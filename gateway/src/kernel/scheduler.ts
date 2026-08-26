@@ -2,7 +2,6 @@ import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import { hasCapability } from "./capabilities";
 import type {
-  ConnectionIdentity,
   ScheduleExpression,
   SchedulePrincipal,
   ScheduleRecord,
@@ -20,10 +19,12 @@ import type {
   ScheduleRunResult,
   ScheduleTarget,
 } from "@humansandmachines/gsv/protocol";
+import type { ConnectionIdentity } from "./identity";
 import {
   assertAdapterMessageDestinationAccess,
   normalizeAdapterMessageDestination,
 } from "./adapter-destinations";
+import * as z from "zod/mini";
 
 const DEFAULT_LIST_LIMIT = 100;
 const MAX_LIST_LIMIT = 500;
@@ -91,6 +92,12 @@ type StoredScheduleRecord = ScheduleRecord & {
   oneShotOccurrenceId: string | null;
   oneShotAttemptCount: number;
 };
+type ScheduleList = { records: ScheduleRecord[]; count: number };
+type ScheduleAfterFinish = { enabled: boolean; nextRunAtMs: number | null };
+type ScheduleJsonValue = string | number | boolean | null | ScheduleJsonObject | ScheduleJsonValue[];
+type ScheduleJsonObject = { [key: string]: ScheduleJsonValue };
+const scheduleNumberSchema = z.number();
+const scheduleTextSchema = z.string();
 
 export class ScheduleStore {
   constructor(private readonly sql: SqlStorage) {}
@@ -161,7 +168,7 @@ export class ScheduleStore {
     includeDisabled?: boolean;
     limit?: number;
     offset?: number;
-  }): { records: ScheduleRecord[]; count: number } {
+  }): ScheduleList {
     const limit = clampListLimit(args.limit);
     const offset = Math.max(0, Math.trunc(args.offset ?? 0));
     const clauses: string[] = [];
@@ -570,7 +577,7 @@ export async function handleSchedulerAdd(
   const now = Date.now();
   const expression = normalizeScheduleExpression(args.expression, ctx);
   assertSchedulableAtExpression(expression, args.enabled !== false, now);
-  const target = normalizeScheduleTarget(args.target);
+  const target = normalizeShipScheduleTarget(normalizeScheduleTarget(args.target), ctx);
   validateScheduleTargetAccess(target, ctx);
 
   const principal = principalFromContext(ctx);
@@ -604,7 +611,7 @@ export async function handleSchedulerUpdate(
 
   const nextTarget = args.patch.target === undefined
     ? existing.target
-    : normalizeScheduleTarget(args.patch.target);
+    : normalizeShipScheduleTarget(normalizeScheduleTarget(args.patch.target), ctx);
   const now = Date.now();
   const nextExpression = args.patch.expression === undefined
     ? existing.expression
@@ -669,10 +676,6 @@ export function normalizeScheduleExpression(
   expression: ScheduleExpression,
   ctx?: KernelContext,
 ): ScheduleExpression {
-  if (!expression || typeof expression !== "object") {
-    throw new Error("schedule expression must be an object");
-  }
-
   if (expression.kind === "at") {
     return { kind: "at", atMs: normalizeTimestamp(expression.atMs, "schedule atMs") };
   }
@@ -684,13 +687,14 @@ export function normalizeScheduleExpression(
     if (everyMs < MIN_INTERVAL_MS) {
       throw new Error(`schedule everyMs must be at least ${MIN_INTERVAL_MS}`);
     }
-    return {
+    const every: Extract<ScheduleExpression, { kind: "every" }> = {
       kind: "every",
       everyMs,
-      ...(expression.anchorMs === undefined
-        ? {}
-        : { anchorMs: normalizeTimestamp(expression.anchorMs, "schedule anchorMs") }),
     };
+    if (expression.anchorMs !== undefined) {
+      every.anchorMs = normalizeTimestamp(expression.anchorMs, "schedule anchorMs");
+    }
+    return every;
   }
   if (expression.kind === "cron") {
     const expr = normalizeRequiredText(expression.expr, "cron expression");
@@ -698,6 +702,7 @@ export function normalizeScheduleExpression(
     const timezone = normalizeTimezone(expression.timezone || ctx?.config.get("config/server/timezone") || "UTC");
     return { kind: "cron", expr, timezone };
   }
+  // SAFETY: the discriminated ScheduleExpression union is exhausted above.
   throw new Error(`unsupported schedule expression kind: ${(expression as { kind?: unknown }).kind}`);
 }
 
@@ -741,7 +746,7 @@ function assertSchedulableAtExpression(
 export function computeNextRunAfterFinish(
   expression: ScheduleExpression,
   finishedAtMs: number,
-): { enabled: boolean; nextRunAtMs: number | null } {
+): ScheduleAfterFinish {
   if (expression.kind === "at" || expression.kind === "after") {
     return { enabled: false, nextRunAtMs: null };
   }
@@ -795,43 +800,50 @@ function principalFromContext(ctx: KernelContext): SchedulePrincipal {
 }
 
 function normalizeScheduleTarget(target: ScheduleTarget): ScheduleTarget {
-  if (!target || typeof target !== "object") {
-    throw new Error("schedule target must be an object");
-  }
-
   if (target.kind === "command.exec") {
-    return {
+    const command: Extract<ScheduleTarget, { kind: "command.exec" }> = {
       kind: "command.exec",
       command: normalizeRequiredText(target.command, "command.exec command"),
-      ...(target.cwd ? { cwd: normalizeRequiredText(target.cwd, "command.exec cwd") } : {}),
-      ...(target.timeoutMs === undefined
-        ? {}
-        : { timeoutMs: normalizePositiveInteger(target.timeoutMs, "command.exec timeoutMs") }),
     };
+    if (target.cwd) command.cwd = normalizeRequiredText(target.cwd, "command.exec cwd");
+    if (target.timeoutMs !== undefined) command.timeoutMs = normalizePositiveInteger(target.timeoutMs, "command.exec timeoutMs");
+    return command;
   }
 
   if (target.kind === "process.spawn") {
     const prompt = normalizeRequiredText(target.prompt, "process.spawn prompt");
-    return {
+    const spawn: Extract<ScheduleTarget, { kind: "process.spawn" }> = {
       kind: "process.spawn",
       prompt,
-      ...(target.runAs ? { runAs: normalizeRequiredText(target.runAs, "process.spawn runAs") } : {}),
-      ...(target.label ? { label: normalizeRequiredText(target.label, "process.spawn label") } : {}),
-      ...(target.parentPid ? { parentPid: normalizeRequiredText(target.parentPid, "process.spawn parentPid") } : {}),
-      ...(target.cwd ? { cwd: normalizeRequiredText(target.cwd, "process.spawn cwd") } : {}),
     };
+    if (target.runAs) spawn.runAs = normalizeRequiredText(target.runAs, "process.spawn runAs");
+    if (target.label) spawn.label = normalizeRequiredText(target.label, "process.spawn label");
+    if (target.parentPid) spawn.parentPid = normalizeRequiredText(target.parentPid, "process.spawn parentPid");
+    if (target.cwd) spawn.cwd = normalizeRequiredText(target.cwd, "process.spawn cwd");
+    return spawn;
   }
 
   if (target.kind === "process.event") {
-    return {
+    const event: Extract<ScheduleTarget, { kind: "process.event" }> = {
       kind: "process.event",
       pid: normalizeRequiredText(target.pid, "process.event pid"),
       message: normalizeRequiredText(target.message, "process.event message"),
-      ...(target.data === undefined ? {} : { data: normalizePlainObject(target.data, "process.event data") }),
-      ...(target.replyTo === undefined
-        ? {}
-        : { replyTo: normalizeAdapterMessageDestination(target.replyTo) }),
     };
+    if (target.data !== undefined) event.data = normalizePlainObject(target.data, "process.event data");
+    if (target.replyTo !== undefined) event.replyTo = normalizeAdapterMessageDestination(target.replyTo);
+    return event;
+  }
+
+  if (target.kind === "responsibility") {
+    const responsibility: Extract<ScheduleTarget, { kind: "responsibility" }> = {
+      kind: "responsibility",
+      message: normalizeRequiredText(target.message, "responsibility message"),
+    };
+    if (target.data !== undefined) {
+      responsibility.data = normalizePlainObject(target.data, "responsibility data");
+    }
+    if (target.priority !== undefined) responsibility.priority = target.priority;
+    return responsibility;
   }
 
   if (target.kind === "adapter.send") {
@@ -842,6 +854,7 @@ function normalizeScheduleTarget(target: ScheduleTarget): ScheduleTarget {
     };
   }
 
+  // SAFETY: the discriminated ScheduleTarget union is exhausted above.
   throw new Error(`unsupported schedule target kind: ${(target as { kind?: unknown }).kind}`);
 }
 
@@ -871,6 +884,11 @@ function validateScheduleTargetAccess(target: ScheduleTarget, ctx: KernelContext
       assertAdapterMessageDestinationAccess(target.replyTo, ownerUid, ctx);
     }
   }
+  if (target.kind === "responsibility") {
+    if (!hasCapability(ctx.identity?.capabilities ?? [], "r12y.create")) {
+      throw new Error("Permission denied: r12y.create");
+    }
+  }
   if (target.kind === "adapter.send") {
     if (!hasCapability(ctx.identity?.capabilities ?? [], "adapter.send")) {
       throw new Error("Permission denied: adapter.send");
@@ -886,6 +904,25 @@ function validateScheduleTargetAccess(target: ScheduleTarget, ctx: KernelContext
       throw new Error(`Permission denied: cannot schedule child under ${target.parentPid}`);
     }
   }
+}
+
+function normalizeShipScheduleTarget(
+  target: ScheduleTarget,
+  ctx: KernelContext,
+): ScheduleTarget {
+  if (target.kind !== "process.event") return target;
+  const process = ctx.procs.get(target.pid);
+  if (!process?.isPersonalController) return target;
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  if (ownerUid !== 0 && process.ownerUid !== ownerUid) {
+    throw new Error(`Permission denied: cannot schedule process ${target.pid}`);
+  }
+  const responsibility: Extract<ScheduleTarget, { kind: "responsibility" }> = {
+    kind: "responsibility",
+    message: target.message,
+  };
+  if (target.data !== undefined) responsibility.data = target.data;
+  return responsibility;
 }
 
 function computeEveryNextRunAt(
@@ -1083,7 +1120,7 @@ function zonedDateParts(ms: number, formatter: Intl.DateTimeFormat): ZonedDatePa
   };
 }
 
-function normalizeTimestamp(value: unknown, label: string): number {
+function normalizeTimestamp<T>(value: T, label: string): number {
   const n = normalizePositiveInteger(value, label);
   if (n < 0) {
     throw new Error(`${label} must be non-negative`);
@@ -1091,39 +1128,44 @@ function normalizeTimestamp(value: unknown, label: string): number {
   return n;
 }
 
-function normalizePositiveInteger(value: unknown, label: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
+function normalizePositiveInteger<T>(value: T, label: string): number {
+  const parsed = scheduleNumberSchema.safeParse(value);
+  if (!parsed.success || !Number.isFinite(parsed.data) || !Number.isInteger(parsed.data) || parsed.data <= 0) {
     throw new Error(`${label} must be a positive integer`);
   }
-  return value;
+  return parsed.data;
 }
 
-function normalizeRequiredText(value: unknown, label: string): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
+function normalizeRequiredText<T>(value: T, label: string): string {
+  const parsed = scheduleTextSchema.safeParse(value);
+  if (!parsed.success || parsed.data.trim().length === 0) {
     throw new Error(`${label} is required`);
   }
-  return value.trim();
+  return parsed.data.trim();
 }
 
-function normalizeOptionalText(value: unknown): string | undefined {
+function normalizeOptionalText<T>(value: T): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
-  if (typeof value !== "string") {
+  const parsed = scheduleTextSchema.safeParse(value);
+  if (!parsed.success) {
     throw new Error("description must be a string");
   }
-  const trimmed = value.trim();
+  const trimmed = parsed.data.trim();
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function normalizePlainObject(value: unknown, label: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+function normalizePlainObject<T>(value: T, label: string): ScheduleJsonObject {
+  const parsed = z.record(z.string(), z.json()).safeParse(value);
+  if (!parsed.success) {
     throw new Error(`${label} must be a JSON object`);
   }
-  return value as Record<string, unknown>;
+  // SAFETY: the JSON-object schema validates a persisted schedule payload at this boundary.
+  return parsed.data as ScheduleJsonObject;
 }
 
-function normalizeTimezone(value: unknown): string {
+function normalizeTimezone<T>(value: T): string {
   const timezone = normalizeRequiredText(value, "timezone");
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format(new Date());
@@ -1133,21 +1175,21 @@ function normalizeTimezone(value: unknown): string {
   return timezone;
 }
 
-function clampListLimit(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
+function clampListLimit<T>(value: T): number {
+  const parsed = scheduleNumberSchema.safeParse(value);
+  if (!parsed.success || !Number.isFinite(parsed.data)) {
     return DEFAULT_LIST_LIMIT;
   }
-  return Math.max(1, Math.min(MAX_LIST_LIMIT, Math.trunc(value)));
+  return Math.max(1, Math.min(MAX_LIST_LIMIT, Math.trunc(parsed.data)));
 }
 
 function toRecord(row: ScheduleRow): StoredScheduleRecord {
-  return {
+  const record: StoredScheduleRecord = {
     id: row.schedule_id,
     ownerUid: row.owner_uid,
     creator: parseJson<SchedulePrincipal>(row.creator_json),
     runAs: parseJson<SchedulePrincipal>(row.run_as_json),
     name: row.name,
-    ...(row.description ? { description: row.description } : {}),
     enabled: row.enabled === 1,
     expression: normalizeScheduleExpression(parseJson<ScheduleExpression>(row.expression_json)),
     target: normalizeScheduleTarget(parseJson<ScheduleTarget>(row.target_json)),
@@ -1158,6 +1200,7 @@ function toRecord(row: ScheduleRow): StoredScheduleRecord {
       nextRunAtMs: row.next_run_at,
       runningAtMs: row.running_at,
       lastRunAtMs: row.last_run_at,
+      // SAFETY: last_status is constrained to the ScheduleRunState status enum by the schedules schema.
       lastStatus: row.last_status as ScheduleRecord["state"]["lastStatus"],
       lastError: row.last_error,
       lastDurationMs: row.last_duration_ms,
@@ -1167,16 +1210,17 @@ function toRecord(row: ScheduleRow): StoredScheduleRecord {
     oneShotOccurrenceId: row.one_shot_occurrence_id,
     oneShotAttemptCount: row.one_shot_attempt_count,
   };
+  if (row.description) record.description = row.description;
+  return record;
 }
 
 function publicRecord(record: StoredScheduleRecord): ScheduleRecord {
-  return {
+  const result: ScheduleRecord = {
     id: record.id,
     ownerUid: record.ownerUid,
     creator: record.creator,
     runAs: record.runAs,
     name: record.name,
-    ...(record.description ? { description: record.description } : {}),
     enabled: record.enabled,
     expression: record.expression,
     target: record.target,
@@ -1185,20 +1229,24 @@ function publicRecord(record: StoredScheduleRecord): ScheduleRecord {
     updatedAtMs: record.updatedAtMs,
     state: record.state,
   };
+  if (record.description) result.description = record.description;
+  return result;
 }
 
 function toHistoryEntry(row: ScheduleRunRow): ScheduleRunHistoryEntry {
-  const result = parseJson<unknown>(row.result_json);
-  return {
+  const parsedResult = parseJson<unknown>(row.result_json);
+  const entry: ScheduleRunHistoryEntry = {
     id: row.run_id,
     scheduleId: row.schedule_id,
     scheduledAtMs: row.scheduled_at,
     startedAtMs: row.started_at,
     finishedAtMs: row.finished_at,
+    // SAFETY: run status values are constrained by the scheduler history schema.
     status: row.status as ScheduleRunHistoryEntry["status"],
-    ...(row.error ? { error: row.error } : {}),
-    ...(result === null ? {} : { result }),
   };
+  if (row.error) entry.error = row.error;
+  if (parsedResult !== null) entry.result = parsedResult;
+  return entry;
 }
 
 function toCronFileRecord(row: CronFileRow): CronFileRecord {
@@ -1212,6 +1260,7 @@ function toCronFileRecord(row: CronFileRow): CronFileRecord {
 }
 
 function parseJson<T>(value: string): T {
+  // SAFETY: callers immediately validate persisted JSON through the owning domain normalizers.
   return JSON.parse(value) as T;
 }
 

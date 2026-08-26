@@ -1,16 +1,18 @@
-import { lexer, type Token, type Tokens } from "marked";
+import { lexer, type MarkedToken, type Token, type Tokens } from "marked";
+import { z } from "zod";
+import type { callManagedTelegramApi } from "./managed-telegram-api";
 
-type TelegramApiPayload = Record<string, unknown> | FormData;
+type TelegramApiPayload = Parameters<typeof callManagedTelegramApi>[2];
 
 type TelegramApiCall<T> = (
   method: string,
   payload: TelegramApiPayload,
 ) => Promise<T>;
 
-type TelegramErrorDetails = {
-  telegramStatus?: unknown;
-  telegramDescription?: unknown;
-};
+const telegramFormattingErrorSchema = z.object({
+  telegramStatus: z.literal(400),
+  telegramDescription: z.string(),
+}).passthrough();
 
 export type TelegramReplyParameters = {
   message_id: number;
@@ -27,10 +29,7 @@ const FORMATTING_ERROR_PATTERN =
 export function buildTelegramReplyParameters(
   replyToMessageId?: number,
 ): TelegramReplyParameters | undefined {
-  if (
-    typeof replyToMessageId !== "number" ||
-    !Number.isFinite(replyToMessageId)
-  ) {
+  if (replyToMessageId === undefined || !Number.isFinite(replyToMessageId)) {
     return undefined;
   }
 
@@ -55,7 +54,7 @@ export async function sendTelegramMarkdownMessage<T>(
       ...replyPayload,
     });
   } catch (error) {
-    if (!isTelegramFormattingError(error)) {
+    if (!(error instanceof Error) || !isTelegramFormattingError(error)) {
       throw error;
     }
   }
@@ -68,7 +67,7 @@ export async function sendTelegramMarkdownMessage<T>(
       ...replyPayload,
     });
   } catch (error) {
-    if (!isTelegramFormattingError(error)) {
+    if (!(error instanceof Error) || !isTelegramFormattingError(error)) {
       throw error;
     }
   }
@@ -96,7 +95,7 @@ export async function callTelegramApiWithMarkdownCaption<T>(
       buildPayload(markdownToTelegramHtml(caption), "HTML"),
     );
   } catch (error) {
-    if (!isTelegramFormattingError(error)) {
+    if (!(error instanceof Error) || !isTelegramFormattingError(error)) {
       throw error;
     }
   }
@@ -111,31 +110,26 @@ export function markdownToTelegramHtml(markdown: string): string {
   }
 
   try {
-    return renderBlockTokens(lexer(trimmed) as Token[]).trim();
+    return renderBlockTokens(lexer(trimmed)).trim();
   } catch {
     return escapeTelegramHtml(trimmed);
   }
 }
 
-export function isTelegramFormattingError(error: unknown): boolean {
-  if (!error || typeof error !== "object") {
-    return false;
-  }
-
-  const details = error as TelegramErrorDetails;
-  return details.telegramStatus === 400 &&
-    typeof details.telegramDescription === "string" &&
-    FORMATTING_ERROR_PATTERN.test(details.telegramDescription);
+export function isTelegramFormattingError(error: Error): boolean {
+  const parsed = telegramFormattingErrorSchema.safeParse(error);
+  return parsed.success && FORMATTING_ERROR_PATTERN.test(parsed.data.telegramDescription);
 }
 
 function renderBlockTokens(tokens: Token[], blockquoteDepth = 0): string {
   return tokens
+    .filter(isMarkedToken)
     .map((token) => renderBlockToken(token, blockquoteDepth))
     .filter((value) => value.length > 0)
     .join("\n\n");
 }
 
-function renderBlockToken(token: Token, blockquoteDepth: number): string {
+function renderBlockToken(token: MarkedToken, blockquoteDepth: number): string {
   switch (token.type) {
     case "space":
     case "def":
@@ -145,8 +139,7 @@ function renderBlockToken(token: Token, blockquoteDepth: number): string {
     case "paragraph":
       return renderInlineTokens(token.tokens);
     case "blockquote": {
-      const blockquote = token as Tokens.Blockquote;
-      const content = renderBlockTokens(blockquote.tokens, blockquoteDepth + 1);
+      const content = renderBlockTokens(token.tokens, blockquoteDepth + 1);
       if (!content) {
         return "";
       }
@@ -155,11 +148,11 @@ function renderBlockToken(token: Token, blockquoteDepth: number): string {
         : prefixLines(content, "&gt; ");
     }
     case "list":
-      return renderList(token as Tokens.List, blockquoteDepth);
+      return renderList(token, blockquoteDepth);
     case "code":
-      return renderCodeBlock(token as Tokens.Code);
+      return renderCodeBlock(token);
     case "table":
-      return renderTable(token as Tokens.Table);
+      return renderTable(token);
     case "hr":
       return "────────";
     case "html":
@@ -174,7 +167,7 @@ function renderBlockToken(token: Token, blockquoteDepth: number): string {
 }
 
 function renderList(token: Tokens.List, blockquoteDepth: number): string {
-  const start = typeof token.start === "number" ? token.start : 1;
+  const start = token.start === "" ? 1 : token.start;
 
   return token.items
     .map((item, index) => {
@@ -182,6 +175,7 @@ function renderList(token: Tokens.List, blockquoteDepth: number): string {
         ? item.checked ? "☑ " : "☐ "
         : token.ordered ? `${start + index}. ` : "• ";
       const content = item.tokens
+        .filter(isMarkedToken)
         .map((child) => renderBlockToken(child, blockquoteDepth))
         .filter(Boolean)
         .join("\n")
@@ -229,7 +223,7 @@ function renderInlineTokens(tokens: Token[] | undefined): string {
     return "";
   }
 
-  return tokens.map(renderInlineToken).join("");
+  return tokens.filter(isMarkedToken).map(renderInlineToken).join("");
 }
 
 function renderInlineToken(token: Token): string {
@@ -247,9 +241,11 @@ function renderInlineToken(token: Token): string {
     case "codespan":
       return `<code>${escapeTelegramHtml(token.text)}</code>`;
     case "link":
-      return renderLink(token as Tokens.Link);
+      if (!isLinkToken(token)) return "";
+      return renderLink(token);
     case "image":
-      return renderImage(token as Tokens.Image);
+      if (!isImageToken(token)) return "";
+      return renderImage(token);
     case "br":
       return "\n";
     case "escape":
@@ -257,6 +253,7 @@ function renderInlineToken(token: Token): string {
     case "html":
       return escapeTelegramHtml(token.text || token.raw);
     default:
+      if (!isMarkedToken(token)) return "";
       return renderUnknownToken(token);
   }
 }
@@ -283,14 +280,26 @@ function renderImage(token: Tokens.Image): string {
   return `<a href="${escapeTelegramHtml(href)}">${label}</a>`;
 }
 
-function renderUnknownToken(token: Token): string {
-  if ("tokens" in token && Array.isArray(token.tokens)) {
-    return renderInlineTokens(token.tokens);
-  }
-  if ("text" in token && typeof token.text === "string") {
-    return escapeTelegramHtml(token.text);
-  }
+function renderUnknownToken(_token: MarkedToken): string {
   return "";
+}
+
+const markedTokenTypeSchema = z.enum([
+  "blockquote", "br", "code", "codespan", "def", "del", "em", "escape",
+  "heading", "hr", "html", "image", "link", "list", "list_item", "paragraph",
+  "space", "strong", "table", "text",
+]);
+
+function isMarkedToken(token: Token): token is MarkedToken {
+  return markedTokenTypeSchema.safeParse(token.type).success;
+}
+
+function isLinkToken(token: Token): token is Tokens.Link {
+  return token.type === "link" && isMarkedToken(token);
+}
+
+function isImageToken(token: Token): token is Tokens.Image {
+  return token.type === "image" && isMarkedToken(token);
 }
 
 function normalizeTelegramLink(href: string): string | null {

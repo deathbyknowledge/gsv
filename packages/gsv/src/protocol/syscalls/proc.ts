@@ -8,11 +8,15 @@
 
 import type { ProcessIdentity } from "./system";
 import type { InteractionOrigin } from "./interaction-origin";
+import type { JsonObject } from "../json";
+import type { ResourceBlock } from "../resource";
 
 export type ProcMediaInput = {
   type: "image" | "audio" | "video" | "document";
   mimeType: string;
   key?: string;
+  /** Set for immutable media owned by a canonical conversation message. */
+  conversationId?: string;
   /** Server-derived read-only filesystem path for a process-scoped media key. */
   path?: string;
   url?: string;
@@ -22,11 +26,15 @@ export type ProcMediaInput = {
   transcription?: string;
 };
 
+/** Legacy stored media descriptors remain readable while new messages use resources. */
+export type MessageAttachment = ResourceBlock | ProcMediaInput;
+
 export type ProcSpawnArgs = {
   /**
    * Account to run the process as a username or uid string. Defaults to the
-   * caller's personal agent. The caller must own the account or hold membership
-   * in its private group (root may run as anyone).
+   * caller's personal agent for a top-level process and the parent account for
+   * a child. The caller must own the account or hold membership in its
+   * private group (root may run as anyone).
    */
   runAs?: string;
   /** Whether the process can request human-in-the-loop approval. Background spawns set false. */
@@ -60,14 +68,19 @@ export type ProcKillResult =
       archivedMessages: number;
       archivedTo?: string;
       archives: ProcArchiveEntry[];
+      contextEpochArchives?: string[];
     }
   | { ok: false; error: string };
 
 export type ProcSendArgs = {
   pid?: string;
   message: string;
-  media?: ProcMediaInput[];
+  media?: ResourceBlock[];
   origin?: InteractionOrigin;
+  interaction?: {
+    conversationId: string;
+    messageId: string;
+  };
 };
 
 export type ProcAbortArgs = {
@@ -92,10 +105,13 @@ export type ProcHilRequest = {
   pid: string;
   requestId: string;
   runId: string;
+  conversationId?: string;
   callId: string;
   toolName: string;
   syscall: string;
-  args: Record<string, unknown>;
+  /** Authoritative normalized execution target resolved by the Process approval policy. */
+  target: string;
+  args: JsonObject;
   createdAt: number;
 };
 
@@ -129,7 +145,7 @@ export type ProcSendResult =
     }
   | { ok: false; error: string };
 
-export type ProcIpcMetadata = Record<string, unknown>;
+export type ProcIpcMetadata = JsonObject;
 
 export type ProcIpcSendArgs = {
   pid: string;
@@ -183,6 +199,7 @@ export type ProcIpcCallResult =
 
 export type ProcHistoryArgs = {
   pid?: string;
+  includeMessages?: boolean;
   limit?: number;
   offset?: number;
   beforeMessageId?: number;
@@ -192,12 +209,33 @@ export type ProcHistoryArgs = {
 
 export type ProcToolResultOutcome = "completed" | "failed" | "cancelled" | "denied";
 
+export type ProcRunToolStartedSignal = {
+  pid: string;
+  runId: string;
+  executionId: string;
+  callId: string;
+  name: string;
+  syscall: string;
+  args: unknown;
+};
+
+export type ProcRunToolFinishedSignal = {
+  pid: string;
+  runId: string;
+  executionId: string;
+  callId: string;
+  outcome: ProcToolResultOutcome;
+  timestamp: number;
+};
+
 export type ProcHistoryToolResultContent = {
   toolName: string;
   isError: boolean;
   outcome: ProcToolResultOutcome;
   toolCallId: string | null;
   output: unknown;
+  media?: ProcMediaInput[];
+  resources?: ResourceBlock[];
 };
 
 export type ProcHistoryMessage = {
@@ -309,6 +347,7 @@ export type ProcAiConfigSnapshot = {
 };
 
 export type ProcAiConfigGetArgs = {
+  pid?: string;
   redacted?: boolean;
 };
 
@@ -322,17 +361,21 @@ export type ProcAiConfigGetResult =
 
 export type ProcAiConfigSetArgs =
   | {
+      pid?: string;
       clear: true;
     }
   | {
+      pid?: string;
       profileId: string;
       profileName?: string;
     }
   | {
+      pid?: string;
       profileName: string;
       profileId?: string;
     }
   | {
+      pid?: string;
       values: Record<string, string>;
       profile?: {
         id?: string;
@@ -340,6 +383,7 @@ export type ProcAiConfigSetArgs =
       };
     }
   | {
+      pid?: string;
       key: string;
       value: string;
     };
@@ -365,43 +409,6 @@ export type ProcHistoryResult =
       pendingHil?: ProcHilRequest | null;
       context?: ProcContextState | null;
     }
-  | { ok: false; error: string };
-
-export type ProcMediaReadArgs = {
-  pid?: string;
-  key: string;
-};
-
-export type ProcMediaReadResult =
-  | {
-      ok: true;
-      key: string;
-      path: string;
-      mimeType: string;
-      size: number;
-    }
-  | { ok: false; error: string };
-
-export type ProcMediaWriteArgs = Omit<ProcMediaInput, "key" | "path" | "url" | "size"> & {
-  pid?: string;
-  /** Caller-preallocated idempotency key for a staged process media object. */
-  mediaId?: string;
-};
-
-export type ProcMediaWriteResult =
-  | {
-      ok: true;
-      media: ProcMediaInput & { key: string; path: string; size: number };
-    }
-  | { ok: false; error: string };
-
-export type ProcMediaDeleteArgs = {
-  pid?: string;
-  key: string;
-};
-
-export type ProcMediaDeleteResult =
-  | { ok: true; key: string }
   | { ok: false; error: string };
 
 export type ProcHistoryOverflowPolicy = "auto-compact" | "fail";
@@ -476,6 +483,7 @@ export type ProcForkArgs = {
   pid?: string;
   segmentId?: string;
   throughMessageId?: number;
+  throughRunId?: string;
   label?: string;
   includeLiveSuffix?: boolean;
 };
@@ -515,11 +523,25 @@ export type ProcHistorySegmentsArgs = {
   pid?: string;
 };
 
+export type ProcContextEpoch = {
+  id: string;
+  generation: number;
+  state: "live" | "closed";
+  r12yRevision: number;
+  r12yCount: number;
+  observedR12yRevision: number;
+  createdAt: number;
+  closedAt?: number;
+  closeReason?: string;
+  archivePath?: string;
+};
+
 export type ProcHistorySegmentsResult =
   | {
       ok: true;
       pid: string;
       segments: ProcHistorySegment[];
+      epochs: ProcContextEpoch[];
     }
   | { ok: false; error: string };
 
@@ -527,6 +549,7 @@ export type ProcHistorySegmentsResult =
 export type ProcHistoryExportArgs = {
   segmentId?: string;
   throughMessageId?: number;
+  throughRunId?: string;
   includeLiveSuffix?: boolean;
 };
 
@@ -562,6 +585,7 @@ export type ProcResetResult =
       archivedMessages: number;
       archivedTo?: string;
       archives: ProcArchiveEntry[];
+      contextEpochArchives?: string[];
     }
   | { ok: false; error: string };
 
@@ -576,6 +600,7 @@ export type ProcListEntry = {
   username: string;
   /** Whether the process can hold an interactive (human-in-the-loop) conversation. */
   interactive: boolean;
+  personal: boolean;
   parentPid: string | null;
   state: string;
   activeRunId: string | null;
@@ -590,10 +615,15 @@ export type ProcListResult = {
   processes: ProcListEntry[];
 };
 
+export type ProcObserveArgs = { pid: string };
+export type ProcObserveResult = { ok: true; pid: string; observing: boolean };
+
+export type ProcUnobserveArgs = { pid: string };
+export type ProcUnobserveResult = { ok: true; pid: string; observing: boolean };
+
 // Kernel-only: sets process identity. Sent by the kernel to Process DOs
 // at spawn time and never routed from user/device connections.
 export type ProcSetIdentityArgs = {
-  pid: string;
   identity: ProcessIdentity;
   interactive?: boolean;
   /** Initial process label. */

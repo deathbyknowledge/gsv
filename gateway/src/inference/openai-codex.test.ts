@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import {
   completeWithOpenAiCodexFetch,
@@ -13,7 +13,11 @@ function codexToken(accountId = "acct-test"): string {
   });
 }
 
-function jwtToken(payload: Record<string, unknown>): string {
+type JsonPrimitive = string | number | boolean | null;
+type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
+type JsonObject = { [key: string]: JsonValue };
+
+function jwtToken(payload: JsonObject): string {
   const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
   return `header.${encoded}.signature`;
 }
@@ -31,7 +35,7 @@ function codexModel() {
   return model;
 }
 
-function codexTextEvents(text = "ok"): Array<Record<string, unknown>> {
+function codexTextEvents(text = "ok"): JsonObject[] {
   return [
     {
       type: "response.created",
@@ -81,7 +85,7 @@ function codexTextEvents(text = "ok"): Array<Record<string, unknown>> {
   ];
 }
 
-function sseResponse(events: Array<Record<string, unknown>>, separator = "\n\n"): Response {
+function sseResponse(events: JsonObject[], separator = "\n\n"): Response {
   const body = events.map((event) => `data: ${JSON.stringify(event)}${separator}`).join("");
   return new Response(body, {
     status: 200,
@@ -96,11 +100,11 @@ describe("OpenAI Codex routed fetch transport", () => {
   it("streams Codex SSE through the supplied fetch implementation", async () => {
     let capturedUrl = "";
     let capturedInit: RequestInit | undefined;
-    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    const fetchMock: typeof fetch = async (url, init) => {
       capturedUrl = String(url);
       capturedInit = init;
       return sseResponse(codexTextEvents());
-    });
+    };
 
     const result = await completeWithOpenAiCodexFetch({
       model: codexModel(),
@@ -108,7 +112,7 @@ describe("OpenAI Codex routed fetch transport", () => {
         systemPrompt: "Reply briefly.",
         messages: [{ role: "user", content: "Say ok" }],
       },
-      fetch: fetchMock as unknown as typeof fetch,
+      fetch: fetchMock,
       options: {
         apiKey: codexToken("acct-123"),
         reasoning: "low",
@@ -118,7 +122,7 @@ describe("OpenAI Codex routed fetch transport", () => {
     });
 
     const headers = new Headers(capturedInit?.headers);
-    const body = JSON.parse(String(capturedInit?.body)) as Record<string, unknown>;
+    const body = JSON.parse(String(capturedInit?.body));
 
     expect(result.stopReason).toBe("stop");
     expect(result.content).toContainEqual(expect.objectContaining({ type: "text", text: "ok" }));
@@ -142,10 +146,10 @@ describe("OpenAI Codex routed fetch transport", () => {
   it("uses an OAuth account id supplied outside the access token", async () => {
     let capturedInit: RequestInit | undefined;
     const accessToken = bareCodexToken();
-    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+    const fetchMock: typeof fetch = async (_url, init) => {
       capturedInit = init;
       return sseResponse(codexTextEvents());
-    });
+    };
 
     const result = await completeWithOpenAiCodexFetch({
       model: codexModel(),
@@ -153,7 +157,7 @@ describe("OpenAI Codex routed fetch transport", () => {
         systemPrompt: "Reply briefly.",
         messages: [{ role: "user", content: "Say ok" }],
       },
-      fetch: fetchMock as unknown as typeof fetch,
+      fetch: fetchMock,
       options: {
         apiKey: accessToken,
         openAiCodexAccountId: "acct-from-metadata",
@@ -168,7 +172,7 @@ describe("OpenAI Codex routed fetch transport", () => {
   });
 
   it("handles CRLF-delimited Codex SSE frames", async () => {
-    const fetchMock = vi.fn(async () => sseResponse(codexTextEvents(), "\r\n\r\n"));
+    const fetchMock: typeof fetch = async () => sseResponse(codexTextEvents(), "\r\n\r\n");
 
     const result = await completeWithOpenAiCodexFetch({
       model: codexModel(),
@@ -176,7 +180,7 @@ describe("OpenAI Codex routed fetch transport", () => {
         systemPrompt: "Reply briefly.",
         messages: [{ role: "user", content: "Say ok" }],
       },
-      fetch: fetchMock as unknown as typeof fetch,
+      fetch: fetchMock,
       options: {
         apiKey: codexToken("acct-123"),
       },
@@ -187,7 +191,7 @@ describe("OpenAI Codex routed fetch transport", () => {
   });
 
   it("emits an error instead of done for terminal failed Codex responses", async () => {
-    const fetchMock = vi.fn(async () => sseResponse([
+    const fetchMock: typeof fetch = async () => sseResponse([
       {
         type: "response.created",
         response: { id: "resp_failed" },
@@ -210,7 +214,7 @@ describe("OpenAI Codex routed fetch transport", () => {
           },
         },
       },
-    ]));
+    ]);
 
     const stream = streamWithOpenAiCodexFetch({
       model: codexModel(),
@@ -218,7 +222,7 @@ describe("OpenAI Codex routed fetch transport", () => {
         systemPrompt: "Reply briefly.",
         messages: [{ role: "user", content: "Say ok" }],
       },
-      fetch: fetchMock as unknown as typeof fetch,
+      fetch: fetchMock,
       options: {
         apiKey: codexToken("acct-123"),
       },
@@ -236,7 +240,7 @@ describe("OpenAI Codex routed fetch transport", () => {
   });
 
   it("includes non-secret response diagnostics on HTML challenge errors", async () => {
-    const fetchMock = vi.fn(async () =>
+    const fetchMock: typeof fetch = async () =>
       new Response("<html><body>Unable to load site</body></html>", {
         status: 403,
         headers: {
@@ -244,13 +248,12 @@ describe("OpenAI Codex routed fetch transport", () => {
           "cf-ray": "ray-blocked",
           "x-request-id": "req-blocked",
         },
-      })
-    );
+      });
 
     const result = await streamWithOpenAiCodexFetch({
       model: codexModel(),
       context: { systemPrompt: "", messages: [{ role: "user", content: "hi" }] },
-      fetch: fetchMock as unknown as typeof fetch,
+      fetch: fetchMock,
       options: {
         apiKey: codexToken(),
       },

@@ -5,12 +5,36 @@ import type {
   AiImageReadReasoning,
   AiImageReadResponseFormat,
   AiImageReadResult,
+  JsonObject,
+  JsonValue,
 } from "@humansandmachines/gsv/protocol";
+import {
+  byteStreamChunk,
+  jsonObjectSchema,
+  jsonValueSchema,
+} from "@humansandmachines/gsv/protocol";
+import { z } from "zod";
 import { normalizeBase64Data } from "../shared/base64";
 import { TimeoutError, withTimeout } from "./timeout";
 
+type MoondreamInput = {
+  task: "caption" | "query" | "point" | "detect";
+  image: string;
+  stream: boolean;
+  max_tokens?: number;
+  temperature?: number;
+  top_p?: number;
+  caption_length?: "short" | "normal" | "long";
+  question?: string;
+  reasoning?: boolean;
+  target?: string;
+  max_objects?: number;
+};
+
+type MoondreamProviderResponse = JsonValue | ReadableStream<Uint8Array>;
+
 export type ImageReadingBinding = {
-  run(model: string, input: Record<string, unknown>): Promise<unknown>;
+  run(model: string, input: MoondreamInput): Promise<MoondreamProviderResponse>;
 };
 
 export type ImageReadingMode = "caption" | "query" | "ocr" | "point" | "detect";
@@ -24,7 +48,7 @@ export type ImageReadingRequest = {
   captionLength?: "short" | "normal" | "long";
   reasoning?: boolean;
   responseFormat?: AiImageReadResponseFormat;
-  schema?: Record<string, unknown>;
+  schema?: JsonObject;
   stream?: boolean;
   maxTokens?: number;
   maxObjects?: number;
@@ -48,13 +72,52 @@ export const DEFAULT_IMAGE_READING_TIMEOUT_MS = 30_000;
 
 const OCR_PROMPT =
   "Transcribe all visible text exactly. Preserve reading order, line breaks, and layout.";
-const RESPONSE_FORMATS = new Set<AiImageReadResponseFormat>([
-  "text",
-  "json",
-  "xml",
-  "markdown",
-  "csv",
+const streamingModeSchema = z.enum(["caption", "query", "ocr"]);
+const finiteNumberSchema = z.number().finite();
+const nonEmptyTextSchema = z.string().trim().min(1);
+const providerMetricsSchema = z.object({
+  input_tokens: finiteNumberSchema,
+  output_tokens: finiteNumberSchema,
+  prefill_time_ms: finiteNumberSchema,
+  decode_time_ms: finiteNumberSchema,
+  ttft_ms: finiteNumberSchema,
+});
+const providerPointTupleSchema = z.tuple([
+  finiteNumberSchema,
+  finiteNumberSchema,
+]).rest(jsonValueSchema);
+const providerPointObjectSchema = z.object({
+  x: finiteNumberSchema,
+  y: finiteNumberSchema,
+});
+const providerObjectSchema = z.object({
+  x_min: finiteNumberSchema,
+  y_min: finiteNumberSchema,
+  x_max: finiteNumberSchema,
+  y_max: finiteNumberSchema,
+});
+const providerGroundingSchema = z.object({
+  start_idx: finiteNumberSchema,
+  end_idx: finiteNumberSchema,
+  points: z.array(jsonValueSchema).optional(),
+});
+const providerReasoningSchema = z.object({
+  text: z.string().optional(),
+  grounding: z.array(jsonValueSchema).optional(),
+});
+const jsonSchemaTypesSchema = z.union([
+  z.string().transform((value) => [value]),
+  z.array(z.string()),
 ]);
+const stringArraySchema = z.array(z.string());
+const jsonValueArraySchema = z.array(jsonValueSchema);
+const streamFailureSchema = z.instanceof(Error).catch(
+  new Error("Image reading stream failed"),
+);
+
+type ImageReadMetricsProjection = { metrics?: AiImageReadMetrics };
+type ImageReadReasoningProjection = { reasoning?: AiImageReadReasoning };
+type ImageReadFinishProjection = { finishReason?: string };
 
 export async function readImage(
   ai: ImageReadingBinding | undefined,
@@ -95,7 +158,7 @@ export async function readImage(
     }
     return {
       result: {
-        mode: mode as "caption" | "query" | "ocr",
+        mode: streamingModeSchema.parse(mode),
         streamed: true,
         contentType: "text/plain; charset=utf-8",
         provider: "workers-ai",
@@ -113,15 +176,20 @@ export async function readImage(
   }
 
   return {
-    result: normalizeMoondreamResponse(response, mode, responseFormat, request),
+    result: normalizeMoondreamResponse(
+      jsonValueSchema.parse(response),
+      mode,
+      responseFormat,
+      request,
+    ),
   };
 }
 
 async function awaitMoondreamRun(
-  operation: Promise<unknown>,
+  operation: Promise<MoondreamProviderResponse>,
   timeoutMs: number,
   signal?: AbortSignal,
-): Promise<unknown> {
+): Promise<MoondreamProviderResponse> {
   let accepted = false;
   const timed = withTimeout(
     operation,
@@ -159,7 +227,7 @@ function raceWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T>
   });
 }
 
-export function normalizeImageReadingText(value: unknown): string | null {
+export function normalizeImageReadingText(value: JsonValue | undefined): string | null {
   const text = firstText(value);
   return text === null ? null : text.trim() || null;
 }
@@ -179,7 +247,7 @@ export function decodeMoondreamStream(
   let closed = false;
   let pumpStarted = false;
   let timeout: ReturnType<typeof setTimeout> | undefined;
-  let controller: ReadableStreamDefaultController<Uint8Array>;
+  let controller: ReadableByteStreamController;
 
   const cleanup = () => {
     if (timeout !== undefined) {
@@ -188,7 +256,7 @@ export function decodeMoondreamStream(
     }
     options.signal?.removeEventListener("abort", abort);
   };
-  const fail = (reason: unknown) => {
+  const fail = (reason: Error) => {
     if (closed) {
       return;
     }
@@ -206,7 +274,8 @@ export function decodeMoondreamStream(
       : new Error("Image reading cancelled"),
   );
 
-  return new ReadableStream<Uint8Array>({
+  const stream: UnderlyingByteSource = {
+    type: "bytes",
     start(nextController) {
       controller = nextController;
       options.signal?.addEventListener("abort", abort, { once: true });
@@ -246,7 +315,7 @@ export function decodeMoondreamStream(
             }
           }
         } catch (error) {
-          fail(error);
+          fail(streamFailureSchema.parse(error));
         } finally {
           reader.releaseLock();
         }
@@ -259,7 +328,8 @@ export function decodeMoondreamStream(
         await reader.cancel(reason).catch(() => {});
       }
     },
-  });
+  };
+  return new ReadableStream(stream);
 }
 
 function buildMoondreamInput(
@@ -267,8 +337,8 @@ function buildMoondreamInput(
   mode: ImageReadingMode,
   base64: string,
   responseFormat: AiImageReadResponseFormat,
-): Record<string, unknown> {
-  const input: Record<string, unknown> = {
+): MoondreamInput {
+  const input: MoondreamInput = {
     task: mode === "ocr" ? "query" : mode,
     image: `data:${normalizeImageMimeType(request.mimeType)};base64,${base64}`,
     stream: request.stream === true,
@@ -386,7 +456,7 @@ function validateRequest(
 }
 
 function normalizeMoondreamResponse(
-  value: unknown,
+  value: JsonValue,
   mode: ImageReadingMode,
   responseFormat: AiImageReadResponseFormat,
   request: ImageReadingRequest,
@@ -418,16 +488,17 @@ function normalizeMoondreamResponse(
     if (!answer) {
       throw new Error("Moondream returned no answer");
     }
-    return {
+    const result: AiImageReadResult = {
       ...metadata,
       mode,
       text: answer,
       answer,
       responseFormat,
-      ...(responseFormat === "json"
-        ? { structured: parseAndValidateJson(answer, request.schema) }
-        : {}),
     };
+    if (responseFormat === "json") {
+      result.structured = parseAndValidateJson(answer, request.schema);
+    }
+    return result;
   }
   if (mode === "point") {
     return {
@@ -443,24 +514,26 @@ function normalizeMoondreamResponse(
   };
 }
 
-function moondreamResultRecord(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+function moondreamResultRecord(value: JsonValue): JsonObject {
+  const envelopeResult = jsonObjectSchema.safeParse(value);
+  if (!envelopeResult.success) {
     throw new Error("Moondream returned an invalid response");
   }
-  const envelope = value as Record<string, unknown>;
+  const envelope = envelopeResult.data;
   if (envelope.result === undefined) {
     return envelope;
   }
-  if (!envelope.result || typeof envelope.result !== "object" || Array.isArray(envelope.result)) {
+  const result = jsonObjectSchema.safeParse(envelope.result);
+  if (!result.success) {
     throw new Error("Moondream returned an invalid response");
   }
-  return envelope.result as Record<string, unknown>;
+  return result.data;
 }
 
 function appendResponseFormatInstruction(
   prompt: string,
   responseFormat: AiImageReadResponseFormat,
-  schema: Record<string, unknown> | undefined,
+  schema: JsonObject | undefined,
 ): string {
   if (responseFormat === "text") {
     return prompt;
@@ -475,11 +548,11 @@ function appendResponseFormatInstruction(
 
 function parseAndValidateJson(
   text: string,
-  schema: Record<string, unknown> | undefined,
-): unknown {
-  let parsed: unknown;
+  schema: JsonObject | undefined,
+): JsonValue {
+  let parsed: JsonValue;
   try {
-    parsed = JSON.parse(text);
+    parsed = jsonValueSchema.parse(JSON.parse(text));
   } catch {
     throw new Error("Moondream returned invalid JSON");
   }
@@ -490,50 +563,50 @@ function parseAndValidateJson(
 }
 
 function validateJsonSchemaValue(
-  value: unknown,
-  schema: Record<string, unknown>,
+  value: JsonValue,
+  schema: JsonObject,
   path: string,
 ): void {
-  if (Array.isArray(schema.enum) && !schema.enum.some((item) => Object.is(item, value))) {
+  const enumResult = jsonValueArraySchema.safeParse(schema.enum);
+  if (enumResult.success && !enumResult.data.some((item) => Object.is(item, value))) {
     throw new Error(`Moondream JSON does not match schema at ${path}: value is not in enum`);
   }
 
-  const types = typeof schema.type === "string"
-    ? [schema.type]
-    : Array.isArray(schema.type)
-      ? schema.type.filter((item): item is string => typeof item === "string")
-      : [];
+  const typesResult = jsonSchemaTypesSchema.safeParse(schema.type);
+  const types = typesResult.success ? typesResult.data : [];
   if (types.length > 0 && !types.some((type) => matchesJsonType(value, type))) {
     throw new Error(`Moondream JSON does not match schema at ${path}: expected ${types.join(" or ")}`);
   }
 
-  if (Array.isArray(value) && schema.items && typeof schema.items === "object") {
-    value.forEach((item, index) => {
-      validateJsonSchemaValue(item, schema.items as Record<string, unknown>, `${path}[${index}]`);
+  const valuesResult = jsonValueArraySchema.safeParse(value);
+  const itemsResult = jsonObjectSchema.safeParse(schema.items);
+  if (valuesResult.success && itemsResult.success) {
+    valuesResult.data.forEach((item, index) => {
+      validateJsonSchemaValue(item, itemsResult.data, `${path}[${index}]`);
     });
   }
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  const objectResult = jsonObjectSchema.safeParse(value);
+  if (!objectResult.success) {
     return;
   }
 
-  const object = value as Record<string, unknown>;
-  const required = Array.isArray(schema.required)
-    ? schema.required.filter((item): item is string => typeof item === "string")
-    : [];
+  const object = objectResult.data;
+  const requiredResult = stringArraySchema.safeParse(schema.required);
+  const required = requiredResult.success ? requiredResult.data : [];
   for (const key of required) {
     if (!(key in object)) {
       throw new Error(`Moondream JSON does not match schema at ${path}: missing ${key}`);
     }
   }
 
-  const properties = schema.properties && typeof schema.properties === "object"
-    ? schema.properties as Record<string, unknown>
-    : {};
+  const propertiesResult = jsonObjectSchema.safeParse(schema.properties);
+  const properties = propertiesResult.success ? propertiesResult.data : {};
   for (const [key, child] of Object.entries(properties)) {
-    if (key in object && child && typeof child === "object") {
+    const childResult = jsonObjectSchema.safeParse(child);
+    if (key in object && childResult.success) {
       validateJsonSchemaValue(
         object[key],
-        child as Record<string, unknown>,
+        childResult.data,
         `${path}.${key}`,
       );
     }
@@ -546,128 +619,105 @@ function validateJsonSchemaValue(
   }
 }
 
-function matchesJsonType(value: unknown, type: string): boolean {
+function matchesJsonType(value: JsonValue, type: string): boolean {
   switch (type) {
     case "null":
       return value === null;
     case "array":
-      return Array.isArray(value);
+      return jsonValueArraySchema.safeParse(value).success;
     case "object":
-      return value !== null && typeof value === "object" && !Array.isArray(value);
+      return jsonObjectSchema.safeParse(value).success;
     case "integer":
-      return typeof value === "number" && Number.isInteger(value);
+      return z.number().int().safeParse(value).success;
     case "number":
-      return typeof value === "number" && Number.isFinite(value);
+      return finiteNumberSchema.safeParse(value).success;
     case "string":
+      return z.string().safeParse(value).success;
     case "boolean":
-      return typeof value === type;
+      return z.boolean().safeParse(value).success;
     default:
       return true;
   }
 }
 
-function normalizeFinishReason(record: Record<string, unknown>): { finishReason?: string } {
-  return typeof record.finish_reason === "string"
-    ? { finishReason: record.finish_reason }
-    : {};
+function normalizeFinishReason(record: JsonObject): ImageReadFinishProjection {
+  const result = z.string().safeParse(record.finish_reason);
+  return result.success ? { finishReason: result.data } : {};
 }
 
-function normalizeMetrics(value: unknown): { metrics?: AiImageReadMetrics } {
-  if (!value || typeof value !== "object") {
+function normalizeMetrics(value: JsonValue | undefined): ImageReadMetricsProjection {
+  const result = providerMetricsSchema.safeParse(value);
+  if (!result.success) {
     return {};
   }
-  const record = value as Record<string, unknown>;
-  const inputTokens = finiteNumber(record.input_tokens);
-  const outputTokens = finiteNumber(record.output_tokens);
-  const prefillTimeMs = finiteNumber(record.prefill_time_ms);
-  const decodeTimeMs = finiteNumber(record.decode_time_ms);
-  const timeToFirstTokenMs = finiteNumber(record.ttft_ms);
-  return inputTokens === undefined
-      || outputTokens === undefined
-      || prefillTimeMs === undefined
-      || decodeTimeMs === undefined
-      || timeToFirstTokenMs === undefined
-    ? {}
-    : {
-      metrics: {
-        inputTokens,
-        outputTokens,
-        prefillTimeMs,
-        decodeTimeMs,
-        timeToFirstTokenMs,
-      },
-    };
+  return {
+    metrics: {
+      inputTokens: result.data.input_tokens,
+      outputTokens: result.data.output_tokens,
+      prefillTimeMs: result.data.prefill_time_ms,
+      decodeTimeMs: result.data.decode_time_ms,
+      timeToFirstTokenMs: result.data.ttft_ms,
+    },
+  };
 }
 
-function normalizeReasoning(value: unknown): { reasoning?: AiImageReadReasoning } {
-  if (!value || typeof value !== "object") {
+function normalizeReasoning(value: JsonValue | undefined): ImageReadReasoningProjection {
+  const result = providerReasoningSchema.safeParse(value);
+  if (!result.success) {
     return {};
   }
-  const record = value as Record<string, unknown>;
-  const text = typeof record.text === "string" ? record.text.trim() : "";
-  const grounding = Array.isArray(record.grounding)
-    ? record.grounding.flatMap((item) => {
-      if (!item || typeof item !== "object") {
-        return [];
-      }
-      const entry = item as Record<string, unknown>;
-      const startIndex = finiteNumber(entry.start_idx);
-      const endIndex = finiteNumber(entry.end_idx);
-      if (startIndex === undefined || endIndex === undefined) {
+  const text = result.data.text?.trim() ?? "";
+  const grounding = result.data.grounding?.flatMap((item) => {
+      const entry = providerGroundingSchema.safeParse(item);
+      if (!entry.success) {
         return [];
       }
       return [{
-        startIndex,
-        endIndex,
-        points: normalizePoints(entry.points),
+        startIndex: entry.data.start_idx,
+        endIndex: entry.data.end_idx,
+        points: normalizePoints(entry.data.points),
       }];
-    })
-    : [];
+    }) ?? [];
   return text || grounding.length > 0 ? { reasoning: { text, grounding } } : {};
 }
 
-function normalizePoints(value: unknown): AiImagePoint[] {
-  if (!Array.isArray(value)) {
+function normalizePoints(value: JsonValue | undefined): AiImagePoint[] {
+  const values = jsonValueArraySchema.safeParse(value);
+  if (!values.success) {
     return [];
   }
-  return value.flatMap((item) => {
-    if (Array.isArray(item) && item.length >= 2) {
-      const x = finiteNumber(item[0]);
-      const y = finiteNumber(item[1]);
-      return x === undefined || y === undefined ? [] : [{ x, y }];
+  return values.data.flatMap((item) => {
+    const tuple = providerPointTupleSchema.safeParse(item);
+    if (tuple.success) {
+      return [{ x: tuple.data[0], y: tuple.data[1] }];
     }
-    if (!item || typeof item !== "object") {
-      return [];
-    }
-    const record = item as Record<string, unknown>;
-    const x = finiteNumber(record.x);
-    const y = finiteNumber(record.y);
-    return x === undefined || y === undefined ? [] : [{ x, y }];
+    const point = providerPointObjectSchema.safeParse(item);
+    return point.success ? [{ x: point.data.x, y: point.data.y }] : [];
   });
 }
 
-function normalizeObjects(value: unknown): AiImageObject[] {
-  if (!Array.isArray(value)) {
+function normalizeObjects(value: JsonValue | undefined): AiImageObject[] {
+  const values = jsonValueArraySchema.safeParse(value);
+  if (!values.success) {
     return [];
   }
-  return value.flatMap((item) => {
-    if (!item || typeof item !== "object") {
+  return values.data.flatMap((item) => {
+    const object = providerObjectSchema.safeParse(item);
+    if (!object.success) {
       return [];
     }
-    const record = item as Record<string, unknown>;
-    const xMin = finiteNumber(record.x_min);
-    const yMin = finiteNumber(record.y_min);
-    const xMax = finiteNumber(record.x_max);
-    const yMax = finiteNumber(record.y_max);
-    return xMin === undefined || yMin === undefined || xMax === undefined || yMax === undefined
-      ? []
-      : [{ xMin, yMin, xMax, yMax }];
+    return [{
+      xMin: object.data.x_min,
+      yMin: object.data.y_min,
+      xMax: object.data.x_max,
+      yMax: object.data.y_max,
+    }];
   });
 }
 
 function emitSseEvents(
   input: string,
-  controller: ReadableStreamDefaultController<Uint8Array>,
+  controller: ReadableByteStreamController,
   encoder: TextEncoder,
   state: { cumulativeText: string },
   flush: boolean,
@@ -684,32 +734,35 @@ function emitSseEvents(
     if (!data || data === "[DONE]") {
       continue;
     }
-    let parsed: unknown;
+    let parsed: JsonValue;
     try {
-      parsed = JSON.parse(data);
+      parsed = jsonValueSchema.parse(JSON.parse(data));
     } catch {
       throw new Error("Moondream returned invalid streaming data");
     }
     const text = streamEventText(parsed, state);
     if (text) {
-      controller.enqueue(encoder.encode(text));
+      controller.enqueue(byteStreamChunk(encoder.encode(text)));
     }
   }
 }
 
 function streamEventText(
-  value: unknown,
+  value: JsonValue,
   state: { cumulativeText: string },
 ): string {
-  if (typeof value === "string") {
-    return value;
+  const textValue = z.string().safeParse(value);
+  if (textValue.success) {
+    return textValue.data;
   }
-  if (!value || typeof value !== "object") {
+  const recordResult = jsonObjectSchema.safeParse(value);
+  if (!recordResult.success) {
     return "";
   }
-  const record = value as Record<string, unknown>;
-  if (record.chunk && typeof record.chunk === "object" && !Array.isArray(record.chunk)) {
-    const replacement = firstText(record.chunk);
+  const record = recordResult.data;
+  const chunkResult = jsonObjectSchema.safeParse(record.chunk);
+  if (chunkResult.success) {
+    const replacement = firstText(chunkResult.data);
     if (replacement !== null) {
       if (replacement.startsWith(state.cumulativeText)) {
         const delta = replacement.slice(state.cumulativeText.length);
@@ -730,26 +783,28 @@ function streamEventText(
     record.caption,
     record.response,
   ]) {
-    if (typeof candidate === "string") {
-      return candidate;
+    const candidateText = z.string().safeParse(candidate);
+    if (candidateText.success) {
+      return candidateText.data;
     }
   }
   if (record.error) {
-    throw new Error(typeof record.error === "string"
-      ? record.error
-      : "Moondream streaming failed");
+    const errorText = z.string().safeParse(record.error);
+    throw new Error(errorText.success ? errorText.data : "Moondream streaming failed");
   }
   return "";
 }
 
-function firstText(value: unknown): string | null {
-  if (typeof value === "string") {
-    return value;
+function firstText(value: JsonValue | undefined): string | null {
+  const textValue = z.string().safeParse(value);
+  if (textValue.success) {
+    return textValue.data;
   }
-  if (!value || typeof value !== "object") {
+  const recordResult = jsonObjectSchema.safeParse(value);
+  if (!recordResult.success) {
     return null;
   }
-  const record = value as Record<string, unknown>;
+  const record = recordResult.data;
   for (const candidate of [
     record.answer,
     record.caption,
@@ -757,52 +812,34 @@ function firstText(value: unknown): string | null {
     record.response,
     record.content,
   ]) {
-    if (typeof candidate === "string") {
-      return candidate;
+    const candidateText = z.string().safeParse(candidate);
+    if (candidateText.success) {
+      return candidateText.data;
     }
   }
   return null;
 }
 
-function normalizeMode(value: unknown): ImageReadingMode {
-  if (
-    value === "caption"
-    || value === "query"
-    || value === "ocr"
-    || value === "point"
-    || value === "detect"
-  ) {
-    return value;
-  }
-  if (value === undefined) {
-    return "caption";
-  }
-  throw new Error("mode must be caption, query, ocr, point, or detect");
+function normalizeMode(value: ImageReadingMode | undefined): ImageReadingMode {
+  return value ?? "caption";
 }
 
-function normalizeResponseFormat(value: unknown): AiImageReadResponseFormat {
-  if (value === undefined) {
-    return "text";
-  }
-  if (typeof value === "string" && RESPONSE_FORMATS.has(value as AiImageReadResponseFormat)) {
-    return value as AiImageReadResponseFormat;
-  }
-  throw new Error("responseFormat must be text, json, xml, markdown, or csv");
+function normalizeResponseFormat(
+  value: AiImageReadResponseFormat | undefined,
+): AiImageReadResponseFormat {
+  return value ?? "text";
 }
 
-function normalizeImageMimeType(value: unknown): string {
+function normalizeImageMimeType(value: string | undefined): string {
   const normalized = normalizeOptionalText(value);
   return normalized && normalized.startsWith("image/") ? normalized : "image/png";
 }
 
-function normalizeOptionalText(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+function normalizeOptionalText(value: string | undefined): string | undefined {
+  const result = nonEmptyTextSchema.safeParse(value);
+  return result.success ? result.data : undefined;
 }
 
-function normalizePositiveNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
-}
-
-function finiteNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+function normalizePositiveNumber(value: number | undefined): number | undefined {
+  return value !== undefined && Number.isFinite(value) && value > 0 ? value : undefined;
 }

@@ -303,7 +303,7 @@ export function useDraggableMinimizedChat({
 
     reclamp();
     window.addEventListener("resize", reclamp);
-    if (typeof ResizeObserver === "undefined") {
+    if (!globalThis.ResizeObserver) {
       return () => window.removeEventListener("resize", reclamp);
     }
 

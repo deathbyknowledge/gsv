@@ -2,6 +2,7 @@ import {
   DynamicWorkerExecutor,
   type ResolvedProvider,
 } from "@cloudflare/codemode";
+import { z } from "zod";
 import type { CodeModeMcpToolBinding } from "../codemode/mcp";
 import type { SyscallName } from "../syscalls";
 import type { CodeModeExecResult } from "../syscalls/codemode";
@@ -13,6 +14,7 @@ import {
   FS_READ,
   FS_SEARCH,
   FS_WRITE,
+  MAIL_SEND,
   SHELL_EXEC,
   SYS_MCP_CALL,
 } from "../syscalls/constants";
@@ -20,6 +22,12 @@ import {
   CODE_MODE_UNAVAILABLE_ERROR,
   type CodeModeEnvironment,
 } from "../codemode/availability";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
+  type JsonObject,
+  type JsonValue,
+} from "@humansandmachines/gsv/protocol";
 
 export { buildCodeModeMcpToolBindings } from "../codemode/mcp";
 export type { CodeModeMcpToolBinding } from "../codemode/mcp";
@@ -31,14 +39,21 @@ export type CodeModeExecutionOptions = {
   defaultCwd?: string;
   argv?: string[];
   args?: unknown;
+  mailDeliveryBase?: string;
   mcpToolBindings?: CodeModeMcpToolBinding[];
   signal?: AbortSignal;
 };
 
 export type CodeModeToolRequest = (
   call: SyscallName,
-  args: Record<string, unknown>,
-) => Promise<unknown>;
+  args: JsonObject,
+) => Promise<JsonValue>;
+
+const codeModeMailArgsSchema = z.intersection(
+  jsonObjectSchema,
+  z.object({ deliveryId: z.string().trim().min(1) }),
+);
+const optionalCodeModeArgsSchema = z.nullish(jsonObjectSchema).transform((value) => value ?? {});
 
 export function buildCodeModeSource(
   code: string,
@@ -49,6 +64,7 @@ export function buildCodeModeSource(
   const defaultCwd = JSON.stringify(options?.defaultCwd ?? null);
   const argv = JSON.stringify(options?.argv ?? []);
   const args = JSON.stringify(options && "args" in options ? options.args : null);
+  const mailDeliveryBase = JSON.stringify(options?.mailDeliveryBase ?? null);
   const mcpToolBindings = options?.mcpToolBindings ?? [];
   const mcpToolInfo = JSON.stringify(mcpToolBindings.map((binding) => ({
     functionName: binding.functionName,
@@ -66,6 +82,8 @@ export function buildCodeModeSource(
   const mcpTools = Object.freeze(${mcpToolInfo});
   const __defaultTarget = ${defaultTarget};
   const __defaultCwd = ${defaultCwd};
+  const __mailDeliveryBase = ${mailDeliveryBase};
+  let __mailDeliveryOrdinal = 0;
   const __isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
   const __unwrapToolResult = (result) => {
     if (__isObject(result) && typeof result.__gsvCodeModeAbort === "string") {
@@ -218,6 +236,25 @@ export function buildCodeModeSource(
     delete: async (args) => __unwrapToolResult(await codemode.delete(__withFsDefaults("fs.delete", args))),
     search: async (args) => __unwrapToolResult(await codemode.search(__withFsDefaults("fs.search", args))),
   });
+  const mail = Object.freeze({
+    send: async (args) => {
+      const request = __withObjectArgs("mail.send", args);
+      __mailDeliveryOrdinal += 1;
+      if (
+        request.deliveryId !== undefined
+        && (typeof request.deliveryId !== "string" || request.deliveryId.trim().length === 0)
+      ) {
+        throw new Error("mail.send deliveryId must be a string");
+      }
+      if (request.deliveryId === undefined) {
+        if (__mailDeliveryBase === null) {
+          throw new Error("mail.send requires deliveryId in this CodeMode execution");
+        }
+        request.deliveryId = __mailDeliveryBase + ":" + __mailDeliveryOrdinal;
+      }
+      return __unwrapToolResult(await __mail.send(request));
+    },
+  });
 ${mcpFunctionDeclarations}
   const __userMain = ${userMain};
   return await __userMain();
@@ -234,8 +271,8 @@ function buildMcpFunctionDeclarations(bindings: CodeModeMcpToolBinding[]): strin
 
 function sanitizeCodeModeSource(code: string): string {
   return code
-    .replace(/\u0000/g, "")
-    .replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "")
+    .replaceAll(String.fromCharCode(0), "")
+    .replace(new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g"), "")
     .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "");
 }
 
@@ -282,13 +319,13 @@ export async function executeCodeMode(
     timeout: CODE_MODE_EXECUTION_TIMEOUT_MS,
     globalOutbound: null,
   });
-  const request = async (call: SyscallName, args: Record<string, unknown>) => {
+  const request = async (call: SyscallName, args: JsonObject) => {
     if (options?.signal?.aborted) {
       // Resolve the host RPC and throw in the sandbox; rejecting a late RPC is
       // reported as unhandled after the outer execution has already returned.
       return codeModeAbortResult(options.signal);
     }
-    let result: unknown;
+    let result: JsonValue;
     try {
       result = await requestTool(call, args);
     } catch (error) {
@@ -307,33 +344,43 @@ export async function executeCodeMode(
     {
       name: "codemode",
       fns: {
-        shell: async (args: unknown) => request(SHELL_EXEC as SyscallName, toRecord(args, "shell")),
-        read: async (args: unknown) => request(FS_READ as SyscallName, toRecord(args, "fs.read")),
-        write: async (args: unknown) => request(FS_WRITE as SyscallName, toRecord(args, "fs.write")),
-        edit: async (args: unknown) => request(FS_EDIT as SyscallName, toRecord(args, "fs.edit")),
-        delete: async (args: unknown) => request(FS_DELETE as SyscallName, toRecord(args, "fs.delete")),
-        search: async (args: unknown) => request(FS_SEARCH as SyscallName, toRecord(args, "fs.search")),
+        shell: async (args) => request(SHELL_EXEC, jsonObjectSchema.parse(args)),
+        read: async (args) => request(FS_READ, jsonObjectSchema.parse(args)),
+        write: async (args) => request(FS_WRITE, jsonObjectSchema.parse(args)),
+        edit: async (args) => request(FS_EDIT, jsonObjectSchema.parse(args)),
+        delete: async (args) => request(FS_DELETE, jsonObjectSchema.parse(args)),
+        search: async (args) => request(FS_SEARCH, jsonObjectSchema.parse(args)),
       },
     },
     {
       name: "net",
       fns: {
-        fetch: async (args: unknown) => request(NET_FETCH, toRecord(args, "fetch")),
+        fetch: async (args) => request(NET_FETCH, jsonObjectSchema.parse(args)),
+      },
+    },
+    {
+      name: "__mail",
+      fns: {
+        send: async (args) => {
+          const requestArgs = codeModeMailArgsSchema.parse(args);
+          return request(MAIL_SEND, requestArgs);
+        },
       },
     },
   ];
   const mcpToolBindings = options?.mcpToolBindings ?? [];
   if (mcpToolBindings.length > 0) {
+    const fns: ResolvedProvider["fns"] = {};
+    for (const binding of mcpToolBindings) {
+      fns[binding.functionName] = async (args) => request(SYS_MCP_CALL, {
+        serverId: binding.serverId,
+        name: binding.toolName,
+        arguments: optionalCodeModeArgsSchema.parse(args),
+      });
+    }
     providers.push({
       name: "__mcp",
-      fns: Object.fromEntries(mcpToolBindings.map((binding) => [
-        binding.functionName,
-        async (args: unknown) => request(SYS_MCP_CALL as SyscallName, {
-          serverId: binding.serverId,
-          name: binding.toolName,
-          arguments: toOptionalRecord(args, binding.functionName),
-        }),
-      ])),
+      fns,
     });
   }
 
@@ -351,12 +398,22 @@ export async function executeCodeMode(
   }
   const logs = response.logs && response.logs.length > 0 ? response.logs : undefined;
   if (response.error) {
-    return { status: "failed", error: response.error, logs };
+    const failed: Extract<CodeModeExecResult, { status: "failed" }> = {
+      status: "failed",
+      error: response.error,
+    };
+    if (logs) failed.logs = logs;
+    return failed;
   }
-  return { status: "completed", result: response.result, logs };
+  const completed: Extract<CodeModeExecResult, { status: "completed" }> = {
+    status: "completed",
+    result: jsonValueSchema.parse(response.result ?? null),
+  };
+  if (logs) completed.logs = logs;
+  return completed;
 }
 
-function codeModeAbortResult(signal: AbortSignal): Record<string, string> {
+function codeModeAbortResult(signal: AbortSignal): JsonObject {
   return { __gsvCodeModeAbort: codeModeAbortMessage(signal) };
 }
 
@@ -364,18 +421,4 @@ function codeModeAbortMessage(signal: AbortSignal): string {
   return signal.reason instanceof Error
     ? signal.reason.message
     : "CodeMode execution cancelled";
-}
-
-function toRecord(value: unknown, name: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${name} requires an object argument`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function toOptionalRecord(value: unknown, name: string): Record<string, unknown> {
-  if (value === undefined || value === null) {
-    return {};
-  }
-  return toRecord(value, name);
 }

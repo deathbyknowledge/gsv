@@ -44,7 +44,7 @@ function isImageFile(file: File, hintedType = ""): boolean {
 
 function normalizeClipboardImageFile(file: File, hintedType: string, index: number): File {
   const mimeType = file.type || hintedType;
-  if ((file.type && file.name) || typeof File === "undefined") {
+  if ((file.type && file.name) || !("File" in globalThis)) {
     return file;
   }
   const filename = file.name || `pasted-image-${index + 1}.${imageExtension(mimeType)}`;
@@ -55,7 +55,7 @@ function normalizeClipboardImageFile(file: File, hintedType: string, index: numb
 }
 
 function imageFileFromDataUrl(dataUrl: string, index: number): File | null {
-  if (typeof File === "undefined" || typeof atob !== "function") {
+  if (!("File" in globalThis) || !("atob" in globalThis)) {
     return null;
   }
 

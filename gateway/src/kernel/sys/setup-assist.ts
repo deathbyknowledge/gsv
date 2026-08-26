@@ -7,6 +7,7 @@ import type {
   SysSetupAssistResult,
 } from "@humansandmachines/gsv/protocol";
 import { SETUP_ASSIST_SYSTEM_PROMPT } from "../../prompts/setup-assist";
+import { z } from "zod";
 
 const ALLOWED_PATCH_PATHS = new Set<OnboardingAssistPatch["path"]>([
   "account.username",
@@ -21,6 +22,24 @@ const ALLOWED_PATCH_PATHS = new Set<OnboardingAssistPatch["path"]>([
   "device.label",
   "device.expiryDays",
 ]);
+const setupPatchPathSchema = z.enum([
+  "account.username", "account.agentName", "admin.mode", "system.timezone",
+  "ai.enabled", "ai.provider", "ai.model", "device.enabled", "device.deviceId",
+  "device.label", "device.expiryDays",
+]);
+const setupPatchSchema = z.object({
+  op: z.enum(["set", "clear"]),
+  path: setupPatchPathSchema,
+  value: z.union([z.string(), z.boolean(), z.number()]).optional(),
+});
+const setupAssistResponseSchema = z.object({
+  message: z.string().optional(),
+  reviewReady: z.boolean().optional(),
+  focus: z.string().optional(),
+  patches: z.array(z.unknown()).optional(),
+});
+const setupWireSchema = z.unknown();
+type SetupWireValue = z.input<typeof setupWireSchema>;
 
 export async function handleSysSetupAssist(
   args: SysSetupAssistArgs,
@@ -60,46 +79,44 @@ function parseAssistResponse(raw: string): SysSetupAssistResult {
     throw new Error("Setup assist returned invalid JSON");
   }
 
-  if (!parsed || typeof parsed !== "object") {
-    throw new Error("Setup assist returned invalid payload");
-  }
-
-  const record = parsed as Record<string, unknown>;
-  const message = typeof record.message === "string" && record.message.trim()
-    ? record.message.trim()
+  const record = setupAssistResponseSchema.safeParse(parsed);
+  if (!record.success) throw new Error("Setup assist returned invalid payload");
+  const message = record.data.message?.trim()
+    ? record.data.message.trim()
     : "I need one more detail before you continue.";
-  const reviewReady = record.reviewReady === true;
-  const focus = typeof record.focus === "string" && record.focus.trim() ? record.focus.trim() : undefined;
-  const patches = Array.isArray(record.patches)
-    ? record.patches.flatMap(parsePatch)
+  const reviewReady = record.data.reviewReady === true;
+  const focus = record.data.focus?.trim() ? record.data.focus.trim() : undefined;
+  const patches = record.data.patches
+    ? record.data.patches.flatMap(parsePatch)
     : [];
 
   return { message, reviewReady, focus, patches };
 }
 
-function parsePatch(value: unknown): OnboardingAssistPatch[] {
-  if (!value || typeof value !== "object") return [];
-  const record = value as Record<string, unknown>;
-  const op = record.op === "clear" ? "clear" : record.op === "set" ? "set" : null;
-  const path = typeof record.path === "string" ? record.path as OnboardingAssistPatch["path"] : null;
-  if (!op || !path || !ALLOWED_PATCH_PATHS.has(path)) return [];
+function parsePatch(value: SetupWireValue): OnboardingAssistPatch[] {
+  const parsed = setupPatchSchema.safeParse(value);
+  if (!parsed.success || !ALLOWED_PATCH_PATHS.has(parsed.data.path)) return [];
+  const { op, path } = parsed.data;
 
   if (op === "clear") {
     return [{ op, path }];
   }
 
-  if (
-    typeof record.value !== "string" &&
-    typeof record.value !== "boolean" &&
-    typeof record.value !== "number"
-  ) {
+  if (parsed.data.value === undefined) {
     return [];
   }
 
+  const numericValue = z.number().safeParse(parsed.data.value);
+  const stringValue = z.string().safeParse(parsed.data.value);
+  const booleanValue = z.boolean().safeParse(parsed.data.value);
   return [{
     op,
     path,
-    value: typeof record.value === "number" ? String(record.value) : record.value,
+    value: numericValue.success
+      ? String(numericValue.data)
+      : stringValue.success
+        ? stringValue.data
+        : booleanValue.data,
   }];
 }
 

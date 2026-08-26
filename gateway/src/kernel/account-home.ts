@@ -2,31 +2,27 @@ import { RipgitClient, type RipgitApplyOp } from "../fs/ripgit/client";
 import { accountHomeRepoRef } from "../fs/ripgit/repos";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import {
-  DEFAULT_BOOT_CONTEXT_TEMPLATE,
   DEFAULT_MEMORY_CONTEXT_TEMPLATE,
   DEFAULT_STYLE_CONTEXT,
-  LEGACY_BOOT_CONTEXT_TEMPLATE,
-  LEGACY_DEFAULT_CONSTITUTION_CONTEXT,
-  LEGACY_DEFAULT_USER_CONTEXT_TEMPLATE,
-  LEGACY_MEMORY_CONTEXT_TEMPLATE_V1,
-  LEGACY_MEMORY_CONTEXT_TEMPLATE_V2,
-  LEGACY_OPEN_LOOPS_CONTEXT,
-  LEGACY_STYLE_CONTEXT,
+  RETIRED_BOOT_CONTEXT_TEMPLATE,
 } from "../prompts/agent-home";
-import { LEGACY_DEFAULT_PERSONA_CONTEXT_TEMPLATE } from "../prompts/persona";
+import {
+  PERSONAL_INTELLIGENCE_CONTEXT,
+  PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
+  RETIRED_PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
+} from "../prompts/personal-intelligence";
 
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
 
-// TODO: Remove legacy generated-context reconciliation and its templates once all existing agent homes have migrated.
 export async function ensureAccountHomeLayout(
   env: Pick<Env, "STORAGE" | "RIPGIT">,
   identity: ProcessIdentity,
   options: {
-    userContextUsername?: string;
     seedPromptContext?: boolean;
-    seedBootContext?: boolean;
+    personalAgent?: boolean;
     cleanupGeneratedPromptContext?: boolean;
+    beforeRetiringGeneratedBootContext?: () => void;
   } = {},
 ): Promise<void> {
   await ensureHomeDir(env.STORAGE, identity.home, identity.uid, identity.gid);
@@ -40,27 +36,24 @@ export async function ensureAccountHomeLayout(
   const [
     contextDir,
     bootContext,
+    roleContext,
     styleContext,
-    personaContext,
+    voiceContext,
+    commitmentsContext,
     memoryContext,
-    constitutionContext,
-    userContext,
-    openLoopsContext,
     skillsDir,
   ] = await Promise.all([
     client.readPath(repo, "context.d"),
     client.readPath(repo, "context.d/00-boot.md"),
+    client.readPath(repo, "context.d/00-role.md"),
     client.readPath(repo, "context.d/00-style.md"),
-    client.readPath(repo, "context.d/05-persona.md"),
+    client.readPath(repo, "context.d/05-voice.md"),
+    client.readPath(repo, "context.d/10-commitments.md"),
     client.readPath(repo, "context.d/15-memory.md"),
-    client.readPath(repo, "context.d/00-constitution.md"),
-    client.readPath(repo, "context.d/10-user.md"),
-    client.readPath(repo, "context.d/20-open-loops.md"),
     client.readPath(repo, "skills.d"),
   ]);
 
   const ops: RipgitApplyOp[] = [];
-  const userContextUsername = options.userContextUsername ?? identity.username;
   if (contextDir.kind === "missing") {
     ops.push({
       type: "put" as const,
@@ -69,96 +62,84 @@ export async function ensureAccountHomeLayout(
     });
   }
   if (options.seedPromptContext === true) {
-    if (options.seedBootContext === true || bootContext.kind !== "missing") {
-      maybePutOrReplaceGeneratedTextFile(
+    if (options.personalAgent === true) {
+      const retiringGeneratedBootContext = maybeDeleteGeneratedTextFile(
         ops,
         "context.d/00-boot.md",
         bootContext,
-        renderBootContext(identity),
-        [renderLegacyBootContext(identity)],
+        RETIRED_BOOT_CONTEXT_TEMPLATE,
+      );
+      if (retiringGeneratedBootContext) {
+        options.beforeRetiringGeneratedBootContext?.();
+      }
+      maybePutTextFile(
+        ops,
+        "context.d/00-role.md",
+        roleContext,
+        PERSONAL_INTELLIGENCE_CONTEXT,
+      );
+      maybePutTextFile(
+        ops,
+        "context.d/05-voice.md",
+        voiceContext,
+        PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
+      );
+      maybeDeleteGeneratedTextFile(
+        ops,
+        "context.d/10-commitments.md",
+        commitmentsContext,
+        RETIRED_PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
+      );
+      maybeDeleteGeneratedTextFile(
+        ops,
+        "context.d/00-style.md",
+        styleContext,
+        DEFAULT_STYLE_CONTEXT,
+      );
+      maybeDeleteGeneratedTextFile(
+        ops,
+        "context.d/15-memory.md",
+        memoryContext,
+        DEFAULT_MEMORY_CONTEXT_TEMPLATE,
+      );
+    } else {
+      maybePutTextFile(
+        ops,
+        "context.d/00-style.md",
+        styleContext,
+        DEFAULT_STYLE_CONTEXT,
+      );
+      maybePutTextFile(
+        ops,
+        "context.d/15-memory.md",
+        memoryContext,
+        DEFAULT_MEMORY_CONTEXT_TEMPLATE,
       );
     }
-    maybePutOrReplaceGeneratedTextFile(
-      ops,
-      "context.d/00-style.md",
-      styleContext,
-      DEFAULT_STYLE_CONTEXT,
-      [LEGACY_STYLE_CONTEXT],
-    );
-    maybePutOrReplaceGeneratedTextFile(
-      ops,
-      "context.d/15-memory.md",
-      memoryContext,
-      renderMemoryContext(identity.username),
-      [
-        renderLegacyMemoryContextV1(identity.username),
-        renderLegacyMemoryContextV2(identity.username),
-      ],
-    );
-    maybeDeleteGeneratedTextFile(
-      ops,
-      "context.d/20-open-loops.md",
-      openLoopsContext,
-      [LEGACY_OPEN_LOOPS_CONTEXT],
-    );
-    maybeDeleteGeneratedTextFile(
-      ops,
-      "context.d/00-constitution.md",
-      constitutionContext,
-      [LEGACY_DEFAULT_CONSTITUTION_CONTEXT],
-    );
-    maybeDeleteGeneratedTextFile(
-      ops,
-      "context.d/05-persona.md",
-      personaContext,
-      [renderLegacyPersonaContext(identity, userContextUsername)],
-    );
-    maybeDeleteGeneratedTextFile(
-      ops,
-      "context.d/10-user.md",
-      userContext,
-      [renderLegacyUserContext(userContextUsername), renderLegacyUserContext(identity.username)],
-    );
   } else if (options.cleanupGeneratedPromptContext === true) {
     maybeDeleteGeneratedTextFile(
       ops,
       "context.d/00-boot.md",
       bootContext,
-      [renderBootContext(identity), renderLegacyBootContext(identity)],
+      RETIRED_BOOT_CONTEXT_TEMPLATE,
     );
     maybeDeleteGeneratedTextFile(
       ops,
       "context.d/00-style.md",
       styleContext,
-      [DEFAULT_STYLE_CONTEXT, LEGACY_STYLE_CONTEXT],
+      DEFAULT_STYLE_CONTEXT,
     );
     maybeDeleteGeneratedTextFile(
       ops,
       "context.d/15-memory.md",
       memoryContext,
-      [
-        renderMemoryContext(identity.username),
-        renderLegacyMemoryContextV1(identity.username),
-        renderLegacyMemoryContextV2(identity.username),
-      ],
+      DEFAULT_MEMORY_CONTEXT_TEMPLATE,
     );
     maybeDeleteGeneratedTextFile(
       ops,
-      "context.d/00-constitution.md",
-      constitutionContext,
-      [LEGACY_DEFAULT_CONSTITUTION_CONTEXT],
-    );
-    maybeDeleteGeneratedTextFile(
-      ops,
-      "context.d/20-open-loops.md",
-      openLoopsContext,
-      [LEGACY_OPEN_LOOPS_CONTEXT],
-    );
-    maybeDeleteGeneratedTextFile(
-      ops,
-      "context.d/10-user.md",
-      userContext,
-      [renderLegacyUserContext(identity.username), renderLegacyUserContext(userContextUsername)],
+      "context.d/10-commitments.md",
+      commitmentsContext,
+      RETIRED_PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
     );
   }
   if (skillsDir.kind === "missing") {
@@ -197,101 +178,24 @@ function maybePutTextFile(
   });
 }
 
-function maybePutOrReplaceGeneratedTextFile(
-  ops: RipgitApplyOp[],
-  path: string,
-  existing: Awaited<ReturnType<RipgitClient["readPath"]>>,
-  content: string,
-  generatedPreviousContents: string[] = [],
-): void {
-  if (existing.kind === "missing") {
-    maybePutTextFile(ops, path, existing, content);
-    return;
-  }
-  if (existing.kind !== "file") {
-    return;
-  }
-  const existingText = TEXT_DECODER.decode(existing.bytes);
-  if (!generatedPreviousContents.includes(existingText)) {
-    return;
-  }
-  ops.push({
-    type: "put",
-    path,
-    contentBytes: Array.from(TEXT_ENCODER.encode(content)),
-  });
-}
-
 function maybeDeleteGeneratedTextFile(
   ops: RipgitApplyOp[],
   path: string,
   existing: Awaited<ReturnType<RipgitClient["readPath"]>>,
-  generatedContents: string[],
-): void {
+  generatedContent: string,
+): boolean {
   if (existing.kind !== "file") {
-    return;
+    return false;
   }
   const text = TEXT_DECODER.decode(existing.bytes);
-  if (!generatedContents.some((content) => content === text)) {
-    return;
+  if (text !== generatedContent) {
+    return false;
   }
   ops.push({
     type: "delete",
     path,
   });
-}
-
-function renderBootContext(identity: Pick<ProcessIdentity, "home" | "username">): string {
-  return renderPromptTemplate(DEFAULT_BOOT_CONTEXT_TEMPLATE, {
-    "program.home": identity.home,
-    "program.username": identity.username,
-  });
-}
-
-function renderLegacyBootContext(identity: Pick<ProcessIdentity, "home" | "username">): string {
-  return renderPromptTemplate(LEGACY_BOOT_CONTEXT_TEMPLATE, {
-    "program.home": identity.home,
-    "program.username": identity.username,
-  });
-}
-
-function renderLegacyUserContext(username: string): string {
-  return renderPromptTemplate(LEGACY_DEFAULT_USER_CONTEXT_TEMPLATE, {
-    "user.username": username,
-  });
-}
-
-function renderLegacyPersonaContext(
-  identity: Pick<ProcessIdentity, "home" | "username">,
-  ownerUsername: string,
-): string {
-  return renderPromptTemplate(LEGACY_DEFAULT_PERSONA_CONTEXT_TEMPLATE, {
-    "program.home": identity.home,
-    "program.username": identity.username,
-    "user.username": ownerUsername,
-  });
-}
-
-function renderMemoryContext(username: string): string {
-  return renderPromptTemplate(DEFAULT_MEMORY_CONTEXT_TEMPLATE, {
-    "program.username": username,
-  });
-}
-
-function renderLegacyMemoryContextV1(username: string): string {
-  return renderPromptTemplate(LEGACY_MEMORY_CONTEXT_TEMPLATE_V1, {
-    "program.username": username,
-  });
-}
-
-function renderLegacyMemoryContextV2(username: string): string {
-  return renderPromptTemplate(LEGACY_MEMORY_CONTEXT_TEMPLATE_V2, {
-    "program.username": username,
-  });
-}
-
-function renderPromptTemplate(template: string, values: Record<string, string>): string {
-  return template.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (_match, key: string) => values[key] ?? "");
+  return true;
 }
 
 async function ensureHomeDir(

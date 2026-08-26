@@ -6,10 +6,11 @@ import {
   DEFAULT_WORKERS_AI_MODEL,
 } from "../inference/default-models";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
+import { MAIL_STATUS } from "../syscalls/constants";
 
 describe("ConfigStore", () => {
   const configuredStoreTest = it.extend<{ store: ConfigStore }>({
-    store: async ({}, use) => {
+    store: async ({ task: _task }, use) => {
       await runWithRealKernelSql(async (sql) => {
         const store = new ConfigStore(sql);
         store.set("config/ai/provider", "anthropic");
@@ -64,7 +65,7 @@ describe("ConfigStore", () => {
       expect(values.get("config/ai/model")).toBe("claude-sonnet-4-6");
       expect(values.get("config/ai/generation/streaming")).toBe("auto");
       expect(values.get("config/ai/context.d/01-gsv.md")).toContain(
-        "[Process Event]:",
+        "[GSV EVENT]",
       );
     },
   );
@@ -72,8 +73,10 @@ describe("ConfigStore", () => {
   it("ships a Workers AI primary model and root fallback profile", () =>
     runWithRealKernelSql((sql) => {
       const store = new ConfigStore(sql);
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       const rootProfiles = JSON.parse(
         store.get("users/0/ai/model_profiles") ?? "{}",
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       ) as {
         profiles?: Array<{ id?: string; values?: Record<string, string> }>;
       };
@@ -104,21 +107,29 @@ describe("ConfigStore", () => {
     expect(context).toContain("GSV is a personal intelligence OS");
     expect(context).toContain("its own lightweight Linux virtual computer");
     expect(context).toContain("skills show browser-target");
-    expect(context).toContain("[Process Event]:");
-    expect(context).toContain("Treat them as system notifications");
+    expect(context).toContain("[GSV EVENT]");
+    expect(context).toContain("typed runtime events from GSV");
     const targets = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/05-targets.md"];
     expect(targets).toContain("message destinations");
     expect(targets).toContain("message attach PATH...");
+    expect(targets).toContain("sending does not finish the run");
     expect(targets).toContain("message send");
+    expect(targets).toContain("yield");
     expect(targets).toContain(
       "cp source-target:/path destination-target:/path",
     );
     expect(targets).toContain("targets list");
     expect(targets).toContain("must be run from the `gsv` target");
+    const responsibilities =
+      SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/10-responsibilities.md"];
+    expect(responsibilities).toContain("Kernel responsibility ledger");
+    expect(responsibilities).toContain("`r12y` command");
+    expect(responsibilities).toContain("{{r12y}}");
     const discovery =
       SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/20-discovery.md"];
     expect(discovery).toContain("man --search -- '<plain-language goal>'");
     expect(discovery).toContain("the `mcp` command");
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     expect(discovery).toContain("CodeMode as `mcpTools`");
     expect(discovery).toContain("Load the relevant skill");
     expect(SYSTEM_CONFIG_DEFAULTS["config/ai/skills/index_mode"]).toBe(
@@ -157,5 +168,7 @@ describe("ConfigStore", () => {
     expect(policy.rules).toContainEqual({ match: "shell.exec", action: "ask" });
     expect(policy.rules).toContainEqual({ match: "net.fetch", action: "ask" });
     expect(policy.rules).toContainEqual({ match: "fs.delete", action: "ask" });
+    expect(policy.rules).toContainEqual({ match: "mail.send", action: "ask" });
+    expect(policy.rules).not.toContainEqual({ match: MAIL_STATUS, action: "ask" });
   });
 });

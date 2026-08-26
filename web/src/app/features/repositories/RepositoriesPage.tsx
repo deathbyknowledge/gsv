@@ -1,4 +1,5 @@
 import type { JSX } from "preact";
+import { z } from "zod";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { Breadcrumbs } from "../../components/ui/Breadcrumbs";
 import { Button } from "../../components/ui/Button";
@@ -47,7 +48,6 @@ import {
   refsToOptions,
   repoKindLabel,
   repoKindTone,
-  repositoryDescription,
   shortHash,
   sortTreeEntries,
 } from "./domain/presentation";
@@ -94,14 +94,14 @@ type PullNotice = {
   text: string;
 };
 
-const STATE_TONE: Record<StateKind, StatusTone> = {
+const STATE_TONE = {
   loading: "live",
   error: "error",
   empty: "idle",
   offline: "idle",
-};
+} satisfies Record<StateKind, StatusTone>;
 
-function queryErrorText(error: unknown): string {
+function queryErrorText<T>(error: T): string {
   return error instanceof Error ? error.message : error ? String(error) : "";
 }
 
@@ -191,10 +191,7 @@ function pullNoticeForResult(result: RepositoryPullResult): PullNotice {
 }
 
 function gatewayOrigin(): string {
-  if (typeof window === "undefined") {
-    return "";
-  }
-  return window.location.origin.replace(/\/+$/, "");
+  return globalThis.window?.location.origin.replace(/\/+$/, "") ?? "";
 }
 
 function repositoryCloneUrl(repo: RepositorySummary): string {
@@ -1146,9 +1143,15 @@ export function RepositoriesPage() {
   };
 
   const openCommitTab = (repo: string, ref: string, commit: RepositoryCommit | string) => {
-    const commitHash = typeof commit === "string" ? commit : commit.hash;
-    if (typeof commit !== "string") {
-      setKnownCommits((current) => ({ ...current, [commit.hash]: commit }));
+    const commitText = z.string().safeParse(commit);
+    const commitSchema = z.object({
+      hash: z.string(), treeHash: z.string(), author: z.string(), authorEmail: z.string(), authorTime: z.number(),
+      committer: z.string(), committerEmail: z.string(), commitTime: z.number(), message: z.string(), parents: z.array(z.string()),
+    });
+    const commitDetails = commitSchema.safeParse(commit);
+    const commitHash = commitText.success ? commitText.data : commitDetails.data?.hash ?? "";
+    if (commitDetails.success) {
+      setKnownCommits((current) => ({ ...current, [commitDetails.data.hash]: commitDetails.data }));
     }
     const nextTab = createCommitTab(repo, ref, commitHash);
     const existing = tabs.find((tab) => tab.id === nextTab.id);

@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { AdapterIngressReceiptStore } from "./adapter-ingress-receipts";
+import { PrivateAdapterDestinationStore } from "./private-adapter-destinations";
 
 const BASE_KEY = {
   adapter: "telegram",
   accountId: "bot",
   actorId: "telegram:user:1",
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   surfaceKind: "dm" as const,
   surfaceId: "chat-1",
   providerMessageId: "provider-message-1",
@@ -89,6 +91,44 @@ describe("AdapterIngressReceiptStore", () => {
           )
           .one().count,
       ).toBe(1);
+    });
+  });
+
+  it("fences an older DM message after a later receipt regardless of provider time", async () => {
+    await runWithRealKernelSql((sql) => {
+      const store = new AdapterIngressReceiptStore(sql);
+      const privateDestinations = new PrivateAdapterDestinationStore(sql);
+      const destination = {
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+        kind: "adapter" as const,
+        adapter: "telegram",
+        accountId: "bot",
+        actorId: "telegram:user:1",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+        surface: { kind: "dm" as const, id: "chat-1" },
+      };
+      store.claim({ ...BASE_KEY, receiptId: "receipt-original" });
+      privateDestinations.recordActivity(1000, destination, "provider-message-1", 200);
+
+      expect(store.isLatestPrivateMessage(destination, "provider-message-1")).toBe(true);
+
+      store.claim({
+        ...BASE_KEY,
+        actorId: "telegram:user:alias",
+        providerMessageId: "provider-home-older-timestamp",
+        providerDeliveryId: "provider-home-older-timestamp",
+        receiptId: "receipt-home",
+      });
+      privateDestinations.recordActivity(
+        1000,
+        destination,
+        "provider-home-older-timestamp",
+        100,
+      );
+
+      expect(privateDestinations.get(1000)?.messageId).toBe("provider-message-1");
+      expect(store.isLatestPrivateMessage(destination, "provider-message-1")).toBe(false);
+      expect(store.isLatestPrivateMessage(destination, "provider-home-older-timestamp")).toBe(true);
     });
   });
 

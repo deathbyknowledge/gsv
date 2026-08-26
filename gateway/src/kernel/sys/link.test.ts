@@ -20,6 +20,7 @@ type FakeAdapters = {
 };
 
 function makeContext(uid: number, adapters: FakeAdapters): KernelContext {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     identity: {
       role: "user",
@@ -34,7 +35,8 @@ function makeContext(uid: number, adapters: FakeAdapters): KernelContext {
       capabilities: ["*"],
     },
     adapters,
-  } as unknown as KernelContext;
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  } as KernelContext;
 }
 
 describe("sys.link handlers", () => {

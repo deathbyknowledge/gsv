@@ -1,11 +1,20 @@
-import type { OnboardingDetailStep, OnboardingDraft } from "@humansandmachines/gsv/protocol";
+import type {
+  OnboardingDetailStep,
+  OnboardingDraft,
+} from "@humansandmachines/gsv/protocol";
 import { useEffect } from "preact/hooks";
 import { Checkbox } from "../../../components/ui/Checkbox";
 import { Select } from "../../../components/ui/Select";
 import { TextInput } from "../../../components/ui/TextInput";
 import { Toggle } from "../../../components/ui/Toggle";
 import { InfoTip } from "../../../components/ui/InfoTip";
-import { aiProviderOptionsForValue, aiProviderSelectIndex } from "../../../domain/aiProviders";
+import {
+  aiModelAfterProviderChange,
+  aiProviderOptionsForValue,
+  aiProviderSelectIndex,
+  fixedAiProviderModel,
+} from "../../../domain/aiProviders";
+import { readInstallationOnboardingToken } from "../../../services/session/installationOnboarding";
 import { advancedSectionsVisible } from "../sessionDomain";
 import "./SystemDetails.css";
 
@@ -23,6 +32,7 @@ export function SystemDetails({
   const showAdvanced = advancedSectionsVisible(draft);
   const showAiRows = showAdvanced && draft.ai.enabled;
   const showNodeRows = showAdvanced && draft.device.enabled;
+  const managedInferenceIncluded = readInstallationOnboardingToken() !== null;
   const options = timezoneOptions.includes(draft.system.timezone)
     ? timezoneOptions
     : [...timezoneOptions, draft.system.timezone].filter(Boolean).sort((left, right) => left.localeCompare(right));
@@ -31,21 +41,36 @@ export function SystemDetails({
   const aiProviderLabels = aiProviderOptions.map((option) => option.label);
   const aiProviderIndex = aiProviderSelectIndex(aiProviderOptions, draft.ai.provider);
   const defaultAiProvider = aiProviderOptions[0]?.value ?? "";
+  const fixedAiModel = fixedAiProviderModel(draft.ai.provider);
 
   useEffect(() => {
-    if (!showAiRows || draft.ai.provider.trim() || !defaultAiProvider) {
+    if (!showAiRows || !defaultAiProvider) {
+      return;
+    }
+    const provider = draft.ai.provider.trim() || defaultAiProvider;
+    const model = fixedAiProviderModel(provider) ?? draft.ai.model;
+    if (provider === draft.ai.provider && model === draft.ai.model) {
       return;
     }
     updateDraft((current) => {
-      if (!advancedSectionsVisible(current) || !current.ai.enabled || current.ai.provider.trim()) {
+      if (!advancedSectionsVisible(current) || !current.ai.enabled) {
+        return current;
+      }
+      const provider = current.ai.provider.trim() || defaultAiProvider;
+      const model = fixedAiProviderModel(provider) ?? current.ai.model;
+      if (provider === current.ai.provider && model === current.ai.model) {
         return current;
       }
       return {
         ...current,
-        ai: { ...current.ai, provider: defaultAiProvider },
+        ai: {
+          ...current.ai,
+          provider,
+          model,
+        },
       };
     });
-  }, [defaultAiProvider, draft.ai.provider, showAiRows, updateDraft]);
+  }, [defaultAiProvider, draft.ai.model, draft.ai.provider, showAiRows, updateDraft]);
 
   return (
     <section class="onboarding-section gsv-setup-preferences" data-setup-detail-step="system" hidden={draft.stage !== "details" || activeStep !== "system"}>
@@ -141,27 +166,43 @@ export function SystemDetails({
             <InfoTip
               position="right"
               label="Explain AI defaults"
-              text="These settings choose the default AI service GSV uses after setup. You can change them later from settings."
+              text={managedInferenceIncluded
+                ? "GSV intelligence is included. Use these settings only when you want to bring another AI provider."
+                : "These settings choose the default AI service GSV uses after setup. You can change them later from settings."}
             />
           </h3>
-          <p class="gsv-prose-sm">Keep the default AI path, or choose the AI service and model from the start.</p>
+          <p class="gsv-prose-sm">
+            {managedInferenceIncluded
+              ? "GSV chooses and operates the included intelligence automatically."
+              : "Keep the default AI path, or choose the AI service and model from the start."}
+          </p>
         </div>
         <div class="system-details-fields">
           <div data-setup-ai-enabled>
             <Toggle
-              label="Customize AI settings"
+              label={managedInferenceIncluded ? "Use my own AI provider" : "Customize AI settings"}
               on={draft.ai.enabled}
               disabled={!showAdvanced}
-              onChange={(checked) => updateDraft((current) => ({
-                ...current,
-                ai: {
-                  ...current.ai,
-                  enabled: checked,
-                  provider: checked && !current.ai.provider.trim()
-                    ? defaultAiProvider
-                    : current.ai.provider,
-                },
-              }))}
+              onChange={(checked) => updateDraft((current) => {
+                const provider = checked && !current.ai.provider.trim()
+                  ? defaultAiProvider
+                  : current.ai.provider;
+                return {
+                  ...current,
+                  ai: {
+                    ...current.ai,
+                    enabled: checked,
+                    provider,
+                    model: checked
+                      ? aiModelAfterProviderChange(
+                          current.ai.provider,
+                          current.ai.model,
+                          provider,
+                        )
+                      : current.ai.model,
+                  },
+                };
+              })}
             />
           </div>
           <div data-setup-ai-provider-row hidden={!showAiRows}>
@@ -171,13 +212,24 @@ export function SystemDetails({
               options={aiProviderLabels}
               value={aiProviderIndex}
               disabled={!showAiRows}
-              onChange={(index) => updateDraft((current) => ({
-                ...current,
-                ai: { ...current.ai, provider: aiProviderOptions[index]?.value ?? "" },
-              }))}
+              onChange={(index) => updateDraft((current) => {
+                const selected = aiProviderOptions[index];
+                return {
+                  ...current,
+                  ai: {
+                    ...current.ai,
+                    provider: selected?.value ?? "",
+                    model: aiModelAfterProviderChange(
+                      current.ai.provider,
+                      current.ai.model,
+                      selected?.value ?? "",
+                    ),
+                  },
+                };
+              })}
             />
           </div>
-          <div data-setup-ai-model-row hidden={!showAiRows}>
+          <div data-setup-ai-model-row hidden={!showAiRows || fixedAiModel !== null}>
             <TextInput
               label="AI model"
               placeholder="gpt-5.4"
@@ -190,7 +242,7 @@ export function SystemDetails({
               }))}
             />
           </div>
-          <div data-setup-ai-key-row hidden={!showAiRows}>
+          <div data-setup-ai-key-row hidden={!showAiRows || fixedAiModel !== null}>
             <TextInput
               label="API key"
               type="password"

@@ -1,60 +1,106 @@
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" ? value as Record<string, unknown> : null;
+import {
+  resourceBlockSchema,
+  type FileResourceReference,
+} from "@humansandmachines/gsv/protocol";
+import { z } from "zod";
+
+const mediaKindSchema = z.enum(["audio", "document", "image", "video"]);
+const optionalMediaStringSchema = z.string().trim().min(1).optional().catch(undefined);
+const optionalMediaNumberSchema = z.number().finite().optional().catch(undefined);
+
+const chatMediaObjectSchema = z.object({
+  type: mediaKindSchema.optional().catch(undefined),
+  mimeType: optionalMediaStringSchema,
+  key: optionalMediaStringSchema,
+  conversationId: optionalMediaStringSchema,
+  url: optionalMediaStringSchema,
+  filename: optionalMediaStringSchema,
+  size: optionalMediaNumberSchema,
+  duration: optionalMediaNumberSchema,
+  transcription: optionalMediaStringSchema,
+  description: optionalMediaStringSchema,
+  resource: z.undefined().optional(),
+});
+
+const chatResourceMediaSchema = resourceBlockSchema.transform((resource) => ({
+  type: resource.mediaType ?? mediaKindFromContentType(resource.ref.contentType),
+  mimeType: resource.ref.contentType,
+  key: undefined,
+  conversationId: undefined,
+  url: undefined,
+  filename: resource.filename?.trim() || resourceFilename(resource.ref.path),
+  size: resource.ref.size,
+  duration: resource.duration,
+  transcription: resource.transcription?.trim() || undefined,
+  description: undefined,
+  resource: resource.ref,
+}));
+
+const chatMediaWireSchema = z.unknown().pipe(z.union([
+  chatResourceMediaSchema,
+  chatMediaObjectSchema,
+]));
+
+export type ChatMediaDescriptor = z.output<typeof chatMediaWireSchema>;
+type ChatMediaWireValue = z.input<typeof chatMediaWireSchema>;
+
+export function parseChatMedia(value: ChatMediaWireValue): ChatMediaDescriptor {
+  return chatMediaWireSchema.parse(value);
 }
 
-function asString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
+function parsedMedia(media: ChatMediaWireValue): ChatMediaDescriptor {
+  return parseChatMedia(media);
 }
 
-function asNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-export function chatMediaKind(media: unknown): "audio" | "document" | "image" | "video" {
-  const record = asRecord(media);
-  const type = asString(record?.type);
-  if (type === "image" || type === "audio" || type === "video" || type === "document") {
-    return type;
-  }
-  const mimeType = asString(record?.mimeType)?.toLowerCase() ?? "";
+export function chatMediaKind(media: ChatMediaWireValue): "audio" | "document" | "image" | "video" {
+  const parsed = parsedMedia(media);
+  if (parsed.type) return parsed.type;
+  const mimeType = parsed.mimeType?.toLowerCase() ?? "";
   if (mimeType.startsWith("image/")) return "image";
   if (mimeType.startsWith("audio/")) return "audio";
   if (mimeType.startsWith("video/")) return "video";
   return "document";
 }
 
-export function chatMediaKey(media: unknown): string {
-  return asString(asRecord(media)?.key) ?? "";
+export function chatMediaKey(media: ChatMediaWireValue): string {
+  return parsedMedia(media).key ?? "";
 }
 
-export function chatMediaMimeType(media: unknown): string {
-  return asString(asRecord(media)?.mimeType) ?? "application/octet-stream";
+export function chatMediaConversationId(media: ChatMediaWireValue): string {
+  return parsedMedia(media).conversationId ?? "";
 }
 
-export function chatMediaFilename(media: unknown): string {
-  return asString(asRecord(media)?.filename) ?? "attachment";
+export function chatMediaMimeType(media: ChatMediaWireValue): string {
+  return parsedMedia(media).mimeType ?? "application/octet-stream";
 }
 
-export function chatMediaSize(media: unknown): number | null {
-  return asNumber(asRecord(media)?.size);
+export function chatMediaFilename(media: ChatMediaWireValue): string {
+  return parsedMedia(media).filename ?? "attachment";
 }
 
-export function chatMediaDuration(media: unknown): number | null {
-  return asNumber(asRecord(media)?.duration);
+export function chatMediaSize(media: ChatMediaWireValue): number | null {
+  return parsedMedia(media).size ?? null;
 }
 
-export function chatMediaTranscription(media: unknown): string {
-  return asString(asRecord(media)?.transcription) ?? "";
+export function chatMediaDuration(media: ChatMediaWireValue): number | null {
+  return parsedMedia(media).duration ?? null;
 }
 
-export function chatMediaDescription(media: unknown): string {
-  return asString(asRecord(media)?.description) ?? "";
+export function chatMediaTranscription(media: ChatMediaWireValue): string {
+  return parsedMedia(media).transcription ?? "";
 }
 
-export function chatMediaSource(media: unknown, storedSource = ""): string {
-  const record = asRecord(media);
-  const url = asString(record?.url);
-  if (url) return safeMediaSourceUrl(url, ["https:", "http:"]);
+export function chatMediaDescription(media: ChatMediaWireValue): string {
+  return parsedMedia(media).description ?? "";
+}
+
+export function chatMediaResource(media: ChatMediaWireValue): FileResourceReference | null {
+  return parsedMedia(media).resource ?? null;
+}
+
+export function chatMediaSource(media: ChatMediaWireValue, storedSource = ""): string {
+  const parsed = parsedMedia(media);
+  if (parsed.url) return safeMediaSourceUrl(parsed.url, ["https:", "http:"]);
   return storedSource ? safeMediaSourceUrl(storedSource, ["blob:"]) : "";
 }
 
@@ -79,10 +125,23 @@ function safeMediaSourceUrl(value: string, allowedProtocols: string[]): string {
     return "";
   }
   try {
-    const base = typeof window !== "undefined" ? window.location.href : "https://gsv.local/";
+    const base = globalThis.window?.location.href ?? "https://gsv.local/";
     const url = new URL(trimmed, base);
     return allowedProtocols.includes(url.protocol) ? trimmed : "";
   } catch {
     return "";
   }
+}
+
+function mediaKindFromContentType(contentType: string): "audio" | "document" | "image" | "video" {
+  const normalized = contentType.toLowerCase();
+  if (normalized.startsWith("image/")) return "image";
+  if (normalized.startsWith("audio/")) return "audio";
+  if (normalized.startsWith("video/")) return "video";
+  return "document";
+}
+
+function resourceFilename(path: string): string {
+  const filename = path.split("/").filter(Boolean).at(-1)?.trim();
+  return filename || "resource";
 }

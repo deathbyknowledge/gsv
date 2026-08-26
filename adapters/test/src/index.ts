@@ -19,35 +19,57 @@ import {
   SAFE_MATERIALIZED_MEDIA_PART_BYTES,
   SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
 } from "../../shared/src/media-body";
+import {
+  adapterAccountDurableObjectName,
+  parseAdapterInstallationContext,
+} from "../../shared/src/installation";
+import {
+  callAdapterGateway,
+  type AdapterGatewayBinding,
+} from "../../shared/src/gateway-rpc";
+import {
+  resolveAdapterActivityRpcArgs,
+  resolveAdapterConnectRpcArgs,
+  resolveAdapterDisconnectRpcArgs,
+  resolveAdapterSendRpcArgs,
+  resolveAdapterStatusRpcArgs,
+  type AdapterActivityRpcArgs,
+  type AdapterConnectRpcArgs,
+  type AdapterDisconnectRpcArgs,
+  type AdapterSendRpcArgs,
+  type AdapterStatusRpcArgs,
+} from "../../shared/src/rpc-compat";
 import type {
   AdapterAccountStatus,
   AdapterActivity,
   AdapterActor,
+  AdapterConnectConfig,
   AdapterInboundMessage,
-  AdapterInboundResult,
+  AdapterInstallationContext,
   AdapterMedia,
   AdapterOutboundMessage,
   AdapterSendResult,
+  AdapterService,
+  AdapterServiceDescriptor,
   AdapterSurface,
-  AdapterWorkerInterface,
   BinaryBody,
-  GatewayFrame,
-  GatewayRequestFrame,
 } from "../../shared/src/types";
 
-type GatewayAdapterBinding = Fetcher & {
-  serviceFrame: (frame: GatewayFrame) => Promise<GatewayFrame | null>;
-};
-
-type RecordedMessage = {
-  direction: "in" | "out";
-  message: AdapterOutboundMessage | AdapterInboundMessage;
-  timestamp: number;
-};
+type RecordedMessage =
+  | {
+      direction: "in";
+      message: AdapterInboundMessage;
+      timestamp: number;
+    }
+  | {
+      direction: "out";
+      message: AdapterOutboundMessage;
+      timestamp: number;
+    };
 
 interface Env {
-  GATEWAY: GatewayAdapterBinding;
-  TEST_CHANNEL_STATE: DurableObjectNamespace;
+  GATEWAY: Fetcher & AdapterGatewayBinding;
+  TEST_CHANNEL_STATE: DurableObjectNamespace<TestChannelState>;
 }
 
 // ============================================================================
@@ -78,11 +100,8 @@ export class TestChannelState extends DurableObject<Env> {
     return this.connected;
   }
   
-  async recordMessage(
-    direction: "in" | "out",
-    message: AdapterOutboundMessage | AdapterInboundMessage,
-  ): Promise<void> {
-    this.messages.push({ direction, message, timestamp: Date.now() });
+  async recordInboundMessage(message: AdapterInboundMessage): Promise<void> {
+    this.messages.push({ direction: "in", message, timestamp: Date.now() });
     await this.ctx.storage.put("messages", this.messages);
   }
 
@@ -129,7 +148,7 @@ export class TestChannelState extends DurableObject<Env> {
 
     try {
       await this.deliveries.succeed(message.deliveryId, claim.attemptId, messageId);
-    } catch (error) {
+    } catch {
       return {
         ok: false,
         error: "Test adapter recorded the delivery but could not persist its outcome",
@@ -146,7 +165,7 @@ export class TestChannelState extends DurableObject<Env> {
   async getOutboundMessages(): Promise<AdapterOutboundMessage[]> {
     return this.messages
       .filter(m => m.direction === "out")
-      .map(m => m.message as AdapterOutboundMessage);
+      .map(m => m.message);
   }
   
   async clearMessages(): Promise<void> {
@@ -165,19 +184,67 @@ export class TestChannelState extends DurableObject<Env> {
 // Test Channel WorkerEntrypoint
 // ============================================================================
 
-export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerInterface {
+export class TestChannel extends WorkerEntrypoint<Env> implements AdapterService {
   readonly adapterId = "test";
 
-  private getStateDO(accountId: string): DurableObjectStub<TestChannelState> {
-    const id = this.env.TEST_CHANNEL_STATE.idFromName(accountId);
-    return this.env.TEST_CHANNEL_STATE.get(id) as DurableObjectStub<TestChannelState>;
+  async adapterDescribe(): Promise<AdapterServiceDescriptor> {
+    return {
+      version: 1,
+      id: this.adapterId,
+      displayName: "Test",
+      capabilities: {
+        connect: true,
+        disconnect: true,
+        send: true,
+        status: true,
+        activity: true,
+        pairing: false,
+        surfaces: ["dm", "group", "channel", "thread"],
+        media: {
+          inbound: ["image", "audio", "video", "document"],
+          outbound: ["image", "audio", "video", "document"],
+        },
+      },
+    };
+  }
+
+  private getStateDO(
+    installation: AdapterInstallationContext,
+    accountId: string,
+  ): DurableObjectStub<TestChannelState> {
+    const id = this.env.TEST_CHANNEL_STATE.idFromName(
+      adapterAccountDurableObjectName(installation, accountId),
+    );
+    return this.env.TEST_CHANNEL_STATE.get(id);
   }
 
   async adapterConnect(
     accountId: string,
-    _config: Record<string, unknown> = {},
+    config?: AdapterConnectConfig,
+  ): Promise<{ ok: true; connected: true; authenticated: true; message: string }>;
+  async adapterConnect(
+    installation: AdapterInstallationContext,
+    accountId: string,
+    config?: AdapterConnectConfig,
+  ): Promise<{ ok: true; connected: true; authenticated: true; message: string }>;
+  async adapterConnect(
+    ...args: AdapterConnectRpcArgs
   ): Promise<{ ok: true; connected: true; authenticated: true; message: string }> {
-    const state = this.getStateDO(accountId);
+    const resolved = resolveAdapterConnectRpcArgs(args);
+    return await this.#adapterConnectForInstallation(
+      resolved.installation,
+      resolved.accountId,
+      resolved.config,
+    );
+  }
+
+  async #adapterConnectForInstallation(
+    installation: AdapterInstallationContext,
+    accountId: string,
+    _config: AdapterConnectConfig = {},
+  ): Promise<{ ok: true; connected: true; authenticated: true; message: string }> {
+    const parsedInstallation = parseAdapterInstallationContext(installation);
+    const state = this.getStateDO(parsedInstallation, accountId);
     await state.setConnected(true);
     return {
       ok: true,
@@ -189,15 +256,53 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
 
   async adapterDisconnect(
     accountId: string,
+  ): Promise<{ ok: true; message: string }>;
+  async adapterDisconnect(
+    installation: AdapterInstallationContext,
+    accountId: string,
+  ): Promise<{ ok: true; message: string }>;
+  async adapterDisconnect(
+    ...args: AdapterDisconnectRpcArgs
   ): Promise<{ ok: true; message: string }> {
-    const state = this.getStateDO(accountId);
+    const resolved = resolveAdapterDisconnectRpcArgs(args);
+    return await this.#adapterDisconnectForInstallation(
+      resolved.installation,
+      resolved.accountId,
+    );
+  }
+
+  async #adapterDisconnectForInstallation(
+    installation: AdapterInstallationContext,
+    accountId: string,
+  ): Promise<{ ok: true; message: string }> {
+    const parsedInstallation = parseAdapterInstallationContext(installation);
+    const state = this.getStateDO(parsedInstallation, accountId);
     await state.setConnected(false);
     return { ok: true, message: "Disconnected" };
   }
 
-  async adapterStatus(accountId?: string): Promise<AdapterAccountStatus[]> {
+  async adapterStatus(
+    accountId?: string,
+  ): Promise<AdapterAccountStatus[]>;
+  async adapterStatus(
+    installation: AdapterInstallationContext,
+    accountId?: string,
+  ): Promise<AdapterAccountStatus[]>;
+  async adapterStatus(...args: AdapterStatusRpcArgs): Promise<AdapterAccountStatus[]> {
+    const resolved = resolveAdapterStatusRpcArgs(args);
+    return await this.#adapterStatusForInstallation(
+      resolved.installation,
+      resolved.accountId,
+    );
+  }
+
+  async #adapterStatusForInstallation(
+    installation: AdapterInstallationContext,
+    accountId?: string,
+  ): Promise<AdapterAccountStatus[]> {
+    const parsedInstallation = parseAdapterInstallationContext(installation);
     if (accountId) {
-      const state = this.getStateDO(accountId);
+      const state = this.getStateDO(parsedInstallation, accountId);
       const connected = await state.isConnected();
       return [{
         accountId,
@@ -218,7 +323,39 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
     accountId: string,
     message: AdapterOutboundMessage,
     body?: BinaryBody,
+  ): Promise<AdapterSendResult>;
+  async adapterSend(
+    installation: AdapterInstallationContext,
+    accountId: string,
+    message: AdapterOutboundMessage,
+    body?: BinaryBody,
+  ): Promise<AdapterSendResult>;
+  async adapterSend(...args: AdapterSendRpcArgs): Promise<AdapterSendResult> {
+    const resolved = await resolveAdapterSendRpcArgs(args);
+    return await this.#adapterSendForInstallation(
+      resolved.installation,
+      resolved.accountId,
+      resolved.message,
+      resolved.body,
+    );
+  }
+
+  async #adapterSendForInstallation(
+    installation: AdapterInstallationContext,
+    accountId: string,
+    message: AdapterOutboundMessage,
+    body?: BinaryBody,
   ): Promise<AdapterSendResult> {
+    let parsedInstallation: AdapterInstallationContext;
+    try {
+      parsedInstallation = parseAdapterInstallationContext(installation);
+    } catch (error) {
+      await cancelBinaryBody(body, error);
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
     try {
       validateAdapterMediaBody(message.media, body, {
         maxBytes: SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
@@ -245,7 +382,7 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
         retryable: true,
       };
     }
-    const state = this.getStateDO(accountId);
+    const state = this.getStateDO(parsedInstallation, accountId);
     let requestFingerprint: string;
     try {
       requestFingerprint = await fingerprintOutboundDelivery(message, mediaBytes);
@@ -292,10 +429,35 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
   }
 
   async adapterSetActivity(
+    accountId: string,
+    surface: AdapterSurface,
+    activity: AdapterActivity,
+  ): Promise<{ ok: true } | { ok: false; error: string }>;
+  async adapterSetActivity(
+    installation: AdapterInstallationContext,
+    accountId: string,
+    surface: AdapterSurface,
+    activity: AdapterActivity,
+  ): Promise<{ ok: true } | { ok: false; error: string }>;
+  async adapterSetActivity(
+    ...args: AdapterActivityRpcArgs
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const resolved = resolveAdapterActivityRpcArgs(args);
+    return await this.#adapterSetActivityForInstallation(
+      resolved.installation,
+      resolved.accountId,
+      resolved.surface,
+      resolved.activity,
+    );
+  }
+
+  async #adapterSetActivityForInstallation(
+    installation: AdapterInstallationContext,
     _accountId: string,
     _surface: AdapterSurface,
     _activity: AdapterActivity,
   ): Promise<{ ok: true } | { ok: false; error: string }> {
+    parseAdapterInstallationContext(installation);
     return { ok: true };
   }
 
@@ -304,6 +466,7 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
   // =========================================================================
 
   async simulateInbound(
+    installation: AdapterInstallationContext,
     accountId: string,
     surface: AdapterSurface,
     text: string,
@@ -316,7 +479,8 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
       wasMentioned?: boolean;
     },
   ): Promise<{ ok: boolean; messageId: string; error?: string }> {
-    const state = this.getStateDO(accountId);
+    const parsedInstallation = parseAdapterInstallationContext(installation);
+    const state = this.getStateDO(parsedInstallation, accountId);
     const connected = await state.isConnected();
     if (!connected) {
       await cancelBinaryBody(options?.body, "Test adapter account is not connected");
@@ -337,30 +501,18 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
       wasMentioned: surface.kind === "dm" ? true : options?.wasMentioned === true,
     };
 
-    await state.recordMessage("in", message);
+    await state.recordInboundMessage(message);
 
     console.log(`[TestChannel] Simulating inbound from ${surface.id}: ${text}`);
 
     try {
-      const frame: GatewayRequestFrame = {
-        type: "req",
-        id: crypto.randomUUID(),
-        call: "adapter.inbound",
-        args: { adapter: "test", accountId, deliveryId: messageId, message },
-        ...(options?.body ? { body: options.body } : {}),
-      };
-      const response = await this.env.GATEWAY.serviceFrame(frame);
-      if (!response || response.type !== "res") {
-        return { ok: false, messageId, error: "No response from gateway serviceFrame" };
-      }
-      if (!response.ok) {
-        return {
-          ok: false,
-          messageId,
-          error: response.error?.message || "Gateway rejected message",
-        };
-      }
-      const result = (response.data ?? {}) as AdapterInboundResult;
+      const result = await callAdapterGateway(
+        this.env.GATEWAY,
+        parsedInstallation,
+        "adapter.inbound",
+        { adapter: "test", accountId, deliveryId: messageId, message },
+        options?.body,
+      );
       if (!result.ok) {
         return { ok: false, messageId, error: result.error || "Gateway rejected message" };
       }
@@ -372,23 +524,39 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
     }
   }
 
-  async getMessages(accountId: string): Promise<RecordedMessage[]> {
-    const state = this.getStateDO(accountId);
+  async getMessages(
+    installation: AdapterInstallationContext,
+    accountId: string,
+  ): Promise<RecordedMessage[]> {
+    const parsedInstallation = parseAdapterInstallationContext(installation);
+    const state = this.getStateDO(parsedInstallation, accountId);
     return await state.getMessages();
   }
 
-  async getOutboundMessages(accountId: string): Promise<AdapterOutboundMessage[]> {
-    const state = this.getStateDO(accountId);
+  async getOutboundMessages(
+    installation: AdapterInstallationContext,
+    accountId: string,
+  ): Promise<AdapterOutboundMessage[]> {
+    const parsedInstallation = parseAdapterInstallationContext(installation);
+    const state = this.getStateDO(parsedInstallation, accountId);
     return await state.getOutboundMessages();
   }
 
-  async clearMessages(accountId: string): Promise<void> {
-    const state = this.getStateDO(accountId);
+  async clearMessages(
+    installation: AdapterInstallationContext,
+    accountId: string,
+  ): Promise<void> {
+    const parsedInstallation = parseAdapterInstallationContext(installation);
+    const state = this.getStateDO(parsedInstallation, accountId);
     await state.clearMessages();
   }
 
-  async reset(accountId: string): Promise<void> {
-    const state = this.getStateDO(accountId);
+  async reset(
+    installation: AdapterInstallationContext,
+    accountId: string,
+  ): Promise<void> {
+    const parsedInstallation = parseAdapterInstallationContext(installation);
+    const state = this.getStateDO(parsedInstallation, accountId);
     await state.reset();
   }
 }
@@ -398,7 +566,7 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
 // ============================================================================
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     
     if (url.pathname === "/" || url.pathname === "/health") {

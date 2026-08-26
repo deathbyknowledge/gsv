@@ -12,6 +12,31 @@ import {
   isAdapterWorkerStatusResult,
 } from "../dist/protocol/adapters.js";
 import { isAdapterConnectResult } from "../dist/protocol/syscalls/adapter.js";
+import { adapterServiceDescriptorSchema } from "../dist/services/adapters.js";
+
+test("validates an open-ended adapter service descriptor", () => {
+  const descriptor = {
+    version: 1,
+    id: "matrix",
+    displayName: "Matrix",
+    capabilities: {
+      connect: true,
+      disconnect: true,
+      send: true,
+      status: true,
+      activity: false,
+      pairing: false,
+      surfaces: ["dm", "group"],
+      media: { inbound: ["image"], outbound: ["image", "document"] },
+    },
+  };
+
+  assert.equal(adapterServiceDescriptorSchema.safeParse(descriptor).success, true);
+  assert.equal(adapterServiceDescriptorSchema.safeParse({
+    ...descriptor,
+    id: "Matrix Plugin",
+  }).success, false);
+});
 
 test("validates adapter inbound results at the shared protocol boundary", () => {
   assert.equal(isAdapterInboundResult({

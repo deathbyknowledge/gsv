@@ -5,6 +5,13 @@ import {
 } from "./whatsappPairing";
 import "./WhatsAppPairing.css";
 
+export type WhatsAppQrCodeDependencies = {
+  useEffect: typeof useEffect;
+  useState: (initialValue: string | (() => string)) => [string, (value: string) => void];
+};
+
+const defaultDependencies: WhatsAppQrCodeDependencies = { useEffect, useState };
+
 export async function renderWhatsAppQrImageUrl(source: WhatsAppQrSource): Promise<string> {
   if (source.kind === "data-url") {
     if (!isWhatsAppQrImageDataUrl(source.value)) {
@@ -29,17 +36,19 @@ export async function renderWhatsAppQrImageUrl(source: WhatsAppQrSource): Promis
 export function WhatsAppQrCode({
   source,
   onRenderError,
+  dependencies = defaultDependencies,
 }: {
   source: WhatsAppQrSource;
   onRenderError?: () => void;
+  dependencies?: WhatsAppQrCodeDependencies;
 }) {
-  const [imageUrl, setImageUrl] = useState(
+  const [imageUrl, setImageUrl] = dependencies.useState(
     source.kind === "data-url" && isWhatsAppQrImageDataUrl(source.value)
       ? source.value
       : "",
   );
 
-  useEffect(() => {
+  dependencies.useEffect(() => {
     let active = true;
     setImageUrl("");
     void renderWhatsAppQrImageUrl(source).then((url) => {

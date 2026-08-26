@@ -1,0 +1,46 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gsv-managed-telegram-test",
+  "main": "src/managed.ts",
+  "compatibility_date": "2026-07-29",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "TELEGRAM_BOT_TOKEN": "test-token",
+    "TELEGRAM_BOT_USERNAME": "official_gsv_bot",
+    "TELEGRAM_WEBHOOK_SECRET": "test_webhook_secret_123",
+    "TELEGRAM_ALLOWED_ACTOR_IDS": "12345"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MANAGED_TELEGRAM_PEER",
+        "class_name": "ManagedTelegramPeer"
+      },
+      {
+        "name": "MANAGED_TELEGRAM_PAIRING",
+        "class_name": "ManagedTelegramPairing"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ManagedTelegramPeer", "ManagedTelegramPairing"]
+    }
+  ],
+  "services": [
+    {
+      "binding": "GATEWAY",
+      "service": "managed-telegram-gateway-test",
+      "entrypoint": "AdapterGatewayEntrypoint",
+      "props": {
+        "id": "telegram",
+        "calls": ["adapter.inbound", "adapter.state.update"]
+      }
+    },
+    {
+      "binding": "TELEGRAM_API",
+      "service": "managed-telegram-api-test"
+    }
+  ]
+}

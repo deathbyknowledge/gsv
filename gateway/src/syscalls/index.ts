@@ -1,4 +1,4 @@
-import type { SyscallName } from "@humansandmachines/gsv/protocol";
+import type { JsonValue, SyscallName } from "@humansandmachines/gsv/protocol";
 import type { ToolDefinition } from "@humansandmachines/gsv/protocol";
 
 export type {
@@ -14,16 +14,29 @@ type SyscallDomain =
   | "shell"
   | "net"
   | "codemode"
+  | "mail"
   | "proc"
   | "repo"
   | "sys"
   | "ai"
   | "sched"
+  | "r12y"
   | "adapter"
   | "signal"
   | "account";
 
+type SyscallInputSchema = {
+  required: string[];
+  properties: Record<string, JsonValue>;
+};
+
+function parseSyscallInputSchema(inputSchema: ToolDefinition["inputSchema"]): SyscallInputSchema {
+  // SAFETY: ToolDefinition input schemas are produced by the protocol schema boundary.
+  return inputSchema as SyscallInputSchema;
+}
+
 function domainOf(syscall: SyscallName): SyscallDomain {
+  // SAFETY: SyscallName is constructed from the finite domain prefixes above.
   return syscall.split(".")[0] as SyscallDomain;
 }
 
@@ -47,8 +60,7 @@ export function intoSyscallTool(
   tool: ToolDefinition,
   devices: string[],
 ): ToolDefinition {
-  const required = tool.inputSchema.required as string[];
-  const properties = tool.inputSchema.properties as Record<string, unknown>;
+  const { required, properties } = parseSyscallInputSchema(tool.inputSchema);
   if (
     required.includes("target") ||
     Object.keys(properties).includes("target")

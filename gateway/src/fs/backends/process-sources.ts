@@ -12,15 +12,41 @@ import {
   type RipgitRepoRef,
 } from "../ripgit/client";
 import { concatBytes, normalizePath } from "../utils";
+import { z } from "zod";
 
 const TEXT_DECODER = new TextDecoder();
 const TEXT_ENCODER = new TextEncoder();
 const DEFAULT_REPO_REF = "main";
+const sourceBranchStateSchema = z.object({
+  branch: z.string(),
+  baseRef: z.string(),
+  head: z.string().nullable().optional(),
+  createdAt: z.number().optional(),
+  updatedAt: z.number().optional(),
+});
+const sourceOverlayChangeSchema = z.object({
+  type: z.enum(["put", "delete"]),
+  path: z.string().optional(),
+  contentKey: z.string().optional(),
+  size: z.number().optional(),
+  recursive: z.boolean().optional(),
+  updatedAt: z.number().optional(),
+});
+const sourceOverlayManifestSchema = z.object({
+  version: z.literal(1),
+  packageId: z.string(),
+  packageKey: z.string(),
+  baseRef: z.string().optional(),
+  createdAt: z.number().optional(),
+  updatedAt: z.number().optional(),
+  changes: z.record(z.string(), z.json()),
+});
 
 type SourceConfig = {
   get(key: string): string | null;
   set(key: string, value: string): void;
 };
+type SourceApplyOptions = { baseRef: string; expectedHead?: string };
 
 export type ProcessSourceBackendOptions = {
   identity: ProcessIdentity;
@@ -792,16 +818,17 @@ export async function commitRepoSourceChanges(
     };
   }
 
+  const applyOptions: SourceApplyOptions = { baseRef: targetRef.applyBaseRef };
+  if (targetRef.expectedHead) {
+    applyOptions.expectedHead = targetRef.expectedHead;
+  }
   const result = await options.ripgit.apply(
     { ...repoRef, branch },
     options.identity.username,
     `${options.identity.username}@gsv.local`,
     message,
     ops,
-    {
-      baseRef: targetRef.applyBaseRef,
-      ...(targetRef.expectedHead ? { expectedHead: targetRef.expectedHead } : {}),
-    },
+    applyOptions,
   );
   const nextState = sourceBranchStateForTarget(state, branch, targetRef, result.head ?? null);
   writeSourceBranchState(options.config, options.processId, repo, nextState);
@@ -887,13 +914,15 @@ function sourceRepoForSummary(summary: RepoSummary): SourceRepo | null {
 }
 
 function sourceRefForSummary(summary: RepoSummary): string {
-  return typeof summary.ref === "string" && summary.ref.trim().length > 0
+  return summary.ref?.trim()
+    && summary.ref.trim().length > 0
     ? summary.ref.trim()
     : DEFAULT_REPO_REF;
 }
 
 function sourceBaseRefForSummary(summary: RepoSummary, fallback: string): string {
-  return typeof summary.baseRef === "string" && summary.baseRef.trim().length > 0
+  return summary.baseRef?.trim()
+    && summary.baseRef.trim().length > 0
     ? summary.baseRef.trim()
     : fallback;
 }
@@ -1121,19 +1150,17 @@ function readSourceBranchState(
     return null;
   }
   try {
-    const parsed = JSON.parse(raw) as Partial<SourceBranchState>;
-    if (typeof parsed.branch !== "string" || parsed.branch.trim().length === 0) {
+    const parsed = sourceBranchStateSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success || parsed.data.branch.trim().length === 0 || parsed.data.baseRef.trim().length === 0) {
       return null;
     }
-    if (typeof parsed.baseRef !== "string" || parsed.baseRef.trim().length === 0) {
-      return null;
-    }
+    const value = parsed.data;
     return {
-      branch: parsed.branch,
-      baseRef: parsed.baseRef,
-      head: typeof parsed.head === "string" ? parsed.head : null,
-      createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : Date.now(),
-      updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : Date.now(),
+      branch: value.branch,
+      baseRef: value.baseRef,
+      head: value.head ?? null,
+      createdAt: value.createdAt ?? Date.now(),
+      updatedAt: value.updatedAt ?? Date.now(),
     };
   } catch {
     return null;
@@ -1172,36 +1199,34 @@ async function readOverlayManifest(
     return empty;
   }
   try {
-    const parsed = JSON.parse(await obj.text()) as Partial<SourceOverlayManifest>;
-    if (
-      parsed.version !== 1 ||
-      parsed.packageId !== repo.sourceKey ||
-      parsed.packageKey !== sourceRepoStorageKey(repo) ||
-      !parsed.changes
-    ) {
+    const parsed = sourceOverlayManifestSchema.safeParse(JSON.parse(await obj.text()));
+    if (!parsed.success || parsed.data.packageId !== repo.sourceKey || parsed.data.packageKey !== sourceRepoStorageKey(repo)) {
       return empty;
     }
     const changes: Record<string, SourceOverlayChange> = {};
-    for (const [path, value] of Object.entries(parsed.changes)) {
+    for (const [path, value] of Object.entries(parsed.data.changes)) {
       const normalizedPath = normalizeRepoPath(path);
-      if (!normalizedPath || !value || typeof value !== "object") {
+      if (!normalizedPath) {
         continue;
       }
-      const change = value as Partial<SourceOverlayChange>;
-      if (change.type === "put" && typeof change.contentKey === "string") {
+      const change = sourceOverlayChangeSchema.safeParse(value);
+      if (!change.success) {
+        continue;
+      }
+      if (change.data.type === "put" && change.data.contentKey) {
         changes[normalizedPath] = {
           type: "put",
           path: normalizedPath,
-          contentKey: change.contentKey,
-          size: typeof change.size === "number" ? change.size : 0,
-          updatedAt: typeof change.updatedAt === "number" ? change.updatedAt : Date.now(),
+          contentKey: change.data.contentKey,
+          size: change.data.size ?? 0,
+          updatedAt: change.data.updatedAt ?? Date.now(),
         };
-      } else if (change.type === "delete") {
+      } else if (change.data.type === "delete") {
         changes[normalizedPath] = {
           type: "delete",
           path: normalizedPath,
-          recursive: change.recursive === true,
-          updatedAt: typeof change.updatedAt === "number" ? change.updatedAt : Date.now(),
+          recursive: change.data.recursive === true,
+          updatedAt: change.data.updatedAt ?? Date.now(),
         };
       }
     }
@@ -1209,11 +1234,9 @@ async function readOverlayManifest(
       version: 1,
       packageId: repo.sourceKey,
       packageKey: sourceRepoStorageKey(repo),
-      baseRef: typeof parsed.baseRef === "string" && parsed.baseRef
-        ? parsed.baseRef
-        : empty.baseRef,
-      createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : Date.now(),
-      updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : Date.now(),
+      baseRef: parsed.data.baseRef || empty.baseRef,
+      createdAt: parsed.data.createdAt ?? Date.now(),
+      updatedAt: parsed.data.updatedAt ?? Date.now(),
       changes,
     };
   } catch {
@@ -1484,8 +1507,5 @@ function makeFileStat(uid: number, gid: number, size: number, writable: boolean)
 }
 
 function asBytes(content: FileContent): Uint8Array {
-  if (typeof content === "string") {
-    return TEXT_ENCODER.encode(content);
-  }
-  return content;
+  return content instanceof Uint8Array ? content : TEXT_ENCODER.encode(content);
 }

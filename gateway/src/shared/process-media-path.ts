@@ -49,7 +49,7 @@ export function isValidAgentArchiveMediaObject(input: {
   const objectContentType = input.object.httpMetadata?.contentType?.trim() ?? "";
   const expectedSourceEtag = input.expectedSourceEtag?.trim();
   const expectedContentType = input.expectedContentType?.trim();
-  return metadata?.purpose === "conversation-media"
+  return (metadata?.purpose === "conversation-media" || metadata?.purpose === "resource")
     && metadata.uid === String(input.uid)
     && metadata.gid === String(input.gid)
     && metadata.mode === "400"

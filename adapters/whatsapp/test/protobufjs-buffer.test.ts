@@ -19,6 +19,7 @@ type Utf8WriteCall = {
 };
 
 const require = createRequire(import.meta.url);
+// SAFETY: The protobufjs writer_buffer module exports the constructor contract exercised below.
 const BufferWriter = require(
   "protobufjs/src/writer_buffer",
 ) as BufferWriterConstructor;

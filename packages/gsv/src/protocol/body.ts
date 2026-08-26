@@ -1,15 +1,38 @@
+import * as z from "zod/mini";
+
 export type BinaryBody = {
   stream: ReadableStream<Uint8Array>;
   length?: number;
 };
+
+/** Returns a byte-stream-safe view, copying only SharedArrayBuffer-backed input. */
+export function byteStreamChunk(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  if (bytes.buffer instanceof ArrayBuffer) {
+    return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  }
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy;
+}
+
+const binaryBodyObjectSchema = z.strictObject({
+  stream: z.instanceof(ReadableStream),
+  length: z.optional(z.number()),
+});
+
+/** Validates a transferred body without replacing its identity or stream. */
+export const binaryBodySchema = z.custom<BinaryBody>(
+  (value) => binaryBodyObjectSchema.safeParse(value).success,
+);
+
+const MAX_PREALLOCATED_BODY_BYTES = 64 * 1024 * 1024;
 
 export const BODY_SYSCALL_NAMES = [
   "fs.read",
   "fs.transfer.send",
   "fs.transfer.receive",
   "net.fetch",
-  "proc.media.read",
-  "proc.media.write",
+  "conversation.media.read",
   "ai.transcription.create",
   "ai.image.read",
   "ai.image.generate",
@@ -52,6 +75,14 @@ export async function bodyToBytes(
 
   const reader = body.stream.getReader();
   const chunks: Uint8Array[] = [];
+  const fixed = Number.isFinite(maxBytes)
+    && body.length !== undefined
+    && Number.isSafeInteger(body.length)
+    && body.length >= 0
+    && body.length <= maxBytes
+    && body.length <= MAX_PREALLOCATED_BODY_BYTES
+    ? new Uint8Array(body.length)
+    : null;
   let length = 0;
   let aborted: Error | null = null;
   const abort = () => {
@@ -75,7 +106,15 @@ export async function bodyToBytes(
         await reader.cancel().catch(() => {});
         throw new Error(`Body exceeds limit (${length} bytes, max ${maxBytes})`);
       }
-      chunks.push(value);
+      if (fixed) {
+        if (length > fixed.byteLength) {
+          await reader.cancel().catch(() => {});
+          throw new Error(`Body length ${length} did not match ${body.length}`);
+        }
+        fixed.set(value, length - value.byteLength);
+      } else {
+        chunks.push(value);
+      }
     }
     if (aborted) {
       throw aborted;
@@ -88,6 +127,7 @@ export async function bodyToBytes(
   if (body.length !== undefined && length !== body.length) {
     throw new Error(`Body length ${length} did not match ${body.length}`);
   }
+  if (fixed) return fixed;
   if (chunks.length === 0) {
     return new Uint8Array();
   }

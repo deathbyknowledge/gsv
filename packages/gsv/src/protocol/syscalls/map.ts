@@ -63,12 +63,8 @@ import type {
   ProcKillResult,
   ProcListArgs,
   ProcListResult,
-  ProcMediaReadArgs,
-  ProcMediaReadResult,
-  ProcMediaDeleteArgs,
-  ProcMediaDeleteResult,
-  ProcMediaWriteArgs,
-  ProcMediaWriteResult,
+  ProcObserveArgs,
+  ProcObserveResult,
   ProcResetArgs,
   ProcResetResult,
   ProcSendArgs,
@@ -77,6 +73,8 @@ import type {
   ProcSetIdentityResult,
   ProcSpawnArgs,
   ProcSpawnResult,
+  ProcUnobserveArgs,
+  ProcUnobserveResult,
 } from "./proc";
 import type {
   RepoApplyArgs,
@@ -177,6 +175,22 @@ import type {
   SchedulerUpdateResult,
 } from "./scheduler";
 import type {
+  ResponsibilityChangesArgs,
+  ResponsibilityChangesResult,
+  ResponsibilityCreateArgs,
+  ResponsibilityCreateResult,
+  ResponsibilityGetArgs,
+  ResponsibilityGetResult,
+  ResponsibilityListArgs,
+  ResponsibilityListResult,
+  ResponsibilitySourceListArgs,
+  ResponsibilitySourceListResult,
+  ResponsibilitySourceUpdateArgs,
+  ResponsibilitySourceUpdateResult,
+  ResponsibilityUpdateArgs,
+  ResponsibilityUpdateResult,
+} from "./responsibility";
+import type {
   AiConfigArgs,
   AiConfigResult,
   AiImageGenerateArgs,
@@ -201,6 +215,14 @@ import type {
   AdapterInboundSyscallResult,
   AdapterListArgs,
   AdapterListResult,
+  AdapterPairConfirmArgs,
+  AdapterPairConfirmResult,
+  AdapterPairDisconnectArgs,
+  AdapterPairDisconnectResult,
+  AdapterPairInfoArgs,
+  AdapterPairInfoResult,
+  AdapterPairInspectArgs,
+  AdapterPairInspectResult,
   AdapterSendArgs,
   AdapterSendResult,
   AdapterStateUpdateArgs,
@@ -214,6 +236,26 @@ import type {
   SignalWatchArgs,
   SignalWatchResult,
 } from "./signal";
+import type {
+  MailSendArgs,
+  MailSendResult,
+  MailStatusArgs,
+  MailStatusResult,
+} from "./mail";
+import type {
+  ConversationForProcessArgs,
+  ConversationForProcessResult,
+  ConversationHistoryArgs,
+  ConversationHistoryResult,
+  ConversationShipArgs,
+  ConversationShipResult,
+  ConversationListArgs,
+  ConversationListResult,
+  ConversationMediaReadArgs,
+  ConversationMediaReadResult,
+  ConversationSendArgs,
+  ConversationSendResult,
+} from "./conversation";
 
 export type SyscallDomains = {
   "fs.read": { args: FsReadArgs; result: FsReadResult };
@@ -233,9 +275,21 @@ export type SyscallDomains = {
   "codemode.exec": { args: CodeModeExecArgs; result: CodeModeExecResult };
   "codemode.run": { args: CodeModeRunArgs; result: CodeModeRunResult };
 
+  "mail.send": { args: MailSendArgs; result: MailSendResult };
+  "mail.status": { args: MailStatusArgs; result: MailStatusResult };
+
+  "conversation.ship": { args: ConversationShipArgs; result: ConversationShipResult };
+  "conversation.forProcess": { args: ConversationForProcessArgs; result: ConversationForProcessResult };
+  "conversation.list": { args: ConversationListArgs; result: ConversationListResult };
+  "conversation.history": { args: ConversationHistoryArgs; result: ConversationHistoryResult };
+  "conversation.send": { args: ConversationSendArgs; result: ConversationSendResult };
+  "conversation.media.read": { args: ConversationMediaReadArgs; result: ConversationMediaReadResult };
+
   "proc.spawn": { args: ProcSpawnArgs; result: ProcSpawnResult };
   "proc.kill": { args: ProcKillArgs; result: ProcKillResult };
   "proc.list": { args: ProcListArgs; result: ProcListResult };
+  "proc.observe": { args: ProcObserveArgs; result: ProcObserveResult };
+  "proc.unobserve": { args: ProcUnobserveArgs; result: ProcUnobserveResult };
   "proc.send": { args: ProcSendArgs; result: ProcSendResult };
   "proc.ipc.send": { args: ProcIpcSendArgs; result: ProcIpcSendResult };
   "proc.ipc.call": { args: ProcIpcCallArgs; result: ProcIpcCallResult };
@@ -253,9 +307,6 @@ export type SyscallDomains = {
   "proc.fork": { args: ProcForkArgs; result: ProcForkResult };
   "proc.ai.config.get": { args: ProcAiConfigGetArgs; result: ProcAiConfigGetResult };
   "proc.ai.config.set": { args: ProcAiConfigSetArgs; result: ProcAiConfigSetResult };
-  "proc.media.read": { args: ProcMediaReadArgs; result: ProcMediaReadResult };
-  "proc.media.write": { args: ProcMediaWriteArgs; result: ProcMediaWriteResult };
-  "proc.media.delete": { args: ProcMediaDeleteArgs; result: ProcMediaDeleteResult };
   "proc.reset": { args: ProcResetArgs; result: ProcResetResult };
   "proc.setidentity": { args: ProcSetIdentityArgs; result: ProcSetIdentityResult };
 
@@ -309,6 +360,14 @@ export type SyscallDomains = {
   "sched.remove": { args: SchedulerRemoveArgs; result: SchedulerRemoveResult };
   "sched.run": { args: SchedulerRunArgs; result: SchedulerRunResult };
 
+  "r12y.list": { args: ResponsibilityListArgs; result: ResponsibilityListResult };
+  "r12y.get": { args: ResponsibilityGetArgs; result: ResponsibilityGetResult };
+  "r12y.create": { args: ResponsibilityCreateArgs; result: ResponsibilityCreateResult };
+  "r12y.update": { args: ResponsibilityUpdateArgs; result: ResponsibilityUpdateResult };
+  "r12y.changes": { args: ResponsibilityChangesArgs; result: ResponsibilityChangesResult };
+  "r12y.source.list": { args: ResponsibilitySourceListArgs; result: ResponsibilitySourceListResult };
+  "r12y.source.update": { args: ResponsibilitySourceUpdateArgs; result: ResponsibilitySourceUpdateResult };
+
   "ai.tools": { args: AiToolsArgs; result: AiToolsResult };
   "ai.config": { args: AiConfigArgs; result: AiConfigResult };
   "ai.text.generate": { args: AiTextGenerateArgs; result: AiTextGenerateResult };
@@ -324,6 +383,10 @@ export type SyscallDomains = {
   "adapter.send": { args: AdapterSendArgs; result: AdapterSendResult };
   "adapter.status": { args: AdapterStatusArgs; result: AdapterStatusResult };
   "adapter.list": { args: AdapterListArgs; result: AdapterListResult };
+  "adapter.pair.info": { args: AdapterPairInfoArgs; result: AdapterPairInfoResult };
+  "adapter.pair.inspect": { args: AdapterPairInspectArgs; result: AdapterPairInspectResult };
+  "adapter.pair.confirm": { args: AdapterPairConfirmArgs; result: AdapterPairConfirmResult };
+  "adapter.pair.disconnect": { args: AdapterPairDisconnectArgs; result: AdapterPairDisconnectResult };
 
   "signal.watch": { args: SignalWatchArgs; result: SignalWatchResult };
   "signal.unwatch": { args: SignalUnwatchArgs; result: SignalUnwatchResult };

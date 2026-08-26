@@ -8,6 +8,7 @@
  */
 
 import { DurableObject } from "cloudflare:workers";
+import { z } from "zod";
 import { DeliveryLedger } from "../../shared/src/delivery-ledger";
 import {
   adapterInboundResultDisposition,
@@ -15,6 +16,11 @@ import {
 } from "../../shared/src/inbound-delivery";
 import { callAdapterGateway } from "../../shared/src/gateway-rpc";
 import type { AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
+import {
+  assertAdapterAccountDurableObjectIdentity,
+  LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
+  resolveAdapterAccountDurableObjectIdentity,
+} from "../../shared/src/installation";
 import {
   bundleAdapterMedia,
   cancelResponseBody,
@@ -29,7 +35,7 @@ import type {
 import type {
   AdapterAccountStatus,
   AdapterInboundMessage,
-  AdapterInboundResult,
+  AdapterInstallationContext,
   AdapterMedia,
   AdapterOutboundMessage,
   AdapterSendResult,
@@ -38,6 +44,40 @@ import type {
 import { deliverDiscordMessage } from "./discord-delivery";
 
 const DISCORD_GATEWAY_URL = "https://discord.com/api/v10/gateway";
+
+const discordAuthorSchema = z.object({
+  id: z.string(), username: z.string(), bot: z.boolean().optional(), discriminator: z.string().optional(),
+}).passthrough();
+const discordAttachmentPayloadSchema = z.object({
+  id: z.string(), filename: z.string(), url: z.string().optional(), proxy_url: z.string().optional(),
+  size: z.number().optional(), content_type: z.string().optional(), duration_secs: z.number().optional(),
+}).passthrough();
+const discordMessagePayloadSchema = z.object({
+  id: z.string(), author: discordAuthorSchema.optional(), content: z.string().optional(),
+  guild_id: z.string().optional(), channel_id: z.string(), timestamp: z.string().optional(),
+  attachments: z.array(discordAttachmentPayloadSchema).optional(), mentions: z.array(z.object({ id: z.string().optional() })).optional(),
+  message_reference: z.object({ message_id: z.string().optional() }).optional(),
+  referenced_message: z.object({ author: z.object({ id: z.string().optional() }).optional() }).nullable().optional(),
+}).passthrough();
+const discordDispatchPayloadSchema = discordMessagePayloadSchema.extend({
+  heartbeat_interval: z.number().optional(), session_id: z.string().optional(), resume_gateway_url: z.string().optional(),
+  user: z.object({ id: z.string(), username: z.string() }).optional(),
+});
+const discordGatewayFrameSchema = z.object({
+  op: z.number(), t: z.string().nullable(), d: discordDispatchPayloadSchema, s: z.number().nullable(),
+});
+const discordReadyPayloadSchema = z.object({
+  session_id: z.string(),
+  resume_gateway_url: z.string(),
+  user: z.object({ id: z.string(), username: z.string() }).optional(),
+});
+type DiscordMessagePayload = z.infer<typeof discordMessagePayloadSchema>;
+type DiscordDispatchPayload = z.infer<typeof discordDispatchPayloadSchema>;
+type DiscordGatewayFrame = z.infer<typeof discordGatewayFrameSchema>;
+
+function parseDiscordGatewayFrame(raw: string): DiscordGatewayFrame {
+  return discordGatewayFrameSchema.parse(JSON.parse(raw));
+}
 
 // Discord Gateway Opcodes
 const OP = {
@@ -103,6 +143,7 @@ export class DiscordGateway extends DurableObject<Env> {
   private readonly deliveries: DeliveryLedger;
   private readonly inboundDeliveries: InboundDeliveryLedger<string>;
   private heartbeatInterval: number = 0;
+  private loaded = false;
   private state: GatewayState = {
     accountId: null,
     botToken: null,
@@ -121,14 +162,16 @@ export class DiscordGateway extends DurableObject<Env> {
       this.ctx.storage,
       INBOUND_DELIVERY_PREFIX,
     );
-    this.loadState();
+    this.ctx.blockConcurrencyWhile(async () => this.loadState());
   }
 
   private async loadState() {
+    if (this.loaded) return;
     const stored = await this.ctx.storage.get<GatewayState>("state");
     if (stored) {
       this.state = { ...this.state, ...stored };
     }
+    this.loaded = true;
   }
 
   private async saveState() {
@@ -140,14 +183,27 @@ export class DiscordGateway extends DurableObject<Env> {
   // ─────────────────────────────────────────────────────────
 
   async start(botToken: string, accountId?: string): Promise<void> {
+    await this.loadState();
+    const normalizedAccountId = accountId
+      ? assertAdapterAccountDurableObjectIdentity(
+          this.ctx.id.name,
+          accountId,
+          {
+            installationId: this.ctx.id.name
+              ? undefined
+              : LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
+            accountId: this.state.accountId,
+          },
+        ).accountId
+      : undefined;
     if (this.ws && this.state.connected) {
       console.log("[DiscordGateway] Already connected");
       return;
     }
 
     // Store the accountId name (not the hex DO id) for consistent inbound routing.
-    if (accountId) {
-      this.state.accountId = accountId;
+    if (normalizedAccountId) {
+      this.state.accountId = normalizedAccountId;
     }
     this.state.botToken = botToken;
     await this.saveState();
@@ -158,6 +214,7 @@ export class DiscordGateway extends DurableObject<Env> {
   }
 
   async stop(): Promise<void> {
+    await this.loadState();
     if (this.ws) {
       this.ws.close(1000, "Stopped by user");
       this.ws = null;
@@ -168,6 +225,10 @@ export class DiscordGateway extends DurableObject<Env> {
   }
 
   async getStatus(): Promise<AdapterAccountStatus> {
+    await this.loadState();
+    const extra: NonNullable<AdapterAccountStatus["extra"]> = {};
+    if (this.state.sessionId !== undefined) extra.sessionId = this.state.sessionId;
+    if (this.state.seq !== undefined) extra.seq = this.state.seq;
     return {
       accountId: this.getAccountId(),
       connected: this.state.connected,
@@ -175,10 +236,7 @@ export class DiscordGateway extends DurableObject<Env> {
       mode: "gateway",
       lastActivity: this.state.lastHeartbeatAck ?? undefined,
       error: this.state.lastError ?? undefined,
-      extra: {
-        sessionId: this.state.sessionId,
-        seq: this.state.seq,
-      },
+      extra,
     };
   }
 
@@ -203,6 +261,19 @@ export class DiscordGateway extends DurableObject<Env> {
   /** Get the account ID name (e.g., "default"), falling back to hex DO id */
   private getAccountId(): string {
     return this.state.accountId ?? this.ctx.id.toString();
+  }
+
+  private getInstallationContext(): AdapterInstallationContext {
+    const identity = resolveAdapterAccountDurableObjectIdentity(
+      this.ctx.id.name,
+      {
+        installationId: this.ctx.id.name
+          ? undefined
+          : LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
+        accountId: this.state.accountId,
+      },
+    );
+    return { installationId: identity.installationId };
   }
 
   // ─────────────────────────────────────────────────────────
@@ -290,14 +361,14 @@ export class DiscordGateway extends DurableObject<Env> {
 
     // Set up event handlers
     ws.addEventListener("message", (event) => {
-      this.ctx.waitUntil(this.handleMessage(event.data as string));
+      this.ctx.waitUntil(this.handleMessage(event.data));
     });
     ws.addEventListener("close", (event) => this.handleClose(event));
     ws.addEventListener("error", (event) => this.handleError(event));
   }
 
   private async handleMessage(rawData: string) {
-    const payload = JSON.parse(rawData);
+    const payload = parseDiscordGatewayFrame(rawData);
     const { op, t, d, s } = payload;
 
     // Track sequence number
@@ -307,7 +378,7 @@ export class DiscordGateway extends DurableObject<Env> {
 
     switch (op) {
       case OP.HELLO:
-        this.heartbeatInterval = d.heartbeat_interval;
+        this.heartbeatInterval = d.heartbeat_interval ?? 45_000;
         await this.scheduleHeartbeat();
         
         // IDENTIFY or RESUME
@@ -323,7 +394,7 @@ export class DiscordGateway extends DurableObject<Env> {
         break;
 
       case OP.DISPATCH:
-        await this.handleDispatch(t, d);
+        await this.handleDispatch(t ?? "", d);
         break;
 
       case OP.RECONNECT:
@@ -346,18 +417,19 @@ export class DiscordGateway extends DurableObject<Env> {
     await this.saveState();
   }
 
-  private async handleDispatch(eventType: string, data: unknown) {
-    const d = data as Record<string, unknown>;
+  private async handleDispatch(eventType: string, d: DiscordDispatchPayload) {
 
     switch (eventType) {
       case "READY":
-        this.state.sessionId = d.session_id as string;
-        this.state.resumeGatewayUrl = d.resume_gateway_url as string;
+        {
+        const ready = discordReadyPayloadSchema.parse(d);
+        this.state.sessionId = ready.session_id;
+        this.state.resumeGatewayUrl = ready.resume_gateway_url;
         this.state.connected = true;
         this.state.lastError = null;
         
         // Store bot user info for mention detection
-        const botUser = d.user as { id: string; username: string } | undefined;
+        const botUser = ready.user;
         if (botUser) {
           await this.ctx.storage.put("botUser", { id: botUser.id, username: botUser.username });
         }
@@ -366,16 +438,22 @@ export class DiscordGateway extends DurableObject<Env> {
         
         // Notify Gateway of status change via Service Binding RPC.
         const accountId = this.getAccountId();
+        const extra: NonNullable<AdapterAccountStatus["extra"]> = {};
+        if (botUser) {
+          extra.botUserId = botUser.id;
+          extra.botUsername = botUser.username;
+        }
         await this.notifyGatewayStatus({
           accountId,
           connected: true,
           authenticated: true,
           mode: "gateway",
-          extra: { botUserId: botUser?.id, botUsername: botUser?.username },
+          extra,
         });
         
         await this.saveState();
         break;
+        }
 
       case "RESUMED":
         this.state.connected = true;
@@ -392,18 +470,17 @@ export class DiscordGateway extends DurableObject<Env> {
     }
   }
 
-  private async handleMessageCreate(data: Record<string, unknown>): Promise<void> {
-    const author = data.author as { id: string; username: string; bot?: boolean; discriminator?: string } | undefined;
+  private async handleMessageCreate(data: DiscordMessagePayload): Promise<void> {
+    const author = data.author;
 
     // Ignore bot messages
     if (author?.bot) return;
 
-    const content = typeof data.content === "string" ? data.content : "";
-    const hasAttachments = Array.isArray(data.attachments) && data.attachments.length > 0;
+    const content = data.content ?? "";
+    const hasAttachments = (data.attachments?.length ?? 0) > 0;
     if (!content && !hasAttachments) return;
 
-    const messageId = data.id as string;
-    if (typeof messageId !== "string" || !messageId) return;
+    const messageId = data.id;
 
     await this.inboundDeliveries.enqueueAndArm(
       messageId,
@@ -417,7 +494,7 @@ export class DiscordGateway extends DurableObject<Env> {
     const attempt = await this.inboundDeliveries.attempt(
       messageId,
       async (serialized) => this.forwardMessageCreate(
-        JSON.parse(serialized) as Record<string, unknown>,
+        discordMessagePayloadSchema.parse(JSON.parse(serialized)),
       ),
       async (response) => this.sendMessage(response),
     );
@@ -439,26 +516,19 @@ export class DiscordGateway extends DurableObject<Env> {
   }
 
   private async forwardMessageCreate(
-    data: Record<string, unknown>,
+    data: DiscordMessagePayload,
   ): Promise<{ terminal: boolean; error?: string }> {
-    const author = data.author as { id: string; username: string; bot?: boolean; discriminator?: string } | undefined;
-    const content = typeof data.content === "string" ? data.content : "";
-    const guildId = data.guild_id as string | undefined;
-    const channelId = data.channel_id as string;
-    const messageId = data.id as string;
-    const messageReference = data.message_reference as
-      | { message_id?: string }
-      | undefined;
+    const author = data.author;
+    const content = data.content ?? "";
+    const guildId = data.guild_id;
+    const channelId = data.channel_id;
+    const messageId = data.id;
+    const messageReference = data.message_reference;
 
     // Check if bot was mentioned
-    const mentions = Array.isArray(data.mentions)
-      ? (data.mentions as Array<{ id?: string }>)
-      : [];
+    const mentions = data.mentions ?? [];
     const botUser = await this.ctx.storage.get<{ id: string }>("botUser");
-    const referencedMessage = data.referenced_message as
-      | { author?: { id?: string } }
-      | null
-      | undefined;
+    const referencedMessage = data.referenced_message;
     const botUserId = botUser?.id;
     const wasMentioned = Boolean(
       botUserId
@@ -486,15 +556,14 @@ export class DiscordGateway extends DurableObject<Env> {
       text: content || (media.media.length > 0 ? "[Media]" : "[Media unavailable]"),
       media: media.media.length > 0 ? media.media : undefined,
       replyToId:
-        messageReference && typeof messageReference.message_id === "string"
-          ? messageReference.message_id
-          : undefined,
-      timestamp: data.timestamp ? new Date(data.timestamp as string).getTime() : Date.now(),
+        messageReference?.message_id,
+      timestamp: data.timestamp ? new Date(data.timestamp).getTime() : Date.now(),
       wasMentioned,
     };
 
-    const result = await callAdapterGateway<AdapterInboundResult>(
+    const result = await callAdapterGateway(
       this.env.GATEWAY,
+      this.getInstallationContext(),
       "adapter.inbound",
       {
         adapter: "discord",
@@ -526,18 +595,23 @@ export class DiscordGateway extends DurableObject<Env> {
   private async notifyGatewayStatus(status: AdapterAccountStatus): Promise<void> {
     const accountId = this.getAccountId();
     try {
-      await callAdapterGateway(this.env.GATEWAY, "adapter.state.update", {
-        adapter: "discord",
-        accountId,
-        status,
-      });
+      await callAdapterGateway(
+        this.env.GATEWAY,
+        this.getInstallationContext(),
+        "adapter.state.update",
+        {
+          adapter: "discord",
+          accountId,
+          status,
+        },
+      );
     } catch (e) {
       console.error("[DiscordGateway] Failed to deliver status via RPC:", e);
     }
   }
 
   private async extractMediaAttachments(
-    data: Record<string, unknown>,
+    data: DiscordMessagePayload,
   ): Promise<AdapterMediaBundle> {
     if (!Array.isArray(data.attachments)) {
       return { media: [] };
@@ -562,36 +636,16 @@ export class DiscordGateway extends DurableObject<Env> {
     return await bundleAdapterMedia(media);
   }
 
-  private parseAttachment(raw: unknown): DiscordAttachment | null {
-    if (!raw || typeof raw !== "object") {
-      return null;
-    }
-
-    const value = raw as Record<string, unknown>;
-    const id = typeof value.id === "string" ? value.id : null;
-    const filename = typeof value.filename === "string" ? value.filename : null;
-    const url = typeof value.url === "string" ? value.url : undefined;
-    const proxyUrl =
-      typeof value.proxy_url === "string" ? value.proxy_url : undefined;
-
-    if (!id || !filename) {
-      return null;
-    }
-
+  private parseAttachment(value: z.infer<typeof discordAttachmentPayloadSchema>): DiscordAttachment {
+    const { id, filename, url, proxy_url: proxyUrl } = value;
     return {
       id,
       filename,
-      size: typeof value.size === "number" ? value.size : undefined,
+      size: value.size,
       url,
       proxyUrl,
-      contentType:
-        typeof value.content_type === "string"
-          ? value.content_type
-          : undefined,
-      duration:
-        typeof value.duration_secs === "number"
-          ? value.duration_secs
-          : undefined,
+      contentType: value.content_type,
+      duration: value.duration_secs,
     };
   }
 
@@ -670,7 +724,7 @@ export class DiscordGateway extends DurableObject<Env> {
 
   private inferMimeTypeFromFilename(filename: string): string {
     const extension = filename.split(".").pop()?.toLowerCase() || "";
-    const map: Record<string, string> = {
+    const map = {
       jpg: "image/jpeg",
       jpeg: "image/jpeg",
       png: "image/png",
@@ -685,8 +739,8 @@ export class DiscordGateway extends DurableObject<Env> {
       mp4: "video/mp4",
       mov: "video/quicktime",
       pdf: "application/pdf",
-    };
-    return map[extension] || "application/octet-stream";
+    } satisfies Record<string, string>;
+    return Object.entries(map).find(([key]) => key === extension)?.[1] || "application/octet-stream";
   }
 
   private async identify() {

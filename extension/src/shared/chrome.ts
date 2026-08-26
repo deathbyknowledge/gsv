@@ -35,7 +35,7 @@ export async function listTabs(): Promise<TabSummary[]> {
   const tabs = await chrome.tabs.query({});
   return tabs
     .filter((tab): tab is chrome.tabs.Tab & { id: number; windowId: number } =>
-      typeof tab.id === "number" && typeof tab.windowId === "number"
+      isNumber(tab.id) && isNumber(tab.windowId)
     )
     .map(toTabSummary)
     .sort((left, right) => left.windowId - right.windowId || left.index - right.index);
@@ -66,7 +66,7 @@ export async function createTab(url: string, active: boolean): Promise<TabSummar
 
 export async function focusTab(tabId: number): Promise<TabSummary> {
   const current = await chrome.tabs.get(tabId);
-  if (typeof current.windowId === "number") {
+  if (isNumber(current.windowId)) {
     await chrome.windows.update(current.windowId, { focused: true });
   }
   const tab = await chrome.tabs.update(tabId, { active: true });
@@ -87,26 +87,26 @@ export async function reloadTab(tabId: number): Promise<void> {
 export async function listWindows(): Promise<WindowSummary[]> {
   const windows = await chrome.windows.getAll({ populate: true });
   return windows
-    .filter((window): window is chrome.windows.Window & { id: number } => typeof window.id === "number")
+    .filter((window): window is chrome.windows.Window & { id: number } => isNumber(window.id))
     .map((window) => ({
       id: window.id,
       focused: window.focused ?? false,
       type: window.type ?? null,
       state: window.state ?? null,
-      left: typeof window.left === "number" ? window.left : null,
-      top: typeof window.top === "number" ? window.top : null,
-      width: typeof window.width === "number" ? window.width : null,
-      height: typeof window.height === "number" ? window.height : null,
+      left: isNumber(window.left) ? window.left : null,
+      top: isNumber(window.top) ? window.top : null,
+      width: isNumber(window.width) ? window.width : null,
+      height: isNumber(window.height) ? window.height : null,
       tabIds: (window.tabs ?? [])
         .map((tab) => tab.id)
-        .filter((id): id is number => typeof id === "number"),
+        .filter((id): id is number => isNumber(id)),
     }))
     .sort((left, right) => left.id - right.id);
 }
 
 export async function focusWindow(windowId: number): Promise<WindowSummary> {
   const window = await chrome.windows.update(windowId, { focused: true });
-  if (!window || typeof window.id !== "number") {
+  if (!window || !isNumber(window.id)) {
     throw new Error(`Unable to focus window ${windowId}`);
   }
   return {
@@ -114,10 +114,10 @@ export async function focusWindow(windowId: number): Promise<WindowSummary> {
     focused: window.focused ?? true,
     type: window.type ?? null,
     state: window.state ?? null,
-    left: typeof window.left === "number" ? window.left : null,
-    top: typeof window.top === "number" ? window.top : null,
-    width: typeof window.width === "number" ? window.width : null,
-    height: typeof window.height === "number" ? window.height : null,
+    left: isNumber(window.left) ? window.left : null,
+    top: isNumber(window.top) ? window.top : null,
+    width: isNumber(window.width) ? window.width : null,
+    height: isNumber(window.height) ? window.height : null,
     tabIds: [],
   };
 }
@@ -135,7 +135,7 @@ export async function captureTabPng(tabId: number): Promise<Uint8Array> {
     }
     return base64ToBytes(result.data);
   } finally {
-    await releaseDebugger(tabId).catch((error: unknown) => {
+    await releaseDebugger(tabId).catch((error: ExtensionBoundaryValue | Error) => {
       console.warn("GSV browser target failed to detach debugger", error);
     });
   }
@@ -143,14 +143,15 @@ export async function captureTabPng(tabId: number): Promise<Uint8Array> {
 
 export async function executeInTab<T>(
   tabId: number,
-  func: (...args: unknown[]) => T,
-  args: unknown[] = [],
+  func: (...args: ExtensionBoundaryValue[]) => T,
+  args: ExtensionBoundaryValue[] = [],
 ): Promise<T> {
   const results = await chrome.scripting.executeScript({
     target: { tabId },
     func,
     args,
   });
+  // SAFETY: executeScript returns the function's declared result type T.
   return results[0]?.result as T;
 }
 
@@ -172,7 +173,7 @@ export function toTabSummary(tab: chrome.tabs.Tab & { id: number; windowId: numb
 }
 
 function hasTabIdentity(tab: chrome.tabs.Tab): tab is chrome.tabs.Tab & { id: number; windowId: number } {
-  return typeof tab.id === "number" && typeof tab.windowId === "number";
+  return isNumber(tab.id) && isNumber(tab.windowId);
 }
 
 function base64ToBytes(value: string): Uint8Array {
@@ -183,3 +184,4 @@ function base64ToBytes(value: string): Uint8Array {
   }
   return bytes;
 }
+import { isNumber } from "./schemas";

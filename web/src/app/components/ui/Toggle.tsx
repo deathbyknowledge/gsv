@@ -17,11 +17,11 @@ export interface ToggleProps {
   onChange?: (on: boolean) => void;
 }
 
-const SIZE_CLASS: Record<ToggleSize, string> = {
+const SIZE_CLASS = {
   small: "gsv-tg-sm",
   medium: "gsv-tg-md",
   large: "gsv-tg-lg",
-};
+} satisfies Record<ToggleSize, string>;
 
 /** Toggle — ported from Toggle.dc.html. Self-toggling track + knob switch with
  *  optional label, field description and status row. */
@@ -68,7 +68,11 @@ export function Toggle(props: ToggleProps) {
             disabled={disabled}
             role="switch"
             type="checkbox"
-            onChange={(event) => handleChange((event.currentTarget as HTMLInputElement).checked)}
+            onChange={(event) => {
+              // SAFETY: Preact's checkbox change event exposes the HTML input as currentTarget.
+              // SAFETY: Component boundary provides the asserted DOM/test shape.
+              handleChange((event.currentTarget as HTMLInputElement).checked);
+            }}
           />
           <span class="gsv-tg-track">
             <span class="gsv-tg-knob" />

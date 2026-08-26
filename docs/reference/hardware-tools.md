@@ -191,7 +191,11 @@ original MCP tool name or the generated CodeMode function name.
 
 ## CLI Device Targets
 
-CLI devices run on user machines through `gsv device run` or the managed device service. They implement the same `fs.*` and `shell.exec` interface over WebSocket.
+The `gsvd` machine daemon runs on user machines directly or through the managed
+per-user service. `gsv daemon` installs and controls that service; the hidden
+`gsv device run` command remains only for old installed service definitions.
+The daemon implements the same `fs.*`, `shell.exec`, and `net.fetch` interface
+over WebSocket.
 
 Device filesystem semantics:
 
@@ -236,8 +240,8 @@ same `target` and `sessionId` routing rules as the direct `Shell`, `Read`,
 - Native filesystem: `gateway/src/drivers/native/fs.ts`
 - Native shell: `gateway/src/drivers/native/shell.ts`
 - Device registry: `gateway/src/kernel/devices.ts`
-- CLI driver bridge: `cli/src/main.rs`
-- CLI local tools: `cli/src/tools/`
+- CLI driver bridge: `host/apps/cli/src/main.rs`
+- Machine tools: `host/apps/machine/src/tools/`
 
 ## See also
 

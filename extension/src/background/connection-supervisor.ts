@@ -1,14 +1,15 @@
 import type {
   GsvClientStatus,
-  GsvDriverConnectOptions,
+  GsvEndpointConnectOptions,
 } from "@humansandmachines/gsv/client";
+import type { ConnectResult } from "@humansandmachines/gsv/protocol";
 import { configReady, type ExtensionConfig } from "../shared/config";
 
-type ConnectionDriver = {
+type ConnectionEndpoint = {
   client: {
     getStatus(): GsvClientStatus;
   };
-  connect(options: GsvDriverConnectOptions): Promise<unknown>;
+  connect(options: GsvEndpointConnectOptions): Promise<ConnectResult | void>;
   disconnect(reason?: string): void;
 };
 
@@ -32,7 +33,7 @@ const DEFAULT_RETRY_BASE_MS = 1_000;
 const DEFAULT_RETRY_MAX_MS = 30_000;
 
 export class ConnectionSupervisor {
-  private readonly driver: ConnectionDriver;
+  private readonly endpoint: ConnectionEndpoint;
   private readonly retryBaseMs: number;
   private readonly retryMaxMs: number;
   private readonly random: () => number;
@@ -46,8 +47,8 @@ export class ConnectionSupervisor {
   private retryAt: number | null = null;
   private connectAttempt: { generation: number; promise: Promise<void> } | null = null;
 
-  constructor(driver: ConnectionDriver, options: ConnectionSupervisorOptions = {}) {
-    this.driver = driver;
+  constructor(endpoint: ConnectionEndpoint, options: ConnectionSupervisorOptions = {}) {
+    this.endpoint = endpoint;
     this.retryBaseMs = options.retryBaseMs ?? DEFAULT_RETRY_BASE_MS;
     this.retryMaxMs = options.retryMaxMs ?? DEFAULT_RETRY_MAX_MS;
     this.random = options.random ?? Math.random;
@@ -70,8 +71,8 @@ export class ConnectionSupervisor {
     this.maintainConnection = false;
     this.retryAttempt = 0;
     this.clearRetry();
-    if (suppressed && this.driver.client.getStatus().state !== "disconnected") {
-      this.driver.disconnect(reason);
+    if (suppressed && this.endpoint.client.getStatus().state !== "disconnected") {
+      this.endpoint.disconnect(reason);
     }
   }
 
@@ -91,18 +92,18 @@ export class ConnectionSupervisor {
     this.maintainConnection = shouldMaintain;
     if (configChanged) {
       this.desired = { config: { ...config }, fingerprint };
-      if (this.driver.client.getStatus().state !== "disconnected") {
-        this.driver.disconnect("connection settings changed");
+      if (this.endpoint.client.getStatus().state !== "disconnected") {
+        this.endpoint.disconnect("connection settings changed");
       }
     }
 
     if (!shouldMaintain) {
-      if (this.driver.client.getStatus().state === "connecting") {
-        this.driver.disconnect("automatic reconnect disabled");
+      if (this.endpoint.client.getStatus().state === "connecting") {
+        this.endpoint.disconnect("automatic reconnect disabled");
       }
       return;
     }
-    if (this.driver.client.getStatus().state !== "disconnected") {
+    if (this.endpoint.client.getStatus().state !== "disconnected") {
       return;
     }
     this.clearRetry();
@@ -125,7 +126,7 @@ export class ConnectionSupervisor {
       generation !== this.generation
       || !this.maintainConnection
       || !this.desired
-      || this.driver.client.getStatus().state !== "disconnected"
+      || this.endpoint.client.getStatus().state !== "disconnected"
     ) {
       return;
     }
@@ -134,11 +135,11 @@ export class ConnectionSupervisor {
     }
 
     const { config } = this.desired;
-    const promise = this.driver.connect({
+    const promise = this.endpoint.connect({
       url: config.gatewayUrl,
       username: config.username,
       token: config.token,
-      deviceId: config.deviceId,
+      peerId: config.deviceId,
     }).then(() => undefined);
     this.connectAttempt = { generation, promise };
     try {

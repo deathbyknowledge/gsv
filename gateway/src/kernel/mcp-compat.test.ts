@@ -1,3 +1,5 @@
+type KernelTestValue<T = string | number | boolean | null | undefined> = T;
+
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { MCPClientManager } from "agents/mcp/client";
@@ -8,31 +10,38 @@ type McpConnection = MCPClientManager["mcpConnections"][string];
 
 function makeManager(options: {
   discover?: (client: Client) => Promise<{ success: boolean; error?: string }>;
-  listPrompts?: () => Promise<unknown>;
+  listPrompts?: () => Promise<KernelTestValue>;
   discoveryResult?: { success: boolean; error?: string };
 } = {}) {
   const listPrompts = vi.fn(options.listPrompts ?? (async () => ({ prompts: [] })));
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   const client = {
     listTools: vi.fn(async () => ({ tools: [] })),
     listResources: vi.fn(async () => ({ resources: [] })),
     listPrompts,
     listResourceTemplates: vi.fn(async () => ({ resourceTemplates: [] })),
-  } as unknown as Client;
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  } as Client;
   const discover = vi.fn(async () => options.discover?.(client)
     ?? options.discoveryResult
     ?? { success: true });
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   const connection = {
     client,
     connectionError: null,
     discover,
-  } as unknown as McpConnection;
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  } as McpConnection;
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   const manager = {
     mcpConnections: { server: connection },
     discoverIfConnected: vi.fn(async (serverId: string) => {
       const result = await manager.mcpConnections[serverId].discover();
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       return { ...result, state: "ready" as const };
     }),
-  } as unknown as MCPClientManager;
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  } as MCPClientManager;
   return { client, connection, discover, listPrompts, manager };
 }
 

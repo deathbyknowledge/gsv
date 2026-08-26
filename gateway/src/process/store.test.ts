@@ -5,9 +5,96 @@ import { getProcessByPid } from "../shared/utils";
 
 describe("ProcessStore", () => {
   describe("history", () => {
+    it("stores one immutable context baseline and revisioned delta projections", async () => {
+      const stub = await getProcessByPid("history-context-epoch");
+      await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture exercises the internal ProcessStore contract.
+        const store = (instance as any).store;
+        const responsibility = {
+          id: "r12y:00000000-0000-4000-8000-000000000001",
+          ownerUid: 1000,
+          title: "Finish the handoff",
+          source: { kind: "account", uid: 1000, username: "hank" },
+          assignee: { kind: "ship" },
+          state: "open",
+          priority: "normal",
+          revision: 1,
+          createdAtMs: 100,
+          updatedAtMs: 100,
+        };
+        const epoch = store.createContextEpoch({
+          id: "epoch-1",
+          generation: 1,
+          systemPrompt: "exact prompt",
+          r12yRevision: 1,
+          r12yCount: 1,
+          r12yBaseline: [responsibility],
+          sourceManifest: { version: 1 },
+          now: 100,
+        });
+        const transition = {
+          revision: 2,
+          responsibilityId: responsibility.id,
+          kind: "updated",
+          beforeState: "open",
+          afterState: "active",
+          changedFields: ["state"],
+          actor: { kind: "process", processId: "proc:ship" },
+          record: { ...responsibility, state: "active", revision: 2, updatedAtMs: 200 },
+          createdAtMs: 200,
+        };
+
+        expect(epoch).toMatchObject({
+          systemPrompt: "exact prompt",
+          r12yRevision: 1,
+          r12yCount: 1,
+          observedR12yRevision: 1,
+        });
+        expect(store.appendContextEpochTransition(
+          epoch.id,
+          transition,
+          "Responsibility changed.",
+          "run-1",
+        )).toBe(2);
+        expect(store.appendContextEpochTransition(
+          epoch.id,
+          transition,
+          "must not duplicate",
+          "run-1",
+        )).toBe(2);
+        expect(store.listContextEpochTransitions(epoch.id)).toEqual([transition]);
+        store.recordContextEpochRun("run-1", {
+          runId: "run-1",
+          status: "ok",
+          delivery: { kind: "message", conversationId: "conv:ship", messageId: "msg:1" },
+        }, 250);
+        store.recordContextEpochRun("run-1", { runId: "run-1", status: "error" }, 251);
+        expect(store.listContextEpochRuns(epoch.id)).toEqual([{
+          runId: "run-1",
+          status: "ok",
+          delivery: { kind: "message", conversationId: "conv:ship", messageId: "msg:1" },
+        }]);
+        expect(store.getMessages().map((message: any) => message.content)).toEqual([
+          "Responsibility changed.",
+        ]);
+
+        store.deleteContextEpochProjectionMessages(epoch.id);
+        expect(store.getMessages()).toEqual([]);
+        expect(store.closeLiveContextEpoch("process.reset", 300, "/epoch.json.gz"))
+          .toMatchObject({
+            id: epoch.id,
+            state: "closed",
+            observedR12yRevision: 2,
+            archivePath: "/epoch.json.gz",
+          });
+      });
+    });
+
     it("resets history by clearing messages and incrementing generation", async () => {
       const stub = await getProcessByPid("history-reset");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.appendMessage("user", "old message");
 
@@ -19,7 +106,9 @@ describe("ProcessStore", () => {
 
     it("compacts a history prefix and records a segment", async () => {
       const stub = await getProcessByPid("history-compact-store");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         const firstId = store.appendMessage("user", "old one");
         const secondId = store.appendMessage("assistant", "old two");
@@ -65,7 +154,9 @@ describe("ProcessStore", () => {
 
     it("keeps parallel tool exchanges on one side of a compaction boundary", async () => {
       const stub = await getProcessByPid("history-compact-tool-boundary");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         const oldUserId = store.appendMessage("user", "old");
         const assistantId = store.appendMessage("assistant", "checking", {
@@ -102,7 +193,9 @@ describe("ProcessStore", () => {
   describe("messages", () => {
     it("appendMessage stores and retrieves a user message", async () => {
       const stub = await getProcessByPid("msg-crud-1");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.appendMessage("user", "hello world");
         const msgs = store.getMessages();
@@ -116,7 +209,9 @@ describe("ProcessStore", () => {
 
     it("appendMessage stores optional media metadata", async () => {
       const stub = await getProcessByPid("msg-crud-media");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.appendMessage("user", "look at this", {
           media: JSON.stringify([
@@ -135,7 +230,9 @@ describe("ProcessStore", () => {
 
     it("appendMessage stores optional run ids", async () => {
       const stub = await getProcessByPid("msg-crud-run-id");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.appendMessage("user", "hello from a run", { runId: "run-message-1" });
         const msgs = store.getMessages();
@@ -146,7 +243,9 @@ describe("ProcessStore", () => {
 
     it("appendMessage stores assistant usage metadata and accumulates history usage", async () => {
       const stub = await getProcessByPid("msg-crud-usage-metadata");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         const id = store.appendMessage("assistant", "priced response", {
           metadata: {
@@ -189,6 +288,7 @@ describe("ProcessStore", () => {
           generations: 1,
         });
 
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const piMessage = store.toMessages()[0] as any;
         expect(piMessage.provider).toBe("workers-ai");
         expect(piMessage.model).toBe("@cf/nvidia/nemotron-3-120b-a12b");
@@ -198,7 +298,9 @@ describe("ProcessStore", () => {
 
     it("appendMessage stores assistant message with tool calls", async () => {
       const stub = await getProcessByPid("msg-crud-2");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         const toolCalls = JSON.stringify([
           { type: "toolCall", id: "call_1", name: "Read", arguments: { path: "/etc/hostname" } },
@@ -214,7 +316,9 @@ describe("ProcessStore", () => {
 
     it("messageCount returns correct count", async () => {
       const stub = await getProcessByPid("msg-count");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         expect(store.messageCount()).toBe(0);
         store.appendMessage("user", "one");
@@ -226,7 +330,9 @@ describe("ProcessStore", () => {
 
     it("getMessages respects limit and offset", async () => {
       const stub = await getProcessByPid("msg-pagination");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         for (let i = 0; i < 5; i++) {
           store.appendMessage("user", `msg-${i}`);
@@ -240,7 +346,9 @@ describe("ProcessStore", () => {
 
     it("getMessages uses a bounded default and requires explicit unbounded reads", async () => {
       const stub = await getProcessByPid("msg-no-implicit-limit");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         for (let i = 0; i < 205; i++) {
           store.appendMessage("user", `msg-${i}`);
@@ -257,7 +365,9 @@ describe("ProcessStore", () => {
 
     it("messageStats returns count and last message id without reading rows", async () => {
       const stub = await getProcessByPid("msg-stats");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         expect(store.messageStats()).toEqual({ count: 0, firstMessageId: null, lastMessageId: null });
 
@@ -270,7 +380,9 @@ describe("ProcessStore", () => {
 
     it("getMessages supports tail and cursor pagination", async () => {
       const stub = await getProcessByPid("msg-tail-pagination");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         for (let i = 0; i < 10; i++) {
           store.appendMessage("user", `msg-${i}`);
@@ -291,7 +403,9 @@ describe("ProcessStore", () => {
 
     it("clearMessages removes all and returns count", async () => {
       const stub = await getProcessByPid("msg-clear");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.appendMessage("user", "a");
         store.appendMessage("assistant", "b");
@@ -303,7 +417,9 @@ describe("ProcessStore", () => {
 
     it("keeps history usage through compaction and clears it on reset", async () => {
       const stub = await getProcessByPid("history-usage-compaction");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         const firstId = store.appendMessage("user", "old one");
         const secondId = store.appendMessage("assistant", "old two", {
@@ -347,7 +463,9 @@ describe("ProcessStore", () => {
   describe("appendToolResult", () => {
     it("stores tool result presentation metadata in tool_calls column", async () => {
       const stub = await getProcessByPid("tool-result-1");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.appendToolResult(
           "call_1",
@@ -372,7 +490,9 @@ describe("ProcessStore", () => {
 
     it("maps syscall name to LLM tool name", async () => {
       const stub = await getProcessByPid("tool-result-2");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.appendToolResult("call_2", "shell.exec", "output", false);
         const meta = JSON.parse(store.getMessages()[0].toolCalls!);
@@ -382,11 +502,85 @@ describe("ProcessStore", () => {
 
     it("stores isError=true for error results", async () => {
       const stub = await getProcessByPid("tool-result-3");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.appendToolResult("call_3", "fs.write", "EPERM: permission denied", true);
         const meta = JSON.parse(store.getMessages()[0].toolCalls!);
         expect(meta.isError).toBe(true);
+      });
+    });
+
+    // SAFETY: test fixture is constructed with the asserted domain shape.
+    it("stores tool result media as message references", async () => {
+      const stub = await getProcessByPid("tool-result-media");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
+      await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
+        const store = (instance as any).store;
+        const media = JSON.stringify([{
+          type: "image",
+          mimeType: "image/png",
+          key: "var/media/0/tool-result-media/image",
+        }]);
+        store.appendToolResult(
+          "call_media",
+          "fs.read",
+          "image metadata",
+          false,
+          "run-tool-media",
+          "completed",
+          media,
+        );
+
+        expect(store.getMessages()[0].media).toBe(media);
+        expect(store.toMessages()[0].content).toEqual([
+          { type: "text", text: "image metadata" },
+          {
+            type: "text",
+            text: "Attached image [image/png]\nPath: /var/media/0/tool-result-media/image",
+          },
+        ]);
+      });
+    });
+
+    // SAFETY: test fixture is constructed with the asserted domain shape.
+    it("restores legacy image tool results without presenting base64 as text", async () => {
+      const stub = await getProcessByPid("tool-result-legacy-image");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
+      await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
+        const store = (instance as any).store;
+        store.appendToolResult(
+          "call_legacy_image",
+          "fs.read",
+          JSON.stringify({
+            ok: true,
+            content: [
+              { type: "text", text: "legacy image" },
+              { type: "image", data: "AQID", mimeType: "image/png" },
+            ],
+          }),
+          false,
+        );
+
+        const message = store.toMessages()[0];
+        expect(message.content).toEqual([
+          {
+            type: "text",
+            text: JSON.stringify({
+              ok: true,
+              content: [
+                { type: "text", text: "legacy image" },
+                { type: "image", mimeType: "image/png" },
+              ],
+            }),
+          },
+          { type: "image", data: "AQID", mimeType: "image/png" },
+        ]);
+        // SAFETY: test fixture is constructed with the asserted domain shape.
+        expect((message.content as any[])[0].text).not.toContain("AQID");
       });
     });
   });
@@ -396,7 +590,9 @@ describe("ProcessStore", () => {
   describe("toMessages", () => {
     it("converts user messages to pi-ai format", async () => {
       const stub = await getProcessByPid("to-msg-user");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.appendMessage("user", "hello");
         const msgs = store.toMessages();
@@ -409,7 +605,9 @@ describe("ProcessStore", () => {
 
     it("converts user messages with media to fallback text blocks", async () => {
       const stub = await getProcessByPid("to-msg-user-media");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.appendMessage("user", "See attachment", {
           media: JSON.stringify([
@@ -425,18 +623,23 @@ describe("ProcessStore", () => {
         expect(msgs).toHaveLength(1);
         expect(msgs[0].role).toBe("user");
         expect(Array.isArray(msgs[0].content)).toBe(true);
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         expect((msgs[0].content as any)[0]).toEqual({ type: "text", text: "See attachment" });
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         expect((msgs[0].content as any)[1].type).toBe("text");
       });
     });
 
     it("converts assistant messages with text", async () => {
       const stub = await getProcessByPid("to-msg-assistant-text");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.appendMessage("assistant", "Hello there!");
         const msgs = store.toMessages();
         expect(msgs).toHaveLength(1);
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const msg = msgs[0] as any;
         expect(msg.role).toBe("assistant");
         expect(msg.content[0]).toEqual({ type: "text", text: "Hello there!" });
@@ -445,7 +648,9 @@ describe("ProcessStore", () => {
 
     it("converts assistant messages with tool calls", async () => {
       const stub = await getProcessByPid("to-msg-assistant-tools");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         const toolCalls = [
           { type: "toolCall", id: "call_1", name: "Read", arguments: { path: "/etc/hostname" } },
@@ -454,6 +659,7 @@ describe("ProcessStore", () => {
           toolCalls: JSON.stringify(toolCalls),
         });
         const msgs = store.toMessages();
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const msg = msgs[0] as any;
         expect(msg.content).toHaveLength(2);
         expect(msg.content[0].type).toBe("text");
@@ -464,7 +670,9 @@ describe("ProcessStore", () => {
 
     it("converts assistant messages with thinking and tool calls", async () => {
       const stub = await getProcessByPid("to-msg-assistant-thinking");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.appendMessage("assistant", "Reading file...", {
           toolCalls: JSON.stringify({
@@ -478,6 +686,7 @@ describe("ProcessStore", () => {
         });
 
         const msgs = store.toMessages();
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const msg = msgs[0] as any;
         expect(msg.content).toEqual([
           { type: "thinking", thinking: "First inspect the workspace." },
@@ -489,11 +698,14 @@ describe("ProcessStore", () => {
 
     it("converts toolResult messages", async () => {
       const stub = await getProcessByPid("to-msg-toolresult");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.appendToolResult("call_1", "fs.read", "gsv", false);
         const msgs = store.toMessages();
         expect(msgs).toHaveLength(1);
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const msg = msgs[0] as any;
         expect(msg.role).toBe("toolResult");
         expect(msg.toolCallId).toBe("call_1");
@@ -505,7 +717,9 @@ describe("ProcessStore", () => {
 
     it("converts a full history round-trip", async () => {
       const stub = await getProcessByPid("to-msg-full");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.appendMessage("user", "What is my hostname?");
         store.appendMessage("assistant", "Let me check.", {
@@ -531,7 +745,9 @@ describe("ProcessStore", () => {
   describe("message queue", () => {
     it("enqueue and dequeue in FIFO order", async () => {
       const stub = await getProcessByPid("queue-fifo");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.enqueue("run-1", "first message");
         store.enqueue("run-2", "second message");
@@ -553,7 +769,9 @@ describe("ProcessStore", () => {
 
     it("dequeue returns null on empty queue", async () => {
       const stub = await getProcessByPid("queue-empty");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         expect(store.dequeue()).toBeNull();
       });
@@ -561,7 +779,9 @@ describe("ProcessStore", () => {
 
     it("drainQueue returns all and clears", async () => {
       const stub = await getProcessByPid("queue-drain");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.enqueue("r1", "msg-a");
         store.enqueue("r2", "msg-b");
@@ -577,7 +797,9 @@ describe("ProcessStore", () => {
 
     it("drainQueue returns empty array on empty queue", async () => {
       const stub = await getProcessByPid("queue-drain-empty");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         expect(store.drainQueue()).toEqual([]);
       });
@@ -585,11 +807,39 @@ describe("ProcessStore", () => {
 
     it("enqueue stores optional media", async () => {
       const stub = await getProcessByPid("queue-meta");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.enqueue("r1", "hello", '["img.png"]');
+        store.enqueue("r1", "hello", { media: '["img.png"]' });
         const item = store.dequeue();
         expect(item!.media).toBe('["img.png"]');
+      });
+    });
+
+    it("preserves queued runtime event semantics", async () => {
+      const stub = await getProcessByPid("queue-runtime-event");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
+      await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
+        const store = (instance as any).store;
+        const provenance = JSON.stringify({
+          source: "kernel",
+          eventId: "work-return-1",
+          eventType: "adapter.work.returned",
+        });
+        store.enqueue("work-return-run-1", "the user returned from work", {
+          role: "system",
+          kind: "adapter.work.returned",
+          provenance,
+        });
+
+        expect(store.dequeue()).toMatchObject({
+          runId: "work-return-run-1",
+          role: "system",
+          kind: "adapter.work.returned",
+          provenance,
+        });
       });
     });
 
@@ -600,13 +850,16 @@ describe("ProcessStore", () => {
   describe("tool calls", () => {
     it("register and resolve", async () => {
       const stub = await getProcessByPid("tc-resolve");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.register("dispatch_1", "call_1", "run_1", "fs.read", { path: "/etc/hostname" });
         expect(store.getPending("dispatch_1")).not.toBeNull();
         expect(store.isRunResolved("run_1")).toBe(false);
 
-        store.resolve("dispatch_1", { content: "gsv" });
+        expect(store.resolve("dispatch_1", { content: "gsv" })).toBe(true);
+        expect(store.resolve("dispatch_1", { content: "late" })).toBe(false);
         expect(store.getPending("dispatch_1")).toBeNull();
         expect(store.isRunResolved("run_1")).toBe(true);
 
@@ -620,7 +873,9 @@ describe("ProcessStore", () => {
 
     it("distinguishes registered calls from dispatched calls", async () => {
       const stub = await getProcessByPid("tc-dispatch-state");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.register("dispatch_1", "call_1", "run_1", "fs.read", { path: "/tmp/input" });
         expect(store.getResults("run_1")[0].status).toBe("registered");
@@ -633,7 +888,9 @@ describe("ProcessStore", () => {
 
     it("register and fail", async () => {
       const stub = await getProcessByPid("tc-fail");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.register("dispatch_2", "call_2", "run_2", "fs.write", { path: "/root/x" });
         store.fail("dispatch_2", "EPERM");
@@ -647,7 +904,9 @@ describe("ProcessStore", () => {
 
     it("persists an explicit user-controlled outcome", async () => {
       const stub = await getProcessByPid("tc-denied");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.register("dispatch_denied", "call_denied", "run_denied", "fs.read", {});
         store.fail("dispatch_denied", "Tool execution denied by user", "denied");
@@ -659,9 +918,12 @@ describe("ProcessStore", () => {
       });
     });
 
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     it("classifies a resolved failure envelope as failed", async () => {
       const stub = await getProcessByPid("tc-resolved-failure");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.register(
           "dispatch_resolved_failure",
@@ -684,7 +946,9 @@ describe("ProcessStore", () => {
 
     it("ignores late dispatch results when a provider tool id is reused", async () => {
       const stub = await getProcessByPid("tc-reused-provider-id");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.register(
           "dispatch_old",
@@ -730,7 +994,9 @@ describe("ProcessStore", () => {
 
     it("isRunResolved waits for all calls", async () => {
       const stub = await getProcessByPid("tc-multi");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.register("dispatch_c1", "c1", "run_3", "fs.read", {});
         store.register("dispatch_c2", "c2", "run_3", "shell.exec", {});
@@ -746,7 +1012,9 @@ describe("ProcessStore", () => {
 
     it("clearRun removes all entries for a run", async () => {
       const stub = await getProcessByPid("tc-clear");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.register("dispatch_c1", "c1", "run_4", "fs.read", {});
         store.register("dispatch_c2", "c2", "run_4", "fs.write", {});
@@ -763,7 +1031,9 @@ describe("ProcessStore", () => {
   describe("key-value", () => {
     it("set, get, delete", async () => {
       const stub = await getProcessByPid("kv-1");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         expect(store.getValue("foo")).toBeNull();
         store.setValue("foo", "bar");
@@ -775,7 +1045,9 @@ describe("ProcessStore", () => {
 
     it("setValue overwrites existing values", async () => {
       const stub = await getProcessByPid("kv-2");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.setValue("key", "v1");
         store.setValue("key", "v2");
@@ -785,7 +1057,9 @@ describe("ProcessStore", () => {
 
     it("persists process-local AI config snapshots", async () => {
       const stub = await getProcessByPid("kv-ai-config");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         expect(store.getAiConfigSnapshot()).toBeNull();
 

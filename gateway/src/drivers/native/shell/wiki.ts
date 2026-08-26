@@ -3,9 +3,9 @@ import type { ExecResult } from "just-bash";
 import type {
   RepoApplyOp,
   RepoReadResult,
-  RepoSearchResult,
 } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../../../kernel/context";
+import { z } from "zod";
 import { resolveCallerOwnerUid } from "../../../kernel/context";
 import {
   handleRepoApply,
@@ -18,6 +18,11 @@ import { requireCommandCapability, requireShellOptionValue } from "./common";
 
 const WIKI_MANIFEST_PATH = "wiki.json";
 const WIKI_MANIFEST_KIND = "gsv.wiki";
+const wikiManifestSchema = z.object({
+  kind: z.literal(WIKI_MANIFEST_KIND),
+  id: z.string().optional(),
+  title: z.string().optional(),
+});
 
 type WikiCollection = {
   id: string;
@@ -37,6 +42,11 @@ type WikiPathRef = {
   collection: WikiCollection;
   localPath: string;
 };
+type WikiDbInitArgs = { db: string; title?: string };
+type WikiSearchArgs = { query: string; prefix?: string; limit: number };
+type WikiIngestArgs = { db: string; path?: string; sources: WikiSourceRef[]; summary?: string; title?: string };
+type WikiSourceAddArgs = { path: string; sources: WikiSourceRef[] };
+type WikiSearchRequest = { repo: string; query: string; prefix?: string };
 
 type WikiSearchMatch = {
   collection: WikiCollection;
@@ -149,7 +159,7 @@ async function listWikiCollections(ctx: KernelContext): Promise<WikiCollection[]
       title: manifest.title || titleFromPath(manifest.id || repo.name),
       repo: repo.repo,
       writable: repo.writable,
-      updatedAt: typeof repo.updatedAt === "number" ? repo.updatedAt : null,
+      updatedAt: repo.updatedAt ?? null,
     });
   }
 
@@ -166,7 +176,7 @@ async function readWikiManifest(
   try {
     result = await handleRepoRead({ repo, path: WIKI_MANIFEST_PATH }, ctx);
   } catch (error) {
-    if (isMissingPathError(error)) {
+    if (error instanceof Error && isMissingPathError(error)) {
       return null;
     }
     throw error;
@@ -175,13 +185,10 @@ async function readWikiManifest(
     return null;
   }
   try {
-    const parsed = JSON.parse(result.content) as Record<string, unknown>;
-    if (parsed.kind !== WIKI_MANIFEST_KIND) {
-      return null;
-    }
+    const parsed = wikiManifestSchema.parse(JSON.parse(result.content));
     return {
-      id: typeof parsed.id === "string" ? parsed.id.trim() : undefined,
-      title: typeof parsed.title === "string" ? parsed.title.trim() : undefined,
+      id: parsed.id?.trim(),
+      title: parsed.title?.trim(),
     };
   } catch {
     return null;
@@ -270,7 +277,7 @@ async function collectWikiPages(ctx: KernelContext, collection: WikiCollection):
     await readWikiText(ctx, collection, "index.md");
     pages.push("index.md");
   } catch (error) {
-    if (!isMissingPathError(error)) {
+    if (!isMissingPathError(error instanceof Error ? error : String(error))) {
       throw error;
     }
   }
@@ -292,7 +299,7 @@ async function collectMarkdownPages(
   try {
     result = await handleRepoRead({ repo: collection.repo, path: localPath }, ctx);
   } catch (error) {
-    if (isMissingPathError(error)) {
+    if (isMissingPathError(error instanceof Error ? error : String(error))) {
       return;
     }
     throw error;
@@ -330,11 +337,12 @@ async function searchWikis(
   const matches: WikiSearchMatch[] = [];
 
   for (const target of targets) {
-    const result = await handleRepoSearch({
+    const searchArgs: WikiSearchRequest = {
       repo: target.collection.repo,
       query,
-      ...(target.localPath ? { prefix: target.localPath } : {}),
-    }, ctx) as RepoSearchResult;
+    };
+    if (target.localPath) searchArgs.prefix = target.localPath;
+    const result = await handleRepoSearch(searchArgs, ctx);
     for (const match of result.matches) {
       matches.push({
         collection: target.collection,
@@ -480,7 +488,7 @@ async function addWikiSources(
   return `/src/repos/${ref.collection.repo}/${ref.localPath}`;
 }
 
-function parseWikiDbInitArgs(args: string[]): { db: string; title?: string } {
+function parseWikiDbInitArgs(args: string[]): WikiDbInitArgs {
   const db = String(args[0] ?? "").trim();
   if (!db) {
     throw new Error("Usage: wiki db init <wiki-id> [--title TITLE]");
@@ -495,14 +503,12 @@ function parseWikiDbInitArgs(args: string[]): { db: string; title?: string } {
     }
     throw new Error(`Unknown wiki db init argument: ${current}`);
   }
-  return { db, ...(title ? { title } : {}) };
+  const parsed: WikiDbInitArgs = { db };
+  if (title) parsed.title = title;
+  return parsed;
 }
 
-function parseWikiSearchArgs(args: string[], defaultLimit: number): {
-  query: string;
-  prefix?: string;
-  limit: number;
-} {
+function parseWikiSearchArgs(args: string[], defaultLimit: number): WikiSearchArgs {
   let prefix: string | undefined;
   let limit = defaultLimit;
   const queryParts: string[] = [];
@@ -531,16 +537,12 @@ function parseWikiSearchArgs(args: string[], defaultLimit: number): {
   if (!query) {
     throw new Error("Usage: wiki search <query> [--prefix WIKI_OR_PATH]");
   }
-  return { query, ...(prefix ? { prefix } : {}), limit };
+  const parsed: WikiSearchArgs = { query, limit };
+  if (prefix) parsed.prefix = prefix;
+  return parsed;
 }
 
-function parseWikiIngestArgs(args: string[]): {
-  db: string;
-  path?: string;
-  sources: WikiSourceRef[];
-  summary?: string;
-  title?: string;
-} {
+function parseWikiIngestArgs(args: string[]): WikiIngestArgs {
   const db = String(args[0] ?? "").trim();
   if (!db) {
     throw new Error("Usage: wiki ingest <wiki-id> --source <target:/path::title> [--title TITLE]");
@@ -577,16 +579,14 @@ function parseWikiIngestArgs(args: string[]): {
   if (sources.length === 0) {
     throw new Error("wiki ingest requires at least one --source");
   }
-  return {
-    db,
-    sources,
-    ...(path ? { path } : {}),
-    ...(summary ? { summary } : {}),
-    ...(title ? { title } : {}),
-  };
+  const parsed: WikiIngestArgs = { db, sources };
+  if (path) parsed.path = path;
+  if (summary) parsed.summary = summary;
+  if (title) parsed.title = title;
+  return parsed;
 }
 
-function parseWikiSourceAddArgs(args: string[]): { path: string; sources: WikiSourceRef[] } {
+function parseWikiSourceAddArgs(args: string[]): WikiSourceAddArgs {
   const path = String(args[0] ?? "").trim();
   if (!path) {
     throw new Error("Usage: wiki source add <wiki-id/path.md> --source <target:/path::title>");
@@ -615,11 +615,10 @@ function parseSourceRef(value: string): WikiSourceRef {
   if (!target || !path) {
     throw new Error(`invalid source reference: ${value}`);
   }
-  return {
-    target,
-    path,
-    ...(title?.trim() ? { title: title.trim() } : {}),
-  };
+  const source: WikiSourceRef = { target, path };
+  const trimmedTitle = title?.trim();
+  if (trimmedTitle) source.title = trimmedTitle;
+  return source;
 }
 
 function localPathForCollection(rawPath: string, collection: WikiCollection): string {
@@ -767,8 +766,8 @@ function slugify(value: string): string {
     .slice(0, 64);
 }
 
-function isMissingPathError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
+function isMissingPathError(error: Error | string): boolean {
+  const message = error instanceof Error ? error.message : error;
   return message.toLowerCase().includes("path not found");
 }
 

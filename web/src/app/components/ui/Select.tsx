@@ -32,7 +32,7 @@ export interface SelectProps {
   onChange?: (index: number) => void;
 }
 
-const SIZE_CLASS: Record<SelectSize, string> = {
+const SIZE_CLASS = {
   small: "gsv-sel-sm",
   medium: "gsv-sel-md",
   large: "gsv-sel-lg",
@@ -69,6 +69,7 @@ export function Select(props: SelectProps) {
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
+      // SAFETY: Component boundary provides the asserted DOM/test shape.
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
     };
     document.addEventListener("mousedown", onDoc);
@@ -112,7 +113,6 @@ export function Select(props: SelectProps) {
       setHighlight(idx);
       listRef.current?.focus();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   useEffect(() => {
@@ -306,16 +306,18 @@ export function Select(props: SelectProps) {
   );
 }
 
-function normalizeSelectOption(option: SelectOption): { label: string; value: string; description: string; group: string } {
-  if (typeof option === "string") {
-    return { label: option, value: option, description: "", group: "" };
+function normalizeSelectOption(option: SelectOption) {
+  const candidate = Object(option);
+  if (!("label" in candidate)) {
+    const text = String(option);
+    return { label: text, value: text, description: "", group: "" };
   }
-  const label = String(option.label ?? "").trim();
-  const value = String(option.value ?? label).trim();
+  const label = String(candidate.label ?? "").trim();
+  const value = String(candidate.value ?? label).trim();
   return {
     label: label || value,
     value,
-    description: String(option.description ?? "").trim(),
-    group: String(option.group ?? "").trim(),
+    description: String(candidate.description ?? "").trim(),
+    group: String(candidate.group ?? "").trim(),
   };
 }

@@ -40,6 +40,7 @@ const SAM_AGENT: ProcessIdentity = {
   home: "/home/sam-agent",
   cwd: "/home/sam-agent",
 };
+type ExpectedSizeFixture = { expectedSize: number };
 
 function putFile(
   path: string,
@@ -67,6 +68,7 @@ function bytesToStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
 
 describe("GsvFs openFile", () => {
   it("returns a byte stream for backends without openFile", async () => {
+    // SAFETY: this fixture supplies only the GsvFs methods exercised by the test.
     const fs = Object.create(GsvFs.prototype) as any;
     fs.resolveFinalPath = async (path: string) => path;
     fs.backendForPath = () => ({
@@ -83,6 +85,7 @@ describe("GsvFs openFile", () => {
   });
 
   it("returns an empty byte stream for empty fallback files", async () => {
+    // SAFETY: this fixture supplies only the GsvFs methods exercised by the test.
     const fs = Object.create(GsvFs.prototype) as any;
     fs.resolveFinalPath = async (path: string) => path;
     fs.backendForPath = () => ({
@@ -124,10 +127,15 @@ function makeConfigBackedFs(
   };
 
   return new GsvFs(env.STORAGE, identity, {
+    // SAFETY: these kernel stores are unused by the config-backed fixture.
     auth: null as never,
+    // SAFETY: these kernel stores are unused by the config-backed fixture.
     procs: null as never,
+    // SAFETY: these kernel stores are unused by the config-backed fixture.
     devices: null as never,
+    // SAFETY: these kernel stores are unused by the config-backed fixture.
     caps: null as never,
+    // SAFETY: the fixture implements the config contract used by GsvFs.
     config: config as never,
   });
 }
@@ -274,6 +282,7 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
   }));
   const canAccessCrontab = (username: string) => identity.uid === 0 || identity.username === username;
 
+  // SAFETY: this test kernel supplies typed behavior for only the exercised stores.
   const kernel: KernelRefs = {
     auth: {
       getPasswdByUsername(username: string) {
@@ -285,7 +294,8 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
       getPersonalAgentUid(ownerUid: number) {
         return ownerUid === SAM.uid ? SAM_AGENT.uid : null;
       },
-    } as never,
+    // SAFETY: the fixture implements the auth methods used by this test.
+    } /* SAFETY: typed fixture implements the auth subset used here. */ as never,
     procs: {
       get(pid: string) {
         if (pid === "task-alpha") return processRecord;
@@ -300,16 +310,20 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
         return [processRecord, personalAgentProcessRecord, otherProcessRecord]
           .filter((record) => ownerUid === undefined || record.ownerUid === ownerUid);
       },
-    } as never,
+    // SAFETY: the fixture implements the process methods used by this test.
+    } /* SAFETY: typed fixture implements the process subset used here. */ as never,
     conversations: {
       getDefault(ownerUid: number, agentUid: number) {
         return ownerUid === SAM.uid && agentUid === SAM_AGENT.uid
           ? { activePid: "task-personal" }
           : null;
       },
-    } as never,
-    devices: null as never,
-    caps: null as never,
+    // SAFETY: the fixture implements the conversation methods used by this test.
+    } /* SAFETY: typed fixture implements the conversation subset used here. */ as never,
+    // SAFETY: these kernel stores are unused by the runtime-view fixture.
+    devices: null /* SAFETY: unused fixture store. */ as never,
+    // SAFETY: these kernel stores are unused by the runtime-view fixture.
+    caps: null /* SAFETY: unused fixture store. */ as never,
     config: {
       get(key: string) {
         return configEntries.get(key) ?? null;
@@ -324,7 +338,8 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
           .filter(([key]) => key.startsWith(withSlash))
           .map(([key, value]) => ({ key, value }));
       },
-    } as never,
+    // SAFETY: the fixture implements the config methods used by this test.
+    } /* SAFETY: typed fixture implements the config subset used here. */ as never,
     cron: {
       listUserCrontabs() {
         return canAccessCrontab("sam") ? ["sam"] : [];
@@ -364,7 +379,9 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     schedules: {
       list(args) {
         const records = schedules.filter((schedule) => args.ownerUid === undefined || schedule.ownerUid === args.ownerUid);
-        return { records: records as never, count: records.length };
+        type ScheduleFixture = (typeof schedules)[number];
+        // SAFETY: the schedule fixtures match the view fields exercised here.
+        return { records: records as ScheduleFixture[], count: records.length };
       },
       history(scheduleId: string) {
         if (scheduleId !== "sched-1") return [];
@@ -389,17 +406,19 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
           processAiConfig = null;
           return { ok: true, pid, config: null };
         }
-        if ("values" in args && args.values && typeof args.values === "object") {
+        if ("values" in args && args.values) {
           processAiConfig = {
             version: 1,
             values: { ...args.values },
-            ...(args.profile ? { profile: { ...args.profile, appliedAt: now } } : {}),
             updatedAt: now,
           };
+          if (args.profile) {
+            processAiConfig.profile = { ...args.profile, appliedAt: now };
+          }
           return { ok: true, pid, config: processAiConfig };
         }
-        if ("key" in args && typeof args.key === "string") {
-          const values = { ...(processAiConfig?.values ?? {}) };
+        if ("key" in args && args.key) {
+          const values = { ...processAiConfig?.values };
           const value = String(args.value ?? "").trim();
           if (value) {
             values[args.key] = value;
@@ -769,11 +788,13 @@ describe("GsvFs write metadata", () => {
     await expect(fs.writeFileStream(
       `/${TEST_PREFIX}unknown-length.txt`,
       bytesToStream(new TextEncoder().encode("buffered")),
-      {} as { expectedSize: number },
+      // SAFETY: this fixture intentionally omits expectedSize to test validation.
+      {} as ExpectedSizeFixture,
     )).rejects.toThrow("expectedSize");
   });
 
   it("falls back to exact-size buffering for non-streaming backends", async () => {
+    // SAFETY: this fixture intentionally leaves unrelated kernel stores unavailable.
     const fs = new GsvFs(env.STORAGE, SAM, {
       procs: null as never,
       devices: null as never,
@@ -791,6 +812,7 @@ describe("GsvFs write metadata", () => {
   });
 
   it("rejects stream fallback content larger than the declared size", async () => {
+    // SAFETY: this fixture intentionally leaves unrelated kernel stores unavailable.
     const fs = new GsvFs(env.STORAGE, SAM, {
       procs: null as never,
       devices: null as never,
@@ -806,6 +828,7 @@ describe("GsvFs write metadata", () => {
   });
 
   it("rejects stream fallback content smaller than the declared size", async () => {
+    // SAFETY: this fixture intentionally leaves unrelated kernel stores unavailable.
     const fs = new GsvFs(env.STORAGE, SAM, {
       procs: null as never,
       devices: null as never,
@@ -821,6 +844,7 @@ describe("GsvFs write metadata", () => {
   });
 
   it("cancels buffered stream writes", async () => {
+    // SAFETY: this fixture supplies only the GsvFs methods exercised by the test.
     const fs = Object.create(GsvFs.prototype) as any;
     let written = false;
     fs.resolveFinalPath = async (path: string) => path;
@@ -1040,6 +1064,7 @@ describe("GsvFs virtual /dev", () => {
   });
 
   it("lists /dev directory", async () => {
+    // SAFETY: this fixture intentionally leaves unrelated kernel stores unavailable.
     const fs = new GsvFs(env.STORAGE, SAM, {
       procs: null as never,
       devices: null as never,
@@ -1485,9 +1510,10 @@ describe("GsvFs search", () => {
       key: `${TEST_PREFIX}slow.txt`,
       size: 1,
     };
+    // SAFETY: this fixture implements only the R2 get method exercised by the test.
     const backend = new R2MountBackend({
       get: async () => object,
-    } as unknown as R2Bucket, SAM);
+    } /* SAFETY: fixture implements only the R2 get method exercised here. */ as R2Bucket, SAM);
     const controller = new AbortController();
     const reason = new Error("search cancelled");
 

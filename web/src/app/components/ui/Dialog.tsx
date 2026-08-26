@@ -65,12 +65,14 @@ export function Dialog({
         const root = rootRef.current;
         if (!root) return;
         // Only enabled, visible controls are real Tab stops — the browser skips
+        // SAFETY: Component boundary provides the asserted DOM/test shape.
         // disabled/hidden ones, so including them as `first`/`last` would let the
         // wrap-around miss and focus escape behind the modal.
         const focusable = Array.from(
           root.querySelectorAll<HTMLElement>(
             'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
           ),
+        // SAFETY: Component boundary provides the asserted DOM/test shape.
         ).filter((el) => !(el as HTMLButtonElement).disabled && el.offsetParent !== null);
         if (focusable.length === 0) return;
         const first = focusable[0];

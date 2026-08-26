@@ -6,9 +6,11 @@ import {
 } from "../sessionDomain";
 import { Tooltip } from "../../../components/ui/Tooltip";
 import { InfoTip } from "../../../components/ui/InfoTip";
+import { readInstallationOnboardingToken } from "../../../services/session/installationOnboarding";
 import "./ReviewStage.css";
 
 export function ReviewStage({ draft }: { draft: OnboardingDraft }) {
+  const managedInferenceIncluded = readInstallationOnboardingToken() !== null;
   const username = draft.account.username.trim();
   const agentName = draft.account.agentName.trim();
   const accountSummary = agentName
@@ -48,8 +50,8 @@ export function ReviewStage({ draft }: { draft: OnboardingDraft }) {
         </div>
         <div class="review-row">
           <span class="review-row-k gsv-label">AI</span>
-          <Tooltip text="Initial AI service and model behavior." position="left">
-            <span class="review-row-v gsv-listitem" data-setup-summary-ai>{buildAiSummary(draft)}</span>
+          <Tooltip text="Initial AI service behavior." position="left">
+            <span class="review-row-v gsv-listitem" data-setup-summary-ai>{buildAiSummary(draft, managedInferenceIncluded)}</span>
           </Tooltip>
         </div>
         <div class="review-row">

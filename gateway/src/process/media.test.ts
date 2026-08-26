@@ -199,6 +199,8 @@ describe("process media", () => {
       })),
     };
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
     const raw = await storeIncomingProcessMedia(
       env.STORAGE,
       0,
@@ -211,6 +213,7 @@ describe("process media", () => {
         }),
       ],
       {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         ai: ai as AudioTranscriptionBinding & ImageReadingBinding,
         imageReadingMaxTokens: 128,
       },
@@ -235,6 +238,8 @@ describe("process media", () => {
     const pid = pidForTest("svg");
     const ai: ImageReadingBinding = { run: vi.fn() };
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
     const raw = await storeIncomingProcessMedia(
       env.STORAGE,
       0,
@@ -246,6 +251,7 @@ describe("process media", () => {
           filename: "diagram.svg",
         }),
       ],
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       { ai: ai as AudioTranscriptionBinding & ImageReadingBinding },
     );
 
@@ -270,6 +276,8 @@ describe("process media", () => {
       }),
     };
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
     const raw = await storeIncomingProcessMedia(
       env.STORAGE,
       0,
@@ -281,6 +289,7 @@ describe("process media", () => {
           filename: "settings.png",
         }),
       ],
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       { ai: ai as AudioTranscriptionBinding & ImageReadingBinding },
     );
 

@@ -15,6 +15,7 @@
 import {
   GSV_CONTEXT_DISCOVERY,
   GSV_PROCESS_ORCHESTRATION,
+  GSV_RESPONSIBILITY_CONTEXT,
   GSV_RUNTIME_CONTEXT,
   GSV_RUNTIME_FACTS,
   GSV_TARGET_CONTEXT,
@@ -25,6 +26,7 @@ import {
   DEFAULT_WORKERS_AI_FALLBACK_PROFILE_NAME,
   DEFAULT_WORKERS_AI_MODEL,
 } from "../inference/default-models";
+import { MAIL_SEND } from "../syscalls/constants";
 
 // =============================================================================
 // System config defaults — every field documented.
@@ -40,8 +42,17 @@ const WORKER_TOOL_APPROVAL_POLICY = JSON.stringify({
     { match: "net.fetch", action: "ask" },
     { match: "fs.delete", action: "ask" },
     { match: "sys.mcp.call", action: "ask" },
+    { match: MAIL_SEND, action: "ask" },
   ],
 });
+
+type SystemConfigDefaults = { readonly [key: string]: string };
+
+function defineSystemConfigDefaults<T extends SystemConfigDefaults>(
+  defaults: T,
+): SystemConfigDefaults & T {
+  return defaults;
+}
 
 const DEFAULT_ROOT_MODEL_PROFILES = JSON.stringify({
   version: 1,
@@ -62,7 +73,7 @@ const DEFAULT_ROOT_MODEL_PROFILES = JSON.stringify({
   }],
 });
 
-export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
+export const SYSTEM_CONFIG_DEFAULTS = defineSystemConfigDefaults({
   // -- AI / LLM ---------------------------------------------------------------
   // The LLM provider to use (workers-ai, anthropic, openai, google, mistral, etc.)
   "config/ai/provider": "workers-ai",
@@ -89,6 +100,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/context.d/00-runtime.md": GSV_RUNTIME_FACTS,
   "config/ai/context.d/01-gsv.md": GSV_RUNTIME_CONTEXT,
   "config/ai/context.d/05-targets.md": GSV_TARGET_CONTEXT,
+  "config/ai/context.d/10-responsibilities.md": GSV_RESPONSIBILITY_CONTEXT,
   "config/ai/context.d/20-discovery.md": GSV_CONTEXT_DISCOVERY,
   "config/ai/context.d/30-process-orchestration.md": GSV_PROCESS_ORCHESTRATION,
   // Prompt-visible skill enumeration. Detailed skill discovery remains available
@@ -144,7 +156,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   // with a default action and ordered rules matching exact syscalls or domain
   // wildcards. Per-account overrides live under `users/<uid>/ai/tools/approval`.
   "config/ai/tools/approval": WORKER_TOOL_APPROVAL_POLICY,
-};
+});
 
 // Per-user config keys follow the same structure under "users/{uid}/ai/*".
 // e.g. "users/1000/ai/provider" overrides "config/ai/provider" for uid 1000.

@@ -218,7 +218,7 @@ export function createPresenceRecorder(options: PresenceRecorderOptions): Presen
       ambientAnalyser = ambientContext.createAnalyser();
       ambientAnalyser.fftSize = 2048;
       ambientSource.connect(ambientAnalyser);
-      ambientSamples = new Float32Array(ambientAnalyser.fftSize) as Float32Array<ArrayBuffer>;
+      ambientSamples = new Float32Array(ambientAnalyser.fftSize);
 
       ambientTimer = window.setInterval(tickAmbientVad, AMBIENT_SAMPLE_MS);
       options.setNote("Mind is listening");

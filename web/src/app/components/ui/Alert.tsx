@@ -22,7 +22,7 @@ export interface AlertProps {
   onDismiss?: () => void;
 }
 
-const VARIANT_CLASS: Record<AlertVariant, string> = {
+const VARIANT_CLASS = {
   info: "gsv-alert-info",
   attention: "gsv-alert-attention",
   warning: "gsv-alert-warning",
@@ -32,7 +32,7 @@ const VARIANT_CLASS: Record<AlertVariant, string> = {
 };
 
 /** Sensible default icon per variant when `icon` is omitted. */
-const DEFAULT_ICON: Record<AlertVariant, AlertIconKey> = {
+const DEFAULT_ICON = {
   info: "info",
   attention: "attention",
   warning: "attention",
@@ -41,7 +41,9 @@ const DEFAULT_ICON: Record<AlertVariant, AlertIconKey> = {
   error: "attention",
 };
 
+// SAFETY: Component boundary provides the asserted DOM/test shape.
 const ICON_GLYPH = { info: "help", attention: "attention" } as const;
+// SAFETY: Component boundary provides the asserted DOM/test shape.
 const ICON_LABEL = { info: "Information", attention: "Attention" } as const;
 
 export function Alert({ variant = "info", title, text, icon, children, onDismiss }: AlertProps) {

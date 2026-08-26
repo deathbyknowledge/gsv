@@ -46,6 +46,7 @@ function recorderOptions() {
     ambientIdleNote: () => "Listening",
     setPanelOpen: () => {},
     setNote: () => {},
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
     getState: () => "idle" as const,
     setState: () => {},
     transcribe: async () => ({ text: "ok", provider: "test", model: "test" }),
@@ -74,6 +75,11 @@ afterEach(() => {
 });
 
 describe("presence recorder permission races", () => {
+  function fakeStream(stop: () => void = vi.fn()): MediaStream {
+    // SAFETY: This focused fixture implements the only MediaStream capability under test.
+    return { getTracks: () => [{ stop }] } as MediaStream;
+  }
+
   it("discards a push stream granted after recording was cancelled", async () => {
     const request = deferred<MediaStream>();
     const stop = vi.fn();
@@ -82,7 +88,7 @@ describe("presence recorder permission races", () => {
 
     const starting = recorder.startPushRecording();
     recorder.cleanupPushRecorder();
-    request.resolve({ getTracks: () => [{ stop }] } as unknown as MediaStream);
+    request.resolve(fakeStream(stop));
     await starting;
 
     expect(stop).toHaveBeenCalledOnce();
@@ -91,7 +97,7 @@ describe("presence recorder permission races", () => {
 
   it("stops a granted stream when MediaRecorder construction fails", async () => {
     const stop = vi.fn();
-    const stream = { getTracks: () => [{ stop }] } as unknown as MediaStream;
+    const stream = fakeStream(stop);
     installMediaGlobals(Promise.resolve(stream));
     vi.stubGlobal("MediaRecorder", class {
       static isTypeSupported() {
@@ -111,7 +117,7 @@ describe("presence recorder permission races", () => {
   });
 
   it("detaches a queued push stop handler during cleanup", async () => {
-    const stream = { getTracks: () => [{ stop: vi.fn() }] } as unknown as MediaStream;
+    const stream = fakeStream();
     installMediaGlobals(Promise.resolve(stream));
     const recorder = createPresenceRecorder(recorderOptions());
 
@@ -134,7 +140,7 @@ describe("presence recorder permission races", () => {
 
     const starting = recorder.startAmbient();
     recorder.stopAmbient();
-    request.resolve({ getTracks: () => [{ stop }] } as unknown as MediaStream);
+    request.resolve(fakeStream(stop));
     await starting;
 
     expect(stop).toHaveBeenCalledOnce();
@@ -142,7 +148,7 @@ describe("presence recorder permission races", () => {
   });
 
   it("suppresses a queued ambient stop event when listening stops", async () => {
-    const stream = { getTracks: () => [{ stop: vi.fn() }] } as unknown as MediaStream;
+    const stream = fakeStream();
     let tick: (() => void) | undefined;
     const onAmbientSegment = vi.fn();
     installMediaGlobals(Promise.resolve(stream));

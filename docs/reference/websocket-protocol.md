@@ -4,7 +4,7 @@ Gateway control requests, responses, and signals use JSON text frames over
 `GET /ws`. Requests and successful responses may attach a byte stream carried
 by binary frames.
 
-The current protocol is syscall-based:
+Protocol version 3 is peer- and syscall-based:
 
 - requests carry a syscall name in `call`
 - responses carry success data in `data`
@@ -12,10 +12,14 @@ The current protocol is syscall-based:
 
 The source of truth is:
 
+- `packages/gsv/src/protocol/wire-frame.ts`
 - `gateway/src/protocol/frames.ts`
+- `gateway/src/protocol/decode-wire-frame.ts`
+- `tools/protocol/generate-gateway-wire-validator.mjs`
 - `packages/gsv/src/protocol/request-cancel.ts`
 - `packages/gsv/src/protocol/adapters.ts`
 - `packages/gsv/src/protocol/adapter-media-body.ts`
+- `packages/gsv/src/protocol/syscalls/proc.ts`
 - `packages/gsv/src/protocol/syscalls/system.ts`
 - `gateway/src/kernel/connect.ts`
 - `gateway/src/kernel/dispatch.ts`
@@ -42,7 +46,7 @@ For syscall arguments, result shapes, and domain behavior, see [Syscalls Referen
 | `type` | `"req"` | Yes | Request discriminator |
 | `id` | `string` | Yes | Request/response correlation ID |
 | `call` | `string` | Yes | Syscall name |
-| `args` | `object` | No | Syscall arguments |
+| `args` | `object` | Yes | Arguments for the exact syscall named by `call` |
 | `body` | `BodyDescriptor` | No | Attached request byte stream |
 
 ### Response Frame
@@ -77,7 +81,7 @@ Error:
 | `type` | `"res"` | Yes | Response discriminator |
 | `id` | `string` | Yes | Matching request ID |
 | `ok` | `boolean` | Yes | Success flag |
-| `data` | `unknown` | No | Present when `ok` is `true` |
+| `data` | JSON value | No | Present when `ok` is `true`; must match the routed syscall result |
 | `error` | `ErrorShape` | No | Present when `ok` is `false` |
 | `body` | `BodyDescriptor` | No | Attached byte stream; only valid when `ok` is `true` |
 
@@ -87,7 +91,15 @@ Error:
 {
   "type": "sig",
   "signal": "proc.run.finished",
-  "payload": {},
+  "payload": {
+    "pid": "proc-id",
+    "runId": "run-id",
+    "status": "ok",
+    "result": { "text": "completed work" },
+    "delivery": { "kind": "none" },
+    "queuedCount": 0,
+    "timestamp": 1710000000000
+  },
   "seq": 1
 }
 ```
@@ -96,7 +108,7 @@ Error:
 |---|---|---|---|
 | `type` | `"sig"` | Yes | Signal discriminator |
 | `signal` | `string` | Yes | Signal/event name |
-| `payload` | `unknown` | No | Signal payload |
+| `payload` | JSON value | No | Signal payload |
 | `seq` | `number` | No | Optional sequence number |
 
 ### ErrorShape
@@ -114,7 +126,7 @@ Error:
 |---|---|---|---|
 | `code` | `number` | Yes | Error code |
 | `message` | `string` | Yes | Human-readable message |
-| `details` | `unknown` | No | Structured error context |
+| `details` | JSON value | No | Structured error context |
 | `retryable` | `boolean` | No | Retry hint |
 
 ---
@@ -135,11 +147,21 @@ The gateway rejects setup-mode connections with error code `425` and details:
 }
 ```
 
+Managed first boot is different: a provisioning hostname may serve the desktop
+and accept its WebSocket, but normal `sys.connect` returns `503` until setup is
+complete. `sys.setup` and `sys.setup.assist` must include the one-time
+`onboardingToken` issued for that exact installation. The Kernel removes the
+token before invoking the ordinary setup implementation and activates routing
+only after setup succeeds.
+
 ---
 
 ## `sys.connect`
 
-`sys.connect` is the handshake syscall. It authenticates the caller, assigns identity, registers drivers or services, and returns the allowed syscall/signal surface.
+`sys.connect` is the handshake syscall. It authenticates the principal, binds a
+live peer session, and returns the Kernel-authoritative call, signal, and
+implementation grants. The request does not contain a role. Principal kind is
+derived from the password or token used to authenticate.
 
 ### Request
 
@@ -149,12 +171,12 @@ The gateway rejects setup-mode connections with error code `425` and details:
   "id": "uuid",
   "call": "sys.connect",
   "args": {
-    "protocol": 2,
-    "client": {
-      "id": "client-123",
+    "protocol": 3,
+    "peer": {
+      "id": "desktop-alice",
       "version": "0.1.0",
       "platform": "linux",
-      "role": "user"
+      "implements": ["fs.*", "shell.exec"]
     },
     "auth": {
       "username": "alice",
@@ -166,16 +188,19 @@ The gateway rejects setup-mode connections with error code `425` and details:
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `protocol` | `number` | Yes | Must currently be `2` |
-| `client.id` | `string` | Yes | Client identifier |
-| `client.version` | `string` | Yes | Client version |
-| `client.platform` | `string` | Yes | Platform string |
-| `client.role` | `"user" \| "driver" \| "service"` | Yes | Connection role |
-| `client.channel` | `string` | No | Required for `service` role |
-| `driver.implements` | `string[]` | No | Required for `driver` role |
+| `protocol` | `number` | Yes | Must currently be `3` |
+| `peer.id` | `string` | Yes | Stable application, machine, or service identity |
+| `peer.version` | `string` | Yes | Peer version |
+| `peer.platform` | `string` | Yes | Platform string |
+| `peer.implements` | `string[]` | No | Requested reverse syscall implementation patterns. Machine credentials require at least one. |
 | `auth.username` | `string` | No | Required when authenticating |
 | `auth.password` | `string` | No | User-password auth |
-| `auth.token` | `string` | No | Token auth. Required for machine connections. |
+| `auth.token` | `string` | No | User, node, or service token auth |
+
+Password and token are mutually exclusive. A node token is bound to the exact
+`peer.id` recorded when the token was created. `peer.implements` is an
+advertisement, not authority: the Kernel validates it and independently derives
+the returned grants.
 
 ### Response
 
@@ -185,56 +210,79 @@ The gateway rejects setup-mode connections with error code `425` and details:
   "id": "uuid",
   "ok": true,
   "data": {
-    "protocol": 2,
+    "protocol": 3,
     "server": {
       "version": "0.4.0",
       "release": "dev",
+      "features": ["ai.provider.gsv"],
       "connectionId": "conn-123"
     },
-    "identity": {
-      "role": "user",
-      "process": {
-        "uid": 1000,
-        "gid": 1000,
-        "gids": [1000],
-        "username": "alice",
-        "home": "/home/alice",
-        "cwd": "/home/alice",
-        "workspaceId": null
+    "peer": {
+      "id": "desktop-alice",
+      "sessionId": "conn-123",
+      "principal": {
+        "kind": "human",
+        "account": {
+          "uid": 1000,
+          "gid": 1000,
+          "gids": [1000, 100],
+          "username": "alice",
+          "home": "/home/alice",
+          "cwd": "/home/alice"
+        }
       },
-      "capabilities": ["fs.*", "proc.*"]
-    },
-    "syscalls": ["fs.read", "proc.send"],
-    "signals": ["proc.run.output", "proc.run.finished"]
+      "grant": {
+        "calls": ["fs.*", "proc.*"],
+        "signals": ["proc.changed", "message.committed", "peer.pong"],
+        "implements": ["fs.*", "shell.exec"]
+      }
+    }
   }
 }
 ```
 
-**Role-specific identity payloads**
+`server.features` is an optional list of runtime capabilities advertised by the
+connected deployment. Managed gateways with the private GSV inference binding
+include `ai.provider.gsv`; standalone gateways omit it.
 
-| Role | Extra fields |
-|---|---|
-| `user` | none |
-| `driver` | `device`, `implements` |
-| `service` | `channel` |
+The three grant axes are independent:
+
+- `calls` lists syscall patterns the peer may invoke;
+- `signals` lists asynchronous signals it may receive; and
+- `implements` lists syscall patterns GSV may route back to this peer.
+
+`peer.id` is stable across reconnects. `peer.sessionId` identifies this live
+socket incarnation. Neither is a credential.
 
 ---
 
 ## Syscall Dispatch
 
+The Kernel decodes each incoming text frame once at the WebSocket boundary.
+Requests are validated against the argument contract for their exact `call`.
+Successful endpoint responses are validated against the result contract recorded
+on the matching route. Dispatch and syscall handlers therefore receive trusted
+protocol types and do not repeat structural type checks. Authorization,
+resource limits, and other semantic policy remain the responsibility of the
+owning Kernel or syscall handler.
+
 The websocket protocol is uniform: every operation is a `req` frame with a syscall name in `call`. Dispatch behavior depends on the syscall domain:
 
 | Domain | Behavior |
 |---|---|
-| `fs.*` | Native on `gsv`, or routed to a driver when `args.target` names a device |
-| `shell.exec` | Native on `gsv`, routed to a driver when `args.target` names a device, or routed by `args.sessionId` for an existing shell session |
+| `fs.*` | Native on `gsv`, or routed to an endpoint when `args.target` names a registered target |
+| `shell.exec` | Native on `gsv`, routed to an endpoint when `args.target` names a registered target, or routed by `args.sessionId` for an existing shell session |
 | `proc.*` | Kernel and Process DO control plane |
+| `conversation.*` | Kernel-owned canonical conversation state and media |
 | `repo.*`, `sys.*`, `sched.*`, `signal.*` | Kernel-handled |
 | `adapter.*` | Service-binding / adapter control path |
 | `ai.tools`, `ai.config` | Kernel-internal process bootstrap path |
 | Other `ai.*` | Capability-gated inference and media operations |
 
-For routed `fs.*` and initial `shell.exec` requests, the gateway strips `args.target` before forwarding the request frame to the driver. Shell continuations use `args.sessionId`; the gateway looks up the session owner and forwards the same `shell.exec` frame to that device.
+For routed `fs.*` and initial `shell.exec` requests, the gateway strips
+`args.target` before forwarding the request frame to the endpoint. Shell
+continuations use `args.sessionId`; the gateway looks up the session owner and
+forwards the same `shell.exec` frame to that endpoint.
 
 Use the [Syscalls Reference](/reference/syscalls) for the full syscall surface.
 
@@ -242,11 +290,11 @@ Use the [Syscalls Reference](/reference/syscalls) for the full syscall surface.
 
 ## Signals
 
-The connect response advertises the signal set allowed for the role.
+The connect response advertises the signal set granted to that peer.
 
-Current role defaults from `buildSignalList()`:
+Current principal defaults from `buildSignalList()`:
 
-### User connections
+### Human peers
 
 - `proc.changed`
 - `proc.run.started`
@@ -256,36 +304,88 @@ Current role defaults from `buildSignalList()`:
     A retry after context compaction stays on the active model and has no
     `fallback` field; model fallback transitions include their source and target.
 - `proc.run.output`
-  - Carries assembled assistant text/thinking and, when present, process-owned
-    `media` references registered for the automatic final reply.
+  - Carries raw assembled assistant text, model reasoning, and process-owned
+    media references for process inspection. It is not a user-facing Message
+    and does not imply delivery to an endpoint.
 - `proc.run.tool.started`
+  - Emitted after a tool execution is durably marked dispatched. Its payload
+    includes `pid`, `runId`, provider `callId`, and the unique `executionId`
+    used for that dispatch, alongside the existing tool name, syscall, and
+    arguments.
+- `proc.run.tool.finished`
+  - Emitted when each started execution first reaches a terminal outcome.
+    Consumers deduplicate by `executionId`. The payload is `{ pid, runId,
+    executionId, callId, outcome, timestamp }`, where `outcome` is `completed`,
+    `failed`, `cancelled`, or `denied`. It carries no tool arguments, output, or
+    error content. Delivery is best effort, like other Process signals.
 - `proc.run.hil.requested`
   - Native clients answer with `proc.hil` and the exact `requestId`. Adapter DM
     prompts render the same identity as `hil[requestId]`; bare or stale
     decisions fail closed, and provider reply threading is not authorization.
+    The payload includes the Process-resolved `target` so clients can explain
+    the approval scope without reproducing routing policy from raw arguments.
 - `proc.run.finished`
-  - Repeats final-reply `media` references after they have been persisted on the
-    assistant history record.
+  - Reports the terminal Process-run status. A successful user-facing response
+    is represented separately by `message.committed`.
 - `process.exit`
+- `conversation.changed`
+  - Announces that canonical conversation history has advanced. Clients use
+    `conversation.history` to synchronize the durable record.
+- `message.started`
+  - Begins the directed endpoint's transient projection of a Process Message.
+- `message.delta`
+  - Appends text to that transient projection. It is sent only to the connection
+    that admitted the run; other clients synchronize the committed Message.
+- `message.committed`
+  - Carries a canonical `ConversationMessage`. `directed` is true only for the
+    connection whose input admitted the run; other connected clients receive
+    the same committed Message with `directed: false`.
+- `message.aborted`
+  - Discards the directed endpoint's transient projection when a Message cannot
+    be committed or the run is superseded.
 - `device.status`
 - `adapter.status`
 - `mcp.changed`
+- `peer.pong`
 
-### Driver connections
+### Machine peers
 
 - `device.status`
+- `peer.pong`
 
-### Service connections
+### Service peers
 
-Service connections receive no ambient signals. Adapter workers report state through the gateway service binding.
+Service peers receive no ambient signals. Adapter workers report state through
+the gateway service binding.
 
-`proc.run.*` signals are emitted by Process DOs and relayed through run-route tracking. In the current kernel:
+An endpoint may send `peer.ping` with an optional payload and sequence. The
+Kernel echoes them in `peer.pong` while that endpoint is the active session for
+its registered target. This is a generic endpoint heartbeat, not a machine-only
+protocol.
 
-- user connections receive routed process signals for their own runs
+`proc.run.*` signals are raw Process activity emitted by Process DOs. In the
+current Kernel:
+
+- the connection that admitted a run receives its activity through the exact
+  run route
+- another user connection receives that activity only after explicitly calling
+  `proc.observe` for the owner-scoped Process; `proc.unobserve` removes the watch
+- idle owner connections receive only a content-free `proc.changed` invalidation
+  for process-list synchronization, not its raw message, context, or run fields
 - `proc.run.hil.requested` is broadcast to every connected user client for the
   process owner; its payload includes `pid`, and `proc.history` recovers pending
   requests after reconnects
-- adapter surfaces also consume HIL and terminal run signals through their run route
+- adapter surfaces consume HIL prompts and committed Messages through their
+  exact run route; they do not render raw model output as a reply
+
+Canonical `conversation.*` and `message.*` signals are independent of raw
+Process observation. All connected clients for the owner can synchronize the
+same conversation, while only the directed connection receives transient
+Message streaming. `message send` commits without finishing the run; the model must explicitly
+finish a human-facing run through Shell with `yield`. A final send composes as
+`message send ... && yield`; ordinary assistant output remains Process activity. For a
+bounded IPC worker, ordinary final output becomes `proc.run.finished.payload.result` and
+`delivery.kind` remains `"none"`.
 
 ### Request cancellation
 
@@ -306,7 +406,8 @@ request:
 The `id` is the original request ID. The optional reason is diagnostic only;
 request ownership is determined from the authenticated connection or Process
 route. The gateway removes matching routes and body pumps before forwarding the
-signal to a driver. Drivers stop the active handler and suppress late responses.
+signal to an endpoint. Endpoints stop the active handler and suppress late
+responses.
 Unknown, duplicate, and post-completion cancellation signals have no effect.
 
 Process abort, reset, kill, user supersession, route expiry, client timeout, and
@@ -370,12 +471,11 @@ The current body-bearing syscalls are:
 
 | Syscall | Request body | Response body |
 |---|---|---|
-| `fs.read` | No | Always for a successful file read; raw UTF-8 text or image bytes. Directory listings and operation errors remain JSON-only. |
+| `fs.read` | No | Raw UTF-8 text, or image bytes when `representation` is `content`. Resource-mode image reads, directory listings, and operation errors are JSON-only. |
 | `fs.transfer.receive` | Required file bytes | No |
 | `fs.transfer.send` | No | Successful file bytes |
 | `net.fetch` | Optional HTTP request bytes | HTTP response bytes when the response has a body |
-| `proc.media.read` | No | Successful stored media bytes |
-| `proc.media.write` | Required media bytes with an exact descriptor length | No |
+| `conversation.media.read` | No | Successful legacy conversation media bytes |
 | `ai.transcription.create` | Required audio bytes | No |
 | `ai.image.read` | Required image bytes | Decoded UTF-8 text when caption, query, or OCR requests set `stream: true` |
 | `ai.image.generate` | No | Generated image bytes when returned inline |
@@ -403,7 +503,9 @@ before returning. Success consumes the body through its exact end; validation
 failure, cancellation, or a downstream error cancels the stream and prevents
 later parts from being processed. Adapter service bindings use the same
 metadata/body ownership contract even though they do not encode the stream as
-WebSocket binary chunks between workers.
+WebSocket binary chunks between workers. Cross-Worker and cross-Durable-Object
+RPC forwards the body as a byte-oriented `ReadableStream`, preserving
+backpressure and cancellation rather than materializing or serializing it.
 
 Adapter retry identity remains in JSON, not in the binary framing layer.
 Inbound events must reuse their provider `message.messageId`. The Kernel claims

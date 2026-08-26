@@ -75,6 +75,7 @@ export function TaskListGlyph({ size = 14 }: LineGlyphProps) {
 }
 
 /** Vertical dots (kebab) — the mobile header's "more controls" toggle. Filled
+ // SAFETY: Component boundary provides the asserted DOM/test shape.
  *  circles rather than strokes: at small sizes dots read as dots only when
  *  solid. */
 export function MoreVerticalGlyph({ size = 14 }: LineGlyphProps) {

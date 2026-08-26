@@ -108,6 +108,17 @@ describe("console AI config classification", () => {
     ]);
   });
 
+  it("labels the fixed GSV model without exposing its internal alias", () => {
+    expect(modelOptionsForConfig([
+      { key: "config/ai/provider", value: "gsv", redacted: false },
+      { key: "config/ai/model", value: "default", redacted: false },
+    ])).toEqual([{
+      value: "default",
+      label: "GSV included",
+      description: "Included and managed by GSV",
+    }]);
+  });
+
   it("prefers saved profile options over duplicate user raw model overrides", () => {
     const options = modelOptionsForConfig([
       { key: "config/ai/model", value: "@cf/default/model", redacted: false },

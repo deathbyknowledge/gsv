@@ -1,0 +1,1003 @@
+mod depthwise;
+mod geometry;
+mod models;
+pub(crate) mod runtime;
+
+use std::error::Error as StdError;
+use std::fmt::{self, Display, Formatter};
+use std::time::Instant;
+
+use crate::observation::{
+    FrameView, HandObservation, Handedness, Landmark, Observation, HAND_LANDMARK_COUNT, MAX_HANDS,
+};
+use crate::pose;
+
+use self::geometry::{
+    decode_hand_rects, map_rect_from_crop, next_hand_rect, overlaps_tracked, project_landmarks,
+    rotate_world_landmarks, same_projected_hand, sample_rgb, Rect,
+};
+use self::models::{LandmarkOutputs, Models};
+use self::runtime::ModelData;
+
+const MAX_FRAME_WIDTH: u32 = 1_920;
+const MAX_FRAME_HEIGHT: u32 = 1_080;
+const RGB_CHANNELS: usize = 3;
+const LANDMARK_SIZE: usize = 224;
+const PRESENCE_THRESHOLD: f32 = 0.5;
+const TRACK_RECOVERY_GRACE_MS: i64 = 250;
+const PALM_DISCOVERY_FALLBACK_INTERVAL_MS: i64 = 500;
+const MOTION_GRID_SIZE: usize = 16;
+const MOTION_SAMPLE_COUNT: usize = MOTION_GRID_SIZE * MOTION_GRID_SIZE;
+const MOTION_PIXEL_DELTA: u8 = 16;
+const LANDMARK_REVALIDATION_INTERVAL_MS: i64 = 100;
+const CROP_SIGNATURE_SIZE: usize = 16;
+const CROP_SIGNATURE_SAMPLES: usize = CROP_SIGNATURE_SIZE * CROP_SIGNATURE_SIZE;
+const CROP_PIXEL_DELTA: u8 = 12;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Error {
+    InvalidModel,
+    InvalidFrame,
+    InvalidTimestamp,
+    Inference,
+}
+
+impl Display for Error {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::InvalidModel => "native hand-tracking models are invalid",
+            Self::InvalidFrame => "video frame is invalid",
+            Self::InvalidTimestamp => "video timestamp is invalid",
+            Self::Inference => "native gesture inference failed",
+        })
+    }
+}
+
+impl StdError for Error {}
+
+pub(crate) struct GestureRecognizer {
+    models: Models,
+    tracked_hands: Vec<TrackedHand>,
+    last_timestamp_ms: Option<i64>,
+    last_palm_detection_ms: Option<i64>,
+    last_palm_signature: Option<MotionSignature>,
+}
+
+#[derive(Clone)]
+struct MotionSignature {
+    luminance: [u8; MOTION_SAMPLE_COUNT],
+    included: [bool; MOTION_SAMPLE_COUNT],
+}
+
+#[derive(Clone)]
+struct CropSignature([u8; CROP_SIGNATURE_SAMPLES]);
+
+#[derive(Clone)]
+struct CachedHand {
+    detected: DetectedHand,
+    crop_signature: CropSignature,
+    inferred_at_ms: i64,
+}
+
+#[derive(Clone)]
+struct TrackedHand {
+    rect: Rect,
+    cached: Option<CachedHand>,
+    missed_since_ms: Option<i64>,
+}
+
+struct HandCandidate {
+    rect: Rect,
+    previous: Option<usize>,
+}
+
+#[derive(Clone)]
+struct DetectedHand {
+    observation: HandObservation,
+    next_rect: Rect,
+}
+
+#[derive(Clone, Copy)]
+#[repr(usize)]
+enum RecognitionStage {
+    PalmPreprocess,
+    PalmInference,
+    PalmPostprocess,
+    LandmarkPreprocess,
+    LandmarkInference,
+    LandmarkPostprocess,
+    PoseRecognition,
+}
+
+#[cfg(test)]
+const RECOGNITION_STAGES: [RecognitionStage; 7] = [
+    RecognitionStage::PalmPreprocess,
+    RecognitionStage::PalmInference,
+    RecognitionStage::PalmPostprocess,
+    RecognitionStage::LandmarkPreprocess,
+    RecognitionStage::LandmarkInference,
+    RecognitionStage::LandmarkPostprocess,
+    RecognitionStage::PoseRecognition,
+];
+
+trait RecognitionProfiler: Default + Send {
+    type Started;
+
+    fn start(&mut self) -> Self::Started;
+    fn finish(&mut self, stage: RecognitionStage, started: Self::Started);
+    fn merge_parallel(&mut self, left: Self, right: Self);
+}
+
+#[derive(Default)]
+struct NoopProfiler;
+
+impl RecognitionProfiler for NoopProfiler {
+    type Started = ();
+
+    #[inline(always)]
+    fn start(&mut self) {}
+
+    #[inline(always)]
+    fn finish(&mut self, _stage: RecognitionStage, _started: ()) {}
+
+    #[inline(always)]
+    fn merge_parallel(&mut self, _left: Self, _right: Self) {}
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug)]
+struct RecognitionTimings {
+    stages: [std::time::Duration; RECOGNITION_STAGES.len()],
+    executions: [usize; RECOGNITION_STAGES.len()],
+}
+
+#[cfg(test)]
+impl Default for RecognitionTimings {
+    fn default() -> Self {
+        Self {
+            stages: [std::time::Duration::ZERO; RECOGNITION_STAGES.len()],
+            executions: [0; RECOGNITION_STAGES.len()],
+        }
+    }
+}
+
+#[cfg(test)]
+impl RecognitionTimings {
+    fn get(&self, stage: RecognitionStage) -> std::time::Duration {
+        self.stages[stage as usize]
+    }
+
+    fn executions(&self, stage: RecognitionStage) -> usize {
+        self.executions[stage as usize]
+    }
+}
+
+#[cfg(test)]
+impl RecognitionProfiler for RecognitionTimings {
+    type Started = Instant;
+
+    fn start(&mut self) -> Self::Started {
+        Instant::now()
+    }
+
+    fn finish(&mut self, stage: RecognitionStage, started: Self::Started) {
+        self.stages[stage as usize] += started.elapsed();
+        self.executions[stage as usize] += 1;
+    }
+
+    fn merge_parallel(&mut self, left: Self, right: Self) {
+        for (index, stage) in self.stages.iter_mut().enumerate() {
+            *stage += left.stages[index].max(right.stages[index]);
+            self.executions[index] += left.executions[index] + right.executions[index];
+        }
+    }
+}
+
+impl GestureRecognizer {
+    pub(crate) fn load(models: &ModelData) -> Result<Self, Error> {
+        Ok(Self {
+            models: Models::load(models)?,
+            tracked_hands: Vec::new(),
+            last_timestamp_ms: None,
+            last_palm_detection_ms: None,
+            last_palm_signature: None,
+        })
+    }
+
+    pub(crate) fn recognize(
+        &mut self,
+        frame: &FrameView,
+        timestamp_ms: i64,
+    ) -> Result<Observation, Error> {
+        self.recognize_with_profiler(frame, timestamp_ms, &mut NoopProfiler)
+    }
+
+    #[cfg(test)]
+    fn recognize_profiled(
+        &mut self,
+        frame: &FrameView,
+        timestamp_ms: i64,
+    ) -> Result<(Observation, RecognitionTimings), Error> {
+        let mut timings = RecognitionTimings::default();
+        let observation = self.recognize_with_profiler(frame, timestamp_ms, &mut timings)?;
+        Ok((observation, timings))
+    }
+
+    fn recognize_with_profiler<P: RecognitionProfiler>(
+        &mut self,
+        frame: &FrameView,
+        timestamp_ms: i64,
+        profiler: &mut P,
+    ) -> Result<Observation, Error> {
+        validate_frame(frame)?;
+        if timestamp_ms < 0
+            || self
+                .last_timestamp_ms
+                .is_some_and(|previous| timestamp_ms <= previous)
+        {
+            return Err(Error::InvalidTimestamp);
+        }
+        self.last_timestamp_ms = Some(timestamp_ms);
+        let started = Instant::now();
+
+        let active_tracks = self
+            .tracked_hands
+            .iter()
+            .filter(|tracked| tracked.missed_since_ms.is_none())
+            .count();
+        let mut occupied_rects: Vec<_> = self
+            .tracked_hands
+            .iter()
+            .map(|tracked| tracked.rect)
+            .collect();
+        let mut candidates: Vec<_> = self
+            .tracked_hands
+            .iter()
+            .enumerate()
+            .map(|(index, tracked)| HandCandidate {
+                rect: tracked.rect,
+                previous: Some(index),
+            })
+            .collect();
+        let discovery_signature =
+            (active_tracks == 1).then(|| motion_signature(frame, &occupied_rects));
+        let external_motion = self
+            .last_palm_signature
+            .as_ref()
+            .zip(discovery_signature.as_ref())
+            .is_some_and(|(previous, current)| motion_detected(previous, current));
+        let mut detected_palms = false;
+        if should_detect_palms(
+            active_tracks,
+            timestamp_ms,
+            self.last_palm_detection_ms,
+            external_motion,
+        ) {
+            detected_palms = true;
+            self.last_palm_detection_ms = Some(timestamp_ms);
+            let detector_rect = Rect::padded_full_frame(frame.width, frame.height);
+            let stage = profiler.start();
+            let detector_input = sample_rgb(frame, detector_rect, 192);
+            profiler.finish(RecognitionStage::PalmPreprocess, stage);
+            let stage = profiler.start();
+            let detector_output = self.models.detect_palms(&detector_input);
+            profiler.finish(RecognitionStage::PalmInference, stage);
+            let (raw_boxes, raw_scores) = detector_output?;
+            let stage = profiler.start();
+            for detected in decode_hand_rects(&raw_boxes, &raw_scores) {
+                let detected =
+                    map_rect_from_crop(detected, detector_rect, frame.width, frame.height);
+                if !overlaps_tracked(detected, &occupied_rects) {
+                    occupied_rects.push(detected);
+                    candidates.push(HandCandidate {
+                        rect: detected,
+                        previous: None,
+                    });
+                }
+            }
+            profiler.finish(RecognitionStage::PalmPostprocess, stage);
+        }
+
+        let detections = self.detect_candidate_hands(frame, &candidates, timestamp_ms, profiler)?;
+        let previous_tracks = std::mem::take(&mut self.tracked_hands);
+        let (tracked_hands, hands) =
+            reconcile_tracking(previous_tracks, candidates, detections, timestamp_ms);
+        self.tracked_hands = tracked_hands;
+        let tracked_rects: Vec<_> = self
+            .tracked_hands
+            .iter()
+            .map(|tracked| tracked.rect)
+            .collect();
+        if detected_palms && hands.len() == 1 {
+            self.last_palm_signature = Some(motion_signature(frame, &tracked_rects));
+        } else if hands.len() != 1 {
+            self.last_palm_signature = None;
+        }
+        let observed_at = Instant::now();
+        Ok(Observation {
+            frame_sequence: frame.sequence,
+            observed_at,
+            hands,
+            inference_time: observed_at.saturating_duration_since(started),
+        })
+    }
+
+    fn detect_candidate_hands<P: RecognitionProfiler>(
+        &self,
+        frame: &FrameView,
+        candidates: &[HandCandidate],
+        timestamp_ms: i64,
+        profiler: &mut P,
+    ) -> Result<Vec<Option<CachedHand>>, Error> {
+        let [first, second] = candidates else {
+            return candidates
+                .iter()
+                .map(|candidate| {
+                    self.detect_cached_hand(
+                        frame,
+                        candidate.rect,
+                        candidate
+                            .previous
+                            .and_then(|index| self.tracked_hands[index].cached.as_ref()),
+                        timestamp_ms,
+                        profiler,
+                    )
+                })
+                .collect();
+        };
+        let Some(pool) = self.models.inference_pool() else {
+            return candidates
+                .iter()
+                .map(|candidate| {
+                    self.detect_cached_hand(
+                        frame,
+                        candidate.rect,
+                        candidate
+                            .previous
+                            .and_then(|index| self.tracked_hands[index].cached.as_ref()),
+                        timestamp_ms,
+                        profiler,
+                    )
+                })
+                .collect();
+        };
+        let ((first, first_profiler), (second, second_profiler)) = pool.install(|| {
+            rayon::join(
+                || {
+                    let mut profiler = P::default();
+                    let result = self.detect_cached_hand(
+                        frame,
+                        first.rect,
+                        first
+                            .previous
+                            .and_then(|index| self.tracked_hands[index].cached.as_ref()),
+                        timestamp_ms,
+                        &mut profiler,
+                    );
+                    (result, profiler)
+                },
+                || {
+                    let mut profiler = P::default();
+                    let result = self.detect_cached_hand(
+                        frame,
+                        second.rect,
+                        second
+                            .previous
+                            .and_then(|index| self.tracked_hands[index].cached.as_ref()),
+                        timestamp_ms,
+                        &mut profiler,
+                    );
+                    (result, profiler)
+                },
+            )
+        });
+        profiler.merge_parallel(first_profiler, second_profiler);
+        Ok(vec![first?, second?])
+    }
+
+    #[cfg(test)]
+    fn clear_tracking(&mut self) {
+        self.tracked_hands.clear();
+    }
+
+    #[cfg(test)]
+    fn set_tracked_rects(&mut self, rects: &[Rect]) {
+        let previous = std::mem::take(&mut self.tracked_hands);
+        self.tracked_hands = rects
+            .iter()
+            .enumerate()
+            .map(|(index, rect)| TrackedHand {
+                rect: *rect,
+                cached: previous
+                    .get(index)
+                    .and_then(|tracked| tracked.cached.clone()),
+                missed_since_ms: None,
+            })
+            .collect();
+    }
+
+    #[cfg(test)]
+    fn tracked_rect(&self, index: usize) -> Rect {
+        self.tracked_hands[index].rect
+    }
+
+    #[cfg(test)]
+    fn detect_hand<P: RecognitionProfiler>(
+        &self,
+        frame: &FrameView,
+        rect: Rect,
+        profiler: &mut P,
+    ) -> Result<Option<DetectedHand>, Error> {
+        let stage = profiler.start();
+        let input = sample_rgb(frame, rect, LANDMARK_SIZE);
+        profiler.finish(RecognitionStage::LandmarkPreprocess, stage);
+        self.detect_hand_from_input(frame, rect, &input, profiler)
+    }
+
+    fn detect_cached_hand<P: RecognitionProfiler>(
+        &self,
+        frame: &FrameView,
+        rect: Rect,
+        cached: Option<&CachedHand>,
+        timestamp_ms: i64,
+        profiler: &mut P,
+    ) -> Result<Option<CachedHand>, Error> {
+        let stage = profiler.start();
+        let input = sample_rgb(frame, rect, LANDMARK_SIZE);
+        profiler.finish(RecognitionStage::LandmarkPreprocess, stage);
+        let crop_signature = crop_signature(&input);
+        if let Some(cached) = cached.filter(|cached| {
+            should_reuse_landmarks(
+                &cached.crop_signature,
+                cached.inferred_at_ms,
+                &crop_signature,
+                timestamp_ms,
+            )
+        }) {
+            return Ok(Some(cached.clone()));
+        }
+        self.detect_hand_from_input(frame, rect, &input, profiler)
+            .map(|detected| {
+                detected.map(|detected| CachedHand {
+                    detected,
+                    crop_signature,
+                    inferred_at_ms: timestamp_ms,
+                })
+            })
+    }
+
+    fn detect_hand_from_input<P: RecognitionProfiler>(
+        &self,
+        frame: &FrameView,
+        rect: Rect,
+        input: &[f32],
+        profiler: &mut P,
+    ) -> Result<Option<DetectedHand>, Error> {
+        let stage = profiler.start();
+        let landmark_output = self.models.detect_landmarks(input);
+        profiler.finish(RecognitionStage::LandmarkInference, stage);
+        let output = landmark_output?;
+        let stage = profiler.start();
+        if !output.presence.is_finite() || output.presence < PRESENCE_THRESHOLD {
+            profiler.finish(RecognitionStage::LandmarkPostprocess, stage);
+            return Ok(None);
+        }
+        let (crop_landmarks, crop_world_landmarks) = decode_landmarks(&output)?;
+        let landmarks = project_landmarks(&crop_landmarks, rect, frame.width, frame.height);
+        let world_landmarks = rotate_world_landmarks(&crop_world_landmarks, rect.rotation);
+        let next_rect =
+            next_hand_rect(&landmarks, frame.width, frame.height).ok_or(Error::Inference)?;
+        let right_hand_score = finite_probability(output.handedness)?;
+        let handedness = if right_hand_score >= 0.5 {
+            Handedness::Right
+        } else {
+            Handedness::Left
+        };
+        let handedness_score = right_hand_score.max(1.0 - right_hand_score);
+        profiler.finish(RecognitionStage::LandmarkPostprocess, stage);
+        let stage = profiler.start();
+        let pose = pose::recognize(&world_landmarks);
+        let detected = DetectedHand {
+            observation: HandObservation {
+                handedness,
+                handedness_score,
+                pose: pose.pose,
+                pose_score: pose.score,
+                landmarks,
+            },
+            next_rect,
+        };
+        profiler.finish(RecognitionStage::PoseRecognition, stage);
+        Ok(Some(detected))
+    }
+}
+
+fn reconcile_tracking(
+    previous_tracks: Vec<TrackedHand>,
+    candidates: Vec<HandCandidate>,
+    detections: Vec<Option<CachedHand>>,
+    timestamp_ms: i64,
+) -> (Vec<TrackedHand>, Vec<HandObservation>) {
+    debug_assert_eq!(candidates.len(), detections.len());
+    let mut previous_tracks: Vec<_> = previous_tracks.into_iter().map(Some).collect();
+    let mut missed = Vec::new();
+    let mut tracked = Vec::with_capacity(MAX_HANDS);
+    let mut hands = Vec::with_capacity(MAX_HANDS);
+    for (candidate, detection) in candidates.into_iter().zip(detections) {
+        let Some(hand) = detection else {
+            if let Some(previous) = candidate
+                .previous
+                .and_then(|index| previous_tracks[index].take())
+            {
+                missed.push(previous);
+            }
+            continue;
+        };
+        if tracked.len() == MAX_HANDS
+            || hands.iter().any(|existing: &HandObservation| {
+                same_projected_hand(&existing.landmarks, &hand.detected.observation.landmarks)
+            })
+        {
+            continue;
+        }
+        let observation = hand.detected.observation.clone();
+        tracked.push(TrackedHand {
+            rect: hand.detected.next_rect,
+            cached: Some(hand),
+            missed_since_ms: None,
+        });
+        hands.push(observation);
+    }
+
+    for mut previous in missed {
+        if tracked.len() == MAX_HANDS {
+            break;
+        }
+        let missed_since_ms = previous.missed_since_ms.unwrap_or(timestamp_ms);
+        if timestamp_ms.saturating_sub(missed_since_ms) > TRACK_RECOVERY_GRACE_MS {
+            continue;
+        }
+        let occupied: Vec<_> = tracked.iter().map(|hand| hand.rect).collect();
+        if overlaps_tracked(previous.rect, &occupied) {
+            continue;
+        }
+        previous.missed_since_ms = Some(missed_since_ms);
+        tracked.push(previous);
+    }
+    (tracked, hands)
+}
+
+fn should_detect_palms(
+    tracked_hands: usize,
+    timestamp_ms: i64,
+    last_detection_ms: Option<i64>,
+    external_motion: bool,
+) -> bool {
+    match tracked_hands {
+        0 => true,
+        1 => {
+            external_motion
+                || last_detection_ms.is_none_or(|last| {
+                    timestamp_ms.saturating_sub(last) >= PALM_DISCOVERY_FALLBACK_INTERVAL_MS
+                })
+        }
+        _ => false,
+    }
+}
+
+fn motion_signature(frame: &FrameView, tracked_rects: &[Rect]) -> MotionSignature {
+    let mut signature = MotionSignature {
+        luminance: [0; MOTION_SAMPLE_COUNT],
+        included: [true; MOTION_SAMPLE_COUNT],
+    };
+    for grid_y in 0..MOTION_GRID_SIZE {
+        for grid_x in 0..MOTION_GRID_SIZE {
+            let index = grid_y * MOTION_GRID_SIZE + grid_x;
+            let normalized_x = (grid_x as f32 + 0.5) / MOTION_GRID_SIZE as f32;
+            let normalized_y = (grid_y as f32 + 0.5) / MOTION_GRID_SIZE as f32;
+            if tracked_rects
+                .iter()
+                .any(|rect| expanded_rect_contains(*rect, normalized_x, normalized_y))
+            {
+                signature.included[index] = false;
+                continue;
+            }
+            let pixel_x = ((grid_x * 2 + 1) * frame.width as usize / (MOTION_GRID_SIZE * 2))
+                .min(frame.width as usize - 1);
+            let pixel_y = ((grid_y * 2 + 1) * frame.height as usize / (MOTION_GRID_SIZE * 2))
+                .min(frame.height as usize - 1);
+            let pixel = (pixel_y * frame.width as usize + pixel_x) * RGB_CHANNELS;
+            signature.luminance[index] = ((u32::from(frame.rgb[pixel]) * 77
+                + u32::from(frame.rgb[pixel + 1]) * 150
+                + u32::from(frame.rgb[pixel + 2]) * 29)
+                >> 8) as u8;
+        }
+    }
+    signature
+}
+
+fn expanded_rect_contains(rect: Rect, x: f32, y: f32) -> bool {
+    let half_width = rect.width * 0.6;
+    let half_height = rect.height * 0.6;
+    x >= rect.center.x - half_width
+        && x <= rect.center.x + half_width
+        && y >= rect.center.y - half_height
+        && y <= rect.center.y + half_height
+}
+
+fn motion_detected(previous: &MotionSignature, current: &MotionSignature) -> bool {
+    let mut compared = 0;
+    let mut changed = 0;
+    for index in 0..MOTION_SAMPLE_COUNT {
+        if !previous.included[index] || !current.included[index] {
+            continue;
+        }
+        compared += 1;
+        if previous.luminance[index].abs_diff(current.luminance[index]) >= MOTION_PIXEL_DELTA {
+            changed += 1;
+        }
+    }
+    compared > 0 && changed >= (compared / 32).max(4)
+}
+
+fn crop_signature(input: &[f32]) -> CropSignature {
+    let mut signature = [0; CROP_SIGNATURE_SAMPLES];
+    for grid_y in 0..CROP_SIGNATURE_SIZE {
+        for grid_x in 0..CROP_SIGNATURE_SIZE {
+            let source_x = ((grid_x * 2 + 1) * LANDMARK_SIZE / (CROP_SIGNATURE_SIZE * 2))
+                .min(LANDMARK_SIZE - 1);
+            let source_y = ((grid_y * 2 + 1) * LANDMARK_SIZE / (CROP_SIGNATURE_SIZE * 2))
+                .min(LANDMARK_SIZE - 1);
+            let source = (source_y * LANDMARK_SIZE + source_x) * RGB_CHANNELS;
+            let luminance =
+                input[source] * 0.299 + input[source + 1] * 0.587 + input[source + 2] * 0.114;
+            signature[grid_y * CROP_SIGNATURE_SIZE + grid_x] =
+                (luminance * 255.0).round().clamp(0.0, 255.0) as u8;
+        }
+    }
+    CropSignature(signature)
+}
+
+fn should_reuse_landmarks(
+    previous: &CropSignature,
+    inferred_at_ms: i64,
+    current: &CropSignature,
+    timestamp_ms: i64,
+) -> bool {
+    timestamp_ms.saturating_sub(inferred_at_ms) < LANDMARK_REVALIDATION_INTERVAL_MS
+        && !crop_motion_detected(previous, current)
+}
+
+fn crop_motion_detected(previous: &CropSignature, current: &CropSignature) -> bool {
+    previous
+        .0
+        .iter()
+        .zip(&current.0)
+        .filter(|(previous, current)| previous.abs_diff(**current) >= CROP_PIXEL_DELTA)
+        .count()
+        >= (CROP_SIGNATURE_SAMPLES / 32).max(4)
+}
+
+fn validate_frame(frame: &FrameView) -> Result<(), Error> {
+    if frame.width == 0
+        || frame.height == 0
+        || frame.width > MAX_FRAME_WIDTH
+        || frame.height > MAX_FRAME_HEIGHT
+    {
+        return Err(Error::InvalidFrame);
+    }
+    let expected = frame.width as usize * frame.height as usize * RGB_CHANNELS;
+    if frame.rgb.len() != expected {
+        return Err(Error::InvalidFrame);
+    }
+    Ok(())
+}
+
+fn decode_landmarks(
+    output: &LandmarkOutputs,
+) -> Result<
+    (
+        [Landmark; HAND_LANDMARK_COUNT],
+        [Landmark; HAND_LANDMARK_COUNT],
+    ),
+    Error,
+> {
+    let mut image = [Landmark::default(); HAND_LANDMARK_COUNT];
+    let mut world = [Landmark::default(); HAND_LANDMARK_COUNT];
+    for index in 0..HAND_LANDMARK_COUNT {
+        image[index] = Landmark {
+            x: finite(output.image[index * 3])? / LANDMARK_SIZE as f32,
+            y: finite(output.image[index * 3 + 1])? / LANDMARK_SIZE as f32,
+            z: finite(output.image[index * 3 + 2])? / (LANDMARK_SIZE as f32 * 0.4),
+        };
+        world[index] = Landmark {
+            x: finite(output.world[index * 3])?,
+            y: finite(output.world[index * 3 + 1])?,
+            z: finite(output.world[index * 3 + 2])?,
+        };
+    }
+    Ok((image, world))
+}
+
+fn finite(value: f32) -> Result<f32, Error> {
+    value.is_finite().then_some(value).ok_or(Error::Inference)
+}
+
+fn finite_probability(value: f32) -> Result<f32, Error> {
+    let value = finite(value)?;
+    ((0.0..=1.0).contains(&value))
+        .then_some(value)
+        .ok_or(Error::Inference)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    use super::*;
+    use crate::observation::HandPose;
+
+    #[test]
+    fn malformed_probabilities_fail_closed() {
+        assert_eq!(finite_probability(f32::NAN), Err(Error::Inference));
+        assert_eq!(finite_probability(1.1), Err(Error::Inference));
+    }
+
+    #[test]
+    fn palm_discovery_is_immediate_without_tracking_and_bounded_with_one_hand() {
+        assert!(should_detect_palms(0, 1, Some(1), false));
+        assert!(should_detect_palms(1, 1, None, false));
+        assert!(!should_detect_palms(
+            1,
+            PALM_DISCOVERY_FALLBACK_INTERVAL_MS - 1,
+            Some(0),
+            false,
+        ));
+        assert!(should_detect_palms(1, 1, Some(0), true));
+        assert!(should_detect_palms(
+            1,
+            PALM_DISCOVERY_FALLBACK_INTERVAL_MS,
+            Some(0),
+            false,
+        ));
+        assert!(!should_detect_palms(2, i64::MAX, None, true));
+    }
+
+    #[test]
+    fn palm_discovery_motion_ignores_the_tracked_hand_region() {
+        let base = motion_test_frame(None);
+        let tracked = Rect {
+            center: geometry::Point { x: 0.5, y: 0.5 },
+            width: 0.3,
+            height: 0.3,
+            rotation: 0.0,
+        };
+        let baseline = motion_signature(&base, &[tracked]);
+        let inside = motion_signature(&motion_test_frame(Some((6, 6))), &[tracked]);
+        let outside = motion_signature(&motion_test_frame(Some((0, 0))), &[tracked]);
+        assert!(!motion_detected(&baseline, &inside));
+        assert!(motion_detected(&baseline, &outside));
+    }
+
+    #[test]
+    fn stable_landmarks_are_reused_only_within_the_revalidation_bound() {
+        let previous = CropSignature([0; CROP_SIGNATURE_SAMPLES]);
+        let unchanged = previous.clone();
+        let mut changed = previous.clone();
+        for value in changed.0.iter_mut().take(CROP_SIGNATURE_SAMPLES / 32) {
+            *value = CROP_PIXEL_DELTA;
+        }
+        assert!(should_reuse_landmarks(&previous, 0, &unchanged, 99));
+        assert!(!should_reuse_landmarks(&previous, 0, &unchanged, 100));
+        assert!(!should_reuse_landmarks(&previous, 0, &changed, 1));
+    }
+
+    #[test]
+    fn weak_landmark_frames_retain_the_roi_without_emitting_stale_poses() {
+        let previous = tracked_test_hand(0.25, HandPose::Fist);
+        let candidate = HandCandidate {
+            rect: previous.rect,
+            previous: Some(0),
+        };
+        let (tracked, hands) = reconcile_tracking(vec![previous], vec![candidate], vec![None], 100);
+        assert!(hands.is_empty());
+        assert_eq!(tracked.len(), 1);
+        assert_eq!(tracked[0].missed_since_ms, Some(100));
+
+        let candidate = HandCandidate {
+            rect: tracked[0].rect,
+            previous: Some(0),
+        };
+        let (tracked, hands) = reconcile_tracking(
+            tracked,
+            vec![candidate],
+            vec![None],
+            100 + TRACK_RECOVERY_GRACE_MS + 1,
+        );
+        assert!(hands.is_empty());
+        assert!(tracked.is_empty());
+    }
+
+    #[test]
+    fn a_second_hand_does_not_discard_a_recovering_track() {
+        let fist = tracked_test_hand(0.25, HandPose::Fist);
+        let anchor = tracked_test_hand(0.75, HandPose::FiveFingers);
+        let candidates = vec![
+            HandCandidate {
+                rect: fist.rect,
+                previous: Some(0),
+            },
+            HandCandidate {
+                rect: anchor.rect,
+                previous: Some(1),
+            },
+        ];
+        let detections = vec![None, anchor.cached.clone()];
+        let (tracked, hands) = reconcile_tracking(vec![fist, anchor], candidates, detections, 100);
+        assert_eq!(hands.len(), 1);
+        assert_eq!(hands[0].pose, HandPose::FiveFingers);
+        assert_eq!(tracked.len(), 2);
+        assert_eq!(
+            tracked
+                .iter()
+                .filter(|track| track.missed_since_ms.is_some())
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn detected_hands_replace_recovery_slots_before_the_two_hand_limit() {
+        let fist = tracked_test_hand(0.15, HandPose::Fist);
+        let anchor = tracked_test_hand(0.5, HandPose::FiveFingers);
+        let point = tracked_test_hand(0.85, HandPose::OneFinger);
+        let candidates = vec![
+            HandCandidate {
+                rect: fist.rect,
+                previous: Some(0),
+            },
+            HandCandidate {
+                rect: anchor.rect,
+                previous: Some(1),
+            },
+            HandCandidate {
+                rect: point.rect,
+                previous: None,
+            },
+        ];
+        let (tracked, hands) = reconcile_tracking(
+            vec![fist, anchor.clone()],
+            candidates,
+            vec![None, anchor.cached.clone(), point.cached.clone()],
+            100,
+        );
+        assert_eq!(hands.len(), MAX_HANDS);
+        assert_eq!(tracked.len(), MAX_HANDS);
+        assert!(tracked.iter().all(|track| track.missed_since_ms.is_none()));
+    }
+
+    fn tracked_test_hand(center_x: f32, pose: HandPose) -> TrackedHand {
+        let mut landmarks = [Landmark::default(); HAND_LANDMARK_COUNT];
+        for (index, landmark) in landmarks.iter_mut().enumerate() {
+            landmark.x = center_x + (index % 5) as f32 * 0.01;
+            landmark.y = 0.4 + (index / 5) as f32 * 0.01;
+        }
+        let rect = Rect {
+            center: geometry::Point {
+                x: center_x,
+                y: 0.5,
+            },
+            width: 0.15,
+            height: 0.2,
+            rotation: 0.0,
+        };
+        TrackedHand {
+            rect,
+            cached: Some(CachedHand {
+                detected: DetectedHand {
+                    observation: HandObservation {
+                        handedness: Handedness::Right,
+                        handedness_score: 1.0,
+                        pose,
+                        pose_score: 1.0,
+                        landmarks,
+                    },
+                    next_rect: rect,
+                },
+                crop_signature: CropSignature([0; CROP_SIGNATURE_SAMPLES]),
+                inferred_at_ms: 0,
+            }),
+            missed_since_ms: None,
+        }
+    }
+
+    fn motion_test_frame(patch: Option<(usize, usize)>) -> FrameView {
+        let mut rgb = vec![0_u8; MOTION_GRID_SIZE * MOTION_GRID_SIZE * RGB_CHANNELS];
+        if let Some((start_x, start_y)) = patch {
+            for y in start_y..start_y + 4 {
+                for x in start_x..start_x + 4 {
+                    let pixel = (y * MOTION_GRID_SIZE + x) * RGB_CHANNELS;
+                    rgb[pixel..pixel + RGB_CHANNELS].fill(255);
+                }
+            }
+        }
+        FrameView {
+            sequence: 1,
+            captured_at: Instant::now(),
+            width: MOTION_GRID_SIZE as u32,
+            height: MOTION_GRID_SIZE as u32,
+            rgb: Arc::from(rgb),
+        }
+    }
+
+    #[test]
+    #[ignore = "run with scripts/vision-native/parity.sh"]
+    fn matches_mediapipe_landmark_fixtures() {
+        let fixture_root = PathBuf::from(
+            std::env::var_os("GSV_VISION_PARITY_FIXTURES").expect("parity fixture directory"),
+        );
+        let models = runtime::embedded_models();
+        let mut recognizer = GestureRecognizer::load(&models).expect("native recognizer");
+        for (name, expected_pose, actionable, expected_handedness, wrist) in [
+            (
+                "fist.jpg",
+                HandPose::Fist,
+                true,
+                0.989_296_1_f32,
+                (0.477_097_f32, 0.661_291_f32),
+            ),
+            (
+                "pointing_up.jpg",
+                HandPose::OneFinger,
+                true,
+                0.995_088_8_f32,
+                (0.479_238_4_f32, 0.742_612_f32),
+            ),
+            (
+                "thumb_up.jpg",
+                HandPose::Unknown,
+                false,
+                0.983_551_7_f32,
+                (0.638_752_8_f32, 0.671_340_5_f32),
+            ),
+            (
+                "victory.jpg",
+                HandPose::TwoFingers,
+                true,
+                0.995_300_7_f32,
+                (0.516_432_1_f32, 0.804_093_7_f32),
+            ),
+        ] {
+            recognizer.clear_tracking();
+            recognizer.last_timestamp_ms = None;
+            let decoded = image::ImageReader::open(fixture_root.join(name))
+                .expect("fixture image")
+                .decode()
+                .expect("decoded fixture")
+                .to_rgb8();
+            let frame = FrameView {
+                sequence: 1,
+                captured_at: Instant::now(),
+                width: decoded.width(),
+                height: decoded.height(),
+                rgb: Arc::from(decoded.into_raw()),
+            };
+            let observation = recognizer.recognize(&frame, 0).expect("fixture inference");
+            assert_eq!(observation.hands.len(), 1, "{name}");
+            let hand = &observation.hands[0];
+            assert_eq!(hand.handedness, Handedness::Right, "{name}");
+            assert_eq!(hand.pose, expected_pose, "{name} score {}", hand.pose_score);
+            assert_eq!(hand.pose_score >= 0.50, actionable, "{name}");
+            assert!(
+                (hand.handedness_score - expected_handedness).abs() <= 0.03,
+                "{name}"
+            );
+            assert!((hand.landmarks[0].x - wrist.0).abs() <= 0.04, "{name}");
+            assert!((hand.landmarks[0].y - wrist.1).abs() <= 0.04, "{name}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod benchmark;

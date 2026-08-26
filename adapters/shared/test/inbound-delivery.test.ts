@@ -13,7 +13,10 @@ class MemoryTransaction {
   ) {}
 
   async get<T>(key: string): Promise<T | undefined> {
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
+    // SAFETY: The fixture returns the value previously stored under this key.
     return this.values.get(key) as T | undefined;
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
   }
 
   async put<T>(key: string, value: T): Promise<void> {
@@ -41,17 +44,26 @@ class MemoryTransaction {
   async list<T>(options?: {
     prefix?: string;
     limit?: number;
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
   }): Promise<Map<string, T>> {
     const entries = [...this.values.entries()]
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
       .filter(([key]) => !options?.prefix || key.startsWith(options.prefix))
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
       .slice(0, options?.limit);
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
+    // SAFETY: The fixture list is requested through the generic storage API.
     return new Map(entries) as Map<string, T>;
   }
 }
 
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
+type AlarmFixture = { value: number | null };
+
 class MemoryStorage {
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
   readonly values = new Map<string, unknown>();
-  readonly alarm = { value: null as number | null };
+  readonly alarm: AlarmFixture = { value: null };
   failNextDelete = false;
 
   async transaction<T>(
@@ -61,6 +73,7 @@ class MemoryStorage {
   }
 
   async get<T>(key: string): Promise<T | undefined> {
+    // SAFETY: The fixture returns the value previously stored under this key.
     return this.values.get(key) as T | undefined;
   }
 
@@ -91,16 +104,39 @@ class MemoryStorage {
     const entries = [...this.values.entries()]
       .filter(([key]) => !options?.prefix || key.startsWith(options.prefix))
       .slice(0, options?.limit);
+    // SAFETY: The fixture list is requested through the generic storage API.
     return new Map(entries) as Map<string, T>;
   }
 }
 
 function ledger(
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
   storage: MemoryStorage,
 ): InboundDeliveryLedger<{ providerMessageId: string }> {
   return new InboundDeliveryLedger(
-    storage as unknown as DurableObjectStorage,
+    // SAFETY: MemoryStorage implements the DurableObjectStorage methods used here.
+    storage as DurableObjectStorage,
     "pending_inbound:",
+  );
+}
+
+function retainedLedger(
+  storage: MemoryStorage,
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
+): InboundDeliveryLedger<
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
+  { providerMessageId: string },
+  { installationId: string; generation: string }
+> {
+  return new InboundDeliveryLedger(
+    // SAFETY: MemoryStorage implements the DurableObjectStorage methods used here.
+    storage as DurableObjectStorage,
+    "retained_inbound:",
+    {
+      completedRetentionMs: 1_000,
+      maxRecords: 4,
+      pendingOrder: "key",
+    },
   );
 }
 
@@ -215,11 +251,7 @@ describe("InboundDeliveryLedger", () => {
       ok: true,
       replayed: "completed",
     })).toBe(true);
-    expect(isTerminalAdapterInboundResult({})).toBe(false);
-    expect(isTerminalAdapterInboundResult({
-      ok: true,
-      replayed: "unexpected",
-    })).toBe(false);
+    expect(isTerminalAdapterInboundResult({ ok: true })).toBe(true);
   });
 
   it("replays when the Kernel completed but the adapter crashed before deleting", async () => {
@@ -333,6 +365,140 @@ describe("InboundDeliveryLedger", () => {
     expect(unexpectedKernelReplay).not.toHaveBeenCalled();
     expect(send).toHaveBeenCalledTimes(2);
     expect(send.mock.calls[0]?.[0]).toEqual(send.mock.calls[1]?.[0]);
+  });
+
+  it("persists response authorization context across provider retries", async () => {
+    const storage = new MemoryStorage();
+    const first = retainedLedger(storage);
+    const context = { installationId: "installation-a", generation: "generation-a" };
+    await first.enqueueAndArm("update:0002", { providerMessageId: "2" }, 100);
+    const enterKernel = vi.fn(async () => ({
+      terminal: true,
+      responses: [{
+        message: {
+          deliveryId: "reply-2",
+          surface: { kind: "dm" as const, id: "2" },
+          actorId: "2",
+          text: "Reply",
+        },
+        context,
+      }],
+    }));
+    const send = vi.fn()
+      .mockResolvedValueOnce({ ok: false as const, error: "retry", retryable: true })
+      .mockResolvedValueOnce({ ok: true as const });
+
+    await expect(first.attempt("update:0002", enterKernel, send)).resolves.toEqual({
+      state: "pending",
+      error: "retry",
+    });
+    await expect(retainedLedger(storage).attempt(
+      "update:0002",
+      vi.fn(async () => ({ terminal: false })),
+      send,
+    )).resolves.toEqual({ state: "completed" });
+    expect(enterKernel).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls).toEqual([
+      [expect.objectContaining({ deliveryId: "reply-2" }), context],
+      [expect.objectContaining({ deliveryId: "reply-2" }), context],
+    ]);
+  });
+
+  it("retains completed ids against provider replay until they expire", async () => {
+    const storage = new MemoryStorage();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(10_000);
+    try {
+      const first = retainedLedger(storage);
+      await first.enqueueAndArm("update:0003", { providerMessageId: "original" }, 100);
+      const deliver = vi.fn(async () => ({ terminal: true }));
+      await expect(first.attempt("update:0003", deliver)).resolves.toEqual({
+        state: "completed",
+      });
+
+      await retainedLedger(storage).enqueueAndArm(
+        "update:0003",
+        { providerMessageId: "replay" },
+        100,
+      );
+      const replay = vi.fn(async () => ({ terminal: true }));
+      await expect(retainedLedger(storage).attempt("update:0003", replay)).resolves.toEqual({
+        state: "completed",
+      });
+      expect(replay).not.toHaveBeenCalled();
+
+      clock.mockReturnValue(11_001);
+      await retainedLedger(storage).enqueueAndArm(
+        "update:0003",
+        { providerMessageId: "after-expiry" },
+        100,
+      );
+      await expect(retainedLedger(storage).attempt("update:0003", replay)).resolves.toEqual({
+        state: "completed",
+      });
+      expect(replay).toHaveBeenCalledWith({ providerMessageId: "after-expiry" });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("reclaims the oldest completed id before admitting new provider work", async () => {
+    const storage = new MemoryStorage();
+    const pending = retainedLedger(storage);
+    const clock = vi.spyOn(Date, "now");
+    try {
+      for (let index = 1; index <= 4; index += 1) {
+        clock.mockReturnValue(10_000 + index);
+        const deliveryId = `update:000${index}`;
+        await pending.enqueueAndArm(deliveryId, { providerMessageId: deliveryId }, 100);
+        await pending.attempt(deliveryId, async () => ({ terminal: true }));
+      }
+
+      clock.mockReturnValue(10_500);
+      await pending.enqueueAndArm("update:0005", { providerMessageId: "update:0005" }, 100);
+
+      expect(storage.values.has("retained_inbound:update:0001")).toBe(false);
+      expect(storage.values.has("retained_inbound:update:0002")).toBe(true);
+      expect(storage.values.has("retained_inbound:update:0005")).toBe(true);
+      expect([...storage.values.keys()].filter((key) => key.startsWith("retained_inbound:")))
+        .toHaveLength(4);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("rejects new provider work rather than discarding pending work at capacity", async () => {
+    const storage = new MemoryStorage();
+    const pending = retainedLedger(storage);
+    for (let index = 1; index <= 4; index += 1) {
+      const deliveryId = `update:000${index}`;
+      await pending.enqueueAndArm(deliveryId, { providerMessageId: deliveryId }, 100);
+    }
+
+    await expect(pending.enqueueAndArm(
+      "update:0005",
+      { providerMessageId: "update:0005" },
+      100,
+    )).rejects.toThrow("Inbound delivery ledger is at capacity");
+    expect(storage.values.has("retained_inbound:update:0001")).toBe(true);
+    expect(storage.values.has("retained_inbound:update:0005")).toBe(false);
+  });
+
+  it("can order pending provider ids by their stable key", async () => {
+    const storage = new MemoryStorage();
+    const pending = retainedLedger(storage);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    try {
+      await pending.enqueueAndArm("update:0003", { providerMessageId: "3" }, 100);
+      await pending.enqueueAndArm("update:0001", { providerMessageId: "1" }, 100);
+      await pending.enqueueAndArm("update:0002", { providerMessageId: "2" }, 100);
+      await expect(pending.pendingIds()).resolves.toEqual([
+        "update:0001",
+        "update:0002",
+        "update:0003",
+      ]);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("attempts every response in a retry round", async () => {

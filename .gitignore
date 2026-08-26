@@ -7,6 +7,7 @@ target/
 
 # Build artifacts
 dist/
+release/local/
 docs/.vitepress/cache/
 
 # Alchemy state

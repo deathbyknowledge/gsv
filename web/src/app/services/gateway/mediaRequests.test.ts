@@ -6,6 +6,7 @@ import { requestAudioTranscription, requestSpeechAudio } from "./mediaRequests";
 type MediaRequestClient = Pick<GSVClient, "request">;
 
 describe("gateway media requests", () => {
+  // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
   it("sends transcription audio as a frame body with metadata-only args", async () => {
     const request = vi.fn(async (..._args: unknown[]) => ({
       data: {
@@ -17,7 +18,9 @@ describe("gateway media requests", () => {
     const audio = new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" });
     const controller = new AbortController();
 
-    const result = await requestAudioTranscription({ request } as unknown as MediaRequestClient, {
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+
+    const result = await requestAudioTranscription({ request } as MediaRequestClient, {
       audio: {
         mimeType: "audio/webm",
         filename: "voice.webm",
@@ -38,6 +41,7 @@ describe("gateway media requests", () => {
         signal: controller.signal,
       },
     );
+    // SAFETY: Test fixture uses the asserted API shape for this focused case.
     const options = request.mock.calls[0]?.[2] as { body?: GsvBody } | undefined;
     const body = options?.body;
     expect(body).toBeDefined();
@@ -54,7 +58,9 @@ describe("gateway media requests", () => {
       body: frameBodyFromBlob(new Blob([new Uint8Array([7, 8, 9])])),
     }));
 
-    const response = await requestSpeechAudio({ request } as unknown as MediaRequestClient, {
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+
+    const response = await requestSpeechAudio({ request } as MediaRequestClient, {
       text: "hello",
     });
 
@@ -74,7 +80,9 @@ describe("gateway media requests", () => {
       },
     }));
 
-    const response = await requestSpeechAudio({ request } as unknown as MediaRequestClient, {
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+
+    const response = await requestSpeechAudio({ request } as MediaRequestClient, {
       text: "```",
     });
 

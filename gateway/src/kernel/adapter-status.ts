@@ -1,4 +1,6 @@
 import type { AdapterAccountStatus } from "../adapter-interface";
+import type { AdapterMetadata } from "@humansandmachines/gsv/protocol";
+import { adapterMetadataSchema } from "@humansandmachines/gsv/protocol";
 
 export type AdapterStatusRecord = AdapterAccountStatus & {
   adapter: string;
@@ -16,7 +18,7 @@ export class AdapterStatusStore {
 
   upsert(adapter: string, accountId: string, status: AdapterAccountStatus): AdapterStatusRecord {
     const now = Date.now();
-    const rows = this.sql.exec<RowShape>(
+    const rows = this.sql.exec<AdapterStatusRow>(
       `INSERT INTO adapter_status
        (adapter, account_id, connected, authenticated, mode, last_activity, error, extra_json, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -43,7 +45,7 @@ export class AdapterStatusStore {
   }
 
   get(adapter: string, accountId: string): AdapterStatusRecord | null {
-    const rows = this.sql.exec<RowShape>(
+    const rows = this.sql.exec<AdapterStatusRow>(
       `SELECT ${STATUS_COLUMNS}
        FROM adapter_status
        WHERE adapter = ? AND account_id = ?
@@ -80,7 +82,7 @@ export class AdapterStatusStore {
   }
 
   listByOwner(ownerUid: number): AdapterStatusRecord[] {
-    return this.sql.exec<RowShape>(
+    return this.sql.exec<AdapterStatusRow>(
       `SELECT ${STATUS_COLUMNS}
        FROM adapter_status
        WHERE owner_uid = ?
@@ -91,7 +93,7 @@ export class AdapterStatusStore {
 
   list(adapter: string, accountId?: string): AdapterStatusRecord[] {
     if (accountId) {
-      return this.sql.exec<RowShape>(
+      return this.sql.exec<AdapterStatusRow>(
         `SELECT ${STATUS_COLUMNS}
          FROM adapter_status
          WHERE adapter = ? AND account_id = ?
@@ -101,7 +103,7 @@ export class AdapterStatusStore {
       ).toArray().map(toRecord);
     }
 
-    return this.sql.exec<RowShape>(
+    return this.sql.exec<AdapterStatusRow>(
       `SELECT ${STATUS_COLUMNS}
        FROM adapter_status
        WHERE adapter = ?
@@ -111,7 +113,7 @@ export class AdapterStatusStore {
   }
 
   listAll(): AdapterStatusRecord[] {
-    return this.sql.exec<RowShape>(
+    return this.sql.exec<AdapterStatusRow>(
       `SELECT ${STATUS_COLUMNS}
        FROM adapter_status
        ORDER BY adapter ASC, updated_at DESC`,
@@ -119,7 +121,7 @@ export class AdapterStatusStore {
   }
 }
 
-type RowShape = {
+type AdapterStatusRow = {
   adapter: string;
   account_id: string;
   connected: number;
@@ -132,7 +134,7 @@ type RowShape = {
   updated_at: number;
 };
 
-function toRecord(row: RowShape): AdapterStatusRecord {
+function toRecord(row: AdapterStatusRow): AdapterStatusRecord {
   return {
     adapter: row.adapter,
     accountId: row.account_id,
@@ -141,10 +143,15 @@ function toRecord(row: RowShape): AdapterStatusRecord {
     mode: row.mode ?? undefined,
     lastActivity: row.last_activity ?? undefined,
     error: row.error ?? undefined,
-    extra: row.extra_json
-      ? (JSON.parse(row.extra_json) as Record<string, unknown>)
-      : undefined,
+    extra: parseAdapterStatusExtra(row.extra_json),
     ownerUid: row.owner_uid,
     updatedAt: row.updated_at,
   };
+}
+
+function parseAdapterStatusExtra(source: string | null): AdapterMetadata | undefined {
+  if (source === null) return undefined;
+  const decoded = adapterMetadataSchema.safeParse(JSON.parse(source));
+  if (!decoded.success) throw new Error("Stored adapter status metadata is invalid");
+  return decoded.data;
 }

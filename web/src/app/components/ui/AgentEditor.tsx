@@ -17,6 +17,19 @@ import {
   type AgentToolTarget,
 } from "./AgentToolsPanel";
 import { useUnsavedGuard } from "../../features/gsv-shell/unsaved/unsavedGuard";
+import { protectManagedMailApproval } from "../../domain/agentApproval";
+import { z } from "zod";
+
+const approvalRecordSchema = z.object({
+  target: z.string().optional(),
+  when: z.object({ target: z.string().optional() }).optional(),
+  match: z.string().optional(),
+  action: z.string().optional(),
+});
+const approvalPolicyInputSchema = z.object({
+  default: z.unknown().optional(),
+  rules: z.array(approvalRecordSchema).optional(),
+});
 
 export type AgentEditorMode = "new" | "manage";
 export type AgentEditorTab = "general" | "files" | "tasks";
@@ -124,6 +137,7 @@ const DEFAULT_APPROVAL_POLICY: AgentToolApprovalPolicy = {
     { match: "net.fetch", action: "ask" },
     { match: "fs.delete", action: "ask" },
     { match: "sys.mcp.call", action: "ask" },
+    { match: "mail.send", action: "ask" },
   ],
 };
 export const MODEL_SETTING_INFO = "Which AI this agent uses to respond. Inherit uses the default model.";
@@ -131,7 +145,8 @@ export const FALLBACK_SETTING_INFO = "Backup AI to try if the main one fails. In
 export const REASONING_SETTING_INFO = "How much the AI thinks before replying. Higher can help with hard tasks, but may be slower.";
 
 function optionValue(option: AgentEditorModelOption): string {
-  return typeof option === "string" ? option : option.value ?? option.label;
+  const candidate = Object(option);
+  return "value" in candidate ? String(candidate.value ?? candidate.label) : String(option);
 }
 
 function modelIndexForValue(value: string | undefined, options: readonly AgentEditorModelOption[] | undefined): number {
@@ -180,11 +195,9 @@ function permissionForValue(value: string | undefined): AgentToolApprovalAction 
   return value === "auto" || value === "deny" || value === "ask" ? value : "ask";
 }
 
-function legacyApprovalTarget(value: unknown): string | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  const target = (value as { target?: unknown }).target;
+function legacyApprovalTarget(value: z.infer<typeof approvalRecordSchema> | undefined): string | undefined {
+  if (!value) return undefined;
+  const target = value.target;
   return approvalTargetFromValue(target === "device" ? "targets/*" : target);
 }
 
@@ -192,35 +205,35 @@ function parseApprovalPolicy(raw: string | undefined, fallbackAction: string | u
   const trimmed = raw?.trim() ?? "";
   if (!trimmed) {
     return fallbackAction
-      ? { default: permissionForValue(fallbackAction), rules: [] }
+      ? protectManagedMailApproval({ default: permissionForValue(fallbackAction), rules: [] })
       : DEFAULT_APPROVAL_POLICY;
   }
   try {
-    const parsed = JSON.parse(trimmed) as { default?: unknown; rules?: unknown };
-    const rules = Array.isArray(parsed.rules)
+    const parsed = approvalPolicyInputSchema.parse(JSON.parse(trimmed));
+    const rules = parsed.rules
       ? parsed.rules
           .map((entry): AgentToolApprovalRule | null => {
-            const record = entry && typeof entry === "object" ? entry as Record<string, unknown> : {};
-            const match = typeof record.match === "string" ? record.match.trim() : "";
+            const record = entry;
+            const match = record.match?.trim() ?? "";
             if (!match) {
               return null;
             }
             const target = approvalTargetFromValue(record.target) ?? legacyApprovalTarget(record.when);
             return {
               match,
-              ...(target ? { target } : {}),
-              action: permissionForValue(String(record.action ?? "")),
+              ...(target ? { target } : undefined),
+              action: permissionForValue(record.action ?? ""),
             };
           })
           .filter((rule): rule is AgentToolApprovalRule => rule !== null)
       : [];
-    return {
+    return protectManagedMailApproval({
       default: parsed.default === undefined ? DEFAULT_APPROVAL_POLICY.default : permissionForValue(String(parsed.default ?? "")),
       rules: Array.isArray(parsed.rules) ? rules : DEFAULT_APPROVAL_POLICY.rules,
-    };
+    });
   } catch {
     return fallbackAction
-      ? { default: permissionForValue(fallbackAction), rules: [] }
+      ? protectManagedMailApproval({ default: permissionForValue(fallbackAction), rules: [] })
       : DEFAULT_APPROVAL_POLICY;
   }
 }
@@ -229,7 +242,7 @@ function serializeApprovalPolicy(policy: AgentToolApprovalPolicy): string {
   const rules = policy.rules
     .map((rule) => ({
       match: rule.match.trim(),
-      ...(rule.target ? { target: rule.target } : {}),
+      ...(rule.target ? { target: rule.target } : undefined),
       action: permissionForValue(rule.action),
     }))
     .filter((rule) => rule.match.length > 0);
@@ -461,8 +474,8 @@ export function AgentEditor(props: AgentEditorProps) {
     approvalPolicy: serializeApprovalPolicy(approvalPolicy),
     files: files.map((file) => ({ ...file })),
   });
-  const errorText = (error: unknown): string => {
-    return error instanceof Error ? error.message : error ? String(error) : "Action failed";
+  const errorText = (error: Error | string | null): string => {
+    return error instanceof Error ? error.message : error ? error : "Action failed";
   };
   const runAction = async (
     kind: "create" | "save",
@@ -481,7 +494,7 @@ export function AgentEditor(props: AgentEditorProps) {
       await handler(draft());
       setFlashMsg(successMessage);
     } catch (error) {
-      setErrorMsg(errorText(error));
+      setErrorMsg(errorText(error instanceof Error ? error : error ? String(error) : null));
     } finally {
       setPendingAction(null);
     }
@@ -542,6 +555,7 @@ export function AgentEditor(props: AgentEditorProps) {
       <div style={padStyle}>
         {/* ============ PANEL ============ */}
         {/* Navigation (back + breadcrumb) is owned by the shell ConsoleHeader.
+            // SAFETY: Component boundary provides the asserted DOM/test shape.
             Same full-width header as the list/detail pages: name + status. */}
         <SectionHeader
           className="gsv-ae-header"

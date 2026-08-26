@@ -2,12 +2,22 @@ import { hashPassword, isLocked, makeShadowEntry } from "../../auth/shadow";
 import type { KernelContext } from "../context";
 import { SERVER_RELEASE } from "../../version";
 import type { PasswdEntry } from "../../auth/passwd";
-import type { ProcessIdentity, SysSetupArgs, SysSetupResult, UserIdentity } from "@humansandmachines/gsv/protocol";
+import {
+  GSV_INFERENCE_FEATURE,
+  GSV_INFERENCE_MODEL,
+  GSV_INFERENCE_PROVIDER,
+  type ProcessIdentity,
+  type SysSetupArgs,
+  type SysSetupResult,
+} from "@humansandmachines/gsv/protocol";
+import type { UserIdentity } from "../identity";
 import { handleSysBootstrap } from "./bootstrap";
 import { ensureAccountHomeLayout } from "../account-home";
 import { RipgitClient } from "../../fs";
 import { seedBuiltinSkillsToHome } from "./skills-seed";
-import { ensurePersonalAgent } from "../agents";
+import { gsvInferenceFeaturesFromEnv } from "../../inference/gsv-provider";
+import { ensurePersonalController } from "../personal-controller";
+import { getConversationById } from "../../shared/utils";
 
 const USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 
@@ -15,6 +25,30 @@ type SetupTiming = {
   label: string;
   ms: number;
 };
+
+type SetupIdentity = {
+  username: string;
+  password: string;
+};
+
+type SetupNodeConfig = {
+  deviceId: string;
+  label?: string;
+  expiresAt?: number;
+};
+
+async function ensurePersonalConversation(
+  ownerUid: number,
+  ctx: KernelContext,
+  preferredAgentName?: string,
+): Promise<void> {
+  const pid = await ensurePersonalController(ownerUid, ctx, preferredAgentName);
+  const conversation = ctx.conversations.ensureShip(ownerUid, pid);
+  await getConversationById(ctx.installationId, conversation.id).initialize({
+    ownerUid,
+    kind: "ship",
+  });
+}
 
 async function timeSetupStep<T>(
   timings: SetupTiming[],
@@ -36,10 +70,7 @@ function formatSetupTimings(timings: SetupTiming[]): string {
   return timings.map((timing) => `${timing.label}=${timing.ms}ms`).join(", ");
 }
 
-function readRequiredString(value: unknown, name: string): string {
-  if (typeof value !== "string") {
-    throw new Error(`${name} is required`);
-  }
+function readRequiredString(value: string, name: string): string {
   const trimmed = value.trim();
   if (!trimmed) {
     throw new Error(`${name} is required`);
@@ -47,15 +78,15 @@ function readRequiredString(value: unknown, name: string): string {
   return trimmed;
 }
 
-function readOptionalString(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
+function readOptionalString(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
   const trimmed = value.trim();
   return trimmed ? trimmed : undefined;
 }
 
-function parseOptionalFutureTimestamp(value: unknown): number | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "number" || !Number.isFinite(value)) {
+function parseOptionalFutureTimestamp(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isFinite(value)) {
     throw new Error("node.expiresAt must be a unix timestamp in milliseconds");
   }
   const ts = Math.floor(value);
@@ -71,19 +102,18 @@ function ensureSingleUserBootstrap(passwd: PasswdEntry[]): void {
   }
 }
 
-function parseSetupIdentity(args: SysSetupArgs): { username: string; password: string } {
-  const raw = args as Record<string, unknown>;
-  if (typeof raw.username !== "string" || !raw.username.trim()) {
+function parseSetupIdentity(args: SysSetupArgs): SetupIdentity {
+  if (!args.username.trim()) {
     throw new Error("username is required");
   }
   // Validate the raw (untrimmed) value so padded names like " alice " are
   // rejected at the syscall boundary, not only in the web wizard.
-  if (!USERNAME_RE.test(raw.username)) {
+  if (!USERNAME_RE.test(args.username)) {
     throw new Error("username must match ^[a-z_][a-z0-9_-]{0,31}$");
   }
-  const username = raw.username;
+  const username = args.username;
 
-  const password = readRequiredString(raw.password, "password");
+  const password = readRequiredString(args.password, "password");
   if (password.length < 8) {
     throw new Error("password must be at least 8 characters");
   }
@@ -93,10 +123,10 @@ function parseSetupIdentity(args: SysSetupArgs): { username: string; password: s
 
 function parseSetupAgentName(
   auth: KernelContext["auth"],
-  value: unknown,
+  value: string | undefined,
   username: string,
 ): string | undefined {
-  if (typeof value !== "string" || !value.trim()) return undefined;
+  if (!value?.trim()) return undefined;
   // Validate the raw (untrimmed) value so padded names are rejected here too.
   if (!USERNAME_RE.test(value)) {
     throw new Error("agentName must match ^[a-z_][a-z0-9_-]{0,31}$");
@@ -111,22 +141,58 @@ function parseSetupAgentName(
   return agentName;
 }
 
-function parseAiConfig(args: SysSetupArgs): { provider?: string; model?: string; apiKey?: string } {
-  const raw = args as Record<string, unknown>;
-  if (!raw.ai || typeof raw.ai !== "object") {
+type SetupAiConfig = {
+  provider?: string;
+  model?: string;
+  apiKey?: string;
+};
+
+function parseAiConfig(args: SysSetupArgs): SetupAiConfig {
+  if (!args.ai) {
     return {};
   }
-  const ai = raw.ai as Record<string, unknown>;
   return {
-    provider: readOptionalString(ai.provider),
-    model: readOptionalString(ai.model),
-    apiKey: typeof ai.apiKey === "string" ? ai.apiKey : undefined,
+    provider: readOptionalString(args.ai.provider),
+    model: readOptionalString(args.ai.model),
+    apiKey: args.ai.apiKey,
   };
 }
 
+function resolveSetupAiConfig(
+  ai: SetupAiConfig,
+  managedInferenceAvailable: boolean,
+): SetupAiConfig {
+  if (ai.provider === GSV_INFERENCE_PROVIDER) {
+    if (!managedInferenceAvailable) {
+      throw new Error("GSV included inference is not available");
+    }
+    if (ai.model !== undefined && ai.model !== GSV_INFERENCE_MODEL) {
+      throw new Error("GSV included inference does not accept a model selection");
+    }
+    if (ai.apiKey?.trim()) {
+      throw new Error("GSV included inference does not accept an API key");
+    }
+    return {
+      provider: GSV_INFERENCE_PROVIDER,
+      model: GSV_INFERENCE_MODEL,
+    };
+  }
+  if (
+    managedInferenceAvailable
+    && ai.provider === undefined
+    && ai.model === undefined
+    && ai.apiKey === undefined
+  ) {
+    return {
+      provider: GSV_INFERENCE_PROVIDER,
+      model: GSV_INFERENCE_MODEL,
+    };
+  }
+  return ai;
+}
+
 function parseTimezone(args: SysSetupArgs): string | undefined {
-  const raw = args as Record<string, unknown>;
-  const timezone = readOptionalString(raw.timezone);
+  const timezone = readOptionalString(args.timezone);
   if (!timezone) {
     return undefined;
   }
@@ -138,22 +204,30 @@ function parseTimezone(args: SysSetupArgs): string | undefined {
   return timezone;
 }
 
-function parseNodeConfig(args: SysSetupArgs): {
-  deviceId: string;
-  label?: string;
-  expiresAt?: number;
-} | null {
-  const raw = args as Record<string, unknown>;
-  if (!raw.node || typeof raw.node !== "object") {
+function parseNodeConfig(args: SysSetupArgs): SetupNodeConfig | null {
+  if (!args.node) {
     return null;
   }
-  const node = raw.node as Record<string, unknown>;
-  const deviceId = readRequiredString(node.deviceId, "node.deviceId");
+  const deviceId = readRequiredString(args.node.deviceId, "node.deviceId");
   return {
     deviceId,
-    label: readOptionalString(node.label),
-    expiresAt: parseOptionalFutureTimestamp(node.expiresAt),
+    label: readOptionalString(args.node.label),
+    expiresAt: parseOptionalFutureTimestamp(args.node.expiresAt),
   };
+}
+
+function setupServerBuild(
+  ctx: KernelContext,
+  features: string[],
+): SysSetupResult["server"] {
+  const server: SysSetupResult["server"] = {
+    version: ctx.serverVersion,
+    release: SERVER_RELEASE,
+  };
+  if (features.length > 0) {
+    server.features = features;
+  }
+  return server;
 }
 
 export async function handleSysSetup(
@@ -161,7 +235,7 @@ export async function handleSysSetup(
   ctx: KernelContext,
 ): Promise<SysSetupResult> {
   const { auth, config } = ctx;
-  const requestedUsername = typeof args.username === "string" && args.username.trim().length > 0
+  const requestedUsername = args.username.trim().length > 0
     ? args.username.trim()
     : "<unknown>";
   const startedAt = Date.now();
@@ -172,10 +246,15 @@ export async function handleSysSetup(
   }
 
   const { username, password } = parseSetupIdentity(args);
-  const ai = parseAiConfig(args);
+  const serverFeatures = gsvInferenceFeaturesFromEnv(ctx.env);
+  const managedInferenceAvailable = serverFeatures.includes(GSV_INFERENCE_FEATURE);
+  const ai = resolveSetupAiConfig(
+    parseAiConfig(args),
+    managedInferenceAvailable,
+  );
   const timezone = parseTimezone(args);
   const node = parseNodeConfig(args);
-  const rootPassword = readOptionalString((args as Record<string, unknown>).rootPassword);
+  const rootPassword = readOptionalString(args.rootPassword);
   if (rootPassword && rootPassword.length < 8) {
     throw new Error("rootPassword must be at least 8 characters");
   }
@@ -185,7 +264,7 @@ export async function handleSysSetup(
   if (auth.getPasswdByUsername(username)) {
     throw new Error(`User already exists: ${username}`);
   }
-  const agentName = parseSetupAgentName(auth, (args as Record<string, unknown>).agentName, username);
+  const agentName = parseSetupAgentName(auth, args.agentName, username);
 
   const uid = auth.nextUid();
   // User Private Group (UPG): each user gets a unique primary group with gid = uid.
@@ -276,6 +355,9 @@ export async function handleSysSetup(
       if (ai.apiKey !== undefined) {
         config.set("config/ai/api_key", ai.apiKey);
       }
+      if (managedInferenceAvailable) {
+        config.set("config/ai/fallback_model_profile", "");
+      }
     });
 
     if (node) {
@@ -336,7 +418,7 @@ export async function handleSysSetup(
     };
 
     await timeSetupStep(timings, "provision-personal-agent", async () => {
-      await ensurePersonalAgent(ctx, processIdentity, agentName);
+      await ensurePersonalConversation(uid, ctx, agentName);
     });
 
     const rootShadow = auth.getShadowByUsername("root");
@@ -347,10 +429,7 @@ export async function handleSysSetup(
     );
 
     return {
-      server: {
-        version: ctx.serverVersion,
-        release: SERVER_RELEASE,
-      },
+      server: setupServerBuild(ctx, serverFeatures),
       user: processIdentity,
       rootLocked,
       bootstrap,
@@ -363,4 +442,73 @@ export async function handleSysSetup(
     );
     throw error;
   }
+}
+
+export async function recoverCompletedSysSetup(
+  args: SysSetupArgs,
+  ctx: KernelContext,
+): Promise<SysSetupResult> {
+  const { username, password } = parseSetupIdentity(args);
+  const humans = ctx.auth.getPasswdEntries().filter(
+    (entry) => entry.uid >= 1000 && !ctx.auth.isPersonalAgentUid(entry.uid),
+  );
+  const user = ctx.auth.getPasswdByUsername(username);
+  if (humans.length !== 1 || !user || humans[0]?.uid !== user.uid) {
+    throw new Error("System already initialized");
+  }
+  const authenticated = await ctx.auth.authenticate(username, password);
+  if (!authenticated.ok || authenticated.identity.uid !== user.uid) {
+    throw new Error("Installation setup credentials do not match");
+  }
+
+  const preferredAgentName = ctx.auth.getPersonalAgentUid(user.uid) === null
+    ? parseSetupAgentName(ctx.auth, args.agentName, username)
+    : undefined;
+  await ensurePersonalConversation(user.uid, ctx, preferredAgentName);
+
+  const node = parseNodeConfig(args);
+  let nodeToken: SysSetupResult["nodeToken"];
+  if (node) {
+    for (const token of ctx.auth.listTokens(user.uid)) {
+      if (
+        token.kind === "node"
+        && token.allowedDeviceId === node.deviceId
+        && token.revokedAt === null
+      ) {
+        ctx.auth.revokeToken(token.tokenId, "setup retry", user.uid);
+      }
+    }
+    const issued = await ctx.auth.issueToken({
+      uid: user.uid,
+      kind: "node",
+      label: node.label ?? `node:${node.deviceId}`,
+      allowedRole: "driver",
+      allowedDeviceId: node.deviceId,
+      expiresAt: node.expiresAt,
+    });
+    nodeToken = {
+      tokenId: issued.tokenId,
+      token: issued.token,
+      tokenPrefix: issued.tokenPrefix,
+      uid: issued.uid,
+      kind: "node",
+      label: issued.label,
+      allowedRole: "driver",
+      allowedDeviceId: issued.allowedDeviceId,
+      createdAt: issued.createdAt,
+      expiresAt: issued.expiresAt,
+    };
+  }
+
+  const rootShadow = ctx.auth.getShadowByUsername("root");
+  const serverFeatures = gsvInferenceFeaturesFromEnv(ctx.env);
+  return {
+    server: setupServerBuild(ctx, serverFeatures),
+    user: {
+      ...authenticated.identity,
+      cwd: authenticated.identity.home,
+    },
+    rootLocked: rootShadow ? isLocked(rootShadow) : true,
+    nodeToken,
+  };
 }

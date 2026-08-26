@@ -42,8 +42,7 @@ export function useVirtualTranscript<T extends VirtualTranscriptSource>({
   const geometry = useMemo(() => {
     const items: Array<VirtualTranscriptItem<T>> = [];
     let cursor = 0;
-    for (let index = 0; index < entries.length; index += 1) {
-      const entry = entries[index] as T;
+    for (const [index, entry] of entries.entries()) {
       const entryEstimateKey = estimateKeyForEntry(entry);
       const cached = heightCacheRef.current.get(entry.key);
       const cachedHeight = cached?.estimateKey === entryEstimateKey ? cached.height : undefined;
@@ -97,7 +96,7 @@ export function useVirtualTranscript<T extends VirtualTranscriptSource>({
     };
 
     updateHeight();
-    if (typeof ResizeObserver === "undefined") {
+    if (!globalThis.ResizeObserver) {
       return;
     }
 

@@ -313,7 +313,7 @@ export function createPresenceSpeechOutput(options: PresenceSpeechOutputOptions)
       };
       audio.onerror = () => finish(new Error("Speech playback failed"));
       setSpeechStatus(speechChunkStatus("Starting speech", chunk));
-      void audio.play().catch((error: unknown) => {
+      void audio.play().catch((error) => {
         finish(error instanceof Error ? error : new Error(String(error)));
       });
     });

@@ -1,4 +1,5 @@
 import type { AdapterConnectChallenge } from "@humansandmachines/gsv/protocol";
+import { z } from "zod";
 
 export const DEFAULT_WHATSAPP_QR_TTL_MS = 45_000;
 
@@ -79,9 +80,9 @@ export function whatsappQrExpiresAt(
   challenge: AdapterConnectChallenge,
   issuedAt: number,
 ): number {
-  return typeof challenge.expiresAt === "number"
-    && Number.isFinite(challenge.expiresAt)
-    ? challenge.expiresAt
+  const expiresAt = z.number().finite().safeParse(challenge.expiresAt);
+  return expiresAt.success
+    ? expiresAt.data
     : issuedAt + DEFAULT_WHATSAPP_QR_TTL_MS;
 }
 

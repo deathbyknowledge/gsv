@@ -1,4 +1,4 @@
-import type { JSX } from "preact";
+import type { ComponentChildren, JSX } from "preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { Alert } from "../../../components/ui/Alert";
 import { Button } from "../../../components/ui/Button";
@@ -32,6 +32,23 @@ type WhatsAppOnboardingFlowProps = {
   initialAccountId?: string | null;
   onBack: () => void;
   onConnected: (detailId: string) => void;
+  dependencies?: WhatsAppOnboardingDependencies;
+};
+
+export type WhatsAppOnboardingDependencies = {
+  ConnectFlowShell: (props: Parameters<typeof ConnectFlowShell>[0]) => ComponentChildren;
+  useConsumeIdentityLinkCode: () => Pick<ReturnType<typeof useConsumeIdentityLinkCode>, "isPending" | "mutateAsync">;
+  useUnsavedGuard: typeof useUnsavedGuard;
+  useUnsavedGuardLeave: typeof useUnsavedGuardLeave;
+  useWhatsAppPairing: typeof useWhatsAppPairing;
+};
+
+const defaultDependencies: WhatsAppOnboardingDependencies = {
+  ConnectFlowShell: (props) => <ConnectFlowShell {...props} />,
+  useConsumeIdentityLinkCode: () => useConsumeIdentityLinkCode(),
+  useUnsavedGuard: (...args) => useUnsavedGuard(...args),
+  useUnsavedGuardLeave: () => useUnsavedGuardLeave(),
+  useWhatsAppPairing: (...args) => useWhatsAppPairing(...args),
 };
 
 type SuccessfulConnectResult = Extract<ConnectConsoleAdapterResult, { ok: true }>;
@@ -42,7 +59,7 @@ const STEP_LINK = 2;
 const stepLinksStyle = { display: "flex", flexWrap: "wrap" as const, gap: "18px", alignItems: "center" };
 const fieldStyle = { maxWidth: "520px" };
 
-function errorText(error: unknown): string {
+function errorText<T>(error: T): string {
   return error instanceof Error ? error.message : error ? String(error) : "";
 }
 
@@ -74,27 +91,28 @@ export function WhatsAppOnboardingFlow({
   initialAccountId = null,
   onBack,
   onConnected,
+  dependencies = defaultDependencies,
 }: WhatsAppOnboardingFlowProps): JSX.Element {
   const [initialId] = useState(
     () => initialWhatsAppAccountId(initialAccountId, existingAccountIds),
   );
   const accountIdLocked = Boolean(initialAccountId?.trim());
   const reconnecting = accountIdLocked && !forceRelink;
-  const consumeLinkCode = useConsumeIdentityLinkCode();
+  const consumeLinkCode = dependencies.useConsumeIdentityLinkCode();
   const [step, setStep] = useState(STEP_PREPARE);
   const [accountId, setAccountId] = useState(initialId);
   const [qrRenderError, setQrRenderError] = useState(false);
   const [linkCode, setLinkCode] = useState("");
   const [linkError, setLinkError] = useState("");
   const [linkResultText, setLinkResultText] = useState("");
-  const requestLeave = useUnsavedGuardLeave();
+  const requestLeave = dependencies.useUnsavedGuardLeave();
   const normalizedAccountId = accountId.trim();
   const accountError = whatsappAccountIdError(
     accountId,
     accountIdLocked ? [] : existingAccountIds,
   );
   const linked = linkResultText.length > 0;
-  const pairing = useWhatsAppPairing({
+  const pairing = dependencies.useWhatsAppPairing({
     accountId,
     forceRelink,
     pairScreenActive: step === STEP_PAIR,
@@ -114,7 +132,7 @@ export function WhatsAppOnboardingFlow({
   const pairedAccountLabel = pairedPhone
     || whatsappAccountIdLabel(normalizedAccountId);
 
-  useUnsavedGuard(
+  dependencies.useUnsavedGuard(
     () => !linked && (pairingStarted || accountId !== initialId || linkCode.trim() !== ""),
   );
 
@@ -432,5 +450,6 @@ export function WhatsAppOnboardingFlow({
     ],
   };
 
-  return <ConnectFlowShell flow={flow} current={step} onStep={goToStep} />;
+  const FlowShell = dependencies.ConnectFlowShell;
+  return <FlowShell flow={flow} current={step} onStep={goToStep} />;
 }

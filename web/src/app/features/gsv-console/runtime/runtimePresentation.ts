@@ -48,8 +48,8 @@ export function processSub(process: ConsoleProcess): string {
 export function processBlurb(process: ConsoleProcess): string {
   const owner = process.username || uidLabel(process.uid) || "unknown owner";
   return compactText(
-    [`${statusForProcess(process).toLowerCase()} task`, owner, process.profile, process.cwd],
-    "Process-backed task with durable history and runtime controls.",
+    [`${statusForProcess(process).toLowerCase()} work`, owner, process.profile, process.cwd],
+    "Process-backed work with durable history and runtime controls.",
   );
 }
 
@@ -77,7 +77,7 @@ export function processDetailSections(process: ConsoleProcess): ConsoleDetailSec
         detailRow("owner", "RUN AS", process.username || uidLabel(process.uid)),
         detailRow("profile", "PROFILE", process.profile),
         detailRow("interactive", "HIL APPROVALS", process.interactive),
-        detailRow("parent", "PARENT TASK", process.parentPid),
+        detailRow("parent", "PARENT WORK", process.parentPid),
       ]),
     },
     {

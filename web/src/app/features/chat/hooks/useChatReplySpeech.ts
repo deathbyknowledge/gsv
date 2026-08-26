@@ -16,6 +16,7 @@ function latestSpeakableAssistantRow(
     const row = rows[index];
     if (
       row.role === "assistant"
+      && row.delivery === "directed"
       && row.text.trim().length > 0
       && row.status !== "error"
       && row.status !== "streaming"

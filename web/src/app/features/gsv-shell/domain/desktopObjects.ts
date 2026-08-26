@@ -40,7 +40,7 @@ type StatusSummary = {
   error: number;
 };
 
-const SPECS: Record<DesktopObjectId, DesktopObjectSpec> = {
+const SPECS = {
   machines: {
     id: "machines",
     label: "MACHINES",
@@ -68,17 +68,17 @@ const SPECS: Record<DesktopObjectId, DesktopObjectSpec> = {
     x: 50,
     y: 70,
   },
-};
+} satisfies Record<DesktopObjectId, DesktopObjectSpec>;
 
 const BRANCH_ORDER: DesktopObjectId[] = ["machines", "messengers", "integrations"];
-const KNOWN_TOKEN_LABELS: Record<string, string> = {
+const KNOWN_TOKEN_LABELS = {
   discord: "Discord",
   gsv: "GSV",
   whatsapp: "WhatsApp",
-};
+} satisfies Record<string, string>;
 
 export function buildDesktopObjectsFromConsole(data: ConsoleOverviewData | null | undefined): DesktopObject[] {
-  const branches: Record<DesktopObjectId, DesktopObjectBranch> = {
+  const branches = {
     machines: {
       id: "machines",
       children: safeArray(data?.targets)
@@ -95,7 +95,7 @@ export function buildDesktopObjectsFromConsole(data: ConsoleOverviewData | null 
         .map(mcpServerToChild)
         .sort(compareChildren),
     },
-  };
+  } satisfies Record<DesktopObjectId, DesktopObjectBranch>;
 
   return BRANCH_ORDER.map((id) => buildObject(branches[id]));
 }
@@ -144,7 +144,7 @@ function familyToChild(family: MessengerFamily): DesktopChildObject {
     label: formatTokenLabel(family.adapter),
     type: "MESSENGER",
     blurb: familyBlurb(family),
-    status: family.status.tone as ShellStatus,
+    status: family.status.tone,
     statusLabel: family.status.label,
     glyph: "messengers",
     route: {
@@ -238,7 +238,9 @@ function statusLabelForChildren(children: readonly DesktopChildObject[]): string
   return `${summary.total} IDLE`;
 }
 
-function mcpServerStatus(server: ConsoleMcpServer): { status: ShellStatus; label: string } {
+type McpStatus = { status: ShellStatus; label: string };
+
+function mcpServerStatus(server: ConsoleMcpServer): McpStatus {
   if (server.state === "failed" || firstNonEmpty(server.error)) {
     return { status: "error", label: "ERROR" };
   }
@@ -308,12 +310,12 @@ function statusRank(status: ShellStatus): number {
   return 5;
 }
 
-function stableId(prefix: string, parts: readonly unknown[], fallback: unknown): string {
+function stableId(prefix: string, parts: readonly (string | number | null | undefined)[], fallback: string | number | null | undefined): string {
   const body = parts.map(normalizeIdPart).filter(Boolean).join(":") || normalizeIdPart(fallback) || "unknown";
   return `${prefix}:${body}`;
 }
 
-function normalizeIdPart(value: unknown): string {
+function normalizeIdPart(value: string | number | null | undefined): string {
   return firstNonEmpty(value)?.replace(/\s+/g, "-") ?? "";
 }
 
@@ -321,13 +323,13 @@ function countLabel(count: number, singular: string, plural: string): string {
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
-function formatTokenLabel(value: unknown): string {
+function formatTokenLabel(value: string | number | null | undefined): string {
   const text = firstNonEmpty(value);
   if (!text) {
     return "";
   }
 
-  const knownLabel = KNOWN_TOKEN_LABELS[text.toLowerCase()];
+  const knownLabel = Object.entries(KNOWN_TOKEN_LABELS).find(([key]) => key === text.toLowerCase())?.[1];
   if (knownLabel) {
     return knownLabel;
   }
@@ -340,21 +342,25 @@ function formatTokenLabel(value: unknown): string {
     .join(" ");
 }
 
-function joinNonEmpty(values: readonly unknown[] | null | undefined): string {
+function joinNonEmpty(values: readonly (string | number | null | undefined)[] | null | undefined): string {
   return safeArray(values).map((value) => firstNonEmpty(value)).filter((value): value is string => value !== null).join(", ");
 }
 
-function firstNonEmpty(...values: readonly unknown[]): string | null {
+function isStringValue(
+  value: string | number | null | undefined,
+): value is string {
+  return typeof value === "string";
+}
+
+function firstNonEmpty(...values: readonly (string | number | null | undefined)[]): string | null {
   for (const value of values) {
-    if (typeof value === "string") {
+    if (isStringValue(value)) {
       const trimmed = value.trim();
       if (trimmed) {
         return trimmed;
       }
     }
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return String(value);
-    }
+    if (value !== null && value !== undefined && Number.isFinite(Number(value))) return String(value);
   }
   return null;
 }

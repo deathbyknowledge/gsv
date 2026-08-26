@@ -9,6 +9,7 @@ import {
 import type { ConsoleAccount, ConsoleConfigEntry } from "./consoleModels";
 
 function account(overrides: Partial<ConsoleAccount>): ConsoleAccount {
+  // SAFETY: Test fixture uses the asserted API shape for this focused case.
   return {
     uid: 1000,
     username: "agent",
@@ -18,6 +19,7 @@ function account(overrides: Partial<ConsoleAccount>): ConsoleAccount {
     gecos: "",
     capabilities: [],
     ...overrides,
+  // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
   } as ConsoleAccount;
 }
 

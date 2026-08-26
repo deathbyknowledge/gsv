@@ -5,8 +5,8 @@
  *  kind HERE, not in each consumer. */
 export type ObjectGlyph = "machines" | "messengers" | "integrations";
 
-export const OBJECT_GLYPH_ICON: Record<ObjectGlyph, string> = {
+export const OBJECT_GLYPH_ICON = {
   machines: "computer",
   messengers: "chat",
   integrations: "weblink",
-};
+} satisfies Record<ObjectGlyph, string>;

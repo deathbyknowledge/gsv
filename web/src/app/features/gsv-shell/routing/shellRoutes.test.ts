@@ -22,6 +22,28 @@ describe("shellRoutes", () => {
     expect(shellRouteFromLocation(location("/tasks"))).toEqual(route);
   });
 
+  it("round-trips the responsibilities page", () => {
+    const route: ShellRoute = { surface: "responsibilities" };
+    expect(shellRouteToPath(route)).toBe("/responsibilities");
+    expect(shellRouteFromLocation(location("/responsibilities"))).toEqual(route);
+  });
+
+  it("keeps settings task paths compatible with the Work presentation", () => {
+    const listRoute: ShellRoute = {
+      surface: "settings",
+      settingsRoute: { view: "list", kind: "tasks" },
+    };
+    const detailRoute: ShellRoute = {
+      surface: "settings",
+      settingsRoute: { view: "list", kind: "tasks", detailId: "proc:review" },
+    };
+
+    expect(shellRouteFromLocation(location("/settings/tasks"))).toEqual(listRoute);
+    expect(shellRouteToPath(listRoute)).toBe("/settings/tasks");
+    expect(shellRouteFromLocation(location("/settings/tasks/proc%3Areview"))).toEqual(detailRoute);
+    expect(shellRouteToPath(detailRoute)).toBe("/settings/tasks/proc%3Areview");
+  });
+
   it("uses /repositories for the native repository page", () => {
     const route: ShellRoute = { surface: "repositories" };
 

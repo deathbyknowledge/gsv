@@ -7,32 +7,26 @@ import {
   createTestRoot,
   nodeWithLabel,
 } from "./messengerTestHarness";
+import { MessengerLinkCodePanel, type MessengerLinkCodeDependencies } from "./MessengerLinkCodePanel";
 
 const mocks = vi.hoisted(() => ({
+  // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
   children: null as ComponentChildren,
   isPending: false,
   mutateAsync: vi.fn(),
 }));
 
-vi.mock("../hooks/useConsoleData", () => ({
+const dependencies: MessengerLinkCodeDependencies = {
   useConsumeIdentityLinkCode: () => ({
     isPending: mocks.isPending,
     mutateAsync: mocks.mutateAsync,
   }),
-}));
-
-vi.mock("../../gsv-shell/unsaved/unsavedGuard", () => ({
   useUnsavedGuard: () => undefined,
-}));
-
-vi.mock("../../../components/ui/Surface", () => ({
-  Surface: ({ children }: { children: ComponentChildren }) => {
+  Surface: ({ children }) => {
     mocks.children = children;
     return null;
   },
-}));
-
-import { MessengerLinkCodePanel } from "./MessengerLinkCodePanel";
+};
 
 let root: ReturnType<typeof createTestRoot> | null = null;
 
@@ -45,7 +39,7 @@ function currentNodes() {
 
 async function renderPanel(): Promise<void> {
   root ??= createTestRoot("The link-code panel harness");
-  await root.render(<MessengerLinkCodePanel linkCount={0} refreshing={false} />);
+  await root.render(<MessengerLinkCodePanel linkCount={0} refreshing={false} dependencies={dependencies} />);
 }
 
 async function enterCode(code: string): Promise<void> {

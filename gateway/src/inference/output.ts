@@ -2,6 +2,7 @@ import type {
   AssistantMessage,
   TextContent,
 } from "@earendil-works/pi-ai";
+import * as z from "zod/mini";
 
 export function describeAssistantResponseFailure(response: AssistantMessage): string | null {
   if (response.stopReason === "error" || response.stopReason === "aborted") {
@@ -28,9 +29,9 @@ export function isRetryableAssistantResponseFailure(
   }
 
   if (response.stopReason === "error") {
-    return typeof response.errorMessage === "string" &&
-      response.errorMessage.trim().length > 0 &&
-      isRetryableGenerationErrorMessage(response.errorMessage);
+    const message = z.string().safeParse(response.errorMessage);
+    return message.success && message.data.trim().length > 0 &&
+      isRetryableGenerationErrorMessage(message.data);
   }
 
   const failureText = `${response.errorMessage ?? ""}\n${failure}`;
@@ -56,12 +57,13 @@ export function hasRawToolCallMarkupOutput(response: AssistantMessage): boolean 
     .map((block) => block.text)
     .join("")
     .trim();
-  return /^<tool_call(?:\s|>)/.test(text) && /<\/tool_call>$/.test(text);
+  return /^<tool_call(?:\s|>)/.test(text) && text.endsWith("</tool_call>");
 }
 
 export function isRetryableGenerationErrorMessage(message: string): boolean {
   const normalized = message.toLowerCase();
-  return normalized.includes("reasoning but no final response") ||
+  return normalized.includes("subrequest depth limit exceeded") ||
+    normalized.includes("reasoning but no final response") ||
     normalized.includes("malformed tool call markup") ||
     normalized.includes("generation returned no text") ||
     normalized.includes("returned an empty response") ||

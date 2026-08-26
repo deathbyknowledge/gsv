@@ -1,7 +1,6 @@
 import type { PendingAction } from "./sessionDomain";
 import { provisioningCopy } from "./sessionDomain";
 import { Progress } from "../../components/ui/Progress";
-import { Spinner } from "../../components/ui/Spinner";
 import { AuthLayout } from "./AuthLayout";
 import "./ProvisioningScreen.css";
 

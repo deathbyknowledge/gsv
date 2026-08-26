@@ -22,25 +22,38 @@ export type ProcessViewRequest = <S extends ProcessViewCall>(
   args: ArgsOf<S>,
 ) => Promise<ResultOf<S>>;
 
-export async function requestProcessView<S extends ProcessViewCall>(
+async function requestProcessView<S extends ProcessViewCall>(
+  installationId: string,
   pid: string,
   call: S,
   args: ArgsOf<S>,
 ): Promise<ResultOf<S>> {
+  // SAFETY: call and args are paired by the generic ProcessViewCall contract.
   const frame = {
     type: "req",
     id: crypto.randomUUID(),
     call,
     args,
   } as RequestFrame;
-  const response = await sendFrameToProcess(pid, frame);
+  const response = await sendFrameToProcess(installationId, pid, frame);
   if (!response || response.type !== "res") {
     throw new Error(`${call} did not return a response`);
   }
   if (!response.ok) {
     throw new Error(response.error.message);
   }
+  // SAFETY: the process response is validated by its matching request call.
+  // SAFETY: response data is selected by the matching syscall response contract.
   return response.data as ResultOf<S>;
+}
+
+// just a wrapper to avoid passing the installationId everywhere
+export function createProcessViewRequest(
+  installationId: string,
+): ProcessViewRequest {
+  return <S extends ProcessViewCall>(pid: string, call: S, args: ArgsOf<S>) => (
+    requestProcessView(installationId, pid, call, args)
+  );
 }
 
 export type ScheduleViewStore = {

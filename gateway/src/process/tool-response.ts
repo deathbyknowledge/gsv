@@ -1,29 +1,72 @@
 import {
   bodyToBytes,
   bodyToText,
+  fileResourceReferenceSchema,
+  jsonValueSchema,
 } from "@humansandmachines/gsv/protocol";
-import type { FrameBody } from "../protocol/frames";
+import type {
+  JsonValue,
+} from "@humansandmachines/gsv/protocol";
+import type {
+  FrameBody,
+  ResponseOkFrame,
+} from "../protocol/frames";
 import { formatSize } from "../fs";
 import { encodeBase64Bytes } from "../shared/base64";
+import { z } from "zod";
 
 const MAX_TOOL_IMAGE_BYTES = 25 * 1024 * 1024;
 
+const toolResponseRecordSchema = z.object({
+  ok: z.boolean().optional(),
+  files: z.array(z.json()).optional(),
+  directories: z.array(z.json()).optional(),
+  kind: z.enum(["text", "image"]).optional(),
+  content: z.json().optional(),
+  contentType: z.string().optional(),
+  path: z.string().optional(),
+  size: z.number().optional(),
+  lines: z.number().optional(),
+  truncated: z.boolean().optional(),
+  nextOffset: z.number().int().nonnegative().optional(),
+  resource: fileResourceReferenceSchema.optional(),
+}).catchall(z.json());
+
+const textToolResponseSchema = toolResponseRecordSchema.extend({
+  kind: z.literal("text"),
+  content: z.string(),
+});
+
+const toolRequestSchema = z.object({
+  offset: z.number().optional(),
+}).catchall(z.json());
+
+type ToolResponseRecord = z.infer<typeof toolResponseRecordSchema>;
+type ToolResponseInput = ResponseOkFrame["data"] | null;
+type ToolResponseMaterializationOptions = {
+  maxTextBytes?: number;
+};
+
 export async function materializeToolResponse(
   call: string,
-  data: unknown,
+  data: ToolResponseInput | null,
   body?: FrameBody,
   signal?: AbortSignal,
-): Promise<unknown> {
-  const record = asRecord(data);
+  options?: ToolResponseMaterializationOptions,
+): Promise<JsonValue> {
+  const record = parseToolResponseRecord(data);
   if (call === "net.fetch") {
     const bytes = body ? await bodyToBytes(body, Infinity, signal) : new Uint8Array();
     const text = decodeUtf8(bytes);
-    return {
-      ...(record ?? {}),
+    const result: ToolResponseRecord = {
+      ...record,
       bodyBase64: encodeBase64Bytes(bytes),
-      ...(text === null ? {} : { bodyText: text }),
       bodyBytes: bytes.byteLength,
     };
+    if (text !== null) {
+      result.bodyText = text;
+    }
+    return result;
   }
   if (
     call === "fs.read"
@@ -31,23 +74,43 @@ export async function materializeToolResponse(
     && !("files" in record)
     && !("directories" in record)
     && !body
+    && !(record.kind === "image" && record.resource)
   ) {
     throw new Error("fs.read file response did not include a body");
   }
+  if (
+    call === "fs.read"
+    && record?.ok === true
+    && record.kind === "image"
+    && record.resource
+    && !body
+  ) {
+    const path = record.path ?? record.resource.path;
+    const mimeType = record.contentType ?? record.resource.contentType;
+    const size = record.size ?? record.resource.size;
+    return {
+      ...record,
+      content: [
+        { type: "text", text: `Read image ${path} [${mimeType}, ${formatSize(size)}]` },
+        { type: "resource", ref: record.resource },
+      ],
+    };
+  }
   if (!body) {
-    return data;
+    return jsonValueSchema.parse(data);
   }
   if (call === "fs.read" && record?.ok === true) {
     if (record.kind === "text") {
-      return { ...record, content: await bodyToText(body, Infinity, signal) };
+      return {
+        ...record,
+        content: await bodyToText(body, options?.maxTextBytes ?? Infinity, signal),
+      };
     }
     if (record.kind === "image") {
       const bytes = await bodyToBytes(body, MAX_TOOL_IMAGE_BYTES, signal);
-      const mimeType = typeof record.contentType === "string"
-        ? record.contentType
-        : "application/octet-stream";
-      const path = typeof record.path === "string" ? record.path : "image";
-      const size = typeof record.size === "number" ? record.size : bytes.byteLength;
+      const mimeType = record.contentType ?? "application/octet-stream";
+      const path = record.path ?? "image";
+      const size = record.size ?? bytes.byteLength;
       return {
         ...record,
         content: [
@@ -63,29 +126,39 @@ export async function materializeToolResponse(
 
 export function formatAgentToolResponse(
   call: string,
-  args: unknown,
-  result: unknown,
-): unknown {
-  const record = asRecord(result);
-  if (call !== "fs.read" || record?.kind !== "text" || typeof record.content !== "string") {
+  args: JsonValue,
+  result: JsonValue,
+): JsonValue {
+  const record = textToolResponseSchema.safeParse(result);
+  if (call !== "fs.read" || !record.success) {
     return result;
   }
 
-  const request = asRecord(args);
-  const offset = typeof request?.offset === "number" ? request.offset : 0;
-  const lines = record.lines === 0 ? [] : record.content.split("\n");
+  const request = parseToolRequest(args);
+  const offset = request?.offset ?? 0;
+  const lines = record.data.lines === 0 ? [] : record.data.content.split("\n");
+  const numbered = lines
+    .map((line, index) => `${String(offset + index + 1).padStart(6)}\t${line}`)
+    .join("\n");
+  const truncationNotice = record.data.truncated
+    ? record.data.nextOffset === undefined
+      ? "[Read truncated inside a line. Use Shell for byte-range inspection.]"
+      : `[Read truncated. Continue with Read using offset ${record.data.nextOffset}.]`
+    : "";
   return {
-    ...record,
-    content: lines
-      .map((line, index) => `${String(offset + index + 1).padStart(6)}\t${line}`)
-      .join("\n"),
+    ...record.data,
+    content: [numbered, truncationNotice].filter(Boolean).join("\n\n"),
   };
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
+function parseToolResponseRecord(value: ToolResponseInput | JsonValue): ToolResponseRecord | null {
+  const parsed = toolResponseRecordSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+function parseToolRequest(value: JsonValue): z.infer<typeof toolRequestSchema> | null {
+  const parsed = toolRequestSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 function decodeUtf8(bytes: Uint8Array): string | null {

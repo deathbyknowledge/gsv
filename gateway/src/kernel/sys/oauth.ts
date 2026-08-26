@@ -1,6 +1,5 @@
 import type {
   SysOAuthAccountSummary,
-  SysOAuthConnectionKind,
   SysOAuthDevicePollArgs,
   SysOAuthDevicePollResult,
   SysOAuthDeviceStartArgs,
@@ -13,6 +12,8 @@ import type {
   SysOAuthStartArgs,
   SysOAuthStartResult,
 } from "@humansandmachines/gsv/protocol";
+import { jsonObjectSchema, type JsonObject } from "@humansandmachines/gsv/protocol";
+import { z } from "zod";
 import type { KernelContext } from "../context";
 import type {
   OAuthAccountRecord,
@@ -47,6 +48,27 @@ const EXTRA_AUTH_RESERVED_PARAMS = new Set([
   "state",
 ]);
 
+type OAuthScalar = string | number | null | undefined;
+type OAuthExtraInput = Record<string, OAuthScalar> | null | undefined;
+type DeviceAccountMetadata = { authorizedAt: number; chatgptAccountId?: string };
+
+const oauthScalarSchema = z.union([z.string(), z.number(), z.null()]);
+const oauthExtraInputSchema = z.record(z.string(), oauthScalarSchema).nullable().optional();
+const oauthStartArgsSchema = z.object({
+  uid: oauthScalarSchema.optional(), provider: oauthScalarSchema.optional(), kind: oauthScalarSchema.optional(),
+  accountKey: oauthScalarSchema.optional(), label: oauthScalarSchema.optional(),
+  authorizationEndpoint: oauthScalarSchema.optional(), tokenEndpoint: oauthScalarSchema.optional(),
+  clientId: oauthScalarSchema.optional(), redirectUri: oauthScalarSchema.optional(),
+  scope: oauthScalarSchema.optional(), resource: oauthScalarSchema.optional(), extraAuthParams: oauthExtraInputSchema,
+});
+const oauthDeviceStartArgsSchema = z.object({
+  uid: oauthScalarSchema.optional(), provider: oauthScalarSchema.optional(), kind: oauthScalarSchema.optional(),
+  accountKey: oauthScalarSchema.optional(), label: oauthScalarSchema.optional(),
+});
+const oauthDevicePollArgsSchema = z.object({ uid: oauthScalarSchema.optional(), flowId: oauthScalarSchema.optional() });
+const oauthListArgsSchema = z.object({ uid: oauthScalarSchema.optional(), includePending: z.boolean().optional() });
+const oauthForgetArgsSchema = z.object({ uid: oauthScalarSchema.optional(), accountId: oauthScalarSchema.optional() });
+
 export type OAuthCallbackInput = {
   state?: string | null;
   code?: string | null;
@@ -60,61 +82,66 @@ export type OAuthCallbackResult =
 
 function requireUid(ctx: KernelContext): number {
   const uid = ctx.identity?.process.uid;
-  if (typeof uid !== "number") {
+  const parsed = z.number().safeParse(uid);
+  if (!parsed.success) {
     throw new Error("Authentication required");
   }
-  return uid;
+  return parsed.data;
 }
 
-function parseOptionalUid(input: unknown): number | undefined {
+function parseOptionalUid(input: OAuthScalar): number | undefined {
   if (input === undefined || input === null) return undefined;
-  if (!Number.isInteger(input) || typeof input !== "number" || input < 0) {
+  const parsed = z.number().int().nonnegative().safeParse(input);
+  if (!parsed.success) {
     throw new Error("uid must be a non-negative integer");
   }
-  return input;
+  return parsed.data;
 }
 
-function parseKind(input: unknown): OAuthConnectionKind {
-  if (typeof input !== "string" || !OAUTH_KINDS.has(input as OAuthConnectionKind)) {
+function parseKind(input: OAuthScalar): OAuthConnectionKind {
+  const parsed = z.enum(["ai-provider", "mcp-server", "generic"]).safeParse(input);
+  if (!parsed.success || !OAUTH_KINDS.has(parsed.data)) {
     throw new Error("kind must be one of: ai-provider, mcp-server, generic");
   }
-  return input as OAuthConnectionKind;
+  return parsed.data;
 }
 
-function parseRequiredString(input: unknown, field: string, maxLength = 512): string {
-  if (typeof input !== "string") {
+function parseRequiredString(input: OAuthScalar, field: string, maxLength = 512): string {
+  const parsed = z.string().safeParse(input);
+  if (!parsed.success) {
     throw new Error(`${field} must be a string`);
   }
-  const trimmed = input.trim();
+  const trimmed = parsed.data.trim();
   if (!trimmed) {
     throw new Error(`${field} is required`);
   }
   if (trimmed.length > maxLength) {
     throw new Error(`${field} is too long`);
   }
-  if (/[\u0000-\u001f\u007f]/.test(trimmed)) {
+  if (hasControlCharacters(trimmed)) {
     throw new Error(`${field} must not contain control characters`);
   }
   return trimmed;
 }
 
-function parseOptionalString(input: unknown, field: string, maxLength = 1024): string | null {
+function parseOptionalString(input: OAuthScalar, field: string, maxLength = 1024): string | null {
   if (input === undefined || input === null) return null;
-  if (typeof input !== "string") {
+  const parsed = z.string().safeParse(input);
+  if (!parsed.success) {
     throw new Error(`${field} must be a string`);
   }
-  const trimmed = input.trim();
+  const trimmed = parsed.data.trim();
   if (!trimmed) return null;
   if (trimmed.length > maxLength) {
     throw new Error(`${field} is too long`);
   }
-  if (/[\u0000-\u001f\u007f]/.test(trimmed)) {
+  if (hasControlCharacters(trimmed)) {
     throw new Error(`${field} must not contain control characters`);
   }
   return trimmed;
 }
 
-function parseOAuthUrl(input: unknown, field: string): string {
+function parseOAuthUrl(input: OAuthScalar, field: string): string {
   const value = parseRequiredString(input, field, 2048);
   let parsed: URL;
   try {
@@ -141,26 +168,32 @@ function isLoopbackHost(hostname: string): boolean {
     || hostname === "[::1]";
 }
 
-function parseExtraAuthParams(input: unknown): Record<string, string> {
+function parseExtraAuthParams(input: OAuthExtraInput) {
   if (input === undefined || input === null) return {};
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
-    throw new Error("extraAuthParams must be an object");
-  }
 
-  const params: Record<string, string> = {};
-  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+  const entries: Array<[string, string]> = [];
+  for (const [key, value] of Object.entries(input)) {
     if (!/^[A-Za-z0-9_.:-]+$/.test(key)) {
       throw new Error(`extraAuthParams key is invalid: ${key}`);
     }
     if (EXTRA_AUTH_RESERVED_PARAMS.has(key.toLowerCase())) {
       throw new Error(`extraAuthParams cannot override ${key}`);
     }
-    if (typeof value !== "string") {
+    const parsed = z.string().safeParse(value);
+    if (!parsed.success) {
       throw new Error(`extraAuthParams.${key} must be a string`);
     }
-    params[key] = value;
+    entries.push([key, parsed.data]);
   }
-  return params;
+  return Object.fromEntries(entries);
+}
+
+function hasControlCharacters(value: string): boolean {
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
 }
 
 export async function handleSysOAuthStart(
@@ -169,7 +202,7 @@ export async function handleSysOAuthStart(
 ): Promise<SysOAuthStartResult> {
   const callerUid = requireUid(ctx);
   const isRoot = callerUid === 0;
-  const raw = args as Record<string, unknown>;
+  const raw = oauthStartArgsSchema.parse(args);
   const targetUid = parseOptionalUid(raw.uid) ?? callerUid;
   if (!isRoot && targetUid !== callerUid) {
     throw new Error("Permission denied: cannot start OAuth for another user");
@@ -238,7 +271,7 @@ export async function handleSysOAuthDeviceStart(
 ): Promise<SysOAuthDeviceStartResult> {
   const callerUid = requireUid(ctx);
   const isRoot = callerUid === 0;
-  const raw = args as Record<string, unknown>;
+  const raw = oauthDeviceStartArgsSchema.parse(args);
   const targetUid = parseOptionalUid(raw.uid) ?? callerUid;
   if (!isRoot && targetUid !== callerUid) {
     throw new Error("Permission denied: cannot start OAuth for another user");
@@ -301,7 +334,7 @@ export async function handleSysOAuthDevicePoll(
 ): Promise<SysOAuthDevicePollResult> {
   const callerUid = requireUid(ctx);
   const isRoot = callerUid === 0;
-  const raw = args as Record<string, unknown>;
+  const raw = oauthDevicePollArgsSchema.parse(args);
   const requestedUid = parseOptionalUid(raw.uid);
   if (!isRoot && requestedUid !== undefined && requestedUid !== callerUid) {
     throw new Error("Permission denied: cannot poll OAuth for another user");
@@ -356,10 +389,7 @@ export async function handleSysOAuthDevicePoll(
     accessToken: token.accessToken,
     refreshToken: token.refreshToken,
     expiresAt: token.expiresAt,
-    metadata: {
-      authorizedAt: now,
-      ...(token.accountId ? { chatgptAccountId: token.accountId } : {}),
-    },
+    metadata: deviceAccountMetadata(now, token.accountId),
   });
   ctx.oauth.deleteFlow(flow.flowId);
   return {
@@ -374,7 +404,7 @@ export function handleSysOAuthList(
 ): SysOAuthListResult {
   const callerUid = requireUid(ctx);
   const isRoot = callerUid === 0;
-  const raw = args as Record<string, unknown>;
+  const raw = oauthListArgsSchema.parse(args);
   const requestedUid = parseOptionalUid(raw.uid);
   if (!isRoot && requestedUid !== undefined && requestedUid !== callerUid) {
     throw new Error("Permission denied: cannot list OAuth accounts for another user");
@@ -396,7 +426,7 @@ export function handleSysOAuthForget(
 ): SysOAuthForgetResult {
   const callerUid = requireUid(ctx);
   const isRoot = callerUid === 0;
-  const raw = args as Record<string, unknown>;
+  const raw = oauthForgetArgsSchema.parse(args);
   const accountId = parseRequiredString(raw.accountId, "accountId", 200);
   const requestedUid = parseOptionalUid(raw.uid);
   if (!isRoot && requestedUid !== undefined && requestedUid !== callerUid) {
@@ -471,7 +501,7 @@ function summarizeFlow(flow: OAuthFlowRecord): SysOAuthFlowSummary {
   return {
     flowId: flow.flowId,
     uid: flow.uid,
-    kind: flow.kind as SysOAuthConnectionKind,
+    kind: flow.kind,
     provider: flow.provider,
     accountKey: flow.accountKey,
     label: flow.label,
@@ -490,7 +520,7 @@ function summarizeAccount(account: OAuthAccountRecord): SysOAuthAccountSummary {
   return {
     accountId: account.accountId,
     uid: account.uid,
-    kind: account.kind as SysOAuthConnectionKind,
+    kind: account.kind,
     provider: account.provider,
     accountKey: account.accountKey,
     label: account.label,
@@ -502,8 +532,18 @@ function summarizeAccount(account: OAuthAccountRecord): SysOAuthAccountSummary {
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
     lastUsedAt: account.lastUsedAt,
-    metadata: account.metadata,
+    metadata: (() => {
+      const parsed = jsonObjectSchema.safeParse(account.metadata);
+      return parsed.success ? parsed.data : {};
+    })(),
   };
+}
+
+
+function deviceAccountMetadata(now: number, accountId: string | null): DeviceAccountMetadata {
+  const metadata: DeviceAccountMetadata = { authorizedAt: now };
+  if (accountId) metadata.chatgptAccountId = accountId;
+  return metadata;
 }
 
 async function exchangeAuthorizationCode(
@@ -551,13 +591,13 @@ async function exchangeAuthorizationCode(
     };
   }
 
-  let json: Record<string, unknown>;
+  let json: JsonObject;
   try {
-    const parsed = await response.json();
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    const parsed = jsonObjectSchema.safeParse(await response.json());
+    if (!parsed.success) {
       return { ok: false, status: 502, message: "OAuth token endpoint returned an invalid JSON object" };
     }
-    json = parsed as Record<string, unknown>;
+    json = parsed.data;
   } catch {
     return { ok: false, status: 502, message: "OAuth token endpoint returned invalid JSON" };
   }
@@ -577,21 +617,24 @@ async function exchangeAuthorizationCode(
   };
 }
 
-function stringField(record: Record<string, unknown>, key: string): string | null {
+function stringField(record: JsonObject, key: string): string | null {
   const value = record[key];
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+  const parsed = z.string().safeParse(value);
+  if (!parsed.success || parsed.data.trim().length === 0) return null;
+  return parsed.data.trim();
 }
 
-function numberField(record: Record<string, unknown>, key: string): number | null {
+function numberField(record: JsonObject, key: string): number | null {
   const value = record[key];
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+  const parsed = z.number().finite().positive().safeParse(value);
+  if (!parsed.success) {
     return null;
   }
-  return Math.floor(value);
+  return Math.floor(parsed.data);
 }
 
-function parsePositiveInt(value: unknown): number | null {
-  if (typeof value !== "string") return null;
+function parsePositiveInt(value: string | undefined): number | null {
+  if (value === undefined) return null;
   const parsed = Number(value.trim());
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }

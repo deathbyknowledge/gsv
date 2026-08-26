@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { CommandContext } from "just-bash";
+import { InMemoryFs } from "just-bash";
 import type { KernelContext } from "../../../kernel/context";
-import type { GsvFs } from "../../../fs/gsv-fs";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
-import { buildSkillsCommand } from "./skills";
+import { buildSkillsCommand, type SkillFs } from "./skills";
 
 const IDENTITY: ProcessIdentity = {
   uid: 1000,
@@ -178,18 +177,21 @@ async function run(
   stdin = "",
 ) {
   return command.execute(args, {
-    fs: {} as CommandContext["fs"],
+    // SAFETY: The command only reads cwd/env/stdin and delegates filesystem calls to the skill fixture.
+    fs: new InMemoryFs(),
     cwd: IDENTITY.cwd,
     env: new Map(),
     stdin,
-  } as CommandContext);
+  });
 }
 
 function makeContext(): KernelContext {
+  // SAFETY: This command path does not access kernel context in the focused tests.
   return {} as KernelContext;
 }
 
-function makeSkillFs(entries: Record<string, string[] | string>): GsvFs {
+function makeSkillFs(entries: Record<string, string[] | string>): SkillFs {
+  // SAFETY: The fixture implements the filesystem methods exercised by buildSkillsCommand.
   return {
     async readdir(path: string): Promise<string[]> {
       const entry = entries[path];
@@ -204,25 +206,21 @@ function makeSkillFs(entries: Record<string, string[] | string>): GsvFs {
         throw new Error(`ENOENT: ${path}`);
       }
       return {
-        isFile: typeof entry === "string",
+      isFile: !Array.isArray(entry),
         isDirectory: Array.isArray(entry),
       };
     },
     async readFile(path: string): Promise<string> {
       const entry = entries[path];
-      if (typeof entry !== "string") {
+      if (Array.isArray(entry)) {
         throw new Error(`ENOENT: ${path}`);
       }
       return entry;
     },
-  } as unknown as GsvFs;
+  };
 }
 
-function makeMutableSkillFs(initial: Record<string, string[] | string>): {
-  fs: GsvFs;
-  entries: Record<string, string[] | string>;
-  writes: string[];
-} {
+function makeMutableSkillFs(initial: Record<string, string[] | string>) {
   const entries = structuredClone(initial);
   const writes: string[] = [];
 
@@ -276,18 +274,18 @@ function makeMutableSkillFs(initial: Record<string, string[] | string>): {
         throw new Error(`ENOENT: ${path}`);
       }
       return {
-        isFile: typeof entry === "string",
+        isFile: !Array.isArray(entry),
         isDirectory: Array.isArray(entry),
       };
     },
     async readFile(path: string): Promise<string> {
       const entry = entries[path];
-      if (typeof entry !== "string") {
+      if (Array.isArray(entry)) {
         throw new Error(`ENOENT: ${path}`);
       }
       return entry;
     },
-  } as unknown as GsvFs;
+};
 
   return { fs, entries, writes };
 }
@@ -309,7 +307,7 @@ function parentPath(path: string): string {
   const normalized = normalizePath(path);
   const parts = normalized.split("/").filter(Boolean);
   if (parts.length === 0) return "/";
-  return `/${parts.slice(0, -1).join("/")}` || "/";
+  return parts.length > 1 ? `/${parts.slice(0, -1).join("/")}` : "/";
 }
 
 function pathName(path: string): string {

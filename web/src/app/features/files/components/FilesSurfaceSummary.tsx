@@ -108,26 +108,26 @@ type DeleteRequest = {
   path: string;
 };
 
-const STATE_TONE: Record<StateKind, StatusTone> = {
+const STATE_TONE = {
   loading: "live",
   error: "error",
   empty: "idle",
   offline: "idle",
-};
+} satisfies Record<StateKind, StatusTone>;
 
-const INLINE_STATE_TONE: Record<InlineStateKind, StatusTone> = {
+const INLINE_STATE_TONE = {
   loading: "live",
   error: "error",
   success: "online",
   info: "idle",
   warn: "warn",
-};
+} satisfies Record<InlineStateKind, StatusTone>;
 
-function queryErrorText(error: unknown): string {
+function queryErrorText<T>(error: T): string {
   return error instanceof Error ? error.message : error ? String(error) : "";
 }
 
-function mutationErrorText(error: unknown, fallback: string): string {
+function mutationErrorText<T>(error: T, fallback: string): string {
   return error instanceof Error ? error.message : error ? String(error) : fallback;
 }
 
@@ -872,7 +872,6 @@ export function FilesSurfaceSummary({
     });
     // Seeds only when the target list (re)loads; live deep-link changes on an
     // already-mounted surface are handled by the entry effect below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targets]);
 
   // A deep link arriving (or changing) while the surface is already mounted —

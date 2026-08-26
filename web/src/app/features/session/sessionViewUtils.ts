@@ -1,7 +1,19 @@
 export function textInputValue(event: Event): string {
-  return (event.currentTarget as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).value;
+  const target = event.currentTarget;
+  if (
+    target instanceof HTMLInputElement
+    || target instanceof HTMLTextAreaElement
+    || target instanceof HTMLSelectElement
+  ) {
+    return target.value;
+  }
+  throw new TypeError("Expected a text input event");
 }
 
 export function checkedInputValue(event: Event): boolean {
-  return (event.currentTarget as HTMLInputElement).checked;
+  const target = event.currentTarget;
+  if (target instanceof HTMLInputElement) {
+    return target.checked;
+  }
+  throw new TypeError("Expected a checkbox input event");
 }

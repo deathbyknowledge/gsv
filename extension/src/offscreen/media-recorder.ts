@@ -65,18 +65,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   void handleMessage(message)
     .then((value) => {
-      sendResponse({ ok: true, value } satisfies OffscreenMediaResponse<unknown>);
+        sendResponse({ ok: true, value } satisfies OffscreenMediaResponse<ExtensionBoundaryValue>);
     })
     .catch((error) => {
       sendResponse({
         ok: false,
         error: error instanceof Error ? error.message : String(error),
-      } satisfies OffscreenMediaResponse<unknown>);
+      } satisfies OffscreenMediaResponse<ExtensionBoundaryValue>);
     });
   return true;
 });
 
-async function handleMessage(message: OffscreenMediaMessage): Promise<unknown> {
+async function handleMessage(message: OffscreenMediaMessage): Promise<ExtensionBoundaryValue> {
   switch (message.type) {
     case "start":
       return await startRecording(message);
@@ -392,12 +392,14 @@ function activeStatus(state: RecordingState): MediaRecordingStatus {
 }
 
 function tabMediaConstraints(streamId: string, mode: MediaRecordingMode): MediaStreamConstraints {
-  const tabSource = {
+  const rawTabSource = {
     mandatory: {
       chromeMediaSource: "tab",
       chromeMediaSourceId: streamId,
     },
-  } as unknown as MediaTrackConstraints;
+  };
+  // SAFETY: Chrome's tab capture constraints extend the standard media constraint shape.
+  const tabSource = rawTabSource as MediaTrackConstraints;
   return {
     audio: tabSource,
     video: mode === "video" ? tabSource : false,
@@ -425,11 +427,12 @@ function fallbackMimeType(mode: MediaRecordingMode): string {
   return mode === "video" ? "video/webm" : "audio/webm";
 }
 
-function isOffscreenMediaMessage(value: unknown): value is OffscreenMediaMessage {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+function isOffscreenMediaMessage(value: ExtensionBoundaryValue): value is OffscreenMediaMessage {
+    if (!value || Object(value) !== value || Array.isArray(value)) {
     return false;
   }
-  const record = value as Record<string, unknown>;
+  // SAFETY: the object/array checks above establish a record-shaped message payload.
+  const record = value as { [key: string]: ExtensionBoundaryValue };
   return record.target === OFFSCREEN_MEDIA_RECORDER_TARGET
     && (
       record.type === "start"
@@ -439,11 +442,13 @@ function isOffscreenMediaMessage(value: unknown): value is OffscreenMediaMessage
     );
 }
 
-function promiseWithResolvers<T>(): {
+type PromiseResolvers<T> = {
   promise: Promise<T>;
   resolve: (value: T) => void;
   reject: (error: Error) => void;
-} {
+};
+
+function promiseWithResolvers<T>(): PromiseResolvers<T> {
   let resolve!: (value: T) => void;
   let reject!: (error: Error) => void;
   const promise = new Promise<T>((promiseResolve, promiseReject) => {

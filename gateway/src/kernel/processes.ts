@@ -26,6 +26,7 @@ export type ProcessRecord = {
   uid: number;
   ownerUid: number;
   interactive: boolean;
+  isPersonalController: boolean;
   gid: number;
   gids: number[];
   username: string;
@@ -39,6 +40,36 @@ export type ProcessRecord = {
   createdAt: number;
 };
 
+export type ProcessSelectorResult =
+  | { kind: "found"; record: ProcessRecord }
+  | { kind: "ambiguous"; records: ProcessRecord[] }
+  | { kind: "missing" };
+
+export function findInteractiveProcess(
+  selector: string,
+  processes: readonly ProcessRecord[],
+): ProcessSelectorResult {
+  const normalized = selector.trim().toLowerCase();
+  if (!normalized) return { kind: "missing" };
+
+  const interactive = processes.filter((record) => record.interactive);
+  const exact = interactive.find((record) => record.processId.toLowerCase() === normalized);
+  if (exact) return { kind: "found", record: exact };
+
+  const matches = interactive.filter((record) => {
+    const pid = record.processId.toLowerCase();
+    const shortPid = pid.slice(0, 13);
+    const label = record.label?.trim().toLowerCase();
+    return pid.startsWith(normalized)
+      || shortPid === normalized
+      || shortPid.startsWith(normalized)
+      || label === normalized;
+  });
+  if (matches.length === 1) return { kind: "found", record: matches[0] };
+  if (matches.length > 1) return { kind: "ambiguous", records: matches };
+  return { kind: "missing" };
+}
+
 export class ProcessRegistry {
   constructor(private readonly sql: SqlStorage) {}
 
@@ -49,19 +80,21 @@ export class ProcessRegistry {
       parentPid?: string;
       ownerUid?: number;
       interactive?: boolean;
+      isPersonalController?: boolean;
       label?: string;
       cwd?: string;
     },
   ): void {
     this.sql.exec(
-      `INSERT OR REPLACE INTO processes
-        (process_id, parent_pid, uid, owner_uid, interactive, gid, gids, username, home, cwd, state, active_run_id, queued_count, last_active_at, label, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle', NULL, 0, NULL, ?, ?)`,
+      `INSERT INTO processes
+        (process_id, parent_pid, uid, owner_uid, interactive, is_personal_controller, gid, gids, username, home, cwd, state, active_run_id, queued_count, last_active_at, label, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle', NULL, 0, NULL, ?, ?)`,
       processId,
       opts.parentPid ?? null,
       identity.uid,
       opts.ownerUid ?? identity.uid,
       (opts.interactive ?? true) ? 1 : 0,
+      opts.isPersonalController ? 1 : 0,
       identity.gid,
       JSON.stringify(identity.gids),
       identity.username,
@@ -109,13 +142,37 @@ export class ProcessRegistry {
   }
 
   get(processId: string): ProcessRecord | null {
-    const rows = [...this.sql.exec<RowShape>(
+    const rows = [...this.sql.exec<ProcessRow>(
       "SELECT * FROM processes WHERE process_id = ?",
       processId,
     )];
 
     if (rows.length === 0) return null;
     return toRecord(rows[0]);
+  }
+
+  getPersonalController(ownerUid: number): ProcessRecord | null {
+    const rows = [...this.sql.exec<ProcessRow>(
+      `SELECT * FROM processes
+       WHERE owner_uid = ? AND is_personal_controller = 1
+       LIMIT 1`,
+      ownerUid,
+    )];
+
+    if (rows.length === 0) return null;
+    return toRecord(rows[0]);
+  }
+
+  clearPersonalController(processId: string): boolean {
+    const existing = this.get(processId);
+    if (!existing?.isPersonalController) {
+      return false;
+    }
+    this.sql.exec(
+      "UPDATE processes SET is_personal_controller = 0 WHERE process_id = ?",
+      processId,
+    );
+    return true;
   }
 
   updateIdentity(processId: string, identity: ProcessIdentity): void {
@@ -199,7 +256,7 @@ export class ProcessRegistry {
    * List children of a given process.
    */
   children(parentPid: string): ProcessRecord[] {
-    return [...this.sql.exec<RowShape>(
+    return [...this.sql.exec<ProcessRow>(
       "SELECT * FROM processes WHERE parent_pid = ? ORDER BY created_at DESC",
       parentPid,
     )].map(toRecord);
@@ -208,13 +265,13 @@ export class ProcessRegistry {
   /** List processes owned by a uid (owner_uid), or all processes when omitted. */
   list(ownerUid?: number): ProcessRecord[] {
     if (ownerUid !== undefined) {
-      return [...this.sql.exec<RowShape>(
+      return [...this.sql.exec<ProcessRow>(
         "SELECT * FROM processes WHERE owner_uid = ? ORDER BY created_at DESC",
         ownerUid,
       )].map(toRecord);
     }
 
-    return [...this.sql.exec<RowShape>(
+      return [...this.sql.exec<ProcessRow>(
       "SELECT * FROM processes ORDER BY created_at DESC",
     )].map(toRecord);
   }
@@ -225,12 +282,13 @@ export class ProcessRegistry {
   }
 }
 
-type RowShape = {
+type ProcessRow = {
   process_id: string;
   parent_pid: string | null;
   uid: number;
   owner_uid: number | null;
   interactive: number | null;
+  is_personal_controller: number | null;
   gid: number;
   gids: string;
   username: string;
@@ -244,13 +302,15 @@ type RowShape = {
   created_at: number;
 };
 
-function toRecord(row: RowShape): ProcessRecord {
+function toRecord(row: ProcessRow): ProcessRecord {
   return {
     processId: row.process_id,
     parentPid: row.parent_pid,
     uid: row.uid,
     ownerUid: row.owner_uid ?? row.uid,
     interactive: row.interactive === null ? true : row.interactive !== 0,
+    isPersonalController: row.is_personal_controller !== null
+      && row.is_personal_controller !== 0,
     gid: row.gid,
     gids: JSON.parse(row.gids),
     username: row.username,

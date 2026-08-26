@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { Button } from "../../../components/ui/Button";
-import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
+import { ListRow } from "../../../components/ui/ListRow";
 import { Search } from "../../../components/ui/Search";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import type { StatusTone } from "../../../components/ui/StatusDot";
@@ -40,6 +40,7 @@ type ListTemplateProps = {
 
   /** Left column — the action surface. */
   connectLabel: string;
+  connectDisabled?: boolean;
   onConnect?: () => void;
   search?: ListTemplateSearch;
   /** Optional filter controls (Selects, chips). */
@@ -64,7 +65,7 @@ function ListTemplateRowView({ row }: { row: ListTemplateRow }) {
         leading={row.leading}
         label={row.label}
         sub={row.sub}
-        status={listRowStatusForTone(row.tone) as ListRowStatus}
+        status={listRowStatusForTone(row.tone)}
         statusDotPlacement="trailing"
         statusLabel={row.statusLabel}
         tag={row.tag?.label}
@@ -84,6 +85,7 @@ export function ListTemplate({
   rows,
   emptyObject,
   connectLabel,
+  connectDisabled = false,
   onConnect,
   search,
   filters,
@@ -122,7 +124,7 @@ export function ListTemplate({
           ) : null}
           {filters ? <div class="gsv-list-template-filters">{filters}</div> : null}
           <div class="gsv-list-template-connect">
-            <Button variant="primary" block label={connectLabel} onClick={onConnect} />
+            <Button variant="primary" block label={connectLabel} disabled={connectDisabled} onClick={onConnect} />
           </div>
         </section>
 

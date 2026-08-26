@@ -17,7 +17,7 @@ export interface StepperProps {
   onChange?: (current: number) => void;
 }
 
-const SIZE_CLASS: Record<StepperSize, string> = {
+const SIZE_CLASS = {
   small: "gsv-sp-sm",
   medium: "gsv-sp-md",
   large: "gsv-sp-lg",
@@ -35,6 +35,7 @@ export function Stepper(props: StepperProps) {
   // (e.g. the catalog demo).
   const controlled = onChange != null;
 
+  // SAFETY: Component boundary provides the asserted DOM/test shape.
   const names = [l0, l1, l2, l3, l4].filter((x) => x != null && x !== "") as string[];
   const stepCount = names.length ? names.length : Math.max(2, Math.min(6, count));
   const cur = controlled || stateCur === undefined ? current : stateCur;

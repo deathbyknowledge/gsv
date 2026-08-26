@@ -1,21 +1,23 @@
 import type { PresenceState } from "../../presence/types";
+import { z } from "zod";
 
 const TRANSCRIPTION_FAILURE_PREFIX = /^Transcription failed:\s*/i;
 const PROVIDER_ERROR_CODE = /\b(?:error|provider) code:\s*([a-z0-9_-]+)/i;
 const TRANSCRIPTION_RETRY_MESSAGE =
   "Audio transcription failed. Try recording again. If it keeps happening, check the configured speech model.";
 
-function errorDetail(error: unknown): string {
+function errorDetail<T>(error: T): string {
   if (error instanceof Error) {
     return error.message.trim();
   }
-  if (typeof error === "string") {
-    return error.trim();
+  const text = z.string().safeParse(error);
+  if (text.success) {
+    return text.data.trim();
   }
   return "";
 }
 
-export function formatTranscriptionError(error: unknown): string {
+export function formatTranscriptionError<T>(error: T): string {
   const detail = errorDetail(error).replace(TRANSCRIPTION_FAILURE_PREFIX, "");
   if (!detail || detail === "Unknown error") {
     return TRANSCRIPTION_RETRY_MESSAGE;
@@ -30,7 +32,7 @@ export function formatTranscriptionError(error: unknown): string {
   return TRANSCRIPTION_RETRY_MESSAGE;
 }
 
-export function normalizeTranscriptionRequestError(error: unknown): Error {
+export function normalizeTranscriptionRequestError<T>(error: T): Error {
   if (error instanceof Error && error.name === "AbortError") {
     return error;
   }

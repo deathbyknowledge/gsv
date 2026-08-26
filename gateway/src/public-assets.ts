@@ -173,7 +173,7 @@ function publicAssetHeaders(path: string, file: OpenFileResult): Headers {
 
 function rangeNotSatisfiableResponse(totalSize?: number): Response {
   const headers = new Headers({ "accept-ranges": "bytes" });
-  if (typeof totalSize === "number") {
+  if (totalSize !== undefined) {
     headers.set("content-range", `bytes */${totalSize}`);
   }
   return new Response("Range Not Satisfiable", {
@@ -208,10 +208,10 @@ function openFileOptionsFromRequest(request: Request): OpenFileOptions | null {
     return null;
   }
 
-  return {
-    ...(conditions ? { conditions } : {}),
-    ...(range ? { range } : {}),
-  };
+  const options: OpenFileOptions = {};
+  if (conditions) options.conditions = conditions;
+  if (range) options.range = range;
+  return options;
 }
 
 function openFileConditionsFromHeaders(headers: Headers): OpenFileOptions["conditions"] | undefined {

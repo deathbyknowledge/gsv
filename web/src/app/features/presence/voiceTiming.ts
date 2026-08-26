@@ -70,8 +70,9 @@ export function recordVoiceTimingChunkPlaybackStart(timing: VoiceTimingTrace | u
   if (chunk.index === 0) {
     markVoiceTiming(timing, "speech_first_audio_playing", now);
   }
-  if (typeof timing.lastChunkEndedAt === "number") {
-    entry.gapMs = Math.max(0, now - timing.lastChunkEndedAt);
+  const lastChunkEndedAt = timing.lastChunkEndedAt;
+  if (lastChunkEndedAt !== undefined) {
+    entry.gapMs = Math.max(0, now - lastChunkEndedAt);
   }
 }
 
@@ -114,11 +115,11 @@ function ensureVoiceTimingChunk(
   return entry;
 }
 
-function voiceTimingSummary(timing: VoiceTimingTrace, reason: string): Record<string, unknown> {
+function voiceTimingSummary(timing: VoiceTimingTrace, reason: string) {
   const marks = timing.marks;
   const chunkGaps = timing.chunks
     .map((chunk) => chunk.gapMs)
-    .filter((gap): gap is number => typeof gap === "number" && Number.isFinite(gap));
+    .filter((gap): gap is number => gap !== undefined && Number.isFinite(gap));
   const chunks = timing.chunks
     .slice()
     .sort((left, right) => left.index - right.index)
@@ -159,15 +160,16 @@ function voiceTimingSummary(timing: VoiceTimingTrace, reason: string): Record<st
 }
 
 function durationMs(start: number | undefined, end: number | undefined): number | undefined {
-  if (typeof start !== "number" || typeof end !== "number") {
+  if (start === undefined || end === undefined) {
     return undefined;
   }
   return Math.max(0, Math.round(end - start));
 }
 
 function createTimingId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
+  const randomUuid = globalThis.crypto?.randomUUID;
+  if (randomUuid) {
+    return randomUuid.call(globalThis.crypto);
   }
   return `voice-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }

@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(19);
+    expect(KERNEL_MIGRATIONS).toHaveLength(32);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -108,6 +108,58 @@ describe("kernel schema migrations", () => {
       id: 19,
       name: "remove_notifications",
     });
+    expect(KERNEL_MIGRATIONS[19]).toMatchObject({
+      id: 20,
+      name: "add_mailboxes",
+    });
+    expect(KERNEL_MIGRATIONS[20]).toMatchObject({
+      id: 21,
+      name: "isolate_mail_notifications",
+    });
+    expect(KERNEL_MIGRATIONS[21]).toMatchObject({
+      id: 22,
+      name: "add_outbound_mail",
+    });
+    expect(KERNEL_MIGRATIONS[22]).toMatchObject({
+      id: 23,
+      name: "add_personal_controller_slot",
+    });
+    expect(KERNEL_MIGRATIONS[23]).toMatchObject({
+      id: 24,
+      name: "add_surface_route_modes",
+    });
+    expect(KERNEL_MIGRATIONS[24]).toMatchObject({
+      id: 25,
+      name: "add_private_adapter_destinations",
+    });
+    expect(KERNEL_MIGRATIONS[25]).toMatchObject({
+      id: 26,
+      name: "add_conversations",
+    });
+    expect(KERNEL_MIGRATIONS[26]).toMatchObject({
+      id: 27,
+      name: "own_durable_tasks",
+    });
+    expect(KERNEL_MIGRATIONS[27]).toMatchObject({
+      id: 28,
+      name: "rename_home_conversation_to_ship",
+    });
+    expect(KERNEL_MIGRATIONS[28]).toMatchObject({
+      id: 29,
+      name: "add_responsibilities",
+    });
+    expect(KERNEL_MIGRATIONS[29]).toMatchObject({
+      id: 30,
+      name: "link_ipc_responsibilities",
+    });
+    expect(KERNEL_MIGRATIONS[30]).toMatchObject({
+      id: 31,
+      name: "add_responsibility_source_policies",
+    });
+    expect(KERNEL_MIGRATIONS[31]).toMatchObject({
+      id: 32,
+      name: "fence_adapter_run_routes",
+    });
   });
 
   it("creates the current kernel table set", () => {
@@ -145,6 +197,12 @@ describe("kernel schema migrations", () => {
       "oauth_accounts",
       "user_mcp_servers",
       "adapter_ingress_receipts",
+      "mailboxes",
+      "mail_messages",
+      "mail_intakes",
+      "mail_outbound",
+      "cf_agents_schedules",
+      "cf_agents_mcp_servers",
     ]);
   });
 
@@ -166,6 +224,104 @@ describe("kernel schema migrations", () => {
     expect(normalizedStatements()).toContain("ALTER TABLE processes DROP COLUMN context_files_json");
   });
 
+  it("adds one personal controller slot per process owner", () => {
+    const statements = normalizedStatements();
+    expect(statements).toContain(
+      "ALTER TABLE processes ADD COLUMN is_personal_controller INTEGER NOT NULL DEFAULT 0 CHECK (is_personal_controller IN (0, 1))",
+    );
+    expect(statements).toContain(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_processes_personal_controller_owner ON processes(owner_uid) WHERE is_personal_controller = 1",
+    );
+  });
+
+  it("classifies existing surface routes for the DM cutover", () => {
+    const statements = normalizedStatements();
+    expect(statements).toContain(
+      "ALTER TABLE surface_routes ADD COLUMN route_mode TEXT NOT NULL DEFAULT 'legacy' CHECK (route_mode IN ('legacy', 'work', 'surface'))",
+    );
+    expect(statements).toContain(
+      "UPDATE surface_routes SET route_mode = 'surface' WHERE surface_kind != 'dm'",
+    );
+    expect(statements).toContain(
+      "CREATE INDEX IF NOT EXISTS idx_surface_routes_mode_pid ON surface_routes(route_mode, pid)",
+    );
+  });
+
+  it("stores one last-active private adapter destination per owner", () => {
+    expect(normalizedStatements()).toContain(
+      "CREATE TABLE private_adapter_destinations ( uid INTEGER PRIMARY KEY, adapter TEXT NOT NULL, account_id TEXT NOT NULL, actor_id TEXT NOT NULL, surface_id TEXT NOT NULL, thread_id TEXT NOT NULL DEFAULT '', message_id TEXT NOT NULL, updated_at INTEGER NOT NULL )",
+    );
+  });
+
+  it("adds canonical conversations independently of process history", () => {
+    const statements = normalizedStatements();
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE conversations")
+      && statement.includes("kind TEXT NOT NULL CHECK (kind IN ('home', 'work', 'group'))")
+      && statement.includes("handler_pid TEXT NOT NULL")
+    ))).toBe(true);
+    expect(statements).toContain(
+      "CREATE UNIQUE INDEX conversations_home_owner_idx ON conversations (owner_uid) WHERE kind = 'home'",
+    );
+    expect(statements.some((statement) => statement.startsWith("CREATE TABLE conversation_members")))
+      .toBe(true);
+    expect(statements.some((statement) => statement.startsWith("CREATE TABLE conversation_surfaces")))
+      .toBe(true);
+  });
+
+  it("renames the canonical Home conversation to Ship without losing its address", () => {
+    const statements = normalizedStatements();
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE conversations_v028")
+      && statement.includes("kind TEXT NOT NULL CHECK (kind IN ('ship', 'work', 'group'))")
+    ))).toBe(true);
+    expect(statements.some((statement) => (
+      statement.startsWith("INSERT INTO conversations_v028")
+      && statement.includes("CASE kind WHEN 'home' THEN 'ship' ELSE kind END")
+      && statement.includes("CASE WHEN kind = 'home' AND title = 'Home' THEN 'Ship' ELSE title END")
+    ))).toBe(true);
+    expect(statements).toContain(
+      "CREATE UNIQUE INDEX conversations_ship_owner_idx ON conversations (owner_uid) WHERE kind = 'ship'",
+    );
+  });
+
+  it("stores responsibilities, transition history, and recoverable wake state", () => {
+    const statements = normalizedStatements();
+    const responsibilities = statements.find((statement) => (
+      statement.startsWith("CREATE TABLE responsibilities ")
+    ));
+    expect(responsibilities).toContain("change_pending INTEGER NOT NULL DEFAULT 0");
+    expect(responsibilities).toContain("wake_retry_at INTEGER");
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE responsibility_transitions ")
+    ))).toBe(true);
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE responsibility_wake_batches ")
+    ))).toBe(true);
+  });
+
+  it("links delegated IPC calls to their responsibility", () => {
+    const statements = normalizedStatements();
+    expect(statements).toContain(
+      "ALTER TABLE ipc_calls ADD COLUMN responsibility_id TEXT",
+    );
+  });
+
+  it("stores per-owner responsibility source policy overrides", () => {
+    const statements = normalizedStatements();
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE responsibility_source_policies ")
+      && statement.includes("PRIMARY KEY (owner_uid, source_id)")
+      && statement.includes("enabled INTEGER NOT NULL CHECK (enabled IN (0, 1))")
+    ))).toBe(true);
+  });
+
+  it("binds adapter run routes to a managed peer generation", () => {
+    expect(normalizedStatements()).toContain(
+      "ALTER TABLE run_routes ADD COLUMN route_generation TEXT",
+    );
+  });
+
   it("removes the parallel conversation registry", () => {
     expect(normalizedStatements()).toContain("DROP TABLE conversations");
     expect(normalizedStatements()).toContain(
@@ -182,6 +338,41 @@ describe("kernel schema migrations", () => {
       "DELETE FROM signal_watches WHERE signal LIKE 'notification.%'",
     );
     expect(statements).toContain("DROP TABLE notifications");
+  });
+
+  it("adds installation-local mailbox indexes", () => {
+    const statements = normalizedStatements();
+    const mailboxes = createTableStatement("mailboxes");
+    const messages = createTableStatement("mail_messages");
+    const intakes = createTableStatement("mail_intakes");
+
+    expect(mailboxes).toContain("owner_uid INTEGER NOT NULL");
+    expect(mailboxes).toContain("address TEXT NOT NULL UNIQUE");
+    expect(mailboxes).toContain("notification_pid TEXT");
+    expect(messages).toContain("UNIQUE(mailbox_id, digest)");
+    expect(messages).toContain("raw_path TEXT NOT NULL");
+    expect(messages).toContain("event_delivered_at INTEGER");
+    expect(intakes).toContain("intake_id TEXT PRIMARY KEY");
+    expect(intakes).toContain("message_id TEXT NOT NULL");
+    expect(statements).toContain(
+      "CREATE INDEX IF NOT EXISTS idx_mail_messages_mailbox_received ON mail_messages(mailbox_id, received_at DESC, message_id DESC)",
+    );
+  });
+
+  it("adds replay-safe outbound mail intents", () => {
+    const statements = normalizedStatements();
+    const outbound = createTableStatement("mail_outbound");
+
+    expect(outbound).toContain("outbound_id TEXT PRIMARY KEY");
+    expect(outbound).toContain("UNIQUE(owner_uid, delivery_id)");
+    expect(outbound).toContain("fingerprint TEXT NOT NULL");
+    expect(outbound).toContain("body_digest TEXT NOT NULL");
+    expect(outbound).toContain("body_path TEXT NOT NULL");
+    expect(outbound).toContain("state TEXT NOT NULL");
+    expect(outbound).toContain("'staging', 'queued', 'accepted', 'failed', 'unknown'");
+    expect(statements).toContain(
+      "CREATE INDEX IF NOT EXISTS idx_mail_outbound_owner_created ON mail_outbound(owner_uid, created_at DESC, outbound_id DESC)",
+    );
   });
 
   it("moves explicit system context overrides to the new lexical order", () => {

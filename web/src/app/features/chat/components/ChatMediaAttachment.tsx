@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { Icon } from "../../../components/ui/Icon";
 import {
   chatMediaDescription,
+  chatMediaConversationId,
   chatMediaDuration,
   chatMediaFilename,
   chatMediaKey,
   chatMediaKind,
   chatMediaMimeType,
+  chatMediaResource,
   chatMediaSize,
   chatMediaSource,
   chatMediaTranscription,
@@ -14,7 +16,7 @@ import {
   formatChatMediaSize,
 } from "../domain/media";
 import { Hint } from "../../../components/ui/Tooltip";
-import { useChatProcessMedia } from "../hooks";
+import { useChatProcessMedia, useChatResource } from "../hooks";
 
 type ChatMediaAttachmentProps = {
   media: unknown;
@@ -91,10 +93,10 @@ function AudioPlayer({
 
   const seek = (event: Event) => {
     const audio = audioRef.current;
-    if (!audio) {
+    if (!audio || !(event.currentTarget instanceof HTMLInputElement)) {
       return;
     }
-    const nextTime = Number((event.currentTarget as HTMLInputElement).value);
+    const nextTime = Number(event.currentTarget.value);
     if (!Number.isFinite(nextTime)) {
       return;
     }
@@ -127,13 +129,18 @@ function AudioPlayer({
 
 export function ChatMediaAttachment({ media, processId }: ChatMediaAttachmentProps) {
   const key = chatMediaKey(media);
+  const conversationId = chatMediaConversationId(media);
   const inlineSource = chatMediaSource(media);
+  const resource = chatMediaResource(media);
   const mediaQuery = useChatProcessMedia({
-    args: { key, ...(processId ? { pid: processId } : {}) },
-    enabled: !inlineSource && key.length > 0 && processId.length > 0,
+    args: conversationId
+      ? { conversationId, key }
+      : { key, ...(processId ? { pid: processId } : undefined) },
+    enabled: !resource && !inlineSource && key.length > 0 && (conversationId.length > 0 || processId.length > 0),
   });
+  const resourceQuery = useChatResource({ ref: resource, enabled: Boolean(resource) });
   const [storedSource, setStoredSource] = useState("");
-  const storedBlob = mediaQuery.data?.blob;
+  const storedBlob = resourceQuery.data?.blob ?? mediaQuery.data?.blob;
   useEffect(() => {
     if (!storedBlob) {
       setStoredSource("");
@@ -154,12 +161,12 @@ export function ChatMediaAttachment({ media, processId }: ChatMediaAttachmentPro
   const description = chatMediaDescription(media);
   const meta = [mimeType, size, durationLabel].filter(Boolean).join(" · ");
 
-  if (mediaQuery.isError) {
+  if (mediaQuery.isError || resourceQuery.isError) {
     return (
       <div class="gsv-chat-media is-error">
         <Icon name={mediaIconName(kind)} family="doticons" size={15} />
         <span>{mediaLabel(kind)} failed to load</span>
-        <button type="button" onClick={() => void mediaQuery.refetch()}>RETRY</button>
+        <button type="button" onClick={() => void (resource ? resourceQuery.refetch() : mediaQuery.refetch())}>RETRY</button>
       </div>
     );
   }

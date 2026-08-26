@@ -101,7 +101,8 @@ describe("provider context overflow errors", () => {
   });
 
   it("does not read missing usage for usage-based overflow detection", () => {
-    const message = {
+    // SAFETY: This fixture satisfies the assistant-message fields read by the overflow detector.
+    const message: AssistantMessage = {
       role: "assistant",
       content: [],
       api: "test",
@@ -109,7 +110,7 @@ describe("provider context overflow errors", () => {
       model: "test",
       stopReason: "stop",
       timestamp: Date.now(),
-    } as unknown as AssistantMessage;
+    };
 
     expect(isProviderContextOverflow(message, 1000)).toBe(false);
   });
@@ -195,14 +196,16 @@ describe("errorMessageFromUnknown", () => {
   });
 
   it("handles cyclic objects without exposing raw JSON", () => {
-    const error: { self?: unknown } = {};
+    type CyclicFixture = { self?: CyclicFixture };
+    const error: CyclicFixture = {};
     error.self = error;
 
     expect(errorMessageFromUnknown(error)).toBe(NON_STANDARD_PROVIDER_ERROR);
   });
 
   it("handles cyclic Error causes", () => {
-    const error = new Error("request failed") as Error & { cause?: unknown };
+    // SAFETY: Error cause is intentionally cyclic to exercise safe formatting.
+    const error = new Error("request failed") as Error & { cause?: Error };
     error.cause = error;
 
     expect(errorMessageFromUnknown(error)).toBe("request failed");

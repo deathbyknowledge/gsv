@@ -16,23 +16,45 @@ import type {
   ConsoleTarget,
   ConsoleTargetKind,
 } from "./consoleModels";
+import { consoleWorkProcesses } from "./consoleProcesses";
 import {
   isModelProfilesConfigKey,
   redactModelProfilesConfigValue,
 } from "./consoleSettings";
+import { z } from "zod";
 
 const SENSITIVE_CONFIG_KEY_RE = /(?:^|\/|_)(?:api[_-]?key|password|secret|token|credential)(?:$|\/|_)/i;
 
-export function normalizeProcessesPayload(payload: unknown): ConsoleProcess[] {
-  const record = asRecord(payload);
+type ConsoleWireValue =
+  | string
+  | number
+  | boolean
+  | null
+  | ConsoleWireValue[]
+  | ConsoleWireRecord;
+
+type ConsoleWireRecord = { [key: string]: ConsoleWireValue };
+const consoleWireValueSchema: z.ZodType<ConsoleWireValue> = z.lazy(() => z.union([
+  z.string(), z.number(), z.boolean(), z.null(),
+  z.array(consoleWireValueSchema),
+  z.record(z.string(), consoleWireValueSchema),
+]));
+type ConsoleRpcPayload = z.input<typeof consoleWireValueSchema>;
+
+function parseConsolePayload(value: ConsoleRpcPayload): ConsoleWireValue {
+  return consoleWireValueSchema.parse(value);
+}
+
+export function normalizeProcessesPayload(payload: ConsoleRpcPayload): ConsoleProcess[] {
+  const record = asRecord(parseConsolePayload(payload));
   return asArray(record?.processes)
     .map(normalizeProcess)
     .filter((entry): entry is ConsoleProcess => entry !== null)
     .sort(compareNullableNumbersDesc((entry) => entry.lastActiveAt ?? entry.createdAt));
 }
 
-export function normalizeTargetsPayload(payload: unknown): ConsoleTarget[] {
-  const record = asRecord(payload);
+export function normalizeTargetsPayload(payload: ConsoleRpcPayload): ConsoleTarget[] {
+  const record = asRecord(parseConsolePayload(payload));
   return asArray(record?.devices)
     .map(normalizeTarget)
     .filter((entry): entry is ConsoleTarget => entry !== null)
@@ -44,16 +66,16 @@ export function normalizeTargetsPayload(payload: unknown): ConsoleTarget[] {
     });
 }
 
-export function normalizeAccountsPayload(payload: unknown): ConsoleAccount[] {
-  const record = asRecord(payload);
+export function normalizeAccountsPayload(payload: ConsoleRpcPayload): ConsoleAccount[] {
+  const record = asRecord(parseConsolePayload(payload));
   return asArray(record?.accounts)
     .map(normalizeAccount)
     .filter((entry): entry is ConsoleAccount => entry !== null)
     .sort((left, right) => accountRank(left.relation) - accountRank(right.relation) || left.username.localeCompare(right.username));
 }
 
-export function normalizeAdapterStatusPayload(payload: unknown, adapterFallback: string): ConsoleAdapterAccount[] {
-  const record = asRecord(payload);
+export function normalizeAdapterStatusPayload(payload: ConsoleRpcPayload, adapterFallback: string): ConsoleAdapterAccount[] {
+  const record = asRecord(parseConsolePayload(payload));
   const adapter = nonEmptyString(record?.adapter) ?? adapterFallback;
   return asArray(record?.accounts)
     .map((account) => normalizeAdapterAccount(account, adapter))
@@ -61,8 +83,8 @@ export function normalizeAdapterStatusPayload(payload: unknown, adapterFallback:
     .sort((left, right) => left.accountId.localeCompare(right.accountId));
 }
 
-export function normalizeAdapterPayload(payload: unknown, adapterFallback = ""): ConsoleAdapterAccount[] {
-  const record = asRecord(payload);
+export function normalizeAdapterPayload(payload: ConsoleRpcPayload, adapterFallback = ""): ConsoleAdapterAccount[] {
+  const record = asRecord(parseConsolePayload(payload));
   const adapters = asArray(record?.adapters);
   if (adapters.length > 0) {
     return adapters.flatMap((adapter) => normalizeAdapterStatusPayload(adapter, ""));
@@ -70,20 +92,21 @@ export function normalizeAdapterPayload(payload: unknown, adapterFallback = ""):
   return normalizeAdapterStatusPayload(payload, adapterFallback);
 }
 
-export function normalizeAdapterInventoryPayload(payload: unknown, adapterFallback = ""): ConsoleAdapter[] {
-  const record = asRecord(payload);
+export function normalizeAdapterInventoryPayload(payload: ConsoleRpcPayload, adapterFallback = ""): ConsoleAdapter[] {
+  const parsedPayload = parseConsolePayload(payload);
+  const record = asRecord(parsedPayload);
   const adapters = asArray(record?.adapters);
   const rows = adapters.length > 0
     ? adapters.map((adapter) => normalizeAdapterEntry(adapter, ""))
-    : [normalizeAdapterEntry(payload, adapterFallback)];
+    : [normalizeAdapterEntry(parsedPayload, adapterFallback)];
 
   return rows
     .filter((entry): entry is ConsoleAdapter => entry !== null)
     .sort((left, right) => adapterRank(left.adapter) - adapterRank(right.adapter) || left.adapter.localeCompare(right.adapter));
 }
 
-export function normalizeMcpServersPayload(payload: unknown): ConsoleMcpServer[] {
-  const record = asRecord(payload);
+export function normalizeMcpServersPayload(payload: ConsoleRpcPayload): ConsoleMcpServer[] {
+  const record = asRecord(parseConsolePayload(payload));
   return asArray(record?.servers)
     .map(normalizeMcpServer)
     .filter((entry): entry is ConsoleMcpServer => entry !== null)
@@ -94,16 +117,16 @@ export function normalizeMcpServersPayload(payload: unknown): ConsoleMcpServer[]
     });
 }
 
-export function normalizeConfigPayload(payload: unknown): ConsoleConfigEntry[] {
-  const record = asRecord(payload);
+export function normalizeConfigPayload(payload: ConsoleRpcPayload): ConsoleConfigEntry[] {
+  const record = asRecord(parseConsolePayload(payload));
   return asArray(record?.entries)
     .map(normalizeConfigEntry)
     .filter((entry): entry is ConsoleConfigEntry => entry !== null)
     .sort((left, right) => left.key.localeCompare(right.key));
 }
 
-export function normalizeIdentityLinksPayload(payload: unknown): ConsoleIdentityLink[] {
-  const record = asRecord(payload);
+export function normalizeIdentityLinksPayload(payload: ConsoleRpcPayload): ConsoleIdentityLink[] {
+  const record = asRecord(parseConsolePayload(payload));
   return asArray(record?.links)
     .map(normalizeIdentityLink)
     .filter((entry): entry is ConsoleIdentityLink => entry !== null)
@@ -111,12 +134,12 @@ export function normalizeIdentityLinksPayload(payload: unknown): ConsoleIdentity
 }
 
 export function buildConsoleOverviewData(input: {
-  processes: unknown;
-  targets: unknown;
-  accounts: unknown;
-  adapters: unknown[];
-  mcpServers: unknown;
-  config: unknown;
+  processes: ConsoleRpcPayload;
+  targets: ConsoleRpcPayload;
+  accounts: ConsoleRpcPayload;
+  adapters: ConsoleRpcPayload[];
+  mcpServers: ConsoleRpcPayload;
+  config: ConsoleRpcPayload;
   loadedAt?: number;
 }): ConsoleOverviewData {
   const adapterInventory = input.adapters.flatMap((payload) => normalizeAdapterInventoryPayload(payload));
@@ -133,10 +156,11 @@ export function buildConsoleOverviewData(input: {
 }
 
 export function summarizeConsoleOverview(data: ConsoleOverviewData): ConsoleOverviewCounts {
+  const processes = consoleWorkProcesses(data.processes);
   return {
-    processes: data.processes.length,
-    activeProcesses: data.processes.filter((entry) => entry.activeRunId || entry.state === "running").length,
-    queuedProcesses: data.processes.filter((entry) => entry.queuedCount > 0 || entry.state === "queued").length,
+    processes: processes.length,
+    activeProcesses: processes.filter((entry) => entry.activeRunId || entry.state === "running").length,
+    queuedProcesses: processes.filter((entry) => entry.queuedCount > 0 || entry.state === "queued").length,
     targets: data.targets.length,
     onlineTargets: data.targets.filter((entry) => entry.online).length,
     accounts: data.accounts.length,
@@ -151,7 +175,7 @@ export function summarizeConsoleOverview(data: ConsoleOverviewData): ConsoleOver
   };
 }
 
-function normalizeIdentityLink(value: unknown): ConsoleIdentityLink | null {
+function normalizeIdentityLink(value: ConsoleWireValue): ConsoleIdentityLink | null {
   const record = asRecord(value);
   const adapter = nonEmptyString(record?.adapter);
   const accountId = nonEmptyString(record?.accountId);
@@ -170,7 +194,7 @@ function normalizeIdentityLink(value: unknown): ConsoleIdentityLink | null {
   };
 }
 
-function normalizeProcess(value: unknown): ConsoleProcess | null {
+function normalizeProcess(value: ConsoleWireValue): ConsoleProcess | null {
   const record = asRecord(value);
   const pid = nonEmptyString(record?.pid);
   if (!record || !pid) {
@@ -192,6 +216,7 @@ function normalizeProcess(value: unknown): ConsoleProcess | null {
     cwd: nonEmptyString(record.cwd) ?? "",
     parentPid: nonEmptyString(record.parentPid),
     interactive: record.interactive === true,
+    personal: record.personal === true,
     activeRunId,
     queuedCount,
     createdAt: numberOrNull(record.createdAt),
@@ -199,7 +224,7 @@ function normalizeProcess(value: unknown): ConsoleProcess | null {
   };
 }
 
-function normalizeTarget(value: unknown): ConsoleTarget | null {
+function normalizeTarget(value: ConsoleWireValue): ConsoleTarget | null {
   const record = asRecord(value);
   const deviceId = nonEmptyString(record?.deviceId);
   if (!record || !deviceId) {
@@ -223,7 +248,7 @@ function normalizeTarget(value: unknown): ConsoleTarget | null {
   };
 }
 
-function normalizeAccount(value: unknown): ConsoleAccount | null {
+function normalizeAccount(value: ConsoleWireValue): ConsoleAccount | null {
   const record = asRecord(value);
   const uid = numberOrNull(record?.uid);
   const username = nonEmptyString(record?.username);
@@ -242,7 +267,7 @@ function normalizeAccount(value: unknown): ConsoleAccount | null {
   };
 }
 
-function normalizeAdapterAccount(value: unknown, adapter: string): ConsoleAdapterAccount | null {
+function normalizeAdapterAccount(value: ConsoleWireValue, adapter: string): ConsoleAdapterAccount | null {
   const record = asRecord(value);
   const accountId = nonEmptyString(record?.accountId);
   if (!record || !accountId) {
@@ -261,7 +286,7 @@ function normalizeAdapterAccount(value: unknown, adapter: string): ConsoleAdapte
   };
 }
 
-function normalizeAdapterEntry(value: unknown, adapterFallback: string): ConsoleAdapter | null {
+function normalizeAdapterEntry(value: ConsoleWireValue, adapterFallback: string): ConsoleAdapter | null {
   const record = asRecord(value);
   const adapter = nonEmptyString(record?.adapter) ?? adapterFallback;
   if (!record || !adapter) {
@@ -281,11 +306,12 @@ function normalizeAdapterEntry(value: unknown, adapterFallback: string): Console
     supportsSend: record.supportsSend === true,
     supportsStatus: record.supportsStatus === true,
     supportsActivity: record.supportsActivity === true,
+    supportsPairing: record.supportsPairing === true,
     accounts,
   };
 }
 
-function normalizeMcpServer(value: unknown): ConsoleMcpServer | null {
+function normalizeMcpServer(value: ConsoleWireValue): ConsoleMcpServer | null {
   const record = asRecord(value);
   const serverId = nonEmptyString(record?.serverId);
   if (!record || !serverId) {
@@ -314,7 +340,7 @@ function normalizeMcpServer(value: unknown): ConsoleMcpServer | null {
   };
 }
 
-function normalizeMcpTool(value: unknown): ConsoleMcpTool | null {
+function normalizeMcpTool(value: ConsoleWireValue): ConsoleMcpTool | null {
   const record = asRecord(value);
   const name = nonEmptyString(record?.name);
   if (!record || !name) {
@@ -328,7 +354,7 @@ function normalizeMcpTool(value: unknown): ConsoleMcpTool | null {
   };
 }
 
-function normalizeConfigEntry(value: unknown): ConsoleConfigEntry | null {
+function normalizeConfigEntry(value: ConsoleWireValue): ConsoleConfigEntry | null {
   const record = asRecord(value);
   const key = nonEmptyString(record?.key);
   if (!record || !key) {
@@ -366,15 +392,15 @@ function normalizeTargetKind(deviceId: string, platform: string): ConsoleTargetK
   return "unknown";
 }
 
-function normalizeAccountRelation(value: unknown): ConsoleAccountRelation {
+function normalizeAccountRelation(value: ConsoleWireValue | undefined): ConsoleAccountRelation {
   return value === "self" || value === "personal-agent" || value === "agent" || value === "human" ? value : "unknown";
 }
 
-function normalizeMcpTransport(value: unknown): ConsoleMcpTransport {
+function normalizeMcpTransport(value: ConsoleWireValue | undefined): ConsoleMcpTransport {
   return value === "auto" || value === "streamable-http" || value === "sse" ? value : "unknown";
 }
 
-function normalizeMcpState(value: unknown): ConsoleMcpConnectionState {
+function normalizeMcpState(value: ConsoleWireValue | undefined): ConsoleMcpConnectionState {
   if (
     value === "not-connected"
     || value === "authenticating"
@@ -417,37 +443,39 @@ function compareNullableNumbersDesc<T>(select: (item: T) => number | null): (lef
   return (left, right) => (select(right) ?? 0) - (select(left) ?? 0);
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
+function asRecord(value: ConsoleWireValue | undefined): ConsoleWireRecord | null {
+  const parsed = z.record(z.string(), consoleWireValueSchema).safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
-function asArray(value: unknown): unknown[] {
+function asArray(value: ConsoleWireValue | undefined): ConsoleWireValue[] {
   return Array.isArray(value) ? value : [];
 }
 
-function stringOrEmpty(value: unknown): string {
-  return typeof value === "string" ? value : "";
+function stringOrEmpty(value: ConsoleWireValue | undefined): string {
+  const parsed = z.string().safeParse(value);
+  return parsed.success ? parsed.data : "";
 }
 
-function nonEmptyString(value: unknown): string | null {
-  if (typeof value !== "string") {
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return String(value);
-    }
-    return null;
+function nonEmptyString(value: ConsoleWireValue | undefined): string | null {
+  const text = z.string().safeParse(value);
+  if (text.success) {
+    const trimmed = text.data.trim();
+    return trimmed ? trimmed : null;
   }
-  const trimmed = value.trim();
-  return trimmed ? trimmed : null;
+  const number = z.number().finite().safeParse(value);
+  if (number.success) return String(number.data);
+  return null;
 }
 
-function numberOrNull(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
+function numberOrNull(value: ConsoleWireValue | undefined): number | null {
+  const number = z.number().finite().safeParse(value);
+  if (number.success) {
+    return number.data;
   }
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value);
+  const text = z.string().safeParse(value);
+  if (text.success && text.data.trim()) {
+    const parsed = Number(text.data);
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;

@@ -120,8 +120,9 @@ npm run dev
 
 ## Deployment
 
-Deploy the adapter through the GSV infrastructure command:
+Standalone deployments include the adapter by default. To deploy only selected
+adapters with the public Alchemy stack:
 
 ```bash
-gsv infra deploy -c channel-whatsapp
+GSV_ADAPTERS=whatsapp npm run deployment:deploy
 ```

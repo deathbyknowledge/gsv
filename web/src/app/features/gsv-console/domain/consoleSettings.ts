@@ -2,7 +2,16 @@ import type { ConsoleAccount, ConsoleConfigEntry } from "./consoleModels";
 import {
   AI_OPENAI_WORKERS_PROVIDER_OPTIONS,
   AI_PROVIDER_OPTIONS,
+  aiProviderDisplayLabel,
+  fixedAiProviderModel,
 } from "../../../domain/aiProviders";
+import { z } from "zod";
+
+const settingsValueSchema = z.unknown();
+type SettingsValue = z.input<typeof settingsValueSchema>;
+const settingsRecordSchema = z.record(z.string(), z.unknown());
+type SettingsRecord = z.infer<typeof settingsRecordSchema>;
+interface ProfileValues { [key: string]: string }
 
 export type ConsoleSettingKind = "text" | "textarea" | "password" | "number" | "checkbox" | "select" | "readonly";
 export type ConsoleSettingRequirement = "none" | "required" | "optional";
@@ -438,7 +447,7 @@ export function configValueForKey(
   return entry && !entry.redacted ? entry.value : "";
 }
 
-export function configValueMap(config: readonly ConsoleConfigEntry[]): Record<string, string> {
+export function configValueMap(config: readonly ConsoleConfigEntry[]) {
   const values: Record<string, string> = {};
   for (const entry of config) {
     if (!entry.redacted) {
@@ -451,18 +460,19 @@ export function configValueMap(config: readonly ConsoleConfigEntry[]): Record<st
 export function effectiveAiValuesForViewer(
   config: readonly ConsoleConfigEntry[],
   uid: number | null | undefined,
-): Record<string, string> {
+) {
   const values: Record<string, string> = {};
   for (const field of allAiSettingFields()) {
     values[field.key] = configValueForKey(config, field.key);
   }
-  if (typeof uid !== "number" || !Number.isFinite(uid)) {
+  const validUid = z.number().finite().safeParse(uid);
+  if (!validUid.success) {
     return values;
   }
-  const profileValues = effectiveAiProfileValuesForViewer(config, uid);
+  const profileValues = effectiveAiProfileValuesForViewer(config, validUid.data);
   for (const field of allAiSettingFields()) {
     const profileValue = cleanValue(profileValues[field.key]);
-    const overrideValue = cleanValue(configValueForKey(config, buildUserAiOverrideKey(uid, field.key)));
+    const overrideValue = cleanValue(configValueForKey(config, buildUserAiOverrideKey(validUid.data, field.key)));
     if (profileValue !== "") {
       values[field.key] = profileValue;
     } else if (overrideValue !== "") {
@@ -475,7 +485,7 @@ export function effectiveAiValuesForViewer(
 function effectiveAiProfileValuesForViewer(
   config: readonly ConsoleConfigEntry[],
   uid: number,
-): Record<string, string> {
+) {
   const explicitSelector = cleanValue(configValueForKey(config, `users/${uid}/ai/model_profile`));
   const inferredSelector = explicitSelector
     ? ""
@@ -530,21 +540,23 @@ export function modelProfilesForConfig(
   config: readonly ConsoleConfigEntry[],
   uid: number | null | undefined,
 ): ConsoleModelProfile[] {
-  if (typeof uid !== "number" || !Number.isFinite(uid)) {
+  const validUid = z.number().finite().safeParse(uid);
+  if (!validUid.success) {
     return [];
   }
-  const raw = configValueForKey(config, modelProfilesConfigKey(uid));
+  const raw = configValueForKey(config, modelProfilesConfigKey(validUid.data));
   if (!raw.trim()) {
     return [];
   }
 
   try {
-    const payload = JSON.parse(raw) as { profiles?: unknown[] };
-    const profiles = Array.isArray(payload.profiles) ? payload.profiles : [];
+    const payload = z.object({ profiles: z.array(settingsValueSchema) }).safeParse(JSON.parse(raw));
+    if (!payload.success) return [];
+    const profiles = payload.data.profiles;
     return profiles
       .map(normalizeModelProfile)
       .filter((profile): profile is ConsoleModelProfile => profile !== null)
-      .map((profile) => hydrateModelProfileSecrets(config, uid, profile))
+      .map((profile) => hydrateModelProfileSecrets(config, validUid.data, profile))
       .sort((left, right) => right.updatedAt - left.updatedAt || left.name.localeCompare(right.name));
   } catch {
     return [];
@@ -642,13 +654,13 @@ export function redactModelProfilesConfigValue(raw: string): string {
     return raw;
   }
   try {
-    const payload = JSON.parse(raw) as Record<string, unknown>;
-    if (!payload || typeof payload !== "object" || !Array.isArray(payload.profiles)) {
+    const payload = z.object({ profiles: z.array(settingsValueSchema) }).passthrough().safeParse(JSON.parse(raw));
+    if (!payload.success) {
       return raw;
     }
     return JSON.stringify({
-      ...payload,
-      profiles: payload.profiles.map(redactModelProfileSecrets),
+      ...payload.data,
+      profiles: payload.data.profiles.map(redactModelProfileSecrets),
     });
   } catch {
     return raw;
@@ -715,7 +727,7 @@ export function profileValuesFromDrafts(values: Record<string, string>): Record<
 export function modelValidationValuesFromProfileDrafts(
   values: Record<string, string>,
   clearedSecretKeys: ReadonlySet<string> = new Set(),
-): Record<string, string> {
+): ProfileValues {
   const validationValues = { ...values };
   for (const field of MODEL_PROFILE_SECRET_FIELDS) {
     if (validationValues[field.key] === "" && !clearedSecretKeys.has(field.key)) {
@@ -729,7 +741,18 @@ export function modelProfileSummary(values: Record<string, string>): string {
   const provider = cleanValue(values["config/ai/provider"]) || "provider";
   const model = cleanValue(values["config/ai/model"]) || "model";
   const reasoning = cleanValue(values["config/ai/reasoning"]) || "default";
+  if (fixedAiProviderModel(provider)) {
+    return `${aiProviderDisplayLabel(provider)} / reasoning ${reasoning}`;
+  }
   return `${provider} / ${modelDisplayName(model)} / reasoning ${reasoning}`;
+}
+
+export function modelStackDisplayName(values: Record<string, string>): string {
+  const provider = cleanValue(values["config/ai/provider"]);
+  if (fixedAiProviderModel(provider)) {
+    return aiProviderDisplayLabel(provider);
+  }
+  return modelDisplayName(values["config/ai/model"] ?? "");
 }
 
 export function modelDisplayName(value: string): string {
@@ -786,11 +809,10 @@ export function allModeledSettingKeys(): Set<string> {
   ].map((field) => field.key));
 }
 
-function normalizeModelProfile(raw: unknown): ConsoleModelProfile | null {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return null;
-  }
-  const record = raw as Record<string, unknown>;
+function normalizeModelProfile(raw: SettingsValue): ConsoleModelProfile | null {
+  const recordResult = settingsRecordSchema.safeParse(raw);
+  if (!recordResult.success) return null;
+  const record = recordResult.data;
   const id = normalizeProfileId(record.id);
   const name = normalizeProfileName(record.name);
   if (!id || !name) {
@@ -799,25 +821,23 @@ function normalizeModelProfile(raw: unknown): ConsoleModelProfile | null {
   return {
     id,
     name,
-    values: normalizeProfileValues(
-      record.values && typeof record.values === "object" && !Array.isArray(record.values)
-        ? record.values as Record<string, unknown>
-        : {},
-    ),
+    values: normalizeProfileValues(settingsRecordSchema.safeParse(record.values).success
+      ? settingsRecordSchema.parse(record.values)
+      : {}),
     createdAt: normalizeTimestamp(record.createdAt),
     updatedAt: normalizeTimestamp(record.updatedAt),
   };
 }
 
-function normalizeProfileValues(values: Record<string, unknown>): Record<string, string> {
-  const normalized: Record<string, string> = {};
+function normalizeProfileValues(values: SettingsRecord): ProfileValues {
+  const normalized: ProfileValues = {};
   for (const field of MODEL_PROFILE_FIELDS) {
     normalized[field.key] = String(values[field.key] ?? "");
   }
   return normalized;
 }
 
-function normalizeProfileStorageValues(values: Record<string, unknown>): Record<string, string> {
+function normalizeProfileStorageValues(values: SettingsRecord): Record<string, string> {
   const normalized = normalizeProfileValues(values);
   for (const [key, value] of Object.entries(normalized)) {
     if (!value.trim()) {
@@ -845,15 +865,13 @@ function hydrateModelProfileSecrets(
   return { ...profile, values };
 }
 
-function redactModelProfileSecrets(profile: unknown): unknown {
-  if (!profile || typeof profile !== "object" || Array.isArray(profile)) {
-    return profile;
-  }
-  const record = profile as Record<string, unknown>;
-  if (!record.values || typeof record.values !== "object" || Array.isArray(record.values)) {
-    return record;
-  }
-  const values = { ...(record.values as Record<string, unknown>) };
+function redactModelProfileSecrets(profile: SettingsValue): SettingsValue {
+  const profileResult = settingsRecordSchema.safeParse(profile);
+  if (!profileResult.success) return profile;
+  const record = profileResult.data;
+  const valuesResult = settingsRecordSchema.safeParse(record.values);
+  if (!valuesResult.success) return record;
+  const values = { ...valuesResult.data };
   for (const key of Object.keys(values)) {
     if (isSensitiveSettingKey(key)) {
       values[key] = "";
@@ -862,16 +880,17 @@ function redactModelProfileSecrets(profile: unknown): unknown {
   return { ...record, values };
 }
 
-export function normalizeProfileName(value: unknown): string {
+export function normalizeProfileName(value: SettingsValue): string {
   return String(value ?? "").trim().replace(/\s+/g, " ").slice(0, MAX_PROFILE_NAME_LENGTH);
 }
 
-function normalizeProfileId(value: unknown): string {
+function normalizeProfileId(value: SettingsValue): string {
   return String(value ?? "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
 }
 
-function normalizeTimestamp(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : Date.now();
+function normalizeTimestamp(value: SettingsValue): number {
+  const parsed = z.number().finite().safeParse(value);
+  return parsed.success && parsed.data > 0 ? parsed.data : Date.now();
 }
 
 function uniqueProfileId(profiles: readonly ConsoleModelProfile[], name: string): string {
@@ -894,6 +913,6 @@ function slugify(value: string): string {
     .slice(0, 48);
 }
 
-function cleanValue(value: unknown): string {
+function cleanValue(value: SettingsValue): string {
   return String(value ?? "").trim();
 }

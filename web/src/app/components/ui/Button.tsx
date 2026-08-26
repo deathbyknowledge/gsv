@@ -16,7 +16,7 @@ export interface ButtonProps {
   dataAttrs?: Record<`data-${string}`, string | number | boolean>;
 }
 
-const VARIANT_CLASS: Record<ButtonVariant, string> = {
+const VARIANT_CLASS = {
   primary: "gsv-btn-primary",
   secondary: "gsv-btn-secondary",
   success: "gsv-btn-success",

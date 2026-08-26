@@ -1,4 +1,4 @@
-import type { ComponentChildren, JSX, RefObject, VNode } from "preact";
+import type { ComponentChildren, JSX, RefObject } from "preact";
 import { cloneElement, isValidElement } from "preact";
 import { createPortal } from "preact/compat";
 import { useEffect, useId, useRef, useState } from "preact/hooks";
@@ -27,7 +27,7 @@ export interface TooltipProps {
 /** Wrapper position class. Still used by InfoTip (in-flow bubble) and kept on the
  *  Tooltip/Hint wrapper for parity, though the portaled bubble is positioned in
  *  JS and driven by its resolved-side class instead. */
-export const POS_CLASS: Record<TooltipPosition, string> = {
+export const POS_CLASS = {
   top: "gsv-tt-top",
   bottom: "gsv-tt-bottom",
   left: "gsv-tt-left",
@@ -40,7 +40,7 @@ export const POS_CLASS: Record<TooltipPosition, string> = {
 
 /** Resolved-side class on the portaled bubble — drives which arrow edge shows. */
 export type Side = "top" | "bottom" | "left" | "right";
-const SIDE_CLASS: Record<Side, string> = {
+const SIDE_CLASS = {
   top: "gsv-tt-side-top",
   bottom: "gsv-tt-side-bottom",
   left: "gsv-tt-side-left",
@@ -158,12 +158,12 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.min(Math.max(v, lo), hi);
 }
 
-interface SidePref {
+type SidePreference = {
+  align: "center" | "end" | "start";
   side: Side;
-  align: "center" | "start" | "end";
-}
+};
 
-const SIDE_PREF: Record<TooltipPosition, SidePref> = {
+const SIDE_PREF = {
   top: { side: "top", align: "center" },
   bottom: { side: "bottom", align: "center" },
   left: { side: "left", align: "center" },
@@ -172,7 +172,7 @@ const SIDE_PREF: Record<TooltipPosition, SidePref> = {
   "top-end": { side: "top", align: "end" },
   "bottom-start": { side: "bottom", align: "start" },
   "bottom-end": { side: "bottom", align: "end" },
-};
+} satisfies Record<TooltipPosition, SidePreference>;
 
 /** Resolve the final on-screen placement of the bubble around the visible anchor
  *  rect: pick a side (flipping when the preferred side lacks room and its
@@ -257,7 +257,7 @@ function useTooltipReveal(position: TooltipPosition) {
     const wrap = wrapRef.current;
     if (!wrap) return;
     const canHover =
-      typeof window.matchMedia === "function" && window.matchMedia("(hover: hover)").matches;
+      "matchMedia" in window && window.matchMedia("(hover: hover)").matches;
 
     let hoverTimer = 0;
     // After activation, suppress the focus-open and hover re-arm that would
@@ -392,7 +392,7 @@ function TooltipBubble({
         left: `${placement.left}px`,
         top: `${placement.top}px`,
         "--gsv-tt-arrow-offset": `${placement.arrowOffset}px`,
-      } as JSX.CSSProperties)
+      } satisfies JSX.CSSProperties)
     : undefined;
   return createPortal(
     <span
@@ -464,7 +464,8 @@ export function Hint({ text, position = "top", children }: HintProps) {
   const bubbleId = useId();
   const { wrapRef, bubbleRef, open, shown, placement } = useTooltipReveal(position);
   const child = isValidElement(children)
-    ? cloneElement(children as VNode<{ "aria-describedby"?: string }>, {
+    // SAFETY: isValidElement narrows children to a VNode accepted by cloneElement.
+    ? cloneElement(children, {
         "aria-describedby": bubbleId,
       })
     : children;

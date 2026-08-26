@@ -83,6 +83,7 @@ export function SectionHeader({
     className,
   ].filter(Boolean).join(" ");
 
+  // SAFETY: Component boundary provides the asserted DOM/test shape.
   const Heading = (`h${headingLevel}` as HeadingTag);
 
   // Type class + the existing inline title look. margin:0 resets default

@@ -1,10 +1,15 @@
 import type { GSVClient, GsvConnectOptions } from "@humansandmachines/gsv/client";
+import { z } from "zod";
 import type {
   ConnectResult,
   ServerBuild,
   SysSetupArgs,
   SysSetupResult,
 } from "@humansandmachines/gsv/protocol";
+import {
+  clearInstallationOnboardingToken,
+  readInstallationOnboardingToken,
+} from "./installationOnboarding";
 
 const STORAGE_USERNAME = "gsv.ui.gateway.username";
 const STORAGE_SESSION_TOKEN = "gsv.ui.session.token.v1";
@@ -28,6 +33,21 @@ type UserSessionToken = {
   expiresAt: number | null;
 };
 
+const persistedSessionTokenSchema = z.object({
+  username: z.string(),
+  tokenId: z.string(),
+  token: z.string(),
+  expiresAt: z.number().finite().nullable().catch(null),
+});
+const persistedRevokesSchema = z.array(z.string().min(1)).catch([]);
+const sessionErrorSchema = z.object({
+  code: z.number().optional(),
+  details: z.object({ setupMode: z.literal(true).optional() }).optional(),
+});
+const sessionWireSchema = z.unknown();
+type SessionWireValue = z.input<typeof sessionWireSchema>;
+const sessionMessageSchema = z.union([z.instanceof(Error), z.string()]);
+
 export type SessionPhase = "booting" | "setup" | "setup-complete" | "locked" | "authenticating" | "ready";
 
 export type SessionSnapshot = {
@@ -48,8 +68,17 @@ export type SessionLoginInput = {
 
 export type SessionSetupInput = SysSetupArgs;
 
+export type SessionClient = Pick<
+  GSVClient,
+  "connect" | "disconnect" | "isConnected" | "onStatus" | "requestOnce"
+> & {
+  sys: {
+    token: Pick<GSVClient["sys"]["token"], "create" | "revoke" | "list">;
+  };
+};
+
 export type SessionService = {
-  client: GSVClient;
+  client: SessionClient;
   snapshot: () => SessionSnapshot;
   subscribe: (listener: (snapshot: SessionSnapshot) => void) => () => void;
   login: (input: SessionLoginInput) => Promise<ConnectResult>;
@@ -90,21 +119,7 @@ function readPersistedToken(): PersistedSessionToken | null {
   }
 
   try {
-    const parsed = JSON.parse(raw) as Partial<PersistedSessionToken>;
-    if (
-      typeof parsed.username !== "string" ||
-      typeof parsed.tokenId !== "string" ||
-      typeof parsed.token !== "string"
-    ) {
-      return null;
-    }
-
-    return {
-      username: parsed.username,
-      tokenId: parsed.tokenId,
-      token: parsed.token,
-      expiresAt: typeof parsed.expiresAt === "number" ? parsed.expiresAt : null,
-    };
+    return persistedSessionTokenSchema.parse(JSON.parse(raw));
   } catch {
     return null;
   }
@@ -117,11 +132,7 @@ function readPersistedRevokes(): string[] {
   }
 
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed.filter((item): item is string => typeof item === "string" && item.length > 0);
+    return persistedRevokesSchema.parse(JSON.parse(raw));
   } catch {
     return [];
   }
@@ -141,39 +152,24 @@ function deriveGatewayUrlFromOrigin(): string {
   return `${wsProtocol}//${host}/ws`;
 }
 
-function normalizeMessage(value: unknown): string {
-  if (value instanceof Error) {
-    return value.message;
-  }
-  if (typeof value === "string") {
-    return value;
-  }
+function normalizeMessage(value: SessionWireValue): string {
+  const parsed = sessionMessageSchema.safeParse(value);
+  if (parsed.success) return parsed.data instanceof Error ? parsed.data.message : parsed.data;
   return "Authentication failed";
 }
 
-function isSetupRequiredError(value: unknown): boolean {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-
-  const error = value as Error & { code?: number; details?: unknown };
-  if (error.code === 425) {
+function isSetupRequiredError(value: SessionWireValue): boolean {
+  const error = sessionErrorSchema.safeParse(value);
+  if (!error.success) return false;
+  if (error.data.code === 425) {
     return true;
   }
-
-  if (!error.details || typeof error.details !== "object") {
-    return false;
-  }
-
-  return (error.details as { setupMode?: unknown }).setupMode === true;
+  return error.data.details?.setupMode === true;
 }
 
-function isAuthenticationRejectedError(value: unknown): boolean {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-
-  return (value as Error & { code?: number }).code === 401;
+function isAuthenticationRejectedError(value: SessionWireValue): boolean {
+  const error = sessionErrorSchema.safeParse(value);
+  return error.success && error.data.code === 401;
 }
 
 function isTokenExpired(token: PersistedSessionToken): boolean {
@@ -195,7 +191,7 @@ function waitFor(ms: number): Promise<void> {
   });
 }
 
-async function createUserSessionToken(client: GSVClient, expiresAt: number): Promise<UserSessionToken> {
+async function createUserSessionToken(client: SessionClient, expiresAt: number): Promise<UserSessionToken> {
   const result = await client.sys.token.create({
     kind: "user",
     label: "gsv-ui-session",
@@ -210,7 +206,7 @@ async function createUserSessionToken(client: GSVClient, expiresAt: number): Pro
   };
 }
 
-async function revokeSessionToken(client: GSVClient, tokenId: string, reason: string): Promise<boolean> {
+async function revokeSessionToken(client: SessionClient, tokenId: string, reason: string): Promise<boolean> {
   const result = await client.sys.token.revoke({
     tokenId,
     reason,
@@ -218,15 +214,14 @@ async function revokeSessionToken(client: GSVClient, tokenId: string, reason: st
   return result.revoked === true;
 }
 
-async function probeSetupMode(client: GSVClient, url: string): Promise<boolean> {
+async function probeSetupMode(client: SessionClient, url: string): Promise<boolean> {
   try {
     await client.requestOnce(url, "sys.connect", {
-      protocol: 2,
-      client: {
+      protocol: 3,
+      peer: {
         id: "gsv-ui-setup-probe",
         version: "0.4.1",
         platform: "browser",
-        role: "user",
       },
     });
     return false;
@@ -238,10 +233,11 @@ async function probeSetupMode(client: GSVClient, url: string): Promise<boolean> 
   }
 }
 
-export function createSessionService(client: GSVClient): SessionService {
+export function createSessionService(client: SessionClient): SessionService {
   const listeners = new Set<(snapshot: SessionSnapshot) => void>();
 
   let currentSessionToken: PersistedSessionToken | null = readPersistedToken();
+  let installationOnboardingToken = readInstallationOnboardingToken();
 
   let snapshot: SessionSnapshot = {
     phase: "booting",
@@ -361,7 +357,7 @@ export function createSessionService(client: GSVClient): SessionService {
   const scheduleRefresh = (token: PersistedSessionToken): void => {
     clearRefreshTimer();
 
-    if (typeof token.expiresAt !== "number") {
+    if (token.expiresAt === null) {
       return;
     }
 
@@ -510,7 +506,7 @@ export function createSessionService(client: GSVClient): SessionService {
       }
 
       const nextDelay = SESSION_RECONNECT_DELAYS_MS[reconnectAttempts];
-      if (typeof nextDelay !== "number") {
+      if (nextDelay === undefined) {
         finishSilentReconnectFailure("Unable to reconnect. Sign in again.");
         return;
       }
@@ -677,7 +673,16 @@ export function createSessionService(client: GSVClient): SessionService {
     });
 
     try {
-      const result = await client.requestOnce(url, "sys.setup", input);
+      const result = await client.requestOnce(url, "sys.setup", {
+        ...input,
+        ...(installationOnboardingToken
+          ? { onboardingToken: installationOnboardingToken }
+          : undefined),
+      });
+      if (installationOnboardingToken) {
+        clearInstallationOnboardingToken();
+        installationOnboardingToken = null;
+      }
       pendingSetupLogin = { username, password };
       storeValue(STORAGE_USERNAME, username);
 
@@ -715,6 +720,7 @@ export function createSessionService(client: GSVClient): SessionService {
 
   const lock = (reason = "Session locked"): void => {
     cancelSilentReconnect();
+    const lockGeneration = reconnectGeneration;
     const previousTokenId = currentSessionToken?.tokenId ?? null;
     clearStoredSessionToken();
     pendingSetupLogin = null;
@@ -723,21 +729,24 @@ export function createSessionService(client: GSVClient): SessionService {
       queueRevoke(previousTokenId);
     }
 
+    setSnapshot({
+      phase: "locked",
+      url: deriveGatewayUrlFromOrigin(),
+      username: snapshot.username,
+      connectionId: null,
+      message: reason,
+      setupResult: null,
+    });
+
     void (async () => {
       await Promise.race([
         drainPendingRevokes("ui session lock"),
         waitFor(LOCK_REVOKE_WAIT_MS),
       ]);
 
-      client.disconnect();
-      setSnapshot({
-        phase: "locked",
-        url: deriveGatewayUrlFromOrigin(),
-        username: snapshot.username,
-        connectionId: null,
-        message: reason,
-        setupResult: null,
-      });
+      if (reconnectGeneration === lockGeneration && snapshot.phase === "locked") {
+        client.disconnect();
+      }
     })();
   };
 
@@ -745,6 +754,18 @@ export function createSessionService(client: GSVClient): SessionService {
     cancelSilentReconnect();
     const url = deriveGatewayUrlFromOrigin();
     const persisted = currentSessionToken;
+
+    if (installationOnboardingToken) {
+      setSnapshot({
+        phase: "setup",
+        url,
+        username: snapshot.username,
+        connectionId: null,
+        message: null,
+        setupResult: null,
+      });
+      return;
+    }
 
     if (!persisted) {
       const setupRequired = await probeSetupMode(client, url);

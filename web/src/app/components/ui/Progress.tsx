@@ -11,7 +11,7 @@ export interface ProgressProps {
   width?: number;
 }
 
-const SIZE_CLASS: Record<ProgressSize, string> = {
+const SIZE_CLASS = {
   small: "gsv-pr-sm",
   medium: "gsv-pr-md",
   large: "gsv-pr-lg",

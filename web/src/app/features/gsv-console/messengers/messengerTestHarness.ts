@@ -1,6 +1,7 @@
 import type { ComponentChild, ComponentChildren, VNode } from "preact";
-import { render } from "preact";
+import { isValidElement, render } from "preact";
 import { act } from "preact/test-utils";
+import { z } from "zod";
 import type { ConnectFlowDef, ConnectNav } from "../connect-flows/connectFlowTypes";
 import type { ConsoleAdapter, ConsoleAdapterAccount } from "../domain/consoleModels";
 
@@ -13,6 +14,8 @@ export type TestNodeProps = {
   onChange?: (value: string) => void;
   onClick?: () => void | Promise<void>;
   status?: string;
+  sub?: string;
+  text?: string;
   tone?: string;
   value?: string;
   variant?: string;
@@ -56,23 +59,26 @@ export function availableConsoleAdapter(
     supportsSend: true,
     supportsStatus: true,
     supportsActivity: true,
+    supportsPairing: false,
     accounts,
   };
 }
 
 function fakeContainer(owner: string): Element {
-  return {
+  const container: Partial<Element> = {
     nodeType: 1,
     namespaceURI: "http://www.w3.org/1999/xhtml",
     firstChild: null,
-    childNodes: [],
     insertBefore: () => {
       throw new Error(`${owner} must not render DOM nodes`);
     },
     removeChild: () => {
       throw new Error(`${owner} must not render DOM nodes`);
     },
-  } as unknown as Element;
+  };
+  // SAFETY: Preact only exercises the explicitly implemented container
+  // members before these tests reject any attempted DOM insertion.
+  return container as Element;
 }
 
 export function createTestRoot(owner: string) {
@@ -106,9 +112,10 @@ export function collectNodes(value: ComponentChildren): Array<VNode<TestNodeProp
       child.forEach(visit);
       return;
     }
-    if (!child || typeof child !== "object" || !("props" in child)) {
+    if (!isValidElement(child)) {
       return;
     }
+    // SAFETY: The harness replaces rendered components with TestNodeProps fixtures.
     const node = child as VNode<TestNodeProps>;
     nodes.push(node);
     visit(node.props.children);
@@ -121,12 +128,16 @@ export function collectText(value: ComponentChildren): string {
   if (Array.isArray(value)) {
     return value.map(collectText).filter(Boolean).join(" ");
   }
-  if (typeof value === "string" || typeof value === "number") {
-    return String(value);
+  const primitive = z.union([z.string(), z.number()]).safeParse(value);
+  if (primitive.success) {
+    return String(primitive.data);
   }
-  return value && typeof value === "object" && "props" in value
-    ? collectText((value as VNode<TestNodeProps>).props.children)
-    : "";
+  if (!isValidElement(value)) {
+    return "";
+  }
+  // SAFETY: The harness replaces rendered components with TestNodeProps fixtures.
+  const node = value as VNode<TestNodeProps>;
+  return collectText(node.props.children);
 }
 
 export function nodeWithLabel(
@@ -144,8 +155,9 @@ export function flowStepNodes(
   flow: ConnectFlowDef,
   step: number | string,
 ): Array<VNode<TestNodeProps>> {
-  const match = typeof step === "number"
-    ? flow.steps[step]
+  const numericStep = z.number().int().safeParse(step);
+  const match = numericStep.success
+    ? flow.steps[numericStep.data]
     : flow.steps.find((candidate) => candidate.key === step);
   if (!match) {
     throw new Error(`The connect flow has no step ${step}`);

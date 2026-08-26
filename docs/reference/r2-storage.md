@@ -9,7 +9,20 @@ GSV uses several storage planes. The Kernel chooses the plane based on whether t
 | Kernel SQLite | Kernel Durable Object SQL | Users, groups, tokens, OAuth accounts, config, devices, routing tables, process registry, workspaces, adapter links, and automation. |
 | Process SQLite | Process Durable Object SQL | Active messages, pending tool calls, message queue, HIL state, process-local metadata. |
 | R2 `STORAGE` bucket | Cloudflare R2 | Ordinary virtual filesystem files, process media, and process archives. |
-| ripgit | `RIPGIT` binding | Versioned home knowledge, workspaces, and source trees. |
+| ripgit | `RIPGIT` binding | Versioned home context and skills, personal wikis, workspaces, and source trees. |
+
+## Installation Namespaces
+
+Managed installations share the deployment R2 bucket through scoped bucket
+views. Runtime code continues to address logical keys such as
+`home/alice/file.txt`, while the view maps them beneath
+`installations/{installationId}/`. Returned object keys and list results are
+mapped back to logical keys, so filesystem, media, archive, and cleanup code do
+not handle physical prefixes.
+
+The standalone `singleton` installation maps to the historical unprefixed
+keyspace. Existing self-hosted filesystem objects, Process media, and archives
+therefore retain their current keys after upgrade.
 
 ## Virtual Filesystem Mapping
 
@@ -20,9 +33,9 @@ The native `fs.*` and `shell.exec` handlers use `GsvFs`, a Linux-like virtual fi
 | `/sys/*`, `/proc/*`, `/dev/*` | Kernel SQLite and live registries | Virtual control-plane files. |
 | `/etc/passwd`, `/etc/shadow`, `/etc/group` | Kernel auth tables | Overlaid on top of regular `/etc` storage. |
 | `/home` | Account-home namespace | Virtual ancestor that exists without an R2 marker and lists only account homes the caller may manage. |
-| `~/context.d/*` | ripgit home repo, with R2 fallback | User-global prompt context, including seeded constitution and user files. |
-| `~/skills.d/*` | ripgit home repo, with R2 fallback | User-global reusable process skills. |
-| `~/knowledge/*` | ripgit home repo | Durable knowledge databases. |
+| `~/context.d/*` | ripgit home repo, with R2 fallback | Account context. Human account context is shared with its owned agents; agent account context is role-local. |
+| `~/skills.d/*` | ripgit home repo, with R2 fallback | Reusable process skills layered from the owner and run-as agent. |
+| `/src/repos/{human}/personal/*` | ripgit Personal wiki repo plus R2 overlay | Human-owned durable personal memory shared by all owned agents. |
 | Other home files | R2 | Stored as ordinary objects with uid/gid/mode metadata. |
 | `/src/repos/{owner}/{repo}` | ripgit repo plus R2 overlay | Visible source repositories. Writable repos stage process-local edits in R2 until explicit `rgit commit`. |
 | `/workspaces/{workspaceId}` | ripgit workspace repo | Mutable, versioned task workspace. |
@@ -39,7 +52,7 @@ Kernel SQLite is the authoritative control-plane store. Important tables include
 |---|---|
 | `passwd`, `shadow`, `groups`, `auth_tokens` | Users, passwords, groups, and issued auth tokens. |
 | `oauth_accounts`, `oauth_flows` | Stored generic OAuth account credentials and pending authorization-code + PKCE flows. |
-| `mcp_servers`, `cf_agents_mcp_servers` | User-owned MCP server metadata plus the Agent MCP client manager's connection/OAuth state. |
+| `user_mcp_servers`, `cf_agents_mcp_servers` | User-owned MCP server metadata plus the Kernel MCP client's connection/OAuth state. |
 | `config_kv` | Runtime configuration exposed under `/sys/config` and `/sys/users`. |
 | `group_capabilities` | Capability grants by group id. |
 | `devices`, `device_access` | Registered devices and group access. |
@@ -72,13 +85,13 @@ R2 remains the byte store. The current runtime uses these key families:
 | Key Pattern | Written By | Purpose |
 |---|---|---|
 | Any normal filesystem key, for example `home/alice/file.txt` | `R2MountBackend` | Default virtual filesystem storage. |
-| `var/media/{uid}/{pid}/{uuid}` | Process media handling | Uploaded or adapter-provided media attached to process messages and exposed at the matching absolute `/var/media/...` path. |
-| `home/{agent}/.gsv/media/archived-media:{hash}` | Process history archiving | Immutable media retained by archived transcripts and scoped to the run-as agent home. |
+| `var/media/{uid}/{pid}/{uuid}` | Process media handling | Uploaded, adapter-provided, or tool-result media attached to process messages and exposed at the matching absolute `/var/media/...` path. |
+| `home/{agent}/.gsv/media/archived-media:{hash}` | Process resource retention and history archiving | Immutable resource revisions retained by messages and transcripts, scoped to the run-as agent home. |
 | `home/{agent}/processes/{pid}/history/*.jsonl.gz` | Process reset, kill, compaction, and fork | Gzipped JSONL transcript archives scoped to the owning process. |
 | `process-source-overlays/{pid}/{sourceKey}/manifest.json` | `/src/repos`, `rgit` | Manifest of staged source edits for one process/repo. |
 | `process-source-overlays/{pid}/{sourceKey}/files/{path}` | `/src/repos`, `rgit` | Staged file content for source puts. |
 
-Live process media is deleted by prefix when the process is reset or killed. Final-reply attachments are promoted before assistant history and `proc.run.finished` are persisted, so automatic delivery retries never depend on executor-scoped bytes. Other referenced bytes are promoted before an archive drops their last live reference. Promotion copies them into the run-as agent's immutable `.gsv/media` namespace using the live object key and ETag as content identity, then rewrites the durable record. Every Process, Kernel, and filesystem read validates the archive path plus its `purpose`, owning `uid` and `gid`, read-only mode `0400`, required source ETag metadata, stored source content type, and current object HTTP content type. A missing live object is archived as metadata-only rather than preventing reset or teardown. The `/var/media` view is read-only so creation and deletion remain owned by the process-media lifecycle; files can still be read, streamed, or copied to another filesystem target.
+Temporary process media is deleted by prefix when the process is reset or killed. New producers retain the exact source revision directly in the run-as agent's immutable `.gsv/media` namespace; legacy process-media records are promoted before a transcript archive or terminal Message drops their last live reference. The archive identity includes the source key and revision, so two reads of a mutable path before and after an edit remain distinct immutable resources. Every Process, Kernel, and filesystem read validates the archive path plus its `purpose`, owning `uid` and `gid`, read-only mode `0400`, required source revision metadata, stored source content type, and current object HTTP content type. A missing legacy live object is archived as metadata-only rather than preventing reset or teardown. The `/var/media` view remains read-only for supported stored histories.
 
 ## ripgit Repositories
 
@@ -86,7 +99,8 @@ ripgit stores versioned content. It is used anywhere history, diffs, search, or 
 
 | Repository | Ref Helper | Mounted At | Purpose |
 |---|---|---|---|
-| `{username}/home` | `accountHomeRepoRef(username)` | `~/context.d`, `~/skills.d`, `~/knowledge` | Home context, account-local skills, and knowledge databases. |
+| `{username}/home` | `accountHomeRepoRef(username)` | `~/context.d`, `~/skills.d` | Account context and account-local skills. |
+| `{human}/personal` | repo manifest `wiki.json` | Wiki app, `/src/repos/{human}/personal` | Shared durable personal memory for the human and their owned agents. |
 | Wiki repos, for example `root/gsv-manual` or `{owner}/{wiki}` | repo manifest `wiki.json` | Wiki app, `/src/repos/{owner}/{wiki}`, `repo.*` | Durable markdown knowledge databases. |
 | Registered source repos, for example `{owner}/{repo}` | repository config | `/src/repos/{owner}/{repo}`, `repo.*`, `rgit` | Source inspection and generic repo operations. |
 | `{username}/{workspaceId}` | `workspaceRepoRef(workspaceId, username)` | `/workspaces/{workspaceId}` | Task workspace files and checkpoints. |

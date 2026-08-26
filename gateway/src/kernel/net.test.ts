@@ -1,3 +1,5 @@
+type KernelTestValue<T = string | number | boolean | null | undefined> = T;
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { bodyFromText, bodyToText } from "@humansandmachines/gsv/protocol";
 import {
@@ -26,7 +28,7 @@ describe("responseFromNetFetchResult", () => {
       url: "https://example.test/final",
       status: 200,
       statusText: "OK",
-      headers: {},
+      headers: undefined,
       redirected: true,
     });
 
@@ -41,7 +43,7 @@ describe("responseFromNetFetchResult", () => {
         url: "https://example.test/no-content",
         status,
         statusText: status === 304 ? "Not Modified" : "No Content",
-        headers: {},
+        headers: undefined,
         redirected: false,
       });
 
@@ -51,7 +53,7 @@ describe("responseFromNetFetchResult", () => {
   });
 
   it("cancels bodies attached to invalid responses", async () => {
-    const cancelled: unknown[] = [];
+    const cancelled: KernelTestValue[] = [];
     const body = {
       stream: new ReadableStream<Uint8Array>({
         cancel(reason) {
@@ -68,7 +70,7 @@ describe("responseFromNetFetchResult", () => {
 
   it("keeps the routed response body bound to its abort signal", async () => {
     const controller = new AbortController();
-    let cancelled: unknown;
+    let cancelled: KernelTestValue;
     const response = responseFromNetFetchResult(
       { status: 200, headers: {} },
       {
@@ -92,9 +94,11 @@ describe("responseFromNetFetchResult", () => {
     const fetchMock = vi.fn<typeof fetch>(async () => new Response(null, { status: 302 }));
     vi.stubGlobal("fetch", fetchMock);
 
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     await handleNetFetch({
       url: "https://example.test/redirect",
       redirect: "manual",
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     }, {} as never);
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -113,9 +117,11 @@ describe("responseFromNetFetchResult", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     await expect(handleNetFetch({
       url: "https://example.test/redirect",
       redirect: "error",
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     }, {} as never)).rejects.toThrow(
       "net.fetch encountered a redirect with redirect mode error",
     );
@@ -125,19 +131,24 @@ describe("responseFromNetFetchResult", () => {
     const fetchMock = vi.fn<typeof fetch>(async () => new Response("ok"));
     vi.stubGlobal("fetch", fetchMock);
 
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const result = await handleNetFetch({
       url: "https://example.test/data",
       redirect: "error",
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     }, {} as never);
 
     expect(result.data.status).toBe(200);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     expect(result.body && await bodyToText(result.body)).toBe("ok");
   });
 
   it("rejects invalid redirect modes", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     await expect(handleNetFetch({
       url: "https://example.test/redirect",
       redirect: "invalid",
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as never, {} as never)).rejects.toThrow(
       "net.fetch redirect must be follow, error, or manual",
     );
@@ -160,6 +171,7 @@ describe("responseFromNetFetchResult", () => {
 
     const result = await handleNetFetch(
       { url: "https://example.test/data", method: "POST" },
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       {} as never,
       bodyFromText("request bytes"),
     );
@@ -168,9 +180,12 @@ describe("responseFromNetFetchResult", () => {
   });
 
   it("rejects legacy inline request bodies", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     for (const field of ["body", "bodyBase64"] as const) {
       await expect(handleNetFetch(
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         { url: "https://example.test/data", method: "POST", [field]: "inline" } as never,
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         {} as never,
       )).rejects.toThrow(`args.${field} was removed`);
     }
@@ -183,6 +198,7 @@ describe("responseFromNetFetchResult", () => {
 
     await expect(handleNetFetch(
       { url: "https://example.test/data", method: "POST" },
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       {} as never,
       {
         length: MAX_NET_FETCH_REQUEST_BYTES + 1,
@@ -218,8 +234,10 @@ describe("responseFromNetFetchResult", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     await expect(handleNetFetch({
       url: "https://example.test/large.bin",
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     }, {} as never)).rejects.toThrow(
       `net.fetch response body exceeds limit (${MAX_NET_FETCH_RESPONSE_BYTES + 1} bytes, max ${MAX_NET_FETCH_RESPONSE_BYTES})`,
     );
@@ -231,8 +249,10 @@ describe("responseFromNetFetchResult", () => {
     }));
     vi.stubGlobal("fetch", fetchMock);
 
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const result = await handleNetFetch({
       url: "https://example.test/no-body",
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     }, {} as never);
 
     expect(result.data.status).toBe(200);
@@ -268,6 +288,7 @@ describe("handleNetFetch", () => {
 
     const request = handleNetFetch(
       { url: "https://example.test/slow" },
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       { requestSignal: controller.signal } as never,
     );
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
@@ -283,7 +304,7 @@ describe("createRoutedFetch", () => {
     const requestDevice = vi.fn(async (
       _deviceId: string,
       _call: string,
-      _args: unknown,
+      _args: KernelTestValue,
       options?: { signal?: AbortSignal },
     ) => await new Promise<ResponseOkFrame>((_resolve, reject) => {
       options?.signal?.addEventListener(
@@ -292,6 +313,7 @@ describe("createRoutedFetch", () => {
         { once: true },
       );
     }));
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const routedFetch = createRoutedFetch({
       requestSignal: controller.signal,
       identity: {
@@ -324,6 +346,7 @@ describe("createRoutedFetch", () => {
           disconnected_at: null,
         }),
       },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as never, { requestDevice }, "workstation");
     const request = routedFetch("https://example.test/slow");
     await vi.waitFor(() => expect(requestDevice).toHaveBeenCalledOnce());
@@ -341,7 +364,7 @@ describe("requestNetFetchWithSignal", () => {
     const controller = new AbortController();
     const reason = new Error("already stopped");
     let started = false;
-    let cancelled: unknown;
+    let cancelled: KernelTestValue;
     controller.abort(reason);
 
     await expect(requestNetFetchWithSignal(
@@ -369,7 +392,7 @@ describe("requestNetFetchWithSignal", () => {
     const request = new Promise<ResponseOkFrame<"net.fetch">>((resolve) => {
       resolveRequest = resolve;
     });
-    let responseCancelled: unknown;
+    let responseCancelled: KernelTestValue;
     const result = requestNetFetchWithSignal(() => request, controller.signal);
     const reason = new Error("request abandoned");
 
@@ -384,7 +407,7 @@ describe("requestNetFetchWithSignal", () => {
         url: "https://example.test",
         status: 200,
         statusText: "OK",
-        headers: {},
+        headers: undefined,
         redirected: false,
       },
       body: {

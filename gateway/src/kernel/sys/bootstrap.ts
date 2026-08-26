@@ -18,6 +18,9 @@ type BootstrapTiming = {
   label: string;
   ms: number;
 };
+type BootstrapUpstream = { remoteUrl: string; ref?: string };
+type BootstrapResolvedUpstream = { remoteUrl: string; ref: string };
+type BootstrapRefSplit = { upstream: string; ref?: string };
 
 async function timeBootstrapStep<T>(
   timings: BootstrapTiming[],
@@ -95,7 +98,7 @@ export async function handleSysBootstrap(
   }
 }
 
-function resolveManualBootstrapUpstream(env: Env): { remoteUrl: string; ref: string } {
+function resolveManualBootstrapUpstream(env: Env): BootstrapResolvedUpstream {
   const configuredUpstream = readEnvString(env, GSV_MANUAL_BOOTSTRAP_UPSTREAM_ENV);
   const configured = configuredUpstream ? parseConfiguredUpstream(configuredUpstream) : undefined;
   return {
@@ -128,7 +131,7 @@ function repoConfigKey(repo: Pick<RipgitRepoRef, "owner" | "repo">, field: strin
   return `repos/${repo.owner}/${repo.repo}/${field}`;
 }
 
-function parseConfiguredUpstream(value: string): { remoteUrl: string; ref?: string } {
+function parseConfiguredUpstream(value: string): BootstrapUpstream {
   const split = splitUpstreamRef(value);
   return {
     remoteUrl: bootstrapUpstreamUrl(split.upstream),
@@ -136,7 +139,7 @@ function parseConfiguredUpstream(value: string): { remoteUrl: string; ref?: stri
   };
 }
 
-function splitUpstreamRef(value: string): { upstream: string; ref?: string } {
+function splitUpstreamRef(value: string): BootstrapRefSplit {
   const hashIndex = value.lastIndexOf("#");
   if (hashIndex <= 0 || hashIndex === value.length - 1) {
     return { upstream: value };
@@ -165,11 +168,8 @@ function githubRepoUrl(repo: string): string {
 }
 
 function readEnvString(env: Env, name: string): string | undefined {
-  const value = (env as unknown as Record<string, unknown>)[name];
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const trimmed = value.trim();
+  const value = Object.entries(env).find(([key]) => key === name)?.[1];
+  const trimmed = String(value ?? "").trim();
   return trimmed ? trimmed : undefined;
 }
 

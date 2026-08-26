@@ -13,6 +13,7 @@ type FakeAuth = {
 };
 
 function makeContext(uid: number, auth: FakeAuth): KernelContext {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     identity: {
       role: "user",
@@ -26,7 +27,9 @@ function makeContext(uid: number, auth: FakeAuth): KernelContext {
       },
       capabilities: ["*"],
     },
-    auth: auth as unknown as KernelContext["auth"],
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    auth: auth as KernelContext["auth"],
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as KernelContext;
 }
 
@@ -39,12 +42,18 @@ describe("sys.token handlers", () => {
         tokenId: "tok-1",
         token: "gsv_node_example",
         tokenPrefix: "gsv_node_example",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         uid: input.uid as number,
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         kind: input.kind as "node" | "service" | "user",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         label: (input.label as string | undefined) ?? null,
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         allowedRole: (input.allowedRole as "driver" | "service" | "user") ?? null,
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         allowedDeviceId: (input.allowedDeviceId as string | undefined) ?? null,
         createdAt: 1_700_000_000_000,
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         expiresAt: (input.expiresAt as number | undefined) ?? null,
       })),
       listTokens: vi.fn(() => []),

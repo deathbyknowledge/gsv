@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "id": "whatsapp",
+  "displayName": "WhatsApp",
+  "description": "WhatsApp adapter worker",
+  "deployOrder": 1,
+  "wranglerConfig": "wrangler.jsonc",
+  "devStateDirectories": ["gsv-channel-whatsapp-WhatsAppAccount"],
+  "standalone": {
+    "main": "dist/cloudflare/channel-whatsapp/worker/index.js",
+    "bundle": false,
+    "gatewayEntrypoint": "WhatsAppChannelEntrypoint",
+    "adapterEntrypoint": "WhatsAppChannelEntrypoint",
+    "durableObjects": [
+      {
+        "binding": "WHATSAPP_ACCOUNT",
+        "className": "WhatsAppAccount"
+      }
+    ],
+    "requiredSecrets": []
+  }
+}

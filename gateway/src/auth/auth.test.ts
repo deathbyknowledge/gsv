@@ -140,11 +140,11 @@ describe("shadow", () => {
   });
 
   it("isLocked detects locked accounts", () => {
-    expect(isLocked({ hash: "!" } as any)).toBe(true);
-    expect(isLocked({ hash: "*" } as any)).toBe(true);
-    expect(isLocked({ hash: "" } as any)).toBe(true);
-    expect(isLocked({ hash: "$token-sha256$abc" } as any)).toBe(false);
-    expect(isLocked({ hash: "$pbkdf2-sha512$100000$x$y" } as any)).toBe(false);
+    expect(isLocked({ hash: "!" })).toBe(true);
+    expect(isLocked({ hash: "*" })).toBe(true);
+    expect(isLocked({ hash: "" })).toBe(true);
+    expect(isLocked({ hash: "$token-sha256$abc" })).toBe(false);
+    expect(isLocked({ hash: "$pbkdf2-sha512$100000$x$y" })).toBe(false);
   });
 
   it("makeShadowEntry creates a valid entry", () => {

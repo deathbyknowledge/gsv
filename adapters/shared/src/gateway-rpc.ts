@@ -1,6 +1,20 @@
 import type { AdapterGatewayInterface } from "../../../packages/gsv/src/protocol/adapters.js";
-import { cancelBinaryBody } from "./media-body";
+import { adapterInboundResultSchema } from "../../../packages/gsv/src/protocol/adapters.js";
+import {
+  jsonValueSchema,
+  type JsonValue,
+} from "../../../packages/gsv/src/protocol/json.js";
 import type {
+  AdapterInboundArgs,
+  AdapterStateUpdateArgs,
+  AdapterStateUpdateResult,
+} from "../../../packages/gsv/src/protocol/syscalls/adapter.js";
+import { adapterStateUpdateResultSchema } from "../../../packages/gsv/src/protocol/syscalls/adapter.js";
+import { cancelBinaryBody } from "./media-body";
+import { LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID } from "./installation";
+import type {
+  AdapterInstallationContext,
+  AdapterInboundResult,
   BinaryBody,
   GatewayFrame,
   GatewayRequestFrame,
@@ -14,23 +28,47 @@ export type AdapterGatewayBinding = AdapterGatewayInterface<GatewayFrame>;
  * request body; response bodies are always cancelled because this RPC surface
  * returns structured data only.
  */
-export async function callAdapterGateway<T = unknown>(
+export function callAdapterGateway(
   gateway: AdapterGatewayBinding,
-  call: string,
-  args: unknown,
+  installation: AdapterInstallationContext,
+  call: "adapter.inbound",
+  args: AdapterInboundArgs,
   body?: BinaryBody,
-): Promise<T> {
+): Promise<AdapterInboundResult>;
+export function callAdapterGateway(
+  gateway: AdapterGatewayBinding,
+  installation: AdapterInstallationContext,
+  call: "adapter.state.update",
+  args: AdapterStateUpdateArgs,
+  body?: BinaryBody,
+): Promise<AdapterStateUpdateResult>;
+export async function callAdapterGateway(
+  gateway: AdapterGatewayBinding,
+  installation: AdapterInstallationContext,
+  call: "adapter.inbound" | "adapter.state.update",
+  args: AdapterInboundArgs | AdapterStateUpdateArgs,
+  body?: BinaryBody,
+): Promise<AdapterInboundResult | AdapterStateUpdateResult> {
+  let wireArgs: JsonValue;
+  try {
+    wireArgs = projectJsonMetadata(args);
+  } catch (error) {
+    await cancelBinaryBody(body, error);
+    throw error;
+  }
   const frame: GatewayRequestFrame = {
     type: "req",
     id: crypto.randomUUID(),
     call,
-    args,
-    ...(body ? { body } : {}),
+    args: wireArgs,
   };
+  if (body) frame.body = body;
 
   let response: GatewayFrame | null;
   try {
-    response = await gateway.serviceFrame(frame);
+    response = installation.installationId === LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID
+      ? await gateway.serviceFrame(frame)
+      : await gateway.serviceFrame(installation, frame);
   } catch (error) {
     await cancelBinaryBody(body, error);
     throw error;
@@ -56,5 +94,19 @@ export async function callAdapterGateway<T = unknown>(
     throw new Error(errorMessage);
   }
 
-  return (response.data ?? {}) as T;
+  const decoded = call === "adapter.inbound"
+    ? adapterInboundResultSchema.safeParse(response.data)
+    : adapterStateUpdateResultSchema.safeParse(response.data);
+  if (!decoded.success) {
+    throw new Error(`Gateway returned an invalid ${call} response`);
+  }
+  return decoded.data;
+}
+
+function projectJsonMetadata(value: AdapterInboundArgs | AdapterStateUpdateArgs): JsonValue {
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) {
+    throw new Error("Adapter gateway request metadata is not JSON-serializable");
+  }
+  return jsonValueSchema.parse(JSON.parse(serialized));
 }

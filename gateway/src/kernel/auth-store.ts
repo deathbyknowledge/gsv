@@ -34,6 +34,15 @@ export type AuthResult =
 export type AuthTokenKind = "node" | "service" | "user";
 export type AuthTokenRole = "driver" | "service" | "user";
 
+export type PeerTokenAuthResult =
+  | {
+      ok: true;
+      identity: AuthIdentity;
+      role: AuthTokenRole;
+      allowedDeviceId: string | null;
+    }
+  | { ok: false; error: string };
+
 export type AuthTokenIssueInput = {
   uid: number;
   kind: AuthTokenKind;
@@ -362,18 +371,46 @@ export class AuthStore {
     token: string,
     options: TokenAuthOptions = {},
   ): Promise<AuthResult> {
+    const result = await this.authenticatePeerToken(username, token);
+    if (!result.ok) return result;
+    if (options.role && result.role !== options.role) {
+      return { ok: false, error: "Authentication failed" };
+    }
+    if (options.role === "driver") {
+      if (!options.deviceId || !result.allowedDeviceId) {
+        return { ok: false, error: "Authentication failed" };
+      }
+      if (result.allowedDeviceId !== options.deviceId) {
+        return { ok: false, error: "Authentication failed" };
+      }
+    } else if (
+      options.deviceId
+      && result.allowedDeviceId
+      && result.allowedDeviceId !== options.deviceId
+    ) {
+      return { ok: false, error: "Authentication failed" };
+    }
+    return { ok: true, identity: result.identity };
+  }
+
+  /** Verify a token and return the peer category stored with that credential. */
+  async authenticatePeerToken(
+    username: string,
+    token: string,
+  ): Promise<PeerTokenAuthResult> {
     const user = this.getPasswdByUsername(username);
     if (!user) return { ok: false, error: "Unknown user" };
 
     const tokenHash = await hashToken(token);
     const rows = this.sql.exec<{
       token_id: string;
+      kind: AuthTokenKind;
       allowed_role: AuthTokenRole | null;
       allowed_device_id: string | null;
       expires_at: number | null;
       revoked_at: number | null;
     }>(
-      `SELECT token_id, allowed_role, allowed_device_id, expires_at, revoked_at
+      `SELECT token_id, kind, allowed_role, allowed_device_id, expires_at, revoked_at
        FROM auth_tokens
        WHERE uid = ? AND token_hash = ?
        LIMIT 1`,
@@ -393,24 +430,6 @@ export class AuthStore {
     if (tokenRow.expires_at !== null && tokenRow.expires_at <= now) {
       return { ok: false, error: "Authentication failed" };
     }
-    if (options.role && tokenRow.allowed_role && tokenRow.allowed_role !== options.role) {
-      return { ok: false, error: "Authentication failed" };
-    }
-    if (options.role === "driver") {
-      if (!options.deviceId || !tokenRow.allowed_device_id) {
-        return { ok: false, error: "Authentication failed" };
-      }
-      if (tokenRow.allowed_device_id !== options.deviceId) {
-        return { ok: false, error: "Authentication failed" };
-      }
-    } else if (
-      options.deviceId &&
-      tokenRow.allowed_device_id &&
-      tokenRow.allowed_device_id !== options.deviceId
-    ) {
-      return { ok: false, error: "Authentication failed" };
-    }
-
     this.sql.exec(
       "UPDATE auth_tokens SET last_used_at = ? WHERE token_id = ?",
       now,
@@ -427,6 +446,8 @@ export class AuthStore {
         username: user.username,
         home: user.home,
       },
+      role: tokenRow.allowed_role ?? defaultRoleForKind(tokenRow.kind),
+      allowedDeviceId: tokenRow.allowed_device_id,
     };
   }
 
@@ -477,7 +498,7 @@ export class AuthStore {
   }
 
   listTokens(uid?: number): AuthTokenRecord[] {
-    if (typeof uid === "number") {
+    if (uid !== undefined) {
       return this.sql.exec<{
         token_id: string;
         uid: number;
@@ -523,7 +544,7 @@ export class AuthStore {
   }
 
   revokeToken(tokenId: string, reason?: string, uid?: number): boolean {
-    const rows = typeof uid === "number"
+    const rows = uid !== undefined
       ? this.sql.exec<{ token_id: string }>(
           "SELECT token_id FROM auth_tokens WHERE token_id = ? AND uid = ? LIMIT 1",
           tokenId,
@@ -537,7 +558,7 @@ export class AuthStore {
     if (rows.length === 0) return false;
 
     const now = Date.now();
-    if (typeof uid === "number") {
+    if (uid !== undefined) {
       this.sql.exec(
         "UPDATE auth_tokens SET revoked_at = ?, revoked_reason = ? WHERE token_id = ? AND uid = ?",
         now,

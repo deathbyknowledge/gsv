@@ -166,6 +166,7 @@ async function clearHomeStorage(): Promise<void> {
 
 function createDelegatingBackend() {
   return createAccountHomeBackend(env.STORAGE, fakeRipgit, ALICE, {
+    // SAFETY: The test auth double implements only the methods exercised by this backend.
     auth: auth as never,
     ownerUid: ALICE.uid,
     isRoot: false,
@@ -174,6 +175,7 @@ function createDelegatingBackend() {
 
 function createPersonalAgentBackend() {
   return createAccountHomeBackend(env.STORAGE, fakeRipgit, PERSONAL_AGENT, {
+    // SAFETY: The test auth double implements only the methods exercised by this backend.
     auth: auth as never,
     ownerUid: ALICE.uid,
     isRoot: false,
@@ -236,6 +238,7 @@ describe("AccountHomeMountBackend delegated routing", () => {
       },
     } satisfies Fetcher;
     const backend = createAccountHomeBackend(env.STORAGE, ripgit, ALICE, {
+      // SAFETY: The test auth double implements only the methods exercised by this backend.
       auth: auth as never,
       ownerUid: ALICE.uid,
       isRoot: false,
@@ -276,7 +279,7 @@ describe("AccountHomeMountBackend delegated routing", () => {
       customMetadata: {
         uid: String(BOB.uid),
         gid: String(BOB.gid),
-        mode: "644",
+        mode: "000",
       },
     });
     const backend = createDelegatingBackend();
@@ -298,6 +301,7 @@ describe("AccountHomeMountBackend delegated routing", () => {
     await expect(fs.readdir("/home/bob")).rejects.toThrow("EACCES");
 
     const rootBackend = createAccountHomeBackend(env.STORAGE, fakeRipgit, ROOT, {
+      // SAFETY: The test auth double implements only the methods exercised by this backend.
       auth: auth as never,
       ownerUid: ROOT.uid,
       isRoot: true,
@@ -316,6 +320,7 @@ describe("AccountHomeMountBackend delegated routing", () => {
       "bob",
       "wiki-builder",
     ]);
+    await expect(rootFs.readFile("/home/bob/private.txt")).resolves.toBe("secret");
   });
 
   it("appends overlay files without UTF-8 conversion", async () => {
@@ -324,6 +329,7 @@ describe("AccountHomeMountBackend delegated routing", () => {
     const ripgit = {
       async fetch(_input: RequestInfo | URL, init?: RequestInit) {
         if (init?.method === "POST") {
+          // SAFETY: The ripgit request body is produced by the backend's known operation encoder.
           const body = JSON.parse(String(init.body)) as { ops: Array<{ contentBytes: number[] }> };
           applied = body.ops[0].contentBytes;
           return Response.json({ ok: true, head: "test" });
@@ -343,14 +349,14 @@ describe("AccountHomeMountBackend delegated routing", () => {
     expect(new Uint8Array(applied)).toEqual(new Uint8Array([0xff, 0x00, 0x80, 0xfe, 0x61]));
   });
 
-  it("streams normal home files through R2", async () => {
+  it("streams owner home files with owner authority", async () => {
     const fs = new GsvFs(
       env.STORAGE,
-      ALICE,
+      PERSONAL_AGENT,
       undefined,
       undefined,
       null,
-      createDelegatingBackend(),
+      createPersonalAgentBackend(),
     );
     const bytes = new TextEncoder().encode("streamed home data");
 
@@ -394,11 +400,11 @@ describe("AccountHomeMountBackend delegated routing", () => {
     });
     const fs = new GsvFs(
       env.STORAGE,
-      ALICE,
+      PERSONAL_AGENT,
       undefined,
       undefined,
       null,
-      createDelegatingBackend(),
+      createPersonalAgentBackend(),
     );
 
     await expect(fs.readFileBuffer(archivePath)).resolves.toEqual(archivedBytes);
@@ -428,10 +434,41 @@ describe("AccountHomeMountBackend delegated routing", () => {
       .rejects
       .toThrow("EACCES");
     expect(cancelled).toBeInstanceOf(Error);
+    // SAFETY: The cancelled promise is asserted to reject with the backend's Error contract.
     expect((cancelled as Error).message).toContain("EACCES");
     await expect(env.STORAGE.get(archiveKey).then((object) => object?.arrayBuffer()))
       .resolves
       .toEqual(archivedBytes.buffer);
+  });
+
+  it("exposes retained resources through the same read-only namespace", async () => {
+    const key = `home/alice/.gsv/media/archived-media:${"c".repeat(64)}`;
+    const path = `/${key}`;
+    const bytes = new Uint8Array([2, 4, 6, 8]);
+    await env.STORAGE.put(key, bytes, {
+      httpMetadata: { contentType: "image/png" },
+      customMetadata: {
+        uid: String(ALICE.uid),
+        gid: String(ALICE.gid),
+        mode: "400",
+        purpose: "resource",
+        sourceEtag: "device-revision-1",
+        sourceContentType: "image/png",
+      },
+    });
+    const fs = new GsvFs(
+      env.STORAGE,
+      PERSONAL_AGENT,
+      undefined,
+      undefined,
+      null,
+      createPersonalAgentBackend(),
+    );
+
+    const opened = await fs.openFile(path);
+
+    expect(new Uint8Array(await new Response(opened.body).arrayBuffer())).toEqual(bytes);
+    await expect(fs.writeFile(path, "overwrite")).rejects.toThrow("EACCES");
   });
 
   it("hides malformed archived media from filesystem reads and search", async () => {
@@ -465,7 +502,7 @@ describe("AccountHomeMountBackend delegated routing", () => {
       .toMatchObject({ matches: [] });
   });
 
-  it("lists virtual overlay roots from an authorized agent home", async () => {
+  it("lists ordinary storage and overlay roots from an authorized agent home", async () => {
     await env.STORAGE.put("home/wiki-builder/conversations/.dir", "", {
       customMetadata: {
         uid: String(CUSTOM_AGENT.uid),
@@ -486,16 +523,18 @@ describe("AccountHomeMountBackend delegated routing", () => {
 
     await expect(fs.readdir("/home/wiki-builder")).resolves.toEqual([
       "context.d",
+      "conversations",
       "skills.d",
     ]);
   });
 
-  it("denies delegated reads, lists, searches, and writes for target R2-backed files", async () => {
-    await env.STORAGE.put("home/wiki-builder/conversations/default/history", "secret transcript", {
+  it("uses an owned account identity for authorized home access", async () => {
+    const path = "/home/wiki-builder/conversations/default/history";
+    await env.STORAGE.put(path.slice(1), "secret transcript", {
       customMetadata: {
         uid: String(CUSTOM_AGENT.uid),
         gid: String(CUSTOM_AGENT.gid),
-        mode: "644",
+        mode: "600",
       },
     });
 
@@ -508,31 +547,68 @@ describe("AccountHomeMountBackend delegated routing", () => {
       createDelegatingBackend(),
     );
 
-    await expect(fs.readFile("/home/wiki-builder/conversations/default/history"))
-      .rejects
-      .toThrow("EACCES");
+    await expect(fs.readFile(path)).resolves.toBe("secret transcript");
     await expect(fs.readdir("/home/wiki-builder/conversations/default"))
-      .rejects
-      .toThrow("EACCES");
+      .resolves
+      .toEqual(["history"]);
     await expect(createDelegatingBackend()?.readdir("/home/wiki-builder/conversations/default"))
-      .rejects
-      .toThrow("EACCES");
+      .resolves
+      .toEqual(["history"]);
     await expect(fs.search("/home/wiki-builder/conversations", "secret"))
-      .rejects
-      .toThrow("EACCES");
-    await expect(fs.writeFile("/home/wiki-builder/conversations/default/history", "changed"))
-      .rejects
-      .toThrow("EACCES");
-    await expect(fs.openFile("/home/wiki-builder/conversations/default/history"))
-      .rejects
-      .toThrow("EACCES");
+      .resolves
+      .toMatchObject({ matches: [{ path }] });
+
+    await fs.writeFile(path, "changed");
+    await expect(fs.readFile(path)).resolves.toBe("changed");
+    await expect(env.STORAGE.head(path.slice(1))).resolves.toMatchObject({
+      customMetadata: {
+        uid: String(CUSTOM_AGENT.uid),
+        gid: String(CUSTOM_AGENT.gid),
+        mode: "600",
+      },
+    });
+
+    const streamed = new Uint8Array([1, 2, 3]);
     await expect(fs.writeFileStream(
-      "/home/wiki-builder/conversations/default/history",
-      bytesToStream(new Uint8Array([1])),
-      { expectedSize: 1 },
-    ))
-      .rejects
-      .toThrow("EACCES");
+      path,
+      bytesToStream(streamed),
+      { expectedSize: streamed.byteLength },
+    )).resolves.toEqual({ size: streamed.byteLength, streamed: true });
+    const opened = await fs.openFile(path);
+    expect(new Uint8Array(await new Response(opened.body).arrayBuffer()))
+      .toEqual(streamed);
+  });
+
+  it("lets an owned agent use the owner's ordinary home with owner authority", async () => {
+    const privatePath = "/home/alice/private.txt";
+    const createdPath = "/home/alice/created-by-agent.txt";
+    await env.STORAGE.put(privatePath.slice(1), "private", {
+      customMetadata: {
+        uid: String(ALICE.uid),
+        gid: String(ALICE.gid),
+        mode: "600",
+      },
+    });
+    const fs = new GsvFs(
+      env.STORAGE,
+      PERSONAL_AGENT,
+      undefined,
+      undefined,
+      null,
+      createPersonalAgentBackend(),
+    );
+
+    await expect(fs.readFile(privatePath)).resolves.toBe("private");
+    await fs.writeFile(privatePath, "updated");
+    await fs.writeFile(createdPath, "created");
+    await expect(fs.readFile(privatePath)).resolves.toBe("updated");
+    await expect(env.STORAGE.head(createdPath.slice(1))).resolves.toMatchObject({
+      customMetadata: {
+        uid: String(ALICE.uid),
+        gid: String(ALICE.gid),
+        mode: "644",
+      },
+    });
   });
 
   it("denies unauthorized account-home paths instead of falling through to R2", async () => {
@@ -547,11 +623,11 @@ describe("AccountHomeMountBackend delegated routing", () => {
 
     const fs = new GsvFs(
       env.STORAGE,
-      ALICE,
+      PERSONAL_AGENT,
       undefined,
       undefined,
       null,
-      createDelegatingBackend(),
+      createPersonalAgentBackend(),
     );
 
     await expect(fs.readFile("/home/bob/public.txt"))

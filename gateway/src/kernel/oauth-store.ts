@@ -1,4 +1,10 @@
 export type OAuthConnectionKind = "ai-provider" | "mcp-server" | "generic";
+import { z } from "zod";
+
+const oauthKindSchema = z.enum(["ai-provider", "mcp-server", "generic"]);
+const oauthStringMapSchema = z.record(z.string(), z.string());
+const oauthMetadataSchema = z.record(z.string(), z.unknown());
+type OAuthMetadata = z.output<typeof oauthMetadataSchema>;
 
 export type OAuthFlowRecord = {
   flowId: string;
@@ -41,7 +47,7 @@ export type OAuthAccountRecord = {
   createdAt: number;
   updatedAt: number;
   lastUsedAt: number | null;
-  metadata: Record<string, unknown>;
+  metadata: OAuthMetadata;
 };
 
 export type OAuthAccountUpsertInput = Omit<
@@ -49,7 +55,7 @@ export type OAuthAccountUpsertInput = Omit<
   "accountId" | "createdAt" | "updatedAt" | "lastUsedAt"
 > & {
   accountId?: string;
-  metadata?: Record<string, unknown>;
+  metadata?: OAuthMetadata;
 };
 
 type OAuthFlowRow = {
@@ -333,7 +339,7 @@ function flowFromRow(row: OAuthFlowRow): OAuthFlowRecord {
   return {
     flowId: row.flow_id,
     uid: row.uid,
-    kind: row.kind as OAuthConnectionKind,
+    kind: oauthKindSchema.parse(row.kind),
     provider: row.provider,
     accountKey: row.account_key,
     label: row.label,
@@ -343,7 +349,7 @@ function flowFromRow(row: OAuthFlowRow): OAuthFlowRecord {
     redirectUri: row.redirect_uri,
     scope: row.scope,
     resource: row.resource,
-    extraAuthParams: parseJsonObject(row.extra_auth_params_json) as Record<string, string>,
+    extraAuthParams: parseStringMap(row.extra_auth_params_json),
     codeVerifier: row.code_verifier,
     createdAt: row.created_at,
     expiresAt: row.expires_at,
@@ -354,7 +360,7 @@ function accountFromRow(row: OAuthAccountRow): OAuthAccountRecord {
   return {
     accountId: row.account_id,
     uid: row.uid,
-    kind: row.kind as OAuthConnectionKind,
+    kind: oauthKindSchema.parse(row.kind),
     provider: row.provider,
     accountKey: row.account_key,
     label: row.label,
@@ -368,17 +374,25 @@ function accountFromRow(row: OAuthAccountRow): OAuthAccountRecord {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     lastUsedAt: row.last_used_at,
-    metadata: parseJsonObject(row.metadata_json),
+    metadata: parseMetadata(row.metadata_json),
   };
 }
 
-function parseJsonObject(value: string | null): Record<string, unknown> {
+function parseStringMap(value: string | null): Record<string, string> {
   if (!value) return {};
   try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : {};
+    const parsed = oauthStringMapSchema.safeParse(JSON.parse(value));
+    return parsed.success ? parsed.data : {};
+  } catch {
+    return {};
+  }
+}
+
+function parseMetadata(value: string | null): OAuthMetadata {
+  if (!value) return {};
+  try {
+    const parsed = oauthMetadataSchema.safeParse(JSON.parse(value));
+    return parsed.success ? parsed.data : {};
   } catch {
     return {};
   }

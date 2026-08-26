@@ -25,7 +25,11 @@
     {
       "binding": "GATEWAY",
       "service": "gsv",
-      "entrypoint": "GatewayEntrypoint"
+      "entrypoint": "AdapterGatewayEntrypoint",
+      "props": {
+        "id": "test",
+        "calls": ["adapter.inbound", "adapter.state.update"]
+      }
     }
   ]
 }

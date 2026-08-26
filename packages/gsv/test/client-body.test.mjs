@@ -24,7 +24,7 @@ class FakeWebSocket extends EventTarget {
   readyState = 0;
   sent = [];
   closeCalls = [];
-  connectSignals = ["device.pong"];
+  connectSignals = ["peer.pong"];
 
   constructor() {
     super();
@@ -37,7 +37,7 @@ class FakeWebSocket extends EventTarget {
 
   send(data) {
     this.sent.push(data);
-    if (typeof data !== "string") {
+    if (data instanceof ArrayBuffer) {
       return;
     }
     const frame = JSON.parse(data);
@@ -47,11 +47,28 @@ class FakeWebSocket extends EventTarget {
         id: frame.id,
         ok: true,
         data: {
-          protocol: 2,
+          protocol: 3,
           server: { connectionId: "test" },
-          identity: { role: "user" },
-          syscalls: [],
-          signals: this.connectSignals,
+          peer: {
+            id: frame.args.peer.id,
+            sessionId: "test",
+            principal: {
+              kind: "human",
+              account: {
+                uid: 1000,
+                gid: 1000,
+                gids: [1000],
+                username: "test",
+                home: "/home/test",
+                cwd: "/home/test",
+              },
+            },
+            grant: {
+              calls: [],
+              signals: this.connectSignals,
+              implements: frame.args.peer.implements ?? [],
+            },
+          },
         },
       })));
     }
@@ -91,7 +108,7 @@ class OpeningWebSocket extends EventTarget {
 
 class SignalFailingWebSocket extends FakeWebSocket {
   send(data) {
-    if (typeof data === "string" && JSON.parse(data).type === "sig") {
+    if (!(data instanceof ArrayBuffer) && JSON.parse(data).type === "sig") {
       throw new Error("send failed");
     }
     super.send(data);
@@ -175,26 +192,65 @@ test("keeps body-bearing syscalls off the data-only namespaces", () => {
   assert.equal(client.fs.transfer.send, undefined);
   assert.equal(client.fs.transfer.receive, undefined);
   assert.equal(client.net, undefined);
-  assert.equal(client.proc.media.read, undefined);
-  assert.equal(client.proc.media.write, undefined);
-  assert.equal(typeof client.proc.media.delete, "function");
   assert.equal(client.ai.transcription, undefined);
   assert.equal(client.ai.image, undefined);
   assert.equal(client.ai.speech, undefined);
-  assert.equal(typeof client.fs.transfer.stat, "function");
+  assert.equal(client.fs.transfer.stat instanceof Function, true);
 });
 
 test("keeps exact syscalls callable when they also own nested namespaces", () => {
   const client = new GSVClient({ WebSocket: FakeWebSocket });
 
   // proc.history is registered before its children.
-  assert.equal(typeof client.proc.history, "function");
-  assert.equal(typeof client.proc.history.compact, "function");
-  assert.equal(typeof client.proc.history.policy.get, "function");
+  assert.equal(client.proc.history instanceof Function, true);
+  assert.equal(client.proc.history.compact instanceof Function, true);
+  assert.equal(client.proc.history.policy.get instanceof Function, true);
 
   // sys.setup.assist is registered before sys.setup.
-  assert.equal(typeof client.sys.setup, "function");
-  assert.equal(typeof client.sys.setup.assist, "function");
+  assert.equal(client.sys.setup instanceof Function, true);
+  assert.equal(client.sys.setup.assist instanceof Function, true);
+});
+
+test("exposes the typed mail status namespace", async () => {
+  const { client, socket } = await connectedClient();
+  const pending = client.mail.status({ deliveryId: "delivery-1" });
+  const request = JSON.parse(socket.sent.at(-1));
+
+  assert.equal(request.call, "mail.status");
+  assert.deepEqual(request.args, { deliveryId: "delivery-1" });
+  socket.receive(JSON.stringify({
+    type: "res",
+    id: request.id,
+    ok: true,
+    data: {
+      outbound: {
+        deliveryId: "delivery-1",
+        outboundId: "mail-outbound:1",
+        state: "queued",
+        from: "hank@gsv.space",
+        to: "mike@example.com",
+        subject: "Hello",
+        createdAt: 1,
+        queuedAt: 2,
+        completedAt: null,
+      },
+    },
+  }));
+
+  assert.equal((await pending).outbound.state, "queued");
+  client.close();
+});
+
+test("exposes the responsibility namespace", () => {
+  const client = new GSVClient({ WebSocket: FakeWebSocket });
+
+  assert.equal(client.r12y.list instanceof Function, true);
+  assert.equal(client.r12y.get instanceof Function, true);
+  assert.equal(client.r12y.create instanceof Function, true);
+  assert.equal(client.r12y.update instanceof Function, true);
+  assert.equal(client.r12y.changes instanceof Function, true);
+  assert.equal(client.r12y.source.list instanceof Function, true);
+  assert.equal(client.r12y.source.update instanceof Function, true);
 });
 
 test("bodyFromBytes preserves its input buffer", async () => {
@@ -214,6 +270,26 @@ test("bodyFromBytes supports an empty body", async () => {
 
   assert.equal(framed.length, 0);
   assert.equal((await new Response(framed.stream).arrayBuffer()).byteLength, 0);
+});
+
+test("bodyToBytes assembles a bounded declared body from multiple chunks", async () => {
+  const chunks = [
+    Uint8Array.of(1, 2),
+    Uint8Array.of(3),
+    Uint8Array.of(4, 5),
+  ];
+  const body = {
+    length: 5,
+    stream: new ReadableStream({
+      pull(controller) {
+        const chunk = chunks.shift();
+        if (chunk) controller.enqueue(chunk);
+        else controller.close();
+      },
+    }),
+  };
+
+  assert.deepEqual([...await bodyToBytes(body, 5)], [1, 2, 3, 4, 5]);
 });
 
 test("bodyToBytes cancels an active read with its signal", async () => {
@@ -271,6 +347,49 @@ test("sends a request body after its JSON descriptor", async () => {
 
   socket.receive(JSON.stringify({ type: "res", id: request.id, ok: true, data: { ok: true } }));
   assert.deepEqual((await pending).data, { ok: true });
+  client.close();
+});
+
+test("normalizes optional request arguments before accepting a body", async () => {
+  const { client, socket } = await connectedClient();
+  const pending = client.request("test.echo", { optional: undefined }, {
+    body: body(new Uint8Array([1, 2, 3])),
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const request = JSON.parse(socket.sent.at(-3));
+
+  assert.deepEqual(request.args, {});
+  assert.equal(request.body.streamId, 1);
+
+  socket.receive(JSON.stringify({ type: "res", id: request.id, ok: true, data: {} }));
+  await pending;
+  client.close();
+});
+
+test("rejects invalid request arguments before allocating a body stream", async () => {
+  const { client, socket } = await connectedClient();
+  const circular = {};
+  circular.self = circular;
+  const sentBefore = socket.sent.length;
+
+  await assert.rejects(
+    client.request("test.echo", circular, {
+      body: body(new Uint8Array([1, 2, 3])),
+    }),
+    /circular/i,
+  );
+  assert.equal(socket.sent.length, sentBefore);
+
+  const pending = client.request("test.echo", {}, {
+    body: body(new Uint8Array([4, 5, 6])),
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const request = JSON.parse(socket.sent.at(-3));
+  assert.equal(request.body.streamId, 1);
+
+  socket.receive(JSON.stringify({ type: "res", id: request.id, ok: true, data: {} }));
+  await pending;
   client.close();
 });
 
@@ -572,7 +691,7 @@ test("cancels a pending request and its outgoing body from an abort signal", asy
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   const cancellation = socket.sent
-    .filter((frame) => typeof frame === "string")
+    .filter((frame) => !(frame instanceof ArrayBuffer))
     .map((frame) => JSON.parse(frame))
     .find((frame) => frame.type === "sig" && frame.payload?.id === request.id);
   assert.deepEqual(cancellation, {
@@ -583,7 +702,7 @@ test("cancels a pending request and its outgoing body from an abort signal", asy
   assert.equal(cancelledWith, reason);
   assert.equal(listeners.size, 0);
   const terminal = socket.sent
-    .filter((frame) => typeof frame !== "string")
+    .filter((frame) => frame instanceof ArrayBuffer)
     .map((frame) => parseBinaryFrame(frame))
     .find((frame) => frame.streamId === request.body.streamId);
   assert.equal(terminal.flags, BINARY_FRAME_ERROR | BINARY_FRAME_END);
@@ -669,9 +788,35 @@ test("cancels an outbound request before rejecting its timeout", async () => {
   client.close();
 });
 
-test("cancels an inbound driver request without publishing the reserved signal", async () => {
+test("keeps a caller-owned mail delivery id after a lost response", async () => {
+  const client = new GSVClient({
+    WebSocket: FakeWebSocket,
+    defaultRequestTimeoutMs: 10,
+  });
+  await client.connect({
+    url: "ws://test",
+    username: "test",
+    password: "test",
+  });
+  const socket = FakeWebSocket.instance;
+  const deliveryId = "sdk-mail-timeout-1";
+  const pending = client.mail.send({
+    deliveryId,
+    to: "mike@example.com",
+    subject: "Hello",
+    text: "The Gateway may durably admit this before the response is lost.",
+  });
+  const request = JSON.parse(socket.sent.at(-1));
+
+  await assert.rejects(pending, /Request timed out after 10ms: mail\.send/);
+  assert.equal(request.call, "mail.send");
+  assert.equal(request.args.deliveryId, deliveryId);
+  client.close();
+});
+
+test("cancels an inbound endpoint request without publishing the reserved signal", async () => {
   const client = new GSVClient({ WebSocket: FakeWebSocket });
-  const driver = client.driver({ keepalive: false });
+  const driver = client.endpoint({ keepalive: false });
   let requestSignal;
   let started;
   const requestStarted = new Promise((resolve) => {
@@ -684,7 +829,7 @@ test("cancels an inbound driver request without publishing the reserved signal",
     return { data: { status: "completed", output: "late", exitCode: 0 } };
   });
   await driver.connect({
-    deviceId: "test-driver",
+    peerId: "test-driver",
     url: "ws://test",
     username: "test",
     password: "test",
@@ -711,20 +856,20 @@ test("cancels an inbound driver request without publishing the reserved signal",
   assert.match(requestSignal.reason.message, /User interrupted/);
   assert.deepEqual(published, []);
   assert.equal(socket.sent.some((data) => {
-    if (typeof data !== "string") return false;
+    if (data instanceof ArrayBuffer) return false;
     const frame = JSON.parse(data);
     return frame.type === "res" && frame.id === "inbound-1";
   }), false);
   driver.close();
 });
 
-test("keeps driver acknowledgement checks opt-in", async () => {
+test("keeps endpoint acknowledgement checks opt-in", async () => {
   const client = new GSVClient({ WebSocket: FakeWebSocket });
-  const driver = client.driver({ keepalive: { intervalMs: 10 } });
+  const driver = client.endpoint({ keepalive: { intervalMs: 10 } });
   driver.implement("shell.exec", async () => ({ data: {} }));
 
   await driver.connect({
-    deviceId: "test-driver",
+    peerId: "test-driver",
     url: "ws://test",
     username: "test",
     password: "test",
@@ -732,14 +877,14 @@ test("keeps driver acknowledgement checks opt-in", async () => {
   await new Promise((resolve) => setTimeout(resolve, 20));
 
   const ping = JSON.parse(FakeWebSocket.instance.sent.at(-1));
-  assert.equal(ping.signal, "device.ping");
+  assert.equal(ping.signal, "peer.ping");
   assert.equal(ping.payload.nonce, undefined);
   driver.close();
 });
 
 test("uses unacknowledged keepalives when the gateway does not advertise pong support", async () => {
   const client = new GSVClient({ WebSocket: LegacyGatewayWebSocket });
-  const driver = client.driver({
+  const driver = client.endpoint({
     keepalive: {
       intervalMs: 10,
       acknowledgement: { timeoutMs: 20 },
@@ -748,7 +893,7 @@ test("uses unacknowledged keepalives when the gateway does not advertise pong su
   driver.implement("shell.exec", async () => ({ data: {} }));
 
   await driver.connect({
-    deviceId: "test-driver",
+    peerId: "test-driver",
     url: "ws://test",
     username: "test",
     password: "test",
@@ -756,15 +901,15 @@ test("uses unacknowledged keepalives when the gateway does not advertise pong su
   await new Promise((resolve) => setTimeout(resolve, 40));
 
   const ping = JSON.parse(LegacyGatewayWebSocket.instance.sent.at(-1));
-  assert.equal(ping.signal, "device.ping");
+  assert.equal(ping.signal, "peer.ping");
   assert.equal(ping.payload.nonce, undefined);
   assert.equal(client.getStatus().state, "connected");
   driver.close();
 });
 
-test("disconnects a driver when its keepalive acknowledgement is missing", async () => {
+test("disconnects an endpoint when its keepalive acknowledgement is missing", async () => {
   const client = new GSVClient({ WebSocket: FakeWebSocket });
-  const driver = client.driver({
+  const driver = client.endpoint({
     keepalive: {
       intervalMs: 1_000,
       acknowledgement: { timeoutMs: 20 },
@@ -772,7 +917,7 @@ test("disconnects a driver when its keepalive acknowledgement is missing", async
   });
   driver.implement("shell.exec", async () => ({ data: {} }));
   await driver.connect({
-    deviceId: "test-driver",
+    peerId: "test-driver",
     url: "ws://test",
     username: "test",
     password: "test",
@@ -782,38 +927,38 @@ test("disconnects a driver when its keepalive acknowledgement is missing", async
 
   socket.receive(JSON.stringify({
     type: "sig",
-    signal: "device.pong",
+    signal: "peer.pong",
     payload: { nonce: `${ping.payload.nonce}-stale` },
   }));
   await new Promise((resolve) => setTimeout(resolve, 40));
 
   assert.equal(client.getStatus().state, "disconnected");
-  assert.equal(client.getStatus().message, "device heartbeat timed out");
+  assert.equal(client.getStatus().message, "peer heartbeat timed out");
   driver.close();
 });
 
-test("disconnects a driver when an acknowledged keepalive cannot be sent", async () => {
+test("disconnects an endpoint when an acknowledged keepalive cannot be sent", async () => {
   const client = new GSVClient({ WebSocket: SignalFailingWebSocket });
-  const driver = client.driver({
+  const driver = client.endpoint({
     keepalive: { acknowledgement: {} },
   });
   driver.implement("shell.exec", async () => ({ data: {} }));
 
   await driver.connect({
-    deviceId: "test-driver",
+    peerId: "test-driver",
     url: "ws://test",
     username: "test",
     password: "test",
   });
 
   assert.equal(client.getStatus().state, "disconnected");
-  assert.equal(client.getStatus().message, "device heartbeat send failed");
+  assert.equal(client.getStatus().message, "peer heartbeat send failed");
   driver.close();
 });
 
-test("accepts only the matching driver keepalive acknowledgement", async () => {
+test("accepts only the matching endpoint keepalive acknowledgement", async () => {
   const client = new GSVClient({ WebSocket: FakeWebSocket });
-  const driver = client.driver({
+  const driver = client.endpoint({
     keepalive: {
       intervalMs: 1_000,
       acknowledgement: { timeoutMs: 20 },
@@ -821,7 +966,7 @@ test("accepts only the matching driver keepalive acknowledgement", async () => {
   });
   driver.implement("shell.exec", async () => ({ data: {} }));
   await driver.connect({
-    deviceId: "test-driver",
+    peerId: "test-driver",
     url: "ws://test",
     username: "test",
     password: "test",
@@ -831,7 +976,7 @@ test("accepts only the matching driver keepalive acknowledgement", async () => {
 
   socket.receive(JSON.stringify({
     type: "sig",
-    signal: "device.pong",
+    signal: "peer.pong",
     payload: { nonce: ping.payload.nonce, at: Date.now() },
   }));
   await new Promise((resolve) => setTimeout(resolve, 40));
@@ -842,7 +987,7 @@ test("accepts only the matching driver keepalive acknowledgement", async () => {
 
 test("cancelling an inbound request terminates its incoming body", async () => {
   const client = new GSVClient({ WebSocket: FakeWebSocket });
-  const driver = client.driver({ keepalive: false });
+  const driver = client.endpoint({ keepalive: false });
   let reading;
   const bodyReading = new Promise((resolve) => {
     reading = resolve;
@@ -853,7 +998,7 @@ test("cancelling an inbound request terminates its incoming body", async () => {
     return { data: {} };
   });
   await driver.connect({
-    deviceId: "body-driver",
+    peerId: "body-driver",
     url: "ws://test",
     username: "test",
     password: "test",
@@ -884,7 +1029,7 @@ test("cancelling an inbound request terminates its incoming body", async () => {
 
 test("cancelling an inbound request stops its response body", async () => {
   const client = new GSVClient({ WebSocket: FakeWebSocket });
-  const driver = client.driver({ keepalive: false });
+  const driver = client.endpoint({ keepalive: false });
   let sourceCancelled;
   const cancelled = new Promise((resolve) => {
     sourceCancelled = resolve;
@@ -899,7 +1044,7 @@ test("cancelling an inbound request stops its response body", async () => {
     },
   }));
   await driver.connect({
-    deviceId: "response-driver",
+    peerId: "response-driver",
     url: "ws://test",
     username: "test",
     password: "test",
@@ -909,7 +1054,7 @@ test("cancelling an inbound request stops its response body", async () => {
   socket.receive(JSON.stringify({ type: "req", id: "inbound-response", call: "shell.exec", args: {} }));
   await new Promise((resolve) => setTimeout(resolve, 0));
   const response = socket.sent
-    .filter((data) => typeof data === "string")
+    .filter((data) => !(data instanceof ArrayBuffer))
     .map((data) => JSON.parse(data))
     .find((frame) => frame.type === "res" && frame.id === "inbound-response");
   assert.ok(response?.body);

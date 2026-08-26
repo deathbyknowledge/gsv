@@ -5,6 +5,6 @@ export function formatElapsed(ms: number): string {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
-export function formatError(error: unknown): string {
+export function formatError<T>(error: T): string {
   return error instanceof Error ? error.message : String(error);
 }

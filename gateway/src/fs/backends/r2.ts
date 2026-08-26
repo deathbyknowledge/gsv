@@ -18,11 +18,22 @@ import type {
 } from "../mount";
 import { concatBytes, inferContentType, isTextContentType, normalizePath } from "../utils";
 import { bindStreamToAbort } from "../../shared/streams";
+import { z } from "zod";
 
 const READ_BIT = 4;
 const WRITE_BIT = 2;
 const MAX_SEARCH_MATCHES = 500;
 const TEXT_ENCODER = new TextEncoder();
+const r2WriteFileOptionsSchema = z.object({
+  contentType: z.string().optional(),
+});
+const r2OffsetRangeSchema = z.object({
+  offset: z.number(),
+  length: z.number().optional(),
+});
+const r2SuffixRangeSchema = z.object({
+  suffix: z.number(),
+});
 
 export class R2MountBackend implements MountBackend {
   constructor(
@@ -61,7 +72,7 @@ export class R2MountBackend implements MountBackend {
     const key = toKey(p);
     const getOptions = toR2GetOptions(options);
     const obj: R2ObjectBody | R2Object | null = getOptions?.onlyIf
-      ? await this.bucket.get(key, getOptions as R2GetOptions & { onlyIf: R2Conditional })
+      ? await this.bucket.get(key, { ...getOptions, onlyIf: getOptions.onlyIf })
       : getOptions
         ? await this.bucket.get(key, getOptions)
         : await this.bucket.get(key);
@@ -85,7 +96,7 @@ export class R2MountBackend implements MountBackend {
     const totalSize = obj.range ? (await this.bucket.head(key))?.size ?? obj.size : obj.size;
     const range = options?.range && obj.range ? normalizeR2Range(obj.range, totalSize) : undefined;
     return {
-      body: obj.body as ReadableStream<Uint8Array>,
+      body: obj.body,
       size: range?.length ?? obj.size,
       totalSize,
       mtime: obj.uploaded,
@@ -103,10 +114,11 @@ export class R2MountBackend implements MountBackend {
     const existing = await this.bucket.head(key);
     if (existing) this.assertMode(existing, WRITE_BIT, p);
 
+    const parsedOptions = r2WriteFileOptionsSchema.safeParse(options);
     await this.bucket.put(key, content, {
       httpMetadata: {
-        contentType: typeof options === "object" && options.contentType
-          ? options.contentType
+        contentType: parsedOptions.success && parsedOptions.data.contentType
+          ? parsedOptions.data.contentType
           : inferContentType(p),
       },
       customMetadata: {
@@ -160,7 +172,7 @@ export class R2MountBackend implements MountBackend {
     if (existing) {
       this.assertMode(existing, WRITE_BIT, p);
       const old = new Uint8Array(await existing.arrayBuffer());
-      const appended = concatBytes(old, typeof content === "string" ? TEXT_ENCODER.encode(content) : content);
+      const appended = concatBytes(old, content instanceof Uint8Array ? content : TEXT_ENCODER.encode(content));
       await this.bucket.put(key, appended, {
         httpMetadata: existing.httpMetadata,
         customMetadata: existing.customMetadata,
@@ -498,7 +510,7 @@ export class R2MountBackend implements MountBackend {
     }
 
     const text = await bodyToText(
-      { stream: object.body as ReadableStream<Uint8Array>, length: object.size },
+      { stream: object.body, length: object.size },
       Infinity,
       signal,
     );
@@ -644,26 +656,27 @@ function toR2HttpMetadata(path: string, options: WriteFileStreamOptions): R2HTTP
   };
 }
 
-function assertExpectedSize(size: unknown): asserts size is number {
-  if (!Number.isSafeInteger(size) || (size as number) < 0) {
+function assertExpectedSize(size: number): void {
+  if (!Number.isSafeInteger(size) || size < 0) {
     throw new Error("EINVAL: writeFileStream expectedSize must be a non-negative safe integer");
   }
 }
 
 function normalizeR2Range(range: R2Range, totalSize: number): OpenFileRange | undefined {
-  if ("offset" in range && typeof range.offset === "number") {
-    const length = typeof range.length === "number"
-      ? range.length
-      : Math.max(0, totalSize - range.offset);
+  const offsetRange = r2OffsetRangeSchema.safeParse(range);
+  if (offsetRange.success) {
+    const length = offsetRange.data.length
+      ?? Math.max(0, totalSize - offsetRange.data.offset);
     return {
-      offset: range.offset,
+      offset: offsetRange.data.offset,
       length,
       total: totalSize,
     };
   }
 
-  if ("suffix" in range && typeof range.suffix === "number") {
-    const length = Math.min(range.suffix, totalSize);
+  const suffixRange = r2SuffixRangeSchema.safeParse(range);
+  if (suffixRange.success) {
+    const length = Math.min(suffixRange.data.suffix, totalSize);
     return {
       offset: Math.max(0, totalSize - length),
       length,

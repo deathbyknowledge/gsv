@@ -1,4 +1,4 @@
-import type { GsvDriverHandler } from "@humansandmachines/gsv/client";
+import type { GsvEndpointHandler } from "@humansandmachines/gsv/client";
 
 export type CommandResult = {
   stdout: string;
@@ -31,7 +31,7 @@ export type CommandContext = {
   copyTargetFile?: (source: TargetCopyEndpoint, destination: TargetCopyEndpoint) => Promise<unknown>;
 };
 
-export type DriverHandler = GsvDriverHandler;
+export type DriverHandler = GsvEndpointHandler;
 
 export type FileStat = {
   path: string;

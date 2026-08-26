@@ -43,7 +43,7 @@ function appendLines(lines: readonly TerminalLine[], next: readonly TerminalLine
   return [...lines, ...next].slice(-MAX_LINES);
 }
 
-function errorText(error: unknown): string {
+function errorText<T>(error: T): string {
   return error instanceof Error ? error.message : error ? String(error) : "Command failed.";
 }
 

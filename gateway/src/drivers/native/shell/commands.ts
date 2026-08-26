@@ -12,6 +12,7 @@ import { buildCpCommand } from "./cp";
 import { buildCrontabCommand } from "./crontab";
 import { buildLsCommand } from "./ls";
 import { buildLlmCommand } from "./llm";
+import { buildMailCommand } from "./mail";
 import { buildMediaCommands } from "./media";
 import { buildMessageCommand } from "./message";
 import { buildMcpCommand } from "./mcp";
@@ -19,6 +20,7 @@ import { buildNetCommands } from "./net";
 import { buildOAuthCommand } from "./oauth";
 import { buildProcCommand } from "./proc";
 import { buildRgitCommands } from "./rgit";
+import { buildR12yCommand } from "./r12y";
 import { buildSchedCommand } from "./sched";
 import { buildSkillsCommand } from "./skills";
 import { buildStatCommand } from "./stat";
@@ -45,6 +47,7 @@ export function buildCustomCommands(
   const coreCommands = buildCoreCommands(fs, identity, ctx, discovery);
   const ls = buildLsCommand(fs, identity, ctx);
   const llm = buildLlmCommand(ctx, options?.netFetchTransport);
+  const mail = buildMailCommand(fs, ctx);
   const stat = buildStatCommand(fs, identity, ctx);
   const cp = buildCpCommand(ctx, options?.fsTransport);
   const crontab = buildCrontabCommand(fs, ctx);
@@ -54,10 +57,16 @@ export function buildCustomCommands(
   const wiki = buildWikiCommand(ctx);
   const proc = buildProcCommand(ctx);
   const rgitCommands = buildRgitCommands(ctx);
+  const r12y = buildR12yCommand(ctx);
   const sched = buildSchedCommand(ctx);
   const targets = buildTargetsCommands(ctx);
   const mediaCommands = buildMediaCommands(fs, ctx, options?.fsTransport);
   const message = buildMessageCommand(fs, ctx);
+  const yieldRun = defineCommand("yield", async (): Promise<ExecResult> => ({
+    stdout: "",
+    stderr: "yield: must be invoked as a direct Shell tool call to finish the active run\n",
+    exitCode: 1,
+  }));
   const netCommands = buildNetCommands(ctx, options?.netFetchTransport);
   const oauth = buildOAuthCommand(ctx);
   const flynn = defineCommand("flynn", async (): Promise<ExecResult> => ({
@@ -76,13 +85,16 @@ export function buildCustomCommands(
     mcp,
     proc,
     ...rgitCommands,
+    r12y,
     sched,
     ...targets,
     ...netCommands,
     oauth,
     llm,
+    mail,
     ...mediaCommands,
     message,
+    yieldRun,
     skills,
     wiki,
     flynn,

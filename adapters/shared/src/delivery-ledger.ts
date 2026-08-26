@@ -65,7 +65,7 @@ export type DeliveryFailureKind = "retryable" | "permanent" | "ambiguous";
 
 type OutboundDeliveryFingerprintInput = Pick<
   AdapterOutboundMessage,
-  "surface" | "actorId" | "text" | "media" | "replyToId"
+  "surface" | "actorId" | "routeGeneration" | "text" | "media" | "replyToId"
 >;
 
 /**
@@ -101,6 +101,9 @@ export async function fingerprintOutboundDelivery(
       threadId: message.surface.threadId ?? null,
     },
     actorId: message.actorId ?? null,
+    ...(message.routeGeneration === undefined
+      ? undefined
+      : { routeGeneration: message.routeGeneration }),
     text: message.text,
     replyToId: message.replyToId ?? null,
     media,
@@ -262,16 +265,17 @@ export class DeliveryLedger {
     attemptId: string,
     messageId?: string,
   ): Promise<void> {
-    await this.replaceAttempt(deliveryId, attemptId, (attempt) => ({
+    await this.replaceAttempt(deliveryId, attemptId, (attempt) => {
+      const replacement: Extract<DeliveryRecord, { state: "sent" }> = {
       state: "sent",
       deliveryId,
       requestFingerprint: attempt.requestFingerprint,
-      ...(messageId
-        ? { messageId: truncate(messageId, MAX_MESSAGE_ID_LENGTH) }
-        : {}),
       createdAt: attempt.createdAt,
       expiresAt: attempt.expiresAt,
-    }));
+      };
+      if (messageId) replacement.messageId = truncate(messageId, MAX_MESSAGE_ID_LENGTH);
+      return replacement;
+    });
   }
 
   async failAmbiguous(
@@ -340,14 +344,17 @@ export class DeliveryLedger {
 function claimFromExisting(record: DeliveryRecord): DeliveryClaim {
   switch (record.state) {
     case "sent":
+      {
+      const result: AdapterSendResult = {
+        ok: true,
+        deduplicated: true,
+      };
+      if (record.messageId) result.messageId = record.messageId;
       return {
         claimed: false,
-        result: {
-          ok: true,
-          ...(record.messageId ? { messageId: record.messageId } : {}),
-          deduplicated: true,
-        },
+        result,
       };
+      }
     case "failed":
       return {
         claimed: false,
@@ -373,7 +380,7 @@ function claimFromExisting(record: DeliveryRecord): DeliveryClaim {
 }
 
 function validateDeliveryId(deliveryId: string): string | null {
-  if (typeof deliveryId !== "string" || !deliveryId || deliveryId !== deliveryId.trim()) {
+  if (!deliveryId || deliveryId !== deliveryId.trim()) {
     return "deliveryId must be a non-empty string without surrounding whitespace";
   }
   if (!/^[a-zA-Z0-9._:-]+$/.test(deliveryId)) {
@@ -396,20 +403,22 @@ function isMatchingAttempt(
   return record?.state === "attempting" && record.attemptId === attemptId;
 }
 
-function isDeliveryMeta(value: unknown): value is DeliveryMeta {
-  if (!value || typeof value !== "object") return false;
+function isDeliveryMeta(value: DeliveryMeta | DeliveryRecord | null | undefined): value is DeliveryMeta {
+  if (!value) return false;
+  // SAFETY: Durable Object storage data is parsed as the ledger domain union at this boundary.
   const meta = value as Partial<DeliveryMeta>;
   return Number.isSafeInteger(meta.count)
     && (meta.count ?? -1) >= 0
     && Number.isFinite(meta.nextPruneAt);
 }
 
-function isDeliveryRecord(value: unknown): value is DeliveryRecord {
-  if (!value || typeof value !== "object") return false;
+function isDeliveryRecord(value: DeliveryMeta | DeliveryRecord | null | undefined): value is DeliveryRecord {
+  if (!value) return false;
+  // SAFETY: Durable Object storage data is parsed as the ledger domain union at this boundary.
   const record = value as Partial<DeliveryRecord>;
   if (
-    typeof record.deliveryId !== "string"
-    || typeof record.requestFingerprint !== "string"
+    !isStringValue(record.deliveryId)
+    || !isStringValue(record.requestFingerprint)
     || !/^[0-9a-f]{64}$/.test(record.requestFingerprint)
     || !Number.isFinite(record.createdAt)
     || !Number.isFinite(record.expiresAt)
@@ -417,16 +426,16 @@ function isDeliveryRecord(value: unknown): value is DeliveryRecord {
     return false;
   }
   if (record.state === "attempting") {
-    return typeof (record as { attemptId?: unknown }).attemptId === "string";
+    return isStringValue(record.attemptId);
   }
   if (record.state === "retryable") {
     return true;
   }
   if (record.state === "sent") {
-    return record.messageId === undefined || typeof record.messageId === "string";
+    return record.messageId === undefined || isStringValue(record.messageId);
   }
   if (record.state === "ambiguous" || record.state === "failed") {
-    return typeof (record as { error?: unknown }).error === "string";
+    return isStringValue(record.error);
   }
   return false;
 }
@@ -440,6 +449,10 @@ function positiveInteger(value: number, name: string): number {
 
 function truncate(value: string, maxLength: number): string {
   return value.length <= maxLength ? value : value.slice(0, maxLength);
+}
+
+function isStringValue(value: string | undefined): value is string {
+  return value !== undefined && String(value) === value;
 }
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {

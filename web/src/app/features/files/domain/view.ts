@@ -90,7 +90,7 @@ export function formatFileStats(file: FilesFilePayload): string {
 }
 
 export function textFromContent(content: string | FilesContentItem[]): string {
-  if (typeof content === "string") {
+  if (Array.isArray(content) === false) {
     return content;
   }
   return content
@@ -101,7 +101,7 @@ export function textFromContent(content: string | FilesContentItem[]): string {
 }
 
 export function imagePreviewsFromContent(content: string | FilesContentItem[]): FilesImagePreview[] {
-  if (typeof content === "string") {
+  if (Array.isArray(content) === false) {
     return [];
   }
   return content

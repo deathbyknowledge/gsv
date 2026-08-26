@@ -1,5 +1,5 @@
 import { AddAction } from "../../../components/ui/AddAction";
-import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
+import { ListRow } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { TagTone } from "../../../components/ui/Tag";
@@ -44,7 +44,7 @@ function SettingsListRowView({ row }: { row: SettingsListRow }) {
         icon={row.icon}
         label={row.label}
         sub={row.sub}
-        status={listRowStatusForTone(row.tone) as ListRowStatus}
+        status={listRowStatusForTone(row.tone)}
         statusDotPlacement="trailing"
         statusLabel={row.statusLabel}
         tag={row.tag?.label}

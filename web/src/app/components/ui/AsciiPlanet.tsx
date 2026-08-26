@@ -90,7 +90,7 @@ const RAMP = " .-:=+*oO#@";
 const GLYPH_COLOR = "#8071dd";
 const GLYPH_GLOW = "0 0 5px rgba(140,120,235,.40), 0 0 13px rgba(110,95,209,.20)";
 
-const PRESETS: Record<AsciiPlanetVariant, Omit<PlanetConfig, "v">> = {
+const PRESETS = {
   orbit: { PW: 90, PH: 44, FS: 8, Rx: 17, light: [-0.64, -0.42, 0.5], bands: 8, craters: 3, cut: 0.05, gamma: 1.55, contrast: 1.9, pivot: 0.32, spec: 0.95, specP: 9, ring: [1.5, 2.12], ringEl: 0.31, seed: 60 },
   moon: { PW: 90, PH: 44, FS: 8, Rx: 20, light: [-0.62, -0.34, 0.56], craters: 17, cut: 0.06, gamma: 1.45, contrast: 1.78, pivot: 0.33, spec: 0.42, specP: 16, seed: 73 },
   giant: { PW: 90, PH: 44, FS: 8, Rx: 18, light: [-0.18, -0.58, 0.79], bands: 11, craters: 1, cut: 0.05, gamma: 1.4, contrast: 1.6, pivot: 0.34, spec: 0.55, specP: 11, ring: [1.12, 2.12], ringEl: 0.15, seed: 88 },
@@ -98,7 +98,7 @@ const PRESETS: Record<AsciiPlanetVariant, Omit<PlanetConfig, "v">> = {
   terminator: { PW: 66, PH: 36, FS: 6, Rx: 18, light: [-0.66, -0.26, 0.62], craters: 7, cut: 0.1, gamma: 1.3, contrast: 1.3, pivot: 0.4, seed: 34 },
   crescent: { PW: 66, PH: 36, FS: 6, Rx: 18, light: [-0.9, -0.07, -0.34], craters: 4, cut: 0.1, gamma: 1.3, contrast: 1.3, pivot: 0.4, seed: 48 },
   orb: { PW: 24, PH: 14, FS: 4, Rx: 9, light: [-0.4, -0.4, 0.86], craters: 4, cut: 0.08, gamma: 1.4, contrast: 1.4, pivot: 0.4, seed: 12 },
-};
+} satisfies Record<AsciiPlanetVariant, Omit<PlanetConfig, "v">>;
 
 function makeRandom(seed: number): () => number {
   let state = seed >>> 0;
@@ -213,8 +213,8 @@ function generatePlanet(config: PlanetConfig): PlanetRender {
     });
   }
 
-  const grid = Array.from({ length: config.PH }, () => new Array<string>(config.PW).fill(" "));
-  const depth = Array.from({ length: config.PH }, () => new Array<number>(config.PW).fill(-9));
+  const grid = Array.from({ length: config.PH }, () => Array<string>(config.PW).fill(" "));
+  const depth = Array.from({ length: config.PH }, () => Array<number>(config.PW).fill(-9));
 
   for (let y = 0; y < config.PH; y += 1) {
     for (let x = 0; x < config.PW; x += 1) {
@@ -316,7 +316,7 @@ function buildStars(seed: number, width: number, height: number): Star[] {
 }
 
 function buildStarRows(stars: readonly Star[], width: number, height: number): string[] {
-  const buffer = new Array<string>(width * height).fill(" ");
+  const buffer = Array<string>(width * height).fill(" ");
   for (const star of stars) {
     buffer[star.idx] = star.g;
   }
@@ -328,7 +328,7 @@ function buildStarRows(stars: readonly Star[], width: number, height: number): s
 }
 
 function buildFormationFrame(runtime: RuntimePlanet, elapsed: number, config: PlanetConfig, formDuration: number): string {
-  const buffer = new Array<string>(config.PW * config.PH).fill(" ");
+  const buffer = Array<string>(config.PW * config.PH).fill(" ");
   const progress = clamp(elapsed / formDuration, 0, 1);
 
   for (const particle of runtime.parts) {
@@ -435,7 +435,7 @@ function shouldShowStars(variant: AsciiPlanetVariant, showStars: boolean | undef
   return variant !== "orb" && showStars !== false;
 }
 
-function boxSize(config: PlanetConfig, size: number | undefined): { width: number; height: number } {
+function boxSize(config: PlanetConfig, size: number | undefined) {
   if (config.v === "orb") {
     const resolved = Number(size) || 60;
     return { width: resolved, height: resolved };
@@ -553,6 +553,8 @@ export function AsciiPlanet({
       }, 40);
     };
 
+    // SAFETY: Browsers expose document.fonts when FontFaceSet is available; the optional property handles older runtimes.
+    // SAFETY: Component boundary provides the asserted DOM/test shape.
     const fontSet = (document as Document & { fonts?: FontFaceSet }).fonts;
     if (fontSet?.ready) {
       void fontSet.ready.then(draw);

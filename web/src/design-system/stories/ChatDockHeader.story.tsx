@@ -51,11 +51,11 @@ function headerProps(overrides: VariantProps = {}): Parameters<typeof ChatDockHe
     contextPercent: 63,
     contextTitle: "Context 63% · healthy",
     effectiveStatus: "idle",
-    hasActiveProcess: true,
     mobileLayout: true,
     modelLabel: "@CF/ZAI-ORG/GLM-5.2",
     openPopover: null,
     reasoningLabel: "MEDIUM",
+    showStartAction: false,
     spawnPending: false,
     speakReplies: false,
     speechStatus: "Speech off",
@@ -109,9 +109,9 @@ const story: Story = {
         <div class="ds-label">Primary view — idle (START beside ⋮), context null</div>
         <MobileFrame>
           <ChatDockHeader {...headerProps({
-            hasActiveProcess: false,
             contextPercent: null,
             contextTitle: "No context yet",
+            showStartAction: true,
           })} />
         </MobileFrame>
       </div>

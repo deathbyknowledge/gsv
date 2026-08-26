@@ -55,6 +55,7 @@ function renderContextTemplate(
     };
     devices: Array<{ id: string; label?: string; implements: string[]; description?: string; platform?: string }>;
     mcpServers: string[];
+    r12y: string;
     config: {
       system?: {
         timezone?: string;
@@ -90,6 +91,7 @@ function renderContextTemplate(
     ["targets", formatTargets(input.devices)],
     ["devices", formatTargets(input.devices)],
     ["mcpServers", formatMcpServers(input.mcpServers)],
+    ["r12y", input.r12y],
   ]);
 
   return template.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (_match, key: string) => {
@@ -98,7 +100,7 @@ function renderContextTemplate(
 }
 
 function normalizeTimezone(timezone: string | undefined): string {
-  const candidate = typeof timezone === "string" && timezone.trim() ? timezone.trim() : "UTC";
+  const candidate = timezone?.trim() || "UTC";
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: candidate }).format(new Date());
     return candidate;

@@ -18,6 +18,14 @@ import type {
   BinaryBody,
 } from "../../shared/src/types";
 
+type DiscordRequestPayload = {
+  content?: string;
+  message_reference?: { message_id: string };
+  enforce_nonce?: boolean;
+  nonce?: string;
+  attachments?: Array<{ id: number; filename: string; description?: string }>;
+};
+
 const DISCORD_API = "https://discord.com/api/v10";
 const MAX_MEDIA_BODY_BYTES = SAFE_MATERIALIZED_MEDIA_PART_BYTES;
 const MAX_MEDIA_TOTAL_BODY_BYTES = SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES;
@@ -34,7 +42,7 @@ export async function deliverDiscordMessage(
   }
 
   const channelId = message.surface.id.trim();
-  const payload: Record<string, unknown> = {};
+  const payload: DiscordRequestPayload = {};
   const hasText = message.text.trim().length > 0;
   const media = message.media ?? [];
 
@@ -119,12 +127,13 @@ export async function deliverDiscordMessage(
     } catch (ledgerError) {
       console.error("[DiscordGateway] Failed to persist delivery outcome", ledgerError);
     }
-    return {
+    const result: AdapterSendResult = {
       ok: false,
       error,
-      ...(kind === "retryable" ? { retryable: true } : {}),
-      ...(kind === "ambiguous" ? { ambiguous: true } : {}),
     };
+    if (kind === "retryable") result.retryable = true;
+    if (kind === "ambiguous") result.ambiguous = true;
+    return result;
   };
 
   if (hasText) {
@@ -230,7 +239,7 @@ async function discordFetch(
 ): Promise<Response> {
   const headers = new Headers(init.headers || {});
   headers.set("Authorization", `Bot ${init.botToken}`);
-  const isFormDataBody = typeof FormData !== "undefined" && init.body instanceof FormData;
+  const isFormDataBody = init.body instanceof FormData;
   if (!headers.has("Content-Type") && init.body && !isFormDataBody) {
     headers.set("Content-Type", "application/json; charset=utf-8");
   }
@@ -310,7 +319,7 @@ function getExtensionFromMime(
   mediaType: AdapterMedia["type"],
 ): string {
   const normalized = mimeType.split(";")[0].trim().toLowerCase();
-  const mapping: Record<string, string> = {
+  const mapping = {
     "image/jpeg": "jpg",
     "image/png": "png",
     "image/gif": "gif",
@@ -325,9 +334,9 @@ function getExtensionFromMime(
     "video/mp4": "mp4",
     "video/webm": "webm",
     "application/pdf": "pdf",
-  };
+  } satisfies Record<string, string>;
 
-  const fromMime = mapping[normalized];
+  const fromMime = Object.entries(mapping).find(([mime]) => mime === normalized)?.[1];
   if (fromMime) return fromMime;
   return mediaType === "document" ? "bin" : mediaType;
 }
@@ -346,6 +355,6 @@ async function discordNonce(deliveryId: string): Promise<string> {
     byte.toString(16).padStart(2, "0")).join("");
 }
 
-function toErrorMessage(error: unknown): string {
+function toErrorMessage(error: any): string {
   return error instanceof Error ? error.message : String(error);
 }

@@ -19,19 +19,19 @@ type ConsoleResourceBoundaryProps<T> = {
   render: (data: T) => ComponentChildren;
 };
 
-const STATE_LABEL: Record<ConsolePageStateKind, string> = {
+const STATE_LABEL = {
   loading: "LOADING",
   error: "ERROR",
   empty: "NO DATA",
   offline: "WAITING FOR GATEWAY",
-};
+} satisfies Record<ConsolePageStateKind, string>;
 
-const STATE_TONE: Record<ConsolePageStateKind, StatusTone> = {
+const STATE_TONE = {
   loading: "live",
   error: "error",
   empty: "idle",
   offline: "idle",
-};
+} satisfies Record<ConsolePageStateKind, StatusTone>;
 
 export function ConsolePage({ children, flush = false, className = "" }: ConsolePageProps) {
   const classes = ["gsv-console-page", flush ? "is-flush" : "", className].filter(Boolean).join(" ");

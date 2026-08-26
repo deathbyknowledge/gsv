@@ -5,7 +5,7 @@ import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 
 describe("ProcessRegistry", () => {
   const registryTest = it.extend<{ registry: ProcessRegistry }>({
-    registry: async ({}, use) => {
+    registry: async ({ task: _task }, use) => {
       await runWithRealKernelSql((sql) => use(new ProcessRegistry(sql)));
     },
   });
@@ -120,4 +120,55 @@ describe("ProcessRegistry", () => {
       });
     },
   );
+
+  registryTest("enforces one personal controller slot per owner", ({ registry }) => {
+    registry.spawn("proc:ordinary", makeIdentity("/home/sam"), {
+      ownerUid: 1000,
+    });
+    registry.spawn("proc:personal-1", makeIdentity("/home/sam"), {
+      ownerUid: 1000,
+      isPersonalController: true,
+    });
+
+    expect(registry.get("proc:ordinary")?.isPersonalController).toBe(false);
+    expect(registry.getPersonalController(1000)?.processId).toBe("proc:personal-1");
+    expect(() => registry.spawn("proc:personal-2", makeIdentity("/home/sam"), {
+      ownerUid: 1000,
+      isPersonalController: true,
+    })).toThrow();
+    expect(registry.get("proc:personal-1")?.isPersonalController).toBe(true);
+    expect(registry.get("proc:personal-2")).toBeNull();
+  });
+
+  registryTest("does not replace an existing process on pid collision", ({ registry }) => {
+    registry.spawn("proc:stable", makeIdentity("/home/sam"), {
+      label: "original",
+    });
+
+    expect(() => registry.spawn("proc:stable", makeIdentity("/srv/sam"), {
+      label: "replacement",
+    })).toThrow();
+    expect(registry.get("proc:stable")).toMatchObject({
+      home: "/home/sam",
+      label: "original",
+    });
+  });
+
+  registryTest("vacates the personal controller slot only when killed", ({ registry }) => {
+    registry.spawn("proc:personal-old", makeIdentity("/home/sam"), {
+      ownerUid: 1000,
+      isPersonalController: true,
+    });
+
+    expect(registry.kill("proc:missing")).toBe(false);
+    expect(registry.getPersonalController(1000)?.processId).toBe("proc:personal-old");
+    expect(registry.kill("proc:personal-old")).toBe(true);
+    expect(registry.getPersonalController(1000)).toBeNull();
+
+    registry.spawn("proc:personal-new", makeIdentity("/home/sam"), {
+      ownerUid: 1000,
+      isPersonalController: true,
+    });
+    expect(registry.getPersonalController(1000)?.processId).toBe("proc:personal-new");
+  });
 });

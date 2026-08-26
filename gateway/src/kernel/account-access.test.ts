@@ -36,20 +36,28 @@ describe("account-access", () => {
 
   it("authorizes custom agents via their primary group for run-as and home overlay", () => {
     const target = { uid: 3000, gid: 3000, username: "wiki-builder" };
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     expect(canOwnerDelegateRunAs(auth as never, 1000, target)).toBe(true);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     expect(canOwnerRunAsAccount(auth as never, 1000, target, false)).toBe(true);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     expect(canOwnerAccessAccountHome(auth as never, 1000, "alice", "wiki-builder", false)).toBe(true);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     expect(canOwnerAccessAccountHome(auth as never, 1000, "alice", "bob", false)).toBe(false);
   });
 
   it("authorizes an owned agent viewer to access the owner's home overlay", () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     expect(canOwnerAccessAccountHome(auth as never, 1000, "alice-agent", "alice", false)).toBe(true);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     expect(canOwnerAccessAccountHome(auth as never, 1001, "alice-agent", "alice", false)).toBe(false);
   });
 
   it("does not authorize delegation through shared primary groups", () => {
     const legacyHuman = { uid: 1001, gid: 100, username: "bob" };
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     expect(canOwnerDelegateRunAs(auth as never, 1000, legacyHuman)).toBe(false);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     expect(canOwnerRunAsAccount(auth as never, 1000, legacyHuman, false)).toBe(false);
   });
 });

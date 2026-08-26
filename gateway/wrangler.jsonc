@@ -6,7 +6,7 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "gsv",
 	"main": "src/index.ts",
-	"compatibility_date": "2026-01-28",
+	"compatibility_date": "2026-07-30",
 	"compatibility_flags": ["nodejs_compat"],
 	"define": {
 		"__GSV_RELEASE__": "\"dev\""
@@ -34,6 +34,10 @@
 		{
 			"deleted_classes": ["AppRunner"],
 			"tag": "v4"
+		},
+		{
+			"new_sqlite_classes": ["Conversation"],
+			"tag": "v5"
 		}
 	],
 	"durable_objects": {
@@ -45,6 +49,10 @@
 			{
 				"class_name": "Process",
 				"name": "PROCESS"
+			},
+			{
+				"class_name": "Conversation",
+				"name": "CONVERSATION"
 			}
 		]
 	},
@@ -59,7 +67,8 @@
 	],
 	// Workers AI for audio transcription (free)
 	"ai": {
-		"binding": "AI"
+		"binding": "AI",
+		"remote": true
 	},
 	// Static Assets - serve UI from Gateway
 	"assets": {

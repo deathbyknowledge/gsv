@@ -14,7 +14,7 @@ export interface TagProps {
 }
 
 // Transcribed verbatim from Tag.dc.html (literal hex; not all tones map to tokens).
-const COLOR: Record<TagTone, string> = {
+const COLOR = {
   update: "#ffd24d",
   online: "#5ef2a0",
   error: "#ff6f8c",
@@ -23,7 +23,7 @@ const COLOR: Record<TagTone, string> = {
   accent: "#b3aeff",
   idle: "#9a95cf",
 };
-const BORDER: Record<TagTone, string> = {
+const BORDER = {
   update: "#5a4a1f",
   online: "#1c4a32",
   error: "#5a2b3a",

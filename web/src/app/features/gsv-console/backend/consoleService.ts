@@ -1,10 +1,12 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import type {
   AdapterConnectResult,
+  AdapterPairConfirmResult,
+  AdapterPairInfoResult,
+  AdapterPairInspectResult,
   AiTextGenerateConfig,
   SysOAuthDevicePollResult,
   SysOAuthDeviceStartResult,
-  SysOAuthListResult,
 } from "@humansandmachines/gsv/protocol";
 import { isAdapterConnectResult } from "@humansandmachines/gsv/protocol";
 import {
@@ -34,6 +36,7 @@ import type {
 import { modelProfileIdFromOptionValue } from "../domain/consoleAi";
 import { isSensitiveSettingKey } from "../domain/consoleSettings";
 import { requestFsRead } from "../../../services/gateway/fsRead";
+import { z } from "zod";
 export type { AgentApprovalAction } from "../domain/consoleAgentBehavior";
 
 export const DEFAULT_CONSOLE_ADAPTERS = ["whatsapp", "discord", "telegram"] as const;
@@ -52,8 +55,30 @@ const OPENAI_CODEX_PROVIDER = "openai-codex";
 const HTML_DOCUMENT_PATTERN = /(?:<!doctype\s+html|<html[\s>])/i;
 const HTML_CHALLENGE_OR_BLOCK_PATTERN =
   /\b(?:unable\s+to\s+load\s+site|ray\s+id|cf-ray|cdn-cgi\/challenge-platform|cloudflare|vpn)\b/i;
+const gatewayPayloadSchema = z.unknown();
+type GatewayPayload = z.input<typeof gatewayPayloadSchema>;
+const gatewayRecordSchema = z.record(z.string(), z.unknown());
+type GatewayRecord = z.infer<typeof gatewayRecordSchema>;
+
+function parseGatewayRecord(value: GatewayPayload): GatewayRecord {
+  const parsed = gatewayRecordSchema.safeParse(value);
+  return parsed.success ? parsed.data : {};
+}
 
 export type ConsoleClient = Pick<GSVClient, "call" | "proc" | "account" | "sys">;
+type ConsoleConfigClient = {
+  sys: {
+    config: Pick<GSVClient["sys"]["config"], "set">;
+  };
+};
+type ConsoleAccountCreateClient = ConsoleConfigClient & {
+  account: Pick<GSVClient["account"], "create">;
+};
+type ConsoleTokenCreateClient = {
+  sys: {
+    token: Pick<GSVClient["sys"]["token"], "create">;
+  };
+};
 
 export type ConsoleAgentContextFileDraft = {
   label: string;
@@ -203,10 +228,19 @@ export type RemoveIdentityLinkResult = {
 export type ConnectConsoleAdapterInput = {
   adapter: string;
   accountId: string;
-  config?: Record<string, unknown>;
+  config?: Record<string, string | number | boolean | null>;
 };
 
 export type ConnectConsoleAdapterResult = AdapterConnectResult;
+
+export type InspectConsoleAdapterPairingInput = {
+  adapter: string;
+  code: string;
+};
+
+export type ConsoleAdapterPairingInfo = AdapterPairInfoResult;
+export type ConsoleAdapterPairingCandidate = AdapterPairInspectResult;
+export type ConsoleAdapterPairingResult = AdapterPairConfirmResult;
 
 export type AddConsoleMcpServerInput = {
   name: string;
@@ -262,7 +296,7 @@ export async function consumeIdentityLinkCode(
     throw new Error("link code is required");
   }
 
-  const result = await client.call("sys.link.consume", { code }) as Record<string, unknown>;
+  const result = parseGatewayRecord(await client.call("sys.link.consume", { code }));
   return normalizeIdentityLinkMutationResult(result);
 }
 
@@ -274,12 +308,12 @@ export async function removeIdentityLink(
   const accountId = normalizeIdentityLinkField(input.accountId, "account id");
   const actorId = normalizeIdentityLinkField(input.actorId, "actor id");
 
-  const result = await client.call("sys.unlink", { adapter, accountId, actorId }) as Record<string, unknown>;
+  const result = parseGatewayRecord(await client.call("sys.unlink", { adapter, accountId, actorId }));
   return { removed: result.removed === true };
 }
 
 export async function saveConsoleConfig(
-  client: Pick<GSVClient, "sys">,
+  client: ConsoleConfigClient,
   input: SaveConsoleConfigInput,
 ): Promise<SaveConsoleConfigResult> {
   const key = input.key.trim();
@@ -297,7 +331,7 @@ export async function saveConsoleConfig(
 }
 
 export async function saveConsoleConfigEntries(
-  client: Pick<GSVClient, "sys">,
+  client: ConsoleConfigClient,
   input: SaveConsoleConfigEntriesInput,
 ): Promise<SaveConsoleConfigEntriesResult> {
   let written = 0;
@@ -320,8 +354,8 @@ export async function validateConsoleModelConfig(
   }
 
   const config: AiTextGenerateConfig = {
-    ...(presetId ? { preset: { id: presetId } } : {}),
-    ...(Object.keys(overrides).length > 0 ? { overrides } : {}),
+    ...(presetId ? { preset: { id: presetId } } : undefined),
+    ...(Object.keys(overrides).length > 0 ? { overrides } : undefined),
   };
   const secretValues = Object.entries(overrides)
     .filter(([key, value]) => isSensitiveSettingKey(key) && value.length > 0)
@@ -377,7 +411,7 @@ export async function pollConsoleOpenAiCodexOAuth(
 export async function checkConsoleOpenAiCodexOAuth(
   client: Pick<GSVClient, "call">,
 ): Promise<CheckConsoleOpenAiCodexOAuthResult> {
-  const result = await client.call("sys.oauth.list", {}) as SysOAuthListResult;
+  const result = await client.call("sys.oauth.list", {});
   return {
     connected: result.accounts.some((account) =>
       account.kind === "ai-provider" &&
@@ -398,7 +432,7 @@ export async function runConsoleProcessAction(
   }
 
   const result = input.action === "abort"
-    ? await client.proc.abort({ pid, ...(input.runId ? { runId: input.runId } : {}) })
+    ? await client.proc.abort({ pid, ...(input.runId ? { runId: input.runId } : undefined) })
     : input.action === "reset"
       ? await client.proc.reset({ pid })
       : input.action === "kill"
@@ -452,7 +486,7 @@ export async function loadConsoleAgentContext(
 }
 
 export async function createConsoleAgent(
-  client: Pick<GSVClient, "account" | "sys">,
+  client: ConsoleAccountCreateClient,
   input: CreateConsoleAgentInput,
 ): Promise<CreateConsoleAgentResult> {
   const displayName = input.name.trim();
@@ -526,7 +560,7 @@ export async function saveConsoleAgentContext(
       const result = await client.call("fs.write", {
         path: `${contextDir(username)}/${name}`,
         content: file.content,
-      }) as { ok?: boolean; error?: string };
+      });
       if (result.ok === false) {
         throw new Error(result.error || `failed to write ${name}`);
       }
@@ -540,7 +574,7 @@ export async function saveConsoleAgentContext(
     }
     const result = await client.call("fs.delete", {
       path: `${contextDir(username)}/${name}`,
-    }) as { ok?: boolean; error?: string };
+    });
     if (result.ok === false) {
       throw new Error(result.error || `failed to delete ${name}`);
     }
@@ -551,7 +585,7 @@ export async function saveConsoleAgentContext(
 }
 
 export async function saveConsoleAgentBehavior(
-  client: Pick<GSVClient, "sys">,
+  client: ConsoleConfigClient,
   input: SaveConsoleAgentBehaviorInput,
 ): Promise<SaveConsoleAgentBehaviorResult> {
   const uid = Number(input.uid);
@@ -564,7 +598,7 @@ export async function saveConsoleAgentBehavior(
 }
 
 export async function createMachineNodeToken(
-  client: Pick<GSVClient, "sys">,
+  client: ConsoleTokenCreateClient,
   input: CreateMachineNodeTokenInput,
 ): Promise<IssuedMachineNodeToken> {
   const deviceId = input.deviceId.trim();
@@ -573,12 +607,13 @@ export async function createMachineNodeToken(
   }
 
   const label = input.label?.trim();
+  const expiresAt = z.number().finite().safeParse(input.expiresAt);
   const result = await client.sys.token.create({
     kind: "node",
     allowedRole: "driver",
     allowedDeviceId: deviceId,
-    ...(label ? { label } : {}),
-    ...(typeof input.expiresAt === "number" ? { expiresAt: input.expiresAt } : {}),
+    ...(label ? { label } : undefined),
+    ...(expiresAt.success ? { expiresAt: expiresAt.data } : undefined),
   });
 
   return {
@@ -604,13 +639,14 @@ export async function deleteConsoleMachine(
     throw new Error("device id is required");
   }
 
-  const result = await client.call("sys.device.delete", { deviceId }) as Record<string, unknown>;
+  const result = parseGatewayRecord(await client.call("sys.device.delete", { deviceId }));
   return {
     deleted: result.deleted === true,
     deviceId: stringOr(deviceId, result.deviceId),
-    revokedTokens: typeof result.revokedTokens === "number" && Number.isFinite(result.revokedTokens)
-      ? Math.max(0, Math.floor(result.revokedTokens))
-      : 0,
+    revokedTokens: (() => {
+      const count = z.number().finite().safeParse(result.revokedTokens);
+      return count.success ? Math.max(0, Math.floor(count.data)) : 0;
+    })(),
   };
 }
 
@@ -644,15 +680,56 @@ export async function connectConsoleAdapter(
     throw new Error("account id is required");
   }
 
-  const result: unknown = await client.call("adapter.connect", {
+  const result: GatewayPayload = await client.call("adapter.connect", {
     adapter,
     accountId,
-    ...(input.config && Object.keys(input.config).length > 0 ? { config: input.config } : {}),
+    ...(input.config && Object.keys(input.config).length > 0 ? { config: input.config } : undefined),
   });
-  if (!isAdapterConnectResult(result)) {
+  // The gateway response is transported as JSON; round-tripping here gives the
+  // protocol guard its JSON-domain input and establishes the adapter result boundary.
+  const parsedResult = JSON.parse(JSON.stringify(result));
+  if (!isAdapterConnectResult(parsedResult)) {
     throw new Error("Adapter returned an invalid connection response");
   }
-  return result;
+  return parsedResult;
+}
+
+export async function loadConsoleAdapterPairingInfo(
+  client: Pick<GSVClient, "call">,
+  adapter: string,
+): Promise<ConsoleAdapterPairingInfo> {
+  return await client.call("adapter.pair.info", { adapter: adapter.trim() });
+}
+
+export async function inspectConsoleAdapterPairing(
+  client: Pick<GSVClient, "call">,
+  input: InspectConsoleAdapterPairingInput,
+): Promise<ConsoleAdapterPairingCandidate> {
+  return await client.call("adapter.pair.inspect", {
+    adapter: input.adapter.trim(),
+    code: input.code.trim(),
+  });
+}
+
+export async function confirmConsoleAdapterPairing(
+  client: Pick<GSVClient, "call">,
+  input: InspectConsoleAdapterPairingInput,
+): Promise<ConsoleAdapterPairingResult> {
+  return await client.call("adapter.pair.confirm", {
+    adapter: input.adapter.trim(),
+    code: input.code.trim(),
+  });
+}
+
+export async function disconnectConsoleAdapterPairing(
+  client: Pick<GSVClient, "call">,
+  input: RemoveIdentityLinkInput,
+): Promise<{ disconnected: boolean }> {
+  return await client.call("adapter.pair.disconnect", {
+    adapter: input.adapter.trim(),
+    accountId: input.accountId.trim(),
+    actorId: input.actorId.trim(),
+  });
 }
 
 export async function disconnectConsoleAdapter(
@@ -668,7 +745,7 @@ export async function disconnectConsoleAdapter(
     throw new Error("account id is required");
   }
 
-  const result = await client.call("adapter.disconnect", { adapter, accountId }) as Record<string, unknown>;
+  const result = parseGatewayRecord(await client.call("adapter.disconnect", { adapter, accountId }));
   if (result.ok !== true) {
     throw new Error(stringOr(stringOr("Disconnect failed", result.message), result.error));
   }
@@ -697,16 +774,16 @@ export async function addConsoleMcpServer(
   }
 
   const transport = input.transport === "streamable-http" || input.transport === "sse" ? input.transport : "auto";
-  const callbackHost = typeof window === "undefined" ? undefined : window.location.origin;
+  const callbackHost = globalThis.window?.location.origin;
   const result = await client.call("sys.mcp.add", {
     name,
     url,
-    ...(callbackHost ? { callbackHost } : {}),
+    ...(callbackHost ? { callbackHost } : undefined),
     transport: {
       type: transport,
-      ...(input.headers && Object.keys(input.headers).length > 0 ? { headers: input.headers } : {}),
+      ...(input.headers && Object.keys(input.headers).length > 0 ? { headers: input.headers } : undefined),
     },
-  }) as Record<string, unknown>;
+  });
   const servers = normalizeMcpServersPayload({ servers: [result.server] });
   const server = servers[0];
   if (!server) {
@@ -723,7 +800,7 @@ export async function refreshConsoleMcpServer(
   if (!id) {
     throw new Error("server id is required");
   }
-  const result = await client.call("sys.mcp.refresh", { serverId: id }) as Record<string, unknown>;
+  const result = parseGatewayRecord(await client.call("sys.mcp.refresh", { serverId: id }));
   return normalizeMcpServersPayload({ servers: result.server ? [result.server] : [] })[0] ?? null;
 }
 
@@ -735,7 +812,7 @@ export async function removeConsoleMcpServer(
   if (!id) {
     throw new Error("server id is required");
   }
-  const result = await client.call("sys.mcp.remove", { serverId: id }) as Record<string, unknown>;
+  const result = parseGatewayRecord(await client.call("sys.mcp.remove", { serverId: id }));
   return { removed: result.removed === true };
 }
 
@@ -772,7 +849,7 @@ export async function loadConsoleOverview(
   });
 }
 
-function normalizeIdentityLinkMutationResult(result: Record<string, unknown>): IdentityLinkMutationResult {
+function normalizeIdentityLinkMutationResult(result: GatewayRecord): IdentityLinkMutationResult {
   const links = normalizeIdentityLinksPayload({ links: result.link ? [result.link] : [] });
   return {
     linked: result.linked === true,
@@ -788,7 +865,7 @@ function normalizeIdentityLinkField(value: string, field: string): string {
   return normalized;
 }
 
-function modelValidationOverrides(values: Record<string, string>): Record<string, string> {
+function modelValidationOverrides(values: Record<string, string>) {
   const overrides: Record<string, string> = {};
   for (const key of TEXT_MODEL_VALIDATION_KEYS) {
     if (Object.prototype.hasOwnProperty.call(values, key)) {
@@ -798,15 +875,14 @@ function modelValidationOverrides(values: Record<string, string>): Record<string
   return overrides;
 }
 
-function hasOpenAiCodexAccountId(metadata: unknown): boolean {
-  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-    return false;
-  }
-  const accountId = (metadata as Record<string, unknown>).chatgptAccountId;
-  return typeof accountId === "string" && accountId.trim().length > 0;
+function hasOpenAiCodexAccountId(metadata: GatewayPayload): boolean {
+  const record = parseGatewayRecord(metadata);
+  const accountId = record.chatgptAccountId;
+  const parsed = z.string().safeParse(accountId);
+  return parsed.success && parsed.data.trim().length > 0;
 }
 
-function sanitizeModelValidationError(error: unknown, secretValues: readonly string[]): string {
+function sanitizeModelValidationError(error: GatewayPayload, secretValues: readonly string[]): string {
   let message = error instanceof Error ? error.message : error ? String(error) : "model validation failed";
   message = sanitizeHtmlModelValidationError(message);
   for (const secret of secretValues) {
@@ -839,7 +915,7 @@ async function loadAdapterPayloads(
   client: Pick<GSVClient, "call">,
   adapters?: readonly string[],
   accountId?: string,
-): Promise<unknown[]> {
+): Promise<GatewayPayload[]> {
   if (!adapters) {
     try {
       return [await client.call("adapter.list", {})];
@@ -855,13 +931,13 @@ async function loadAdapterStatusPayloads(
   client: Pick<GSVClient, "call">,
   adapters: readonly string[],
   accountId?: string,
-): Promise<unknown[]> {
+): Promise<GatewayPayload[]> {
   const settled = await Promise.allSettled(
     adapters.map(async (adapter) => {
       try {
         return await client.call("adapter.status", {
           adapter,
-          ...(accountId ? { accountId } : {}),
+          ...(accountId ? { accountId } : undefined),
         });
       } catch {
         return { adapter, accounts: [] };
@@ -872,11 +948,12 @@ async function loadAdapterStatusPayloads(
   return settled.map((result) => result.status === "fulfilled" ? result.value : { accounts: [] });
 }
 
-function stringOr(fallback: string, value: unknown): string {
-  return typeof value === "string" && value.trim().length > 0 ? value : fallback;
+function stringOr(fallback: string, value: GatewayPayload): string {
+  const parsed = z.string().safeParse(value);
+  return parsed.success && parsed.data.trim().length > 0 ? parsed.data : fallback;
 }
 
-async function loadOptionalPayload(load: () => Promise<unknown>): Promise<unknown> {
+async function loadOptionalPayload(load: () => Promise<GatewayPayload>): Promise<GatewayPayload> {
   try {
     return await load();
   } catch {
@@ -892,7 +969,7 @@ type AgentBehaviorConfigDraft = {
 };
 
 async function saveAgentBehaviorConfig(
-  client: Pick<GSVClient, "sys">,
+  client: ConsoleConfigClient,
   uid: number,
   input: AgentBehaviorConfigDraft,
   options: { includeEmpty?: boolean } = {},

@@ -163,7 +163,7 @@ export function useLibraryWorkspace(
     await queryClient.invalidateQueries({ queryKey: libraryWorkspaceQueryKey });
   };
 
-  const handleMutationError = (error: unknown) => {
+  const handleMutationError = <T,>(error: T) => {
     setNotice(null);
     setLocalError(error instanceof Error ? error.message : String(error));
   };
@@ -234,7 +234,7 @@ export function useLibraryWorkspace(
     state,
     applySearch: () => {
       const q = searchDraft.trim();
-      guardedNavigate({ view: "index", db: selectedDb || undefined, ...(q ? { q } : {}) });
+      guardedNavigate({ view: "index", db: selectedDb || undefined, ...(q ? { q } : undefined) });
     },
     clearSearch: () => {
       setSearchDraft("");
@@ -311,7 +311,7 @@ export function useLibraryWorkspace(
         setBuildDbTitle("");
         setBuildTarget("gsv");
         setBuildDbId("");
-        navigate({ view: "build", ...(selectedDb ? { db: selectedDb } : {}) });
+        navigate({ view: "build", ...(selectedDb ? { db: selectedDb } : undefined) });
       };
       if (requestLeave) {
         requestLeave(proceed);
@@ -392,7 +392,9 @@ export function useLibraryWorkspace(
   };
 }
 
-function loadArgsForRoute(route: ShellLibraryRoute): { db?: string; path?: string; q?: string; newPage?: boolean } {
+type LibraryRouteLoadArgs = { db?: string; path?: string; q?: string; newPage?: boolean };
+
+function loadArgsForRoute(route: ShellLibraryRoute): LibraryRouteLoadArgs {
   if (route.view === "editor") {
     // A path-less editor route is a brand-new page: tell the loader not to fall
     // back to the collection index.md (which the editor would then overwrite).
@@ -408,7 +410,9 @@ function loadArgsForRoute(route: ShellLibraryRoute): { db?: string; path?: strin
     return { db: route.db };
   }
   if (route.view === "build") {
-    return route.db ? { db: route.db } : {};
+    const args: LibraryRouteLoadArgs = {};
+    if (route.db) args.db = route.db;
+    return args;
   }
   return {
     db: route.db,

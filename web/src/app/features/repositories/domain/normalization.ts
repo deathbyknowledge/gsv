@@ -1,5 +1,8 @@
+import type { JsonValue } from "@humansandmachines/gsv/protocol";
+import { z } from "zod";
 import type {
   RepositoryCommit,
+  RepositoryCommitsPage,
   RepositoryCompareResult,
   RepositoryDeleteResult,
   RepositoryDiffFile,
@@ -17,171 +20,332 @@ import type {
 
 const DEFAULT_COMMIT_PAGE_SIZE = 20;
 
-export function normalizeRepositoryList(payload: unknown): RepositorySummary[] {
-  return asArray<Record<string, unknown>>(asRecord(payload)?.repos)
+const stringField = z.string().catch("");
+const optionalStringField = z.string().optional().catch(undefined);
+const nullableStringField = z.union([z.string(), z.null()]).catch(null);
+const numberField = z.number().finite().catch(0);
+const optionalNumberField = z.number().finite().optional().catch(undefined);
+const booleanField = z.boolean().catch(false);
+const optionalBooleanField = z.boolean().optional().catch(undefined);
+const stringMapField = z.record(z.string(), z.string()).catch({});
+
+const repositorySummaryWireSchema = z.looseObject({
+  repo: stringField,
+  owner: stringField,
+  name: stringField,
+  kind: stringField,
+  writable: booleanField,
+  public: booleanField,
+  ref: optionalStringField,
+  baseRef: optionalStringField,
+  description: optionalStringField,
+  updatedAt: optionalNumberField,
+});
+
+const repositoryListWireSchema = z.looseObject({
+  repos: z.array(repositorySummaryWireSchema).catch([]),
+}).catch({ repos: [] });
+
+const repositoryRefsWireSchema = z.looseObject({
+  repo: stringField,
+  heads: stringMapField,
+  tags: stringMapField,
+  remotes: stringMapField,
+}).catch({ repo: "", heads: {}, tags: {}, remotes: {} });
+
+const repositoryTreeEntryWireSchema = z.looseObject({
+  name: stringField,
+  path: stringField,
+  mode: stringField,
+  hash: stringField,
+  type: stringField,
+});
+
+const repositoryReadWireSchema = z.looseObject({
+  repo: stringField,
+  ref: stringField,
+  path: stringField,
+  kind: stringField,
+  entries: z.array(repositoryTreeEntryWireSchema).catch([]),
+  size: numberField,
+  isBinary: booleanField,
+  content: nullableStringField,
+}).catch({
+  repo: "",
+  ref: "",
+  path: "",
+  kind: "file",
+  entries: [],
+  size: 0,
+  isBinary: false,
+  content: null,
+});
+
+const repositorySearchMatchWireSchema = z.looseObject({
+  path: stringField,
+  line: numberField,
+  content: stringField,
+});
+
+const repositorySearchWireSchema = z.looseObject({
+  repo: stringField,
+  ref: stringField,
+  query: stringField,
+  prefix: optionalStringField,
+  truncated: booleanField,
+  matches: z.array(repositorySearchMatchWireSchema).catch([]),
+}).catch({
+  repo: "",
+  ref: "",
+  query: "",
+  truncated: false,
+  matches: [],
+});
+
+const repositoryCommitWireSchema = z.looseObject({
+  hash: stringField,
+  treeHash: stringField,
+  author: stringField,
+  authorEmail: stringField,
+  authorTime: numberField,
+  committer: stringField,
+  committerEmail: stringField,
+  commitTime: numberField,
+  message: stringField,
+  parents: z.array(z.string()).catch([]),
+});
+
+const repositoryCommitsWireSchema = z.looseObject({
+  repo: stringField,
+  ref: stringField,
+  entries: z.array(repositoryCommitWireSchema).catch([]),
+}).catch({ repo: "", ref: "", entries: [] });
+
+const repositoryStatsWireSchema = z.looseObject({
+  filesChanged: numberField,
+  additions: numberField,
+  deletions: numberField,
+}).catch({ filesChanged: 0, additions: 0, deletions: 0 });
+
+const repositoryDiffLineWireSchema = z.looseObject({
+  tag: stringField,
+  content: stringField,
+});
+
+const repositoryDiffHunkWireSchema = z.looseObject({
+  oldStart: numberField,
+  oldCount: numberField,
+  newStart: numberField,
+  newCount: numberField,
+  lines: z.array(repositoryDiffLineWireSchema).catch([]),
+});
+
+const repositoryDiffFileWireSchema = z.looseObject({
+  path: stringField,
+  status: stringField,
+  oldHash: optionalStringField,
+  newHash: optionalStringField,
+  hunks: z.array(repositoryDiffHunkWireSchema).catch([]),
+});
+
+const repositoryDiffWireSchema = z.looseObject({
+  repo: stringField,
+  commitHash: stringField,
+  parentHash: nullableStringField,
+  stats: repositoryStatsWireSchema,
+  files: z.array(repositoryDiffFileWireSchema).catch([]),
+}).catch({
+  repo: "",
+  commitHash: "",
+  parentHash: null,
+  stats: { filesChanged: 0, additions: 0, deletions: 0 },
+  files: [],
+});
+
+const repositoryCompareWireSchema = z.looseObject({
+  repo: stringField,
+  base: stringField,
+  head: stringField,
+  stats: repositoryStatsWireSchema,
+  files: z.array(repositoryDiffFileWireSchema).catch([]),
+}).catch({
+  repo: "",
+  base: "",
+  head: "",
+  stats: { filesChanged: 0, additions: 0, deletions: 0 },
+  files: [],
+});
+
+const repositoryPullWireSchema = z.looseObject({
+  repo: stringField,
+  ref: stringField,
+  head: nullableStringField,
+  changed: booleanField,
+  remoteUrl: optionalStringField,
+  remote_url: optionalStringField,
+  remoteRef: optionalStringField,
+  remote_ref: optionalStringField,
+  trackingRef: optionalStringField,
+  tracking_ref: optionalStringField,
+  upstreamHead: optionalStringField,
+  upstream_head: optionalStringField,
+  upstreamChanged: optionalBooleanField,
+  upstream_changed: optionalBooleanField,
+  localChanged: optionalBooleanField,
+  local_changed: optionalBooleanField,
+  diverged: optionalBooleanField,
+}).catch({ repo: "", ref: "", head: null, changed: false });
+
+const repositoryDeleteWireSchema = z.looseObject({
+  repo: stringField,
+  deleted: booleanField,
+}).catch({ repo: "", deleted: false });
+
+const repositoryVisibilityWireSchema = z.looseObject({
+  repo: stringField,
+  public: optionalBooleanField,
+  changed: booleanField,
+}).catch({ repo: "", changed: false });
+
+export function normalizeRepositoryList(payload: JsonValue): RepositorySummary[] {
+  return repositoryListWireSchema.parse(payload).repos
     .map(normalizeRepositorySummary)
     .filter((repo): repo is RepositorySummary => repo !== null)
     .sort((left, right) => left.repo.localeCompare(right.repo));
 }
 
-export function normalizeRepositoryRefs(payload: unknown, fallbackRepo: string): RepositoryRefs {
-  const record = asRecord(payload);
-  return {
-    repo: asString(record?.repo) || fallbackRepo,
-    heads: asStringRecord(record?.heads),
-    tags: asStringRecord(record?.tags),
-    remotes: asStringRecord(record?.remotes),
-  };
+export function normalizeRepositoryRefs(
+  payload: JsonValue,
+  fallbackRepo: string,
+): RepositoryRefs {
+  const record = repositoryRefsWireSchema.parse(payload);
+  return { ...record, repo: record.repo || fallbackRepo };
 }
 
-export function normalizeRepositoryRead(payload: unknown): RepositoryReadResult {
-  const record = asRecord(payload);
-  if (record?.kind === "tree") {
+export function normalizeRepositoryRead(payload: JsonValue): RepositoryReadResult {
+  const record = repositoryReadWireSchema.parse(payload);
+  if (record.kind === "tree") {
     return {
-      repo: asString(record.repo),
-      ref: asString(record.ref),
-      path: asString(record.path),
+      repo: record.repo,
+      ref: record.ref,
+      path: record.path,
       kind: "tree",
-      entries: asArray<Record<string, unknown>>(record.entries).map(normalizeTreeEntry),
+      entries: record.entries.map(normalizeTreeEntry),
     };
   }
   return {
-    repo: asString(record?.repo),
-    ref: asString(record?.ref),
-    path: asString(record?.path),
+    repo: record.repo,
+    ref: record.ref,
+    path: record.path,
     kind: "file",
-    size: asNumber(record?.size),
-    isBinary: record?.isBinary === true,
-    content: typeof record?.content === "string" ? record.content : null,
+    size: record.size,
+    isBinary: record.isBinary,
+    content: record.content,
   };
 }
 
-export function normalizeRepositorySearch(payload: unknown): RepositorySearchResult {
-  const record = asRecord(payload);
-  return {
-    repo: asString(record?.repo),
-    ref: asString(record?.ref),
-    query: asString(record?.query),
-    prefix: asString(record?.prefix) || undefined,
-    truncated: record?.truncated === true,
-    matches: asArray<Record<string, unknown>>(record?.matches).map((match) => ({
-      path: asString(match.path),
-      line: asNumber(match.line),
-      content: asString(match.content),
-    })),
-  };
+export function normalizeRepositorySearch(payload: JsonValue): RepositorySearchResult {
+  return repositorySearchWireSchema.parse(payload);
 }
 
 export function normalizeRepositoryCommitsPage(
-  payload: unknown,
+  payload: JsonValue,
   fallbackRepo: string,
   fallbackRef: string,
   requestedLimit: number,
   requestedOffset: number,
-): {
-  repo: string;
-  ref: string;
-  limit: number;
-  offset: number;
-  entries: RepositoryCommit[];
-  hasNextPage: boolean;
-} {
-  const record = asRecord(payload);
-  const entries = asArray<Record<string, unknown>>(record?.entries);
+): RepositoryCommitsPage {
+  const record = repositoryCommitsWireSchema.parse(payload);
   const limit = normalizeLimit(requestedLimit);
   return {
-    repo: asString(record?.repo) || fallbackRepo,
-    ref: asString(record?.ref) || fallbackRef,
+    repo: record.repo || fallbackRepo,
+    ref: record.ref || fallbackRef,
     limit,
     offset: normalizeOffset(requestedOffset),
-    entries: entries.slice(0, limit).map(normalizeCommit),
-    hasNextPage: entries.length > limit,
+    entries: record.entries.slice(0, limit).map(normalizeCommit),
+    hasNextPage: record.entries.length > limit,
   };
 }
 
-export function normalizeRepositoryDiff(payload: unknown): RepositoryDiffResult {
-  const record = asRecord(payload);
+export function normalizeRepositoryDiff(payload: JsonValue): RepositoryDiffResult {
+  const record = repositoryDiffWireSchema.parse(payload);
   return {
-    repo: asString(record?.repo),
-    commitHash: asString(record?.commitHash),
-    parentHash: asString(record?.parentHash) || null,
-    stats: normalizeStats(record?.stats),
-    files: asArray<Record<string, unknown>>(record?.files).map(normalizeDiffFile),
+    ...record,
+    stats: normalizeStats(record.stats),
+    files: record.files.map(normalizeDiffFile),
   };
 }
 
-export function normalizeRepositoryCompare(payload: unknown): RepositoryCompareResult {
-  const record = asRecord(payload);
+export function normalizeRepositoryCompare(
+  payload: JsonValue,
+): RepositoryCompareResult {
+  const record = repositoryCompareWireSchema.parse(payload);
   return {
-    repo: asString(record?.repo),
-    base: asString(record?.base),
-    head: asString(record?.head),
-    stats: normalizeStats(record?.stats),
-    files: asArray<Record<string, unknown>>(record?.files).map(normalizeDiffFile),
+    ...record,
+    stats: normalizeStats(record.stats),
+    files: record.files.map(normalizeDiffFile),
   };
 }
 
-export function normalizeRepositoryPull(payload: unknown): RepositoryPullResult {
-  const record = asRecord(payload);
+export function normalizeRepositoryPull(payload: JsonValue): RepositoryPullResult {
+  const record = repositoryPullWireSchema.parse(payload);
   const result: RepositoryPullResult = {
-    repo: asString(record?.repo),
-    ref: asString(record?.ref),
-    head: asString(record?.head) || null,
-    changed: record?.changed === true,
-    remoteUrl: asString(record?.remoteUrl) || asString(record?.remote_url),
-    remoteRef: asString(record?.remoteRef) || asString(record?.remote_ref),
+    repo: record.repo,
+    ref: record.ref,
+    head: record.head,
+    changed: record.changed,
+    remoteUrl: record.remoteUrl || record.remote_url || "",
+    remoteRef: record.remoteRef || record.remote_ref || "",
   };
-  const trackingRef = asString(record?.trackingRef) || asString(record?.tracking_ref);
-  const upstreamHead = asString(record?.upstreamHead) || asString(record?.upstream_head);
-  const upstreamChanged = asOptionalBoolean(record?.upstreamChanged ?? record?.upstream_changed);
-  const localChanged = asOptionalBoolean(record?.localChanged ?? record?.local_changed);
-  const diverged = record?.diverged;
+  const trackingRef = record.trackingRef || record.tracking_ref;
+  const upstreamHead = record.upstreamHead || record.upstream_head;
+  const upstreamChanged = record.upstreamChanged ?? record.upstream_changed;
+  const localChanged = record.localChanged ?? record.local_changed;
   if (trackingRef) result.trackingRef = trackingRef;
   if (upstreamHead) result.upstreamHead = upstreamHead;
-  if (typeof upstreamChanged === "boolean") result.upstreamChanged = upstreamChanged;
-  if (typeof localChanged === "boolean") result.localChanged = localChanged;
-  if (typeof diverged === "boolean") result.diverged = diverged;
+  if (upstreamChanged !== undefined) result.upstreamChanged = upstreamChanged;
+  if (localChanged !== undefined) result.localChanged = localChanged;
+  if (record.diverged !== undefined) result.diverged = record.diverged;
   return result;
 }
 
-export function normalizeRepositoryDelete(payload: unknown, fallbackRepo: string): RepositoryDeleteResult {
-  const record = asRecord(payload);
+export function normalizeRepositoryDelete(
+  payload: JsonValue,
+  fallbackRepo: string,
+): RepositoryDeleteResult {
+  const record = repositoryDeleteWireSchema.parse(payload);
+  return { repo: record.repo || fallbackRepo, deleted: record.deleted };
+}
+
+export function normalizeRepositoryVisibility(
+  payload: JsonValue,
+  fallbackRepo: string,
+  fallbackPublic: boolean,
+): RepositoryVisibilityResult {
+  const record = repositoryVisibilityWireSchema.parse(payload);
   return {
-    repo: asString(record?.repo) || fallbackRepo,
-    deleted: record?.deleted === true,
+    repo: record.repo || fallbackRepo,
+    public: record.public ?? fallbackPublic,
+    changed: record.changed,
   };
 }
 
-export function normalizeRepositoryVisibility(payload: unknown, fallbackRepo: string, fallbackPublic: boolean): RepositoryVisibilityResult {
-  const record = asRecord(payload);
+function normalizeRepositorySummary(
+  entry: z.output<typeof repositorySummaryWireSchema>,
+): RepositorySummary | null {
+  if (!entry.repo || !entry.owner || !entry.name) return null;
   return {
-    repo: asString(record?.repo) || fallbackRepo,
-    public: typeof record?.public === "boolean" ? record.public : fallbackPublic,
-    changed: record?.changed === true,
-  };
-}
-
-function normalizeRepositorySummary(entry: Record<string, unknown>): RepositorySummary | null {
-  const repo = asString(entry.repo);
-  const owner = asString(entry.owner);
-  const name = asString(entry.name);
-  if (!repo || !owner || !name) {
-    return null;
-  }
-
-  const rawKind = asString(entry.kind);
-  return {
-    repo,
-    owner,
-    name,
-    kind: normalizeRepositoryKind(rawKind),
-    rawKind,
-    writable: entry.writable === true,
-    public: entry.public === true,
-    ref: asString(entry.ref) || undefined,
-    baseRef: asString(entry.baseRef) || undefined,
-    description: asString(entry.description) || undefined,
-    updatedAt: asOptionalNumber(entry.updatedAt),
+    repo: entry.repo,
+    owner: entry.owner,
+    name: entry.name,
+    kind: normalizeRepositoryKind(entry.kind),
+    rawKind: entry.kind,
+    writable: entry.writable,
+    public: entry.public,
+    ref: entry.ref || undefined,
+    baseRef: entry.baseRef || undefined,
+    description: entry.description || undefined,
+    updatedAt: entry.updatedAt,
   };
 }
 
@@ -192,112 +356,67 @@ function normalizeRepositoryKind(value: string): RepositoryKind {
   return "unknown";
 }
 
-function normalizeTreeEntry(entry: Record<string, unknown>): RepositoryTreeEntry {
-  const type = asString(entry.type);
+function normalizeTreeEntry(
+  entry: z.output<typeof repositoryTreeEntryWireSchema>,
+): RepositoryTreeEntry {
   return {
-    name: asString(entry.name),
-    path: asString(entry.path),
-    mode: asString(entry.mode),
-    hash: asString(entry.hash),
-    type: type === "tree" || type === "symlink" ? type : "blob",
+    name: entry.name,
+    path: entry.path,
+    mode: entry.mode,
+    hash: entry.hash,
+    type: entry.type === "tree" || entry.type === "symlink" ? entry.type : "blob",
   };
 }
 
-function normalizeCommit(entry: Record<string, unknown>): RepositoryCommit {
-  return {
-    hash: asString(entry.hash),
-    treeHash: asString(entry.treeHash),
-    author: asString(entry.author),
-    authorEmail: asString(entry.authorEmail),
-    authorTime: asNumber(entry.authorTime),
-    committer: asString(entry.committer),
-    committerEmail: asString(entry.committerEmail),
-    commitTime: asNumber(entry.commitTime),
-    message: asString(entry.message),
-    parents: asArray<string>(entry.parents).filter((parent) => typeof parent === "string"),
-  };
+function normalizeCommit(
+  entry: z.output<typeof repositoryCommitWireSchema>,
+): RepositoryCommit {
+  return entry;
 }
 
-function normalizeDiffFile(file: Record<string, unknown>): RepositoryDiffFile {
-  const status = asString(file.status);
+function normalizeDiffFile(
+  file: z.output<typeof repositoryDiffFileWireSchema>,
+): RepositoryDiffFile {
   return {
-    path: asString(file.path),
-    status: status === "added" || status === "deleted" ? status : "modified",
-    oldHash: asString(file.oldHash) || undefined,
-    newHash: asString(file.newHash) || undefined,
-    hunks: asArray<Record<string, unknown>>(file.hunks).map((hunk) => ({
-      oldStart: asNumber(hunk.oldStart),
-      oldCount: asNumber(hunk.oldCount),
-      newStart: asNumber(hunk.newStart),
-      newCount: asNumber(hunk.newCount),
-      lines: asArray<Record<string, unknown>>(hunk.lines).map((line) => ({
+    path: file.path,
+    status: file.status === "added" || file.status === "deleted"
+      ? file.status
+      : "modified",
+    oldHash: file.oldHash || undefined,
+    newHash: file.newHash || undefined,
+    hunks: file.hunks.map((hunk) => ({
+      oldStart: hunk.oldStart,
+      oldCount: hunk.oldCount,
+      newStart: hunk.newStart,
+      newCount: hunk.newCount,
+      lines: hunk.lines.map((line) => ({
         tag: normalizeDiffLineTag(line.tag),
-        content: asString(line.content),
+        content: line.content,
       })),
     })),
   };
 }
 
-function normalizeStats(value: unknown): RepositoryDiffStats {
-  const stats = asRecord(value);
-  return {
-    filesChanged: asNumber(stats?.filesChanged),
-    additions: asNumber(stats?.additions),
-    deletions: asNumber(stats?.deletions),
-  };
+function normalizeStats(
+  value: z.output<typeof repositoryStatsWireSchema>,
+): RepositoryDiffStats {
+  return value;
 }
 
-function normalizeDiffLineTag(value: unknown): "context" | "add" | "delete" | "binary" {
-  return value === "add" || value === "delete" || value === "binary" ? value : "context";
+function normalizeDiffLineTag(
+  value: string,
+): "context" | "add" | "delete" | "binary" {
+  return value === "add" || value === "delete" || value === "binary"
+    ? value
+    : "context";
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
-}
-
-function asArray<T = unknown>(value: unknown): T[] {
-  return Array.isArray(value) ? value as T[] : [];
-}
-
-function asString(value: unknown): string {
-  return typeof value === "string" ? value : "";
-}
-
-function asStringRecord(value: unknown): Record<string, string> {
-  const record = asRecord(value) ?? {};
-  const result: Record<string, string> = {};
-  for (const [key, value] of Object.entries(record)) {
-    if (typeof value === "string") {
-      result[key] = value;
-    }
-  }
-  return result;
-}
-
-function asNumber(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-function asOptionalNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function asOptionalBoolean(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined;
-}
-
-function normalizeLimit(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    return DEFAULT_COMMIT_PAGE_SIZE;
-  }
+function normalizeLimit(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return DEFAULT_COMMIT_PAGE_SIZE;
   return Math.min(Math.floor(value), 100);
 }
 
-function normalizeOffset(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    return 0;
-  }
+function normalizeOffset(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 0;
   return Math.floor(value);
 }

@@ -16,6 +16,7 @@ import type {
   ConsoleResourceState,
   ConsoleTarget,
 } from "../domain/consoleModels";
+import { consoleWorkProcesses } from "../domain/consoleProcesses";
 import {
   avatarForAccount,
   isConsoleAgentAccount,
@@ -143,7 +144,7 @@ function CrewRoster({
     if (!node) return;
     const update = () => setWidth(node.clientWidth);
     update();
-    if (typeof ResizeObserver === "undefined") {
+    if (!globalThis.ResizeObserver) {
       window.addEventListener("resize", update);
       return () => window.removeEventListener("resize", update);
     }
@@ -152,7 +153,7 @@ function CrewRoster({
     return () => observer.disconnect();
   }, []);
 
-  const processes = processResource.data ?? [];
+  const processes = consoleWorkProcesses(processResource.data ?? []);
   const agents = orderedCrewAccounts(accounts).filter(isConsoleAgentAccount);
   const crewMeta = `${agents.length} AGENT${agents.length === 1 ? "" : "S"}`;
   const viewer = viewerAccountForCrew(accounts);

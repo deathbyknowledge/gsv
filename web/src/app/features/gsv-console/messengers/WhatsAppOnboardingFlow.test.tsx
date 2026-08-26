@@ -6,35 +6,28 @@ import {
   flowStepNodes,
   nodeWithLabel,
 } from "./messengerTestHarness";
+import { WhatsAppOnboardingFlow, type WhatsAppOnboardingDependencies } from "./WhatsAppOnboardingFlow";
 
 const mocks = vi.hoisted(() => ({
   consumeLinkCode: vi.fn(),
-  currentFlow: null as unknown,
+  // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+  currentFlow: null as ConnectFlowDef | null,
   currentStep: -1,
   pair: vi.fn(),
 }));
 
-vi.mock("../connect-flows/ConnectFlowShell", () => ({
-  ConnectFlowShell: ({ current, flow }: { current: number; flow: unknown }) => {
+const dependencies: WhatsAppOnboardingDependencies = {
+  ConnectFlowShell: ({ current, flow }: { current: number; flow: ConnectFlowDef }) => {
     mocks.currentFlow = flow;
     mocks.currentStep = current;
     return null;
   },
-}));
-
-vi.mock("../hooks/useConsoleData", () => ({
   useConsumeIdentityLinkCode: () => ({
     isPending: false,
     mutateAsync: mocks.consumeLinkCode,
   }),
-}));
-
-vi.mock("../../gsv-shell/unsaved/unsavedGuard", () => ({
   useUnsavedGuard: () => undefined,
   useUnsavedGuardLeave: () => (leave: () => void) => leave(),
-}));
-
-vi.mock("./useWhatsAppPairing", () => ({
   useWhatsAppPairing: () => ({
     error: "",
     isPending: false,
@@ -53,9 +46,7 @@ vi.mock("./useWhatsAppPairing", () => ({
     },
     secondsRemaining: 0,
   }),
-}));
-
-import { WhatsAppOnboardingFlow } from "./WhatsAppOnboardingFlow";
+};
 
 let root: ReturnType<typeof createTestRoot> | null = null;
 
@@ -63,7 +54,7 @@ function currentFlow(): ConnectFlowDef {
   if (!mocks.currentFlow) {
     throw new Error("WhatsApp onboarding flow is not mounted");
   }
-  return mocks.currentFlow as ConnectFlowDef;
+  return mocks.currentFlow;
 }
 
 function linkStepNodes() {
@@ -72,7 +63,7 @@ function linkStepNodes() {
 
 function buttonLabels(): string[] {
   return linkStepNodes()
-    .filter((node) => typeof node.props.onClick === "function" && node.props.variant)
+    .filter((node) => node.props.onClick && node.props.variant)
     .map((node) => node.props.label ?? "");
 }
 
@@ -109,6 +100,7 @@ describe("WhatsAppOnboardingFlow identity linking", () => {
       <WhatsAppOnboardingFlow
         onBack={() => undefined}
         onConnected={() => undefined}
+        dependencies={dependencies}
       />,
     );
 

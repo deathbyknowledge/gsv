@@ -1,73 +1,78 @@
 # Context and Knowledge Architecture
 
-GSV keeps context and durable knowledge as ordinary files in versioned
-repositories. The kernel provides generic filesystem and repository primitives;
-knowledge-specific behavior lives in the built-in Wiki UI and CLI.
+GSV keeps standing context and durable knowledge as ordinary files in versioned
+repositories. Memory belongs to the human rather than to one agent. The kernel
+provides generic filesystem and repository primitives; knowledge-specific
+behavior lives in agent workflows and the Wiki shell surface.
 
 ## Layers
 
 | Layer | Location | Purpose |
 |---|---|---|
-| Home context | `~/context.d/` | Always-relevant user and system context loaded into agent prompts. |
-| Durable knowledge | `~/knowledge/` | User-controlled markdown databases, pages, inbox notes, and source references. |
+| Program context | `<agent home>/context.d/` | Role, voice, and standing state private to one agent account. |
+| User context | `<human home>/context.d/` | Compact standing context layered into every agent owned by that human. |
+| Personal wiki | `/src/repos/<human>/personal/` | Human-owned durable, searchable personal memory shared by all owned agents. |
+| Other wikis | `/src/repos/<owner>/<wiki>/` | User-controlled markdown collections and source references. |
 | Repository substrate | `repo.*` | Versioned reads, writes, diffs, imports, and history over ripgit repositories. |
 | Filesystem substrate | `fs.*` | Linux-like file access across native GSV storage and routed devices. |
 
-## Home Context
+## Standing context
 
-Home context is for information that should shape most agent sessions:
+The human owner's context is for information that should shape nearly every
+interaction:
 
-- persistent user preferences
+- persistent preferences
+- explicit stable personal facts
 - standing instructions
 - durable identity or operating constraints
-- small files that should always be prompt-visible
 
-Use `~/context.d/` for scoped snippets. Keep files short and specific. Large
-knowledge collections belong in `~/knowledge/`, not always-loaded context.
+The conventional shared file is `context.d/10-personal.md`. An owned agent sees
+it under the editable `<user>` prompt root; `~` still refers to that agent's own
+home. Keep shared context short and specific. Role instructions, voice, and the
+personal intelligence's stable program context stay in the personal agent
+account. Unresolved work belongs in the Kernel responsibility ledger rather
+than standing context. Detailed or occasionally relevant information belongs
+in the Personal wiki.
 
-## Durable Knowledge
+## Personal wiki
 
-Durable knowledge is stored under:
-
-```text
-~/knowledge/
-```
-
-The conventional layout is:
+Each human receives a `personal` wiki. It is a normal registered ripgit repo:
 
 ```text
-~/knowledge/
-  personal/
-    index.md
-    pages/
-    inbox/
-  product/
-    index.md
-    pages/
-    inbox/
+/src/repos/<human>/personal/
+  wiki.json
+  index.md
+  inbox/
+  pages/
+    journal/YYYY/MM/YYYY-MM-DD.md
+    people/
+    projects/
+    preferences/
+    decisions/
+    routines/
+    places/
+    concepts/
 ```
 
-Each database is just markdown in the user's home repo. `index.md` is the
-database landing page. `pages/` contains canonical notes. `inbox/` contains
-staged notes that should be reviewed before becoming canonical.
+`index.md` is the orientation page. `pages/` contains canonical notes and dated
+journal entries. `inbox/` is only for information that cannot yet be placed.
+Additional wikis use the same manifest and repository convention.
 
-## Wiki Semantics
+## Wiki semantics
 
-The built-in Wiki UI and `wiki` CLI command provide semantic operations over
-`~/knowledge/`:
+The `wiki` shell command provides semantic operations over registered wiki
+repositories:
 
-- list and initialize databases
-- read and write markdown pages
-- search and query notes
-- ingest live source references
-- compile inbox notes into canonical pages
-- merge or annotate existing notes
+- list and initialize collections
+- inspect page trees
+- read and search markdown pages
+- ingest or attach live source references
 
-These are product and CLI behaviors, not kernel syscalls. The implementation
-uses generic repository operations against the home repo, so agent workflows
-can build on the same substrate without depending on a special kernel domain.
+These are shell behaviors, not special memory syscalls. Page changes use normal
+filesystem and repository operations, so permissions, diffs, and history stay
+inspectable.
 
-## Source References
+## Source references
 
 Knowledge pages may point back to live sources instead of copying content.
 
@@ -81,28 +86,37 @@ Example:
 
 Source references are intentionally inspectable text. A page can cite GSV files,
 workspace files, or routed device paths without embedding the source corpus into
-the home repo.
+the wiki.
 
-## Retrieval Model
+## Retrieval and writing
 
-`~/knowledge/` is not loaded wholesale into prompts. Agents should use the Wiki
-surface, shell tools, `fs.*`, or `repo.*` to inspect it deliberately.
+Wiki contents are not loaded wholesale into prompts. Agents retrieve from the
+Personal wiki before asking, recommending, or acting when personal history not
+already in context could change the outcome. Self-contained questions do not
+need a memory search.
 
-This keeps the prompt small and makes retrieval visible:
+Explicit, unambiguous requests to remember something can be written directly.
+Potential duplicates, corrections, ambiguous people or projects, and inferred
+outcomes require a search and merge. A direct-interaction process delegates that
+discovery; workers perform it using the shared `personal` collection.
+
+This keeps the prompt small and the behavior inspectable:
 
 - always-loaded context stays compact
-- durable knowledge remains human-editable
+- durable knowledge remains human-owned and human-editable
 - reads and writes are auditable through normal repository history
 - agents use Linux-like file and CLI patterns instead of hidden memory channels
 
-## Design Rule
+## Design rule
 
 Do not add a kernel syscall for a knowledge workflow unless it is truly generic
-infrastructure. Most knowledge behavior belongs in the UI, CLI, or an agent
-workflow layered on top of `repo.*` and `fs.*`.
+infrastructure. Most knowledge behavior belongs in the shell or an agent
+workflow layered on top of `repo.*` and `fs.*`. The runtime guarantees that the
+Personal wiki exists and that authorized owned agents can reach it; the
+intelligence decides when information is worth retrieving or preserving.
 
 ## See also
 
-- [Context Compaction & Memory](./context-compaction.md)
+- [Context Compaction](./context-compaction.md)
 - [The Agent Loop](./agent-loop.md)
 - [Context Files Reference](../reference/context-files.md)

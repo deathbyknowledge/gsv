@@ -117,16 +117,16 @@ export class GsvFs implements IFileSystem {
       ? bytes.subarray(range.offset, range.offset + range.length)
       : bytes;
     const size = body.byteLength;
-    return {
+    const result = {
       body: bytesToStream(body),
       size,
       totalSize: stat.size,
       mtime: stat.mtime,
-      status: range ? 206 : 200,
+      status: range ? 206 as const : 200 as const,
       contentType: stat.contentType,
       etag,
-      ...(range ? { range } : {}),
-    };
+    } satisfies Omit<OpenFileResult, "range">;
+    return range ? { ...result, range } : result;
   }
 
   async writeFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void> {
@@ -471,7 +471,7 @@ export class GsvFs implements IFileSystem {
   private async readdirRoot(): Promise<string[]> {
     const entries = new Set<string>();
 
-    for (const name of await this.r2Backend.readdir("/").catch(() => [] as string[])) {
+    for (const name of await this.r2Backend.readdir("/").catch(() => [])) {
       entries.add(name);
     }
 
@@ -499,7 +499,7 @@ export class GsvFs implements IFileSystem {
 
   private async readdirEtc(): Promise<string[]> {
     const entries = new Set<string>();
-    for (const name of await this.r2Backend.readdir("/etc").catch(() => [] as string[])) {
+    for (const name of await this.r2Backend.readdir("/etc").catch(() => [])) {
       entries.add(name);
     }
     entries.add("cron.d");
@@ -511,10 +511,10 @@ export class GsvFs implements IFileSystem {
 
   private async readdirVar(): Promise<string[]> {
     const entries = new Set<string>();
-    for (const name of await this.r2Backend.readdir("/var").catch(() => [] as string[])) {
+    for (const name of await this.r2Backend.readdir("/var").catch(() => [])) {
       entries.add(name);
     }
-    for (const name of await this.kernelBackend.readdir("/var").catch(() => [] as string[])) {
+    for (const name of await this.kernelBackend.readdir("/var").catch(() => [])) {
       entries.add(name);
     }
     entries.add("media");
@@ -555,8 +555,8 @@ function resolveOpenFileRange(range: OpenFileRangeRequest, total: number): OpenF
   };
 }
 
-function assertExpectedSize(size: unknown): asserts size is number {
-  if (!Number.isSafeInteger(size) || (size as number) < 0) {
+function assertExpectedSize(size: number | null | undefined): asserts size is number {
+  if (!Number.isSafeInteger(size) || size === undefined || size === null || size < 0) {
     throw new Error("EINVAL: writeFileStream expectedSize must be a non-negative safe integer");
   }
 }

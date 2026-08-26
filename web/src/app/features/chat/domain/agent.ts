@@ -51,6 +51,7 @@ export type ChatAgentData = {
   tasksTotal?: number;
   tasks?: readonly ChatAgentTaskData[];
   crew?: readonly ChatAgentCrewData[];
+  canStartWork?: boolean;
 };
 
 export type ChatAgentTaskView = {
@@ -111,6 +112,8 @@ export type BuildChatAgentViewModelInput = {
   statusLabel: string;
   contextLabel: string;
 };
+type ChatEmptyState = { description: string; showStartAction: boolean; title: string };
+type NormalizedCrew = { members: ChatAgentCrewView[]; hasCrewData: boolean };
 
 const DEFAULT_AGENT_IMAGE = "/img/agent-0.png";
 
@@ -119,13 +122,38 @@ function cleanText(value: string | undefined, fallback: string): string {
   return text && text.length > 0 ? text : fallback;
 }
 
+export function canStartChatWork(agent: ChatAgentData | null | undefined): boolean {
+  return Boolean(agent) && agent?.canStartWork !== false;
+}
+
+export function chatEmptyState(
+  agent: ChatAgentData | null | undefined,
+  hasActiveProcess: boolean,
+): ChatEmptyState {
+  if (hasActiveProcess) {
+    return {
+      title: "No messages yet",
+      description: "This conversation has no visible messages yet.",
+      showStartAction: false,
+    };
+  }
+  const showStartAction = canStartChatWork(agent);
+  return {
+    title: "Personal intelligence unavailable",
+    description: showStartAction
+      ? "Start new work or wait for your personal intelligence to become available."
+      : "This account has no personal intelligence. Chat and new work are unavailable.",
+    showStartAction,
+  };
+}
+
 export function formatChatReasoningLabel(value: string | undefined, fallback = "MEDIUM"): string {
   const text = value?.trim();
   return text && text.length > 0 ? text.toUpperCase() : fallback;
 }
 
 function normalizeCount(value: number | undefined): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
+  if (value === undefined || !Number.isFinite(value)) {
     return 0;
   }
   return Math.max(0, Math.floor(value));
@@ -204,7 +232,7 @@ function buildDefaultDescription(input: {
 function normalizeCrew(
   crew: readonly ChatAgentCrewData[] | undefined,
   fallback: Omit<ChatAgentCrewView, "active">,
-): { members: ChatAgentCrewView[]; hasCrewData: boolean } {
+): NormalizedCrew {
   const members = (crew ?? [])
     .map((member, index) => {
       const name = member.name.trim();
@@ -216,8 +244,8 @@ function normalizeCrew(
       const runAs = member.runAs?.trim();
       return {
         id: cleanText(member.id, `crew-${index}`),
-        ...(processId ? { processId } : {}),
-        ...(runAs ? { runAs } : {}),
+        ...(processId ? { processId } : undefined),
+        ...(runAs ? { runAs } : undefined),
         name,
         role: cleanText(member.role, fallback.role),
         imageSrc: cleanText(member.imageSrc, fallback.imageSrc),

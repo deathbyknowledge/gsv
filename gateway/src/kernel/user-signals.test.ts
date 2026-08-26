@@ -10,6 +10,7 @@ describe("user-facing signal policy", () => {
     expect(USER_PROCESS_SIGNALS).toContain("proc.changed");
     expect(USER_PROCESS_SIGNALS).toContain("process.exit");
     expect(USER_PROCESS_SIGNALS).toContain("proc.run.stream");
+    expect(USER_PROCESS_SIGNALS).toContain("proc.run.tool.finished");
     expect(USER_PROCESS_SIGNALS).toContain("proc.run.hil.requested");
 
     for (const signal of USER_PROCESS_SIGNALS) {
@@ -28,6 +29,11 @@ describe("user-facing signal policy", () => {
   it("advertises all user connection signals", () => {
     expect(USER_CONNECTION_SIGNALS).toEqual(expect.arrayContaining(USER_PROCESS_SIGNALS));
     expect(USER_CONNECTION_SIGNALS).toEqual(expect.arrayContaining([
+      "conversation.changed",
+      "message.started",
+      "message.delta",
+      "message.committed",
+      "message.aborted",
       "device.status",
       "adapter.status",
       "mcp.changed",

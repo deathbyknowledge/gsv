@@ -1,6 +1,8 @@
 import type { ActivityEntry, ExtensionUiState, RuntimeMessage, RuntimeResponse } from "./ui-state";
+import { isNumber } from "./schemas";
 
 export async function sendUiMessage(message: RuntimeMessage): Promise<RuntimeResponse> {
+  // SAFETY: the service worker validates every runtime message before returning it.
   return await chrome.runtime.sendMessage(message) as RuntimeResponse;
 }
 
@@ -14,7 +16,7 @@ export function requireState(response: RuntimeResponse): ExtensionUiState {
   throw new Error(response.error);
 }
 
-export function escapeHtml(value: unknown): string {
+export function escapeHtml(value: ExtensionBoundaryValue): string {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
@@ -50,7 +52,7 @@ export function timeAgo(iso: string | null): string {
 }
 
 export function formatDuration(ms?: number): string {
-  if (typeof ms !== "number") {
+  if (!isNumber(ms)) {
     return "";
   }
   if (ms < 1000) {

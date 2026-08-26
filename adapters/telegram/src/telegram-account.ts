@@ -12,36 +12,45 @@ import {
 import { callAdapterGateway } from "../../shared/src/gateway-rpc";
 import type { AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
-  bundleAdapterMedia,
+  assertAdapterAccountDurableObjectIdentity,
+  LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
+  resolveAdapterAccountDurableObjectIdentity,
+} from "../../shared/src/installation";
+import {
   cancelResponseBody,
   cancelBinaryBody,
   readAdapterMediaBody,
   responseBodyToBinaryBody,
-  validateAdapterMediaBody,
   SAFE_MATERIALIZED_MEDIA_PART_BYTES,
   SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
-} from "../../shared/src/media-body";
-import type {
-  AdapterMediaBundle,
-  AdapterMediaPart,
+  validateAdapterMediaBody,
 } from "../../shared/src/media-body";
 import type {
   AdapterAccountStatus,
   AdapterActor,
   AdapterInboundMessage,
-  AdapterInboundResult,
-  AdapterMedia,
+  AdapterInstallationContext,
   AdapterOutboundMessage,
   AdapterSendResult,
   AdapterSurface,
   BinaryBody,
 } from "./types";
 import {
-  buildTelegramReplyParameters,
-  callTelegramApiWithMarkdownCaption,
   sendTelegramMarkdownMessage,
 } from "./telegram-formatting";
 import { planTelegramMediaDeliveries } from "./telegram-media";
+import {
+  sendTelegramMediaGroupMessage,
+  sendTelegramMediaMessage,
+} from "./telegram-outbound-media";
+import {
+  extractTelegramInboundContent,
+  loadTelegramInboundMedia,
+  type TelegramInboundMediaSource,
+} from "./telegram-inbound-media";
+import { buildTelegramWebhookPath } from "./webhook-route";
+import type { callManagedTelegramApi } from "./managed-telegram-api";
+import * as z from "zod/mini";
 
 interface Env {
   GATEWAY: Fetcher & AdapterGatewayBinding;
@@ -122,7 +131,7 @@ type TelegramMessage = {
   sticker?: TelegramStickerAttachment;
 };
 
-type TelegramUpdate = {
+export type TelegramUpdate = {
   update_id: number;
   message?: TelegramMessage;
   edited_message?: TelegramMessage;
@@ -158,6 +167,88 @@ type TelegramStickerAttachment = TelegramFileAttachment & {
   emoji?: string;
 };
 
+const telegramUserSchema = z.object({
+  id: z.number(),
+  is_bot: z.optional(z.boolean()),
+  first_name: z.optional(z.string()),
+  last_name: z.optional(z.string()),
+  username: z.optional(z.string()),
+});
+const telegramChatSchema = z.object({
+  id: z.number(),
+  type: z.enum(["private", "group", "supergroup", "channel"]),
+  title: z.optional(z.string()),
+  username: z.optional(z.string()),
+  first_name: z.optional(z.string()),
+  last_name: z.optional(z.string()),
+});
+const telegramMessageEntitySchema = z.object({
+  type: z.string(),
+  offset: z.number(),
+  length: z.number(),
+});
+const telegramPhotoSizeSchema = z.object({
+  file_id: z.string(),
+  file_unique_id: z.optional(z.string()),
+  width: z.optional(z.number()),
+  height: z.optional(z.number()),
+  file_size: z.optional(z.number()),
+});
+const telegramFileAttachmentSchema = z.object({
+  file_id: z.optional(z.string()),
+  file_unique_id: z.optional(z.string()),
+  file_name: z.optional(z.string()),
+  mime_type: z.optional(z.string()),
+  file_size: z.optional(z.number()),
+  duration: z.optional(z.number()),
+});
+const telegramFileAttachmentFields = {
+  file_id: z.optional(z.string()),
+  file_unique_id: z.optional(z.string()),
+  file_name: z.optional(z.string()),
+  mime_type: z.optional(z.string()),
+  file_size: z.optional(z.number()),
+  duration: z.optional(z.number()),
+};
+const telegramStickerAttachmentSchema = z.object({
+  ...telegramFileAttachmentFields,
+  is_animated: z.optional(z.boolean()),
+  is_video: z.optional(z.boolean()),
+  emoji: z.optional(z.string()),
+});
+const telegramReplyMessageSchema = z.object({
+  message_id: z.number(),
+  text: z.optional(z.string()),
+  caption: z.optional(z.string()),
+  from: z.optional(telegramUserSchema),
+});
+const telegramMessageSchema = z.object({
+  message_id: z.number(),
+  date: z.number(),
+  chat: telegramChatSchema,
+  from: z.optional(telegramUserSchema),
+  text: z.optional(z.string()),
+  caption: z.optional(z.string()),
+  entities: z.optional(z.array(telegramMessageEntitySchema)),
+  caption_entities: z.optional(z.array(telegramMessageEntitySchema)),
+  reply_to_message: z.optional(telegramReplyMessageSchema),
+  photo: z.optional(z.array(telegramPhotoSizeSchema)),
+  document: z.optional(telegramFileAttachmentSchema),
+  audio: z.optional(telegramFileAttachmentSchema),
+  voice: z.optional(telegramFileAttachmentSchema),
+  video: z.optional(telegramFileAttachmentSchema),
+  video_note: z.optional(telegramFileAttachmentSchema),
+  animation: z.optional(telegramFileAttachmentSchema),
+  sticker: z.optional(telegramStickerAttachmentSchema),
+});
+export const telegramUpdateSchema = z.object({
+  update_id: z.number(),
+  message: z.optional(telegramMessageSchema),
+  edited_message: z.optional(telegramMessageSchema),
+  channel_post: z.optional(telegramMessageSchema),
+  edited_channel_post: z.optional(telegramMessageSchema),
+});
+
 type TelegramFile = {
   file_id: string;
   file_unique_id?: string;
@@ -165,30 +256,13 @@ type TelegramFile = {
   file_path?: string;
 };
 
-type TelegramInboundMediaSource = {
-  type: AdapterMedia["type"];
-  fileId: string;
-  mimeType: string;
-  filename?: string;
-  size?: number;
-  duration?: number;
-};
-
 type TelegramInboundTransfer = {
   message: AdapterInboundMessage;
   body?: BinaryBody;
 };
 
-type TelegramInputMediaType = "photo" | "video" | "audio" | "document";
-
-type TelegramInputMedia = {
-  type: TelegramInputMediaType;
-  media: string;
-  caption?: string;
-  parse_mode?: "HTML";
-};
-
 type TelegramAccountState = {
+  installationId: string | null;
   accountId: string;
   botToken: string | null;
   botUserId: number | null;
@@ -225,8 +299,8 @@ function buildWebhookSecret(): string {
   return crypto.randomUUID().replace(/-/g, "");
 }
 
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function toErrorMessage(error: Error | string): string {
+  return error instanceof Error ? error.message : error;
 }
 
 export class TelegramAccount extends DurableObject<Env> {
@@ -244,6 +318,7 @@ export class TelegramAccount extends DurableObject<Env> {
   }
 
   private state: TelegramAccountState = {
+    installationId: null,
     accountId: "default",
     botToken: null,
     botUserId: null,
@@ -260,14 +335,24 @@ export class TelegramAccount extends DurableObject<Env> {
     if (this.loaded) return;
 
     const stored = await this.ctx.storage.get<
-      TelegramAccountState & { lastUpdateId?: number | null }
+      Omit<TelegramAccountState, "installationId"> & {
+        installationId?: string | null;
+        lastUpdateId?: number | null;
+      }
     >("state");
     if (stored) {
       const normalized = { ...stored };
       const hadLegacyUpdateId = "lastUpdateId" in normalized;
+      const hadLegacyInstallationId = !("installationId" in normalized);
       delete normalized.lastUpdateId;
-      this.state = { ...this.state, ...normalized };
-      if (hadLegacyUpdateId) {
+      this.state = {
+        ...this.state,
+        ...normalized,
+        installationId: hadLegacyInstallationId
+          ? LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID
+          : normalized.installationId ?? null,
+      };
+      if (hadLegacyUpdateId || hadLegacyInstallationId) {
         await this.saveState();
       }
     }
@@ -320,9 +405,17 @@ export class TelegramAccount extends DurableObject<Env> {
     return this.state.accountId || "default";
   }
 
+  private getInstallationContext(): AdapterInstallationContext {
+    const identity = resolveAdapterAccountDurableObjectIdentity(
+      this.ctx.id.name,
+      this.state,
+    );
+    return { installationId: identity.installationId };
+  }
+
   private async callTelegramApi<T>(
     method: string,
-    payload: Record<string, unknown> | FormData,
+    payload: Parameters<typeof callManagedTelegramApi>[2],
     botToken?: string,
   ): Promise<T> {
     const token = botToken ?? this.state.botToken;
@@ -330,8 +423,7 @@ export class TelegramAccount extends DurableObject<Env> {
       throw new Error("Telegram bot token is not configured");
     }
 
-    const isFormDataPayload =
-      typeof FormData !== "undefined" && payload instanceof FormData;
+    const isFormDataPayload = payload instanceof FormData;
 
     let response: Response;
     try {
@@ -346,7 +438,7 @@ export class TelegramAccount extends DurableObject<Env> {
       });
     } catch (error) {
       throw new TelegramDeliveryError(
-        `Telegram API ${method} transport failed: ${toErrorMessage(error)}`,
+        `Telegram API ${method} transport failed: ${toErrorMessage(error instanceof Error ? error : String(error))}`,
         "ambiguous",
       );
     }
@@ -356,7 +448,7 @@ export class TelegramAccount extends DurableObject<Env> {
       responseText = await response.text();
     } catch (error) {
       throw new TelegramDeliveryError(
-        `Telegram API ${method} response could not be read: ${toErrorMessage(error)}`,
+        `Telegram API ${method} response could not be read: ${toErrorMessage(error instanceof Error ? error : String(error))}`,
         response.ok
           ? "ambiguous"
           : classifyNonIdempotentProviderStatus(response.status),
@@ -365,7 +457,7 @@ export class TelegramAccount extends DurableObject<Env> {
     let parsed: TelegramApiResponse<T> | null = null;
     if (responseText) {
       try {
-        parsed = JSON.parse(responseText) as TelegramApiResponse<T>;
+        parsed = JSON.parse(responseText);
       } catch {
         parsed = null;
       }
@@ -408,6 +500,7 @@ export class TelegramAccount extends DurableObject<Env> {
     botToken: string,
     accountId: string,
     webhookBaseUrl: string,
+    webhookRoute: string,
     providedSecret?: string,
   ): Promise<void> {
     await this.ensureLoaded();
@@ -423,11 +516,37 @@ export class TelegramAccount extends DurableObject<Env> {
     }
 
     const normalizedAccountId = accountId.trim() || "default";
+    const accountIdentity = assertAdapterAccountDurableObjectIdentity(
+      this.ctx.id.name,
+      normalizedAccountId,
+      this.state,
+    );
+    if (
+      this.state.installationId
+      && this.state.installationId !== accountIdentity.installationId
+    ) {
+      throw new Error("Adapter installation identity mismatch");
+    }
+    const identityChanged =
+      this.state.installationId !== accountIdentity.installationId
+      || this.state.accountId !== accountIdentity.accountId;
+    this.state.installationId = accountIdentity.installationId;
+    this.state.accountId = accountIdentity.accountId;
+    if (identityChanged) {
+      await this.saveState();
+    }
+    const normalizedWebhookRoute = webhookRoute.trim();
+    if (!normalizedWebhookRoute) {
+      throw new Error("Webhook route is required");
+    }
     const webhookSecret =
       (providedSecret && providedSecret.trim()) ||
       this.state.webhookSecret ||
       buildWebhookSecret();
-    const webhookUrl = `${baseUrl}/webhook/${encodeURIComponent(normalizedAccountId)}`;
+    const webhookUrl = `${baseUrl}${buildTelegramWebhookPath(
+      accountIdentity.installationId,
+      normalizedWebhookRoute,
+    )}`;
 
     const me = await this.callTelegramApi<TelegramUser>(
       "getMe",
@@ -498,6 +617,12 @@ export class TelegramAccount extends DurableObject<Env> {
       }
     }
 
+    const extra: NonNullable<AdapterAccountStatus["extra"]> = {};
+    if (this.state.botUserId !== null) extra.botUserId = this.state.botUserId;
+    if (this.state.botUsername !== null) extra.botUsername = this.state.botUsername;
+    if (this.state.webhookUrl !== null) extra.webhookUrl = this.state.webhookUrl;
+    if (pendingUpdateCount !== undefined) extra.pendingUpdateCount = pendingUpdateCount;
+
     return {
       accountId: this.getAccountId(),
       connected: this.state.connected,
@@ -505,12 +630,7 @@ export class TelegramAccount extends DurableObject<Env> {
       mode: "webhook",
       lastActivity: this.state.lastActivity ?? undefined,
       error: this.state.lastError ?? undefined,
-      extra: {
-        botUserId: this.state.botUserId ?? undefined,
-        botUsername: this.state.botUsername ?? undefined,
-        webhookUrl: this.state.webhookUrl ?? undefined,
-        pendingUpdateCount,
-      },
+      extra,
     };
   }
 
@@ -539,7 +659,7 @@ export class TelegramAccount extends DurableObject<Env> {
       });
     } catch (error) {
       await cancelBinaryBody(body, error);
-      return { ok: false, error: toErrorMessage(error) };
+      return { ok: false, error: toErrorMessage(error instanceof Error ? error : String(error)) };
     }
 
     let mediaBytes: Array<Uint8Array | undefined>;
@@ -552,7 +672,7 @@ export class TelegramAccount extends DurableObject<Env> {
     } catch (error) {
       return {
         ok: false,
-        error: `Could not read Telegram media body: ${toErrorMessage(error)}`,
+        error: `Could not read Telegram media body: ${toErrorMessage(error instanceof Error ? error : String(error))}`,
         retryable: true,
       };
     }
@@ -563,7 +683,7 @@ export class TelegramAccount extends DurableObject<Env> {
     } catch (error) {
       return {
         ok: false,
-        error: `Could not fingerprint Telegram delivery: ${toErrorMessage(error)}`,
+        error: `Could not fingerprint Telegram delivery: ${toErrorMessage(error instanceof Error ? error : String(error))}`,
         retryable: true,
       };
     }
@@ -574,7 +694,7 @@ export class TelegramAccount extends DurableObject<Env> {
     } catch (error) {
       return {
         ok: false,
-        error: `Telegram delivery ledger unavailable: ${toErrorMessage(error)}`,
+        error: `Telegram delivery ledger unavailable: ${toErrorMessage(error instanceof Error ? error : String(error))}`,
         retryable: true,
       };
     }
@@ -613,8 +733,8 @@ export class TelegramAccount extends DurableObject<Env> {
       return {
         ok: false,
         error,
-        ...(kind === "retryable" ? { retryable: true } : {}),
-        ...(kind === "ambiguous" ? { ambiguous: true } : {}),
+        retryable: kind === "retryable" ? true : undefined,
+        ambiguous: kind === "ambiguous" ? true : undefined,
       };
     };
 
@@ -634,6 +754,8 @@ export class TelegramAccount extends DurableObject<Env> {
       } else {
         const deliveries = planTelegramMediaDeliveries(media);
         let mediaOffset = 0;
+          const callApi = <T>(method: string, payload: Parameters<typeof callManagedTelegramApi>[2]) =>
+          this.callTelegramApi<T>(method, payload);
         for (const [index, delivery] of deliveries.entries()) {
           const caption = index === 0 ? trimmedText : "";
           const deliveryBytes = mediaBytes.slice(
@@ -641,14 +763,16 @@ export class TelegramAccount extends DurableObject<Env> {
             mediaOffset + delivery.length,
           );
           const firstSentMessage = delivery.length === 1
-            ? await this.sendMediaMessage(
+            ? await sendTelegramMediaMessage(
+                callApi,
                 message.surface.id,
                 delivery[0],
                 deliveryBytes[0],
                 caption,
                 replyToMessageId,
               )
-            : (await this.sendMediaGroupMessage(
+            : (await sendTelegramMediaGroupMessage(
+                callApi,
                 message.surface.id,
                 delivery,
                 deliveryBytes,
@@ -666,7 +790,7 @@ export class TelegramAccount extends DurableObject<Env> {
 
       try {
         await this.deliveries.succeed(message.deliveryId, attemptId, sentMessageId);
-      } catch (error) {
+      } catch {
         return {
           ok: false,
           error: "Telegram accepted the delivery but its durable outcome could not be recorded",
@@ -691,7 +815,7 @@ export class TelegramAccount extends DurableObject<Env> {
         : error instanceof TelegramDeliveryError
           ? error.kind
           : "permanent";
-      return await fail(kind, toErrorMessage(error));
+      return await fail(kind, toErrorMessage(error instanceof Error ? error : String(error)));
     }
   }
 
@@ -707,236 +831,6 @@ export class TelegramAccount extends DurableObject<Env> {
       text,
       replyToMessageId,
     );
-  }
-
-  private async sendMediaMessage(
-    chatId: string,
-    media: AdapterMedia,
-    bytes: Uint8Array | undefined,
-    text: string,
-    replyToMessageId?: number,
-  ): Promise<TelegramMessage> {
-    const { method, mediaField } = this.getTelegramSendMethod(media.type);
-    const caption = text.trim() || undefined;
-    const replyParameters = buildTelegramReplyParameters(replyToMessageId);
-
-    if (media.url) {
-      return callTelegramApiWithMarkdownCaption(
-        (apiMethod, payload) =>
-          this.callTelegramApi<TelegramMessage>(apiMethod, payload),
-        method,
-        caption,
-        (formattedCaption, parseMode) => ({
-          chat_id: chatId,
-          [mediaField]: media.url,
-          ...(formattedCaption ? { caption: formattedCaption } : {}),
-          ...(parseMode ? { parse_mode: parseMode } : {}),
-          ...(replyParameters ? { reply_parameters: replyParameters } : {}),
-        }),
-      );
-    }
-
-    if (bytes) {
-      const filename = this.buildMediaFilename(media);
-      const blob = new Blob([bytes], { type: media.mimeType });
-
-      return callTelegramApiWithMarkdownCaption(
-        (apiMethod, payload) =>
-          this.callTelegramApi<TelegramMessage>(apiMethod, payload),
-        method,
-        caption,
-        (formattedCaption, parseMode) => {
-          const form = new FormData();
-          form.set("chat_id", chatId);
-          if (formattedCaption) {
-            form.set("caption", formattedCaption);
-          }
-          if (parseMode) {
-            form.set("parse_mode", parseMode);
-          }
-          if (replyParameters) {
-            form.set("reply_parameters", JSON.stringify(replyParameters));
-          }
-          form.set(mediaField, blob, filename);
-          return form;
-        },
-      );
-    }
-
-    throw new Error(
-      "Telegram media attachment must include either a binary body or a URL",
-    );
-  }
-
-  private async sendMediaGroupMessage(
-    chatId: string,
-    mediaItems: AdapterMedia[],
-    mediaBytes: Array<Uint8Array | undefined>,
-    text: string,
-    replyToMessageId?: number,
-  ): Promise<TelegramMessage[]> {
-    if (mediaItems.length < 2 || mediaItems.length > 10) {
-      throw new Error(
-        "Telegram media groups require 2-10 attachments",
-      );
-    }
-
-    this.validateMediaGroupTypes(mediaItems);
-
-    const caption = text.trim() || undefined;
-    const replyParameters = buildTelegramReplyParameters(replyToMessageId);
-    const preparedMedia: Array<Pick<TelegramInputMedia, "type" | "media">> = [];
-    const uploadEntries: Array<{ field: string; blob: Blob; filename: string }> = [];
-
-    for (const [index, media] of mediaItems.entries()) {
-      const inputType = this.toTelegramInputMediaType(media.type);
-      const item: Pick<TelegramInputMedia, "type" | "media"> = {
-        type: inputType,
-        media: "",
-      };
-
-      if (media.url) {
-        item.media = media.url;
-      } else if (mediaBytes[index]) {
-        const field = `file${index + 1}`;
-        item.media = `attach://${field}`;
-        uploadEntries.push({
-          field,
-          blob: new Blob([mediaBytes[index]], { type: media.mimeType }),
-          filename: this.buildMediaFilename(media),
-        });
-      } else {
-        throw new Error(
-          "Telegram media attachment must include either a binary body or a URL",
-        );
-      }
-
-      preparedMedia.push(item);
-    }
-
-    return callTelegramApiWithMarkdownCaption(
-      (method, payload) =>
-        this.callTelegramApi<TelegramMessage[]>(method, payload),
-      "sendMediaGroup",
-      caption,
-      (formattedCaption, parseMode) => {
-        const inputMedia = preparedMedia.map<TelegramInputMedia>((media, index) => ({
-          ...media,
-          ...(index === 0 && formattedCaption
-            ? { caption: formattedCaption }
-            : {}),
-          ...(index === 0 && parseMode ? { parse_mode: parseMode } : {}),
-        }));
-
-        if (uploadEntries.length === 0) {
-          return {
-            chat_id: chatId,
-            media: inputMedia,
-            ...(replyParameters ? { reply_parameters: replyParameters } : {}),
-          };
-        }
-
-        const form = new FormData();
-        form.set("chat_id", chatId);
-        form.set("media", JSON.stringify(inputMedia));
-        if (replyParameters) {
-          form.set("reply_parameters", JSON.stringify(replyParameters));
-        }
-        for (const upload of uploadEntries) {
-          form.set(upload.field, upload.blob, upload.filename);
-        }
-
-        return form;
-      },
-    );
-  }
-
-  private validateMediaGroupTypes(mediaItems: AdapterMedia[]): void {
-    const types = mediaItems.map((item) =>
-      this.toTelegramInputMediaType(item.type),
-    );
-
-    const hasAudio = types.includes("audio");
-    const hasDocument = types.includes("document");
-
-    if (hasAudio && !types.every((type) => type === "audio")) {
-      throw new Error(
-        "Telegram media groups that include audio must contain only audio attachments",
-      );
-    }
-
-    if (hasDocument && !types.every((type) => type === "document")) {
-      throw new Error(
-        "Telegram media groups that include documents must contain only document attachments",
-      );
-    }
-  }
-
-  private getTelegramSendMethod(
-    mediaType: AdapterMedia["type"],
-  ): { method: string; mediaField: string } {
-    switch (this.toTelegramInputMediaType(mediaType)) {
-      case "photo":
-        return { method: "sendPhoto", mediaField: "photo" };
-      case "video":
-        return { method: "sendVideo", mediaField: "video" };
-      case "audio":
-        return { method: "sendAudio", mediaField: "audio" };
-      case "document":
-      default:
-        return { method: "sendDocument", mediaField: "document" };
-    }
-  }
-
-  private toTelegramInputMediaType(
-    mediaType: AdapterMedia["type"],
-  ): TelegramInputMediaType {
-    switch (mediaType) {
-      case "image":
-        return "photo";
-      case "video":
-        return "video";
-      case "audio":
-        return "audio";
-      case "document":
-      default:
-        return "document";
-    }
-  }
-
-  private buildMediaFilename(media: AdapterMedia): string {
-    const provided = media.filename?.trim();
-    if (provided) {
-      return provided;
-    }
-
-    const ext = this.getExtensionFromMime(media.mimeType, media.type);
-    return `attachment.${ext}`;
-  }
-
-  private getExtensionFromMime(
-    mimeType: string,
-    mediaType: AdapterMedia["type"],
-  ): string {
-    const normalized = mimeType.split(";")[0].trim().toLowerCase();
-    const mapping: Record<string, string> = {
-      "image/jpeg": "jpg",
-      "image/png": "png",
-      "image/webp": "webp",
-      "image/gif": "gif",
-      "video/mp4": "mp4",
-      "video/webm": "webm",
-      "audio/mpeg": "mp3",
-      "audio/mp3": "mp3",
-      "audio/ogg": "ogg",
-      "audio/wav": "wav",
-      "application/pdf": "pdf",
-      "application/zip": "zip",
-      "text/plain": "txt",
-      "application/json": "json",
-    };
-
-    return mapping[normalized] || (mediaType === "document" ? "bin" : mediaType);
   }
 
   async setTyping(surface: AdapterSurface, typing: boolean): Promise<void> {
@@ -978,14 +872,6 @@ export class TelegramAccount extends DurableObject<Env> {
         ok: false,
         status: 401,
         error: "Invalid webhook secret token",
-      };
-    }
-
-    if (!update || typeof update !== "object") {
-      return {
-        ok: false,
-        status: 400,
-        error: "Invalid Telegram update payload",
       };
     }
 
@@ -1039,8 +925,9 @@ export class TelegramAccount extends DurableObject<Env> {
       return { terminal: false, error: "Telegram account is disconnected" };
     }
 
-    const result = await callAdapterGateway<AdapterInboundResult>(
+    const result = await callAdapterGateway(
       this.env.GATEWAY,
+      this.getInstallationContext(),
       "adapter.inbound",
       {
         adapter: "telegram",
@@ -1067,8 +954,8 @@ export class TelegramAccount extends DurableObject<Env> {
     return responseDisposition;
   }
 
-  private normalizeUpdateId(value: unknown): number | null {
-    if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+  private normalizeUpdateId(value: number | null | undefined): number | null {
+    if (value === undefined || value === null || !Number.isSafeInteger(value) || value < 0) {
       return null;
     }
     return value;
@@ -1123,8 +1010,8 @@ export class TelegramAccount extends DurableObject<Env> {
       return null;
     }
 
-    const text = this.extractText(message);
-    if (!text) {
+    const content = extractTelegramInboundContent(message, String(message.message_id));
+    if (!content.text) {
       return null;
     }
 
@@ -1132,8 +1019,8 @@ export class TelegramAccount extends DurableObject<Env> {
     const surfaceKind = this.mapSurfaceKind(message.chat.type);
     const surfaceName = this.getChatDisplayName(message.chat);
 
-    const wasMentioned = this.computeWasMentioned(message, text);
-    const media = await this.extractMediaAttachments(message);
+    const wasMentioned = this.computeWasMentioned(message, content.text);
+    const media = await this.extractMediaAttachments(content.media);
 
     return {
       message: {
@@ -1145,7 +1032,7 @@ export class TelegramAccount extends DurableObject<Env> {
           handle: message.chat.username ? `@${message.chat.username}` : undefined,
         },
         actor,
-        text,
+        text: content.text,
         replyToId: message.reply_to_message
           ? String(message.reply_to_message.message_id)
           : undefined,
@@ -1157,276 +1044,31 @@ export class TelegramAccount extends DurableObject<Env> {
         wasMentioned,
         media: media.media.length > 0 ? media.media : undefined,
       },
-      ...(media.body ? { body: media.body } : {}),
+      body: media.body,
     };
-  }
-
-  private extractText(message: TelegramMessage): string | null {
-    if (message.text && message.text.trim()) {
-      return message.text.trim();
-    }
-
-    if (message.caption && message.caption.trim()) {
-      return message.caption.trim();
-    }
-
-    if (message.photo) return "[Photo]";
-    if (message.video) return "[Video]";
-    if (message.video_note) return "[Video note]";
-    if (message.audio) return "[Audio]";
-    if (message.voice) return "[Voice note]";
-    if (message.document) return "[Document]";
-    if (message.animation) return "[Animation]";
-    if (message.sticker) return "[Sticker]";
-
-    return null;
   }
 
   private async extractMediaAttachments(
-    message: TelegramMessage,
-  ): Promise<AdapterMediaBundle> {
-    const sources = this.getTelegramMediaSources(message);
-    const media: AdapterMediaPart[] = [];
-    let bodyBytes = 0;
-
-    for (const source of sources) {
-      const part = await this.sourceToAdapterMedia(
-        source,
-        MAX_MEDIA_TOTAL_BODY_BYTES - bodyBytes,
-      );
-      if (part) {
-        media.push(part);
-        bodyBytes += part.body?.length ?? 0;
-      }
-    }
-
-    return await bundleAdapterMedia(media);
-  }
-
-  private getTelegramMediaSources(
-    message: TelegramMessage,
-  ): TelegramInboundMediaSource[] {
-    const sources: TelegramInboundMediaSource[] = [];
-    const messageId = String(message.message_id);
-
-    const photo = this.pickLargestPhoto(message.photo);
-    if (photo) {
-      sources.push({
-        type: "image",
-        fileId: photo.file_id,
-        mimeType: "image/jpeg",
-        filename: `telegram-photo-${messageId}.jpg`,
-        size: photo.file_size,
-      });
-    }
-
-    const video = this.sourceFromTelegramFile(
-      message.video,
-      "video",
-      "video/mp4",
-      `telegram-video-${messageId}.mp4`,
-    );
-    if (video) sources.push(video);
-
-    const videoNote = this.sourceFromTelegramFile(
-      message.video_note,
-      "video",
-      "video/mp4",
-      `telegram-video-note-${messageId}.mp4`,
-    );
-    if (videoNote) sources.push(videoNote);
-
-    const audio = this.sourceFromTelegramFile(
-      message.audio,
-      "audio",
-      "audio/mpeg",
-      `telegram-audio-${messageId}.mp3`,
-    );
-    if (audio) sources.push(audio);
-
-    const voice = this.sourceFromTelegramFile(
-      message.voice,
-      "audio",
-      "audio/ogg",
-      `telegram-voice-${messageId}.ogg`,
-    );
-    if (voice) sources.push(voice);
-
-    const document = this.sourceFromTelegramFile(
-      message.document,
-      "document",
-      "application/octet-stream",
-      `telegram-document-${messageId}.bin`,
-    );
-    if (document) sources.push(document);
-
-    const animationMime = message.animation?.mime_type || "video/mp4";
-    const animation = this.sourceFromTelegramFile(
-      message.animation,
-      this.inferMediaTypeFromMime(animationMime),
-      animationMime,
-      `telegram-animation-${messageId}.${this.getExtensionFromMime(
-        animationMime,
-        this.inferMediaTypeFromMime(animationMime),
-      )}`,
-    );
-    if (animation) sources.push(animation);
-
-    const sticker = this.sourceFromTelegramSticker(message.sticker, messageId);
-    if (sticker) sources.push(sticker);
-
-    return sources;
-  }
-
-  private pickLargestPhoto(
-    photos: TelegramPhotoSize[] | undefined,
-  ): TelegramPhotoSize | null {
-    if (!photos || photos.length === 0) {
-      return null;
-    }
-
-    return photos.reduce((largest, photo) => {
-      const largestSize = largest.file_size ?? 0;
-      const nextSize = photo.file_size ?? 0;
-      if (nextSize > largestSize) return photo;
-
-      const largestPixels = (largest.width ?? 0) * (largest.height ?? 0);
-      const nextPixels = (photo.width ?? 0) * (photo.height ?? 0);
-      return nextPixels > largestPixels ? photo : largest;
+    sources: readonly TelegramInboundMediaSource[],
+  ) {
+    return await loadTelegramInboundMedia(sources, {
+      getFile: async (fileId) => await this.callTelegramApi<TelegramFile>("getFile", {
+        file_id: fileId,
+      }),
+      downloadFile: async (filePath, expectedSize, maxBytes) =>
+        await this.downloadTelegramFile(filePath, expectedSize, maxBytes),
+      skipFailures: true,
+      onFailure: (error) => {
+        console.warn(`[TelegramAccount:${this.getAccountId()}] Failed to download media`, error);
+      },
     });
-  }
-
-  private sourceFromTelegramFile(
-    file: TelegramFileAttachment | undefined,
-    type: AdapterMedia["type"],
-    defaultMimeType: string,
-    defaultFilename: string,
-  ): TelegramInboundMediaSource | null {
-    if (!file?.file_id) {
-      return null;
-    }
-
-    const mimeType = file.mime_type || defaultMimeType;
-    return {
-      type,
-      fileId: file.file_id,
-      mimeType,
-      filename: file.file_name || defaultFilename,
-      size: file.file_size,
-      duration: file.duration,
-    };
-  }
-
-  private sourceFromTelegramSticker(
-    sticker: TelegramStickerAttachment | undefined,
-    messageId: string,
-  ): TelegramInboundMediaSource | null {
-    if (!sticker?.file_id) {
-      return null;
-    }
-
-    const mimeType =
-      sticker.mime_type ||
-      (sticker.is_video
-        ? "video/webm"
-        : sticker.is_animated
-          ? "application/x-tgsticker"
-          : "image/webp");
-    const type = sticker.is_video
-      ? "video"
-      : sticker.is_animated
-        ? "document"
-        : "image";
-
-    return {
-      type,
-      fileId: sticker.file_id,
-      mimeType,
-      filename:
-        sticker.file_name ||
-        `telegram-sticker-${messageId}.${this.getExtensionFromMime(mimeType, type)}`,
-      size: sticker.file_size,
-    };
-  }
-
-  private async sourceToAdapterMedia(
-    source: TelegramInboundMediaSource,
-    remainingBodyBytes: number,
-  ): Promise<AdapterMediaPart | null> {
-    const base: Omit<AdapterMedia, "body"> = {
-      type: source.type,
-      mimeType: source.mimeType,
-      filename: source.filename,
-      size: source.size,
-      duration: source.duration,
-    };
-
-    if (remainingBodyBytes <= 0) {
-      return null;
-    }
-    if (
-      source.size !== undefined
-      && (!Number.isSafeInteger(source.size) || source.size < 0)
-    ) {
-      console.log(
-        `[TelegramAccount:${this.getAccountId()}] Media ${source.fileId} has an invalid size`,
-      );
-      return null;
-    }
-    const maxBytes = Math.min(MAX_MEDIA_BODY_BYTES, remainingBodyBytes);
-    if (typeof source.size === "number" && source.size > maxBytes) {
-      console.log(
-        `[TelegramAccount:${this.getAccountId()}] Media ${source.fileId} exceeds transfer limit (${source.size} bytes)`,
-      );
-      return null;
-    }
-
-    try {
-      const file = await this.callTelegramApi<TelegramFile>("getFile", {
-        file_id: source.fileId,
-      });
-      const size = file.file_size ?? source.size;
-      const withSize: Omit<AdapterMedia, "body"> = { ...base, size };
-
-      if (!file.file_path) {
-        return null;
-      }
-      if (
-        size !== undefined
-        && (!Number.isSafeInteger(size) || size < 0)
-      ) {
-        return null;
-      }
-      if (typeof size === "number" && size > maxBytes) {
-        console.log(
-          `[TelegramAccount:${this.getAccountId()}] Media ${source.fileId} exceeds transfer limit (${size} bytes)`,
-        );
-        return null;
-      }
-
-      const body = await this.downloadTelegramFile(file.file_path, size, maxBytes);
-      if (!body) {
-        return null;
-      }
-
-      return {
-        media: { ...withSize, size: body.length },
-        body,
-      };
-    } catch (error) {
-      console.warn(
-        `[TelegramAccount:${this.getAccountId()}] Failed to download media ${source.fileId}:`,
-        error,
-      );
-      return null;
-    }
   }
 
   private async downloadTelegramFile(
     filePath: string,
-    expectedSize?: number,
-    maxBytes = MAX_MEDIA_BODY_BYTES,
-  ): Promise<BinaryBody | null> {
+    expectedSize: number | undefined,
+    maxBytes: number,
+  ): Promise<(BinaryBody & { length: number }) | null> {
     if (!this.state.botToken) {
       return null;
     }
@@ -1448,14 +1090,6 @@ export class TelegramAccount extends DurableObject<Env> {
       expectedBytes: expectedSize,
       label: "Telegram media",
     });
-  }
-
-  private inferMediaTypeFromMime(mimeType: string): AdapterMedia["type"] {
-    const normalized = mimeType.split(";")[0].trim().toLowerCase();
-    if (normalized.startsWith("image/")) return "image";
-    if (normalized.startsWith("audio/")) return "audio";
-    if (normalized.startsWith("video/")) return "video";
-    return "document";
   }
 
   private mapSurfaceKind(chatType: TelegramChatType): "dm" | "group" | "channel" {
@@ -1536,12 +1170,18 @@ export class TelegramAccount extends DurableObject<Env> {
 
   private async notifyGatewayStatus(): Promise<void> {
     try {
+      const installation = this.getInstallationContext();
       const status = await this.getStatus();
-      await callAdapterGateway(this.env.GATEWAY, "adapter.state.update", {
-        adapter: "telegram",
-        accountId: this.getAccountId(),
-        status,
-      });
+      await callAdapterGateway(
+        this.env.GATEWAY,
+        installation,
+        "adapter.state.update",
+        {
+          adapter: "telegram",
+          accountId: this.getAccountId(),
+          status,
+        },
+      );
     } catch (error) {
       console.error(
         `[TelegramAccount:${this.getAccountId()}] Failed to notify status:`,

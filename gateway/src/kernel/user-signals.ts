@@ -5,6 +5,7 @@ export const USER_PROCESS_SIGNALS = [
   "proc.run.retrying",
   "proc.run.output",
   "proc.run.tool.started",
+  "proc.run.tool.finished",
   "proc.run.hil.requested",
   "proc.run.finished",
   "process.exit",
@@ -12,6 +13,11 @@ export const USER_PROCESS_SIGNALS = [
 
 export const USER_CONNECTION_SIGNALS = [
   ...USER_PROCESS_SIGNALS,
+  "conversation.changed",
+  "message.started",
+  "message.delta",
+  "message.committed",
+  "message.aborted",
   "device.status",
   "adapter.status",
   "mcp.changed",

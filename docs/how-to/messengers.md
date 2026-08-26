@@ -2,6 +2,10 @@
 
 Once a messenger is connected, you can talk to GSV from it just like you do on the desktop — anything you can ask GSV, you can ask from anywhere.
 
+GSV adapters are extensible. This page documents the messenger implementations
+bundled with the current release; it is not a complete list of transports an
+adapter can implement.
+
 Connecting a bot or phone account and linking your messenger identity are
 separate steps. If you leave setup after the connection succeeds but before
 entering the authorization code, do not create another account. Return to
@@ -17,7 +21,9 @@ still needs its own number and SIM, multi-SIM, or eSIM. See Meta's
 [multi-account setup](https://about.fb.com/news/2023/10/multiple-accounts-on-whatsapp/)
 and [iOS announcement](https://about.fb.com/news/2026/03/whatsapp-new-features-simplify-storage-switch-accounts/).
 
-1. If the worker is not installed, deploy it with `gsv infra deploy -c channel-whatsapp`. A normal full deployment already includes it.
+1. Confirm the deployment includes the WhatsApp adapter. Standalone includes
+   every bundled adapter by default; managed installations expose the adapters
+   enabled by their operator.
 2. In GSV, open **Messengers**, choose **WhatsApp**, and give this connection a stable account ID such as `personal`.
 3. Start pairing. Display GSV's QR code on a computer or another screen so the phone can scan it.
 4. On the phone that owns the second WhatsApp account, open **Settings → Linked Devices → Link a Device** and scan the code.
@@ -84,24 +90,50 @@ before adding continuously connected accounts.
 
 ## Telegram
 
+### Managed GSV
+
+1. In GSV, open **Messengers → Telegram** and use the link to open the official
+   GSV bot.
+2. Send the bot any private message. It replies with a short-lived pairing
+   code.
+3. Enter that code back in GSV. GSV shows the Telegram display name, handle,
+   and numeric identity that requested it.
+4. Confirm only if that is your Telegram identity. The code alone cannot choose
+   an installation or user; the signed-in GSV session supplies both.
+5. Send another message in Telegram. It reaches the same Personal intelligence
+   you use in GSV, without selecting a process.
+
+If the Telegram identity was linked to another GSV, requesting or inspecting a
+code does not interrupt it. The route moves only after confirmation succeeds.
+Use **Disconnect** on the linked identity to revoke it.
+
+### Standalone GSV
+
 1. In GSV, open **Messengers** and click **Connect messenger.**
-2. Open [@BotFather](https://t.me/botfather) in Telegram (on your laptop or your phone) and press **Start.**
-3. Send `/newbot`. Pick a display name (e.g. `ham`), then a username ending in `bot` (e.g. `ham_bot`).
-4. BotFather replies with a **token** that looks like `123456789:QWErtyUIOP`. Back in GSV, click **Next**, then **Next**, and paste the token.
-5. Open your new bot's profile — BotFather links it in that last message — and press **Start.** It returns an **access code**; paste that into GSV.
-6. Connected. Send `/help` in Telegram to see what it can do.
+2. Open [@BotFather](https://t.me/botfather) in Telegram and press **Start.**
+3. Send `/newbot`. Pick a display name, then a username ending in `bot`.
+4. Paste BotFather's token into the GSV connect flow.
+5. Open the new bot and press **Start**. Paste its one-time access code back
+   into GSV to link your Telegram identity.
+
+Managed GSV never asks for a BotFather token. That credential belongs only to
+the platform-owned Worker.
 
 Try it from your phone, away from your desk: *What's on my Mac's clipboard?*
 
 ### Commands
 
 ```
-/list               show available agents and active processes
-/where              show where this chat is routed
-/use personal       start and route to a new personal-agent task
-/use <process-id>   route this chat to an active process
-/use <agent-name>   start and route this chat to an agent
+/where                          show SHIP or the selected WORK SESSION
+/ship                           return this direct message to Ship
 ```
+
+Ask your personal intelligence when you want a direct line to one piece of its
+work. It selects the work process internally, confirms what will receive the
+next message, and remains your personal intelligence. The current answer still
+comes from Ship; later messages use the visibly labeled work session
+until you enter `/ship`. Returning to Ship also gives the personal intelligence a
+small process event naming the work process, without copying its transcript.
 
 When a direct-message approval is pending, copy one of the full commands shown
 in that prompt. Each includes a unique `hil[...]` token; do not omit it or reuse

@@ -4,15 +4,21 @@ import { GsvFs } from "../../../fs/gsv-fs";
 import { resolveUserPath } from "../../../fs";
 import type { KernelContext } from "../../../kernel/context";
 import type {
+  JsonObject,
+  JsonValue,
   ProcessIdentity,
-  SysMcpListResult,
 } from "@humansandmachines/gsv/protocol";
+import { jsonValueSchema } from "@humansandmachines/gsv/protocol";
+import { z } from "zod";
 import type { RequestFrame, ResponseFrame } from "../../../protocol/frames";
 import type { SyscallName } from "../../../syscalls";
 import { createCodeModeRequest } from "../../../codemode/request";
+import { stableOpaqueId } from "../../../shared/stable-id";
 import {
   buildCodeModeMcpToolBindings,
   executeCodeMode,
+  type CodeModeExecutionOptions,
+  type CodeModeToolRequest,
 } from "../../../process/codemode";
 import { materializeToolResponse } from "../../../process/tool-response";
 import { CODEMODE_RUN, SYS_MCP_LIST } from "../../../syscalls/constants";
@@ -25,9 +31,25 @@ type CodeModeCommandOptions = {
   target?: string;
   cwd?: string;
   json: boolean;
-  args: unknown;
+  args: JsonObject | null;
   argv: string[];
 };
+
+const codeModeArgsSchema = z.record(z.string(), z.json());
+const nullableJsonObjectSchema = z.nullable(codeModeArgsSchema);
+const codeModeMcpListResultSchema = z.object({
+  servers: z.array(z.object({
+    serverId: z.string(),
+    name: z.string(),
+    state: z.string(),
+    tools: z.array(z.object({
+      name: z.string(),
+      description: z.nullable(z.string()),
+      inputSchema: nullableJsonObjectSchema,
+      outputSchema: z.optional(nullableJsonObjectSchema),
+    })),
+  })),
+});
 
 type NativeShellRequest = (
   frame: RequestFrame,
@@ -40,6 +62,7 @@ export function buildCodeModeCommand(
   kernelCtx: KernelContext,
   request?: NativeShellRequest,
 ) {
+  let invocationOrdinal = 0;
   return defineCommand("codemode", async (commandArgs, bashCtx): Promise<ExecResult> => {
     try {
       const options = parseCodeModeCommandArgs(commandArgs);
@@ -54,17 +77,28 @@ export function buildCodeModeCommand(
         throw new Error("direct syscall transport is unavailable");
       }
 
-      const requestTool = (call: SyscallName, args: Record<string, unknown>) =>
+      const requestTool = (call: SyscallName, args: JsonObject) =>
         requestCodeModeTool(request, call, args, bashCtx.signal);
       const cwd = resolveCodeModeCwd(options.cwd, options.target, bashCtx.cwd, identity);
-      const result = await executeCodeMode(kernelCtx.env, code, requestTool, {
+      invocationOrdinal += 1;
+      const mailDeliveryBase = kernelCtx.requestId
+        ? await stableOpaqueId("mail-send", [
+            kernelCtx.installationId,
+            kernelCtx.processId ?? identity.uid,
+            kernelCtx.requestId,
+            invocationOrdinal,
+          ])
+        : undefined;
+      const executionOptions: CodeModeExecutionOptions = {
         defaultTarget: options.target,
         defaultCwd: cwd,
         argv: options.argv,
         args: options.args,
         mcpToolBindings: await loadMcpToolBindings(requestTool, bashCtx.signal),
         signal: bashCtx.signal,
-      });
+      };
+      if (mailDeliveryBase) executionOptions.mailDeliveryBase = mailDeliveryBase;
+      const result = await executeCodeMode(kernelCtx.env, code, requestTool, executionOptions);
       return formatCodeModeCommandResult(result, options.json);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -76,18 +110,23 @@ export function buildCodeModeCommand(
 async function requestCodeModeTool(
   request: NativeShellRequest,
   call: SyscallName,
-  args: Record<string, unknown>,
+  args: JsonObject,
   signal?: AbortSignal,
-): Promise<unknown> {
+): Promise<JsonValue> {
   signal?.throwIfAborted();
   const prepared = createCodeModeRequest(call, args);
-  const frame = {
+  const frameWithoutBody = {
     type: "req",
     id: crypto.randomUUID(),
     call,
     args: prepared.args,
-    ...(prepared.body ? { body: prepared.body } : {}),
-  } as RequestFrame;
+  };
+  const frameValue = prepared.body
+    ? { ...frameWithoutBody, body: prepared.body }
+    : frameWithoutBody;
+  // SAFETY: createCodeModeRequest preserves the syscall name and its JSON argument object;
+  // the mapped RequestFrame union cannot express that runtime correlation for a dynamic call.
+  const frame = frameValue as RequestFrame;
   let response: ResponseFrame | undefined;
 
   try {
@@ -96,12 +135,13 @@ async function requestCodeModeTool(
     if (!response.ok) {
       throw new Error(response.error.message);
     }
-    return await materializeToolResponse(
+    const result = await materializeToolResponse(
       call,
       response.data ?? null,
       response.body,
       signal,
     );
+    return jsonValueSchema.parse(result);
   } finally {
     if (response?.ok && response.body && !response.body.stream.locked) {
       await response.body.stream.cancel("CodeMode response completed").catch(() => {});
@@ -113,11 +153,11 @@ async function requestCodeModeTool(
 }
 
 async function loadMcpToolBindings(
-  request: (call: SyscallName, args: Record<string, unknown>) => Promise<unknown>,
+  request: CodeModeToolRequest,
   signal?: AbortSignal,
 ) {
   try {
-    const result = await request(SYS_MCP_LIST, {}) as SysMcpListResult;
+    const result = codeModeMcpListResultSchema.parse(await request(SYS_MCP_LIST, {}));
     return buildCodeModeMcpToolBindings(result.servers);
   } catch {
     signal?.throwIfAborted();
@@ -175,7 +215,9 @@ function parseCodeModeCommandArgs(args: string[]): CodeModeCommandOptions {
     }
     if (current === "--args-json") {
       index += 1;
-      parsed.args = JSON.parse(requireCodeModeOptionValue(commandArgs[index], current));
+      parsed.args = codeModeArgsSchema.parse(JSON.parse(
+        requireCodeModeOptionValue(commandArgs[index], current),
+      ));
       continue;
     }
     if (!parsed.file && parsed.code === undefined) {
@@ -198,10 +240,8 @@ function requireCodeModeOptionValue(value: string | undefined, option: string): 
   return value;
 }
 
-function mergeCodeModeArg(existing: unknown, spec: string): Record<string, unknown> {
-  const args = existing && typeof existing === "object" && !Array.isArray(existing)
-    ? { ...(existing as Record<string, unknown>) }
-    : {};
+function mergeCodeModeArg(existing: JsonObject | null, spec: string): JsonObject {
+  const args = { ...existing };
   const eq = spec.indexOf("=");
   if (eq <= 0) {
     throw new Error("--arg requires key=value");
@@ -256,12 +296,13 @@ function formatCodeModeCommandResult(result: CodeModeRunResult, json: boolean): 
   };
 }
 
-export function formatCodeModeValue(value: unknown): string {
+export function formatCodeModeValue(value: JsonValue): string {
   if (value === null || value === undefined) {
     return "";
   }
-  if (typeof value === "string") {
-    return value.endsWith("\n") ? value : `${value}\n`;
+  const text = z.string().safeParse(value);
+  if (text.success) {
+    return text.data.endsWith("\n") ? text.data : `${text.data}\n`;
   }
   return `${JSON.stringify(value, null, 2)}\n`;
 }

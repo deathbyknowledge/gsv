@@ -41,6 +41,7 @@ function makeContext(uid: number, entries: EntryMap, ownerUid?: number): KernelC
     { name: "helper-agent", gid: 2001, members: ["user1000"] },
   ];
 
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     identity: {
       role: "user",
@@ -68,18 +69,20 @@ function makeContext(uid: number, entries: EntryMap, ownerUid?: number): KernelC
       getGroupByName: (name: string) =>
         groupEntries.find((entry) => entry.name === name) ?? null,
     },
-    config: config as unknown as KernelContext["config"],
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    config: config as KernelContext["config"],
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as KernelContext;
 }
 
 describe("sys.config.get", () => {
-  const baseEntries: EntryMap = {
+  const baseEntries = {
     "config/ai/provider": "openrouter",
     "config/ai/model": "qwen",
     "config/ai/api_key": "sk-live",
     "users/1000/ai/model": "qwen-user",
     "users/1001/ai/model": "other",
-  };
+  } satisfies EntryMap;
 
   it("blocks non-root exact reads of sensitive system config", () => {
     const ctx = makeContext(1000, baseEntries);

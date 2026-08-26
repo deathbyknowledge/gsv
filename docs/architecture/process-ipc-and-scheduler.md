@@ -21,6 +21,13 @@ This keeps lifecycle state aligned:
 Parallel threads are therefore parallel processes. They have independent queues,
 cancellation, permissions, labels, and future histories.
 
+Each human also has one personal process. This is the default place where their
+personal intelligence receives direct conversation and user-level events. The
+Kernel marks the current process in its registry; the pid itself remains an
+ordinary random process id. Reset keeps the same personal process, while kill
+removes it and the next personal interaction creates a fresh one. Old pids are
+never reused.
+
 ## Frames, events, and signals
 
 `SignalFrame` is the existing asynchronous transport frame:
@@ -42,9 +49,9 @@ It is not itself a process signal. The terms mean:
   adapter, or the scheduler; and
 - a process signal is a lifecycle operation such as abort, reset, or kill.
 
-Runtime events rendered into model context are visibly marked. Process IPC uses
-the current `[Process Event]:` envelope rather than pretending the source was a
-human message.
+Runtime events stored as system records are projected into model context under
+the `[GSV EVENT]` envelope. Process IPC uses identified `Delegated task from…`
+or `Message from…` text rather than pretending the source was a human.
 
 ## Process IPC
 
@@ -58,8 +65,59 @@ IPC acceptance is not completion. A successful send or call means the event was
 started or queued by the target. A call result is delivered later to the source
 process as `ipc.reply` or `ipc.timeout`.
 
+A bounded call is a worker run rather than a human conversation. The worker returns ordinary
+assistant text; it does not need `message send` or `yield`. The Process finish record
+stores two independent projections:
+
+- `result` is the durable text and media returned to the calling Process;
+- `delivery` records a canonical human message, an explicit silence, or no human delivery.
+
+The Kernel completes `proc.ipc.call` only from `result`. When the reply reaches a caller that is
+already running, the Process persists the event immediately and includes it in the next model
+context; if no provider request is in flight, the current loop can react without waiting for a
+separate queued run.
+
 The target pid is sufficient: IPC cannot select another history inside the
 target process.
+
+## Personal intelligence and delegation
+
+Each human's personal agent account is the identity of their personal
+intelligence: it owns the role, home, capabilities, and shared memory. One
+interactive process is its current personal conversation. Web, CLI, and
+unrouted private messaging surfaces resolve that process instead of selecting
+the newest process or creating one per surface.
+
+The personal marker is a stable role, not an immortal pid and not a special
+kind of Process Durable Object. Killing it leaves the role temporarily empty;
+the next personal entry point creates a fresh ordinary process and marks it.
+Other processes may run as the same personal agent account, but they are work
+with independent histories and never become the personal process by recency or
+label. `proc.list` reports the distinction explicitly.
+
+The personal agent's account home contains its role, voice, and durable memory.
+Unresolved work lives in the Kernel responsibility ledger and is projected into
+one immutable Process context epoch as a baseline plus ordered transitions. Each
+process retains its own history and lifecycle. The personal process is the normal
+user-facing place where delegated results and actionable system events return;
+real child processes still use ordinary parent pids for lifecycle and IPC.
+
+For bounded work, `proc delegate` creates a non-interactive child and a bounded
+`proc.ipc.call`. The child inherits the personal account unless `--as ACCOUNT`
+selects a specialized owned agent. The delegated-task envelope places an
+inherited child in worker mode. With `--responsibility ID`, the Kernel assigns
+that record to the child and persists the id on the IPC call. Completion, failure,
+timeout, or kill returns a still-active assignment to Ship once, with the IPC call
+and child run ids recorded as evidence. The result itself still re-enters the
+caller as a Process event while that caller still exists; it is not copied into
+the responsibility record. If the personal Process is replaced before delivery,
+the Kernel returns the assignment to Ship and discards the obsolete Process
+signal. The durable responsibility remains the recovery path.
+
+During an adapter turn, `message current --json` exposes the current surface as
+an opaque GSV destination id. The personal intelligence can store that id with
+a commitment and use `message send --to DESTINATION --also` if a result merits a later
+update. Provider account, actor, and surface identifiers remain hidden.
 
 ## History, compaction, and branching
 
@@ -113,7 +171,8 @@ The scheduler is Kernel-owned. The public surface is:
 It stores definitions, calculates next fire times, enforces permissions, tracks
 run history, and dispatches typed targets. Supported expressions are `at`,
 `after`, `every`, and timezone-aware five-field `cron`. Supported targets are
-`command.exec`, `process.spawn`, `process.event`, and `adapter.send`.
+`command.exec`, `process.spawn`, `process.event`, `responsibility`, and
+`adapter.send`.
 
 ```ts
 type ScheduleTarget =
@@ -139,6 +198,12 @@ type ScheduleTarget =
       replyTo?: AdapterMessageDestination;
     }
   | {
+      kind: "responsibility";
+      message: string;
+      data?: Record<string, unknown>;
+      priority?: "low" | "normal" | "high" | "critical";
+    }
+  | {
       kind: "adapter.send";
       destination: AdapterMessageDestination;
       text: string;
@@ -146,29 +211,55 @@ type ScheduleTarget =
 ```
 
 Schedule success reports target dispatch, not model-run completion. A successful
-`process.event` means the target process admitted the event. A successful
-`process.spawn` means the new process was created and accepted its initial
-prompt. Child answers remain in the child history unless another mechanism
-consumes them.
+`responsibility` occurrence means the Kernel durably created or recovered the
+deduplicated `schedule.due` record. A successful `process.event` means the target
+process admitted the transport-bound event. A successful `process.spawn` means the
+new process was created and accepted its initial prompt. Child answers remain in
+the child history unless another mechanism consumes them.
 
 ### Chat delivery contracts
 
-The native shell exposes two distinct schedule forms:
+The native shell exposes three distinct schedule forms:
 
 ```bash
+sched add --ship --name NAME --after 10m --message "Give Ship this responsibility"
 sched add --here --name NAME --after 10m --message "Run the agent"
 sched add --to DESTINATION --name NAME --after 10m --message "Send this text"
 ```
 
-`--here` requires a process-backed shell and creates a `process.event` for the
-current pid. During an adapter run it captures the authorized adapter destination
-in `replyTo`; the future terminal answer follows that destination. Without an
-adapter route, the result remains in process history.
+`--ship` is explicit and works from top-level or process-backed shells. It creates
+a `responsibility` target: every occurrence becomes one deduplicated
+`schedule.due` responsibility and survives replacement of the current Ship pid.
+
+`--here` requires a process-backed shell. It resolves to the calling process while
+inside a pending IPC call. A non-Ship target remains a `process.event` target. If
+the resolved target is Ship, it has the same responsibility semantics as `--ship`,
+regardless of which client or adapter started the current run. It never binds
+future Ship work to the current conversation route.
 
 `--to` creates an `adapter.send` action and sends the stored text directly
 without running an agent. The scheduler validates destination ownership when a
 schedule is created or updated, and delivery rechecks actor and surface
 authority.
+
+## Standing responsibilities
+
+Standing responsibility definitions describe the work GSV must continue to own.
+Required contracts are always active: direct interactions must end with a Message
+or explicit silence, delegated work must return to Ship on every terminal outcome,
+and each enabled Ship schedule must produce its due responsibility. These rows are
+Kernel-defined runtime guarantees rather than user-configurable automation.
+
+Configurable sources are Kernel-defined producers with per-owner enablement
+policies. `mail.received` is enabled by default. Disabling it does not discard
+mail: mailbox ingestion and classification still complete, but no responsibility
+is created and Ship is not woken for that message.
+
+Recurring custom responsibilities are ordinary `every` or `cron` schedules whose
+target is `responsibility`. The Web responsibilities workspace presents three
+projections of the same Kernel state: Open ledger records, Standing source and
+recurring-schedule definitions, and terminal History. It does not create a second
+automation store.
 
 ## Linux-like views
 

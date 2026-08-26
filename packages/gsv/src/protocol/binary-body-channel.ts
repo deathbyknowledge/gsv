@@ -1,4 +1,4 @@
-import type { BinaryBody } from "./body";
+import { byteStreamChunk, type BinaryBody } from "./body";
 import {
   BINARY_FRAME_CANCEL,
   BINARY_FRAME_DATA,
@@ -14,7 +14,7 @@ const DEFAULT_CHUNK_BYTES = 1024 * 1024;
 const DEFAULT_IDLE_TIMEOUT_MS = 120_000;
 
 type PendingBinaryBody = {
-  controller: ReadableStreamDefaultController<Uint8Array>;
+  controller: ReadableByteStreamController;
   timeoutId: ReturnType<typeof setTimeout>;
   expectedBytes?: number;
   receivedBytes: number;
@@ -40,7 +40,7 @@ export type BinaryBodyChannelOptions = {
 export type OutgoingBinaryBody = {
   descriptor: BinaryFrameDescriptor;
   send(signal?: AbortSignal): Promise<void>;
-  cancel(reason?: unknown): Promise<void>;
+  cancel(cause?: unknown): Promise<void>;
 };
 
 /**
@@ -77,35 +77,40 @@ export class BinaryBodyChannel {
     }
 
     const { streamId, length } = descriptor;
-    return {
-      stream: new ReadableStream<Uint8Array>({
-        start: (controller) => {
-          const abort = () => {
-            if (signal) {
-              this.rejectPending(streamId, abortError(signal));
-            }
-          };
-          this.pending.set(streamId, {
-            controller,
-            timeoutId: this.receiveTimeout(streamId),
-            expectedBytes: length,
-            receivedBytes: 0,
-            signal,
-            abort,
-          });
-          signal?.addEventListener("abort", abort, { once: true });
-          if (signal?.aborted) {
-            abort();
+    const source: UnderlyingByteSource = {
+      type: "bytes",
+      start: (controller) => {
+        const abort = () => {
+          if (signal) {
+            this.rejectPending(streamId, abortError(signal));
           }
-        },
-        cancel: async (reason) => {
-          if (this.clearPending(streamId)) {
-            await this.sendCancel(streamId, reason);
-          }
-        },
-      }),
-      ...(length === undefined ? {} : { length }),
+        };
+        this.pending.set(streamId, {
+          controller,
+          timeoutId: this.receiveTimeout(streamId),
+          expectedBytes: length,
+          receivedBytes: 0,
+          signal,
+          abort,
+        });
+        signal?.addEventListener("abort", abort, { once: true });
+        if (signal?.aborted) {
+          abort();
+        }
+      },
+      cancel: async (cause) => {
+        if (this.clearPending(streamId)) {
+          await this.sendCancel(streamId, cause);
+        }
+      },
     };
+    const body: BinaryBody = {
+      stream: new ReadableStream(source),
+    };
+    if (length !== undefined) {
+      body.length = length;
+    }
+    return body;
   }
 
   handleFrame(data: ArrayBuffer | ArrayBufferView): boolean {
@@ -143,7 +148,7 @@ export class BinaryBodyChannel {
         );
         return true;
       }
-      pending.controller.enqueue(frame.payload);
+      pending.controller.enqueue(byteStreamChunk(frame.payload));
     }
     if ((frame.flags & BINARY_FRAME_END) !== 0) {
       if (pending.expectedBytes !== undefined && pending.receivedBytes !== pending.expectedBytes) {
@@ -174,11 +179,12 @@ export class BinaryBodyChannel {
       peerTerminated: false,
     };
     this.outgoing.set(streamId, state);
+    const descriptor: BinaryFrameDescriptor = { streamId };
+    if (body.length !== undefined) {
+      descriptor.length = body.length;
+    }
     return {
-      descriptor: {
-        streamId,
-        ...(body.length === undefined ? {} : { length: body.length }),
-      },
+      descriptor,
       send: async (signal) => {
         if (state.status !== "prepared") {
           throw new Error(`Binary body send is ${state.status}: ${streamId}`);
@@ -186,19 +192,19 @@ export class BinaryBodyChannel {
         state.status = "sending";
         await this.sendBody(state, signal);
       },
-      cancel: async (reason) => {
-        await this.cancelOutgoing(state, reason, true);
+      cancel: async (cause) => {
+        await this.cancelOutgoing(state, cause, true);
       },
     };
   }
 
-  close(reason: unknown = new Error("Binary body channel closed")): void {
-    const error = reason instanceof Error ? reason : new Error(String(reason));
-    for (const streamId of [...this.pending.keys()]) {
+  close(cause: unknown = new Error("Binary body channel closed")): void {
+    const error = cause instanceof Error ? cause : new Error(String(cause));
+    for (const streamId of this.pending.keys()) {
       this.rejectPending(streamId, error, false);
     }
-    for (const state of [...this.outgoing.values()]) {
-      void this.cancelOutgoing(state, reason, false).catch(() => {});
+    for (const state of this.outgoing.values()) {
+      void this.cancelOutgoing(state, cause, false).catch(() => {});
     }
   }
 
@@ -271,7 +277,7 @@ export class BinaryBodyChannel {
 
   private async cancelOutgoing(
     state: OutgoingBinaryBodyState,
-    reason: unknown,
+    cause: unknown,
     notifyPeer: boolean,
   ): Promise<void> {
     if (state.status === "cancelled" || state.status === "completed") {
@@ -279,41 +285,41 @@ export class BinaryBodyChannel {
     }
     const wasSending = state.status === "sending";
     state.status = "cancelled";
-    state.cancelReason = reason;
+    state.cancelReason = cause;
     if (!notifyPeer) {
       state.peerTerminated = true;
     }
-    await this.cancelSource(state, reason);
+    await this.cancelSource(state, cause);
     if (notifyPeer && !state.peerTerminated) {
       state.peerTerminated = true;
-      await this.sendError(state.streamId, reason);
+      await this.sendError(state.streamId, cause);
     }
     if (!wasSending) {
       this.outgoing.delete(state.streamId);
     }
   }
 
-  private async cancelSource(state: OutgoingBinaryBodyState, reason: unknown): Promise<void> {
+  private async cancelSource(state: OutgoingBinaryBodyState, cause: unknown): Promise<void> {
     if (state.reader) {
-      await state.reader.cancel(reason).catch(() => {});
+      await state.reader.cancel(cause).catch(() => {});
     } else if (!state.stream.locked) {
-      await state.stream.cancel(reason).catch(() => {});
+      await state.stream.cancel(cause).catch(() => {});
     }
   }
 
-  private async sendError(streamId: number, error: unknown): Promise<void> {
+  private async sendError(streamId: number, cause: unknown): Promise<void> {
     await Promise.resolve(this.sendFrame(buildBinaryFrame(
       streamId,
       BINARY_FRAME_ERROR | BINARY_FRAME_END,
-      new TextEncoder().encode(error instanceof Error ? error.message : String(error ?? "Binary transfer cancelled")),
+      new TextEncoder().encode(cause instanceof Error ? cause.message : String(cause ?? "Binary transfer cancelled")),
     ))).catch(() => {});
   }
 
-  private async sendCancel(streamId: number, reason: unknown): Promise<void> {
+  private async sendCancel(streamId: number, cause: unknown): Promise<void> {
     await Promise.resolve(this.sendFrame(buildBinaryFrame(
       streamId,
       BINARY_FRAME_CANCEL | BINARY_FRAME_END,
-      new TextEncoder().encode(reason instanceof Error ? reason.message : String(reason ?? "Binary body cancelled")),
+      new TextEncoder().encode(cause instanceof Error ? cause.message : String(cause ?? "Binary body cancelled")),
     ))).catch(() => {});
   }
 

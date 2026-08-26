@@ -1,4 +1,5 @@
 import type { KernelContext } from "./context";
+import * as z from "zod/mini";
 import {
   OPENAI_CODEX_ACCOUNT_KEY,
   OPENAI_CODEX_PROVIDER,
@@ -11,6 +12,7 @@ export type ResolvedAiProviderOAuthApiKey = {
   apiKey: string;
   openAiCodexAccountId?: string;
 };
+const codexMetadataSchema = z.object({ chatgptAccountId: z.optional(z.string()) });
 
 export async function resolveAiProviderOAuthApiKey(
   ctx: KernelContext,
@@ -58,10 +60,14 @@ function resolveOpenAiCodexAccountId(account: { accessToken: string; metadata?: 
     ?? extractOpenAICodexAccountId(account.accessToken);
 }
 
-function metadataString(metadata: unknown, key: string): string | null {
-  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+function metadataString(
+  metadata: Parameters<typeof codexMetadataSchema.safeParse>[0],
+  key: string,
+): string | null {
+  const parsed = codexMetadataSchema.safeParse(metadata);
+  if (!parsed.success || key !== "chatgptAccountId") {
     return null;
   }
-  const value = (metadata as Record<string, unknown>)[key];
-  return typeof value === "string" && value.trim() ? value.trim() : null;
+  const value = parsed.data.chatgptAccountId;
+  return value?.trim() || null;
 }

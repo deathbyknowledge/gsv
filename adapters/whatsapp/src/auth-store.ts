@@ -6,11 +6,36 @@ import type {
   SignalKeyStore,
 } from "@whiskeysockets/baileys";
 import { BufferJSON, initAuthCreds, proto } from "@whiskeysockets/baileys";
+import { z } from "zod";
 
 const CREDS_KEY = "auth:creds";
 const AUTH_EPOCH_KEY = "auth:epoch";
 const SIGNAL_PREFIX = "signal:";
 const STORAGE_BATCH_SIZE = 128;
+
+type AuthValue = AuthenticationCreds | AuthValueObject | Uint8Array | AuthValue[] | string | number | boolean | null | undefined;
+interface AuthValueObject extends Partial<Record<keyof AuthenticationCreds, AuthValue>> {
+  type?: string;
+  data?: number[];
+  id?: string;
+  name?: string;
+  deviceId?: number;
+  identifier?: AuthValueObject;
+  identifierKey?: Uint8Array;
+  unarchiveChats?: boolean;
+  defaultDisappearingMode?: AuthValueObject;
+  public?: Uint8Array;
+  private?: Uint8Array;
+  keyPair?: AuthValueObject;
+  signature?: Uint8Array;
+  keyId?: number;
+  timestampS?: number;
+}
+const authObjectSchema = z.record(z.string(), z.unknown());
+const bufferEnvelopeSchema = z.object({
+  type: z.literal("Buffer"),
+  data: z.array(z.number()),
+});
 
 class StaleWhatsAppAuthStateError extends Error {
   constructor() {
@@ -19,26 +44,18 @@ class StaleWhatsAppAuthStateError extends Error {
   }
 }
 
-const serializeAuthValue = (value: unknown): string =>
+const serializeAuthValue = (value: AuthValue): string =>
   JSON.stringify(value, BufferJSON.replacer);
 
-const deserializeAuthValue = (value: string): unknown =>
+const deserializeAuthValue = (value: string): AuthValue =>
   JSON.parse(value, authValueReviver);
 
-function authValueReviver(key: string, value: unknown): unknown {
+function authValueReviver(key: string, value: AuthValue): AuthValue {
   const revived = BufferJSON.reviver(key, value);
   if (revived !== value) return revived;
 
-  if (
-    value
-    && typeof value === "object"
-    && "type" in value
-    && (value as { type?: unknown }).type === "Buffer"
-    && "data" in value
-    && Array.isArray((value as { data?: unknown }).data)
-  ) {
-    return Buffer.from((value as { data: number[] }).data);
-  }
+  const bufferEnvelope = bufferEnvelopeSchema.safeParse(value);
+  if (bufferEnvelope.success) return Buffer.from(bufferEnvelope.data.data);
 
   return value;
 }
@@ -70,9 +87,12 @@ function deserializeSignalValue<T extends keyof SignalDataTypeMap>(
   const value = deserializeAuthValue(stored);
   if (type === "app-state-sync-key") {
     if (!isRecord(value)) throw new TypeError("Invalid app state sync key");
-    const hydrated = proto.Message.AppStateSyncKeyData.fromObject(value);
-    return hydrated as unknown as SignalDataTypeMap[T];
+    // SAFETY: the signal key discriminator selects the matching Baileys protobuf value.
+    const appStateValue = proto.Message.AppStateSyncKeyData.fromObject(value) as SignalDataTypeMap["app-state-sync-key"];
+    // SAFETY: the signal key discriminator selects the matching Baileys protobuf value.
+    return appStateValue as SignalDataTypeMap[T];
   }
+  // SAFETY: Baileys supplies the value for the requested signal key type.
   return value as SignalDataTypeMap[T];
 }
 
@@ -233,28 +253,39 @@ function mergeCredentialChanges(
   latest: AuthenticationCreds,
 ): AuthenticationCreds {
   const merged = cloneAuthenticationCreds(latest);
-  const baselineRecord = baseline as unknown as Record<string, unknown>;
-  const desiredRecord = desired as unknown as Record<string, unknown>;
-  const mergedRecord = merged as unknown as Record<string, unknown>;
+  // SAFETY: AuthenticationCreds is a JSON object and its fields are merged by name.
+  const baselineRecord = baseline as AuthValueObject;
+  // SAFETY: AuthenticationCreds is a JSON object and its fields are merged by name.
+  const desiredRecord = desired as AuthValueObject;
+  // SAFETY: AuthenticationCreds is a JSON object and its fields are merged by name.
+  const mergedRecord = merged as AuthValueObject;
   const keys = new Set([...Object.keys(baselineRecord), ...Object.keys(desiredRecord)]);
 
   for (const key of keys) {
-    if (serializedField(baselineRecord[key]) === serializedField(desiredRecord[key])) continue;
+    const baselineValue = Object.entries(baselineRecord).find(([name]) => name === key)?.[1];
+    const desiredValue = Object.entries(desiredRecord).find(([name]) => name === key)?.[1];
+    if (serializedField(baselineValue) === serializedField(desiredValue)) continue;
     if (Object.hasOwn(desiredRecord, key)) {
-      mergedRecord[key] = desiredRecord[key];
+      Object.defineProperty(mergedRecord, key, { value: desiredValue, enumerable: true, writable: true, configurable: true });
     } else {
-      delete mergedRecord[key];
+      Object.defineProperty(mergedRecord, key, { value: undefined, enumerable: false, writable: true, configurable: true });
     }
   }
   return merged;
 }
 
 function cloneAuthenticationCreds(creds: AuthenticationCreds): AuthenticationCreds {
-  return deserializeAuthValue(serializeAuthValue(creds)) as AuthenticationCreds;
+  const cloned = deserializeAuthValue(serializeAuthValue(creds));
+  if (!isRecord(cloned)) throw new TypeError("Invalid cloned credentials");
+  // SAFETY: The source value is already Baileys AuthenticationCreds; serialization only clones it.
+  return cloned as AuthenticationCreds;
 }
 
-function serializedField(value: unknown): string {
-  return serializeAuthValue({ value });
+function serializedField(value: AuthValue): string {
+  // SAFETY: The wrapper is an internal JSON object used to preserve undefined fields.
+  const wrapper = Object.create(null) as AuthValueObject;
+  Reflect.set(wrapper, "value", value);
+  return serializeAuthValue(wrapper);
 }
 
 export async function clearAuthState(storage: DurableObjectStorage): Promise<number> {
@@ -287,14 +318,14 @@ export async function hasRegisteredAuthState(
   }
 }
 
-function isAuthenticationCreds(value: unknown): value is AuthenticationCreds {
+function isAuthenticationCreds(value: AuthValue): value is AuthenticationCreds {
   if (!isRecord(value)) return false;
   if (!isKeyPair(value.noiseKey)) return false;
   if (!isKeyPair(value.pairingEphemeralKeyPair)) return false;
   if (!isKeyPair(value.signedIdentityKey)) return false;
   if (!isSignedKeyPair(value.signedPreKey)) return false;
   if (!isNonNegativeSafeInteger(value.registrationId)) return false;
-  if (typeof value.advSecretKey !== "string" || value.advSecretKey.length === 0) {
+  if (!isStringValue(value.advSecretKey) || value.advSecretKey.length === 0) {
     return false;
   }
   if (!Array.isArray(value.processedHistoryMessages)) return false;
@@ -302,12 +333,12 @@ function isAuthenticationCreds(value: unknown): value is AuthenticationCreds {
   if (!isNonNegativeSafeInteger(value.firstUnuploadedPreKeyId)) return false;
   if (!isNonNegativeSafeInteger(value.accountSyncCounter)) return false;
   if (!isRecord(value.accountSettings)) return false;
-  if (typeof value.accountSettings.unarchiveChats !== "boolean") return false;
+  if (!isBooleanValue(value.accountSettings.unarchiveChats)) return false;
   if (
     value.accountSettings.defaultDisappearingMode !== undefined
     && !isRecord(value.accountSettings.defaultDisappearingMode)
   ) return false;
-  if (typeof value.registered !== "boolean") return false;
+  if (!isBooleanValue(value.registered)) return false;
   if (!isOptionalString(value.pairingCode)) return false;
   if (!isOptionalString(value.lastPropHash)) return false;
   if (value.routingInfo !== undefined && !isByteArray(value.routingInfo)) return false;
@@ -328,21 +359,21 @@ function isAuthenticationCreds(value: unknown): value is AuthenticationCreds {
   return true;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+function isRecord(value: AuthValue): value is AuthValueObject {
+  return authObjectSchema.safeParse(value).success;
 }
 
-function isByteArray(value: unknown): value is Uint8Array {
+function isByteArray(value: AuthValue): value is Uint8Array {
   return value instanceof Uint8Array && value.byteLength > 0;
 }
 
-function isKeyPair(value: unknown): boolean {
+function isKeyPair(value: AuthValue): boolean {
   return isRecord(value)
     && isByteArray(value.public)
     && isByteArray(value.private);
 }
 
-function isSignedKeyPair(value: unknown): boolean {
+function isSignedKeyPair(value: AuthValue): boolean {
   return isRecord(value)
     && isKeyPair(value.keyPair)
     && isByteArray(value.signature)
@@ -350,24 +381,36 @@ function isSignedKeyPair(value: unknown): boolean {
     && (value.timestampS === undefined || isNonNegativeSafeInteger(value.timestampS));
 }
 
-function isWhatsAppContact(value: unknown): boolean {
-  return isRecord(value) && typeof value.id === "string" && value.id.length > 0;
+function isWhatsAppContact(value: AuthValue): boolean {
+  return isRecord(value) && isStringValue(value.id) && value.id.length > 0;
 }
 
-function isSignalIdentity(value: unknown): boolean {
+function isSignalIdentity(value: AuthValue): boolean {
   return isRecord(value)
     && isRecord(value.identifier)
-    && typeof value.identifier.name === "string"
+    && isStringValue(value.identifier.name)
     && isNonNegativeSafeInteger(value.identifier.deviceId)
     && isByteArray(value.identifierKey);
 }
 
-function isOptionalString(value: unknown): boolean {
-  return value === undefined || typeof value === "string";
+function isOptionalString(value: AuthValue | undefined): boolean {
+  return value === undefined || isStringValue(value);
 }
 
-function isNonNegativeSafeInteger(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) >= 0;
+function isNonNegativeSafeInteger(value: AuthValue): value is number {
+  return isNumberValue(value) && value >= 0;
+}
+
+function isNumberValue(value: AuthValue): value is number {
+  return Number.isSafeInteger(value);
+}
+
+function isStringValue(value: AuthValue | undefined): value is string {
+  return value !== undefined && String(value) === value;
+}
+
+function isBooleanValue(value: AuthValue): value is boolean {
+  return value === true || value === false;
 }
 
 function normalizeAuthEpoch(value: number | undefined): number {

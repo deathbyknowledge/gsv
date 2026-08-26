@@ -174,17 +174,17 @@ export function ChatDockPopovers({
 
       {openPopover === "tasks" ? (
         <PopoverMenu
-          ariaLabel="Current tasks"
+          ariaLabel="Current work"
           className="gsv-popover-tasks"
-          header={{ kind: "titled", title: "CURRENT TASKS", count: taskCount }}
+          header={{ kind: "titled", title: "CURRENT WORK", count: taskCount }}
           actions={[
             {
-              label: "NEW TASK",
+              label: "NEW WORK",
               onClick: onStartNewTask,
               glyph: <PlusGlyph size={13} />,
               disabled: !canStartNewTask,
             },
-            { label: "OPEN TASKS", onClick: onOpenTasks, glyph: <TaskListGlyph size={13} /> },
+            { label: "OPEN WORK", onClick: onOpenTasks, glyph: <TaskListGlyph size={13} /> },
           ]}
         >
           <div class="gsv-popover-list">
@@ -192,7 +192,7 @@ export function ChatDockPopovers({
               <ListRow
                 density="compact"
                 status="idle"
-                label="No process activity"
+                label="No work yet"
                 statusLabel="IDLE"
               />
             ) : activeAgent.tasks.map((task) => {

@@ -144,6 +144,7 @@ describe("WhatsApp media integrity", () => {
   it("derives and validates media keys before opening a response", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
+    // SAFETY: Fixture contains the Baileys fields exercised by media extraction.
     const message = {
       key: { id: "missing-key", remoteJid: "12025550123@s.whatsapp.net" },
       message: {
@@ -152,6 +153,7 @@ describe("WhatsApp media integrity", () => {
           mimetype: "image/jpeg",
         },
       },
+    // Fixture contains the Baileys fields exercised by media extraction.
     } as WAMessage;
 
     await expect(downloadWhatsAppMedia(stubSocket(), message)).rejects
@@ -199,6 +201,7 @@ async function encryptedImageFixture(): Promise<{
     .digest()
     .subarray(0, 10);
   const encrypted = Buffer.concat([ciphertext, mac]);
+  // SAFETY: Fixture contains the Baileys media fields exercised by download/decrypt.
   return {
     plain,
     encrypted,
@@ -221,5 +224,6 @@ async function encryptedImageFixture(): Promise<{
 function stubSocket(
   updateMediaMessage: (message: WAMessage) => Promise<WAMessage> = async (message) => message,
 ): WASocket {
-  return { updateMediaMessage } as unknown as WASocket;
+  // SAFETY: Fixture implements the socket method consumed by the media downloader.
+  return { updateMediaMessage } as WASocket;
 }

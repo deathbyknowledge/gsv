@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { OnboardingDraft } from "@humansandmachines/gsv/protocol";
 import type { SessionPhase, SessionSnapshot } from "../../services/session/sessionService";
 import {
+  buildAiSummary,
   buildNodeBootstrapCommand,
+  buildSetupPayload,
   resolveVisibleView,
   validateSetupDetails,
-  type PendingAction,
 } from "./sessionDomain";
 
 function snapshot(phase: SessionPhase): SessionSnapshot {
@@ -112,6 +113,40 @@ describe("validateSetupDetails", () => {
       step: "system",
     });
   });
+
+  it("does not ask for a model id when GSV owns model selection", () => {
+    const draft = setupDraft();
+    draft.lane = "customize";
+    draft.detailStep = "system";
+    draft.ai = {
+      enabled: true,
+      provider: "gsv",
+      model: "",
+      apiKey: "",
+    };
+
+    expect(validateSetupDetails(draft, true)).toEqual({ message: null });
+    expect(buildSetupPayload(draft).ai).toEqual({
+      provider: "gsv",
+      model: "default",
+    });
+  });
+});
+
+describe("buildAiSummary", () => {
+  it("describes managed defaults without exposing the internal model alias", () => {
+    const draft = setupDraft();
+
+    expect(buildAiSummary(draft, true)).toBe("GSV included");
+    draft.lane = "customize";
+    draft.ai = {
+      enabled: true,
+      provider: "gsv",
+      model: "default",
+      apiKey: "",
+    };
+    expect(buildAiSummary(draft, true)).toBe("GSV included");
+  });
 });
 
 describe("buildNodeBootstrapCommand", () => {
@@ -129,7 +164,7 @@ describe("buildNodeBootstrapCommand", () => {
       "gsv.exe config --local set gateway.username \"hank\"",
       "gsv.exe config --local set node.id \"studio-pc\"",
       "gsv.exe config --local set node.token \"tok\"",
-      "gsv.exe device install --id \"studio-pc\" --workspace \"$HOME\"",
+      "gsv.exe daemon install --id \"studio-pc\" --workspace \"$HOME\"",
     ].join("\n"));
   });
 

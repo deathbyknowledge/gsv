@@ -1,5 +1,12 @@
 import type { ConsoleConfigEntry } from "./consoleModels";
-import { approvalTargetFromValue } from "../../../domain/agentApproval";
+import { z } from "zod";
+import {
+  approvalTargetFromValue,
+  protectManagedMailApproval,
+  type ApprovalPolicyAction,
+  type ApprovalPolicyRule,
+  type ApprovalPolicyValue,
+} from "../../../domain/agentApproval";
 import {
   defaultModelLabelForConfig,
   modelProfileOptionValue,
@@ -10,18 +17,11 @@ import {
   type ConsoleModelOption,
 } from "./consoleAi";
 
-export type AgentApprovalAction = "auto" | "ask" | "deny";
+export type AgentApprovalAction = ApprovalPolicyAction;
 
-export type ApprovalRule = {
-  match: string;
-  target?: string;
-  action: AgentApprovalAction;
-};
+export type ApprovalRule = ApprovalPolicyRule;
 
-export type ApprovalPolicy = {
-  default: AgentApprovalAction;
-  rules: ApprovalRule[];
-};
+export type ApprovalPolicy = ApprovalPolicyValue;
 
 export type ConsoleAgentBehavior = {
   approval: string;
@@ -56,8 +56,24 @@ const DEFAULT_APPROVAL_POLICY: ApprovalPolicy = {
     { match: "net.fetch", action: "ask" },
     { match: "fs.delete", action: "ask" },
     { match: "sys.mcp.call", action: "ask" },
+    { match: "mail.send", action: "ask" },
   ],
 };
+const ownerUidSchema = z.number().finite().nullable().catch(null);
+const approvalActionSchema = z.enum(["auto", "ask", "deny"]);
+const approvalValueSchema = z.unknown();
+type ApprovalWireValue = z.input<typeof approvalValueSchema>;
+const legacyApprovalTargetSchema = z.object({ target: z.string().optional() });
+const approvalRuleWireSchema = z.object({
+  match: z.string().catch(""),
+  target: z.string().optional().catch(undefined),
+  when: approvalValueSchema.optional(),
+  action: approvalValueSchema,
+});
+const approvalPolicyWireSchema = z.object({
+  default: approvalValueSchema.optional(),
+  rules: z.array(approvalValueSchema).optional(),
+});
 
 export function behaviorForAccount(
   config: readonly ConsoleConfigEntry[],
@@ -103,8 +119,9 @@ export function defaultApprovalPolicyForConfig(
   config: readonly ConsoleConfigEntry[],
   ownerUid?: number | null,
 ): string {
-  const ownerApproval = typeof ownerUid === "number" && Number.isFinite(ownerUid)
-    ? approvalOverrideForAccount(config, ownerUid)
+  const parsedOwnerUid = ownerUidSchema.parse(ownerUid);
+  const ownerApproval = parsedOwnerUid !== null
+    ? approvalOverrideForAccount(config, parsedOwnerUid)
     : "";
   const configured = configValue(config, GLOBAL_APPROVAL_CONFIG_KEY);
   return ownerApproval || configured || serializeApprovalPolicy(DEFAULT_APPROVAL_POLICY);
@@ -131,8 +148,9 @@ export function inheritedModelLabelForAccount(
   uid: number,
   ownerUid?: number | null,
 ): string {
-  const ownerModel = typeof ownerUid === "number" && Number.isFinite(ownerUid) && ownerUid !== uid
-    ? modelLabelOverrideForAccount(config, ownerUid)
+  const parsedOwnerUid = ownerUidSchema.parse(ownerUid);
+  const ownerModel = parsedOwnerUid !== null && parsedOwnerUid !== uid
+    ? modelLabelOverrideForAccount(config, parsedOwnerUid)
     : "";
   return ownerModel || defaultModelLabelForConfig(config);
 }
@@ -142,8 +160,9 @@ export function inheritedFallbackModelLabelForAccount(
   uid: number,
   ownerUid?: number | null,
 ): string {
-  const ownerFallback = typeof ownerUid === "number" && Number.isFinite(ownerUid) && ownerUid !== uid
-    ? fallbackModelLabelOverrideForAccount(config, ownerUid, null)
+  const parsedOwnerUid = ownerUidSchema.parse(ownerUid);
+  const ownerFallback = parsedOwnerUid !== null && parsedOwnerUid !== uid
+    ? fallbackModelLabelOverrideForAccount(config, parsedOwnerUid, null)
     : "";
   const systemFallback = fallbackModelLabelForSelector(config, uid, ownerUid, configValue(config, "config/ai/fallback_model_profile"));
   return ownerFallback || systemFallback;
@@ -158,8 +177,9 @@ export function inheritedReasoningForAccount(
   uid: number,
   ownerUid?: number | null,
 ): string {
-  const ownerReasoning = typeof ownerUid === "number" && Number.isFinite(ownerUid) && ownerUid !== uid
-    ? reasoningOverrideForAccount(config, ownerUid)
+  const parsedOwnerUid = ownerUidSchema.parse(ownerUid);
+  const ownerReasoning = parsedOwnerUid !== null && parsedOwnerUid !== uid
+    ? reasoningOverrideForAccount(config, parsedOwnerUid)
     : "";
   return ownerReasoning || configValue(config, "config/ai/reasoning") || DEFAULT_REASONING_EFFORT;
 }
@@ -271,8 +291,9 @@ function modelProfileForSelector(
   options: { matchModel?: boolean } = {},
 ): ConsoleModelProfile | null {
   const accountProfiles = modelProfilesForConfig(config, uid);
-  const ownerProfiles = typeof ownerUid === "number" && Number.isFinite(ownerUid) && ownerUid !== uid
-    ? modelProfilesForConfig(config, ownerUid)
+  const parsedOwnerUid = ownerUidSchema.parse(ownerUid);
+  const ownerProfiles = parsedOwnerUid !== null && parsedOwnerUid !== uid
+    ? modelProfilesForConfig(config, parsedOwnerUid)
     : [];
   const normalized = selector.trim().toLowerCase();
   return [...accountProfiles, ...ownerProfiles].find((candidate) =>
@@ -294,19 +315,18 @@ function hasAccountProviderStackOverride(config: readonly ConsoleConfigEntry[], 
   );
 }
 
-export function approvalActionFromValue(value: unknown): AgentApprovalAction {
+export function approvalActionFromValue(value: ApprovalWireValue): AgentApprovalAction {
   if (value === "allow") {
     return "auto";
   }
-  return APPROVAL_ACTIONS.includes(value as AgentApprovalAction) ? value as AgentApprovalAction : "ask";
+  const parsed = approvalActionSchema.safeParse(value);
+  return parsed.success ? parsed.data : "ask";
 }
 
-function legacyApprovalTarget(value: unknown): string | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  const target = (value as { target?: unknown }).target;
-  return approvalTargetFromValue(target === "device" ? "targets/*" : target);
+function legacyApprovalTarget(value: ApprovalWireValue): string | undefined {
+  const parsed = legacyApprovalTargetSchema.safeParse(value);
+  if (!parsed.success) return undefined;
+  return approvalTargetFromValue(parsed.data.target === "device" ? "targets/*" : parsed.data.target);
 }
 
 export function parseApprovalPolicy(raw: string): ApprovalPolicy {
@@ -315,27 +335,28 @@ export function parseApprovalPolicy(raw: string): ApprovalPolicy {
     return DEFAULT_APPROVAL_POLICY;
   }
   try {
-    const parsed = JSON.parse(trimmed) as { default?: unknown; rules?: unknown };
-    const rules = Array.isArray(parsed.rules)
+    const parsed = approvalPolicyWireSchema.parse(JSON.parse(trimmed));
+    const rules = parsed.rules
       ? parsed.rules
           .map((entry) => {
-            const record = entry && typeof entry === "object" ? entry as Record<string, unknown> : {};
-            const match = typeof record.match === "string" ? record.match.trim() : "";
-            const target = approvalTargetFromValue(record.target) ?? legacyApprovalTarget(record.when);
+            const record = approvalRuleWireSchema.safeParse(entry);
+            if (!record.success) return null;
+            const match = record.data.match.trim();
+            const target = approvalTargetFromValue(record.data.target) ?? legacyApprovalTarget(record.data.when);
             return match
               ? {
                   match,
-                  ...(target ? { target } : {}),
-                  action: approvalActionFromValue(record.action),
+                  ...(target ? { target } : undefined),
+                  action: approvalActionFromValue(record.data.action),
                 }
               : null;
           })
           .filter((rule): rule is ApprovalRule => rule !== null)
       : [];
-    return {
+    return protectManagedMailApproval({
       default: parsed.default === undefined ? DEFAULT_APPROVAL_POLICY.default : approvalActionFromValue(parsed.default),
-      rules: Array.isArray(parsed.rules) ? rules : DEFAULT_APPROVAL_POLICY.rules,
-    };
+      rules: parsed.rules === undefined ? DEFAULT_APPROVAL_POLICY.rules : rules,
+    });
   } catch {
     return DEFAULT_APPROVAL_POLICY;
   }

@@ -227,7 +227,7 @@ function parseTargetListOptions(args: string[], requireQuery = false): ListOptio
 function parseTargetShowOptions(
   args: string[],
   commandName: "targets" | "devices",
-): { targetId: string; json: boolean } {
+){
   let json = false;
   const positional: string[] = [];
   for (const arg of args) {
@@ -240,7 +240,7 @@ function parseTargetShowOptions(
   if (positional.length !== 1) {
     throw new Error(`usage: ${commandName} show <target-id> [--json]`);
   }
-  return { targetId: positional[0], json };
+  return { targetId: positional[0], json } satisfies { targetId: string; json: boolean };
 }
 
 function parseLimit(value: string): number {

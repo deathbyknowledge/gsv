@@ -5,8 +5,10 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
 import type { IdentityLinkRecord } from "./identity-links";
+import type { SurfaceRouteRecord } from "./surface-routes";
 import { resolveCallerOwnerUid } from "./context";
 import { stableOpaqueId } from "../shared/stable-id";
+import { z } from "zod";
 
 const SURFACE_KINDS = new Set<AdapterSurfaceKind>([
   "dm",
@@ -14,12 +16,27 @@ const SURFACE_KINDS = new Set<AdapterSurfaceKind>([
   "channel",
   "thread",
 ]);
+const bindingSchema = z.object({ adapterSend: z.function() });
+const surfaceKindSchema = z.enum(["dm", "group", "channel", "thread"]);
+const adapterSurfaceSchema = z.object({
+  kind: z.enum(["dm", "group", "channel", "thread"]),
+  id: z.string().trim().min(1),
+  threadId: z.string().optional(),
+});
 
 export type VisibleAdapterMessageDestination = {
   id: string;
   label: string;
   online: boolean;
   destination: AdapterMessageDestination;
+};
+type AdapterMessageRouteKey = {
+  adapter: string;
+  accountId: string;
+  actorId: string;
+  surfaceKind: AdapterSurfaceKind;
+  surfaceId: string;
+  threadId?: string;
 };
 
 export function normalizeAdapterMessageDestination(
@@ -43,24 +60,17 @@ export function normalizeAdapterMessageDestination(
 export function normalizeAdapterSurface(
   surface: AdapterSurface | undefined,
 ): AdapterSurface {
-  if (!surface || typeof surface !== "object") {
+  const parsed = adapterSurfaceSchema.safeParse(surface);
+  if (!parsed.success) {
     throw new Error("surface is required");
   }
-  if (!SURFACE_KINDS.has(surface.kind)) {
-    throw new Error("surface.kind is invalid");
-  }
-  if (typeof surface.id !== "string" || !surface.id.trim()) {
-    throw new Error("surface.id is required");
-  }
-  if (surface.threadId !== undefined && typeof surface.threadId !== "string") {
-    throw new Error("surface.threadId must be a string");
-  }
-  const threadId = optionalText(surface.threadId);
-  return {
-    kind: surface.kind,
-    id: surface.id.trim(),
-    ...(threadId ? { threadId } : {}),
+  const threadId = optionalText(parsed.data.threadId);
+  const normalized: AdapterSurface = {
+    kind: parsed.data.kind,
+    id: parsed.data.id,
   };
+  if (threadId) normalized.threadId = threadId;
+  return normalized;
 }
 
 export function assertAdapterMessageDestinationAccess(
@@ -93,7 +103,7 @@ export function assertAdapterMessageDestinationAccess(
 
 export async function listVisibleAdapterMessageDestinations(
   ctx: KernelContext,
-  options: { includeOffline?: boolean } = {},
+  options: { includeOffline?: boolean; includeUnavailable?: boolean } = {},
 ): Promise<VisibleAdapterMessageDestination[]> {
   if (!ctx.identity || ctx.identity.role !== "user") {
     return [];
@@ -109,7 +119,7 @@ export async function listVisibleAdapterMessageDestinations(
     if (!options.includeOffline && !online) {
       return;
     }
-    if (!adapterSendServiceAvailable(ctx, adapter)) {
+    if (!options.includeUnavailable && !adapterSendServiceAvailable(ctx, adapter)) {
       return;
     }
     const destination = normalizeAdapterMessageDestination({
@@ -122,7 +132,7 @@ export async function listVisibleAdapterMessageDestinations(
     const key = destinationKey(destination);
     candidateMap.set(key, {
       id: "",
-      label: `${adapterDisplayName(adapter)} ${surfaceLabel(destination.surface)}`,
+      label: adapterMessageDestinationLabel(destination),
       online,
       destination,
     });
@@ -144,7 +154,6 @@ export async function listVisibleAdapterMessageDestinations(
     addCandidate(link, {
       kind: route.surfaceKind,
       id: route.surfaceId,
-      ...(route.threadId ? { threadId: route.threadId } : {}),
     });
   }
 
@@ -159,7 +168,7 @@ export async function listVisibleAdapterMessageDestinations(
 export async function resolveVisibleAdapterMessageDestination(
   query: string,
   ctx: KernelContext,
-  options: { includeOffline?: boolean } = {},
+  options: { includeOffline?: boolean; includeUnavailable?: boolean } = {},
 ): Promise<VisibleAdapterMessageDestination> {
   const needle = query.trim().toLowerCase();
   if (!needle) {
@@ -188,6 +197,122 @@ export async function resolveVisibleAdapterMessageDestination(
   );
 }
 
+export function updateAdapterMessageDestinationRoute(
+  destination: AdapterMessageDestination,
+  pid: string | null,
+  ctx: KernelContext,
+): SurfaceRouteRecord | null {
+  const normalized = normalizeAdapterMessageDestination(destination);
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  assertAdapterMessageDestinationAccess(normalized, ownerUid, ctx);
+  const key = adapterMessageDestinationRouteKey(normalized);
+  const existing = ctx.adapters.surfaceRoutes.get(key);
+  if (existing && existing.uid !== ownerUid) {
+    throw new Error("Adapter route ownership does not match the linked identity");
+  }
+  if (!pid) {
+    if (normalized.surface.kind === "dm") {
+      throw new Error("Use /ship in the private DM to return to Ship");
+    }
+    if (existing) ctx.adapters.surfaceRoutes.clearRoute(key);
+    return null;
+  }
+
+  const process = ctx.procs.get(pid);
+  if (!process || process.ownerUid !== ownerUid) {
+    throw new Error("Process not found");
+  }
+  if (!process.interactive) {
+    throw new Error("Adapter destinations can only route to interactive processes");
+  }
+
+  if (normalized.surface.kind === "dm") {
+    return setPrivateDmWorkRoute(normalized, process, existing, ownerUid, ctx);
+  }
+
+  return ctx.adapters.surfaceRoutes.setRoute({
+    ...key,
+    uid: ownerUid,
+    pid: process.processId,
+    mode: "surface",
+    updatedByUid: ctx.identity!.process.uid,
+  });
+}
+
+function setPrivateDmWorkRoute(
+  destination: AdapterMessageDestination,
+  target: NonNullable<ReturnType<KernelContext["procs"]["get"]>>,
+  existing: SurfaceRouteRecord | null,
+  ownerUid: number,
+  ctx: KernelContext,
+): SurfaceRouteRecord {
+  if (target.isPersonalController) {
+    throw new Error("A private DM direct line must target a non-personal work process");
+  }
+  const callerPid = ctx.processId;
+  const runId = ctx.processRunId;
+  const controller = ctx.procs.getPersonalController(ownerUid);
+  if (
+    !callerPid
+    || !runId
+    || controller?.processId !== callerPid
+    || !controller.isPersonalController
+    || controller.activeRunId !== runId
+  ) {
+    throw new Error("Only the personal intelligence can open a private DM direct line");
+  }
+
+  const runRoute = ctx.runRoutes.get(runId);
+  if (
+    runRoute?.kind !== "adapter"
+    || runRoute.processId !== callerPid
+    || runRoute.uid !== ownerUid
+    || !runRoute.replyToId
+    || !sameAdapterMessageDestination(runRoute.destination, destination)
+  ) {
+    throw new Error("A private DM direct line requires the exact conversation that started this run");
+  }
+
+  const latest = ctx.adapters.privateDestinations.get(ownerUid);
+  if (
+    !latest
+    || latest.messageId !== runRoute.replyToId
+    || !sameAdapterMessageDestination(latest.destination, destination)
+    || !ctx.adapters.ingressReceipts.isLatestPrivateMessage(destination, runRoute.replyToId)
+  ) {
+    throw new Error("The private conversation changed before the direct line could be opened");
+  }
+
+  if (existing?.mode === "work" && existing.pid === target.processId) {
+    return existing;
+  }
+  if (existing) {
+    throw new Error("The private conversation selection changed before the direct line could be opened");
+  }
+
+  return ctx.adapters.surfaceRoutes.setRoute({
+    ...adapterMessageDestinationRouteKey(destination),
+    uid: ownerUid,
+    pid: target.processId,
+    mode: "work",
+    updatedByUid: ctx.identity!.process.uid,
+  });
+}
+
+function sameAdapterMessageDestination(
+  left: AdapterMessageDestination,
+  right: AdapterMessageDestination,
+): boolean {
+  const normalizedLeft = normalizeAdapterMessageDestination(left);
+  const normalizedRight = normalizeAdapterMessageDestination(right);
+  return normalizedLeft.adapter === normalizedRight.adapter
+    && normalizedLeft.accountId === normalizedRight.accountId
+    && normalizedLeft.actorId === normalizedRight.actorId
+    && normalizedLeft.surface.kind === normalizedRight.surface.kind
+    && normalizedLeft.surface.id === normalizedRight.surface.id
+    && (normalizedLeft.surface.threadId ?? "") === (normalizedRight.surface.threadId ?? "");
+}
+
 export async function adapterMessageDestinationId(
   destination: AdapterMessageDestination,
   ownerUid: number,
@@ -204,6 +329,13 @@ export async function adapterMessageDestinationId(
   ]);
 }
 
+export function adapterMessageDestinationLabel(
+  destination: AdapterMessageDestination,
+): string {
+  const normalized = normalizeAdapterMessageDestination(destination);
+  return `${adapterDisplayName(normalized.adapter)} ${surfaceLabel(normalized.surface)}`;
+}
+
 export function identityLinkAllowsSurface(
   link: IdentityLinkRecord,
   surface: AdapterSurface,
@@ -214,6 +346,16 @@ export function identityLinkAllowsSurface(
     return linkedSurfaceKind === surface.kind && linkedSurfaceId === surface.id.trim();
   }
   return false;
+}
+
+export function identityLinkRouteGeneration(
+  link: IdentityLinkRecord,
+  surface: AdapterSurface,
+): string | undefined {
+  if (link.metadata?.managed !== true || !identityLinkAllowsSurface(link, surface)) {
+    return undefined;
+  }
+  return metadataString(link.metadata, "routeGeneration") || undefined;
 }
 
 function requiredText(value: string | undefined, label: string): string {
@@ -230,23 +372,27 @@ function optionalText(value: string | undefined): string | undefined {
 }
 
 function metadataString(
-  metadata: Record<string, unknown> | null | undefined,
+  metadata: IdentityLinkRecord["metadata"],
   key: string,
 ): string {
   const value = metadata?.[key];
-  return typeof value === "string" ? value.trim() : "";
+  const parsed = z.string().safeParse(value);
+  return parsed.success ? parsed.data.trim() : "";
 }
 
 function linkedSurface(link: IdentityLinkRecord): AdapterSurface | null {
-  const kind = metadataString(link.metadata, "surfaceKind") as AdapterSurfaceKind;
+  const parsedKind = surfaceKindSchema.safeParse(metadataString(link.metadata, "surfaceKind"));
+  if (!parsedKind.success) return null;
+  const kind = parsedKind.data;
   const id = metadataString(link.metadata, "surfaceId");
   const threadId = metadataString(link.metadata, "threadId");
   if (SURFACE_KINDS.has(kind) && id) {
-    return {
+    const linked: AdapterSurface = {
       kind,
       id,
-      ...(threadId ? { threadId } : {}),
     };
+    if (threadId) linked.threadId = threadId;
+    return linked;
   }
   return null;
 }
@@ -262,14 +408,22 @@ function destinationKey(destination: AdapterMessageDestination): string {
   ].join("\0");
 }
 
+export function adapterMessageDestinationRouteKey(destination: AdapterMessageDestination): AdapterMessageRouteKey {
+  const key: AdapterMessageRouteKey = {
+    adapter: destination.adapter,
+    accountId: destination.accountId,
+    actorId: destination.actorId,
+    surfaceKind: destination.surface.kind,
+    surfaceId: destination.surface.id,
+  };
+  if (destination.surface.threadId) key.threadId = destination.surface.threadId;
+  return key;
+}
+
 function adapterSendServiceAvailable(ctx: KernelContext, adapter: string): boolean {
   const key = `CHANNEL_${adapter.toUpperCase()}`;
-  const binding = (ctx.env as unknown as Record<string, unknown>)[key];
-  return Boolean(
-    binding
-    && typeof binding === "object"
-    && typeof (binding as { adapterSend?: unknown }).adapterSend === "function",
-  );
+  const binding = Object.entries(ctx.env).find(([name]) => name === key)?.[1];
+  return bindingSchema.safeParse(binding).success;
 }
 
 function adapterDisplayName(adapter: string): string {

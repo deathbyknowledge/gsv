@@ -79,7 +79,7 @@ describe("isValidCapability", () => {
 
 describe("CapabilityStore", () => {
   const storeTest = it.extend<{ store: CapabilityStore }>({
-    store: async ({}, use) => {
+    store: async ({ task: _task }, use) => {
       await runWithRealKernelSql((sql) => {
         sql.exec("DELETE FROM group_capabilities");
         return use(new CapabilityStore(sql));
@@ -104,6 +104,8 @@ describe("CapabilityStore", () => {
         "adapter.connect",
         "adapter.disconnect",
         "adapter.list",
+        "adapter.pair.*",
+        "adapter.route",
         "adapter.send",
         "adapter.status",
         "ai.image.generate",
@@ -112,9 +114,13 @@ describe("CapabilityStore", () => {
         "ai.text.generate",
         "ai.transcription.create",
         "codemode.*",
+        "conversation.*",
         "fs.*",
+        "mail.send",
+        "mail.status",
         "net.fetch",
         "proc.*",
+        "r12y.*",
         "repo.apply",
         "repo.compare",
         "repo.create",

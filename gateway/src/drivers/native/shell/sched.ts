@@ -1,6 +1,6 @@
 import { defineCommand } from "just-bash";
 import type { ExecResult } from "just-bash";
-import type { KernelContext } from "../../../kernel/context";
+import { resolveCallerOwnerUid, type KernelContext } from "../../../kernel/context";
 import {
   handleSchedulerAdd,
   handleSchedulerList,
@@ -8,11 +8,48 @@ import {
   handleSchedulerRun,
   handleSchedulerUpdate,
 } from "../../../kernel/scheduler";
+import { jsonObjectSchema } from "@humansandmachines/gsv/protocol";
 import type { SchedulerAddArgs, ScheduleTarget } from "@humansandmachines/gsv/protocol";
 import { parseDurationMs, requireCommandCapability, requireShellOptionValue } from "./common";
 import { resolveVisibleAdapterMessageDestination } from "../../../kernel/adapter-destinations";
+import * as z from "zod/mini";
 
 const ISO_TIMESTAMP_WITH_ZONE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+const adapterDestinationSchema = z.strictObject({
+  kind: z.literal("adapter"),
+  adapter: z.string(),
+  accountId: z.string(),
+  surface: z.strictObject({
+    kind: z.enum(["dm", "group", "channel", "thread"]),
+    id: z.string(),
+    name: z.optional(z.string()),
+    handle: z.optional(z.string()),
+    threadId: z.optional(z.string()),
+  }),
+  actorId: z.string(),
+});
+const responsibilityPrioritySchema = z.enum(["low", "normal", "high", "critical"]);
+const scheduleTargetSchema = z.union([
+  z.strictObject({ kind: z.literal("command.exec"), command: z.string(), cwd: z.optional(z.string()), timeoutMs: z.optional(z.number()) }),
+  z.strictObject({ kind: z.literal("process.spawn"), runAs: z.optional(z.string()), label: z.optional(z.string()), prompt: z.string(), parentPid: z.optional(z.string()), cwd: z.optional(z.string()) }),
+  z.strictObject({ kind: z.literal("process.event"), pid: z.string(), message: z.string(), data: z.optional(jsonObjectSchema), replyTo: z.optional(adapterDestinationSchema) }),
+  z.strictObject({ kind: z.literal("responsibility"), message: z.string(), data: z.optional(jsonObjectSchema), priority: z.optional(responsibilityPrioritySchema) }),
+  z.strictObject({ kind: z.literal("adapter.send"), destination: adapterDestinationSchema, text: z.string() }),
+]);
+const scheduleExpressionSchema = z.union([
+  z.strictObject({ kind: z.literal("at"), atMs: z.number() }),
+  z.strictObject({ kind: z.literal("after"), afterMs: z.number() }),
+  z.strictObject({ kind: z.literal("every"), everyMs: z.number(), anchorMs: z.optional(z.number()) }),
+  z.strictObject({ kind: z.literal("cron"), expr: z.string(), timezone: z.string() }),
+]);
+const schedulerAddArgsSchema = z.strictObject({
+  name: z.string(),
+  description: z.optional(z.string()),
+  enabled: z.optional(z.boolean()),
+  expression: scheduleExpressionSchema,
+  target: scheduleTargetSchema,
+});
 
 export function buildSchedCommand(ctx: KernelContext) {
   return defineCommand("sched", async (args): Promise<ExecResult> => {
@@ -106,10 +143,12 @@ async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise
     if (args.length !== 2) {
       throw new Error("--json must be the only sched add option");
     }
-    return JSON.parse(requireShellOptionValue(args[1], "--json")) as SchedulerAddArgs;
+    const parsed = JSON.parse(requireShellOptionValue(args[1], "--json"));
+    return schedulerAddArgsSchema.parse(parsed);
   }
 
   let here = false;
+  let ship = false;
   let to: string | undefined;
   let name: string | undefined;
   let message: string | undefined;
@@ -123,6 +162,13 @@ async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise
         throw new Error("--here may only be specified once");
       }
       here = true;
+      continue;
+    }
+    if (current === "--ship") {
+      if (ship) {
+        throw new Error("--ship may only be specified once");
+      }
+      ship = true;
       continue;
     }
     if (current === "--to") {
@@ -198,8 +244,8 @@ async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise
     throw new Error(`unexpected argument: ${current}`);
   }
 
-  if (here === (to !== undefined)) {
-    throw new Error("sched add requires exactly one of --here or --to DESTINATION");
+  if (Number(here) + Number(ship) + Number(to !== undefined) !== 1) {
+    throw new Error("sched add requires exactly one of --here, --ship, or --to DESTINATION");
   }
   if (here && !ctx.processId) {
     throw new Error("sched add --here requires a process caller");
@@ -221,6 +267,14 @@ async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise
     throw new Error("sched add requires --message");
   }
 
+  if (ship) {
+    return {
+      name,
+      expression,
+      target: { kind: "responsibility", message },
+    };
+  }
+
   if (to !== undefined) {
     requireCommandCapability(ctx, "adapter.send");
     const destination = (await resolveVisibleAdapterMessageDestination(to, ctx, {
@@ -237,24 +291,37 @@ async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise
     };
   }
 
-  const processId = ctx.processId!;
-  const caller = ctx.procs.get(processId);
+  const currentProcessId = ctx.processId!;
+  const caller = ctx.procs.get(currentProcessId);
   if (!caller) {
-    throw new Error(`current process not found: ${processId}`);
+    throw new Error(`current process not found: ${currentProcessId}`);
   }
-  const route = ctx.processRunId ? ctx.runRoutes.get(ctx.processRunId) : null;
+  const ipcCall = ctx.processRunId
+    ? ctx.ipcCalls.findPendingByTargetRun({
+        uid: resolveCallerOwnerUid(ctx),
+        targetPid: currentProcessId,
+        targetRunId: ctx.processRunId,
+      })
+    : null;
+  const processId = ipcCall?.sourcePid ?? currentProcessId;
+  const routeRunId = ipcCall ? ipcCall.sourceRunId : ctx.processRunId;
+  const route = routeRunId ? ctx.runRoutes.get(routeRunId) : null;
   const replyTo = route?.kind === "adapter" && route.processId === processId
     ? route.destination
     : undefined;
+  const targetProcess = ctx.procs.get(processId);
+  if (!targetProcess) {
+    throw new Error(`target process not found: ${processId}`);
+  }
+  const target: ScheduleTarget = targetProcess.isPersonalController
+    ? { kind: "responsibility", message }
+    : replyTo
+      ? { kind: "process.event", pid: processId, message, replyTo }
+      : { kind: "process.event", pid: processId, message };
   return {
     name,
     expression,
-    target: {
-      kind: "process.event",
-      pid: processId,
-      message,
-      ...(replyTo ? { replyTo } : {}),
-    },
+    target,
   };
 }
 
@@ -274,6 +341,9 @@ function formatScheduleTarget(target: ScheduleTarget): string {
   }
   if (target.kind === "adapter.send") {
     return `message:${target.destination.adapter}`;
+  }
+  if (target.kind === "responsibility") {
+    return "r12y:ship";
   }
   return `event:${target.pid}`;
 }
@@ -297,6 +367,7 @@ function schedUsage(): string {
   return [
     "Usage:",
     "  sched list [--all]",
+    "  sched add --ship --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE",
     "  sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE",
     "  sched add --to DESTINATION --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE",
     "  sched add --json JSON",
@@ -305,7 +376,8 @@ function schedUsage(): string {
     "  sched remove <id>",
     "  sched run <id> [--force]",
     "",
-    "Use --here to wake this process and automatically reply on the current surface.",
+    "Use --ship to create a responsibility for your personal intelligence on every firing.",
+    "Use --here to wake this non-Ship process, or its caller during delegated work.",
     "Use --to for a direct scheduled message to an authorized adapter destination.",
     "--at requires a future ISO timestamp with Z or an explicit numeric UTC offset.",
     "Use crontab -l, crontab FILE, crontab -r, or /var/spool/cron/<user>",

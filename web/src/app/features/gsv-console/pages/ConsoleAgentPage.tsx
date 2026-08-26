@@ -1,4 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import { z } from "zod";
 import {
   AgentEditor,
   type AgentEditorDraft,
@@ -22,6 +23,7 @@ import type {
   ConsoleResourceState,
   ConsoleTarget,
 } from "../domain/consoleModels";
+import { consoleWorkProcesses } from "../domain/consoleProcesses";
 import {
   modelOptionsForConfig,
   type ConsoleModelOption,
@@ -169,7 +171,8 @@ function AgentEditorSurface({
   const rootRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [activeEditorTab, setActiveEditorTab] = useState<AgentEditorTab>("general");
-  const processes = (processResource.data ?? []).filter((process) => ownsProcess(account, process));
+  const processes = consoleWorkProcesses(processResource.data ?? [])
+    .filter((process) => ownsProcess(account, process));
   const context = useConsoleAgentContext(account.username);
   const saveBehavior = useSaveConsoleAgentBehavior();
   const saveContext = useSaveConsoleAgentContext();
@@ -191,12 +194,9 @@ function AgentEditorSurface({
     inheritedFallbackModelLabel,
   );
   const files = editorFilesForAccount({
-    account,
     contextFiles: context.files,
     contextLoading: context.resource.isLoading,
     contextError: context.resource.isError ? context.resource.errorText : "",
-    processes,
-    processResource,
   });
   const editorTasks = isHumanCrewAccount(account) ? [] : tasksForProcesses(processes);
 
@@ -205,11 +205,11 @@ function AgentEditorSurface({
     if (!node) return;
     const update = () => setWidth(node.clientWidth);
     update();
-    if (typeof ResizeObserver === "undefined") {
+    if (!globalThis.ResizeObserver) {
       window.addEventListener("resize", update);
       return () => window.removeEventListener("resize", update);
     }
-    const observer = new ResizeObserver(update);
+    const observer = new globalThis.ResizeObserver(update);
     observer.observe(node);
     return () => observer.disconnect();
   }, []);
@@ -316,11 +316,11 @@ function NewAgentEditorSurface({
     if (!node) return;
     const update = () => setWidth(node.clientWidth);
     update();
-    if (typeof ResizeObserver === "undefined") {
+    if (!globalThis.ResizeObserver) {
       window.addEventListener("resize", update);
       return () => window.removeEventListener("resize", update);
     }
-    const observer = new ResizeObserver(update);
+    const observer = new globalThis.ResizeObserver(update);
     observer.observe(node);
     return () => observer.disconnect();
   }, []);
@@ -390,10 +390,12 @@ function approvalSourceLabel(editsUserDefaults: boolean, inherited: boolean): st
 
 function modelOptionsKey(options: readonly AgentEditorModelOption[]): string {
   return options.map((option) => {
-    if (typeof option === "string") {
-      return option;
+    const text = z.string().safeParse(option);
+    if (text.success) {
+      return text.data;
     }
-    return `${option.value ?? ""}:${option.label}:${option.description ?? ""}`;
+    const model = z.object({ value: z.string().optional(), label: z.string(), description: z.string().optional() }).safeParse(option);
+    return model.success ? `${model.data.value ?? ""}:${model.data.label}:${model.data.description ?? ""}` : "";
   }).join("\u0000");
 }
 
@@ -445,7 +447,7 @@ function avatarStatusForProcesses(account: ConsoleAccount, processes: readonly C
 
 function tasksForProcesses(processes: readonly ConsoleProcess[]): AgentEditorTask[] {
   if (processes.length === 0) {
-    return [{ name: "No process activity", status: "idle" }];
+    return [{ name: "No work yet", status: "idle" }];
   }
   return processes.map((process) => ({
     name: process.label || process.pid,
@@ -453,45 +455,14 @@ function tasksForProcesses(processes: readonly ConsoleProcess[]): AgentEditorTas
   }));
 }
 
-function filesForAccount(
-  account: ConsoleAccount,
-  processes: readonly ConsoleProcess[],
-  processResource: ConsoleResourceState<ConsoleProcess[]>,
-): AgentEditorFile[] {
-  return [
-    {
-      label: "ACCOUNT",
-      content: [
-        `# ${account.displayName}`,
-        "",
-        `username: ${account.username}`,
-        `uid: ${account.uid}`,
-        `relation: ${account.relation}`,
-        `runnable: ${account.runnable ? "yes" : "no"}`,
-        account.gecos ? `gecos: ${account.gecos}` : "",
-      ].filter(Boolean).join("\n"),
-    },
-    {
-      label: "PROCESSES",
-      content: processFileContent(processes, processResource),
-    },
-  ];
-}
-
 function editorFilesForAccount({
-  account,
   contextError,
   contextFiles,
   contextLoading,
-  processes,
-  processResource,
 }: {
-  account: ConsoleAccount;
   contextError: string;
   contextFiles: readonly ConsoleAgentContextFile[];
   contextLoading: boolean;
-  processes: readonly ConsoleProcess[];
-  processResource: ConsoleResourceState<ConsoleProcess[]>;
 }): AgentEditorFile[] {
   if (contextLoading) {
     return [{
@@ -513,27 +484,6 @@ function editorFilesForAccount({
   return [];
 }
 
-function processFileContent(
-  processes: readonly ConsoleProcess[],
-  processResource: ConsoleResourceState<ConsoleProcess[]>,
-): string {
-  if (processResource.isLoading) return "# Processes\n\nLoading process telemetry.";
-  if (processResource.isUnavailable) return "# Processes\n\nProcess telemetry is offline.";
-  if (processResource.isError) return `# Processes\n\n${processResource.errorText || "Process telemetry failed."}`;
-  if (processes.length === 0) return "# Processes\n\nNo process activity.";
-  return [
-    "# Processes",
-    "",
-    ...processes.map((process) => [
-      `- ${process.label || process.pid}`,
-      `  pid: ${process.pid}`,
-      `  state: ${process.rawState || process.state}`,
-      process.cwd ? `  cwd: ${process.cwd}` : "",
-      process.activeRunId ? `  activeRunId: ${process.activeRunId}` : "",
-      process.queuedCount > 0 ? `  queued: ${process.queuedCount}` : "",
-    ].filter(Boolean).join("\n")),
-  ].join("\n");
-}
 
 function accountDescription(account: ConsoleAccount, editsUserDefaults = false): string {
   if (editsUserDefaults) {

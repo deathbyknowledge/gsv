@@ -1,9 +1,19 @@
 import { withTimeout } from "./timeout";
 import { binaryDataFromBase64, binaryDataFromBytes } from "../shared/base64";
+import { jsonObjectSchema, type JsonObject, type JsonValue } from "@humansandmachines/gsv/protocol";
+import * as z from "zod/mini";
 
 export type AudioSpeechBinding = {
-  run(model: string, input: Record<string, unknown>): Promise<unknown>;
+  run(model: string, input: JsonObject): Promise<AudioSpeechResponse>;
 };
+
+type AudioSpeechResponse =
+  | ReadableStream<Uint8Array>
+  | Response
+  | ArrayBuffer
+  | ArrayBufferView
+  | Blob
+  | JsonValue;
 
 export type AudioSpeechRequest = {
   text: string;
@@ -62,21 +72,16 @@ export async function synthesizeSpeechWithWorkersAi(
     `Speech synthesis timed out after ${timeoutMs}ms`,
   );
   const audio = await normalizeSpeechResponse(response, mimeTypeForSpeech({ model, encoding, container }));
-  return audio
-    ? {
-      ...audio,
-      provider: "workers-ai",
-      model,
-      ...(voice ? { voice } : {}),
-      encoding,
-      ...(container ? { container } : {}),
-    }
-    : null;
+  if (!audio) return null;
+  const result: AudioSpeechResult = { ...audio, provider: "workers-ai", model, encoding };
+  if (voice) result.voice = voice;
+  if (container) result.container = container;
+  return result;
 }
 
 function buildWorkersAiSpeechInput(
   request: Required<Pick<AudioSpeechRequest, "text" | "model" | "encoding">> & AudioSpeechRequest,
-): Record<string, unknown> {
+): JsonObject {
   if (request.model.includes("/melotts")) {
     return {
       prompt: request.text,
@@ -84,7 +89,7 @@ function buildWorkersAiSpeechInput(
     };
   }
 
-  const input: Record<string, unknown> = {
+  const input: JsonObject = {
     text: request.text,
     encoding: request.encoding,
   };
@@ -94,17 +99,15 @@ function buildWorkersAiSpeechInput(
   if (request.container) {
     input.container = request.container;
   }
-  if (typeof request.sampleRate === "number" && Number.isFinite(request.sampleRate) && request.sampleRate > 0) {
-    input.sample_rate = request.sampleRate;
-  }
-  if (typeof request.bitRate === "number" && Number.isFinite(request.bitRate) && request.bitRate > 0) {
-    input.bit_rate = request.bitRate;
-  }
+  const sampleRate = normalizePositiveNumber(request.sampleRate);
+  if (sampleRate !== undefined) input.sample_rate = sampleRate;
+  const bitRate = normalizePositiveNumber(request.bitRate);
+  if (bitRate !== undefined) input.bit_rate = bitRate;
   return input;
 }
 
 async function normalizeSpeechResponse(
-  response: unknown,
+  response: AudioSpeechResponse,
   fallbackMimeType: string,
 ): Promise<{ bytes: Uint8Array; mimeType: string } | null> {
   if (response instanceof ReadableStream) {
@@ -125,14 +128,14 @@ async function normalizeSpeechResponse(
   if (response instanceof Blob) {
     return binaryDataFromBytes(await response.arrayBuffer(), response.type || fallbackMimeType);
   }
-  if (typeof response === "string" && response.trim().length > 0) {
-    return binaryDataFromBase64(response.trim(), fallbackMimeType);
+  const parsed = jsonObjectSchema.safeParse(response);
+  if (!parsed.success) {
+    const text = z.string().safeParse(response);
+    return text.success && text.data.trim().length > 0
+      ? binaryDataFromBase64(text.data.trim(), fallbackMimeType)
+      : null;
   }
-  if (!response || typeof response !== "object") {
-    return null;
-  }
-
-  const record = response as Record<string, unknown>;
+  const record = parsed.data;
   const base64 = firstString(record.audio, record.data, record.output, record.result);
   if (base64) {
     const mimeType = firstString(record.mimeType, record.mime_type, record.contentType, record.content_type) || fallbackMimeType;
@@ -147,23 +150,24 @@ function defaultVoiceForModel(model: string): string | undefined {
   return model.includes("/aura-") ? DEFAULT_AUDIO_SPEECH_SPEAKER : undefined;
 }
 
-function normalizeEncoding(value: unknown): string | undefined {
+function normalizeEncoding(value: JsonValue | undefined): string | undefined {
   return normalizeOptionalText(value)?.toLowerCase();
 }
 
-function normalizePositiveNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+function normalizePositiveNumber(value: JsonValue | undefined): number | undefined {
+  const parsed = z.number().safeParse(value);
+  return parsed.success && Number.isFinite(parsed.data) && parsed.data > 0 ? parsed.data : undefined;
 }
 
-function normalizeOptionalText(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+function normalizeOptionalText(value: JsonValue | undefined): string | undefined {
+  const parsed = z.string().safeParse(value);
+  return parsed.success && parsed.data.trim().length > 0 ? parsed.data.trim() : undefined;
 }
 
-function firstString(...values: unknown[]): string | undefined {
+function firstString(...values: JsonValue[]): string | undefined {
   for (const value of values) {
-    if (typeof value === "string" && value.trim().length > 0) {
-      return value.trim();
-    }
+    const text = normalizeOptionalText(value);
+    if (text) return text;
   }
   return undefined;
 }

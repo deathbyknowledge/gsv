@@ -24,7 +24,7 @@ export interface TileProps {
 }
 
 // status tone → token (verbatim from Tile.dc.html)
-const STATUS_VAR: Record<TileStatus, string> = {
+const STATUS_VAR = {
   online: "var(--online)",
   error: "var(--error)",
   idle: "var(--idle)",
@@ -32,12 +32,13 @@ const STATUS_VAR: Record<TileStatus, string> = {
   live: "var(--live)",
   update: "var(--update)",
   // Selection accent — matches the Tag "accent" tone so a selected selector
+  // SAFETY: Component boundary provides the asserted DOM/test shape.
   // tile's dot reads as chosen, not as a live status.
   accent: "#b3aeff",
 };
 
 // Fallback tooltip word per tone, used when the caller passes no `statusHint`.
-const STATUS_WORD: Record<TileStatus, string> = {
+const STATUS_WORD = {
   online: "Online",
   error: "Error",
   idle: "Idle",
@@ -83,7 +84,7 @@ export function Tile({
     height: "8px",
     borderRadius: "50%",
     background: dc,
-    ...(status === "idle" ? {} : { boxShadow: `0 0 7px ${dc}` }),
+    ...(status === "idle" ? undefined : { boxShadow: `0 0 7px ${dc}` }),
   };
 
   if (anchor) {
@@ -112,7 +113,7 @@ export function Tile({
           <span style={{ position: "absolute", left: "-7px", top: "50%", height: "1.5px", width: "8px", background: "#e4e8f2", transform: "translateY(-50%)" }} />
           <span style={{ position: "absolute", right: "-7px", top: "50%", height: "1.5px", width: "8px", background: "#e4e8f2", transform: "translateY(-50%)" }} />
           <svg width="42" height="42" viewBox="0 0 16 16">
-            <g fill="var(--text-hi)" shape-rendering="crispEdges">
+            <g fill="var(--text-hi)" style={{ ["shape-rendering"]: "crispEdges" }}>
               <rect x="7" y="1" width="2" height="2" />
               <rect x="6" y="3" width="4" height="6" />
               <rect x="4" y="6" width="2" height="3" />

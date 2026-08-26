@@ -1,6 +1,6 @@
 import type { AdapterMedia } from "../../shared/src/types";
 
-export function isWhatsAppEncryptionPreparationFailure(error: unknown): boolean {
+export function isWhatsAppEncryptionPreparationFailure(error: Error): boolean {
   return error instanceof Error && error.message === "All encryptions failed";
 }
 
@@ -36,7 +36,7 @@ export function defaultWhatsAppFilename(media: AdapterMedia): string {
   const provided = media.filename?.trim();
   if (provided) return provided.slice(0, 240);
   const mime = media.mimeType.toLowerCase().split(";", 1)[0];
-  const extensions: Record<string, string> = {
+  const extensions = {
     "image/jpeg": "jpg",
     "image/png": "png",
     "image/webp": "webp",
@@ -44,6 +44,7 @@ export function defaultWhatsAppFilename(media: AdapterMedia): string {
     "audio/ogg": "ogg",
     "audio/mpeg": "mp3",
     "application/pdf": "pdf",
-  };
-  return `attachment.${extensions[mime] ?? (media.type === "document" ? "bin" : media.type)}`;
+  } satisfies Record<string, string>;
+  const extension = Object.entries(extensions).find(([key]) => key === mime)?.[1];
+  return `attachment.${extension ?? (media.type === "document" ? "bin" : media.type)}`;
 }

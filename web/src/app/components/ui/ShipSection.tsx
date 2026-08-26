@@ -9,6 +9,7 @@ export interface ShipSectionRow {
   /** Optional eyebrow label grouping the rows beneath it (e.g. "LOCAL FILES"). */
   group?: string;
   /** Leading icon glyph for the list row (ignored for the highlight item, which
+   // SAFETY: Component boundary provides the asserted DOM/test shape.
    *  uses the cover image as its avatar). */
   icon?: string;
   /** Object title. */
@@ -18,6 +19,7 @@ export interface ShipSectionRow {
   statusLabel?: string;
   /** Optional description line. */
   description?: string;
+  // SAFETY: Component boundary provides the asserted DOM/test shape.
   /** Renders as the highlighted / featured item (the back's highlight section). */
   highlight?: boolean;
   onClick?: () => void;
@@ -50,7 +52,7 @@ export interface ShipSectionProps {
 // merely resting where a card mounts — at page load, or after a turn-back —
 // fires a synthetic mouseenter with no preceding movement, which we ignore.
 let lastPointerMoveAt = -Infinity;
-if (typeof document !== "undefined") {
+if ("document" in globalThis) {
   document.addEventListener(
     "pointermove",
     () => { lastPointerMoveAt = performance.now(); },

@@ -1,0 +1,182 @@
+.gsv-r12y-page .gsv-console-page-body {
+  overflow: auto;
+}
+
+.gsv-r12y-shell {
+  display: grid;
+  gap: 24px;
+  padding: 28px;
+}
+
+.gsv-r12y-header,
+.gsv-r12y-section-heading,
+.gsv-r12y-card.is-standing {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.gsv-r12y-header h1,
+.gsv-r12y-section-heading h2 {
+  margin: 4px 0;
+  color: var(--text);
+  font-family: var(--gsv-font-display);
+}
+
+.gsv-r12y-header p,
+.gsv-r12y-card p {
+  margin: 0;
+  color: var(--text-dim);
+  line-height: 1.55;
+}
+
+.gsv-r12y-revision,
+.gsv-r12y-cadence,
+.gsv-r12y-card code,
+.gsv-r12y-schedule-meta {
+  color: var(--accent);
+  font-family: var(--gsv-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+.gsv-r12y-schedule-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 8px;
+  color: var(--text-dim);
+}
+
+.gsv-r12y-standing,
+.gsv-r12y-standing section,
+.gsv-r12y-list {
+  display: grid;
+  gap: 14px;
+}
+
+.gsv-r12y-card {
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 86%, transparent);
+}
+
+.gsv-r12y-card h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 16px;
+}
+
+.gsv-r12y-card-heading {
+  display: flex;
+  gap: 12px;
+  color: var(--text-dim);
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+
+.gsv-r12y-card-heading time {
+  margin-left: auto;
+}
+
+.gsv-r12y-state {
+  color: var(--accent-bright);
+}
+
+.gsv-r12y-state.is-resolved {
+  color: var(--success);
+}
+
+.gsv-r12y-state.is-cancelled {
+  color: var(--text-dim);
+}
+
+.gsv-r12y-required {
+  flex: none;
+  padding: 7px 10px;
+  border: 1px solid var(--border-raised);
+  color: var(--accent-bright);
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+.gsv-r12y-actions,
+.gsv-r12y-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.gsv-r12y-editor {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid var(--accent);
+  background: var(--panel);
+}
+
+.gsv-r12y-editor label {
+  display: grid;
+  gap: 7px;
+  color: var(--text-dim);
+  font-family: var(--gsv-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+}
+
+.gsv-r12y-editor input,
+.gsv-r12y-editor textarea,
+.gsv-r12y-editor select {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  letter-spacing: normal;
+}
+
+.gsv-r12y-editor-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) 1fr 1fr;
+  gap: 12px;
+}
+
+.gsv-r12y-empty {
+  padding: 36px;
+  border: 1px dashed var(--border);
+  color: var(--text-dim);
+  text-align: center;
+  font-family: var(--gsv-font-mono);
+  letter-spacing: 0.12em;
+}
+
+.gsv-r12y-error {
+  padding: 12px 14px;
+  border: 1px solid var(--error);
+  color: var(--error);
+}
+
+@media (max-width: 720px) {
+  .gsv-r12y-shell {
+    padding: 18px;
+  }
+
+  .gsv-r12y-header,
+  .gsv-r12y-section-heading,
+  .gsv-r12y-card.is-standing {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .gsv-r12y-editor-row {
+    grid-template-columns: 1fr;
+  }
+}

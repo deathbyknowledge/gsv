@@ -8,8 +8,11 @@
  *   - process_kv: key-value metadata (processId, archiveId, etc.)
  */
 
-import { SYSCALL_TOOL_NAMES } from "../syscalls/constants";
+import { isToolSyscallName, syscallToolName } from "../syscalls/constants";
+import type { SyscallName } from "../syscalls";
 import type {
+  JsonObject,
+  JsonValue,
   ProcAiConfigSnapshot,
   ProcContextState,
   ProcMessageMetadata,
@@ -17,8 +20,13 @@ import type {
   ProcMessageProviderMetadata,
   ProcToolResultOutcome,
   ProcUsageCost,
-  ProcUsageCostSource,
   ProcUsageState,
+  ResponsibilityRecord,
+  ResponsibilityTransition,
+} from "@humansandmachines/gsv/protocol";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
 } from "@humansandmachines/gsv/protocol";
 import type {
   Message,
@@ -41,8 +49,10 @@ import {
 } from "./history";
 import {
   PROCESS_AI_CONFIG_STORE_KEY,
-  normalizeProcessAiConfigSnapshot,
+  parseProcessAiConfigSnapshot,
 } from "./ai-config";
+import { materializeLegacyToolResultImages } from "./tool-result-media";
+import { z } from "zod";
 
 const DEFAULT_MESSAGE_READ_LIMIT = 200;
 
@@ -52,20 +62,23 @@ export type ToolCallRecord = {
   id: string;
   dispatchId: string;
   call: string;
-  args: unknown;
+  args: JsonValue;
   status: ToolCallStatus;
-  result: unknown;
+  result: JsonValue;
   error: string | null;
   outcome: ProcToolResultOutcome | null;
 };
 
 export type PendingToolCallRecord = {
   runId: string;
+  callId: string;
   call: string;
-  args: unknown;
+  args: JsonValue;
+  status: "registered" | "pending";
 };
 
 export type MessageRole = "user" | "assistant" | "system" | "toolResult";
+export type QueuedMessageRole = Extract<MessageRole, "user" | "system">;
 
 export type MessageRecord = {
   id: number;
@@ -107,9 +120,20 @@ export type QueuedMessage = {
   id: number;
   runId: string;
   generation: number;
+  role: QueuedMessageRole;
+  kind: string;
   message: string;
   media: string | null;
   origin?: string | null;
+  provenance?: string | null;
+};
+
+export type EnqueueMessageOptions = {
+  role?: QueuedMessageRole;
+  kind?: string;
+  media?: string;
+  origin?: string;
+  provenance?: string;
 };
 
 export type PendingHilRecord = {
@@ -118,10 +142,177 @@ export type PendingHilRecord = {
   ownerDispatchId?: string;
   toolCallId: string;
   toolName: string;
-  syscall: string;
-  args: Record<string, unknown>;
+  syscall: SyscallName;
+  args: JsonObject;
   createdAt: number;
 };
+
+type MessageStats = {
+  count: number;
+  firstMessageId: number | null;
+  lastMessageId: number | null;
+};
+
+export type ContextEpochRecord = {
+  id: string;
+  generation: number;
+  systemPrompt: string;
+  r12yRevision: number;
+  r12yCount: number;
+  observedR12yRevision: number;
+  r12yBaseline: ResponsibilityRecord[];
+  sourceManifest: JsonObject;
+  state: "live" | "closed";
+  createdAt: number;
+  closedAt?: number;
+  closeReason?: string;
+  archivePath?: string;
+};
+
+type ContextEpochRow = {
+  epoch_id: string;
+  generation: number;
+  system_prompt: string;
+  r12y_revision: number;
+  r12y_count: number;
+  observed_r12y_revision: number;
+  r12y_baseline_json: string;
+  source_manifest_json: string;
+  state: "live" | "closed";
+  created_at: number;
+  closed_at: number | null;
+  close_reason: string | null;
+  archive_path: string | null;
+};
+
+type ToolResultMetadata = {
+  toolName: string;
+  isError: boolean;
+  outcome?: ProcToolResultOutcome;
+};
+
+const toolCallStatusSchema = z.enum([
+  "registered",
+  "pending",
+  "completed",
+  "error",
+]);
+const messageRoleSchema = z.enum(["user", "assistant", "system", "toolResult"]);
+const nonEmptyStringSchema = z.string().trim().min(1);
+const optionalNonEmptyStringSchema = nonEmptyStringSchema.optional().catch(undefined);
+const optionalNonNegativeNumberSchema = z.number().finite().nonnegative().optional().catch(undefined);
+const optionalPositiveIntegerSchema = z.number().finite().positive().transform(Math.trunc).optional().catch(undefined);
+const usageCostSourceSchema = z.enum(["provider", "model-pricing", "mixed"]);
+const usageCostInputSchema = z.object({
+  input: optionalNonNegativeNumberSchema,
+  output: optionalNonNegativeNumberSchema,
+  cacheRead: optionalNonNegativeNumberSchema,
+  cacheWrite: optionalNonNegativeNumberSchema,
+  total: optionalNonNegativeNumberSchema,
+  source: usageCostSourceSchema.optional().catch(undefined),
+});
+const usageStateInputSchema = z.object({
+  inputTokens: optionalNonNegativeNumberSchema,
+  input: optionalNonNegativeNumberSchema,
+  outputTokens: optionalNonNegativeNumberSchema,
+  output: optionalNonNegativeNumberSchema,
+  cacheReadTokens: optionalNonNegativeNumberSchema,
+  cacheRead: optionalNonNegativeNumberSchema,
+  cacheWriteTokens: optionalNonNegativeNumberSchema,
+  cacheWrite: optionalNonNegativeNumberSchema,
+  totalTokens: optionalNonNegativeNumberSchema,
+  generations: optionalPositiveIntegerSchema,
+  costIncomplete: z.literal(true).optional().catch(undefined),
+  updatedAt: optionalNonNegativeNumberSchema,
+  cost: usageCostInputSchema.nullable().optional().catch(undefined),
+});
+const usageCostSchema = z.object({
+  input: z.number().nonnegative(),
+  output: z.number().nonnegative(),
+  cacheRead: z.number().nonnegative(),
+  cacheWrite: z.number().nonnegative(),
+  total: z.number().nonnegative(),
+  currency: z.literal("USD"),
+  source: usageCostSourceSchema,
+});
+const usageStateSchema = z.object({
+  inputTokens: z.number().nonnegative(),
+  outputTokens: z.number().nonnegative(),
+  cacheReadTokens: z.number().nonnegative(),
+  cacheWriteTokens: z.number().nonnegative(),
+  totalTokens: z.number().nonnegative(),
+  cost: usageCostSchema.nullable(),
+  generations: z.number().int().nonnegative().optional(),
+  costIncomplete: z.literal(true).optional(),
+  updatedAt: z.number().nonnegative().optional(),
+});
+const contextStateSchema = z.object({
+  runId: z.string().optional(),
+  messageCount: z.number().int().nonnegative().optional(),
+  lastMessageId: z.number().int().nonnegative().nullable().optional(),
+  provider: z.string(),
+  model: z.string(),
+  reasoning: z.string().optional(),
+  contextWindowTokens: z.number().nonnegative().nullable(),
+  maxOutputTokens: z.number().nonnegative(),
+  estimatedInputTokens: z.number().nonnegative(),
+  inputTokens: z.number().nonnegative(),
+  outputTokens: z.number().nonnegative().optional(),
+  totalTokens: z.number().nonnegative().optional(),
+  usage: usageStateSchema.optional(),
+  historyUsage: usageStateSchema.optional(),
+  availableInputTokens: z.number().nullable(),
+  pressure: z.number().nullable(),
+  level: z.enum(["unknown", "ok", "warn", "critical", "full"]),
+  source: z.enum(["estimate", "provider"]),
+  updatedAt: z.number().nonnegative(),
+});
+const providerMetadataSchema = z.object({
+  api: optionalNonEmptyStringSchema,
+  provider: optionalNonEmptyStringSchema,
+  model: optionalNonEmptyStringSchema,
+  responseModel: optionalNonEmptyStringSchema,
+  responseId: optionalNonEmptyStringSchema,
+  stopReason: optionalNonEmptyStringSchema,
+});
+const modelMetadataSchema = z.object({
+  provider: optionalNonEmptyStringSchema,
+  model: optionalNonEmptyStringSchema,
+});
+const fallbackMetadataSchema = z.object({
+  used: z.literal(true).optional().catch(undefined),
+  from: z.unknown().optional(),
+  to: z.unknown().optional(),
+  reason: optionalNonEmptyStringSchema,
+});
+const messageMetadataInputSchema = z.object({
+  provider: z.unknown().optional(),
+  fallback: z.unknown().optional(),
+  usage: z.unknown().optional(),
+});
+const thinkingContentSchema = z.object({
+  type: z.literal("thinking"),
+  thinking: z.string(),
+  thinkingSignature: z.string().optional(),
+  redacted: z.boolean().optional(),
+});
+const toolCallSchema = z.object({
+  type: z.literal("toolCall"),
+  id: z.string(),
+  name: z.string(),
+  arguments: jsonObjectSchema,
+  thoughtSignature: z.string().optional(),
+});
+const assistantMessageMetaSchema = z.object({
+  thinking: z.array(thinkingContentSchema).optional(),
+  toolCalls: z.array(toolCallSchema).optional(),
+});
+const toolResultMetaSchema = z.object({
+  toolName: z.string().optional(),
+  isError: z.boolean().optional(),
+  outcome: z.enum(["completed", "failed", "cancelled", "denied"]).optional(),
+});
+const failedToolResultSchema = z.object({ status: z.literal("failed") });
 
 function normalizeStoredToolResultOutcome(value: string | null): ProcToolResultOutcome | null {
   if (
@@ -135,16 +326,8 @@ function normalizeStoredToolResultOutcome(value: string | null): ProcToolResultO
   return null;
 }
 
-function resolvedToolResultOutcome(result: unknown): "completed" | "failed" {
-  if (
-    result
-    && typeof result === "object"
-    && !Array.isArray(result)
-    && (result as { status?: unknown }).status === "failed"
-  ) {
-    return "failed";
-  }
-  return "completed";
+export function resolvedToolResultOutcome(result: JsonValue): "completed" | "failed" {
+  return failedToolResultSchema.safeParse(result).success ? "failed" : "completed";
 }
 
 export class ProcessStore {
@@ -164,6 +347,174 @@ export class ProcessStore {
     this.clearMessages();
     this.setValue("historyGeneration", String(generation));
     return generation;
+  }
+
+  getLiveContextEpoch(): ContextEpochRecord | null {
+    const row = this.sql.exec<ContextEpochRow>(
+      "SELECT * FROM context_epochs WHERE state = 'live' LIMIT 1",
+    ).toArray()[0];
+    return row ? contextEpochFromRow(row) : null;
+  }
+
+  createContextEpoch(input: {
+    id: string;
+    generation: number;
+    systemPrompt: string;
+    r12yRevision: number;
+    r12yCount: number;
+    r12yBaseline: ResponsibilityRecord[];
+    sourceManifest: JsonObject;
+    now: number;
+  }): ContextEpochRecord {
+    if (this.getLiveContextEpoch()) {
+      throw new Error("A live context epoch already exists");
+    }
+    this.sql.exec(
+      `INSERT INTO context_epochs (
+        epoch_id, generation, system_prompt, r12y_revision, r12y_count,
+        observed_r12y_revision, r12y_baseline_json,
+        source_manifest_json, state, created_at, closed_at, close_reason,
+        archive_path
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'live', ?, NULL, NULL, NULL)`,
+      input.id,
+      input.generation,
+      input.systemPrompt,
+      input.r12yRevision,
+      input.r12yCount,
+      input.r12yRevision,
+      JSON.stringify(input.r12yBaseline),
+      JSON.stringify(input.sourceManifest),
+      input.now,
+    );
+    const epoch = this.getLiveContextEpoch();
+    if (!epoch) throw new Error("Context epoch was not persisted");
+    return epoch;
+  }
+
+  closeLiveContextEpoch(
+    reason: string,
+    now: number,
+    archivePath?: string,
+  ): ContextEpochRecord | null {
+    const current = this.getLiveContextEpoch();
+    if (!current) return null;
+    this.sql.exec(
+      `UPDATE context_epochs
+       SET state = 'closed', closed_at = ?, close_reason = ?, archive_path = ?
+       WHERE epoch_id = ? AND state = 'live'`,
+      now,
+      reason,
+      archivePath ?? null,
+      current.id,
+    );
+    return this.getContextEpoch(current.id);
+  }
+
+  getContextEpoch(id: string): ContextEpochRecord | null {
+    const row = this.sql.exec<ContextEpochRow>(
+      "SELECT * FROM context_epochs WHERE epoch_id = ? LIMIT 1",
+      id,
+    ).toArray()[0];
+    return row ? contextEpochFromRow(row) : null;
+  }
+
+  listContextEpochs(): ContextEpochRecord[] {
+    return this.sql.exec<ContextEpochRow>(
+      "SELECT * FROM context_epochs ORDER BY created_at ASC, epoch_id ASC",
+    ).toArray().map(contextEpochFromRow);
+  }
+
+  appendContextEpochTransition(
+    epochId: string,
+    transition: ResponsibilityTransition,
+    content: string,
+    runId: string,
+  ): number {
+    const epoch = this.getContextEpoch(epochId);
+    if (!epoch || epoch.state !== "live") {
+      throw new Error(`Live context epoch not found: ${epochId}`);
+    }
+    if (transition.revision <= epoch.observedR12yRevision) {
+      return epoch.observedR12yRevision;
+    }
+    const messageId = this.appendMessage("system", content, { runId });
+    this.sql.exec(
+      `INSERT INTO context_epoch_transitions (
+        epoch_id, revision, transition_json, message_id, created_at
+      ) VALUES (?, ?, ?, ?, ?)`,
+      epochId,
+      transition.revision,
+      JSON.stringify(transition),
+      messageId,
+      transition.createdAtMs,
+    );
+    this.sql.exec(
+      `UPDATE context_epochs
+       SET observed_r12y_revision = ?
+       WHERE epoch_id = ? AND state = 'live'`,
+      transition.revision,
+      epochId,
+    );
+    return transition.revision;
+  }
+
+  advanceContextEpochObservedRevision(epochId: string, revision: number): void {
+    this.sql.exec(
+      `UPDATE context_epochs
+       SET observed_r12y_revision = ?
+       WHERE epoch_id = ?
+         AND state = 'live'
+         AND observed_r12y_revision < ?`,
+      revision,
+      epochId,
+      revision,
+    );
+  }
+
+  listContextEpochTransitions(epochId: string): ResponsibilityTransition[] {
+    return this.sql.exec<{ transition_json: string }>(
+      `SELECT transition_json
+       FROM context_epoch_transitions
+       WHERE epoch_id = ?
+       ORDER BY revision ASC`,
+      epochId,
+    ).toArray().map((row) => (
+      parseContextEpochJson<ResponsibilityTransition>(row.transition_json)
+    ));
+  }
+
+  recordContextEpochRun(runId: string, finish: JsonObject, now: number): void {
+    const epoch = this.getLiveContextEpoch();
+    if (!epoch) return;
+    this.sql.exec(
+      `INSERT OR IGNORE INTO context_epoch_runs (
+        epoch_id, run_id, finish_json, created_at
+      ) VALUES (?, ?, ?, ?)`,
+      epoch.id,
+      runId,
+      JSON.stringify(finish),
+      now,
+    );
+  }
+
+  listContextEpochRuns(epochId: string): JsonObject[] {
+    return this.sql.exec<{ finish_json: string }>(
+      `SELECT finish_json
+       FROM context_epoch_runs
+       WHERE epoch_id = ?
+       ORDER BY created_at ASC, run_id ASC`,
+      epochId,
+    ).toArray().map((row) => parseContextEpochJson<JsonObject>(row.finish_json));
+  }
+
+  deleteContextEpochProjectionMessages(epochId: string): void {
+    this.sql.exec(
+      `DELETE FROM messages
+       WHERE id IN (
+         SELECT message_id FROM context_epoch_transitions WHERE epoch_id = ?
+       )`,
+      epochId,
+    );
   }
 
   getHistoryPrefixMessages(opts: {
@@ -331,7 +682,7 @@ export class ProcessStore {
     id: string,
     runId: string,
     call: string,
-    args: unknown,
+    args: JsonValue,
   ): void {
     this.sql.exec(
       `INSERT INTO pending_tool_calls (
@@ -348,10 +699,10 @@ export class ProcessStore {
 
   resolve(
     dispatchId: string,
-    result: unknown,
+    result: JsonValue,
     outcome: "completed" | "failed" = resolvedToolResultOutcome(result),
-  ): void {
-    this.sql.exec(
+  ): boolean {
+    const cursor = this.sql.exec(
       `UPDATE pending_tool_calls
           SET status = 'completed', result_json = ?, outcome = ?
         WHERE dispatch_id = ? AND status IN ('registered', 'pending')`,
@@ -359,14 +710,15 @@ export class ProcessStore {
       outcome,
       dispatchId,
     );
+    return cursor.rowsWritten > 0;
   }
 
   fail(
     dispatchId: string,
     error: string,
     outcome: Exclude<ProcToolResultOutcome, "completed"> = "failed",
-  ): void {
-    this.sql.exec(
+  ): boolean {
+    const cursor = this.sql.exec(
       `UPDATE pending_tool_calls
           SET status = 'error', error = ?, outcome = ?
         WHERE dispatch_id = ? AND status IN ('registered', 'pending')`,
@@ -374,6 +726,7 @@ export class ProcessStore {
       outcome,
       dispatchId,
     );
+    return cursor.rowsWritten > 0;
   }
 
   markDispatched(dispatchId: string): boolean {
@@ -388,11 +741,13 @@ export class ProcessStore {
 
   getPending(dispatchId: string): PendingToolCallRecord | null {
     const rows = [...this.sql.exec<{
+      id: string;
       run_id: string;
       call: string;
       args_json: string | null;
+      status: "registered" | "pending";
     }>(
-      `SELECT run_id, call, args_json
+      `SELECT id, run_id, call, args_json, status
          FROM pending_tool_calls
         WHERE dispatch_id = ? AND status IN ('registered', 'pending')`,
       dispatchId,
@@ -400,8 +755,12 @@ export class ProcessStore {
     if (rows.length === 0) return null;
     return {
       runId: rows[0].run_id,
+      callId: rows[0].id,
       call: rows[0].call,
-      args: rows[0].args_json ? JSON.parse(rows[0].args_json) : null,
+      args: rows[0].args_json
+        ? jsonValueSchema.parse(JSON.parse(rows[0].args_json))
+        : null,
+      status: rows[0].status,
     };
   }
 
@@ -435,9 +794,11 @@ export class ProcessStore {
       id: row.id,
       dispatchId: row.dispatch_id,
       call: row.call,
-      args: JSON.parse(row.args_json),
-      status: row.status as ToolCallStatus,
-      result: row.result_json ? JSON.parse(row.result_json) : null,
+      args: jsonValueSchema.parse(JSON.parse(row.args_json)),
+      status: toolCallStatusSchema.parse(row.status),
+      result: row.result_json
+        ? jsonValueSchema.parse(JSON.parse(row.result_json))
+        : null,
       error: row.error,
       outcome: normalizeStoredToolResultOutcome(row.outcome),
     }));
@@ -489,16 +850,22 @@ export class ProcessStore {
     ];
     if (rows.length === 0) return null;
     const row = rows[0];
-    return {
+    if (!isToolSyscallName(row.syscall)) {
+      throw new Error(`Stored approval references an unsupported syscall: ${row.syscall}`);
+    }
+    const record: PendingHilRecord = {
       requestId: row.request_id,
       runId: row.run_id,
-      ...(row.owner_dispatch_id ? { ownerDispatchId: row.owner_dispatch_id } : {}),
       toolCallId: row.tool_call_id,
       toolName: row.tool_name,
       syscall: row.syscall,
-      args: JSON.parse(row.args_json) as Record<string, unknown>,
+      args: jsonObjectSchema.parse(JSON.parse(row.args_json)),
       createdAt: row.created_at,
     };
+    if (row.owner_dispatch_id) {
+      record.ownerDispatchId = row.owner_dispatch_id;
+    }
+    return record;
   }
 
   getPendingHilForRun(runId: string): PendingHilRecord | null {
@@ -668,6 +1035,18 @@ export class ProcessStore {
     )].map(messageRecordFromRow);
   }
 
+  getRunInputMessageId(runId: string): number | null {
+    const row = this.sql.exec<{ id: number }>(
+      `SELECT id FROM messages
+        WHERE generation = ? AND run_id = ? AND role = 'user'
+        ORDER BY id ASC
+        LIMIT 1`,
+      this.getHistoryGeneration(),
+      runId,
+    ).toArray()[0];
+    return row?.id ?? null;
+  }
+
   getMessagesForGenerationAfter(opts: {
     generation: number;
     afterMessageId: number;
@@ -698,11 +1077,7 @@ export class ProcessStore {
     return rows[0]?.cnt ?? 0;
   }
 
-  messageStats(): {
-    count: number;
-    firstMessageId: number | null;
-    lastMessageId: number | null;
-  } {
+  messageStats(): MessageStats {
     const rows = [...this.sql.exec<{ cnt: number; first_id: number | null; last_id: number | null }>(
       "SELECT COUNT(*) as cnt, MIN(id) as first_id, MAX(id) as last_id FROM messages",
     )];
@@ -751,7 +1126,7 @@ export class ProcessStore {
       return null;
     }
     try {
-      return normalizeProcessAiConfigSnapshot(JSON.parse(raw));
+      return parseProcessAiConfigSnapshot(raw);
     } catch {
       return null;
     }
@@ -771,10 +1146,7 @@ export class ProcessStore {
       return null;
     }
     try {
-      const parsed = JSON.parse(raw) as unknown;
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? parsed as ProcContextState
-        : null;
+      return contextStateSchema.parse(JSON.parse(raw));
     } catch {
       return null;
     }
@@ -851,7 +1223,7 @@ export class ProcessStore {
         case "system": {
           messages.push({
             role: "user",
-            content: `[Process Event]:\n${r.content}`,
+            content: `[GSV EVENT]\n${r.content}`,
             timestamp: r.createdAt,
           } satisfies UserMessage);
           break;
@@ -870,29 +1242,42 @@ export class ProcessStore {
           if (meta.toolCalls) {
             content.push(...meta.toolCalls);
           }
-          messages.push({
+          const message: AssistantMessage = {
             role: "assistant",
             content,
             api: metadata?.provider?.api ?? "",
             provider: metadata?.provider?.provider ?? "",
             model: metadata?.provider?.model ?? "",
-            ...(metadata?.provider?.responseModel ? { responseModel: metadata.provider.responseModel } : {}),
-            ...(metadata?.provider?.responseId ? { responseId: metadata.provider.responseId } : {}),
             usage: usageStateToPiUsage(metadata?.usage),
             stopReason: normalizeAssistantStopReason(metadata?.provider?.stopReason),
             timestamp: r.createdAt,
-          } as AssistantMessage);
+          };
+          if (metadata?.provider?.responseModel) {
+            message.responseModel = metadata.provider.responseModel;
+          }
+          if (metadata?.provider?.responseId) {
+            message.responseId = metadata.provider.responseId;
+          }
+          messages.push(message);
           break;
         }
 
         case "toolResult": {
-          const meta: { toolName?: string; isError?: boolean } =
-            r.toolCalls ? JSON.parse(r.toolCalls) : {};
+          const meta = r.toolCalls
+            ? toolResultMetaSchema.parse(JSON.parse(r.toolCalls))
+            : {};
+          const media = parseStoredProcessMedia(r.media);
+          const legacyImageContent = media.length === 0
+            ? materializeLegacyToolResultImages(r.content)
+            : null;
           messages.push({
             role: "toolResult",
-            toolCallId: r.toolCallId!,
+            toolCallId: requiredToolCallId(r),
             toolName: meta.toolName ?? "unknown",
-            content: [{ type: "text", text: r.content }],
+            content: legacyImageContent ?? [
+              { type: "text", text: r.content },
+              ...buildFallbackMediaBlocks(media),
+            ],
             isError: meta.isError ?? false,
             timestamp: r.createdAt,
           } satisfies ToolResultMessage);
@@ -915,16 +1300,21 @@ export class ProcessStore {
     isError: boolean,
     runId?: string,
     outcome?: ProcToolResultOutcome,
+    media?: string,
   ): number {
-    const toolName = SYSCALL_TOOL_NAMES[syscallName] ?? syscallName;
+    const toolName = syscallToolName(syscallName) ?? syscallName;
+    const toolResultMeta: ToolResultMetadata = {
+      toolName,
+      isError,
+    };
+    if (outcome) {
+      toolResultMeta.outcome = outcome;
+    }
     return this.appendMessage("toolResult", content, {
       runId,
       toolCallId,
-      toolCalls: JSON.stringify({
-        toolName,
-        isError,
-        ...(outcome ? { outcome } : {}),
-      }),
+      media,
+      toolCalls: JSON.stringify(toolResultMeta),
     });
   }
 
@@ -933,19 +1323,22 @@ export class ProcessStore {
   enqueue(
     runId: string,
     message: string,
-    media?: string,
-    origin?: string,
+    options: EnqueueMessageOptions = {},
   ): void {
     const generation = this.getHistoryGeneration();
     this.sql.exec(
       `INSERT INTO message_queue (
-        run_id, generation, message, media_json, origin_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?)`,
+        run_id, generation, role, kind, message, media_json, origin_json,
+        provenance_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       runId,
       generation,
+      options.role ?? "user",
+      options.kind ?? "message",
       message,
-      media ?? null,
-      origin ?? null,
+      options.media ?? null,
+      options.origin ?? null,
+      options.provenance ?? null,
       Date.now(),
     );
   }
@@ -956,11 +1349,15 @@ export class ProcessStore {
         id: number;
         run_id: string;
         generation: number;
+        role: string;
+        kind: string;
         message: string;
         media_json: string | null;
         origin_json: string | null;
+        provenance_json: string | null;
       }>(
-        `SELECT id, run_id, generation, message, media_json, origin_json
+        `SELECT id, run_id, generation, role, kind, message, media_json,
+                origin_json, provenance_json
            FROM message_queue
           ORDER BY id ASC
           LIMIT 1`,
@@ -973,9 +1370,12 @@ export class ProcessStore {
       id: row.id,
       runId: row.run_id,
       generation: row.generation,
+      role: queuedMessageRole(row.role),
+      kind: row.kind,
       message: row.message,
       media: row.media_json,
       origin: row.origin_json,
+      provenance: row.provenance_json,
     };
   }
 
@@ -985,11 +1385,15 @@ export class ProcessStore {
         id: number;
         run_id: string;
         generation: number;
+        role: string;
+        kind: string;
         message: string;
         media_json: string | null;
         origin_json: string | null;
+        provenance_json: string | null;
       }>(
-        `SELECT id, run_id, generation, message, media_json, origin_json
+        `SELECT id, run_id, generation, role, kind, message, media_json,
+                origin_json, provenance_json
            FROM message_queue
           ORDER BY id ASC`,
       ),
@@ -1000,9 +1404,12 @@ export class ProcessStore {
       id: row.id,
       runId: row.run_id,
       generation: row.generation,
+      role: queuedMessageRole(row.role),
+      kind: row.kind,
       message: row.message,
       media: row.media_json,
       origin: row.origin_json,
+      provenance: row.provenance_json,
     }));
   }
 
@@ -1071,7 +1478,7 @@ function messageRecordFromRow(row: MessageRow): MessageRecord {
     id: row.id,
     generation: row.generation,
     runId: row.run_id,
-    role: row.role as MessageRole,
+    role: messageRoleSchema.parse(row.role),
     content: row.content,
     toolCalls: row.tool_calls,
     toolCallId: row.tool_call_id,
@@ -1080,6 +1487,20 @@ function messageRecordFromRow(row: MessageRow): MessageRecord {
     metadata: row.metadata_json ?? null,
     createdAt: row.created_at,
   };
+}
+
+function requiredToolCallId(record: MessageRecord): string {
+  if (record.toolCallId === null) {
+    throw new Error(`Stored tool result message ${record.id} has no tool call id`);
+  }
+  return record.toolCallId;
+}
+
+function queuedMessageRole(value: string): QueuedMessageRole {
+  if (value === "user" || value === "system") {
+    return value;
+  }
+  throw new Error(`Invalid queued message role: ${value}`);
 }
 
 export function parseMessageMetadata(raw: string | null | undefined): MessageMetadata | null {
@@ -1099,133 +1520,135 @@ export function stringifyMessageMetadata(
   if (metadata === undefined || metadata === null) {
     return null;
   }
-  if (typeof metadata === "string") {
-    const normalized = parseMessageMetadata(metadata);
+  const serialized = z.string().safeParse(metadata);
+  if (serialized.success) {
+    const normalized = parseMessageMetadata(serialized.data);
     return normalized ? JSON.stringify(normalized) : null;
   }
-  const normalized = normalizeMessageMetadata(metadata);
+  const objectMetadata = messageMetadataInputSchema.safeParse(metadata);
+  if (!objectMetadata.success) {
+    return null;
+  }
+  const normalized = normalizeMessageMetadata(objectMetadata.data);
   return normalized ? JSON.stringify(normalized) : null;
 }
 
-export function normalizeMessageMetadata(value: unknown): MessageMetadata | null {
-  const record = asRecord(value);
-  if (!record) {
+export function normalizeMessageMetadata(
+  value: Parameters<typeof messageMetadataInputSchema.safeParse>[0],
+): MessageMetadata | null {
+  const parsed = messageMetadataInputSchema.safeParse(value);
+  if (!parsed.success) {
     return null;
   }
-  const provider = normalizeProviderMetadata(record.provider);
-  const fallback = normalizeFallbackMetadata(record.fallback);
-  const usage = normalizeUsageState(record.usage);
+  const provider = normalizeProviderMetadata(parsed.data.provider);
+  const fallback = normalizeFallbackMetadata(parsed.data.fallback);
+  const usage = normalizeUsageState(parsed.data.usage);
   if (!provider && !fallback && !usage) {
     return null;
   }
-  return {
-    ...(provider ? { provider } : {}),
-    ...(fallback ? { fallback } : {}),
-    ...(usage ? { usage } : {}),
-  };
+  const metadata: MessageMetadata = {};
+  if (provider) metadata.provider = provider;
+  if (fallback) metadata.fallback = fallback;
+  if (usage) metadata.usage = usage;
+  return metadata;
 }
 
-function normalizeProviderMetadata(value: unknown): MessageProviderMetadata | null {
-  const record = asRecord(value);
-  if (!record) {
+function normalizeProviderMetadata(
+  value: Parameters<typeof providerMetadataSchema.safeParse>[0],
+): MessageProviderMetadata | null {
+  const parsed = providerMetadataSchema.safeParse(value);
+  if (!parsed.success) {
     return null;
   }
   const provider: MessageProviderMetadata = {};
-  const api = normalizeOptionalNonEmptyString(record.api);
-  const providerName = normalizeOptionalNonEmptyString(record.provider);
-  const model = normalizeOptionalNonEmptyString(record.model);
-  const responseModel = normalizeOptionalNonEmptyString(record.responseModel);
-  const responseId = normalizeOptionalNonEmptyString(record.responseId);
-  const stopReason = normalizeOptionalNonEmptyString(record.stopReason);
-  if (api) provider.api = api;
-  if (providerName) provider.provider = providerName;
-  if (model) provider.model = model;
-  if (responseModel) provider.responseModel = responseModel;
-  if (responseId) provider.responseId = responseId;
-  if (stopReason) provider.stopReason = stopReason;
+  if (parsed.data.api) provider.api = parsed.data.api;
+  if (parsed.data.provider) provider.provider = parsed.data.provider;
+  if (parsed.data.model) provider.model = parsed.data.model;
+  if (parsed.data.responseModel) provider.responseModel = parsed.data.responseModel;
+  if (parsed.data.responseId) provider.responseId = parsed.data.responseId;
+  if (parsed.data.stopReason) provider.stopReason = parsed.data.stopReason;
   return Object.keys(provider).length > 0 ? provider : null;
 }
 
-function normalizeFallbackMetadata(value: unknown): MessageMetadata["fallback"] | null {
-  const record = asRecord(value);
-  if (!record) {
+function normalizeFallbackMetadata(
+  value: Parameters<typeof fallbackMetadataSchema.safeParse>[0],
+): MessageMetadata["fallback"] | null {
+  const parsed = fallbackMetadataSchema.safeParse(value);
+  if (!parsed.success) {
     return null;
   }
-  const from = normalizeModelMetadata(record.from);
-  const to = normalizeModelMetadata(record.to);
-  const reason = normalizeOptionalNonEmptyString(record.reason);
-  if (!from && !to && !reason && record.used !== true) {
+  const from = normalizeModelMetadata(parsed.data.from);
+  const to = normalizeModelMetadata(parsed.data.to);
+  if (!from && !to && !parsed.data.reason && parsed.data.used !== true) {
     return null;
   }
-  return {
-    used: true,
-    ...(from ? { from } : {}),
-    ...(to ? { to } : {}),
-    ...(reason ? { reason } : {}),
-  };
+  const fallback: NonNullable<MessageMetadata["fallback"]> = { used: true };
+  if (from) fallback.from = from;
+  if (to) fallback.to = to;
+  if (parsed.data.reason) fallback.reason = parsed.data.reason;
+  return fallback;
 }
 
-function normalizeModelMetadata(value: unknown): ProcMessageModelMetadata | null {
-  const record = asRecord(value);
-  if (!record) {
+function normalizeModelMetadata(
+  value: Parameters<typeof modelMetadataSchema.safeParse>[0],
+): ProcMessageModelMetadata | null {
+  const parsed = modelMetadataSchema.safeParse(value);
+  if (!parsed.success) {
     return null;
   }
-  const provider = normalizeOptionalNonEmptyString(record.provider);
-  const model = normalizeOptionalNonEmptyString(record.model);
-  if (!provider && !model) {
+  if (!parsed.data.provider && !parsed.data.model) {
     return null;
   }
-  return {
-    ...(provider ? { provider } : {}),
-    ...(model ? { model } : {}),
-  };
+  const model: ProcMessageModelMetadata = {};
+  if (parsed.data.provider) model.provider = parsed.data.provider;
+  if (parsed.data.model) model.model = parsed.data.model;
+  return model;
 }
 
-export function normalizeUsageState(value: unknown): ProcUsageState | null {
-  const record = asRecord(value);
-  if (!record) {
+export function normalizeUsageState(
+  value: Parameters<typeof usageStateInputSchema.safeParse>[0],
+): ProcUsageState | null {
+  const parsed = usageStateInputSchema.safeParse(value);
+  if (!parsed.success) {
     return null;
   }
-  const inputTokens = normalizeNonNegativeNumber(record.inputTokens ?? record.input) ?? 0;
-  const outputTokens = normalizeNonNegativeNumber(record.outputTokens ?? record.output) ?? 0;
-  const cacheReadTokens = normalizeNonNegativeNumber(record.cacheReadTokens ?? record.cacheRead) ?? 0;
-  const cacheWriteTokens = normalizeNonNegativeNumber(record.cacheWriteTokens ?? record.cacheWrite) ?? 0;
-  const totalTokens = normalizeNonNegativeNumber(record.totalTokens)
-    ?? inputTokens + outputTokens;
-  const generations = normalizePositiveInteger(record.generations);
-  const updatedAt = normalizeNonNegativeNumber(record.updatedAt);
-
-  return {
+  const inputTokens = parsed.data.inputTokens ?? parsed.data.input ?? 0;
+  const outputTokens = parsed.data.outputTokens ?? parsed.data.output ?? 0;
+  const cacheReadTokens = parsed.data.cacheReadTokens ?? parsed.data.cacheRead ?? 0;
+  const cacheWriteTokens = parsed.data.cacheWriteTokens ?? parsed.data.cacheWrite ?? 0;
+  const usage: ProcUsageState = {
     inputTokens,
     outputTokens,
     cacheReadTokens,
     cacheWriteTokens,
-    totalTokens,
-    cost: normalizeUsageCost(record.cost),
-    ...(generations !== null ? { generations } : {}),
-    ...(record.costIncomplete === true ? { costIncomplete: true } : {}),
-    ...(updatedAt !== null ? { updatedAt } : {}),
+    totalTokens: parsed.data.totalTokens ?? inputTokens + outputTokens,
+    cost: normalizeUsageCost(parsed.data.cost),
   };
+  if (parsed.data.generations !== undefined) usage.generations = parsed.data.generations;
+  if (parsed.data.costIncomplete === true) usage.costIncomplete = true;
+  if (parsed.data.updatedAt !== undefined) usage.updatedAt = parsed.data.updatedAt;
+  return usage;
 }
 
-function normalizeUsageCost(value: unknown): ProcUsageCost | null {
-  const record = asRecord(value);
-  if (!record) {
+function normalizeUsageCost(
+  value: Parameters<typeof usageCostInputSchema.safeParse>[0],
+): ProcUsageCost | null {
+  const parsed = usageCostInputSchema.safeParse(value);
+  if (!parsed.success) {
     return null;
   }
-  const input = normalizeNonNegativeNumber(record.input) ?? 0;
-  const output = normalizeNonNegativeNumber(record.output) ?? 0;
-  const cacheRead = normalizeNonNegativeNumber(record.cacheRead) ?? 0;
-  const cacheWrite = normalizeNonNegativeNumber(record.cacheWrite) ?? 0;
-  const total = normalizeNonNegativeNumber(record.total) ?? input + output + cacheRead + cacheWrite;
+  const input = parsed.data.input ?? 0;
+  const output = parsed.data.output ?? 0;
+  const cacheRead = parsed.data.cacheRead ?? 0;
+  const cacheWrite = parsed.data.cacheWrite ?? 0;
   return {
     input,
     output,
     cacheRead,
     cacheWrite,
-    total,
+    total: parsed.data.total ?? input + output + cacheRead + cacheWrite,
     currency: "USD",
-    source: normalizeUsageCostSource(record.source) ?? "provider",
+    source: parsed.data.source ?? "provider",
   };
 }
 
@@ -1241,7 +1664,7 @@ function mergeUsageStates(
     || next.cost === null
     || (current !== null && current.cost === null);
 
-  return {
+  const merged: ProcUsageState = {
     inputTokens: (current?.inputTokens ?? 0) + next.inputTokens,
     outputTokens: (current?.outputTokens ?? 0) + next.outputTokens,
     cacheReadTokens: (current?.cacheReadTokens ?? 0) + next.cacheReadTokens,
@@ -1249,9 +1672,10 @@ function mergeUsageStates(
     totalTokens: (current?.totalTokens ?? 0) + next.totalTokens,
     cost,
     generations: currentGenerations + nextGenerations,
-    ...(costIncomplete ? { costIncomplete: true } : {}),
     updatedAt: Date.now(),
   };
+  if (costIncomplete) merged.costIncomplete = true;
+  return merged;
 }
 
 function mergeUsageCosts(
@@ -1262,7 +1686,7 @@ function mergeUsageCosts(
     return null;
   }
   if (!current) {
-    return cloneUsageCost(next!);
+    return next === null ? null : cloneUsageCost(next);
   }
   if (!next) {
     return cloneUsageCost(current);
@@ -1319,10 +1743,36 @@ function usageStateToPiUsage(usage: ProcUsageState | null | undefined): Assistan
   };
 }
 
-function normalizeAssistantStopReason(value: unknown): AssistantMessage["stopReason"] {
+function normalizeAssistantStopReason(
+  value: string | undefined,
+): AssistantMessage["stopReason"] {
   return value === "length" || value === "toolUse" || value === "error" || value === "aborted"
     ? value
     : "stop";
+}
+
+function contextEpochFromRow(row: ContextEpochRow): ContextEpochRecord {
+  const epoch: ContextEpochRecord = {
+    id: row.epoch_id,
+    generation: row.generation,
+    systemPrompt: row.system_prompt,
+    r12yRevision: row.r12y_revision,
+    r12yCount: row.r12y_count,
+    observedR12yRevision: row.observed_r12y_revision,
+    r12yBaseline: parseContextEpochJson<ResponsibilityRecord[]>(row.r12y_baseline_json),
+    sourceManifest: parseContextEpochJson<JsonObject>(row.source_manifest_json),
+    state: row.state,
+    createdAt: row.created_at,
+  };
+  if (row.closed_at !== null) epoch.closedAt = row.closed_at;
+  if (row.close_reason) epoch.closeReason = row.close_reason;
+  if (row.archive_path) epoch.archivePath = row.archive_path;
+  return epoch;
+}
+
+function parseContextEpochJson<Value>(value: string): Value {
+  // SAFETY: context epoch JSON is written only by ProcessStore from typed records.
+  return JSON.parse(value) as Value;
 }
 
 export function parseAssistantMessageMeta(raw: string | null): AssistantMessageMeta {
@@ -1330,63 +1780,19 @@ export function parseAssistantMessageMeta(raw: string | null): AssistantMessageM
     return {};
   }
 
-  let parsed: unknown;
+  let parsed: z.input<typeof assistantMessageMetaSchema>;
   try {
     parsed = JSON.parse(raw);
   } catch {
     return {};
   }
 
-  if (Array.isArray(parsed)) {
-    return { toolCalls: parsed as ToolCall[] };
+  const legacyToolCalls = z.array(toolCallSchema).safeParse(parsed);
+  if (legacyToolCalls.success) {
+    return { toolCalls: legacyToolCalls.data };
   }
-  if (!parsed || typeof parsed !== "object") {
-    return {};
-  }
-
-  const meta = parsed as Record<string, unknown>;
-  return {
-    thinking: Array.isArray(meta.thinking)
-      ? meta.thinking as ThinkingContent[]
-      : undefined,
-    toolCalls: Array.isArray(meta.toolCalls)
-      ? meta.toolCalls as ToolCall[]
-      : undefined,
-  };
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
-}
-
-function normalizeOptionalNonEmptyString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0
-    ? value.trim()
-    : undefined;
-}
-
-function normalizeNonNegativeNumber(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return null;
-  }
-  return value >= 0 ? value : null;
-}
-
-function normalizePositiveInteger(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return null;
-  }
-  const normalized = Math.trunc(value);
-  return normalized > 0 ? normalized : null;
-}
-
-function normalizeUsageCostSource(value: unknown): ProcUsageCostSource | null {
-  if (value === "provider" || value === "model-pricing" || value === "mixed") {
-    return value;
-  }
-  return null;
+  const metadata = assistantMessageMetaSchema.safeParse(parsed);
+  return metadata.success ? metadata.data : {};
 }
 
 function buildFallbackUserContent(

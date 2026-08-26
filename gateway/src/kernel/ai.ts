@@ -69,6 +69,13 @@ import {
   createGenerationService,
   extractGeneratedText,
 } from "../inference/service";
+import {
+  gsvInferenceProviderFactoryFromEnv,
+} from "../inference/gsv-provider";
+import {
+  inferenceLogicalRequestId,
+  type InferenceAttribution,
+} from "../inference/provider";
 import { createRoutedFetch, normalizeTarget, type NetFetchDeviceTransport } from "./net";
 import {
   DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
@@ -115,20 +122,24 @@ import {
 import { raceWithAbort } from "../shared/abort";
 import { sendFrameToProcess } from "../shared/utils";
 
-const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
-  "fs.read": FS_READ_DEFINITION,
-  "fs.write": FS_WRITE_DEFINITION,
-  "fs.edit": FS_EDIT_DEFINITION,
-  "fs.delete": FS_DELETE_DEFINITION,
-  "fs.search": FS_SEARCH_DEFINITION,
-  "shell.exec": SHELL_EXEC_DEFINITION,
-  "codemode.exec": CODEMODE_EXEC_DEFINITION,
-};
+const SYSCALL_TOOLS: Array<{ syscall: SyscallName; definition: ToolDefinition }> = [
+  { syscall: "fs.read", definition: FS_READ_DEFINITION },
+  { syscall: "fs.write", definition: FS_WRITE_DEFINITION },
+  { syscall: "fs.edit", definition: FS_EDIT_DEFINITION },
+  { syscall: "fs.delete", definition: FS_DELETE_DEFINITION },
+  { syscall: "fs.search", definition: FS_SEARCH_DEFINITION },
+  { syscall: "shell.exec", definition: SHELL_EXEC_DEFINITION },
+  { syscall: "codemode.exec", definition: CODEMODE_EXEC_DEFINITION },
+];
 
 const DEFAULT_GENERATION_TIMEOUT_MS = 180_000;
 const DEFAULT_GENERATION_STREAMING = "auto";
 
 type AiAccountProfileOverrides = Map<number, Record<string, string>>;
+interface AiConfigValues {
+  [key: string]: string;
+}
+type AiFrameResult<T> = { data: T; body?: FrameBody };
 type AiModelStackConfig = Pick<
   AiConfigResult,
   | "provider"
@@ -174,14 +185,14 @@ export async function handleAiTools(
 
   const tools: ToolDefinition[] = [];
 
-  for (const [syscall, baseDef] of Object.entries(SYSCALL_TOOLS)) {
+  for (const { syscall, definition } of SYSCALL_TOOLS) {
     if (!hasCapability(capabilities, syscall)) continue;
     if (syscall === "codemode.exec" && !isCodeModeAvailable(ctx.env)) continue;
 
-    if (isRoutableSyscall(syscall as SyscallName)) {
-      tools.push(intoSyscallTool(baseDef, deviceIds));
+    if (isRoutableSyscall(syscall)) {
+      tools.push(intoSyscallTool(definition, deviceIds));
     } else {
-      tools.push(baseDef);
+      tools.push(definition);
     }
   }
 
@@ -201,7 +212,7 @@ export async function handleAiConfig(
   const owner = resolveOwnerIdentity(ctx);
   const builtinSkillsReady = ensureBuiltinSkillsForPrompt(ctx, owner);
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
-  const input = args && typeof args === "object" ? args : ({} as AiConfigArgs);
+  const input = args;
   const processOverrides = resolveEffectiveAiProcessOverrides(
     ctx,
     uid,
@@ -292,27 +303,29 @@ export async function handleAiConfig(
     accountProfileOverrides,
     processOverrides,
   );
+  const primary: AiModelStackConfig = {
+    provider,
+    model,
+    apiKey: resolvedApiKey,
+    providerStyle: providerStyle.trim().toLowerCase() || "auto",
+    transportTarget: normalizeTarget(transportTarget),
+    reasoning,
+    maxTokens,
+    contextWindowTokens,
+    contextWindowSource,
+    generationTimeoutMs,
+    generationStreaming,
+  };
+  const normalizedBaseUrl = baseUrl.trim();
+  if (normalizedBaseUrl) primary.baseUrl = normalizedBaseUrl;
+  if (resolvedOAuth.openAiCodexAccountId) {
+    primary.openAiCodex = { accountId: resolvedOAuth.openAiCodexAccountId };
+  }
   const fallbacks = await resolveAiFallbackConfigs({
     ctx,
     accountUids: fallbackSelection?.accountUids ?? [],
     selector: fallbackSelection?.selector ?? "",
-    primary: {
-      provider,
-      model,
-      apiKey: resolvedApiKey,
-      ...(baseUrl.trim().length > 0 ? { baseUrl: baseUrl.trim() } : {}),
-      providerStyle: providerStyle.trim().toLowerCase() || "auto",
-      transportTarget: normalizeTarget(transportTarget),
-      ...(resolvedOAuth.openAiCodexAccountId
-        ? { openAiCodex: { accountId: resolvedOAuth.openAiCodexAccountId } }
-        : {}),
-      reasoning,
-      maxTokens,
-      contextWindowTokens,
-      contextWindowSource,
-      generationTimeoutMs,
-      generationStreaming,
-    },
+    primary,
   });
   const media = resolveAiMediaConfig(
     config,
@@ -333,18 +346,14 @@ export async function handleAiConfig(
       return [];
     });
 
-  return {
+  const result: AiConfigResult = {
     owner,
     executor: resolveAiTextExecutor(ctx),
     provider,
     model,
     apiKey: resolvedApiKey,
-    ...(baseUrl.trim().length > 0 ? { baseUrl: baseUrl.trim() } : {}),
     providerStyle: providerStyle.trim().toLowerCase() || "auto",
     transportTarget: normalizeTarget(transportTarget),
-    ...(resolvedOAuth.openAiCodexAccountId
-      ? { openAiCodex: { accountId: resolvedOAuth.openAiCodexAccountId } }
-      : {}),
     reasoning,
     maxTokens,
     contextWindowTokens,
@@ -360,9 +369,14 @@ export async function handleAiConfig(
     maxContextBytes,
     generationTimeoutMs,
     generationStreaming,
-    ...(fallbacks.length > 0 ? { fallbacks } : {}),
     media,
   };
+  if (normalizedBaseUrl) result.baseUrl = normalizedBaseUrl;
+  if (resolvedOAuth.openAiCodexAccountId) {
+    result.openAiCodex = { accountId: resolvedOAuth.openAiCodexAccountId };
+  }
+  if (fallbacks.length > 0) result.fallbacks = fallbacks;
+  return result;
 }
 
 async function ensureBuiltinSkillsForPrompt(
@@ -388,7 +402,7 @@ export async function handleAiTextGenerate(
   ctx: KernelContext,
   transport?: NetFetchDeviceTransport,
 ): Promise<AiTextGenerateResult> {
-  const input = args && typeof args === "object" ? args : ({} as AiTextGenerateArgs);
+  const input = args;
   const target = normalizeOptionalString(input.target) ?? "gsv";
   if (target !== "gsv") {
     // TODO: implement device ai gen + routing.
@@ -402,32 +416,65 @@ export async function handleAiTextGenerate(
   const generationFetch = transportTarget === "gsv"
     ? undefined
     : createRoutedFetch(ctx, transport, transportTarget);
-  const response = await createGenerationService(generationFetch ? { fetch: generationFetch } : {}).generate({
+  const gsvInference = gsvInferenceProviderFactoryFromEnv(ctx.env);
+  const attribution = await inferenceAttribution(ctx);
+  const serviceOptions: Parameters<typeof createGenerationService>[0] = {};
+  if (generationFetch) serviceOptions.fetch = generationFetch;
+  if (gsvInference) serviceOptions.providers = [gsvInference];
+  const generationRequest: Parameters<ReturnType<typeof createGenerationService>["generate"]>[0] = {
     config,
     context,
-    ...(options ? { options } : {}),
     sessionAffinityKey: normalizeOptionalString(input.sessionAffinityKey),
     signal: ctx.requestSignal,
-  });
+    attribution,
+  };
+  if (options) generationRequest.options = options;
+  const response = await createGenerationService(serviceOptions).generate(generationRequest);
   const text = extractGeneratedText(response);
-  return {
-    message: response as unknown as AiAssistantMessage,
+  // SAFETY: The generation service and public AI protocol share the assistant-message contract.
+  const message = response as AiAssistantMessage;
+  const result: AiTextGenerateResult = {
+    message,
     provider: response.provider || config.provider,
     model: response.model || config.model,
-    ...(text ? { text } : {}),
   };
+  if (text) result.text = text;
+  return result;
+}
+
+async function inferenceAttribution(
+  ctx: KernelContext,
+): Promise<InferenceAttribution> {
+  const process = ctx.identity?.process;
+  const attribution: InferenceAttribution = {
+    installationId: ctx.installationId,
+    logicalRequestId: await inferenceLogicalRequestId([
+      "kernel",
+      ctx.installationId,
+      process?.uid ?? 0,
+      ctx.processId,
+      ctx.processRunId,
+      ctx.requestId ?? crypto.randomUUID(),
+    ]),
+    actor: {
+      localUid: process?.uid ?? 0,
+    },
+  };
+  if (ctx.processId) attribution.actor.processId = ctx.processId;
+  if (ctx.processRunId) attribution.actor.runId = ctx.processRunId;
+  return attribution;
 }
 
 function normalizeAiProcessOverrideValues(
-  raw: Record<string, unknown>,
+  raw: AiConfigValues,
   options: { preserveEmpty?: boolean } = {},
-): Record<string, string> {
-  const values: Record<string, string> = {};
+): AiConfigValues {
+  const values: AiConfigValues = {};
   for (const [key, value] of Object.entries(raw)) {
     if (!isProcessAiConfigKey(key)) {
       continue;
     }
-    const normalized = String(value ?? "").trim();
+    const normalized = value.trim();
     if (!normalized && !options.preserveEmpty && !PROCESS_AI_CONFIG_SECRET_KEYS.has(key)) {
       continue;
     }
@@ -458,14 +505,11 @@ export async function handleAiTranscriptionCreate(
   ctx: KernelContext,
   body?: FrameBody,
 ): Promise<AiTranscriptionCreateResult> {
-  const input = args && typeof args === "object" ? args : ({} as AiTranscriptionCreateArgs);
+  const input = args;
   const configContext = resolveAiTranscriptionProcessContext(input.pid, ctx);
   const { primary, fallback } = await resolveAiTranscriptionStacksForContext(configContext);
   const audio = input.audio;
-  if (!audio || typeof audio !== "object") {
-    throw new Error("audio is required");
-  }
-  if (typeof audio.mimeType !== "string" || !audio.mimeType.trim().toLowerCase().startsWith("audio/")) {
+  if (!audio.mimeType.trim().toLowerCase().startsWith("audio/")) {
     throw new Error("audio.mimeType must be an audio MIME type");
   }
 
@@ -517,14 +561,11 @@ export async function handleAiImageRead(
   args: AiImageReadArgs,
   ctx: KernelContext,
   body?: FrameBody,
-): Promise<{ data: AiImageReadResult; body?: FrameBody }> {
-  const input = args && typeof args === "object" ? args : ({} as AiImageReadArgs);
+): Promise<AiFrameResult<AiImageReadResult>> {
+  const input = args;
   const media = await resolveAiMediaConfigForContext(ctx);
   const image = input.image;
-  if (!image || typeof image !== "object") {
-    throw new Error("image is required");
-  }
-  if (typeof image.mimeType !== "string" || !image.mimeType.trim().toLowerCase().startsWith("image/")) {
+  if (!image.mimeType.trim().toLowerCase().startsWith("image/")) {
     throw new Error("image.mimeType must be an image MIME type");
   }
   if (isVectorImageMimeType(image.mimeType)) {
@@ -563,17 +604,16 @@ export async function handleAiImageRead(
     throw new Error("Image reading unavailable");
   }
 
-  return {
-    data: response.result,
-    ...(response.stream ? { body: { stream: response.stream } } : {}),
-  };
+  const result: AiFrameResult<AiImageReadResult> = { data: response.result };
+  if (response.stream) result.body = { stream: response.stream };
+  return result;
 }
 
 export async function handleAiImageGenerate(
   args: AiImageGenerateArgs,
   ctx: KernelContext,
-): Promise<{ data: AiImageGenerateResult; body?: FrameBody }> {
-  const input = args && typeof args === "object" ? args : ({} as AiImageGenerateArgs);
+): Promise<AiFrameResult<AiImageGenerateResult>> {
+  const input = args;
   const media = await resolveAiMediaConfigForContext(ctx);
   const prompt = normalizeOptionalString(input.prompt);
   if (!prompt) {
@@ -596,26 +636,26 @@ export async function handleAiImageGenerate(
     throw new Error("Image generation unavailable");
   }
 
-  return {
-    data: {
+  const data: AiImageGenerateResult = {
       image: {
         mimeType: result.mimeType,
         size: result.bytes?.byteLength ?? 0,
       },
       provider: result.provider,
       model: result.model,
-      ...(result.revisedPrompt ? { revisedPrompt: result.revisedPrompt } : {}),
-      ...(result.url ? { url: result.url } : {}),
-    },
-    ...(result.bytes ? { body: bodyFromBytes(result.bytes) } : {}),
   };
+  if (result.revisedPrompt) data.revisedPrompt = result.revisedPrompt;
+  if (result.url) data.url = result.url;
+  const response: AiFrameResult<AiImageGenerateResult> = { data };
+  if (result.bytes) response.body = bodyFromBytes(result.bytes);
+  return response;
 }
 
 export async function handleAiSpeechCreate(
   args: AiSpeechCreateArgs,
   ctx: KernelContext,
-): Promise<{ data: AiSpeechCreateResult; body?: FrameBody }> {
-  const input = args && typeof args === "object" ? args : ({} as AiSpeechCreateArgs);
+): Promise<AiFrameResult<AiSpeechCreateResult>> {
+  const input = args;
   const media = await resolveAiMediaConfigForContext(ctx);
   const rawText = normalizeOptionalString(input.text);
   if (!rawText) {
@@ -668,33 +708,30 @@ export async function handleAiSpeechCreate(
     throw new Error("Speech synthesis unavailable");
   }
 
-  return {
-    data: {
+  const data: AiSpeechCreateResult = {
       audio: {
         mimeType: result.mimeType,
         size: result.bytes.byteLength,
       },
       provider: result.provider,
       model: result.model,
-      ...(result.voice ? { voice: result.voice } : {}),
-      ...(result.encoding ? { encoding: result.encoding } : {}),
-      ...(result.container ? { container: result.container } : {}),
-    },
-    body: bodyFromBytes(result.bytes),
   };
+  if (result.voice) data.voice = result.voice;
+  if (result.encoding) data.encoding = result.encoding;
+  if (result.container) data.container = result.container;
+  return { data, body: bodyFromBytes(result.bytes) };
 }
 
 async function resolveAiTextGenerationConfig(
   input: AiTextGenerateConfig | undefined,
   ctx: KernelContext,
 ): Promise<AiConfigResult> {
-  const requested = input && typeof input === "object" ? input : undefined;
   const overrides = {
-    ...normalizeAiProcessOverrideValues(requested?.processOverrides ?? {}),
-    ...normalizeAiProcessOverrideValues(requested?.overrides ?? {}, { preserveEmpty: true }),
+    ...normalizeAiProcessOverrideValues(input?.processOverrides ?? {}),
+    ...normalizeAiProcessOverrideValues(input?.overrides ?? {}, { preserveEmpty: true }),
   };
-  const processProfile = requested?.processProfile;
-  const preset = requested?.preset;
+  const processProfile = input?.processProfile;
+  const preset = input?.preset;
   if (!preset) {
     return withAiTextExecutor(
       await handleAiConfig(
@@ -762,66 +799,39 @@ function withAiTextExecutor(
 }
 
 function normalizeAiTextGenerationContext(input: AiTextGenerateArgs): Context {
-  if (!Array.isArray(input.messages)) {
-    throw new Error("messages must be an array");
-  }
-  const tools = Array.isArray(input.tools)
-    ? input.tools.map(normalizeAiTextTool)
-    : undefined;
-  return {
-    systemPrompt: typeof input.systemPrompt === "string" ? input.systemPrompt : "",
+  const tools = input.tools?.map(normalizeAiTextTool);
+  const context: Context = {
+    systemPrompt: input.systemPrompt ?? "",
     messages: input.messages.map(normalizeAiTextMessage),
-    ...(tools && tools.length > 0 ? { tools } : {}),
   };
+  if (tools && tools.length > 0) context.tools = tools;
+  return context;
 }
 
-function normalizeAiTextMessage(message: AiTextMessage, index: number): Message {
-  if (!message || typeof message !== "object") {
-    throw new Error(`messages[${index}] must be an object`);
-  }
-  const timestamp = normalizeTimestamp((message as { timestamp?: unknown }).timestamp);
-  if (message.role === "user") {
-    return {
-      ...message,
-      timestamp,
-    } as unknown as Message;
-  }
-  if (message.role === "assistant") {
-    return {
-      ...message,
-      timestamp,
-    } as unknown as Message;
-  }
-  if (message.role === "toolResult") {
-    return {
-      ...message,
-      timestamp,
-    } as unknown as Message;
-  }
-  throw new Error(`messages[${index}].role is unsupported`);
+function normalizeAiTextMessage(message: AiTextMessage): Message {
+  const timestamp = normalizeTimestamp(message.timestamp);
+  const normalized = { ...message, timestamp };
+  // SAFETY: The generated syscall schema validates the shared pi-ai message contract.
+  return normalized as Message;
 }
 
 function normalizeAiTextTool(tool: AiTextTool, index: number): Tool {
-  if (!tool || typeof tool !== "object") {
-    throw new Error(`tools[${index}] must be an object`);
-  }
   const name = normalizeOptionalString(tool.name);
   if (!name) {
     throw new Error(`tools[${index}].name is required`);
   }
   return {
     name,
-    description: typeof tool.description === "string" ? tool.description : "",
-    parameters: tool.parameters && typeof tool.parameters === "object"
-      ? tool.parameters as Tool["parameters"]
-      : {},
+    description: tool.description,
+    // SAFETY: The wire contract validates tool.parameters as a JSON Schema object.
+    parameters: tool.parameters as Tool["parameters"],
   };
 }
 
 function normalizeAiTextGenerateOptions(
   input: AiTextGenerateOptions | undefined,
 ): AiTextGenerateOptions | undefined {
-  if (!input || typeof input !== "object") {
+  if (!input) {
     return undefined;
   }
   const options: AiTextGenerateOptions = {};
@@ -841,9 +851,9 @@ function normalizeAiTextGenerateOptions(
 }
 
 function normalizeAiTextGenerationReasoning(
-  value: unknown,
+  value: AiTextGenerateOptions["reasoning"],
 ): AiTextGenerateOptions["reasoning"] | undefined {
-  if (typeof value !== "string") {
+  if (!value) {
     return undefined;
   }
   const normalized = value.trim().toLowerCase();
@@ -861,8 +871,8 @@ function normalizeAiTextGenerationReasoning(
   throw new Error("options.reasoning must be inherit, off, minimal, low, medium, high, or xhigh");
 }
 
-function normalizeTimestamp(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0
+function normalizeTimestamp(value: number | undefined): number {
+  return value !== undefined && Number.isFinite(value) && value > 0
     ? value
     : Date.now();
 }
@@ -949,19 +959,32 @@ function createAiConfigValueResolver(
   config: KernelContext["config"],
   accountUids: number[],
   accountProfileOverrides: AiAccountProfileOverrides,
-  processOverrides: Record<string, string>,
+  processOverrides: AiConfigValues,
   explicitSystem = false,
 ) {
-  return <T = string>(
+  function resolve(key: string): string | null;
+  function resolve<T>(key: string, normalize: (value: string | null) => T | null): T | null;
+  function resolve<T>(
     key: string,
-    normalize: (value: string | null) => T | null = (value) => value as T | null,
-  ): T | null => normalize(resolveAiProcessConfigValue(processOverrides, key))
-    ?? normalize(resolveAiConfigValue(config, accountUids, accountProfileOverrides, key))
-    ?? normalize(
+    normalize?: (value: string | null) => T | null,
+  ): string | T | null {
+    const candidates = [
+      resolveAiProcessConfigValue(processOverrides, key),
+      resolveAiConfigValue(config, accountUids, accountProfileOverrides, key),
       explicitSystem
         ? config.getExplicit(`config/ai/${key}`)
         : config.get(`config/ai/${key}`),
-    );
+    ];
+    if (!normalize) {
+      return candidates.find((candidate) => candidate !== null) ?? null;
+    }
+    for (const candidate of candidates) {
+      const value = normalize(candidate);
+      if (value !== null && value !== undefined) return value;
+    }
+    return null;
+  }
+  return resolve;
 }
 
 function resolveAiFallbackSelection(
@@ -1073,16 +1096,12 @@ async function resolveAiFallbackModelStack(
     resolveConfig("generation/streaming"),
   );
 
-  return {
+  const result: AiModelStackConfig = {
     provider,
     model,
     apiKey: resolvedApiKey,
-    ...(baseUrl.trim().length > 0 ? { baseUrl: baseUrl.trim() } : {}),
     providerStyle: providerStyle.trim().toLowerCase() || "auto",
     transportTarget: normalizeTarget(transportTarget),
-    ...(resolvedOAuth.openAiCodexAccountId
-      ? { openAiCodex: { accountId: resolvedOAuth.openAiCodexAccountId } }
-      : {}),
     reasoning,
     maxTokens,
     contextWindowTokens,
@@ -1090,6 +1109,12 @@ async function resolveAiFallbackModelStack(
     generationTimeoutMs,
     generationStreaming,
   };
+  const normalizedBaseUrl = baseUrl.trim();
+  if (normalizedBaseUrl) result.baseUrl = normalizedBaseUrl;
+  if (resolvedOAuth.openAiCodexAccountId) {
+    result.openAiCodex = { accountId: resolvedOAuth.openAiCodexAccountId };
+  }
+  return result;
 }
 
 function isSameAiModelStack(
@@ -1106,7 +1131,7 @@ function isSameAiModelStack(
 }
 
 function resolveAiTranscriptionProcessContext(
-  requestedPid: unknown,
+  requestedPid: string | undefined,
   ctx: KernelContext,
 ): KernelContext {
   if (requestedPid === undefined) {
@@ -1255,7 +1280,7 @@ async function resolveAiProcessOverridesForContext(
   let frame: Awaited<ReturnType<typeof sendFrameToProcess>>;
   try {
     frame = await raceWithAbort(
-      sendFrameToProcess(ctx.processId, {
+      sendFrameToProcess(ctx.installationId, ctx.processId, {
         type: "req",
         id: crypto.randomUUID(),
         call: "proc.ai.config.get",
@@ -1273,6 +1298,7 @@ async function resolveAiProcessOverridesForContext(
     return {};
   }
 
+  // SAFETY: proc.ai.config.get returns the typed result for this exact internal request.
   const result = frame.data as ProcAiConfigGetResult;
   if (!result.ok || !result.config) {
     return {};
@@ -1290,9 +1316,9 @@ function resolveEffectiveAiProcessOverrides(
   ctx: KernelContext,
   uid: number,
   owner: ProcessIdentity | null,
-  processOverrides: Record<string, unknown> | undefined,
+  processOverrides: AiConfigValues | undefined,
   processProfile: ProcAiConfigProfileRef | null | undefined,
-): Record<string, string> {
+): AiConfigValues {
   const profileSecretOverrides = resolveAiProfileSecretOverrides(
     ctx.config,
     resolveAiProfileOwnerUid(ctx, uid, owner),
@@ -1400,12 +1426,12 @@ function resolveAiProfileSecretOverrides(
   config: KernelContext["config"],
   ownerUid: number,
   profile: ProcAiConfigProfileRef | null | undefined,
-): Record<string, string> {
+): AiConfigValues {
   const profileId = normalizeOptionalString(profile?.id);
   if (!profileId) {
     return {};
   }
-  const values: Record<string, string> = {};
+  const values: AiConfigValues = {};
   for (const key of PROCESS_AI_CONFIG_SECRET_KEYS) {
     const value = normalizeOptionalString(
       config.get(processAiModelProfileSecretConfigKey(ownerUid, profileId, key)),
@@ -1591,20 +1617,18 @@ function normalizeSkillIndexMode(value: string | null | undefined): "summary" | 
   return normalized === "names" || normalized === "off" ? normalized : "summary";
 }
 
-function normalizeOptionalString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+function normalizeOptionalString(value: string | null | undefined): string | undefined {
+  return value && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-function normalizePositiveNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+function normalizePositiveNumber(value: number | undefined): number | undefined {
+  return value !== undefined && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 function listReadyMcpServerNames(ctx: KernelContext, uid: number): string[] {
   const names = new Set<string>();
   for (const record of ctx.mcpServers.list(uid)) {
-    const connection = ctx.mcp.mcpConnections[record.serverId] as {
-      connectionState?: unknown;
-    } | undefined;
+    const connection = ctx.mcp.mcpConnections[record.serverId];
     if (connection?.connectionState === "ready") {
       names.add(record.name);
     }

@@ -34,6 +34,35 @@ import {
   KERNEL_V018_REMOVE_CONVERSATION_REGISTRY,
 } from "./v018_remove_conversation_registry";
 import { KERNEL_V019_REMOVE_NOTIFICATIONS } from "./v019_remove_notifications";
+import { KERNEL_V020_ADD_MAILBOXES } from "./v020_add_mailboxes";
+import {
+  KERNEL_V021_ISOLATE_MAIL_NOTIFICATIONS,
+} from "./v021_isolate_mail_notifications";
+import { KERNEL_V022_ADD_OUTBOUND_MAIL } from "./v022_add_outbound_mail";
+import {
+  KERNEL_V023_ADD_PERSONAL_CONTROLLER_SLOT,
+} from "./v023_add_personal_controller_slot";
+import {
+  KERNEL_V024_ADD_SURFACE_ROUTE_MODES,
+} from "./v024_add_surface_route_modes";
+import {
+  KERNEL_V025_ADD_PRIVATE_ADAPTER_DESTINATIONS,
+} from "./v025_add_private_adapter_destinations";
+import { KERNEL_V026_ADD_CONVERSATIONS } from "./v026_add_conversations";
+import { KERNEL_V027_OWN_DURABLE_TASKS } from "./v027_own_durable_tasks";
+import {
+  KERNEL_V028_RENAME_HOME_CONVERSATION_TO_SHIP,
+} from "./v028_rename_home_conversation_to_ship";
+import { KERNEL_V029_ADD_RESPONSIBILITIES } from "./v029_add_responsibilities";
+import {
+  KERNEL_V030_LINK_IPC_RESPONSIBILITIES,
+} from "./v030_link_ipc_responsibilities";
+import {
+  KERNEL_V031_ADD_RESPONSIBILITY_SOURCE_POLICIES,
+} from "./v031_add_responsibility_source_policies";
+import {
+  KERNEL_V032_FENCE_ADAPTER_RUN_ROUTES,
+} from "./v032_fence_adapter_run_routes";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -58,6 +87,19 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V017_REORDER_SYSTEM_CONTEXT,
   KERNEL_V018_REMOVE_CONVERSATION_REGISTRY,
   KERNEL_V019_REMOVE_NOTIFICATIONS,
+  KERNEL_V020_ADD_MAILBOXES,
+  KERNEL_V021_ISOLATE_MAIL_NOTIFICATIONS,
+  KERNEL_V022_ADD_OUTBOUND_MAIL,
+  KERNEL_V023_ADD_PERSONAL_CONTROLLER_SLOT,
+  KERNEL_V024_ADD_SURFACE_ROUTE_MODES,
+  KERNEL_V025_ADD_PRIVATE_ADAPTER_DESTINATIONS,
+  KERNEL_V026_ADD_CONVERSATIONS,
+  KERNEL_V027_OWN_DURABLE_TASKS,
+  KERNEL_V028_RENAME_HOME_CONVERSATION_TO_SHIP,
+  KERNEL_V029_ADD_RESPONSIBILITIES,
+  KERNEL_V030_LINK_IPC_RESPONSIBILITIES,
+  KERNEL_V031_ADD_RESPONSIBILITY_SOURCE_POLICIES,
+  KERNEL_V032_FENCE_ADAPTER_RUN_ROUTES,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

@@ -12,6 +12,7 @@
 
 
 const CAPABILITY_PATTERN = /^(\*|[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)*\.(?:[a-z][a-z0-9]*|\*))$/;
+type CapabilityMutationResult = { ok: boolean; error?: string };
 
 const DEFAULT_CAPABILITIES: [number, string[]][] = [
   [0,   ["*"]],                                           // root
@@ -20,6 +21,9 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "fs.*",
     "shell.*",
     "net.fetch",
+    "mail.send",
+    "mail.status",
+    "conversation.*",
     "proc.*",
     "signal.*",
     "repo.apply",
@@ -35,6 +39,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "repo.search",
     "repo.visibility.set",
     "sched.*",
+    "r12y.*",
     "ai.text.generate",
     "ai.image.generate",
     "ai.image.read",
@@ -43,6 +48,8 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "adapter.connect",
     "adapter.disconnect",
     "adapter.list",
+    "adapter.pair.*",
+    "adapter.route",
     "adapter.send",
     "adapter.status",
     "sys.config.get",
@@ -107,7 +114,7 @@ export class CapabilityStore {
     return rows.map((r) => r.capability);
   }
 
-  grant(gid: number, capability: string): { ok: boolean; error?: string } {
+  grant(gid: number, capability: string): CapabilityMutationResult {
     if (!isValidCapability(capability)) {
       return { ok: false, error: `Invalid capability format: ${capability}` };
     }
@@ -121,7 +128,7 @@ export class CapabilityStore {
     return { ok: true };
   }
 
-  revoke(gid: number, capability: string): { ok: boolean; error?: string } {
+  revoke(gid: number, capability: string): CapabilityMutationResult {
     this.sql.exec(
       `DELETE FROM group_capabilities WHERE gid = ? AND capability = ?`,
       gid,

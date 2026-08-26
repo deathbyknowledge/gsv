@@ -1,16 +1,42 @@
 import { describe, expect, it, vi } from "vitest";
+import { adapterGatewayFrameSchema } from "../../../packages/gsv/src/protocol/adapters";
 
 import {
   callAdapterGateway,
   type AdapterGatewayBinding,
 } from "../src/gateway-rpc";
-import type { BinaryBody, GatewayFrame } from "../src/types";
+import type {
+  AdapterInstallationContext,
+  BinaryBody,
+  GatewayFrame,
+} from "../src/types";
 
-function trackedBody(): {
-  body: BinaryBody;
-  cancelled: () => unknown;
-} {
-  let cancelled: unknown;
+const INSTALLATION = { installationId: "inst_test" } as const;
+const INBOUND_ARGS = {
+  adapter: "test",
+  accountId: "account",
+  deliveryId: "delivery-1",
+  message: {
+    messageId: "provider-1",
+    surface: { kind: "dm", id: "dm-1" },
+    text: "hello",
+  },
+} as const;
+const STATE_UPDATE_ARGS = {
+  adapter: "test",
+  accountId: "account",
+  status: {
+    accountId: "account",
+    connected: true,
+    authenticated: true,
+  },
+} as const;
+
+type TrackedBody = { body: BinaryBody; cancelled: () => Error | string | undefined };
+
+function trackedBody(): TrackedBody {
+  let cancelled: Error | string | undefined;
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
   return {
     body: {
       stream: new ReadableStream<Uint8Array>({
@@ -24,19 +50,94 @@ function trackedBody(): {
 }
 
 function binding(
-  serviceFrame: (frame: GatewayFrame) => Promise<GatewayFrame | null>,
+  scopedServiceFrame: (
+    installation: AdapterInstallationContext,
+    frame: GatewayFrame,
+  ) => Promise<GatewayFrame | null>,
 ): AdapterGatewayBinding {
-  return { serviceFrame };
+  const serviceFrame = vi.fn(async (
+    installationOrFrame: AdapterInstallationContext | GatewayFrame,
+    scopedFrame?: GatewayFrame,
+  ) => scopedFrame
+    ? await scopedServiceFrame(
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
+        installationOrFrame as AdapterInstallationContext,
+        scopedFrame,
+      )
+    : null);
+  return {
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
+    serviceFrame: serviceFrame as AdapterGatewayBinding["serviceFrame"],
+  };
 }
 
 describe("callAdapterGateway", () => {
+  it("projects optional metadata to the receiver's JSON frame contract", async () => {
+    let received: GatewayFrame | undefined;
+    const serviceFrame = vi.fn(async (
+      _installation: AdapterInstallationContext,
+      frame: GatewayFrame,
+    ) => {
+      received = frame;
+      return {
+        type: "res" as const,
+        id: frame.type === "req" ? frame.id : "unexpected",
+        ok: true,
+        data: { ok: true },
+      };
+    });
+
+    await expect(callAdapterGateway(
+      binding(serviceFrame),
+      INSTALLATION,
+      "adapter.inbound",
+      {
+        adapter: "telegram",
+        accountId: "managed",
+        deliveryId: "telegram:1",
+        message: {
+          messageId: "1",
+          surface: { kind: "dm", id: "123", name: undefined },
+          actor: { id: "123", handle: undefined },
+          text: "/help",
+          media: undefined,
+          replyToId: undefined,
+          timestamp: 1_700_000_000_000,
+          wasMentioned: true,
+        },
+      },
+    )).resolves.toEqual({ ok: true });
+
+    expect(adapterGatewayFrameSchema.safeParse(received).success).toBe(true);
+    expect(received).toMatchObject({
+      type: "req",
+      args: {
+        adapter: "telegram",
+        accountId: "managed",
+        deliveryId: "telegram:1",
+        message: {
+          messageId: "1",
+          surface: { kind: "dm", id: "123" },
+          actor: { id: "123" },
+          text: "/help",
+          timestamp: 1_700_000_000_000,
+          wasMentioned: true,
+        },
+      },
+    });
+  });
+
   it("forwards the request body and returns typed response data", async () => {
     const request = trackedBody();
-    const serviceFrame = vi.fn(async (frame: GatewayFrame) => {
+    const serviceFrame = vi.fn(async (
+      installation: AdapterInstallationContext,
+      frame: GatewayFrame,
+    ) => {
+      expect(installation).toEqual(INSTALLATION);
       expect(frame).toMatchObject({
         type: "req",
         call: "adapter.inbound",
-        args: { value: 1 },
+        args: INBOUND_ARGS,
         body: request.body,
       });
       expect(frame.type === "req" && frame.id).toMatch(/^[0-9a-f-]{36}$/);
@@ -44,17 +145,68 @@ describe("callAdapterGateway", () => {
         type: "res" as const,
         id: frame.type === "req" ? frame.id : "unexpected",
         ok: true,
-        data: { accepted: true },
+        data: { ok: true },
       };
     });
 
-    await expect(callAdapterGateway<{ accepted: boolean }>(
+    await expect(callAdapterGateway(
       binding(serviceFrame),
+      INSTALLATION,
       "adapter.inbound",
-      { value: 1 },
+      INBOUND_ARGS,
       request.body,
-    )).resolves.toEqual({ accepted: true });
+    )).resolves.toEqual({ ok: true });
+    expect(serviceFrame).toHaveBeenCalledOnce();
     expect(request.cancelled()).toBeUndefined();
+  });
+
+  it("uses the legacy one-argument Gateway RPC for standalone", async () => {
+    const serviceFrame = vi.fn(async (frame: GatewayFrame) => ({
+      type: "res" as const,
+      id: frame.type === "req" ? frame.id : "unexpected",
+      ok: true,
+      data: { ok: true },
+    }));
+    const gateway: AdapterGatewayBinding = {
+      serviceFrame,
+    };
+
+    await expect(callAdapterGateway(
+      gateway,
+      { installationId: "singleton" },
+      "adapter.inbound",
+      INBOUND_ARGS,
+    )).resolves.toEqual({ ok: true });
+    expect(serviceFrame).toHaveBeenCalledOnce();
+    expect(serviceFrame).toHaveBeenCalledWith(expect.objectContaining({
+      type: "req",
+      call: "adapter.inbound",
+    }));
+  });
+
+  it("uses the already-deployed two-argument Gateway RPC for managed installations", async () => {
+    const serviceFrame = vi.fn(async (
+      installation: AdapterInstallationContext,
+      frame: GatewayFrame,
+    ) => ({
+      type: "res" as const,
+      id: frame.type === "req" ? frame.id : "unexpected",
+      ok: true,
+      data: { ok: true },
+    }));
+    const gateway = binding(serviceFrame);
+
+    await expect(callAdapterGateway(
+      gateway,
+      INSTALLATION,
+      "adapter.inbound",
+      INBOUND_ARGS,
+    )).resolves.toEqual({ ok: true });
+    expect(serviceFrame).toHaveBeenCalledOnce();
+    expect(serviceFrame).toHaveBeenCalledWith(
+      INSTALLATION,
+      expect.objectContaining({ type: "req", call: "adapter.inbound" }),
+    );
   });
 
   it("cancels the request body when the binding throws or returns no response", async () => {
@@ -64,8 +216,9 @@ describe("callAdapterGateway", () => {
       binding(async () => {
         throw transportError;
       }),
+      INSTALLATION,
       "adapter.inbound",
-      {},
+      INBOUND_ARGS,
       transportBody.body,
     )).rejects.toBe(transportError);
     expect(transportBody.cancelled()).toBe(transportError);
@@ -73,8 +226,9 @@ describe("callAdapterGateway", () => {
     const missingBody = trackedBody();
     await expect(callAdapterGateway(
       binding(async () => null),
+      INSTALLATION,
       "adapter.inbound",
-      {},
+      INBOUND_ARGS,
       missingBody.body,
     )).rejects.toThrow("No response from gateway serviceFrame");
     expect(missingBody.cancelled()).toBe("No response from gateway serviceFrame");
@@ -92,8 +246,9 @@ describe("callAdapterGateway", () => {
         args: {},
         body: unexpected.body,
       })),
+      INSTALLATION,
       "adapter.inbound",
-      {},
+      INBOUND_ARGS,
       request.body,
     )).rejects.toThrow("No response from gateway serviceFrame");
 
@@ -108,11 +263,13 @@ describe("callAdapterGateway", () => {
         type: "res",
         id: "success",
         ok: true,
+        data: { ok: true },
         body: successBody.body,
       })),
+      INSTALLATION,
       "adapter.state.update",
-      {},
-    )).resolves.toEqual({});
+      STATE_UPDATE_ARGS,
+    )).resolves.toEqual({ ok: true });
     expect(successBody.cancelled()).toBe(
       "Gateway response body is not consumed by adapters",
     );
@@ -127,8 +284,9 @@ describe("callAdapterGateway", () => {
         error: { message: "Gateway rejected message" },
         body: errorBody.body,
       })),
+      INSTALLATION,
       "adapter.inbound",
-      {},
+      INBOUND_ARGS,
       acceptedRequestBody.body,
     )).rejects.toThrow("Gateway rejected message");
     expect(acceptedRequestBody.cancelled()).toBeUndefined();
@@ -142,8 +300,9 @@ describe("callAdapterGateway", () => {
         id: "error",
         ok: false,
       })),
+      INSTALLATION,
       "adapter.state.update",
-      {},
+      STATE_UPDATE_ARGS,
     )).rejects.toThrow("Gateway error on adapter.state.update");
   });
 });

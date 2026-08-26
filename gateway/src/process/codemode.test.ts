@@ -1,3 +1,5 @@
+type ProcessTestValue<T = string | number | boolean | null | undefined> = T;
+
 import { describe, expect, it } from "vitest";
 import { env } from "cloudflare:workers";
 import {
@@ -17,7 +19,7 @@ describe.sequential("CodeMode executor", () => {
   });
 
   it("runs with the Worker Loader binding and exposes shell and fs wrappers", async () => {
-    const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
+    const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
     const result = await executeCodeMode(
       env,
       `
@@ -61,6 +63,125 @@ describe.sequential("CodeMode executor", () => {
     });
   });
 
+  it("routes mail through its syscall with deterministic default delivery ids", async () => {
+    const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
+    const result = await executeCodeMode(
+      env,
+      `
+        const first = await mail.send({ to: "mike@example.com", text: "First" });
+        const explicit = await mail.send({
+          to: "mike@example.com",
+          text: "Explicit",
+          deliveryId: "caller-delivery",
+        });
+        const third = await mail.send({ to: "mike@example.com", text: "Third" });
+        return { first, explicit, third };
+      `,
+      async (call, args) => {
+        calls.push({ call, args });
+        return { ok: true, deliveryId: args.deliveryId };
+      },
+      { mailDeliveryBase: "mail-send:execution" },
+    );
+
+    expect(calls).toEqual([
+      {
+        call: "mail.send",
+        args: {
+          to: "mike@example.com",
+          text: "First",
+          deliveryId: "mail-send:execution:1",
+        },
+      },
+      {
+        call: "mail.send",
+        args: {
+          to: "mike@example.com",
+          text: "Explicit",
+          deliveryId: "caller-delivery",
+        },
+      },
+      {
+        call: "mail.send",
+        args: {
+          to: "mike@example.com",
+          text: "Third",
+          deliveryId: "mail-send:execution:3",
+        },
+      },
+    ]);
+    expect(result).toEqual({
+      status: "completed",
+      result: {
+        first: { ok: true, deliveryId: "mail-send:execution:1" },
+        explicit: { ok: true, deliveryId: "caller-delivery" },
+        third: { ok: true, deliveryId: "mail-send:execution:3" },
+      },
+    });
+  });
+
+  it("requires an explicit mail delivery id without a durable execution identity", async () => {
+    const calls: string[] = [];
+    const result = await executeCodeMode(
+      env,
+      `return await mail.send({ to: "mike@example.com", text: "Hello" });`,
+      async (call) => {
+        calls.push(call);
+        return { ok: true };
+      },
+    );
+
+    expect(result).toEqual({
+      status: "failed",
+      error: "mail.send requires deliveryId in this CodeMode execution",
+    });
+    expect(calls).toEqual([]);
+
+    const explicit = await executeCodeMode(
+      env,
+      `return await mail.send({
+        to: "mike@example.com",
+        text: "Hello",
+        deliveryId: "manual-delivery",
+      });`,
+      async (call, args) => {
+        calls.push(call);
+        return { ok: true, deliveryId: args.deliveryId };
+      },
+    );
+    expect(explicit).toEqual({
+      status: "completed",
+      result: { ok: true, deliveryId: "manual-delivery" },
+    });
+    expect(calls).toEqual(["mail.send"]);
+  });
+
+  it.each([42, "", "   "])(
+    "rejects invalid CodeMode mail delivery id %j instead of replacing it",
+    async (deliveryId) => {
+      const calls: string[] = [];
+      const result = await executeCodeMode(
+        env,
+        `return await mail.send({
+          to: "mike@example.com",
+          text: "Hello",
+          deliveryId: ${JSON.stringify(deliveryId)},
+        });`,
+        async (call) => {
+          calls.push(call);
+          return { ok: true };
+        },
+        { mailDeliveryBase: "mail-send:execution" },
+      );
+
+      expect(result).toEqual({
+        status: "failed",
+        error: "mail.send deliveryId must be a string",
+      });
+      expect(calls).toEqual([]);
+    },
+  );
+
   it("returns on cancellation and blocks later tool requests", async () => {
     const controller = new AbortController();
     const calls: string[] = [];
@@ -100,7 +221,7 @@ describe.sequential("CodeMode executor", () => {
   });
 
   it("routes sandboxed fetch through the canonical syscall shape", async () => {
-    const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
+    const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
     const result = await executeCodeMode(
       env,
       `
@@ -158,6 +279,7 @@ describe.sequential("CodeMode executor", () => {
         redirected: true,
         header: "text/plain",
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect(String((result.result as { body?: unknown }).body)).toContain("gateway test assets");
     }
   });
@@ -186,7 +308,7 @@ describe.sequential("CodeMode executor", () => {
   });
 
   it("applies command defaults and exposes argv and args", async () => {
-    const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
+    const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
     const result = await executeCodeMode(
       env,
       `
@@ -233,8 +355,9 @@ describe.sequential("CodeMode executor", () => {
     });
   });
 
+  // SAFETY: test fixture is constructed with the asserted domain shape.
   it("exposes connected MCP tools as direct CodeMode functions", async () => {
-    const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
+    const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
     const mcpToolBindings = buildCodeModeMcpToolBindings([
       {
         serverId: "server-1",
@@ -364,15 +487,89 @@ describe.sequential("CodeMode executor", () => {
       serverId: "server-1",
       name: "Network",
       state: "ready",
-      tools: [{
-        name: "fetch",
-        description: "Fetch through MCP",
-        inputSchema: null,
-        outputSchema: null,
-      }],
+      tools: ["fetch", "mail", "__mail", "__mailDeliveryBase", "__mailDeliveryOrdinal"]
+        .map((name) => ({
+          name,
+          description: `MCP ${name}`,
+          inputSchema: null,
+          outputSchema: null,
+        })),
     }]);
 
-    expect(bindings.map((binding) => binding.functionName)).toEqual(["Network_fetch"]);
+    expect(bindings.map((binding) => binding.functionName)).toEqual([
+      "Network_fetch",
+      "Network_mail",
+      "Network___mail",
+      "Network___mailDeliveryBase",
+      "Network___mailDeliveryOrdinal",
+    ]);
+  });
+
+  it("keeps builtin mail available beside colliding MCP mail tools", async () => {
+    const mcpToolBindings = buildCodeModeMcpToolBindings([{
+      serverId: "server-1",
+      name: "Network",
+      state: "ready",
+      tools: ["mail", "__mail"].map((name) => ({
+        name,
+        description: `MCP ${name}`,
+        inputSchema: null,
+        outputSchema: null,
+      })),
+    }]);
+    const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
+    const result = await executeCodeMode(
+      env,
+      `
+        const sent = await mail.send({ to: "mike@example.com", subject: "Hello", text: "Body" });
+        const publicMcp = await Network_mail({ source: "public" });
+        const privateMcp = await Network___mail({ source: "private" });
+        return { sent, publicMcp, privateMcp };
+      `,
+      async (call, args) => {
+        calls.push({ call, args });
+        return call === "mail.send"
+          ? { ok: true, deliveryId: args.deliveryId }
+          : { structuredContent: { name: args.name } };
+      },
+      { mailDeliveryBase: "mail-send:collision", mcpToolBindings },
+    );
+
+    expect(calls).toEqual([
+      {
+        call: "mail.send",
+        args: {
+          to: "mike@example.com",
+          subject: "Hello",
+          text: "Body",
+          deliveryId: "mail-send:collision:1",
+        },
+      },
+      {
+        call: "sys.mcp.call",
+        args: {
+          serverId: "server-1",
+          name: "mail",
+          arguments: { source: "public" },
+        },
+      },
+      {
+        call: "sys.mcp.call",
+        args: {
+          serverId: "server-1",
+          name: "__mail",
+          arguments: { source: "private" },
+        },
+      },
+    ]);
+    expect(result).toEqual({
+      status: "completed",
+      result: {
+        sent: { ok: true, deliveryId: "mail-send:collision:1" },
+        publicMcp: { name: "mail" },
+        privateMcp: { name: "__mail" },
+      },
+    });
   });
 
 });

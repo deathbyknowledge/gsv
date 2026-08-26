@@ -26,7 +26,7 @@ type InternalSessionCipher = {
   decryptWithSessions: (
     data: Buffer,
     sessions: SyntheticSession[],
-  ) => Promise<unknown>;
+  ) => Promise<Buffer>;
   doDecryptWhisperMessage: (
     data: Buffer,
     session: SyntheticSession,
@@ -38,9 +38,11 @@ type InternalSessionCipherConstructor = {
 };
 
 const require = createRequire(import.meta.url);
+// SAFETY: The patched dependency exports the tested session-record constructor.
 const SessionRecord = require(
   "libsignal/src/session_record",
 ) as InternalSessionRecordConstructor;
+// SAFETY: The patched dependency exports the tested session-cipher prototype.
 const SessionCipher = require(
   "libsignal/src/session_cipher",
 ) as InternalSessionCipherConstructor;
@@ -70,6 +72,7 @@ describe("patched dependency logging", () => {
     record.openSession(sensitiveSession);
 
     const errorMarker = "synthetic-signal-error-detail";
+    // SAFETY: The cipher fixture only exercises the two methods in InternalSessionCipher.
     const cipher = Object.create(
       SessionCipher.prototype,
     ) as InternalSessionCipher;

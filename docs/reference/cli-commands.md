@@ -1,8 +1,9 @@
 # CLI Command Reference
 
-The `gsv` binary controls a GSV gateway, local device daemon, process tree,
-adapters, and Cloudflare infrastructure. Most commands talk to the Kernel syscall
-surface over WebSocket; `infra` talks directly to Cloudflare.
+The `gsv` binary controls a GSV gateway, local Desktop application, device
+daemon, process tree, adapters, and Cloudflare infrastructure. Most commands
+talk to the Kernel syscall surface over WebSocket; `desktop` uses a same-user
+local endpoint and `infra` talks directly to Cloudflare.
 
 ## Global Options
 
@@ -29,21 +30,24 @@ gsv chat [MESSAGE] [--pid PID]
 gsv shell
 ```
 
-`chat` sends a message to a process with `proc.send`. With `MESSAGE`, it waits
-for the matching `proc.run.finished` signal for up to 120 seconds. The
+`chat` resolves the Ship or selected Work conversation and sends with
+`conversation.send`. With `MESSAGE`, it waits for the canonical
+`message.committed` and matching `proc.run.finished` signals for up to 120
+seconds. The
 interactive prompt returns after each message is accepted so another message
 can supersede an active run; type `quit` or `exit` to leave. `--pid` targets a
-specific process; when omitted, the CLI creates one process and uses it for the
-whole command. Set `GSV_CLIENT_DEBUG=1` to trace run-signal matching.
+specific process; when omitted, the CLI uses the user's personal
+intelligence process. Set `GSV_CLIENT_DEBUG=1` to trace run-signal matching.
 
 `shell` opens an interactive prompt backed by the gateway `shell.exec` syscall.
 Commands run inside the gateway OS context, not directly on your local machine.
 Use `:quit`, `:exit`, or `:q` to leave.
 
 Inside the gateway shell, `proc` is the process IPC userland command.
-`message` inspects and uses external chat reply routes. `sched add --here`
-admits scheduled events to the current process and preserves the
-current authorized adapter reply destination when one exists.
+`message` inspects and uses external chat reply routes. `sched add --ship`
+creates recurring or one-shot Ship responsibilities; `sched add --here`
+targets the resolved current Process and uses the same responsibility semantics
+when that Process is Ship.
 `crontab` schedules background shell commands, while the remaining `sched`
 commands inspect and control the Kernel schedule records:
 
@@ -51,15 +55,32 @@ commands inspect and control the Kernel schedule records:
 proc self
 proc list
 proc spawn [--as ACCOUNT] [--non-interactive] [--label LABEL] [--prompt TEXT] [--] [prompt]
-proc delegate [--as ACCOUNT] [--label LABEL] [--timeout 10m] <task>
+proc delegate [--as ACCOUNT] [--label LABEL] [--timeout 10m] [--responsibility ID] <task>
 proc reset [--pid PID]
 proc kill PID [--no-archive]
 proc send <pid> [--metadata-json json] <message>
 proc call <pid> [--metadata-json json] [--timeout 60s] <message>
 message current [--json]
 message destinations [--all] [--json]
+message route show [--to here|DESTINATION] [--json]
+message route list [--json]
+message route set --process PID_OR_LABEL [--to here|DESTINATION] [--json]
+message route clear [--to here|DESTINATION] [--json]
 message attach PATH... [--mime TYPE]
+message send [--message TEXT]
+yield
 message send --to DESTINATION [--message TEXT] [--attach PATH [--mime TYPE]] [--delivery-id ID] [--also]
+r12y list [--all] [--json]
+r12y show ID
+r12y create --title TITLE [--details JSON] [--parent ID] [--priority PRIORITY] [--due ISO] [--check ISO] [--blocker TEXT] [--dedupe KEY]
+r12y update ID --json PATCH
+r12y start ID
+r12y wait ID [--until ISO] [--blocker TEXT]
+r12y delegate ID PID --until ISO
+r12y resolve ID [--json RESOLUTION]
+r12y cancel ID [--json RESOLUTION]
+r12y sources
+r12y source enable|disable mail.received
 img2txt [caption] [--length short|normal|long] [--stream] IMAGE
 img2txt query --prompt TEXT [--reasoning] [--response-format FORMAT] [--schema JSON] [--stream] IMAGE
 img2txt ocr [--prompt TEXT] [--response-format FORMAT] [--schema JSON] [--stream] IMAGE
@@ -69,6 +90,7 @@ crontab -l
 crontab FILE
 crontab -r
 sched list [--all]
+sched add --ship --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE
 sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE
 sched add --to DESTINATION --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE
 sched add --json JSON
@@ -78,31 +100,77 @@ sched remove <id>
 sched run <id> [--force]
 ```
 
-`proc spawn` always creates a fresh process. Its prompt is fire-and-forget, and
-any answer remains in that child process's history. Unknown options are
+`proc spawn` always creates a fresh process. A parentless spawn defaults to the
+owner's personal agent, and a child inherits its parent unless `--as` selects
+another owned agent account. Its prompt is fire-and-forget, and any answer
+remains in that child process's history. Unknown options are
 rejected; use `--` before a positional prompt that begins with `-`. Use
 `--non-interactive` for scheduled background work. `proc delegate` creates a
-bounded child and reports the result to its caller as a process event; it
-requires a process-backed caller and must not be placed in a crontab.
+bounded child whose ordinary final assistant output returns to its caller as a process event; it
+requires a process-backed caller and must not be placed in a crontab. Passing
+`--responsibility ID` assigns that existing Kernel record to the child before
+IPC admission and restores its prior Ship state if admission fails. Completion,
+failure, timeout, or kill returns a still-active assignment to Ship exactly once;
+the IPC event carries the child result and the responsibility retains stable call
+and run references.
 `proc send` is asynchronous same-owner process mail. `proc call` is bounded:
 the source process receives either
 `ipc.reply` or `ipc.timeout` as a delegated task event. In a process-backed
 shell, `proc self` prints the current process id and the shell exports it as
 `GSV_PID`; a top-level user shell has no current process, so `proc self` exits
-with an error there.
+with an error there. `proc list` labels the one canonical process as
+`kind=personal`; all other entries are `kind=work`, even when they run as the
+same personal-agent account.
 
-`message current` reports where the current run's final answer is delivered
-automatically. `message attach` adds one or more GSV filesystem files to that
-same final answer for native clients and adapter origins; it does not create an
-extra message. Existing files in the current process's `/var/media` directory
-are reused, while other readable files are staged there. Return the answer
-normally. `message send` creates an
+`r12y` manages the Kernel's durable unresolved-work ledger. `list` omits
+terminal records unless `--all` is supplied. Waiting work must name a future
+check time or a blocker. Prefer `proc delegate --responsibility ID ...` for a
+new bounded worker; the lower-level `r12y delegate ID PID --until ISO` command
+assigns an already-existing owned process with an explicit recovery deadline.
+`r12y sources` lists required runtime contracts as `always-on` and configurable
+producers as `configurable`. Only configurable producers can be changed. Use
+`r12y source disable mail.received` to keep accepting mail without creating a
+Ship responsibility for each message; enabling it affects future completions.
+
+`message current` reports the current run's directed endpoint. For an adapter
+run, both text and JSON output include an opaque
+destination id suitable for a later `message send --to`; raw provider ids stay
+hidden. `message attach` adds one or more GSV filesystem files to the run's
+next current-conversation message; it does not create an extra message. Existing files
+in the current process's `/var/media` directory
+are reused, while other readable files are staged there. A direct Shell call using a literal block
+sends a message and leaves the run active:
+
+```bash
+message send <<'GSV_MESSAGE'
+your user-visible response
+GSV_MESSAGE
+```
+
+Run `yield` when the work is complete. A final message can commit and yield without another model
+turn by placing `&& yield` after the block declaration. The Process recognizes these message and
+run-control commands without shell approval. During an active run,
+`message send --to ... --also` creates an
 additional outbound message or sends to another authorized destination.
 `message destinations` lists observed destinations that are online; `--all`
 also includes known authorized destinations whose adapter account is offline.
 Group, channel, and thread entries appear only after the linked actor addresses
 GSV on that exact surface. Entries use opaque GSV ids and generic labels;
 provider account, actor, surface, and message ids are not printed.
+
+`message route show` and `message route list` inspect adapter routing. `route
+set` and `route clear` manage persistent mappings for groups, channels, and
+threads. On a private DM, only the canonical personal process can use `route
+set`, only from the exact latest inbound run on that DM, and only to an owned
+interactive non-personal process. The human uses `/ship` inside the messaging
+app to return to personal intelligence; `route clear` does not clear a DM.
+`--to` defaults to `here` during an adapter-originated run; elsewhere, pass an
+opaque destination id or unambiguous label from `message destinations --all`.
+`route set` accepts a full or unique process-id prefix or an unambiguous process
+label. A route change controls future inbound messages only, so the run making
+the change keeps its direct messages routed to the conversation that started it.
+Repeated `route set` calls from the same current run to the same work process
+are idempotent. Newer private activity or a newer selection fences a late call.
 
 `img2txt` uses Moondream 3.1 as its only image reader. With no subcommand it
 returns a normal caption. `query` requires the caller's prompt; there is no
@@ -125,15 +193,16 @@ reasoning, or structured output. The underlying `ai.image.read` response body
 streams decoded UTF-8 chunks; the gateway shell collects those chunks into its
 final `shell.exec` stdout.
 
-`--to here` selects the current adapter reply surface. An explicit send to that
-same destination requires `--also`, acknowledging that it is intentionally in
-addition to the automatic final reply. `--attach` streams one GSV filesystem
+`--to here` selects the current adapter endpoint. Any explicit destination send during an active
+run requires `--also`, acknowledging that it is intentionally sent to an explicit destination.
+`--attach` streams one GSV filesystem
 file; `--mime` overrides the inferred MIME type. Copy a file from a connected
 target to GSV before attaching it:
 
 ```bash
 cp laptop:/home/alice/report.pdf /tmp/report.pdf
 message attach /tmp/report.pdf
+message send --message "Here is the report." && yield
 message send --to here --message "Here is the report." --attach /tmp/report.pdf --also
 ```
 
@@ -145,13 +214,13 @@ also report that id, including a failure while reopening the file for the
 automatic retry. An outcome that may have reached the provider is reported as
 `sent=false`, `delivery_confirmed=false`, and `delivery_state=ambiguous`.
 
-Use `sched add --here` from a process-backed shell when each firing should admit
-an event into the current process. It creates a typed
-`process.event` schedule for the current process. When invoked during an adapter
-run, `--here` captures the authorized adapter destination so the future final
-answer returns there. Without such a route, the answer remains in the GSV
-process history. The target is bound to the current process id and must be
-recreated after that process is killed.
+Use `sched add --ship` when every firing should become one durable Ship
+responsibility. It works from top-level and process-backed shells. Use
+`sched add --here` when the schedule should follow the resolved current Process.
+For Ship, `--here` has exactly the same responsibility semantics as `--ship`,
+even during an adapter run: future work is not bound to that run's destination.
+A non-Ship target uses `process.event` and must be recreated after that Process
+is killed.
 
 Use `sched add --to DESTINATION` for direct scheduled text delivery. It creates
 an `adapter.send` scheduled action and does not run the agent. Destination
@@ -159,13 +228,14 @@ resolution includes known authorized offline destinations because the account
 may be online when the schedule fires. Run `message destinations --all` and
 copy its opaque GSV destination id; provider account, actor, and surface ids are
 not part of the agent-facing command contract.
-A successful `process.event` firing records event admission, not completion of
-a model turn or reply. Choose exactly one time expression. `--at` requires a
-future ISO timestamp with `Z` or an explicit numeric UTC offset.
+A successful `responsibility` firing records durable responsibility creation, not
+completion of its work. A successful `process.event` firing records event admission,
+not completion of a model turn or reply. Choose exactly one time expression. `--at`
+requires a future ISO timestamp with `Z` or an explicit numeric UTC offset.
 
 ```bash
-sched add --here --name animal-facts --every 2m --message "Send one obscure animal fact."
-sched add --here --name daily-brief --cron "0 9 * * *" --timezone Europe/Amsterdam --message "Prepare the daily brief."
+sched add --ship --name animal-facts --every 2m --message "Send one obscure animal fact."
+sched add --ship --name daily-brief --cron "0 9 * * *" --timezone Europe/Amsterdam --message "Prepare the daily brief."
 sched add --to MESSAGE_DESTINATION_ID --name standup --cron "0 9 * * 1-5" --message "Standup starts now."
 ```
 
@@ -203,26 +273,99 @@ Processes are the agent-facing execution model. `spawn` creates a new process;
 `send`, `history`, `reset`, and `kill` require a PID. `--uid` filters process
 lists and requires root when viewing another user.
 
-## Device Commands
+## Desktop Commands
 
 ```bash
-gsv device run [--id ID] [--workspace PATH]
-gsv device install [--id ID] [--workspace PATH]
-gsv device start
-gsv device stop
-gsv device status
-gsv device logs [-l N] [--follow]
+gsv desktop
+gsv desktop status [--json]
+gsv desktop new
+gsv desktop use PID
+gsv desktop microphone list
+gsv desktop microphone use NAME
+gsv desktop microphone default
+```
+
+`gsv desktop` focuses a running Desktop or launches the sibling
+`gsv-desktop` executable and waits for its local control endpoint. `new` also
+launches or focuses Desktop, asks Desktop to create a Process using its own
+authenticated gateway connection, selects it after authoritative history is
+installed, and prints the new PID. A cancellation after durable spawn but
+before selection can leave that Process valid but unselected. `use` launches
+or focuses Desktop, validates and selects an existing
+Process, then prints its PID.
+
+The microphone commands query a running Desktop without focusing its window. If
+Desktop is absent, they launch it and retry the requested microphone operation
+while its local endpoint starts. `microphone list` lists at most 32 available
+input devices and marks the operating-system default, the saved selection, and
+any active `GSV_VOICE_DEVICE` environment override. That legacy override uses a
+case-insensitive exact name, or a case-insensitive substring only when it
+identifies one device unambiguously. If the environment value is empty, too
+long, or otherwise invalid, output reports `environment override: invalid
+(remove GSV_VOICE_DEVICE)` without echoing the value. A selection of `not
+configured` means Desktop will ask on first voice use; `system default` means
+that choice was made explicitly. `microphone use NAME` validates and saves an
+exact device name, then prints the confirmed selection. Duplicate display names
+are numbered in the list but remain ambiguous to the name-only CLI; select those
+inputs in Desktop's picker instead. Quote names containing spaces. `microphone
+default` clears a named preference in favor of the operating
+system's default and prints the confirmed selection.
+
+`status` never launches Desktop. Its human output contains only gateway state,
+window state, and the selected PID; `--json` prints those same redacted fields
+for scripts. The command returns an error when Desktop is not running.
+
+The CLI finds `gsv-desktop` beside `gsv`, then on `PATH`. Development builds
+also recognize the legacy `gsv-native` binary name. Set `GSV_DESKTOP_PATH` to
+an explicit executable when testing a nonstandard installation.
+
+These commands use the versioned same-user IPC contract in
+`desktop-protocol`; they do not connect through `gsvd`. Credentials,
+messages, drafts, attachment paths, and approval content cannot be sent over
+that contract. Microphone names cross it only for the explicit microphone
+commands and are never included in the general redacted Desktop status. Desktop
+remains the owner of gateway authentication, process selection, microphone
+preference, and process-switch fencing.
+
+## Daemon Commands
+
+```bash
+gsv daemon install [--id ID] [--workspace PATH]
+gsv daemon start
+gsv daemon restart
+gsv daemon stop
+gsv daemon uninstall
+gsv daemon status
+gsv daemon doctor
+gsv daemon reload
+gsv daemon reconnect
+gsv daemon diagnostics [--json]
+gsv daemon logs [-l N] [--follow]
 ```
 
 The device daemon exposes local hardware-style capabilities to the Kernel:
-`fs.*` and `shell.exec`. The gateway always sees the same syscall/tool surface;
+`fs.*`, `shell.exec`, and `net.fetch`. The gateway always sees the same syscall/tool surface;
 the device ID selects which implementation receives a driver request.
 
-`run` starts a foreground driver. `install` creates and starts a launchd agent on
-macOS or a systemd user unit on Linux. The daemon writes daily rotated JSONL logs
+The driver runtime is the separate `gsvd` executable. The hidden legacy command
+`gsv device run` transfers process ownership to the sibling
+`gsvd --foreground`; the CLI never embeds the driver. `install` creates and
+starts a launchd agent on
+macOS, a systemd user unit on Linux, or a scheduled task on Windows. Reinstalling
+or starting an old definition migrates `gsv device run` to the direct `gsvd`
+entrypoint without changing the existing service identity. `doctor` checks the
+installed executable and definition. The daemon writes daily rotated JSONL logs
 under `~/.gsv/logs/device.log*`; `logs` tails the latest file with `-l, --lines`
 defaulting to `100`. Foreground logs use compact text by default; set
 `GSV_DEVICE_CONSOLE_FORMAT=json` or `GSV_DEVICE_CONSOLE_FORMAT=quiet` to change that.
+
+`reload` rereads `config.toml` and reconnects, while `reconnect` keeps the
+current settings. `diagnostics` reports bounded, redacted runtime notices.
+`status` combines the operating-system service state with the live daemon's
+version, PID, machine id, connection phase, uptime, and reconnect count. These
+live operations use a versioned same-user Unix socket on macOS/Linux and a
+current-user Windows named pipe. They do not expose credentials or gateway
+traffic.
 
 Device identity resolves as `--id`, then local `device.id`, then
 `device-<hostname>`. Workspace resolves as `--workspace`, then
@@ -231,6 +374,19 @@ Device identity resolves as `--id`, then local `device.id`, then
 `gsv auth setup --device-id ...` or
 `gsv auth token create --kind device --device ...` followed by
 `gsv config --local set device.token ...`.
+Because the compatibility launcher replaces itself with `gsvd`, gateway setup
+must be completed before starting `gsvd`; use `gsv auth setup` when connecting
+to a new deployment.
+
+`gsv`, `gsvd`, and the Desktop application share protocol and configuration
+crates but remain separate applications. The CLI owns operator commands and OS
+service control; `gsvd` owns machine syscalls, subprocesses, transfers,
+cancellation, reconnection, logging, and shutdown.
+
+The verified host installer ships `gsv` and `gsvd` as a matching pair and
+migrates an existing legacy service definition during upgrade. See
+[Install Host Applications](/how-to/install-host-apps) for the release matrix,
+checksum verification, and rollback contract.
 
 ## Auth Commands
 
@@ -308,11 +464,9 @@ overrides, currently `users/{uid}/ai/*`.
 With `--local`, commands edit `~/.config/gsv/config.toml`. Supported local keys:
 `gateway.url`, `gateway.username`, `gateway.token`, `gateway.session_token`,
 `gateway.session_token_id`, `gateway.session_expires_at`,
-`gateway.session_expires_at_ms`, `cloudflare.account_id`,
-`cloudflare.api_token`, `release.channel`, `r2.account_id`,
-`r2.access_key_id`, `r2.secret_access_key`, `r2.bucket`,
+`gateway.session_expires_at_ms`, `release.channel`,
 `session.default_key`, `device.id`, `device.token`, and `device.workspace`.
-`release.channel` must be `stable` or `dev`; token and secret values are masked
+`release.channel` must be `stable` or `dev`; token values are masked
 on local `get`. Adapter workers use Cloudflare service bindings rather than
 locally configured WhatsApp URLs or tokens.
 
@@ -353,41 +507,6 @@ itself or from a group. If it still gets no reply, verify that the Gateway and
 both workers' live logs. For an expired or already-used code, send a new DM and
 run `gsv auth link` with the new code.
 
-## Infrastructure Commands
-
-```bash
-gsv infra deploy [--version REF] [-c COMPONENT ... | --all] [--force-fetch] [--codemode auto|on|off]
-gsv infra upgrade [--version REF] [-c COMPONENT ... | --all] [--force-fetch] [--codemode auto|on|off]
-gsv infra destroy [-c COMPONENT ... | --all] [--delete-bucket] [--purge-bucket]
-```
-
-`--codemode` defaults to `auto`. Auto mode enables the gateway's Worker Loader
-binding only when the account is positively identified as Workers Paid. Free and
-unknown plans omit it, keeping the default deployment Free-safe. Use `on` to
-require CodeMode explicitly or `off` to omit the binding explicitly.
-
-Valid components are `ripgit`, `gateway`, `channel-whatsapp`,
-`channel-discord`, and `channel-telegram`. When no deploy/upgrade component is
-supplied, all components are selected. Deploying `gateway` requires `ripgit` to
-be selected or already deployed. Deploying or upgrading an adapter also
-reconciles the adapter-to-gateway and gateway-to-adapter service bindings when a
-gateway already exists. This applies to both the default and named instances.
-
-`deploy` fetches release bundles and applies Cloudflare Workers. `upgrade` does
-the same but auto-refreshes mutable refs such as `latest`, `stable`, and `dev`.
-Both accept `--bundle-dir PATH` for local bundles, `--api-token` or
-`CF_API_TOKEN`, `--account-id` or `CF_ACCOUNT_ID`, and `--discord-bot-token` or
-`DISCORD_BOT_TOKEN`.
-
-`destroy` tears down Workers. If no component or `--all` is supplied, it targets
-all components. `--delete-bucket` removes the shared R2 bucket; `--purge-bucket`
-must be combined with it. Unless `--keep-device` is passed, `destroy` also
-attempts to uninstall the local device service. A full teardown also removes the
-legacy assembler Worker when it exists; assembler remains unavailable as a
-deployable component. Cloudflare removes service bindings associated with a
-destroyed adapter worker, and later gateway upgrades also omit bindings whose
-target worker is absent.
-
 ## Version
 
 ```bash
@@ -404,7 +523,7 @@ Prints build metadata for the installed CLI.
 | `gsv client` | `gsv chat` |
 | `gsv session` | `gsv proc` |
 | `gsv local-config` | `gsv config --local` |
-| `gsv deploy` | `gsv infra` |
+| `gsv deploy`, `gsv infra` | Removed; use the public Alchemy stack or Managed GSV. |
 | `gsv tools`, `gsv skills`, `gsv init` | Removed from the current CLI. |
 
 ## See also

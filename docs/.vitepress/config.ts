@@ -124,6 +124,7 @@ export default defineConfig({
           items: [
             { text: "Overview", link: "/how-to/" },
             { text: "Deploy / Update / Remove", link: "/how-to/deploy" },
+            { text: "Install Host Applications", link: "/how-to/install-host-apps" },
             { text: "Connect Devices", link: "/how-to/connect-devices" },
             { text: "Connect a Messenger", link: "/how-to/messengers" },
             { text: "Bring Your Own Model", link: "/how-to/bring-your-own-model" },

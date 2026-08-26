@@ -159,6 +159,8 @@ function createBash(
       LANG: "en_US.UTF-8",
       UID: String(identity.uid),
       GSV_PID: ctx.processId ?? "",
+      GSV_INSTALLATION_ID: ctx.installationId ?? "",
+      GSV_URL: ctx.installationIdentity?.canonicalOrigin ?? "",
       HOSTNAME: serverName,
       GSV_VERSION: serverVersion,
     },

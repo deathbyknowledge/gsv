@@ -6,6 +6,8 @@ import { PROCESS_V003_MESSAGE_METADATA } from "./v003_message_metadata";
 import { PROCESS_V005_TOOL_RESULT_OUTCOME } from "./v005_tool_result_outcome";
 import { PROCESS_V006_PENDING_HIL_OWNER } from "./v006_pending_hil_owner";
 import { PROCESS_V008_SINGLE_PROCESS_HISTORY } from "./v008_single_process_history";
+import { PROCESS_V009_TYPED_MESSAGE_QUEUE } from "./v009_typed_message_queue";
+import { PROCESS_V011_ADD_CONTEXT_EPOCHS } from "./v011_add_context_epochs";
 
 function normalizedStatements(): string[] {
   return PROCESS_MIGRATIONS.flatMap((migration) => migration.statements)
@@ -37,7 +39,7 @@ function createTableStatement(name: string): string {
 describe("process schema migrations", () => {
   it("starts the process component at a v1 baseline with ordered migrations", () => {
     expect(PROCESS_SCHEMA_COMPONENT).toBe("process");
-    expect(PROCESS_MIGRATIONS).toHaveLength(8);
+    expect(PROCESS_MIGRATIONS).toHaveLength(11);
     expect(PROCESS_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_process_schema",
@@ -70,6 +72,18 @@ describe("process schema migrations", () => {
       id: 8,
       name: "single_process_history",
     });
+    expect(PROCESS_MIGRATIONS[8]).toMatchObject({
+      id: 9,
+      name: "add_typed_message_queue",
+    });
+    expect(PROCESS_MIGRATIONS[9]).toMatchObject({
+      id: 10,
+      name: "own_durable_tasks",
+    });
+    expect(PROCESS_MIGRATIONS[10]).toMatchObject({
+      id: 11,
+      name: "add_context_epochs",
+    });
   });
 
   it("keeps the shipped v1 table set intact", () => {
@@ -82,6 +96,7 @@ describe("process schema migrations", () => {
       "pending_hil",
       "conversation_segments",
       "conversation_archives",
+      "cf_agents_schedules",
     ]);
   });
 
@@ -108,6 +123,7 @@ describe("process schema migrations", () => {
       "messages_conversation_id_id_idx",
       "conversation_archives_conversation_generation_idx",
       "messages_run_id_idx",
+      "cf_agents_schedules_time_idx",
     ]);
   });
 
@@ -174,5 +190,50 @@ describe("process schema migrations", () => {
     expect(statements.some((statement) => (
       statement.includes("FROM messages WHERE conversation_id = 'default'")
     ))).toBe(true);
+  });
+
+  it("adds role, kind, and provenance to queued work in v9", () => {
+    const statements = PROCESS_V009_TYPED_MESSAGE_QUEUE.statements
+      .map((statement) => statement.trim().replace(/\s+/g, " "));
+
+    expect(statements).toContain(
+      "ALTER TABLE message_queue ADD COLUMN role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'system'))",
+    );
+    expect(statements).toContain(
+      "ALTER TABLE message_queue ADD COLUMN kind TEXT NOT NULL DEFAULT 'message'",
+    );
+    expect(statements).toContain(
+      "ALTER TABLE message_queue ADD COLUMN provenance_json TEXT",
+    );
+    expect(statements.some((statement) => (
+      statement.startsWith("UPDATE message_queue SET role = 'system', kind = 'schedule.event'")
+    ))).toBe(true);
+    expect(statements.some((statement) => (
+      statement.startsWith("UPDATE message_queue SET role = 'system', kind = 'runtime.wake'")
+    ))).toBe(true);
+  });
+
+  it("adds immutable context epoch baselines in v11", () => {
+    const statements = PROCESS_V011_ADD_CONTEXT_EPOCHS.statements
+      .map((statement) => statement.trim().replace(/\s+/g, " "));
+    const table = statements.find((statement) => (
+      statement.startsWith("CREATE TABLE context_epochs")
+    ));
+    expect(table).toContain("system_prompt TEXT NOT NULL");
+    expect(table).toContain("r12y_revision INTEGER NOT NULL");
+    expect(table).toContain("r12y_count INTEGER NOT NULL");
+    expect(table).toContain("observed_r12y_revision INTEGER NOT NULL");
+    expect(table).toContain("r12y_baseline_json TEXT NOT NULL");
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE context_epoch_transitions")
+      && statement.includes("PRIMARY KEY (epoch_id, revision)")
+    ))).toBe(true);
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE context_epoch_runs")
+      && statement.includes("PRIMARY KEY (epoch_id, run_id)")
+    ))).toBe(true);
+    expect(statements).toContain(
+      "CREATE UNIQUE INDEX context_epochs_live_idx ON context_epochs (state) WHERE state = 'live'",
+    );
   });
 });

@@ -1,21 +1,60 @@
 import type { KernelContext } from "./context";
 import { getVisibleTarget } from "./targets";
-import type { NetFetchArgs, NetFetchResult } from "@humansandmachines/gsv/protocol";
+import {
+  jsonValueSchema,
+  byteStreamChunk,
+  type JsonValue,
+  type NetFetchArgs,
+  type NetFetchResult,
+} from "@humansandmachines/gsv/protocol";
 import type { FrameBody, ResponseOkFrame } from "../protocol/frames";
 import { abortError, bindStreamToAbort } from "../shared/streams";
+import { z } from "zod";
 
 export type NetFetchDeviceTransport = {
   requestDevice: (
     deviceId: string,
-    call: string,
-    args: unknown,
+    call: "net.fetch",
+    args: NetFetchArgs,
     options?: { ttlMs?: number; body?: FrameBody; signal?: AbortSignal },
-  ) => Promise<ResponseOkFrame>;
+  ) => Promise<ResponseOkFrame<"net.fetch">>;
 };
 
-export type RoutedFetch = typeof fetch;
 type RoutedFetchInit = RequestInit & { timeoutMs?: number };
+export type RoutedFetch = (
+  input: RequestInfo | URL,
+  init?: RoutedFetchInit,
+) => Promise<Response>;
 type NetFetchRedirect = NonNullable<NetFetchArgs["redirect"]>;
+type NormalizedNetFetchRequest = {
+  url: string;
+  method: string;
+  headers: Headers;
+  body?: BodyInit;
+  redirect: NetFetchRedirect;
+  timeoutMs: number;
+};
+type NetFetchFrameResult = { data: NetFetchResult; body?: FrameBody };
+type NetFetchOutbound = { args: NetFetchArgs; body?: FrameBody };
+type CancellationReason = string | Error | null | undefined;
+type NetFetchDeviceRequestOptions = {
+  ttlMs: number;
+  signal: AbortSignal;
+  body?: FrameBody;
+};
+
+const netFetchResultSchema = z.object({
+  ok: z.boolean().optional().default(false),
+  url: z.string().optional().default(""),
+  status: z.number(),
+  statusText: z.string().optional().default(""),
+  headers: z.record(z.string(), z.string()).optional().default({}),
+  redirected: z.boolean().optional().default(false),
+});
+const legacyNetFetchFieldsSchema = z.object({
+  body: z.unknown().optional(),
+  bodyBase64: z.unknown().optional(),
+});
 
 const NET_FETCH_CALL = "net.fetch";
 const DEFAULT_NET_FETCH_TIMEOUT_MS = 60_000;
@@ -86,64 +125,59 @@ export function createRoutedFetch(
     const signal = ctx.requestSignal && callerSignal
       ? AbortSignal.any([ctx.requestSignal, callerSignal])
       : ctx.requestSignal ?? callerSignal;
-    const request = new Request(input, {
+    const requestInit: RequestInit = {
       ...init,
-      ...(requestedRedirect === "error" ? { redirect: "manual" } : {}),
-      ...(signal ? { signal } : {}),
-    });
+    };
+    if (requestedRedirect === "error") requestInit.redirect = "manual";
+    if (signal) requestInit.signal = signal;
+    const request = new Request(input, requestInit);
     const outbound = requestToNetFetchArgs(request, requestedRedirect);
-    const timeoutMs = normalizeNetFetchTimeoutMs((init as RoutedFetchInit | undefined)?.timeoutMs);
+    const timeoutMs = normalizeNetFetchTimeoutMs(init?.timeoutMs);
     outbound.args.timeoutMs = timeoutMs;
     const response = await requestNetFetchWithSignal(
-      () => transport.requestDevice(normalizedTarget, NET_FETCH_CALL, outbound.args, {
-        ttlMs: timeoutMs,
-        signal: request.signal,
-        ...(outbound.body ? { body: outbound.body } : {}),
-      }),
+      () => {
+        const options: NetFetchDeviceRequestOptions = {
+          ttlMs: timeoutMs,
+          signal: request.signal,
+        };
+        if (outbound.body) options.body = outbound.body;
+        return transport.requestDevice(normalizedTarget, NET_FETCH_CALL, outbound.args, options);
+      },
       request.signal,
       outbound.body,
     );
-    return responseFromNetFetchResult(response.data, response.body, request.signal);
+    return responseFromNetFetchResult(
+      jsonValueSchema.parse(response.data),
+      response.body,
+      request.signal,
+    );
   };
 }
 
 export function normalizeTarget(value: string | undefined): string {
-  const normalized = typeof value === "string" ? value.trim() : "";
+  const normalized = value?.trim() ?? "";
   return normalized && normalized !== "worker" ? normalized : "gsv";
 }
 
 async function normalizeNetFetchRequest(
   args: NetFetchArgs,
   frameBody?: FrameBody,
-): Promise<{
-  url: string;
-  method: string;
-  headers: Headers;
-  body?: BodyInit;
-  redirect: NetFetchRedirect;
-  timeoutMs: number;
-}> {
-  const input = args && typeof args === "object" ? args : ({} as NetFetchArgs);
-  const url = normalizeHttpUrl(input.url);
-  const method = normalizeMethod(input.method);
-  const headers = new Headers();
-  for (const [key, value] of Object.entries(input.headers ?? {})) {
-    if (typeof value === "string") {
-      headers.append(key, value);
-    }
-  }
-
-  const legacyInput = input as NetFetchArgs & { body?: unknown; bodyBase64?: unknown };
-  const legacyField = legacyInput.body !== undefined
+): Promise<NormalizedNetFetchRequest> {
+  const legacy = legacyNetFetchFieldsSchema.parse(args);
+  const legacyField = legacy.body !== undefined
     ? "body"
-    : legacyInput.bodyBase64 !== undefined
+    : legacy.bodyBase64 !== undefined
       ? "bodyBase64"
-      : null;
+      : undefined;
   if (legacyField) {
-    if (frameBody) {
-      await frameBody.stream.cancel().catch(() => {});
-    }
+    await frameBody?.stream.cancel().catch(() => {});
     throw new Error(`net.fetch args.${legacyField} was removed; use a request body`);
+  }
+  const url = normalizeHttpUrl(args.url);
+  const method = normalizeMethod(args.method);
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(args.headers ?? {})) {
+    headers.append(key, value);
   }
   if ((method === "GET" || method === "HEAD") && frameBody) {
     if (frameBody) {
@@ -164,14 +198,15 @@ async function normalizeNetFetchRequest(
     ? limitNetFetchRequestBody(frameBody.stream, MAX_NET_FETCH_REQUEST_BYTES)
     : undefined;
 
-  return {
+  const request: NormalizedNetFetchRequest = {
     url,
     method,
     headers,
-    ...(body ? { body } : {}),
-    redirect: normalizeRedirect(input.redirect),
-    timeoutMs: normalizeNetFetchTimeoutMs(input.timeoutMs),
+    redirect: normalizeRedirect(args.redirect),
+    timeoutMs: normalizeNetFetchTimeoutMs(args.timeoutMs),
   };
+  if (body) request.body = body;
+  return request;
 }
 
 export function limitNetFetchRequestBody(
@@ -184,35 +219,35 @@ export function limitNetFetchRequestBody(
 export function requestToNetFetchArgs(
   request: Request,
   redirect: NetFetchArgs["redirect"] = normalizeRedirect(request.redirect),
-): { args: NetFetchArgs; body?: FrameBody } {
+): NetFetchOutbound {
   const headers: Record<string, string> = {};
   request.headers.forEach((value, key) => {
     headers[key] = value;
   });
 
   const contentLength = parseContentLength(request.headers.get("content-length"));
-  const body = request.method !== "GET" && request.method !== "HEAD" && request.body
-    ? {
-        stream: request.body,
-        ...(contentLength === null ? {} : { length: contentLength }),
-      }
-    : undefined;
+  let body: FrameBody | undefined;
+  if (request.method !== "GET" && request.method !== "HEAD" && request.body) {
+    body = { stream: request.body };
+    if (contentLength !== null) body.length = contentLength;
+  }
 
-  return {
+  const result: NetFetchOutbound = {
     args: {
       url: request.url,
       method: request.method,
       headers,
       redirect,
     },
-    ...(body ? { body } : {}),
   };
+  if (body) result.body = body;
+  return result;
 }
 
 function netFetchResultFromResponse(
   response: Response,
   onBodyDone: () => void,
-): { data: NetFetchResult; body?: FrameBody } {
+): NetFetchFrameResult {
   const headers: Record<string, string> = {};
   response.headers.forEach((value, key) => {
     headers[key] = value;
@@ -220,7 +255,7 @@ function netFetchResultFromResponse(
   const body = response.body
     ? limitNetFetchResponseBody(response.body, response.headers, onBodyDone)
     : undefined;
-  return {
+  const result: NetFetchFrameResult = {
     data: {
       ok: response.ok,
       url: response.url,
@@ -229,8 +264,9 @@ function netFetchResultFromResponse(
       headers,
       redirected: response.redirected,
     },
-    ...(body ? { body: { stream: body } } : {}),
   };
+  if (body) result.body = { stream: body };
+  return result;
 }
 
 export function limitNetFetchResponseBody(
@@ -266,7 +302,8 @@ function limitNetFetchBody(
     }
   };
 
-  return new ReadableStream<Uint8Array>({
+  const source: UnderlyingByteSource = {
+    type: "bytes",
     async pull(controller) {
       try {
         const { done, value } = await reader.read();
@@ -286,7 +323,7 @@ function limitNetFetchBody(
           controller.error(error);
           return;
         }
-        controller.enqueue(value);
+        controller.enqueue(byteStreamChunk(value));
       } catch (error) {
         await reader.cancel(error).catch(() => {});
         finish();
@@ -297,16 +334,17 @@ function limitNetFetchBody(
       await reader.cancel(reason).catch(() => {});
       finish();
     },
-  });
+  };
+  return new ReadableStream(source);
 }
 
 export async function requestNetFetchWithSignal(
   start: () => Promise<ResponseOkFrame>,
   signal: AbortSignal,
   requestBody?: FrameBody,
-  cancelRequest?: (reason: unknown) => void | Promise<void>,
+  cancelRequest?: (reason: CancellationReason) => void | Promise<void>,
 ): Promise<ResponseOkFrame> {
-  const cancel = (reason: unknown) => {
+  const cancel = (reason: CancellationReason) => {
     try {
       void requestBody?.stream.cancel(reason).catch(() => {});
     } catch {}
@@ -348,16 +386,16 @@ export async function requestNetFetchWithSignal(
 }
 
 export function responseFromNetFetchResult(
-  raw: unknown,
+  raw: JsonValue | undefined,
   frameBody?: FrameBody,
   signal?: AbortSignal,
 ): Response {
   try {
-    if (!raw || typeof raw !== "object") {
+    if (!raw) {
       throw new Error("net.fetch returned an invalid response");
     }
-    const result = raw as Partial<NetFetchResult>;
-    const status = typeof result.status === "number" ? result.status : 0;
+    const result = netFetchResultSchema.parse(raw);
+    const status = result.status;
     if (!Number.isInteger(status) || status < 200 || status > 599) {
       throw new Error("net.fetch returned an invalid HTTP status");
     }
@@ -372,15 +410,13 @@ export function responseFromNetFetchResult(
       : null;
     const response = new Response(stream, {
       status,
-      statusText: typeof result.statusText === "string" ? result.statusText : "",
-      headers: result.headers && typeof result.headers === "object"
-        ? result.headers as Record<string, string>
-        : undefined,
+      statusText: result.statusText,
+      headers: result.headers,
     });
-    if (typeof result.url === "string" && result.url.length > 0) {
+    if (result.url.length > 0) {
       try {
         Object.defineProperty(response, "url", { value: result.url });
-        Object.defineProperty(response, "redirected", { value: result.redirected === true });
+        Object.defineProperty(response, "redirected", { value: result.redirected });
       } catch {}
     }
     return response;
@@ -390,8 +426,8 @@ export function responseFromNetFetchResult(
   }
 }
 
-function normalizeHttpUrl(value: unknown): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
+function normalizeHttpUrl(value: string): string {
+  if (value.trim().length === 0) {
     throw new Error("net.fetch requires url");
   }
   let url: URL;
@@ -406,8 +442,8 @@ function normalizeHttpUrl(value: unknown): string {
   return url.toString();
 }
 
-function normalizeMethod(value: unknown): string {
-  const method = typeof value === "string" && value.trim().length > 0
+function normalizeMethod(value: string | undefined): string {
+  const method = value?.trim()
     ? value.trim().toUpperCase()
     : "GET";
   if (!/^[A-Z]+$/.test(method)) {
@@ -416,7 +452,7 @@ function normalizeMethod(value: unknown): string {
   return method;
 }
 
-function normalizeRedirect(value: unknown): NetFetchRedirect {
+function normalizeRedirect(value: string | undefined): NetFetchRedirect {
   if (value === undefined) {
     return "follow";
   }
@@ -426,8 +462,8 @@ function normalizeRedirect(value: unknown): NetFetchRedirect {
   throw new Error("net.fetch redirect must be follow, error, or manual");
 }
 
-export function normalizeNetFetchTimeoutMs(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0
+export function normalizeNetFetchTimeoutMs(value: number | undefined): number {
+  return value !== undefined && Number.isFinite(value) && value > 0
     ? Math.min(Math.floor(value), MAX_NET_FETCH_TIMEOUT_MS)
     : DEFAULT_NET_FETCH_TIMEOUT_MS;
 }

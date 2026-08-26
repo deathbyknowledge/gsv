@@ -19,8 +19,11 @@ import type {
   SysOAuthDevicePollResult,
   SysOAuthDeviceStartResult,
   SysOAuthFlowSummary,
+  JsonObject,
+  JsonValue,
 } from "@humansandmachines/gsv/protocol";
 import { requireCommandCapability, requireShellOptionValue } from "./common";
+import { z } from "zod";
 
 const OPENAI_CODEX_PROVIDER = "openai-codex";
 const DEFAULT_ACCOUNT_KEY = "default";
@@ -35,6 +38,14 @@ type ListOptions = CommonOptions & {
   kind?: SysOAuthConnectionKind;
   includePending: boolean;
 };
+type SelectorOptions = { selector: string; options: CommonOptions };
+type DeviceStartOptions = { provider: typeof OPENAI_CODEX_PROVIDER; options: CommonOptions };
+type DevicePollOptions = { flowId: string; options: CommonOptions };
+type OAuthListRequest = { includePending: boolean; uid?: number };
+type OAuthListJsonPayload = { accounts: SysOAuthAccountSummary[]; flows?: SysOAuthFlowSummary[] };
+type OAuthForgetRequest = { accountId: string; uid?: number };
+type OAuthDeviceStartRequest = { kind: "ai-provider"; provider: typeof OPENAI_CODEX_PROVIDER; uid?: number };
+type OAuthDevicePollRequest = { flowId: string; uid?: number };
 
 export function buildOAuthCommand(ctx: KernelContext) {
   return defineCommand("oauth", async (args): Promise<ExecResult> => {
@@ -73,16 +84,17 @@ export function buildOAuthCommand(ctx: KernelContext) {
 async function listOAuth(args: string[], ctx: KernelContext): Promise<ExecResult> {
   requireCommandCapability(ctx, SYS_OAUTH_LIST);
   const options = parseListOptions(args);
-  const result = handleSysOAuthList({
-    ...(options.uid !== undefined ? { uid: options.uid } : {}),
-    includePending: options.includePending,
-  }, ctx);
+  const request: OAuthListRequest = { includePending: options.includePending };
+  if (options.uid !== undefined) request.uid = options.uid;
+  const result = handleSysOAuthList(request, ctx);
   const accounts = filterAccounts(result.accounts, options);
   const flows = options.includePending
     ? filterFlows(result.flows ?? [], options)
     : undefined;
   if (options.json) {
-    return jsonResult({ accounts, ...(flows ? { flows } : {}) });
+    const payload: OAuthListJsonPayload = { accounts };
+    if (flows) payload.flows = flows;
+    return jsonResult(payload);
   }
   return {
     stdout: formatAccountTable(accounts, flows),
@@ -95,7 +107,6 @@ async function showOAuth(args: string[], ctx: KernelContext): Promise<ExecResult
   requireCommandCapability(ctx, SYS_OAUTH_LIST);
   const { selector, options } = parseShowOptions(args);
   const result = handleSysOAuthList({
-    ...(options.uid !== undefined ? { uid: options.uid } : {}),
     includePending: false,
   }, ctx);
   const account = result.accounts.find((candidate) =>
@@ -119,10 +130,9 @@ async function showOAuth(args: string[], ctx: KernelContext): Promise<ExecResult
 function forgetOAuth(args: string[], ctx: KernelContext): ExecResult {
   requireCommandCapability(ctx, SYS_OAUTH_FORGET);
   const { selector, options } = parseForgetOptions(args);
-  const result = handleSysOAuthForget({
-    accountId: selector,
-    ...(options.uid !== undefined ? { uid: options.uid } : {}),
-  }, ctx);
+  const request: OAuthForgetRequest = { accountId: selector };
+  if (options.uid !== undefined) request.uid = options.uid;
+  const result = handleSysOAuthForget(request, ctx);
   if (options.json) {
     return jsonResult(result);
   }
@@ -141,20 +151,20 @@ async function runDeviceOAuth(args: string[], ctx: KernelContext): Promise<ExecR
   if (subcommand === "start") {
     requireCommandCapability(ctx, SYS_OAUTH_DEVICE_START);
     const { provider, options } = parseDeviceStartOptions(rest);
-    const result = await handleSysOAuthDeviceStart({
+    const request: OAuthDeviceStartRequest = {
       kind: "ai-provider",
       provider,
-      ...(options.uid !== undefined ? { uid: options.uid } : {}),
-    }, ctx);
+    };
+    if (options.uid !== undefined) request.uid = options.uid;
+    const result = await handleSysOAuthDeviceStart(request, ctx);
     return options.json ? jsonResult(result) : deviceStartResult(result);
   }
   if (subcommand === "poll") {
     requireCommandCapability(ctx, SYS_OAUTH_DEVICE_POLL);
     const { flowId, options } = parseDevicePollOptions(rest);
-    const result = await handleSysOAuthDevicePoll({
-      flowId,
-      ...(options.uid !== undefined ? { uid: options.uid } : {}),
-    }, ctx);
+    const request: OAuthDevicePollRequest = { flowId };
+    if (options.uid !== undefined) request.uid = options.uid;
+    const result = await handleSysOAuthDevicePoll(request, ctx);
     return options.json ? jsonResult(result) : devicePollResult(result);
   }
   throw new Error(`unknown device subcommand: ${subcommand}`);
@@ -168,10 +178,9 @@ async function runCodexOAuth(args: string[], ctx: KernelContext): Promise<ExecRe
   if (subcommand === "status") {
     requireCommandCapability(ctx, SYS_OAUTH_LIST);
     const options = parseCommonOptions(rest, "oauth codex status [--json] [-u UID]");
-    const result = handleSysOAuthList({
-      ...(options.uid !== undefined ? { uid: options.uid } : {}),
-      includePending: false,
-    }, ctx);
+    const request: OAuthListRequest = { includePending: false };
+    if (options.uid !== undefined) request.uid = options.uid;
+    const result = handleSysOAuthList(request, ctx);
     const account = result.accounts.find(isDefaultCodexAccount) ?? null;
     const status = {
       connected: account !== null,
@@ -228,7 +237,7 @@ function parseListOptions(args: string[]): ListOptions {
   return options;
 }
 
-function parseShowOptions(args: string[]): { selector: string; options: CommonOptions } {
+function parseShowOptions(args: string[]): SelectorOptions {
   const options = parseTrailingCommonOptions(args, "oauth show <account-id|provider[/key]> [--json] [-u UID]");
   if (options.positionals.length !== 1) {
     throw new Error("usage: oauth show <account-id|provider[/key]> [--json] [-u UID]");
@@ -236,7 +245,7 @@ function parseShowOptions(args: string[]): { selector: string; options: CommonOp
   return { selector: options.positionals[0], options };
 }
 
-function parseForgetOptions(args: string[]): { selector: string; options: CommonOptions } {
+function parseForgetOptions(args: string[]): SelectorOptions {
   const options = parseTrailingCommonOptions(args, "oauth forget <account-id> [--json] [-u UID]");
   if (options.positionals.length !== 1) {
     throw new Error("usage: oauth forget <account-id> [--json] [-u UID]");
@@ -244,7 +253,7 @@ function parseForgetOptions(args: string[]): { selector: string; options: Common
   return { selector: options.positionals[0], options };
 }
 
-function parseDeviceStartOptions(args: string[]): { provider: typeof OPENAI_CODEX_PROVIDER; options: CommonOptions } {
+function parseDeviceStartOptions(args: string[]): DeviceStartOptions {
   const options = parseTrailingCommonOptions(args, "oauth device start <provider> [--json] [-u UID]");
   if (options.positionals.length !== 1) {
     throw new Error("usage: oauth device start <provider> [--json] [-u UID]");
@@ -255,7 +264,7 @@ function parseDeviceStartOptions(args: string[]): { provider: typeof OPENAI_CODE
   return { provider: OPENAI_CODEX_PROVIDER, options };
 }
 
-function parseDevicePollOptions(args: string[]): { flowId: string; options: CommonOptions } {
+function parseDevicePollOptions(args: string[]): DevicePollOptions {
   const options = parseTrailingCommonOptions(args, "oauth device poll <flow-id> [--json] [-u UID]");
   if (options.positionals.length !== 1) {
     throw new Error("usage: oauth device poll <flow-id> [--json] [-u UID]");
@@ -321,12 +330,10 @@ function hasCodexAccountId(account: SysOAuthAccountSummary): boolean {
   return stringMetadata(account.metadata, "chatgptAccountId") !== null;
 }
 
-function stringMetadata(metadata: unknown, key: string): string | null {
-  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-    return null;
-  }
-  const value = (metadata as Record<string, unknown>)[key];
-  return typeof value === "string" && value.trim() ? value.trim() : null;
+function stringMetadata(metadata: JsonObject | null | undefined, key: string): string | null {
+  const value = metadata?.[key];
+  const parsed = z.string().safeParse(value);
+  return parsed.success && parsed.data.trim() ? parsed.data.trim() : null;
 }
 
 function parseKind(value: string): SysOAuthConnectionKind {
@@ -343,7 +350,7 @@ function parseUid(value: string): number {
   return Number.parseInt(value, 10);
 }
 
-function jsonResult(value: unknown): ExecResult {
+function jsonResult(value: JsonValue): ExecResult {
   return {
     stdout: `${JSON.stringify(value, null, 2)}\n`,
     stderr: "",

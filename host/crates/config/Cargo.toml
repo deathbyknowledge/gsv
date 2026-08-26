@@ -1,0 +1,21 @@
+[package]
+name = "host-config"
+version.workspace = true
+edition = "2021"
+publish = false
+
+[dependencies]
+chrono = "0.4"
+dirs = "5"
+fs2 = "0.4"
+serde = { version = "1", features = ["derive"] }
+tempfile = "3"
+toml = "0.8"
+
+[dev-dependencies]
+
+[lints.clippy]
+unwrap_used = "warn"
+panic = "warn"
+todo = "warn"
+dbg_macro = "warn"

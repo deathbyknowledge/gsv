@@ -51,7 +51,26 @@ type ProcessIdentity = {
   workspaceId: string | null;
 };
 
-type MediaInput = {
+type FileResourceReference = {
+  type: "file";
+  target: string;
+  path: string;
+  revision: string;
+  contentType: string;
+  size: number;
+  expiresAt?: number;
+};
+
+type ResourceBlock = {
+  type: "resource";
+  ref: FileResourceReference;
+  mediaType?: "image" | "audio" | "video" | "document";
+  filename?: string;
+  duration?: number;
+  transcription?: string;
+};
+
+type LegacyMediaInput = {
   type: "image" | "audio" | "video" | "document";
   mimeType: string;
   key?: string;
@@ -61,6 +80,8 @@ type MediaInput = {
   duration?: number;
   transcription?: string;
 };
+
+type MessageAttachment = ResourceBlock | LegacyMediaInput;
 
 ```
 
@@ -72,7 +93,7 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `fs.read` | `handleFsRead`; CLI `Read` | Resolves paths against process `cwd` and home. Direct directory results are JSON. A successful file result always attaches a response body containing raw UTF-8 text or image bytes; `data` contains file metadata. Text decoding is strict across native and device implementations, so invalid UTF-8 returns a binary-file error. `offset` defaults to `0`; `limit` defaults to all lines. Agent tool results add line numbers when presenting text to the model. The transport streams images without a target-specific size cap; process tool results cap model-context materialization at 25 MiB. |
+| `fs.read` | `handleFsRead`; CLI `Read` | Resolves paths against process `cwd` and home. Direct directory results are JSON. Text reads attach raw UTF-8 in the response body. Image reads attach raw bytes by default; `representation: "resource"` instead returns a revision-bound file reference with no body. Process-dispatched reads select resources automatically, retain the exact revision in the run-as agent's immutable archive, and add provider image bytes only while assembling model context. Text decoding is strict across native and device implementations, so invalid UTF-8 returns a binary-file error. Direct syscalls default `offset` to `0` and `limit` to all lines. Agent Read defaults to 2,000 lines and always caps returned text at 64 KiB; truncated results expose `nextOffset` when another line-based Read can continue. Agent tool results add line numbers when presenting text to the model. Retained process image reads are capped at 25 MiB. |
 | `fs.write` | `handleFsWrite`; CLI `Write` | Creates or replaces a complete file. Native writes through `GsvFs.writeFile`; CLI creates parent directories explicitly. Returns written path and size. |
 | `fs.edit` | `handleFsEdit`; CLI `Edit` | Performs exact string replacement in a text file. `replaceAll` defaults to `false`; if multiple matches exist and `replaceAll` is false, the handler asks for a more specific edit. |
 | `fs.delete` | `handleFsDelete`; CLI `Delete` | Deletes the path. Native checks existence then calls `rm` with force; CLI deletes files or directories recursively. This is destructive. |
@@ -83,9 +104,9 @@ Device routing errors are frame-level errors: `403` for access denied, `503` for
 ```ts
 type FilesystemSyscalls = {
   "fs.read": {
-    args: { target?: string; path: string; offset?: number; limit?: number };
+    args: { target?: string; path: string; offset?: number; limit?: number; maxBytes?: number; representation?: "content" | "resource" };
     result:
-      | { ok: true; path: string; kind: "text" | "image"; contentType: string; lines?: number; size: number }
+      | { ok: true; path: string; kind: "text" | "image"; contentType: string; lines?: number; size: number; truncated?: boolean; nextOffset?: number; resource?: FileResourceReference }
       | { ok: true; path: string; files: string[]; directories: string[] }
       | OperationError;
   };
@@ -116,8 +137,21 @@ type FilesystemSyscalls = {
 
 For a file result, `size` is the original file size; the body descriptor length
 is the transmitted payload size and can differ when `offset` or `limit` selects
-only part of the file. Process tool results and CodeMode materialize the body
-back into `content`; only direct agent tool results add line numbers.
+only part of the file. Text results are materialized back into `content`; only
+direct agent tool results add line numbers. Image-bearing agent tool results are
+retained at the exact source revision before history is written, expose a typed
+resource block to clients, and are hydrated as typed image blocks only while
+building model context. Web and Desktop resolve the resource lazily through
+`fs.transfer.send`; the reference itself is not a bearer capability. CodeMode
+may inspect a materialized image during execution; if that image is returned as
+its result, the compatibility externalization boundary still applies.
+
+`maxBytes` bounds the transmitted text selection. It is primarily a runtime
+transport control: the model-facing Read schema does not let a model raise its
+64 KiB ceiling. If a complete next line would exceed the bound, `nextOffset`
+identifies the first unread line. If one line alone exceeds the bound, Read
+returns a UTF-8-safe prefix without `nextOffset` and directs the agent to Shell
+for byte-range inspection.
 
 ## Network: `net.fetch`
 
@@ -155,11 +189,15 @@ type NetworkSyscalls = {
 
 `shell.exec` starts, polls, or writes to a shell command on the selected target. Use `gsv` for the Worker sandbox shell, or a device id for local source trees, private networks, OS packages, credentials, or hardware.
 
+The native `gsv` shell exposes the immutable installation identity as
+`GSV_INSTALLATION_ID` and its persisted canonical HTTP(S) origin as `GSV_URL`.
+It does not derive either value from an agent-supplied hostname.
+
 Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env and built-in commands such as `codemode`, `mcp`, and `wiki`. Device targets run a real local shell through the CLI. Device start calls return within a runtime-owned wait budget. If the command is still running, the result includes a `sessionId`; later calls with that `sessionId` poll or write stdin. |
+| `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env and built-in commands such as `codemode`, `mail`, `mcp`, and `wiki`. Device targets run a real local shell through the CLI. Device start calls return within a runtime-owned wait budget. If the command is still running, the result includes a `sessionId`; later calls with that `sessionId` poll or write stdin. |
 
 ```ts
 type ShellSyscalls = {
@@ -211,6 +249,114 @@ while (res.status === "running") {
 return output;
 ```
 
+The native `mail` command exposes the managed mailbox. `mail send` sends a new
+message and `mail reply` replies to a stored inbound message:
+
+```bash
+mail send --to person@example.com --subject "Hello" --message "Hello from GSV"
+mail reply MESSAGE_ID --body ./reply.txt
+mail status DELIVERY_ID
+```
+
+Both commands run inside `shell.exec`, so a model invocation is governed by the
+outer `shell.exec` approval. They do not create a second nested `mail.send`
+approval. Use `--delivery-id` to retain an idempotency key across a deliberate
+retry; otherwise the command derives one from the outer request and the
+invocation's ordinal.
+
+## Mail: `mail.send`
+
+`mail.send` is the explicit managed-email send primitive. Version one accepts a
+non-empty plain-text body of at most 1 MiB and exactly one recipient. It does
+not accept HTML, CC, BCC, or attachments. New messages require `to` and `subject`. A reply
+instead supplies `replyToMessageId`; the Kernel looks up that message in the
+caller's mailbox, derives its recipient and threading headers, and derives a
+`Re:` subject unless the caller supplies one. A reply cannot override `to`.
+
+The caller must have the `mail.send` capability and resolve to an active human
+mailbox owner. The Kernel derives `from` from that owner's managed mailbox; the
+caller cannot choose it. Standalone deployments do not bind the managed email
+queue, so this syscall returns an unavailable operation result there.
+
+`deliveryId` is the caller's required durable idempotency key. A direct protocol
+or SDK caller must retain it before sending so a timeout or disconnect can be
+reconciled without minting a duplicate. Reusing the same id for the same owner and exact message returns the existing outbound intent with
+`replayed: true`; reusing it with different content, destination, or reply
+context is rejected. CodeMode and the native shell derive deterministic ids
+from their durable outer execution when the caller does not supply one.
+
+The first successful call normally returns `queued`, which means only that the
+canonical intent and body are durable and Queue publication is durably owned by
+the Kernel. The Kernel retries publication until the Queue accepts the command.
+Replaying the same call returns its current state. `accepted` means Cloudflare
+Email Sending accepted the message and returned a provider id, not that the
+recipient's mailbox has delivered it. `failed` is a known terminal failure.
+`unknown` means the provider call may have succeeded, so GSV will not replay it
+and risk sending a duplicate.
+
+Cancellation is effective until the Kernel durably admits the outbox wake. Once
+that admission exists, delivery recovery continues even if the original request
+disconnects; the caller must retain the delivery id and inspect `mail.status`
+rather than assuming that cancellation recalled the message.
+
+```ts
+type MailSyscalls = {
+  "mail.send": {
+    args: {
+      text: string;
+      to?: string;
+      subject?: string;
+      replyToMessageId?: string;
+      deliveryId: string;
+    };
+    result:
+      | {
+          ok: true;
+          deliveryId: string;
+          outboundId: string;
+          state: "queued" | "accepted" | "failed" | "unknown";
+          from: string;
+          to: string;
+          subject: string;
+          errorCode?: string;
+          replayed: boolean;
+        }
+      | {
+          ok: false;
+          error: string;
+          retryable: boolean;
+          deliveryId?: string;
+          outboundId?: string;
+        };
+  };
+  "mail.status": {
+    args: { deliveryId: string };
+    result: {
+      outbound: null | {
+        deliveryId: string;
+        outboundId: string;
+        state: "staging" | "queued" | "accepted" | "failed" | "unknown";
+        from: string;
+        to: string;
+        subject: string;
+        createdAt: number;
+        queuedAt: number | null;
+        completedAt: number | null;
+        providerMessageId?: string;
+        errorCode?: string;
+      };
+    };
+  };
+};
+```
+
+`mail.status` is a pure owner-scoped lookup by exact `deliveryId`. It has its
+own `mail.status` capability, remains available when sending is disabled or the
+managed Queue is unavailable, and returns the same `null` result for missing
+and foreign-owned deliveries. It does not re-enter compose, body storage, or
+Queue publication. This is the normal way to observe the eventual outcome of a
+send that returned `queued`.
+
 ## CodeMode: `codemode.exec`, `codemode.run`
 
 `codemode.exec` runs one sandboxed async JavaScript block in the Process DO
@@ -237,16 +383,22 @@ const toolResult = await lookup_record({ query: "gsv" });
 ```
 
 Nested tool calls are dispatched back through the Process DO and Kernel as
-ordinary `shell.exec`, `fs.*`, `net.fetch`, and `sys.mcp.*` request frames. They keep the
-same capability, approval, target routing, async device response, and shell
-session behavior as direct model tool calls.
+ordinary `shell.exec`, `fs.*`, `net.fetch`, `mail.send`, and `sys.mcp.*`
+request frames. They keep the same capability, approval, target routing, async
+device response, and shell session behavior as direct model tool calls.
+
+`mail.send` is deliberately available through the CodeMode wrapper rather than
+as another fixed model-facing tool. Each nested call is checked independently
+against the Process approval policy; the default interactive policy asks for
+approval. The wrapper derives an ordinal idempotency key from the durable run
+and CodeMode dispatch unless the script supplies `deliveryId` explicitly.
 
 Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `codemode.exec` | Process DO `executeCodeModeTool`; `executeCodeMode` | Runs code in an isolated Worker Loader worker with outbound network disabled. Provides `shell(input, options)`, `fs.read/write/edit/delete/search`, `mcpTools` metadata, and connected MCP tools as generated async functions. Returns a structured `completed` or `failed` CodeMode result. |
-| `codemode.run` | Kernel `forwardToProcess`; Process DO `handleCodeModeRun`; `executeCodeMode` | Manual CodeMode execution for shell/CLI surfaces. Accepts code plus optional wrapper defaults and script arguments. Nested tools route through normal `shell.exec`, `fs.*`, `net.fetch`, and `sys.mcp.*` syscalls. |
+| `codemode.exec` | Process DO `executeCodeModeTool`; `executeCodeMode` | Runs code in an isolated Worker Loader worker with outbound network disabled. Provides `shell(input, options)`, `fs.read/write/edit/delete/search`, `mail.send`, `mcpTools` metadata, and connected MCP tools as generated async functions. Returns a structured `completed` or `failed` CodeMode result. |
+| `codemode.run` | Kernel `forwardToProcess`; Process DO `handleCodeModeRun`; `executeCodeMode` | Manual CodeMode execution for shell/CLI surfaces. Accepts code plus optional wrapper defaults and script arguments. Nested tools route through normal `shell.exec`, `fs.*`, `net.fetch`, `mail.send`, and `sys.mcp.*` syscalls. |
 
 ```ts
 type CodeModeSyscalls = {
@@ -332,6 +484,73 @@ if (res.status === "failed") {
 return { exitCode: res.exitCode, output };
 ```
 
+## Conversations: `conversation.*`
+
+`conversation.*` is the direct-client interface for canonical user-visible messages. It is
+separate from raw `proc.history` activity. These operations require an authenticated direct user
+client; Process and adapter service callers use private Kernel-owned admission paths.
+
+| Syscall | Handler | Behavior |
+|---|---|---|
+| `conversation.ship` | Kernel | Ensures and returns the caller's stable Ship conversation and current personal Process handler. |
+| `conversation.forProcess` | Kernel | Returns Ship for the personal Process or ensures a Work conversation for an owned interactive Process. |
+| `conversation.list` | Kernel | Lists the caller's canonical Ship, Work, and Group conversations. |
+| `conversation.history` | Conversation DO | Returns a newest-first page normalized into chronological order, paging transparently across hot SQLite messages and immutable R2 segments. |
+| `conversation.send` | Kernel | Idempotently commits user input, preinstalls the originating connection's directed run route, and admits the interaction to the conversation handler. The returned run id is deterministically bound to the canonical input message. |
+| `conversation.media.read` | Conversation DO through Kernel | Compatibility reader for media copied by older conversation records. New messages carry resource blocks and resolve them with `fs.transfer.send`. |
+
+```ts
+type ConversationKind = "ship" | "work" | "group";
+type ConversationSummary = {
+  id: string;
+  kind: ConversationKind;
+  ownerUid: number;
+  title: string | null;
+  handlerPid: string;
+  latestSequence: number;
+  createdAt: number;
+  updatedAt: number;
+};
+type ConversationMessage = {
+  id: string;
+  conversationId: string;
+  sequence: number;
+  author: { kind: "user"; uid: number } | { kind: "process"; pid: string; uid: number };
+  text: string;
+  media?: MessageAttachment[];
+  origin: ConversationMessageOrigin;
+  processId?: string;
+  runId?: string;
+  createdAt: number;
+};
+type ConversationSyscalls = {
+  "conversation.ship": {
+    args: Record<string, never>;
+    result: { conversation: ConversationSummary };
+  };
+  "conversation.forProcess": {
+    args: { pid: string };
+    result: { conversation: ConversationSummary };
+  };
+  "conversation.list": {
+    args: Record<string, never>;
+    result: { conversations: ConversationSummary[] };
+  };
+  "conversation.history": {
+    args: { conversationId: string; beforeSequence?: number; limit?: number };
+    result: { conversation: ConversationSummary; messages: ConversationMessage[]; hasMore: boolean };
+  };
+  "conversation.send": {
+    args: { conversationId: string; text: string; media?: ResourceBlock[]; idempotencyKey?: string };
+    result: { message: ConversationMessage; handlerPid: string; runId: string; queued?: boolean };
+  };
+  "conversation.media.read": {
+    args: { conversationId: string; key: string };
+    result: { ok: true; conversationId: string; key: string; mimeType: string; size: number } | OperationError;
+  };
+};
+```
+
 ## Processes: `proc.*`
 
 `proc.*` controls GSV AI processes. These are long-lived agent processes, not shell commands.
@@ -340,26 +559,25 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `proc.list` | `handleProcList` | Reads the kernel process registry. Root defaults to all processes; non-root defaults to own uid, though an explicit `uid` is currently honored by the handler. |
-| `proc.spawn` | `handleProcSpawn` | Resolves the run-as identity, registers a process, sends kernel-only `proc.setidentity`, and optionally admits the initial prompt. |
-| `proc.send` | Process DO `handleProcSend` | Admits work into the target process history. A direct user message supersedes the active run; process and scheduler messages remain FIFO queued. Media entries contain process-scoped keys returned by `proc.media.write` or external URLs; inline `media.data` is not accepted. Media-bearing messages are admitted immediately and generation starts after background preparation. Kernel-owned paths can preallocate a run id, which the Process reconciles against active, queued, and recorded admissions. |
+| `proc.list` | `handleProcList` | Reads the kernel process registry. Each entry reports whether it occupies its owner's one personal-process slot. Root defaults to all processes and may filter by `uid`; non-root is always scoped to its owning human. |
+| `proc.observe` | Kernel | Adds an owned Process to the current user connection's raw-activity observation set. Reasoning, output, tool, retry, HIL, and finish signals then reach that connection even when it does not own the run route. |
+| `proc.unobserve` | Kernel | Removes an owned Process from the current connection's observation set. |
+| `proc.spawn` | `handleProcSpawn` | Resolves the run-as identity (the personal agent for a parentless default, the parent for an inherited child, or explicit `runAs`), registers a process, sends kernel-only `proc.setidentity`, and optionally admits the initial prompt. |
+| `proc.send` | Process DO `handleProcSend` | Admits work into the target process history. A direct user message supersedes the active run; process and scheduler messages remain FIFO queued. Attachments are revision-bound resource blocks. The Process validates and retains any non-owned source before generation. Kernel-owned paths can preallocate a run id, which the Process reconciles against active, queued, and recorded admissions. |
 | `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target owners match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
-| `proc.ipc.call` | `handleProcIpcCall` | Process-callable bounded same-owner IPC. Creates a call id and deadline, delivers the request to the target process, and later sends either `ipc.reply` or `ipc.timeout` to the source process. The syscall returns after acceptance, not after the target replies. |
+| `proc.ipc.call` | `handleProcIpcCall` | Process-callable bounded same-owner IPC. Creates a call id and deadline, delivers the request to the target process, and later sends either `ipc.reply` or `ipc.timeout` to the source process. The worker's ordinary final assistant output is its durable caller result and does not require human-facing message or yield commands. The syscall returns after acceptance, not after the target replies. |
 | `proc.abort` | Process DO | Cancels the active run. Converts outstanding tool calls to error results, sends `request.cancel` for active tool, CodeMode, and routed provider requests, clears pending HIL and current run, emits `proc.run.finished` with `status: "aborted"`, and may promote the next queued run. Cancellation is nonblocking and late results cannot mutate the successor run. An optional `runId` prevents a stale abort from stopping a successor. |
 | `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. `remember: true` with `approve` stores a process-local allow override for the syscall and target class. |
 | `proc.kill` | Process DO | Optionally archives the process history under the run-as agent's home, promotes referenced media into immutable archive objects, clears live process media, and wipes Process DO state. After success the Kernel removes the process registry entry. |
-| `proc.history` | Process DO | Returns paged stored messages, message count and cursor flags, pending HIL, and the latest context-pressure state. Offset paging reads from the beginning. `tail: true` reads the latest page, `beforeMessageId` reads older messages, and `afterMessageId` reads newer messages. Tool results and assistant metadata are expanded into structured content. |
-| `proc.media.read` | Process DO | Reads one process-scoped media object. A successful result returns key, filesystem path, MIME type, and size in `data` and always attaches the media bytes as a response body. |
-| `proc.media.write` | Process DO | Streams one request body directly into process-scoped R2 storage. The body descriptor must declare its exact length so R2 receives a fixed-length stream. An internal caller may supply `mediaId` as an idempotency key: an exact repeated descriptor drains the repeated body and returns the original reference, while conflicting metadata is rejected. Returns a stable media reference for `proc.send`, including its read-only `/var/media/{uid}/{pid}/{id}` filesystem path. |
-| `proc.media.delete` | Process DO | Idempotently deletes one unreferenced process-scoped media object. Keys outside the target process or already referenced by process history are rejected. Used to roll back uploads that are not admitted by `proc.send`. |
+| `proc.history` | Process DO | Returns paged stored messages, message count and cursor flags, pending HIL, and the latest context-pressure state. Offset paging reads from the beginning. `tail: true` reads the latest page, `beforeMessageId` reads older messages, and `afterMessageId` reads newer messages. `includeMessages: false` returns status metadata without transferring raw Process activity. Tool results and assistant metadata are expanded into structured content when messages are included. |
 | `proc.history.policy.get` | Process DO | Returns the process context-overflow policy. The default is `auto-compact` at 90% pressure while retaining the newest 80 stored messages. |
 | `proc.history.policy.set` | Process DO | Sets the process context-overflow policy. Supported `overflow` values are `auto-compact` and `fail`; the policy is applied during run preflight and after a provider-confirmed overflow. Provider overflow does not advance the main generation fallback chain. |
 | `proc.history.compact` | Process DO | Archives an old history prefix, inserts a visible system summary marker, and records a `compaction` segment. Requires a supplied or generated summary and exactly one of `keepLast` or `throughMessageId`. |
 | `proc.history.segment.read` | Process DO | Reads paged messages from a compacted segment without restoring them into active history. |
-| `proc.history.segments` | Process DO | Lists compacted segments, including archive paths and summary marker ids. |
-| `proc.fork` | `handleProcFork` | Creates a new process from committed source history through `throughMessageId`, or from a compacted `segmentId`. Its label defaults to `Branch of <source label>` and the canonical label is returned. Segment restore includes the live suffix present at the compaction boundary unless `includeLiveSuffix: false`. Active work, queued input, tools, and HIL are not copied. |
+| `proc.history.segments` | Process DO | Lists compacted segments and context epochs, including immutable archive paths for closed records. |
+| `proc.fork` | `handleProcFork` | Creates a new process from committed source history through a raw `throughMessageId`, a canonical Conversation message's `throughRunId`, or a compacted `segmentId`. Run selection resolves to the corresponding Process input boundary. Its label defaults to `Branch of <source label>` and the canonical label is returned. Segment restore includes the live suffix present at the compaction boundary unless `includeLiveSuffix: false`. Active work, queued input, tools, and HIL are not copied. |
 | `proc.reset` | Process DO | Archives the non-empty history, clears active execution state, queues, process media, and messages, then increments the history generation. |
-| `proc.ipc.deliver` | Process DO direct path | Kernel-only through public dispatch. Delivers a Kernel-validated IPC envelope to the target process. |
+| `proc.ipc.deliver` | Process DO direct path | Kernel-only through public dispatch. Delivers a Kernel-validated IPC envelope to the target process. A bounded call marks the run as returning to its caller, omits terminal human-delivery instructions, and completes the Kernel call from `proc.run.finished.result` rather than `delivery`. |
 | `proc.history.export` | Process DO direct path | Kernel-only syscall used by `proc.fork` to materialize committed history as archive paths. |
 | `proc.history.import` | Process DO direct path | Kernel-only syscall used by `proc.fork` to initialize an empty target process from exported archives. |
 | `proc.setidentity` | Process DO direct path | Kernel-only through public dispatch. Stores pid, identity, interaction mode, initial label, and auto-title policy. |
@@ -369,9 +587,12 @@ type ProcHilRequest = {
   pid: string;
   requestId: string;
   runId: string;
+  conversationId?: string;
   callId: string;
   toolName: string;
   syscall: string;
+  // Process-resolved approval scope (for example `gsv` or a connected target).
+  target: string;
   args: Record<string, unknown>;
   createdAt: number;
 };
@@ -411,6 +632,19 @@ type ProcHistorySegment = {
   archivePath: string;
   summaryMessageId: number | null;
   createdAt: number;
+};
+
+type ProcContextEpoch = {
+  id: string;
+  generation: number;
+  state: "live" | "closed";
+  r12yRevision: number;
+  r12yCount: number;
+  observedR12yRevision: number;
+  createdAt: number;
+  closedAt?: number;
+  closeReason?: string;
+  archivePath?: string;
 };
 
 type ProcHistoryContextPolicy = {
@@ -454,7 +688,7 @@ type ProcIpcCallResult =
 type ProcessSyscalls = {
   "proc.list": {
     args: { uid?: number };
-    result: { processes: Array<{ pid: string; uid: number; username: string; interactive: boolean; parentPid: string | null; state: string; activeRunId: string | null; queuedCount: number; lastActiveAt: number | null; label: string | null; createdAt: number; cwd: string }> };
+    result: { processes: Array<{ pid: string; uid: number; username: string; interactive: boolean; personal: boolean; parentPid: string | null; state: string; activeRunId: string | null; queuedCount: number; lastActiveAt: number | null; label: string | null; createdAt: number; cwd: string }> };
   };
 
   "proc.spawn": {
@@ -462,8 +696,18 @@ type ProcessSyscalls = {
     result: { ok: true; pid: string; label?: string; cwd: string } | OperationError;
   };
 
+  "proc.observe": {
+    args: { pid: string };
+    result: { ok: true; pid: string };
+  };
+
+  "proc.unobserve": {
+    args: { pid: string };
+    result: { ok: true; pid: string };
+  };
+
   "proc.send": {
-    args: { pid?: string; message: string; media?: MediaInput[] };
+    args: { pid?: string; message: string; media?: ResourceBlock[] };
     result: { ok: true; status: "started"; runId: string; queued?: boolean; replayed?: "active" | "queued" | "recorded" } | OperationError;
   };
 
@@ -494,27 +738,12 @@ type ProcessSyscalls = {
 
   "proc.kill": {
     args: { pid: string; archive?: boolean };
-    result: { ok: true; pid: string; archivedMessages: number; archivedTo?: string; archives: ProcArchiveEntry[] } | OperationError;
+    result: { ok: true; pid: string; archivedMessages: number; archivedTo?: string; archives: ProcArchiveEntry[]; contextEpochArchives?: string[] } | OperationError;
   };
 
   "proc.history": {
-    args: { pid?: string; limit?: number; offset?: number; beforeMessageId?: number; afterMessageId?: number; tail?: boolean };
+    args: { pid?: string; includeMessages?: boolean; limit?: number; offset?: number; beforeMessageId?: number; afterMessageId?: number; tail?: boolean };
     result: { ok: true; pid: string; messages: ProcHistoryMessage[]; messageCount: number; truncated?: boolean; hasMoreBefore?: boolean; hasMoreAfter?: boolean; pendingHil?: ProcHilRequest | null; context?: ProcContextState | null } | OperationError;
-  };
-
-  "proc.media.read": {
-    args: { pid?: string; key: string };
-    result: { ok: true; key: string; path: string; mimeType: string; size: number } | OperationError;
-  };
-
-  "proc.media.write": {
-    args: { pid?: string; type: "image" | "audio" | "video" | "document"; mimeType: string; mediaId?: string; filename?: string; duration?: number; transcription?: string };
-    result: { ok: true; media: MediaInput & { key: string; path: string; size: number } } | OperationError;
-  };
-
-  "proc.media.delete": {
-    args: { pid?: string; key: string };
-    result: { ok: true; key: string } | OperationError;
   };
 
   "proc.history.policy.get": {
@@ -539,16 +768,16 @@ type ProcessSyscalls = {
 
   "proc.history.segments": {
     args: { pid?: string };
-    result: { ok: true; pid: string; segments: ProcHistorySegment[] } | OperationError;
+    result: { ok: true; pid: string; segments: ProcHistorySegment[]; epochs: ProcContextEpoch[] } | OperationError;
   };
 
   "proc.fork": {
-    args: { pid?: string; segmentId?: string; throughMessageId?: number; label?: string; includeLiveSuffix?: boolean };
+    args: { pid?: string; segmentId?: string; throughMessageId?: number; throughRunId?: string; label?: string; includeLiveSuffix?: boolean };
     result: { ok: true; pid: string; label: string; sourcePid: string; segment?: ProcHistorySegment; throughMessageId?: number; restoredMessages: number; includedLiveSuffix: boolean } | OperationError;
   };
 
   "proc.history.export": {
-    args: { segmentId?: string; throughMessageId?: number; includeLiveSuffix?: boolean };
+    args: { segmentId?: string; throughMessageId?: number; throughRunId?: string; includeLiveSuffix?: boolean };
     result: { ok: true; sourcePid: string; archivePaths: string[]; temporaryArchivePaths: string[]; segment?: ProcHistorySegment; throughMessageId?: number; includedLiveSuffix: boolean } | OperationError;
   };
 
@@ -559,7 +788,7 @@ type ProcessSyscalls = {
 
   "proc.reset": {
     args: { pid?: string };
-    result: { ok: true; pid: string; archivedMessages: number; archivedTo?: string; archives: ProcArchiveEntry[] } | OperationError;
+    result: { ok: true; pid: string; archivedMessages: number; archivedTo?: string; archives: ProcArchiveEntry[]; contextEpochArchives?: string[] } | OperationError;
   };
 
   "proc.setidentity": {
@@ -573,6 +802,108 @@ type ProcessSyscalls = {
 `proc.setidentity` are kernel-only. User and device callers receive a forbidden
 response. Export and import use normal syscall frames; their Process Durable
 Object methods are routing details rather than a second semantic API.
+
+## Responsibilities: `r12y.*`
+
+`r12y.*` is the Kernel-owned ledger for unresolved work that must survive the
+current Process run. The Kernel derives the owner from the authenticated caller.
+Ship can inspect the owner's ledger; a child Process sees its own assignments
+and their ancestor records, and may update only its own assignment.
+
+| Syscall | Behavior |
+|---|---|
+| `r12y.list` | Lists current records, optionally filtered by exact ids, state, assignee, or parent. Terminal records are hidden unless requested. |
+| `r12y.get` | Reads one visible record and the owner's current ledger revision. |
+| `r12y.create` | Creates an open responsibility, or returns the existing record for the same stable dedupe key. |
+| `r12y.update` | Applies an optimistic revision-checked state or metadata transition and appends it to the ordered journal. |
+| `r12y.changes` | Pages ordered transitions after a known revision for context recovery. |
+| `r12y.source.list` | Lists Kernel-defined required contracts and configurable responsibility sources for the caller owner. |
+| `r12y.source.update` | Enables or disables one configurable source for the caller owner. Required contracts are immutable, and source payload storage remains owned by its subsystem. |
+
+```ts
+type ResponsibilityState = "open" | "active" | "waiting" | "resolved" | "cancelled";
+type ResponsibilityAssignee =
+  | { kind: "ship" }
+  | { kind: "process"; processId: string };
+
+type ResponsibilitySourcePolicy =
+  | {
+      id: "interaction.response" | "process.delegation" | "schedule.due";
+      name: string;
+      description: string;
+      control: "required";
+      enabled: true;
+      defaultEnabled: true;
+    }
+  | {
+      id: "mail.received";
+      name: string;
+      description: string;
+      control: "configurable";
+      enabled: boolean;
+      defaultEnabled: boolean;
+      updatedAtMs?: number;
+    };
+
+type ResponsibilityRecord = {
+  id: string;
+  ownerUid: number;
+  parentId?: string;
+  title: string;
+  details?: Record<string, unknown>;
+  source:
+    | { kind: "account"; uid: number; username: string }
+    | { kind: "process"; processId: string; runId?: string }
+    | { kind: "event"; eventType: string; eventId: string }
+    | { kind: "schedule"; scheduleId: string }
+    | { kind: "system"; component: string };
+  audience?: { conversationIds: string[] };
+  assignee: ResponsibilityAssignee;
+  state: ResponsibilityState;
+  priority: "low" | "normal" | "high" | "critical";
+  dueAtMs?: number;
+  nextCheckAtMs?: number;
+  blocker?: string;
+  leaseExpiresAtMs?: number;
+  dedupeKey?: string;
+  resolution?: Record<string, unknown>;
+  revision: number;
+  createdAtMs: number;
+  updatedAtMs: number;
+  resolvedAtMs?: number;
+};
+
+type ResponsibilitySyscalls = {
+  "r12y.list": {
+    args: { ids?: string[]; states?: ResponsibilityState[]; assigneeProcessId?: string; parentId?: string; includeTerminal?: boolean; limit?: number; offset?: number };
+    result: { responsibilities: ResponsibilityRecord[]; count: number; revision: number };
+  };
+  "r12y.get": {
+    args: { id: string };
+    result: { responsibility: ResponsibilityRecord; revision: number };
+  };
+  "r12y.create": {
+    args: { title: string; details?: Record<string, unknown>; parentId?: string; audience?: { conversationIds: string[] }; assignee?: ResponsibilityAssignee; priority?: ResponsibilityRecord["priority"]; dueAtMs?: number; nextCheckAtMs?: number; blocker?: string; leaseExpiresAtMs?: number; dedupeKey?: string };
+    result: { responsibility: ResponsibilityRecord; created: boolean; revision: number };
+  };
+  "r12y.update": {
+    args: { id: string; expectedRevision?: number; patch: Partial<Omit<ResponsibilityRecord, "id" | "ownerUid" | "source" | "revision" | "createdAtMs" | "updatedAtMs" | "resolvedAtMs">> };
+    result: { responsibility: ResponsibilityRecord; revision: number };
+  };
+  "r12y.changes": {
+    args: { afterRevision: number; limit?: number };
+    result: { transitions: Array<{ revision: number; responsibilityId: string; record: ResponsibilityRecord }>; revision: number; hasMore: boolean };
+  };
+  "r12y.source.list": {
+    args: Record<string, never>;
+    result: { sources: ResponsibilitySourcePolicy[] };
+  };
+  "r12y.source.update": {
+    args: { id: "mail.received"; enabled: boolean };
+    result: { source: ResponsibilitySourcePolicy };
+  };
+};
+```
 
 ## Repositories: `repo.*`
 
@@ -679,7 +1010,7 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates, assigns identity, returns capabilities as `syscalls`, returns signal list, registers driver devices, closes older same-client connections, and ensures the user's personal agent account exists. Setup mode rejects with `425` and `next: "sys.setup"`. |
+| `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates the credential, derives the principal kind, returns independent call/signal/implementation grants, registers peers that implement syscalls as route targets, closes older sessions for the same logical peer, and ensures a human user's personal intelligence exists. Setup mode rejects with `425` and `next: "sys.setup"`. |
 | `sys.setup.assist` | `handleSysSetupAssist` | Pre-connect setup helper. Uses app AI config to guide onboarding, redacts secrets from drafts, and only accepts whitelisted non-secret patches from model output. Rejected if already connected or initialized. |
 | `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, optional timezone, optional AI config, optional node token, home layout, imports the manual, and seeds built-in skills. Username, password, and timezone are validated. |
 | `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv-manual`, registers it as a public system repository, and seeds the gateway's bundled skills into the caller's home without replacing existing files. `GSV_MANUAL_BOOTSTRAP_UPSTREAM` accepts `owner/repo`, a git URL, or either form with `#ref`; `GSV_MANUAL_BOOTSTRAP_REF` overrides its ref. The default is `deathbyknowledge/gsv-manual#main`. Requires `RIPGIT`. |
@@ -709,7 +1040,7 @@ Runtime behavior:
 `sys.connect`, `sys.setup`, and `sys.setup.assist` are special-cased before normal auth/capability dispatch. Other `sys.*` calls require a connected identity and are denied in setup mode.
 
 OAuth callbacks are handled by the Gateway HTTP route `GET /oauth/callback`.
-Gateway forwards that route to the Kernel, where the inherited Agent MCP client
+Gateway forwards that route to the Kernel, where its composed MCP client
 manager gets first chance to consume MCP OAuth callbacks before the generic
 `sys.oauth.*` callback handler runs. `sys.oauth.start` callers must pass the
 exact redirect URI they registered with the remote provider, normally
@@ -721,8 +1052,21 @@ metadata document advertises the same URL as its `client_id`.
 ```ts
 type SystemSyscalls = {
   "sys.connect": {
-    args: { protocol: number; client: { id: string; version: string; platform: string; role: "user" | "driver" | "service"; channel?: string }; driver?: { implements: string[] }; auth?: { username: string; password?: string; token?: string } };
-    result: { protocol: number; server: { version: string; release: string; connectionId: string }; identity: ConnectionIdentity; syscalls: string[]; signals: string[] };
+    args: {
+      protocol: 3;
+      peer: { id: string; version: string; platform: string; implements?: string[] };
+      auth?: { username: string; password?: string; token?: string };
+    };
+    result: {
+      protocol: 3;
+      server: { version: string; release: string; features?: string[]; connectionId: string };
+      peer: {
+        id: string;
+        sessionId: string;
+        principal: { kind: "human" | "machine" | "service"; account: ProcessIdentity };
+        grant: { calls: string[]; signals: string[]; implements: string[] };
+      };
+    };
   };
 
   "sys.setup.assist": {
@@ -732,7 +1076,7 @@ type SystemSyscalls = {
 
   "sys.setup": {
     args: { username: string; password: string; rootPassword?: string; timezone?: string; ai?: { provider?: string; model?: string; apiKey?: string }; node?: { deviceId: string; label?: string; expiresAt?: number } };
-    result: { server: { version: string; release: string }; user: ProcessIdentity; rootLocked: boolean; bootstrap?: SystemSyscalls["sys.bootstrap"]["result"]; nodeToken?: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "node"; label: string | null; allowedRole: "driver" | null; allowedDeviceId: string | null; createdAt: number; expiresAt: number | null } };
+    result: { server: { version: string; release: string; features?: string[] }; user: ProcessIdentity; rootLocked: boolean; bootstrap?: SystemSyscalls["sys.bootstrap"]["result"]; nodeToken?: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "node"; label: string | null; allowedRole: "driver" | null; allowedDeviceId: string | null; createdAt: number; expiresAt: number | null } };
   };
 
   "sys.bootstrap": {
@@ -915,7 +1259,9 @@ type AiSyscalls = {
 ## Adapters: `adapter.*`
 
 `adapter.*` is the control plane for external chat or channel connectors.
-Gateway-to-adapter service bindings implement `AdapterWorkerInterface` with
+Gateway-to-adapter service bindings implement `AdapterService` from
+`@humansandmachines/gsv/services/adapters`. Its descriptor makes discovery
+independent of any fixed messenger list; optional operations include
 `adapterConnect`, `adapterDisconnect`, `adapterSend`,
 `adapterSetActivity`, and `adapterStatus`. Adapters call the Gateway's single
 `serviceFrame` entrypoint for `adapter.inbound` and
@@ -965,12 +1311,16 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `adapter.list` | `handleAdapterList` | Lists configured adapter bindings and caller-visible account status, including which lifecycle, send, status, and activity methods each binding implements. |
-| `adapter.connect` | `handleAdapterConnect` | User-role only. Rejects foreign-owned accounts, serializes lifecycle operations per account, durably assigns new accounts to the caller's owning human, and calls `CHANNEL_<ADAPTER>.adapterConnect(accountId, config)`. Ownership survives failed provisioning so the owner can retry safely. |
+| `adapter.list` | `handleAdapterList` | Lists arbitrary configured `CHANNEL_*` bindings, their validated descriptors, and caller-visible account status. Older bindings without a descriptor temporarily fall back to method discovery. |
+| `adapter.connect` | `handleAdapterConnect` | User-role only. Rejects foreign-owned accounts, serializes lifecycle operations per account, durably assigns new accounts to the caller's owning human, and calls `CHANNEL_<ADAPTER>.adapterConnect({ installationId }, accountId, config)`. Ownership survives failed provisioning so the owner can retry safely. |
 | `adapter.disconnect` | `handleAdapterDisconnect` | Owner-or-root only. Serializes with connect, calls adapter disconnect, upserts local status as disconnected and unauthenticated, then best-effort refreshes live status. |
-| `adapter.inbound` | `handleAdapterInbound` | Service-role only. Requires a stable account-scoped ingress `deliveryId`, derived from the provider's complete event identity, and claims its durable receipt before link, command, HIL, route, media, or Process side effects. Actor and surface remain authorization metadata rather than receipt-key components, so alias normalization cannot bypass replay protection and equal provider stanza ids from different participants remain distinct. Completed replays return the persisted disposition; a concurrent live claim reports `replayed: "in_progress"`, while an abandoned or post-restart claim is fenced and reclaimed. Optional media bytes are cancelled before staging on any replay. New ingress resolves the exact identity link, issues link challenges for unlinked DMs, and drops unlinked non-DM messages. A linked non-DM message is admitted only when the adapter sets `wasMentioned: true`. Normal messages derive an opaque run id, record the actor/thread-scoped surface, store media idempotently, install the automatic reply route, and reconcile through kernel-only `proc.adapter.deliver`. Immediate replies and link challenges carry deterministic outbound `deliveryId` values and use the adapter's ordinary outbound ledger. Persistent first-party adapters retain the provider payload before this call, then replace it with any terminal response state before provider delivery; transport failures and `in_progress` retry through their existing account alarm. |
+| `adapter.pair.info` | `handleAdapterPairInfo` | Direct signed-in human only. Returns public information for a platform-owned managed adapter, such as the official bot username. |
+| `adapter.pair.inspect` | `handleAdapterPairInspect` | Direct signed-in human only. Resolves a short-lived code to the external identity that requested it. It does not create or move a link. |
+| `adapter.pair.confirm` | `handleAdapterPairConfirm` | Direct signed-in human only. Binds the inspected external identity to the caller's current installation and local uid, activates a fresh route generation, writes the Kernel identity link, and finalizes retryable cleanup of any previous installation. Agent processes cannot invoke this flow. |
+| `adapter.pair.disconnect` | `handleAdapterPairDisconnect` | Direct signed-in human only. Generation-fences and disables the managed peer route before removing the matching Kernel identity link. Generic `sys.unlink` refuses managed links so the two sides cannot be orphaned. |
+| `adapter.inbound` | `handleAdapterInbound` | Service-role only. Requires a stable account-scoped ingress `deliveryId`, derived from the provider's complete event identity, and claims its durable receipt before link, command, HIL, route, media, or Process side effects. Actor and surface remain authorization metadata rather than receipt-key components, so alias normalization cannot bypass replay protection and equal provider stanza ids from different participants remain distinct. A platform-owned adapter also supplies its peer-route generation; the Kernel requires the exact currently linked generation and retains it on the run route. Completed replays return the persisted disposition; a concurrent live claim reports `replayed: "in_progress"`, while an abandoned or post-restart claim is fenced and reclaimed. Optional media bytes are cancelled before staging on any replay. New ingress resolves the exact identity link, issues link challenges for unlinked DMs, and drops unlinked non-DM messages. A linked non-DM message is admitted only when the adapter sets `wasMentioned: true`. Normal messages resolve the canonical Ship, Work, or Group conversation, append the user Message idempotently, derive an opaque run id, install its exact directed endpoint, and reconcile through kernel-only `proc.adapter.deliver`. Immediate replies and link challenges carry deterministic outbound `deliveryId` values and use the adapter's ordinary outbound ledger. Persistent first-party adapters retain the provider payload before this call, then replace it with any terminal response state before provider delivery; transport failures and `in_progress` retry through their existing account alarm. |
 | `adapter.state.update` | `handleAdapterStateUpdate` | Service-role only. Updates status without changing ownership and broadcasts a minimal `adapter.status` invalidation to root, the account owner, and linked users. |
-| `adapter.send` | `handleAdapterSend` | Accepts optional concatenated media bytes, validates the caller's identity link or exact observed surface route, allocates or validates a stable `deliveryId`, and forwards outbound text, media, reply id, and body to the adapter service. During a process run, an explicit send to the current automatic reply surface is rejected unless `also: true` acknowledges the additional message. Returns the delivery id, provider message id when available, and `sent`, `deduplicated`, or `ambiguous` delivery state. A failed result is retryable only when replaying the same delivery id is safe. |
+| `adapter.send` | `handleAdapterSend` | Accepts optional concatenated media bytes, validates the caller's identity link or exact observed surface route, allocates or validates a stable `deliveryId`, and forwards outbound text, media, reply id, and body to the adapter service. During a process run, a separate send to the current directed endpoint is rejected unless `also: true` acknowledges the additional message. Returns the delivery id, provider message id when available, and `sent`, `deduplicated`, or `ambiguous` delivery state. A failed result is retryable only when replaying the same delivery id is safe. |
 | `adapter.status` | `handleAdapterStatus` | Attempts live status refresh, swallowing live errors, then returns last known local statuses sorted newest first and optionally filtered by account id. |
 
 Adapter status intentionally remains useful when a live adapter service is unavailable; stale local state may be returned.
@@ -984,7 +1334,7 @@ ignored with payload-free diagnostics.
 type AdapterSyscalls = {
   "adapter.list": {
     args: Record<string, never>;
-    result: { adapters: Array<{ adapter: string; available: boolean; supportsConnect: boolean; supportsDisconnect: boolean; supportsSend: boolean; supportsStatus: boolean; supportsActivity: boolean; accounts: AdapterAccountStatus[] }> };
+    result: { adapters: Array<{ adapter: string; available: boolean; supportsConnect: boolean; supportsDisconnect: boolean; supportsSend: boolean; supportsStatus: boolean; supportsActivity: boolean; supportsPairing: boolean; accounts: AdapterAccountStatus[] }> };
   };
 
   "adapter.connect": {
@@ -997,6 +1347,26 @@ type AdapterSyscalls = {
   "adapter.disconnect": {
     args: { adapter: string; accountId: string };
     result: { ok: true; adapter: string; accountId: string; message?: string } | OperationError;
+  };
+
+  "adapter.pair.info": {
+    args: { adapter: string };
+    result: { adapter: string; accountId: string; configured: boolean; botUsername?: string };
+  };
+
+  "adapter.pair.inspect": {
+    args: { adapter: string; code: string };
+    result: { adapter: string; accountId: string; actorId: string; surfaceId: string; actorName?: string; actorHandle?: string; expiresAt: number; linked: boolean };
+  };
+
+  "adapter.pair.confirm": {
+    args: { adapter: string; code: string };
+    result: { paired: true; adapter: string; accountId: string; actorId: string; surfaceId: string; uid: number };
+  };
+
+  "adapter.pair.disconnect": {
+    args: { adapter: string; accountId: string; actorId: string };
+    result: { disconnected: boolean; adapter: string; accountId: string; actorId: string };
   };
 
   "adapter.inbound": {
@@ -1025,11 +1395,19 @@ type AdapterSyscalls = {
 
 ### Reply and destination routing
 
-An admitted process run receives exactly one automatic route. Client-originated
-runs route to that client connection. Adapter-originated runs route to the
-linked actor's exact adapter, account, surface, and optional thread. HIL and
-terminal run signals use the same route; agents normally return their answer
-without calling `adapter.send`.
+Client- and adapter-originated admitted process runs receive one automatic
+route. Client-originated runs route to that client connection. Adapter-originated
+runs route to the linked actor's exact adapter, account, surface, and optional
+thread. Other runs can be route-less. HIL and terminal run signals use the exact
+route when one exists; agents normally return their answer without calling
+`adapter.send`.
+
+Every user-visible process signal is still broadcast to the owner's connected
+clients. If a route-less HIL request or terminal result comes from the owner's
+canonical personal process, the Kernel may also deliver it to that owner's
+last-active linked private DM. An exact connection or adapter route always wins,
+the live identity link is rechecked before delivery, and no other process uses
+this fallback.
 
 An adapter HIL prompt includes the exact pending request identity as
 `hil[requestId]`. An adapter approval or denial is accepted only when it carries
@@ -1046,10 +1424,15 @@ notification delivery.
 
 Observed adapter surface routes are keyed by adapter, account, actor, surface
 kind, surface id, and thread id. They record the owner uid and selected process.
-The actor dimension allows multiple linked GSV users to use one shared external
-surface without overwriting one another. Userland destination enumeration joins
-these rows back to the caller's live identity links; raw platform ids do not
-become authorized merely because an adapter account exists.
+A private DM has no route row while it uses Ship. The canonical
+personal process can open an explicit work override from the exact latest run
+on that DM; `/ship` clears it and sends the personal process a typed return
+event containing the selected work PID but no transcript. Groups, channels,
+and threads use actor-scoped shared-surface routes. The actor dimension allows multiple linked
+GSV users to use one shared external surface without overwriting one another.
+Userland destination enumeration joins these rows back to the caller's live
+identity links; raw platform ids do not become authorized merely because an
+adapter account exists.
 
 Durable delayed destinations use this minimum stable address:
 
@@ -1110,21 +1493,27 @@ Scheduler syscalls are Kernel-owned. Schedule records live in Kernel SQLite,
 GSV computes timezone-aware next fire times, and Cloudflare Agent schedules are
 used only as concrete wake-ups.
 
-The user-facing interface depends on the delivery contract. From a
-process-backed shell, use the following form when each firing should enter the
-current process:
+The user-facing interface depends on the delivery contract. Use the following
+form when every occurrence should become durable Ship work:
+
+```bash
+sched add --ship --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE
+```
+
+From a process-backed shell, use the following form when each firing should
+enter the resolved current process:
 
 ```bash
 sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE
 ```
 
-The shell resolves `--here` into a typed `process.event` target for the current
-process. The target remains bound to that process id;
-recreate it after killing the process. When the shell belongs to an active
-adapter run, `--here` captures that run's authorized
-`AdapterMessageDestination` in `process.event.replyTo`, so the future
-terminal answer returns to that adapter surface. Without an adapter route, the
-answer remains in the GSV process history.
+The shell resolves `--here` against its current Process, or the calling Process
+inside a pending IPC call. A non-Ship Process remains a `process.event` target.
+Ship always becomes a `responsibility` target, so each occurrence creates one
+deduplicated `schedule.due` record and survives Ship Process replacement. Its
+future work is not bound to the adapter or client route active when the schedule
+was created. Low-level `sched.add` and `sched.update` calls receive the same
+normalization at the Kernel boundary.
 
 For direct scheduled text that must not run the agent, use:
 
@@ -1156,7 +1545,8 @@ Runtime behavior:
 | `sched.run` | `handleSchedulerRun` | Runs due schedules or force-runs one schedule. `force` requires `id`. |
 
 Schedule status reports completion of target dispatch, not an implied model-run
-completion contract. For `process.event`, `ok` means the event was
+completion contract. For `responsibility`, `ok` means the occurrence's durable
+record was created or recovered. For `process.event`, `ok` means the event was
 accepted into the target process, not that a model turn or reply
 completed. For `adapter.send`, `ok` means the adapter accepted the direct
 delivery. For `process.spawn`, or a
@@ -1176,6 +1566,7 @@ type ScheduleTarget =
   | { kind: "command.exec"; command: string; cwd?: string; timeoutMs?: number }
   | { kind: "process.spawn"; runAs?: string; label?: string; prompt: string; parentPid?: string; cwd?: string }
   | { kind: "process.event"; pid: string; message: string; data?: Record<string, unknown>; replyTo?: AdapterMessageDestination }
+  | { kind: "responsibility"; message: string; data?: Record<string, unknown>; priority?: "low" | "normal" | "high" | "critical" }
   | { kind: "adapter.send"; destination: AdapterMessageDestination; text: string };
 
 type ScheduleRecord = {

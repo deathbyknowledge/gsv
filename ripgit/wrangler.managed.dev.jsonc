@@ -1,0 +1,28 @@
+{
+  "$schema": "../gateway/node_modules/wrangler/config-schema.json",
+  "name": "gsv-managed-ripgit-dev",
+  "main": "build/index.js",
+  "compatibility_date": "2026-07-29",
+  "workers_dev": false,
+  "preview_urls": false,
+  "secrets": {
+    "required": []
+  },
+  "build": {
+    "command": "bash ../scripts/worker-build.sh ripgit --release"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "REPOSITORY",
+        "class_name": "Repository"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["Repository"]
+    }
+  ]
+}

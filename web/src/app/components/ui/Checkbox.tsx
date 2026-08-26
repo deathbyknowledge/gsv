@@ -20,7 +20,7 @@ export interface CheckboxProps {
   onChange?: (checked: boolean) => void;
 }
 
-const SIZE_CLASS: Record<CheckboxSize, string> = {
+const SIZE_CLASS = {
   small: "gsv-cb-sm",
   medium: "gsv-cb-md",
   large: "gsv-cb-lg",
@@ -88,6 +88,7 @@ export function Checkbox(props: CheckboxProps) {
             class="gsv-cb-input"
             disabled={disabled}
             type="checkbox"
+            // SAFETY: Component boundary provides the asserted DOM/test shape.
             onChange={(event) => handleChange((event.currentTarget as HTMLInputElement).checked)}
           />
           <span class="gsv-cb-box">

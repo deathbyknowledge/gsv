@@ -17,43 +17,43 @@ export const CHAT_MINIMIZED_DRAG_THRESHOLD = 4;
 export const CHAT_MINIMIZED_VIEWPORT_MARGIN = 8;
 export const CHAT_MINIMIZED_POSITION_STORAGE_KEY = "gsv.chat.minimized-position.v1";
 
-type PersistedChatMinimizedPosition = ChatMinimizedPoint & {
-  version: 1;
-};
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
+const persistedChatMinimizedPositionSchema = z.object({
+  version: z.literal(1),
+  x: z.number().finite(),
+  y: z.number().finite(),
+});
 
 export function readPersistedChatMinimizedPosition(): ChatMinimizedPoint | null {
-  if (typeof window === "undefined") {
+  const storage = globalThis.window?.localStorage;
+  if (!storage) {
     return null;
   }
   try {
-    const raw = window.localStorage.getItem(CHAT_MINIMIZED_POSITION_STORAGE_KEY);
+    const raw = storage.getItem(CHAT_MINIMIZED_POSITION_STORAGE_KEY);
     if (!raw) {
       return null;
     }
 
-    const parsed = JSON.parse(raw) as Partial<PersistedChatMinimizedPosition>;
-    if (parsed.version !== 1 || !isFiniteNumber(parsed.x) || !isFiniteNumber(parsed.y)) {
+    const parsed = persistedChatMinimizedPositionSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success) {
       return null;
     }
-    return { x: parsed.x, y: parsed.y };
+    return { x: parsed.data.x, y: parsed.data.y };
   } catch {
     return null;
   }
 }
 
 export function writePersistedChatMinimizedPosition(position: ChatMinimizedPoint): void {
-  if (typeof window === "undefined") {
+  const storage = globalThis.window?.localStorage;
+  if (!storage) {
     return;
   }
   try {
-    window.localStorage.setItem(CHAT_MINIMIZED_POSITION_STORAGE_KEY, JSON.stringify({
+    storage.setItem(CHAT_MINIMIZED_POSITION_STORAGE_KEY, JSON.stringify({
       version: 1,
       ...position,
-    } satisfies PersistedChatMinimizedPosition));
+    } satisfies ChatMinimizedPoint & { version: 1 }));
   } catch {
     // Storage is optional; keep the current-session position when unavailable.
   }
@@ -102,3 +102,4 @@ export function exceededChatMinimizedDragThreshold(
 ): boolean {
   return Math.hypot(current.x - start.x, current.y - start.y) > threshold;
 }
+import { z } from "zod";

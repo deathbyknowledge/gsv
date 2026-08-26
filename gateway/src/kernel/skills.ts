@@ -43,6 +43,8 @@ export type SkillValidationResult = {
   ok: false;
   errors: string[];
 };
+type ParsedSkillMetadata = { name: string; description: string; aliases: string[] };
+type ParsedFrontmatter = { frontmatter: Map<string, string>; body: string };
 
 type SkillFile = {
   idBase: string;
@@ -175,11 +177,7 @@ export async function listSkillFiles(
   return files.sort((left, right) => left.localeCompare(right));
 }
 
-export function parseSkillMarkdown(content: string, fallbackName: string): {
-  name: string;
-  description: string;
-  aliases: string[];
-} {
+export function parseSkillMarkdown(content: string, fallbackName: string): ParsedSkillMetadata {
   const { frontmatter, body } = parseFrontmatter(content);
   const name = normalizeSkillName(frontmatter.get("name") ?? fallbackName);
   const description = truncateDescription(
@@ -385,7 +383,7 @@ function resolveSkillHomeLayers(ctx: KernelContext, runAsIdentity: ProcessIdenti
 }
 
 function resolveSkillOwnerUid(ctx: KernelContext, runAsIdentity: ProcessIdentity): number {
-  if (typeof ctx.callerOwnerUid === "number" && Number.isFinite(ctx.callerOwnerUid)) {
+  if (ctx.callerOwnerUid !== undefined && Number.isFinite(ctx.callerOwnerUid)) {
     return ctx.callerOwnerUid;
   }
 
@@ -704,27 +702,32 @@ function buildSkillDocuments(files: ParsedSkillFile[]): SkillDocument[] {
 
   const documents = parsed.map((file) => ({
     file,
-    id: skillId(file.idBase, file.source, counts.get(normalizeLookup(file.idBase)) ?? 0, file.idPrefix),
+    id: skillId(file.idBase, file.source, counts.get(normalizeLookup(file.idBase)) ?? 0),
   }));
   const idsBySourceSkill = new Map<string, string>();
   for (const document of documents) {
     idsBySourceSkill.set(sourceSkillKey(document.file), document.id);
   }
 
-  return documents.map(({ file, id }) => ({
-    id,
-    name: file.name,
-    description: file.description,
-    aliases: file.aliases,
-    ...(file.parentId ? { parentId: idsBySourceSkill.get(sourceSkillKey(file, file.parentId)) ?? file.parentId } : {}),
-    depth: file.depth,
-    content: file.content.trimEnd(),
-    path: file.path,
-    source: file.source,
-  }));
+  return documents.map(({ file, id }) => {
+    const document: SkillDocument = {
+      id,
+      name: file.name,
+      description: file.description,
+      aliases: file.aliases,
+      depth: file.depth,
+      content: file.content.trimEnd(),
+      path: file.path,
+      source: file.source,
+    };
+    if (file.parentId) {
+      document.parentId = idsBySourceSkill.get(sourceSkillKey(file, file.parentId)) ?? file.parentId;
+    }
+    return document;
+  });
 }
 
-function skillId(name: string, source: SkillSource, count: number, idPrefix?: string): string {
+function skillId(name: string, source: SkillSource, count: number): string {
   if (count <= 1) {
     return name;
   }
@@ -749,7 +752,7 @@ function sourceRank(source: SkillSource): number {
   }
 }
 
-function parseFrontmatter(content: string): { frontmatter: Map<string, string>; body: string } {
+function parseFrontmatter(content: string): ParsedFrontmatter {
   const frontmatter = new Map<string, string>();
   if (!content.startsWith("---")) {
     return { frontmatter, body: content };

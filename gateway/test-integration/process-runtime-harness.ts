@@ -1,5 +1,7 @@
 import { GSVClient } from "@humansandmachines/gsv";
+import { jsonObjectSchema } from "@humansandmachines/gsv/protocol";
 import type {
+  JsonObject,
   ProcAiConfigSetResult,
   ProcSpawnResult,
 } from "@humansandmachines/gsv/protocol";
@@ -12,8 +14,10 @@ const PASSWORD = "process-runtime-password";
 
 export type RunSignal = {
   signal: string;
-  payload: Record<string, unknown>;
+  payload: SignalPayload;
 };
+
+type SignalPayload = JsonObject;
 
 export type ProcessRuntimeHarness = {
   ai: OpenAiFixture;
@@ -50,11 +54,10 @@ export async function startProcessRuntimeHarness(): Promise<ProcessRuntimeHarnes
       url: webSocketUrl(url),
       username: USERNAME,
       password: PASSWORD,
-      client: {
+      peer: {
         id: "process-runtime-integration",
         version: "1.0.0",
         platform: "node",
-        role: "user",
       },
     });
     await client.connect();
@@ -76,8 +79,9 @@ export async function startProcessRuntimeHarness(): Promise<ProcessRuntimeHarnes
   const signals: RunSignal[] = [];
   const spawnedPids = new Set<string>();
   const stopSignals = connectedClient.onSignal((signal, payload) => {
-    if (payload && typeof payload === "object") {
-      signals.push({ signal, payload: payload as Record<string, unknown> });
+    const parsed = jsonObjectSchema.safeParse(payload);
+    if (parsed.success) {
+      signals.push({ signal, payload: parsed.data });
     }
   });
 
@@ -97,7 +101,7 @@ export async function startProcessRuntimeHarness(): Promise<ProcessRuntimeHarnes
     },
     configureAi: async (pid) => {
       const result = await connectedClient.call<ProcAiConfigSetResult>(
-        "proc.ai.config.set" as string,
+        "proc.ai.config.set",
         {
           pid,
           values: {

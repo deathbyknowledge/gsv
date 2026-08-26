@@ -1,3 +1,5 @@
+import type { JsonObject } from "../json";
+
 export type ProcessIdentity = {
   uid: number;
   gid: number;
@@ -7,40 +9,39 @@ export type ProcessIdentity = {
   cwd: string;
 };
 
-export type ConnectionIdentity = UserIdentity | DeviceIdentity | ServiceIdentity;
+export type PeerPrincipalKind = "human" | "machine" | "service";
 
-export type UserIdentity = {
-  role: "user";
-  process: ProcessIdentity;
-  capabilities: string[];
+export type PeerPrincipal = {
+  kind: PeerPrincipalKind;
+  account: ProcessIdentity;
 };
 
-export type DeviceIdentity = {
-  role: "driver";
-  process: ProcessIdentity;
-  capabilities: string[];
-  device: string;
+export type PeerGrant = {
+  /** Syscall patterns this peer may invoke. */
+  calls: string[];
+  /** Signal names this peer may receive. */
+  signals: string[];
+  /** Syscall patterns this peer implements for GSV. */
   implements: string[];
 };
 
-export type ServiceIdentity = {
-  role: "service";
-  process: ProcessIdentity;
-  capabilities: string[];
-  channel: string;
+export type ConnectedPeer = {
+  /** Application/device/service identity chosen by the peer. Routeable endpoints keep it stable. */
+  id: string;
+  /** One live authenticated connection incarnation, assigned by the Kernel. */
+  sessionId: string;
+  principal: PeerPrincipal;
+  grant: PeerGrant;
 };
 
 export type ConnectArgs = {
   protocol: number;
-  client: {
+  peer: {
     id: string;
     version: string;
     platform: string;
-    role: "user" | "driver" | "service";
-    channel?: string;
-  };
-  driver?: {
-    implements: string[];
+    /** Requested reverse syscall implementations. Authority is server-derived. */
+    implements?: string[];
   };
   auth?: {
     username: string;
@@ -52,6 +53,7 @@ export type ConnectArgs = {
 export type ServerBuild = {
   version: string;
   release: string;
+  features?: string[];
 };
 
 export type ConnectResult = {
@@ -59,9 +61,7 @@ export type ConnectResult = {
   server: ServerBuild & {
     connectionId: string;
   };
-  identity: ConnectionIdentity;
-  syscalls: string[];
-  signals: string[];
+  peer: ConnectedPeer;
 };
 
 export type UserPermissions = {
@@ -127,6 +127,7 @@ export type AccountListResult = {
 export type SysSetupArgs = {
   username: string;
   password: string;
+  onboardingToken?: string;
   rootPassword?: string;
   /** Optional name for the user's 1:1 personal agent account (defaults to a curated name). */
   agentName?: string;
@@ -207,6 +208,7 @@ export type SysSetupAssistArgs = {
   lane: OnboardingLane;
   draft: OnboardingDraft;
   messages: OnboardingAssistMessage[];
+  onboardingToken?: string;
 };
 
 export type SysSetupAssistResult = {
@@ -373,7 +375,7 @@ export type SysOAuthAccountSummary = {
   createdAt: number;
   updatedAt: number;
   lastUsedAt: number | null;
-  metadata: Record<string, unknown>;
+  metadata: JsonObject;
 };
 
 export type SysOAuthStartResult = {
@@ -448,8 +450,8 @@ export type SysMcpConnectionState =
 export type SysMcpToolSummary = {
   name: string;
   description: string | null;
-  inputSchema: Record<string, unknown> | null;
-  outputSchema: Record<string, unknown> | null;
+  inputSchema: JsonObject | null;
+  outputSchema: JsonObject | null;
 };
 
 export type SysMcpServerSummary = {
@@ -462,7 +464,7 @@ export type SysMcpServerSummary = {
   authUrl: string | null;
   error: string | null;
   instructions: string | null;
-  capabilities: Record<string, unknown> | null;
+  capabilities: JsonObject | null;
   tools: SysMcpToolSummary[];
   resourceCount: number;
   promptCount: number;
@@ -515,7 +517,7 @@ export type SysMcpCallArgs = {
   uid?: number;
   serverId: string;
   name: string;
-  arguments?: Record<string, unknown>;
+  arguments?: JsonObject;
 };
 
 export type SysMcpCallResult = {

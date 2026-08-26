@@ -67,7 +67,7 @@ export function loadNameCache(ctx: KernelContext, identity: ProcessIdentity): Na
   return { uid, gid };
 }
 
-export function resolveOwner(cache: NameCache, fileUid: number, fileGid: number): { owner: string; group: string } {
+export function resolveOwner(cache: NameCache, fileUid: number, fileGid: number) {
   return {
     owner: cache.uid.get(fileUid) ?? String(fileUid),
     group: cache.gid.get(fileGid) ?? String(fileGid),

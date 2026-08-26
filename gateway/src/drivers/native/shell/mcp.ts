@@ -18,6 +18,7 @@ import type {
   SysMcpToolSummary,
   SysMcpTransportType,
 } from "@humansandmachines/gsv/protocol";
+import { jsonValueSchema } from "@humansandmachines/gsv/protocol";
 import {
   SYS_MCP_ADD,
   SYS_MCP_CALL,
@@ -27,6 +28,13 @@ import {
 } from "../../../syscalls/constants";
 import { requireCommandCapability } from "./common";
 import { formatCodeModeValue } from "./codemode";
+import * as z from "zod/mini";
+
+type McpJsonValue = string | number | boolean | null | McpJsonObject | McpJsonValue[];
+type McpJsonObject = { [key: string]: McpJsonValue };
+type McpJsonOptions = { json: boolean };
+type McpKeyValue = { key: string; value: string };
+type McpTransportOptions = { type: SysMcpTransportType; headers?: Record<string, string> };
 
 type McpAddCommand = {
   name: string;
@@ -61,11 +69,11 @@ type McpSearchCommand = {
 type McpCallCommand = {
   serverSelector: string;
   toolSelector: string;
-  args: Record<string, unknown>;
+  args: McpJsonObject;
   json: boolean;
 };
 
-function parseMcpJsonOptions(args: string[]): { json: boolean } {
+function parseMcpJsonOptions(args: string[]): McpJsonOptions {
   const options = { json: false };
   for (const arg of args) {
     if (arg === "--json") {
@@ -258,7 +266,7 @@ function parseMcpTransport(value: string): SysMcpTransportType {
   throw new Error("transport must be auto, streamable-http, or sse");
 }
 
-function parseKeyValue(spec: string, option: string): { key: string; value: string } {
+function parseKeyValue(spec: string, option: string): McpKeyValue {
   const eq = spec.indexOf("=");
   if (eq <= 0) {
     throw new Error(`${option} requires key=value`);
@@ -269,12 +277,15 @@ function parseKeyValue(spec: string, option: string): { key: string; value: stri
   };
 }
 
-function parseJsonObjectOption(value: string, option: string): Record<string, unknown> {
-  const parsed = JSON.parse(value) as unknown;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+const mcpJsonObjectSchema = z.record(z.string(), z.json());
+
+function parseJsonObjectOption(value: string, option: string): McpJsonObject {
+  const parsed = mcpJsonObjectSchema.safeParse(JSON.parse(value));
+  if (!parsed.success) {
     throw new Error(`${option} must be a JSON object`);
   }
-  return parsed as Record<string, unknown>;
+  // SAFETY: the JSON object schema validates the command-line payload before insertion.
+  return parsed.data as McpJsonObject;
 }
 
 function requireOptionValue(value: string | undefined, option: string): string {
@@ -523,8 +534,9 @@ function formatMcpCallResult(result: SysMcpCallResult, json: boolean): ExecResul
   const value = result.structuredContent !== undefined
     ? result.structuredContent
     : result.content;
+  const parsedValue = jsonValueSchema.safeParse(value);
   return {
-    stdout: formatCodeModeValue(value),
+    stdout: formatCodeModeValue(parsedValue.success ? parsedValue.data : null),
     stderr: "",
     exitCode: result.isError ? 1 : 0,
   };
@@ -533,8 +545,8 @@ function formatMcpCallResult(result: SysMcpCallResult, json: boolean): ExecResul
 function buildMcpToolBindings(servers: SysMcpServerSummary[]): CodeModeMcpToolBinding[] {
   return buildCodeModeMcpToolBindings(servers.map((server) => ({
     serverId: server.serverId,
-    serverName: server.name,
-    state: server.state,
+    serverName: String(server.name),
+    state: String(server.state),
     tools: server.tools,
   })));
 }
@@ -605,7 +617,7 @@ function resolveMcpTool(
   throw new Error(`MCP tool not found on ${server.name}: ${selector}`);
 }
 
-function schemaRequiredFields(schema: Record<string, unknown> | null): string[] {
+function schemaRequiredFields(schema: McpJsonObject | null): string[] {
   return Array.isArray(schema?.required)
     ? schema.required.filter((item): item is string => typeof item === "string").sort((left, right) => left.localeCompare(right))
     : [];
@@ -615,20 +627,15 @@ function oneLine(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function textFromMcpContent(content: unknown): string | null {
-  if (!Array.isArray(content)) {
-    return null;
-  }
+function textFromMcpContent<T>(content: T): string | null {
+  const parsed = z.array(z.object({ type: z.string(), text: z.string() })).safeParse(content);
+  if (!parsed.success) return null;
   const chunks: string[] = [];
-  for (const item of content) {
-    if (!item || typeof item !== "object" || Array.isArray(item)) {
+  for (const item of parsed.data) {
+    if (item.type !== "text") {
       return null;
     }
-    const record = item as Record<string, unknown>;
-    if (record.type !== "text" || typeof record.text !== "string") {
-      return null;
-    }
-    chunks.push(record.text);
+    chunks.push(item.text);
   }
   return chunks.join("\n");
 }
@@ -773,15 +780,17 @@ async function runMcpCommand(args: string[], ctx: KernelContext): Promise<ExecRe
     case "add": {
       requireCommandCapability(ctx, SYS_MCP_ADD);
       const parsed = parseMcpAddCommand(rest);
-      const result = await handleSysMcpAdd({
+      const transport: McpTransportOptions = {
+        type: parsed.transport,
+      };
+      if (Object.keys(parsed.headers).length > 0) transport.headers = parsed.headers;
+      const addArgs: Parameters<typeof handleSysMcpAdd>[0] = {
         name: parsed.name,
         url: parsed.url,
-        ...(parsed.callbackHost ? { callbackHost: parsed.callbackHost } : {}),
-        transport: {
-          type: parsed.transport,
-          ...(Object.keys(parsed.headers).length > 0 ? { headers: parsed.headers } : {}),
-        },
-      }, ctx);
+        transport,
+      };
+      if (parsed.callbackHost) addArgs.callbackHost = parsed.callbackHost;
+      const result = await handleSysMcpAdd(addArgs, ctx);
       return {
         stdout: parsed.json
           ? `${JSON.stringify(result, null, 2)}\n`

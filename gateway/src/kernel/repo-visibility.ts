@@ -1,16 +1,23 @@
+import * as z from "zod/mini";
+
 type RepoVisibilityConfig = {
   get(key: string): string | null;
   set(key: string, value: string): void;
   delete(key: string): boolean;
 };
+type RepoSlug = { owner: string; repo: string };
+const repoSlugObjectSchema = z.object({ owner: z.string(), repo: z.string() });
 
 export type RepoVisibility = "private" | "public";
 
-export function repoVisibilityConfigKey(repo: string | { owner: string; repo: string }): string {
-  const parsed = typeof repo === "string" ? parseRepoSlug(repo) : {
-    owner: normalizeRepoSegment(repo.owner, "owner"),
-    repo: normalizeRepoSegment(repo.repo, "repo"),
-  };
+export function repoVisibilityConfigKey(repo: string | RepoSlug): string {
+  const object = repoSlugObjectSchema.safeParse(repo);
+  const parsed = object.success
+    ? {
+        owner: normalizeRepoSegment(object.data.owner, "owner"),
+        repo: normalizeRepoSegment(object.data.repo, "repo"),
+      }
+    : parseRepoSlug(z.string().parse(repo));
   return `repos/${parsed.owner}/${parsed.repo}/visibility`;
 }
 
@@ -41,7 +48,7 @@ export function setRepoVisibility(
   config.delete(key);
 }
 
-function parseRepoSlug(raw: string): { owner: string; repo: string } {
+function parseRepoSlug(raw: string): RepoSlug {
   const [owner, repo, ...rest] = raw.split("/");
   if (rest.length > 0) {
     throw new Error(`Invalid repo slug: ${raw}`);

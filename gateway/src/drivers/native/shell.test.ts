@@ -10,44 +10,41 @@ import {
   handleFsTransferStat,
   handleFsWrite,
 } from "./fs";
-import { sendFrameToProcess } from "../../shared/utils";
+import * as inferenceService from "../../inference/service";
+import * as sharedUtils from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
 import type { DeviceRecord } from "../../kernel/devices";
+import type { ProcessRecord } from "../../kernel/processes";
+import type { SurfaceRouteRecord } from "../../kernel/surface-routes";
 import {
   bodyFromText,
   bodyToBytes,
   bodyToText,
+  jsonObjectSchema,
+  type JsonObject,
   type ProcessIdentity,
+  type ResponsibilityRecord,
 } from "@humansandmachines/gsv/protocol";
+import type { ResponsibilityUpdateInput } from "../../kernel/responsibility-store";
 import type { RequestFrame, ResponseFrame } from "../../protocol/frames";
+import type { InstallationIdentity } from "../../installation/identity";
+import { stableOpaqueId } from "../../shared/stable-id";
+import * as z from "zod/mini";
 
-const generateMock = vi.hoisted(() => vi.fn());
-
-vi.mock("../../inference/service", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../inference/service")>();
-  return {
-    ...actual,
-    createGenerationService: () => ({
-      generate: generateMock,
-      stream: vi.fn(),
-      generateText: vi.fn(),
-    }),
-  };
-});
-
-vi.mock("../../shared/utils", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../shared/utils")>();
-  return {
-    ...actual,
-    sendFrameToProcess: vi.fn(),
-  };
-});
-
-const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
+const generateMock = vi.fn();
+const createGenerationServiceMock = vi.spyOn(inferenceService, "createGenerationService");
+const sendFrameToProcessMock = vi.spyOn(sharedUtils, "sendFrameToProcess");
+const TEST_INSTALLATION_ID: KernelContext["installationId"] = "inst_shell_test";
+const TEST_INSTALLATION_CONTEXT = { installationId: TEST_INSTALLATION_ID };
 
 beforeEach(() => {
+  createGenerationServiceMock.mockReturnValue({
+    generate: generateMock,
+    stream: vi.fn(),
+    generateText: vi.fn(),
+  });
   sendFrameToProcessMock.mockReset();
-  sendFrameToProcessMock.mockImplementation(async (_pid, frame) => (
+  sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => (
     frame.type === "req" && frame.call === "proc.setidentity"
       ? { type: "res", id: frame.id, ok: true, data: { ok: true } }
       : null
@@ -63,6 +60,44 @@ const IDENTITY: ProcessIdentity = {
   home: "/home/sam",
   cwd: "/home/sam",
 };
+
+type ShellAiInput = {
+  task?: string;
+  audio?: string;
+  text?: string;
+  prompt?: string;
+};
+type ShellAiResult =
+  | { caption: string }
+  | { text: string }
+  | { image: string }
+  | ReadableStream<Uint8Array>
+  | null;
+
+function focusedFixture<T extends object>(value: Partial<T>): T {
+  // SAFETY: Shell tests use focused doubles whose supplied members are checked
+  // against the owning interface; unimplemented members are never exercised.
+  return value as T;
+}
+
+function responseFixture(frame: ResponseFrame): ResponseFrame {
+  return frame;
+}
+
+const currentDestinationOutputSchema = z.object({
+  destinationId: z.string(),
+});
+const destinationListOutputSchema = z.object({
+  destinations: z.array(z.object({ id: z.string() })),
+});
+const wikiApplyBodySchema = z.object({
+  message: z.optional(z.string()),
+  ops: z.optional(z.array(z.object({
+    type: z.optional(z.string()),
+    path: z.optional(z.string()),
+    contentBytes: z.optional(z.array(z.number())),
+  }))),
+});
 
 function makeDevice(partial: Partial<DeviceRecord> & { device_id: string }): DeviceRecord {
   const now = 1_800_000_000_000;
@@ -82,24 +117,79 @@ function makeDevice(partial: Partial<DeviceRecord> & { device_id: string }): Dev
   };
 }
 
+function makeProcess(
+  partial: Partial<ProcessRecord> & { processId: string },
+): ProcessRecord {
+  return {
+    processId: partial.processId,
+    parentPid: partial.parentPid ?? null,
+    uid: partial.uid ?? IDENTITY.uid,
+    ownerUid: partial.ownerUid ?? IDENTITY.uid,
+    interactive: partial.interactive ?? true,
+    isPersonalController: partial.isPersonalController ?? false,
+    gid: partial.gid ?? IDENTITY.gid,
+    gids: partial.gids ?? [...IDENTITY.gids],
+    username: partial.username ?? IDENTITY.username,
+    home: partial.home ?? IDENTITY.home,
+    cwd: partial.cwd ?? IDENTITY.cwd,
+    state: partial.state ?? "idle",
+    activeRunId: partial.activeRunId ?? null,
+    queuedCount: partial.queuedCount ?? 0,
+    lastActiveAt: partial.lastActiveAt ?? null,
+    label: partial.label ?? null,
+    createdAt: partial.createdAt ?? 1,
+  };
+}
+
+function applyResponsibilityTestUpdate(
+  current: ResponsibilityRecord,
+  input: ResponsibilityUpdateInput,
+): ResponsibilityRecord {
+  const next: ResponsibilityRecord = {
+    ...current,
+    revision: current.revision + 1,
+    updatedAtMs: input.now,
+  };
+  if (input.patch.assignee) next.assignee = input.patch.assignee;
+  if (input.patch.state) next.state = input.patch.state;
+  for (const field of ["blocker", "nextCheckAtMs", "leaseExpiresAtMs"] as const) {
+    const value = input.patch[field];
+    if (value === null) {
+      delete next[field];
+    } else if (value !== undefined) {
+      next[field] = value;
+    }
+  }
+  return next;
+}
+
 function makeContext(options?: {
   capabilities?: string[];
   config?: Record<string, string>;
   procs?: Partial<KernelContext["procs"]>;
-  devices?: KernelContext["devices"];
-  auth?: KernelContext["auth"];
-  caps?: KernelContext["caps"];
-  schedules?: KernelContext["schedules"];
-  ipcCalls?: KernelContext["ipcCalls"];
-  oauth?: KernelContext["oauth"];
+  devices?: Partial<KernelContext["devices"]>;
+  auth?: Partial<KernelContext["auth"]>;
+  caps?: Partial<KernelContext["caps"]>;
+  schedules?: Partial<KernelContext["schedules"]>;
+  ipcCalls?: Partial<KernelContext["ipcCalls"]>;
+  responsibilities?: Partial<KernelContext["responsibilities"]>;
+  responsibilitySources?: Partial<KernelContext["responsibilitySources"]>;
+  oauth?: Partial<KernelContext["oauth"]>;
   scheduleIpcCallTimeout?: KernelContext["scheduleIpcCallTimeout"];
   scheduleScheduleWake?: KernelContext["scheduleScheduleWake"];
+  reconcileResponsibilityWake?: KernelContext["reconcileResponsibilityWake"];
   processRunId?: string;
+  processId?: string | null;
   identity?: ProcessIdentity;
-  aiRun?: (model: string, input: Record<string, unknown>) => Promise<unknown>;
+  aiRun?: (model: string, input: ShellAiInput) => Promise<ShellAiResult>;
   ripgit?: Fetcher;
 }): KernelContext {
   const identity = options?.identity ?? IDENTITY;
+  const installationIdentity: InstallationIdentity = {
+    installationId: "inst_shell_test",
+    handle: "shell-test",
+    canonicalOrigin: "https://shell-test.gsv.space",
+  };
   const configValues = new Map<string, string>(Object.entries(options?.config ?? {}));
   const defaultAuth = {
     getPasswdByUid: vi.fn((uid: number) => uid === identity.uid
@@ -124,22 +214,28 @@ function makeContext(options?: {
       : null),
     getPersonalAgentUid: vi.fn(() => null),
     resolveGids: vi.fn(() => [...identity.gids]),
-  } as unknown as KernelContext["auth"];
-  return {
-    env: {
-      STORAGE: env.STORAGE,
-      RIPGIT: options?.ripgit ?? {} as Fetcher,
-      LOADER: { get() { throw new Error("LOADER should not be used in shell tests"); } },
-      ...(options?.aiRun ? { AI: { run: vi.fn(options.aiRun) } } : {}),
-    } as unknown as Env,
-    auth: {
+  };
+  const testEnv = focusedFixture<Env>({
+    STORAGE: env.STORAGE,
+    RIPGIT: options?.ripgit ?? focusedFixture<Fetcher>({}),
+    LOADER: { get() { throw new Error("LOADER should not be used in shell tests"); } },
+  });
+  if (options?.aiRun) {
+    testEnv.AI = { run: vi.fn(options.aiRun) };
+  }
+  return focusedFixture<KernelContext>({
+    env: testEnv,
+    installationId: installationIdentity.installationId,
+    installationIdentity,
+    auth: focusedFixture<KernelContext["auth"]>({
       ...defaultAuth,
       ...options?.auth,
-    } as KernelContext["auth"],
-    caps: options?.caps ?? {
+    }),
+    caps: focusedFixture<KernelContext["caps"]>({
       resolve: vi.fn(() => []),
-    } as unknown as KernelContext["caps"],
-    config: {
+      ...options?.caps,
+    }),
+    config: focusedFixture<KernelContext["config"]>({
       get(key: string) {
         if (key === "config/server/name") return "gsv";
         if (key === "config/server/version") return "0.4.1";
@@ -161,9 +257,9 @@ function makeContext(options?: {
           .map(([key, value]) => ({ key, value }))
           .sort((left, right) => left.key.localeCompare(right.key));
       },
-    } as never,
-    devices: options?.devices ?? null as never,
-    procs: {
+    }),
+    devices: focusedFixture<KernelContext["devices"]>(options?.devices ?? {}),
+    procs: focusedFixture<KernelContext["procs"]>({
       get() {
         return {
           profile: "task",
@@ -173,36 +269,49 @@ function makeContext(options?: {
       getOwnerUid() {
         return identity.uid;
       },
-      ...(options?.procs ?? {}),
-    } as never,
-    oauth: options?.oauth ?? {
+      ...options?.procs,
+    }),
+    oauth: focusedFixture<KernelContext["oauth"]>({
       listAccounts: vi.fn(() => []),
       listFlows: vi.fn(() => []),
       deleteAccount: vi.fn(() => false),
-    } as unknown as KernelContext["oauth"],
-    adapters: {
+      ...options?.oauth,
+    }),
+    adapters: focusedFixture<KernelContext["adapters"]>({
       identityLinks: { list: vi.fn(() => []) },
       status: {
         list: vi.fn(() => []),
         listAll: vi.fn(() => []),
         listByOwner: vi.fn(() => []),
       },
-    } as unknown as KernelContext["adapters"],
-    runRoutes: null as never,
-    schedules: options?.schedules,
-    ipcCalls: options?.ipcCalls,
+    }),
+    runRoutes: focusedFixture<KernelContext["runRoutes"]>({}),
+    schedules: options?.schedules
+      ? focusedFixture<KernelContext["schedules"]>(options.schedules)
+      : undefined,
+    ipcCalls: focusedFixture<KernelContext["ipcCalls"]>({
+      findPendingByTargetRun: vi.fn(() => null),
+      ...options?.ipcCalls,
+    }),
+    responsibilities: focusedFixture<KernelContext["responsibilities"]>(
+      options?.responsibilities ?? {},
+    ),
+    responsibilitySources: focusedFixture<KernelContext["responsibilitySources"]>(
+      options?.responsibilitySources ?? {},
+    ),
     connection: null,
     identity: {
       role: "user",
       process: identity,
       capabilities: options?.capabilities ?? ["repo.refs", "repo.log"],
     },
-    processId: "task:shell",
+    processId: options?.processId === null ? undefined : options?.processId ?? "task:shell",
     processRunId: options?.processRunId,
     serverVersion: "0.4.1",
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
-  } as KernelContext;
+    reconcileResponsibilityWake: options?.reconcileResponsibilityWake,
+  });
 }
 
 function makeSkillFetcher(
@@ -211,7 +320,7 @@ function makeSkillFetcher(
 ): Fetcher {
   const encoder = new TextEncoder();
   const names = Object.keys(files).sort();
-  return {
+  return focusedFixture<Fetcher>({
     async fetch(input: RequestInfo | URL) {
       const url = new URL(input instanceof Request ? input.url : String(input));
       if (url.pathname !== "/hyperspace/repos/sam/home/read") {
@@ -235,7 +344,7 @@ function makeSkillFetcher(
         headers: { "X-Blob-Size": String(encoder.encode(content).byteLength) },
       });
     },
-  } as unknown as Fetcher;
+  });
 }
 
 function enableTelegramMessaging(ctx: KernelContext) {
@@ -261,17 +370,18 @@ function enableTelegramMessaging(ctx: KernelContext) {
     updatedAt: 3,
   };
   const adapterSend = vi.fn(async (
+    _installation: string,
     _accountId: string,
-    _message: unknown,
+    _message: JsonObject,
     body?: { stream: ReadableStream<Uint8Array>; length?: number },
   ) => {
     const bytes = body ? await bodyToBytes(body) : undefined;
-    return { ok: true as const, messageId: bytes ? `bytes-${bytes.byteLength}` : "msg-1" };
+    return { ok: true, messageId: bytes ? `bytes-${bytes.byteLength}` : "msg-1" };
   });
-  Object.assign(ctx.env as unknown as Record<string, unknown>, {
+  Object.assign(ctx.env, {
     CHANNEL_TELEGRAM: { adapterSend },
   });
-  ctx.adapters = {
+  ctx.adapters = focusedFixture<KernelContext["adapters"]>({
     identityLinks: {
       list: vi.fn(() => [link]),
       get: vi.fn((adapter: string, accountId: string, actorId: string) =>
@@ -283,6 +393,12 @@ function enableTelegramMessaging(ctx: KernelContext) {
       get: vi.fn(() => null),
       list: vi.fn(() => []),
     },
+    privateDestinations: {
+      get: vi.fn(() => null),
+    },
+    ingressReceipts: {
+      isLatestPrivateMessage: vi.fn(() => true),
+    },
     status: {
       get: vi.fn((adapter: string, accountId: string) =>
         adapter === status.adapter && accountId === status.accountId ? status : null),
@@ -290,8 +406,8 @@ function enableTelegramMessaging(ctx: KernelContext) {
       listAll: vi.fn(() => [status]),
       listByOwner: vi.fn(() => [status]),
     },
-  } as unknown as KernelContext["adapters"];
-  ctx.runRoutes = {
+  });
+  ctx.runRoutes = focusedFixture<KernelContext["runRoutes"]>({
     get: vi.fn((runId: string) => runId === ctx.processRunId
       ? {
           kind: "adapter",
@@ -305,12 +421,83 @@ function enableTelegramMessaging(ctx: KernelContext) {
             actorId: "chat-42",
             surface: { kind: "dm", id: "chat-42" },
           },
+          replyToId: "msg-1",
           createdAt: 1,
           expiresAt: Date.now() + 60_000,
         }
       : null),
-  } as unknown as KernelContext["runRoutes"];
+  });
   return { adapterSend, link, status };
+}
+
+function enableMessageRouteStore(
+  ctx: KernelContext,
+  processes: ProcessRecord[],
+) {
+  let route: SurfaceRouteRecord | null = null;
+  const setRoute = vi.fn((input: Parameters<KernelContext["adapters"]["surfaceRoutes"]["setRoute"]>[0]) => {
+    route = { ...input, updatedAt: 1_800_000_000_000 };
+    return route;
+  });
+  const clearRoute = vi.fn(() => {
+    const cleared = route !== null;
+    route = null;
+    return cleared;
+  });
+  Object.assign(ctx.adapters.surfaceRoutes, {
+    get: vi.fn(() => route),
+    list: vi.fn(() => route ? [route] : []),
+    setRoute,
+    clearRoute,
+  });
+  ctx.procs = focusedFixture<KernelContext["procs"]>({
+    getOwnerUid: vi.fn(() => IDENTITY.uid),
+    getPersonalController: vi.fn((ownerUid: number) => (
+      ownerUid === IDENTITY.uid
+        ? processes.find((process) => process.isPersonalController) ?? null
+        : null
+    )),
+    list: vi.fn(() => processes),
+    get: vi.fn((pid: string) => processes.find((process) => process.processId === pid) ?? null),
+  });
+  return { setRoute, clearRoute };
+}
+
+function enablePrivateDmHandoff(
+  ctx: KernelContext,
+  latestMessageId = "msg-1",
+) {
+  const controller = makeProcess({
+    processId: ctx.processId!,
+    isPersonalController: true,
+    activeRunId: ctx.processRunId ?? null,
+    label: "personal",
+  });
+  const target = makeProcess({
+    processId: "proc:groceries",
+    label: "groceries",
+    username: "helper",
+    uid: 1001,
+  });
+  const destination = {
+    kind: "adapter",
+    adapter: "telegram",
+    accountId: "bot",
+    actorId: "chat-42",
+    surface: { kind: "dm", id: "chat-42" },
+  };
+  ctx.adapters.privateDestinations = focusedFixture<
+    KernelContext["adapters"]["privateDestinations"]
+  >({
+    get: vi.fn(() => ({
+      uid: IDENTITY.uid,
+      destination,
+      messageId: latestMessageId,
+      updatedAt: 1,
+    })),
+  });
+  const routeStore = enableMessageRouteStore(ctx, [controller, target]);
+  return { controller, target, destination, ...routeStore };
 }
 
 describe("native shell execution", () => {
@@ -369,6 +556,40 @@ describe("native shell execution", () => {
     expect(read.body && await bodyToText(read.body)).toBe("é\nlast\n");
   });
 
+  it("bounds text reads by UTF-8 bytes and reports a continuation offset", async () => {
+    const ctx = makeContext();
+    const path = "/tmp/fs-read-bounded.txt";
+    await handleFsWrite({ path, content: "zero\néé\nthird\nfourth" }, ctx);
+
+    const read = await handleFsRead({ path, limit: 3, maxBytes: 9 }, ctx);
+
+    expect(read.data).toMatchObject({
+      ok: true,
+      kind: "text",
+      lines: 2,
+      truncated: true,
+      nextOffset: 2,
+    });
+    expect(read.body && await bodyToText(read.body)).toBe("zero\néé");
+  });
+
+  it("returns a safe prefix when one line exceeds the text byte limit", async () => {
+    const ctx = makeContext();
+    const path = "/tmp/fs-read-long-line.txt";
+    await handleFsWrite({ path, content: "ééé" }, ctx);
+
+    const read = await handleFsRead({ path, maxBytes: 3 }, ctx);
+
+    expect(read.data).toMatchObject({
+      ok: true,
+      kind: "text",
+      lines: 1,
+      truncated: true,
+    });
+    expect(read.data).not.toHaveProperty("nextOffset");
+    expect(read.body && await bodyToText(read.body)).toBe("é");
+  });
+
   it("uses stored MIME types for reads and transfer metadata", async () => {
     const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
     await env.STORAGE.put("tmp/fs-read-image", bytes, {
@@ -377,6 +598,10 @@ describe("native shell execution", () => {
 
     const ctx = makeContext();
     const read = await handleFsRead({ path: "/tmp/fs-read-image" }, ctx);
+    const referenced = await handleFsRead({
+      path: "/tmp/fs-read-image",
+      representation: "resource",
+    }, ctx);
     const stat = await handleFsTransferStat({ path: "/tmp/fs-read-image" }, ctx);
 
     expect(read.data).toMatchObject({
@@ -386,11 +611,47 @@ describe("native shell execution", () => {
       size: bytes.byteLength,
     });
     expect(read.body && await bodyToBytes(read.body)).toEqual(bytes);
+    expect(referenced.body).toBeUndefined();
+    expect(referenced.data).toMatchObject({
+      ok: true,
+      kind: "image",
+      resource: {
+        type: "file",
+        target: "gsv",
+        path: "/tmp/fs-read-image",
+        contentType: "image/png",
+        size: bytes.byteLength,
+        revision: expect.any(String),
+      },
+    });
     expect(stat).toMatchObject({
       ok: true,
       contentType: "image/png",
       size: bytes.byteLength,
+      revision: expect.any(String),
     });
+  });
+
+  it("refuses to transfer a different file revision", async () => {
+    const path = "/tmp/fs-transfer-revision.png";
+    await env.STORAGE.put(path.slice(1), new Uint8Array([1]), {
+      httpMetadata: { contentType: "image/png" },
+    });
+    const ctx = makeContext();
+    const stat = await handleFsTransferStat({ path }, ctx);
+    expect(stat).toMatchObject({ ok: true, revision: expect.any(String) });
+    if (!stat.ok || !stat.revision) throw new Error("fixture did not produce a revision");
+    await env.STORAGE.put(path.slice(1), new Uint8Array([2, 3]), {
+      httpMetadata: { contentType: "image/png" },
+    });
+
+    const response = await handleFsTransferSend({ path, revision: stat.revision }, ctx, "send-1");
+
+    expect(response.data).toEqual({
+      ok: false,
+      error: `Source revision is no longer available: ${path}`,
+    });
+    expect(response.body).toBeUndefined();
   });
 
   it("reads SVG images as text", async () => {
@@ -467,7 +728,8 @@ describe("native shell capability discovery", () => {
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("GSV live capability manual");
-    expect(result.stdout).toContain("message      Send messages and file attachments");
+    expect(result.stdout).toContain("message      Send messages, attach files, and route adapter chats");
+    expect(result.stdout).toContain("yield        Finish the active agent run");
     expect(result.stdout).toContain("skills       Inspect and maintain reusable agent workflows");
     expect(result.stdout).not.toContain("GSV manual pages");
   });
@@ -481,6 +743,8 @@ describe("native shell capability discovery", () => {
     ["run this every weekday morning", "crontab"],
     ["save this workflow for next time", "skills"],
     ["send this file to the chat", "message"],
+    ["send an email to this person", "mail"],
+    ["start a new chat in this conversation", "message"],
   ])("maps a plain-language task '%s' to %s", async (query, expectedCommand) => {
     const result = await handleShellExec(
       { input: `man --search -- '${query}'` },
@@ -502,6 +766,20 @@ describe("native shell capability discovery", () => {
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("command\ttxt2img\t");
+  });
+
+  it("renders the managed mail manual", async () => {
+    const result = await handleShellExec(
+      { input: "man mail" },
+      makeContext({ capabilities: ["shell.exec", "mail.send", "mail.status"] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("MAIL(1)");
+    expect(result.stdout).toContain("mail send --to ADDRESS");
+    expect(result.stdout).toContain("mail reply MESSAGE_ID");
+    expect(result.stdout).toContain("mail status DELIVERY_ID");
+    expect(result.stdout).toContain("queued");
   });
 
   it("reports the caller's current media capability availability", async () => {
@@ -541,7 +819,13 @@ describe("native shell capability discovery", () => {
     expect(result.stdout).toContain("MESSAGE(1)");
     expect(result.stdout).toContain("message current [--json]");
     expect(result.stdout).toContain("[--delivery-id ID] [--also]");
+    expect(result.stdout).toContain("message send [--message TEXT]");
+    expect(result.stdout).toContain("append `&& yield`");
     expect(result.stdout).toContain("message send --to DESTINATION");
+    expect(result.stdout).toContain("message route set --process PID_OR_LABEL");
+    expect(result.stdout).toContain("personal intelligence");
+    expect(result.stdout).toContain("temporary work direct line");
+    expect(result.stdout).toContain("Use /ship inside that DM");
     expect(result.stdout).toContain("--attach PATH");
   });
 
@@ -621,7 +905,7 @@ describe("native shell capability discovery", () => {
         platform: "darwin",
         implements: ["shell.exec", "fs.*"],
       })]),
-    } as unknown as KernelContext["devices"];
+    };
     const visible = await handleShellExec(
       { input: "man --search -- 'work on studio macbook'" },
       makeContext({ capabilities: ["shell.exec", "sys.device.list"], devices }),
@@ -639,7 +923,7 @@ describe("native shell capability discovery", () => {
 });
 
 describe("oauth native command", () => {
-  function oauthAccount(metadata: Record<string, unknown> = {}) {
+  function oauthAccount(metadata: JsonObject = {}) {
     return {
       accountId: "acct-codex",
       uid: 1000,
@@ -664,7 +948,7 @@ describe("oauth native command", () => {
       listAccounts: vi.fn(() => [oauthAccount({ chatgptAccountId: "chatgpt-account-1" })]),
       listFlows: vi.fn(() => []),
       deleteAccount: vi.fn(),
-    } as unknown as KernelContext["oauth"];
+    };
 
     const result = await handleShellExec(
       { input: "oauth list" },
@@ -683,7 +967,7 @@ describe("oauth native command", () => {
       listAccounts: vi.fn(() => [oauthAccount()]),
       listFlows: vi.fn(() => []),
       deleteAccount: vi.fn(),
-    } as unknown as KernelContext["oauth"];
+    };
 
     const result = await handleShellExec(
       { input: "oauth codex status" },
@@ -702,7 +986,7 @@ describe("oauth native command", () => {
       listAccounts: vi.fn(() => []),
       listFlows: vi.fn(() => []),
       deleteAccount,
-    } as unknown as KernelContext["oauth"];
+    };
 
     const result = await handleShellExec(
       { input: "oauth forget acct-codex" },
@@ -807,7 +1091,7 @@ describe("media native commands", () => {
       canAccess: vi.fn(() => true),
       get: vi.fn(() => device),
       listForUser: vi.fn(() => [device]),
-    } as unknown as KernelContext["devices"];
+    };
     const requestDevice = vi.fn();
 
     const result = await handleShellExec(
@@ -874,10 +1158,10 @@ describe("media native commands", () => {
           if (input.task === "caption") {
             return { caption: "terminal screenshot" };
           }
-          if (typeof input.audio === "string") {
+          if (input.audio !== undefined) {
             return { text: "hello audio" };
           }
-          if (typeof input.text === "string") {
+          if (input.text !== undefined) {
             return new ReadableStream({
               start(controller) {
                 controller.enqueue(new Uint8Array([4, 5, 6]));
@@ -885,7 +1169,7 @@ describe("media native commands", () => {
               },
             });
           }
-          if (typeof input.prompt === "string") {
+          if (input.prompt !== undefined) {
             return { image: "AQID" };
           }
           return null;
@@ -905,7 +1189,7 @@ describe("media native commands", () => {
 
   it("preserves generated image MIME when the output extension differs", async () => {
     const key = "home/sam/generated-jpeg.png";
-    let imageReadInput: Record<string, unknown> | undefined;
+    let imageReadInput: ShellAiInput | undefined;
     await env.STORAGE.delete(key);
 
     const result = await handleShellExec(
@@ -919,7 +1203,7 @@ describe("media native commands", () => {
             imageReadInput = input;
             return { caption: "a green square" };
           }
-          if (typeof input.prompt === "string") {
+          if (input.prompt !== undefined) {
             return { image: "/9j/4AAQSkZJRgABAQAAAQABAAD/2Q==" };
           }
           return null;
@@ -956,7 +1240,7 @@ describe("targets native command", () => {
     ];
     const devices = {
       listForUser: vi.fn(() => records),
-    } as unknown as KernelContext["devices"];
+    };
 
     const result = await handleShellExec(
       { input: "targets list --limit 2" },
@@ -995,7 +1279,7 @@ describe("targets native command", () => {
           disconnected_at: 1_800_000_000_000,
         }),
       ]),
-    } as unknown as KernelContext["devices"];
+    };
     const ctx = makeContext({ capabilities: ["sys.device.list"], devices });
 
     const result = await handleShellExec({ input: "targets list" }, ctx);
@@ -1019,10 +1303,10 @@ describe("targets native command", () => {
     const devices = {
       canAccess: vi.fn(() => true),
       get: vi.fn(() => record),
-    } as unknown as KernelContext["devices"];
+    };
     const auth = {
       getPasswdByUid: vi.fn(() => ({ username: "sam" })),
-    } as unknown as KernelContext["auth"];
+    };
 
     const result = await handleShellExec(
       { input: "targets show macbook" },
@@ -1056,14 +1340,19 @@ describe("proc native command", () => {
         get: vi.fn((pid: string) => pid === process.processId ? process : null),
         getOwnerUid: vi.fn(() => IDENTITY.uid),
         kill,
-      } as Partial<KernelContext["procs"]>,
+      },
       ipcCalls: {
         cancelBySourcePid,
-      } as unknown as KernelContext["ipcCalls"],
+      },
+      responsibilities: {
+        reclaimProcessAssignments: vi.fn(() => []),
+      },
+      reconcileResponsibilityWake: vi.fn(async () => undefined),
     });
     Object.assign(ctx, {
       failIpcCallsByTarget,
       runRoutes: { clearForProcess: clearProcessRoutes },
+      defer: vi.fn(),
     });
     return {
       ctx,
@@ -1086,14 +1375,14 @@ describe("proc native command", () => {
       getGroupByGid: vi.fn((gid: number) => ({ name: passwd.find((u) => u.uid === gid)?.username ?? "g", gid, members: [] })),
       getGroupByName: vi.fn(() => null),
       getShadowByUsername: vi.fn((username: string) => ({ username, hash: username === "sam-agent" ? "!" : "x" })),
-    } as unknown as KernelContext["auth"];
+    };
 
     const result = await handleShellExec(
       { input: "proc agents" },
       makeContext({
         capabilities: ["account.list"],
         auth,
-        procs: { getOwnerUid: () => 1000 } as unknown as KernelContext["procs"],
+        procs: { getOwnerUid: () => 1000 },
       }),
     );
 
@@ -1125,7 +1414,7 @@ describe("proc native command", () => {
             };
           },
           spawn,
-        } as never,
+        },
       }),
     );
 
@@ -1156,7 +1445,7 @@ describe("proc native command", () => {
     const ctx = makeContext({
       identity: rootIdentity,
       capabilities: ["proc.spawn"],
-      procs: { spawn } as Partial<KernelContext["procs"]>,
+      procs: { spawn },
     });
     ctx.processId = undefined;
 
@@ -1176,6 +1465,7 @@ describe("proc native command", () => {
       }),
     );
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
       expect.stringMatching(/^proc:/),
       expect.objectContaining({ call: "proc.send", args: expect.objectContaining({ message: "do work" }) }),
     );
@@ -1199,7 +1489,7 @@ describe("proc native command", () => {
       { input: 'proc spawn --label facts "Generate a fact" --timeout 1m' },
       makeContext({
         capabilities: ["proc.spawn"],
-        procs: { spawn } as Partial<KernelContext["procs"]>,
+        procs: { spawn },
       }),
     );
 
@@ -1236,13 +1526,14 @@ describe("proc native command", () => {
           get: vi.fn((pid: string) => pid === parent.processId ? parent : null),
           getOwnerUid: vi.fn(() => IDENTITY.uid),
           spawn,
-        } as Partial<KernelContext["procs"]>,
+        },
       }),
     );
 
     expect(result.ok).toBe(true);
     expect(spawn).toHaveBeenCalledOnce();
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
       expect.stringMatching(/^proc:/),
       expect.objectContaining({
         call: "proc.send",
@@ -1274,6 +1565,7 @@ describe("proc native command", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toBe('pid=proc:child archived=3 archive="/home/sam/archive.jsonl.gz"\n');
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
       "proc:child",
       expect.objectContaining({ call: "proc.reset", args: { pid: "proc:child" } }),
     );
@@ -1313,6 +1605,7 @@ describe("proc native command", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toBe("pid=proc:child archived=0\n");
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
       "proc:child",
       expect.objectContaining({ call: "proc.kill", args: { pid: "proc:child", archive: false } }),
     );
@@ -1352,8 +1645,9 @@ describe("proc native command", () => {
     };
     const scheduleIpcCallTimeout = vi.fn(async () => "timeout-schedule");
 
-    sendFrameToProcessMock.mockImplementation(async (pid, frame) => {
-      const req = frame as any;
+    sendFrameToProcessMock.mockImplementation(async (_installationId, pid, frame) => {
+      if (frame.type !== "req") throw new Error("expected process request frame");
+      const req = frame;
       if (req.call === "proc.setidentity") {
         return { type: "res", id: req.id, ok: true, data: { ok: true } };
       }
@@ -1401,8 +1695,8 @@ describe("proc native command", () => {
           },
           getOwnerUid: vi.fn(() => IDENTITY.uid),
           spawn,
-        } as unknown as KernelContext["procs"],
-        ipcCalls: ipcCalls as unknown as KernelContext["ipcCalls"],
+        },
+        ipcCalls,
         scheduleIpcCallTimeout,
         processRunId: "parent-run",
       }),
@@ -1431,14 +1725,236 @@ describe("proc native command", () => {
       uid: IDENTITY.uid,
     }));
     const callId = createdCall.callId;
-    expect(scheduleIpcCallTimeout).toHaveBeenCalledWith(callId, createdCall.deadlineAt);
+    expect(scheduleIpcCallTimeout).toHaveBeenCalledWith(
+      callId,
+      createdCall.deadlineAt,
+      { terminateTargetOnTimeout: true },
+    );
+  });
+
+  it("assigns a responsibility before admitting delegated work", async () => {
+    const responsibilityId = "r12y:11111111-1111-4111-8111-111111111111";
+    const parent = makeProcess({
+      processId: "task:shell",
+      isPersonalController: true,
+      state: "running",
+      activeRunId: "parent-run",
+    });
+    const children: string[] = [];
+    const order: string[] = [];
+    let responsibility: ResponsibilityRecord = {
+      id: responsibilityId,
+      ownerUid: IDENTITY.uid,
+      title: "write a migration plan",
+      source: { kind: "process", processId: parent.processId, runId: "parent-run" },
+      assignee: { kind: "ship" },
+      state: "open",
+      priority: "normal",
+      revision: 1,
+      createdAtMs: 1,
+      updatedAtMs: 1,
+    };
+    const update = vi.fn((input: ResponsibilityUpdateInput) => {
+      expect(input.expectedRevision).toBe(responsibility.revision);
+      responsibility = applyResponsibilityTestUpdate(responsibility, input);
+      order.push("assigned");
+      return { record: responsibility, revision: responsibility.revision, changed: true };
+    });
+    const ipcCalls = {
+      create: vi.fn(),
+      get: vi.fn(() => ({ status: "pending", error: null })),
+      remove: vi.fn(),
+    };
+    const ctx = makeContext({
+      capabilities: ["proc.spawn", "proc.ipc.call", "r12y.get", "r12y.update"],
+      procs: {
+        get(pid: string) {
+          if (pid === parent.processId) return parent;
+          if (pid === children[0]) {
+            return makeProcess({
+              processId: pid,
+              parentPid: parent.processId,
+              interactive: false,
+              label: "planning",
+            });
+          }
+          return null;
+        },
+        getOwnerUid: vi.fn(() => IDENTITY.uid),
+        spawn: vi.fn((pid: string) => children.push(pid)),
+      },
+      responsibilities: {
+        get: vi.fn(() => responsibility),
+        revision: vi.fn(() => responsibility.revision),
+        update,
+        reclaimProcessAssignments: vi.fn(() => []),
+      },
+      reconcileResponsibilityWake: vi.fn(async () => undefined),
+      ipcCalls,
+      scheduleIpcCallTimeout: vi.fn(async () => "timeout-schedule"),
+      processRunId: "parent-run",
+    });
+    sendFrameToProcessMock.mockImplementation(async (_installationId, pid, frame) => {
+      if (frame.type !== "req") throw new Error("expected process request frame");
+      if (frame.call === "proc.setidentity") {
+        return { type: "res", id: frame.id, ok: true, data: { ok: true } };
+      }
+      if (frame.call === "proc.ipc.deliver") {
+        order.push("delivered");
+        expect(pid).toBe(children[0]);
+        expect(frame.args.metadata).toEqual({ responsibilityId });
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: {
+            ok: true,
+            status: "started",
+            pid,
+            sourcePid: parent.processId,
+            runId: frame.args.runId,
+          },
+        };
+      }
+      throw new Error(`unexpected process frame: ${frame.call}`);
+    });
+
+    const result = await handleShellExec({
+      input: `proc delegate --responsibility ${responsibilityId} --label planning analyze schema`,
+    }, ctx);
+
+    expect(result.ok).toBe(true);
+    expect(order).toEqual(["assigned", "delivered"]);
+    expect(responsibility.assignee).toEqual({ kind: "process", processId: children[0] });
+    expect(responsibility.state).toBe("active");
+    expect(responsibility.leaseExpiresAtMs).toEqual(expect.any(Number));
+    expect(ipcCalls.create).toHaveBeenCalledWith(expect.objectContaining({
+      responsibilityId,
+    }));
+    expect(result.stdout).toContain(`responsibility=${responsibilityId}`);
+  });
+
+  it("returns a responsibility to Ship when delegated admission fails", async () => {
+    const responsibilityId = "r12y:22222222-2222-4222-8222-222222222222";
+    const parent = makeProcess({
+      processId: "task:shell",
+      isPersonalController: true,
+      state: "running",
+      activeRunId: "parent-run",
+    });
+    const children: string[] = [];
+    let responsibility: ResponsibilityRecord = {
+      id: responsibilityId,
+      ownerUid: IDENTITY.uid,
+      title: "inspect deployment",
+      source: { kind: "process", processId: parent.processId, runId: "parent-run" },
+      assignee: { kind: "ship" },
+      state: "waiting",
+      priority: "normal",
+      nextCheckAtMs: 99_000,
+      blocker: "waiting for a worker",
+      revision: 1,
+      createdAtMs: 1,
+      updatedAtMs: 1,
+    };
+    const update = vi.fn((input: ResponsibilityUpdateInput) => {
+      responsibility = applyResponsibilityTestUpdate(responsibility, input);
+      return { record: responsibility, revision: responsibility.revision, changed: true };
+    });
+    const kill = vi.fn();
+    const ctx = makeContext({
+      capabilities: [
+        "proc.spawn",
+        "proc.ipc.call",
+        "proc.kill",
+        "r12y.get",
+        "r12y.update",
+      ],
+      procs: {
+        get(pid: string) {
+          if (pid === parent.processId) return parent;
+          if (pid === children[0]) {
+            return makeProcess({
+              processId: pid,
+              parentPid: parent.processId,
+              interactive: false,
+            });
+          }
+          return null;
+        },
+        getOwnerUid: vi.fn(() => IDENTITY.uid),
+        spawn: vi.fn((pid: string) => children.push(pid)),
+        kill,
+      },
+      responsibilities: {
+        get: vi.fn(() => responsibility),
+        revision: vi.fn(() => responsibility.revision),
+        update,
+        reclaimProcessAssignments: vi.fn(() => []),
+      },
+      reconcileResponsibilityWake: vi.fn(async () => undefined),
+      ipcCalls: {
+        create: vi.fn(),
+        remove: vi.fn(),
+        cancelBySourcePid: vi.fn(),
+      },
+      scheduleIpcCallTimeout: vi.fn(async () => "timeout-schedule"),
+      processRunId: "parent-run",
+    });
+    Object.assign(ctx, {
+      failIpcCallsByTarget: vi.fn(),
+      runRoutes: { clearForProcess: vi.fn() },
+      defer: vi.fn(),
+    });
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
+      if (frame.type !== "req") throw new Error("expected process request frame");
+      if (frame.call === "proc.setidentity") {
+        return { type: "res", id: frame.id, ok: true, data: { ok: true } };
+      }
+      if (frame.call === "proc.ipc.deliver") {
+        return {
+          type: "res",
+          id: frame.id,
+          ok: false,
+          error: { code: "DELIVERY_FAILED", message: "delivery failed" },
+        };
+      }
+      if (frame.call === "proc.kill") {
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: {
+            ok: true,
+            pid: children[0],
+            archivedMessages: 0,
+            archives: [],
+          },
+        };
+      }
+      throw new Error(`unexpected process frame: ${frame.call}`);
+    });
+
+    const result = await handleShellExec({
+      input: `proc delegate --responsibility ${responsibilityId} inspect deployment`,
+    }, ctx);
+
+    expect(result.status).toBe("failed");
+    expect(result.stderr).toContain("delivery failed");
+    expect(responsibility.assignee).toEqual({ kind: "ship" });
+    expect(responsibility.state).toBe("waiting");
+    expect(responsibility.blocker).toBe("waiting for a worker");
+    expect(responsibility.nextCheckAtMs).toBe(99_000);
+    expect(responsibility.leaseExpiresAtMs).toBeUndefined();
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(kill).toHaveBeenCalledWith(children[0]);
   });
 
   it("rejects delegation from a top-level shell before spawning", async () => {
     const spawn = vi.fn();
     const ctx = makeContext({
       capabilities: ["proc.spawn", "proc.ipc.call"],
-      procs: { spawn } as Partial<KernelContext["procs"]>,
+      procs: { spawn },
     });
     ctx.processId = undefined;
 
@@ -1516,17 +2032,23 @@ describe("proc native command", () => {
         getOwnerUid: vi.fn(() => IDENTITY.uid),
         spawn,
         kill,
-      } as unknown as KernelContext["procs"],
-      ipcCalls: ipcCalls as unknown as KernelContext["ipcCalls"],
+      },
+      ipcCalls,
+      responsibilities: {
+        reclaimProcessAssignments: vi.fn(() => []),
+      },
+      reconcileResponsibilityWake: vi.fn(async () => undefined),
       scheduleIpcCallTimeout: vi.fn(async () => "timeout-schedule"),
       processRunId: "parent-run",
     });
     Object.assign(ctx, {
       failIpcCallsByTarget: vi.fn(),
       runRoutes: { clearForProcess: vi.fn() },
+      defer: vi.fn(),
     });
-    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => {
-      const req = frame as RequestFrame;
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
+      if (frame.type !== "req") throw new Error("expected process request frame");
+      const req = frame;
       if (req.call === "proc.setidentity") {
         return { type: "res", id: req.id, ok: true, data: { ok: true } };
       }
@@ -1563,6 +2085,7 @@ describe("proc native command", () => {
     expect(result.stderr).toContain(`proc delegate: ${error}`);
     expect(result.stderr).not.toContain("rollback failed");
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
       children[0],
       expect.objectContaining({
         call: "proc.kill",
@@ -1606,7 +2129,7 @@ describe("proc native command", () => {
             }
             return null;
           }),
-        } as Partial<KernelContext["procs"]>,
+        },
       }),
     );
 
@@ -1677,7 +2200,7 @@ describe("proc native command", () => {
             }
             return null;
           }),
-        } as Partial<KernelContext["procs"]>,
+        },
       }),
     );
 
@@ -1688,14 +2211,18 @@ describe("proc native command", () => {
     expect(result.stdout).toContain("[truncated 6 chars; use --full or --json to inspect all content]");
     expect(result.stdout).toContain("xxxxxxxxxxxx");
     expect(result.stdout).toContain("[truncated 28 chars; use --full or --json to inspect all content]");
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith("proc:child", expect.objectContaining({
-      call: "proc.history",
-      args: {
-        pid: "proc:child",
-        limit: 2,
-        tail: true,
-      },
-    }));
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
+      "proc:child",
+      expect.objectContaining({
+        call: "proc.history",
+        args: {
+          pid: "proc:child",
+          limit: 2,
+          tail: true,
+        },
+      }),
+    );
   });
 });
 
@@ -1796,11 +2323,11 @@ describe("fs copy", () => {
       httpMetadata: { contentType: "text/plain; charset=utf-8" },
       customMetadata: { uid: "1000", gid: "1000", mode: "644" },
     });
-    const ctx = makeContext() as KernelContext;
-    ctx.devices = {
+    const ctx = makeContext();
+    ctx.devices = focusedFixture<KernelContext["devices"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
-    } as never;
+    });
     let received = "";
 
     const result = await handleFsCopy({
@@ -1841,12 +2368,12 @@ describe("fs copy", () => {
 
   it("cancels a device copy request", async () => {
     const controller = new AbortController();
-    const ctx = makeContext() as KernelContext;
+    const ctx = makeContext();
     ctx.requestSignal = controller.signal;
-    ctx.devices = {
+    ctx.devices = focusedFixture<KernelContext["devices"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
-    } as never;
+    });
     let requestSignal: AbortSignal | undefined;
     const request = handleFsCopy({
       source: { target: "gsv", path: "/tmp/source.txt" },
@@ -1878,11 +2405,11 @@ describe("fs copy", () => {
       httpMetadata: { contentType: "text/plain; charset=utf-8" },
       customMetadata: { uid: "1000", gid: "1000", mode: "644" },
     });
-    const ctx = makeContext() as KernelContext;
-    ctx.devices = {
+    const ctx = makeContext();
+    ctx.devices = focusedFixture<KernelContext["devices"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
-    } as never;
+    });
     const result = await handleFsCopy({
       source: { target: "gsv", path: "/home/sam/copy-test/device-send-fail.txt" },
       destination: { target: "rearden", path: "/tmp/device-destination.txt" },
@@ -1910,11 +2437,11 @@ describe("fs copy", () => {
   it("streams device files to gsv", async () => {
     const destinationKey = "home/sam/copy-test/from-device.txt";
     await env.STORAGE.delete(destinationKey);
-    const ctx = makeContext() as KernelContext;
-    ctx.devices = {
+    const ctx = makeContext();
+    ctx.devices = focusedFixture<KernelContext["devices"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
-    } as never;
+    });
 
     const result = await handleFsCopy({
       source: { target: "rearden", path: "/tmp/source.txt" },
@@ -1961,11 +2488,11 @@ describe("fs copy", () => {
   });
 
   it("returns device send failures when copying to gsv", async () => {
-    const ctx = makeContext() as KernelContext;
-    ctx.devices = {
+    const ctx = makeContext();
+    ctx.devices = focusedFixture<KernelContext["devices"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
-    } as never;
+    });
     const result = await handleFsCopy({
       source: { target: "rearden", path: "/tmp/source.txt" },
       destination: { target: "gsv", path: "/home/sam/copy-test/from-device-fail.txt" },
@@ -1991,11 +2518,11 @@ describe("fs copy", () => {
   });
 
   it("streams device files directly to another device", async () => {
-    const ctx = makeContext() as KernelContext;
-    ctx.devices = {
+    const ctx = makeContext();
+    ctx.devices = focusedFixture<KernelContext["devices"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
-    } as never;
+    });
     let received = "";
 
     const result = await handleFsCopy({
@@ -2112,7 +2639,7 @@ describe("native administration shell commands", () => {
           data: {
             ok: true,
             kind: "text",
-            path: (frame.args as { path: string }).path,
+            path: frame.args.path,
             size: 5,
             contentType: "text/plain; charset=utf-8",
           },
@@ -2172,6 +2699,61 @@ describe("native administration shell commands", () => {
     expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
+  it("derives native CodeMode mail delivery ids from the outer shell request", async () => {
+    const mailFrames: RequestFrame[] = [];
+    const request = vi.fn(async (frame: RequestFrame): Promise<ResponseFrame> => {
+      if (frame.call === "sys.mcp.list") {
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: { servers: [] },
+        };
+      }
+      if (frame.call === "mail.send") {
+        mailFrames.push(frame);
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: {
+            ok: true,
+            deliveryId: frame.args.deliveryId,
+          },
+        };
+      }
+      throw new Error(`unexpected call: ${frame.call}`);
+    });
+    const ctx = makeContext({ capabilities: ["codemode.run"] });
+    ctx.requestId = "native-mail-shell-request";
+    Object.assign(ctx.env, { LOADER: env.LOADER });
+    const input = "codemode -e 'return await mail.send({ to: \"mike@example.com\", text: \"Hello\" })'";
+
+    const first = await handleShellExec({ input }, ctx, { request });
+    const replay = await handleShellExec({ input }, ctx, { request });
+
+    const deliveryBase = await stableOpaqueId("mail-send", [
+      ctx.installationId,
+      ctx.processId!,
+      ctx.requestId,
+      1,
+    ]);
+    expect(first).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(replay).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(mailFrames.map((frame) => frame.args)).toEqual([
+      {
+        to: "mike@example.com",
+        text: "Hello",
+        deliveryId: `${deliveryBase}:1`,
+      },
+      {
+        to: "mike@example.com",
+        text: "Hello",
+        deliveryId: `${deliveryBase}:1`,
+      },
+    ]);
+  });
+
   it("releases a CodeMode response body when cancellation wins after dispatch", async () => {
     const controller = new AbortController();
     const cancel = vi.fn();
@@ -2226,7 +2808,7 @@ describe("native administration shell commands", () => {
   });
 
   it("lists MCP servers through the native shell command", async () => {
-    const ctx = makeContext({ capabilities: ["sys.mcp.list"] }) as KernelContext;
+    const ctx = makeContext({ capabilities: ["sys.mcp.list"] });
     Object.assign(ctx, {
       mcpServers: {
         list: () => [{
@@ -2250,7 +2832,7 @@ describe("native administration shell commands", () => {
           callback_url: "",
           server_options: JSON.stringify({ transport: { type: "auto" } }),
         }],
-        listTools: () => [{ name: "lookup", description: "Lookup", inputSchema: {} }],
+        listTools: () => [{ name: "lookup", description: "Lookup", inputSchema: { type: "object" } }],
         listResources: () => [],
         listPrompts: () => [],
       },
@@ -2268,7 +2850,7 @@ describe("native administration shell commands", () => {
   });
 
   it("lists MCP tools with CodeMode function names", async () => {
-    const ctx = makeContext({ capabilities: ["sys.mcp.list"] }) as KernelContext;
+    const ctx = makeContext({ capabilities: ["sys.mcp.list"] });
     Object.assign(ctx, {
       mcpServers: {
         list: () => [{
@@ -2292,7 +2874,7 @@ describe("native administration shell commands", () => {
           callback_url: "",
           server_options: JSON.stringify({ transport: { type: "auto" } }),
         }],
-        listTools: () => [{ name: "lookup-record", description: "Lookup records", inputSchema: { required: ["query"] } }],
+        listTools: () => [{ name: "lookup-record", description: "Lookup records", inputSchema: { type: "object", required: ["query"] } }],
         listResources: () => [],
         listPrompts: () => [],
       },
@@ -2313,7 +2895,7 @@ describe("native administration shell commands", () => {
   });
 
   it("calls MCP tools through the native shell command", async () => {
-    const ctx = makeContext({ capabilities: ["sys.mcp.call"] }) as KernelContext;
+    const ctx = makeContext({ capabilities: ["sys.mcp.call"] });
     const controller = new AbortController();
     ctx.requestSignal = controller.signal;
     const callMcpTool = vi.fn(async () => ({
@@ -2344,7 +2926,7 @@ describe("native administration shell commands", () => {
           callback_url: "",
           server_options: JSON.stringify({ transport: { type: "auto" } }),
         }],
-        listTools: () => [{ name: "lookup", description: "Lookup", inputSchema: {} }],
+        listTools: () => [{ name: "lookup", description: "Lookup", inputSchema: { type: "object" } }],
         listResources: () => [],
         listPrompts: () => [],
       },
@@ -2393,6 +2975,19 @@ describe("native administration shell commands", () => {
     expect(result.stderr).toBe("");
   });
 
+  it("exposes the installation identity and canonical URL to shell commands", async () => {
+    const result = await handleShellExec(
+      { input: "printf \"$GSV_INSTALLATION_ID\\n$GSV_URL\\n\"" },
+      makeContext(),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toBe(
+      "inst_shell_test\nhttps://shell-test.gsv.space\n",
+    );
+    expect(result.stderr).toBe("");
+  });
+
   it("shows sched command usage", async () => {
     const result = await handleShellExec(
       { input: "sched --help" },
@@ -2406,6 +3001,42 @@ describe("native administration shell commands", () => {
     expect(result.stdout).toContain("--all includes disabled schedules");
     expect(result.stdout).toContain("sched run <id>");
     expect(result.stderr).toBe("");
+  });
+
+  it("lists and toggles built-in responsibility sources", async () => {
+    let enabled = true;
+    const responsibilitySources = {
+      list: vi.fn(() => [{
+        id: "mail.received",
+        name: "Incoming mail",
+        description: "Ask the Ship to review each newly received email.",
+        control: "configurable",
+        defaultEnabled: true,
+        enabled,
+      }]),
+      set: vi.fn((_uid: number, id: string, next: boolean) => {
+        enabled = next;
+        return {
+          id,
+          name: "Incoming mail",
+          description: "Ask the Ship to review each newly received email.",
+          control: "configurable",
+          defaultEnabled: true,
+          enabled,
+        };
+      }),
+    };
+    const ctx = makeContext({
+      capabilities: ["r12y.source.list", "r12y.source.update"],
+      responsibilitySources,
+    });
+
+    const listed = await handleShellExec({ input: "r12y sources" }, ctx);
+    const disabled = await handleShellExec({ input: "r12y source disable mail.received" }, ctx);
+
+    expect(listed.stdout).toContain("mail.received\tenabled\tconfigurable\tIncoming mail");
+    expect(disabled.stdout).toContain('"enabled":false');
+    expect(responsibilitySources.set).toHaveBeenCalledWith(IDENTITY.uid, "mail.received", false);
   });
 
   it("installs and lists a user crontab", async () => {
@@ -2477,13 +3108,13 @@ describe("native administration shell commands", () => {
         ? { username: "sam", uid: IDENTITY.uid, gid: IDENTITY.gid, gecos: "", home: IDENTITY.home, shell: "/bin/init" }
         : null),
       resolveGids: vi.fn(() => IDENTITY.gids),
-    } as unknown as KernelContext["auth"];
+    };
     const ctx = makeContext({
       capabilities: ["sched.add", "sched.remove", "sched.list"],
       auth,
       caps: {
         resolve: vi.fn(() => ["shell.*"]),
-      } as unknown as KernelContext["caps"],
+      },
       schedules: {
         create,
         setWakeScheduleId,
@@ -2516,7 +3147,7 @@ describe("native administration shell commands", () => {
         linkCronFileSchedule: vi.fn((path: string, scheduleId: string) => {
           links.set(path, [...(links.get(path) ?? []), scheduleId]);
         }),
-      } as unknown as KernelContext["schedules"],
+      },
       scheduleScheduleWake: wake,
     });
     await env.STORAGE.put(
@@ -2645,17 +3276,17 @@ describe("native administration shell commands", () => {
         return null;
       }),
       resolveGids: vi.fn((username: string) => username === agent.username ? agent.gids : IDENTITY.gids),
-    } as unknown as KernelContext["auth"];
+    };
     const ctx = makeContext({
       identity: agent,
       capabilities: ["sched.add", "sched.remove", "sched.list"],
       auth,
       caps: {
         resolve: vi.fn(() => ["shell.exec"]),
-      } as unknown as KernelContext["caps"],
+      },
       procs: {
         getOwnerUid: vi.fn(() => IDENTITY.uid),
-      } as Partial<KernelContext["procs"]>,
+      },
       schedules: {
         create,
         setWakeScheduleId: vi.fn(),
@@ -2695,7 +3326,7 @@ describe("native administration shell commands", () => {
         linkCronFileSchedule: vi.fn((path: string, scheduleId: string) => {
           links.set(path, [...(links.get(path) ?? []), scheduleId]);
         }),
-      } as unknown as KernelContext["schedules"],
+      },
       scheduleScheduleWake: wake,
     });
     await env.STORAGE.put(
@@ -2768,11 +3399,11 @@ describe("native administration shell commands", () => {
             uid: IDENTITY.uid,
             ownerUid: IDENTITY.uid,
           })),
-        } as Partial<KernelContext["procs"]>,
+        },
         schedules: {
           create,
           setWakeScheduleId,
-        } as unknown as KernelContext["schedules"],
+        },
         scheduleScheduleWake: wake,
       }),
     );
@@ -2791,7 +3422,7 @@ describe("native administration shell commands", () => {
     expect(setWakeScheduleId).toHaveBeenCalledWith("sched-2", "wake-1");
   });
 
-  it("distinguishes the automatic reply from intentional extra messages", async () => {
+  it("distinguishes the directed endpoint from intentional separate messages", async () => {
     const ctx = makeContext({
       capabilities: ["shell.exec", "adapter.send"],
       processRunId: "run-telegram",
@@ -2799,6 +3430,13 @@ describe("native administration shell commands", () => {
     const { adapterSend } = enableTelegramMessaging(ctx);
 
     const current = await handleShellExec({ input: "message current" }, ctx);
+    const currentJson = await handleShellExec({ input: "message current --json" }, ctx);
+    const terminalFallback = await handleShellExec({
+      input: 'message send --message "terminal reply"',
+    }, ctx);
+    const yieldFallback = await handleShellExec({
+      input: "yield",
+    }, ctx);
     const duplicate = await handleShellExec({
       input: 'message send --to here --message "duplicate reply"',
     }, ctx);
@@ -2807,11 +3445,25 @@ describe("native administration shell commands", () => {
     }, ctx);
 
     expect(current).toMatchObject({ status: "completed", exitCode: 0 });
-    expect(current.stdout).toContain("automatic reply: Telegram direct message");
-    expect(current.stdout).toContain("create additional outbound messages");
+    expect(current.stdout).toContain("directed endpoint: Telegram direct message");
+    expect(current.stdout).toContain("cross-channel delivery");
+    const currentOutput = currentDestinationOutputSchema.safeParse(
+      JSON.parse(currentJson.stdout),
+    );
+    expect(currentOutput.success).toBe(true);
+    if (!currentOutput.success) throw new Error("invalid message current output");
+    const { destinationId } = currentOutput.data;
+    expect(destinationId).toMatch(/^message-destination:[0-9a-f]{64}$/);
+    expect(current.stdout).toContain(`destination: ${destinationId}`);
+    expect(current.stdout).not.toContain("chat-42");
+    expect(currentJson.stdout).not.toContain("chat-42");
     expect(duplicate.status).toBe("failed");
-    expect(duplicate.stderr).toContain("automatic reply destination");
+    expect(duplicate.stderr).toContain("current-conversation form");
     expect(duplicate.stderr).toContain("--also");
+    expect(terminalFallback).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(terminalFallback.stderr).toContain("direct Shell tool call");
+    expect(yieldFallback).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(yieldFallback.stderr).toContain("direct Shell tool call");
     expect(intentional).toMatchObject({ status: "completed", exitCode: 0 });
     expect(intentional.stdout).toContain("sent=true");
     expect(intentional.stdout).toMatch(/destination=message-destination:[0-9a-f]{64}/);
@@ -2820,6 +3472,7 @@ describe("native administration shell commands", () => {
     expect(intentional.stdout).not.toContain("message_id=msg-1");
     expect(adapterSend).toHaveBeenCalledTimes(1);
     expect(adapterSend).toHaveBeenCalledWith(
+      TEST_INSTALLATION_CONTEXT,
       "bot",
       expect.objectContaining({
         surface: { kind: "dm", id: "chat-42" },
@@ -2838,7 +3491,12 @@ describe("native administration shell commands", () => {
 
     const listed = await handleShellExec({ input: "message destinations --json" }, ctx);
     expect(listed).toMatchObject({ status: "completed", exitCode: 0 });
-    const destinationId = JSON.parse(listed.stdout).destinations[0].id as string;
+    const listedOutput = destinationListOutputSchema.safeParse(JSON.parse(listed.stdout));
+    expect(listedOutput.success).toBe(true);
+    if (!listedOutput.success || !listedOutput.data.destinations[0]) {
+      throw new Error("invalid message destinations output");
+    }
+    const destinationId = listedOutput.data.destinations[0].id;
     expect(destinationId).toMatch(/^message-destination:[0-9a-f]{64}$/);
     expect(listed.stdout).toContain("Telegram direct message");
     expect(listed.stdout).not.toContain("chat-42");
@@ -2855,10 +3513,284 @@ describe("native administration shell commands", () => {
     expect(sent.stdout).not.toContain("chat-42");
     expect(sent.stdout).not.toContain("msg-1");
     expect(adapterSend).toHaveBeenCalledWith(
+      TEST_INSTALLATION_CONTEXT,
       "bot",
       expect.objectContaining({ text: "opaque route" }),
       undefined,
     );
+  });
+
+  it("shows and changes the process route for an adapter group", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.route"],
+      processRunId: "run-telegram-route",
+    });
+    const { link } = enableTelegramMessaging(ctx);
+    link.metadata = { surfaceKind: "group", surfaceId: "group-42" };
+    ctx.runRoutes = focusedFixture<KernelContext["runRoutes"]>({
+      get: vi.fn(() => ({
+        kind: "adapter",
+        runId: ctx.processRunId!,
+        processId: ctx.processId!,
+        uid: IDENTITY.uid,
+        destination: {
+          kind: "adapter",
+          adapter: "telegram",
+          accountId: "bot",
+          actorId: "chat-42",
+          surface: { kind: "group", id: "group-42" },
+        },
+      })),
+    });
+    const target = makeProcess({
+      processId: "proc:groceries",
+      label: "groceries",
+      username: "helper",
+      uid: 1001,
+    });
+    const { setRoute, clearRoute } = enableMessageRouteStore(ctx, [target]);
+
+    const set = await handleShellExec({
+      input: "message route set --process groceries",
+    }, ctx);
+    expect(set).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(set.stdout).toContain("routed=true");
+    expect(set.stdout).toContain("process=proc:groceries");
+    expect(set.stdout).not.toContain("chat-42");
+    expect(set.stdout).not.toContain("account=bot");
+    expect(setRoute).toHaveBeenCalledWith(expect.objectContaining({
+      adapter: "telegram",
+      accountId: "bot",
+      actorId: "chat-42",
+      surfaceKind: "group",
+      surfaceId: "group-42",
+      uid: IDENTITY.uid,
+      pid: "proc:groceries",
+      mode: "surface",
+      updatedByUid: IDENTITY.uid,
+    }));
+
+    const shown = await handleShellExec({ input: "message route show --json" }, ctx);
+    expect(shown).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(JSON.parse(shown.stdout)).toMatchObject({
+      routes: [{
+        chat: "Telegram group",
+        process: "proc:groceries",
+        processState: "idle",
+        processLabel: "groceries",
+      }],
+    });
+    expect(shown.stdout).not.toContain("chat-42");
+    expect(shown.stdout).not.toContain('"bot"');
+
+    const listed = await handleShellExec({ input: "message route list" }, ctx);
+    expect(listed).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(listed.stdout).toContain("proc:groceries");
+    expect(listed.stdout).toContain("Telegram group");
+    expect(listed.stdout).not.toContain("chat-42");
+
+    const cleared = await handleShellExec({ input: "message route clear" }, ctx);
+    expect(cleared).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(cleared.stdout).toContain("cleared=true");
+    expect(clearRoute).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets the exact personal DM run open an owned work direct line", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.route"],
+      processRunId: "run-personal-handoff",
+    });
+    enableTelegramMessaging(ctx);
+    const { target, setRoute } = enablePrivateDmHandoff(ctx);
+
+    const first = await handleShellExec({
+      input: "message route set --process groceries",
+    }, ctx);
+    const replay = await handleShellExec({
+      input: "message route set --process groceries",
+    }, ctx);
+
+    expect(first).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(replay).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(first.stdout).toContain(`process=${target.processId}`);
+    expect(setRoute).toHaveBeenCalledTimes(1);
+    expect(setRoute).toHaveBeenCalledWith(expect.objectContaining({
+      adapter: "telegram",
+      accountId: "bot",
+      actorId: "chat-42",
+      surfaceKind: "dm",
+      surfaceId: "chat-42",
+      uid: IDENTITY.uid,
+      pid: target.processId,
+      mode: "work",
+      updatedByUid: IDENTITY.uid,
+    }));
+  });
+
+  it("fences a personal DM handoff after newer private activity", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.route"],
+      processRunId: "run-stale-personal-handoff",
+    });
+    enableTelegramMessaging(ctx);
+    const { setRoute } = enablePrivateDmHandoff(ctx, "newer-message");
+
+    const result = await handleShellExec({
+      input: "message route set --process groceries",
+    }, ctx);
+
+    expect(result).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(result.stderr).toContain("conversation changed before the direct line");
+    expect(setRoute).not.toHaveBeenCalled();
+  });
+
+  it("rejects a handoff from a superseded personal run", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.route"],
+      processRunId: "run-superseded-personal-handoff",
+    });
+    enableTelegramMessaging(ctx);
+    const { controller, setRoute } = enablePrivateDmHandoff(ctx);
+    controller.activeRunId = "run-newer-personal-activity";
+
+    const result = await handleShellExec({
+      input: "message route set --process groceries",
+    }, ctx);
+
+    expect(result).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(result.stderr).toContain("Only the personal intelligence");
+    expect(setRoute).not.toHaveBeenCalled();
+  });
+
+  it("fences a delayed handoff after a later /ship with an older provider timestamp", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.route"],
+      processRunId: "run-delayed-before-home",
+    });
+    enableTelegramMessaging(ctx);
+    const { setRoute } = enablePrivateDmHandoff(ctx, "msg-1");
+    ctx.adapters.ingressReceipts.isLatestPrivateMessage = vi.fn(() => false);
+
+    const result = await handleShellExec({
+      input: "message route set --process groceries",
+    }, ctx);
+
+    expect(result).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(result.stderr).toContain("conversation changed before the direct line");
+    expect(ctx.adapters.privateDestinations.get(IDENTITY.uid)).toMatchObject({
+      messageId: "msg-1",
+      updatedAt: 1,
+    });
+    expect(ctx.adapters.ingressReceipts.isLatestPrivateMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ surface: { kind: "dm", id: "chat-42" } }),
+      "msg-1",
+    );
+    expect(setRoute).not.toHaveBeenCalled();
+  });
+
+  it("fences a personal DM handoff after its selection changed", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.route"],
+      processRunId: "run-reselected-personal-handoff",
+    });
+    enableTelegramMessaging(ctx);
+    const { setRoute } = enablePrivateDmHandoff(ctx);
+    const other = makeProcess({ processId: "proc:newer-work", label: "newer" });
+    ctx.procs.get = vi.fn((pid: string) => (
+      pid === other.processId ? other : pid === "proc:groceries"
+        ? makeProcess({ processId: "proc:groceries", label: "groceries" })
+        : pid === ctx.processId
+          ? makeProcess({ processId: ctx.processId!, isPersonalController: true })
+          : null
+    ));
+    ctx.adapters.surfaceRoutes.setRoute({
+      adapter: "telegram",
+      accountId: "bot",
+      actorId: "chat-42",
+      surfaceKind: "dm",
+      surfaceId: "chat-42",
+      uid: IDENTITY.uid,
+      pid: other.processId,
+      mode: "work",
+      updatedByUid: IDENTITY.uid,
+    });
+    setRoute.mockClear();
+
+    const result = await handleShellExec({
+      input: "message route set --process groceries",
+    }, ctx);
+
+    expect(result).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(result.stderr).toContain("selection changed before the direct line");
+    expect(setRoute).not.toHaveBeenCalled();
+  });
+
+  it("rejects private DM route changes from a top-level user shell", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.route"],
+    });
+    delete ctx.processId;
+    enableTelegramMessaging(ctx);
+    const target = makeProcess({
+      processId: "proc:groceries",
+      label: "groceries",
+    });
+    const { setRoute, clearRoute } = enableMessageRouteStore(ctx, [target]);
+
+    const set = await handleShellExec({
+      input: "message route set --process groceries --to telegram",
+    }, ctx);
+    expect(set).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(set.stderr).toContain("Only the personal intelligence can open a private DM direct line");
+
+    const cleared = await handleShellExec({
+      input: "message route clear --to telegram",
+    }, ctx);
+    expect(cleared).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(cleared.stderr).toContain("Use /ship in the private DM");
+    expect(setRoute).not.toHaveBeenCalled();
+    expect(clearRoute).not.toHaveBeenCalled();
+  });
+
+  it("explains the personal-intelligence DM handoff boundary", async () => {
+    const result = await handleShellExec(
+      { input: "message route --help" },
+      makeContext({ capabilities: ["shell.exec", "adapter.route"] }),
+    );
+
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(result.stdout).toContain("intelligence can use `set`");
+    expect(result.stdout).toContain("Use /ship inside the DM to return");
+  });
+
+  it("only routes chats to owned interactive processes", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.route"],
+      processRunId: "run-telegram-route-denied",
+    });
+    enableTelegramMessaging(ctx);
+    enableMessageRouteStore(ctx, [makeProcess({
+      processId: "proc:background",
+      label: "background",
+      interactive: false,
+    })]);
+
+    const result = await handleShellExec({
+      input: "message route set --process background",
+    }, ctx);
+    expect(result).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(result.stderr).toContain("No owned interactive process matches");
+
+    enableMessageRouteStore(ctx, [makeProcess({
+      processId: "proc:foreign",
+      label: "foreign",
+      ownerUid: 2000,
+    })]);
+    const foreign = await handleShellExec({
+      input: "message route set --process foreign",
+    }, ctx);
+    expect(foreign).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(foreign.stderr).toContain("Process not found");
   });
 
   it("bridges a GSV file into an explicit adapter message body", async () => {
@@ -2877,6 +3809,7 @@ describe("native administration shell commands", () => {
     expect(result.stdout).toContain("sent=true");
     expect(result.stdout).not.toContain("bytes-3");
     expect(adapterSend).toHaveBeenCalledWith(
+      TEST_INSTALLATION_CONTEXT,
       "bot",
       expect.objectContaining({
         text: "",
@@ -2900,8 +3833,8 @@ describe("native administration shell commands", () => {
     enableTelegramMessaging(ctx);
     const adapterSend = vi.fn()
       .mockRejectedValueOnce(new Error("service binding disconnected"))
-      .mockResolvedValueOnce({ ok: true as const, messageId: "msg-retried" });
-    Object.assign(ctx.env as unknown as Record<string, unknown>, {
+      .mockResolvedValueOnce({ ok: true, messageId: "msg-retried" });
+    Object.assign(ctx.env, {
       CHANNEL_TELEGRAM: { adapterSend },
     });
 
@@ -2912,7 +3845,7 @@ describe("native administration shell commands", () => {
     expect(result).toMatchObject({ status: "completed", exitCode: 0 });
     expect(result.stdout).toContain("delivery_id=logical-send-1");
     expect(adapterSend).toHaveBeenCalledTimes(2);
-    expect(adapterSend.mock.calls.map((call) => (call[1] as any).deliveryId)).toEqual([
+    expect(adapterSend.mock.calls.map((call) => call[2].deliveryId)).toEqual([
       "logical-send-1",
       "logical-send-1",
     ]);
@@ -2924,10 +3857,10 @@ describe("native administration shell commands", () => {
       processRunId: "run-telegram-ambiguous",
     });
     enableTelegramMessaging(ctx);
-    Object.assign(ctx.env as unknown as Record<string, unknown>, {
+    Object.assign(ctx.env, {
       CHANNEL_TELEGRAM: {
         adapterSend: vi.fn(async () => ({
-          ok: false as const,
+          ok: false,
           error: "provider outcome unknown",
           ambiguous: true,
         })),
@@ -2953,15 +3886,16 @@ describe("native administration shell commands", () => {
     enableTelegramMessaging(ctx);
     await handleFsWrite({ path: "/tmp/retry-share.png", content: "PNG" }, ctx);
     const adapterSend = vi.fn(async (
+      _installation: string,
       _accountId: string,
-      _message: unknown,
+      _message: JsonObject,
       body?: { stream: ReadableStream<Uint8Array>; length?: number },
     ) => {
       if (body) await bodyToBytes(body);
       await env.STORAGE.delete("tmp/retry-share.png");
-      return { ok: false as const, error: "retry safely", retryable: true };
+      return { ok: false, error: "retry safely", retryable: true };
     });
-    Object.assign(ctx.env as unknown as Record<string, unknown>, {
+    Object.assign(ctx.env, {
       CHANNEL_TELEGRAM: { adapterSend },
     });
 
@@ -2975,43 +3909,21 @@ describe("native administration shell commands", () => {
     expect(result.stderr).toContain("retry with --delivery-id using this value");
   });
 
-  it("stages files on the active run's automatic final reply", async () => {
+  it("stages files for the active run's next message", async () => {
     const ctx = makeContext({
-      capabilities: ["shell.exec", "proc.media.write", "fs.write"],
+      capabilities: ["shell.exec", "fs.read", "fs.write"],
       processRunId: "run-native-file",
     });
     await handleFsWrite({ path: "/tmp/final.png", content: "PNG" }, ctx);
-    let stagedBytes: Uint8Array | undefined;
-    let stagedKey = "";
-    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
       if (frame.type !== "req") return null;
-      if (frame.call === "proc.media.write") {
-        stagedBytes = frame.body ? await bodyToBytes(frame.body) : undefined;
-        stagedKey = `var/media/1000/task:shell/${frame.args.mediaId}`;
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: {
-            ok: true,
-            media: {
-              type: "image",
-              mimeType: "image/png",
-              filename: "final.png",
-              key: stagedKey,
-              path: `/${stagedKey}`,
-              size: 3,
-            },
-          },
-        } as any;
-      }
       if (frame.call === "proc.run.attach") {
-        return {
+        return responseFixture({
           type: "res",
           id: frame.id,
           ok: true,
           data: { ok: true, runId: frame.args.runId, media: frame.args.media },
-        } as any;
+        });
       }
       return null;
     });
@@ -3021,58 +3933,43 @@ describe("native administration shell commands", () => {
     expect(result).toMatchObject({ status: "completed", exitCode: 0 });
     expect(result.stdout).toContain("attached=true");
     expect(result.stdout).toContain("run_id=run-native-file");
-    expect(stagedBytes && [...stagedBytes]).toEqual([80, 78, 71]);
     expect(sendFrameToProcessMock).toHaveBeenLastCalledWith(
+      TEST_INSTALLATION_ID,
       "task:shell",
       expect.objectContaining({
         call: "proc.run.attach",
         args: expect.objectContaining({
           runId: "run-native-file",
-          stagedKeys: [stagedKey],
+          media: [expect.objectContaining({
+            type: "resource",
+            ref: expect.objectContaining({
+              target: "gsv",
+              path: "/tmp/final.png",
+              contentType: "image/png",
+              size: 3,
+              revision: expect.any(String),
+            }),
+          })],
         }),
       }),
     );
   });
 
-  it("removes staged reply media when active-run registration fails", async () => {
+  it("leaves the source file intact when active-run registration fails", async () => {
     const ctx = makeContext({
-      capabilities: ["shell.exec", "proc.media.write", "fs.write"],
+      capabilities: ["shell.exec", "fs.read", "fs.write"],
       processRunId: "run-ended",
     });
     await handleFsWrite({ path: "/tmp/late.pdf", content: "PDF" }, ctx);
-    let key = "";
-    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
       if (frame.type !== "req") return null;
-      if (frame.call === "proc.media.write") {
-        await frame.body?.stream.cancel("test does not need the bytes");
-        key = `var/media/1000/task:shell/${frame.args.mediaId}`;
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: {
-            ok: true,
-            media: {
-              type: "document",
-              mimeType: "application/pdf",
-              filename: "late.pdf",
-              key,
-              path: `/${key}`,
-              size: 3,
-            },
-          },
-        } as any;
-      }
       if (frame.call === "proc.run.attach") {
-        return {
+        return responseFixture({
           type: "res",
           id: frame.id,
           ok: true,
           data: { ok: false, error: "the process run is no longer active" },
-        } as any;
-      }
-      if (frame.call === "proc.media.delete") {
-        return { type: "res", id: frame.id, ok: true, data: { ok: true, key } } as any;
+        });
       }
       return null;
     });
@@ -3081,10 +3978,9 @@ describe("native administration shell commands", () => {
 
     expect(result.status).toBe("failed");
     expect(result.stderr).toContain("run is no longer active");
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      "task:shell",
-      expect.objectContaining({ call: "proc.media.delete", args: { pid: "task:shell", key } }),
-    );
+    const source = await handleFsTransferSend({ path: "/tmp/late.pdf" }, ctx);
+    expect(source.data).toMatchObject({ ok: true, path: "/tmp/late.pdf", size: 3 });
+    await source.body?.stream.cancel();
   });
 
   it("captures the current adapter reply destination in a --here schedule", async () => {
@@ -3120,11 +4016,11 @@ describe("native administration shell commands", () => {
           ownerUid: IDENTITY.uid,
         })),
         getOwnerUid: vi.fn(() => IDENTITY.uid),
-      } as Partial<KernelContext["procs"]>,
+      },
       schedules: {
         create,
         setWakeScheduleId: vi.fn(),
-      } as unknown as KernelContext["schedules"],
+      },
       scheduleScheduleWake: vi.fn(async () => "wake-adapter-here"),
     });
     enableTelegramMessaging(ctx);
@@ -3133,6 +4029,7 @@ describe("native administration shell commands", () => {
       input: 'sched add --here --name reminder --after 10m --message "Check the oven."',
     }, ctx);
 
+    expect(result.stderr).toBe("");
     expect(result).toMatchObject({ status: "completed", exitCode: 0 });
     expect(create).toHaveBeenCalledWith(expect.objectContaining({
       target: {
@@ -3178,7 +4075,7 @@ describe("native administration shell commands", () => {
       schedules: {
         create,
         setWakeScheduleId: vi.fn(),
-      } as unknown as KernelContext["schedules"],
+      },
       scheduleScheduleWake: vi.fn(async () => "wake-adapter-direct"),
     });
     enableTelegramMessaging(ctx);
@@ -3209,7 +4106,7 @@ describe("native administration shell commands", () => {
     expect(create).toHaveBeenCalledTimes(1);
   });
 
-  it("schedules an event into the caller process", async () => {
+  it("returns a delegated schedule to the IPC caller", async () => {
     const wake = vi.fn(async () => "wake-here");
     const setWakeScheduleId = vi.fn();
     const create = vi.fn((input) => ({
@@ -3234,10 +4131,16 @@ describe("native administration shell commands", () => {
         runCount: 0,
       },
     }));
-    const caller = {
+    const worker = {
       processId: "task:shell",
       uid: IDENTITY.uid,
       ownerUid: IDENTITY.uid,
+    };
+    const caller = {
+      processId: "proc:personal-chat",
+      uid: 2000,
+      ownerUid: IDENTITY.uid,
+      isPersonalController: true,
     };
 
     const result = await handleShellExec(
@@ -3245,16 +4148,23 @@ describe("native administration shell commands", () => {
         input: 'sched add --here --name "animal facts" --every 2m --message "Send a niche animal fact."',
       },
       makeContext({
-        capabilities: ["sched.add", "proc.send"],
+        capabilities: ["sched.add", "proc.send", "r12y.create"],
         procs: {
-          get: vi.fn((pid: string) => pid === caller.processId ? caller : null),
+          get: vi.fn((pid: string) => [worker, caller].find((proc) => proc.processId === pid) ?? null),
           getOwnerUid: vi.fn(() => IDENTITY.uid),
-        } as Partial<KernelContext["procs"]>,
+        },
+        ipcCalls: {
+          findPendingByTargetRun: vi.fn(() => ({
+            sourcePid: caller.processId,
+            sourceRunId: null,
+          })),
+        },
         schedules: {
           create,
           setWakeScheduleId,
-        } as unknown as KernelContext["schedules"],
+        },
         scheduleScheduleWake: wake,
+        processRunId: "run-worker",
       }),
     );
 
@@ -3264,12 +4174,49 @@ describe("native administration shell commands", () => {
       name: "animal facts",
       expression: { kind: "every", everyMs: 120_000 },
       target: {
-        kind: "process.event",
-        pid: "task:shell",
+        kind: "responsibility",
         message: "Send a niche animal fact.",
       },
     }));
     expect(setWakeScheduleId).toHaveBeenCalledWith("sched-here", "wake-here");
+  });
+
+  it("creates an explicit Ship responsibility schedule from a top-level shell", async () => {
+    const create = vi.fn((input) => ({
+      id: "sched-ship",
+      ownerUid: input.ownerUid,
+      creator: input.creator,
+      runAs: input.runAs,
+      name: input.name,
+      enabled: input.enabled,
+      expression: input.expression,
+      target: input.target,
+      overlapPolicy: "skip",
+      createdAtMs: input.now,
+      updatedAtMs: input.now,
+      state: {
+        nextRunAtMs: input.now + input.expression.everyMs,
+        runningAtMs: null,
+        lastRunAtMs: null,
+        lastStatus: null,
+        lastError: null,
+        lastDurationMs: null,
+        runCount: 0,
+      },
+    }));
+    const result = await handleShellExec({
+      input: 'sched add --ship --name upkeep --every 24h --message "Review system health."',
+    }, makeContext({
+      capabilities: ["sched.add", "r12y.create"],
+      schedules: { create, setWakeScheduleId: vi.fn() },
+      scheduleScheduleWake: vi.fn(async () => "wake-ship"),
+      processId: null,
+    }));
+
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      target: { kind: "responsibility", message: "Review system health." },
+    }));
   });
 
   it.each([
@@ -3349,11 +4296,11 @@ describe("native administration shell commands", () => {
             ownerUid: IDENTITY.uid,
           })),
           getOwnerUid: vi.fn(() => IDENTITY.uid),
-        } as Partial<KernelContext["procs"]>,
+        },
         schedules: {
           create,
           setWakeScheduleId: vi.fn(),
-        } as unknown as KernelContext["schedules"],
+        },
         scheduleScheduleWake: vi.fn(async () => "wake-expression"),
       }),
     );
@@ -3373,7 +4320,7 @@ describe("native administration shell commands", () => {
     const create = vi.fn();
     const ctx = makeContext({
       capabilities: ["sched.add", "proc.send"],
-      schedules: { create } as Partial<KernelContext["schedules"]> as KernelContext["schedules"],
+      schedules: { create },
     });
     ctx.processId = undefined;
 
@@ -3393,7 +4340,7 @@ describe("native administration shell commands", () => {
     const create = vi.fn();
     const ctx = makeContext({
       capabilities: ["sched.add", "proc.send"],
-      schedules: { create } as Partial<KernelContext["schedules"]> as KernelContext["schedules"],
+      schedules: { create },
     });
 
     const ambiguous = await handleShellExec(
@@ -3471,7 +4418,7 @@ describe("native administration shell commands", () => {
               },
             }],
           })),
-        } as unknown as KernelContext["schedules"],
+        },
       }),
     );
 
@@ -3481,8 +4428,8 @@ describe("native administration shell commands", () => {
   });
 
   it("initializes wiki databases through the native wiki command", async () => {
-    const applyBodies: unknown[] = [];
-    const ripgit = {
+    const applyBodies: JsonObject[] = [];
+    const ripgit = focusedFixture<Fetcher>({
       async fetch(input: RequestInfo | URL, init?: RequestInit) {
         const url = new URL(String(input));
         if (url.pathname === "/hyperspace/repos/sam/memory/refs") {
@@ -3492,13 +4439,13 @@ describe("native administration shell commands", () => {
           return new Response("missing", { status: 404 });
         }
         if (url.pathname === "/hyperspace/repos/sam/memory/apply") {
-          const body = typeof init?.body === "string" ? JSON.parse(init.body) : {};
-          applyBodies.push(body);
+          const parsed = jsonObjectSchema.safeParse(JSON.parse(String(init?.body ?? "{}")));
+          applyBodies.push(parsed.success ? parsed.data : {});
           return Response.json({ ok: true, head: `head-${applyBodies.length}` });
         }
         return new Response(`unexpected ${url.pathname}`, { status: 500 });
       },
-    } as Fetcher;
+    });
 
     const result = await handleShellExec(
       { input: 'wiki db init memory --title "Sam Memory"' },
@@ -3509,10 +4456,10 @@ describe("native administration shell commands", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("created /src/repos/sam/memory");
     expect(applyBodies).toHaveLength(2);
-    const initBody = applyBodies[1] as {
-      message?: string;
-      ops?: Array<{ type?: string; path?: string; contentBytes?: number[] }>;
-    };
+    const parsedInitBody = wikiApplyBodySchema.safeParse(applyBodies[1]);
+    expect(parsedInitBody.success).toBe(true);
+    if (!parsedInitBody.success) throw new Error("invalid wiki apply body");
+    const initBody = parsedInitBody.data;
     expect(initBody.message).toBe("wiki: init memory");
     expect(initBody.ops).toEqual(
       expect.arrayContaining([
@@ -3528,7 +4475,7 @@ describe("native administration shell commands", () => {
   });
 
   it("searches wiki collections and returns source repo file refs", async () => {
-    const ripgit = {
+    const ripgit = focusedFixture<Fetcher>({
       async fetch(input: RequestInfo | URL) {
         const url = new URL(String(input));
         if (url.pathname.endsWith("/read")) {
@@ -3559,7 +4506,7 @@ describe("native administration shell commands", () => {
         }
         return new Response(`unexpected ${url.pathname}`, { status: 500 });
       },
-    } as Fetcher;
+    });
 
     const result = await handleShellExec(
       { input: "wiki search auth --prefix gsv-manual" },
@@ -3581,7 +4528,7 @@ describe("native administration shell commands", () => {
 
   it("preserves explicit wiki index search prefixes", async () => {
     const searchPrefixes: Array<string | null> = [];
-    const ripgit = {
+    const ripgit = focusedFixture<Fetcher>({
       async fetch(input: RequestInfo | URL) {
         const url = new URL(String(input));
         if (url.pathname.endsWith("/read")) {
@@ -3613,7 +4560,7 @@ describe("native administration shell commands", () => {
         }
         return new Response(`unexpected ${url.pathname}`, { status: 500 });
       },
-    } as Fetcher;
+    });
 
     const result = await handleShellExec(
       { input: "wiki search auth --prefix gsv-manual/index.md" },

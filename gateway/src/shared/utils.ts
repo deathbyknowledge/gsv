@@ -1,25 +1,46 @@
-import { getAgentByName } from "agents";
 import { Kernel } from "../kernel/do";
 import { env } from "cloudflare:workers";
 import { Process } from "../process/do";
-import type { Frame, FrameBody, ResponseOkFrame } from "../protocol/frames";
+import type {
+  Frame,
+  FrameBody,
+  RequestFrame,
+  ResponseFrame,
+  ResponseOkFrame,
+} from "../protocol/frames";
+import type { SyscallName } from "../syscalls";
 import type {
   ProcessAdapterDeliverRequestFrame,
   ProcessAdapterDeliverResponseFrame,
   ProcessInboundFrame,
   ProcessRunAttachRequestFrame,
   ProcessRunAttachResponseFrame,
+  ProcessRuntimeEventDeliverRequestFrame,
+  ProcessRuntimeEventDeliverResponseFrame,
   ProcessScheduleDeliverRequestFrame,
   ProcessScheduleDeliverResponseFrame,
+  ProcessMessageCommitRequestFrame,
+  ProcessMessageCommitResponseFrame,
+  ProcessMessageStreamSignal,
+  ProcessResourceResponseFrame,
+  ProcessResourceRetainRequestFrame,
+  ProcessResourceWriteRequestFrame,
 } from "../protocol/process-frames";
 import type { NetFetchArgs } from "@humansandmachines/gsv/protocol";
+import { SINGLETON_INSTALLATION_ID } from "../installation/identity";
+import {
+  conversationDurableObjectName,
+  getKernelByInstallationId,
+  processDurableObjectName,
+} from "../installation/routing";
+import type { Conversation } from "../conversation/do";
 
 export const isWebSocketRequest = (request: Request) =>
   request.method === "GET" && request.headers.get("upgrade") === "websocket";
 
 // don't break the ✨illusion✨
-type ProcessPtr = DurableObjectStub<Process>;
-type KernelPtr = DurableObjectStub<Kernel>;
+type ProcessPtr = DurableObjectStub<undefined> & Process;
+type KernelPtr = DurableObjectStub<undefined> & Kernel;
 
 export type RequestProcessNetFetchOptions = {
   ttlMs?: number;
@@ -28,67 +49,145 @@ export type RequestProcessNetFetchOptions = {
   requestId?: string;
 };
 
-export async function getKernelPtr(): Promise<KernelPtr> {
-  return await getAgentByName(env.KERNEL, "singleton");
+export async function getKernelPtr(
+  installationId: string = SINGLETON_INSTALLATION_ID,
+): Promise<KernelPtr> {
+  const stub: unknown = await getKernelByInstallationId(
+    env.KERNEL,
+    installationId,
+  );
+  // SAFETY: the namespace is generated from the exported Kernel class; this
+  // narrows only Cloudflare's recursively mapped RPC stub type.
+  return stub as KernelPtr;
 }
 
-export async function getProcessByPid(pid: string): Promise<ProcessPtr> {
-  return await getAgentByName(env.PROCESS, pid);
+export async function getProcessByPid(
+  pid: string,
+  installationId: string = SINGLETON_INSTALLATION_ID,
+): Promise<ProcessPtr> {
+  const stub: unknown = env.PROCESS.getByName(
+    processDurableObjectName(installationId, pid),
+  );
+  // SAFETY: the namespace is generated from the exported Process class; this
+  // narrows only Cloudflare's recursively mapped RPC stub type.
+  return stub as ProcessPtr;
 }
 
-export async function sendFrameToKernel(
+export function sendFrameToKernel(
+  installationId: string,
+  processId: string,
+  frame: ProcessMessageCommitRequestFrame,
+): Promise<ProcessMessageCommitResponseFrame | null>;
+export function sendFrameToKernel<S extends SyscallName>(
+  installationId: string,
+  processId: string,
+  frame: RequestFrame<S>,
+): Promise<ResponseFrame<S> | null>;
+export function sendFrameToKernel(
+  installationId: string,
+  processId: string,
+  frame: ProcessMessageStreamSignal,
+): Promise<Frame | null>;
+export function sendFrameToKernel(
+  installationId: string,
   processId: string,
   frame: Frame,
-): Promise<Frame | null> {
-  const kernel = await getKernelPtr();
+): Promise<Frame | null>;
+export async function sendFrameToKernel(
+  installationId: string,
+  processId: string,
+  frame: Frame | ProcessMessageCommitRequestFrame | ProcessMessageStreamSignal,
+): Promise<Frame | ProcessMessageCommitResponseFrame | null> {
+  const kernel = await getKernelPtr(installationId);
   return kernel.recvFrame(processId, frame);
 }
 
+export async function attachProcessRunStream(
+  installationId: string,
+  processId: string,
+  stream: ReadableStream<Uint8Array>,
+): Promise<boolean> {
+  const kernel = await getKernelPtr(installationId);
+  return await kernel.acceptProcessRunStream(processId, stream);
+}
+
 export async function requestProcessNetFetch(
+  installationId: string,
   processId: string,
   target: string,
   args: NetFetchArgs,
   options: RequestProcessNetFetchOptions = {},
 ): Promise<ResponseOkFrame<"net.fetch">> {
-  const kernel = await getKernelPtr();
+  const kernel = await getKernelPtr(installationId);
   return kernel.requestProcessNetFetch(processId, target, args, options);
 }
 
 export async function cancelProcessRequests(
+  installationId: string,
   processId: string,
   requestIds: string[],
   reason?: string,
 ): Promise<number> {
-  const kernel = await getKernelPtr();
+  const kernel = await getKernelPtr(installationId);
   return kernel.cancelProcessRequests(processId, requestIds, reason);
 }
 
 export function sendFrameToProcess(
+  installationId: string,
+  pid: string,
+  frame: ProcessRuntimeEventDeliverRequestFrame,
+): Promise<ProcessRuntimeEventDeliverResponseFrame | null>;
+export function sendFrameToProcess(
+  installationId: string,
   pid: string,
   frame: ProcessAdapterDeliverRequestFrame,
 ): Promise<ProcessAdapterDeliverResponseFrame | null>;
 export function sendFrameToProcess(
+  installationId: string,
   pid: string,
   frame: ProcessScheduleDeliverRequestFrame,
 ): Promise<ProcessScheduleDeliverResponseFrame | null>;
 export function sendFrameToProcess(
+  installationId: string,
   pid: string,
   frame: ProcessRunAttachRequestFrame,
 ): Promise<ProcessRunAttachResponseFrame | null>;
 export function sendFrameToProcess(
+  installationId: string,
+  pid: string,
+  frame: ProcessResourceRetainRequestFrame | ProcessResourceWriteRequestFrame,
+): Promise<ProcessResourceResponseFrame | null>;
+export function sendFrameToProcess<S extends SyscallName>(
+  installationId: string,
+  pid: string,
+  frame: RequestFrame<S>,
+): Promise<ResponseFrame<S> | null>;
+export function sendFrameToProcess(
+  installationId: string,
   pid: string,
   frame: Frame,
 ): Promise<Frame | null>;
 export async function sendFrameToProcess(
+  installationId: string,
   pid: string,
   frame: ProcessInboundFrame,
 ): Promise<
   | Frame
+  | ProcessRuntimeEventDeliverResponseFrame
   | ProcessScheduleDeliverResponseFrame
   | ProcessAdapterDeliverResponseFrame
   | ProcessRunAttachResponseFrame
+  | ProcessResourceResponseFrame
   | null
 > {
-  const proc = await getProcessByPid(pid);
+  const proc = await getProcessByPid(pid, installationId);
   return proc.recvFrame(frame);
+}
+
+export function getConversationById(
+  installationId: string,
+  conversationId: string,
+): DurableObjectStub<Conversation> {
+  const name = conversationDurableObjectName(installationId, conversationId);
+  return env.CONVERSATION.get(env.CONVERSATION.idFromName(name));
 }

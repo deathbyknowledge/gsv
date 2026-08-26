@@ -25,7 +25,7 @@ const CONNECT_COMMAND = [
   'gsv config --local set gateway.url "wss://gsv.studio/ws"',
   'gsv config --local set gateway.username "jessicat"',
   'gsv config --local set node.token "a1b2c3d4e5f6g7h8"',
-  'gsv device install --id "studio-macbook" --workspace ~/',
+  'gsv daemon install --id "studio-macbook" --workspace ~/',
 ].join("\n");
 
 /** Copy-able command block — header (title + meta + COPY) over a <pre> body. */

@@ -8,7 +8,6 @@ import {
 import { transcribeAudio } from "../inference/capabilities";
 import {
   DEFAULT_IMAGE_READING_MAX_TOKENS,
-  DEFAULT_IMAGE_READING_MODEL,
   DEFAULT_IMAGE_READING_TIMEOUT_MS,
   DEFAULT_MAX_IMAGE_READING_BYTES,
   readImage,
@@ -21,6 +20,7 @@ import {
   processMediaPath,
   processMediaPrefix,
 } from "../shared/process-media-path";
+import { z } from "zod";
 
 export { processMediaPath, processMediaPrefix } from "../shared/process-media-path";
 
@@ -51,6 +51,18 @@ export type StoredProcessMedia = {
 
 const ARCHIVED_PROCESS_MEDIA_KEY =
   /^(?:root|home\/(?!\.{1,2}\/)[^/\\]+)\/\.gsv\/media\/archived-media:[0-9a-f]{64}$/;
+const storedMediaSchema = z.object({
+  type: z.enum(["image", "audio", "video", "document"]),
+  mimeType: z.string(),
+  key: z.string().optional(),
+  path: z.string().optional(),
+  url: z.string().optional(),
+  filename: z.string().optional(),
+  size: z.number().finite().optional(),
+  duration: z.number().finite().optional(),
+  transcription: z.string().optional(),
+  description: z.string().optional(),
+});
 
 export function archivedProcessMediaPath(key: string): string | null {
   return ARCHIVED_PROCESS_MEDIA_KEY.test(key) ? `/${key}` : null;
@@ -66,6 +78,7 @@ export type StoreIncomingProcessMediaOptions = {
   imageReadingMaxBytes?: number;
   imageReadingMaxTokens?: number;
   imageReadingTimeoutMs?: number;
+  allowedStoredKeys?: ReadonlySet<string>;
 };
 
 
@@ -97,9 +110,10 @@ export async function storeIncomingProcessMedia(
     let bytes: Uint8Array | null = null;
     let base64: string | null = null;
 
-    if (typeof item.key === "string" && item.key.length > 0) {
-      const path = processMediaPath(item.key);
-      if (!item.key.startsWith(prefix) || !path) {
+    if (item.key && item.key.length > 0) {
+      const path = processMediaPath(item.key) ?? archivedProcessMediaPath(item.key);
+      const processOwned = item.key.startsWith(prefix) && processMediaPath(item.key) !== null;
+      if ((!processOwned && !options.allowedStoredKeys?.has(item.key)) || !path) {
         throw new Error("media key is outside this process");
       }
       const object = await bucket.head(item.key);
@@ -123,7 +137,7 @@ export async function storeIncomingProcessMedia(
           base64 = encodeBase64Bytes(bytes);
         }
       }
-    } else if (typeof item.url === "string" && item.url.length > 0) {
+    } else if (item.url && item.url.length > 0) {
       next.url = item.url;
     }
 
@@ -138,7 +152,7 @@ export async function storeIncomingProcessMedia(
       });
       if (result) {
         next.transcription = result.text;
-        if (next.duration === undefined && typeof result.duration === "number") {
+        if (next.duration === undefined && result.duration !== undefined) {
           next.duration = result.duration;
         }
       }
@@ -197,42 +211,31 @@ export function parseStoredProcessMedia(raw: string | null): StoredProcessMedia[
     return [];
   }
 
-  if (!Array.isArray(parsed)) {
+  const entries = z.array(storedMediaSchema).safeParse(parsed);
+  if (!entries.success) {
     return [];
   }
 
-  return parsed.flatMap((entry) => {
-    if (!entry || typeof entry !== "object") {
-      return [];
-    }
-    const candidate = entry as Record<string, unknown>;
-    const type = candidate.type;
-    const mimeType = candidate.mimeType;
-    if (
-      (type !== "image" && type !== "audio" && type !== "video" && type !== "document")
-      || typeof mimeType !== "string"
-    ) {
-      return [];
-    }
-
+  return entries.data.flatMap((candidate) => {
+    const { type, mimeType } = candidate;
     const next: StoredProcessMedia = {
       type,
       mimeType,
     };
-    if (typeof candidate.key === "string" && candidate.key.length > 0) {
+    if (candidate.key && candidate.key.length > 0) {
       next.key = candidate.key;
-      const persistedPath = typeof candidate.path === "string"
+      const persistedPath = candidate.path
         && candidate.path === `/${candidate.key}`
         ? archivedProcessMediaPath(candidate.key)
         : null;
       next.path = processMediaPath(candidate.key) ?? persistedPath ?? undefined;
     }
-    if (typeof candidate.url === "string" && candidate.url.length > 0) next.url = candidate.url;
-    if (typeof candidate.filename === "string" && candidate.filename.length > 0) next.filename = candidate.filename;
-    if (typeof candidate.size === "number" && Number.isFinite(candidate.size)) next.size = candidate.size;
-    if (typeof candidate.duration === "number" && Number.isFinite(candidate.duration)) next.duration = candidate.duration;
-    if (typeof candidate.transcription === "string" && candidate.transcription.length > 0) next.transcription = candidate.transcription;
-    if (typeof candidate.description === "string" && candidate.description.length > 0) next.description = candidate.description;
+    if (candidate.url && candidate.url.length > 0) next.url = candidate.url;
+    if (candidate.filename && candidate.filename.length > 0) next.filename = candidate.filename;
+    if (candidate.size !== undefined) next.size = candidate.size;
+    if (candidate.duration !== undefined) next.duration = candidate.duration;
+    if (candidate.transcription && candidate.transcription.length > 0) next.transcription = candidate.transcription;
+    if (candidate.description && candidate.description.length > 0) next.description = candidate.description;
     return [next];
   });
 }
@@ -250,10 +253,10 @@ export function describeStoredProcessMedia(media: StoredProcessMedia): string {
     parts.push(`"${media.filename}"`);
   }
   parts.push(`[${media.mimeType}]`);
-  if (typeof media.size === "number" && Number.isFinite(media.size) && media.size > 0) {
+  if (media.size !== undefined && media.size > 0) {
     parts.push(formatSize(media.size));
   }
-  if (typeof media.duration === "number" && Number.isFinite(media.duration) && media.duration > 0) {
+  if (media.duration !== undefined && media.duration > 0) {
     parts.push(`${media.duration}s`);
   }
   const base = parts.join(" ");
@@ -300,11 +303,11 @@ function shouldTranscribeAudio(
   if (input.type !== "audio") {
     return false;
   }
-  if (typeof stored.transcription === "string" && stored.transcription.trim().length > 0) {
+  if (stored.transcription && stored.transcription.trim().length > 0) {
     return false;
   }
   const provider = options.audioTranscriptionProvider?.trim() || "workers-ai";
-  if (isWorkersAiProvider(provider) && (!options.ai || typeof options.ai.run !== "function")) {
+  if (isWorkersAiProvider(provider) && !options.ai) {
     return false;
   }
   if (!bytes || bytes.byteLength === 0) {
@@ -326,10 +329,10 @@ function shouldReadImage(
   if (isVectorImageMimeType(input.mimeType)) {
     return false;
   }
-  if (typeof stored.description === "string" && stored.description.trim().length > 0) {
+  if (stored.description && stored.description.trim().length > 0) {
     return false;
   }
-  if (!options.ai || typeof options.ai.run !== "function") {
+  if (!options.ai) {
     return false;
   }
   if (!bytes || bytes.byteLength === 0) {

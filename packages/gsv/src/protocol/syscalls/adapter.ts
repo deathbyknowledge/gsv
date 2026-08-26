@@ -1,20 +1,43 @@
 import type {
   AdapterAccountStatus,
+  AdapterConnectConfig,
   AdapterInboundMessage,
   AdapterInboundResult,
   AdapterMedia,
   AdapterSurface,
 } from "../adapters";
+import type { AdapterServiceDescriptor } from "../../services/adapters";
 import {
-  isAdapterConnectChallenge,
+  adapterConnectChallengeSchema,
   type AdapterConnectChallenge,
 } from "../adapters";
+import type { JsonValue } from "../json";
+import * as z from "zod/mini";
+
+const nonEmptyStringSchema = z.string().check(z.minLength(1));
 
 export type AdapterConnectArgs = {
   adapter: string;
   accountId: string;
-  config?: Record<string, unknown>;
+  config?: AdapterConnectConfig;
 };
+
+export const adapterConnectResultSchema = z.discriminatedUnion("ok", [
+  z.strictObject({
+    ok: z.literal(true),
+    adapter: nonEmptyStringSchema,
+    accountId: nonEmptyStringSchema,
+    connected: z.boolean(),
+    authenticated: z.boolean(),
+    message: z.optional(z.string()),
+    challenge: z.optional(adapterConnectChallengeSchema),
+  }),
+  z.strictObject({
+    ok: z.literal(false),
+    error: nonEmptyStringSchema,
+    challenge: z.optional(adapterConnectChallengeSchema),
+  }),
+]);
 
 export type AdapterConnectResult =
   | {
@@ -33,30 +56,8 @@ export type AdapterConnectResult =
     };
 
 /** Validate the complete public `adapter.connect` result at a client boundary. */
-export function isAdapterConnectResult(value: unknown): value is AdapterConnectResult {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return false;
-  }
-  const result = value as Record<string, unknown>;
-  if (typeof result.ok !== "boolean") {
-    return false;
-  }
-  if (
-    result.challenge !== undefined
-    && !isAdapterConnectChallenge(result.challenge)
-  ) {
-    return false;
-  }
-  if (!result.ok) {
-    return typeof result.error === "string" && result.error.trim().length > 0;
-  }
-  return typeof result.adapter === "string"
-    && result.adapter.trim().length > 0
-    && typeof result.accountId === "string"
-    && result.accountId.trim().length > 0
-    && typeof result.connected === "boolean"
-    && typeof result.authenticated === "boolean"
-    && (result.message === undefined || typeof result.message === "string");
+export function isAdapterConnectResult(value: JsonValue): value is AdapterConnectResult {
+  return adapterConnectResultSchema.safeParse(value).success;
 }
 
 export type AdapterDisconnectArgs = {
@@ -85,7 +86,7 @@ export type AdapterSendArgs = {
   text: string;
   replyToId?: string;
   media?: AdapterMedia[];
-  /** Acknowledge that this explicit send intentionally duplicates the active run's automatic reply destination. */
+  /** Acknowledge that this separate send intentionally duplicates the active run's directed endpoint. */
   also?: boolean;
 };
 
@@ -123,11 +124,13 @@ export type AdapterListArgs = Record<string, never>;
 export type AdapterListEntry = {
   adapter: string;
   available: boolean;
+  descriptor?: AdapterServiceDescriptor;
   supportsConnect: boolean;
   supportsDisconnect: boolean;
   supportsSend: boolean;
   supportsStatus: boolean;
   supportsActivity: boolean;
+  supportsPairing: boolean;
   accounts: AdapterAccountStatus[];
 };
 
@@ -140,6 +143,8 @@ export type AdapterInboundArgs = {
   accountId: string;
   /** Stable account-scoped identity for the complete provider event. */
   deliveryId: string;
+  /** Adapter-owned peer-route generation for relink-fenced ingress. */
+  routeGeneration?: string;
   message: AdapterInboundMessage;
 };
 
@@ -153,4 +158,59 @@ export type AdapterStateUpdateArgs = {
 
 export type AdapterStateUpdateResult = {
   ok: true;
+};
+
+export const adapterStateUpdateResultSchema = z.strictObject({
+  ok: z.literal(true),
+});
+
+export type AdapterPairInfoArgs = {
+  adapter: string;
+};
+
+export type AdapterPairInfoResult = {
+  adapter: string;
+  accountId: string;
+  configured: boolean;
+  botUsername?: string;
+};
+
+export type AdapterPairInspectArgs = {
+  adapter: string;
+  code: string;
+};
+
+export type AdapterPairInspectResult = {
+  adapter: string;
+  accountId: string;
+  actorId: string;
+  surfaceId: string;
+  actorName?: string;
+  actorHandle?: string;
+  expiresAt: number;
+  linked: boolean;
+};
+
+export type AdapterPairConfirmArgs = AdapterPairInspectArgs;
+
+export type AdapterPairConfirmResult = {
+  paired: true;
+  adapter: string;
+  accountId: string;
+  actorId: string;
+  surfaceId: string;
+  uid: number;
+};
+
+export type AdapterPairDisconnectArgs = {
+  adapter: string;
+  accountId: string;
+  actorId: string;
+};
+
+export type AdapterPairDisconnectResult = {
+  disconnected: boolean;
+  adapter: string;
+  accountId: string;
+  actorId: string;
 };

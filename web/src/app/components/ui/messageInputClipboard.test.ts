@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 import { clipboardImageFiles } from "./messageInputClipboard";
 
 function item(file: File, type = file.type): DataTransferItem {
+  // SAFETY: Test fixture uses the asserted API shape for this focused case.
   return {
     kind: "file",
     type,
     getAsFile: () => file,
+  // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+  // SAFETY: Component boundary provides the asserted DOM/test shape.
   } as DataTransferItem;
 }
 

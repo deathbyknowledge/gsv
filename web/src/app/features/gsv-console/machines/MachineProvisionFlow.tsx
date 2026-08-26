@@ -46,7 +46,7 @@ type MachineProvisionFlowProps = {
 
 type CopyTarget = "install" | "connect" | "gateway" | "username" | "token" | "deviceId";
 
-function errorText(error: unknown): string {
+function errorText<T>(error: T): string {
   return error instanceof Error ? error.message : error ? String(error) : "";
 }
 
@@ -71,7 +71,7 @@ async function copyText(value: string): Promise<boolean> {
     return false;
   }
   try {
-    if (typeof navigator.clipboard?.writeText === "function") {
+    if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(value);
       return true;
     }
@@ -153,7 +153,7 @@ function ExtensionValueRow({
 }
 
 export function MachineProvisionFlow({
-  onBack,
+  onBack: _onBack,
   onOpenMachine,
 }: MachineProvisionFlowProps) {
   const { snapshot } = useSession();

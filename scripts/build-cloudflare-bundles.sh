@@ -16,27 +16,23 @@ install_dir() {
   npm ci --prefix "$dir" --workspaces=false
 }
 
-install_workspaces() {
-  local args=()
-  local workspace
-  for workspace in "$@"; do
-    args+=(--workspace "$workspace")
-  done
-  (
-    cd "${ROOT_DIR}"
-    npm ci "${args[@]}" --include-workspace-root=false --ignore-scripts
-  )
-}
-
 echo "==> Installing dependencies"
-install_workspaces "packages/gsv"
+(cd "${ROOT_DIR}" && npm ci --ignore-scripts)
 npm run build --workspace packages/gsv
 install_dir "${ROOT_DIR}/gateway"
 install_dir "${ROOT_DIR}/web"
 install_dir "${ROOT_DIR}/ripgit"
-install_dir "${ROOT_DIR}/adapters/whatsapp"
-install_dir "${ROOT_DIR}/adapters/discord"
-install_dir "${ROOT_DIR}/adapters/telegram"
+
+ADAPTER_ROWS=()
+ADAPTER_CATALOG_ROWS="$(node "${ROOT_DIR}/scripts/adapter-catalog.mjs")"
+while IFS= read -r row; do
+  ADAPTER_ROWS+=("${row}")
+done <<< "${ADAPTER_CATALOG_ROWS}"
+
+for row in "${ADAPTER_ROWS[@]}"; do
+  IFS=$'\t' read -r _adapter_id _display_name _component source_dir _wrangler_config _dev_state <<< "${row}"
+  install_dir "${ROOT_DIR}/${source_dir}"
+done
 
 echo "==> Building web UI"
 npm run build --prefix "${ROOT_DIR}/web"
@@ -45,9 +41,10 @@ echo "==> Bundling workers with wrangler --dry-run"
 rm -rf "${DIST_DIR}"
 mkdir -p "${DIST_DIR}/gateway/worker"
 mkdir -p "${DIST_DIR}/ripgit/worker"
-mkdir -p "${DIST_DIR}/channel-whatsapp/worker"
-mkdir -p "${DIST_DIR}/channel-discord/worker"
-mkdir -p "${DIST_DIR}/channel-telegram/worker"
+for row in "${ADAPTER_ROWS[@]}"; do
+  IFS=$'\t' read -r _adapter_id _display_name component _source_dir _wrangler_config _dev_state <<< "${row}"
+  mkdir -p "${DIST_DIR}/${component}/worker"
+done
 
 (
   cd "${ROOT_DIR}/gateway"
@@ -57,18 +54,13 @@ mkdir -p "${DIST_DIR}/channel-telegram/worker"
   cd "${ROOT_DIR}/ripgit"
   npm exec --workspaces=false -- wrangler deploy --minify --dry-run --outdir "${DIST_DIR}/ripgit/worker"
 )
-(
-  cd "${ROOT_DIR}/adapters/whatsapp"
-  npm exec --workspaces=false -- wrangler deploy --minify --dry-run --outdir "${DIST_DIR}/channel-whatsapp/worker"
-)
-(
-  cd "${ROOT_DIR}/adapters/discord"
-  npm exec --workspaces=false -- wrangler deploy --minify --dry-run --outdir "${DIST_DIR}/channel-discord/worker"
-)
-(
-  cd "${ROOT_DIR}/adapters/telegram"
-  npm exec --workspaces=false -- wrangler deploy --minify --dry-run --outdir "${DIST_DIR}/channel-telegram/worker"
-)
+for row in "${ADAPTER_ROWS[@]}"; do
+  IFS=$'\t' read -r _adapter_id _display_name component source_dir wrangler_config _dev_state <<< "${row}"
+  (
+    cd "${ROOT_DIR}/${source_dir}"
+    npm exec --workspaces=false -- wrangler deploy --config "${wrangler_config}" --minify --dry-run --outdir "${DIST_DIR}/${component}/worker"
+  )
+done
 
 echo "==> Assembling component metadata"
 cp "${ROOT_DIR}/gateway/wrangler.jsonc" "${DIST_DIR}/gateway/wrangler.jsonc"
@@ -96,41 +88,31 @@ cat > "${DIST_DIR}/ripgit/manifest.json" <<'EOF'
 }
 EOF
 
-cp "${ROOT_DIR}/adapters/whatsapp/wrangler.jsonc" "${DIST_DIR}/channel-whatsapp/wrangler.jsonc"
-cat > "${DIST_DIR}/channel-whatsapp/manifest.json" <<'EOF'
-{
-  "component": "channel-whatsapp",
-  "worker": {
-    "entrypoint": "worker/index.js",
-    "sourceMap": "worker/index.js.map",
-    "wranglerConfig": "wrangler.jsonc"
-  }
-}
-EOF
+for row in "${ADAPTER_ROWS[@]}"; do
+  IFS=$'\t' read -r adapter_id display_name component source_dir wrangler_config _dev_state <<< "${row}"
+  cp "${ROOT_DIR}/${source_dir}/${wrangler_config}" "${DIST_DIR}/${component}/${wrangler_config}"
+  node --input-type=module - \
+    "${DIST_DIR}/${component}/manifest.json" \
+    "${adapter_id}" \
+    "${display_name}" \
+    "${component}" \
+    "${wrangler_config}" <<'NODE'
+import { writeFileSync } from "node:fs";
+const [output, id, displayName, component, wranglerConfig] = process.argv.slice(2);
+writeFileSync(output, `${JSON.stringify({
+  component,
+  adapter: { id, displayName },
+  worker: {
+    entrypoint: "worker/index.js",
+    sourceMap: "worker/index.js.map",
+    wranglerConfig,
+  },
+}, null, 2)}\n`);
+NODE
+done
 
-cp "${ROOT_DIR}/adapters/discord/wrangler.jsonc" "${DIST_DIR}/channel-discord/wrangler.jsonc"
-cat > "${DIST_DIR}/channel-discord/manifest.json" <<'EOF'
-{
-  "component": "channel-discord",
-  "worker": {
-    "entrypoint": "worker/index.js",
-    "sourceMap": "worker/index.js.map",
-    "wranglerConfig": "wrangler.jsonc"
-  }
-}
-EOF
-
-cp "${ROOT_DIR}/adapters/telegram/wrangler.jsonc" "${DIST_DIR}/channel-telegram/wrangler.jsonc"
-cat > "${DIST_DIR}/channel-telegram/manifest.json" <<'EOF'
-{
-  "component": "channel-telegram",
-  "worker": {
-    "entrypoint": "worker/index.js",
-    "sourceMap": "worker/index.js.map",
-    "wranglerConfig": "wrangler.jsonc"
-  }
-}
-EOF
+node "${ROOT_DIR}/scripts/build-deployment-manifest.mjs" \
+  "${DIST_DIR}/deployment-manifest.json"
 
 # Remove host-specific metadata files from bundle contents.
 find "${DIST_DIR}" \
@@ -140,18 +122,27 @@ find "${DIST_DIR}" \
 echo "==> Creating local tarballs"
 mkdir -p "${OUT_DIR}"
 rm -f "${OUT_DIR}/gsv-cloudflare-"*.tar.gz "${OUT_DIR}/cloudflare-checksums.txt" 2>/dev/null || true
+cp "${DIST_DIR}/deployment-manifest.json" \
+  "${OUT_DIR}/gsv-cloudflare-deployment-manifest.json"
 
 tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-gateway.tar.gz" gateway
 tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-ripgit.tar.gz" ripgit
-tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-channel-whatsapp.tar.gz" channel-whatsapp
-tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-channel-discord.tar.gz" channel-discord
-tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-channel-telegram.tar.gz" channel-telegram
+for row in "${ADAPTER_ROWS[@]}"; do
+  IFS=$'\t' read -r _adapter_id _display_name component _source_dir _wrangler_config _dev_state <<< "${row}"
+  tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-${component}.tar.gz" "${component}"
+done
 
 (
   cd "${OUT_DIR}"
-  sha256sum gsv-cloudflare-*.tar.gz > cloudflare-checksums.txt
+  sha256sum \
+    gsv-cloudflare-*.tar.gz \
+    gsv-cloudflare-deployment-manifest.json \
+    > cloudflare-checksums.txt
 )
 
 echo ""
 echo "Cloudflare bundles ready in: ${OUT_DIR}"
-ls -lh "${OUT_DIR}"/gsv-cloudflare-*.tar.gz "${OUT_DIR}/cloudflare-checksums.txt"
+ls -lh \
+  "${OUT_DIR}"/gsv-cloudflare-*.tar.gz \
+  "${OUT_DIR}/gsv-cloudflare-deployment-manifest.json" \
+  "${OUT_DIR}/cloudflare-checksums.txt"

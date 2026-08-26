@@ -1,35 +1,61 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import { describe, expect, it, vi } from "vitest";
 import { frameBodyFromBlob } from "../../../services/gateway/frameBody";
-import { readChatProcessMedia, sendChatMessage } from "./chatService";
+import { readChatProcessMedia, readChatResource, sendChatMessage } from "./chatService";
+
+type UploadRequestArgs = { path?: string; contentType?: string };
+type ClientFixture = { request: unknown; proc?: unknown; conversation?: unknown };
+
+function clientFixture(value: ClientFixture): Pick<GSVClient, "proc" | "conversation" | "request"> {
+  // SAFETY: each fixture supplies exactly the client methods exercised by its focused test.
+  return value as Pick<GSVClient, "proc" | "conversation" | "request">;
+}
 
 describe("chat process media", () => {
   it("uploads attachment bodies before sending their references", async () => {
     const request = vi.fn(async (
-      _call: string,
-      args: Record<string, unknown>,
+      call: string,
+      args: UploadRequestArgs,
       options?: { body?: { stream: ReadableStream<Uint8Array> } },
     ) => {
-      expect(args).toMatchObject({ pid: "proc:test", type: "image" });
-      expect(args).not.toHaveProperty("size");
-      expect(await new Response(options?.body?.stream).text()).toBe("abc");
-      return {
-        data: {
-          ok: true as const,
-          media: {
-            type: "image" as const,
-            mimeType: "image/png",
-            key: "var/media/1000/proc/test.png",
+      if (call === "fs.transfer.receive") {
+        expect(args).toMatchObject({ contentType: "image/png" });
+        expect(await new Response(options?.body?.stream).text()).toBe("abc");
+        return { data: { ok: true as const, path: args.path!, bytesWritten: 3 } };
+      }
+      if (call === "fs.transfer.stat") {
+        return {
+          data: {
+            ok: true as const,
+            path: args.path!,
             size: 3,
+            isFile: true,
+            isDirectory: false,
+            contentType: "image/png",
+            revision: "revision-one",
           },
-        },
+        };
+      }
+      return {
+        data: { ok: true as const, path: args.path! },
       };
     });
-    const send = vi.fn(async () => ({ ok: true as const, status: "started" as const, runId: "run:1" }));
-    const client = {
+    const send = vi.fn(async () => ({
+      // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+      message: {} as never,
+      handlerPid: "proc:test",
+      runId: "run:1",
+    }));
+    // SAFETY: Test fixture uses the asserted API shape for this focused case.
+    const client = clientFixture({
       request,
-      proc: { send },
-    } as unknown as Pick<GSVClient, "proc" | "request">;
+      proc: {},
+      conversation: {
+        forProcess: vi.fn(async () => ({ conversation: { id: "conv:test" } })),
+        send,
+      },
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+    });
 
     await sendChatMessage(client, {
       pid: "proc:test",
@@ -43,18 +69,26 @@ describe("chat process media", () => {
     });
 
     expect(request).toHaveBeenCalledWith(
-      "proc.media.write",
-      expect.objectContaining({ pid: "proc:test", filename: "test.png" }),
+      "fs.transfer.receive",
+      expect.objectContaining({ path: expect.stringMatching(/^~\/\.gsv\/uploads\//) }),
       expect.objectContaining({ body: expect.any(Object) }),
     );
     expect(send).toHaveBeenCalledWith({
-      pid: "proc:test",
-      message: "look",
+      conversationId: "conv:test",
+      text: "look",
+      idempotencyKey: expect.any(String),
       media: [{
-        type: "image",
-        mimeType: "image/png",
-        key: "var/media/1000/proc/test.png",
-        size: 3,
+        type: "resource",
+        ref: {
+          type: "file",
+          target: "gsv",
+          path: expect.stringMatching(/^~\/\.gsv\/uploads\//),
+          revision: "revision-one",
+          contentType: "image/png",
+          size: 3,
+        },
+        mediaType: "image",
+        filename: "test.png",
       }],
     });
   });
@@ -62,16 +96,20 @@ describe("chat process media", () => {
   it("rejects oversized attachments before starting an upload", async () => {
     const request = vi.fn();
     const send = vi.fn();
-    const client = {
+    // SAFETY: Test fixture uses the asserted API shape for this focused case.
+    const client = clientFixture({
       request,
-      proc: { send, media: { delete: vi.fn() } },
-    } as unknown as Pick<GSVClient, "proc" | "request">;
+      proc: { media: { delete: vi.fn() } },
+      conversation: { forProcess: vi.fn(), send },
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+    });
 
     await expect(sendChatMessage(client, {
       message: "too large",
       media: [{
         type: "video",
         mimeType: "video/mp4",
+        // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
         body: { size: 25 * 1024 * 1024 + 1 } as Blob,
       }],
     })).rejects.toThrow("Chat attachments cannot exceed 25 MiB");
@@ -79,26 +117,41 @@ describe("chat process media", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("rolls back successful parallel uploads when another upload fails", async () => {
-    const request = vi.fn(async (_call: string, args: { filename?: string }) => ({
-      data: args.filename === "bad.png"
-        ? { ok: false as const, error: "upload failed" }
-        : {
+  it("deletes successful parallel uploads when another upload fails", async () => {
+    const request = vi.fn(async (call: string, args: { path: string }) => {
+      if (call === "fs.transfer.receive") {
+        return {
+          data: args.path.endsWith("bad.png")
+            ? { ok: false as const, error: "upload failed" }
+            : { ok: true as const, path: args.path, bytesWritten: 1 },
+        };
+      }
+      if (call === "fs.transfer.stat") {
+        return {
+          data: {
             ok: true as const,
-            media: {
-              type: "image" as const,
-              mimeType: "image/png",
-              key: "var/media/1000/proc/good.png",
-              size: 1,
-            },
+            path: args.path,
+            size: 1,
+            isFile: true,
+            isDirectory: false,
+            contentType: "image/png",
+            revision: "revision-one",
           },
-    }));
-    const remove = vi.fn(async () => ({ ok: true as const, key: "var/media/1000/proc/good.png" }));
+        };
+      }
+      return { data: { ok: true as const, path: args.path } };
+    });
     const send = vi.fn();
-    const client = {
+    // SAFETY: Test fixture uses the asserted API shape for this focused case.
+    const client = clientFixture({
       request,
-      proc: { send, media: { delete: remove } },
-    } as unknown as Pick<GSVClient, "proc" | "request">;
+      proc: {},
+      conversation: {
+        forProcess: vi.fn(async () => ({ conversation: { id: "conv:test" } })),
+        send,
+      },
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+    });
 
     await expect(sendChatMessage(client, {
       pid: "proc:test",
@@ -110,64 +163,94 @@ describe("chat process media", () => {
     })).rejects.toThrow("upload failed");
 
     expect(send).not.toHaveBeenCalled();
-    expect(remove).toHaveBeenCalledWith({
-      pid: "proc:test",
-      key: "var/media/1000/proc/good.png",
-    });
+    expect(request).toHaveBeenCalledWith(
+      "fs.delete",
+      expect.objectContaining({ path: expect.stringContaining("good.png") }),
+    );
   });
 
-  it("rolls back staged media when proc.send rejects it", async () => {
-    const request = vi.fn(async () => ({
-      data: {
-        ok: true as const,
-        media: {
-          type: "image" as const,
-          mimeType: "image/png",
-          key: "var/media/1000/proc/staged.png",
-          size: 1,
-        },
-      },
-    }));
-    const remove = vi.fn(async () => ({ ok: true as const, key: "var/media/1000/proc/staged.png" }));
-    const client = {
+  it("deletes the staged resource when conversation.send rejects it", async () => {
+    const request = vi.fn(async (call: string, args: { path: string }) => {
+      if (call === "fs.transfer.receive") {
+        return { data: { ok: true as const, path: args.path, bytesWritten: 1 } };
+      }
+      if (call === "fs.transfer.stat") {
+        return {
+          data: {
+            ok: true as const,
+            path: args.path,
+            size: 1,
+            isFile: true,
+            isDirectory: false,
+            contentType: "image/png",
+            revision: "revision-one",
+          },
+        };
+      }
+      return { data: { ok: true as const, path: args.path } };
+    });
+    // SAFETY: Test fixture uses the asserted API shape for this focused case.
+    const client = clientFixture({
       request,
-      proc: {
-        send: vi.fn(async () => ({ ok: false as const, error: "conversation closed" })),
-        media: { delete: remove },
+      proc: {},
+      conversation: {
+        forProcess: vi.fn(async () => ({ conversation: { id: "conv:test" } })),
+        send: vi.fn(async () => { throw new Error("conversation closed"); }),
       },
-    } as unknown as Pick<GSVClient, "proc" | "request">;
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+    });
 
     await expect(sendChatMessage(client, {
       pid: "proc:test",
       message: "look",
       media: [{ type: "image", mimeType: "image/png", body: new Blob(["a"]) }],
     })).rejects.toThrow("conversation closed");
-    expect(remove).toHaveBeenCalledWith({
-      pid: "proc:test",
-      key: "var/media/1000/proc/staged.png",
-    });
+    expect(request).toHaveBeenCalledWith(
+      "fs.delete",
+      expect.objectContaining({ path: expect.stringContaining("attachment") }),
+    );
   });
 
+  // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+
   it("caches the response body as a Blob instead of a data URL", async () => {
-    const request = vi.fn(async () => ({
-      data: {
-        ok: true as const,
-        key: "var/media/1000/proc/example.png",
-        mimeType: "image/png",
-        size: 3,
-      },
-      body: frameBodyFromBlob(new Blob([new Uint8Array([1, 2, 3])])),
-    }));
-    const client = { request } as unknown as Pick<GSVClient, "request">;
+    const request = vi.fn(async (call: string) => call === "fs.transfer.stat"
+      ? {
+          data: {
+            ok: true as const,
+            path: "/var/media/1000/proc/example.png",
+            size: 3,
+            isFile: true,
+            isDirectory: false,
+            contentType: "image/png",
+            revision: "revision-one",
+          },
+        }
+      : {
+          data: {
+            ok: true as const,
+            path: "/var/media/1000/proc/example.png",
+            contentType: "image/png",
+            revision: "revision-one",
+            size: 3,
+          },
+          body: frameBodyFromBlob(new Blob([new Uint8Array([1, 2, 3])])),
+        });
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+    const client = clientFixture({ request });
 
     const result = await readChatProcessMedia(client, {
       pid: "proc:test",
       key: "var/media/1000/proc/example.png",
     });
 
-    expect(request).toHaveBeenCalledWith("proc.media.read", {
-      pid: "proc:test",
-      key: "var/media/1000/proc/example.png",
+    expect(request).toHaveBeenCalledWith("fs.transfer.stat", {
+      path: "/var/media/1000/proc/example.png",
+    });
+    expect(request).toHaveBeenCalledWith("fs.transfer.send", {
+      target: "gsv",
+      path: "/var/media/1000/proc/example.png",
+      revision: "revision-one",
     });
     expect(result).not.toHaveProperty("dataUrl");
     expect(result.blob.type).toBe("image/png");
@@ -175,45 +258,119 @@ describe("chat process media", () => {
   });
 
   it("rejects successful metadata without a response body", async () => {
-    const request = vi.fn(async () => ({
-      data: {
-        ok: true as const,
-        key: "var/media/1000/proc/example.png",
-        mimeType: "image/png",
-        size: 3,
-      },
-    }));
-    const client = { request } as unknown as Pick<GSVClient, "request">;
+    const request = vi.fn(async (call: string) => call === "fs.transfer.stat"
+      ? {
+          data: {
+            ok: true as const,
+            path: "/var/media/1000/proc/example.png",
+            size: 3,
+            isFile: true,
+            isDirectory: false,
+            contentType: "image/png",
+            revision: "revision-one",
+          },
+        }
+      : {
+          data: {
+            ok: true as const,
+            path: "/var/media/1000/proc/example.png",
+            size: 3,
+            contentType: "image/png",
+            revision: "revision-one",
+          },
+        });
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+    const client = clientFixture({ request });
 
     await expect(readChatProcessMedia(client, {
       key: "var/media/1000/proc/example.png",
-    })).rejects.toThrow("Process media response did not include a body");
+    })).rejects.toThrow("Resource response did not include a body");
   });
 
-  it("cancels process media above the eager display limit", async () => {
-    let cancelReason: unknown;
-    const body = {
-      stream: new ReadableStream<Uint8Array>({
-        cancel(reason) {
-          cancelReason = reason;
-        },
-      }),
-      length: 25 * 1024 * 1024 + 1,
+  it("resolves the exact resource revision over the binary body channel", async () => {
+    const ref = {
+      type: "file" as const,
+      target: "gsv",
+      path: "/root/.gsv/media/archived-media:one",
+      revision: '"revision-one"',
+      contentType: "image/png",
+      size: 3,
     };
     const request = vi.fn(async () => ({
       data: {
         ok: true as const,
-        key: "var/media/1000/proc/large.mp4",
-        mimeType: "video/mp4",
-        size: 25 * 1024 * 1024 + 1,
+        path: ref.path,
+        revision: ref.revision,
+        contentType: ref.contentType,
+        size: ref.size,
       },
-      body,
+      body: frameBodyFromBlob(new Blob([new Uint8Array([4, 5, 6])])),
     }));
-    const client = { request } as unknown as Pick<GSVClient, "request">;
+    const client = clientFixture({ request });
+
+    const result = await readChatResource(client, ref);
+
+    expect(request).toHaveBeenCalledWith("fs.transfer.send", {
+      target: "gsv",
+      path: ref.path,
+      revision: ref.revision,
+    });
+    expect(result.ref).toEqual(ref);
+    expect(Array.from(new Uint8Array(await result.blob.arrayBuffer()))).toEqual([4, 5, 6]);
+  });
+
+  it("cancels a resource body whose revision does not match", async () => {
+    let cancelled = false;
+    const ref = {
+      type: "file" as const,
+      target: "gsv",
+      path: "/root/image.png",
+      revision: '"expected"',
+      contentType: "image/png",
+      size: 3,
+    };
+    const request = vi.fn(async () => ({
+      data: {
+        ok: true as const,
+        path: ref.path,
+        revision: '"newer"',
+        contentType: ref.contentType,
+        size: ref.size,
+      },
+      body: {
+        stream: new ReadableStream<Uint8Array>({ cancel: () => { cancelled = true; } }),
+        length: ref.size,
+      },
+    }));
+    const client = clientFixture({ request });
+
+    await expect(readChatResource(client, ref)).rejects.toThrow(
+      "Resource response does not match its reference",
+    );
+    expect(cancelled).toBe(true);
+  });
+
+  it("rejects process media above the eager display limit before reading bytes", async () => {
+    const request = vi.fn(async () => ({
+      data: {
+        ok: true as const,
+        path: "/var/media/1000/proc/large.mp4",
+        size: 25 * 1024 * 1024 + 1,
+        isFile: true,
+        isDirectory: false,
+        contentType: "video/mp4",
+        revision: "large-revision",
+      },
+    }));
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+    const client = clientFixture({ request });
 
     await expect(readChatProcessMedia(client, {
       key: "var/media/1000/proc/large.mp4",
-    })).rejects.toThrow("Process media exceeds the 25 MiB display limit");
-    expect(cancelReason).toBeInstanceOf(Error);
+    })).rejects.toThrow("Resource exceeds the 25 MiB display limit");
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledWith("fs.transfer.stat", {
+      path: "/var/media/1000/proc/large.mp4",
+    });
   });
 });

@@ -79,6 +79,8 @@ A successful compaction:
 
 The process then rebuilds context before calling the model. Summary or archive
 failure stops the run explicitly; GSV does not install a content-free summary.
+Successful installation clears the old pressure estimate because it no longer
+describes the live history.
 
 ## Archives and restoration
 

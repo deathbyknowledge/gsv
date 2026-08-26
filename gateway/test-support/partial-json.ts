@@ -19,15 +19,15 @@ export const Allow = {
   ALL: (1 << 9) - 1,
 } as const;
 
-export function parseJSON(jsonString: string): unknown {
-  if (typeof jsonString !== "string") {
-    throw new TypeError(`expecting str, got ${typeof jsonString}`);
-  }
+type PartialJsonValue = string | number | boolean | null | PartialJsonValue[] | { [key: string]: PartialJsonValue };
+
+export function parseJSON(jsonString: string): PartialJsonValue {
   if (!jsonString.trim()) {
     throw new PartialJSON("Unexpected end of input");
   }
   try {
-    return JSON.parse(jsonString);
+    // SAFETY: JSON.parse returns a JSON value for valid JSON input.
+    return JSON.parse(jsonString) as PartialJsonValue;
   } catch (error) {
     throw error instanceof SyntaxError
       ? new MalformedJSON(error.message)

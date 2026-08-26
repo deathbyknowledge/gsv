@@ -1,4 +1,5 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
+import { z } from "zod";
 import type {
   OnboardingDetailStep,
   OnboardingAssistMessage,
@@ -8,8 +9,32 @@ import type {
   OnboardingMode,
   OnboardingStage,
 } from "@humansandmachines/gsv/protocol";
+import { readInstallationOnboardingToken } from "./installationOnboarding";
 
 const STORAGE_ONBOARDING = "gsv.ui.onboarding.v2";
+
+const onboardingMessageSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  content: z.string(),
+});
+const onboardingDraftSchema = z.object({
+  lane: z.enum(["quick", "customize", "advanced"]).optional(),
+  mode: z.enum(["manual", "guided"]).optional(),
+  stage: z.enum(["welcome", "details", "review"]).optional(),
+  detailStep: z.enum(["account", "admin", "system", "ai", "device"]).optional(),
+  account: z.object({ username: z.string().optional(), agentName: z.string().optional(), password: z.string().optional(), passwordConfirm: z.string().optional() }).optional(),
+  admin: z.object({ mode: z.enum(["same", "custom"]).optional(), password: z.string().optional(), passwordConfirm: z.string().optional() }).optional(),
+  system: z.object({ timezone: z.string().optional() }).optional(),
+  ai: z.object({ enabled: z.boolean().optional(), provider: z.string().optional(), model: z.string().optional(), apiKey: z.string().optional() }).optional(),
+  device: z.object({ enabled: z.boolean().optional(), deviceId: z.string().optional(), label: z.string().optional(), expiryDays: z.string().optional() }).optional(),
+});
+const persistedSnapshotSchema = z.object({
+  draft: onboardingDraftSchema.optional(),
+  messages: z.array(onboardingMessageSchema).optional(),
+  error: z.string().nullable().optional(),
+  focus: z.string().nullable().optional(),
+  reviewReady: z.boolean().optional(),
+});
 
 export type OnboardingSnapshot = {
   draft: OnboardingDraft;
@@ -32,6 +57,8 @@ export type OnboardingService = {
   updateDraft: (updater: (draft: OnboardingDraft) => OnboardingDraft) => void;
   assist: (message: string) => Promise<void>;
 };
+
+export type OnboardingClient = Pick<GSVClient, "requestOnce">;
 
 function deriveGatewayUrlFromOrigin(): string {
   const { protocol, host } = window.location;
@@ -98,7 +125,10 @@ function sanitizeDraftForStorage(draft: OnboardingDraft): OnboardingDraft {
   };
 }
 
-function mergeDraft(username: string, draft: Partial<OnboardingDraft> | null | undefined): OnboardingDraft {
+function mergeDraft(
+  username: string,
+  draft: z.infer<typeof onboardingDraftSchema> | null | undefined,
+): OnboardingDraft {
   const base = defaultDraft(username);
   return {
     ...base,
@@ -139,21 +169,18 @@ function readPersistedDraft(username = ""): OnboardingSnapshot {
         reviewReady: false,
       };
     }
-    const parsed = JSON.parse(raw) as Partial<OnboardingSnapshot>;
+    const decoded: unknown = JSON.parse(raw);
+    const parsed = persistedSnapshotSchema.safeParse(decoded);
+    if (!parsed.success) {
+      throw new Error("Invalid persisted onboarding state");
+    }
     return {
-      draft: mergeDraft(username, parsed.draft),
-      messages: Array.isArray(parsed.messages)
-        ? parsed.messages.filter((entry): entry is OnboardingAssistMessage =>
-          Boolean(entry) &&
-          typeof entry === "object" &&
-          (entry as Record<string, unknown>).role !== undefined &&
-          typeof (entry as Record<string, unknown>).content === "string",
-        )
-        : [],
+      draft: mergeDraft(username, parsed.data.draft),
+      messages: parsed.data.messages ?? [],
       busy: false,
-      error: typeof parsed.error === "string" ? parsed.error : null,
-      focus: typeof parsed.focus === "string" ? parsed.focus : null,
-      reviewReady: parsed.reviewReady === true,
+      error: parsed.data.error ?? null,
+      focus: parsed.data.focus ?? null,
+      reviewReady: parsed.data.reviewReady === true,
     };
   } catch {
     return {
@@ -198,7 +225,7 @@ function detailStepFromPatchPath(path: OnboardingAssistPatch["path"]): Onboardin
 }
 
 export function createOnboardingService(
-  client: GSVClient,
+  client: OnboardingClient,
   initialUsername = "",
 ): OnboardingService {
   const listeners = new Set<(snapshot: OnboardingSnapshot) => void>();
@@ -217,26 +244,24 @@ export function createOnboardingService(
   };
 
   const applyPatch = (draft: OnboardingDraft, patch: OnboardingAssistPatch): OnboardingDraft => {
-    const next = structuredClone(draft) as OnboardingDraft;
-    const [section, key] = patch.path.split(".") as [keyof OnboardingDraft, string];
-    if (!(section in next)) return draft;
-    if (patch.op === "clear") {
-      if (section === "ai" || section === "device") {
-        (next[section] as Record<string, unknown>)[key] = key === "enabled" ? false : "";
-      } else if (section === "admin") {
-        (next.admin as Record<string, unknown>)[key] = key === "mode" ? "same" : "";
-      } else if (section === "account" && (key === "username" || key === "agentName")) {
-        next.account[key] = "";
-      } else if (section === "system" && key === "timezone") {
-        next.system.timezone = defaultTimezone();
-      }
-      return next;
+    const next = structuredClone(draft);
+    const textValue = z.string().safeParse(patch.value);
+    const booleanValue = z.boolean().safeParse(patch.value);
+    const text = textValue.success ? textValue.data : String(patch.value ?? "");
+    const enabled = booleanValue.success ? booleanValue.data : false;
+    switch (patch.path) {
+      case "account.username": next.account.username = patch.op === "clear" ? "" : text; break;
+      case "account.agentName": next.account.agentName = patch.op === "clear" ? "" : text; break;
+      case "admin.mode": next.admin.mode = patch.op === "clear" ? "same" : (text === "custom" ? "custom" : "same"); break;
+      case "system.timezone": next.system.timezone = patch.op === "clear" ? defaultTimezone() : text; break;
+      case "ai.enabled": next.ai.enabled = patch.op === "clear" ? false : enabled; break;
+      case "ai.provider": next.ai.provider = patch.op === "clear" ? "" : text; break;
+      case "ai.model": next.ai.model = patch.op === "clear" ? "" : text; break;
+      case "device.enabled": next.device.enabled = patch.op === "clear" ? false : enabled; break;
+      case "device.deviceId": next.device.deviceId = patch.op === "clear" ? "" : text; break;
+      case "device.label": next.device.label = patch.op === "clear" ? "" : text; break;
+      case "device.expiryDays": next.device.expiryDays = patch.op === "clear" ? "" : text; break;
     }
-    if (section === "account" && (key === "username" || key === "agentName")) {
-      next.account[key] = typeof patch.value === "string" ? patch.value : String(patch.value ?? "");
-      return next;
-    }
-    (next[section] as Record<string, unknown>)[key] = patch.value;
     return next;
   };
 
@@ -341,10 +366,12 @@ export function createOnboardingService(
       });
 
       try {
+        const onboardingToken = readInstallationOnboardingToken();
         const result = await client.requestOnce(url, "sys.setup.assist", {
           lane: currentState.draft.lane,
           draft: sanitizeDraftForStorage(currentState.draft),
           messages: nextMessages,
+          ...(onboardingToken ? { onboardingToken } : undefined),
         });
         const latestState = state;
         let nextDraft = latestState.draft;

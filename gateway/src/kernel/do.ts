@@ -1,41 +1,73 @@
-import {
-  Connection,
-  ConnectionContext,
-  Agent as Host,
-  getCurrentAgent,
-  type WSMessage,
-} from "agents";
+import { DurableObject } from "cloudflare:workers";
+import { z } from "zod";
 import {
   DurableObjectOAuthClientProvider,
   type AgentMcpOAuthProvider,
 } from "agents/mcp/do-oauth-client-provider";
-import type { MCPConnectionResult } from "agents/mcp/client";
+import {
+  MCPClientManager,
+  type MCPConnectionResult,
+} from "agents/mcp/client";
 import type {
   Frame,
   FrameBody,
+  FrameError,
   RequestFrame,
   ResponseOkFrame,
   ResponseFrame,
   SignalFrame,
 } from "../protocol/frames";
+import {
+  decodeWireFrameJson,
+  decodeWireResponse,
+  InvalidWireFrameError,
+} from "../protocol/decode-wire-frame";
+import type {
+  WireFrame,
+  WireRequestFrame,
+  WireResponseEnvelope,
+  WireResponseFrame,
+} from "@humansandmachines/gsv/protocol";
+import { consumeProcessRunStream } from "../protocol/process-run-stream";
 import type {
   AdapterMedia,
   AdapterMediaPart,
-  AdapterSurface,
+  AdapterActivity,
   BinaryBody,
-  ConnectionIdentity,
+  ConnectedPeer,
+  InstallationOnboardingAuthorization,
+  JsonObject,
+  JsonValue,
+  ManagedInboundMailAccepted,
+  ManagedInboundMailCompletion,
+  ManagedInboundMailMetadata,
+  ManagedOutboundMailClaimOutcome,
+  ManagedOutboundMailCompletion,
+  ManagedOutboundMailReference,
+  UnlinkManagedTelegramIdentityInput,
+  UnlinkManagedTelegramIdentityResult,
   NetFetchArgs,
+  MessageAttachment,
   ProcessIdentity,
   ScheduleRecord,
   ScheduleRunResult,
   SchedulerRunArgs,
   SchedulerRunResult,
+  ShellExecResult,
+  SysDeviceDeleteResult,
+  SysSetupResult,
+  ConversationMessage,
+  ConversationMessageOrigin,
 } from "@humansandmachines/gsv/protocol";
+import type { InstallationDirectoryService } from "@humansandmachines/gsv/services/directory";
+import type { InstallationOnboardingService } from "@humansandmachines/gsv/services/onboarding";
+import type { ConnectionIdentity } from "./identity";
 import {
   BinaryBodyChannel,
   REQUEST_CANCEL_SIGNAL,
   bundleAdapterMedia,
   cancelBinaryBody,
+  resourceBlockSchema,
   type BinaryFrameDescriptor,
   type OutgoingBinaryBody,
 } from "@humansandmachines/gsv/protocol";
@@ -50,13 +82,19 @@ import {
   type RouteOrigin,
 } from "./routing";
 import { ShellSessionStore, type ShellSessionStatus } from "./shell-sessions";
-import { ProcessRegistry, type ProcessState } from "./processes";
+import {
+  ProcessRegistry,
+  type ProcessRuntimePatch,
+  type ProcessState,
+} from "./processes";
+import { ConversationRegistry } from "./conversations";
 import { AdapterStore } from "./adapter-store";
-import { RunRouteStore, type AdapterRunRoute, type RunRoute } from "./run-routes";
+import { RunRouteStore, type AdapterRunRoute } from "./run-routes";
 import { OAuthStore } from "./oauth-store";
 import { McpServerStore } from "./mcp-store";
+import { MailboxStore } from "./mailbox-store";
 import { SignalWatchStore, type SignalWatchRecord } from "./signal-watches";
-import { isUserProcessSignal } from "./user-signals";
+import { isUserProcessSignal, USER_PROCESS_SIGNALS } from "./user-signals";
 import { IpcCallStore, type IpcCallRecord } from "./ipc-calls";
 import {
   assertCanManageSchedule,
@@ -71,10 +109,20 @@ import {
   SETUP_REQUIRED_ERROR_CODE,
 } from "./connect";
 import { dispatch, type DispatchDeps } from "./dispatch";
-import { bindStreamToAbort } from "../shared/streams";
+import { bindByteStreamToAbort } from "../shared/streams";
 import { raceWithAbort } from "../shared/abort";
 import type { KernelContext } from "./context";
-import { sendFrameToProcess } from "../shared/utils";
+import {
+  connectedPeerContext,
+  peerAllowsCall,
+  peerConnectionIdentity,
+  peerProvidesOperations,
+  type PeerContext,
+  servicePeerContext,
+  type ServicePeerProfile,
+} from "./peer";
+import { getConversationById, sendFrameToProcess } from "../shared/utils";
+import type { ConversationAppendRequest } from "../conversation/do";
 import { stableOpaqueId } from "../shared/stable-id";
 import {
   MAX_MESSAGE_MEDIA_ITEMS,
@@ -84,10 +132,11 @@ import {
 import {
   agentArchiveMediaPath,
   isValidAgentArchiveMediaObject,
-  processMediaPath,
-  processMediaPrefix,
 } from "../shared/process-media-path";
-import { handleSysSetup as handleKernelSetup } from "./sys/setup";
+import {
+  handleSysSetup as handleKernelSetup,
+  recoverCompletedSysSetup,
+} from "./sys/setup";
 import { handleSysSetupAssist } from "./sys/setup-assist";
 import { completeOAuthCallback as completeOAuthCallbackFlow } from "./sys/oauth";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
@@ -95,25 +144,68 @@ import { installMcpDiscoveryCompatibility } from "./mcp-compat";
 import { oauthCallbackHtmlResponse } from "../oauth-http";
 import { isInternalOnlySyscall } from "./syscall-exposure";
 import {
-  handleAdapterSend,
   deliverAdapterReply,
   normalizeAdapterHilRequest,
+  prefixAdapterDmProcessReply,
   renderAdapterHilPrompt,
   setAdapterActivityForKernel,
 } from "./adapter-handlers";
-import { assertAdapterMessageDestinationAccess } from "./adapter-destinations";
+import {
+  assertAdapterMessageDestinationAccess,
+  identityLinkRouteGeneration,
+} from "./adapter-destinations";
 import type {
+  ProcessMessageCommitArgs,
+  ProcessMessageCommitResponseFrame,
+  ProcessMessageStreamSignal,
+  ProcessOutboundFrame,
+  ProcessRuntimeEventDeliverRequestFrame,
   ProcessScheduleDeliverRequestFrame,
   ProcessScheduleDeliverResponseFrame,
 } from "../protocol/process-frames";
 import { isRepoPublic } from "./repo-visibility";
 import { canReadRepo, canWriteRepo } from "./repo";
-import { handleProcSpawn } from "./proc-handlers";
-import { ensurePersonalAgent } from "./agents";
+import { forwardToProcess, handleProcSpawn } from "./proc-handlers";
+import { ensurePersonalController } from "./personal-controller";
+import {
+  ResponsibilityStore,
+  type ResponsibilityWakeBatch,
+} from "./responsibility-store";
+import { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
+import {
+  acceptManagedInboundMail as acceptKernelManagedInboundMail,
+  completeManagedInboundMail as completeKernelManagedInboundMail,
+} from "./mailbox";
+import {
+  claimManagedOutboundMail as claimKernelManagedOutboundMail,
+  completeManagedOutboundMail as completeKernelManagedOutboundMail,
+  recoverManagedOutboundEnqueue,
+} from "./outbound-mail";
 import { handleShellExec } from "../drivers/native/shell";
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
 import { SERVER_VERSION } from "../version";
+import { parseInstallationId } from "../installation/identity";
+import type { InstallationIdentity } from "../installation/identity";
+import { createInstallationStorage } from "../installation/storage";
+import { createInstallationRipgit } from "../installation/ripgit";
+import {
+  MANAGED_LIFECYCLE_RECHECK_MS,
+  managedInstallationWorkGate,
+  type ManagedInstallationLifecycleBindings,
+} from "../installation/lifecycle";
+import {
+  DurableTaskScheduler,
+  type DurableTask,
+  type DurableTaskOptions,
+} from "../shared/durable-tasks";
+import {
+  acceptKernelWebSocket,
+  KernelConnection,
+  type KernelConnectionState as ConnectionState,
+  type KernelWebSocketMessage,
+  restoreKernelWebSocket,
+} from "./connection";
 
 const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
 const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
@@ -121,16 +213,31 @@ const MAX_REQUEST_CANCEL_REASON_LENGTH = 512;
 const MAX_ONE_SHOT_SCHEDULE_DELIVERY_ATTEMPTS = 10;
 const MAX_ADAPTER_SIGNAL_DELIVERY_ATTEMPTS = 10;
 
+type IpcCallTimeout = {
+  callId: string;
+  terminateTargetOnTimeout?: boolean;
+};
+
 type AdapterSignalDeliveryOutcome =
   | { state: "delivered" }
   | { state: "skipped" }
   | { state: "retryable" | "permanent" | "ambiguous"; error: string };
 
+function adapterTypingActivity(route: AdapterRunRoute, active: boolean): AdapterActivity {
+  return {
+    kind: "typing",
+    active,
+    ...(route.routeGeneration === undefined
+      ? undefined
+      : { routeGeneration: route.routeGeneration }),
+  };
+}
+
 type AdapterSignalDeliveryRetry = {
   runId: string;
   processId: string;
   signal: string;
-  payload: unknown;
+  payload?: JsonValue;
   attempt: number;
 };
 
@@ -144,6 +251,11 @@ type ProcessDeliveryNoticeRetry = {
   message: string;
   cleanupRunRoute: boolean;
 };
+
+type ProcessDeliveryNoticePayload = Omit<
+  ProcessDeliveryNoticeRetry,
+  "processId" | "cleanupRunRoute"
+>;
 
 class ScheduleTargetDispatchError extends Error {
   constructor(message: string, readonly retryable: boolean) {
@@ -159,6 +271,14 @@ class AdapterReplyMediaError extends Error {
   }
 }
 
+function mediaTypeFromContentType(contentType: string): AdapterMedia["type"] {
+  const normalized = contentType.trim().toLowerCase();
+  if (normalized.startsWith("image/")) return "image";
+  if (normalized.startsWith("audio/")) return "audio";
+  if (normalized.startsWith("video/")) return "video";
+  return "document";
+}
+
 function scheduleDeliveryRetryDelayMs(attempt: number): number {
   return Math.min(5 * 60_000, 5_000 * (2 ** Math.max(0, attempt - 1)));
 }
@@ -167,18 +287,94 @@ function adapterSignalRetryDelayMs(attempt: number): number {
   return Math.min(30_000, 1_000 * (2 ** Math.max(0, attempt - 1)));
 }
 
-type ConnectionState = {
-  step: "pending" | "connected" | "superseded";
-  identity?: ConnectionIdentity;
-  clientId?: string;
-  clientPlatform?: string;
-};
-
 type ProcessNetFetchOptions = {
   ttlMs?: number;
   internalPurpose?: "model-transport";
   body?: FrameBody;
   requestId?: string;
+};
+
+type DeviceRequestOptions = {
+  ttlMs?: number;
+  body?: FrameBody;
+  id?: string;
+  signal?: AbortSignal;
+};
+
+type FrameCancellationReason = string | Error;
+type CancellableFrameBody = {
+  cancel(reason?: FrameCancellationReason): Promise<void>;
+};
+type ConnectionMessageStreamPayload = {
+  conversationId?: string;
+  messageId: string;
+  processId: string;
+  runId: string;
+  timestamp: number;
+  delta?: string;
+  reason?: string;
+};
+
+type IpcCompletionResponse = {
+  text: string | null;
+  usage: JsonValue;
+  media?: MessageAttachment[];
+};
+
+type IpcDeliverySignalPayload = {
+  callId: string;
+  sourcePid: string;
+  sourceRunId?: string;
+  targetPid: string;
+  runId: string;
+  deadlineAt: number;
+  createdAt: number;
+  status: IpcCallRecord["status"];
+  response?: IpcCallRecord["response"];
+  error?: string;
+};
+
+type AdapterCommittedReply = {
+  deliveryId: string;
+  text: string;
+  media?: AdapterMedia[];
+};
+
+type SignalWatchDelivery = {
+  id: string;
+  key?: string;
+  state?: SignalWatchRecord["state"];
+  createdAt: number;
+};
+
+type ScheduleExecutionResult = {
+  kind?: "command.exec" | "process.spawn" | "adapter.send" | "process.event" | "responsibility" | "unknown";
+  error?: string;
+  command?: string;
+  exitCode?: number;
+  stdout?: string;
+  stderr?: string;
+  truncated?: boolean;
+  pid?: string;
+  runId?: string;
+  adapter?: string;
+  accountId?: string;
+  surfaceId?: string;
+  messageId?: string;
+  deliveryState?: string;
+  responsibilityId?: string;
+};
+
+type PendingKernelResponse = {
+  promise: Promise<ResponseFrame>;
+  cleanup: () => void;
+};
+
+type AmbientProcessChangePayload = {
+  pid: string;
+  changes: string[];
+  queuedCount?: number;
+  timestamp?: number;
 };
 
 type AuthorizeGitHttpInput = {
@@ -202,7 +398,191 @@ type AuthorizeGitHttpResult =
       message: string;
     };
 
-export class Kernel extends Host<Env> {
+type StoredInstallationIdentity = Omit<InstallationIdentity, "installationId">;
+
+type PendingManagedOnboardingCompletion = {
+  claimId: string;
+  installationId: string;
+};
+
+type KernelTask =
+  | { callback: "onAdapterSignalDelivery"; payload: AdapterSignalDeliveryRetry }
+  | { callback: "onIpcCallDelivery"; payload: string }
+  | { callback: "onIpcCallTimeout"; payload: IpcCallTimeout }
+  | { callback: "onManagedOutboundEnqueue"; payload: string }
+  | { callback: "onProcessDeliveryNotice"; payload: ProcessDeliveryNoticeRetry }
+  | { callback: "onRouteExpired"; payload: string }
+  | { callback: "onScheduleDue"; payload: string }
+  | {
+      callback: "onResponsibilityWake";
+      payload: { ownerUid: number; generation: number };
+    };
+
+type KernelTaskCallback = KernelTask["callback"];
+
+const ipcCallTimeoutPayloadSchema = z.union([
+  z.string().transform((callId): IpcCallTimeout => ({ callId })),
+  z.object({
+    callId: z.string(),
+    terminateTargetOnTimeout: z.boolean().optional(),
+  }),
+]);
+const execStatusPayloadSchema = z.object({
+  sessionId: z.string().trim().min(1),
+  event: z.string().optional().default(""),
+  exitCode: z.number().optional(),
+  signal: z.string().optional(),
+});
+
+const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
+  z.object({
+    callback: z.literal("onAdapterSignalDelivery"),
+    payload: z.object({
+      runId: z.string(),
+      processId: z.string(),
+      signal: z.string(),
+      payload: z.json().optional(),
+      attempt: z.number().int().positive(),
+    }),
+  }),
+  z.object({ callback: z.literal("onIpcCallDelivery"), payload: z.string() }),
+  z.object({
+    callback: z.literal("onIpcCallTimeout"),
+    payload: ipcCallTimeoutPayloadSchema,
+  }),
+  z.object({ callback: z.literal("onManagedOutboundEnqueue"), payload: z.string() }),
+  z.object({
+    callback: z.literal("onProcessDeliveryNotice"),
+    payload: z.object({
+      noticeId: z.string(),
+      runId: z.string(),
+      processId: z.string(),
+      deliveryKind: z.enum(["hil", "final"]),
+      requestId: z.string().optional(),
+      state: z.enum(["permanent", "ambiguous", "exhausted"]),
+      message: z.string(),
+      cleanupRunRoute: z.boolean(),
+    }),
+  }),
+  z.object({ callback: z.literal("onRouteExpired"), payload: z.string() }),
+  z.object({ callback: z.literal("onScheduleDue"), payload: z.string() }),
+  z.object({
+    callback: z.literal("onResponsibilityWake"),
+    payload: z.object({
+      ownerUid: z.number().int().nonnegative(),
+      generation: z.number().int().nonnegative(),
+    }),
+  }),
+]);
+const requestCancelPayloadSchema = z.object({
+  id: z.string(),
+  reason: z.string().optional(),
+});
+const processMessageStreamSignalSchema = z.object({
+  type: z.literal("sig"),
+  signal: z.literal("proc.message.stream"),
+  payload: z.object({
+    pid: z.string(),
+    runId: z.string(),
+    conversationId: z.string().optional(),
+    messageId: z.string(),
+    phase: z.enum(["started", "delta", "aborted", "silenced"]),
+    delta: z.string().optional(),
+    reason: z.string().optional(),
+    timestamp: z.number(),
+  }),
+});
+const procMediaInputSchema = z.object({
+  type: z.enum(["image", "audio", "video", "document"]),
+  mimeType: z.string(),
+  key: z.string().optional(),
+  conversationId: z.string().optional(),
+  path: z.string().optional(),
+  url: z.string().optional(),
+  filename: z.string().optional(),
+  size: z.number().optional(),
+  duration: z.number().optional(),
+  transcription: z.string().optional(),
+});
+const adapterConversationMessageSchema = z.object({
+  id: z.string(),
+  conversationId: z.string(),
+  author: z.object({
+    kind: z.literal("process"),
+    pid: z.string(),
+    uid: z.number().int().nonnegative(),
+  }),
+  text: z.string(),
+  media: z.array(z.union([resourceBlockSchema, procMediaInputSchema])).optional(),
+  processId: z.string().optional(),
+  runId: z.string().optional(),
+});
+const userProcessSignalPayloadSchema = z.object({
+  pid: z.string().optional(),
+  runId: z.string().optional(),
+  conversationId: z.string().optional(),
+  queuedCount: z.number().finite().optional(),
+  timestamp: z.number().finite().optional(),
+  changes: z.array(z.string()).optional(),
+  title: z.string().optional(),
+  status: z.string().optional(),
+  reason: z.string().optional(),
+  text: z.string().nullable().optional(),
+  result: z.object({
+    text: z.string().nullable(),
+    media: z.array(z.union([resourceBlockSchema, procMediaInputSchema])).optional(),
+  }).optional(),
+  delivery: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("none") }),
+    z.object({
+      kind: z.literal("message"),
+      conversationId: z.string().optional(),
+      messageId: z.string().optional(),
+    }),
+    z.object({ kind: z.literal("silence"), reason: z.string().optional() }),
+  ]).optional(),
+  error: z.string().optional(),
+  usage: z.json().optional(),
+  media: z.array(z.union([resourceBlockSchema, procMediaInputSchema])).optional(),
+}).catchall(z.json());
+const userProcessSignalFrameSchema = z.object({
+  type: z.literal("sig"),
+  signal: z.enum(USER_PROCESS_SIGNALS),
+  payload: userProcessSignalPayloadSchema.optional(),
+  seq: z.number().optional(),
+});
+const processSignalFrameSchema = z.object({
+  type: z.literal("sig"),
+  signal: z.string(),
+  payload: z.json().optional(),
+  seq: z.number().optional(),
+});
+const managedTelegramUnlinkSchema = z.object({
+  installationId: z.string(),
+  operationId: z.string().min(1),
+  actorId: z.string().regex(/^[1-9][0-9]{0,19}$/),
+  surfaceId: z.string(),
+  expectedLocalUid: z.number().int().nonnegative(),
+  expectedGeneration: z.string().min(1),
+});
+
+const serviceBindingArgsSchema = z.object({
+  adapter: z.string().trim().min(1).optional(),
+});
+const servicePeerProfileSchema = z.object({
+  id: z.string().trim().min(1),
+  calls: z.array(z.string().trim().min(1)),
+});
+
+type UserProcessSignalFrame = z.infer<typeof userProcessSignalFrameSchema>;
+
+const MANAGED_ONBOARDING_COMPLETION_KEY = "managed_onboarding_completion";
+
+export class Kernel extends DurableObject<Env> {
+  private readonly installationId: string;
+  private installationIdentity?: InstallationIdentity;
+  private readonly installationStorage: R2Bucket;
+  private readonly installationEnv: Env;
   private readonly auth: AuthStore;
   private readonly caps: CapabilityStore;
   private readonly config: ConfigStore;
@@ -210,20 +590,28 @@ export class Kernel extends Host<Env> {
   private readonly routes: RoutingTable;
   private readonly shellSessions: ShellSessionStore;
   private readonly procs: ProcessRegistry;
+  private readonly conversations: ConversationRegistry;
   private readonly adapters: AdapterStore;
   private readonly runRoutes: RunRouteStore;
   private readonly signalWatches: SignalWatchStore;
   private readonly ipcCalls: IpcCallStore;
   private readonly schedules: ScheduleStore;
+  private readonly mailboxes: MailboxStore;
+  private readonly responsibilities: ResponsibilityStore;
+  private readonly responsibilitySources: ResponsibilitySourcePolicyStore;
   private readonly oauth: OAuthStore;
   private readonly mcpServers: McpServerStore;
-  private readonly connections = new Map<string, Connection<ConnectionState>>();
+  private readonly connections = new Map<string, KernelConnection<ConnectionState>>();
+  private readonly tasks: DurableTaskScheduler<KernelTask>;
+  private mcp: MCPClientManager;
+  private managedOnboardingInProgress = false;
+  private pendingManagedOnboarding?: PendingManagedOnboardingCompletion;
   private readonly pendingKernelResponses = new Map<string, (frame: ResponseFrame) => void>();
   private readonly pendingProcessSignals = new Map<string, Promise<void>>();
   private readonly frameBodyChannels = new Map<string, BinaryBodyChannel>();
   private readonly routedBodies = new Map<
     string,
-    { cancel(reason?: unknown): Promise<void> }
+    CancellableFrameBody
   >();
   private readonly activeRequests = new Map<
     string,
@@ -236,8 +624,28 @@ export class Kernel extends Host<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    this.installationId = parseInstallationId(ctx.id.name);
     const sql = ctx.storage.sql;
     runKernelSqlMigrations(ctx.storage);
+
+    const identity = ctx.storage.kv.get<StoredInstallationIdentity>("install_identity");
+    this.installationIdentity = identity
+      ? { ...identity, installationId: this.installationId }
+      : undefined;
+    this.pendingManagedOnboarding = ctx.storage.kv.get<PendingManagedOnboardingCompletion>(
+      MANAGED_ONBOARDING_COMPLETION_KEY,
+    );
+    this.installationStorage = createInstallationStorage(
+      env.STORAGE,
+      this.installationId,
+    );
+    this.installationEnv = envWithInstallationResources(
+      env,
+      this.installationStorage,
+      env.RIPGIT
+        ? createInstallationRipgit(env.RIPGIT, this.installationId)
+        : undefined,
+    );
 
     this.auth = new AuthStore(sql);
 
@@ -254,6 +662,8 @@ export class Kernel extends Host<Env> {
 
     this.procs = new ProcessRegistry(sql);
 
+    this.conversations = new ConversationRegistry(sql);
+
     this.adapters = new AdapterStore(sql);
 
     this.runRoutes = new RunRouteStore(sql);
@@ -264,9 +674,23 @@ export class Kernel extends Host<Env> {
 
     this.schedules = new ScheduleStore(sql);
 
+    this.mailboxes = new MailboxStore(sql);
+
+    this.responsibilities = new ResponsibilityStore(ctx.storage);
+    this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql);
+
     this.oauth = new OAuthStore(sql);
 
     this.mcpServers = new McpServerStore(sql);
+    this.tasks = new DurableTaskScheduler(
+      ctx.storage,
+      decodeKernelTask,
+      this.runScheduledTask.bind(this),
+    );
+    this.mcp = new MCPClientManager("GSV Kernel", SERVER_VERSION, {
+      storage: ctx.storage,
+      createAuthProvider: (callbackUrl) => this.createMcpOAuthProvider(callbackUrl),
+    });
     installMcpDiscoveryCompatibility(this.mcp);
     this.mcp.configureOAuthCallback({
       customHandler: (result) => oauthCallbackHtmlResponse(
@@ -287,22 +711,66 @@ export class Kernel extends Host<Env> {
     this.mcp.onServerStateChanged(() => {
       this.broadcastMcpChanged();
     });
+    ctx.blockConcurrencyWhile(async () => {
+      await this.mcp.restoreConnectionsFromStorage(ctx.id.name ?? this.installationId);
+    });
 
     this.rehydrateConnections();
     for (const callId of this.ipcCalls.recoverDeliveryIds()) {
       this.queueIpcCallDelivery(callId);
     }
+    ctx.waitUntil(this.recoverResponsibilityWakes().catch((error) => {
+      console.warn(
+        "[Kernel] Failed to recover responsibility wakes:",
+        error instanceof Error ? error.message : String(error),
+      );
+    }));
   }
 
   createMcpOAuthProvider(callbackUrl: string): AgentMcpOAuthProvider {
+    // SAFETY: the Agents SDK provider implements AgentMcpOAuthProvider; the
+    // intersection exposes its supported dynamic client metadata extension.
     const provider = (
-      new DurableObjectOAuthClientProvider(this.ctx.storage, this.name, callbackUrl)
+      new DurableObjectOAuthClientProvider(this.ctx.storage, this.installationId, callbackUrl)
     ) as AgentMcpOAuthProvider & { clientMetadataUrl?: string };
     const metadataUrl = `${new URL(callbackUrl).origin}/.well-known/oauth-client/gsv.json`;
     if (metadataUrl.startsWith("https://")) {
       provider.clientMetadataUrl = metadataUrl;
     }
     return provider;
+  }
+
+  async ensureInstallationIdentity(input: InstallationIdentity) {
+    if (input.installationId !== this.installationId) {
+      throw new Error("installation identity conflicts with Kernel name");
+    }
+
+    if (!this.installationIdentity) {
+      const identity: StoredInstallationIdentity = {
+        canonicalOrigin: input.canonicalOrigin,
+      };
+      if (input.handle !== undefined) identity.handle = input.handle;
+      this.ctx.storage.kv.put("install_identity", identity);
+      this.installationIdentity = {
+        ...identity,
+        installationId: this.installationId,
+      };
+      return this.installationIdentity;
+    }
+
+    const existing = this.installationIdentity;
+    if (
+      existing.installationId !== input.installationId
+      || existing.handle !== input.handle
+      || existing.canonicalOrigin !== input.canonicalOrigin
+    ) {
+      throw new Error("installation identity conflicts with persisted Kernel identity");
+    }
+    return existing;
+  }
+
+  async getInstallationIdentity(): Promise<InstallationIdentity | null> {
+    return this.installationIdentity ?? null;
   }
 
   async onRequest(request: Request): Promise<Response> {
@@ -320,15 +788,118 @@ export class Kernel extends Host<Env> {
     return oauthCallbackHtmlResponse(result, result.ok ? 200 : result.status);
   }
 
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname === "/ws") {
+      if (
+        request.method !== "GET"
+        || request.headers.get("upgrade")?.toLowerCase() !== "websocket"
+      ) {
+        return new Response("WebSocket upgrade required", { status: 426 });
+      }
+      const accepted = acceptKernelWebSocket<ConnectionState>(
+        this.ctx,
+        request,
+        { step: "pending" } satisfies ConnectionState,
+      );
+      this.onConnect(accepted.connection);
+      return accepted.response;
+    }
+
+    if (this.mcp.isCallbackRequest(request)) {
+      const result = await this.mcp.handleCallbackRequest(request);
+      if (result.authSuccess) {
+        this.ctx.waitUntil(this.mcp.establishConnection(result.serverId));
+      }
+      this.broadcastMcpChanged();
+      const customHandler = this.mcp.getOAuthCallbackConfig()?.customHandler;
+      return customHandler
+        ? customHandler(result)
+        : Response.redirect(url.origin);
+    }
+    return await this.onRequest(request);
+  }
+
+  async webSocketMessage(
+    socket: WebSocket,
+    message: KernelWebSocketMessage,
+  ): Promise<void> {
+    const connection = this.connectionForSocket(socket);
+    if (!connection) {
+      socket.close(1011, "Connection state unavailable");
+      return;
+    }
+    await this.onMessage(connection, message);
+  }
+
+  webSocketClose(
+    socket: WebSocket,
+    _code: number,
+    _reason: string,
+    _wasClean: boolean,
+  ): void {
+    const connection = this.connectionForSocket(socket);
+    if (connection) this.onClose(connection);
+  }
+
+  webSocketError(socket: WebSocket): void {
+    const connection = this.connectionForSocket(socket);
+    if (connection) this.onClose(connection);
+  }
+
+  async alarm(): Promise<void> {
+    await this.tasks.alarm();
+  }
+
+  private schedule(
+    when: Date | number,
+    callback: KernelTaskCallback,
+    payload: KernelTask["payload"],
+    options?: DurableTaskOptions,
+  ) {
+    const task = KERNEL_TASK_SCHEMA.parse({ callback, payload });
+    return this.tasks.schedule(when, task, options);
+  }
+
+  private cancelSchedule(id: string): Promise<boolean> {
+    return this.tasks.cancel(id);
+  }
+
+  private async runScheduledTask(
+    task: DurableTask<KernelTask>,
+  ): Promise<void> {
+    switch (task.callback) {
+      case "onAdapterSignalDelivery":
+        await this.onAdapterSignalDelivery(task.payload);
+        return;
+      case "onIpcCallDelivery":
+        await this.onIpcCallDelivery(task.payload);
+        return;
+      case "onIpcCallTimeout":
+        await this.onIpcCallTimeout(task.payload);
+        return;
+      case "onManagedOutboundEnqueue":
+        await this.onManagedOutboundEnqueue(task.payload);
+        return;
+      case "onProcessDeliveryNotice":
+        await this.onProcessDeliveryNotice(task.payload);
+        return;
+      case "onRouteExpired":
+        await this.onRouteExpired(task.payload);
+        return;
+      case "onScheduleDue":
+        await this.onScheduleDue(task.payload, task);
+        return;
+      case "onResponsibilityWake":
+        await this.onResponsibilityWake(task.payload, task);
+        return;
+    }
+  }
+
   private async addMcpServerConnection(input: McpAddConnectionInput): Promise<McpAddConnectionResult> {
     const serverName = `u${input.uid}:${input.name}`;
     const serverId = `mcp-${crypto.randomUUID()}`;
-    let callbackHost = input.callbackHost;
-    if (!callbackHost) {
-      const { request, connection } = getCurrentAgent();
-      const activeUrl = request?.url ?? connection?.uri;
-      callbackHost = activeUrl ? new URL(activeUrl).origin : undefined;
-    }
+    const callbackHost = this.installationIdentity?.canonicalOrigin ?? input.callbackHost;
     const callbackUrl = callbackHost
       ? `${callbackHost.replace(/\/$/, "")}/oauth/callback`
       : undefined;
@@ -337,17 +908,18 @@ export class Kernel extends Host<Env> {
       authProvider.serverId = serverId;
     }
 
+    const transport = input.transport.headers
+      ? {
+          authProvider,
+          type: input.transport.type,
+          requestInit: { headers: input.transport.headers },
+        }
+      : { authProvider, type: input.transport.type };
     await this.mcp.registerServer(serverId, {
       url: input.url,
       name: serverName,
       callbackUrl,
-      transport: {
-        authProvider,
-        type: input.transport.type,
-        ...(input.transport.headers
-          ? { requestInit: { headers: input.transport.headers } }
-          : {}),
-      },
+      transport,
     });
 
     let result: MCPConnectionResult;
@@ -405,6 +977,10 @@ export class Kernel extends Host<Env> {
     }
   }
 
+  private async removeMcpServer(serverId: string): Promise<void> {
+    await this.mcp.removeServer(serverId);
+  }
+
   private broadcastMcpChanged(): void {
     const uids = new Set(this.mcpServers.list().map((record) => record.uid));
     for (const uid of uids) {
@@ -412,19 +988,15 @@ export class Kernel extends Host<Env> {
     }
   }
 
-  shouldSendProtocolMessages(_: Connection, __: ConnectionContext): boolean {
-    return false;
-  }
-
-  onConnect(connection: Connection): void {
+  onConnect(connection: KernelConnection<ConnectionState>): void {
     const state: ConnectionState = { step: "pending" };
     connection.setState(state);
+    this.connections.set(connection.id, connection);
   }
 
-  onClose(connection: Connection): void {
+  onClose(connection: KernelConnection<ConnectionState>): void {
     this.closeFrameBodyChannel(connection.id);
-    const state = connection.state as ConnectionState | undefined;
-    if (!state) return;
+    const state = connection.state;
 
     this.connections.delete(connection.id);
     const origin: RouteOrigin = { type: "connection", id: connection.id };
@@ -434,13 +1006,13 @@ export class Kernel extends Host<Env> {
       }
     }
 
-    const identity = state.identity;
+    const peer = state.peer;
 
-    if (identity?.role === "driver") {
-      if (state.step === "connected" && !this.findDeviceConnection(identity.device)) {
-        this.devices.setOnline(identity.device, false);
-        this.broadcastDeviceStatus(identity.device, "disconnected");
-        this.failRoutesForDevice(identity.device);
+    if (peer && peerProvidesOperations(peer)) {
+      if (state.step === "connected" && !this.findDeviceConnection(peer.id)) {
+        this.devices.setOnline(peer.id, false);
+        this.broadcastDeviceStatus(peer.id, "disconnected");
+        this.failRoutesForDevice(peer.id);
       } else {
         this.failRoutesForDriverConnection(connection.id);
       }
@@ -450,31 +1022,25 @@ export class Kernel extends Host<Env> {
     this.runRoutes.clearForConnection(connection.id);
   }
 
-  async onMessage(connection: Connection<ConnectionState>, message: WSMessage): Promise<void> {
-    if (typeof message !== "string") {
+  async onMessage(
+    connection: KernelConnection<ConnectionState>,
+    message: KernelWebSocketMessage,
+  ): Promise<void> {
+    if (message instanceof ArrayBuffer) {
       this.handleBinaryMessage(connection, message);
       return;
     }
 
-    let parsed: Frame;
+    let parsed: WireFrame;
     try {
-      const value = JSON.parse(message) as unknown;
-      if (!value || typeof value !== "object") {
-        throw new Error("Invalid frame");
-      }
-      parsed = value as Frame;
-    } catch {
-      this.sendError(connection, "?", 400, "Malformed JSON");
-      return;
-    }
-
-    const valid = parsed.type === "req"
-      ? typeof parsed.id === "string" && typeof parsed.call === "string"
-      : parsed.type === "res"
-        ? typeof parsed.id === "string" && typeof parsed.ok === "boolean"
-        : parsed.type === "sig" && typeof parsed.signal === "string";
-    if (!valid) {
-      this.sendError(connection, "?", 400, "Invalid frame");
+      parsed = decodeWireFrameJson(message);
+    } catch (error) {
+      this.sendError(
+        connection,
+        error instanceof InvalidWireFrameError ? error.frameId : "?",
+        400,
+        error instanceof Error ? error.message : "Invalid frame",
+      );
       return;
     }
 
@@ -486,10 +1052,6 @@ export class Kernel extends Host<Env> {
         this.handleRes(connection, parsed);
         break;
       case "sig":
-        if ((parsed as unknown as { body?: unknown }).body !== undefined) {
-          this.sendError(connection, "?", 400, "Signals cannot carry bodies");
-          return;
-        }
         if (parsed.signal === REQUEST_CANCEL_SIGNAL) {
           this.handleRequestCancel(connection, parsed);
         } else {
@@ -500,15 +1062,15 @@ export class Kernel extends Host<Env> {
   }
 
   private handleRequestCancel(
-    connection: Connection<ConnectionState>,
+    connection: KernelConnection<ConnectionState>,
     frame: SignalFrame,
   ): void {
     if (connection.state?.step !== "connected") {
       return;
     }
-    const payload = asRecord(frame.payload);
-    const requestId = typeof payload?.id === "string" ? payload.id : "";
-    const reason = typeof payload?.reason === "string" ? payload.reason : undefined;
+    const parsed = requestCancelPayloadSchema.safeParse(frame.payload);
+    if (!parsed.success) return;
+    const { id: requestId, reason } = parsed.data;
     this.cancelRequest(
       { type: "connection", id: connection.id },
       requestId,
@@ -524,8 +1086,29 @@ export class Kernel extends Host<Env> {
    * or null if deferred (forwarded to a device — result will arrive later
    * via process.recvFrame callback).
    */
-  async recvFrame(processId: string, frame: Frame): Promise<Frame | null> {
+  async recvFrame(
+    processId: string,
+    frame: ProcessOutboundFrame,
+  ): Promise<Frame | ProcessMessageCommitResponseFrame | null> {
     if (frame.type === "req") {
+      if (frame.call === "proc.message.commit") {
+        try {
+          return {
+            type: "res",
+            id: frame.id,
+            ok: true,
+            data: {
+              message: await this.commitProcessMessage(processId, frame.args),
+            },
+          };
+        } catch (error) {
+          return errFrame(
+            frame.id,
+            500,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      }
       try {
         return await this.handleProcessReq(processId, frame);
       } finally {
@@ -534,15 +1117,34 @@ export class Kernel extends Host<Env> {
     }
 
     if (frame.type === "sig") {
-      const runId = this.extractRunId(frame.payload);
-      if (!this.updateProcessRuntimeFromSignal(processId, frame, runId)) {
+      if (frame.signal === "proc.message.stream") {
+        const parsed = processMessageStreamSignalSchema.safeParse(frame);
+        if (!parsed.success) return null;
+        await this.deliverProcessMessageStream(processId, parsed.data);
+        return null;
+      }
+      const parsed = processSignalFrameSchema.safeParse(frame);
+      if (!parsed.success) return null;
+      const processFrame = parsed.data;
+      const userFrame = isUserProcessSignal(processFrame.signal)
+        ? userProcessSignalFrameSchema.safeParse(processFrame)
+        : null;
+      if (userFrame && !userFrame.success) return null;
+      const typedUserFrame = userFrame?.data;
+      const runId = typedUserFrame?.payload?.runId?.trim() || null;
+      if (
+        typedUserFrame
+        && !this.updateProcessRuntimeFromSignal(processId, typedUserFrame, runId)
+      ) {
         if (frame.signal === "proc.run.finished" && runId) {
           this.runRoutes.delete(runId);
         }
         return null;
       }
-      const delivered = this.enqueueProcessSignal(processId, frame);
-      this.completeIpcCallsForProcessSignal(processId, frame);
+      const delivered = this.enqueueProcessSignal(processId, processFrame, typedUserFrame);
+      if (typedUserFrame) {
+        this.completeIpcCallsForProcessSignal(processId, typedUserFrame);
+      }
       if (
         frame.signal === "proc.run.finished"
         || frame.signal === "proc.run.hil.requested"
@@ -555,6 +1157,186 @@ export class Kernel extends Host<Env> {
     }
 
     return null;
+  }
+
+  private async commitProcessMessage(
+    processId: string,
+    args: ProcessMessageCommitArgs,
+  ): Promise<ConversationMessage> {
+    const process = this.procs.get(processId);
+    if (!process) throw new Error("Unknown process");
+    if (!args.runId) {
+      throw new Error("Message runId is invalid");
+    }
+    if (!args.actionId) {
+      throw new Error("Message actionId is invalid");
+    }
+    let conversation = args.conversationId
+      ? this.conversations.get(args.conversationId)
+      : null;
+    if (conversation) {
+      if (
+        conversation.ownerUid !== process.ownerUid
+        || conversation.handlerPid !== processId
+      ) {
+        throw new Error("Process does not handle this conversation");
+      }
+    } else if (args.conversationId) {
+      throw new Error("Conversation does not exist");
+    } else {
+      conversation = process.isPersonalController
+        ? this.conversations.ensureShip(process.ownerUid, processId)
+        : this.conversations.ensureWork(process.ownerUid, processId, process.label);
+    }
+    const stub = getConversationById(this.installationId, conversation.id);
+    await stub.initialize({ ownerUid: conversation.ownerUid, kind: conversation.kind });
+    const messageId = await stableOpaqueId("msg", [
+      conversation.id,
+      processId,
+      args.runId,
+      args.actionId,
+    ]);
+    const origin: ConversationMessageOrigin = {
+      kind: "process",
+      pid: processId,
+      runId: args.runId,
+    };
+    const appendInput: ConversationAppendRequest = {
+      messageId,
+      idempotencyKey: `output:${processId}:${args.runId}:${args.actionId}`,
+      author: { kind: "process", pid: processId, uid: process.uid },
+      text: args.text,
+      mediaOwner: {
+        pid: processId,
+        uid: process.uid,
+        gid: process.gid,
+        home: process.home,
+      },
+      origin,
+      processId,
+      runId: args.runId,
+      createdAt: Date.now(),
+    };
+    if (args.media?.length) appendInput.media = args.media;
+    const appended = await stub.append(appendInput);
+    const { message } = appended;
+    this.conversations.recordSequence(conversation.id, message.sequence);
+
+    let route = this.runRoutes.get(args.runId);
+    if (!route && !args.conversationId) {
+      route = this.materializePersonalAdapterFallback(processId, args.runId, process.ownerUid);
+    }
+    if (route?.uid !== process.ownerUid || route?.processId !== processId) {
+      if (route) this.runRoutes.delete(args.runId);
+      route = null;
+    }
+    if (route?.kind === "connection") {
+      this.sendSignalToConnection(route.connectionId, "message.committed", {
+        message,
+        directed: true,
+      });
+      if (appended.created) {
+        this.broadcastToUserUidExcept(process.ownerUid, route.connectionId, "message.committed", {
+          message,
+          directed: false,
+        });
+      }
+    } else {
+      if (appended.created) {
+        this.broadcastToUserUid(process.ownerUid, "message.committed", {
+          message,
+          directed: false,
+        });
+      }
+      if (route?.kind === "adapter") {
+        await this.queueAdapterSignalDelivery(route, {
+          type: "sig",
+          signal: "message.committed",
+          payload: { message },
+        }, 1);
+      }
+    }
+    if (appended.created) {
+      this.broadcastToUserUid(process.ownerUid, "conversation.changed", {
+        conversationId: conversation.id,
+        latestSequence: message.sequence,
+      });
+    }
+    return message;
+  }
+
+  private async deliverProcessMessageStream(
+    processId: string,
+    frame: ProcessMessageStreamSignal,
+  ): Promise<void> {
+    const process = this.procs.get(processId);
+    const payload = frame.payload;
+    if (
+      !process
+      || !payload
+      || payload.pid !== processId
+    ) {
+      return;
+    }
+    const route = this.runRoutes.get(payload.runId);
+    if (
+      !route
+      || route.processId !== processId
+      || route.uid !== process.ownerUid
+    ) {
+      return;
+    }
+    if (payload.phase === "silenced") {
+      if (route.kind === "adapter") {
+        await setAdapterActivityForKernel(
+          this.bindings,
+          this.installationId,
+          route.destination.adapter,
+          route.destination.accountId,
+          route.destination.surface,
+          adapterTypingActivity(route, false),
+        ).catch(() => undefined);
+      }
+      return;
+    }
+    if (route.kind !== "connection") return;
+    const signal = payload.phase === "started"
+      ? "message.started"
+      : payload.phase === "delta"
+        ? "message.delta"
+        : "message.aborted";
+    const signalPayload: ConnectionMessageStreamPayload = {
+      messageId: payload.messageId,
+      processId,
+      runId: payload.runId,
+      timestamp: payload.timestamp,
+    };
+    if (payload.conversationId !== undefined) {
+      signalPayload.conversationId = payload.conversationId;
+    }
+    if (payload.phase === "delta") signalPayload.delta = payload.delta ?? "";
+    if (payload.phase === "aborted") signalPayload.reason = payload.reason ?? "aborted";
+    this.sendSignalToConnection(route.connectionId, signal, signalPayload);
+  }
+
+  async acceptProcessRunStream(
+    processId: string,
+    stream: ReadableStream<Uint8Array>,
+  ): Promise<boolean> {
+    if (!this.procs.get(processId)) {
+      await stream.cancel("Unknown process").catch(() => {});
+      return false;
+    }
+    void consumeProcessRunStream(
+      processId,
+      stream,
+      async (frame) => {
+        await this.recvFrame(processId, frame);
+      },
+    ).catch(() => {
+      console.warn("[Kernel] Process run stream ended before completion");
+    });
+    return true;
   }
 
   async requestProcessNetFetch(
@@ -584,17 +1366,18 @@ export class Kernel extends Host<Env> {
       if (options.requestId) {
         controller = this.registerActiveRequest(origin, options.requestId);
       }
+      const requestOptions: DeviceRequestOptions = {};
+      if (options.ttlMs !== undefined) requestOptions.ttlMs = options.ttlMs;
+      if (options.body !== undefined) requestOptions.body = options.body;
+      if (options.requestId !== undefined) requestOptions.id = options.requestId;
+      if (controller) requestOptions.signal = controller.signal;
       const response = await this.requestDevice(
         device.targetId,
         "net.fetch",
         args,
-        {
-          ttlMs: options.ttlMs,
-          ...(options.body ? { body: options.body } : {}),
-          ...(options.requestId ? { id: options.requestId } : {}),
-          ...(controller ? { signal: controller.signal } : {}),
-        },
+        requestOptions,
       );
+      // SAFETY: requestDevice preserves the result type for the net.fetch call.
       return response as ResponseOkFrame<"net.fetch">;
     } finally {
       if (options.requestId && controller) {
@@ -622,16 +1405,97 @@ export class Kernel extends Host<Env> {
    * Service-binding RPC entrypoint.
    * Accepts the same frame format as WS connections/process RPC.
    */
-  async serviceFrame(frame: Frame): Promise<Frame | null> {
+  async peerFrame(profile: ServicePeerProfile, frame: Frame): Promise<Frame | null> {
     const body = "body" in frame ? frame.body : undefined;
     try {
       if (frame.type !== "req") {
         return null;
       }
-      return await this.handleServiceReq(frame);
+      const parsedProfile = servicePeerProfileSchema.safeParse(profile);
+      if (!parsedProfile.success) {
+        return errFrame(frame.id, 403, "Service peer profile is invalid");
+      }
+      const gate = await this.managedWorkGate();
+      if (!gate.allowed) {
+        return errFrame(frame.id, gate.code, gate.message);
+      }
+      return await this.handleServiceReq(parsedProfile.data, frame);
     } finally {
       await cancelUnlockedBody(body, "Service request completed");
     }
+  }
+
+  async acceptManagedInboundMail(
+    metadata: ManagedInboundMailMetadata,
+    body: BinaryBody,
+  ): Promise<ManagedInboundMailAccepted> {
+    try {
+      const gate = await this.managedWorkGate();
+      if (!gate.allowed) throw new Error(gate.message);
+      return await acceptKernelManagedInboundMail(
+        metadata,
+        body,
+        this.buildKernelContext({}),
+      );
+    } finally {
+      await cancelUnlockedBody(body, "Managed mail request completed");
+    }
+  }
+
+  async completeManagedInboundMail(
+    completion: ManagedInboundMailCompletion,
+  ): Promise<void> {
+    const gate = await this.managedWorkGate();
+    if (!gate.allowed) throw new Error(gate.message);
+    await completeKernelManagedInboundMail(
+      completion,
+      this.buildKernelContext({}),
+    );
+  }
+
+  async claimManagedOutboundMail(
+    reference: ManagedOutboundMailReference,
+  ): Promise<ManagedOutboundMailClaimOutcome> {
+    const gate = await this.managedWorkGate();
+    if (!gate.allowed) throw new Error(gate.message);
+    return await claimKernelManagedOutboundMail(
+      reference,
+      this.buildKernelContext({}),
+    );
+  }
+
+  async completeManagedOutboundMail(
+    completion: ManagedOutboundMailCompletion,
+  ): Promise<void> {
+    completeKernelManagedOutboundMail(
+      completion,
+      this.buildKernelContext({}),
+    );
+  }
+
+  async unlinkManagedTelegramIdentity(
+    input: UnlinkManagedTelegramIdentityInput,
+  ): Promise<UnlinkManagedTelegramIdentityResult> {
+    const parsed = managedTelegramUnlinkSchema.parse(input);
+    if (parsed.installationId !== this.installationId) {
+      throw new Error("Managed Telegram installation identity mismatch");
+    }
+    if (parsed.surfaceId !== parsed.actorId) {
+      throw new Error("Managed Telegram unlink input is invalid");
+    }
+    const link = this.adapters.identityLinks.get("telegram", "managed", parsed.actorId);
+    if (
+      !link
+      || link.uid !== parsed.expectedLocalUid
+      || link.metadata?.managed !== true
+      || link.metadata?.surfaceId !== parsed.surfaceId
+      || link.metadata?.routeGeneration !== parsed.expectedGeneration
+    ) {
+      return { removed: false };
+    }
+    return {
+      removed: this.adapters.identityLinks.unlink("telegram", "managed", parsed.actorId),
+    };
   }
 
   async authorizeGitHttp(input: AuthorizeGitHttpInput): Promise<AuthorizeGitHttpResult> {
@@ -699,27 +1563,47 @@ export class Kernel extends Host<Env> {
   /**
    * Relay process signals using deterministic run route lookups.
    */
-  private async handleProcessSignal(processId: string, frame: SignalFrame): Promise<void> {
+  private async handleProcessSignal(
+    processId: string,
+    frame: SignalFrame<JsonValue>,
+    userFrame?: UserProcessSignalFrame,
+  ): Promise<void> {
     const ownerUid = this.procs.getOwnerUid(processId);
     if (ownerUid === null) {
       console.warn(`[Kernel] Signal from unknown process ${processId}`);
       return;
     }
 
-    const runId = this.extractRunId(frame.payload);
+    const runId = userFrame?.payload?.runId?.trim() || null;
 
     // Signal watches are scoped to the process owner, not the run-as account.
     await this.dispatchSignalWatches(ownerUid, processId, frame);
 
-    if (!isUserProcessSignal(frame.signal)) return;
+    if (!userFrame) return;
 
-    const isHilRequest = frame.signal === "proc.run.hil.requested";
-    const route = runId ? this.runRoutes.get(runId) : null;
+    let route = runId ? this.runRoutes.get(runId) : null;
 
-    // Client-facing process signals route by the owning human (owner_uid), not the
-    // run-as identity (which may be the personal agent account).
-    if (isHilRequest || !route) {
-      this.broadcastToUserUid(ownerUid, frame.signal, frame.payload);
+    this.broadcastProcessSignal(ownerUid, processId, route, userFrame);
+
+    if (frame.signal === "proc.run.finished") {
+      const process = this.procs.get(processId);
+      if (
+        process?.state === "idle"
+        && process.activeRunId === null
+        && process.queuedCount === 0
+      ) {
+        this.adapters.surfaceRoutes.clearLegacyForProcess(processId);
+      }
+    }
+    if (
+      !route
+      && runId
+      && frame.signal === "proc.run.hil.requested"
+      && !(
+        userFrame.payload?.conversationId
+      )
+    ) {
+      route = this.materializePersonalAdapterFallback(processId, runId, ownerUid);
     }
     if (!runId || !route) {
       return;
@@ -731,9 +1615,6 @@ export class Kernel extends Host<Env> {
     }
 
     if (route.kind === "connection") {
-      if (!isHilRequest) {
-        this.deliverSignalToConnection(route, frame, ownerUid);
-      }
       if (frame.signal === "proc.run.finished") {
         this.runRoutes.delete(runId);
       }
@@ -744,14 +1625,65 @@ export class Kernel extends Host<Env> {
       // HIL admission waits only for a durable outbox write, never for provider
       // delivery. This prevents a Kernel crash during the first provider call
       // from losing the approval notification after Process has entered HIL.
-      await this.queueAdapterSignalDelivery(route, frame, 1);
+      await this.queueAdapterSignalDelivery(route, userFrame, 1);
       return;
     }
     if (frame.signal === "proc.run.finished") {
-      await this.attemptAdapterSignalDelivery(route, frame, 1);
+      const payload = userFrame.payload;
+      if (payload?.delivery?.kind !== "message") {
+        this.runRoutes.delete(runId);
+        await setAdapterActivityForKernel(
+          this.bindings,
+          this.installationId,
+          route.destination.adapter,
+          route.destination.accountId,
+          route.destination.surface,
+          adapterTypingActivity(route, false),
+        ).catch(() => undefined);
+      }
       return;
     }
-    await this.deliverSignalToAdapter(route, frame);
+    await this.deliverSignalToAdapter(route, userFrame);
+  }
+
+  private materializePersonalAdapterFallback(
+    processId: string,
+    runId: string,
+    ownerUid: number,
+  ): AdapterRunRoute | null {
+    const process = this.procs.get(processId);
+    if (!process?.isPersonalController || process.ownerUid !== ownerUid) {
+      return null;
+    }
+    const preferred = this.adapters.privateDestinations.get(ownerUid);
+    if (!preferred) {
+      return null;
+    }
+    const ctx = this.buildProcessContext(processId, runId);
+    if (!ctx) {
+      return null;
+    }
+    try {
+      assertAdapterMessageDestinationAccess(preferred.destination, ownerUid, ctx);
+    } catch {
+      this.adapters.privateDestinations.clearIfMatches(ownerUid, preferred.destination);
+      return null;
+    }
+    const link = ctx.adapters.identityLinks.get(
+      preferred.destination.adapter,
+      preferred.destination.accountId,
+      preferred.destination.actorId,
+    );
+    const routeGeneration = link
+      ? identityLinkRouteGeneration(link, preferred.destination.surface)
+      : undefined;
+    return this.runRoutes.setAdapterRoute({
+      runId,
+      processId,
+      uid: ownerUid,
+      destination: preferred.destination,
+      ...(routeGeneration === undefined ? undefined : { routeGeneration }),
+    });
   }
 
   private async attemptAdapterSignalDelivery(
@@ -789,7 +1721,7 @@ export class Kernel extends Host<Env> {
     }
 
     if (outcome.state === "delivered" || outcome.state === "skipped") {
-      if (frame.signal === "proc.run.finished") {
+      if (frame.signal === "message.committed") {
         this.runRoutes.delete(route.runId);
       }
       return;
@@ -799,7 +1731,7 @@ export class Kernel extends Host<Env> {
     const deliveryError = outcome.error;
     const label = frame.signal === "proc.run.hil.requested"
       ? "approval notification"
-      : "automatic reply";
+      : "message";
     await this.queueProcessDeliveryNotice(route, frame, {
       state: terminalState,
       message: terminalState === "ambiguous"
@@ -815,16 +1747,18 @@ export class Kernel extends Host<Env> {
     frame: SignalFrame,
     attempt: number,
   ): Promise<void> {
+    const payload = frame.payload === undefined ? undefined : z.json().parse(frame.payload);
+    const retry: AdapterSignalDeliveryRetry = {
+      runId: route.runId,
+      processId: route.processId,
+      signal: frame.signal,
+      attempt,
+    };
+    if (payload !== undefined) retry.payload = payload;
     await this.schedule(
       new Date(Date.now() + (attempt === 1 ? 10 : adapterSignalRetryDelayMs(attempt - 1))),
       "onAdapterSignalDelivery",
-      {
-        runId: route.runId,
-        processId: route.processId,
-        signal: frame.signal,
-        payload: frame.payload,
-        attempt,
-      } satisfies AdapterSignalDeliveryRetry,
+      retry,
       {
         idempotent: true,
         retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
@@ -833,16 +1767,6 @@ export class Kernel extends Host<Env> {
   }
 
   async onAdapterSignalDelivery(input: AdapterSignalDeliveryRetry): Promise<void> {
-    if (
-      !input
-      || typeof input.runId !== "string"
-      || typeof input.processId !== "string"
-      || typeof input.signal !== "string"
-      || !Number.isSafeInteger(input.attempt)
-      || input.attempt < 1
-    ) {
-      return;
-    }
     const route = this.runRoutes.get(input.runId);
     if (!route || route.kind !== "adapter" || route.processId !== input.processId) {
       return;
@@ -859,7 +1783,7 @@ export class Kernel extends Host<Env> {
     runId: string,
     requestId: string,
   ): Promise<boolean> {
-    const response = await sendFrameToProcess(processId, {
+    const response = await sendFrameToProcess(this.installationId, processId, {
       type: "req",
       id: crypto.randomUUID(),
       call: "proc.history",
@@ -868,18 +1792,12 @@ export class Kernel extends Host<Env> {
     if (!response || response.type !== "res" || !response.ok) {
       throw new Error(`Unable to verify pending approval ${requestId}`);
     }
-    const data = response.data && typeof response.data === "object"
-      ? response.data as Record<string, unknown>
-      : null;
-    if (!data || data.ok !== true) {
+    const data = response.data;
+    if (!data?.ok) {
       throw new Error(`Unable to verify pending approval ${requestId}`);
     }
-    const pendingValue = data.pendingHil;
-    const pending = normalizeAdapterHilRequest(pendingValue);
-    const pendingRecord = pendingValue && typeof pendingValue === "object"
-      ? pendingValue as Record<string, unknown>
-      : null;
-    return pending?.requestId === requestId && pendingRecord?.runId === runId;
+    const pending = data.pendingHil;
+    return pending?.requestId === requestId && pending.runId === runId;
   }
 
   private async queueProcessDeliveryNotice(
@@ -900,19 +1818,20 @@ export class Kernel extends Host<Env> {
       requestId ?? "",
       outcome.state,
     ]);
+    const notice: ProcessDeliveryNoticeRetry = {
+      noticeId,
+      runId: route.runId,
+      processId: route.processId,
+      deliveryKind,
+      state: outcome.state,
+      message: outcome.message,
+      cleanupRunRoute: deliveryKind === "final",
+    };
+    if (requestId) notice.requestId = requestId;
     await this.schedule(
       new Date(Date.now() + 10),
       "onProcessDeliveryNotice",
-      {
-        noticeId,
-        runId: route.runId,
-        processId: route.processId,
-        deliveryKind,
-        ...(requestId ? { requestId } : {}),
-        state: outcome.state,
-        message: outcome.message,
-        cleanupRunRoute: deliveryKind === "final",
-      } satisfies ProcessDeliveryNoticeRetry,
+      notice,
       {
         idempotent: true,
         retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
@@ -921,19 +1840,6 @@ export class Kernel extends Host<Env> {
   }
 
   async onProcessDeliveryNotice(input: ProcessDeliveryNoticeRetry): Promise<void> {
-    if (
-      !input
-      || typeof input.noticeId !== "string"
-      || typeof input.runId !== "string"
-      || typeof input.processId !== "string"
-      || typeof input.message !== "string"
-      || (input.deliveryKind === "hil" && (
-        typeof input.requestId !== "string"
-        || input.requestId.length === 0
-      ))
-    ) {
-      return;
-    }
     const route = this.runRoutes.get(input.runId);
     if (!route || route.kind !== "adapter" || route.processId !== input.processId) {
       return;
@@ -948,17 +1854,18 @@ export class Kernel extends Host<Env> {
         return;
       }
     }
-    await sendFrameToProcess(input.processId, {
+    const payload: ProcessDeliveryNoticePayload = {
+      noticeId: input.noticeId,
+      runId: input.runId,
+      deliveryKind: input.deliveryKind,
+      state: input.state,
+      message: input.message,
+    };
+    if (requestId) payload.requestId = requestId;
+    await sendFrameToProcess(this.installationId, input.processId, {
       type: "sig",
       signal: "proc.delivery.notice",
-      payload: {
-        noticeId: input.noticeId,
-        runId: input.runId,
-        deliveryKind: input.deliveryKind,
-        ...(requestId ? { requestId } : {}),
-        state: input.state,
-        message: input.message,
-      },
+      payload,
     });
     if (input.cleanupRunRoute) {
       this.runRoutes.delete(input.runId);
@@ -967,18 +1874,12 @@ export class Kernel extends Host<Env> {
 
   private updateProcessRuntimeFromSignal(
     processId: string,
-    frame: SignalFrame,
+    frame: UserProcessSignalFrame,
     runId: string | null,
   ): boolean {
-    const payload = frame.payload && typeof frame.payload === "object"
-      ? frame.payload as Record<string, unknown>
-      : {};
-    const queuedCount = typeof payload.queuedCount === "number" && Number.isFinite(payload.queuedCount)
-      ? payload.queuedCount
-      : undefined;
-    const timestamp = typeof payload.timestamp === "number" && Number.isFinite(payload.timestamp)
-      ? payload.timestamp
-      : Date.now();
+    const payload = frame.payload;
+    const queuedCount = payload?.queuedCount;
+    const timestamp = payload?.timestamp ?? Date.now();
     const current = this.procs.get(processId);
     if (!current) {
       return false;
@@ -995,17 +1896,19 @@ export class Kernel extends Host<Env> {
           return false;
         }
       } else {
-        return frame.signal === "proc.run.finished";
+        return frame.signal === "proc.run.finished"
+          || frame.signal === "proc.run.tool.finished";
       }
     }
 
     const patchForActive = (state: ProcessState) => {
-      this.procs.updateRuntimeState(processId, {
+      const patch: ProcessRuntimePatch = {
         state,
-        ...(runId ? { activeRunId: runId } : {}),
-        ...(queuedCount !== undefined ? { queuedCount } : {}),
         lastActiveAt: timestamp,
-      });
+      };
+      if (runId) patch.activeRunId = runId;
+      if (queuedCount !== undefined) patch.queuedCount = queuedCount;
+      this.procs.updateRuntimeState(processId, patch);
     };
 
     switch (frame.signal) {
@@ -1018,22 +1921,26 @@ export class Kernel extends Host<Env> {
       case "proc.run.tool.started":
         patchForActive("waiting_tool");
         return true;
+      case "proc.run.tool.finished":
+        return true;
       case "proc.run.hil.requested":
         patchForActive("waiting_hil");
         return true;
       case "proc.run.finished":
-        this.procs.updateRuntimeState(processId, {
-          state: queuedCount && queuedCount > 0 ? "queued" : "idle",
-          activeRunId: null,
-          ...(queuedCount !== undefined ? { queuedCount } : {}),
-          lastActiveAt: timestamp,
-        });
+        {
+          const patch: ProcessRuntimePatch = {
+            state: queuedCount && queuedCount > 0 ? "queued" : "idle",
+            activeRunId: null,
+            lastActiveAt: timestamp,
+          };
+          if (queuedCount !== undefined) patch.queuedCount = queuedCount;
+          this.procs.updateRuntimeState(processId, patch);
+        }
         return true;
       case "proc.changed":
         if (
-          Array.isArray(payload.changes)
-          && payload.changes.includes("title")
-          && typeof payload.title === "string"
+          payload?.changes?.includes("title")
+          && payload.title
         ) {
           const title = Array.from(payload.title.trim()).slice(0, 80).join("");
           if (title) {
@@ -1043,8 +1950,7 @@ export class Kernel extends Host<Env> {
         if (
           runId
           && current.activeRunId === runId
-          && Array.isArray(payload.changes)
-          && payload.changes.includes("messages")
+          && payload?.changes?.includes("messages")
         ) {
           patchForActive("running");
           return true;
@@ -1061,9 +1967,13 @@ export class Kernel extends Host<Env> {
     }
   }
 
-  private enqueueProcessSignal(processId: string, frame: SignalFrame): Promise<void> {
+  private enqueueProcessSignal(
+    processId: string,
+    frame: SignalFrame<JsonValue>,
+    userFrame?: UserProcessSignalFrame,
+  ): Promise<void> {
     const previous = this.pendingProcessSignals.get(processId) ?? Promise.resolve();
-    const delivery = previous.then(() => this.handleProcessSignal(processId, frame));
+    const delivery = previous.then(() => this.handleProcessSignal(processId, frame, userFrame));
     const queued = delivery
       .catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
@@ -1078,11 +1988,14 @@ export class Kernel extends Host<Env> {
     return delivery;
   }
 
-  private completeIpcCallsForProcessSignal(processId: string, frame: SignalFrame): void {
+  private completeIpcCallsForProcessSignal(
+    processId: string,
+    frame: UserProcessSignalFrame,
+  ): void {
     if (frame.signal !== "proc.run.finished") {
       return;
     }
-    const runId = this.extractRunId(frame.payload);
+    const runId = frame.payload?.runId?.trim() || null;
     if (!runId) {
       return;
     }
@@ -1091,16 +2004,15 @@ export class Kernel extends Host<Env> {
       return;
     }
 
-    const payload = frame.payload && typeof frame.payload === "object"
-      ? frame.payload as Record<string, unknown>
-      : {};
-    const response = {
-      text: typeof payload.text === "string" ? payload.text : null,
-      usage: payload.usage ?? null,
+    const payload = frame.payload;
+    const response: IpcCompletionResponse = {
+      text: payload?.result?.text ?? null,
+      usage: payload?.usage ?? null,
     };
-    const status = typeof payload.status === "string" ? payload.status : "ok";
-    const reason = typeof payload.reason === "string" ? payload.reason : null;
-    const error = typeof payload.error === "string"
+    if (payload?.result?.media?.length) response.media = payload.result.media;
+    const status = payload?.status ?? "ok";
+    const reason = payload?.reason ?? null;
+    const error = payload?.error
       ? payload.error
       : status === "aborted"
         ? `Target run was aborted${reason ? `: ${reason}` : ""}`
@@ -1123,6 +2035,8 @@ export class Kernel extends Host<Env> {
     });
 
     for (const callId of completed) {
+      const call = this.ipcCalls.get(callId);
+      if (call) this.returnDelegatedResponsibility(call);
       this.queueIpcCallDelivery(callId);
     }
   }
@@ -1145,6 +2059,11 @@ export class Kernel extends Host<Env> {
       return;
     }
     try {
+      this.returnDelegatedResponsibility(call);
+      if (call.responsibilityId && !this.procs.get(call.sourcePid)) {
+        this.ipcCalls.remove(callId);
+        return;
+      }
       await this.deliverIpcCallSignal(call);
       this.ipcCalls.remove(callId);
     } catch (error) {
@@ -1158,36 +2077,23 @@ export class Kernel extends Host<Env> {
   }
 
   private async deliverIpcCallSignal(call: IpcCallRecord): Promise<void> {
-    await sendFrameToProcess(call.sourcePid, {
+    const payload: IpcDeliverySignalPayload = {
+      callId: call.callId,
+      sourcePid: call.sourcePid,
+      targetPid: call.targetPid,
+      runId: call.targetRunId,
+      deadlineAt: call.deadlineAt,
+      createdAt: call.createdAt,
+      status: call.status,
+    };
+    if (call.sourceRunId) payload.sourceRunId = call.sourceRunId;
+    if (call.status === "completed") payload.response = call.response;
+    if (call.error) payload.error = call.error;
+    await sendFrameToProcess(this.installationId, call.sourcePid, {
       type: "sig",
       signal: call.status === "timed_out" ? "ipc.timeout" : "ipc.reply",
-      payload: {
-        callId: call.callId,
-        sourcePid: call.sourcePid,
-        ...(call.sourceRunId ? { sourceRunId: call.sourceRunId } : {}),
-        targetPid: call.targetPid,
-        runId: call.targetRunId,
-        deadlineAt: call.deadlineAt,
-        createdAt: call.createdAt,
-        status: call.status,
-        ...(call.status === "completed" ? { response: call.response } : {}),
-        ...(call.error ? { error: call.error } : {}),
-      },
+      payload,
     });
-  }
-
-  private deliverSignalToConnection(
-    route: Extract<RunRoute, { kind: "connection" }>,
-    frame: SignalFrame,
-    uid: number,
-  ): void {
-    const conn = this.connections.get(route.connectionId);
-    if (!conn) {
-      this.broadcastToUserUid(uid, frame.signal, frame.payload);
-      return;
-    }
-
-    conn.send(JSON.stringify(frame));
   }
 
   private async deliverSignalToAdapter(
@@ -1197,11 +2103,12 @@ export class Kernel extends Host<Env> {
     const { adapter, accountId, surface } = route.destination;
     if (frame.signal === "proc.run.started") {
       await setAdapterActivityForKernel(
-        this.env,
+        this.bindings,
+        this.installationId,
         adapter,
         accountId,
         surface,
-        { kind: "typing", active: true },
+        adapterTypingActivity(route, true),
       );
       return { state: "delivered" };
     }
@@ -1210,11 +2117,12 @@ export class Kernel extends Host<Env> {
       const request = normalizeAdapterHilRequest(frame.payload, "signal");
       if (!request) {
         await setAdapterActivityForKernel(
-          this.env,
+          this.bindings,
+          this.installationId,
           adapter,
           accountId,
           surface,
-          { kind: "typing", active: false },
+          adapterTypingActivity(route, false),
         ).catch(() => undefined);
         return { state: "skipped" };
       }
@@ -1226,58 +2134,53 @@ export class Kernel extends Host<Env> {
         });
       } finally {
         await setAdapterActivityForKernel(
-          this.env,
+          this.bindings,
+          this.installationId,
           adapter,
           accountId,
           surface,
-          { kind: "typing", active: false },
+          adapterTypingActivity(route, false),
         ).catch((error) => {
           console.warn(`[Kernel] Failed to stop adapter typing for ${route.runId}:`, error);
         });
       }
     }
 
-    if (frame.signal !== "proc.run.finished") {
-      return { state: "skipped" };
-    }
-
-    const payload =
-      frame.payload && typeof frame.payload === "object"
-        ? (frame.payload as Record<string, unknown>)
-        : {};
-
-    const text =
-      typeof payload.error === "string" && payload.error.trim().length > 0
-        ? `Error: ${payload.error}`
-        : typeof payload.text === "string"
-          ? payload.text
-          : "";
-
-    try {
-      const attachmentBundle = await this.bundleProcessReplyMedia(
-        route.processId,
-        payload.media,
-      );
-
-      if (!text.trim() && attachmentBundle.media.length === 0) {
-        return { state: "delivered" };
+    if (frame.signal === "message.committed") {
+      const parsed = z.object({ message: adapterConversationMessageSchema }).safeParse(frame.payload);
+      if (!parsed.success) return { state: "skipped" };
+      const message = parsed.data.message;
+      if (!message || message.processId !== route.processId || message.runId !== route.runId) {
+        return { state: "skipped" };
       }
-      return await this.deliverAdapterRouteReply(route, {
-        deliveryId: `${route.runId}:finished`,
-        text,
-        ...(attachmentBundle.media.length > 0 ? { media: attachmentBundle.media } : {}),
-      }, attachmentBundle.body);
-    } finally {
-      await setAdapterActivityForKernel(
-        this.env,
-        adapter,
-        accountId,
-        surface,
-        { kind: "typing", active: false },
-      ).catch((error) => {
-        console.warn(`[Kernel] Failed to stop adapter typing for ${route.runId}:`, error);
-      });
+      try {
+        const attachmentBundle = await this.bundleConversationReplyMedia(
+          message.conversationId,
+          message.media,
+          message.author.uid,
+        );
+        if (!message.text.trim() && attachmentBundle.media.length === 0) {
+          return { state: "delivered" };
+        }
+        const reply: AdapterCommittedReply = {
+          deliveryId: message.id,
+          text: message.text,
+        };
+        if (attachmentBundle.media.length > 0) reply.media = attachmentBundle.media;
+        return await this.deliverAdapterRouteReply(route, reply, attachmentBundle.body);
+      } finally {
+        await setAdapterActivityForKernel(
+          this.bindings,
+          this.installationId,
+          adapter,
+          accountId,
+          surface,
+          adapterTypingActivity(route, false),
+        ).catch(() => undefined);
+      }
     }
+
+    return { state: "skipped" };
   }
 
   private async deliverAdapterRouteReply(
@@ -1301,6 +2204,7 @@ export class Kernel extends Host<Env> {
       assertAdapterMessageDestinationAccess(route.destination, route.uid, ctx);
     } catch (error) {
       await cancelBinaryBody(body, error);
+      ctx.adapters.privateDestinations.clearIfMatches(route.uid, route.destination);
       // Revocation is a permanent delivery outcome, not a transport outage.
       // A HIL signal was already broadcast to any connected GSV client, and a
       // terminal result must not retry forever after the user removes access.
@@ -1317,7 +2221,16 @@ export class Kernel extends Host<Env> {
 
     const result = await deliverAdapterReply(route.destination, route.uid, {
       ...message,
+      text: prefixAdapterDmProcessReply(
+        message.text,
+        route.processId,
+        route.destination,
+        ctx,
+      ),
       replyToId: message.replyToId ?? route.replyToId,
+      ...(route.routeGeneration === undefined
+        ? undefined
+        : { routeGeneration: route.routeGeneration }),
     }, ctx, body);
     if (!result.ok) {
       const detail = `Adapter reply failed (${route.destination.adapter}): ${result.error}`;
@@ -1336,105 +2249,113 @@ export class Kernel extends Host<Env> {
     return { state: "delivered" };
   }
 
-  private async bundleProcessReplyMedia(
-    processId: string,
-    value: unknown,
+  private async bundleConversationReplyMedia(
+    conversationId: string,
+    value: MessageAttachment[] | undefined,
+    authorUid: number,
   ): Promise<{ media: AdapterMedia[]; body?: BinaryBody }> {
     if (value === undefined) {
       return { media: [] };
-    }
-    if (!Array.isArray(value)) {
-      throw new AdapterReplyMediaError("Process reply media must be an array");
     }
     if (value.length > MAX_MESSAGE_MEDIA_ITEMS) {
       throw new AdapterReplyMediaError(
         `Process reply media exceeds item limit (${MAX_MESSAGE_MEDIA_ITEMS})`,
       );
     }
-    const process = this.procs.get(processId);
-    if (!process) {
-      throw new AdapterReplyMediaError(`Unknown process for reply media: ${processId}`);
-    }
-
-    const prefix = processMediaPrefix(process.uid, processId);
+    const conversation = getConversationById(this.installationId, conversationId);
     const parts: AdapterMediaPart[] = [];
     let totalBytes = 0;
     try {
-      for (const raw of value) {
-        if (!raw || typeof raw !== "object") {
-          throw new AdapterReplyMediaError("Process reply media entries must be objects");
+      for (const item of value) {
+        if (item.type === "resource") {
+          const { ref } = item;
+          const account = this.auth.getPasswdByUid(authorUid);
+          const key = ref.path.replace(/^\/+/, "");
+          const object = ref.target === "gsv" && ref.expiresAt === undefined
+            ? await this.installationStorage.get(key)
+            : null;
+          const matches = account
+            && object
+            && agentArchiveMediaPath(account.home, key) === ref.path
+            && object.httpEtag === ref.revision
+            && object.size === ref.size
+            && isValidAgentArchiveMediaObject({
+              home: account.home,
+              key,
+              uid: account.uid,
+              gid: account.gid,
+              object,
+              expectedContentType: ref.contentType,
+            });
+          if (!matches || !object) {
+            await object?.body.cancel("Message resource descriptor mismatch").catch(() => {});
+            throw new AdapterReplyMediaError("Message resource does not match retained data");
+          }
+          if (ref.size > MAX_MESSAGE_MEDIA_PART_BYTES) {
+            await object.body.cancel("Message resource exceeds the per-item limit").catch(() => {});
+            throw new AdapterReplyMediaError(
+              `Message media exceeds per-item limit (${MAX_MESSAGE_MEDIA_PART_BYTES} bytes)`,
+            );
+          }
+          totalBytes += ref.size;
+          if (totalBytes > MAX_MESSAGE_MEDIA_TOTAL_BYTES) {
+            await object.body.cancel("Message resources exceed the total limit").catch(() => {});
+            throw new AdapterReplyMediaError(
+              `Message media exceeds total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
+            );
+          }
+          const media: AdapterMedia = {
+            type: item.mediaType ?? mediaTypeFromContentType(ref.contentType),
+            mimeType: ref.contentType,
+            size: ref.size,
+          };
+          if (item.filename) media.filename = item.filename;
+          if (item.duration !== undefined) media.duration = item.duration;
+          if (item.transcription) media.transcription = item.transcription;
+          parts.push({ media, body: { stream: object.body, length: object.size } });
+          continue;
         }
-        const item = raw as Record<string, unknown>;
-        const key = typeof item.key === "string" ? item.key.trim() : "";
-        const activePath = key.startsWith(prefix) ? processMediaPath(key) : null;
-        const archivePath = key ? agentArchiveMediaPath(process.home, key) : null;
-        const path = activePath ?? archivePath;
-        if (!key || !path || item.path !== path) {
-          throw new AdapterReplyMediaError("Process reply media key is outside the emitting process");
+        const key = item.key?.trim() ?? "";
+        if (!key || item.conversationId !== conversationId) {
+          throw new AdapterReplyMediaError("Message media is outside its conversation");
         }
-        if (!(["image", "audio", "video", "document"] as unknown[]).includes(item.type)) {
-          throw new AdapterReplyMediaError("Process reply media has an invalid type");
-        }
-        const mimeType = typeof item.mimeType === "string" ? item.mimeType.trim() : "";
+        const mimeType = item.mimeType.trim();
         if (!mimeType) {
           throw new AdapterReplyMediaError("Process reply media requires mimeType");
         }
-        const object = await this.env.STORAGE.get(key);
-        if (!object) {
-          throw new AdapterReplyMediaError(`Process reply media not found: ${key}`);
-        }
-        if (
-          archivePath
-          && !isValidAgentArchiveMediaObject({
-            home: process.home,
-            key,
-            uid: process.uid,
-            gid: process.gid,
-            object,
-            expectedContentType: mimeType,
-          })
-        ) {
-          await object.body.cancel("Process reply archive metadata mismatch").catch(() => {});
-          throw new AdapterReplyMediaError(
-            `Process reply media archive metadata does not match the emitting process: ${key}`,
-          );
-        }
+        const object = await conversation.readMedia({ key });
         if (object.size > MAX_MESSAGE_MEDIA_PART_BYTES) {
-          await object.body.cancel("Process reply media exceeds the per-item limit").catch(() => {});
+          await object.stream.cancel("Conversation media exceeds the per-item limit").catch(() => {});
           throw new AdapterReplyMediaError(
-            `Process reply media exceeds per-item limit (${MAX_MESSAGE_MEDIA_PART_BYTES} bytes)`,
+            `Message media exceeds per-item limit (${MAX_MESSAGE_MEDIA_PART_BYTES} bytes)`,
           );
         }
         totalBytes += object.size;
         if (totalBytes > MAX_MESSAGE_MEDIA_TOTAL_BYTES) {
-          await object.body.cancel("Process reply media exceeds the total limit").catch(() => {});
+          await object.stream.cancel("Conversation media exceeds the total limit").catch(() => {});
           throw new AdapterReplyMediaError(
-            `Process reply media exceeds total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
+            `Message media exceeds total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
           );
         }
-        const storedMimeType = object.httpMetadata?.contentType || "application/octet-stream";
-        if (storedMimeType !== mimeType || item.size !== object.size) {
-          await object.body.cancel("Process reply media descriptor mismatch").catch(() => {});
+        if (object.mimeType !== mimeType || item.size !== object.size) {
+          await object.stream.cancel("Conversation media descriptor mismatch").catch(() => {});
           throw new AdapterReplyMediaError(
-            `Process reply media descriptor does not match stored data: ${key}`,
+            `Message media descriptor does not match stored data: ${key}`,
           );
         }
-        parts.push({
-          media: {
-            type: item.type as AdapterMedia["type"],
+        const media: AdapterMedia = {
+            type: item.type,
             mimeType,
             size: object.size,
-            ...(typeof item.filename === "string" && item.filename
-              ? { filename: item.filename }
-              : {}),
-            ...(typeof item.duration === "number" && Number.isFinite(item.duration)
-              ? { duration: item.duration }
-              : {}),
-            ...(typeof item.transcription === "string" && item.transcription
-              ? { transcription: item.transcription }
-              : {}),
-          },
-          body: { stream: object.body, length: object.size },
+        };
+        if (item.filename) media.filename = item.filename;
+        if (item.duration !== undefined && Number.isFinite(item.duration)) {
+          media.duration = item.duration;
+        }
+        if (item.transcription) media.transcription = item.transcription;
+        parts.push({
+          media,
+          body: { stream: object.stream, length: object.size },
         });
       }
       return await bundleAdapterMedia(parts);
@@ -1504,7 +2425,10 @@ export class Kernel extends Host<Env> {
     });
   }
 
-  private async handleServiceReq(frame: RequestFrame): Promise<ResponseFrame> {
+  private async handleServiceReq(
+    profile: ServicePeerProfile,
+    frame: RequestFrame,
+  ): Promise<ResponseFrame> {
     if (frame.call === "sys.connect" || frame.call === "sys.setup" || frame.call === "sys.setup.assist") {
       return errFrame(frame.id, 400, `${frame.call} is not supported via serviceFrame`);
     }
@@ -1513,50 +2437,70 @@ export class Kernel extends Host<Env> {
       return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
     }
 
-    const identity = this.buildServiceBindingIdentity(frame);
+    const identity = this.buildServiceBindingIdentity(profile);
     if (!identity) {
       return errFrame(frame.id, 503, "Service identity is not configured");
     }
-    if (!hasCapability(identity.capabilities, frame.call)) {
+    const args = serviceBindingArgsSchema.safeParse(frame.args);
+    if (args.success && args.data.adapter && args.data.adapter.toLowerCase() !== profile.id) {
+      return errFrame(frame.id, 403, "Service peer cannot act as another adapter");
+    }
+    const peer = servicePeerContext({
+      installationId: this.installationId,
+      profile,
+      sessionId: `service:${profile.id}`,
+      identity,
+    });
+    if (!peerAllowsCall(peer, frame.call)) {
       return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
     }
 
-    const ctx = this.buildKernelContext({ identity });
-    const origin: RouteOrigin = { type: "process", id: "__service_binding__" };
-    const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
-
-    if (!result.handled) {
-      return errFrame(frame.id, 501, `${frame.call} requires unsupported async routing`);
-    }
-
-    this.applyPostDispatchEffects(frame, result.response);
-    return result.response;
+    const ctx = this.buildKernelContext({ identity, peer });
+    return await this.dispatchPeerRequest(
+      frame,
+      { type: "kernel", id: frame.id },
+      ctx,
+      { awaitRouted: true },
+    ) ?? errFrame(frame.id, 500, "Service request did not produce a response");
   }
 
-  private buildContext(connection: Connection<ConnectionState>): KernelContext {
+  private buildContext(connection: KernelConnection<ConnectionState>): KernelContext {
     const state = connection.state;
     if (!state) throw new Error("Connection state is missing");
+    const peer = state.peer
+      ? connectedPeerContext({
+          installationId: this.installationId,
+          peer: state.peer,
+          credential: state.credentialMethod ?? "token",
+        })
+      : undefined;
     return this.buildKernelContext({
       connection,
-      identity: state.identity as ConnectionIdentity | undefined,
+      peer,
+      identity: state.peer ? peerConnectionIdentity(state.peer) : undefined,
     });
   }
 
   private buildKernelContext(options: {
-    connection?: Connection | null;
+    connection?: KernelConnection<ConnectionState> | null;
+    peer?: PeerContext;
     identity?: ConnectionIdentity;
     processId?: string;
     processRunId?: string;
     requestSignal?: AbortSignal;
     callerOwnerUid?: number;
   }): KernelContext {
+    const installationIdentity = this.installationIdentity ?? null;
     return {
-      env: this.env,
+      env: this.bindings,
+      installationId: this.installationId,
+      installationIdentity,
       auth: this.auth,
       caps: this.caps,
       config: this.config,
       devices: this.devices,
       procs: this.procs,
+      conversations: this.conversations,
       oauth: this.oauth,
       mcp: this.mcp,
       mcpServers: this.mcpServers,
@@ -1566,13 +2510,18 @@ export class Kernel extends Host<Env> {
       signalWatches: this.signalWatches,
       ipcCalls: this.ipcCalls,
       schedules: this.schedules,
+      mailboxes: this.mailboxes,
+      responsibilities: this.responsibilities,
+      responsibilitySources: this.responsibilitySources,
       connection: options.connection ?? null,
+      peer: options.peer,
       identity: options.identity,
       processId: options.processId,
       processRunId: options.processRunId,
       requestSignal: options.requestSignal,
       callerOwnerUid: options.callerOwnerUid,
       serverVersion: SERVER_VERSION,
+      defer: (promise) => this.ctx.waitUntil(promise),
       broadcastToUserUid: this.broadcastToUserUid.bind(this),
       scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
       failIpcCallsByTarget: this.failIpcCallsByTarget.bind(this),
@@ -1580,8 +2529,16 @@ export class Kernel extends Host<Env> {
       cancelScheduleWake: async (wakeScheduleId) => {
         await this.cancelSchedule(wakeScheduleId);
       },
+      reconcileResponsibilityWake: this.reconcileResponsibilityWake.bind(this),
+      scheduleManagedOutboundEnqueue: async (outboundId, dueAtMs) => {
+        await this.scheduleManagedOutboundEnqueue(outboundId, dueAtMs);
+      },
       runSchedules: this.runSchedules.bind(this),
-      addMcpServerConnection: this.addMcpServerConnection.bind(this),
+      addMcpServerConnection: (input) => this.addMcpServerConnection({
+        ...input,
+        callbackHost: input.callbackHost
+          ?? (options.connection ? new URL(options.connection.uri).origin : undefined),
+      }),
       removeMcpServerConnection: this.removeMcpServer.bind(this),
       refreshMcpServerConnection: this.refreshMcpServerConnection.bind(this),
       callMcpTool: (serverId, toolName, args, signal) => this.mcp.callTool(
@@ -1593,7 +2550,16 @@ export class Kernel extends Host<Env> {
         undefined,
         signal ? { signal } : undefined,
       ),
+      request: this.requestDispatchedFrame.bind(this),
     };
+  }
+
+  private get bindings(): Env {
+    return this.installationEnv ?? this.env;
+  }
+
+  private get storage(): R2Bucket {
+    return this.installationStorage ?? this.env.STORAGE;
   }
 
   private buildDispatchDeps(): DispatchDeps {
@@ -1612,38 +2578,74 @@ export class Kernel extends Host<Env> {
     ctx: KernelContext,
     signal?: AbortSignal,
   ): Promise<ResponseFrame> {
-    if (isInternalOnlySyscall(frame.call)) {
-      await cancelUnlockedBody(frame.body, "Dispatched request rejected");
-      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
+    try {
+      const response = await this.dispatchPeerRequest(
+        frame,
+        { type: "kernel", id: frame.id },
+        ctx,
+        { awaitRouted: true, signal, throwOnCancel: true },
+      );
+      return response ?? errFrame(frame.id, 500, "Dispatched request did not produce a response");
+    } finally {
+      await cancelUnlockedBody(frame.body, "Dispatched request completed");
     }
-    if (!hasCapability(ctx.identity?.capabilities ?? [], frame.call)) {
-      await cancelUnlockedBody(frame.body, "Dispatched request rejected");
-      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
+  }
+
+  private async dispatchPeerRequest(
+    inputFrame: RequestFrame,
+    origin: RouteOrigin,
+    ctx: KernelContext,
+    options: {
+      awaitRouted: boolean;
+      signal?: AbortSignal;
+      throwOnCancel?: boolean;
+    },
+  ): Promise<ResponseFrame | null> {
+    if (isInternalOnlySyscall(inputFrame.call)) {
+      return errFrame(inputFrame.id, 403, `Permission denied: ${inputFrame.call}`);
+    }
+    const allowed = ctx.peer
+      ? peerAllowsCall(ctx.peer, inputFrame.call)
+      : hasCapability(ctx.identity?.capabilities ?? [], inputFrame.call);
+    if (!allowed) {
+      return errFrame(inputFrame.id, 403, `Permission denied: ${inputFrame.call}`);
     }
 
-    const requestSignal = ctx.requestSignal && signal && ctx.requestSignal !== signal
-      ? AbortSignal.any([ctx.requestSignal, signal])
-      : signal ?? ctx.requestSignal;
-    if (requestSignal?.aborted) {
-      await cancelUnlockedBody(frame.body, "Request cancelled");
-      throw requestAbortError(requestSignal.reason);
+    const callerSignal = ctx.requestSignal && options.signal && ctx.requestSignal !== options.signal
+      ? AbortSignal.any([ctx.requestSignal, options.signal])
+      : options.signal ?? ctx.requestSignal;
+    if (callerSignal?.aborted) {
+      if (options.throwOnCancel) throw requestAbortError(callerSignal.reason);
+      return null;
     }
 
-    const origin: RouteOrigin = { type: "kernel", id: frame.id };
-    const pending = this.createPendingKernelResponse(frame.id);
+    let controller: AbortController;
+    try {
+      controller = this.registerActiveRequest(origin, inputFrame.id);
+    } catch (error) {
+      return errFrame(
+        inputFrame.id,
+        409,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    const requestSignal = callerSignal
+      ? AbortSignal.any([controller.signal, callerSignal])
+      : controller.signal;
+    const pending = options.awaitRouted
+      ? this.createPendingKernelResponse(inputFrame.id)
+      : null;
     const cancel = () => {
       this.cancelRequest(
         origin,
-        frame.id,
-        requestAbortError(requestSignal?.reason).message,
+        inputFrame.id,
+        requestAbortError(requestSignal.reason).message,
         false,
       );
     };
+    let frame = this.bindRequestBodyCancellation(inputFrame, requestSignal);
 
     try {
-      if (requestSignal) {
-        frame = this.bindRequestBodyCancellation(frame, requestSignal);
-      }
       const result = await raceWithAbort(
         dispatch(
           frame,
@@ -1653,7 +2655,7 @@ export class Kernel extends Host<Env> {
         ),
         requestSignal,
         {
-          abortReason: () => requestAbortError(requestSignal?.reason),
+          abortReason: () => requestAbortError(requestSignal.reason),
           onAbort: cancel,
           onLateResolve: (late) => {
             if (late.handled && late.response.ok) {
@@ -1662,26 +2664,30 @@ export class Kernel extends Host<Env> {
           },
         },
       );
-      const response = result.handled
-        ? result.response
-        : await raceWithAbort(
-            pending.promise,
-            requestSignal,
-            {
-              abortReason: () => requestAbortError(requestSignal?.reason),
-              onAbort: cancel,
-              onLateResolve: (late) => {
-                if (late.ok) {
-                  void cancelUnlockedBody(late.body, "Request was cancelled");
-                }
-              },
+      let response: ResponseFrame | null = result.handled ? result.response : null;
+      if (!response && pending) {
+        response = await raceWithAbort(
+          pending.promise,
+          requestSignal,
+          {
+            abortReason: () => requestAbortError(requestSignal.reason),
+            onAbort: cancel,
+            onLateResolve: (late) => {
+              if (late.ok) {
+                void cancelUnlockedBody(late.body, "Request was cancelled");
+              }
             },
-          );
-      this.applyPostDispatchEffects(frame, response);
+          },
+        );
+      }
+      if (response) this.applyPostDispatchEffects(frame, response);
       return response;
+    } catch (error) {
+      if (!requestSignal.aborted || options.throwOnCancel) throw error;
+      return null;
     } finally {
-      pending.cleanup();
-      await cancelUnlockedBody(frame.body, "Dispatched request completed");
+      pending?.cleanup();
+      this.finishActiveRequest(frame.id, controller);
     }
   }
 
@@ -1694,7 +2700,7 @@ export class Kernel extends Host<Env> {
     ttlMs: number;
   }): Promise<{
     cancel: () => void;
-    attachBody: (body: { cancel(reason?: unknown): Promise<void> }) => void;
+    attachBody: (body: CancellableFrameBody) => void;
   }> {
     const scheduleId = (await this.schedule(
       route.ttlMs / 1000,
@@ -1753,7 +2759,7 @@ export class Kernel extends Host<Env> {
     const body = frame.body;
     frame.body = {
       ...body,
-      stream: bindStreamToAbort(body.stream, signal),
+      stream: bindByteStreamToAbort(body.stream, signal),
     };
     return frame;
   }
@@ -1797,14 +2803,12 @@ export class Kernel extends Host<Env> {
       active.controller.abort(new Error(message));
     }
     if (route && ownsRoute) {
-      if (!internalKernelRoute) {
-        this.sendDeviceRequestCancel(
-          route.deviceId,
-          route.driverConnectionId,
-          requestId,
-          message,
-        );
-      }
+      this.sendDeviceRequestCancel(
+        route.deviceId,
+        route.driverConnectionId,
+        requestId,
+        message,
+      );
       this.cancelRoute(requestId);
     }
     if (ownsActive || ownsRoute) {
@@ -1871,31 +2875,38 @@ export class Kernel extends Host<Env> {
     void body.cancel(reason);
   }
 
-  private decodeWebSocketFrame(
-    connection: Connection<ConnectionState>,
-    frame: Frame,
-  ): Frame {
-    const descriptor = (frame as unknown as { body?: BinaryFrameDescriptor }).body;
-    if (descriptor === undefined) {
-      return frame;
-    }
-    if (frame.type === "sig" || (frame.type === "res" && !frame.ok)) {
-      throw new Error("This frame type cannot carry a body");
-    }
-    return {
-      ...frame,
-      body: this.receiveFrameBody(connection, descriptor),
-    } as Frame;
+  private decodeWebSocketRequestFrame(
+    connection: KernelConnection<ConnectionState>,
+    frame: WireRequestFrame,
+  ): RequestFrame {
+    const { body, ...request } = frame;
+    return body === undefined
+      ? request
+      : { ...request, body: this.receiveFrameBody(connection, body) };
+  }
+
+  private decodeWebSocketResponseFrame(
+    connection: KernelConnection<ConnectionState>,
+    frame: WireResponseFrame,
+  ): ResponseFrame {
+    if (!frame.ok) return frame;
+    const { body, ...response } = frame;
+    return body === undefined
+      ? response
+      : { ...response, body: this.receiveFrameBody(connection, body) };
   }
 
   private receiveFrameBody(
-    connection: Connection<ConnectionState>,
+    connection: KernelConnection<ConnectionState>,
     descriptor: BinaryFrameDescriptor,
   ): FrameBody {
     return this.frameBodyChannel(connection).receive(descriptor);
   }
 
-  private sendWebSocketFrame(connection: Connection, frame: Frame): OutgoingBinaryBody | null {
+  private sendWebSocketFrame(
+    connection: KernelConnection<ConnectionState>,
+    frame: Frame,
+  ): OutgoingBinaryBody | null {
     const body = frame.type === "sig" || (frame.type === "res" && !frame.ok)
       ? undefined
       : frame.body;
@@ -1918,7 +2929,7 @@ export class Kernel extends Host<Env> {
     return outgoing;
   }
 
-  private frameBodyChannel(connection: Connection): BinaryBodyChannel {
+  private frameBodyChannel(connection: KernelConnection<ConnectionState>): BinaryBodyChannel {
     let channel = this.frameBodyChannels.get(connection.id);
     if (!channel) {
       channel = new BinaryBodyChannel({
@@ -1936,22 +2947,17 @@ export class Kernel extends Host<Env> {
 
   private async requestDevice(
     deviceId: string,
-    call: string,
-    args: unknown,
-    options: {
-      ttlMs?: number;
-      body?: FrameBody;
-      id?: string;
-      signal?: AbortSignal;
-    } = {},
-  ): Promise<Extract<ResponseFrame, { ok: true }>> {
+    call: "net.fetch",
+    args: NetFetchArgs,
+    options: DeviceRequestOptions = {},
+  ): Promise<ResponseOkFrame<"net.fetch">> {
     const id = options.id ?? crypto.randomUUID();
     let cleanupPending: (() => void) | null = null;
     let route: { cancel: () => void } | null = null;
     let outgoing: OutgoingBinaryBody | null = null;
     let onAbort: (() => void) | null = null;
     let requestSent = false;
-    let completionReason: unknown = "Device request completed";
+    let completionReason: FrameCancellationReason = "Device request completed";
 
     try {
       if (options.signal?.aborted) {
@@ -1974,7 +2980,7 @@ export class Kernel extends Host<Env> {
       cleanupPending = pending.cleanup;
       route = await this.registerRouteWithExpiry({
         id,
-        call: call as SyscallName,
+        call,
         origin: { type: "kernel", id },
         deviceId,
         driverConnectionId: deviceConn.id,
@@ -1984,13 +2990,15 @@ export class Kernel extends Host<Env> {
         throw requestAbortError(options.signal.reason);
       }
 
-      outgoing = this.sendWebSocketFrame(deviceConn, {
+      // SAFETY: dispatch supplies args from the syscall schema associated with call.
+      const requestFrame = {
         type: "req",
         id,
         call,
         args,
-        ...(options.body ? { body: options.body } : {}),
-      } as RequestFrame);
+      } as RequestFrame;
+      if (options.body) requestFrame.body = options.body;
+      outgoing = this.sendWebSocketFrame(deviceConn, requestFrame);
       requestSent = true;
       const frame = options.signal
         ? await Promise.race([
@@ -2017,9 +3025,10 @@ export class Kernel extends Host<Env> {
       if (!frame.ok) {
         throw new Error(frame.error.message);
       }
-      return frame;
+      // SAFETY: the pending route was registered for the net.fetch request above.
+      return frame as ResponseOkFrame<"net.fetch">;
     } catch (error) {
-      completionReason = error;
+      completionReason = error instanceof Error ? error : String(error);
       throw error;
     } finally {
       if (onAbort) {
@@ -2036,7 +3045,7 @@ export class Kernel extends Host<Env> {
     }
   }
 
-  private findDeviceConnection(deviceId: string): Connection<ConnectionState> | null {
+  private findDeviceConnection(deviceId: string): KernelConnection<ConnectionState> | null {
     for (const [, conn] of this.connections) {
       if (this.isConnectionForDevice(conn, deviceId)) {
         return conn;
@@ -2045,11 +3054,14 @@ export class Kernel extends Host<Env> {
     return null;
   }
 
-  private isConnectionForDevice(connection: Connection<ConnectionState>, deviceId: string): boolean {
+  private isConnectionForDevice(
+    connection: KernelConnection<ConnectionState>,
+    deviceId: string,
+  ): boolean {
     const state = connection.state;
     return state?.step === "connected" &&
-      state.identity?.role === "driver" &&
-      state.identity.device === deviceId;
+      state.peer?.id === deviceId &&
+      peerProvidesOperations(state.peer);
   }
 
   private disconnectDeviceConnections(deviceId: string, reason: string): void {
@@ -2070,19 +3082,86 @@ export class Kernel extends Host<Env> {
     }
   }
 
-  private async scheduleIpcCallTimeout(callId: string, deadlineAt: number): Promise<string> {
+  private async scheduleIpcCallTimeout(
+    callId: string,
+    deadlineAt: number,
+    options?: { terminateTargetOnTimeout?: boolean },
+  ): Promise<string> {
     const sched = await this.schedule(
       new Date(Math.ceil(Math.max(Date.now() + 1_000, deadlineAt) / 1_000) * 1_000),
       "onIpcCallTimeout",
-      callId,
+      options?.terminateTargetOnTimeout
+        ? { callId, terminateTargetOnTimeout: true } satisfies IpcCallTimeout
+        : callId,
     );
     return sched.id;
   }
 
   private failIpcCallsByTarget(uid: number, targetPid: string, error: string): void {
     for (const callId of this.ipcCalls.failByTargetPid({ uid, targetPid, error })) {
+      const call = this.ipcCalls.get(callId);
+      if (call) this.returnDelegatedResponsibility(call);
       this.queueIpcCallDelivery(callId);
     }
+  }
+
+  private returnDelegatedResponsibility(call: IpcCallRecord): void {
+    if (!call.responsibilityId) return;
+    const current = this.responsibilities.get(call.ownerUid, call.responsibilityId);
+    if (
+      !current
+      || current.state === "resolved"
+      || current.state === "cancelled"
+      || current.assignee.kind !== "process"
+      || current.assignee.processId !== call.targetPid
+    ) {
+      return;
+    }
+
+    const eventType = call.status === "timed_out"
+      ? "process.delegation.timed_out"
+      : call.error?.toLowerCase().includes("killed")
+        ? "process.delegation.killed"
+        : call.error
+          ? "process.delegation.failed"
+          : "process.delegation.completed";
+    const completedAtMs = Date.now();
+    const delegation: JsonObject = {
+      eventType,
+      callId: call.callId,
+      processId: call.targetPid,
+      runId: call.targetRunId,
+      status: call.status,
+      completedAtMs,
+    };
+    if (call.sourceRunId) delegation.sourceRunId = call.sourceRunId;
+    if (call.error) delegation.error = call.error.slice(0, 2_000);
+    this.responsibilities.update({
+      ownerUid: call.ownerUid,
+      id: current.id,
+      expectedRevision: current.revision,
+      patch: {
+        details: {
+          ...current.details,
+          delegation,
+        },
+        assignee: { kind: "ship" },
+        state: "open",
+        blocker: call.error ? call.error.slice(0, 2_000) : null,
+        nextCheckAtMs: null,
+        leaseExpiresAtMs: null,
+      },
+      actor: {
+        kind: "event",
+        eventType,
+        eventId: call.callId,
+      },
+      observedByShip: false,
+      now: completedAtMs,
+    });
+    this.ctx.waitUntil(this.reconcileResponsibilityWake(call.ownerUid).catch((error) => {
+      console.warn("[Kernel] Failed to schedule delegated responsibility return:", error);
+    }));
   }
 
   private async scheduleScheduleWake(scheduleId: string, dueAtMs: number): Promise<string> {
@@ -2095,13 +3174,87 @@ export class Kernel extends Host<Env> {
     return sched.id;
   }
 
+  private async recoverResponsibilityWakes(): Promise<void> {
+    for (const ownerUid of this.responsibilities.ownersWithLedgers()) {
+      await this.reconcileResponsibilityWake(ownerUid);
+    }
+  }
+
+  private async reconcileResponsibilityWake(ownerUid: number): Promise<void> {
+    const now = Date.now();
+    const state = this.responsibilities.wakeState(ownerUid);
+    const nextWakeAt = this.responsibilities.nextWakeAt(ownerUid, now);
+    if (nextWakeAt === null) {
+      this.responsibilities.setWakeTask(
+        ownerUid,
+        state.generation,
+        null,
+        null,
+        now,
+      );
+      if (state.taskId) await this.cancelSchedule(state.taskId);
+      return;
+    }
+    await this.scheduleResponsibilityWakeAt(
+      ownerUid,
+      state.generation,
+      nextWakeAt,
+      state.taskId,
+    );
+  }
+
+  private async scheduleResponsibilityWakeAt(
+    ownerUid: number,
+    generation: number,
+    wakeAtMs: number,
+    previousTaskId: string | null,
+  ): Promise<void> {
+    const wakeAt = new Date(
+      Math.ceil(Math.max(Date.now() + 1_000, wakeAtMs) / 1_000) * 1_000,
+    );
+    const task = await this.schedule(
+      wakeAt,
+      "onResponsibilityWake",
+      { ownerUid, generation },
+    );
+    const installed = this.responsibilities.setWakeTask(
+      ownerUid,
+      generation,
+      task.id,
+      wakeAt.getTime(),
+      Date.now(),
+    );
+    if (!installed) {
+      await this.cancelSchedule(task.id);
+      return;
+    }
+    if (previousTaskId && previousTaskId !== task.id) {
+      await this.cancelSchedule(previousTaskId);
+    }
+  }
+
+  private async scheduleManagedOutboundEnqueue(
+    outboundId: string,
+    dueAtMs: number,
+  ): Promise<void> {
+    await this.schedule(
+      new Date(Math.max(Date.now() + 10, dueAtMs)),
+      "onManagedOutboundEnqueue",
+      outboundId,
+      {
+        idempotent: false,
+        retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
+      },
+    );
+  }
+
   private async handleReq(
-    connection: Connection<ConnectionState>,
-    wireFrame: RequestFrame,
+    connection: KernelConnection<ConnectionState>,
+    wireFrame: WireRequestFrame,
   ): Promise<void> {
     let frame: RequestFrame;
     try {
-      frame = this.decodeWebSocketFrame(connection, wireFrame) as RequestFrame;
+      frame = this.decodeWebSocketRequestFrame(connection, wireFrame);
     } catch (error) {
       this.sendError(
         connection,
@@ -2113,7 +3266,18 @@ export class Kernel extends Host<Env> {
     }
 
     try {
-      const state = connection.state as ConnectionState | undefined;
+      const state = connection.state;
+
+      if (
+        frame.call !== "sys.setup"
+        && frame.call !== "sys.setup.assist"
+      ) {
+        const gate = await this.managedWorkGate();
+        if (!gate.allowed) {
+          this.sendError(connection, frame.id, gate.code, gate.message);
+          return;
+        }
+      }
 
       if (frame.call === "sys.connect") {
         if (state && state.step !== "pending") {
@@ -2130,17 +3294,26 @@ export class Kernel extends Host<Env> {
       }
 
       if (frame.call === "sys.setup.assist") {
-        await this.handleSysSetupAssist(connection, frame as RequestFrame<"sys.setup.assist">);
+        await this.handleSysSetupAssist(connection, frame);
         return;
       }
 
       if (frame.call === "sys.setup") {
-        await this.handleSysSetup(connection, frame as RequestFrame<"sys.setup">);
+        await this.handleSysSetup(connection, frame);
         return;
       }
 
-      if (!state || state.step !== "connected" || !state.identity) {
+      if (!state || state.step !== "connected" || !state.peer) {
         if (this.auth.isSetupMode()) {
+          if (this.managedOnboardingService()) {
+            this.sendError(
+              connection,
+              frame.id,
+              503,
+              "Managed installation provisioning is incomplete",
+            );
+            return;
+          }
           this.sendError(
             connection,
             frame.id,
@@ -2159,48 +3332,49 @@ export class Kernel extends Host<Env> {
         return;
       }
 
-      if (!hasCapability(state.identity.capabilities, frame.call)) {
+      const peer = connectedPeerContext({
+        installationId: this.installationId,
+        peer: state.peer,
+        credential: state.credentialMethod ?? "token",
+      });
+      if (!peerAllowsCall(peer, frame.call)) {
         this.sendError(connection, frame.id, 403, `Permission denied: ${frame.call}`);
         return;
       }
 
-      const origin: RouteOrigin = { type: "connection", id: connection.id };
-      let controller: AbortController;
-      try {
-        controller = this.registerActiveRequest(origin, frame.id);
-      } catch (error) {
-        this.sendError(connection, frame.id, 409, error instanceof Error ? error.message : String(error));
+      if (frame.call === "proc.observe" || frame.call === "proc.unobserve") {
+        const pid = frame.args.pid.trim();
+        const process = pid ? this.procs.get(pid) : null;
+        if (!process || process.ownerUid !== state.peer.principal.account.uid) {
+          this.sendError(connection, frame.id, 404, `Process not found: ${pid || "(missing)"}`);
+          return;
+        }
+        const observed = new Set(state.observedProcessIds ?? []);
+        if (frame.call === "proc.observe") observed.add(pid);
+        else observed.delete(pid);
+        connection.setState({ ...state, observedProcessIds: [...observed] });
+        this.sendOk(connection, frame.id, {
+          ok: true,
+          pid,
+          observing: frame.call === "proc.observe",
+        });
         return;
       }
-      let result;
-      try {
-        frame = this.bindRequestBodyCancellation(frame, controller.signal);
-        result = await dispatch(
-          frame,
-          origin,
-          { ...this.buildContext(connection), requestSignal: controller.signal },
-          this.buildDispatchDeps(),
-        );
-      } finally {
-        this.finishActiveRequest(frame.id, controller);
-      }
-      if (result.handled) {
-        this.applyPostDispatchEffects(frame, result.response);
-        this.sendWebSocketFrame(connection, result.response);
-      }
+
+      const response = await this.dispatchPeerRequest(
+        frame,
+        { type: "connection", id: connection.id },
+        this.buildContext(connection),
+        { awaitRouted: false },
+      );
+      if (response) this.sendWebSocketFrame(connection, response);
       // Routed responses arrive asynchronously through handleRes.
     } finally {
       await cancelUnlockedBody(frame.body, "WebSocket request completed");
     }
   }
 
-  private buildServiceBindingIdentity(frame: RequestFrame): ConnectionIdentity | null {
-    const args = frame.args as Record<string, unknown>;
-    const adapterHint =
-      typeof args.adapter === "string" && args.adapter.trim().length > 0
-        ? args.adapter.trim().toLowerCase()
-        : "service-binding";
-
+  private buildServiceBindingIdentity(profile: ServicePeerProfile): ConnectionIdentity | null {
     const root = this.auth.getPasswdByUid(0);
     if (!root) {
       return null;
@@ -2217,7 +3391,7 @@ export class Kernel extends Host<Env> {
         cwd: root.home,
       },
       capabilities: this.caps.resolve([102]),
-      channel: adapterHint,
+      channel: profile.id,
     };
   }
 
@@ -2225,13 +3399,9 @@ export class Kernel extends Host<Env> {
     if (!response.ok) return;
 
     if (frame.call === "sys.device.delete") {
-      const data = (response as {
-        data?: {
-          deleted?: unknown;
-          deviceId?: unknown;
-        };
-      }).data;
-      if (data?.deleted === true && typeof data.deviceId === "string") {
+      // SAFETY: dispatch preserves the syscall's request/result correlation.
+      const data = response.data as SysDeviceDeleteResult | undefined;
+      if (data?.deleted) {
         this.disconnectDeviceConnections(data.deviceId, "Machine forgotten");
       }
     }
@@ -2267,25 +3437,27 @@ export class Kernel extends Host<Env> {
       throw new Error(`Process signal watch ${watch.watchId} is missing target process`);
     }
 
-    await sendFrameToProcess(watch.targetProcessId, {
+    const watchDelivery: SignalWatchDelivery = {
+      id: watch.watchId,
+      createdAt: watch.createdAt,
+    };
+    if (watch.key) watchDelivery.key = watch.key;
+    if (watch.state !== undefined) watchDelivery.state = watch.state;
+
+    await sendFrameToProcess(this.installationId, watch.targetProcessId, {
       type: "sig",
       signal: frame.signal,
       payload: {
         watched: true,
         sourcePid: processId,
-        watch: {
-          id: watch.watchId,
-          ...(watch.key ? { key: watch.key } : {}),
-          ...(watch.state === undefined ? {} : { state: watch.state }),
-          createdAt: watch.createdAt,
-        },
+        watch: watchDelivery,
         payload: frame.payload,
       },
     });
   }
 
   private async handleSysConnect(
-    connection: Connection<ConnectionState>,
+    connection: KernelConnection<ConnectionState>,
     frame: RequestFrame<"sys.connect">,
   ): Promise<void> {
     const ctx = this.buildContext(connection);
@@ -2297,31 +3469,46 @@ export class Kernel extends Host<Env> {
       return;
     }
 
-    const clientId = frame.args?.client?.id?.trim();
-    const clientPlatform = frame.args?.client?.platform?.trim();
+    const clientId = frame.args.peer.id.trim();
+    const clientPlatform = frame.args.peer.platform.trim();
     const newState = {
       step: "connected",
-      identity: outcome.identity,
+      peer: outcome.peer,
       clientId: clientId || undefined,
       clientPlatform: clientPlatform || undefined,
-    } satisfies ConnectionState & { step: "connected"; identity: ConnectionIdentity };
-    this.activateConnection(connection, newState);
+      credentialMethod: frame.args.auth?.token ? "token" : "password",
+    } satisfies ConnectionState & { step: "connected" };
 
-    if (outcome.identity.role === "driver") {
-      this.broadcastDeviceStatus(outcome.identity.device, "connected");
+    if (
+      outcome.peer.principal.kind === "human"
+      && outcome.peer.principal.account.uid >= 1000
+      && !ctx.auth.isPersonalAgentUid(outcome.peer.principal.account.uid)
+    ) {
+      const ownerUid = outcome.peer.principal.account.uid;
+      const pid = await ensurePersonalController(ownerUid, ctx);
+      const conversation = ctx.conversations.ensureShip(ownerUid, pid);
+      await getConversationById(this.installationId, conversation.id).initialize({
+        ownerUid,
+        kind: "ship",
+      });
     }
 
-    if (outcome.identity.role === "user") {
-      await ensurePersonalAgent(ctx, outcome.identity.process);
-      this.reconcileOwnedIdentities(outcome.identity.process.uid);
+    this.activateConnection(connection, newState);
+
+    if (peerProvidesOperations(outcome.peer)) {
+      this.broadcastDeviceStatus(outcome.peer.id, "connected");
+    }
+
+    if (outcome.peer.principal.kind === "human") {
+      this.reconcileOwnedIdentities(outcome.peer.principal.account.uid);
     }
 
     this.sendOk(connection, frame.id, outcome.result);
   }
 
   private activateConnection(
-    connection: Connection<ConnectionState>,
-    state: ConnectionState & { step: "connected"; identity: ConnectionIdentity },
+    connection: KernelConnection<ConnectionState>,
+    state: ConnectionState & { step: "connected"; peer: ConnectedPeer },
   ): void {
     connection.setState(state);
     this.connections.set(connection.id, connection);
@@ -2330,12 +3517,12 @@ export class Kernel extends Host<Env> {
       return;
     }
     for (const [connectionId, existing] of this.connections) {
-      const existingState = existing.state as ConnectionState | undefined;
+      const existingState = existing.state;
       if (
         existing !== connection &&
         existingState?.step === "connected" &&
-        existingState.identity?.process.uid === state.identity.process.uid &&
-        existingState.identity.role === state.identity.role &&
+        existingState.peer?.principal.account.uid === state.peer.principal.account.uid &&
+        existingState.peer.principal.kind === state.peer.principal.kind &&
         existingState.clientId === state.clientId
       ) {
         existing.setState({ ...existingState, step: "superseded" });
@@ -2346,10 +3533,10 @@ export class Kernel extends Host<Env> {
   }
 
   private async handleSysSetup(
-    connection: Connection<ConnectionState>,
+    connection: KernelConnection<ConnectionState>,
     frame: RequestFrame<"sys.setup">,
   ): Promise<void> {
-    const state = connection.state as ConnectionState | undefined;
+    const state = connection.state;
     if (state && state.step !== "pending") {
       this.sendError(
         connection,
@@ -2362,6 +3549,11 @@ export class Kernel extends Host<Env> {
 
     const ctx = this.buildContext(connection);
     await ensureKernelBootstrapped(ctx);
+
+    if (this.managedOnboardingService()) {
+      await this.handleManagedSysSetup(connection, frame, ctx);
+      return;
+    }
 
     if (!this.auth.isSetupMode()) {
       this.sendError(connection, frame.id, 409, "System already initialized");
@@ -2378,10 +3570,10 @@ export class Kernel extends Host<Env> {
   }
 
   private async handleSysSetupAssist(
-    connection: Connection<ConnectionState>,
+    connection: KernelConnection<ConnectionState>,
     frame: RequestFrame<"sys.setup.assist">,
   ): Promise<void> {
-    const state = connection.state as ConnectionState | undefined;
+    const state = connection.state;
     if (state && state.step !== "pending") {
       this.sendError(
         connection,
@@ -2395,13 +3587,37 @@ export class Kernel extends Host<Env> {
     const ctx = this.buildContext(connection);
     await ensureKernelBootstrapped(ctx);
 
+    let args = frame.args;
+    if (this.managedOnboardingService()) {
+      let authorization: InstallationOnboardingAuthorization;
+      try {
+        authorization = await this.authorizeManagedInstallationOnboarding(
+          frame.args.onboardingToken,
+        );
+      } catch {
+        this.sendError(connection, frame.id, 503, "Installation setup is unavailable");
+        return;
+      }
+      if (!authorization.ok) {
+        this.sendError(
+          connection,
+          frame.id,
+          401,
+          "Installation setup link is invalid or expired",
+        );
+        return;
+      }
+      const { onboardingToken: _onboardingToken, ...assistArgs } = frame.args;
+      args = assistArgs;
+    }
+
     if (!this.auth.isSetupMode()) {
       this.sendError(connection, frame.id, 409, "System already initialized");
       return;
     }
 
     try {
-      const data = await handleSysSetupAssist(frame.args, ctx);
+      const data = await handleSysSetupAssist(args, ctx);
       this.sendOk(connection, frame.id, data);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -2409,11 +3625,191 @@ export class Kernel extends Host<Env> {
     }
   }
 
-  private handleRes(connection: Connection<ConnectionState>, wireFrame: ResponseFrame): void {
-    const route = this.routes.get(wireFrame.id);
+  private async handleManagedSysSetup(
+    connection: KernelConnection<ConnectionState>,
+    frame: RequestFrame<"sys.setup">,
+    ctx: KernelContext,
+  ): Promise<void> {
+    if (this.managedOnboardingInProgress) {
+      this.sendError(connection, frame.id, 409, "Installation setup is already in progress");
+      return;
+    }
+    this.managedOnboardingInProgress = true;
+
+    try {
+      const { onboardingToken: _onboardingToken, ...setupArgs } = frame.args;
+      let authorization: InstallationOnboardingAuthorization;
+      try {
+        authorization = await this.authorizeManagedInstallationOnboarding(
+          frame.args.onboardingToken,
+        );
+      } catch {
+        this.sendError(connection, frame.id, 503, "Installation setup is unavailable");
+        return;
+      }
+      if (!authorization.ok) {
+        let recovered: SysSetupResult | null;
+        try {
+          recovered = await this.recoverActivatedManagedSetup(setupArgs);
+        } catch {
+          this.sendError(connection, frame.id, 503, "Installation setup is unavailable");
+          return;
+        }
+        if (recovered) {
+          this.sendOk(connection, frame.id, recovered);
+          return;
+        }
+        this.sendError(
+          connection,
+          frame.id,
+          401,
+          "Installation setup link is invalid or expired",
+        );
+        return;
+      }
+
+      let data: SysSetupResult;
+      try {
+        if (this.auth.isSetupMode()) {
+          data = await handleKernelSetup(setupArgs, ctx);
+        } else {
+          const pending = this.pendingManagedOnboarding;
+          if (
+            pending
+            && (
+              pending.claimId !== authorization.claimId
+              || pending.installationId !== authorization.installation.installationId
+            )
+          ) {
+            throw new Error("System already initialized");
+          }
+          data = await recoverCompletedSysSetup(setupArgs, ctx);
+        }
+        this.pendingManagedOnboarding = {
+          claimId: authorization.claimId,
+          installationId: authorization.installation.installationId,
+        };
+        this.ctx.storage.kv.put(
+          MANAGED_ONBOARDING_COMPLETION_KEY,
+          this.pendingManagedOnboarding,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.sendError(connection, frame.id, 400, message);
+        return;
+      }
+
+      try {
+        const directory = this.managedOnboardingService();
+        if (!directory) throw new Error("Managed onboarding is unavailable");
+        const completion = await directory.completeInstallationOnboarding({
+          claimId: authorization.claimId,
+          installationId: authorization.installation.installationId,
+        });
+        if (
+          completion.state !== "complete"
+          || completion.installationId !== authorization.installation.installationId
+        ) {
+          throw new Error("Installation onboarding completion mismatch");
+        }
+        this.pendingManagedOnboarding = undefined;
+        this.ctx.storage.kv.delete(MANAGED_ONBOARDING_COMPLETION_KEY);
+        this.sendOk(connection, frame.id, data);
+      } catch {
+        this.sendError(
+          connection,
+          frame.id,
+          503,
+          "Installation setup could not be activated",
+        );
+      }
+    } finally {
+      this.managedOnboardingInProgress = false;
+    }
+  }
+
+  private async authorizeManagedInstallationOnboarding(
+    token: string | undefined,
+  ): Promise<InstallationOnboardingAuthorization> {
+    if (!token) return { ok: false };
+    const directory = this.managedOnboardingService();
+    const installation = this.installationIdentity;
+    if (!directory || !installation) return { ok: false };
+
+    const authorization = await directory.authorizeInstallationOnboarding({
+      installationId: installation.installationId,
+      token,
+    });
+    if (
+      !authorization.ok
+      || authorization.installation.installationId !== installation.installationId
+      || authorization.installation.handle !== installation.handle
+      || authorization.installation.canonicalOrigin !== installation.canonicalOrigin
+    ) {
+      return { ok: false };
+    }
+    return authorization;
+  }
+
+  private async recoverActivatedManagedSetup(
+    args: Parameters<typeof recoverCompletedSysSetup>[0],
+  ): Promise<SysSetupResult | null> {
+    const pending = this.pendingManagedOnboarding;
+    const installation = this.installationIdentity;
+    const directory = this.managedOnboardingService();
+    if (!pending || !installation || !directory || this.auth.isSetupMode()) {
+      return null;
+    }
+
+    const resolved = await directory.resolveHostname(
+      new URL(installation.canonicalOrigin).hostname,
+    );
+    if (
+      !resolved.found
+      || resolved.state !== "active"
+      || resolved.installationId !== installation.installationId
+      || resolved.handle !== installation.handle
+      || resolved.canonicalOrigin !== installation.canonicalOrigin
+    ) {
+      return null;
+    }
+
+    let data: SysSetupResult;
+    try {
+      data = await recoverCompletedSysSetup(args, this.buildKernelContext({}));
+    } catch {
+      return null;
+    }
+    this.pendingManagedOnboarding = undefined;
+    this.ctx.storage.kv.delete(MANAGED_ONBOARDING_COMPLETION_KEY);
+    return data;
+  }
+
+  private managedOnboardingService(): (
+    InstallationDirectoryService & InstallationOnboardingService
+  ) | null {
+    // SAFETY: managed deployments add this service binding to Wrangler's Env contract.
+    return (this.env as Env & {
+      INSTALLATION_DIRECTORY?: InstallationDirectoryService & InstallationOnboardingService;
+    }).INSTALLATION_DIRECTORY ?? null;
+  }
+
+  private async managedWorkGate() {
+    // SAFETY: managed deployments add lifecycle bindings to Wrangler's Env contract.
+    return await managedInstallationWorkGate(
+      this.env as Env & ManagedInstallationLifecycleBindings,
+      this.installationId,
+    );
+  }
+
+  private handleRes(
+    connection: KernelConnection<ConnectionState>,
+    wireEnvelope: WireResponseEnvelope,
+  ): void {
+    const route = this.routes.get(wireEnvelope.id);
     if (!route) {
-      if (wireFrame.ok) {
-        const descriptor = (wireFrame as unknown as { body?: BinaryFrameDescriptor }).body;
+      if (wireEnvelope.ok) {
+        const descriptor = wireEnvelope.body;
         if (descriptor) {
           try {
             void this.receiveFrameBody(connection, descriptor).stream.cancel("Request is no longer pending");
@@ -2434,21 +3830,22 @@ export class Kernel extends Host<Env> {
 
     let frame: ResponseFrame;
     try {
-      frame = this.decodeWebSocketFrame(connection, wireFrame) as ResponseFrame;
+      const wireFrame = decodeWireResponse(route.call, wireEnvelope);
+      frame = this.decodeWebSocketResponseFrame(connection, wireFrame);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Invalid frame body";
-      this.cancelRoute(wireFrame.id);
+      this.cancelRoute(wireEnvelope.id);
       this.deliverToOrigin(
         route.origin,
         errFrame(
-          wireFrame.id,
+          wireEnvelope.id,
           502,
           `Invalid response from device ${route.deviceId}: ${message}`,
         ),
       );
       this.sendError(
         connection,
-        wireFrame.id,
+        wireEnvelope.id,
         400,
         message,
       );
@@ -2463,32 +3860,43 @@ export class Kernel extends Host<Env> {
     }
 
     if (route.call === "shell.exec") {
-      this.recordShellSessionFromResponse(route.deviceId, frame);
+      // SAFETY: decodeWireResponse validated frame against route.call above.
+      this.recordShellSessionFromResponse(
+        route.deviceId,
+        frame as ResponseFrame<"shell.exec">,
+      );
     }
 
     this.deliverToOrigin(route.origin, frame);
   }
 
-  private handleBinaryMessage(connection: Connection<ConnectionState>, message: WSMessage): void {
-    this.frameBodyChannel(connection).handleFrame(message as ArrayBuffer | ArrayBufferView);
+  private handleBinaryMessage(
+    connection: KernelConnection<ConnectionState>,
+    message: ArrayBuffer,
+  ): void {
+    this.frameBodyChannel(connection).handleFrame(message);
   }
 
-  private handleSig(connection: Connection<ConnectionState>, frame: SignalFrame): void {
-    const state = connection.state as ConnectionState | undefined;
-    const targetId = state?.identity?.role === "driver"
-      ? state.identity.device
+  private handleSig(
+    connection: KernelConnection<ConnectionState>,
+    frame: SignalFrame,
+  ): void {
+    const state = connection.state;
+    const targetId = state?.peer && peerProvidesOperations(state.peer)
+      ? state.peer.id
       : null;
     if (!targetId || !this.isConnectionForDevice(connection, targetId)) {
       return;
     }
 
-    if (frame.signal === "device.ping") {
-      this.sendWebSocketFrame(connection, {
+    if (frame.signal === "peer.ping") {
+      const pong: SignalFrame = {
         type: "sig",
-        signal: "device.pong",
-        ...(frame.payload === undefined ? {} : { payload: frame.payload }),
-        ...(frame.seq === undefined ? {} : { seq: frame.seq }),
-      });
+        signal: "peer.pong",
+      };
+      if (frame.payload !== undefined) pong.payload = frame.payload;
+      if (frame.seq !== undefined) pong.seq = frame.seq;
+      this.sendWebSocketFrame(connection, pong);
       return;
     }
 
@@ -2496,34 +3904,38 @@ export class Kernel extends Host<Env> {
       return;
     }
 
-    const payload = asRecord(frame.payload);
-    const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId.trim() : "";
-    if (!sessionId) {
+    const parsed = execStatusPayloadSchema.safeParse(frame.payload);
+    if (!parsed.success) {
       return;
     }
+    const payload = parsed.data;
 
-    const status = shellStatusFromEvent(typeof payload?.event === "string" ? payload.event : "");
-    this.shellSessions.rememberDeviceSession(sessionId, targetId, status, {
-      exitCode: typeof payload?.exitCode === "number" ? payload.exitCode : null,
-      error: typeof payload?.signal === "string" ? payload.signal : null,
+    const status = shellStatusFromEvent(payload.event);
+    this.shellSessions.rememberDeviceSession(payload.sessionId, targetId, status, {
+      exitCode: payload.exitCode ?? null,
+      error: payload.signal ?? null,
     });
   }
 
-  private recordShellSessionFromResponse(deviceId: string, frame: ResponseFrame): void {
+  private recordShellSessionFromResponse(
+    deviceId: string,
+    frame: ResponseFrame<"shell.exec">,
+  ): void {
     if (!frame.ok) {
       return;
     }
 
-    const data = asRecord(frame.data);
-    const sessionId = typeof data?.sessionId === "string" ? data.sessionId.trim() : "";
+    const data: ShellExecResult | undefined = frame.data;
+    if (!data) return;
+    const sessionId = data.sessionId?.trim() ?? "";
     if (!sessionId) {
       return;
     }
 
-    const status = shellStatusFromResult(typeof data?.status === "string" ? data.status : "");
+    const status = shellStatusFromResult(data.status);
     this.shellSessions.rememberDeviceSession(sessionId, deviceId, status, {
-      exitCode: typeof data?.exitCode === "number" ? data.exitCode : null,
-      error: typeof data?.error === "string" ? data.error : null,
+      exitCode: data.status === "running" ? null : data.exitCode ?? null,
+      error: data.status === "failed" ? data.error : null,
     });
   }
 
@@ -2551,20 +3963,119 @@ export class Kernel extends Host<Env> {
     this.deliverToOrigin(expired.origin, timeoutFrame);
   }
 
-  async onIpcCallTimeout(callId: string): Promise<void> {
+  async onIpcCallTimeout(input: string | IpcCallTimeout): Promise<void> {
+    const timeout = ipcCallTimeoutPayloadSchema.parse(input);
+    const callId = timeout.callId;
+    const call = this.ipcCalls.get(callId);
     const timedOut = this.ipcCalls.timeout(callId);
     if (!timedOut) return;
+    const timedOutCall = this.ipcCalls.get(callId);
+    if (timedOutCall) this.returnDelegatedResponsibility(timedOutCall);
     this.queueIpcCallDelivery(callId);
+    if (timeout.terminateTargetOnTimeout && call) {
+      await this.terminateTimedOutIpcTarget(call).catch((error) => {
+        console.warn(`[Kernel] Failed to terminate timed-out delegated process ${call.targetPid}:`, error);
+      });
+    }
+  }
+
+  private async terminateTimedOutIpcTarget(call: IpcCallRecord): Promise<void> {
+    const ctx = this.buildProcessContext(call.sourcePid);
+    if (!ctx) return;
+    await forwardToProcess({
+      type: "req",
+      id: crypto.randomUUID(),
+      call: "proc.kill",
+      args: { pid: call.targetPid, archive: false },
+    }, ctx);
   }
 
   async onIpcCallDelivery(callId: string): Promise<void> {
     await this.deliverIpcCall(callId);
   }
 
-  async onScheduleDue(scheduleId: string, wake?: { id?: unknown }): Promise<void> {
+  async onManagedOutboundEnqueue(outboundId: string): Promise<void> {
+    await recoverManagedOutboundEnqueue(
+      outboundId,
+      this.buildKernelContext({}),
+      true,
+    );
+  }
+
+  async onResponsibilityWake(
+    payload: { ownerUid: number; generation: number },
+    task?: { id?: string },
+  ): Promise<void> {
+    const state = this.responsibilities.wakeState(payload.ownerUid);
+    if (state.generation !== payload.generation) {
+      await this.reconcileResponsibilityWake(payload.ownerUid);
+      return;
+    }
+    if (task?.id && state.taskId !== task.id) return;
+
+    const gate = await this.managedWorkGate();
+    if (!gate.allowed) {
+      await this.scheduleResponsibilityWakeAt(
+        payload.ownerUid,
+        payload.generation,
+        Date.now() + MANAGED_LIFECYCLE_RECHECK_MS,
+        state.taskId,
+      );
+      return;
+    }
+
+    const batch = this.responsibilities.createReadyBatch(payload.ownerUid, Date.now());
+    if (!batch) {
+      await this.reconcileResponsibilityWake(payload.ownerUid);
+      return;
+    }
+
+    try {
+      const processId = await ensurePersonalController(
+        payload.ownerUid,
+        this.buildKernelContext({ callerOwnerUid: payload.ownerUid }),
+      );
+      const response = await sendFrameToProcess(
+        this.installationId,
+        processId,
+        responsibilityRuntimeEventFrame(batch),
+      );
+      if (!response) throw new Error("Responsibility event produced no Process response");
+      if (!response.ok) throw new Error(response.error.message);
+      this.responsibilities.markBatchDelivered(batch.id);
+      await this.reconcileResponsibilityWake(payload.ownerUid);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.responsibilities.markBatchFailed(batch.id, message, Date.now());
+      const current = this.responsibilities.pendingBatch(payload.ownerUid);
+      const attempt = current?.attemptCount ?? batch.attemptCount + 1;
+      const retryAt = Date.now()
+        + Math.min(5 * 60_000, 1_000 * (2 ** Math.min(8, attempt)));
+      await this.scheduleResponsibilityWakeAt(
+        payload.ownerUid,
+        payload.generation,
+        retryAt,
+        state.taskId,
+      );
+    }
+  }
+
+  async onScheduleDue(scheduleId: string, wake?: { id?: string }): Promise<void> {
     const record = this.schedules.getStored(scheduleId);
-    const wakeId = typeof wake?.id === "string" ? wake.id : null;
+    const wakeId = wake?.id ?? null;
     if (wakeId && record?.wakeScheduleId !== wakeId) {
+      return;
+    }
+
+    const gate = await this.managedWorkGate();
+    if (!gate.allowed) {
+      if (record?.enabled && record.state.nextRunAtMs !== null) {
+        const nextWakeId = await this.scheduleScheduleWake(
+          record.id,
+          Date.now() + MANAGED_LIFECYCLE_RECHECK_MS,
+        );
+        this.schedules.setWakeScheduleId(record.id, nextWakeId);
+      }
       return;
     }
 
@@ -2594,6 +4105,16 @@ export class Kernel extends Host<Env> {
     const records = args.id
       ? [this.schedules.get(args.id)].filter((record): record is ScheduleRecord => record !== null)
       : this.schedules.listDue(now, callerOwnerUid !== undefined && callerOwnerUid !== 0 ? callerOwnerUid : undefined);
+
+    const gate = await this.managedWorkGate();
+    if (!gate.allowed) {
+      return {
+        ran: 0,
+        results: records.map((record) =>
+          skippedScheduleResult(record.id, gate.message)
+        ),
+      };
+    }
 
     const results: ScheduleRunResult[] = [];
     for (const record of records) {
@@ -2633,7 +4154,7 @@ export class Kernel extends Host<Env> {
 
     let status: "ok" | "error" = "ok";
     let error: string | undefined;
-    let result: unknown;
+    let result: ScheduleExecutionResult;
     let retryableFailure = false;
     const oneShot = running.expression.kind === "at" || running.expression.kind === "after";
     const occurrenceKey = this.schedules.occurrenceKey(
@@ -2698,14 +4219,15 @@ export class Kernel extends Host<Env> {
       this.schedules.setWakeScheduleId(updated.id, null);
     }
 
-    return {
+    const runResult: ScheduleRunResult = {
       scheduleId: record.id,
       status,
-      ...(error ? { error } : {}),
       summary: scheduleResultSummary(record, result),
       durationMs: Math.max(0, finishedAtMs - startedAtMs),
       nextRunAtMs: updated?.state.nextRunAtMs ?? null,
     };
+    if (error) runResult.error = error;
+    return runResult;
   }
 
   private async dispatchScheduleTarget(
@@ -2713,9 +4235,14 @@ export class Kernel extends Host<Env> {
     scheduledAtMs: number | null,
     firedAtMs: number,
     occurrenceKey: string,
-  ): Promise<unknown> {
+  ): Promise<ScheduleExecutionResult> {
     const target = record.target;
-    const ctx = this.buildScheduleContext(record);
+    const ctx = {
+      ...this.buildScheduleContext(record),
+      requestId: target.kind === "command.exec"
+        ? `schedule:${record.id}:${occurrenceKey}`
+        : occurrenceKey,
+    };
     if (target.kind === "command.exec") {
       if (!hasCapability(ctx.identity?.capabilities ?? [], "shell.exec")) {
         throw new Error("Permission denied: shell.exec");
@@ -2752,14 +4279,15 @@ export class Kernel extends Host<Env> {
         throw new Error("Permission denied: proc.spawn");
       }
       const runAs = this.resolveScheduledSpawnRunAs(record, target.runAs);
-      const result = await handleProcSpawn({
+      const spawnArgs: Parameters<typeof handleProcSpawn>[0] = {
         interactive: false,
         label: target.label ?? record.name,
         prompt: target.prompt,
         parentPid: target.parentPid,
         cwd: target.cwd,
-        ...(runAs ? { runAs } : {}),
-      }, ctx);
+      };
+      if (runAs) spawnArgs.runAs = runAs;
+      const result = await handleProcSpawn(spawnArgs, ctx);
       if (!result.ok) {
         throw new Error(result.error);
       }
@@ -2799,15 +4327,32 @@ export class Kernel extends Host<Env> {
       };
     }
 
+    if (target.kind === "responsibility") {
+      if (!hasCapability(ctx.identity?.capabilities ?? [], "r12y.create")) {
+        throw new Error("Permission denied: r12y.create");
+      }
+      const responsibilityId = this.createScheduleResponsibility(
+        record,
+        target,
+        scheduledAtMs,
+        firedAtMs,
+        occurrenceKey,
+      );
+      return {
+        kind: "responsibility",
+        responsibilityId,
+      };
+    }
+
     if (target.kind === "process.event") {
       if (!hasCapability(ctx.identity?.capabilities ?? [], "proc.send")) {
         throw new Error("Permission denied: proc.send");
       }
-      if (target.replyTo) {
-        if (!hasCapability(ctx.identity?.capabilities ?? [], "adapter.send")) {
-          throw new Error("Permission denied: adapter.send");
-        }
-        assertAdapterMessageDestinationAccess(target.replyTo, record.ownerUid, ctx);
+      if (
+        target.replyTo
+        && !hasCapability(ctx.identity?.capabilities ?? [], "adapter.send")
+      ) {
+        throw new Error("Permission denied: adapter.send");
       }
       const proc = this.procs.get(target.pid);
       if (!proc) {
@@ -2816,15 +4361,42 @@ export class Kernel extends Host<Env> {
       if (proc.ownerUid !== record.ownerUid && record.ownerUid !== 0) {
         throw new Error(`Permission denied: schedule ${record.id} cannot access process ${target.pid}`);
       }
+      if (proc.isPersonalController) {
+        if (!hasCapability(ctx.identity?.capabilities ?? [], "r12y.create")) {
+          throw new Error("Permission denied: r12y.create");
+        }
+        return {
+          kind: "responsibility",
+          responsibilityId: this.createScheduleResponsibility(
+            record,
+            target,
+            scheduledAtMs,
+            firedAtMs,
+            occurrenceKey,
+          ),
+        };
+      }
+      if (target.replyTo) {
+        assertAdapterMessageDestinationAccess(target.replyTo, record.ownerUid, ctx);
+      }
 
       const runId = await stableOpaqueId("schedule-run", [record.id, occurrenceKey]);
       const delivery = target.replyTo;
       if (delivery) {
+        const link = ctx.adapters.identityLinks.get(
+          delivery.adapter,
+          delivery.accountId,
+          delivery.actorId,
+        );
+        const routeGeneration = link
+          ? identityLinkRouteGeneration(link, delivery.surface)
+          : undefined;
         this.runRoutes.setAdapterRoute({
           runId,
           processId: target.pid,
           uid: record.ownerUid,
           destination: delivery,
+          ...(routeGeneration === undefined ? undefined : { routeGeneration }),
         });
       }
       const request: ProcessScheduleDeliverRequestFrame = {
@@ -2845,7 +4417,7 @@ export class Kernel extends Host<Env> {
       let admittedRunId = runId;
       let response: ProcessScheduleDeliverResponseFrame | null;
       try {
-        response = await sendFrameToProcess(target.pid, request);
+        response = await sendFrameToProcess(this.installationId, target.pid, request);
       } catch (error) {
         // As with adapter ingress, a thrown DO transport may have lost the
         // response after admission. Preserve a preallocated reply route so an
@@ -2872,14 +4444,52 @@ export class Kernel extends Host<Env> {
           false,
         );
       }
-      return {
+      const result: ScheduleExecutionResult = {
         kind: "process.event",
         pid: target.pid,
         runId: admittedRunId,
       };
+      return result;
     }
 
     return { kind: "unknown" };
+  }
+
+  private createScheduleResponsibility(
+    record: ScheduleRecord,
+    target: Extract<ScheduleRecord["target"], { kind: "responsibility" | "process.event" }>,
+    scheduledAtMs: number | null,
+    firedAtMs: number,
+    occurrenceKey: string,
+  ): string {
+    const details: JsonObject = {
+      eventType: "schedule.due",
+      scheduleId: record.id,
+      occurrenceKey,
+      scheduledAtMs,
+      firedAtMs,
+      message: target.message,
+    };
+    if (target.data !== undefined) details.data = target.data;
+    const outcome = this.responsibilities.create({
+      ownerUid: record.ownerUid,
+      title: `Run scheduled responsibility: ${record.name}`,
+      details,
+      source: { kind: "schedule", scheduleId: record.id },
+      assignee: { kind: "ship" },
+      state: "open",
+      priority: target.kind === "responsibility"
+        ? target.priority ?? "normal"
+        : "normal",
+      dedupeKey: `schedule.due:${record.id}:${occurrenceKey}`,
+      actor: { kind: "system", component: "scheduler" },
+      observedByShip: false,
+      now: firedAtMs,
+    });
+    this.ctx.waitUntil(this.reconcileResponsibilityWake(record.ownerUid).catch((error) => {
+      console.warn("[Kernel] Failed to schedule due responsibility:", error);
+    }));
+    return outcome.record.id;
   }
 
   private buildScheduleContext(record: ScheduleRecord): KernelContext {
@@ -2938,7 +4548,7 @@ export class Kernel extends Host<Env> {
     }
 
     if (origin.type === "process") {
-      sendFrameToProcess(origin.id, frame).catch((err: unknown) => {
+      sendFrameToProcess(this.installationId, origin.id, frame).catch((err) => {
         void body?.stream.cancel(err).catch(() => {});
         console.error(`[Kernel] Failed to deliver frame to process ${origin.id}:`, err);
       });
@@ -2954,10 +4564,7 @@ export class Kernel extends Host<Env> {
     }
   }
 
-  private createPendingKernelResponse(id: string): {
-    promise: Promise<ResponseFrame>;
-    cleanup: () => void;
-  } {
+  private createPendingKernelResponse(id: string): PendingKernelResponse {
     let settled = false;
     const promise = new Promise<ResponseFrame>((resolve) => {
       this.pendingKernelResponses.set(id, (frame) => {
@@ -3049,11 +4656,11 @@ export class Kernel extends Host<Env> {
 
       this.procs.updateIdentity(proc.processId, fresh);
 
-      sendFrameToProcess(proc.processId, {
+      sendFrameToProcess(this.installationId, proc.processId, {
         type: "sig",
         signal: "identity.changed",
         payload: { identity: fresh },
-      }).catch((err: unknown) => {
+      }).catch((err) => {
         console.error(`[Kernel] Failed to send identity.changed to ${proc.processId}:`, err);
       });
     }
@@ -3062,7 +4669,7 @@ export class Kernel extends Host<Env> {
   /**
    * Broadcast a signal to active user WebSockets belonging to a UID.
    */
-  broadcastToUserUid(uid: number, signal: string, payload?: unknown): void {
+  broadcastToUserUid(uid: number, signal: string, payload?: JsonValue): void {
     const frame: SignalFrame = {
       type: "sig",
       signal,
@@ -3072,28 +4679,74 @@ export class Kernel extends Host<Env> {
 
     for (const [, conn] of this.connections) {
       const state = conn.state;
-      if (!state) continue;
-      if (state.identity?.role !== "user") continue;
-      if (state.identity?.process.uid === uid) {
+      const peer = state?.peer;
+      if (!peer || peer.principal.kind !== "human") continue;
+      if (!peer.grant.signals.includes(signal)) continue;
+      if (peer.principal.account.uid === uid) {
         conn.send(json);
       }
     }
   }
 
-  private broadcastToRole(role: ConnectionIdentity["role"], signal: string, payload?: unknown): void {
-    const frame: SignalFrame = {
-      type: "sig",
-      signal,
-      payload,
-    };
+  private broadcastProcessSignal(
+    uid: number,
+    processId: string,
+    route: ReturnType<RunRouteStore["get"]>,
+    frame: UserProcessSignalFrame,
+  ): void {
     const json = JSON.stringify(frame);
-
-    for (const [, conn] of this.connections) {
-      const state = conn.state;
-      if (!state?.identity) continue;
-      if (state.identity.role !== role) continue;
-      conn.send(json);
+    const ambient = frame.signal === "proc.changed"
+      ? JSON.stringify(ambientProcessChangeFrame(processId, frame))
+      : null;
+    for (const [connectionId, connection] of this.connections) {
+      const state = connection.state;
+      const peer = state?.peer;
+      if (
+        !peer
+        || peer.principal.kind !== "human"
+        || peer.principal.account.uid !== uid
+      ) {
+        continue;
+      }
+      const routed = route?.kind === "connection" && route.connectionId === connectionId;
+      const observing = state.observedProcessIds?.includes(processId) === true;
+      if ((routed || observing) && peer.grant.signals.includes(frame.signal)) {
+        connection.send(json);
+      } else if (ambient && peer.grant.signals.includes("proc.changed")) {
+        connection.send(ambient);
+      }
     }
+  }
+
+  private broadcastToUserUidExcept(
+    uid: number,
+    excludedConnectionId: string,
+    signal: string,
+    payload?: JsonValue,
+  ): void {
+    const json = JSON.stringify({ type: "sig", signal, payload } satisfies SignalFrame);
+    for (const [connectionId, connection] of this.connections) {
+      if (connectionId === excludedConnectionId) continue;
+      const state = connection.state;
+      const peer = state?.peer;
+      if (
+        peer?.principal.kind === "human"
+        && peer.principal.account.uid === uid
+        && peer.grant.signals.includes(signal)
+      ) {
+        connection.send(json);
+      }
+    }
+  }
+
+  private sendSignalToConnection(
+    connectionId: string,
+    signal: string,
+    payload?: JsonValue,
+  ): void {
+    const connection = this.connections.get(connectionId);
+    if (!connection?.state.peer?.grant.signals.includes(signal)) return;
+    connection.send(JSON.stringify({ type: "sig", signal, payload } satisfies SignalFrame));
   }
 
   private broadcastDeviceStatus(
@@ -3129,16 +4782,17 @@ export class Kernel extends Host<Env> {
 
     for (const [, conn] of this.connections) {
       const state = conn.state;
-      if (!state?.identity) continue;
-      if (state.identity.role === "service") continue;
+      const peer = state?.peer;
+      if (!peer?.grant.signals.includes("device.status")) continue;
+      if (peer.principal.kind === "service") continue;
 
-      if (state.identity.role === "user") {
-        const proc = state.identity.process;
+      if (peer.principal.kind === "human") {
+        const proc = peer.principal.account;
         if (!this.devices.canAccess(deviceId, proc.uid, [...proc.gids])) {
           continue;
         }
-      } else if (state.identity.role === "driver") {
-        if (state.identity.device !== deviceId) {
+      } else if (peer.principal.kind === "machine") {
+        if (peer.id !== deviceId) {
           continue;
         }
       }
@@ -3147,24 +4801,21 @@ export class Kernel extends Host<Env> {
     }
   }
 
-  /**
-   * Rebuild in-memory connection index after hibernation/wake.
-   * The Agent runtime restores Connection objects and their persisted state,
-   * but our local maps must be reconstructed per constructor invocation.
-   */
+  /** Rebuild the in-memory connection index from hibernating WebSockets. */
   private rehydrateConnections(): void {
-    const live = this.getConnections<ConnectionState>();
-
     const onlineTargets = new Set<string>();
-
-    for (const connection of live) {
+    for (const socket of this.ctx.getWebSockets()) {
+      const connection = restoreKernelWebSocket(socket);
+      if (!connection) {
+        socket.close(1011, "Connection state unavailable");
+        continue;
+      }
       const state = connection.state;
-      if (!state || state.step !== "connected" || !state.identity) continue;
-
       this.connections.set(connection.id, connection);
-      if (state.identity.role === "driver") {
-        onlineTargets.add(state.identity.device);
-        this.devices.setOnline(state.identity.device, true);
+      if (!state || state.step !== "connected" || !state.peer) continue;
+      if (peerProvidesOperations(state.peer)) {
+        onlineTargets.add(state.peer.id);
+        this.devices.setOnline(state.peer.id, true);
       }
     }
 
@@ -3177,36 +4828,59 @@ export class Kernel extends Host<Env> {
     }
   }
 
-  private extractRunId(payload: unknown): string | null {
-    if (!payload || typeof payload !== "object") return null;
-    const maybe = (payload as Record<string, unknown>).runId;
-    return typeof maybe === "string" && maybe.trim().length > 0 ? maybe : null;
+  private connectionForSocket(socket: WebSocket): KernelConnection<ConnectionState> | null {
+    for (const connection of this.connections.values()) {
+      if (connection.socket === socket) return connection;
+    }
+    return null;
   }
 
-  private sendOk(connection: Connection, id: string, data?: unknown): void {
+  private sendOk(
+    connection: KernelConnection<ConnectionState>,
+    id: string,
+    data?: JsonValue,
+  ): void {
     connection.send(JSON.stringify({ type: "res", id, ok: true, data }));
   }
 
   private sendError(
-    connection: Connection,
+    connection: KernelConnection<ConnectionState>,
     id: string,
     code: number,
     message: string,
-    details?: unknown,
+    details?: JsonValue,
   ): void {
+    const error: FrameError = {
+      code,
+      message,
+    };
+    if (details !== undefined) error.details = details;
     connection.send(
       JSON.stringify({
         type: "res",
         id,
         ok: false,
-        error: {
-          code,
-          message,
-          ...(details === undefined ? {} : { details }),
-        },
+        error,
       }),
     );
   }
+}
+
+function ambientProcessChangeFrame(
+  processId: string,
+  frame: UserProcessSignalFrame,
+): SignalFrame {
+  const payload: AmbientProcessChangePayload = {
+    pid: processId,
+    changes: frame.payload?.changes ?? [],
+  };
+  if (frame.payload?.queuedCount !== undefined) payload.queuedCount = frame.payload.queuedCount;
+  if (frame.payload?.timestamp !== undefined) payload.timestamp = frame.payload.timestamp;
+  return {
+    type: "sig",
+    signal: "proc.changed",
+    payload,
+  };
 }
 
 async function cancelUnlockedBody(body: FrameBody | undefined, reason: string): Promise<void> {
@@ -3219,7 +4893,26 @@ function errFrame(id: string, code: number, message: string): ResponseFrame {
   return { type: "res", id, ok: false, error: { code, message } };
 }
 
-function requestAbortError(reason: unknown): Error {
+function responsibilityRuntimeEventFrame(
+  batch: ResponsibilityWakeBatch,
+): ProcessRuntimeEventDeliverRequestFrame {
+  return {
+    type: "req",
+    id: crypto.randomUUID(),
+    call: "proc.runtime.event.deliver",
+    args: {
+      eventId: batch.eventId,
+      event: {
+        type: "r12y.ready",
+        batchId: batch.id,
+        ledgerRevision: batch.throughRevision,
+        responsibilityIds: batch.responsibilities.map(({ id }) => id),
+      },
+    },
+  };
+}
+
+function requestAbortError(reason: FrameCancellationReason | undefined): Error {
   return reason instanceof Error ? reason : new Error("Device request cancelled");
 }
 
@@ -3232,28 +4925,36 @@ function normalizeRequestCancelReason(reason: string | undefined): string {
   return (normalized || "Request cancelled").slice(0, MAX_REQUEST_CANCEL_REASON_LENGTH);
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" ? value as Record<string, unknown> : null;
+function decodeKernelTask(callback: string, payloadJson: string): KernelTask {
+  return KERNEL_TASK_SCHEMA.parse({
+    callback,
+    payload: JSON.parse(payloadJson),
+  });
 }
 
-function scheduleResultSummary(record: ScheduleRecord, result: unknown): string {
-  const value = asRecord(result);
+function scheduleResultSummary(record: ScheduleRecord, result: ScheduleExecutionResult): string {
   if (record.target.kind === "command.exec") {
-    return typeof value?.exitCode === "number"
-      ? `command exited ${value.exitCode}`
+    return result.exitCode !== undefined
+      ? `command exited ${result.exitCode}`
       : "command failed";
   }
-  if (record.target.kind === "process.spawn" && typeof value?.pid === "string") {
-    return `spawned process ${value.pid}`;
+  if (record.target.kind === "process.spawn" && result.pid) {
+    return `spawned process ${result.pid}`;
   }
   if (record.target.kind === "process.event") {
+    if (result.responsibilityId && result.kind === "responsibility") {
+      return `created responsibility ${result.responsibilityId}`;
+    }
     return `delivered event to process ${record.target.pid}`;
   }
+  if (record.target.kind === "responsibility" && result.responsibilityId) {
+    return `created responsibility ${result.responsibilityId}`;
+  }
   if (record.target.kind === "adapter.send") {
-    if (value?.deliveryState === "ambiguous") {
+    if (result.deliveryState === "ambiguous") {
       return `message delivery through ${record.target.destination.adapter} is ambiguous`;
     }
-    if (value?.deliveryState === "deduplicated") {
+    if (result.deliveryState === "deduplicated") {
       return `message through ${record.target.destination.adapter} was already delivered`;
     }
     return `sent message through ${record.target.destination.adapter}`;
@@ -3276,4 +4977,19 @@ function shellStatusFromEvent(event: string): ShellSessionStatus {
     return "failed";
   }
   return "running";
+}
+
+function envWithInstallationResources(
+  env: Env,
+  storage: R2Bucket,
+  ripgit: Fetcher | undefined,
+): Env {
+  return new Proxy(env, {
+    get(target, property) {
+      if (property === "STORAGE") return storage;
+      if (property === "RIPGIT") return ripgit;
+      // SAFETY: Proxy keys outside these overrides are ordinary Env properties.
+      return target[property as keyof Env];
+    },
+  });
 }

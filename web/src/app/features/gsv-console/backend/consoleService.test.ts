@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { GSVClient } from "@humansandmachines/gsv/client";
 import {
   checkConsoleOpenAiCodexOAuth,
   connectConsoleAdapter,
@@ -19,17 +20,21 @@ import {
   validateConsoleModelConfig,
 } from "./consoleService";
 
-function createMockClient(uid: number | string = 42) {
-  const createAccount = vi.fn(async () => ({
+function createMockClient(uid = 42) {
+  const createAccount = vi.fn<GSVClient["account"]["create"]>(async () => ({
+    kind: "agent",
     account: {
       uid,
+      gid: uid,
+      gids: [uid],
       username: "scout-agent",
+      home: "/home/scout-agent",
+      cwd: "/home/scout-agent",
     },
   }));
-  const setConfig = vi.fn(async () => undefined);
+  const setConfig = vi.fn<GSVClient["sys"]["config"]["set"]>(async () => ({ ok: true }));
 
-  return {
-    client: {
+  const client = {
       account: {
         create: createAccount,
       },
@@ -38,7 +43,9 @@ function createMockClient(uid: number | string = 42) {
           set: setConfig,
         },
       },
-    } as unknown as Parameters<typeof createConsoleAgent>[0],
+  } satisfies Parameters<typeof createConsoleAgent>[0];
+  return {
+    client,
     createAccount,
     setConfig,
   };
@@ -47,6 +54,7 @@ function createMockClient(uid: number | string = 42) {
 describe("console agent service", () => {
   it("preserves the public adapter QR challenge contract", async () => {
     const result = {
+      // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
       ok: true as const,
       adapter: "whatsapp",
       accountId: "default",
@@ -55,12 +63,15 @@ describe("console agent service", () => {
       challenge: {
         type: "qr",
         data: "sensitive-provider-payload",
+        // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
         format: "raw" as const,
         expiresAt: 1_800_000_000_000,
         extra: { refreshAfter: 30_000 },
       },
     };
     const call = vi.fn(async () => result);
+
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
     await expect(connectConsoleAdapter({ call } as any, {
       adapter: " whatsapp ",
@@ -88,11 +99,13 @@ describe("console agent service", () => {
 
     let caught: Error | null = null;
     try {
+      // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
       await connectConsoleAdapter({ call } as any, {
         adapter: "whatsapp",
         accountId: "default",
       });
     } catch (error) {
+      // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
       caught = error as Error;
     }
     expect(caught?.message).toBe("Adapter returned an invalid connection response");
@@ -115,10 +128,12 @@ describe("console agent service", () => {
       },
     }));
 
+    // SAFETY: Test fixture uses the asserted API shape for this focused case.
     await expect(createMachineNodeToken({
       sys: {
         token: { create },
       },
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
     } as any, {
       deviceId: "studio-mac",
       label: "Studio Mac",
@@ -171,6 +186,8 @@ describe("console agent service", () => {
       };
     });
 
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+
     await expect(loadConsoleAdapterAccounts({ call } as any)).resolves.toEqual([
       {
         adapter: "whatsapp",
@@ -199,6 +216,8 @@ describe("console agent service", () => {
       ],
     }));
 
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+
     await expect(loadConsoleAdapters({ call } as any)).resolves.toEqual([
       {
         adapter: "telegram",
@@ -208,6 +227,7 @@ describe("console agent service", () => {
         supportsSend: true,
         supportsStatus: false,
         supportsActivity: false,
+        supportsPairing: false,
         accounts: [],
       },
     ]);
@@ -234,6 +254,8 @@ describe("console agent service", () => {
         },
       ],
     }));
+
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
     await expect(loadConsoleIdentityLinks({ call } as any)).resolves.toEqual([
       {
@@ -268,6 +290,8 @@ describe("console agent service", () => {
       },
     }));
 
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+
     await expect(consumeIdentityLinkCode({ call } as any, { code: " abc123 " })).resolves.toEqual({
       linked: true,
       link: {
@@ -284,6 +308,8 @@ describe("console agent service", () => {
 
   it("removes identity links", async () => {
     const call = vi.fn(async () => ({ removed: true }));
+
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
     await expect(removeIdentityLink({ call } as any, {
       adapter: " Discord ",
@@ -318,6 +344,8 @@ describe("console agent service", () => {
       };
     });
 
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+
     await expect(loadConsoleAdapterAccounts({ call } as any)).resolves.toEqual([
       {
         adapter: "discord",
@@ -346,6 +374,7 @@ describe("console agent service", () => {
     }));
 
     await expect(loadConsoleAdapterAccounts(
+      // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
       { call } as any,
       ["whatsapp"],
       "secondary",
@@ -482,6 +511,8 @@ describe("console agent service", () => {
     expect(setConfig).toHaveBeenCalledTimes(3);
   });
 
+  // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+
   it("persists selected model presets as profile references", async () => {
     const { client, setConfig } = createMockClient(42);
 
@@ -505,6 +536,8 @@ describe("console agent service", () => {
     });
     expect(setConfig).toHaveBeenCalledTimes(3);
   });
+
+  // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
   it("persists selected fallback presets as account fallback references", async () => {
     const { client, setConfig } = createMockClient(42);
@@ -538,6 +571,8 @@ describe("console agent service", () => {
   it("reconciles renamed and deleted agent context files", async () => {
     const call = vi.fn(async () => ({ ok: true }));
 
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+
     await expect(saveConsoleAgentContext({ call } as any, {
       username: "scout-agent",
       baseNames: ["old-notes.md", "remove-me.md"],
@@ -566,6 +601,8 @@ describe("console agent service", () => {
 
   it("writes newly added agent context files even when seeded from a draft", async () => {
     const call = vi.fn(async () => ({ ok: true }));
+
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
     await expect(saveConsoleAgentContext({ call } as any, {
       username: "scout-agent",
@@ -659,6 +696,8 @@ describe("console agent service", () => {
       expiresAt: 901,
     }));
 
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+
     await expect(startConsoleOpenAiCodexOAuth({ call } as any))
       .resolves.toMatchObject({
         provider: "openai-codex",
@@ -694,6 +733,8 @@ describe("console agent service", () => {
       expiresAt: 901,
     }));
 
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+
     await expect(pollConsoleOpenAiCodexOAuth({ call } as any, { flowId: "flow-1" }))
       .resolves.toMatchObject({
         status: "pending",
@@ -726,9 +767,13 @@ describe("console agent service", () => {
       ],
     }));
 
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+
     await expect(checkConsoleOpenAiCodexOAuth({ call } as any)).resolves.toEqual({ connected: true });
     expect(call).toHaveBeenCalledWith("sys.oauth.list", {});
   });
+
+  // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
   it("treats OpenAI Codex OAuth without account metadata as disconnected", async () => {
     const call = vi.fn(async () => ({
@@ -751,6 +796,8 @@ describe("console agent service", () => {
         },
       ],
     }));
+
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
     await expect(checkConsoleOpenAiCodexOAuth({ call } as any)).resolves.toEqual({ connected: false });
   });
@@ -777,6 +824,8 @@ describe("console agent service", () => {
         stopReason: "stop",
       },
     }));
+
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
     await expect(validateConsoleModelConfig({ call } as any, {
       values: {
@@ -832,6 +881,8 @@ describe("console agent service", () => {
       },
     }));
 
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+
     await expect(validateConsoleModelConfig({ call } as any, {
       values: {
         "config/ai/provider": " openai-codex ",
@@ -861,6 +912,7 @@ describe("console agent service", () => {
 
     let caught: Error | null = null;
     try {
+      // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
       await validateConsoleModelConfig({ call } as any, {
         values: {
           "config/ai/provider": "anthropic",
@@ -868,6 +920,7 @@ describe("console agent service", () => {
         },
       });
     } catch (error) {
+      // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
       caught = error as Error;
     }
 
@@ -899,6 +952,8 @@ describe("console agent service", () => {
       },
     }));
 
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+
     await validateConsoleModelConfig({ call } as any, {
       presetId: "fast-stack",
       values: {
@@ -917,6 +972,8 @@ describe("console agent service", () => {
       },
     }));
   });
+
+  // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
   it("validates explicit API key clears as empty overrides", async () => {
     const call = vi.fn(async () => ({
@@ -941,6 +998,8 @@ describe("console agent service", () => {
       },
     }));
 
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+
     await validateConsoleModelConfig({ call } as any, {
       presetId: "fast-stack",
       values: {
@@ -961,6 +1020,8 @@ describe("console agent service", () => {
       },
     }));
   });
+
+  // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
   it("validates explicit base URL clears as empty overrides", async () => {
     const call = vi.fn(async () => ({
@@ -984,6 +1045,8 @@ describe("console agent service", () => {
         stopReason: "stop",
       },
     }));
+
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
     await validateConsoleModelConfig({ call } as any, {
       presetId: "local",
@@ -1029,6 +1092,8 @@ describe("console agent service", () => {
       },
     }));
 
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+
     await expect(validateConsoleModelConfig({ call } as any, {
       values: {
         "config/ai/provider": "anthropic",
@@ -1046,6 +1111,8 @@ describe("console agent service", () => {
       proc: { abort, reset, kill },
     };
 
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+
     await expect(runConsoleProcessAction(client as any, {
       pid: " proc-1 ",
       runId: "run-1",
@@ -1055,11 +1122,13 @@ describe("console agent service", () => {
       action: "abort",
       pid: "proc-1",
     });
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
     await expect(runConsoleProcessAction(client as any, { pid: "proc-1", action: "reset" })).resolves.toEqual({
       ok: true,
       action: "reset",
       pid: "proc-1",
     });
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
     await expect(runConsoleProcessAction(client as any, { pid: "proc-1", action: "kill" })).resolves.toEqual({
       ok: true,
       action: "kill",

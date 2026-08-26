@@ -2,7 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "gsv-channel-telegram",
   "main": "src/index.ts",
-  "compatibility_date": "2026-01-28",
+  "compatibility_date": "2026-07-30",
   "compatibility_flags": ["nodejs_compat"],
   "observability": {
     "enabled": true
@@ -25,7 +25,11 @@
     {
       "binding": "GATEWAY",
       "service": "gsv",
-      "entrypoint": "GatewayEntrypoint"
+      "entrypoint": "AdapterGatewayEntrypoint",
+      "props": {
+        "id": "telegram",
+        "calls": ["adapter.inbound", "adapter.state.update"]
+      }
     }
   ]
 }

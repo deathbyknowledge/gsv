@@ -67,12 +67,14 @@ async function runCrontabCommand(
   return { stdout: "", stderr: "", exitCode: 0 };
 }
 
-function parseCrontabArgs(args: string[], ctx: KernelContext): {
+type ParsedCrontabArgs = {
   action: "install" | "list" | "remove" | "edit";
   username: string;
   file: string;
   help?: boolean;
-} {
+};
+
+function parseCrontabArgs(args: string[], ctx: KernelContext): ParsedCrontabArgs {
   let username = ctx.identity!.process.username;
   let action: "install" | "list" | "remove" | "edit" | null = null;
   let file = "";

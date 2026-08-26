@@ -30,7 +30,7 @@ type HeaderDraft = {
   value: string;
 };
 
-function errorText(error: unknown): string {
+function errorText<T>(error: T): string {
   return error instanceof Error ? error.message : error ? String(error) : "";
 }
 

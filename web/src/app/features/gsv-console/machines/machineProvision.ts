@@ -122,12 +122,7 @@ export function buildBrowserExtensionConfig(input: {
   username: string;
   deviceId: string;
   token: string;
-}): {
-  gatewayUrl: string;
-  username: string;
-  token: string;
-  deviceId: string;
-} {
+}) {
   const deviceId = requireDeviceId(input.deviceId);
   return {
     gatewayUrl: buildGatewayWsUrl(input.origin),
@@ -155,7 +150,7 @@ export function buildMachineBootstrapCommand(input: {
     `${cli} config --local set gateway.url "${gatewayWs}"`,
     `${cli} config --local set gateway.username "${username}"`,
     `${cli} config --local set node.token "${token}"`,
-    `${cli} device install --id "${deviceId}" --workspace ${workspace}`,
+    `${cli} daemon install --id "${deviceId}" --workspace ${workspace}`,
   ].join("\n");
 }
 

@@ -6,11 +6,13 @@ import { OBJECT_GLYPH_ICON } from "../../../components/ui/objectGlyph";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { TagTone } from "../../../components/ui/Tag";
+import { fixedAiProviderModel } from "../../../domain/aiProviders";
 import {
   configValueForKey,
   effectiveAiValuesForViewer,
   modelDisplayName,
   modelProfilesForConfig,
+  modelStackDisplayName,
   viewerAccountForSettings,
 } from "../domain/consoleSettings";
 import {
@@ -37,6 +39,7 @@ import type {
   ConsoleProcess,
   ConsoleTarget,
 } from "../domain/consoleModels";
+import { consoleWorkProcesses } from "../domain/consoleProcesses";
 import type { ShellSurfaceId } from "../../gsv-shell/domain/shellModel";
 import {
   processSub,
@@ -90,8 +93,11 @@ function isQueuedProcess(process: ConsoleProcess): boolean {
 
 function joinMeta(parts: readonly (number | string | null | undefined | false)[]): string {
   return parts
-    .map((part) => typeof part === "number" ? String(part) : part)
-    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+    .map((part) => z.number().safeParse(part).success ? String(part) : part)
+    .filter((part) => {
+      const parsed = z.string().safeParse(part);
+      return parsed.success && parsed.data.trim().length > 0;
+    })
     .join(" · ");
 }
 
@@ -158,7 +164,8 @@ function integrationRow(server: ConsoleMcpServer): OverviewRow {
 }
 
 function accountStatus(account: ConsoleAccount, processes: readonly ConsoleProcess[]): Pick<CrewCard, "meta" | "statusLabel" | "tone"> {
-  const ownedProcesses = processes.filter((process) => process.uid === account.uid || process.username === account.username);
+  const ownedProcesses = consoleWorkProcesses(processes)
+    .filter((process) => process.uid === account.uid || process.username === account.username);
   const running = ownedProcesses.some(isRunningProcess);
   const queuedCount = ownedProcesses.filter(isQueuedProcess).length;
   const unknown = ownedProcesses.some((process) => process.state === "unknown");
@@ -168,7 +175,7 @@ function accountStatus(account: ConsoleAccount, processes: readonly ConsoleProce
     return { meta: `${queuedCount} queued`, statusLabel: "QUEUED", tone: "update" };
   }
   if (running) {
-    const openLabel = openCount === 1 ? "1 open task" : `${openCount} open tasks`;
+    const openLabel = openCount === 1 ? "1 open work item" : `${openCount} open work items`;
     return { meta: openLabel, statusLabel: "RUNNING", tone: "live" };
   }
   if (unknown) {
@@ -301,7 +308,11 @@ function SettingsCard({
   const viewer = viewerAccountForSettings(accounts);
   const modelValues = effectiveAiValuesForViewer(config, viewer?.uid);
   const profiles = modelProfilesForConfig(config, viewer?.uid);
-  const chatModel = modelCoreName(modelValues["config/ai/model"] ?? "") || "Not configured";
+  const chatModel = (
+    fixedAiProviderModel(modelValues["config/ai/provider"] ?? "")
+      ? modelStackDisplayName(modelValues)
+      : modelCoreName(modelValues["config/ai/model"] ?? "")
+  ) || "Not configured";
   const savedModels = `${profiles.length} saved model${profiles.length === 1 ? "" : "s"}`;
   const behavior = viewer ? behaviorForAccount(config, viewer.uid, viewer.uid) : null;
   const permission = behavior?.permission ?? "ask";
@@ -435,34 +446,35 @@ function TasksListCard({
   onOpenSurface?: OpenSurface;
   processes: readonly ConsoleProcess[];
 }) {
-  const running = counts?.activeProcesses ?? processes.filter(isRunningProcess).length;
-  const queued = counts?.queuedProcesses ?? processes.filter(isQueuedProcess).length;
-  const errored = processes.filter((process) => process.state === "unknown").length;
+  const workProcesses = consoleWorkProcesses(processes);
+  const running = counts?.activeProcesses ?? workProcesses.filter(isRunningProcess).length;
+  const queued = counts?.queuedProcesses ?? workProcesses.filter(isQueuedProcess).length;
+  const errored = workProcesses.filter((process) => process.state === "unknown").length;
   const openTasks = onOpenSurface ? () => onOpenSurface("tasks") : undefined;
-  const rows: ListCardRow[] = sortProcessesForOverview(processes).map((process) =>
+  const rows: ListCardRow[] = sortProcessesForOverview(workProcesses).map((process) =>
     toListCardRow(
       processOverviewRow(process),
       onOpenListDetail ? () => onOpenListDetail("tasks", process.pid, process.label) : openTasks,
     ),
   );
-  const taskMeta = processes.length === 0
-    ? "NO TASKS"
+  const taskMeta = workProcesses.length === 0
+    ? "NO WORK"
     : joinMeta([
         running > 0 ? `${running} RUNNING` : undefined,
         queued > 0 ? `${queued} QUEUED` : undefined,
         errored > 0 ? `${errored} UNKNOWN` : undefined,
-        running === 0 && queued === 0 && errored === 0 ? `${processes.length} IDLE` : undefined,
+        running === 0 && queued === 0 && errored === 0 ? `${workProcesses.length} IDLE` : undefined,
       ]);
 
   return (
     <ListCard
       className="gsv-settings-listcard"
       collapse={{ id: "tasks", at: "mobile" }}
-      title="TASKS"
+      title="WORK"
       meta={taskMeta}
       onOpen={openTasks}
       rows={rows}
-      emptyLabel="NO TASKS"
+      emptyLabel="NO WORK"
       onViewAll={openTasks}
     />
   );
@@ -623,3 +635,4 @@ export function SettingsOverviewDashboard({
     </div>
   );
 }
+import { z } from "zod";

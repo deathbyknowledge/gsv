@@ -3,12 +3,33 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
 const VERSION_FILE = join(ROOT, "VERSION");
 const SEMVER_RE = /^\d+\.\d+\.\d+$/;
+const WORKSPACE_MANIFESTS = [
+  "host/apps/cli/Cargo.toml",
+  "host/apps/desktop/Cargo.toml",
+  "host/apps/machine/Cargo.toml",
+  "host/crates/config/Cargo.toml",
+  "host/crates/desktop-protocol/Cargo.toml",
+  "host/crates/gateway-client/Cargo.toml",
+  "host/crates/gesture-protocol/Cargo.toml",
+  "host/helpers/gestures/Cargo.toml",
+  "host/helpers/transcriber/Cargo.toml",
+];
+const WORKSPACE_PACKAGES = [
+  "desktop",
+  "desktop-protocol",
+  "gateway-client",
+  "gesture-protocol",
+  "gestures",
+  "gsv",
+  "host-config",
+  "machine",
+  "transcriber",
+];
 
 function fail(message) {
   throw new Error(message);
@@ -94,28 +115,47 @@ function replaceInFile(relativePath, pattern, replacement) {
   writeFileSync(absolutePath, next);
 }
 
-function run(command, args, cwd) {
-  const result = spawnSync(command, args, {
-    cwd,
-    stdio: "inherit",
-    shell: process.platform === "win32",
-  });
-  if (result.status !== 0) {
-    fail(`Command failed: ${command} ${args.join(" ")}`);
-  }
-}
-
 function syncPackageJsonVersions(version) {
   for (const file of listPackageJsonFiles()) {
     writeJsonFile(file, (value) => ({ ...value, version }));
   }
 }
 
+function npmLockFiles() {
+  return [
+    "package-lock.json",
+    ...listStandaloneNpmDirs().map((dir) => `${dir}/package-lock.json`),
+  ];
+}
+
+function syncNpmLockVersions(version) {
+  const rootPackagePaths = listPackageJsonFiles()
+    .filter((relativePath) => relativePath !== "package.json")
+    .map((relativePath) => relativePath.replace(/\/package\.json$/, ""));
+
+  for (const relativePath of npmLockFiles()) {
+    writeJsonFile(relativePath, (value) => {
+      value.version = version;
+      if (value.packages?.[""]) {
+        value.packages[""].version = version;
+      }
+      if (relativePath === "package-lock.json" && value.packages) {
+        for (const packagePath of rootPackagePaths) {
+          if (value.packages[packagePath]) {
+            value.packages[packagePath].version = version;
+          }
+        }
+      }
+      return value;
+    });
+  }
+}
+
 function syncSourceVersions(version) {
   replaceInFile(
-    "cli/Cargo.toml",
-    /^version = "[^"]+"$/m,
-    `version = "${version}"`,
+    "host/Cargo.toml",
+    /^(\[workspace\.package\]\nversion = ")[^"]+("$)/m,
+    `$1${version}$2`,
   );
   replaceInFile(
     "ripgit/Cargo.toml",
@@ -175,11 +215,13 @@ function syncSourceVersions(version) {
 }
 
 function syncCargoLocks(version) {
-  replaceInFile(
-    "cli/Cargo.lock",
-    /(name = "gsv"\nversion = ")[^"]+(")/,
-    `$1${version}$2`,
-  );
+  for (const packageName of WORKSPACE_PACKAGES) {
+    replaceInFile(
+      "host/Cargo.lock",
+      new RegExp(`(name = "${packageName}"\\nversion = ")[^"]+(")`),
+      `$1${version}$2`,
+    );
+  }
   replaceInFile(
     "ripgit/Cargo.lock",
     /(name = "ripgit"\nversion = ")[^"]+(")/,
@@ -187,47 +229,26 @@ function syncCargoLocks(version) {
   );
 }
 
-function refreshNpmLocks() {
-  run("npm", ["install", "--package-lock-only", "--ignore-scripts"], ROOT);
-  for (const dir of listStandaloneNpmDirs()) {
-    run("npm", ["install", "--package-lock-only", "--ignore-scripts", "--workspaces=false"], join(ROOT, dir));
-  }
-}
-
-function stripLockfileLibcMetadata(value) {
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      stripLockfileLibcMetadata(entry);
+function verifyWorkspaceVersionInheritance() {
+  for (const relativePath of WORKSPACE_MANIFESTS) {
+    const manifest = readFileSync(join(ROOT, relativePath), "utf8");
+    const packageSection = manifest.match(/\[package\]\n([\s\S]*?)(?=\n\[|$)/)?.[1];
+    if (!packageSection || !/^version\.workspace = true$/m.test(packageSection)) {
+      fail(`${relativePath} must inherit version.workspace from host/Cargo.toml`);
     }
-    return;
-  }
-  if (!value || typeof value !== "object") {
-    return;
-  }
-
-  delete value.libc;
-  for (const entry of Object.values(value)) {
-    stripLockfileLibcMetadata(entry);
-  }
-}
-
-function normalizeNpmLocks() {
-  const lockfiles = ["package-lock.json", ...listStandaloneNpmDirs().map((dir) => `${dir}/package-lock.json`)];
-  for (const relativePath of lockfiles) {
-    writeJsonFile(relativePath, (value) => {
-      stripLockfileLibcMetadata(value);
-      return value;
-    });
+    if (/^version = /m.test(packageSection)) {
+      fail(`${relativePath} must not declare an independent package version`);
+    }
   }
 }
 
 function managedFiles() {
   const files = new Set([
     "VERSION",
+    "host/Cargo.toml",
+    "host/Cargo.lock",
     "package.json",
     "package-lock.json",
-    "cli/Cargo.toml",
-    "cli/Cargo.lock",
     "ripgit/Cargo.toml",
     "ripgit/Cargo.lock",
     "gateway/src/version.ts",
@@ -240,22 +261,25 @@ function managedFiles() {
     "extension/src/target/network-recorder.ts",
     "ripgit/src/lib.rs",
   ]);
+  for (const manifest of WORKSPACE_MANIFESTS) {
+    files.add(manifest);
+  }
   for (const file of listPackageJsonFiles()) {
     files.add(file);
   }
-  for (const dir of listStandaloneNpmDirs()) {
-    files.add(`${dir}/package-lock.json`);
+  for (const lockfile of npmLockFiles()) {
+    files.add(lockfile);
   }
   return [...files];
 }
 
 function syncAll(version) {
+  verifyWorkspaceVersionInheritance();
   writeVersionFile(version);
   syncPackageJsonVersions(version);
+  syncNpmLockVersions(version);
   syncSourceVersions(version);
   syncCargoLocks(version);
-  refreshNpmLocks();
-  normalizeNpmLocks();
 }
 
 function checkAll(version) {

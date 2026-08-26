@@ -29,7 +29,7 @@ function createMockSqlStorage(options: { failOn?: string } = {}): MockSqlStorage
     return { toArray: () => rows };
   }
 
-  function exec<T = Record<string, unknown>>(query: string, ...bindings: unknown[]): Cursor<T> {
+  function exec<T = AppliedSqlMigration>(query: string, ...bindings: unknown[]): Cursor<T> {
     const normalized = query.trim().replace(/\s+/g, " ");
     statements.push(normalized);
 
@@ -38,11 +38,14 @@ function createMockSqlStorage(options: { failOn?: string } = {}): MockSqlStorage
     }
 
     if (normalized.startsWith("SELECT component, id, name, checksum, applied_at FROM _gsv_schema_migrations")) {
+      // SAFETY: the test invokes this SQL branch only with the migration row contract.
       const [component] = bindings as [string];
+      // SAFETY: the selected rows are AppliedSqlMigration values in this typed fake.
       return cursor(applied.filter((migration) => migration.component === component) as T[]);
     }
 
     if (normalized.startsWith("INSERT INTO _gsv_schema_migrations")) {
+      // SAFETY: the test invokes this SQL branch with the five typed migration bindings.
       const [component, id, name, checksum, appliedAt] = bindings as [
         string,
         number,
@@ -63,6 +66,7 @@ function createMockSqlStorage(options: { failOn?: string } = {}): MockSqlStorage
     return cursor<T>();
   }
 
+  // SAFETY: this object implements the SqlStorage surface used by the migration runner.
   return { exec, applied, statements } as MockSqlStorage;
 }
 
@@ -117,6 +121,34 @@ describe("runSqlMigrations", () => {
 
     expect(sql.applied).toHaveLength(1);
     expect(sql.statements.filter((statement) => statement === "CREATE TABLE first_table (id TEXT PRIMARY KEY)")).toHaveLength(1);
+  });
+
+  it("allows new migrations after unrelated ledger entries absent from the current release", () => {
+    const sql = createMockSqlStorage();
+    sql.applied.push({
+      component: "kernel",
+      id: 90,
+      name: "removed_experiment_one",
+      checksum: "deadbeef",
+      applied_at: 1,
+    });
+    sql.applied.push({
+      component: "kernel",
+      id: 91,
+      name: "removed_experiment_two",
+      checksum: "decafbad",
+      applied_at: 2,
+    });
+    const next: SqlMigration = {
+      id: 93,
+      name: "next_release",
+      statements: ["CREATE TABLE next_release (id TEXT PRIMARY KEY)"],
+    };
+
+    runSqlMigrations(sql, "kernel", [next]);
+
+    expect(sql.statements).toContain("CREATE TABLE next_release (id TEXT PRIMARY KEY)");
+    expect(sql.applied.map(({ id }) => id)).toEqual([90, 91, 93]);
   });
 
   it("rejects applied migrations whose content changed", () => {

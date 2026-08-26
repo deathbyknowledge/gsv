@@ -93,13 +93,16 @@ export function targetCanHandle(target: TargetDescriptor, syscall: string): bool
 }
 
 export function targetToAiDevice(target: TargetDescriptor): AiToolsDevice {
-  return {
+  const device: AiToolsDevice = {
     id: target.targetId,
     implements: target.implements,
     label: target.label,
-    ...(target.description ? { description: target.description } : {}),
     platform: target.platform || undefined,
   };
+  if (target.description) {
+    device.description = target.description;
+  }
+  return device;
 }
 
 export function targetToDeviceSummary(target: TargetDescriptor): SysDeviceSummary {

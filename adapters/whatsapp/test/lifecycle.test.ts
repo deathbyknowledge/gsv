@@ -130,6 +130,7 @@ describe("WhatsApp lifecycle policy", () => {
 
 describe("WhatsApp state upgrade", () => {
   it("reconnects an existing registered legacy session", () => {
+    // SAFETY: Fixture supplies the persisted lifecycle timestamps under test.
     expect(restoreWhatsAppAccountState(
       undefined,
       "default",
@@ -155,6 +156,7 @@ describe("WhatsApp state upgrade", () => {
       lastMessageAt: 41_000,
     };
     expect(restoreWhatsAppAccountState(
+      // SAFETY: Fixture supplies the persisted lifecycle timestamps under test.
       stored as WhatsAppAccountState & {
         rotationAt: number;
         leaseRefreshAt: number;

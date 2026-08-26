@@ -1,10 +1,12 @@
 import { GSVClient } from "@humansandmachines/gsv";
 import {
+  adapterGatewayResponseFrameSchema,
   isAdapterInboundResult,
   type AdapterGatewayRequestFrame,
   type AdapterGatewayResponseFrame,
   type AdapterInboundResult,
   type ProcAiConfigSetResult,
+  type ProcHilRequest,
 } from "@humansandmachines/gsv/protocol";
 import type { TestHarness } from "wrangler";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -14,6 +16,7 @@ import {
   startOpenAiFixture,
   type OpenAiFixture,
 } from "./openai-fixture";
+import { SINGLETON_INSTALLATION_ID } from "../src/installation/identity";
 
 const USERNAME = "runtime-user";
 const PASSWORD = "runtime-integration-password";
@@ -24,10 +27,15 @@ const SURFACE = { kind: "dm" as const, id: "discord:dm-42" };
 
 type RunSignal = {
   signal: string;
-  payload: Record<string, unknown>;
+  payload: {
+    runId?: string;
+    seq?: number;
+    event?: { type: string };
+  };
 };
 
 type RecordedOutboundMessage = {
+  installationId: string;
   accountId: string;
   message: {
     deliveryId: string;
@@ -98,9 +106,8 @@ describe("gateway runtime integration", () => {
 
     const signals: RunSignal[] = [];
     const stopSignals = client.onSignal((signal, payload) => {
-      if (payload && typeof payload === "object") {
-        signals.push({ signal, payload: payload as Record<string, unknown> });
-      }
+      // SAFETY: Runtime signal payloads use the fields asserted by this fixture.
+      signals.push({ signal, payload: payload as RunSignal["payload"] });
     });
     const generationRequestOffset = ai.requests.length;
 
@@ -143,12 +150,13 @@ describe("gateway runtime integration", () => {
         .filter(({ signal, payload }) => signal === "proc.run.stream" && payload.runId === runId)
         .map(({ payload }) => payload);
       expect(streamPayloads.map(({ event }) =>
-        (event as Record<string, unknown>).type
+        // SAFETY: Stream events in this fixture always carry a string type.
+        (event as { type: string }).type
       )).toEqual([
         "start",
-        "text_start",
-        "text_delta",
-        "text_end",
+        "toolcall_start",
+        "toolcall_delta",
+        "toolcall_end",
         "done",
       ]);
       expect(streamPayloads.map(({ seq }) => seq)).toEqual([1, 2, 3, 4, 5]);
@@ -159,15 +167,17 @@ describe("gateway runtime integration", () => {
       expect(runSignals).toEqual(expect.arrayContaining([
         "proc.run.started",
         "proc.run.stream",
-        "proc.run.output",
         "proc.run.finished",
       ]));
       expect(signals).toContainEqual(expect.objectContaining({
-        signal: "proc.run.output",
+        signal: "message.committed",
         payload: expect.objectContaining({
-          pid: spawned.pid,
-          runId,
-          text: INTEGRATION_REPLY,
+          directed: true,
+          message: expect.objectContaining({
+            processId: spawned.pid,
+            runId,
+            text: INTEGRATION_REPLY,
+          }),
         }),
       }));
       expect(signals).toContainEqual(expect.objectContaining({
@@ -176,8 +186,13 @@ describe("gateway runtime integration", () => {
           pid: spawned.pid,
           runId,
           status: "ok",
-          reason: "turn.complete",
-          text: INTEGRATION_REPLY,
+          reason: "run.yielded",
+          result: { text: INTEGRATION_REPLY },
+          delivery: {
+            kind: "message",
+            conversationId: expect.any(String),
+            messageId: expect.any(String),
+          },
         }),
       }));
     }
@@ -199,15 +214,45 @@ describe("gateway runtime integration", () => {
     expect(history).toMatchObject({
       ok: true,
       pid: spawned.pid,
-      messageCount: 4,
+      messageCount: 6,
       activeRunId: null,
     });
     if (!history.ok) throw new Error(history.error);
-    expect(history.messages.map(({ role, content, runId }) => ({ role, content, runId }))).toEqual([
-      { role: "user", content: "first deterministic message", runId: first.runId },
-      { role: "assistant", content: INTEGRATION_REPLY, runId: first.runId },
-      { role: "user", content: "second deterministic message", runId: second.runId },
-      { role: "assistant", content: INTEGRATION_REPLY, runId: second.runId },
+    expect(history.messages).toEqual([
+      expect.objectContaining({
+        role: "user",
+        content: "first deterministic message",
+        runId: first.runId,
+      }),
+      expect.objectContaining({
+        role: "assistant",
+        runId: first.runId,
+        content: expect.objectContaining({
+          toolCalls: [expect.objectContaining({ name: "Shell" })],
+        }),
+      }),
+      expect.objectContaining({
+        role: "toolResult",
+        runId: first.runId,
+        content: expect.objectContaining({ toolName: "Shell" }),
+      }),
+      expect.objectContaining({
+        role: "user",
+        content: "second deterministic message",
+        runId: second.runId,
+      }),
+      expect.objectContaining({
+        role: "assistant",
+        runId: second.runId,
+        content: expect.objectContaining({
+          toolCalls: [expect.objectContaining({ name: "Shell" })],
+        }),
+      }),
+      expect.objectContaining({
+        role: "toolResult",
+        runId: second.runId,
+        content: expect.objectContaining({ toolName: "Shell" }),
+      }),
     ]);
     expect(history.messages[0]).toMatchObject({
       origin: {
@@ -224,7 +269,7 @@ describe("gateway runtime integration", () => {
           provider: "custom",
           model: "integration-model",
           responseId: expect.stringMatching(/^chatcmpl-integration-/),
-          stopReason: "stop",
+          stopReason: "toolUse",
         },
         usage: {
           inputTokens: 10,
@@ -240,9 +285,9 @@ describe("gateway runtime integration", () => {
     expect(reset).toMatchObject({
       ok: true,
       pid: spawned.pid,
-      archivedMessages: 4,
+      archivedMessages: 6,
       archivedTo: expect.stringMatching(/\.history\.gen-1\.jsonl\.gz$/),
-      archives: [expect.objectContaining({ generation: 1, messages: 4 })],
+      archives: [expect.objectContaining({ generation: 1, messages: 6 })],
     });
     if (!reset.ok || !reset.archivedTo) throw new Error("proc.reset did not archive history");
     await expectArchive(harness, client, reset.archivedTo);
@@ -255,9 +300,8 @@ describe("gateway runtime integration", () => {
 
     const thirdSignals: RunSignal[] = [];
     const stopThirdSignals = client.onSignal((signal, payload) => {
-      if (payload && typeof payload === "object") {
-        thirdSignals.push({ signal, payload: payload as Record<string, unknown> });
-      }
+      // SAFETY: Runtime signal payloads use the fields asserted by this fixture.
+      thirdSignals.push({ signal, payload: payload as RunSignal["payload"] });
     });
     const third = await client.proc.send({
       pid: spawned.pid,
@@ -273,10 +317,10 @@ describe("gateway runtime integration", () => {
     expect(killed).toMatchObject({
       ok: true,
       pid: spawned.pid,
-      archivedMessages: 2,
+      archivedMessages: 3,
       archivedTo: expect.stringMatching(/\.history\.gen-2\.jsonl\.gz$/),
       archives: expect.arrayContaining([
-        expect.objectContaining({ generation: 2, messages: 2 }),
+        expect.objectContaining({ generation: 2, messages: 3 }),
       ]),
     });
     if (!killed.ok || !killed.archivedTo) throw new Error("proc.kill did not archive history");
@@ -336,37 +380,31 @@ describe("gateway runtime integration", () => {
     }));
 
     const beforePersonal = await client.proc.list();
-    const usePersonalFrame = inboundFrame({
-      id: "use-personal",
-      deliveryId: "use-personal-delivery",
-      messageId: "use-personal-message",
-      text: "/use personal",
+    const personalProcesses = beforePersonal.processes.filter(({ personal }) => personal);
+    expect(personalProcesses).toHaveLength(1);
+
+    const shipFrame = inboundFrame({
+      id: "ship",
+      deliveryId: "ship-delivery",
+      messageId: "ship-message",
+      text: "/ship",
     });
-    const usePersonal = inboundResult(await sendServiceFrame(harness, usePersonalFrame));
-    expect(usePersonal).toMatchObject({
+    const ship = inboundResult(await sendServiceFrame(harness, shipFrame));
+    expect(ship).toMatchObject({
       ok: true,
       reply: {
         deliveryId: expect.stringMatching(/^adapter-ingress:[0-9a-f]{64}:reply$/),
-        text: "This chat now uses a new personal-agent process.",
-        replyToId: "use-personal-message",
+        text: expect.stringContaining("[SHIP]"),
+        replyToId: "ship-message",
       },
     });
     expect(inboundResult(await sendServiceFrame(harness, {
-      ...usePersonalFrame,
-      id: "use-personal-replay",
-    }))).toEqual({ ...usePersonal, replayed: "completed" });
+      ...shipFrame,
+      id: "ship-replay",
+    }))).toEqual({ ...ship, replayed: "completed" });
 
     const afterPersonal = await client.proc.list();
-    const newPersonalProcesses = afterPersonal.processes.filter(({ pid }) =>
-      !beforePersonal.processes.some((process) => process.pid === pid)
-    );
-    expect(newPersonalProcesses).toEqual([
-      expect.objectContaining({
-        pid: expect.stringMatching(/^proc:adapter-ingress:[0-9a-f]{64}$/),
-        username: "runtime-agent",
-        interactive: true,
-      }),
-    ]);
+    expect(afterPersonal.processes).toEqual(beforePersonal.processes);
 
     const wherePersonal = inboundResult(await sendServiceFrame(harness, inboundFrame({
       id: "where-personal",
@@ -375,7 +413,7 @@ describe("gateway runtime integration", () => {
       text: "/where",
     })));
     expect(wherePersonal.reply).toMatchObject({
-      text: expect.stringContaining(newPersonalProcesses[0]!.pid.slice(0, 13)),
+      text: expect.stringContaining(personalProcesses[0]!.pid.slice(0, 13)),
       replyToId: "where-personal-message",
     });
 
@@ -384,31 +422,84 @@ describe("gateway runtime integration", () => {
       interactive: true,
     });
     if (!target.ok) throw new Error(target.error);
+    await configureDeterministicAi(client, personalProcesses[0]!.pid, ai.baseUrl);
     await configureDeterministicAi(client, target.pid, ai.baseUrl);
 
-    const useTarget = inboundResult(await sendServiceFrame(harness, inboundFrame({
-      id: "use-target",
-      deliveryId: "use-target-delivery",
-      messageId: "use-target-message",
-      text: `/use ${target.pid}`,
+    ai.enqueue(
+      {
+        kind: "tool-calls",
+        calls: [{
+          id: "route-work-call",
+          name: "Shell",
+          arguments: {
+            input: `message route set --process ${target.pid} --to here`,
+          },
+        }],
+      },
+      { kind: "message", text: "work direct line ready" },
+    );
+    const workTarget = inboundResult(await sendServiceFrame(harness, inboundFrame({
+      id: "work-target",
+      deliveryId: "work-target-delivery",
+      messageId: "work-target-message",
+      text: "Open a direct line to the prepared work process.",
     })));
-    expect(useTarget.reply).toMatchObject({
-      text: expect.stringContaining(target.pid.slice(0, 13)),
-      replyToId: "use-target-message",
+    expect(workTarget).toMatchObject({
+      ok: true,
+      delivered: {
+        pid: personalProcesses[0]!.pid,
+        runId: expect.any(String),
+        queued: false,
+      },
     });
+    if (!workTarget.delivered) throw new Error("Personal handoff run was not admitted");
 
-    const whereTarget = inboundResult(await sendServiceFrame(harness, inboundFrame({
-      id: "where-target",
-      deliveryId: "where-target-delivery",
-      messageId: "where-target-message",
-      text: "/where",
-    })));
-    expect(whereTarget.reply).toMatchObject({
-      text: expect.stringContaining(target.pid.slice(0, 13)),
-      replyToId: "where-target-message",
+    const pendingRoute = await waitForPendingHil(
+      client,
+      personalProcesses[0]!.pid,
+      workTarget.delivered.runId,
+    );
+    expect(pendingRoute).toMatchObject({
+      toolName: "Shell",
+      syscall: "shell.exec",
+      args: {
+        input: `message route set --process ${target.pid} --to here`,
+      },
     });
+    expect(await client.proc.hil({
+      pid: personalProcesses[0]!.pid,
+      requestId: pendingRoute.requestId,
+      decision: "approve",
+    })).toMatchObject({
+      ok: true,
+      pid: personalProcesses[0]!.pid,
+      requestId: pendingRoute.requestId,
+      resumed: true,
+    });
+    await waitFor(async () => {
+      const history = await client.proc.history({ pid: personalProcesses[0]!.pid });
+      return history.ok
+        && history.activeRunId === null
+        && history.messages.some(({ role, runId, content }) => (
+          role === "toolResult"
+          && runId === workTarget.delivered?.runId
+          && JSON.stringify(content).includes(target.pid)
+        ));
+    }, "personal controller to set the work route");
+    let personalRouteReply: RecordedOutboundMessage | undefined;
+    await waitFor(async () => {
+      personalRouteReply = (await listOutbound(harness, ACCOUNT_ID)).find(({ message }) => (
+        message.replyToId === "work-target-message"
+        && message.text.includes("work direct line ready")
+      ));
+      return personalRouteReply !== undefined;
+    }, "personal route confirmation");
+    expect(personalRouteReply?.message.text).toBe(
+      "[PERSONAL INTELLIGENCE] work direct line ready",
+    );
 
     const beforeNormal = await client.proc.list();
+    const workOutboundOffset = (await listOutbound(harness, ACCOUNT_ID)).length;
     const firstNormalFrame = inboundFrame({
       id: "normal-one",
       deliveryId: "normal-one-delivery",
@@ -431,14 +522,20 @@ describe("gateway runtime integration", () => {
       },
     });
 
-    const firstOutbound = await waitForOutbound(harness, ACCOUNT_ID, 1);
-    expect(firstOutbound[0]).toMatchObject({
+    const firstOutbound = await waitForOutbound(
+      harness,
+      ACCOUNT_ID,
+      workOutboundOffset + 1,
+    );
+    expect(firstOutbound.find(({ message }) => (
+      message.replyToId === "normal-one-message"
+    ))).toMatchObject({
       accountId: ACCOUNT_ID,
       message: {
         deliveryId: expect.any(String),
         surface: SURFACE,
         actorId: ACTOR_ID,
-        text: INTEGRATION_REPLY,
+        text: `[WORK SESSION] ${INTEGRATION_REPLY}`,
         replyToId: "normal-one-message",
       },
     });
@@ -451,16 +548,22 @@ describe("gateway runtime integration", () => {
     })));
     expect(secondNormal.delivered).toMatchObject({ pid: target.pid, queued: false });
 
-    const twoOutbound = await waitForOutbound(harness, ACCOUNT_ID, 2);
-    expect(twoOutbound[1]?.message).toMatchObject({
+    const twoOutbound = await waitForOutbound(
+      harness,
+      ACCOUNT_ID,
+      workOutboundOffset + 2,
+    );
+    expect(twoOutbound.find(({ message }) => (
+      message.replyToId === "normal-two-message"
+    ))?.message).toMatchObject({
       surface: SURFACE,
       actorId: ACTOR_ID,
-      text: INTEGRATION_REPLY,
+      text: `[WORK SESSION] ${INTEGRATION_REPLY}`,
       replyToId: "normal-two-message",
     });
 
     const routedHistory = await client.proc.history({ pid: target.pid });
-    expect(routedHistory).toMatchObject({ ok: true, messageCount: 4 });
+    expect(routedHistory).toMatchObject({ ok: true, messageCount: 6 });
     if (!routedHistory.ok) throw new Error(routedHistory.error);
     expect(routedHistory.messages[0]).toMatchObject({
       role: "user",
@@ -478,17 +581,31 @@ describe("gateway runtime integration", () => {
     });
     expect(routedHistory.messages[1]).toMatchObject({
       role: "assistant",
-      content: INTEGRATION_REPLY,
+      content: expect.objectContaining({
+        toolCalls: [expect.objectContaining({ name: "Shell" })],
+      }),
       runId: firstNormal.delivered?.runId,
     });
     expect(routedHistory.messages[2]).toMatchObject({
+      role: "toolResult",
+      content: expect.objectContaining({ toolName: "Shell" }),
+      runId: firstNormal.delivered?.runId,
+    });
+    expect(routedHistory.messages[3]).toMatchObject({
       role: "user",
       content: "second routed adapter message",
       runId: secondNormal.delivered?.runId,
     });
-    expect(routedHistory.messages[3]).toMatchObject({
+    expect(routedHistory.messages[4]).toMatchObject({
       role: "assistant",
-      content: INTEGRATION_REPLY,
+      content: expect.objectContaining({
+        toolCalls: [expect.objectContaining({ name: "Shell" })],
+      }),
+      runId: secondNormal.delivered?.runId,
+    });
+    expect(routedHistory.messages[5]).toMatchObject({
+      role: "toolResult",
+      content: expect.objectContaining({ toolName: "Shell" }),
       runId: secondNormal.delivered?.runId,
     });
 
@@ -498,12 +615,14 @@ describe("gateway runtime integration", () => {
     );
     expect(await client.proc.history({ pid: target.pid })).toMatchObject({
       ok: true,
-      messageCount: 4,
+      messageCount: 6,
       messages: [
         expect.objectContaining({ content: "first routed adapter message" }),
-        expect.objectContaining({ content: INTEGRATION_REPLY }),
+        expect.objectContaining({ role: "assistant" }),
+        expect.objectContaining({ role: "toolResult" }),
         expect.objectContaining({ content: "second routed adapter message" }),
-        expect.objectContaining({ content: INTEGRATION_REPLY }),
+        expect.objectContaining({ role: "assistant" }),
+        expect.objectContaining({ role: "toolResult" }),
       ],
     });
 
@@ -512,10 +631,43 @@ describe("gateway runtime integration", () => {
       id: "normal-one-replay",
     }));
     expect(replayedNormal).toEqual({ ...firstNormal, replayed: "completed" });
-    expect(await listOutbound(harness, ACCOUNT_ID)).toHaveLength(2);
+    expect(await listOutbound(harness, ACCOUNT_ID)).toHaveLength(twoOutbound.length);
     expect(await client.proc.history({ pid: target.pid })).toMatchObject({
       ok: true,
-      messageCount: 4,
+      messageCount: 6,
+    });
+
+    const returnShipFrame = inboundFrame({
+      id: "return-ship",
+      deliveryId: "return-ship-delivery",
+      messageId: "return-ship-message",
+      text: "/ship",
+    });
+    const returnedShip = inboundResult(await sendServiceFrame(harness, returnShipFrame));
+    expect(returnedShip).toMatchObject({
+      ok: true,
+      reply: {
+        text: expect.stringContaining("[SHIP]"),
+        replyToId: "return-ship-message",
+      },
+    });
+    expect(inboundResult(await sendServiceFrame(harness, {
+      ...returnShipFrame,
+      id: "return-ship-replay",
+    }))).toEqual({ ...returnedShip, replayed: "completed" });
+
+    const afterShip = inboundResult(await sendServiceFrame(harness, inboundFrame({
+      id: "after-ship",
+      deliveryId: "after-ship-delivery",
+      messageId: "after-ship-message",
+      text: "back aboard Ship",
+    })));
+    expect(afterShip).toMatchObject({
+      ok: true,
+      delivered: {
+        pid: personalProcesses[0]!.pid,
+        runId: expect.any(String),
+      },
     });
   });
 
@@ -532,11 +684,10 @@ describe("gateway runtime integration", () => {
       url: webSocketUrl(baseUrl),
       username: USERNAME,
       password: PASSWORD,
-      client: {
+      peer: {
         id: CLIENT_ID,
         version: "1.0.0",
         platform: "node",
-        role: "user",
       },
     });
     clients.add(client);
@@ -550,6 +701,7 @@ async function configureDeterministicAi(
   pid: string,
   baseUrl: string,
 ): Promise<void> {
+  // SAFETY: The client command name is a stable protocol literal accepted by the test client.
   const result = await client.call<ProcAiConfigSetResult>("proc.ai.config.set" as string, {
     pid,
     values: {
@@ -596,6 +748,26 @@ async function processHistoryCounts(client: GSVClient): Promise<Array<{
   }));
 }
 
+async function waitForPendingHil(
+  client: GSVClient,
+  pid: string,
+  runId: string,
+): Promise<ProcHilRequest> {
+  let pending: ProcHilRequest | null = null;
+  await waitFor(async () => {
+    const history = await client.proc.history({ pid });
+    if (!history.ok || history.pendingHil?.runId !== runId) {
+      return false;
+    }
+    pending = history.pendingHil;
+    return true;
+  }, `pending approval for ${runId}`);
+  if (!pending) {
+    throw new Error(`Process ${pid} did not expose approval for ${runId}`);
+  }
+  return pending;
+}
+
 function inboundFrame(options: {
   id: string;
   deliveryId: string;
@@ -628,24 +800,29 @@ async function sendServiceFrame(
   frame: AdapterGatewayRequestFrame,
 ): Promise<AdapterGatewayResponseFrame> {
   const response = await harness.getWorker("gsv-test-dependencies").fetch(
-    "http://gsv-test-dependencies/__test/service-frame",
+    "http://gsv-test-dependencies/__test/service-frame/discord",
     {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(frame),
+      body: JSON.stringify({
+        installation: {
+          installationId: SINGLETON_INSTALLATION_ID,
+        },
+        frame,
+      }),
     },
   );
   if (!response.ok) {
     throw new Error(`Test dependency service-frame endpoint returned ${response.status}`);
   }
-  return await response.json() as AdapterGatewayResponseFrame;
+  return adapterGatewayResponseFrameSchema.parse(await response.json());
 }
 
 function inboundResult(response: AdapterGatewayResponseFrame): AdapterInboundResult {
   if (!response.ok) {
     throw new Error(response.error?.message ?? "Gateway rejected adapter ingress");
   }
-  if (!isAdapterInboundResult(response.data)) {
+  if (response.data === undefined || !isAdapterInboundResult(response.data)) {
     throw new Error("Gateway returned an invalid adapter ingress result");
   }
   return response.data;
@@ -656,12 +833,15 @@ async function listOutbound(
   accountId: string,
 ): Promise<RecordedOutboundMessage[]> {
   const response = await harness.getWorker("gsv-test-dependencies").fetch(
-    `http://gsv-test-dependencies/__test/outbound?accountId=${encodeURIComponent(accountId)}`,
+    `http://gsv-test-dependencies/__test/outbound?installationId=${encodeURIComponent(SINGLETON_INSTALLATION_ID)}&accountId=${encodeURIComponent(accountId)}`,
   );
   if (!response.ok) {
     throw new Error(`Test dependency outbound endpoint returned ${response.status}`);
   }
-  return await response.json() as RecordedOutboundMessage[];
+  const body = await response.json();
+  if (!Array.isArray(body)) throw new Error("Gateway returned invalid outbound messages");
+  // SAFETY: The test dependency endpoint returns the recorded outbound message contract.
+  return body as RecordedOutboundMessage[];
 }
 
 async function waitForOutbound(
@@ -684,8 +864,11 @@ async function expectArchive(
 ): Promise<void> {
   const response = await client.request("fs.transfer.stat", { path });
   expect(response.data).toMatchObject({
-    ok: false,
-    error: expect.stringContaining("EACCES"),
+    ok: true,
+    path,
+    size: expect.any(Number),
+    isFile: true,
+    isDirectory: false,
   });
 
   const env = await harness.getWorker<GatewayTestEnv>("gsv").getEnv();

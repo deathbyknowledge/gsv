@@ -8,17 +8,117 @@ import {
   handleProcIpcCall,
   handleProcIpcSend,
   handleProcSpawn,
+  resolveIpcCallTimeoutMs,
 } from "../../../kernel/proc-handlers";
+import {
+  handleResponsibilityGet,
+  handleResponsibilityUpdate,
+} from "../../../kernel/responsibilities";
 import { handleAccountList } from "../../../kernel/agents";
 import type { ArgsOf, ResultOf } from "../../../syscalls";
 import type {
+  JsonObject,
+  JsonValue,
+  ProcHistoryMessage,
   ProcHistoryOverflowPolicy,
   ProcSpawnArgs,
+  ResponsibilityRecord,
 } from "@humansandmachines/gsv/protocol";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
+} from "@humansandmachines/gsv/protocol";
+import { z } from "zod";
 import type { RequestFrame } from "../../../protocol/frames";
 import { parseDurationMs, requireCommandCapability, requireShellOptionValue } from "./common";
 
 const DEFAULT_HISTORY_CONTENT_CHARS = 4000;
+
+const procSpawnArgsSchema = z.strictObject({
+  runAs: z.string().optional(),
+  interactive: z.boolean().optional(),
+  label: z.string().optional(),
+  prompt: z.string().optional(),
+  parentPid: z.string().optional(),
+  cwd: z.string().optional(),
+});
+const historyDisplayObjectSchema = z.object({
+  text: z.string().optional(),
+  output: z.string().optional(),
+});
+
+type ProcHistoryOk = Extract<ResultOf<"proc.history">, { ok: true }>;
+type ProcSegmentReadOk = Extract<
+  ResultOf<"proc.history.segment.read">,
+  { ok: true }
+>;
+type ParsedProcSegments = { pid: string };
+type ParsedProcPolicy = {
+  pid: string;
+  overflow?: ProcHistoryOverflowPolicy;
+  compactAtPressure?: number;
+  keepLast?: number;
+  set: boolean;
+};
+type ParsedProcSegmentRead = {
+  pid: string;
+  segmentId: string;
+  limit?: number;
+  offset?: number;
+  json?: boolean;
+};
+type ParsedProcHistory = {
+  pid: string;
+  limit?: number;
+  offset?: number;
+  beforeMessageId?: number;
+  afterMessageId?: number;
+  tail?: boolean;
+  json?: boolean;
+  full?: boolean;
+  maxContentChars: number;
+};
+type ParsedProcCompact = {
+  pid: string;
+  summary?: string;
+  generateSummary?: boolean;
+  keepLast?: number;
+  throughMessageId?: number;
+};
+type ParsedProcFork = {
+  pid: string;
+  segmentId?: string;
+  throughMessageId?: number;
+  label?: string;
+  includeLiveSuffix?: boolean;
+};
+type ParsedProcProcessOptions = {
+  pid: string;
+  positional: string[];
+};
+type ParsedProcDelegate = {
+  runAs?: string;
+  label?: string;
+  parentPid?: string;
+  cwd?: string;
+  timeoutMs?: number;
+  responsibilityId?: string;
+  message: string;
+};
+type DelegatedResponsibilityRollback = {
+  original: ResponsibilityRecord;
+  delegatedRevision?: number;
+};
+type ProcHistoryFormatOptions = {
+  json?: boolean;
+  full?: boolean;
+  maxContentChars: number;
+};
+type ProcLifecycleSuccess = {
+  pid: string;
+  archivedMessages: number;
+  archivedTo?: string;
+};
 
 export function buildProcCommand(ctx: KernelContext) {
   return defineCommand("proc", async (args): Promise<ExecResult> => {
@@ -142,29 +242,67 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
         };
       }
       const parsed = parseProcDelegateCommand(rest, ctx);
+      let responsibilityRollback: DelegatedResponsibilityRollback | undefined;
+      if (parsed.responsibilityId) {
+        requireCommandCapability(ctx, "r12y.get");
+        requireCommandCapability(ctx, "r12y.update");
+        responsibilityRollback = {
+          original: handleResponsibilityGet({ id: parsed.responsibilityId }, ctx)
+            .responsibility,
+        };
+      }
       const label = parsed.label ?? summarizeDelegateLabel(parsed.message);
-      const spawned = await handleProcSpawn({
-        ...(parsed.runAs ? { runAs: parsed.runAs } : {}),
+      const spawnArgs: ProcSpawnArgs = {
         interactive: false,
         label,
-        ...(parsed.parentPid ? { parentPid: parsed.parentPid } : {}),
-        ...(parsed.cwd ? { cwd: parsed.cwd } : {}),
-      }, ctx);
+      };
+      if (parsed.runAs) spawnArgs.runAs = parsed.runAs;
+      if (parsed.parentPid) spawnArgs.parentPid = parsed.parentPid;
+      if (parsed.cwd) spawnArgs.cwd = parsed.cwd;
+      const spawned = await handleProcSpawn(spawnArgs, ctx);
       if (!spawned.ok) {
         return { stdout: "", stderr: `proc delegate: ${spawned.error}\n`, exitCode: 1 };
       }
+      const timeoutMs = resolveIpcCallTimeoutMs(parsed.timeoutMs);
+      if (responsibilityRollback) {
+        try {
+          const delegated = await handleResponsibilityUpdate({
+            id: responsibilityRollback.original.id,
+            expectedRevision: responsibilityRollback.original.revision,
+            patch: {
+              assignee: { kind: "process", processId: spawned.pid },
+              state: "active",
+              blocker: null,
+              nextCheckAtMs: null,
+              leaseExpiresAtMs: Date.now() + timeoutMs,
+            },
+          }, ctx);
+          responsibilityRollback.delegatedRevision = delegated.responsibility.revision;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return delegateFailureResult(ctx, spawned.pid, message, responsibilityRollback);
+        }
+      }
       let result: Awaited<ReturnType<typeof handleProcIpcCall>>;
       try {
-        result = await handleProcIpcCall({
+        const callArgs: ArgsOf<"proc.ipc.call"> = {
           pid: spawned.pid,
           message: parsed.message,
-          ...(parsed.timeoutMs !== undefined ? { timeoutMs: parsed.timeoutMs } : {}),
-        }, ctx);
+          timeoutMs,
+        };
+        if (parsed.responsibilityId) {
+          callArgs.metadata = { responsibilityId: parsed.responsibilityId };
+        }
+        result = await handleProcIpcCall(callArgs, ctx, {
+          terminateTargetOnTimeout: true,
+          responsibilityId: parsed.responsibilityId,
+        });
       } catch (error) {
-        return delegateFailureResult(ctx, spawned.pid, error);
+        const message = error instanceof Error ? error.message : String(error);
+        return delegateFailureResult(ctx, spawned.pid, message, responsibilityRollback);
       }
       if (!result.ok) {
-        return delegateFailureResult(ctx, spawned.pid, result.error);
+        return delegateFailureResult(ctx, spawned.pid, result.error, responsibilityRollback);
       }
       return {
         stdout: [
@@ -175,6 +313,9 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
           `queued=${result.queued === true}`,
           `deadline=${new Date(result.deadlineAt).toISOString()}`,
           `label=${quoteShellField(label)}`,
+          ...(parsed.responsibilityId
+            ? [`responsibility=${parsed.responsibilityId}`]
+            : []),
         ].join(" ") + "\n",
         stderr: "",
         exitCode: 0,
@@ -198,6 +339,18 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
           segment.archivePath,
         ].join("\t"));
       }
+      if (result.epochs.length > 0) {
+        lines.push("", "EPOCH\tGEN\tSTATE\tR12Y\tARCHIVE");
+        for (const epoch of result.epochs) {
+          lines.push([
+            epoch.id,
+            String(epoch.generation),
+            epoch.state,
+            `${epoch.r12yRevision}->${epoch.observedR12yRevision}`,
+            epoch.archivePath ?? "-",
+          ].join("\t"));
+        }
+      }
       return { stdout: `${lines.join("\n")}\n`, stderr: "", exitCode: 0 };
     }
     case "policy": {
@@ -206,16 +359,18 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
         ? "proc.history.policy.set"
         : "proc.history.policy.get";
       requireCommandCapability(ctx, call);
-      const result = parsed.set
-        ? await runProcessSyscall(ctx, "proc.history.policy.set", {
-            pid: parsed.pid,
-            ...(parsed.overflow ? { overflow: parsed.overflow } : {}),
-            ...(parsed.compactAtPressure !== undefined
-              ? { compactAtPressure: parsed.compactAtPressure }
-              : {}),
-            ...(parsed.keepLast !== undefined ? { keepLast: parsed.keepLast } : {}),
-          })
-        : await runProcessSyscall(ctx, "proc.history.policy.get", { pid: parsed.pid });
+      let result: ResultOf<"proc.history.policy.set"> | ResultOf<"proc.history.policy.get">;
+      if (parsed.set) {
+        const policyArgs: ArgsOf<"proc.history.policy.set"> = { pid: parsed.pid };
+        if (parsed.overflow) policyArgs.overflow = parsed.overflow;
+        if (parsed.compactAtPressure !== undefined) {
+          policyArgs.compactAtPressure = parsed.compactAtPressure;
+        }
+        if (parsed.keepLast !== undefined) policyArgs.keepLast = parsed.keepLast;
+        result = await runProcessSyscall(ctx, "proc.history.policy.set", policyArgs);
+      } else {
+        result = await runProcessSyscall(ctx, "proc.history.policy.get", { pid: parsed.pid });
+      }
       if (!result.ok) {
         return { stdout: "", stderr: `proc policy: ${result.error}\n`, exitCode: 1 };
       }
@@ -233,14 +388,17 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
     case "history": {
       requireCommandCapability(ctx, "proc.history");
       const parsed = parseProcHistoryCommand(rest, ctx);
-      const result = await runProcessSyscall(ctx, "proc.history", {
-        pid: parsed.pid,
-        ...(parsed.limit !== undefined ? { limit: parsed.limit } : {}),
-        ...(parsed.offset !== undefined ? { offset: parsed.offset } : {}),
-        ...(parsed.beforeMessageId !== undefined ? { beforeMessageId: parsed.beforeMessageId } : {}),
-        ...(parsed.afterMessageId !== undefined ? { afterMessageId: parsed.afterMessageId } : {}),
-        ...(parsed.tail ? { tail: true } : {}),
-      });
+      const historyArgs: ArgsOf<"proc.history"> = { pid: parsed.pid };
+      if (parsed.limit !== undefined) historyArgs.limit = parsed.limit;
+      if (parsed.offset !== undefined) historyArgs.offset = parsed.offset;
+      if (parsed.beforeMessageId !== undefined) {
+        historyArgs.beforeMessageId = parsed.beforeMessageId;
+      }
+      if (parsed.afterMessageId !== undefined) {
+        historyArgs.afterMessageId = parsed.afterMessageId;
+      }
+      if (parsed.tail) historyArgs.tail = true;
+      const result = await runProcessSyscall(ctx, "proc.history", historyArgs);
       if (!result.ok) {
         return { stdout: "", stderr: `proc history: ${result.error}\n`, exitCode: 1 };
       }
@@ -257,12 +415,13 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
     case "segment": {
       requireCommandCapability(ctx, "proc.history.segment.read");
       const parsed = parseProcSegmentReadCommand(rest, ctx);
-      const result = await runProcessSyscall(ctx, "proc.history.segment.read", {
+      const segmentArgs: ArgsOf<"proc.history.segment.read"> = {
         pid: parsed.pid,
         segmentId: parsed.segmentId,
-        ...(parsed.limit !== undefined ? { limit: parsed.limit } : {}),
-        ...(parsed.offset !== undefined ? { offset: parsed.offset } : {}),
-      });
+      };
+      if (parsed.limit !== undefined) segmentArgs.limit = parsed.limit;
+      if (parsed.offset !== undefined) segmentArgs.offset = parsed.offset;
+      const result = await runProcessSyscall(ctx, "proc.history.segment.read", segmentArgs);
       if (!result.ok) {
         return { stdout: "", stderr: `proc segment: ${result.error}\n`, exitCode: 1 };
       }
@@ -361,13 +520,16 @@ async function runProcessSyscall<S extends DirectProcessCall>(
   call: S,
   args: ArgsOf<S>,
 ): Promise<ResultOf<S>> {
-  const frame: RequestFrame<S> = {
+  // SAFETY: `call` and `args` share the same syscall-map key through S.
+  const frame = {
     type: "req",
     id: crypto.randomUUID(),
     call,
     args,
   } as RequestFrame<S>;
+  // SAFETY: RequestFrame<S> is a member of the complete RequestFrame union.
   const response = await forwardToProcess(frame as RequestFrame, ctx);
+  // SAFETY: forwardToProcess preserves the request syscall when typing response data.
   return response.data as ResultOf<S>;
 }
 
@@ -378,6 +540,7 @@ async function runProcLifecycleSyscall<S extends ProcLifecycleCall>(
   call: S,
   args: ArgsOf<S>,
 ): Promise<ResultOf<S>> {
+  // SAFETY: `call` and `args` share the same lifecycle syscall-map key through S.
   const frame = {
     type: "req",
     id: crypto.randomUUID(),
@@ -385,16 +548,49 @@ async function runProcLifecycleSyscall<S extends ProcLifecycleCall>(
     args,
   } as RequestFrame;
   const response = await forwardToProcess(frame, ctx);
+  // SAFETY: forwardToProcess preserves the request syscall when typing response data.
   return response.data as ResultOf<S>;
 }
 
 async function delegateFailureResult(
   ctx: KernelContext,
   pid: string,
-  originalError: unknown,
+  originalError: string,
+  responsibilityRollback?: DelegatedResponsibilityRollback,
 ): Promise<ExecResult> {
-  let error = originalError instanceof Error ? originalError.message : String(originalError);
+  let error = originalError;
   const rollbackErrors: string[] = [];
+  if (responsibilityRollback) {
+    try {
+      const current = handleResponsibilityGet({
+        id: responsibilityRollback.original.id,
+      }, ctx).responsibility;
+      const stillDelegated = current.assignee.kind === "process"
+        && current.assignee.processId === pid;
+      const unchangedSinceDelegation = responsibilityRollback.delegatedRevision === undefined
+        || current.revision === responsibilityRollback.delegatedRevision;
+      if (stillDelegated && unchangedSinceDelegation) {
+        const original = responsibilityRollback.original;
+        await handleResponsibilityUpdate({
+          id: original.id,
+          expectedRevision: current.revision,
+          patch: {
+            assignee: original.assignee,
+            state: original.state,
+            blocker: original.blocker ?? null,
+            nextCheckAtMs: original.nextCheckAtMs ?? null,
+            leaseExpiresAtMs: original.leaseExpiresAtMs ?? null,
+          },
+        }, ctx);
+      }
+    } catch (responsibilityError) {
+      rollbackErrors.push(
+        responsibilityError instanceof Error
+          ? responsibilityError.message
+          : String(responsibilityError),
+      );
+    }
+  }
   try {
     const rollback = await runProcLifecycleSyscall(ctx, "proc.kill", {
       pid,
@@ -432,7 +628,9 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
       if (index !== 0 || args.length !== 2) {
         throw new Error("--json must be the only proc spawn option");
       }
-      return JSON.parse(requireShellOptionValue(args[index + 1], current)) as ProcSpawnArgs;
+      return procSpawnArgsSchema.parse(JSON.parse(
+        requireShellOptionValue(args[index + 1], current),
+      ));
     }
     if (current === "--as" || current === "--run-as") {
       index += 1;
@@ -474,14 +672,14 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
 
   const positionalPrompt = positional.join(" ").trim();
   const finalPrompt = prompt ?? (positionalPrompt || undefined);
-  return {
-    ...(runAs ? { runAs } : {}),
-    ...(label ? { label } : {}),
-    ...(finalPrompt ? { prompt: finalPrompt } : {}),
-    ...(parentPid ? { parentPid } : {}),
-    ...(cwd ? { cwd } : {}),
-    ...(interactive !== undefined ? { interactive } : {}),
-  };
+  const parsed: ProcSpawnArgs = {};
+  if (runAs) parsed.runAs = runAs;
+  if (label) parsed.label = label;
+  if (finalPrompt) parsed.prompt = finalPrompt;
+  if (parentPid) parsed.parentPid = parentPid;
+  if (cwd) parsed.cwd = cwd;
+  if (interactive !== undefined) parsed.interactive = interactive;
+  return parsed;
 }
 
 function parseProcResetCommand(
@@ -525,11 +723,7 @@ function quoteShellField(value: string): string {
   return JSON.stringify(value);
 }
 
-function formatProcLifecycleResult(result: {
-  pid: string;
-  archivedMessages: number;
-  archivedTo?: string;
-}): string {
+function formatProcLifecycleResult(result: ProcLifecycleSuccess): string {
   return [
     `pid=${result.pid}`,
     `archived=${result.archivedMessages}`,
@@ -537,9 +731,7 @@ function formatProcLifecycleResult(result: {
   ].filter(Boolean).join(" ") + "\n";
 }
 
-function parseProcSegmentsCommand(args: string[], ctx: KernelContext): {
-  pid: string;
-} {
+function parseProcSegmentsCommand(args: string[], ctx: KernelContext): ParsedProcSegments {
   const parsed = parseProcProcessOptions(args, ctx);
   if (parsed.positional.length > 0) {
     throw new Error(`unexpected argument: ${parsed.positional[0]}`);
@@ -547,13 +739,7 @@ function parseProcSegmentsCommand(args: string[], ctx: KernelContext): {
   return { pid: parsed.pid };
 }
 
-function parseProcPolicyCommand(args: string[], ctx: KernelContext): {
-  pid: string;
-  overflow?: ProcHistoryOverflowPolicy;
-  compactAtPressure?: number;
-  keepLast?: number;
-  set: boolean;
-} {
+function parseProcPolicyCommand(args: string[], ctx: KernelContext): ParsedProcPolicy {
   let pid: string | undefined;
   let overflow: ProcHistoryOverflowPolicy | undefined;
   let compactAtPressure: number | undefined;
@@ -588,22 +774,20 @@ function parseProcPolicyCommand(args: string[], ctx: KernelContext): {
     throw new Error(`unexpected argument: ${current}`);
   }
 
-  return {
+  const parsed: ParsedProcPolicy = {
     pid: pid ?? requireCurrentProcessId(ctx),
-    ...(overflow ? { overflow } : {}),
-    ...(compactAtPressure !== undefined ? { compactAtPressure } : {}),
-    ...(keepLast !== undefined ? { keepLast } : {}),
     set: overflow !== undefined || compactAtPressure !== undefined || keepLast !== undefined,
   };
+  if (overflow) parsed.overflow = overflow;
+  if (compactAtPressure !== undefined) parsed.compactAtPressure = compactAtPressure;
+  if (keepLast !== undefined) parsed.keepLast = keepLast;
+  return parsed;
 }
 
-function parseProcSegmentReadCommand(args: string[], ctx: KernelContext): {
-  pid: string;
-  segmentId: string;
-  limit?: number;
-  offset?: number;
-  json?: boolean;
-} {
+function parseProcSegmentReadCommand(
+  args: string[],
+  ctx: KernelContext,
+): ParsedProcSegmentRead {
   let pid: string | undefined;
   let limit: number | undefined;
   let offset: number | undefined;
@@ -642,26 +826,17 @@ function parseProcSegmentReadCommand(args: string[], ctx: KernelContext): {
     throw new Error(`unexpected argument: ${positional[0]}`);
   }
 
-  return {
+  const parsed: ParsedProcSegmentRead = {
     pid: pid ?? requireCurrentProcessId(ctx),
     segmentId,
-    ...(limit !== undefined ? { limit } : {}),
-    ...(offset !== undefined ? { offset } : {}),
-    ...(json ? { json } : {}),
   };
+  if (limit !== undefined) parsed.limit = limit;
+  if (offset !== undefined) parsed.offset = offset;
+  if (json) parsed.json = true;
+  return parsed;
 }
 
-function parseProcHistoryCommand(args: string[], ctx: KernelContext): {
-  pid: string;
-  limit?: number;
-  offset?: number;
-  beforeMessageId?: number;
-  afterMessageId?: number;
-  tail?: boolean;
-  json?: boolean;
-  full?: boolean;
-  maxContentChars: number;
-} {
+function parseProcHistoryCommand(args: string[], ctx: KernelContext): ParsedProcHistory {
   let pid: string | undefined;
   let limit: number | undefined;
   let offset: number | undefined;
@@ -719,26 +894,21 @@ function parseProcHistoryCommand(args: string[], ctx: KernelContext): {
     throw new Error(`unexpected argument: ${current}`);
   }
 
-  return {
+  const parsed: ParsedProcHistory = {
     pid: pid ?? requireCurrentProcessId(ctx),
-    ...(limit !== undefined ? { limit } : {}),
-    ...(offset !== undefined ? { offset } : {}),
-    ...(beforeMessageId !== undefined ? { beforeMessageId } : {}),
-    ...(afterMessageId !== undefined ? { afterMessageId } : {}),
-    ...(tail ? { tail } : {}),
-    ...(json ? { json } : {}),
-    ...(full ? { full } : {}),
     maxContentChars,
   };
+  if (limit !== undefined) parsed.limit = limit;
+  if (offset !== undefined) parsed.offset = offset;
+  if (beforeMessageId !== undefined) parsed.beforeMessageId = beforeMessageId;
+  if (afterMessageId !== undefined) parsed.afterMessageId = afterMessageId;
+  if (tail) parsed.tail = true;
+  if (json) parsed.json = true;
+  if (full) parsed.full = true;
+  return parsed;
 }
 
-function parseProcCompactCommand(args: string[], ctx: KernelContext): {
-  pid: string;
-  summary?: string;
-  generateSummary?: boolean;
-  keepLast?: number;
-  throughMessageId?: number;
-} {
+function parseProcCompactCommand(args: string[], ctx: KernelContext): ParsedProcCompact {
   let pid: string | undefined;
   let summary: string | undefined;
   let generateSummary = false;
@@ -781,21 +951,20 @@ function parseProcCompactCommand(args: string[], ctx: KernelContext): {
     throw new Error("provide exactly one of --keep-last or --through-message-id");
   }
 
-  return {
+  const parsed: ParsedProcCompact = {
     pid: pid ?? requireCurrentProcessId(ctx),
-    ...(summary ? { summary } : { generateSummary: true }),
-    ...(keepLast !== undefined ? { keepLast } : {}),
-    ...(throughMessageId !== undefined ? { throughMessageId } : {}),
   };
+  if (summary) {
+    parsed.summary = summary;
+  } else {
+    parsed.generateSummary = true;
+  }
+  if (keepLast !== undefined) parsed.keepLast = keepLast;
+  if (throughMessageId !== undefined) parsed.throughMessageId = throughMessageId;
+  return parsed;
 }
 
-function parseProcForkCommand(args: string[], ctx: KernelContext): {
-  pid: string;
-  segmentId?: string;
-  throughMessageId?: number;
-  label?: string;
-  includeLiveSuffix?: boolean;
-} {
+function parseProcForkCommand(args: string[], ctx: KernelContext): ParsedProcFork {
   let pid: string | undefined;
   let throughMessageId: number | undefined;
   let label: string | undefined;
@@ -834,19 +1003,20 @@ function parseProcForkCommand(args: string[], ctx: KernelContext): {
     throw new Error(`unexpected argument: ${positional[0]}`);
   }
 
-  return {
+  const parsed: ParsedProcFork = {
     pid: pid ?? requireCurrentProcessId(ctx),
-    ...(segmentId ? { segmentId } : {}),
-    ...(throughMessageId !== undefined ? { throughMessageId } : {}),
-    ...(label ? { label } : {}),
-    ...(includeLiveSuffix ? {} : { includeLiveSuffix: false }),
   };
+  if (segmentId) parsed.segmentId = segmentId;
+  if (throughMessageId !== undefined) parsed.throughMessageId = throughMessageId;
+  if (label) parsed.label = label;
+  if (!includeLiveSuffix) parsed.includeLiveSuffix = false;
+  return parsed;
 }
 
-function parseProcProcessOptions(args: string[], ctx: KernelContext): {
-  pid: string;
-  positional: string[];
-} {
+function parseProcProcessOptions(
+  args: string[],
+  ctx: KernelContext,
+): ParsedProcProcessOptions {
   let pid: string | undefined;
   const positional: string[] = [];
 
@@ -897,13 +1067,11 @@ function parsePressureShellNumber(value: string, option: string): number {
   return parsed;
 }
 
-function parseProcMessageCommand(args: string[], allowTimeout: boolean): {
-  pid: string;
-  message: string;
-  metadata?: Record<string, unknown>;
-  timeoutMs?: number;
-} {
-  let metadata: Record<string, unknown> | undefined;
+function parseProcMessageCommand(
+  args: string[],
+  allowTimeout: boolean,
+): ArgsOf<"proc.ipc.call"> {
+  let metadata: JsonObject | undefined;
   let timeoutMs: number | undefined;
   const positional: string[] = [];
 
@@ -911,11 +1079,9 @@ function parseProcMessageCommand(args: string[], allowTimeout: boolean): {
     const current = args[index];
     if (current === "--metadata-json") {
       index += 1;
-      const parsed = JSON.parse(requireShellOptionValue(args[index], current));
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("--metadata-json must be a JSON object");
-      }
-      metadata = parsed as Record<string, unknown>;
+      metadata = jsonObjectSchema.parse(JSON.parse(
+        requireShellOptionValue(args[index], current),
+      ));
       continue;
     }
     if (current === "--timeout") {
@@ -937,27 +1103,22 @@ function parseProcMessageCommand(args: string[], allowTimeout: boolean): {
   if (!message) {
     throw new Error("missing message");
   }
-  return {
+  const parsed: ArgsOf<"proc.ipc.call"> = {
     pid: normalizeProcPid(pid),
     message,
-    ...(metadata ? { metadata } : {}),
-    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
   };
+  if (metadata) parsed.metadata = metadata;
+  if (timeoutMs !== undefined) parsed.timeoutMs = timeoutMs;
+  return parsed;
 }
 
-function parseProcDelegateCommand(args: string[], ctx: KernelContext): {
-  runAs?: string;
-  label?: string;
-  parentPid?: string;
-  cwd?: string;
-  timeoutMs?: number;
-  message: string;
-} {
+function parseProcDelegateCommand(args: string[], ctx: KernelContext): ParsedProcDelegate {
   let runAs: string | undefined;
   let label: string | undefined;
   let parentPid: string | undefined = ctx.processId;
   let cwd: string | undefined;
   let timeoutMs: number | undefined;
+  let responsibilityId: string | undefined;
   const positional: string[] = [];
 
   for (let index = 0; index < args.length; index += 1) {
@@ -987,6 +1148,11 @@ function parseProcDelegateCommand(args: string[], ctx: KernelContext): {
       timeoutMs = parseDurationMs(requireShellOptionValue(args[index], current));
       continue;
     }
+    if (current === "--responsibility") {
+      index += 1;
+      responsibilityId = requireShellOptionValue(args[index], current);
+      continue;
+    }
     positional.push(current);
   }
 
@@ -994,14 +1160,16 @@ function parseProcDelegateCommand(args: string[], ctx: KernelContext): {
   if (!message) {
     throw new Error("missing delegated task");
   }
-  return {
-    ...(runAs ? { runAs } : {}),
-    ...(label ? { label } : {}),
-    ...(parentPid ? { parentPid } : {}),
-    ...(cwd ? { cwd } : {}),
-    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+  const parsed: ParsedProcDelegate = {
     message,
   };
+  if (runAs) parsed.runAs = runAs;
+  if (label) parsed.label = label;
+  if (parentPid) parsed.parentPid = parentPid;
+  if (cwd) parsed.cwd = cwd;
+  if (timeoutMs !== undefined) parsed.timeoutMs = timeoutMs;
+  if (responsibilityId) parsed.responsibilityId = responsibilityId;
+  return parsed;
 }
 
 function normalizeProcPid(pid: string): string {
@@ -1016,7 +1184,10 @@ function summarizeDelegateLabel(message: string): string {
   return firstLine.length <= 48 ? firstLine || "delegated task" : `${firstLine.slice(0, 45)}...`;
 }
 
-function formatProcSegmentReadResult(result: any, json: boolean | undefined): string {
+function formatProcSegmentReadResult(
+  result: ProcSegmentReadOk,
+  json: boolean | undefined,
+): string {
   if (json) {
     return `${JSON.stringify(result, null, 2)}\n`;
   }
@@ -1028,19 +1199,19 @@ function formatProcSegmentReadResult(result: any, json: boolean | undefined): st
   ];
   for (let index = 0; index < result.messages.length; index += 1) {
     const message = result.messages[index];
-    const timestamp = typeof message.timestamp === "number"
-      ? new Date(message.timestamp).toISOString()
-      : "-";
+    const timestamp = message.timestamp === undefined
+      ? "-"
+      : new Date(message.timestamp).toISOString();
     lines.push(`[${index + 1}] ${message.role} ${timestamp}`);
-    lines.push(formatProcHistoryContent(message.content));
+    lines.push(formatProcHistoryMessageContent(message));
     lines.push("");
   }
   return `${lines.join("\n")}\n`;
 }
 
 function formatProcHistoryResult(
-  result: any,
-  options: { json?: boolean; full?: boolean; maxContentChars: number },
+  result: ProcHistoryOk,
+  options: ProcHistoryFormatOptions,
 ): string {
   if (options.json) {
     return `${JSON.stringify(result, null, 2)}\n`;
@@ -1058,42 +1229,47 @@ function formatProcHistoryResult(
   }
   if (result.context) {
     const context = result.context;
-    const pressure = typeof context.pressure === "number"
-      ? `${Math.round(context.pressure * 100)}%`
-      : "unknown";
+    const pressure = context.pressure === null
+      ? "unknown"
+      : `${Math.round(context.pressure * 100)}%`;
     lines.push(`Context: ${context.level ?? "unknown"} pressure=${pressure}`);
   }
   lines.push("");
 
   for (let index = 0; index < result.messages.length; index += 1) {
     const message = result.messages[index];
-    const timestamp = typeof message.timestamp === "number"
-      ? new Date(message.timestamp).toISOString()
-      : "-";
+    const timestamp = message.timestamp === undefined
+      ? "-"
+      : new Date(message.timestamp).toISOString();
     const id = message.id === undefined ? String(index + 1) : `#${message.id}`;
-    const run = typeof message.runId === "string" ? ` run=${message.runId}` : "";
+    const run = message.runId === undefined ? "" : ` run=${message.runId}`;
     lines.push(`[${id}] ${message.role} ${timestamp}${run}`);
-    const content = formatProcHistoryContent(message.content);
+    const content = formatProcHistoryMessageContent(message);
     lines.push(options.full ? content : truncateProcHistoryContent(content, options.maxContentChars));
     lines.push("");
   }
   return `${lines.join("\n")}\n`;
 }
 
-function formatProcHistoryContent(content: unknown): string {
-  if (typeof content === "string") {
-    return content;
+function formatProcHistoryMessageContent(message: ProcHistoryMessage): string {
+  return formatProcHistoryContent(jsonValueSchema.parse(message.content));
+}
+
+function formatProcHistoryContent(content: JsonValue): string {
+  const text = z.string().safeParse(content);
+  if (text.success) {
+    return text.data;
   }
-  if (content && typeof content === "object") {
-    const record = content as Record<string, unknown>;
-    if (typeof record.text === "string" && record.text.trim()) {
-      return record.text;
+  const display = historyDisplayObjectSchema.safeParse(content);
+  if (display.success) {
+    if (display.data.text?.trim()) {
+      return display.data.text;
     }
-    if (typeof record.output === "string") {
-      return record.output;
+    if (display.data.output !== undefined) {
+      return display.data.output;
     }
   }
-  return JSON.stringify(content, null, 2);
+  return JSON.stringify(content, null, 2) ?? "null";
 }
 
 function truncateProcHistoryContent(content: string, maxChars: number): string {
@@ -1113,7 +1289,7 @@ function procUsage(): string {
     "  proc spawn --json JSON",
     "  proc reset [--pid PID]",
     "  proc kill PID [--no-archive]",
-    "  proc delegate [--as ACCOUNT] [--label LABEL] [--parent PID] [--cwd PATH] [--timeout 10m] <task>",
+    "  proc delegate [--as ACCOUNT] [--label LABEL] [--parent PID] [--cwd PATH] [--timeout 10m] [--responsibility ID] <task>",
     "  proc segments [--pid PID]",
     "  proc policy [--pid PID] [--overflow auto-compact|fail] [--compact-at N] [--keep-last N]",
     "  proc history [--pid PID] [--tail] [--limit N] [--offset N] [--json] [--full]",
@@ -1129,7 +1305,9 @@ function procUsage(): string {
     "proc history reads the live transcript for this process or another visible process.",
     "",
     "proc delegate creates a child process for bounded work and returns a task",
-    "handle immediately. proc send is asynchronous mail. proc call sends bounded",
+    "handle immediately. --responsibility assigns the record before the child",
+    "starts and returns it to Ship if IPC admission fails. proc send is asynchronous",
+    "mail. proc call sends bounded",
     "work to an existing process; replies arrive as delegated task events.",
     "",
   ].join("\n");

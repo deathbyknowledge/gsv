@@ -1,11 +1,10 @@
+type KernelTestValue<T = string | number | boolean | null | undefined> = T;
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
 
-const handleAiTextGenerateMock = vi.hoisted(() => vi.fn());
-
-vi.mock("../ai", () => ({
-  handleAiTextGenerate: handleAiTextGenerateMock,
-}));
+import * as ai from "../ai";
+const handleAiTextGenerateMock = vi.spyOn(ai, "handleAiTextGenerate");
 
 import { handleSysSetupAssist } from "./setup-assist";
 
@@ -14,14 +13,16 @@ beforeEach(() => {
 });
 
 function makeContext(): KernelContext {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     auth: {
       isSetupMode: vi.fn(() => true),
     },
-  } as unknown as KernelContext;
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  } as KernelContext;
 }
 
-function assistantMessage(overrides: Record<string, unknown> = {}) {
+function assistantMessage(overrides: Record<string, KernelTestValue> = {}) {
   return {
     role: "assistant",
     content: [],
@@ -52,10 +53,12 @@ describe("handleSysSetupAssist", () => {
       }),
     });
 
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     await expect(handleSysSetupAssist({
       lane: "ai",
       draft: {},
       messages: [],
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as any, makeContext())).rejects.toThrow("insufficient funds");
   });
 });

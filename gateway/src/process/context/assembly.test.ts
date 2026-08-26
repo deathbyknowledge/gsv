@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assembleSystemPrompt } from "./assembly";
+import { assembleSystemPrompt, assembleSystemPromptSnapshot } from "./assembly";
 import { createHomeContextProvider } from "./providers/home";
 import { createSystemContextProvider } from "./providers/system";
 import { resolvePromptProviders } from "./selection";
@@ -151,6 +151,23 @@ describe("assembleSystemPrompt", () => {
       "skill index",
       "</available_skills>",
     ].join("\n"));
+  });
+
+  it("records deterministic source hashes for epoch replay", async () => {
+    const snapshot = await assembleSystemPromptSnapshot(makeInput(), [{
+      name: "fixture",
+      async collect() {
+        return [{ name: "source.md", text: "epoch source" }];
+      },
+    }]);
+
+    expect(snapshot.prompt).toBe("<source_md>\nepoch source\n</source_md>");
+    expect(snapshot.sources).toEqual([{
+      provider: "fixture",
+      name: "source.md",
+      bytes: 12,
+      sha256: "0e3c0c74279d6ae6b5d90e0a9f66cede46cadb544a11beca4680a9cfb2a894d9",
+    }]);
   });
 });
 
@@ -333,6 +350,7 @@ function makeInput(overrides: Partial<PromptAssemblyInput> = {}): PromptAssembly
     identity: IDENTITY,
     devices: [],
     mcpServers: [],
+    r12y: "Ledger revision 0.\n\nNo unresolved responsibilities.",
     storage: {
       async get() {
         return null;

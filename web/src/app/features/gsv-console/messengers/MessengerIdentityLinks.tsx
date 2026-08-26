@@ -14,7 +14,10 @@ import type {
   ConsoleAdapterAccount,
   ConsoleIdentityLink,
 } from "../domain/consoleModels";
-import { useRemoveIdentityLink } from "../hooks/useConsoleData";
+import {
+  useDisconnectConsoleAdapterPairing,
+  useRemoveIdentityLink,
+} from "../hooks/useConsoleData";
 import {
   adapterLabel,
   adapterName,
@@ -76,6 +79,7 @@ export function MessengerIdentityLinks({
   refreshing: boolean;
 }) {
   const removeLink = useRemoveIdentityLink();
+  const disconnectPairing = useDisconnectConsoleAdapterPairing();
   const [confirmUnlink, setConfirmUnlink] = useState<ConsoleIdentityLink | null>(null);
   const meta = refreshing
     ? "SYNCING"
@@ -90,13 +94,20 @@ export function MessengerIdentityLinks({
   ) : undefined;
 
   const unlink = async (link: ConsoleIdentityLink) => {
-    await removeLink.mutateAsync({
+    const input = {
       adapter: link.adapter,
       accountId: link.accountId,
       actorId: link.actorId,
-    });
+    };
+    if (messenger.mode === "managed-shared") {
+      await disconnectPairing.mutateAsync(input);
+    } else {
+      await removeLink.mutateAsync(input);
+    }
     setConfirmUnlink(null);
   };
+  const unlinkPending = removeLink.isPending || disconnectPairing.isPending;
+  const unlinkError = removeLink.error ?? disconnectPairing.error;
 
   return (
     <>
@@ -113,7 +124,10 @@ export function MessengerIdentityLinks({
           ) : links.length === 0 ? (
             <div class="gsv-messenger-identity-empty gsv-sublabel">NO LINKED IDENTITIES</div>
           ) : links.map((link) => {
-            const removing = removeLink.isPending && sameLink(removeLink.variables, link);
+            const removing = (
+              (removeLink.isPending && sameLink(removeLink.variables, link))
+              || (disconnectPairing.isPending && sameLink(disconnectPairing.variables, link))
+            );
             return (
               <div class="gsv-messenger-identity-row" key={linkKey(link)}>
                 <ListRow
@@ -133,7 +147,7 @@ export function MessengerIdentityLinks({
                 <Button
                   variant="dangerGhost"
                   label={removing ? "REMOVING" : "UNLINK"}
-                  disabled={removeLink.isPending}
+                  disabled={unlinkPending}
                   onClick={() => setConfirmUnlink(link)}
                 />
               </div>
@@ -141,8 +155,8 @@ export function MessengerIdentityLinks({
           })}
         </div>
       </section>
-      {removeLink.isError ? (
-        <p class="gsv-messenger-identity-error gsv-prose">{removeLink.error.message}</p>
+      {unlinkError ? (
+        <p class="gsv-messenger-identity-error gsv-prose">{unlinkError.message}</p>
       ) : null}
       {confirmUnlink ? (
         // Portal to <body>: the parent ConsoleDetailPage sets `container-type`,
@@ -159,7 +173,7 @@ export function MessengerIdentityLinks({
                   confirmUnlink.actorId,
                 )} from ${adapterLabel(messenger)}?`}
                 note="Future messages from this external identity will not resolve to the linked GSV account."
-                confirmLabel={removeLink.isPending ? "REMOVING" : "UNLINK"}
+                confirmLabel={unlinkPending ? "REMOVING" : "UNLINK"}
                 onCancel={() => setConfirmUnlink(null)}
                 onConfirm={() => void unlink(confirmUnlink)}
               />

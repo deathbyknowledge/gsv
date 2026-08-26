@@ -21,7 +21,8 @@ Most personal AI agents run on one host you pick and keep alive — a laptop, VP
 
 - Run things across all your machines from one agent — kick off a job on your home server while your laptop's shut.
 - Keep agents working while your devices sleep — they live on the edge, not on your hardware.
-- Reach it from anywhere — web UI, CLI, or WhatsApp / Discord / Telegram.
+- Reach it from anywhere — web UI, CLI, or an extensible adapter system with
+  WhatsApp, Discord, and Telegram implementations bundled today.
 - Spawn durable agents with their own memory and permissions, that can start sub-agents of their own.
 - Keep your repositories and knowledge source-inspectable through a built-in git remote.
 - Hand your agent the browser. The web extension lets it drive your real browser — your tabs and logged-in sessions — so it works the sites you already use, not just the public web.
@@ -36,16 +37,31 @@ Under the hood, GSV is a distributed operating environment: agents are durable p
 
 **From the web (easiest, no terminal).** Go to [deploy.gsv.space](https://deploy.gsv.space/), connect your Cloudflare account, and GSV deploys itself into it.
 
-**Or from the terminal:**
+**Or deploy the open-source stack from the terminal:**
 
 ```bash
-# Install the CLI
-curl -fsSL https://install.gsv.space | bash
-# Deploy all components into your own Cloudflare account
-gsv infra deploy --api-token <CLOUDFLARE-API-TOKEN>
+git clone https://github.com/deathbyknowledge/gsv.git
+cd gsv
+npm ci
+npx alchemy login
+npx alchemy cloudflare bootstrap
+npm run deployment:deploy
 ```
 
-Either way, open the URL it prints to finish onboarding in the web UI.
+Either way, open the deployed Gateway URL to finish onboarding in the web UI.
+
+Install the CLI, machine daemon, and Desktop separately where supported:
+
+```bash
+curl -fsSL https://install.gsv.space | bash
+```
+
+The verified host installer ships matching versions of `gsv` and `gsvd` on
+Linux x64/ARM64, macOS Intel/Apple Silicon, and Windows x64. Linux and macOS
+also receive the native Desktop and its isolated local transcription helper;
+launch it with `gsv desktop`. See the
+[host application install and upgrade guide](docs/how-to/install-host-apps.md)
+for platform details and service rollback behavior.
 
 ### 2. Start using it
 
@@ -64,8 +80,8 @@ Connected devices are reachable by your agents from anywhere — outbound-only, 
 ```bash
 gsv auth token create --kind device --device macbook --label Macbook  # note the token
 gsv config --local set device.token <token>
-gsv device install --id macbook --workspace ~/  # background service
-gsv device status
+gsv daemon install --id macbook --workspace ~/  # background service
+gsv daemon status
 ```
 
 Now GSV can use the shell and read/write files on that machine. Set up adapters under **GSV > Integrations**.
@@ -79,7 +95,7 @@ GSV uses Linux as a design model (not POSIX, though). Familiar, composable primi
 - **Processes** — agents are durable processes with PIDs, histories, permissions, pending work, and subprocesses (`gsv proc list|spawn|send|kill`).
 - **Targets** — the cloud runtime and connected devices implement the same targetable filesystem, shell, and network contracts. The browser extension exposes the browser through the same filesystem and shell shape. Changing the target changes where work runs, not what the syscall means.
 - **Agent tools** — models see a deliberately small surface: Read, Write, Edit, Delete, Search, Shell, and CodeMode. Devices and integrations extend the system underneath those tools instead of making the tool list grow forever.
-- **Messengers** — Discord, Telegram, and WhatsApp workers translate external chat platforms into stable GSV identities and process messages.
+- **Adapters** — independently deployed Workers translate external services into stable GSV actors, surfaces, and messages. The repository bundles several implementations, while the `AdapterService` contract remains open to new providers.
 
 ## Development
 
@@ -87,7 +103,14 @@ GSV uses Linux as a design model (not POSIX, though). Familiar, composable primi
 ./scripts/setup-deps.sh        # install workspace and worker dependencies
 npm run build --workspace web  # build assets served by the gateway
 npm run dev                    # start the local multi-worker stack
+GSV_MANAGED_SERVICES_ROOT=/path/to/services npm run dev:managed
 ```
+
+The public repository does not ship a platform operator's Accounts or funded
+Inference implementation. Supplying compatible `accounts/` and `inference/`
+packages starts those services with the Gateway and ripgit on
+`http://localhost:8976`. See [service contracts](docs/architecture/services.md)
+for the required boundaries.
 
 Requires [Rust](https://rustup.rs) and Node.js 22 or newer with
 [npm](https://nodejs.org).

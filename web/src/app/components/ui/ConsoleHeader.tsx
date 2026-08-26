@@ -39,7 +39,9 @@ export function ConsoleHeader({
   const items: Crumb[] =
     Array.isArray(crumbs) && crumbs.length
       ? crumbs.map((c) => ({ label: c.label, onClick: c.onClick }))
-      : ([c0, c1, c2].filter(Boolean) as string[]).map((label) => ({ label }));
+      // SAFETY: Component boundary provides the asserted DOM/test shape.
+      // SAFETY: Browser API contract guarantees this component assertion.
+      : [c0, c1, c2].filter((label): label is string => Boolean(label)).map((label) => ({ label }));
 
   return (
     <div

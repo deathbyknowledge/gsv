@@ -1,0 +1,106 @@
+[package]
+name = "gsv"
+version.workspace = true
+edition = "2021"
+
+[dependencies]
+daemon-protocol = { path = "../../crates/daemon-protocol" }
+desktop-protocol = { path = "../../crates/desktop-protocol" }
+gateway-client = { path = "../../crates/gateway-client", default-features = false }
+host-config = { path = "../../crates/config" }
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "time",
+    "sync",
+    "io-util",
+    "process",
+    "signal",
+    "fs",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive", "env"] }
+uuid = { version = "1", features = ["v4"] }
+hostname = "0.4.2"
+chrono = "0.4"
+dirs = "5"
+toml = "0.8"
+qrcode = "0.14"
+cliclack = "0.3.8"
+whoami = "1"
+
+# TLS backends - use native-tls by default (respects system certs)
+# CI builds for Linux use rustls feature to avoid OpenSSL dependency
+base64 = "0.22"
+libc = "0.2"
+
+# Only needed when rustls feature is enabled
+rustls_crate = { package = "rustls", version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
+
+[features]
+default = ["native-tls"]
+
+# Use native-tls (macOS: Security.framework, Windows: SChannel, Linux: OpenSSL)
+# This respects system certificate stores (important for corporate proxies/VPNs)
+native-tls = [
+    "gateway-client/native-tls",
+]
+
+# Use rustls with bundled Mozilla roots (no system dependencies)
+# Good for static Linux builds but ignores system cert store
+rustls = [
+    "gateway-client/rustls",
+    "rustls_crate",
+]
+
+[lints.clippy]
+# Prevent panic-prone patterns in non-test code.
+string_slice = "warn"
+unwrap_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+unreachable = "warn"
+get_unwrap = "warn"
+unwrap_in_result = "warn"
+unchecked_time_subtraction = "warn"
+panic_in_result_fn = "warn"
+
+# Prevent silent failure paths.
+let_underscore_future = "warn"
+unused_result_ok = "warn"
+map_err_ignore = "warn"
+assertions_on_result_states = "warn"
+
+# Catch common async and concurrency mistakes.
+await_holding_lock = "warn"
+await_holding_refcell_ref = "warn"
+if_let_mutex = "warn"
+large_futures = "warn"
+
+# Keep unsafe/memory escape hatches explicit.
+mem_forget = "warn"
+undocumented_unsafe_blocks = "warn"
+multiple_unsafe_ops_per_block = "warn"
+unnecessary_safety_doc = "warn"
+unnecessary_safety_comment = "warn"
+
+# Flag suspicious numeric behavior.
+float_cmp = "warn"
+float_cmp_const = "warn"
+lossy_float_literal = "warn"
+cast_sign_loss = "warn"
+invalid_upcast_comparisons = "warn"
+
+# Low-noise guardrails for avoidable footguns.
+rc_mutex = "warn"
+debug_assert_with_mut_call = "warn"
+iter_not_returning_iterator = "warn"
+expl_impl_clone_on_copy = "warn"
+infallible_try_from = "warn"
+dbg_macro = "warn"
+
+# Suppressions should be intentional and documented.
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"

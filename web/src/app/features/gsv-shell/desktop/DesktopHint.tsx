@@ -84,7 +84,6 @@ export function DesktopHint({ lines, minimizedText, collapse = false, played = f
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

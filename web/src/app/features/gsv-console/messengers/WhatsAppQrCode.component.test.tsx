@@ -5,12 +5,15 @@ const hooks = vi.hoisted(() => ({
   setImageUrl: vi.fn(),
 }));
 
-vi.mock("preact/hooks", () => ({
-  useEffect: () => undefined,
-  useState: (initialValue: string) => [initialValue, hooks.setImageUrl],
-}));
+import { WhatsAppQrCode, type WhatsAppQrCodeDependencies } from "./WhatsAppQrCode";
 
-import { WhatsAppQrCode } from "./WhatsAppQrCode";
+const dependencies: WhatsAppQrCodeDependencies = {
+  useEffect: () => undefined,
+  useState: (initialValue: string | (() => string)) => [
+    initialValue instanceof Function ? initialValue() : initialValue,
+    hooks.setImageUrl,
+  ],
+};
 
 beforeEach(() => {
   hooks.setImageUrl.mockReset();
@@ -22,7 +25,9 @@ describe("WhatsAppQrCode", () => {
     const rendered = WhatsAppQrCode({
       source: { kind: "data-url", value: "data:image/png;base64,AAAA" },
       onRenderError,
+      dependencies,
     });
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
     const image = rendered.props.children as VNode<{ onError: () => void }>;
 
     expect(image.type).toBe("img");

@@ -68,7 +68,7 @@ export class LinkChallengeStore {
   consume(code: string, uid: number): LinkChallengeRecord | null {
     this.pruneExpired();
 
-    const row = this.sql.exec<RowShape>(
+    const row = this.sql.exec<LinkChallengeRow>(
       `SELECT code, adapter, account_id, actor_id, surface_kind, surface_id,
               created_at, expires_at, used_at, used_by_uid
        FROM link_challenges
@@ -97,6 +97,7 @@ export class LinkChallengeStore {
       adapter: row.adapter,
       accountId: row.account_id,
       actorId: row.actor_id,
+      // SAFETY: persisted surface_kind values are constrained by the link challenge schema.
       surfaceKind: row.surface_kind as AdapterSurfaceKind,
       surfaceId: row.surface_id,
       createdAt: row.created_at,
@@ -124,7 +125,7 @@ export class LinkChallengeStore {
   }
 
   private findActive(adapter: string, accountId: string, actorId: string): LinkChallengeRecord | null {
-    const row = this.sql.exec<RowShape>(
+    const row = this.sql.exec<LinkChallengeRow>(
       `SELECT code, adapter, account_id, actor_id, surface_kind, surface_id,
               created_at, expires_at, used_at, used_by_uid
        FROM link_challenges
@@ -143,6 +144,7 @@ export class LinkChallengeStore {
       adapter: row.adapter,
       accountId: row.account_id,
       actorId: row.actor_id,
+      // SAFETY: persisted surface_kind values are constrained by the link challenge schema.
       surfaceKind: row.surface_kind as AdapterSurfaceKind,
       surfaceId: row.surface_id,
       createdAt: row.created_at,
@@ -167,7 +169,7 @@ export class LinkChallengeStore {
   }
 }
 
-type RowShape = {
+type LinkChallengeRow = {
   code: string;
   adapter: string;
   account_id: string;

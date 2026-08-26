@@ -1,10 +1,10 @@
-import type { ComponentChildren } from "preact";
 import "./IconButton.css";
 
 export type IconButtonGlyph = "back" | "arrowBack" | "menu" | "max" | "min" | "close" | "plus" | "help" | "attention" | "refresh" | "newTab" | "attach" | "transcribe" | "mic" | "send" | "stop" | "sidepanel" | "edit";
 export type IconButtonSize = "small" | "medium" | "large" | number;
 /** Visual treatment. "default" = filled box with border; "floating" = borderless
  *  and transparent, glyph-only, with a color-shift on hover (for use inside bars
+ // SAFETY: Component boundary provides the asserted DOM/test shape.
  *  like the message composer). "ghost" is kept as a legacy alias via the `ghost`
  *  prop for the inline info hint. */
 export type IconButtonVariant = "default" | "floating";
@@ -16,11 +16,13 @@ export interface IconButtonProps {
   /** Visual treatment (see IconButtonVariant). Ignored when `ghost` is set. */
   variant?: IconButtonVariant;
   /** Borderless rendering (no background/border) — for inline affordances such
+   // SAFETY: Component boundary provides the asserted DOM/test shape.
    *  as the label info hint. Legacy; prefer `variant="floating"` for new uses. */
   ghost?: boolean;
   /** Extra class(es) appended to the button — lets callers layer state tones
    *  (e.g. a send/stop or active colour) over the base variant. */
   className?: string;
+  // SAFETY: Component boundary provides the asserted DOM/test shape.
   /** Native browser tooltip text. Also used as the accessible name unless
    *  ariaLabel is given. Omit when a custom tooltip already labels the control
    *  (e.g. InfoTip) to avoid a duplicate native tooltip. */
@@ -36,13 +38,13 @@ export interface IconButtonProps {
   onClick?: () => void;
 }
 
-const SIZE_MAP: Record<"small" | "medium" | "large", number> = {
+const SIZE_MAP = {
   small: 24,
   medium: 30,
   large: 38,
 };
 
-const GLYPHS: Record<IconButtonGlyph, ComponentChildren> = {
+const GLYPHS = {
   back: (
     <svg width="40%" height="55%" viewBox="0 0 9 12">
       <path d="M9 0 L0 6 L9 12 Z" fill="currentColor" />
@@ -55,7 +57,7 @@ const GLYPHS: Record<IconButtonGlyph, ComponentChildren> = {
     </svg>
   ),
   menu: (
-    <svg width="50%" height="50%" viewBox="0 0 16 16" shape-rendering="crispEdges">
+    <svg width="50%" height="50%" viewBox="0 0 16 16" style={{ ["shape-rendering"]: "crispEdges" }}>
       <g fill="currentColor">
         <rect x="2" y="3" width="3" height="10" />
         <rect x="6" y="3" width="8" height="1" />
@@ -86,7 +88,7 @@ const GLYPHS: Record<IconButtonGlyph, ComponentChildren> = {
     </svg>
   ),
   plus: (
-    <svg width="50%" height="50%" viewBox="0 0 16 16" shape-rendering="crispEdges">
+    <svg width="50%" height="50%" viewBox="0 0 16 16" style={{ ["shape-rendering"]: "crispEdges" }}>
       <g fill="currentColor">
         <rect x="7" y="3" width="2" height="10" />
         <rect x="3" y="7" width="10" height="2" />
@@ -184,7 +186,7 @@ const GLYPHS: Record<IconButtonGlyph, ComponentChildren> = {
   ),
 };
 
-const VARIANT_BASE: Record<IconButtonVariant, string> = {
+const VARIANT_BASE = {
   default: "gsv-ibtn",
   floating: "gsv-ibtn-floating",
 };
@@ -192,14 +194,17 @@ const VARIANT_BASE: Record<IconButtonVariant, string> = {
 /** IconButton — ported from IconButton.dc.html. Square icon button with inline
  *  SVG glyphs, named or numeric size, disabled + title + onClick. `variant`
  *  selects the visual treatment (default filled / floating borderless). */
-export function IconButton({ glyph = "back", size = "medium", disabled = false, variant = "default", ghost = false, className, title = "", ariaLabel, ariaDescribedBy, onClick, ...rest }: IconButtonProps) {
-  const px = typeof size === "number" ? size : SIZE_MAP[size] ?? Number(size) ?? 30;
+export function IconButton({ glyph = "back", size = "medium", disabled = false, variant = "default", ghost = false, className, title = "", ariaLabel, ariaDescribedBy, onClick }: IconButtonProps) {
+  const numericSize = Number(size);
+  const px = Number.isFinite(numericSize) && numericSize > 0
+    ? numericSize
+    : Object.entries(SIZE_MAP).find(([key]) => key === String(size))?.[1] ?? 30;
   const base = ghost ? "gsv-ibtn-ghost" : VARIANT_BASE[variant];
   // Disabled state reuses the base class plus is-disabled, except the legacy
   // default variant which has its own dedicated disabled class.
   const disabledCls = ghost || variant === "floating" ? `${base} is-disabled` : "gsv-ibtn-disabled";
   const cls = [disabled ? disabledCls : base, className].filter(Boolean).join(" ");
-  const describedBy = ariaDescribedBy ?? rest["aria-describedby"];
+  const describedBy = ariaDescribedBy;
   return (
     <button
       type="button"

@@ -6,11 +6,7 @@ import type {
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import type { KernelContext } from "./context";
 
-vi.mock("../shared/utils", () => ({
-  sendFrameToProcess: vi.fn(),
-}));
-
-import { sendFrameToProcess } from "../shared/utils";
+import * as utils from "../shared/utils";
 import { forwardToProcess, handleProcFork, handleProcIpcCall, handleProcIpcSend, handleProcSpawn, handleProcList, resolveRunAsIdentity } from "./proc-handlers";
 import { resolveCallerOwnerUid } from "./context";
 
@@ -22,8 +18,51 @@ const IDENTITY: ProcessIdentity = {
   home: "/home/sam",
   cwd: "/home/sam",
 };
+// SAFETY: test fixture is constructed with the asserted kernel domain shape.
+const TEST_INSTALLATION_ID = "singleton" as KernelContext["installationId"];
 
-const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
+const PERSONAL_AGENT_ACCOUNT = {
+  username: "sam-agent",
+  uid: 2000,
+  gid: 2000,
+  gecos: "Sam Agent",
+  home: "/home/sam-agent",
+  shell: "/bin/init",
+};
+
+function makePersonalAgentAuth() {
+  return {
+    getPasswdByUsername: vi.fn((username: string) => (
+      username === PERSONAL_AGENT_ACCOUNT.username ? PERSONAL_AGENT_ACCOUNT : null
+    )),
+    getPasswdByUid: vi.fn((uid: number) => {
+      if (uid === IDENTITY.uid) {
+        return {
+          username: IDENTITY.username,
+          uid: IDENTITY.uid,
+          gid: IDENTITY.gid,
+          gecos: IDENTITY.username,
+          home: IDENTITY.home,
+          shell: "/bin/init",
+        };
+      }
+      return uid === PERSONAL_AGENT_ACCOUNT.uid ? PERSONAL_AGENT_ACCOUNT : null;
+    }),
+    getShadowByUsername: vi.fn((username: string) => (
+      username === PERSONAL_AGENT_ACCOUNT.username ? { username, hash: "!" } : null
+    )),
+    getGroupByGid: vi.fn((gid: number) => (
+      gid === PERSONAL_AGENT_ACCOUNT.gid
+        ? { name: PERSONAL_AGENT_ACCOUNT.username, gid, members: [IDENTITY.username] }
+        : null
+    )),
+    getPersonalAgentUid: vi.fn(() => PERSONAL_AGENT_ACCOUNT.uid),
+    isPersonalAgentUid: vi.fn((uid: number) => uid === PERSONAL_AGENT_ACCOUNT.uid),
+    resolveGids: vi.fn((_username: string, gid: number) => [gid]),
+  };
+}
+
+const sendFrameToProcessMock = vi.spyOn(utils, "sendFrameToProcess");
 
 // A parent process record (owned by the caller) used by parented-spawn tests,
 // so the run-as identity is inherited from the parent.
@@ -41,20 +80,37 @@ const SPAWN_PARENT = {
 };
 
 function makeStorageBucket() {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     head: vi.fn(async () => null),
     put: vi.fn(async () => undefined),
   };
 }
 
+function makeProcessCleanupMocks() {
+  return {
+    runRoutes: {
+      clearForProcess: vi.fn(),
+    },
+    responsibilities: {
+      reclaimProcessAssignments: vi.fn(() => []),
+    },
+    failIpcCallsByTarget: vi.fn(),
+    defer: vi.fn(),
+    reconcileResponsibilityWake: vi.fn(async () => {}),
+  };
+}
+
 describe("proc handlers", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => ({
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
       type: "res",
       id: frame.type === "req" ? frame.id : "signal",
       ok: true,
       data: { ok: true },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as ResponseFrame));
   });
 
@@ -74,7 +130,8 @@ describe("proc handlers", () => {
 
     expect(result).toEqual({ ok: false, error: "target rejected delivery" });
     const callId = ipcCalls.create.mock.calls[0]?.[0]?.callId;
-    const runId = (sendFrameToProcessMock.mock.calls[0]?.[1] as RequestFrame | undefined)?.args.runId;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const runId = (sendFrameToProcessMock.mock.calls[0]?.[2] as RequestFrame | undefined)?.args.runId;
     expect(callId).toBeTruthy();
     expect(runId).toBeTruthy();
     expect(ipcCalls.remove).toHaveBeenCalledWith(callId);
@@ -89,7 +146,7 @@ describe("proc handlers", () => {
   });
 
   it("keys same-owner cross-agent IPC calls by owner uid", async () => {
-    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => ({
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
       type: "res",
       id: "deliver",
       ok: true,
@@ -98,6 +155,7 @@ describe("proc handlers", () => {
         status: "started",
         pid: "target-process",
         sourcePid: "source-process",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         runId: (frame as RequestFrame).args.runId,
       } satisfies ProcIpcSendResult,
     } satisfies ResponseFrame));
@@ -129,7 +187,11 @@ describe("proc handlers", () => {
       pid: "target-process",
       sourcePid: "source-process",
     });
-    const runId = (sendFrameToProcessMock.mock.calls[0]?.[1] as RequestFrame).args.runId;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const firstCall = sendFrameToProcessMock.mock.calls[0];
+    if (!firstCall) throw new Error("expected proc.start frame");
+    // SAFETY: The proc.start fixture records a request frame in the third mock argument.
+    const runId = (firstCall[2] as RequestFrame).args.runId;
     expect(result).toMatchObject({ runId });
     expect(ipcCalls.create).toHaveBeenCalledWith(expect.objectContaining({
       uid: ownerUid,
@@ -166,7 +228,7 @@ describe("proc handlers", () => {
 
   it("schedules IPC timeout before delivering work to the target", async () => {
     const { ctx, ipcCalls } = makeIpcCallContext();
-    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
       const callId = ipcCalls.create.mock.calls[0]?.[0]?.callId;
       expect(ctx.scheduleIpcCallTimeout).toHaveBeenCalledWith(
         callId,
@@ -181,6 +243,7 @@ describe("proc handlers", () => {
           status: "started",
           pid: "target-process",
           sourcePid: "source-process",
+          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
           runId: (frame as RequestFrame).args.runId,
         } satisfies ProcIpcSendResult,
       } satisfies ResponseFrame;
@@ -193,7 +256,7 @@ describe("proc handlers", () => {
   });
 
   it("correlates IPC with the dispatching run instead of mutable process state", async () => {
-    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => ({
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
       type: "res",
       id: "deliver",
       ok: true,
@@ -202,6 +265,7 @@ describe("proc handlers", () => {
         status: "started",
         pid: "target-process",
         sourcePid: "source-process",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         runId: (frame as RequestFrame).args.runId,
       } satisfies ProcIpcSendResult,
     } satisfies ResponseFrame));
@@ -237,7 +301,7 @@ describe("proc handlers", () => {
   });
 
   it("does not report started after a delivered timeout row was removed", async () => {
-    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => ({
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
       type: "res",
       id: "deliver",
       ok: true,
@@ -246,6 +310,7 @@ describe("proc handlers", () => {
         status: "started",
         pid: "target-process",
         sourcePid: "source-process",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         runId: (frame as RequestFrame).args.runId,
       } satisfies ProcIpcSendResult,
     } satisfies ResponseFrame));
@@ -274,13 +339,15 @@ describe("proc handlers", () => {
     },
   ])("forwards $call cancellation to the Process request", async ({ call, id, args }) => {
     const controller = new AbortController();
-    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
       if (frame.type === "sig") {
         return null;
       }
       return await new Promise(() => {});
     });
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       callerOwnerUid: IDENTITY.uid,
       identity: {
         role: "user",
@@ -291,23 +358,31 @@ describe("proc handlers", () => {
       procs: {
         get: vi.fn(() => ({ uid: IDENTITY.uid, ownerUid: IDENTITY.uid })),
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const request = forwardToProcess({
       type: "req",
       id,
       call,
       args,
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame, ctx);
     await vi.waitFor(() => expect(sendFrameToProcessMock).toHaveBeenCalledOnce());
 
     controller.abort(new Error("new user message"));
 
     await expect(request).rejects.toThrow("new user message");
-    expect(sendFrameToProcessMock).toHaveBeenNthCalledWith(2, "proc-1", {
+    expect(sendFrameToProcessMock).toHaveBeenNthCalledWith(
+      2,
+      TEST_INSTALLATION_ID,
+      "proc-1",
+      {
       type: "sig",
       signal: "request.cancel",
       payload: { id, reason: "new user message" },
-    });
+      },
+    );
   });
 
   it("routes proc.send results by the target process owner", async () => {
@@ -318,7 +393,9 @@ describe("proc handlers", () => {
       data: { ok: true, status: "started", runId: "run-1" },
     } satisfies ResponseFrame);
     const setConnectionRoute = vi.fn();
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       identity: {
         role: "user",
         process: { ...IDENTITY, uid: 0 },
@@ -329,13 +406,16 @@ describe("proc handlers", () => {
         get: vi.fn(() => ({ uid: 2000, ownerUid: 1000 })),
       },
       runRoutes: { setConnectionRoute },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
 
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     await forwardToProcess({
       type: "req",
       id: "send-root",
       call: "proc.send",
       args: { pid: "proc-1", message: "hello" },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame, ctx);
 
     expect(setConnectionRoute).toHaveBeenCalledWith({
@@ -354,7 +434,9 @@ describe("proc handlers", () => {
       data: { ok: true, messages: [] },
     } satisfies ResponseFrame);
 
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       processId: "proc-self",
       callerOwnerUid: IDENTITY.uid,
       identity: {
@@ -367,36 +449,45 @@ describe("proc handlers", () => {
           ? { processId: pid, uid: IDENTITY.uid, ownerUid: IDENTITY.uid }
           : null),
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
 
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     await forwardToProcess({
       type: "req",
       id: "history-1",
       call: "proc.history",
       args: {},
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame, ctx);
 
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
       "proc-self",
       expect.objectContaining({ call: "proc.history" }),
     );
   });
 
   it("requires an explicit pid outside a process", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       callerOwnerUid: IDENTITY.uid,
       identity: {
         role: "user",
         process: IDENTITY,
         capabilities: ["proc.history"],
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
 
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     await expect(forwardToProcess({
       type: "req",
       id: "history-1",
       call: "proc.history",
       args: {},
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame, ctx)).rejects.toThrow("proc.history requires pid outside a process");
     expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
@@ -438,7 +529,9 @@ describe("proc handlers", () => {
       })],
       ["users/1000/ai/model_profiles/fast-stack/api_key", "sk-chat"],
     ]);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       identity: {
         role: "user",
         process: IDENTITY,
@@ -450,8 +543,10 @@ describe("proc handlers", () => {
       config: {
         get: vi.fn((key: string) => configEntries.get(key) ?? null),
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
 
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     await forwardToProcess({
       type: "req",
       id: "ai-profile-1",
@@ -460,9 +555,11 @@ describe("proc handlers", () => {
         pid: "proc-1",
         profileId: "fast-stack",
       },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame, ctx);
 
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
       "proc-1",
       expect.objectContaining({
         call: "proc.ai.config.set",
@@ -498,7 +595,9 @@ describe("proc handlers", () => {
         },
       },
     } satisfies ResponseFrame);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       identity: {
         role: "user",
         process: IDENTITY,
@@ -507,8 +606,10 @@ describe("proc handlers", () => {
       procs: {
         get: vi.fn(() => ({ uid: 2000, ownerUid: IDENTITY.uid })),
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
 
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     await forwardToProcess({
       type: "req",
       id: "ai-config-get-1",
@@ -517,9 +618,11 @@ describe("proc handlers", () => {
         pid: "proc-1",
         redacted: false,
       },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame, ctx);
 
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
       "proc-1",
       expect.objectContaining({
         call: "proc.ai.config.get",
@@ -550,11 +653,13 @@ describe("proc handlers", () => {
     } satisfies ResponseFrame);
     const ctx = makeForwardContext();
 
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     await forwardToProcess({
       type: "req",
       id: "reset-1",
       call: "proc.reset",
       args: { pid: "proc-1" },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame, ctx);
 
     expect(ctx.ipcCalls.cancelBySourcePid).toHaveBeenCalledWith({
@@ -567,6 +672,7 @@ describe("proc handlers", () => {
       "proc-1",
       "Target process was reset",
     );
+    expect(ctx.procs.kill).not.toHaveBeenCalled();
   });
 
   it("unregisters a killed process after its history is archived", async () => {
@@ -587,20 +693,129 @@ describe("proc handlers", () => {
       },
     } satisfies ResponseFrame);
 
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     await forwardToProcess({
       type: "req",
       id: "kill-archive",
       call: "proc.kill",
       args: { pid: "proc-1" },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame, ctx);
 
     expect(ctx.procs.kill).toHaveBeenCalledWith("proc-1");
+    expect(ctx.responsibilities.reclaimProcessAssignments).toHaveBeenCalledWith({
+      ownerUid: IDENTITY.uid,
+      processId: "proc-1",
+      now: expect.any(Number),
+    });
     expect(ctx.runRoutes.clearForProcess).toHaveBeenCalledWith("proc-1");
     expect(ctx.failIpcCallsByTarget).toHaveBeenCalledWith(
       IDENTITY.uid,
       "proc-1",
       "Target process was killed",
     );
+  });
+
+  it.each(["archive failed", "terminal commit failed"])(
+    "retains a process registration when proc.kill reports %s",
+    async (message) => {
+      const ctx = makeForwardContext();
+      sendFrameToProcessMock.mockResolvedValueOnce({
+        type: "res",
+        id: "kill-failed",
+        ok: false,
+        error: { code: 500, message },
+      } satisfies ResponseFrame);
+
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      await expect(forwardToProcess({
+        type: "req",
+        id: "kill-failed",
+        call: "proc.kill",
+        args: { pid: "proc-1" },
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as RequestFrame, ctx)).rejects.toThrow(message);
+
+      expect(ctx.procs.kill).not.toHaveBeenCalled();
+      expect(ctx.runRoutes.clearForProcess).not.toHaveBeenCalled();
+    },
+  );
+
+  it("reconciles Kernel state after terminal cleanup succeeds on retry", async () => {
+    const ctx = makeForwardContext();
+    sendFrameToProcessMock
+      .mockImplementationOnce(async (_installationId, _pid, frame) => ({
+        type: "res",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+        id: (frame as RequestFrame).id,
+        ok: false,
+        error: {
+          code: 500,
+          message: "Process was killed but terminal cleanup is pending",
+        },
+      }))
+      .mockImplementationOnce(async (_installationId, _pid, frame) => ({
+        type: "res",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+        id: (frame as RequestFrame).id,
+        ok: true,
+        data: {
+          ok: true,
+          pid: "proc-1",
+          archivedMessages: 0,
+          archives: [],
+        },
+      }));
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const request = {
+      type: "req",
+      id: "kill-cleanup-retry",
+      call: "proc.kill",
+      args: { pid: "proc-1" },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as RequestFrame;
+
+    await expect(forwardToProcess(request, ctx)).rejects.toThrow(
+      "terminal cleanup is pending",
+    );
+    expect(ctx.procs.kill).not.toHaveBeenCalled();
+
+    await expect(forwardToProcess(request, ctx)).resolves.toMatchObject({
+      data: { ok: true, pid: "proc-1" },
+    });
+    expect(ctx.procs.kill).toHaveBeenCalledWith("proc-1");
+    expect(ctx.runRoutes.clearForProcess).toHaveBeenCalledWith("proc-1");
+  });
+
+  it("unregisters a process when a retried kill reports it already dead", async () => {
+    const ctx = makeForwardContext();
+    sendFrameToProcessMock.mockResolvedValueOnce({
+      type: "res",
+      id: "kill-already-dead",
+      ok: false,
+      error: { code: 410, message: "Process no longer exists" },
+    } satisfies ResponseFrame);
+
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    await expect(forwardToProcess({
+      type: "req",
+      id: "kill-already-dead",
+      call: "proc.kill",
+      args: { pid: "proc-1" },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as RequestFrame, ctx)).rejects.toThrow("Process no longer exists");
+
+    expect(ctx.ipcCalls.cancelBySourcePid).toHaveBeenCalledWith({
+      uid: IDENTITY.uid,
+      sourcePid: "proc-1",
+    });
+    expect(ctx.runRoutes.clearForProcess).toHaveBeenCalledWith("proc-1");
+    expect(ctx.failIpcCallsByTarget).toHaveBeenCalledWith(
+      IDENTITY.uid,
+      "proc-1",
+      "Target process was killed",
+    );
+    expect(ctx.procs.kill).toHaveBeenCalledWith("proc-1");
   });
 
   it("cleans up pending IPC call when delivery reports failure", async () => {
@@ -619,7 +834,8 @@ describe("proc handlers", () => {
 
     expect(result).toEqual({ ok: false, error: "target unavailable" });
     const callId = ipcCalls.create.mock.calls[0]?.[0]?.callId;
-    const runId = (sendFrameToProcessMock.mock.calls[0]?.[1] as RequestFrame | undefined)?.args.runId;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const runId = (sendFrameToProcessMock.mock.calls[0]?.[2] as RequestFrame | undefined)?.args.runId;
     expect(callId).toBeTruthy();
     expect(runId).toBeTruthy();
     expect(ipcCalls.remove).toHaveBeenCalledWith(callId);
@@ -634,15 +850,9 @@ describe("proc handlers", () => {
   });
 
   it("spawns a fresh top-level process when explicit cwd is requested", async () => {
-    const personalAgent = {
-      username: "sam-agent",
-      uid: 2000,
-      gid: 2000,
-      gecos: "sam agent",
-      home: "/home/sam-agent",
-      shell: "/bin/init",
-    };
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       env: {
         STORAGE: makeStorageBucket(),
       },
@@ -650,17 +860,13 @@ describe("proc handlers", () => {
         process: IDENTITY,
         capabilities: ["*"],
       },
-      auth: {
-        isPersonalAgentUid: vi.fn(() => false),
-        getPersonalAgentUid: vi.fn((uid: number) => uid === IDENTITY.uid ? personalAgent.uid : null),
-        getPasswdByUid: vi.fn((uid: number) => uid === personalAgent.uid ? personalAgent : null),
-        resolveGids: vi.fn((_username: string, gid: number) => [gid]),
-      },
+      auth: makePersonalAgentAuth(),
       procs: {
         get: vi.fn(() => null),
         spawn: vi.fn(),
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
 
     const result = await handleProcSpawn({
       label: "Review Demo Tool",
@@ -675,8 +881,8 @@ describe("proc handlers", () => {
     expect(ctx.procs.spawn).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
-        uid: personalAgent.uid,
-        username: personalAgent.username,
+        uid: PERSONAL_AGENT_ACCOUNT.uid,
+        username: PERSONAL_AGENT_ACCOUNT.username,
         cwd: "/src/repos/sam/demo-a/tools/demo-tool",
       }),
       expect.objectContaining({
@@ -684,29 +890,38 @@ describe("proc handlers", () => {
         label: "Review Demo Tool",
       }),
     );
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
-      call: "proc.setidentity",
-      args: expect.objectContaining({
-        title: "Review Demo Tool",
-        autoTitle: false,
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
+      expect.any(String),
+      expect.objectContaining({
+        call: "proc.setidentity",
+        args: expect.objectContaining({
+          title: "Review Demo Tool",
+          autoTitle: false,
+        }),
       }),
-    }));
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
-      call: "proc.send",
-      args: expect.objectContaining({ message: "Review this project." }),
-    }));
+    );
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const identityFrame = sendFrameToProcessMock.mock.calls.find(([, , frame]) =>
+      frame.type === "req" && frame.call === "proc.setidentity"
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    )?.[2] as RequestFrame | undefined;
+    expect(identityFrame?.args).not.toHaveProperty("installationId");
+    expect(identityFrame?.args).not.toHaveProperty("pid");
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
+      expect.any(String),
+      expect.objectContaining({
+        call: "proc.send",
+        args: expect.objectContaining({ message: "Review this project." }),
+      }),
+    );
   });
 
   it("spawns a fresh top-level process when requested without explicit cwd", async () => {
-    const personalAgent = {
-      username: "sam-agent",
-      uid: 2000,
-      gid: 2000,
-      gecos: "sam agent",
-      home: "/home/sam-agent",
-      shell: "/bin/init",
-    };
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       env: {
         STORAGE: makeStorageBucket(),
       },
@@ -714,55 +929,61 @@ describe("proc handlers", () => {
         process: IDENTITY,
         capabilities: ["*"],
       },
-      auth: {
-        getPersonalAgentUid: vi.fn((uid: number) => uid === IDENTITY.uid ? personalAgent.uid : null),
-        getPasswdByUid: vi.fn((uid: number) => uid === personalAgent.uid ? personalAgent : null),
-        isPersonalAgentUid: vi.fn((uid: number) => uid === personalAgent.uid),
-        resolveGids: vi.fn((_username: string, gid: number) => [gid]),
-      },
+      auth: makePersonalAgentAuth(),
       procs: {
         get: vi.fn(() => null),
         spawn: vi.fn(),
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
 
     const result = await handleProcSpawn({ interactive: true }, ctx);
 
     expect(result).toMatchObject({
       ok: true,
-      cwd: "/home/sam-agent",
+      cwd: PERSONAL_AGENT_ACCOUNT.home,
     });
     expect(ctx.procs.spawn).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
-        uid: personalAgent.uid,
-        username: personalAgent.username,
+        uid: PERSONAL_AGENT_ACCOUNT.uid,
+        username: PERSONAL_AGENT_ACCOUNT.username,
       }),
       expect.objectContaining({
         ownerUid: IDENTITY.uid,
         interactive: true,
       }),
     );
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
-      call: "proc.setidentity",
-      args: expect.objectContaining({
-        autoTitle: true,
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
+      expect.any(String),
+      expect.objectContaining({
+        call: "proc.setidentity",
+        args: expect.objectContaining({
+          autoTitle: true,
+        }),
       }),
-    }));
-    const identityFrame = sendFrameToProcessMock.mock.calls.find(([, frame]) =>
+    );
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const identityFrame = sendFrameToProcessMock.mock.calls.find(([, , frame]) =>
       frame.type === "req" && frame.call === "proc.setidentity"
-    )?.[1] as RequestFrame | undefined;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    )?.[2] as RequestFrame | undefined;
     expect(identityFrame?.args).not.toHaveProperty("title");
+    expect(identityFrame?.args).not.toHaveProperty("installationId");
+    expect(identityFrame?.args).not.toHaveProperty("pid");
   });
 
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it.each(["null", "error", "throw"] as const)(
     "rolls back a spawn when proc.setidentity returns %s",
     async (failure) => {
       if (failure === "null") {
         sendFrameToProcessMock.mockResolvedValueOnce(null);
       } else if (failure === "error") {
-        sendFrameToProcessMock.mockImplementationOnce(async (_pid, frame) => ({
+        sendFrameToProcessMock.mockImplementationOnce(async (_installationId, _pid, frame) => ({
           type: "res",
+          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
           id: (frame as RequestFrame).id,
           ok: false,
           error: { code: 500, message: "identity rejected" },
@@ -776,7 +997,10 @@ describe("proc handlers", () => {
         spawn: vi.fn(),
         kill: vi.fn(() => true),
       };
+      const cleanup = makeProcessCleanupMocks();
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       const ctx = {
+        installationId: TEST_INSTALLATION_ID,
         processId: SPAWN_PARENT.processId,
         callerOwnerUid: IDENTITY.uid,
         identity: {
@@ -784,7 +1008,9 @@ describe("proc handlers", () => {
           capabilities: ["proc.spawn"],
         },
         procs,
-      } as unknown as KernelContext;
+        ...cleanup,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as KernelContext;
 
       const result = await handleProcSpawn({}, ctx);
       const pid = procs.spawn.mock.calls[0]?.[0];
@@ -794,19 +1020,29 @@ describe("proc handlers", () => {
         error: expect.stringContaining("Failed to initialize process"),
       });
       expect(pid).toEqual(expect.any(String));
-      expect(sendFrameToProcessMock).toHaveBeenLastCalledWith(pid, expect.objectContaining({
-        call: "proc.kill",
-        args: { pid, archive: false },
-      }));
+      expect(sendFrameToProcessMock).toHaveBeenLastCalledWith(
+        TEST_INSTALLATION_ID,
+        pid,
+        expect.objectContaining({
+          call: "proc.kill",
+          args: { pid, archive: false },
+        }),
+      );
       expect(procs.kill).toHaveBeenCalledWith(pid);
+      expect(cleanup.responsibilities.reclaimProcessAssignments).toHaveBeenCalledWith({
+        ownerUid: IDENTITY.uid,
+        processId: pid,
+        now: expect.any(Number),
+      });
     },
   );
 
   it("keeps a failed spawn registered when Process rollback fails", async () => {
     sendFrameToProcessMock
       .mockResolvedValueOnce(null)
-      .mockImplementationOnce(async (_pid, frame) => ({
+      .mockImplementationOnce(async (_installationId, _pid, frame) => ({
         type: "res",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         id: (frame as RequestFrame).id,
         ok: false,
         error: { code: 500, message: "finish route unavailable" },
@@ -816,7 +1052,10 @@ describe("proc handlers", () => {
       spawn: vi.fn(),
       kill: vi.fn(() => true),
     };
+    const cleanup = makeProcessCleanupMocks();
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       processId: SPAWN_PARENT.processId,
       callerOwnerUid: IDENTITY.uid,
       identity: {
@@ -824,7 +1063,9 @@ describe("proc handlers", () => {
         capabilities: ["proc.spawn"],
       },
       procs,
-    } as unknown as KernelContext;
+      ...cleanup,
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
 
     const result = await handleProcSpawn({}, ctx);
 
@@ -835,8 +1076,81 @@ describe("proc handlers", () => {
     expect(procs.kill).not.toHaveBeenCalled();
   });
 
-  it("spawns a fresh interactive worker for a parented spawn", async () => {
+  it("removes a failed spawn when a repeated rollback finds the Process dead", async () => {
+    sendFrameToProcessMock
+      .mockResolvedValueOnce(null)
+      .mockImplementationOnce(async (_installationId, _pid, frame) => ({
+        type: "res",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+        id: (frame as RequestFrame).id,
+        ok: false,
+        error: { code: 410, message: "Process no longer exists" },
+      }));
+    const procs = {
+      get: vi.fn(() => SPAWN_PARENT),
+      spawn: vi.fn(),
+      kill: vi.fn(() => true),
+    };
+    const cleanup = makeProcessCleanupMocks();
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
+      processId: SPAWN_PARENT.processId,
+      callerOwnerUid: IDENTITY.uid,
+      identity: {
+        process: IDENTITY,
+        capabilities: ["proc.spawn"],
+      },
+      procs,
+      ...cleanup,
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
+
+    const result = await handleProcSpawn({}, ctx);
+    const pid = procs.spawn.mock.calls[0]?.[0];
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.not.stringContaining("rollback failed"),
+    });
+    expect(procs.kill).toHaveBeenCalledWith(pid);
+  });
+
+  it("does not roll back an existing process when registry insertion fails", async () => {
+    const procs = {
+      get: vi.fn(() => SPAWN_PARENT),
+      spawn: vi.fn(() => {
+        throw new Error("process id already exists");
+      }),
+      kill: vi.fn(() => true),
+    };
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const ctx = {
+      installationId: TEST_INSTALLATION_ID,
+      processId: SPAWN_PARENT.processId,
+      callerOwnerUid: IDENTITY.uid,
+      identity: {
+        process: IDENTITY,
+        capabilities: ["proc.spawn"],
+      },
+      procs,
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
+
+    const result = await handleProcSpawn({}, ctx);
+
+    expect(result).toEqual({
+      ok: false,
+      error: "Failed to register process: process id already exists",
+    });
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+    expect(procs.kill).not.toHaveBeenCalled();
+  });
+
+  it("spawns a fresh interactive worker for a parented spawn", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       env: {},
       identity: {
         process: IDENTITY,
@@ -846,7 +1160,8 @@ describe("proc handlers", () => {
         get: vi.fn(() => SPAWN_PARENT),
         spawn: vi.fn(),
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
 
     const result = await handleProcSpawn({ parentPid: `init:${IDENTITY.uid}` }, ctx);
 
@@ -875,7 +1190,9 @@ describe("proc handlers", () => {
       }),
       kill: vi.fn(() => true),
     };
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       processId: sourcePid,
       callerOwnerUid: IDENTITY.uid,
       env: { STORAGE: { delete: removeTemporaryHistory } },
@@ -898,11 +1215,14 @@ describe("proc handlers", () => {
         resolveGids: vi.fn(() => IDENTITY.gids),
       },
       procs,
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
 
-    sendFrameToProcessMock.mockImplementation(async (pid, frame) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId, pid, frame) => {
       if (frame.type !== "req") return null;
       if (frame.call === "proc.history.export") {
+        expect(frame.args).toEqual({ throughRunId: "run:conversation-message" });
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         return {
           type: "res",
           id: frame.id,
@@ -915,29 +1235,34 @@ describe("proc handlers", () => {
             throughMessageId: 2,
             includedLiveSuffix: false,
           },
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         } as ResponseFrame;
       }
       if (frame.call === "proc.history.import") {
         expect(pid).toBe(targetPid);
         expect(frame.args).toEqual({ archivePaths: ["/tmp/fork-history.jsonl.gz"] });
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         return {
           type: "res",
           id: frame.id,
           ok: true,
           data: { ok: true, pid, restoredMessages: 2 },
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         } as ResponseFrame;
       }
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       return {
         type: "res",
         id: frame.id,
         ok: true,
         data: { ok: true },
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       } as ResponseFrame;
     });
 
     const result = await handleProcFork({
       pid: sourcePid,
-      throughMessageId: 2,
+      throughRunId: "run:conversation-message",
     }, ctx);
 
     expect(result).toMatchObject({
@@ -976,7 +1301,9 @@ describe("proc handlers", () => {
       home: "/home/sam-agent",
       cwd: "/home/sam-agent",
     };
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       processId: "proc:delegated-agent",
       callerOwnerUid: IDENTITY.uid,
       env: {},
@@ -1014,7 +1341,8 @@ describe("proc handlers", () => {
         }),
         spawn: vi.fn(),
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
 
     const result = await handleProcSpawn({
       parentPid: "proc:personal-agent",
@@ -1047,7 +1375,9 @@ function makeIpcCallContext(options: {
     get: vi.fn(() => ({ status: "pending", error: null })),
     remove: vi.fn(),
   };
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   const ctx = {
+    installationId: TEST_INSTALLATION_ID,
     processId: "source-process",
     processRunId: "source-run",
     identity: { process: identity },
@@ -1060,7 +1390,8 @@ function makeIpcCallContext(options: {
     },
     ipcCalls,
     scheduleIpcCallTimeout: vi.fn(async () => "timeout-schedule"),
-  } as unknown as KernelContext;
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  } as KernelContext;
 
   return { ctx, ipcCalls };
 }
@@ -1068,7 +1399,9 @@ function makeIpcCallContext(options: {
 function makeForwardContext(overrides?: {
   cancelBySourcePid?: (input: { uid: number; sourcePid: string }) => void;
 }): KernelContext {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
+    installationId: TEST_INSTALLATION_ID,
     identity: {
       role: "user",
       process: IDENTITY,
@@ -1086,37 +1419,52 @@ function makeForwardContext(overrides?: {
       delete: vi.fn(),
       clearForProcess: vi.fn(),
     },
+    responsibilities: {
+      reclaimProcessAssignments: vi.fn(() => []),
+    },
     ipcCalls: {
       cancelBySourcePid: overrides?.cancelBySourcePid ?? vi.fn(),
     },
     failIpcCallsByTarget: vi.fn(),
-  } as unknown as KernelContext;
+    defer: vi.fn(),
+    reconcileResponsibilityWake: vi.fn(async () => {}),
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  } as KernelContext;
 }
 
 describe("resolveCallerOwnerUid", () => {
   it("honors an explicit caller owner override", () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       callerOwnerUid: 1000,
       identity: { role: "user", process: { ...IDENTITY, uid: 2000 }, capabilities: [] },
       procs: { get: vi.fn(() => null) },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
     expect(resolveCallerOwnerUid(ctx)).toBe(1000);
   });
 
   it("resolves to the owning human of the calling process, not the run-as uid", () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       processId: "proc:abc",
       identity: { role: "user", process: { ...IDENTITY, uid: 2000 }, capabilities: [] },
       procs: { getOwnerUid: vi.fn(() => 1000) },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
     expect(resolveCallerOwnerUid(ctx)).toBe(1000);
   });
 
   it("falls back to the connecting user when not invoked from a process", () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       identity: { role: "user", process: { ...IDENTITY, uid: 1000 }, capabilities: [] },
       procs: { get: vi.fn(() => null) },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
     expect(resolveCallerOwnerUid(ctx)).toBe(1000);
   });
 });
@@ -1124,11 +1472,11 @@ describe("resolveCallerOwnerUid", () => {
 describe("resolveRunAsIdentity", () => {
   // Owner human 1000 (alice); her personal agent 2000; a least-privilege
   // delegated agent 3000 that alice is NOT authorized to act as.
-  const passwd: Record<number, { username: string; uid: number; gid: number; home: string }> = {
+  const passwd = {
     1000: { username: "alice", uid: 1000, gid: 1000, home: "/home/alice" },
     2000: { username: "alice-agent", uid: 2000, gid: 2000, home: "/home/alice-agent" },
     3000: { username: "wiki-builder", uid: 3000, gid: 3000, home: "/home/wiki-builder" },
-  };
+  } satisfies Record<number, { username: string; uid: number; gid: number; home: string }>;
   const byName = Object.fromEntries(Object.values(passwd).map((p) => [p.username, p]));
 
   function authMock() {
@@ -1137,6 +1485,7 @@ describe("resolveRunAsIdentity", () => {
       getPasswdByUsername: vi.fn((name: string) => byName[name] ?? null),
       getPersonalAgentUid: vi.fn((ownerUid: number) => (ownerUid === 1000 ? 2000 : null)),
       // No one is listed in alice's primary group members here.
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       getGroupByGid: vi.fn((gid: number) => ({ name: `g${gid}`, gid, members: [] as string[] })),
       getGroupByName: vi.fn(() => null),
       resolveGids: vi.fn((_username: string, gid: number) => [gid]),
@@ -1144,20 +1493,25 @@ describe("resolveRunAsIdentity", () => {
   }
 
   function ctxFor(runAsUid: number, processId?: string) {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {
       processId,
       identity: { role: "user", process: { ...IDENTITY, uid: runAsUid }, capabilities: ["proc.spawn"] },
       auth: authMock(),
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
   }
 
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it("denies an agent-backed process from running as the owning human", () => {
     // Caller runs as a delegated agent (3000); owner is the human (1000).
     const res = resolveRunAsIdentity(ctxFor(3000, "proc:abc"), "alice", 1000);
     expect(res.ok).toBe(false);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     if (!res.ok) expect(res.error).toMatch(/cannot run as alice/i);
   });
 
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it("still lets a human run as themselves and their personal agent", () => {
     const self = resolveRunAsIdentity(ctxFor(1000), "alice", 1000);
     expect(self.ok).toBe(true);
@@ -1174,15 +1528,19 @@ describe("resolveRunAsIdentity", () => {
       getPersonalAgentUid: vi.fn((ownerUid: number) => (ownerUid === 1000 ? 2000 : null)),
       getGroupByGid: vi.fn((gid: number) => {
         if (gid === 3000) return { name: "wiki-builder", gid: 3000, members: ["alice"] };
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         return { name: `g${gid}`, gid, members: [] as string[] };
       }),
       getGroupByName: vi.fn(() => null),
       resolveGids: vi.fn((_username: string, gid: number) => [gid]),
     };
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       identity: { role: "user", process: { ...IDENTITY, uid: 1000 }, capabilities: ["proc.spawn"] },
       auth,
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
 
     const res = resolveRunAsIdentity(ctx, "wiki-builder", 1000);
     expect(res.ok).toBe(true);
@@ -1191,15 +1549,57 @@ describe("resolveRunAsIdentity", () => {
 });
 
 describe("handleProcList", () => {
+  it("exposes the personal controller marker", () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const ctx = {
+      identity: {
+        role: "user",
+        process: IDENTITY,
+        capabilities: ["proc.list"],
+      },
+      procs: {
+        list: vi.fn(() => [{
+          processId: "proc:personal",
+          parentPid: null,
+          uid: PERSONAL_AGENT_ACCOUNT.uid,
+          ownerUid: IDENTITY.uid,
+          interactive: true,
+          isPersonalController: true,
+          gid: PERSONAL_AGENT_ACCOUNT.gid,
+          gids: [PERSONAL_AGENT_ACCOUNT.gid],
+          username: PERSONAL_AGENT_ACCOUNT.username,
+          home: PERSONAL_AGENT_ACCOUNT.home,
+          cwd: PERSONAL_AGENT_ACCOUNT.home,
+          state: "idle",
+          activeRunId: null,
+          queuedCount: 0,
+          lastActiveAt: null,
+          label: null,
+          createdAt: 1,
+        }]),
+      },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
+
+    expect(handleProcList({}, ctx).processes[0]).toMatchObject({
+      pid: "proc:personal",
+      uid: IDENTITY.uid,
+      personal: true,
+    });
+  });
+
   it("filters by the owning human when an agent process lists its user's processes", () => {
     const list = vi.fn(() => []);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       processId: "proc:abc",
       // The process runs as the personal agent (uid 2000) but is owned by the
       // human (uid 1000); listing must resolve to the human owner.
       identity: { role: "user", process: { ...IDENTITY, uid: 2000 }, capabilities: ["proc.list"] },
       procs: { getOwnerUid: vi.fn(() => 1000), list },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
 
     handleProcList({}, ctx);
     expect(list).toHaveBeenCalledWith(1000);
@@ -1207,21 +1607,35 @@ describe("handleProcList", () => {
 
   it("lets a non-root connecting user see only their own processes", () => {
     const list = vi.fn(() => []);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       identity: { role: "user", process: { ...IDENTITY, uid: 1000 }, capabilities: ["proc.list"] },
       procs: { get: vi.fn(() => null), list },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
 
     handleProcList({}, ctx);
     expect(list).toHaveBeenCalledWith(1000);
+
+    list.mockClear();
+    handleProcList({ uid: 1000 }, ctx);
+    expect(list).toHaveBeenCalledWith(1000);
+
+    expect(() => handleProcList({ uid: 2000 }, ctx)).toThrow(
+      "Permission denied: cannot list processes for uid=2000",
+    );
   });
 
   it("lets root list all processes and honors an explicit uid filter", () => {
     const list = vi.fn(() => []);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       identity: { role: "user", process: { ...IDENTITY, uid: 0, username: "root" }, capabilities: ["proc.list"] },
       procs: { get: vi.fn(() => null), list },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
 
     handleProcList({}, ctx);
     expect(list).toHaveBeenCalledWith(undefined);

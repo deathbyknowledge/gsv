@@ -10,7 +10,6 @@
  * the routing table).
  */
 
-import type { Connection } from "agents";
 import type {
   FrameBody,
   RequestFrame,
@@ -20,7 +19,9 @@ import type {
 import { isRoutableSyscall, type SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
 import type { RouteOrigin } from "./routing";
+import type { KernelConnection, KernelConnectionState } from "./connection";
 import type { ShellSessionRecord, ShellSessionStore } from "./shell-sessions";
+import type { NetFetchArgs } from "@humansandmachines/gsv/protocol";
 import {
   handleFsRead,
   handleFsWrite,
@@ -100,6 +101,10 @@ import {
   handleAdapterDisconnect,
   handleAdapterInbound,
   handleAdapterList,
+  handleAdapterPairConfirm,
+  handleAdapterPairDisconnect,
+  handleAdapterPairInfo,
+  handleAdapterPairInspect,
   handleAdapterSend,
   handleAdapterStateUpdate,
   handleAdapterStatus,
@@ -113,17 +118,36 @@ import {
   handleSchedulerUpdate,
 } from "./scheduler";
 import {
+  handleResponsibilityChanges,
+  handleResponsibilityCreate,
+  handleResponsibilityGet,
+  handleResponsibilityList,
+  handleResponsibilitySourceList,
+  handleResponsibilitySourceUpdate,
+  handleResponsibilityUpdate,
+} from "./responsibilities";
+import {
   getVisibleTarget,
   targetCanHandle,
   type TargetDescriptor,
 } from "./targets";
+import { handleMailSend } from "./outbound-mail";
+import { handleMailStatus } from "./outbound-status";
+import {
+  handleConversationForProcess,
+  handleConversationHistory,
+  handleConversationShip,
+  handleConversationList,
+  handleConversationMediaRead,
+  handleConversationSend,
+} from "./conversation-handlers";
 export type DispatchDeps = {
   shellSessions: ShellSessionStore;
-  connections: Map<string, Connection>;
+  connections: Map<string, KernelConnection<KernelConnectionState>>;
   sendFrame: (
-    connection: Connection,
+    connection: KernelConnection<KernelConnectionState>,
     frame: RequestFrame | ResponseFrame,
-  ) => { cancel(reason?: unknown): Promise<void> } | null;
+  ) => CancellableFrameBody | null;
   registerRoute: (route: {
     id: string;
     call: SyscallName;
@@ -133,20 +157,26 @@ export type DispatchDeps = {
     ttlMs: number;
   }) => Promise<{
     cancel: () => void;
-    attachBody: (body: { cancel(reason?: unknown): Promise<void> }) => void;
+    attachBody: (body: CancellableFrameBody) => void;
   }>;
   requestDevice: (
     deviceId: string,
-    call: string,
-    args: unknown,
+    call: "net.fetch",
+    args: NetFetchArgs,
     options?: { ttlMs?: number; body?: FrameBody; signal?: AbortSignal },
-  ) => Promise<ResponseOkFrame>;
+  ) => Promise<ResponseOkFrame<"net.fetch">>;
   request: (
     frame: RequestFrame,
     ctx: KernelContext,
     signal?: AbortSignal,
   ) => Promise<ResponseFrame>;
 };
+
+type FrameCancellationReason = string | Error;
+type CancellableFrameBody = {
+  cancel(reason?: FrameCancellationReason): Promise<void>;
+};
+type RoutingTargetArgs = { target?: string };
 
 export type DispatchResult =
   | { handled: true; response: ResponseFrame }
@@ -163,16 +193,19 @@ export async function dispatch(
   ctx: KernelContext,
   deps: DispatchDeps,
 ): Promise<DispatchResult> {
+  ctx = { ...ctx, requestId: frame.id };
   if (ctx.requestSignal?.aborted) {
     return {
       handled: true,
       response: errFrame(frame.id, 499, requestCancelMessage(ctx.requestSignal)),
     };
   }
-  const raw = frame.args as Record<string, unknown>;
-  const target = raw.target as string | undefined;
-  const sessionId = frame.call === "shell.exec" && typeof raw.sessionId === "string"
-    ? raw.sessionId.trim()
+  const routingArgs = routableFrameArgs(frame);
+  const target = frame.call === "ai.text.generate"
+    ? frame.args.target
+    : routingArgs?.target;
+  const sessionId = frame.call === "shell.exec"
+    ? frame.args.sessionId?.trim() ?? ""
     : "";
 
   if (sessionId) {
@@ -202,7 +235,7 @@ export async function dispatch(
         response: failedShellSessionFrame(frame.id, session),
       };
     }
-    delete raw.target;
+    if (routingArgs) delete routingArgs.target;
     const sessionTarget = getVisibleTarget(ctx, session.deviceId, { includeOffline: true });
     if (!sessionTarget) {
       return {
@@ -214,7 +247,7 @@ export async function dispatch(
   }
 
   if (target && target !== "gsv" && isRoutableSyscall(frame.call)) {
-    delete raw.target;
+    if (routingArgs) delete routingArgs.target;
     const routedTarget = getVisibleTarget(ctx, target, { includeOffline: true });
     if (!routedTarget) {
       return {
@@ -226,7 +259,7 @@ export async function dispatch(
   }
 
   if (target && frame.call !== "ai.text.generate") {
-    delete raw.target;
+    if (routingArgs) delete routingArgs.target;
   }
 
   const result = await dispatchNative(frame, origin, ctx, deps);
@@ -303,6 +336,36 @@ async function dispatchNative(
           ...await forwardToProcess(frame, ctx),
         };
 
+      case "mail.send":
+        data = await handleMailSend(frame.args, ctx);
+        break;
+      case "mail.status":
+        data = handleMailStatus(frame.args, ctx);
+        break;
+
+      case "conversation.ship":
+        data = await handleConversationShip(ctx);
+        break;
+      case "conversation.forProcess":
+        data = await handleConversationForProcess(frame.args, ctx);
+        break;
+      case "conversation.list":
+        data = await handleConversationList(ctx);
+        break;
+      case "conversation.history":
+        data = await handleConversationHistory(frame.args, ctx);
+        break;
+      case "conversation.send":
+        data = await handleConversationSend(frame.args, ctx);
+        break;
+      case "conversation.media.read":
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          ...await handleConversationMediaRead(frame.args, ctx),
+        };
+
       case "proc.list":
         data = handleProcList(frame.args, ctx);
         break;
@@ -325,9 +388,6 @@ async function dispatchNative(
       case "proc.history":
       case "proc.ai.config.get":
       case "proc.ai.config.set":
-      case "proc.media.read":
-      case "proc.media.write":
-      case "proc.media.delete":
       case "proc.history.policy.get":
       case "proc.history.policy.set":
       case "proc.history.compact":
@@ -527,6 +587,29 @@ async function dispatchNative(
         data = await handleSchedulerRun(frame.args, ctx);
         break;
 
+      // --- r12y.* ---
+      case "r12y.list":
+        data = handleResponsibilityList(frame.args, ctx);
+        break;
+      case "r12y.get":
+        data = handleResponsibilityGet(frame.args, ctx);
+        break;
+      case "r12y.create":
+        data = await handleResponsibilityCreate(frame.args, ctx);
+        break;
+      case "r12y.update":
+        data = await handleResponsibilityUpdate(frame.args, ctx);
+        break;
+      case "r12y.changes":
+        data = handleResponsibilityChanges(frame.args, ctx);
+        break;
+      case "r12y.source.list":
+        data = handleResponsibilitySourceList(frame.args, ctx);
+        break;
+      case "r12y.source.update":
+        data = handleResponsibilitySourceUpdate(frame.args, ctx);
+        break;
+
       // --- adapter.* ---
       case "adapter.connect":
         data = await handleAdapterConnect(frame.args, ctx);
@@ -547,7 +630,19 @@ async function dispatchNative(
         data = await handleAdapterStatus(frame.args, ctx);
         break;
       case "adapter.list":
-        data = handleAdapterList(frame.args, ctx);
+        data = await handleAdapterList(frame.args, ctx);
+        break;
+      case "adapter.pair.info":
+        data = await handleAdapterPairInfo(frame.args, ctx);
+        break;
+      case "adapter.pair.inspect":
+        data = await handleAdapterPairInspect(frame.args, ctx);
+        break;
+      case "adapter.pair.confirm":
+        data = await handleAdapterPairConfirm(frame.args, ctx);
+        break;
+      case "adapter.pair.disconnect":
+        data = await handleAdapterPairDisconnect(frame.args, ctx);
         break;
 
       case "signal.watch":
@@ -558,9 +653,11 @@ async function dispatchNative(
         break;
 
       default:
-        return errFrame(frameId, 404, `Unknown syscall: ${(frame as { call: string }).call}`);
+        return errFrame(frameId, 404, "Unknown syscall");
     }
 
+    // SAFETY: each exhaustive switch branch assigns the result declared for
+    // that exact syscall before the response envelope is constructed.
     return { type: "res", id: frame.id, ok: true, data } as ResponseFrame;
   } catch (err) {
     if (ctx.requestSignal?.aborted) {
@@ -602,7 +699,7 @@ async function routeToTarget(
 
   let route: {
     cancel: () => void;
-    attachBody: (body: { cancel(reason?: unknown): Promise<void> }) => void;
+    attachBody: (body: CancellableFrameBody) => void;
   } | null = null;
   const ttlMs = routedFrameTtlMs(frame);
   try {
@@ -631,13 +728,7 @@ async function routeToTarget(
   }
 
   try {
-    const outgoing = deps.sendFrame(deviceConn, {
-      type: "req",
-      id: frame.id,
-      call: frame.call,
-      args: frame.args,
-      ...(frame.body ? { body: frame.body } : {}),
-    } as RequestFrame);
+    const outgoing = deps.sendFrame(deviceConn, frame);
     if (outgoing) {
       route.attachBody(outgoing);
     }
@@ -654,12 +745,9 @@ async function routeToTarget(
 }
 
 export function routedFrameTtlMs(frame: RequestFrame): number {
-  const timeout = frame.args && typeof frame.args === "object"
-    ? (frame.args as { timeout?: unknown; timeoutMs?: unknown })
-    : {};
   if (frame.call === "shell.exec") {
-    const requested = timeout.timeout;
-    if (typeof requested !== "number" || !Number.isFinite(requested) || requested <= 0) {
+    const requested = frame.args.timeout;
+    if (requested === undefined || !Number.isFinite(requested) || requested <= 0) {
       return DEFAULT_SHELL_DEVICE_TTL_MS;
     }
     return Math.min(
@@ -668,24 +756,21 @@ export function routedFrameTtlMs(frame: RequestFrame): number {
     );
   }
   if (frame.call === "net.fetch") {
-    return normalizeNetFetchTimeoutMs(timeout.timeoutMs);
+    return normalizeNetFetchTimeoutMs(frame.args.timeoutMs);
   }
   return DEFAULT_DEVICE_TTL_MS;
 }
 
 function findDeviceConnection(
   deviceId: string,
-  connections: Map<string, Connection>,
-): Connection | null {
+  connections: Map<string, KernelConnection<KernelConnectionState>>,
+): KernelConnection<KernelConnectionState> | null {
   for (const [, conn] of connections) {
-    const state = conn.state as {
-      step?: string;
-      identity?: { role: string; device?: string };
-    } | undefined;
+    const state = conn.state;
     if (
       state?.step === "connected" &&
-      state.identity?.role === "driver" &&
-      state.identity.device === deviceId
+      state.peer?.id === deviceId &&
+      state.peer.grant.implements.length > 0
     ) {
       return conn;
     }
@@ -702,16 +787,27 @@ function requestCancelMessage(signal: AbortSignal): string {
 }
 
 function failedShellSessionFrame(id: string, session: ShellSessionRecord): ResponseFrame {
+  const data: Extract<
+    NonNullable<ResponseOkFrame<"shell.exec">["data"]>,
+    { status: "failed" }
+  > = {
+    status: "failed",
+    output: "",
+    error: session.error ?? "Shell session failed",
+    sessionId: session.sessionId,
+  };
+  if (session.exitCode !== null) data.exitCode = session.exitCode;
   return {
     type: "res",
     id,
     ok: true,
-    data: {
-      status: "failed",
-      output: "",
-      error: session.error ?? "Shell session failed",
-      ...(session.exitCode !== null ? { exitCode: session.exitCode } : {}),
-      sessionId: session.sessionId,
-    },
+    data,
   };
+}
+
+function routableFrameArgs(frame: RequestFrame): RoutingTargetArgs | null {
+  if (!isRoutableSyscall(frame.call)) return null;
+  // SAFETY: routable syscall schemas are extended with the optional string
+  // target metadata before they enter dispatch; native syscall args omit it.
+  return frame.args as typeof frame.args & RoutingTargetArgs;
 }

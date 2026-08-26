@@ -1,5 +1,7 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { isContextOverflow } from "@earendil-works/pi-ai";
+import { jsonObjectSchema, type JsonObject, type JsonValue } from "@humansandmachines/gsv/protocol";
+import * as z from "zod/mini";
 
 export type ProviderErrorContext = {
   provider?: string;
@@ -25,17 +27,20 @@ type ProviderErrorClassifier = {
   matches: (text: string) => boolean;
 };
 
+type ProviderErrorInput = Error | JsonValue | symbol | (() => string);
+
 const PROMOTABLE_PROVIDER_ERROR_CLASSIFIERS: ProviderErrorClassifier[] = [
   { name: "account", matches: isProviderAccountErrorText },
   { name: "rate-limit", matches: isProviderRateLimitErrorText },
   { name: "context-overflow", matches: isProviderContextOverflowErrorText },
 ];
 
-export function errorMessageFromUnknown(error: unknown): string {
-  return extractErrorText(error, new Set()) ?? NON_STANDARD_PROVIDER_ERROR;
+export function errorMessageFromUnknown<T>(error: T): string {
+  // SAFETY: This public boundary accepts arbitrary thrown values and normalizes them immediately.
+  return extractErrorText(error as ProviderErrorInput, new Set()) ?? NON_STANDARD_PROVIDER_ERROR;
 }
 
-function extractErrorText(error: unknown, seen: Set<object>): string | null {
+function extractErrorText(error: ProviderErrorInput | null | undefined, seen: Set<object>): string | null {
   if (error instanceof Error) {
     if (seen.has(error)) {
       return null;
@@ -43,25 +48,26 @@ function extractErrorText(error: unknown, seen: Set<object>): string | null {
     seen.add(error);
 
     const text = normalizeOptionalErrorText(error.message);
-    const causeText = extractErrorText((error as { cause?: unknown }).cause, seen);
+    // SAFETY: Error causes are recursively normalized as provider error inputs.
+    const causeText = extractErrorText((error as Error & { cause?: ProviderErrorInput }).cause, seen);
     if (causeText && (!text || isRecognizedProviderErrorText(causeText))) {
       return causeText;
     }
     return text ?? causeText;
   }
-  if (typeof error === "string") {
-    return normalizeOptionalErrorText(error);
-  }
-  if (!error || typeof error !== "object") {
+  const stringError = z.string().safeParse(error);
+  if (stringError.success) return normalizeOptionalErrorText(stringError.data);
+
+  let parsed: ReturnType<typeof jsonObjectSchema.safeParse>;
+  try {
+    parsed = jsonObjectSchema.safeParse(error);
+  } catch {
     return null;
   }
-
-  if (seen.has(error)) {
-    return null;
-  }
-  seen.add(error);
-
-  const record = error as Record<string, unknown>;
+  if (!parsed.success) return null;
+  const record = parsed.data;
+  if (seen.has(record)) return null;
+  seen.add(record);
   for (const field of ["message", "detail", "error_description", "errorDescription"]) {
     const text = normalizeOptionalErrorText(record[field]);
     if (text) {
@@ -70,8 +76,9 @@ function extractErrorText(error: unknown, seen: Set<object>): string | null {
   }
 
   const nestedError = record.error;
-  if (typeof nestedError === "string") {
-    const text = normalizeOptionalErrorText(nestedError);
+  const nestedText = z.string().safeParse(nestedError);
+  if (nestedText.success) {
+    const text = normalizeOptionalErrorText(nestedText.data);
     if (text) {
       return text;
     }
@@ -187,8 +194,8 @@ function requiresUsageForOverflowDetection(message: AssistantMessage): boolean {
 }
 
 function hasAssistantUsage(message: AssistantMessage): boolean {
-  const usage = (message as { usage?: unknown }).usage;
-  return !!usage && typeof usage === "object";
+  const usage = message.usage;
+  return usage !== undefined && usage !== null;
 }
 
 function buildProviderErrorAssistantMessage(
@@ -222,7 +229,8 @@ function buildProviderErrorAssistantMessage(
 }
 
 function normalizeContextWindowTokens(value: number | null | undefined): number | undefined {
-  return typeof value === "number" && value > 0 ? value : undefined;
+  const parsed = z.number().safeParse(value);
+  return parsed.success && parsed.data > 0 ? parsed.data : undefined;
 }
 
 function formatProviderModelLabel(context: ProviderErrorContext | undefined): string {
@@ -268,13 +276,12 @@ function extractProviderResponseDiagnostics(message: string): string {
     .join("; ");
 }
 
-function normalizeOptionalErrorText(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0
-    ? value.trim()
-    : null;
+function normalizeOptionalErrorText(value: JsonValue | undefined): string | null {
+  const parsed = z.string().safeParse(value);
+  return parsed.success && parsed.data.trim().length > 0 ? parsed.data.trim() : null;
 }
 
-function extractStatusOrCodeText(record: Record<string, unknown>): string | null {
+function extractStatusOrCodeText(record: JsonObject): string | null {
   for (const field of ["code", "type"]) {
     const text = normalizeOptionalErrorText(record[field]);
     if (text && isRecognizedProviderStatusOrCode(text)) {
@@ -312,11 +319,13 @@ function isProviderContextOverflowErrorText(text: string): boolean {
   return isProviderContextOverflowErrorMessage(text);
 }
 
-function providerStatusCode(value: unknown): 402 | 429 | null {
-  const status = typeof value === "number"
-    ? value
-    : typeof value === "string" && /^\d+$/.test(value.trim())
-      ? Number(value.trim())
+function providerStatusCode(value: JsonValue | undefined): 402 | 429 | null {
+  const numeric = z.number().safeParse(value);
+  const text = z.string().safeParse(value);
+  const status = numeric.success
+    ? numeric.data
+    : text.success && /^\d+$/.test(text.data.trim())
+      ? Number(text.data.trim())
       : null;
 
   return status === 402 || status === 429 ? status : null;

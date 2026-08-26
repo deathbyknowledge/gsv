@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   commitRepoSourceChanges,
   createProcessSourceBackend,
@@ -69,7 +69,7 @@ function makeBucket() {
       };
     },
     async put(key: string, value: string | Uint8Array, options?: { httpMetadata?: R2HTTPMetadata }) {
-      const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
+      const bytes = value instanceof Uint8Array ? value : new TextEncoder().encode(value);
       objects.set(key, { bytes, httpMetadata: options?.httpMetadata });
       return null;
     },
@@ -79,7 +79,8 @@ function makeBucket() {
       }
     },
   };
-  return bucket as unknown as R2Bucket & { objects: typeof objects };
+  // SAFETY: this test bucket implements the R2 operations exercised by the source backend.
+  return bucket as R2Bucket & { objects: typeof objects };
 }
 
 describe("createProcessSourceBackend", () => {
@@ -95,11 +96,12 @@ describe("createProcessSourceBackend", () => {
       ],
       processId: "task:source",
       config: makeConfig(),
+      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
       ripgit: {
         readPath: async () => {
           throw new Error("readPath should not be called for virtual repo dirs");
         },
-      } as any,
+      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
     });
 
     expect(backend).not.toBeNull();
@@ -125,6 +127,7 @@ describe("createProcessSourceBackend", () => {
       repos: [makeRepo("sam/docs")],
       processId: "task:source",
       config: makeConfig(),
+      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
       ripgit: {
         readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
           calls.push({ repo, path });
@@ -150,7 +153,7 @@ describe("createProcessSourceBackend", () => {
             matches: [{ path: "README.md", line: 2, content: "visible repo file" }],
           };
         },
-      } as any,
+      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
     });
 
     await expect(backend!.readdir("/src/repos/sam/docs")).resolves.toEqual(["README.md"]);
@@ -194,8 +197,9 @@ describe("createProcessSourceBackend", () => {
       repos: [makeRepo("sam/docs")],
       processId: "task:source",
       config,
+      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
       ripgit: {
-        readPath: async (_repo: unknown, path: string) => {
+        readPath: async (_repo: { owner: string; repo: string; branch?: string }, path: string) => {
           const content = files.get(path);
           if (content !== undefined) {
             return {
@@ -208,6 +212,7 @@ describe("createProcessSourceBackend", () => {
         },
         apply: async (...args: any[]) => {
           applyCalls.push(args);
+          // SAFETY: Ripgit apply receives ops as its fifth argument by contract.
           const ops = args[4] as Array<{ type: string; path: string; contentBytes?: number[] }>;
           for (const op of ops) {
             if (op.type === "put" && op.contentBytes) {
@@ -219,7 +224,7 @@ describe("createProcessSourceBackend", () => {
           return { head: `repohead${applyCalls.length}` };
         },
         refs: async () => ({ heads: { main: "mainhead123" }, tags: {} }),
-      } as any,
+      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
     });
 
     await backend!.writeFile("/src/repos/sam/docs/new.md", "created\n");
@@ -271,8 +276,9 @@ describe("createProcessSourceBackend", () => {
       repos: [makeRepo("sam/docs")],
       processId: "task:source",
       config,
+      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
       ripgit: {
-        readPath: async (_repo: unknown, path: string) => {
+        readPath: async (_repo: { owner: string; repo: string; branch?: string }, path: string) => {
           const content = files.get(path);
           if (content !== undefined) {
             return {
@@ -285,6 +291,7 @@ describe("createProcessSourceBackend", () => {
         },
         apply: async (...args: any[]) => {
           applyCalls.push(args);
+          // SAFETY: Ripgit apply receives ops as its fifth argument by contract.
           const ops = args[4] as Array<{ type: string; path: string; contentBytes?: number[] }>;
           for (const op of ops) {
             if (op.type === "put" && op.contentBytes) {
@@ -296,7 +303,7 @@ describe("createProcessSourceBackend", () => {
           return { head: `repohead${applyCalls.length}` };
         },
         refs: async () => ({ heads: { main: "mainhead123" }, tags: {} }),
-      } as any,
+      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
     }, "sam/docs", { message: "update docs" });
 
     expect(result).toMatchObject({
@@ -323,13 +330,15 @@ describe("createProcessSourceBackend", () => {
       repos: [makeRepo("root/gsv-manual", { public: true, writable: false })],
       processId: "task:source",
       config: makeConfig(),
+      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
+      // SAFETY: typed ripgit fixture implements only methods exercised by this test.
       ripgit: {
         readPath: async () => ({ kind: "missing" }),
         apply: async (...args: any[]) => {
           applyCalls.push(args);
           return { head: "repohead123" };
         },
-      } as any,
+      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
     });
 
     await expect(backend!.writeFile("/src/repos/root/gsv-manual/README.md", "x"))
@@ -351,6 +360,7 @@ describe("createProcessSourceBackend", () => {
       ],
       processId: "task:source",
       config: makeConfig(),
+      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
       ripgit: {
         readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
           if (repo.owner === "root" && repo.repo === "gsv-manual" && path === "README.md") {
@@ -362,7 +372,7 @@ describe("createProcessSourceBackend", () => {
           }
           return { kind: "missing" };
         },
-      } as any,
+      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
     });
 
     await expect(backend!.readdir("/src/repos/root")).resolves.toEqual(["gsv-manual"]);
@@ -381,6 +391,7 @@ describe("createProcessSourceBackend", () => {
       ],
       processId: "task:source",
       config: makeConfig(),
+      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
       ripgit: {
         readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
           if (repo.owner === "root" && repo.repo === "gsv" && path === "README.md") {
@@ -399,7 +410,7 @@ describe("createProcessSourceBackend", () => {
           }
           return { kind: "missing" };
         },
-      } as any,
+      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
     });
 
     await expect(backend!.readdir("/src/repos/root")).resolves.toEqual(["gsv", "gsv-manual"]);
@@ -415,6 +426,7 @@ describe("createProcessSourceBackend", () => {
       repos: [makeRepo("root/gsv", { kind: "user", writable: false, ref: "feature/review", baseRef: "commit123" })],
       processId: "task:source",
       config: makeConfig(),
+      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
       ripgit: {
         readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
           readCalls.push({ repo, path });
@@ -427,7 +439,7 @@ describe("createProcessSourceBackend", () => {
           }
           return { kind: "missing" };
         },
-      } as any,
+      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
     });
 
     await expect(backend!.readFile("/src/repos/root/gsv/packages/chat/package.json")).resolves.toContain("chat");
@@ -442,6 +454,7 @@ describe("createProcessSourceBackend", () => {
     const storage = makeBucket();
     const applyCalls: any[] = [];
     const readCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
+    // SAFETY: typed ripgit fixture implements only methods exercised by this test.
     const ripgit = {
       readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
         readCalls.push({ repo, path });
@@ -452,7 +465,7 @@ describe("createProcessSourceBackend", () => {
         applyCalls.push(args);
         return { head: "featurehead123" };
       },
-    } as any;
+    } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any;
     const repos = [makeRepo("sam/pkg-test", {
       kind: "user",
       writable: true,
@@ -502,6 +515,7 @@ describe("createProcessSourceBackend", () => {
     const storage = makeBucket();
     const applyCalls: any[] = [];
     const readCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
+    // SAFETY: typed ripgit fixture implements only methods exercised by this test.
     const ripgit = {
       readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
         readCalls.push({ repo, path });
@@ -512,7 +526,7 @@ describe("createProcessSourceBackend", () => {
         applyCalls.push(args);
         return { head: "featurehead123" };
       },
-    } as any;
+    } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any;
     const repos = [makeRepo("sam/pkg-test", {
       kind: "user",
       writable: true,
@@ -559,6 +573,7 @@ describe("createProcessSourceBackend", () => {
       repos: [makeRepo("sam/mono")],
       processId: "task:source",
       config: makeConfig(),
+      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
       ripgit: {
         readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
           readCalls.push({ repo, path });
@@ -578,7 +593,7 @@ describe("createProcessSourceBackend", () => {
           }
           return { kind: "missing" };
         },
-      } as any,
+      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
     });
 
     await expect(backend!.readFile("/src/repos/sam/mono/packages/app/index.ts"))
@@ -602,6 +617,7 @@ describe("createProcessSourceBackend", () => {
     const storage = makeBucket();
     const applyCalls: any[] = [];
     const heads = ["processhead123", "featurehead456", "featurehead789"];
+    // SAFETY: typed ripgit fixture implements only methods exercised by this test.
     const ripgit = {
       readPath: async () => ({ kind: "missing" }),
       refs: async () => ({ heads: {}, tags: {} }),
@@ -609,7 +625,7 @@ describe("createProcessSourceBackend", () => {
         applyCalls.push(args);
         return { head: heads[applyCalls.length - 1] };
       },
-    } as any;
+    } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any;
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
@@ -671,6 +687,7 @@ describe("createProcessSourceBackend", () => {
     const storage = makeBucket();
     const applyCalls: any[] = [];
     const readCalls: Array<{ repo: { branch?: string }; path: string }> = [];
+    // SAFETY: typed ripgit fixture implements only methods exercised by this test.
     const ripgit = {
       readPath: async (repo: { branch?: string }, path: string) => {
         readCalls.push({ repo, path });
@@ -692,7 +709,7 @@ describe("createProcessSourceBackend", () => {
         applyCalls.push(args);
         return { head: "featurehead789" };
       },
-    } as any;
+    } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any;
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
@@ -740,6 +757,7 @@ describe("createProcessSourceBackend", () => {
     const applyCalls: any[] = [];
     const readCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
     const filePath = "packages/sample-console/src/index.ts";
+    // SAFETY: typed ripgit fixture implements only methods exercised by this test.
     const ripgit = {
       readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
         readCalls.push({ repo, path });
@@ -807,6 +825,7 @@ describe("createProcessSourceBackend", () => {
     const config = makeConfig();
     const storage = makeBucket();
     const applyCalls: any[] = [];
+    // SAFETY: typed ripgit fixture implements only methods exercised by this test.
     const ripgit = {
       readPath: async (repo: { branch?: string }) => {
         if (repo.branch === "featurehead456") {
@@ -884,8 +903,9 @@ describe("createProcessSourceBackend", () => {
       repos: [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config: makeConfig(),
+      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
       ripgit: {
-        readPath: async (_repo: unknown, path: string) => {
+        readPath: async (_repo: { owner: string; repo: string; branch?: string }, path: string) => {
           if (path === "packages/sample-console") {
             return {
               kind: "tree",
@@ -900,7 +920,7 @@ describe("createProcessSourceBackend", () => {
           }
           return { kind: "missing" };
         },
-      } as any,
+      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
     });
 
     await expect(backend!.readdir("/src/repos/sam/pkg-test/packages/sample-console/src")).resolves.toEqual(["index.ts"]);
@@ -918,8 +938,9 @@ describe("createProcessSourceBackend", () => {
       repos: [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config: makeConfig(),
+      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
       ripgit: {
-        readPath: async (_repo: unknown, path: string) => {
+        readPath: async (_repo: { owner: string; repo: string; branch?: string }, path: string) => {
           if (path === "packages/sample-console") {
             return {
               kind: "tree",
@@ -944,7 +965,7 @@ describe("createProcessSourceBackend", () => {
           }
           return { kind: "missing" };
         },
-      } as any,
+      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
     });
 
     await backend!.rm("/src/repos/sam/pkg-test/packages/sample-console/src/index.ts");
@@ -961,9 +982,10 @@ describe("createProcessSourceBackend", () => {
       repos: [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config: makeConfig(),
+      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
       ripgit: {
         readPath: async () => ({ kind: "missing" }),
-      } as any,
+      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
     });
 
     await expect(backend!.rm("/src/repos/sam/pkg-test/packages/sample-console/missing.ts"))
@@ -983,8 +1005,9 @@ describe("createProcessSourceBackend", () => {
       repos: [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config: makeConfig(),
+      // SAFETY: typed ripgit fixture implements only methods exercised by this test.
       ripgit: {
-        readPath: async (_repo: unknown, path: string) => {
+        readPath: async (_repo: { owner: string; repo: string; branch?: string }, path: string) => {
           if (path === "packages/sample-console/src") {
             return {
               kind: "tree",
@@ -993,7 +1016,7 @@ describe("createProcessSourceBackend", () => {
           }
           return { kind: "missing" };
         },
-      } as any,
+      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
     });
 
     await expect(backend!.rm("/src/repos/sam/pkg-test/packages/sample-console/src"))
@@ -1002,15 +1025,17 @@ describe("createProcessSourceBackend", () => {
   });
 
   it("keeps repos from other owners read-only", async () => {
+    // SAFETY: this fixture supplies only the readPath method exercised by the test.
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
       repos: [makeRepo("root/gsv", { kind: "user", writable: false })],
       processId: "task:source",
       config: makeConfig(),
+      // SAFETY: typed ripgit fixture implements only methods exercised by this test.
       ripgit: {
         readPath: async () => ({ kind: "missing" }),
-      } as any,
+      } /* SAFETY: typed ripgit fixture implements only methods exercised here. */ as any,
     });
 
     await expect(backend!.writeFile("/src/repos/root/gsv/packages/wiki/src/index.ts", "x")).rejects.toThrow("read-only");

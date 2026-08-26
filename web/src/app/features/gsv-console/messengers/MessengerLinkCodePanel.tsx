@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
 import { Button } from "../../../components/ui/Button";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
@@ -16,7 +17,19 @@ type Notice = {
   tone: TagTone;
 };
 
-function errorText(error: unknown): string {
+export type MessengerLinkCodeDependencies = {
+  Surface: (props: Parameters<typeof Surface>[0]) => ComponentChildren;
+  useConsumeIdentityLinkCode: () => Pick<ReturnType<typeof useConsumeIdentityLinkCode>, "isPending" | "mutateAsync">;
+  useUnsavedGuard: typeof useUnsavedGuard;
+};
+
+const defaultDependencies: MessengerLinkCodeDependencies = {
+  Surface: (props) => <Surface {...props} />,
+  useConsumeIdentityLinkCode: () => useConsumeIdentityLinkCode(),
+  useUnsavedGuard: (...args) => useUnsavedGuard(...args),
+};
+
+function errorText<T>(error: T): string {
   return error instanceof Error ? error.message : error ? String(error) : "";
 }
 
@@ -34,17 +47,21 @@ export function MessengerLinkCodePanel({
   errorText: linkErrorText,
   linkCount,
   refreshing,
+  dependencies,
 }: {
   errorText?: string;
   linkCount: number;
   refreshing: boolean;
+  dependencies?: MessengerLinkCodeDependencies;
 }) {
-  const consumeCode = useConsumeIdentityLinkCode();
+  const resolvedDependencies = dependencies ?? defaultDependencies;
+  const SurfaceComponent = resolvedDependencies.Surface;
+  const consumeCode = resolvedDependencies.useConsumeIdentityLinkCode();
   const [code, setCode] = useState("");
   const [resetKey, setResetKey] = useState(0);
   const [notice, setNotice] = useState<Notice | null>(null);
 
-  useUnsavedGuard(() => code.trim() !== "");
+  resolvedDependencies.useUnsavedGuard(() => code.trim() !== "");
 
   const canSubmit = code.trim().length > 0 && !consumeCode.isPending;
 
@@ -64,7 +81,7 @@ export function MessengerLinkCodePanel({
   };
 
   return (
-    <Surface class="gsv-messenger-link-code-panel" level={2}>
+    <SurfaceComponent class="gsv-messenger-link-code-panel" level={2}>
       <SectionHeader
         title="LINK MESSENGER IDENTITY"
         meta={refreshing ? "SYNCING" : `${linkCount} ${linkCount === 1 ? "LINK" : "LINKS"}`}
@@ -104,6 +121,6 @@ export function MessengerLinkCodePanel({
           <span>{notice?.text ?? linkErrorText}</span>
         </div>
       ) : null}
-    </Surface>
+    </SurfaceComponent>
   );
 }

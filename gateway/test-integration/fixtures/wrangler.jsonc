@@ -23,9 +23,22 @@
   ],
   "services": [
     {
-      "binding": "GATEWAY",
+      "binding": "TELEGRAM_GATEWAY",
       "service": "gsv",
-      "entrypoint": "GatewayEntrypoint"
+      "entrypoint": "AdapterGatewayEntrypoint",
+      "props": {
+        "id": "telegram",
+        "calls": ["adapter.inbound", "adapter.state.update"]
+      }
+    },
+    {
+      "binding": "DISCORD_GATEWAY",
+      "service": "gsv",
+      "entrypoint": "AdapterGatewayEntrypoint",
+      "props": {
+        "id": "discord",
+        "calls": ["adapter.inbound", "adapter.state.update"]
+      }
     }
   ]
 }

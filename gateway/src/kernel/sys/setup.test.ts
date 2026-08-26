@@ -1,22 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
 
-const { handleSysBootstrapMock, seedBuiltinSkillsToHomeMock } = vi.hoisted(() => ({
-  handleSysBootstrapMock: vi.fn(),
-  seedBuiltinSkillsToHomeMock: vi.fn(),
-}));
+import * as utils from "../../shared/utils";
+import * as bootstrap from "./bootstrap";
+import * as skillsSeed from "./skills-seed";
+import * as personalController from "../personal-controller";
+const getConversationByIdMock = vi.spyOn(utils, "getConversationById");
+const handleSysBootstrapMock = vi.spyOn(bootstrap, "handleSysBootstrap");
+const seedBuiltinSkillsToHomeMock = vi.spyOn(skillsSeed, "seedBuiltinSkillsToHome");
+const ensurePersonalControllerMock = vi.spyOn(personalController, "ensurePersonalController");
 
-vi.mock("./bootstrap", () => ({
-  handleSysBootstrap: handleSysBootstrapMock,
-}));
+import { handleSysSetup, recoverCompletedSysSetup } from "./setup";
 
-vi.mock("./skills-seed", () => ({
-  seedBuiltinSkillsToHome: seedBuiltinSkillsToHomeMock,
-}));
-
-import { handleSysSetup } from "./setup";
-
-function createCtx(overrides?: { setupMode?: boolean; ripgit?: Fetcher }) {
+function createCtx(overrides?: {
+  setupMode?: boolean;
+  ripgit?: Fetcher;
+  managedInference?: boolean;
+}) {
   type PasswdRow = { username: string; uid: number; gid: number; gecos: string; home: string; shell: string };
   type GroupRow = { name: string; gid: number; members: string[] };
 
@@ -77,14 +77,35 @@ function createCtx(overrides?: { setupMode?: boolean; ripgit?: Fetcher }) {
       personalAgents.set(ownerUid, agentUid);
     }),
     isPersonalAgentUid: vi.fn((uid: number) => [...personalAgents.values()].includes(uid)),
+    authenticate: vi.fn(async (username: string, password: string) => {
+      const user = passwd.find((entry) => entry.username === username);
+      return user && password === "password-123"
+        ? {
+          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+          ok: true as const,
+          identity: {
+            uid: user.uid,
+            gid: user.gid,
+            gids: [user.gid],
+            username: user.username,
+            home: user.home,
+          },
+        }
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+        : { ok: false as const, error: "Authentication failed" };
+    }),
+    listTokens: vi.fn(() => []),
+    revokeToken: vi.fn(() => true),
     setPassword: vi.fn(async () => true),
     issueToken: vi.fn(async () => ({
       tokenId: "tok-1",
       token: "gsv_node_abc",
       tokenPrefix: "gsv_node_abc",
       uid: 1000,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       kind: "node" as const,
       label: "node:macbook",
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       allowedRole: "driver" as const,
       allowedDeviceId: "macbook",
       createdAt: 1_700_000_000_000,
@@ -123,20 +144,42 @@ function createCtx(overrides?: { setupMode?: boolean; ripgit?: Fetcher }) {
     ),
   };
 
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   const storage = {
     head: vi.fn(async () => null),
     put: vi.fn(async () => {}),
   };
 
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   const ctx = {
-    auth: auth as unknown as KernelContext["auth"],
-    caps: caps as unknown as KernelContext["caps"],
-    config: config as unknown as KernelContext["config"],
+    installationId: "singleton",
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    auth: auth as KernelContext["auth"],
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    caps: caps as KernelContext["caps"],
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    config: config as KernelContext["config"],
     env: {
       STORAGE: storage,
-      ...(overrides?.ripgit ? { RIPGIT: overrides.ripgit } : {}),
-    } as unknown as KernelContext["env"],
+      ...(overrides?.ripgit ? { RIPGIT: overrides.ripgit } : undefined),
+      ...(overrides?.managedInference ? { MANAGED_INFERENCE: {} } : undefined),
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext["env"],
+    conversations: {
+      ensureShip: vi.fn((ownerUid: number, handlerPid: string) => ({
+        id: `conv:ship:${ownerUid}`,
+        ownerUid,
+        kind: "ship",
+        title: "Ship",
+        handlerPid,
+        latestSequence: 0,
+        createdAt: 1,
+        updatedAt: 1,
+      })),
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext["conversations"],
     serverVersion: "0.0.1-test",
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as KernelContext;
 
   return { ctx, auth, config, storage, usersGroup, passwd, groups };
@@ -153,6 +196,8 @@ describe("handleSysSetup", () => {
       changed: true,
     });
     seedBuiltinSkillsToHomeMock.mockResolvedValue({ username: "root", copied: 0, skipped: 0 });
+    ensurePersonalControllerMock.mockResolvedValue("proc:personal");
+    getConversationByIdMock.mockReturnValue({ initialize: vi.fn(async () => undefined) });
   });
 
   it("creates first user, ai config, and node token", async () => {
@@ -196,9 +241,85 @@ describe("handleSysSetup", () => {
     expect(result.user.username).toBe("alice");
     expect(result.server).toEqual({ version: "0.0.1-test", release: "dev" });
     expect(result.nodeToken?.allowedDeviceId).toBe("macbook");
+    expect(ensurePersonalControllerMock).toHaveBeenCalledWith(1000, ctx, undefined);
+  });
+
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  it("uses GSV included inference as the managed first-boot default", async () => {
+    const { ctx, config } = createCtx({ managedInference: true });
+
+    const result = await handleSysSetup(
+      {
+        username: "alice",
+        password: "password-123",
+      },
+      ctx,
+    );
+
+    expect(config.set).toHaveBeenCalledWith("config/ai/provider", "gsv");
+    expect(config.set).toHaveBeenCalledWith("config/ai/model", "default");
+    expect(config.set).toHaveBeenCalledWith("config/ai/fallback_model_profile", "");
+    expect(result.server.features).toEqual(["ai.provider.gsv"]);
+  });
+
+  it("keeps standalone defaults implicit when setup has no AI selection", async () => {
+    const { ctx, config } = createCtx();
+
+    await handleSysSetup(
+      {
+        username: "alice",
+        password: "password-123",
+      },
+      ctx,
+    );
+
+    expect(config.set).not.toHaveBeenCalledWith("config/ai/provider", expect.anything());
+    expect(config.set).not.toHaveBeenCalledWith("config/ai/model", expect.anything());
+    expect(config.set).not.toHaveBeenCalledWith("config/ai/fallback_model_profile", expect.anything());
+  });
+
+  it("normalizes an explicit GSV provider without accepting a model or credential", async () => {
+    const { ctx, config } = createCtx({ managedInference: true });
+
+    await handleSysSetup(
+      {
+        username: "alice",
+        password: "password-123",
+        ai: {
+          provider: "gsv",
+        },
+      },
+      ctx,
+    );
+
+    expect(config.set).toHaveBeenCalledWith("config/ai/provider", "gsv");
+    expect(config.set).toHaveBeenCalledWith("config/ai/model", "default");
+    expect(config.set).not.toHaveBeenCalledWith("config/ai/api_key", expect.anything());
+  });
+
+  it("preserves an explicit bring-your-own provider on managed setup", async () => {
+    const { ctx, config } = createCtx({ managedInference: true });
+
+    await handleSysSetup(
+      {
+        username: "alice",
+        password: "password-123",
+        ai: {
+          provider: "openrouter",
+          model: "openai/gpt-5-mini",
+          apiKey: "provider-key",
+        },
+      },
+      ctx,
+    );
+
+    expect(config.set).toHaveBeenCalledWith("config/ai/provider", "openrouter");
+    expect(config.set).toHaveBeenCalledWith("config/ai/model", "openai/gpt-5-mini");
+    expect(config.set).toHaveBeenCalledWith("config/ai/api_key", "provider-key");
   });
 
   it("seeds shipped skills into root home after first setup bootstrap", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ripgit = {
       fetch: vi.fn(async (input: RequestInfo | URL) => {
         const url = new URL(String(input));
@@ -209,6 +330,7 @@ describe("handleSysSetup", () => {
         }
         return new Response("missing", { status: 404 });
       }),
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as Fetcher;
     const { ctx } = createCtx({ ripgit });
 
@@ -302,5 +424,47 @@ describe("handleSysSetup", () => {
     );
 
     expect(auth.setPassword).toHaveBeenCalledWith("root", expect.any(String));
+  });
+
+  it("recovers a completed setup only for the matching credentials", async () => {
+    const { ctx } = createCtx();
+    await handleSysSetup({
+      username: "alice",
+      password: "password-123",
+    }, ctx);
+
+    await expect(recoverCompletedSysSetup({
+      username: "alice",
+      password: "password-123",
+    }, ctx)).resolves.toMatchObject({
+      user: { username: "alice" },
+      server: { version: "0.0.1-test" },
+    });
+    await expect(recoverCompletedSysSetup({
+      username: "alice",
+      password: "wrong-password",
+    }, ctx)).rejects.toThrow("credentials do not match");
+  });
+
+  it("finishes personal provisioning after an interrupted setup", async () => {
+    const { ctx } = createCtx();
+    const initialize = vi.fn()
+      .mockRejectedValueOnce(new Error("conversation unavailable"))
+      .mockResolvedValueOnce(undefined);
+    getConversationByIdMock.mockReturnValue({ initialize });
+
+    await expect(handleSysSetup({
+      username: "alice",
+      password: "password-123",
+    }, ctx)).rejects.toThrow("conversation unavailable");
+
+    await expect(recoverCompletedSysSetup({
+      username: "alice",
+      password: "password-123",
+    }, ctx)).resolves.toMatchObject({
+      user: { username: "alice" },
+    });
+    expect(ensurePersonalControllerMock).toHaveBeenCalledTimes(2);
+    expect(initialize).toHaveBeenCalledTimes(2);
   });
 });

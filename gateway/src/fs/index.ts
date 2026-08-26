@@ -5,7 +5,7 @@
 export { GsvFs } from "./gsv-fs";
 export type { ExtendedStat } from "./gsv-fs";
 export type { KernelRefs } from "./refs";
-export { requestProcessView } from "./refs";
+export { createProcessViewRequest } from "./refs";
 export type {
   MountBackend,
   ExtendedMountStat,

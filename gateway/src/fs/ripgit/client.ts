@@ -131,6 +131,24 @@ type RipgitImportResponse = {
   local_changed?: boolean;
   diverged?: boolean;
 };
+type RipgitApplyBody = {
+  defaultBranch: string;
+  author: string;
+  email: string;
+  message: string;
+  ops: RipgitApplyOp[];
+  baseRef?: string;
+  expectedHead?: string;
+  allowEmpty?: true;
+};
+type RipgitImportBody = {
+  defaultBranch: string;
+  author: string;
+  email: string;
+  message: string;
+  remoteUrl?: string;
+  remoteRef?: string;
+};
 
 export type RipgitImportResult = {
   head?: string | null;
@@ -194,22 +212,23 @@ export class RipgitClient {
       allowEmpty?: boolean;
     },
   ): Promise<RipgitApplyResult> {
+    const applyBody: RipgitApplyBody = {
+      defaultBranch: repo.branch ?? DEFAULT_BRANCH,
+      author,
+      email,
+      message,
+      ops,
+    };
+    if (options?.baseRef) applyBody.baseRef = options.baseRef;
+    if (options?.expectedHead) applyBody.expectedHead = options.expectedHead;
+    if (options?.allowEmpty) applyBody.allowEmpty = true;
     const response = await this.binding.fetch(this.makeApplyUrl(repo), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         ...this.makeInternalHeaders(),
       },
-      body: JSON.stringify({
-        defaultBranch: repo.branch ?? DEFAULT_BRANCH,
-        author,
-        email,
-        message,
-        ops,
-        ...(options?.baseRef ? { baseRef: options.baseRef } : {}),
-        ...(options?.expectedHead ? { expectedHead: options.expectedHead } : {}),
-        ...(options?.allowEmpty ? { allowEmpty: true } : {}),
-      }),
+      body: JSON.stringify(applyBody),
     });
 
     if (!response.ok) {
@@ -234,20 +253,21 @@ export class RipgitClient {
     remoteUrl?: string,
     remoteRef?: string,
   ): Promise<RipgitImportResult> {
+    const importBody: RipgitImportBody = {
+      defaultBranch: repo.branch ?? DEFAULT_BRANCH,
+      author,
+      email,
+      message,
+    };
+    if (remoteUrl) importBody.remoteUrl = remoteUrl;
+    if (remoteRef) importBody.remoteRef = remoteRef;
     const response = await this.binding.fetch(this.makeImportUrl(repo), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         ...this.makeInternalHeaders(),
       },
-      body: JSON.stringify({
-        defaultBranch: repo.branch ?? DEFAULT_BRANCH,
-        author,
-        email,
-        message,
-        ...(remoteUrl ? { remoteUrl } : {}),
-        ...(remoteRef ? { remoteRef } : {}),
-      }),
+      body: JSON.stringify(importBody),
     });
 
     if (!response.ok) {
@@ -255,7 +275,7 @@ export class RipgitClient {
     }
 
     const payload = await response.json<RipgitImportResponse>();
-    if (!payload.ok || typeof payload.remote_url !== "string" || typeof payload.remote_ref !== "string") {
+    if (!payload.ok || !payload.remote_url || !payload.remote_ref) {
       throw new Error(`Failed to import upstream for ${repo.owner}/${repo.repo}`);
     }
 
@@ -425,10 +445,10 @@ export class RipgitClient {
     const url = this.makeUrl(
       `/hyperspace/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/log?ref=${encodeURIComponent(repo.branch ?? DEFAULT_BRANCH)}`,
     );
-    if (typeof limit === "number" && Number.isFinite(limit)) {
+    if (limit !== undefined && Number.isFinite(limit)) {
       url.searchParams.set("limit", String(limit));
     }
-    if (typeof offset === "number" && Number.isFinite(offset)) {
+    if (offset !== undefined && Number.isFinite(offset)) {
       url.searchParams.set("offset", String(offset));
     }
     return url;
@@ -438,7 +458,7 @@ export class RipgitClient {
     const url = this.makeUrl(
       `/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/diff/${encodeURIComponent(commit)}`,
     );
-    if (typeof context === "number" && Number.isFinite(context)) {
+    if (context !== undefined && Number.isFinite(context)) {
       url.searchParams.set("context", String(context));
     }
     return url;
@@ -454,7 +474,7 @@ export class RipgitClient {
     const url = this.makeUrl(
       `/hyperspace/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/compare?base=${encodeURIComponent(base)}&head=${encodeURIComponent(head)}`,
     );
-    if (typeof context === "number" && Number.isFinite(context)) {
+    if (context !== undefined && Number.isFinite(context)) {
       url.searchParams.set("context", String(context));
     }
     if (stat) {

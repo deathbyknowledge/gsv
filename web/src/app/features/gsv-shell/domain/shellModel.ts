@@ -7,6 +7,7 @@ export type ShellSurfaceId =
   | "messengers"
   | "integrations"
   | "runtime"
+  | "responsibilities"
   | "files"
   | "repositories"
   | "library"
@@ -128,7 +129,7 @@ export const SYSTEM_DOCK_ITEMS: SystemDockItem[] = [
     id: "crew",
     label: "CREW",
     icon: "chat",
-    description: "Agents, models, task ownership, and permissions.",
+    description: "Agents, models, work ownership, and permissions.",
   },
 ];
 
@@ -154,7 +155,9 @@ export function shellSurfaceLabel(surface: ShellSurfaceId): string {
     case "integrations":
       return "INTEGRATIONS";
     case "runtime":
-      return "RUNTIME";
+      return "WORK";
+    case "responsibilities":
+      return "RESPONSIBILITIES";
     case "files":
       return "FILES";
     case "repositories":

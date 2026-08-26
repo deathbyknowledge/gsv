@@ -5,25 +5,58 @@ const streamPiAiSimpleMock = vi.hoisted(() => vi.fn());
 const completeWithOpenAiCodexFetchMock = vi.hoisted(() => vi.fn());
 const streamWithOpenAiCodexFetchMock = vi.hoisted(() => vi.fn());
 
-vi.mock("./pi-ai", () => ({
-  completePiAiSimple: completePiAiSimpleMock,
-  streamPiAiSimple: streamPiAiSimpleMock,
-}));
-
-vi.mock("./openai-codex", () => ({
-  completeWithOpenAiCodexFetch: completeWithOpenAiCodexFetchMock,
-  streamWithOpenAiCodexFetch: streamWithOpenAiCodexFetchMock,
-}));
-
 import {
-  createGenerationService,
+  createGenerationService as createProductionGenerationService,
   describeGeneratedTextFailure,
   extractGeneratedText,
   resolveGenerationOptions,
   resolveGenerationTimeoutMs,
 } from "./service";
-import type { AiConfigResult } from "@humansandmachines/gsv/protocol";
+
+function createGenerationService(
+  options: Parameters<typeof createProductionGenerationService>[0] = {},
+) {
+  return createProductionGenerationService({
+    ...options,
+    transports: {
+      completePiAiSimple: completePiAiSimpleMock,
+      streamPiAiSimple: streamPiAiSimpleMock,
+      completeWithOpenAiCodexFetch: completeWithOpenAiCodexFetchMock,
+      streamWithOpenAiCodexFetch: streamWithOpenAiCodexFetchMock,
+    },
+  });
+}
+
+function makeFetchFixture(): typeof fetch {
+  // SAFETY: This fetch fixture is only passed through routing options and never called.
+  return vi.fn() as typeof fetch;
+}
+import {
+  encodeManagedInferenceStreamEvent,
+  GSV_INFERENCE_MODEL,
+  GSV_INFERENCE_PRODUCT_MODEL,
+  GSV_INFERENCE_PROVIDER,
+  type AiConfigResult,
+  type ManagedInferenceResult,
+  type ManagedInferenceService,
+} from "@humansandmachines/gsv/protocol";
 import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
+import { createGsvInferenceProviderFactory } from "./gsv-provider";
+
+function managedResultStream(
+  message: ManagedInferenceResult,
+): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(encodeManagedInferenceStreamEvent({
+        type: "done",
+        reason: "stop",
+        message,
+      }));
+      controller.close();
+    },
+  });
+}
 
 function assistantMessage(content: AssistantMessage["content"]): AssistantMessage {
   return {
@@ -139,9 +172,119 @@ describe("resolveGenerationOptions", () => {
 });
 
 describe("createGenerationService", () => {
+  it("routes gsv/default through the managed binding with trusted identity", async () => {
+    const managedResult: ManagedInferenceResult = {
+      role: "assistant",
+      content: [{ type: "text", text: "managed pong" }],
+      api: "gsv-inference",
+      provider: GSV_INFERENCE_PROVIDER,
+      model: GSV_INFERENCE_PRODUCT_MODEL,
+      usage: {
+        input: 10,
+        output: 2,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 12,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "stop",
+      timestamp: 1,
+    };
+    const generateStream = vi.fn<ManagedInferenceService["generateStream"]>(
+      async () => managedResultStream(managedResult),
+    );
+    const managedInference: ManagedInferenceService = {
+      generate: vi.fn(),
+      generateStream,
+      abort: vi.fn(),
+    };
+    completePiAiSimpleMock.mockImplementationOnce((model, context, options, models) =>
+      models.completeSimple(model, context, options)
+    );
+
+    const result = await createGenerationService({
+      providers: [createGsvInferenceProviderFactory(managedInference)],
+    }).generate({
+      config: {
+        ...CONFIG,
+        provider: GSV_INFERENCE_PROVIDER,
+        model: GSV_INFERENCE_MODEL,
+        apiKey: "",
+        baseUrl: "https://stale.example/v1",
+        providerStyle: "openai-chat-completions",
+      },
+      context: {
+        systemPrompt: "Be direct.",
+        messages: [{ role: "user", content: "ping", timestamp: 1 }],
+      },
+      options: { maxTokens: 128, reasoning: "low", timeoutMs: 1_000 },
+      attribution: {
+        installationId: "inst_test",
+        logicalRequestId: "request_test",
+        actor: { localUid: 1000, processId: "proc_test", runId: "run_test" },
+      },
+    });
+
+    expect(result.content).toEqual([{ type: "text", text: "managed pong" }]);
+    expect(generateStream).toHaveBeenCalledWith(expect.objectContaining({
+      installationId: "inst_test",
+      logicalRequestId: "request_test",
+      actor: { localUid: 1000, processId: "proc_test", runId: "run_test" },
+      model: GSV_INFERENCE_PRODUCT_MODEL,
+      systemPrompt: "Be direct.",
+      maxOutputTokens: 128,
+      reasoning: "low",
+      timeoutMs: 1_000,
+    }));
+    expect(completePiAiSimpleMock).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "gsv", id: "default" }),
+      expect.objectContaining({ systemPrompt: "Be direct." }),
+      expect.objectContaining({ maxTokens: 128, reasoning: "low" }),
+      expect.anything(),
+    );
+  });
+
+  it("does not treat gsv/default configuration as platform authorization", async () => {
+    await expect(createGenerationService().generate({
+      config: {
+        ...CONFIG,
+        provider: GSV_INFERENCE_PROVIDER,
+        model: GSV_INFERENCE_MODEL,
+        apiKey: "",
+      },
+      context: CONTEXT,
+      attribution: {
+        installationId: "inst_test",
+        logicalRequestId: "request_test",
+        actor: { localUid: 1000 },
+      },
+    })).rejects.toThrow("Unknown model provider: gsv");
+  });
+
+  it("requires trusted attribution for a registered provider", async () => {
+    const managedInference: ManagedInferenceService = {
+      generate: vi.fn(),
+      generateStream: vi.fn(),
+      abort: vi.fn(),
+    };
+
+    await expect(createGenerationService({
+      providers: [createGsvInferenceProviderFactory(managedInference)],
+    }).generate({
+      config: {
+        ...CONFIG,
+        provider: GSV_INFERENCE_PROVIDER,
+        model: GSV_INFERENCE_MODEL,
+        apiKey: "",
+      },
+      context: CONTEXT,
+    })).rejects.toThrow("Inference attribution is unavailable for provider: gsv");
+    expect(managedInference.generateStream).not.toHaveBeenCalled();
+  });
+
   it("passes a routed fetch to built-in provider completions", async () => {
     const message = assistantMessage([{ type: "text", text: "pong" }]);
-    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const fetchImpl = makeFetchFixture();
     completePiAiSimpleMock.mockResolvedValueOnce(message);
 
     await createGenerationService({ fetch: fetchImpl }).generate({
@@ -153,12 +296,13 @@ describe("createGenerationService", () => {
       expect.objectContaining({ provider: "anthropic" }),
       CONTEXT,
       expect.objectContaining({ fetch: fetchImpl }),
+      expect.anything(),
     );
   });
 
   it("passes a request fetch to built-in provider streams", () => {
     const message = assistantMessage([{ type: "text", text: "pong" }]);
-    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const fetchImpl = makeFetchFixture();
     const providerStream = {
       result: vi.fn(() => Promise.resolve(message)),
     };
@@ -175,11 +319,12 @@ describe("createGenerationService", () => {
       expect.objectContaining({ provider: "anthropic" }),
       CONTEXT,
       expect.objectContaining({ fetch: fetchImpl }),
+      expect.anything(),
     );
   });
 
   it("rejects a routed fetch for binding-backed Workers AI", async () => {
-    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const fetchImpl = makeFetchFixture();
 
     await expect(createGenerationService({ fetch: fetchImpl }).generate({
       config: {
@@ -242,7 +387,7 @@ describe("createGenerationService", () => {
 
   it("uses the routed OpenAI Codex transport when a fetch implementation is provided", async () => {
     const message = assistantMessage([{ type: "text", text: "pong" }]);
-    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const fetchImpl = makeFetchFixture();
     completeWithOpenAiCodexFetchMock.mockResolvedValueOnce(message);
 
     await createGenerationService({ fetch: fetchImpl }).generate({
@@ -272,7 +417,7 @@ describe("createGenerationService", () => {
 
   it("does not route OpenAI Codex through the generic custom-provider path when custom fields are set", async () => {
     const message = assistantMessage([{ type: "text", text: "pong" }]);
-    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const fetchImpl = makeFetchFixture();
     completeWithOpenAiCodexFetchMock.mockResolvedValueOnce(message);
 
     await createGenerationService({ fetch: fetchImpl }).generate({
@@ -304,7 +449,7 @@ describe("createGenerationService", () => {
     const controller = new AbortController();
     let providerSignal: AbortSignal | undefined;
     completePiAiSimpleMock.mockImplementationOnce((
-      _model: unknown,
+      _model: string,
       _context: Context,
       options?: { signal?: AbortSignal },
     ) => {
@@ -330,7 +475,7 @@ describe("createGenerationService", () => {
   it("combines caller cancellation with the stream timeout signal", async () => {
     const controller = new AbortController();
     let providerSignal: AbortSignal | undefined;
-    let rejectResult: (reason: unknown) => void = () => {};
+    let rejectResult: (reason: Error) => void = () => {};
     const result = new Promise<AssistantMessage>((_resolve, reject) => {
       rejectResult = reject;
     });
@@ -338,7 +483,7 @@ describe("createGenerationService", () => {
       result: vi.fn(() => result),
     };
     streamPiAiSimpleMock.mockImplementationOnce((
-      _model: unknown,
+      _model: string,
       _context: Context,
       options?: { signal?: AbortSignal },
     ) => {
@@ -427,6 +572,7 @@ describe("resolveGenerationTimeoutMs", () => {
   it("defaults legacy persisted configs without a generation timeout", () => {
     const { generationTimeoutMs: _generationTimeoutMs, ...legacyConfig } = CONFIG;
 
+    // SAFETY: Removing the optional timeout preserves the persisted AiConfigResult contract.
     expect(resolveGenerationTimeoutMs(legacyConfig as AiConfigResult)).toBe(180000);
   });
 });

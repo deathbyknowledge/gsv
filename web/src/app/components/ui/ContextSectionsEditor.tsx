@@ -93,12 +93,12 @@ function contextFileNameForSection(
   return `${prefix}${sectionSlug(label, index)}-${suffix}.md`;
 }
 
-function nextUntitledSection(files: readonly ContextSection[]): { label: string; name: string } {
+function nextUntitledSection(files: readonly ContextSection[]) {
   const names = new Set(files.map((file, index) => fileName(file, index).toLowerCase()));
   let index = 1;
   while (true) {
     const label = index === 1 ? "Untitled" : `Untitled ${index}`;
-    const file: ContextSection = { label, content: "" };
+    const file = { label, content: "" } satisfies ContextSection;
     const name = contextFileNameForSection(label, files.length, file, files);
     if (!names.has(name.toLowerCase())) {
       return { label, name };
@@ -181,7 +181,7 @@ export function ContextSectionsEditor({
             class="gsv-cse-file-tab"
             onClick={() => onActiveIndexChange(i)}
           >
-            <svg width="34" height="30" viewBox="0 0 16 14" shape-rendering="crispEdges" fill={i === fileIdx ? "var(--accent-bright)" : "var(--border-raised)"}>
+            <svg width="34" height="30" viewBox="0 0 16 14" style={{ ["shape-rendering"]: "crispEdges" }} fill={i === fileIdx ? "var(--accent-bright)" : "var(--border-raised)"}>
               <rect x="1" y="2" width="6" height="2" />
               <rect x="1" y="4" width="14" height="9" />
             </svg>
@@ -200,7 +200,7 @@ export function ContextSectionsEditor({
           onClick={readOnly ? undefined : addSection}
           class={`gsv-cse-file-tab gsv-cse-newfile${readOnly ? " is-disabled" : ""}`}
         >
-          <svg width="34" height="30" viewBox="0 0 16 14" shape-rendering="crispEdges" fill="none" stroke="var(--dashed)" stroke-width="1">
+          <svg width="34" height="30" viewBox="0 0 16 14" style={{ ["shape-rendering"]: "crispEdges" }} fill="none" stroke="var(--dashed)" stroke-width="1">
             <path d="M1.5 3.5 H6.5 V4.5" />
             <rect x="1.5" y="4.5" width="13" height="8" />
           </svg>
@@ -224,6 +224,7 @@ export function ContextSectionsEditor({
           <textarea
             class="gsv-ed gsv-cse-editor"
             value={curFile.content}
+            // SAFETY: Component boundary provides the asserted DOM/test shape.
             onInput={(event) => setContent((event.target as HTMLTextAreaElement).value)}
             spellcheck={false}
             readOnly={readOnly}

@@ -5,12 +5,16 @@ import {
   addConsoleMcpServer,
   checkConsoleOpenAiCodexOAuth,
   connectConsoleAdapter,
+  confirmConsoleAdapterPairing,
   consumeIdentityLinkCode,
   createMachineNodeToken,
   createConsoleAgent,
   deleteConsoleMachine,
   disconnectConsoleAdapter,
+  disconnectConsoleAdapterPairing,
+  inspectConsoleAdapterPairing,
   loadConsoleAdapters,
+  loadConsoleAdapterPairingInfo,
   loadConsoleAgentContext,
   loadConsoleAccounts,
   loadConsoleAdapterAccounts,
@@ -35,6 +39,9 @@ import {
   type CheckConsoleOpenAiCodexOAuthResult,
   type ConnectConsoleAdapterInput,
   type ConnectConsoleAdapterResult,
+  type ConsoleAdapterPairingCandidate,
+  type ConsoleAdapterPairingInfo,
+  type ConsoleAdapterPairingResult,
   type ConsumeIdentityLinkCodeInput,
   type CreateMachineNodeTokenInput,
   type CreateConsoleAgentInput,
@@ -43,6 +50,7 @@ import {
   type DeleteConsoleMachineResult,
   type ConsoleAgentContextFile,
   type IdentityLinkMutationResult,
+  type InspectConsoleAdapterPairingInput,
   type IssuedMachineNodeToken,
   type LoadConsoleOverviewOptions,
   type PollConsoleOpenAiCodexOAuthInput,
@@ -363,6 +371,40 @@ export function useConnectConsoleAdapter() {
   });
 }
 
+export function useConsoleAdapterPairingInfo(adapter: string, enabled = true) {
+  const { client, connected } = useGateway();
+  return useQuery<ConsoleAdapterPairingInfo>({
+    queryKey: ["adapter-pairing", "info", adapter],
+    enabled: connected && enabled,
+    queryFn: () => loadConsoleAdapterPairingInfo(client, adapter),
+  });
+}
+
+export function useInspectConsoleAdapterPairing() {
+  const { client } = useGateway();
+  return useMutation<ConsoleAdapterPairingCandidate, Error, InspectConsoleAdapterPairingInput>({
+    mutationFn: (input) => inspectConsoleAdapterPairing(client, input),
+  });
+}
+
+export function useConfirmConsoleAdapterPairing() {
+  const { client } = useGateway();
+  const queryClient = useQueryClient();
+  return useMutation<ConsoleAdapterPairingResult, Error, InspectConsoleAdapterPairingInput>({
+    mutationFn: (input) => confirmConsoleAdapterPairing(client, input),
+    onSuccess: async () => invalidateConsoleIdentityState(queryClient),
+  });
+}
+
+export function useDisconnectConsoleAdapterPairing() {
+  const { client } = useGateway();
+  const queryClient = useQueryClient();
+  return useMutation<{ disconnected: boolean }, Error, RemoveIdentityLinkInput>({
+    mutationFn: (input) => disconnectConsoleAdapterPairing(client, input),
+    onSuccess: async () => invalidateConsoleIdentityState(queryClient),
+  });
+}
+
 export function useDisconnectConsoleAdapter() {
   const { client } = useGateway();
   const queryClient = useQueryClient();
@@ -563,15 +605,16 @@ function toResourceState<T>(
   enabled: boolean,
   isEmptyData: (data: T) => boolean,
 ): ConsoleResourceState<T> {
-  const hasData = query.data !== undefined;
+  const data = query.data;
+  const hasData = data !== undefined;
   return {
-    data: query.data ?? null,
+    data: data ?? null,
     isUnavailable: !enabled && !hasData,
     isLoading: query.isLoading && !hasData,
     isRefreshing: query.isFetching && hasData,
     isError: query.isError && !hasData,
     errorText: errorText(query.error),
-    isEmpty: !query.isLoading && !query.isError && hasData && isEmptyData(query.data as T),
+    isEmpty: !query.isLoading && !query.isError && data !== undefined && isEmptyData(data),
   };
 }
 
@@ -589,6 +632,6 @@ function isOverviewEmpty(value: ConsoleOverviewData): boolean {
     && value.config.length === 0;
 }
 
-function errorText(error: unknown): string {
+function errorText<T>(error: T): string {
   return error instanceof Error ? error.message : error ? String(error) : "";
 }

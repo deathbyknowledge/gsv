@@ -4,9 +4,8 @@
  * Each human gets a 1:1 personal agent that is a real user account in the
  * Unix-like identity model: its own uid, its own private primary group
  * (gid = uid, User Private Group), and its own /home. The agent is the
- * default run-as identity for processes spawned without an explicit account,
- * while the human remains the process
- * owner (routing, visibility, quotas).
+ * default run-as identity for the user's personal intelligence, while the
+ * human remains the process owner (routing, visibility, quotas).
  *
  * Bidirectional group membership wires the relationship:
  *   - the agent joins the human's private group (so it can act on the human's
@@ -37,6 +36,8 @@ import {
 } from "./accounts";
 import { canOwnerRunAsAccount } from "./account-access";
 import { ensureAccountHomeLayout } from "./account-home";
+import { ensureInitialOnboardingResponsibility } from "./onboarding-responsibility";
+import { ensurePersonalMemory } from "./personal-memory";
 
 /**
  * Curated, tasteful default names for the personal agent. The first available
@@ -67,7 +68,7 @@ export type PersonalAgentProvision = {
  * Validate and normalize a user-supplied agent name. Returns null when the
  * name is malformed or already taken (caller may then fall back to a default).
  */
-export function normalizeAgentName(auth: AuthStore, value: unknown): string | null {
+export function normalizeAgentName(auth: AuthStore, value: string | undefined): string | null {
   return normalizeAccountName(auth, value);
 }
 
@@ -113,7 +114,7 @@ function reconcilePersonalAgentDisplayName(
   entry: { username: string; uid: number; gecos: string },
   human: ProcessIdentity,
 ): { username: string; uid: number; gid: number; gecos: string; home: string; shell: string } | null {
-  const displayName = typeof entry.gecos === "string" ? entry.gecos.trim() : "";
+  const displayName = entry.gecos.trim();
   if (displayName !== legacyPersonalAgentDisplayName(human.username)) {
     return auth.getPasswdByUid(entry.uid);
   }
@@ -121,8 +122,8 @@ function reconcilePersonalAgentDisplayName(
   return auth.getPasswdByUid(entry.uid);
 }
 
-function normalizeContextFileName(value: unknown): string | null {
-  const raw = String(value ?? "").trim();
+function normalizeContextFileName(value: string): string | null {
+  const raw = value.trim();
   if (!raw || raw.includes("/") || raw.includes("\\") || raw.includes("\0")) {
     return null;
   }
@@ -134,25 +135,20 @@ function normalizeContextFileName(value: unknown): string | null {
   return name;
 }
 
-function normalizeAccountContextFiles(value: unknown): AccountContextFile[] {
+function normalizeAccountContextFiles(
+  value: AccountCreateArgs["contextFiles"],
+): AccountContextFile[] {
   if (value === undefined) return [];
-  if (!Array.isArray(value)) {
-    throw new Error("contextFiles must be an array");
-  }
 
   const files = new Map<string, AccountContextFile>();
   for (const item of value) {
-    if (!item || typeof item !== "object") {
-      throw new Error("contextFiles entries must be objects");
-    }
-    const record = item as { name?: unknown; text?: unknown };
-    const name = normalizeContextFileName(record.name);
+    const name = normalizeContextFileName(item.name);
     if (!name) {
       throw new Error("contextFiles entries require local markdown file names");
     }
     files.set(name, {
       name,
-      text: typeof record.text === "string" ? record.text : String(record.text ?? ""),
+      text: item.text,
     });
   }
   return [...files.values()];
@@ -175,6 +171,8 @@ export async function ensurePersonalAgent(
     return { identity: human, created: false };
   }
 
+  await ensurePersonalMemory(ctx, human);
+
   const existingUid = auth.getPersonalAgentUid(human.uid);
   if (existingUid !== null) {
     const entry = auth.getPasswdByUid(existingUid);
@@ -182,8 +180,11 @@ export async function ensurePersonalAgent(
       const reconciled = reconcilePersonalAgentDisplayName(auth, entry, human) ?? entry;
       const identity = accountIdentity(auth, reconciled);
       await ensureAccountHomeLayout(ctx.env, identity, {
-        userContextUsername: human.username,
         seedPromptContext: true,
+        personalAgent: true,
+        beforeRetiringGeneratedBootContext: () => {
+          ensureInitialOnboardingResponsibility(human.uid, ctx.responsibilities);
+        },
       });
       return { identity, created: false };
     }
@@ -191,6 +192,7 @@ export async function ensurePersonalAgent(
   }
 
   const agentName = pickAgentName(auth, preferredName);
+  ensureInitialOnboardingResponsibility(human.uid, ctx.responsibilities);
   return createAccount(ctx, {
     kind: "agent",
     username: agentName,
@@ -221,7 +223,6 @@ export async function handleAccountCreate(
   if (!name) {
     throw new Error(`Invalid or unavailable username: ${String(args.username)}`);
   }
-
   if (kind === "human") {
     // Creating human accounts is an administrative action.
     if (!caller.capabilities.includes("*")) {
@@ -242,21 +243,22 @@ export async function handleAccountCreate(
   const ownerName = auth.getPasswdByUid(ownerUid)?.username ?? "user";
   const contextFiles = normalizeAccountContextFiles(args.contextFiles);
   const personaFile = contextFiles.find((file) => file.name === "05-persona.md");
-  const explicitPersona = typeof args.persona === "string" && args.persona.trim()
+  const explicitPersona = args.persona?.trim()
     ? args.persona
     : undefined;
   const persona = explicitPersona ?? (personaFile?.text.trim() ? personaFile.text : undefined);
   const extraContextFiles = contextFiles.filter((file) => file.name !== "05-persona.md");
-  const { identity } = await createAccount(ctx, {
+  const accountInput: Parameters<typeof createAccount>[1] = {
     kind: "agent",
     username: name,
     gecos: args.gecos?.trim() || `${ownerName}'s agent`,
     ownerUid,
     shared: true,
     crossMemberOwner: true,
-    ...(persona ? { persona } : {}),
     contextFiles: extraContextFiles,
-  });
+  };
+  if (persona) accountInput.persona = persona;
+  const { identity } = await createAccount(ctx, accountInput);
   return { account: identity, kind };
 }
 
@@ -272,7 +274,7 @@ export function handleAccountList(
   const { auth } = ctx;
   const caller = ctx.identity!;
   const isRoot = caller.process.uid === 0;
-  const ownerUid = isRoot && typeof args.uid === "number"
+  const ownerUid = isRoot && args.uid !== undefined
     ? args.uid
     : resolveCallerOwnerUid(ctx);
   const useRootRunAsBypass = isRoot && ownerUid === caller.process.uid;
@@ -296,23 +298,24 @@ export function handleAccountList(
     else if (isAgent) relation = "agent";
     else relation = "human";
 
-    accounts.push({
+    const accountSummary: AccountSummary = {
       uid: entry.uid,
       username: entry.username,
       displayName: entry.gecos?.trim() || entry.username,
       relation,
       runnable: true,
       capabilities: resolveAccountCapabilities(ctx, entry.username, entry.gid),
-      ...(entry.gecos ? { gecos: entry.gecos } : {}),
-    });
+    };
+    if (entry.gecos) accountSummary.gecos = entry.gecos;
+    accounts.push(accountSummary);
   }
 
-  const relationRank: Record<AccountRelation, number> = {
+  const relationRank = {
     "self": 0,
     "personal-agent": 1,
     "agent": 2,
     "human": 3,
-  };
+  } satisfies Record<AccountRelation, number>;
   accounts.sort((a, b) => {
     const rank = relationRank[a.relation] - relationRank[b.relation];
     return rank !== 0 ? rank : a.username.localeCompare(b.username);

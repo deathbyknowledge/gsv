@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:workers";
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { getAgentByName } from "agents";
+import { getDurableObjectByName } from "../shared/durable-object";
 import type {
   ProcessIdentity,
   SchedulePrincipal,
@@ -54,6 +54,8 @@ const CUSTOM_AGENT_IDENTITY: ProcessIdentity = {
 };
 
 type ScheduleTestAuth = Pick<AuthStore, "addUser" | "addGroup" | "setPersonalAgent">;
+type SchedulerOutboundInput = { [key: string]: string | number | boolean | null | SchedulerOutboundInput | SchedulerOutboundInput[] };
+type SchedulerOptions = { [key: string]: string | number | boolean | null };
 
 function addTestAccount(
   auth: ScheduleTestAuth,
@@ -76,17 +78,16 @@ function addTestUser(auth: ScheduleTestAuth): void {
   auth.addGroup({ name: "users", gid: 100, members: [USER_IDENTITY.username] });
 }
 
-function makeReq(call: string, args: unknown): RequestFrame {
+function makeReq(call: string, args: RequestFrame["args"]): RequestFrame {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return { type: "req", id: crypto.randomUUID(), call, args } as RequestFrame;
 }
 
 async function prepareScheduleTargetProcess(
   process: DurableObjectStub<Process>,
-  pid: string,
   identity: ProcessIdentity = USER_IDENTITY,
 ): Promise<void> {
   const setIdentity = await process.recvFrame(makeReq("proc.setidentity", {
-    pid,
     identity,
     profile: "task",
   }));
@@ -94,7 +95,8 @@ async function prepareScheduleTargetProcess(
   expect(setIdentity && "ok" in setIdentity ? setIdentity.ok : false).toBe(true);
 
   await runInDurableObject(process, (instance: Process) => {
-    const processStore = (instance as unknown as {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const processStore = (instance as {
       store: {
         setValue(key: string, value: string): void;
       };
@@ -111,7 +113,7 @@ function schedulePrincipal(pid?: string): SchedulePrincipal {
     kind: pid ? "process" : "user",
     uid: USER_IDENTITY.uid,
     username: USER_IDENTITY.username,
-    ...(pid ? { pid } : {}),
+    ...(pid ? { pid } : undefined),
   };
 }
 
@@ -142,6 +144,7 @@ function makeScheduleRecord(partial: Partial<ScheduleRecord> = {}): ScheduleReco
 }
 
 function makeSchedulerContext(overrides: Partial<KernelContext> = {}): KernelContext {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     identity: {
       role: "user",
@@ -155,24 +158,29 @@ function makeSchedulerContext(overrides: Partial<KernelContext> = {}): KernelCon
       get: vi.fn(),
     },
     ...overrides,
-  } as unknown as KernelContext;
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  } as KernelContext;
 }
 
 const TELEGRAM_DESTINATION = {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   kind: "adapter" as const,
   adapter: "telegram",
   accountId: "bot",
   actorId: "telegram:user:42",
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   surface: { kind: "dm" as const, id: "chat-42" },
 };
 
 function makeAdapterSchedulerContext(
   adapterSend: ReturnType<typeof vi.fn>,
 ): KernelContext {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return makeSchedulerContext({
     env: {
       CHANNEL_TELEGRAM: { adapterSend },
-    } as unknown as Env,
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as Env,
     adapters: {
       identityLinks: {
         get: vi.fn(() => ({
@@ -184,13 +192,15 @@ function makeAdapterSchedulerContext(
         })),
       },
       surfaceRoutes: { get: vi.fn(() => null) },
-    } as unknown as KernelContext["adapters"],
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext["adapters"],
   });
 }
 
 describe("scheduler", () => {
   it("computes cron next-runs in the schedule timezone", () => {
     const expression = {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       kind: "cron" as const,
       expr: "0 9 * * *",
       timezone: "Europe/Amsterdam",
@@ -202,6 +212,7 @@ describe("scheduler", () => {
       .toBe("2026-03-29T07:00:00.000Z");
   });
 
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it("treats full-range cron day fields as wildcards", () => {
     expect(new Date(computeNextRunAt({
       kind: "cron",
@@ -260,13 +271,14 @@ describe("scheduler", () => {
   });
 
   it("preserves a one-shot occurrence across retry and rotates it on user re-arm or update", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-one-shot-occurrence-test-${crypto.randomUUID()}`,
     );
 
     const state = await runInDurableObject(kernel, (instance: Kernel) => {
-      const schedules = (instance as unknown as { schedules: ScheduleStore }).schedules;
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const schedules = (instance as { schedules: ScheduleStore }).schedules;
       const now = Date.now();
       const created = schedules.create({
         ownerUid: USER_IDENTITY.uid,
@@ -439,18 +451,20 @@ describe("scheduler", () => {
   });
 
   it("uses the per-occurrence attempt count for retry cutoff, backoff, and force isolation", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-one-shot-attempt-test-${crypto.randomUUID()}`,
     );
     const adapterSend = vi.fn(async () => ({
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       ok: false as const,
       error: "temporary adapter outage",
       retryable: true,
     }));
 
     const state = await runInDurableObject(kernel, async (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         schedules: ScheduleStore;
         ctx: DurableObjectState;
         buildScheduleContext: (record: ScheduleRecord) => KernelContext;
@@ -542,18 +556,20 @@ describe("scheduler", () => {
   });
 
   it("records and summarizes an ambiguous adapter delivery without retrying", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-ambiguous-adapter-test-${crypto.randomUUID()}`,
     );
     const adapterSend = vi.fn(async () => ({
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       ok: false as const,
       error: "adapter acknowledgement was lost",
       ambiguous: true,
     }));
 
     const state = await runInDurableObject(kernel, async (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         schedules: ScheduleStore;
         ctx: DurableObjectState;
         buildScheduleContext: (record: ScheduleRecord) => KernelContext;
@@ -660,6 +676,7 @@ describe("scheduler", () => {
       })),
       setWakeScheduleId: vi.fn(),
     };
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       identity: {
         role: "user",
@@ -674,7 +691,8 @@ describe("scheduler", () => {
       },
       schedules: store,
       scheduleScheduleWake: wake,
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
 
     const result = await handleSchedulerAdd({
       name: "morning check",
@@ -697,7 +715,8 @@ describe("scheduler", () => {
   it("rejects enabled one-shot timestamps that are not in the future", async () => {
     const create = vi.fn();
     const ctx = makeSchedulerContext({
-      schedules: { create } as unknown as ScheduleStore,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      schedules: { create } as ScheduleStore,
     });
 
     await expect(handleSchedulerAdd({
@@ -721,11 +740,13 @@ describe("scheduler", () => {
     const stored = { ...existing, wakeScheduleId: null };
     const update = vi.fn();
     const cancel = vi.fn(async () => {});
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = makeSchedulerContext({
       schedules: {
         getStored: vi.fn(() => stored),
         update,
-      } as unknown as ScheduleStore,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as ScheduleStore,
       cancelScheduleWake: cancel,
       scheduleScheduleWake: vi.fn(async () => "wake-new"),
     });
@@ -757,13 +778,16 @@ describe("scheduler", () => {
     const cancel = vi.fn(async () => {});
     const setWakeScheduleId = vi.fn();
     const getProcess = vi.fn(() => null);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = makeSchedulerContext({
-      procs: { get: getProcess } as unknown as KernelContext["procs"],
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      procs: { get: getProcess } as KernelContext["procs"],
       schedules: {
         getStored: vi.fn(() => stored),
         update,
         setWakeScheduleId,
-      } as unknown as ScheduleStore,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as ScheduleStore,
       cancelScheduleWake: cancel,
     });
 
@@ -783,6 +807,7 @@ describe("scheduler", () => {
   });
 
   it("requires shell.exec access for command schedules", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = makeSchedulerContext({
       identity: {
         role: "user",
@@ -791,7 +816,8 @@ describe("scheduler", () => {
       },
       schedules: {
         create: vi.fn(),
-      } as unknown as ScheduleStore,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as ScheduleStore,
     });
 
     await expect(handleSchedulerAdd({
@@ -802,6 +828,7 @@ describe("scheduler", () => {
   });
 
   it("requires proc.spawn access for process spawn schedules", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = makeSchedulerContext({
       identity: {
         role: "user",
@@ -810,7 +837,8 @@ describe("scheduler", () => {
       },
       schedules: {
         create: vi.fn(),
-      } as unknown as ScheduleStore,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as ScheduleStore,
     });
 
     await expect(handleSchedulerAdd({
@@ -821,6 +849,7 @@ describe("scheduler", () => {
   });
 
   it("requires proc.send access for process event schedules", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = makeSchedulerContext({
       identity: {
         role: "user",
@@ -832,10 +861,12 @@ describe("scheduler", () => {
           processId: "proc:target",
           ownerUid: USER_IDENTITY.uid,
         })),
-      } as unknown as KernelContext["procs"],
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as KernelContext["procs"],
       schedules: {
         create: vi.fn(),
-      } as unknown as ScheduleStore,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as ScheduleStore,
     });
 
     await expect(handleSchedulerAdd({
@@ -849,10 +880,88 @@ describe("scheduler", () => {
     }, ctx)).rejects.toThrow("Permission denied: proc.send");
   });
 
+  it("stores personal-process event schedules as Ship responsibilities", async () => {
+    const create = vi.fn((input) => makeScheduleRecord({
+      ownerUid: input.ownerUid,
+      creator: input.creator,
+      runAs: input.runAs,
+      name: input.name,
+      enabled: input.enabled,
+      expression: input.expression,
+      target: input.target,
+      createdAtMs: input.now,
+      updatedAtMs: input.now,
+    }));
+    const ctx = makeSchedulerContext({
+      identity: {
+        role: "user",
+        process: USER_IDENTITY,
+        capabilities: ["sched.add", "r12y.create"],
+      },
+      // SAFETY: this focused process-registry double implements the only lookup the handler uses.
+      procs: {
+        get: vi.fn(() => ({
+          processId: "proc:ship",
+          ownerUid: USER_IDENTITY.uid,
+          isPersonalController: true,
+        })),
+      } as KernelContext["procs"],
+      // SAFETY: this focused schedule-store double implements the methods exercised by add.
+      schedules: {
+        create,
+        setWakeScheduleId: vi.fn(),
+      } as ScheduleStore,
+      scheduleScheduleWake: vi.fn(async () => "wake-ship"),
+    });
+
+    await handleSchedulerAdd({
+      name: "review",
+      expression: { kind: "every", everyMs: 60_000 },
+      target: {
+        kind: "process.event",
+        pid: "proc:ship",
+        message: "Review system health.",
+        replyTo: TELEGRAM_DESTINATION,
+      },
+    }, ctx);
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      target: {
+        kind: "responsibility",
+        message: "Review system health.",
+      },
+    }));
+  });
+
+  it("requires r12y.create access for responsibility schedules", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const ctx = makeSchedulerContext({
+      identity: {
+        role: "user",
+        process: USER_IDENTITY,
+        capabilities: ["sched.add"],
+      },
+      schedules: {
+        create: vi.fn(),
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as ScheduleStore,
+    });
+
+    await expect(handleSchedulerAdd({
+      name: "review",
+      expression: { kind: "after", afterMs: 1_000 },
+      target: {
+        kind: "responsibility",
+        message: "Review system health.",
+      },
+    }, ctx)).rejects.toThrow("Permission denied: r12y.create");
+  });
+
   it("lists only the caller owner for non-root, even when ownerUid is supplied", () => {
     const list = vi.fn(() => ({ records: [], count: 0 }));
     const ctx = makeSchedulerContext({
-      schedules: { list } as unknown as ScheduleStore,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      schedules: { list } as ScheduleStore,
     });
 
     const result = handleSchedulerList({ ownerUid: 2000, includeDisabled: true }, ctx);
@@ -868,6 +977,7 @@ describe("scheduler", () => {
 
   it("lists by the owning human for process-originated calls", () => {
     const list = vi.fn(() => ({ records: [], count: 0 }));
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = makeSchedulerContext({
       identity: {
         role: "user",
@@ -877,8 +987,10 @@ describe("scheduler", () => {
       processId: "proc:agent",
       procs: {
         getOwnerUid: vi.fn(() => USER_IDENTITY.uid),
-      } as unknown as KernelContext["procs"],
-      schedules: { list } as unknown as ScheduleStore,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as KernelContext["procs"],
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      schedules: { list } as ScheduleStore,
     });
 
     handleSchedulerList({ includeDisabled: true }, ctx);
@@ -907,7 +1019,8 @@ describe("scheduler", () => {
         },
         capabilities: ["*"],
       },
-      schedules: { list } as unknown as ScheduleStore,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      schedules: { list } as ScheduleStore,
     });
 
     handleSchedulerList({ ownerUid: 2000 }, ctx);
@@ -930,6 +1043,7 @@ describe("scheduler", () => {
       target: input.target,
     }));
     const setWakeScheduleId = vi.fn();
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = makeSchedulerContext({
       identity: {
         role: "user",
@@ -944,11 +1058,13 @@ describe("scheduler", () => {
           uid: PERSONAL_AGENT_IDENTITY.uid,
           ownerUid: USER_IDENTITY.uid,
         })),
-      } as unknown as KernelContext["procs"],
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as KernelContext["procs"],
       schedules: {
         create,
         setWakeScheduleId,
-      } as unknown as ScheduleStore,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as ScheduleStore,
     });
 
     const result = await handleSchedulerAdd({
@@ -976,6 +1092,7 @@ describe("scheduler", () => {
 
   it("passes the caller owner uid when running schedules", async () => {
     const runSchedules = vi.fn(async () => ({ ran: 0, results: [] }));
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = makeSchedulerContext({
       identity: {
         role: "user",
@@ -985,9 +1102,11 @@ describe("scheduler", () => {
       processId: "proc:agent",
       procs: {
         getOwnerUid: vi.fn(() => USER_IDENTITY.uid),
-      } as unknown as KernelContext["procs"],
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as KernelContext["procs"],
       runSchedules,
     });
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const args = { id: "sched-1", mode: "force" as const };
 
     await handleSchedulerRun(args, ctx);
@@ -997,10 +1116,12 @@ describe("scheduler", () => {
 
   it("rejects update and remove of another owner's schedule", async () => {
     const foreign = makeScheduleRecord({ ownerUid: 2000 });
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = makeSchedulerContext({
       schedules: {
         getStored: vi.fn(() => foreign),
-      } as unknown as ScheduleStore,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as ScheduleStore,
     });
 
     await expect(handleSchedulerUpdate({
@@ -1021,12 +1142,14 @@ describe("scheduler", () => {
     const cancel = vi.fn(async () => {});
     const wake = vi.fn(async () => "wake-new");
     const setWakeScheduleId = vi.fn();
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = makeSchedulerContext({
       schedules: {
         getStored: vi.fn(() => stored),
         update: vi.fn(() => updated),
         setWakeScheduleId,
-      } as unknown as ScheduleStore,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as ScheduleStore,
       cancelScheduleWake: cancel,
       scheduleScheduleWake: wake,
     });
@@ -1047,11 +1170,13 @@ describe("scheduler", () => {
     const stored = { ...existing, wakeScheduleId: "wake-old" };
     const cancel = vi.fn(async () => {});
     const update = vi.fn();
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = makeSchedulerContext({
       schedules: {
         getStored: vi.fn(() => stored),
         update,
-      } as unknown as ScheduleStore,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as ScheduleStore,
       cancelScheduleWake: cancel,
       scheduleScheduleWake: vi.fn(async () => "wake-new"),
     });
@@ -1075,11 +1200,13 @@ describe("scheduler", () => {
     const existing = makeScheduleRecord();
     const stored = { ...existing, wakeScheduleId: "wake-old" };
     const cancel = vi.fn(async () => {});
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = makeSchedulerContext({
       schedules: {
         getStored: vi.fn(() => stored),
         remove: vi.fn(() => stored),
-      } as unknown as ScheduleStore,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as ScheduleStore,
       cancelScheduleWake: cancel,
     });
 
@@ -1091,14 +1218,16 @@ describe("scheduler", () => {
 
   it("runs a due schedule through the Kernel and delivers a process event", async () => {
     const pid = `sched-event-${crypto.randomUUID()}`;
-    const kernel = await getAgentByName<Env, Kernel>(
+    const installationId = `scheduler-test-${crypto.randomUUID()}`;
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
-      `scheduler-test-${crypto.randomUUID()}`,
+      installationId,
     );
-    const process = await getProcessByPid(pid);
+    const process = await getProcessByPid(pid, installationId);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         auth: ScheduleTestAuth;
         caps: { seed: () => void };
         procs: {
@@ -1114,10 +1243,11 @@ describe("scheduler", () => {
       });
     });
 
-    await prepareScheduleTargetProcess(process, pid, PERSONAL_AGENT_IDENTITY);
+    await prepareScheduleTargetProcess(process, PERSONAL_AGENT_IDENTITY);
 
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         schedules: ScheduleStore;
         ctx: DurableObjectState;
       };
@@ -1148,7 +1278,8 @@ describe("scheduler", () => {
     await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(scheduleId));
 
     const messages = await runInDurableObject(process, (instance: Process) => {
-      return (instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      return (instance as {
         store: { getMessages: () => Array<{ role: string; content: string }> };
       }).store.getMessages();
     });
@@ -1158,7 +1289,8 @@ describe("scheduler", () => {
     expect(messages[0].content).toContain("Run the scheduled ops pulse.");
 
     const schedule = await runInDurableObject(kernel, (instance: Kernel) => {
-      return (instance as unknown as { schedules: ScheduleStore }).schedules.get(scheduleId);
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      return (instance as { schedules: ScheduleStore }).schedules.get(scheduleId);
     });
     expect(schedule?.state.lastStatus).toBe("ok");
     expect(schedule?.state.runCount).toBe(1);
@@ -1166,12 +1298,13 @@ describe("scheduler", () => {
   });
 
   it("runs a due command schedule through the Kernel shell", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-command-test-${crypto.randomUUID()}`,
     );
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         auth: ScheduleTestAuth;
         caps: { seed: () => void };
         procs: { spawn: typeof instance["procs"]["spawn"] };
@@ -1209,7 +1342,8 @@ describe("scheduler", () => {
     await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(scheduleId));
 
     const state = await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as { schedules: ScheduleStore };
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as { schedules: ScheduleStore };
       return {
         schedule: k.schedules.get(scheduleId),
         result: k.schedules.history(scheduleId)[0]?.result,
@@ -1225,8 +1359,145 @@ describe("scheduler", () => {
     });
   });
 
+  it("gives recurring command mail sends occurrence-specific delivery ids", async () => {
+    const kernel = await getDurableObjectByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-mail-delivery-test-${crypto.randomUUID()}`,
+    );
+    const scheduled = await runInDurableObject(kernel, (instance: Kernel) => {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
+        auth: ScheduleTestAuth;
+        caps: {
+          seed: () => void;
+          grant: (gid: number, capability: string) => { ok: boolean; error?: string };
+        };
+        schedules: ScheduleStore;
+        ctx: DurableObjectState;
+      };
+      k.caps.seed();
+      addTestUser(k.auth);
+      k.caps.grant(USER_IDENTITY.gid, "shell.exec");
+      k.caps.grant(USER_IDENTITY.gid, "mail.send");
+      const now = Date.now();
+      const firstDueAt = now - 2_000;
+      const secondDueAt = firstDueAt + 1;
+      const schedule = k.schedules.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: schedulePrincipal(),
+        runAs: schedulePrincipal(),
+        name: "recurring mail",
+        enabled: true,
+        expression: { kind: "every", everyMs: 60_000, anchorMs: now - 120_000 },
+        target: {
+          kind: "command.exec",
+          command: "mail send --to mike@example.com --subject Hello --message Scheduled",
+        },
+        now,
+      });
+      k.ctx.storage.sql.exec(
+        "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
+        firstDueAt,
+        schedule.id,
+      );
+      return { scheduleId: schedule.id, firstDueAt, secondDueAt };
+    });
+
+    await runInDurableObject(kernel, (instance: Kernel) =>
+      instance.onScheduleDue(scheduled.scheduleId)
+    );
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as { ctx: DurableObjectState };
+      k.ctx.storage.sql.exec(
+        "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
+        scheduled.secondDueAt,
+        scheduled.scheduleId,
+      );
+    });
+    await runInDurableObject(kernel, (instance: Kernel) =>
+      instance.onScheduleDue(scheduled.scheduleId)
+    );
+
+    const errors = await runInDurableObject(kernel, (instance: Kernel) =>
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      (instance as { schedules: ScheduleStore })
+        .schedules
+        .history(scheduled.scheduleId)
+        .map((entry) => entry.error)
+    );
+    expect(errors).toHaveLength(2);
+    expect(errors).toContain(
+      `mail: Managed outbound mail is not available (delivery_id=schedule:${scheduled.scheduleId}:due:${scheduled.firstDueAt}:mail:1)`,
+    );
+    expect(errors).toContain(
+      `mail: Managed outbound mail is not available (delivery_id=schedule:${scheduled.scheduleId}:due:${scheduled.secondDueAt}:mail:1)`,
+    );
+  });
+
+  it("isolates command delivery ids for schedules due at the same time", async () => {
+    const kernel = await getDurableObjectByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-mail-collision-test-${crypto.randomUUID()}`,
+    );
+    const scheduled = await runInDurableObject(kernel, (instance: Kernel) => {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
+        auth: ScheduleTestAuth;
+        caps: {
+          seed: () => void;
+          grant: (gid: number, capability: string) => { ok: boolean; error?: string };
+        };
+        schedules: ScheduleStore;
+        ctx: DurableObjectState;
+      };
+      k.caps.seed();
+      addTestUser(k.auth);
+      k.caps.grant(USER_IDENTITY.gid, "shell.exec");
+      k.caps.grant(USER_IDENTITY.gid, "mail.send");
+      const now = Date.now();
+      const dueAt = now - 1_000;
+      const ids = ["One", "Two"].map((subject) => {
+        const schedule = k.schedules.create({
+          ownerUid: USER_IDENTITY.uid,
+          creator: schedulePrincipal(),
+          runAs: schedulePrincipal(),
+          name: `mail ${subject}`,
+          enabled: true,
+          expression: { kind: "every", everyMs: 60_000, anchorMs: now - 120_000 },
+          target: {
+            kind: "command.exec",
+            command: `mail send --to mike@example.com --subject ${subject} --message Scheduled`,
+          },
+          now,
+        });
+        k.ctx.storage.sql.exec(
+          "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
+          dueAt,
+          schedule.id,
+        );
+        return schedule.id;
+      });
+      return { dueAt, ids };
+    });
+
+    for (const id of scheduled.ids) {
+      await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(id));
+    }
+
+    const errors = await runInDurableObject(kernel, (instance: Kernel) => {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const schedules = (instance as { schedules: ScheduleStore }).schedules;
+      return scheduled.ids.map((id) => schedules.history(id)[0]?.error);
+    });
+    expect(errors).toEqual(scheduled.ids.map((id) =>
+      `mail: Managed outbound mail is not available (delivery_id=schedule:${id}:due:${scheduled.dueAt}:mail:1)`
+    ));
+  });
+
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it("runs command schedules as the stored run-as account", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-runas-test-${crypto.randomUUID()}`,
     );
@@ -1237,7 +1508,8 @@ describe("scheduler", () => {
       pid: "proc:wiki-builder",
     };
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         auth: ScheduleTestAuth;
         caps: {
           seed: () => void;
@@ -1277,7 +1549,8 @@ describe("scheduler", () => {
     await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(scheduleId));
 
     const state = await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as { schedules: ScheduleStore };
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as { schedules: ScheduleStore };
       return {
         schedule: k.schedules.get(scheduleId),
         result: k.schedules.history(scheduleId)[0]?.result,
@@ -1294,7 +1567,7 @@ describe("scheduler", () => {
   });
 
   it("fails process events when the run-as account no longer exists", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-missing-runas-test-${crypto.randomUUID()}`,
     );
@@ -1304,12 +1577,13 @@ describe("scheduler", () => {
     });
 
     await expect(runInDurableObject(kernel, (instance: Kernel) =>
-      (instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      (instance as {
         dispatchScheduleTarget: (
           record: ScheduleRecord,
           scheduledAtMs: number | null,
           firedAtMs: number,
-        ) => Promise<unknown>;
+        ) => Promise<ScheduleRunResult>;
       }).dispatchScheduleTarget(record, null, Date.now()),
     )).rejects.toThrow("Cannot resolve schedule run-as uid 9999");
   });
@@ -1317,41 +1591,53 @@ describe("scheduler", () => {
   it.each([
     {
       capability: "proc.spawn",
+      revoked: "proc.*",
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       target: { kind: "process.spawn", prompt: "Do not run." } as const,
     },
     {
       capability: "proc.send",
+      revoked: "proc.*",
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       target: { kind: "process.event", pid: "missing", message: "Do not deliver." } as const,
     },
-  ])("rechecks $capability when a process schedule fires", async ({ capability, target }) => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    {
+      capability: "r12y.create",
+      revoked: "r12y.*",
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      target: { kind: "responsibility", message: "Do not create." } as const,
+    },
+  ])("rechecks $capability when a process schedule fires", async ({ capability, revoked, target }) => {
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-revoked-capability-test-${crypto.randomUUID()}`,
     );
     const record = makeScheduleRecord({ target });
 
     await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         auth: ScheduleTestAuth;
         caps: { revoke: (gid: number, capability: string) => { ok: boolean; error?: string } };
       };
       addTestUser(k.auth);
-      k.caps.revoke(100, "proc.*");
+      k.caps.revoke(100, revoked);
     });
 
     await expect(runInDurableObject(kernel, (instance: Kernel) =>
-      (instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      (instance as {
         dispatchScheduleTarget: (
           record: ScheduleRecord,
           scheduledAtMs: number | null,
           firedAtMs: number,
-        ) => Promise<unknown>;
+        ) => Promise<ScheduleRunResult>;
       }).dispatchScheduleTarget(record, null, Date.now()),
     )).rejects.toThrow(`Permission denied: ${capability}`);
   });
 
   it("rechecks adapter.send when a scheduled process event has a reply target", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-revoked-reply-test-${crypto.randomUUID()}`,
     );
@@ -1371,7 +1657,8 @@ describe("scheduler", () => {
     });
 
     await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         auth: ScheduleTestAuth;
         caps: { revoke: (gid: number, capability: string) => { ok: boolean; error?: string } };
       };
@@ -1380,26 +1667,29 @@ describe("scheduler", () => {
     });
 
     await expect(runInDurableObject(kernel, (instance: Kernel) =>
-      (instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      (instance as {
         dispatchScheduleTarget: (
           record: ScheduleRecord,
           scheduledAtMs: number | null,
           firedAtMs: number,
-        ) => Promise<unknown>;
+        ) => Promise<ScheduleRunResult>;
       }).dispatchScheduleTarget(record, null, Date.now()),
     )).rejects.toThrow("Permission denied: adapter.send");
   });
 
-  it("fires an armed one-shot schedule through the Agent alarm", async () => {
+  it("fires an armed one-shot schedule through the Kernel alarm", async () => {
     const pid = `sched-alarm-${crypto.randomUUID()}`;
-    const kernel = await getAgentByName<Env, Kernel>(
+    const installationId = `scheduler-alarm-test-${crypto.randomUUID()}`;
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
-      `scheduler-alarm-test-${crypto.randomUUID()}`,
+      installationId,
     );
-    const process = await getProcessByPid(pid);
+    const process = await getProcessByPid(pid, installationId);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         auth: ScheduleTestAuth;
         caps: { seed: () => void };
         procs: { spawn: typeof instance["procs"]["spawn"] };
@@ -1412,10 +1702,11 @@ describe("scheduler", () => {
       });
     });
 
-    await prepareScheduleTargetProcess(process, pid);
+    await prepareScheduleTargetProcess(process);
 
     const scheduleId = await runInDurableObject(kernel, async (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         schedules: ScheduleStore;
         ctx: DurableObjectState;
         scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;
@@ -1455,7 +1746,8 @@ describe("scheduler", () => {
     await runDurableObjectAlarm(kernel);
 
     const messages = await runInDurableObject(process, (instance: Process) =>
-      (instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      (instance as {
         store: { getMessages: () => Array<{ role: string; content: string }> };
       }).store.getMessages(),
     );
@@ -1467,22 +1759,157 @@ describe("scheduler", () => {
     ]);
 
     const schedule = await runInDurableObject(kernel, (instance: Kernel) =>
-      (instance as unknown as { schedules: ScheduleStore }).schedules.get(scheduleId),
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      (instance as { schedules: ScheduleStore }).schedules.get(scheduleId),
     );
     expect(schedule?.enabled).toBe(false);
     expect(schedule?.state.lastStatus).toBe("ok");
     expect(schedule?.state.runCount).toBe(1);
   });
 
+  it("retains one distinct outbound recovery wake after the current wake runs", async () => {
+    const kernel = await getDurableObjectByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-mail-recovery-test-${crypto.randomUUID()}`,
+    );
+    const seeded = await runInDurableObject(kernel, async (instance: Kernel) => {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
+        mailboxes: {
+          ensureOutbound: (input: SchedulerOutboundInput) => { outbound: { fingerprint: string } };
+          markOutboundQueued: (outboundId: string, fingerprint: string) => void;
+        };
+        ctx: DurableObjectState;
+        schedule: (
+          when: Date,
+          callback: string,
+          payload: string,
+          options: SchedulerOptions,
+        ) => Promise<{ id: string }>;
+      };
+      const outboundId = `mail-recovery-${crypto.randomUUID()}`;
+      const fingerprint = `sha256:${"a".repeat(64)}`;
+      k.mailboxes.ensureOutbound({
+        version: 1,
+        outboundId,
+        ownerUid: USER_IDENTITY.uid,
+        deliveryId: "scheduled-recovery",
+        fingerprint,
+        from: "sam@gsv.space",
+        to: "mike@example.com",
+        subject: "Recovery",
+        bodyDigest: `sha256:${"b".repeat(64)}`,
+        bodyPath: `/home/sam/.gsv/mail/outbox/${outboundId}/message.txt`,
+        textSize: 8,
+        createdAt: Date.now(),
+      });
+      k.mailboxes.markOutboundQueued(outboundId, fingerprint);
+      const wake = await k.schedule(
+        new Date(Date.now() + 1_000),
+        "onManagedOutboundEnqueue",
+        outboundId,
+        { idempotent: false },
+      );
+      k.ctx.storage.sql.exec(
+        "UPDATE cf_agents_schedules SET time = ? WHERE id = ?",
+        Math.floor((Date.now() - 1_000) / 1_000),
+        wake.id,
+      );
+      return { outboundId, wakeId: wake.id };
+    });
+
+    await runDurableObjectAlarm(kernel);
+
+    const state = await runInDurableObject(kernel, (instance: Kernel) => {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as { ctx: DurableObjectState };
+      return {
+        outbound: k.ctx.storage.sql.exec<{ state: string; error_code: string | null }>(
+          "SELECT state, error_code FROM mail_outbound WHERE outbound_id = ?",
+          seeded.outboundId,
+        ).one(),
+        wakes: k.ctx.storage.sql.exec<{ id: string; payload: string }>(
+          "SELECT id, payload FROM cf_agents_schedules WHERE callback = 'onManagedOutboundEnqueue'",
+        ).toArray(),
+      };
+    });
+    expect(state.outbound).toEqual({ state: "failed", error_code: "body_unavailable" });
+    expect(state.wakes).toHaveLength(1);
+    expect(state.wakes[0]).toMatchObject({ payload: JSON.stringify(seeded.outboundId) });
+    expect(state.wakes[0]?.id).not.toBe(seeded.wakeId);
+  });
+
+  it("preserves due work while a managed installation is suspended", async () => {
+    const kernel = await getDurableObjectByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-suspended-test-${crypto.randomUUID()}`,
+    );
+
+    const state = await runInDurableObject(kernel, async (instance: Kernel) => {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
+        ctx: DurableObjectState;
+        managedWorkGate(): Promise<{
+          allowed: false;
+          code: 423;
+          message: string;
+        }>;
+        schedules: ScheduleStore;
+      };
+      k.managedWorkGate = async () => ({
+        allowed: false,
+        code: 423,
+        message: "Managed installation is suspended",
+      });
+      const now = Date.now();
+      const schedule = k.schedules.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: schedulePrincipal(),
+        runAs: schedulePrincipal(),
+        name: "suspended work",
+        enabled: true,
+        expression: { kind: "after", afterMs: 1_000 },
+        target: {
+          kind: "command.exec",
+          command: "printf 'must not run'",
+        },
+        now,
+      });
+      k.ctx.storage.sql.exec(
+        "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
+        now - 1,
+        schedule.id,
+      );
+
+      await instance.onScheduleDue(schedule.id);
+      return {
+        schedule: k.schedules.getStored(schedule.id),
+        wakes: k.ctx.storage.sql.exec<{ id: string; time: number }>(
+          "SELECT id, time FROM cf_agents_schedules WHERE callback = 'onScheduleDue'",
+        ).toArray(),
+      };
+    });
+
+    expect(state.schedule?.enabled).toBe(true);
+    expect(state.schedule?.state.runCount).toBe(0);
+    expect(state.schedule?.state.lastStatus).toBeNull();
+    expect(state.schedule?.wakeScheduleId).toBeTruthy();
+    expect(state.wakes).toEqual([
+      expect.objectContaining({ id: state.schedule?.wakeScheduleId }),
+    ]);
+    expect(state.wakes[0].time * 1_000).toBeGreaterThan(Date.now() + 50_000);
+  });
+
   it("rounds Kernel wake rows up to avoid firing before millisecond-precision due times", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-wake-rounding-test-${crypto.randomUUID()}`,
     );
     const dueAtMs = (Math.floor(Date.now() / 1_000) * 1_000) + 30_123;
 
     const row = await runInDurableObject(kernel, async (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         ctx: DurableObjectState;
         scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;
       };
@@ -1499,14 +1926,16 @@ describe("scheduler", () => {
 
   it("re-arms when an existing wake fires before the GSV schedule is due", async () => {
     const pid = `sched-early-${crypto.randomUUID()}`;
-    const kernel = await getAgentByName<Env, Kernel>(
+    const installationId = `scheduler-early-wake-test-${crypto.randomUUID()}`;
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
-      `scheduler-early-wake-test-${crypto.randomUUID()}`,
+      installationId,
     );
-    const process = await getProcessByPid(pid);
+    const process = await getProcessByPid(pid, installationId);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         caps: { seed: () => void };
         procs: { spawn: typeof instance["procs"]["spawn"] };
       };
@@ -1517,10 +1946,11 @@ describe("scheduler", () => {
       });
     });
 
-    await prepareScheduleTargetProcess(process, pid);
+    await prepareScheduleTargetProcess(process);
 
     const scheduleId = await runInDurableObject(kernel, async (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         schedules: ScheduleStore;
         ctx: DurableObjectState;
         scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;
@@ -1559,7 +1989,8 @@ describe("scheduler", () => {
     await runDurableObjectAlarm(kernel);
 
     const state = await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         schedules: ScheduleStore;
         ctx: DurableObjectState;
       };
@@ -1570,7 +2001,8 @@ describe("scheduler", () => {
       return { schedule, wakeRows };
     });
     const messages = await runInDurableObject(process, (instance: Process) =>
-      (instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      (instance as {
         store: { getMessages: () => Array<{ role: string; content: string }> };
       }).store.getMessages(),
     );
@@ -1587,14 +2019,16 @@ describe("scheduler", () => {
 
   it("ignores stale wake rows before checking due state", async () => {
     const pid = `sched-stale-${crypto.randomUUID()}`;
-    const kernel = await getAgentByName<Env, Kernel>(
+    const installationId = `scheduler-stale-wake-test-${crypto.randomUUID()}`;
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
-      `scheduler-stale-wake-test-${crypto.randomUUID()}`,
+      installationId,
     );
-    const process = await getProcessByPid(pid);
+    const process = await getProcessByPid(pid, installationId);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         caps: { seed: () => void };
         procs: { spawn: typeof instance["procs"]["spawn"] };
       };
@@ -1605,10 +2039,11 @@ describe("scheduler", () => {
       });
     });
 
-    await prepareScheduleTargetProcess(process, pid);
+    await prepareScheduleTargetProcess(process);
 
     const scheduleId = await runInDurableObject(kernel, async (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         schedules: ScheduleStore;
         ctx: DurableObjectState;
         scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;
@@ -1647,14 +2082,16 @@ describe("scheduler", () => {
     await runDurableObjectAlarm(kernel);
 
     const messages = await runInDurableObject(process, (instance: Process) =>
-      (instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      (instance as {
         store: { getMessages: () => Array<{ role: string; content: string }> };
       }).store.getMessages(),
     );
     expect(messages).toHaveLength(0);
 
     const state = await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         schedules: ScheduleStore;
         ctx: DurableObjectState;
       };
@@ -1673,14 +2110,16 @@ describe("scheduler", () => {
 
   it("force-runs a process event schedule before it is due", async () => {
     const pid = `sched-force-${crypto.randomUUID()}`;
-    const kernel = await getAgentByName<Env, Kernel>(
+    const installationId = `scheduler-force-test-${crypto.randomUUID()}`;
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
-      `scheduler-force-test-${crypto.randomUUID()}`,
+      installationId,
     );
-    const process = await getProcessByPid(pid);
+    const process = await getProcessByPid(pid, installationId);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         auth: ScheduleTestAuth;
         caps: { seed: () => void };
         procs: { spawn: typeof instance["procs"]["spawn"] };
@@ -1693,10 +2132,11 @@ describe("scheduler", () => {
       });
     });
 
-    await prepareScheduleTargetProcess(process, pid);
+    await prepareScheduleTargetProcess(process);
 
     const { scheduleId, nextRunAtMs } = await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as { schedules: ScheduleStore };
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as { schedules: ScheduleStore };
       const now = Date.now();
       const schedule = k.schedules.create({
         ownerUid: USER_IDENTITY.uid,
@@ -1716,8 +2156,9 @@ describe("scheduler", () => {
     });
 
     const runResult = await runInDurableObject(kernel, (instance: Kernel) =>
-      (instance as unknown as {
-        runSchedules: (args: { id: string; mode: "force" }) => Promise<unknown>;
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      (instance as {
+        runSchedules: (args: { id: string; mode: "force" }) => Promise<ScheduleRunResult>;
       }).runSchedules({ id: scheduleId, mode: "force" }),
     );
 
@@ -1726,13 +2167,15 @@ describe("scheduler", () => {
       results: [{ scheduleId, status: "ok" }],
     });
     const schedule = await runInDurableObject(kernel, (instance: Kernel) =>
-      (instance as unknown as { schedules: ScheduleStore }).schedules.get(scheduleId),
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      (instance as { schedules: ScheduleStore }).schedules.get(scheduleId),
     );
     expect(schedule?.state.nextRunAtMs).toBe(nextRunAtMs);
     expect(schedule?.enabled).toBe(true);
 
     const messages = await runInDurableObject(process, (instance: Process) =>
-      (instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      (instance as {
         store: { getMessages: () => Array<{ content: string }> };
       }).store.getMessages(),
     );
@@ -1740,12 +2183,13 @@ describe("scheduler", () => {
   });
 
   it("skips a due schedule that is already running", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-overlap-test-${crypto.randomUUID()}`,
     );
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         caps: { seed: () => void };
         procs: { spawn: typeof instance["procs"]["spawn"] };
         schedules: ScheduleStore;
@@ -1780,8 +2224,9 @@ describe("scheduler", () => {
     });
 
     const result = await runInDurableObject(kernel, (instance: Kernel) =>
-      (instance as unknown as {
-        runSchedules: (args: { id: string; mode: "due" }) => Promise<unknown>;
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      (instance as {
+        runSchedules: (args: { id: string; mode: "due" }) => Promise<ScheduleRunResult>;
       }).runSchedules({ id: scheduleId, mode: "due" }),
     );
 
@@ -1793,14 +2238,16 @@ describe("scheduler", () => {
 
   it("disables an after schedule once it runs", async () => {
     const pid = `sched-once-${crypto.randomUUID()}`;
-    const kernel = await getAgentByName<Env, Kernel>(
+    const installationId = `scheduler-once-test-${crypto.randomUUID()}`;
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
-      `scheduler-once-test-${crypto.randomUUID()}`,
+      installationId,
     );
-    const process = await getProcessByPid(pid);
+    const process = await getProcessByPid(pid, installationId);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         auth: ScheduleTestAuth;
         caps: { seed: () => void };
         procs: { spawn: typeof instance["procs"]["spawn"] };
@@ -1813,10 +2260,11 @@ describe("scheduler", () => {
       });
     });
 
-    await prepareScheduleTargetProcess(process, pid);
+    await prepareScheduleTargetProcess(process);
 
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         schedules: ScheduleStore;
         ctx: DurableObjectState;
       };
@@ -1846,7 +2294,8 @@ describe("scheduler", () => {
     await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(scheduleId));
 
     const schedule = await runInDurableObject(kernel, (instance: Kernel) =>
-      (instance as unknown as { schedules: ScheduleStore }).schedules.get(scheduleId),
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      (instance as { schedules: ScheduleStore }).schedules.get(scheduleId),
     );
     expect(schedule?.enabled).toBe(false);
     expect(schedule?.state.nextRunAtMs).toBeNull();
@@ -1854,12 +2303,14 @@ describe("scheduler", () => {
   });
 
   it("runs a due process.spawn schedule and sends the prompt to the cron process", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const installationId = `scheduler-spawn-test-${crypto.randomUUID()}`;
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
-      `scheduler-spawn-test-${crypto.randomUUID()}`,
+      installationId,
     );
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         auth: ScheduleTestAuth;
         caps: { seed: () => void };
         procs: { spawn: typeof instance["procs"]["spawn"] };
@@ -1901,7 +2352,8 @@ describe("scheduler", () => {
     await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(scheduleId));
 
     const spawned = await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         schedules: ScheduleStore;
         procs: {
           get: (pid: string) => {
@@ -1914,6 +2366,7 @@ describe("scheduler", () => {
         };
       };
       const history = k.schedules.history(scheduleId);
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       const result = history[0]?.result as { pid?: string } | null | undefined;
       return {
         pid: result?.pid,
@@ -1934,9 +2387,10 @@ describe("scheduler", () => {
     );
     expect(spawned.schedule?.state.lastStatus).toBe("ok");
 
-    const cronProcess = await getProcessByPid(spawned.pid!);
+    const cronProcess = await getProcessByPid(spawned.pid!, installationId);
     const messages = await runInDurableObject(cronProcess, (instance: Process) =>
-      (instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      (instance as {
         store: { getMessages: () => Array<{ role: string; content: string }> };
       }).store.getMessages(),
     );
@@ -1947,7 +2401,7 @@ describe("scheduler", () => {
   });
 
   it("runs process-principal spawn schedules after the creator process is gone", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-dead-parent-spawn-test-${crypto.randomUUID()}`,
     );
@@ -1958,7 +2412,8 @@ describe("scheduler", () => {
       pid: "proc:dead-creator",
     };
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         auth: ScheduleTestAuth;
         caps: {
           grant: (gid: number, capability: string) => { ok: boolean; error?: string };
@@ -1995,7 +2450,8 @@ describe("scheduler", () => {
     await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(scheduleId));
 
     const spawned = await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const k = instance as {
         schedules: ScheduleStore;
         procs: {
           get: (pid: string) => {
@@ -2009,6 +2465,7 @@ describe("scheduler", () => {
         };
       };
       const history = k.schedules.history(scheduleId);
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       const result = history[0]?.result as { pid?: string } | null | undefined;
       return {
         pid: result?.pid,

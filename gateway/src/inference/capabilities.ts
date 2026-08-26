@@ -25,6 +25,8 @@ import { raceWithAbort } from "../shared/abort";
 import { TimeoutError, withTimeout } from "./timeout";
 import { isWorkersAiProvider } from "./workers-ai";
 import { sniffImageMimeType } from "./image-mime";
+import { jsonObjectSchema, jsonValueSchema, type JsonObject, type JsonValue } from "@humansandmachines/gsv/protocol";
+import * as z from "zod/mini";
 
 export type CapabilityFetch = (
   input: string | URL | Request,
@@ -37,8 +39,16 @@ export type AiCapabilityRuntime = {
 };
 
 export type ImageGenerationBinding = {
-  run(model: string, input: Record<string, unknown>): Promise<unknown>;
+  run(model: string, input: JsonObject): Promise<ImageGenerationResponse>;
 };
+
+type ImageGenerationResponse =
+  | Response
+  | ReadableStream<Uint8Array>
+  | ArrayBuffer
+  | ArrayBufferView
+  | Blob
+  | JsonValue;
 
 export type ImageGenerationRequest = {
   provider?: string;
@@ -149,6 +159,7 @@ async function transcribeAudioWithOpenAi(
 
   const form = new FormData();
   const bytes = decodeBase64Bytes(base64);
+  // SAFETY: The sliced ArrayBuffer covers exactly the decoded byte range.
   const audioBuffer = bytes.buffer.slice(
     bytes.byteOffset,
     bytes.byteOffset + bytes.byteLength,
@@ -203,7 +214,7 @@ async function synthesizeSpeechWithOpenAi(
   const voice = normalizeOptionalText(request.voice) || DEFAULT_OPENAI_SPEECH_VOICE;
   const format = normalizeOpenAiSpeechFormat(request.encoding, request.container);
   const timeoutMs = normalizePositiveNumber(request.timeoutMs) ?? DEFAULT_AUDIO_SPEECH_TIMEOUT_MS;
-  const body: Record<string, unknown> = {
+  const body: JsonObject = {
     model,
     input: request.text,
     voice,
@@ -281,17 +292,15 @@ async function generateImageWithOpenAi(
     return null;
   }
 
-  const body: Record<string, unknown> = {
+  const body: JsonObject = {
     model,
     prompt,
     n: 1,
   };
-  if (normalizeOptionalText(request.size)) {
-    body.size = normalizeOptionalText(request.size);
-  }
-  if (normalizeOptionalText(request.quality)) {
-    body.quality = normalizeOptionalText(request.quality);
-  }
+  const size = normalizeOptionalText(request.size);
+  if (size) body.size = size;
+  const quality = normalizeOptionalText(request.quality);
+  if (quality) body.quality = quality;
   const format = normalizeImageOutputFormat(request.format);
   if (format && !isDallEModel(model)) {
     body.output_format = format;
@@ -323,38 +332,32 @@ async function generateImageWithOpenAi(
   return image ? { ...image, provider: OPENAI_PROVIDER, model } : null;
 }
 
-function normalizeOpenAiTranscriptionResponse(value: unknown): Omit<AudioTranscriptionResult, "provider" | "model"> | null {
-  if (typeof value === "string") {
-    const text = value.trim();
+function normalizeOpenAiTranscriptionResponse(value: JsonValue): Omit<AudioTranscriptionResult, "provider" | "model"> | null {
+  const stringValue = normalizeOptionalText(value);
+  if (stringValue) {
+    const text = stringValue;
     return text ? { text } : null;
   }
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const record = value as Record<string, unknown>;
-  const text = typeof record.text === "string" ? record.text.trim() : "";
+  const parsed = jsonObjectSchema.safeParse(value);
+  if (!parsed.success) return null;
+  const record = parsed.data;
+  const text = normalizeOptionalText(record.text) ?? "";
   if (!text) {
     return null;
   }
-  const workerShape = normalizeTranscriptionResponse(value);
-  const duration = typeof record.duration === "number" && Number.isFinite(record.duration)
-    ? record.duration
-    : workerShape?.duration;
-  const language = typeof record.language === "string" && record.language.trim().length > 0
-    ? record.language.trim()
-    : workerShape?.language;
-  const segments = Array.isArray(record.segments) ? record.segments : workerShape?.segments;
-  return {
-    text,
-    ...(duration !== undefined ? { duration } : {}),
-    ...(language ? { language } : {}),
-    ...(segments ? { segments } : {}),
-  };
+  const providerResult = normalizeTranscriptionResponse(record);
+  const duration = normalizePositiveNumber(record.duration) ?? providerResult?.duration;
+  const language = normalizeOptionalText(record.language) ?? providerResult?.language;
+  const segments = Array.isArray(record.segments) ? record.segments : providerResult?.segments;
+  const result: Omit<AudioTranscriptionResult, "provider" | "model"> = { text };
+  if (duration !== undefined) result.duration = duration;
+  if (language) result.language = language;
+  if (segments) result.segments = segments;
+  return result;
 }
 
 async function normalizeImageGenerationResponse(
-  response: unknown,
+  response: ImageGenerationResponse,
   fallbackMimeType: string,
 ): Promise<Omit<ImageGenerationResult, "provider" | "model"> | null> {
   if (response instanceof Response) {
@@ -376,25 +379,22 @@ async function normalizeImageGenerationResponse(
   if (response instanceof Blob) {
     return imageDataFromBytes(await response.arrayBuffer(), fallbackMimeType, response.type);
   }
-  if (typeof response === "string" && response.trim().length > 0) {
-    return imageDataFromBase64(response.trim(), fallbackMimeType);
+  const responseText = z.string().safeParse(response);
+  if (responseText.success && responseText.data.trim().length > 0) {
+    return imageDataFromBase64(responseText.data.trim(), fallbackMimeType);
   }
-  if (!response || typeof response !== "object") {
-    return null;
-  }
-
-  const record = response as Record<string, unknown>;
+  const parsed = jsonObjectSchema.safeParse(response);
+  if (!parsed.success) return null;
+  const record = parsed.data;
   if (Array.isArray(record.data) && record.data.length > 0) {
     for (const item of record.data) {
       const image = await normalizeImageGenerationResponse(item, fallbackMimeType);
       if (image) {
-        const revisedPrompt = typeof item === "object" && item !== null
-          ? firstString((item as Record<string, unknown>).revised_prompt)
+        const itemRecord = jsonObjectSchema.safeParse(item);
+        const revisedPrompt = itemRecord.success
+          ? firstString(itemRecord.data.revised_prompt)
           : undefined;
-        return {
-          ...image,
-          ...(revisedPrompt ? { revisedPrompt } : {}),
-        };
+        return revisedPrompt ? { ...image, revisedPrompt } : image;
       }
     }
   }
@@ -410,19 +410,15 @@ async function normalizeImageGenerationResponse(
       return null;
     }
     const revisedPrompt = firstString(record.revised_prompt);
-    return {
-      ...image,
-      ...(revisedPrompt ? { revisedPrompt } : {}),
-    };
+    return revisedPrompt ? { ...image, revisedPrompt } : image;
   }
 
   const url = firstString(record.url);
   if (url) {
-    return {
-      mimeType: "",
-      url,
-      ...(firstString(record.revised_prompt) ? { revisedPrompt: firstString(record.revised_prompt) } : {}),
-    };
+    const revisedPrompt = firstString(record.revised_prompt);
+    return revisedPrompt
+      ? { mimeType: "", url, revisedPrompt }
+      : { mimeType: "", url };
   }
 
   return null;
@@ -460,7 +456,7 @@ function resolveImageData(
   };
 }
 
-function normalizeImageMimeType(value: unknown): string | undefined {
+function normalizeImageMimeType(value: JsonValue | undefined): string | undefined {
   const normalized = normalizeOptionalText(value)
     ?.split(";", 1)[0]
     .trim()
@@ -505,14 +501,18 @@ async function throwIfNotOk(response: Response, label: string): Promise<void> {
   throw new Error(`${label} failed with ${response.status}${detail}`);
 }
 
-async function parseResponseBody(response: Response): Promise<unknown> {
+async function parseResponseBody(response: Response): Promise<JsonValue> {
   const contentType = response.headers.get("content-type") || "";
   if (contentType.includes("application/json")) {
-    return response.json();
+    const value = await response.json();
+    const parsed = jsonValueSchema.safeParse(value);
+    if (parsed.success) return parsed.data;
+    throw new Error("Provider returned invalid JSON");
   }
   const text = await response.text();
   try {
-    return JSON.parse(text);
+    const parsed = jsonValueSchema.safeParse(JSON.parse(text));
+    return parsed.success ? parsed.data : text;
   } catch {
     return text;
   }
@@ -522,10 +522,7 @@ function getFetch(fetchFn: CapabilityFetch | undefined): CapabilityFetch {
   if (fetchFn) {
     return fetchFn;
   }
-  if (typeof fetch === "function") {
-    return fetch;
-  }
-  throw new Error("Fetch is not available for this AI provider");
+  return fetch;
 }
 
 function requireApiKey(value: string | undefined, label: string): string {
@@ -544,7 +541,7 @@ function isOpenAiProvider(provider: string): boolean {
   return provider === OPENAI_PROVIDER;
 }
 
-function normalizeOpenAiSpeechFormat(encoding: unknown, container: unknown): string {
+function normalizeOpenAiSpeechFormat(encoding: JsonValue | undefined, container: JsonValue | undefined): string {
   const normalizedEncoding = normalizeOptionalText(encoding)?.toLowerCase();
   const normalizedContainer = normalizeOptionalText(container)?.toLowerCase();
   if (normalizedContainer === "wav" || normalizedEncoding === "wav") return "wav";
@@ -573,7 +570,7 @@ function mimeTypeForOpenAiSpeechFormat(format: string): string {
   }
 }
 
-function normalizeImageOutputFormat(value: unknown): string | undefined {
+function normalizeImageOutputFormat(value: JsonValue | undefined): string | undefined {
   const normalized = normalizeOptionalText(value)?.toLowerCase();
   if (normalized === "png" || normalized === "jpeg" || normalized === "webp") {
     return normalized;
@@ -591,7 +588,7 @@ function isDallEModel(model: string): boolean {
   return model.toLowerCase().startsWith("dall-e-");
 }
 
-function normalizeAudioMimeType(value: unknown): string {
+function normalizeAudioMimeType(value: JsonValue | undefined): string {
   const normalized = normalizeOptionalText(value);
   return normalized && normalized.startsWith("audio/") ? normalized : "audio/webm";
 }
@@ -605,19 +602,20 @@ function defaultAudioFilename(mimeType: string | undefined): string {
   return "audio.webm";
 }
 
-function normalizePositiveNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+function normalizePositiveNumber(value: JsonValue | undefined): number | undefined {
+  const parsed = z.number().safeParse(value);
+  return parsed.success && Number.isFinite(parsed.data) && parsed.data > 0 ? parsed.data : undefined;
 }
 
-function normalizeOptionalText(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+function normalizeOptionalText(value: JsonValue | undefined): string | undefined {
+  const parsed = z.string().safeParse(value);
+  return parsed.success && parsed.data.trim().length > 0 ? parsed.data.trim() : undefined;
 }
 
-function firstString(...values: unknown[]): string | undefined {
+function firstString(...values: JsonValue[]): string | undefined {
   for (const value of values) {
-    if (typeof value === "string" && value.trim().length > 0) {
-      return value.trim();
-    }
+    const text = normalizeOptionalText(value);
+    if (text) return text;
   }
   return undefined;
 }

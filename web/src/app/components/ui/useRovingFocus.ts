@@ -23,6 +23,7 @@ export function useRovingFocus<T extends HTMLElement>(rootRef: RefObject<T>) {
       return;
     }
     event.preventDefault();
+    // SAFETY: Component boundary provides the asserted DOM/test shape.
     const index = items.indexOf(document.activeElement as HTMLButtonElement);
     const next = event.key === "Home"
       ? 0

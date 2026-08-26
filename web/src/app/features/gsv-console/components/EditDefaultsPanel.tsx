@@ -38,18 +38,18 @@ export type EditDefaultsSection = "defaults" | "permissions" | "context";
 
 /** Per-section surface copy. Each CREW default now opens its own titled
  *  surface (model defaults / permissions / global instructions). */
-const SECTION_TITLE: Record<EditDefaultsSection, string> = {
+const SECTION_TITLE = {
   defaults: "MODEL DEFAULTS",
   permissions: "DEFAULT PERMISSIONS",
   context: "GLOBAL INSTRUCTIONS",
-};
+} satisfies Record<EditDefaultsSection, string>;
 
-const SECTION_DESC: Record<EditDefaultsSection, string> = {
+const SECTION_DESC = {
   defaults: "These are your preferences, applied to all your agents.",
   permissions:
     "When there are no overrides configured, all your agents will follow the default permission when using any tool. Overrides are machine or tool specific rules that take priority over the default action.",
   context: "Instructions all your agents follow. These do not take precedence over agent definitions.",
-};
+} satisfies Record<EditDefaultsSection, string>;
 
 /** Draft seed from the loaded context files (mirrors editorFilesForAccount). */
 function contextSectionsFromFiles(files: readonly { label: string; name: string; content: string; orig: string }[]): ContextSection[] {
@@ -168,7 +168,6 @@ export function EditDefaultsPanel({
     setReasoningIndex(initialReasoningIndex);
     setApprovalPolicy(savedPolicy);
     setConfirmDiscard(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [behaviorBaselineKey]);
 
   // Re-baseline the context draft only when the saved context itself changes —
@@ -182,7 +181,6 @@ export function EditDefaultsPanel({
     }
     setFilesDraft(contextSectionsFromFiles(context.files));
     setContextIndex(0);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [context.dataUpdatedAt]);
 
   // On open: move focus to the surface (in-place swap).

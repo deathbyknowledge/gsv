@@ -1,8 +1,8 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
+import { z } from "zod";
 import type {
   RepoApplyOp,
   RepoReadResult,
-  RepoSummary,
 } from "@humansandmachines/gsv/protocol";
 import {
   extractLibraryTitle,
@@ -14,7 +14,6 @@ import {
   normalizeLibraryPath,
   normalizeLibraryQueryTerms,
   scoreLibraryMatch,
-  slugifyLibraryId,
   suggestLibraryPagePath,
 } from "./libraryModel";
 import type {
@@ -51,8 +50,8 @@ export async function loadLibraryWorkspace(
   const searchQuery = String(args.q ?? "").trim();
   let dbs: LibraryCollection[] = [];
   let pages: LibraryEntry[] = [];
-  let selectedNote = null as LibraryWorkspaceState["selectedNote"];
-  let searchMatches = null as LibraryWorkspaceState["searchMatches"];
+  let selectedNote: LibraryWorkspaceState["selectedNote"] = null;
+  let searchMatches: LibraryWorkspaceState["searchMatches"] = null;
 
   try {
     dbs = await listLibraryCollections(client);
@@ -235,8 +234,8 @@ export async function startLibraryBuild(
   const spawn = await client.call("proc.spawn", {
     runAs: "wiki#builder",
     label: `wiki build (${db})`,
-  }) as { ok?: boolean; pid?: string; error?: string };
-  if (!spawn.ok || !spawn.pid) {
+  });
+  if (!spawn.ok) {
     throw new Error(spawn.error || "failed to start wiki builder");
   }
 
@@ -262,7 +261,7 @@ export async function startLibraryBuild(
   const sent = await client.call("proc.send", {
     pid: spawn.pid,
     message: prompt,
-  }) as { ok?: boolean; error?: string };
+  });
   if (!sent.ok) {
     throw new Error(sent.error || "failed to send builder prompt");
   }
@@ -364,8 +363,16 @@ export async function previewLibraryContent(
 }
 
 async function listLibraryCollections(client: LibraryClient): Promise<LibraryCollection[]> {
-  const result = await client.call("repo.list", {}) as { repos?: RepoSummary[] };
-  const repos = Array.isArray(result.repos) ? result.repos : [];
+  const result = await client.call("repo.list", {});
+  const parsed = z.object({
+    repos: z.array(z.object({
+      repo: z.string(),
+      name: z.string(),
+      writable: z.boolean(),
+      updatedAt: z.number().optional(),
+    })).optional(),
+  }).safeParse(result);
+  const repos = parsed.success ? parsed.data.repos ?? [] : [];
   const collections: LibraryCollection[] = [];
 
   for (const repo of repos) {
@@ -379,7 +386,7 @@ async function listLibraryCollections(client: LibraryClient): Promise<LibraryCol
       title: manifest.title || libraryTitleFromPath(id),
       repo: repo.repo,
       writable: repo.writable,
-      updatedAt: typeof repo.updatedAt === "number" ? repo.updatedAt : null,
+      updatedAt: repo.updatedAt ?? null,
     });
   }
 
@@ -503,13 +510,17 @@ async function readWikiManifest(client: LibraryClient, repo: string): Promise<{ 
     return null;
   }
   try {
-    const parsed = JSON.parse(manifest.content) as Record<string, unknown>;
-    if (parsed.kind !== WIKI_MANIFEST_KIND) {
+    const parsed = z.object({
+      kind: z.string(),
+      id: z.string().optional(),
+      title: z.string().optional(),
+    }).safeParse(JSON.parse(manifest.content));
+    if (!parsed.success || parsed.data.kind !== WIKI_MANIFEST_KIND) {
       return null;
     }
     return {
-      id: typeof parsed.id === "string" ? parsed.id.trim() : undefined,
-      title: typeof parsed.title === "string" ? parsed.title.trim() : undefined,
+      id: parsed.data.id?.trim(),
+      title: parsed.data.title?.trim(),
     };
   } catch {
     return null;
@@ -527,7 +538,7 @@ async function requireCollection(client: LibraryClient, db: string): Promise<Lib
 
 async function readRepoPath(client: LibraryClient, repo: string, path: string): Promise<RepoNode> {
   try {
-    const result = await client.call("repo.read", { repo, path }) as RepoReadResult;
+    const result = await client.call("repo.read", { repo, path });
     if (result.kind === "tree") {
       return { kind: "tree", entries: result.entries };
     }
@@ -547,7 +558,7 @@ async function readRepoPath(client: LibraryClient, repo: string, path: string): 
 }
 
 async function homeRepoOwner(client: LibraryClient): Promise<string> {
-  const result = await client.call("repo.list", {}) as { repos?: RepoSummary[] };
+  const result = await client.call("repo.list", {});
   const home = result.repos?.find((repo) => repo.kind === "home");
   if (!home?.owner) {
     throw new Error("home repository owner is not available");
@@ -612,7 +623,7 @@ function joinPath(left: string, right: string): string {
     .join("/");
 }
 
-function formatError(error: unknown): string {
+function formatError<T>(error: T): string {
   return error instanceof Error ? error.message : String(error);
 }
 

@@ -1,6 +1,6 @@
 import { defineCommand } from "just-bash";
 import type { CommandContext, ExecResult } from "just-bash";
-import { GsvFs } from "../../../fs/gsv-fs";
+import type { GsvFs } from "../../../fs/gsv-fs";
 import type { KernelContext } from "../../../kernel/context";
 import {
   collectFilesystemSkillDocuments,
@@ -13,7 +13,9 @@ import {
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { nativeCommandSynopsis } from "./discovery";
 
-export function buildSkillsCommand(fs: GsvFs, ctx: KernelContext, identity: ProcessIdentity) {
+export type SkillFs = Pick<GsvFs, "resolvePath" | "exists" | "mkdir" | "writeFile" | "readdir" | "stat" | "readFile">;
+
+export function buildSkillsCommand(fs: SkillFs, ctx: KernelContext, identity: ProcessIdentity) {
   return defineCommand("skills", async (args, commandCtx): Promise<ExecResult> => {
     try {
       return await runSkillsCommand(args, commandCtx, fs, ctx, identity);
@@ -31,7 +33,7 @@ export function buildSkillsCommand(fs: GsvFs, ctx: KernelContext, identity: Proc
 async function runSkillsCommand(
   args: string[],
   commandCtx: CommandContext,
-  fs: GsvFs,
+  fs: SkillFs,
   ctx: KernelContext,
   identity: ProcessIdentity,
 ): Promise<ExecResult> {
@@ -215,7 +217,7 @@ function parseCreateArgs(args: string[]): CreateSkillArgs {
     throw new Error("--description is required and must explain what the skill does and when to use it");
   }
 
-  return { name, description, ...(from ? { from } : {}), replace };
+  return from ? { name, description, from, replace } : { name, description, replace };
 }
 
 function requireOptionValue(value: string | undefined, option: string): string {
@@ -236,7 +238,7 @@ function normalizeCreatedSkillName(value: string): string {
 async function readSkillBody(
   from: string | undefined,
   commandCtx: CommandContext,
-  fs: GsvFs,
+  fs: SkillFs,
   identity: ProcessIdentity,
 ): Promise<string> {
   const stdin = commandCtx.stdin.trim();
@@ -258,7 +260,7 @@ async function readSkillBody(
 async function readSkillValidationCandidate(
   requested: string,
   commandCtx: CommandContext,
-  fs: GsvFs,
+  fs: SkillFs,
   ctx: KernelContext,
   identity: ProcessIdentity,
 ): Promise<{ path: string; expectedName: string | undefined; content: string }> {

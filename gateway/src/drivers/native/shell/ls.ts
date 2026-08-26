@@ -106,7 +106,6 @@ export function buildLsCommand(fs: GsvFs, identity: ProcessIdentity, kernelCtx: 
 
       const result = await listDir(
         fs, resolved, target, flags, nameCache, paths.length > 1, false,
-        ctx.cwd,
       );
       stdout += result.stdout;
       stderr += result.stderr;
@@ -125,7 +124,6 @@ async function listDir(
   nameCache: NameCache | null,
   showHeader: boolean,
   isRecursive: boolean,
-  cwd: string,
 ): Promise<ExecResult> {
   let stdout = "";
   const stderr = "";
@@ -208,7 +206,7 @@ async function listDir(
       stdout += "\n";
       const subPath = resolved === "/" ? `/${name}` : `${resolved}/${name}`;
       const subDisplay = display === "." ? `./${name}` : `${display}/${name}`;
-      const sub = await listDir(fs, subPath, subDisplay, flags, nameCache, true, true, cwd);
+      const sub = await listDir(fs, subPath, subDisplay, flags, nameCache, true, true);
       stdout += sub.stdout;
     }
   }

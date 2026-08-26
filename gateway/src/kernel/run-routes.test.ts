@@ -52,6 +52,7 @@ describe("RunRouteStore", () => {
             surface: { kind: "thread", id: "surface-a", threadId: "thread-1" },
           },
           replyToId: "message-2",
+          routeGeneration: "generation-2",
         },
         1_000,
       );
@@ -74,6 +75,7 @@ describe("RunRouteStore", () => {
         expect(route.processId).toBe("init:1001");
         expect(route.destination).toEqual(stored.destination);
         expect(route.replyToId).toBe("message-2");
+        expect(route.routeGeneration).toBe("generation-2");
         expect(route.expiresAt).toBe(3_000);
       }
       store.setAdapterRoute({

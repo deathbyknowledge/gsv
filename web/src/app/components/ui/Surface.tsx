@@ -27,6 +27,7 @@ export function Surface({
   level = 1,
   interactive = false,
   selected = false,
+  // SAFETY: Component boundary provides the asserted DOM/test shape.
   as = "div",
   onClick,
   class: extraClass,

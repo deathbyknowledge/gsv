@@ -1,7 +1,7 @@
 import type { BinaryBody } from "@humansandmachines/gsv/protocol";
 import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
 
-export type ErrorShape = {
+export type FrameError = {
   code: number;
   message: string;
   details?: unknown;
@@ -33,7 +33,7 @@ export type ResponseErrFrame = {
   type: "res";
   id: string;
   ok: false;
-  error: ErrorShape;
+  error: FrameError;
 };
 
 export type ResponseFrame<S extends SyscallName = SyscallName> =

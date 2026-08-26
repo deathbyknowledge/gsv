@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChatHistory } from "./processes";
+import { preserveDirectedConversationDelivery } from "./conversations";
 import {
   SYSTEM_ERROR_PREFIXES,
   addOptimisticUserMessage,
@@ -25,6 +26,23 @@ function history(messages: ChatHistory["messages"]): ChatHistory {
 }
 
 describe("chat transcript rows", () => {
+  it("does not downgrade a live directed Message during history synchronization", () => {
+    const current = {
+      id: "conversation:msg-one",
+      role: "assistant" as const,
+      text: "hello",
+      time: "",
+      timestamp: 1,
+      delivery: "directed" as const,
+    };
+    const synchronized = { ...current, delivery: "sync" as const };
+
+    expect(preserveDirectedConversationDelivery(current, synchronized).delivery)
+      .toBe("directed");
+    expect(preserveDirectedConversationDelivery(undefined, synchronized).delivery)
+      .toBe("sync");
+  });
+
   it("renders media attached to a historical assistant reply", () => {
     const media = {
       type: "document",
@@ -55,7 +73,7 @@ describe("chat transcript rows", () => {
     ]);
   });
 
-  it("shows final reply media from the live output signal", () => {
+  it("shows canonical Message media from the live output signal", () => {
     const media = {
       type: "image",
       mimeType: "image/png",
@@ -133,6 +151,81 @@ describe("chat transcript rows", () => {
       toolName: "Read",
       text: "file contents",
     });
+  });
+
+  it("keeps tool result media available to the transcript", () => {
+    const media = [{
+      type: "image",
+      mimeType: "image/jpeg",
+      key: "var/media/0/pid/tool-image",
+      path: "/var/media/0/pid/tool-image",
+    }];
+    const rows = transcriptRowsFromHistory(history([
+      {
+        id: 1,
+        clientId: "1",
+        role: "toolResult",
+        runId: "run-1",
+        content: {
+          toolName: "Read",
+          toolCallId: "call-image",
+          output: { path: "/var/media/0/pid/tool-image" },
+          outcome: "completed",
+          media,
+        },
+        text: "image result",
+        timestamp: 1,
+        origin: undefined,
+        metadata: undefined,
+      },
+    ]));
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        role: "toolResult",
+        toolCallId: "call-image",
+        media,
+      }),
+    ]);
+  });
+
+  it("keeps retained resource blocks available to the transcript", () => {
+    const resources = [{
+      type: "resource",
+      ref: {
+        type: "file",
+        target: "gsv",
+        path: "/root/.gsv/media/archived-media:one",
+        revision: '"revision-one"',
+        contentType: "image/png",
+        size: 3,
+      },
+    }];
+    const rows = transcriptRowsFromHistory(history([{
+      id: 1,
+      clientId: "1",
+      role: "toolResult",
+      runId: "run-1",
+      content: {
+        toolName: "Read",
+        toolCallId: "call-resource",
+        output: { kind: "image" },
+        outcome: "completed",
+        resources,
+      },
+      text: "image result",
+      timestamp: 1,
+      origin: undefined,
+      metadata: undefined,
+    }]));
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        role: "toolResult",
+        toolCallId: "call-resource",
+        media: resources,
+      }),
+    ]);
   });
 
   it.each([
@@ -603,16 +696,46 @@ describe("chat transcript rows", () => {
       callId: "call-1",
       toolName: "Shell",
       syscall: "shell.exec",
+      target: "macbook",
       args: { input: "ls" },
       createdAt: 1,
     }, { pid: "pid-1" }).state;
 
     expect(state.runState).toBe("awaiting_hil");
-    expect(state.pendingHil).toMatchObject({ pid: "pid-1", requestId: "hil-1" });
+    expect(state.pendingHil).toMatchObject({
+      pid: "pid-1",
+      requestId: "hil-1",
+      target: "macbook",
+    });
     expect(state.rows).toEqual(expect.arrayContaining([
       expect.objectContaining({ role: "assistant", text: "Hello", streaming: true }),
       expect.objectContaining({ role: "tool", toolCallId: "call-1", status: "running" }),
     ]));
+  });
+
+  it("refreshes history without entering an unanswerable HIL state", () => {
+    const state = {
+      ...emptyChatRuntimeState("pid-1"),
+      activeRunId: "run-1",
+      runState: "running" as const,
+    };
+
+    const result = applyChatSignal(state, "proc.run.hil.requested", {
+      pid: "pid-1",
+      requestId: "hil-legacy",
+      runId: "run-1",
+      callId: "call-1",
+      toolName: "Shell",
+      syscall: "shell.exec",
+      args: { input: "ls", target: "gsv" },
+      createdAt: 1,
+    }, { pid: "pid-1" });
+
+    expect(result.matched).toBe(true);
+    expect(result.refreshHistory).toBe(true);
+    expect(result.state).toBe(state);
+    expect(result.state.runState).toBe("running");
+    expect(result.state.pendingHil).toBeNull();
   });
 
   it("uses stream partial snapshots as authoritative assistant text", () => {

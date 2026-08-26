@@ -22,6 +22,7 @@ import type { FsEditArgs, FsEditResult } from "../../syscalls/edit";
 import type { FsDeleteArgs, FsDeleteResult } from "../../syscalls/delete";
 import type { FsSearchArgs, FsSearchResult } from "../../syscalls/search";
 import type {
+  FileResourceReference,
   FsCopyArgs,
   FsCopyEndpoint,
   FsCopyResult,
@@ -32,14 +33,14 @@ import type {
   FsTransferStatArgs,
   FsTransferStatResult,
 } from "@humansandmachines/gsv/protocol";
-import { bodyFromText, bodyToBytes } from "@humansandmachines/gsv/protocol";
+import { bodyFromText, bodyToBytes, type JsonObject } from "@humansandmachines/gsv/protocol";
 import { createNativeFileSystem } from "./filesystem";
 
 export type FsDeviceTransport = {
   requestDevice(
     deviceId: string,
     call: string,
-    args: unknown,
+    args: JsonObject,
     options?: { ttlMs?: number; body?: FrameBody; signal?: AbortSignal },
   ): Promise<ResponseOkFrame>;
 };
@@ -49,12 +50,23 @@ export type FsOpenedSource = {
   size: number;
   contentType?: string;
 };
+type FsReadResponse = { data: FsReadResult; body?: FrameBody };
+type FsReadFileSuccess = Extract<
+  FsReadResult,
+  { ok: true; kind: "text" | "image" }
+>;
+type TextLineSelection = {
+  content: string;
+  lines: number;
+  truncated: boolean;
+  partial: boolean;
+};
 
 export async function openFsSource(
   source: Required<FsCopyEndpoint>,
   ctx: KernelContext,
   options?: {
-    fs?: GsvFs;
+    fs?: Pick<GsvFs, "openFile">;
     transport?: FsDeviceTransport;
   },
 ): Promise<FsOpenedSource> {
@@ -124,6 +136,20 @@ export async function handleFsRead(
     const contentType = opened.contentType ?? inferContentType(p);
 
     if (contentType.trim().toLowerCase().startsWith("image/") && !isTextContentType(contentType)) {
+      if (args.representation === "resource") {
+        await opened.body.cancel().catch(() => {});
+        if (!opened.etag) {
+          throw new Error(`Unable to identify file revision: ${p}`);
+        }
+        return readImageResource(p, contentType, opened.size, {
+          type: "file",
+          target: "gsv",
+          path: p,
+          revision: opened.etag,
+          contentType,
+          size: opened.size,
+        });
+      }
       return readImage(p, contentType, opened.body, opened.size);
     }
 
@@ -142,7 +168,15 @@ export async function handleFsRead(
       Infinity,
       ctx.requestSignal,
     );
-    return readText(bytes, p, contentType, st.size, args.offset, args.limit);
+    return readText(
+      bytes,
+      p,
+      contentType,
+      st.size,
+      args.offset,
+      args.limit,
+      args.maxBytes,
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return { data: { ok: false, error: msg } };
@@ -156,7 +190,8 @@ function readText(
   size: number,
   offset?: number,
   limit?: number,
-): { data: FsReadResult; body?: FrameBody } {
+  maxBytes?: number,
+): FsReadResponse {
   let text: string;
   try {
     text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
@@ -171,19 +206,87 @@ function readText(
   const allLines = text.split("\n");
   const start = offset ?? 0;
   const count = limit ?? allLines.length;
-  const selected = allLines.slice(start, start + count);
+  const requested = allLines.slice(start, start + count);
+  const selection = selectTextLines(requested, maxBytes);
+  const truncated = selection.truncated || start + requested.length < allLines.length;
+  const nextOffset = !selection.partial && truncated && selection.lines > 0
+    ? start + selection.lines
+    : undefined;
+  const data: FsReadFileSuccess = {
+    ok: true,
+    path,
+    kind: "text",
+    contentType,
+    lines: selection.lines,
+    size,
+  };
+  if (truncated) {
+    data.truncated = true;
+  }
+  if (nextOffset !== undefined) {
+    data.nextOffset = nextOffset;
+  }
 
   return {
-    data: {
-      ok: true,
-      path,
-      kind: "text",
-      contentType,
-      lines: selected.length,
-      size,
-    },
-    body: bodyFromText(selected.join("\n")),
+    data,
+    body: bodyFromText(selection.content),
   };
+}
+
+function selectTextLines(
+  lines: string[],
+  maxBytes?: number,
+): TextLineSelection {
+  if (maxBytes === undefined) {
+    return {
+      content: lines.join("\n"),
+      lines: lines.length,
+      truncated: false,
+      partial: false,
+    };
+  }
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    throw new Error("fs.read maxBytes must be a positive safe integer");
+  }
+
+  const encoder = new TextEncoder();
+  const selected: string[] = [];
+  let usedBytes = 0;
+  let partial = false;
+  for (const line of lines) {
+    const lineBytes = encoder.encode(line);
+    const separatorBytes = selected.length === 0 ? 0 : 1;
+    if (usedBytes + separatorBytes + lineBytes.byteLength <= maxBytes) {
+      selected.push(line);
+      usedBytes += separatorBytes + lineBytes.byteLength;
+      continue;
+    }
+    if (selected.length === 0) {
+      selected.push(decodeUtf8Prefix(lineBytes, maxBytes));
+      partial = true;
+    }
+    break;
+  }
+
+  return {
+    content: selected.join("\n"),
+    lines: selected.length,
+    truncated: partial || selected.length < lines.length,
+    partial,
+  };
+}
+
+function decodeUtf8Prefix(bytes: Uint8Array, maxBytes: number): string {
+  let end = Math.min(bytes.byteLength, maxBytes);
+  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
+  while (end > 0) {
+    try {
+      return decoder.decode(bytes.subarray(0, end));
+    } catch {
+      end -= 1;
+    }
+  }
+  return "";
 }
 
 function readImage(
@@ -191,7 +294,7 @@ function readImage(
   mimeType: string,
   stream: ReadableStream<Uint8Array>,
   size: number,
-): { data: FsReadResult; body?: FrameBody } {
+): FsReadResponse {
   return {
     data: {
       ok: true,
@@ -203,6 +306,24 @@ function readImage(
     body: {
       stream,
       length: size,
+    },
+  };
+}
+
+function readImageResource(
+  path: string,
+  contentType: string,
+  size: number,
+  resource: FileResourceReference,
+): FsReadResponse {
+  return {
+    data: {
+      ok: true,
+      path,
+      kind: "image",
+      contentType,
+      size,
+      resource,
     },
   };
 }
@@ -234,7 +355,7 @@ export async function handleFsTransferStat(
   ctx: KernelContext,
 ): Promise<FsTransferStatResult> {
   const fs = createNativeFileSystem(ctx);
-  const rawPath = typeof args.path === "string" ? args.path.trim() : "";
+  const rawPath = args.path.trim();
   if (!rawPath) {
     return { ok: false, error: "fs.transfer.stat requires path" };
   }
@@ -247,6 +368,15 @@ export async function handleFsTransferStat(
       const opened = await fs.openFile(path);
       contentType = opened.contentType ?? inferContentType(path);
       await opened.body?.cancel().catch(() => {});
+      return {
+        ok: true,
+        path,
+        size: stat.size,
+        isFile: true,
+        isDirectory: false,
+        contentType,
+        revision: opened.etag,
+      };
     }
     return {
       ok: true,
@@ -270,7 +400,7 @@ export async function handleFsTransferSend(
   frameId: string,
 ): Promise<ResponseOkFrame<"fs.transfer.send">> {
   const fs = createNativeFileSystem(ctx);
-  const rawPath = typeof args.path === "string" ? args.path.trim() : "";
+  const rawPath = args.path.trim();
   if (!rawPath) {
     return {
       type: "res",
@@ -283,6 +413,15 @@ export async function handleFsTransferSend(
 
   try {
     const opened = await fs.openFile(path);
+    if (args.revision && opened.etag !== args.revision) {
+      await opened.body?.cancel("Source revision is no longer available").catch(() => {});
+      return {
+        type: "res",
+        id: frameId,
+        ok: true,
+        data: { ok: false, error: `Source revision is no longer available: ${path}` },
+      };
+    }
     if (opened.status !== 200 || !opened.body) {
       throw new Error(`Unable to open source for transfer: ${path}`);
     }
@@ -295,6 +434,7 @@ export async function handleFsTransferSend(
         path,
         size: opened.size,
         contentType: opened.contentType ?? inferContentType(path),
+        revision: opened.etag,
       },
       body: { stream: opened.body, length: opened.size },
     };
@@ -317,7 +457,7 @@ export async function handleFsTransferReceive(
   body?: FrameBody,
 ): Promise<FsTransferReceiveResult> {
   const fs = createNativeFileSystem(ctx);
-  const rawPath = typeof args.path === "string" ? args.path.trim() : "";
+  const rawPath = args.path.trim();
   if (!rawPath) {
     await body?.stream.cancel().catch(() => {});
     return { ok: false, error: "fs.transfer.receive requires path" };
@@ -689,18 +829,25 @@ async function openDeviceSource(
       `Source is not a file: ${source.target}:${source.path}`,
     );
   }
+  const sendArgs: JsonObject = { path: source.path };
+  if (stat.revision) sendArgs.revision = stat.revision;
   const response = await transport.requestDevice(
     source.target,
     "fs.transfer.send",
-    { path: source.path },
+    sendArgs,
     { ttlMs: 120_000, signal },
   );
+  // SAFETY: The fs.transfer.send response is decoded by the transport contract.
   const result = response.data as FsTransferSendResult;
   if (!result.ok) {
     throw new Error(result.error);
   }
   if (!response.body) {
     throw new Error("fs.transfer.send returned no response body");
+  }
+  if (stat.revision && result.revision !== stat.revision) {
+    void response.body.stream.cancel("Source revision changed during transfer");
+    throw new Error(`Source revision changed during transfer: ${source.path}`);
   }
   if (response.body.length !== stat.size) {
     void response.body.stream.cancel();
@@ -715,9 +862,10 @@ async function requestDeviceResult<T>(
   transport: FsDeviceTransport,
   deviceId: string,
   call: string,
-  args: unknown,
+  args: JsonObject,
   options?: { ttlMs?: number; body?: FrameBody; signal?: AbortSignal },
 ): Promise<T> {
+  // SAFETY: The caller selects T from the syscall response contract for this request.
   return (await transport.requestDevice(deviceId, call, args, options)).data as T;
 }
 
@@ -761,12 +909,8 @@ function normalizeCopyEndpoint(
   endpoint: FsCopyEndpoint,
   ctx: KernelContext,
 ): Required<FsCopyEndpoint> {
-  const target =
-    typeof endpoint?.target === "string" && endpoint.target.trim()
-      ? endpoint.target.trim()
-      : "gsv";
-  const rawPath =
-    typeof endpoint?.path === "string" ? endpoint.path.trim() : "";
+  const target = endpoint.target?.trim() || "gsv";
+  const rawPath = endpoint.path?.trim() ?? "";
   if (!rawPath) {
     throw new Error("fs.copy endpoint path is required");
   }
@@ -839,7 +983,7 @@ export async function handleFsSearch(
   args: FsSearchArgs,
   ctx: KernelContext,
 ): Promise<FsSearchResult> {
-  const query = typeof args.query === "string" ? args.query.trim() : "";
+  const query = args.query.trim();
   if (!query) {
     return { ok: false, error: "Search query is required." };
   }

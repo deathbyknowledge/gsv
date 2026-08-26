@@ -1,4 +1,7 @@
-import { bodyToBytes } from "../../../packages/gsv/src/protocol/body.js";
+import {
+  bodyToBytes,
+  byteStreamChunk,
+} from "../../../packages/gsv/src/protocol/body.js";
 import type { BinaryBody } from "./types";
 
 export {
@@ -38,7 +41,7 @@ export async function readResponseBodyBytes(
   try {
     declaredBytes = responseBodyLength(response, options.expectedBytes);
   } catch (error) {
-    await cancelResponseBody(response, error);
+    await cancelResponseBody(response, String(error));
     throw error;
   }
   if (declaredBytes !== undefined && declaredBytes > maxBytes) {
@@ -56,13 +59,13 @@ export async function readResponseBodyBytes(
     return await bodyToBytes(
       {
         stream: response.body,
-        ...(declaredBytes === undefined ? {} : { length: declaredBytes }),
+        ...(declaredBytes === undefined ? undefined : { length: declaredBytes }),
       },
       maxBytes,
       options.signal,
     );
   } catch (error) {
-    await cancelResponseBody(response, error);
+    await cancelResponseBody(response, String(error));
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`${label} could not be read: ${detail}`);
   }
@@ -83,7 +86,7 @@ export async function responseBodyToBinaryBody(
   try {
     declaredBytes = responseBodyLength(response, options.expectedBytes);
   } catch (error) {
-    await cancelResponseBody(response, error);
+    await cancelResponseBody(response, String(error));
     throw error;
   }
   if (declaredBytes !== undefined && declaredBytes > maxBytes) {
@@ -109,27 +112,30 @@ export async function responseBodyToBinaryBody(
 export function binaryBodyFromOwnedBytes(
   bytes: Uint8Array,
 ): BinaryBody & { length: number } {
+  const source: UnderlyingByteSource = {
+    type: "bytes",
+    start(controller) {
+      if (bytes.byteLength > 0) {
+        controller.enqueue(byteStreamChunk(bytes));
+      }
+      controller.close();
+    },
+  };
   return {
     length: bytes.byteLength,
-    stream: new ReadableStream<Uint8Array>({
-      start(controller) {
-        if (bytes.byteLength > 0) {
-          controller.enqueue(bytes);
-        }
-        controller.close();
-      },
-    }),
+    stream: new ReadableStream(source),
   };
 }
 
 export async function cancelResponseBody(
   response: Response,
-  reason?: unknown,
+  reason?: Error | string,
 ): Promise<void> {
   if (response.body && !response.body.locked) {
     await response.body.cancel(reason).catch(() => {});
   }
 }
+
 
 function responseBodyLength(
   response: Response,

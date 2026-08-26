@@ -1,7 +1,13 @@
 import type {
+  JsonObject,
+  JsonValue,
+} from "@humansandmachines/gsv/protocol";
+import { jsonObjectSchema } from "@humansandmachines/gsv/protocol";
+import type {
   OAuthAccountRecord,
   OAuthStore,
 } from "../oauth-store";
+import { z } from "zod";
 
 export const OPENAI_CODEX_PROVIDER = "openai-codex";
 export const OPENAI_CODEX_ACCOUNT_KEY = "default";
@@ -19,6 +25,11 @@ const OPENAI_CODEX_DEVICE_EXPIRES_SECONDS = 15 * 60;
 const OPENAI_CODEX_REFRESH_SKEW_MS = 60_000;
 const OPENAI_CODEX_JWT_CLAIM_PATH = "https://api.openai.com/auth";
 const MAX_AUTH_RESPONSE_BYTES = 16 * 1024;
+const nonemptyTextSchema = z.string().trim().min(1);
+const positiveIntegerSchema = z.union([
+  z.number(),
+  z.string().trim().min(1).transform(Number),
+]).pipe(z.number().finite().positive()).transform(Math.floor);
 
 export type OpenAICodexDeviceStart = {
   deviceAuthId: string;
@@ -157,6 +168,13 @@ export async function refreshOpenAICodexAccount(
     refresh_token: account.refreshToken,
     client_id: OPENAI_CODEX_CLIENT_ID,
   }, "refresh", fetcher, account.refreshToken);
+  const metadata: OAuthAccountRecord["metadata"] = {
+    ...account.metadata,
+    refreshedAt: now,
+  };
+  if (token.accountId) {
+    metadata.chatgptAccountId = token.accountId;
+  }
   return oauth.upsertAccount({
     uid: account.uid,
     kind: account.kind,
@@ -170,11 +188,7 @@ export async function refreshOpenAICodexAccount(
     accessToken: token.accessToken,
     refreshToken: token.refreshToken,
     expiresAt: token.expiresAt,
-    metadata: {
-      ...account.metadata,
-      ...(token.accountId ? { chatgptAccountId: token.accountId } : {}),
-      refreshedAt: now,
-    },
+    metadata,
   });
 }
 
@@ -182,7 +196,7 @@ export function openAICodexAccountNeedsRefresh(
   account: OAuthAccountRecord,
   now = Date.now(),
 ): boolean {
-  return typeof account.expiresAt === "number"
+  return account.expiresAt !== null
     && account.expiresAt <= now + OPENAI_CODEX_REFRESH_SKEW_MS;
 }
 
@@ -232,12 +246,12 @@ async function exchangeOpenAICodexToken(
   };
 }
 
-async function readJsonObject(response: Response): Promise<Record<string, unknown>> {
+async function readJsonObject(response: Response): Promise<JsonObject> {
   const text = await readLimitedText(response);
   try {
-    const parsed = JSON.parse(text);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
+    const parsed = jsonObjectSchema.safeParse(JSON.parse(text));
+    if (parsed.success) {
+      return parsed.data;
     }
   } catch {
     // handled below
@@ -278,50 +292,46 @@ async function readLimitedText(response: Response, maxBytes = MAX_AUTH_RESPONSE_
 
 function parseOAuthErrorCode(body: string): string | null {
   try {
-    const parsed = JSON.parse(body);
-    const error = parsed?.error;
-    if (typeof error === "string") return error;
-    if (error && typeof error === "object") {
-      const code = (error as Record<string, unknown>).code;
-      return typeof code === "string" ? code : null;
+    const parsed = jsonObjectSchema.parse(JSON.parse(body));
+    const directError = stringValue(parsed.error);
+    if (directError) {
+      return directError;
     }
+    const nestedError = objectField(parsed.error);
+    return stringValue(nestedError?.code);
   } catch {
     // not JSON
   }
   return null;
 }
 
-function stringField(record: Record<string, unknown>, key: string): string | null {
-  const value = record[key];
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+function stringField(record: JsonObject, key: string): string | null {
+  return stringValue(record[key]);
 }
 
-function positiveNumberField(record: Record<string, unknown>, key: string): number | null {
-  const value = record[key];
-  const number = typeof value === "string" ? Number(value.trim()) : value;
-  return typeof number === "number" && Number.isFinite(number) && number > 0
-    ? Math.floor(number)
-    : null;
+function positiveNumberField(record: JsonObject, key: string): number | null {
+  const parsed = positiveIntegerSchema.safeParse(record[key]);
+  return parsed.success ? parsed.data : null;
 }
 
-function accountIdFromJwtPayload(payload: Record<string, unknown>): string | null {
+function accountIdFromJwtPayload(payload: JsonObject): string | null {
   const auth = objectField(payload[OPENAI_CODEX_JWT_CLAIM_PATH]);
   return stringValue(auth?.chatgpt_account_id)
     ?? stringValue(payload.chatgpt_account_id)
     ?? stringValue(payload.account_id);
 }
 
-function objectField(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
+function objectField(value: JsonValue | undefined): JsonObject | null {
+  const parsed = jsonObjectSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
-function stringValue(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
+function stringValue(value: JsonValue | undefined): string | null {
+  const parsed = nonemptyTextSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
-function decodeJwtPayload(token: string): Record<string, unknown> {
+function decodeJwtPayload(token: string): JsonObject {
   const parts = token.split(".");
   if (parts.length !== 3) {
     throw new Error("Invalid JWT");
@@ -329,9 +339,9 @@ function decodeJwtPayload(token: string): Record<string, unknown> {
   const normalized = parts[1].replace(/-/g, "+").replace(/_/g, "/");
   const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
   const decoded = atob(padded);
-  const parsed = JSON.parse(decoded);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+  const parsed = jsonObjectSchema.safeParse(JSON.parse(decoded));
+  if (!parsed.success) {
     throw new Error("Invalid JWT payload");
   }
-  return parsed as Record<string, unknown>;
+  return parsed.data;
 }

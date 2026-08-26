@@ -1,0 +1,39 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gsv-managed-telegram",
+  "main": "src/managed.ts",
+  "compatibility_date": "2026-07-29",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MANAGED_TELEGRAM_PEER",
+        "class_name": "ManagedTelegramPeer"
+      },
+      {
+        "name": "MANAGED_TELEGRAM_PAIRING",
+        "class_name": "ManagedTelegramPairing"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ManagedTelegramPeer", "ManagedTelegramPairing"]
+    }
+  ],
+  "services": [
+    {
+      "binding": "GATEWAY",
+      "service": "gsv-managed-gateway",
+      "entrypoint": "AdapterGatewayEntrypoint",
+      "props": {
+        "id": "telegram",
+        "calls": ["adapter.inbound", "adapter.state.update"]
+      }
+    }
+  ]
+}

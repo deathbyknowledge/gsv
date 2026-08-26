@@ -1,0 +1,33 @@
+[workspace]
+members = [
+    "apps/*",
+    "crates/*",
+    "helpers/*",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.4.1"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+
+[profile.dev.package.gestures]
+opt-level = 3
+debug-assertions = false
+overflow-checks = false
+codegen-units = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+debug-assertions = false
+overflow-checks = false
+codegen-units = 1
+
+[patch.crates-io]
+# MediaPipe's published gesture models use a small set of TFLite operations
+# that tract 0.23.4 can execute but does not yet import. Keep the importer
+# delta local and reviewable until those generic operators are upstream.
+tract-tflite = { path = "vendor/tract-tflite" }

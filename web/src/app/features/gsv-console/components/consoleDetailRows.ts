@@ -1,6 +1,7 @@
 import type { ListRowStatus } from "../../../components/ui/ListRow";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { ConsoleDetailRow } from "./ConsoleDetailPage";
+import { z } from "zod";
 
 export function detailRow(
   id: string,
@@ -8,11 +9,11 @@ export function detailRow(
   value: string | number | boolean | null | undefined,
   options: Pick<ConsoleDetailRow, "icon" | "status" | "statusLabel" | "labelInfo"> = {},
 ): ConsoleDetailRow | null {
-  const sub = typeof value === "boolean"
+  const sub = z.boolean().safeParse(value).success
     ? (value ? "YES" : "NO")
-    : typeof value === "number"
+    : z.number().safeParse(value).success
       ? String(value)
-      : value?.trim() ?? "";
+      : z.string().safeParse(value).data?.trim() ?? "";
 
   return sub ? { id, label, sub, ...options } : null;
 }

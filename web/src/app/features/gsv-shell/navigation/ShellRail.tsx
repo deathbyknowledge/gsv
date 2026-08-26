@@ -4,7 +4,7 @@ import { APP_VERSION } from "../../../../appVersion";
 import { GsvMark } from "../../../components/ui/GsvMark";
 import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
-import { OBJECT_GLYPH_ICON, type ObjectGlyph } from "../../../components/ui/objectGlyph";
+import { OBJECT_GLYPH_ICON } from "../../../components/ui/objectGlyph";
 import {
   type DesktopChildObject,
   type DesktopObject,
@@ -41,23 +41,25 @@ type ShellRailProps = {
 /** Sections that show a "create" entry in their drawer. The label is the same
  *  for every section. Messengers are intentionally absent — connecting a
  *  messenger is done from its dedicated platform page. */
-const CREATE_LABEL: Record<string, string> = {
-  machines: "+ CONNECT NEW",
-  integrations: "+ CONNECT NEW",
-};
+const CREATE_LABEL = new Map<DesktopObjectId, string>([
+  ["machines", "+ CONNECT NEW"],
+  ["integrations", "+ CONNECT NEW"],
+]);
 
 /** Drawer id for the GSV system-surfaces section (the one non-object section). */
 const GSV_DRAWER = "gsv";
 
 /** Unambiguous GSV system surfaces. "settings" is handled separately because it
  *  is overloaded (crew/tasks/config/object-detail all route through it). */
-const GSV_PLAIN_SURFACES: ShellSurfaceId[] = ["files", "repositories", "library", "terminal"];
+const GSV_PLAIN_SURFACES: ShellSurfaceId[] = ["files", "repositories", "library", "terminal", "runtime", "responsibilities"];
 
 const GSV_RAIL_ITEMS: { label: string; surface: ShellSurfaceId }[] = [
   { label: "FILES", surface: "files" },
   { label: "LIBRARY", surface: "library" },
   { label: "TERMINAL", surface: "terminal" },
   { label: "REPOS", surface: "repositories" },
+  { label: "WORK", surface: "runtime" },
+  { label: "RESPONSIBILITIES", surface: "responsibilities" },
   { label: "OVERVIEW", surface: "settings" },
 ];
 
@@ -147,6 +149,19 @@ export function ShellRail({
 
   const isSectionActive = ownsActiveObject;
   const gsvActive = activeSectionId === GSV_DRAWER;
+  const isGsvItemActive = (surface: ShellSurfaceId): boolean => {
+    if (!gsvActive) {
+      return false;
+    }
+    if (surface === "runtime") {
+      return activeSurface === "runtime"
+        || (activeSurface === "settings" && settingsKind === "tasks");
+    }
+    if (surface === "settings") {
+      return activeSurface === "settings" && settingsView === "overview";
+    }
+    return activeSurface === surface;
+  };
 
   // Shared by both the expanded rows and the collapsed icon dots so collapsed
   // navigation follows the same per-object flow.
@@ -175,7 +190,7 @@ export function ShellRail({
             title={object.label}
             onClick={() => openSection(object)}
           >
-            <Icon name={OBJECT_GLYPH_ICON[object.glyph as ObjectGlyph]} size={19} />
+            <Icon name={OBJECT_GLYPH_ICON[object.glyph]} size={19} />
             <span class="gsv-rail-status-dot" style={{ background: statusColor(object.status), color: statusColor(object.status) }} />
           </button>
         ))}
@@ -215,7 +230,7 @@ export function ShellRail({
                   >
                     <span class="gsv-rail-node-icon">
                       <span class="gsv-rail-node-disc">
-                        <Icon name={OBJECT_GLYPH_ICON[object.glyph as ObjectGlyph]} size={19} />
+                        <Icon name={OBJECT_GLYPH_ICON[object.glyph]} size={19} />
                       </span>
                     </span>
                     <span class="gsv-rail-row-copy">
@@ -236,13 +251,13 @@ export function ShellRail({
                           {child.label}
                         </button>
                       ))}
-                      {CREATE_LABEL[object.id] ? (
+                      {CREATE_LABEL.get(object.id) ? (
                         <button
                           type="button"
                           class={`gsv-rail-subitem gsv-rail-subitem-create${object.id === createSection ? " is-active" : ""}`}
                           onClick={() => onCreateObject(object.id)}
                         >
-                          {CREATE_LABEL[object.id]}
+                          {CREATE_LABEL.get(object.id)}
                         </button>
                       ) : null}
                     </div>
@@ -271,7 +286,7 @@ export function ShellRail({
                   <button
                     key={item.surface}
                     type="button"
-                    class={`gsv-rail-subitem${gsvActive && activeSurface === item.surface ? " is-active" : ""}`}
+                    class={`gsv-rail-subitem${isGsvItemActive(item.surface) ? " is-active" : ""}`}
                     onClick={() => onOpenSurface(item.surface)}
                   >
                     {item.label}

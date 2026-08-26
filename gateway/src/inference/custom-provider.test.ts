@@ -1,11 +1,17 @@
 import type { AssistantMessageEvent, Context } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { streamWithCustomProvider } from "./custom-provider";
 
 const CONTEXT: Context = {
   systemPrompt: "",
   messages: [],
 };
+
+const openAiPayloadSchema = z.object({
+  stream_options: z.unknown().optional(),
+}).passthrough();
+type OpenAiPayload = z.infer<typeof openAiPayloadSchema>;
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -35,8 +41,8 @@ describe("streamWithCustomProvider", () => {
     });
 
     const message = await stream.result();
-    const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
-    const payload = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+    const init = fetchMock.mock.calls[0]?.[1];
+    const payload = openAiPayloadSchema.parse(JSON.parse(String(init?.body ?? "{}")));
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(new Headers(init?.headers).has("authorization")).toBe(false);
@@ -67,7 +73,7 @@ describe("streamWithCustomProvider", () => {
 
     await stream.result();
     const [url, init] = fetchMock.mock.calls[0] ?? [];
-    const payload = JSON.parse(String((init as RequestInit | undefined)?.body ?? "{}")) as Record<string, unknown>;
+    const payload = openAiPayloadSchema.parse(JSON.parse(String(init?.body ?? "{}")));
 
     expect(url).toBe("https://api.openai.com/v1/chat/completions");
     expect(payload.stream_options).toEqual({ include_usage: true });
@@ -123,7 +129,7 @@ describe("streamWithCustomProvider", () => {
   });
 });
 
-function openAiChatSseChunk(payload: Record<string, unknown>): string {
+function openAiChatSseChunk(payload: OpenAiPayload): string {
   return `data: ${JSON.stringify(payload)}\n\n`;
 }
 

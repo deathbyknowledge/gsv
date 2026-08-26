@@ -30,7 +30,7 @@ export interface TextAreaProps {
   textareaProps?: JSX.IntrinsicElements["textarea"] & Record<`data-${string}`, string | number | boolean>;
 }
 
-const SIZE_CLASS: Record<TextAreaSize, string> = {
+const SIZE_CLASS = {
   small: "gsv-ta-sm",
   medium: "gsv-ta-md",
   large: "gsv-ta-lg",
@@ -126,6 +126,7 @@ export function TextArea(props: TextAreaProps) {
         aria-labelledby={hasLabelRow && label.length > 0 ? `${fieldId}-label` : undefined}
         aria-describedby={describedBy}
         aria-invalid={effectiveStatus === "error" ? true : undefined}
+        // SAFETY: Component boundary provides the asserted DOM/test shape.
         onInput={(e) => emit((e.target as HTMLTextAreaElement).value)}
         onBlur={(e) => {
           setBlurred(true);

@@ -10,6 +10,8 @@ describe("gateway frame bodies", () => {
     expect(Array.from(new Uint8Array(await new Response(body.stream).arrayBuffer()))).toEqual([1, 2, 3]);
   });
 
+  // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+
   it("materializes response bodies as typed blobs", async () => {
     const body = frameBodyFromBlob(new Blob([new Uint8Array([4, 5, 6])]));
     const blob = await frameBodyToBlob(body, {
@@ -53,6 +55,7 @@ describe("gateway frame bodies", () => {
       label: "Speech audio",
     })).rejects.toThrow("Speech audio length is invalid: -1");
     expect(cancelReason).toBeInstanceOf(Error);
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
     expect((cancelReason as Error).message).toBe("Speech audio length is invalid: -1");
   });
 });

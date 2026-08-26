@@ -91,10 +91,10 @@ function buildLlmConfig(parsed: ParsedArgs): AiTextGenerateConfig | undefined {
   if (!preset && Object.keys(overrides).length === 0) {
     return undefined;
   }
-  return {
-    ...(preset ? { preset: { id: preset } } : {}),
-    ...(Object.keys(overrides).length > 0 ? { overrides } : {}),
-  };
+  const config: AiTextGenerateConfig = {};
+  if (preset) config.preset = { id: preset };
+  if (Object.keys(overrides).length > 0) config.overrides = overrides;
+  return config;
 }
 
 function buildLlmOptions(parsed: ParsedArgs): AiTextGenerateOptions | undefined {
@@ -179,7 +179,9 @@ function hasOption(parsed: ParsedArgs, name: string): boolean {
 
 function optionValue(parsed: ParsedArgs, name: string): string | undefined {
   const value = parsed.options.get(name);
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+  if (value === undefined || value === true) return undefined;
+  const text = String(value).trim();
+  return text.length > 0 ? text : undefined;
 }
 
 function parsePositiveIntOption(value: string | undefined, label: string): number | undefined {
@@ -221,7 +223,7 @@ function ok(stdout: string): ExecResult {
   return { stdout, stderr: "", exitCode: 0 };
 }
 
-function okJson(value: unknown): ExecResult {
+function okJson<T>(value: T): ExecResult {
   return ok(`${JSON.stringify(value, null, 2)}\n`);
 }
 

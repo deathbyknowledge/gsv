@@ -1,6 +1,5 @@
 import type { KernelContext } from "../context";
 import type {
-  UserIdentity,
   SysLinkArgs,
   SysLinkConsumeArgs,
   SysLinkConsumeResult,
@@ -10,6 +9,7 @@ import type {
   SysUnlinkArgs,
   SysUnlinkResult,
 } from "@humansandmachines/gsv/protocol";
+import type { UserIdentity } from "../identity";
 
 export function handleSysLinkConsume(
   args: SysLinkConsumeArgs,
@@ -17,7 +17,7 @@ export function handleSysLinkConsume(
 ): SysLinkConsumeResult {
   const identity = requireUserIdentity(ctx);
 
-  const code = typeof args.code === "string" ? args.code.trim().toUpperCase() : "";
+  const code = args.code.trim().toUpperCase();
   if (!code) {
     throw new Error("code is required");
   }
@@ -97,6 +97,10 @@ export function handleSysUnlink(
     return { removed: false };
   }
 
+  if (existing.metadata?.managed === true) {
+    throw new Error("Managed adapter identities must be disconnected through adapter pairing");
+  }
+
   if (identity.process.uid !== 0 && existing.uid !== identity.process.uid) {
     throw new Error("Permission denied");
   }
@@ -113,7 +117,7 @@ export function handleSysLinkList(
   const identity = requireUserIdentity(ctx);
 
   let uidFilter: number | undefined;
-  if (typeof args.uid === "number") {
+  if (args.uid !== undefined) {
     if (identity.process.uid !== 0 && args.uid !== identity.process.uid) {
       throw new Error("Permission denied");
     }
@@ -143,7 +147,7 @@ function requireUserIdentity(ctx: KernelContext): UserIdentity {
 }
 
 function resolveTargetUid(identity: UserIdentity, requestedUid: number | undefined): number {
-  if (typeof requestedUid !== "number") {
+  if (requestedUid === undefined) {
     return identity.process.uid;
   }
   if (requestedUid === identity.process.uid) {

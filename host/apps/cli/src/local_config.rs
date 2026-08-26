@@ -1,0 +1,170 @@
+use std::path::PathBuf;
+
+use gsv::config::{self, CliConfig};
+
+use crate::auth_flow::format_unix_ms;
+use crate::cli::LocalConfigAction;
+
+fn mask_secret_edges(value: &str, prefix_chars: usize, suffix_chars: usize) -> String {
+    let chars = value.chars().collect::<Vec<_>>();
+    if chars.len() <= prefix_chars + suffix_chars {
+        return "****".to_string();
+    }
+
+    let prefix = chars.iter().take(prefix_chars).copied().collect::<String>();
+    let suffix = chars
+        .iter()
+        .skip(chars.len() - suffix_chars)
+        .copied()
+        .collect::<String>();
+    format!("{}...{}", prefix, suffix)
+}
+
+pub(crate) fn run_local_config(
+    action: LocalConfigAction,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match action {
+        LocalConfigAction::Get { key } => {
+            let cfg = CliConfig::load();
+            let value = match key.as_str() {
+                "gateway.url" => cfg.gateway.url.map(|s| s.to_string()),
+                "gateway.username" => cfg.gateway.username.map(|s| s.to_string()),
+                "gateway.token" => cfg.gateway.token.map(|s| mask_secret_edges(&s, 4, 4)),
+                "gateway.session_token" => cfg
+                    .gateway
+                    .session_token
+                    .map(|s| mask_secret_edges(&s, 4, 4)),
+                "gateway.session_token_id" => cfg.gateway.session_token_id,
+                "gateway.session_expires_at" => cfg.gateway.session_expires_at.map(format_unix_ms),
+                "gateway.session_expires_at_ms" => cfg
+                    .gateway
+                    .session_expires_at
+                    .map(|value| value.to_string()),
+                "release.channel" => cfg.release.channel,
+                "session.default_key" => cfg.session.default_key,
+                "device.id" | "node.id" => cfg.device.id,
+                "device.label" | "node.label" => cfg.device.label,
+                "device.token" | "node.token" => {
+                    cfg.device.token.map(|s| mask_secret_edges(&s, 4, 4))
+                }
+                "device.gateway_url" | "node.gateway_url" => cfg.device.gateway_url,
+                "device.gateway_username" | "node.gateway_username" => cfg.device.gateway_username,
+                "device.workspace" | "node.workspace" => {
+                    cfg.device.workspace.map(|path| path.display().to_string())
+                }
+                _ => {
+                    eprintln!("Unknown config key: {}", key);
+                    eprintln!("\nValid keys:");
+                    eprintln!("  gateway.url, gateway.username, gateway.token");
+                    eprintln!("  gateway.session_token, gateway.session_token_id, gateway.session_expires_at");
+                    eprintln!("  release.channel");
+                    eprintln!("  session.default_key");
+                    eprintln!("  device.id, device.label, device.token, device.workspace");
+                    eprintln!("  device.gateway_url, device.gateway_username");
+                    return Ok(());
+                }
+            };
+
+            match value {
+                Some(v) => println!("{}", v),
+                None => println!("(not set)"),
+            }
+        }
+
+        LocalConfigAction::Set { key, value } => {
+            if !matches!(
+                key.as_str(),
+                "gateway.url"
+                    | "gateway.username"
+                    | "gateway.token"
+                    | "gateway.session_token"
+                    | "gateway.session_token_id"
+                    | "gateway.session_expires_at"
+                    | "gateway.session_expires_at_ms"
+                    | "release.channel"
+                    | "session.default_key"
+                    | "device.id"
+                    | "node.id"
+                    | "device.label"
+                    | "node.label"
+                    | "device.token"
+                    | "node.token"
+                    | "device.gateway_url"
+                    | "node.gateway_url"
+                    | "device.gateway_username"
+                    | "node.gateway_username"
+                    | "device.workspace"
+                    | "node.workspace"
+            ) {
+                eprintln!("Unknown config key: {}", key);
+                return Ok(());
+            }
+            let parsed_expiry = matches!(
+                key.as_str(),
+                "gateway.session_expires_at" | "gateway.session_expires_at_ms"
+            )
+            .then(|| {
+                value.trim().parse::<i64>().map_err(|error| {
+                    format!(
+                        "gateway.session_expires_at must be unix ms integer: {}",
+                        error
+                    )
+                })
+            })
+            .transpose()?;
+            let release_channel =
+                (key == "release.channel").then(|| value.trim().to_ascii_lowercase());
+            if release_channel
+                .as_deref()
+                .is_some_and(|channel| channel != "stable" && channel != "dev")
+            {
+                eprintln!("release.channel must be 'stable' or 'dev'");
+                return Ok(());
+            }
+
+            CliConfig::update(|cfg| match key.as_str() {
+                "gateway.url" => cfg.gateway.url = Some(value.clone()),
+                "gateway.username" => cfg.gateway.username = Some(value.clone()),
+                "gateway.token" => cfg.gateway.token = Some(value.clone()),
+                "gateway.session_token" => cfg.gateway.session_token = Some(value.clone()),
+                "gateway.session_token_id" => cfg.gateway.session_token_id = Some(value.clone()),
+                "gateway.session_expires_at" | "gateway.session_expires_at_ms" => {
+                    cfg.gateway.session_expires_at = parsed_expiry;
+                }
+                "release.channel" => cfg.release.channel = release_channel.clone(),
+                "session.default_key" => {
+                    cfg.session.default_key = Some(config::normalize_session_key(&value))
+                }
+                "device.id" | "node.id" => cfg.device.id = Some(value.clone()),
+                "device.label" | "node.label" => cfg.device.label = Some(value.clone()),
+                "device.token" | "node.token" => cfg.device.token = Some(value.clone()),
+                "device.gateway_url" | "node.gateway_url" => {
+                    cfg.device.gateway_url = Some(value.clone())
+                }
+                "device.gateway_username" | "node.gateway_username" => {
+                    cfg.device.gateway_username = Some(value.clone())
+                }
+                "device.workspace" | "node.workspace" => {
+                    cfg.device.workspace = Some(PathBuf::from(value.clone()))
+                }
+                _ => {}
+            })?;
+            let display_value = if key == "session.default_key" {
+                config::normalize_session_key(&value)
+            } else {
+                value.clone()
+            };
+            println!(
+                "Set {} = {}",
+                key,
+                if key.contains("token") || key.contains("secret") {
+                    "****"
+                } else {
+                    &display_value
+                }
+            );
+        }
+    }
+
+    Ok(())
+}

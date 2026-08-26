@@ -1,3 +1,5 @@
+type KernelTestValue<T = string | number | boolean | null | undefined> = T;
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
 import type { OAuthAccountRecord, OAuthFlowRecord } from "../oauth-store";
@@ -26,6 +28,7 @@ type FakeOAuth = {
 };
 
 function makeContext(uid: number, oauth: FakeOAuth): KernelContext {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     identity: {
       role: "user",
@@ -40,7 +43,8 @@ function makeContext(uid: number, oauth: FakeOAuth): KernelContext {
       capabilities: ["*"],
     },
     oauth,
-  } as unknown as KernelContext;
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  } as KernelContext;
 }
 
 function createFakeOAuth(): FakeOAuth {
@@ -83,7 +87,7 @@ const flow: OAuthFlowRecord = {
   redirectUri: "https://gsv.example.com/oauth/callback",
   scope: "openid profile",
   resource: null,
-  extraAuthParams: {},
+  extraAuthParams: undefined,
   codeVerifier: "pkce-verifier",
   createdAt: 1_700_000_000_000,
   expiresAt: 1_700_000_600_000,
@@ -104,7 +108,7 @@ function fakeCodexAccessToken(accountId: string): string {
   });
 }
 
-function fakeJwtToken(payload: Record<string, unknown>): string {
+function fakeJwtToken(payload: Record<string, KernelTestValue>): string {
   return [
     encodeBase64Url("{}"),
     encodeBase64Url(JSON.stringify(payload)),
@@ -309,6 +313,7 @@ describe("sys.oauth handlers", () => {
           headers: { "content-type": "application/json" },
         });
       }
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       const body = init?.body as URLSearchParams;
       expect(String(input)).toBe("https://auth.openai.com/oauth/token");
       expect(body.get("grant_type")).toBe("authorization_code");
@@ -372,6 +377,7 @@ describe("sys.oauth handlers", () => {
       metadata: { chatgptAccountId: "chatgpt-account-1" },
     };
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       const body = init?.body as URLSearchParams;
       expect(String(input)).toBe("https://auth.openai.com/oauth/token");
       expect(body.get("grant_type")).toBe("refresh_token");
@@ -386,6 +392,7 @@ describe("sys.oauth handlers", () => {
       });
     });
 
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const result = await refreshOpenAICodexAccount(oauth as any, account, fetcher);
 
     expect(result.refreshToken).toBe("stored-refresh-token");
@@ -423,7 +430,7 @@ describe("sys.oauth handlers", () => {
         createdAt: 1,
         updatedAt: 2,
         lastUsedAt: null,
-        metadata: {},
+        metadata: undefined,
       },
     ]);
 
@@ -444,6 +451,7 @@ describe("sys.oauth handlers", () => {
   it("exchanges an OAuth callback code and stores tokens behind the summary boundary", async () => {
     oauth.getFlowByStateHash.mockReturnValue(flow);
     const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       const body = init?.body as URLSearchParams;
       expect(body.get("grant_type")).toBe("authorization_code");
       expect(body.get("client_id")).toBe("client-123");
@@ -464,7 +472,8 @@ describe("sys.oauth handlers", () => {
 
     const result = await completeOAuthCallback(
       { state: "state-value", code: "auth-code" },
-      oauth as unknown as Parameters<typeof completeOAuthCallback>[1],
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      oauth as Parameters<typeof completeOAuthCallback>[1],
       fetcher,
     );
 

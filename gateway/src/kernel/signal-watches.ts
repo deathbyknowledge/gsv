@@ -1,3 +1,7 @@
+import { z } from "zod";
+
+type SignalWatchState = {} | null;
+
 export type SignalWatchTargetInput = {
   kind: "process";
   processId: string;
@@ -12,7 +16,7 @@ export type SignalWatchRecord = {
   signal: string;
   processId: string | null;
   key: string | null;
-  state: unknown;
+  state: SignalWatchState;
   once: boolean;
   status: SignalWatchStatus;
   error: string | null;
@@ -33,7 +37,7 @@ export class SignalWatchStore {
     state?: unknown;
     once?: boolean;
     expiresAt?: number | null;
-  }): { watch: SignalWatchRecord; created: boolean } {
+  }): SignalWatchUpsertResult {
     const now = Date.now();
     const existing = input.key
       ? this.findActiveByKey(input.uid, input.target, input.key)
@@ -116,7 +120,7 @@ export class SignalWatchStore {
       now,
     );
 
-    return [...this.sql.exec<RowShape>(
+    return [...this.sql.exec<SignalWatchRow>(
       `SELECT watch_id, uid, target_process_id, signal, process_id, dedupe_key,
               state_json, once_only, status, error, created_at, updated_at, expires_at
        FROM signal_watches
@@ -176,7 +180,7 @@ export class SignalWatchStore {
     target: SignalWatchTargetInput,
     key: string,
   ): SignalWatchRecord | null {
-    const rows = [...this.sql.exec<RowShape>(
+    const rows = [...this.sql.exec<SignalWatchRow>(
       `SELECT watch_id, uid, target_process_id, signal, process_id, dedupe_key,
               state_json, once_only, status, error, created_at, updated_at, expires_at
        FROM signal_watches
@@ -195,7 +199,7 @@ export class SignalWatchStore {
   }
 }
 
-type RowShape = {
+type SignalWatchRow = {
   watch_id: string;
   uid: number;
   target_process_id: string;
@@ -211,7 +215,9 @@ type RowShape = {
   expires_at: number | null;
 };
 
-function toSignalWatchRecord(row: RowShape): SignalWatchRecord {
+type SignalWatchUpsertResult = { watch: SignalWatchRecord; created: boolean };
+
+function toSignalWatchRecord(row: SignalWatchRow): SignalWatchRecord {
   return {
     watchId: row.watch_id,
     uid: row.uid,
@@ -229,10 +235,11 @@ function toSignalWatchRecord(row: RowShape): SignalWatchRecord {
   };
 }
 
-function parseJsonValue(value: string | null): unknown {
+function parseJsonValue(value: string | null): SignalWatchState {
   if (!value) return null;
   try {
-    return JSON.parse(value);
+    const parsed = z.json().safeParse(JSON.parse(value));
+    return parsed.success ? parsed.data : null;
   } catch {
     return null;
   }

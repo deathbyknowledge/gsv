@@ -1,4 +1,5 @@
 import type { StatusTone } from "../../../components/ui/StatusDot";
+import { z } from "zod";
 import {
   detailRow,
   listRowStatusForTone,
@@ -26,12 +27,14 @@ export function messengerAccountNoun(adapter: string, count = 1): string {
 
 function extraString(adapter: ConsoleAdapterAccount, key: string): string {
   const value = adapter.extra[key];
-  return typeof value === "string" ? value.trim() : "";
+  const parsed = z.string().safeParse(value);
+  return parsed.success ? parsed.data.trim() : "";
 }
 
 function extraTimestamp(adapter: ConsoleAdapterAccount, key: string): number | null {
   const value = adapter.extra[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+  const parsed = z.number().finite().safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 function whatsAppPhoneLabel(value: string): string {
@@ -182,6 +185,7 @@ export function statusForAdapter(adapter: ConsoleAdapterAccount): string {
 }
 
 export function canDisconnectAdapter(adapter: ConsoleAdapterAccount): boolean {
+  if (adapter.mode === "managed-shared") return false;
   return adapter.adapter === "whatsapp"
     ? adapter.connected || adapter.authenticated
     : adapter.connected;

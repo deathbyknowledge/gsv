@@ -22,11 +22,13 @@ operational task, [How-to Guides](../how-to/) will usually get you there faster.
 A good order is:
 
 1. this overview
-2. [The Agent Loop](./agent-loop.md)
-3. [Process IPC and Scheduler](./process-ipc-and-scheduler.md)
-4. [The Adapter Model](./adapter-model.md)
-5. [Context and Knowledge](./context-and-knowledge.md)
-6. [Security Model](./security-model.md)
+2. [Conversations and Process Activity](./conversations.md)
+3. [The Agent Loop](./agent-loop.md)
+4. [Process IPC and Scheduler](./process-ipc-and-scheduler.md)
+5. [The Adapter Model](./adapter-model.md)
+6. [Context and Knowledge](./context-and-knowledge.md)
+7. [Responsibilities and Context Epochs](./responsibilities-and-context-epochs.md)
+8. [Security Model](./security-model.md)
 
 ## The Current Pillars
 
@@ -54,11 +56,19 @@ is allowed to do something and where the request should go.
 
 ### Agent Processes
 
-Agents are durable processes, not sessions. Each task has its own process,
-created with `proc.spawn` or `proc.fork`. A process has a PID, uid/gid identity,
-parent, profile, current working directory, optional workspace, state, and
-persistent message history. A personal agent is a run-as account, not a default
-process.
+Agents are durable processes, not sessions. Each body of work has its own
+process, created with `proc.spawn` or `proc.fork`. A process has a PID, uid/gid
+identity, parent, profile, current working directory, optional workspace, state,
+and persistent message history.
+
+Each human has one personal agent account that acts as their personal
+intelligence, plus one current personal process where direct conversations and
+user-level events converge. The Kernel records that role explicitly; it is not
+inferred from recency, labels, or account name. Its pid remains replaceable and
+ordinary. Custom agent accounts provide specialized identities when explicitly
+selected. A delegated child inherits its parent's account by default and acts
+in a bounded worker role; other processes remain visible work rather than
+alternative personal intelligences.
 
 Process state lives in a Process Durable Object with its own SQLite database.
 That database stores active messages, pending tool calls, queued messages,
@@ -66,10 +76,26 @@ human-in-the-loop state, and process-local metadata. The Kernel registry stores
 the process metadata needed for routing and permissions.
 
 The agent loop belongs to the Process DO. It assembles context, calls the model,
-receives tool calls, issues syscalls, waits for results, and emits `proc.run.*`
-and `proc.changed` signals through the Kernel. `gsv chat` is therefore just one
-client for a process; browser clients and adapters can reach the same process
-model.
+receives tool calls, issues syscalls, waits for results, and emits raw
+`proc.run.*` and `proc.changed` activity through the Kernel. A Process explicitly
+may send user-visible updates through Shell with `message send` and finishes each human-facing run with `yield`;
+a bounded IPC worker returns its ordinary final output directly to its caller.
+
+### Conversations
+
+Conversations are the durable user-facing record. Ship remains stable while its
+personal Process can be reset or replaced; Work conversations reference explicit
+interactive work Processes; adapter groups retain their own conversations.
+Canonical Messages live in installation-scoped Conversation Durable Objects,
+not Process history. Each Message records its handling PID and run ID so clients
+can inspect the corresponding raw execution while it exists or through its
+archive later.
+
+Web, Desktop, CLI, and linked private adapters synchronize the same Ship. The
+endpoint that admitted a run receives transient Message streaming; other signed-in
+clients receive the committed Message as synchronization. Raw Process activity is
+sent only to the run's routed connection or a client that explicitly observes the
+Process.
 
 ### Filesystem and Storage
 
@@ -123,6 +149,12 @@ paths for clone/fetch/push and an internal `/hyperspace/repos/...` API used by
 the Kernel for reads, writes, search, and upstream
 imports.
 
+Repository slugs are installation-local. The Gateway binds internal Ripgit
+requests to the resolved installation, and Ripgit includes that identity in
+the physical Repository Durable Object name. Public Git paths remain
+`/git/{owner}/{repo}.git`; standalone deployments retain the historical
+`{owner}/{repo}` object names.
+
 GSV uses repositories for more than source control:
 
 - `{username}/home` stores user-global knowledge and context.
@@ -139,6 +171,7 @@ A typical chat request follows this path:
 CLI, browser, or adapter
   -> Gateway Worker
   -> Kernel DO
+  -> canonical Conversation input
   -> Process DO
   -> model call
   -> syscall request
@@ -146,8 +179,9 @@ CLI, browser, or adapter
   -> native handler, Process DO, or device driver
   -> response
   -> Process DO continues the run
-  -> proc.run.* signals return through Kernel run routing
-  -> original client or adapter surface
+  -> Process sends zero or more Messages and eventually runs yield through Shell
+  -> canonical Message commit
+  -> directed endpoint plus synchronized clients
 ```
 
 The same dispatcher handles non-chat requests. A client can issue `fs.read`;
@@ -173,8 +207,14 @@ server.
 The system uses multiple Durable Object roles instead of one monolith:
 
 - Kernel DO: authoritative control plane and router.
+- Conversation DOs: canonical Messages, idempotency receipts, and archive indexes.
 - Process DOs: durable agent loops and process-local SQLite.
 - ripgit objects/workers: repository storage and Git protocol handling.
+
+The Kernel also owns the responsibility ledger that lets the personal intelligence
+continue promises, upkeep, delegation, and recovery without waiting for unrelated user
+input. [Responsibilities and Context Epochs](./responsibilities-and-context-epochs.md)
+describes how that ledger is projected into a stable model context and archived.
 
 The tradeoff is that the architecture must be explicit about routing, timeouts,
 and state boundaries. Long-running local work should happen on devices. Durable
@@ -202,3 +242,15 @@ of chat integrations.
 - [Get Started](../get-started/)
 - [How-to Guides](../how-to/)
 - [Reference](../reference/)
+- [Unified Protocol Peers](./unified-protocol-peers.md) describes the shared
+  identity, grants, frames, streaming bodies, reverse calls, and delegated
+  adapter command model used by clients, machines, and services.
+- [Resource References and Lazy Binary Resolution](./resource-references.md)
+  documents the implemented common file-reference and lazy byte-streaming
+  contract used by Messages, Processes, adapters, Web, and Desktop.
+
+## Deferred design proposals
+
+- [Surface Bindings and Output Graphs](./interaction-surface-bindings.md) records
+  the constraints on any future binding or forwarding design. The older
+  Process-owned automatic-output graph is superseded.

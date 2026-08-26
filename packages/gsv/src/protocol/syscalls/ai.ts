@@ -1,10 +1,11 @@
 import type { ProcessIdentity } from "./system";
 import type { ProcAiConfigProfileRef } from "./proc";
+import type { JsonObject } from "../json";
 
 export type ToolDefinition = {
   name: string;
   description: string;
-  inputSchema: Record<string, unknown>;
+  inputSchema: JsonObject;
 };
 
 export type AiToolsArgs = Record<string, never>;
@@ -155,7 +156,7 @@ export type AiToolCall = {
   type: "toolCall";
   id: string;
   name: string;
-  arguments: Record<string, unknown>;
+  arguments: JsonObject;
   thoughtSignature?: string;
 };
 
@@ -215,7 +216,7 @@ export type AiTextMessage = AiUserMessage | AiAssistantMessage | AiToolResultMes
 export type AiTextTool = {
   name: string;
   description: string;
-  parameters: Record<string, unknown>;
+  parameters: JsonObject;
 };
 
 export type AiTextGenerationReasoning =
@@ -311,14 +312,14 @@ export type AiImageReadArgs =
     prompt: string;
     reasoning?: boolean;
     responseFormat?: AiImageReadResponseFormat;
-    schema?: Record<string, unknown>;
+    schema?: JsonObject;
     stream?: boolean;
   })
   | (AiImageReadGenerationArgs & {
     mode: "ocr";
     prompt?: string;
     responseFormat?: AiImageReadResponseFormat;
-    schema?: Record<string, unknown>;
+    schema?: JsonObject;
     stream?: boolean;
   })
   | (AiImageReadCommonArgs & {

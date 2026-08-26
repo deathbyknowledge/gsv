@@ -15,6 +15,16 @@ import {
   processResponsesStream,
 } from "@earendil-works/pi-ai/api/openai-responses-shared";
 import { clampOpenAIPromptCacheKey } from "@earendil-works/pi-ai/api/openai-prompt-cache";
+import type { ResponseStreamEvent } from "openai/resources/responses/responses.js";
+import type {
+  JsonObject,
+  JsonValue,
+} from "@humansandmachines/gsv/protocol";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
+} from "@humansandmachines/gsv/protocol";
+import { z } from "zod";
 
 type OpenAiCodexFetchRequest = {
   model: Model<Api>;
@@ -25,6 +35,9 @@ type OpenAiCodexFetchRequest = {
 
 type OpenAiCodexFetchOptions = SimpleStreamOptions & {
   openAiCodexAccountId?: string;
+  reasoningSummary?: "auto" | "concise" | "detailed";
+  serviceTier?: "auto" | "default" | "flex" | "scale" | "priority";
+  textVerbosity?: "low" | "medium" | "high";
 };
 
 type RoutedRequestInit = RequestInit & { timeoutMs?: number };
@@ -32,7 +45,7 @@ type RoutedRequestInit = RequestInit & { timeoutMs?: number };
 const DEFAULT_CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 const JWT_CLAIM_PATH = "https://api.openai.com/auth";
 const CODEX_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
-const CODEX_RESPONSE_STATUSES = new Set([
+const codexResponseStatusSchema = z.enum([
   "completed",
   "incomplete",
   "failed",
@@ -41,6 +54,25 @@ const CODEX_RESPONSE_STATUSES = new Set([
   "in_progress",
 ]);
 const ERROR_BODY_PREVIEW_CHARS = 4096;
+const codexJwtClaimsSchema = z.object({
+  [JWT_CLAIM_PATH]: z.object({
+    chatgpt_account_id: z.string().trim().min(1),
+  }),
+}).passthrough();
+const codexEventSchema = z.object({
+  type: z.string(),
+}).catchall(z.json());
+const openAiResponseEventSchema = z.custom<ResponseStreamEvent>(
+  (value) => codexEventSchema.safeParse(value).success,
+  "OpenAI response event must be a JSON object with a string discriminator",
+);
+const nonemptyStringSchema = z.string().min(1);
+
+type CodexEvent = z.infer<typeof codexEventSchema>;
+type CodexEventError = {
+  code?: string;
+  message?: string;
+};
 
 export function streamWithOpenAiCodexFetch(
   request: OpenAiCodexFetchRequest,
@@ -61,13 +93,16 @@ export function streamWithOpenAiCodexFetch(
         body = nextBody;
       }
 
-      const response = await request.fetch(resolveCodexUrl(request.model.baseUrl), {
+      const requestInit: RoutedRequestInit = {
         method: "POST",
         headers: buildSseHeaders(request.model, request.options, accountId, apiKey),
         body: JSON.stringify(body),
         signal: request.options?.signal,
-        ...(request.options?.timeoutMs !== undefined ? { timeoutMs: request.options.timeoutMs } : {}),
-      } as RoutedRequestInit);
+      };
+      if (request.options?.timeoutMs !== undefined) {
+        requestInit.timeoutMs = request.options.timeoutMs;
+      }
+      const response = await request.fetch(resolveCodexUrl(request.model.baseUrl), requestInit);
 
       await request.options?.onResponse?.(providerResponseFromFetchResponse(response), request.model);
 
@@ -81,7 +116,7 @@ export function streamWithOpenAiCodexFetch(
 
       stream.push({ type: "start", partial: output });
       await processResponsesStream(
-        mapCodexEvents(parseSse(response, request.options?.signal)) as AsyncIterable<never>,
+        toOpenAiResponseEvents(mapCodexEvents(parseSse(response, request.options?.signal))),
         output,
         stream,
         request.model,
@@ -144,31 +179,35 @@ function buildRequestBody(
   model: Model<Api>,
   context: Context,
   options: OpenAiCodexFetchOptions | undefined,
-): Record<string, unknown> {
-  const body: Record<string, unknown> = {
+): JsonObject {
+  const body: JsonObject = {
     model: model.id,
     store: false,
     stream: true,
     instructions: context.systemPrompt || "You are a helpful assistant.",
-    input: convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
+    input: jsonValueSchema.parse(convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
       includeSystemPrompt: false,
-    }),
-    text: { verbosity: providerOption(options, "textVerbosity") ?? "low" },
+    })),
+    text: { verbosity: options?.textVerbosity ?? "low" },
     include: ["reasoning.encrypted_content"],
-    prompt_cache_key: clampOpenAIPromptCacheKey(options?.sessionId),
     tool_choice: "auto",
     parallel_tool_calls: true,
   };
 
+  const promptCacheKey = clampOpenAIPromptCacheKey(options?.sessionId);
+  if (promptCacheKey !== undefined) {
+    body.prompt_cache_key = promptCacheKey;
+  }
+
   if (options?.temperature !== undefined) {
     body.temperature = options.temperature;
   }
-  const serviceTier = providerOption(options, "serviceTier");
+  const serviceTier = options?.serviceTier;
   if (serviceTier !== undefined) {
     body.service_tier = serviceTier;
   }
   if (context.tools && context.tools.length > 0) {
-    body.tools = convertResponsesTools(context.tools, { strict: null });
+    body.tools = jsonValueSchema.parse(convertResponsesTools(context.tools, { strict: null }));
   }
 
   const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
@@ -177,7 +216,7 @@ function buildRequestBody(
     if (effort !== null) {
       body.reasoning = {
         effort,
-        summary: providerOption(options, "reasoningSummary") ?? "auto",
+        summary: options?.reasoningSummary ?? "auto",
       };
     }
   }
@@ -190,7 +229,12 @@ function buildSseHeaders(
   accountId: string,
   apiKey: string,
 ): Headers {
-  const headers = new Headers(model.headers as HeadersInit | undefined);
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(model.headers ?? {})) {
+    if (value !== null) {
+      headers.set(key, value);
+    }
+  }
   for (const [key, value] of Object.entries(options?.headers ?? {})) {
     if (value === null) {
       headers.delete(key);
@@ -230,11 +274,8 @@ function resolveCodexUrl(baseUrl: string | undefined): string {
 
 function extractAccountId(token: string): string {
   try {
-    const payload = JSON.parse(decodeJwtPart(token.split(".")[1] ?? ""));
-    const accountId = payload?.[JWT_CLAIM_PATH]?.chatgpt_account_id;
-    if (typeof accountId === "string" && accountId.trim()) {
-      return accountId;
-    }
+    const payload = codexJwtClaimsSchema.parse(JSON.parse(decodeJwtPart(token.split(".")[1] ?? "")));
+    return payload[JWT_CLAIM_PATH].chatgpt_account_id;
   } catch {
     // Fall through to a stable provider-facing error.
   }
@@ -247,14 +288,10 @@ function decodeJwtPart(value: string): string {
   return atob(padded);
 }
 
-function providerOption(options: SimpleStreamOptions | undefined, key: string): unknown {
-  return (options as Record<string, unknown> | undefined)?.[key];
-}
-
 async function* parseSse(
   response: Response,
   signal: AbortSignal | undefined,
-): AsyncIterable<Record<string, unknown>> {
+): AsyncIterable<CodexEvent> {
   const reader = response.body?.getReader();
   if (!reader) {
     return;
@@ -287,7 +324,7 @@ async function* parseSse(
           .join("\n")
           .trim();
         if (data && data !== "[DONE]") {
-          yield JSON.parse(data) as Record<string, unknown>;
+          yield codexEventSchema.parse(JSON.parse(data));
         }
         index = buffer.indexOf("\n\n");
       }
@@ -304,10 +341,10 @@ function normalizeSseLineEndings(buffer: string): string {
 }
 
 async function* mapCodexEvents(
-  events: AsyncIterable<Record<string, unknown>>,
-): AsyncIterable<Record<string, unknown>> {
+  events: AsyncIterable<CodexEvent>,
+): AsyncIterable<CodexEvent> {
   for await (const event of events) {
-    const type = typeof event.type === "string" ? event.type : "";
+    const { type } = event;
     if (type === "error") {
       const error = extractCodexEventError(event);
       throw new Error(`Codex error: ${error.message || error.code || JSON.stringify(event)}`);
@@ -323,13 +360,19 @@ async function* mapCodexEvents(
     }
     if (type === "response.done" || type === "response.completed" || type === "response.incomplete") {
       const response = objectRecord(event.response);
+      let normalizedResponse: JsonObject | null = null;
+      if (response) {
+        normalizedResponse = { ...response };
+        delete normalizedResponse.status;
+        const status = normalizeCodexStatus(response.status);
+        if (status !== undefined) {
+          normalizedResponse.status = status;
+        }
+      }
       yield {
         ...event,
         type: "response.completed",
-        response: response ? {
-          ...response,
-          status: normalizeCodexStatus(response.status),
-        } : response,
+        response: normalizedResponse,
       };
       return;
     }
@@ -337,13 +380,12 @@ async function* mapCodexEvents(
   }
 }
 
-function normalizeCodexStatus(status: unknown): string | undefined {
-  return typeof status === "string" && CODEX_RESPONSE_STATUSES.has(status)
-    ? status
-    : undefined;
+function normalizeCodexStatus(status: JsonValue | undefined): string | undefined {
+  const parsed = codexResponseStatusSchema.safeParse(status);
+  return parsed.success ? parsed.data : undefined;
 }
 
-function extractCodexEventError(event: Record<string, unknown>): { code?: string; message?: string } {
+function extractCodexEventError(event: CodexEvent): CodexEventError {
   const nested = objectRecord(event.error);
   return {
     code: stringValue(event.code) ?? stringValue(nested?.code),
@@ -351,12 +393,14 @@ function extractCodexEventError(event: Record<string, unknown>): { code?: string
   };
 }
 
-function objectRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" ? value as Record<string, unknown> : null;
+function objectRecord(value: JsonValue | undefined): JsonObject | null {
+  const parsed = jsonObjectSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
+function stringValue(value: JsonValue | undefined): string | undefined {
+  const parsed = nonemptyStringSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
 }
 
 function providerResponseFromFetchResponse(response: Response): ProviderResponse {
@@ -366,8 +410,8 @@ function providerResponseFromFetchResponse(response: Response): ProviderResponse
   };
 }
 
-function headersToRecord(headers: Headers): Record<string, string> {
-  const record: Record<string, string> = {};
+function headersToRecord(headers: Headers): NonNullable<ProviderResponse["headers"]> {
+  const record: NonNullable<ProviderResponse["headers"]> = {};
   headers.forEach((value, key) => {
     record[key] = value;
   });
@@ -397,7 +441,7 @@ function headerDiagnostic(headers: Headers, header: string, label: string): stri
 
 function parseProviderErrorMessage(rawBody: string): string | null {
   try {
-    const parsed = JSON.parse(rawBody) as Record<string, unknown>;
+    const parsed = jsonObjectSchema.parse(JSON.parse(rawBody));
     const error = objectRecord(parsed.error);
     return stringValue(error?.message) ??
       stringValue(parsed.detail) ??
@@ -405,5 +449,13 @@ function parseProviderErrorMessage(rawBody: string): string | null {
       null;
   } catch {
     return null;
+  }
+}
+
+async function* toOpenAiResponseEvents(
+  events: AsyncIterable<CodexEvent>,
+): AsyncIterable<ResponseStreamEvent> {
+  for await (const event of events) {
+    yield openAiResponseEventSchema.parse(event);
   }
 }

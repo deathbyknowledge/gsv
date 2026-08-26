@@ -15,6 +15,8 @@ export type PromptAssemblyInput = {
   ownerIdentity?: ProcessIdentity;
   devices: AiToolsDevice[];
   mcpServers: string[];
+  /** Frozen responsibility-ledger projection for this context epoch. */
+  r12y: string;
   storage: PromptStorage;
   ripgit: PromptRipgitClient | null;
 };
@@ -28,6 +30,19 @@ export type PromptSection = {
     access: "read-only" | "editable";
     location: string;
   };
+};
+
+export type PromptSourceRecord = {
+  provider: string;
+  name: string;
+  bytes: number;
+  sha256: string;
+  contextRoot?: PromptSection["contextRoot"];
+};
+
+export type PromptAssemblySnapshot = {
+  prompt: string;
+  sources: PromptSourceRecord[];
 };
 
 export type PromptContextProvider = {

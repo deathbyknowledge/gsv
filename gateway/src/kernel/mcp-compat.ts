@@ -1,6 +1,7 @@
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { MCPClientManager } from "agents/mcp/client";
+import * as z from "zod/mini";
 
 type McpConnection = MCPClientManager["mcpConnections"][string];
 
@@ -14,6 +15,11 @@ type NormalizedConnection = McpConnection & {
 type PatchedManager = MCPClientManager & {
   [PATCHED_MANAGER]?: true;
 };
+type McpErrorRecord = { code?: number; message?: string };
+const mcpErrorRecordSchema = z.object({
+  code: z.optional(z.number()),
+  message: z.optional(z.string()),
+});
 
 /**
  * Compatibility for MCP transports that wrap JSON-RPC method-not-found errors
@@ -21,6 +27,7 @@ type PatchedManager = MCPClientManager & {
  * Tracked in cloudflare/agents#787; remove after upstream handles this shape.
  */
 export function installMcpDiscoveryCompatibility(manager: MCPClientManager): void {
+  // SAFETY: the compatibility marker is an internal symbol property added only to this manager instance.
   const patchedManager = manager as PatchedManager;
   if (patchedManager[PATCHED_MANAGER]) {
     return;
@@ -38,6 +45,7 @@ export function installMcpDiscoveryCompatibility(manager: MCPClientManager): voi
 }
 
 function normalizeConnection(connection: McpConnection): void {
+  // SAFETY: the compatibility marker is an internal symbol property added only to this connection instance.
   const normalized = connection as NormalizedConnection;
   if (normalized[NORMALIZED_CONNECTION]) {
     return;
@@ -73,7 +81,8 @@ function normalizeListMethod<Args extends unknown[], Result>(
       return await list.apply(client, args);
     } catch (error) {
       const message = errorMessage(error);
-      if (isRecord(error) && error.code === ErrorCode.MethodNotFound) {
+      const record = parseMcpError(error);
+      if (record?.code === ErrorCode.MethodNotFound) {
         throw error;
       }
       if (/"code"\s*:\s*-32601(?:\s*[,}])/.test(message)) {
@@ -84,16 +93,18 @@ function normalizeListMethod<Args extends unknown[], Result>(
   };
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage<T>(error: T): string {
   if (error instanceof Error) {
     return error.message;
   }
-  if (isRecord(error) && typeof error.message === "string") {
-    return error.message;
+  const record = parseMcpError(error);
+  if (record?.message) {
+    return record.message;
   }
-  return typeof error === "string" ? error : "";
+  return error instanceof String ? error.toString() : "";
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
+function parseMcpError<T>(value: T): McpErrorRecord | null {
+  const parsed = mcpErrorRecordSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
