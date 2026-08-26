@@ -53,5 +53,13 @@ function knownFsTargets(kernelCtx: KernelContext): string[] {
     // Some tests and process contexts only need local GSV paths.
   }
 
+  try {
+    for (const contact of kernelCtx.federation.list(identity.uid, false)) {
+      targets.add(contact.id);
+    }
+  } catch {
+    // Some tests and process contexts do not include federation state.
+  }
+
   return [...targets].sort((left, right) => right.length - left.length);
 }

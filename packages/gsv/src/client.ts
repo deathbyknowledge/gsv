@@ -346,6 +346,7 @@ const SYSCALL_NAMES = [
   "contact.invite.list",
   "contact.invite.cancel",
   "contact.list",
+  "contact.alias.set",
   "contact.revoke",
   "contact.send",
   "contact.delivery.get",

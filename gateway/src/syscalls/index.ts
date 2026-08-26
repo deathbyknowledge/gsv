@@ -91,13 +91,13 @@ export function intoSyscallTool(
 
 function formatTargetSchemaDescription(devices: string[]): string {
   if (devices.length === 0) {
-    return "Target to execute on. Use \"gsv\" for the native cloud target. Run `targets list` in Shell to inspect registered targets and their online status.";
+    return "Target to execute on. Use \"gsv\" for the native cloud target, or preserve the exact target from an authorized file reference. Run `targets list` in Shell to inspect registered targets and their online status.";
   }
   const listed = devices.slice(0, TARGET_SCHEMA_INLINE_LIMIT);
   const suffix = devices.length > listed.length
     ? `, and ${devices.length - listed.length} more`
     : "";
-  return `Target to execute on. Use "gsv" for the native cloud target, or one of: ${listed.join(", ")}${suffix}. Run \`targets list\` in Shell to inspect registered targets and their online status.`;
+  return `Target to execute on. Use "gsv" for the native cloud target, preserve the exact target from an authorized file reference, or use one of: ${listed.join(", ")}${suffix}. Run \`targets list\` in Shell to inspect registered targets and their online status.`;
 }
 
 export function isRoutableSyscall(call: SyscallName): boolean {

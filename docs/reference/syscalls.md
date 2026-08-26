@@ -579,6 +579,7 @@ create, accept, cancel, or revoke Contact trust.
 | `contact.invite.list` | Lists invitation lifecycle metadata without exposing recoverable invitation secrets. |
 | `contact.invite.cancel` | Cancels one unaccepted invitation. |
 | `contact.list` | Lists the caller's active contacts; `includeRevoked` includes terminal relationships. |
+| `contact.alias.set` | Sets or clears the owner's local name for a Contact without changing or federating its authenticated remote identity. |
 | `contact.revoke` | Revokes the local relationship immediately, withdraws its resource grants, terminates pending deliveries, and durably notifies the other Ship. |
 | `contact.send` | Commits one local Contact message and queues an authenticated delivery. Reusing an `idempotencyKey` with the same input returns the same logical delivery; changed input is rejected. |
 | `contact.delivery.get` | Reads the owner-scoped queued, delivered, or failed state of one retained Contact delivery. |
@@ -603,6 +604,7 @@ only a freshness check for the current HTTP attempt.
 Message resources are immutable references. The sender grants the exact
 contact generation access to the exact retained revision; the receiver stores
 a contact-local reference and streams bytes only when they are opened through
+`fs.read`, copied from the Contact target, or opened through
 `fs.transfer.send`. Revocation makes those grants unavailable.
 
 ```ts
@@ -644,6 +646,7 @@ type ContactSummary = {
   remoteShipId: string;
   remoteSubject: FederationSubject;
   remoteOrigin: string;
+  localAlias?: string;
   conversationId: string;
   createdAtMs: number;
   updatedAtMs: number;
@@ -689,6 +692,10 @@ type ContactSyscalls = {
   "contact.list": {
     args: { includeRevoked?: boolean };
     result: { contacts: ContactSummary[] };
+  };
+  "contact.alias.set": {
+    args: { contactId: string; alias: string | null };
+    result: { contact: ContactSummary };
   };
   "contact.revoke": {
     args: { contactId: string };

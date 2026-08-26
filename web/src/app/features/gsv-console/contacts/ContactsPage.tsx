@@ -5,6 +5,7 @@ import type {
   ContactInviteSummary,
   ContactSummary,
 } from "@humansandmachines/gsv/protocol";
+import { contactDisplayName } from "@humansandmachines/gsv/protocol";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import {
@@ -129,6 +130,11 @@ export function ContactsPage() {
                 confirming={confirmRevoke === contact.id}
                 selected={selectedContact?.id === contact.id}
                 onOpen={() => setSelectedContactId(contact.id)}
+                onAlias={(alias) => mutate({
+                  kind: "contact.alias.set",
+                  contactId: contact.id,
+                  alias,
+                })}
                 onCancelRevoke={() => setConfirmRevoke(null)}
                 onRevoke={() => {
                   if (confirmRevoke !== contact.id) {
@@ -201,6 +207,7 @@ function ContactCard({
   confirming,
   selected,
   onCancelRevoke,
+  onAlias,
   onOpen,
   onRevoke,
 }: {
@@ -209,18 +216,43 @@ function ContactCard({
   confirming: boolean;
   selected: boolean;
   onCancelRevoke: () => void;
+  onAlias: (alias: string | null) => void;
   onOpen: () => void;
   onRevoke: () => void;
 }) {
+  const [alias, setAlias] = useState(contact.localAlias ?? "");
+  useEffect(() => setAlias(contact.localAlias ?? ""), [contact.localAlias]);
+  const savedAlias = contact.localAlias ?? "";
   return (
     <article class="gsv-contacts-card">
-      <div>
+      <div class="gsv-contacts-card-copy">
         <div class="gsv-contacts-card-meta">
           <span class={`is-${contact.state}`}>{contact.state.toUpperCase()}</span>
           <code>{contact.id}</code>
         </div>
-        <h2>{contact.remoteSubject.displayName}</h2>
-        <p>{contact.remoteOrigin}</p>
+        <h2>{contactDisplayName(contact)}</h2>
+        <p>{contact.localAlias ? `${contact.remoteSubject.displayName} · ${contact.remoteOrigin}` : contact.remoteOrigin}</p>
+        <form class="gsv-contact-alias" onSubmit={(event) => {
+          event.preventDefault();
+          const normalized = alias.trim();
+          onAlias(normalized || null);
+        }}>
+          <TextInput
+            label="LOCAL ALIAS"
+            size="small"
+            value={alias}
+            placeholder={contact.remoteSubject.displayName}
+            maxLength={256}
+            disabled={busy}
+            onChange={setAlias}
+          />
+          <Button
+            type="submit"
+            variant="secondary"
+            label={savedAlias ? "UPDATE ALIAS" : "SET ALIAS"}
+            disabled={busy || alias.trim() === savedAlias}
+          />
+        </form>
       </div>
       {contact.state === "active" ? (
         <div class="gsv-contacts-actions">
@@ -285,11 +317,11 @@ function ContactConversationPanel({ contact, onClose }: {
   };
 
   return (
-    <section class="gsv-contact-conversation" aria-label={`Conversation with ${contact.remoteSubject.displayName}`}>
+    <section class="gsv-contact-conversation" aria-label={`Conversation with ${contactDisplayName(contact)}`}>
       <header>
         <div>
           <span class="gsv-sublabel">CONTACT CONVERSATION</span>
-          <h2>{contact.remoteSubject.displayName}</h2>
+          <h2>{contactDisplayName(contact)}</h2>
         </div>
         <Button variant="secondary" label="CLOSE" onClick={onClose} />
       </header>
@@ -318,7 +350,7 @@ function ContactConversationPanel({ contact, onClose }: {
         busy={mutation.isPending}
         canSend={Boolean(draft.trim()) || attachments.length > 0}
         disabled={!query.data || query.isError}
-        placeholder={`Message ${contact.remoteSubject.displayName}`}
+        placeholder={`Message ${contactDisplayName(contact)}`}
         value={draft}
         onChange={setDraft}
         onFiles={attach}

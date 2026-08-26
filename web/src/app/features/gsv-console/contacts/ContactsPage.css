@@ -11,6 +11,9 @@
 .gsv-contacts-section-heading { margin-bottom: 10px; }
 .gsv-contacts-list { display: grid; gap: 10px; }
 .gsv-contacts-card { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 18px; border: 1px solid var(--border); background: var(--surface); }
+.gsv-contacts-card-copy { display: grid; gap: 8px; min-width: min(100%, 360px); }
+.gsv-contact-alias { display: flex; align-items: end; gap: 8px; margin-top: 6px; }
+.gsv-contact-alias > :first-child { flex: 1; }
 .gsv-contacts-card-meta { display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: 11px; }
 .gsv-contacts-card-meta .is-active { color: var(--online); }
 .gsv-contacts-card-meta .is-revoked { color: var(--idle); }
@@ -34,6 +37,7 @@
   .gsv-contacts-shell { padding: 18px; }
   .gsv-contacts-pairing { grid-template-columns: 1fr; }
   .gsv-contacts-card, .gsv-contacts-header { align-items: stretch; flex-direction: column; }
+  .gsv-contact-alias { align-items: stretch; flex-direction: column; }
   .gsv-contacts-actions { justify-content: flex-start; }
   .gsv-contact-message { width: 94%; }
 }

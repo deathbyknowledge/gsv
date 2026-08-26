@@ -254,6 +254,7 @@ type ContactRow = {
   remote_ship_id: string;
   remote_subject_id: string;
   remote_display_name: string;
+  local_alias: string | null;
   remote_origin: string;
   remote_public_key_json: string;
   shared_secret: string;
@@ -923,6 +924,25 @@ export class FederationStore {
        ORDER BY updated_at DESC, created_at DESC`,
       ownerUid,
     ).toArray().map(contactFromRow);
+  }
+
+  setAlias(
+    contactId: string,
+    ownerUid: number,
+    alias: string | null,
+    now = Date.now(),
+  ): FederationContactRecord {
+    const updated = this.sql.exec(
+      `UPDATE federation_contacts
+       SET local_alias = ?, updated_at = ?
+       WHERE contact_id = ? AND owner_uid = ?`,
+      alias,
+      now,
+      contactId,
+      ownerUid,
+    );
+    if (updated.rowsWritten === 0) throw new Error(`Contact not found: ${contactId}`);
+    return this.get(contactId)!;
   }
 
   revoke(contactId: string, ownerUid: number, now = Date.now()): FederationContactRecord {
@@ -1679,6 +1699,7 @@ function contactFromRow(row: ContactRow): FederationContactRecord {
       displayName: row.remote_display_name,
     },
     remoteOrigin: row.remote_origin,
+    ...(row.local_alias !== null ? { localAlias: row.local_alias } : undefined),
     remotePublicKey: federationPublicKeySchema.parse(JSON.parse(row.remote_public_key_json)),
     sharedSecret: row.shared_secret,
     conversationId: row.conversation_id,

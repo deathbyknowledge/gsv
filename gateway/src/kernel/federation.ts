@@ -1,4 +1,6 @@
 import type {
+  ContactAliasSetArgs,
+  ContactAliasSetResult,
   ContactIdentityResult,
   ContactInviteAcceptArgs,
   ContactInviteAcceptResult,
@@ -33,6 +35,9 @@ import type {
   FederationRequestDelivery,
   FederationShipDocument,
   FederationSubject,
+  FsCopyEndpoint,
+  FsReadArgs,
+  FsReadResult,
   FsTransferSendArgs,
   JsonObject,
   JsonValue,
@@ -40,6 +45,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import {
   bodyToBytes,
+  contactDisplayName,
   federationDeliveryEnvelopeSchema,
   federationDeliveryReceiptSchema,
   federationShipDocumentSchema,
@@ -52,10 +58,14 @@ import {
   MAX_FEDERATION_RESOURCE_BYTES,
 } from "@humansandmachines/gsv/protocol";
 import * as z from "zod";
-import type { ResponseOkFrame } from "../protocol/frames";
+import type { FrameBody, ResponseOkFrame } from "../protocol/frames";
 import { getConversationById } from "../shared/utils";
 import { stableOpaqueId } from "../shared/stable-id";
-import { handleFsTransferSend } from "../drivers/native/fs";
+import {
+  handleFsReadTransfer,
+  handleFsTransferSend,
+  type FsOpenedSource,
+} from "../drivers/native/fs";
 import { isLocked } from "../auth/shadow";
 import type { ConnectionIdentity } from "./identity";
 import type { KernelContext } from "./context";
@@ -474,6 +484,20 @@ export function handleContactList(
   return {
     contacts: ctx.federation.list(ownerUid, args.includeRevoked ?? false).map(contactSummary),
   };
+}
+
+export function handleContactAliasSet(
+  args: ContactAliasSetArgs,
+  ctx: KernelContext,
+): ContactAliasSetResult {
+  const ownerUid = requireContactCaller(ctx, true);
+  const contact = requireOwnedContact(args.contactId, ownerUid, ctx);
+  const alias = args.alias === null
+    ? null
+    : boundedText(args.alias.trim(), "Contact alias", MAX_CONTACT_DISPLAY_NAME_BYTES, false);
+  const updated = ctx.federation.setAlias(contact.id, ownerUid, alias);
+  ctx.conversations.setTitle(updated.conversationId, contactDisplayName(updated));
+  return { contact: contactSummary(updated) };
 }
 
 export async function handleContactRevoke(
@@ -1180,6 +1204,53 @@ export async function handleContactResourceSend(
   };
 }
 
+export async function handleContactResourceRead(
+  args: FsReadArgs,
+  ctx: KernelContext,
+  frameId: string,
+): Promise<{ data: FsReadResult; body?: FrameBody }> {
+  try {
+    const transfer = await handleContactResourceSend({
+      target: args.target,
+      path: args.path,
+    }, ctx, frameId);
+    return await handleFsReadTransfer(args, transfer, ctx);
+  } catch (error) {
+    return {
+      data: { ok: false, error: error instanceof Error ? error.message : String(error) },
+    };
+  }
+}
+
+export async function openContactResourceSource(
+  source: Required<FsCopyEndpoint>,
+  ctx: KernelContext,
+): Promise<FsOpenedSource> {
+  const response = await handleContactResourceSend({
+    target: source.target,
+    path: source.path,
+  }, ctx, crypto.randomUUID());
+  const result = response.data;
+  if (!result) {
+    await response.body?.stream.cancel("Contact resource transfer returned no response data").catch(() => {});
+    throw new Error("Contact resource transfer returned no response data");
+  }
+  if (!result.ok) {
+    await response.body?.stream.cancel(result.error).catch(() => {});
+    throw new Error(result.error);
+  }
+  if (!response.body) throw new Error("Contact resource transfer returned no response body");
+  if (response.body.length !== undefined && response.body.length !== result.size) {
+    await response.body.stream.cancel("Remote resource size did not match its metadata").catch(() => {});
+    throw new Error("Remote resource size did not match its metadata");
+  }
+  return {
+    body: response.body,
+    size: result.size,
+    contentType: result.contentType,
+  };
+}
+
 async function acceptRemoteInvite(
   input: z.infer<typeof inviteAcceptSchema>,
   ctx: KernelContext,
@@ -1590,7 +1661,7 @@ async function commitInboundDelivery(
           eventType: "federation.contact.revoked",
           contactId: contact.id,
           deliveryId: inbox.deliveryId,
-          remoteDisplayName: contact.remoteSubject.displayName,
+          remoteDisplayName: contactDisplayName(contact),
         },
         dedupeKey: `federation.contact.revoked:${contact.id}:${contact.generation}`,
         deliveryId: inbox.deliveryId,
@@ -1641,7 +1712,7 @@ async function commitInboundMessage(
         conversationId: conversation.id,
         messageId,
         deliveryId: inbox.deliveryId,
-        remoteDisplayName: contact.remoteSubject.displayName,
+        remoteDisplayName: contactDisplayName(contact),
         resourceCount: media?.length ?? 0,
         contentTrust: "untrusted",
       },
@@ -2004,7 +2075,7 @@ async function ensureContactConversation(
   const conversation = ctx.conversations.ensureContact(
     contact.ownerUid,
     handlerPid,
-    contact.remoteSubject.displayName,
+    contactDisplayName(contact),
     contact.conversationId,
   );
   await getConversationById(ctx.installationId, conversation.id).initialize({
@@ -2246,6 +2317,7 @@ function contactSummary(contact: FederationContactRecord): ContactSummary {
     remoteShipId: contact.remoteShipId,
     remoteSubject: contact.remoteSubject,
     remoteOrigin: contact.remoteOrigin,
+    ...(contact.localAlias !== undefined ? { localAlias: contact.localAlias } : undefined),
     conversationId: contact.conversationId,
     createdAtMs: contact.createdAtMs,
     updatedAtMs: contact.updatedAtMs,

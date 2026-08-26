@@ -65,6 +65,7 @@ export type ContactSummary = {
   remoteShipId: string;
   remoteSubject: FederationSubject;
   remoteOrigin: string;
+  localAlias?: string;
   conversationId: string;
   createdAtMs: number;
   updatedAtMs: number;
@@ -134,6 +135,21 @@ export type ContactListArgs = {
 export type ContactListResult = {
   contacts: ContactSummary[];
 };
+
+export type ContactAliasSetArgs = {
+  contactId: string;
+  alias: string | null;
+};
+
+export type ContactAliasSetResult = {
+  contact: ContactSummary;
+};
+
+export function contactDisplayName(
+  contact: Pick<ContactSummary, "localAlias" | "remoteSubject">,
+): string {
+  return contact.localAlias ?? contact.remoteSubject.displayName;
+}
 
 export type ContactRevokeArgs = {
   contactId: string;

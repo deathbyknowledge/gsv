@@ -105,6 +105,9 @@ export class ConversationRegistry {
       if (existing.handlerPid !== handlerPid) {
         this.setHandler(existing.id, handlerPid);
       }
+      if (existing.title !== title) {
+        this.setTitle(existing.id, title);
+      }
       return this.get(existing.id)!;
     }
     return this.create({
@@ -214,6 +217,17 @@ export class ConversationRegistry {
       Date.now(),
       id,
     );
+  }
+
+  setTitle(id: string, title: string | null): void {
+    const updated = this.sql.exec(
+      `UPDATE conversations SET title = ?, updated_at = ?
+       WHERE conversation_id = ?`,
+      title,
+      Date.now(),
+      id,
+    );
+    if (updated.rowsWritten === 0) throw new Error("Conversation does not exist");
   }
 
   recordSequence(id: string, sequence: number): void {

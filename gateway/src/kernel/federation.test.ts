@@ -24,6 +24,7 @@ import type {
 import {
   handleContactInviteAccept,
   handleContactRequestCreate,
+  handleContactResourceRead,
   handleContactResourceSend,
   handleContactSend,
   processFederationDelivery,
@@ -426,6 +427,34 @@ describe("federation outbound boundary", () => {
     reader.releaseLock();
     expect(cancelSource).toHaveBeenCalledOnce();
   });
+
+  it("reads an authorized Contact resource through the ordinary Read contract", async () => {
+    const contact = activeContact();
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("hello contact"));
+        controller.close();
+      },
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => (
+      await remoteResourceResponse(contact, source, init, "text/plain")
+    ));
+
+    const response = await handleContactResourceRead({
+      target: contact.id,
+      path: "/resources/resource:remote",
+      limit: 10,
+    }, focusedResourceContext(() => contact), "resource-read");
+
+    expect(response.data).toMatchObject({
+      ok: true,
+      kind: "text",
+      path: "/resources/resource:remote",
+      contentType: "text/plain",
+      size: 13,
+    });
+    expect(await new Response(response.body?.stream).text()).toBe("hello contact");
+  });
 });
 
 function activeContact(): FederationContactRecord {
@@ -528,6 +557,7 @@ async function remoteResourceResponse(
   contact: FederationContactRecord,
   body: ReadableStream<Uint8Array>,
   init: RequestInit | undefined,
+  contentType = "application/octet-stream",
 ): Promise<Response> {
   const nonce = new Headers(init?.headers).get("x-gsv-nonce");
   if (!nonce) throw new Error("Resource request has no nonce");
@@ -537,7 +567,7 @@ async function remoteResourceResponse(
     requestNonce: nonce,
     size: 13,
     revision: "revision:remote",
-    contentType: "application/octet-stream",
+    contentType,
   };
   return new Response(body, {
     headers: {

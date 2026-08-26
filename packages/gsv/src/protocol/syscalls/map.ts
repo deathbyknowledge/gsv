@@ -257,6 +257,8 @@ import type {
   ConversationSendResult,
 } from "./conversation";
 import type {
+  ContactAliasSetArgs,
+  ContactAliasSetResult,
   ContactIdentityArgs,
   ContactIdentityResult,
   ContactInviteAcceptArgs,
@@ -317,6 +319,7 @@ export type SyscallDomains = {
   "contact.invite.list": { args: ContactInviteListArgs; result: ContactInviteListResult };
   "contact.invite.cancel": { args: ContactInviteCancelArgs; result: ContactInviteCancelResult };
   "contact.list": { args: ContactListArgs; result: ContactListResult };
+  "contact.alias.set": { args: ContactAliasSetArgs; result: ContactAliasSetResult };
   "contact.revoke": { args: ContactRevokeArgs; result: ContactRevokeResult };
   "contact.send": { args: ContactSendArgs; result: ContactSendResult };
   "contact.delivery.get": { args: ContactDeliveryGetArgs; result: ContactDeliveryGetResult };

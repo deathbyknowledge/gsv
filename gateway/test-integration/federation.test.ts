@@ -114,6 +114,13 @@ describe("cross-GSV federation integration", () => {
     expect(secondContact.remoteOrigin).toBe(firstOrigin.origin);
     expect(firstContact.generation).toBe(secondContact.generation);
 
+    const aliased = await first.contact.alias.set({
+      contactId: firstContact.id,
+      alias: "Second Ship",
+    });
+    expect(aliased.contact.localAlias).toBe("Second Ship");
+    expect((await second.contact.list({})).contacts[0]).not.toHaveProperty("localAlias");
+
     const messageArgs: ContactSendArgs = {
       contactId: firstContact.id,
       text: "hello from the first Ship",
@@ -273,6 +280,17 @@ describe("cross-GSV federation integration", () => {
       revision: receivedResource.ref.revision,
     });
     await expect(readBody(streamed.body)).resolves.toEqual(resourceBytes);
+    const readShared = await second.request("fs.read", {
+      target: receivedResource.ref.target,
+      path: receivedResource.ref.path,
+    });
+    expect(readShared.data).toMatchObject({
+      ok: true,
+      kind: "image",
+      size: resourceBytes.byteLength,
+      contentType: "image/png",
+    });
+    await expect(readBody(readShared.body)).resolves.toEqual(resourceBytes);
 
     await first.contact.revoke({ contactId: firstContact.id });
     const revoked = await waitForContact(second, undefined, true, secondContact.id, "revoked");

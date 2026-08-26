@@ -31,12 +31,18 @@ describe("contactsService", () => {
     const accept = vi.fn<GSVClient["contact"]["invite"]["accept"]>();
     const cancel = vi.fn<GSVClient["contact"]["invite"]["cancel"]>();
     const revoke = vi.fn<GSVClient["contact"]["revoke"]>();
+    const setAlias = vi.fn<GSVClient["contact"]["alias"]["set"]>();
     const update = vi.fn<GSVClient["contact"]["request"]["update"]>();
-    const client = contactClient({ accept, cancel, revoke, update });
+    const client = contactClient({ accept, cancel, revoke, setAlias, update });
 
     await mutateContactsWorkspace(client, { kind: "invite.accept", code: "pairing-code" });
     await mutateContactsWorkspace(client, { kind: "invite.cancel", inviteId: "invite:one" });
     await mutateContactsWorkspace(client, { kind: "contact.revoke", contactId: "contact:flynn" });
+    await mutateContactsWorkspace(client, {
+      kind: "contact.alias.set",
+      contactId: "contact:flynn",
+      alias: "Flynn",
+    });
     await mutateContactsWorkspace(client, {
       kind: "request.update",
       requestId: "request:one",
@@ -47,6 +53,7 @@ describe("contactsService", () => {
     expect(accept).toHaveBeenCalledWith({ code: "pairing-code" });
     expect(cancel).toHaveBeenCalledWith({ inviteId: "invite:one" });
     expect(revoke).toHaveBeenCalledWith({ contactId: "contact:flynn" });
+    expect(setAlias).toHaveBeenCalledWith({ contactId: "contact:flynn", alias: "Flynn" });
     expect(update).toHaveBeenCalledWith({
       requestId: "request:one",
       expectedRevision: 2,
@@ -170,6 +177,7 @@ function contactClient(overrides: {
   accept?: GSVClient["contact"]["invite"]["accept"];
   cancel?: GSVClient["contact"]["invite"]["cancel"];
   revoke?: GSVClient["contact"]["revoke"];
+  setAlias?: GSVClient["contact"]["alias"]["set"];
   update?: GSVClient["contact"]["request"]["update"];
   history?: GSVClient["conversation"]["history"];
   send?: GSVClient["contact"]["send"];
@@ -181,6 +189,7 @@ function contactClient(overrides: {
       list: overrides.listContacts ?? vi.fn(),
       revoke: overrides.revoke ?? vi.fn(),
       send: overrides.send ?? vi.fn(),
+      alias: { set: overrides.setAlias ?? vi.fn() },
       invite: {
         accept: overrides.accept ?? vi.fn(),
         cancel: overrides.cancel ?? vi.fn(),

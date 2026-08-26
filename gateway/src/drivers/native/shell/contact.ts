@@ -5,9 +5,10 @@ import type {
   ContactRequestState,
   ContactRequestUpdateArgs,
 } from "@humansandmachines/gsv/protocol";
-import { jsonObjectSchema } from "@humansandmachines/gsv/protocol";
+import { contactDisplayName, jsonObjectSchema } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../../../kernel/context";
 import {
+  handleContactAliasSet,
   handleContactIdentity,
   handleContactInviteAccept,
   handleContactInviteCancel,
@@ -61,6 +62,15 @@ async function runContactCommand(args: string[], ctx: KernelContext): Promise<Ex
       return json(await handleContactIdentity(ctx));
     case "list":
       return listContacts(rest, ctx);
+    case "alias":
+      requireCommandCapability(ctx, "contact.alias.set");
+      if (rest.length < 2) {
+        throw new Error("alias requires: contact alias CONTACT_ID NAME|--clear");
+      }
+      return json(handleContactAliasSet({
+        contactId: rest[0],
+        alias: rest[1] === "--clear" && rest.length === 2 ? null : rest.slice(1).join(" "),
+      }, ctx));
     case "invite":
       return await manageInvite(rest, ctx);
     case "revoke":
@@ -84,7 +94,7 @@ function listContacts(args: string[], ctx: KernelContext): ExecResult {
     lines.push([
       contact.id,
       contact.state,
-      contact.remoteSubject.displayName,
+      contactDisplayName(contact),
       contact.remoteShipId,
     ].join("\t"));
   }
@@ -268,6 +278,7 @@ function contactUsage(): string {
     "Usage:",
     "  contact identity",
     "  contact list [--all] [--json]",
+    "  contact alias CONTACT_ID NAME|--clear",
     "  contact invite create [--expires DURATION]",
     "  contact invite accept CODE",
     "  contact invite list [--all] [--json]",

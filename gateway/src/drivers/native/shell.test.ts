@@ -196,6 +196,7 @@ function makeContext(options?: {
   responsibilities?: Partial<KernelContext["responsibilities"]>;
   responsibilitySources?: Partial<KernelContext["responsibilitySources"]>;
   federation?: Partial<KernelContext["federation"]>;
+  conversations?: Partial<KernelContext["conversations"]>;
   oauth?: Partial<KernelContext["oauth"]>;
   scheduleIpcCallTimeout?: KernelContext["scheduleIpcCallTimeout"];
   scheduleScheduleWake?: KernelContext["scheduleScheduleWake"];
@@ -325,6 +326,9 @@ function makeContext(options?: {
       list: vi.fn(() => []),
       ...options?.federation,
     }),
+    conversations: focusedFixture<KernelContext["conversations"]>(
+      options?.conversations ?? {},
+    ),
     connection: null,
     identity: {
       role: "user",
@@ -2343,6 +2347,45 @@ describe("fs copy", () => {
     expect(await (await env.STORAGE.get(destinationKey))?.text()).toBe("shell copied");
   });
 
+  it("copies a Contact resource through its authorized source stream", async () => {
+    const contact = makeContact();
+    const destinationKey = "home/sam/copy-test/contact-source.txt";
+    await env.STORAGE.delete(destinationKey);
+    const openContactSource = vi.fn(async () => ({
+      size: 12,
+      contentType: "text/plain",
+      body: {
+        length: 12,
+        stream: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("from contact"));
+            controller.close();
+          },
+        }),
+      },
+    }));
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "fs.copy"],
+      federation: { list: vi.fn(() => [contact]) },
+    });
+
+    const result = await handleShellExec({
+      input: `cp ${contact.id}:/resources/resource:shared /home/sam/copy-test/contact-source.txt`,
+    }, ctx, {
+      fsTransport: {
+        requestDevice: vi.fn(),
+        openContactSource,
+      },
+    });
+
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(openContactSource).toHaveBeenCalledWith({
+      target: contact.id,
+      path: "/resources/resource:shared",
+    }, undefined);
+    expect(await (await env.STORAGE.get(destinationKey))?.text()).toBe("from contact");
+  });
+
   it("streams gsv files to a device target", async () => {
     const sourceKey = "home/sam/copy-test/device-source.txt";
     await env.STORAGE.delete(sourceKey);
@@ -3548,7 +3591,7 @@ describe("native administration shell commands", () => {
   });
 
   it("lists trusted GSV contacts as first-class message destinations", async () => {
-    const contact = makeContact();
+    const contact = { ...makeContact(), localAlias: "Alice" };
     const list = vi.fn(() => [contact]);
     const ctx = makeContext({
       capabilities: ["shell.exec", "contact.list"],
@@ -3564,15 +3607,50 @@ describe("native administration shell commands", () => {
       destinations: [{
         id: contact.id,
         kind: "contact",
-        label: "Flynn",
+        label: "Alice",
         state: "active",
       }],
     });
     expect(contacts).toMatchObject({ status: "completed", exitCode: 0 });
-    expect(contacts.stdout).toContain("contact:friend\tactive\tFlynn\tship:friend");
+    expect(contacts.stdout).toContain("contact:friend\tactive\tAlice\tship:friend");
     expect(help).toMatchObject({ status: "completed", exitCode: 0 });
     expect(help.stdout).toContain("contact invite create");
     expect(list).toHaveBeenCalledWith(IDENTITY.uid, false);
+  });
+
+  it("lets the canonical Ship set a local Contact alias", async () => {
+    const contact = makeContact();
+    const setAlias = vi.fn((_contactId: string, _ownerUid: number, alias: string | null) => {
+      const updated: FederationContactRecord = { ...contact };
+      if (alias !== null) updated.localAlias = alias;
+      return updated;
+    });
+    const setTitle = vi.fn();
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "contact.alias.set"],
+      procs: {
+        get: vi.fn(() => makeProcess({
+          processId: "proc:ship",
+          isPersonalController: true,
+        })),
+      },
+      auth: {
+        isPersonalAgentUid: vi.fn(() => false),
+        getShadowByUsername: vi.fn(() => ({ username: IDENTITY.username, hash: "unlocked" })),
+      },
+      federation: { get: vi.fn(() => contact), setAlias },
+      conversations: { setTitle },
+      processId: "proc:ship",
+    });
+
+    const result = await handleShellExec({
+      input: `contact alias ${contact.id} Alice Cooper`,
+    }, ctx);
+
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(JSON.parse(result.stdout).contact.localAlias).toBe("Alice Cooper");
+    expect(setAlias).toHaveBeenCalledWith(contact.id, IDENTITY.uid, "Alice Cooper");
+    expect(setTitle).toHaveBeenCalledWith(contact.conversationId, "Alice Cooper");
   });
 
   it("lets only the canonical Ship perform human contact pairing", async () => {

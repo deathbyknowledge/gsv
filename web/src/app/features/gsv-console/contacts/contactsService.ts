@@ -15,6 +15,7 @@ import {
 
 export type ContactsClient = Pick<GSVClient, "request"> & {
   contact: Pick<GSVClient["contact"], "list" | "revoke" | "send"> & {
+    alias: Pick<GSVClient["contact"]["alias"], "set">;
     invite: Pick<GSVClient["contact"]["invite"], "accept" | "cancel" | "create" | "list">;
     request: Pick<GSVClient["contact"]["request"], "list" | "update">;
   };
@@ -37,6 +38,7 @@ export type ContactsWorkspaceMutation =
   | { kind: "invite.create" }
   | { kind: "invite.accept"; code: string }
   | { kind: "invite.cancel"; inviteId: string }
+  | { kind: "contact.alias.set"; contactId: string; alias: string | null }
   | { kind: "contact.revoke"; contactId: string }
   | {
       kind: "request.update";
@@ -78,6 +80,10 @@ export async function mutateContactsWorkspace(
   }
   if (mutation.kind === "invite.cancel") {
     await client.contact.invite.cancel({ inviteId: mutation.inviteId });
+    return { kind: "updated" };
+  }
+  if (mutation.kind === "contact.alias.set") {
+    await client.contact.alias.set({ contactId: mutation.contactId, alias: mutation.alias });
     return { kind: "updated" };
   }
   if (mutation.kind === "contact.revoke") {

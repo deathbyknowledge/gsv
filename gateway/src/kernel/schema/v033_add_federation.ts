@@ -161,6 +161,7 @@ export const KERNEL_V033_ADD_FEDERATION: SqlMigration = {
         remote_ship_id TEXT NOT NULL,
         remote_subject_id TEXT NOT NULL,
         remote_display_name TEXT NOT NULL,
+        local_alias TEXT,
         remote_origin TEXT NOT NULL,
         remote_public_key_json TEXT NOT NULL,
         shared_secret TEXT NOT NULL,

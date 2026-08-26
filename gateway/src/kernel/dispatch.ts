@@ -142,6 +142,7 @@ import {
   handleConversationSend,
 } from "./conversation-handlers";
 import {
+  handleContactAliasSet,
   handleContactIdentity,
   handleContactInviteAccept,
   handleContactInviteCancel,
@@ -152,9 +153,11 @@ import {
   handleContactRequestCreate,
   handleContactRequestList,
   handleContactRequestUpdate,
+  handleContactResourceRead,
   handleContactResourceSend,
   handleContactRevoke,
   handleContactSend,
+  openContactResourceSource,
 } from "./federation";
 export type DispatchDeps = {
   shellSessions: ShellSessionStore;
@@ -219,7 +222,7 @@ export async function dispatch(
   const target = frame.call === "ai.text.generate"
     ? frame.args.target
     : routingArgs?.target;
-  const contactResourceTarget = frame.call === "fs.transfer.send"
+  const contactResourceTarget = (frame.call === "fs.read" || frame.call === "fs.transfer.send")
     && target?.startsWith("contact:") === true;
   const sessionId = frame.call === "shell.exec"
     ? frame.args.sessionId?.trim() ?? ""
@@ -298,6 +301,12 @@ async function dispatchNative(
   deps: DispatchDeps,
 ): Promise<ResponseFrame> {
   const frameId = frame.id;
+  const fsTransport = {
+    ...deps,
+    openContactSource: async (source: Parameters<typeof openContactResourceSource>[0]) => (
+      await openContactResourceSource(source, ctx)
+    ),
+  };
 
   try {
     let data: unknown;
@@ -308,7 +317,9 @@ async function dispatchNative(
           type: "res",
           id: frame.id,
           ok: true,
-          ...await handleFsRead(frame.args, ctx),
+          ...await (frame.args.target?.startsWith("contact:") === true
+            ? handleContactResourceRead(frame.args, ctx, frame.id)
+            : handleFsRead(frame.args, ctx)),
         };
       case "fs.write":
         data = await handleFsWrite(frame.args, ctx);
@@ -323,7 +334,7 @@ async function dispatchNative(
         data = await handleFsSearch(frame.args, ctx);
         break;
       case "fs.copy":
-        data = await handleFsCopy(frame.args, ctx, deps);
+        data = await handleFsCopy(frame.args, ctx, fsTransport);
         break;
       case "fs.transfer.stat":
         data = await handleFsTransferStat(frame.args, ctx);
@@ -338,7 +349,7 @@ async function dispatchNative(
 
       case "shell.exec":
         data = await handleShellExec(frame.args, ctx, {
-          fsTransport: deps,
+          fsTransport,
           netFetchTransport: deps,
           request: (request, signal) => deps.request(request, ctx, signal),
         });
@@ -652,6 +663,9 @@ async function dispatchNative(
         break;
       case "contact.list":
         data = handleContactList(frame.args, ctx);
+        break;
+      case "contact.alias.set":
+        data = handleContactAliasSet(frame.args, ctx);
         break;
       case "contact.revoke":
         data = await handleContactRevoke(frame.args, ctx);

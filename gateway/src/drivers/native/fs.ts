@@ -43,6 +43,10 @@ export type FsDeviceTransport = {
     args: JsonObject,
     options?: { ttlMs?: number; body?: FrameBody; signal?: AbortSignal },
   ): Promise<ResponseOkFrame>;
+  openContactSource?: (
+    source: Required<FsCopyEndpoint>,
+    signal?: AbortSignal,
+  ) => Promise<FsOpenedSource>;
 };
 
 export type FsOpenedSource = {
@@ -71,7 +75,7 @@ export async function openFsSource(
   },
 ): Promise<FsOpenedSource> {
   ctx.requestSignal?.throwIfAborted();
-  assertCanAccessCopyEndpoint(source, ctx);
+  assertCanAccessCopyEndpoint(source, ctx, "source");
 
   if (source.target === "gsv") {
     const opened = await (options?.fs ?? createNativeFileSystem(ctx)).openFile(source.path);
@@ -89,6 +93,13 @@ export async function openFsSource(
       size: opened.size,
       contentType: opened.contentType,
     };
+  }
+
+  if (isContactTarget(source.target)) {
+    if (!options?.transport?.openContactSource) {
+      throw new Error("Reading a Contact resource requires federation transfer support");
+    }
+    return await options.transport.openContactSource(source, ctx.requestSignal);
   }
 
   if (!options?.transport) {
@@ -133,53 +144,109 @@ export async function handleFsRead(
     if (opened.status !== 200 || !opened.body) {
       throw new Error(`Unable to open file: ${p}`);
     }
-    const contentType = opened.contentType ?? inferContentType(p);
+    return await readOpenedFile(args, {
+      target: "gsv",
+      path: p,
+      size: opened.size,
+      contentType: opened.contentType ?? inferContentType(p),
+      revision: opened.etag,
+      body: { stream: opened.body, length: opened.size },
+    }, ctx.requestSignal);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { data: { ok: false, error: msg } };
+  }
+}
 
+export async function handleFsReadTransfer(
+  args: FsReadArgs,
+  response: ResponseOkFrame<"fs.transfer.send">,
+  ctx: KernelContext,
+): Promise<FsReadResponse> {
+  const result = response.data;
+  if (!result) {
+    await response.body?.stream.cancel("fs.transfer.send returned no response data").catch(() => {});
+    return { data: { ok: false, error: "fs.transfer.send returned no response data" } };
+  }
+  if (!result.ok) {
+    await response.body?.stream.cancel(result.error).catch(() => {});
+    return { data: result };
+  }
+  if (!response.body) {
+    return { data: { ok: false, error: "fs.transfer.send returned no response body" } };
+  }
+  if (response.body.length !== undefined && response.body.length !== result.size) {
+    await response.body.stream.cancel("Remote resource size did not match its metadata").catch(() => {});
+    return { data: { ok: false, error: "Remote resource size did not match its metadata" } };
+  }
+  try {
+    return await readOpenedFile(args, {
+      target: args.target?.trim() || "gsv",
+      path: result.path,
+      size: result.size,
+      contentType: result.contentType ?? inferContentType(result.path),
+      revision: result.revision,
+      body: response.body,
+    }, ctx.requestSignal);
+  } catch (error) {
+    return {
+      data: { ok: false, error: error instanceof Error ? error.message : String(error) },
+    };
+  }
+}
+
+async function readOpenedFile(
+  args: FsReadArgs,
+  opened: FsOpenedSource & {
+    target: string;
+    path: string;
+    revision?: string;
+  },
+  signal?: AbortSignal,
+): Promise<FsReadResponse> {
+  const contentType = opened.contentType ?? inferContentType(opened.path);
+  try {
     if (contentType.trim().toLowerCase().startsWith("image/") && !isTextContentType(contentType)) {
       if (args.representation === "resource") {
-        await opened.body.cancel().catch(() => {});
-        if (!opened.etag) {
-          throw new Error(`Unable to identify file revision: ${p}`);
+        await opened.body.stream.cancel().catch(() => {});
+        if (!opened.revision) {
+          throw new Error(`Unable to identify file revision: ${opened.path}`);
         }
-        return readImageResource(p, contentType, opened.size, {
+        return readImageResource(opened.path, contentType, opened.size, {
           type: "file",
-          target: "gsv",
-          path: p,
-          revision: opened.etag,
+          target: opened.target,
+          path: opened.path,
+          revision: opened.revision,
           contentType,
           size: opened.size,
         });
       }
-      return readImage(p, contentType, opened.body, opened.size);
+      return readImage(opened.path, contentType, opened.body.stream, opened.size);
     }
 
     if (!isTextContentType(contentType)) {
-      await opened.body.cancel().catch(() => {});
+      await opened.body.stream.cancel().catch(() => {});
       return {
         data: {
           ok: false,
-          error: `Binary file (${contentType}, ${formatSize(st.size)}) — not readable as text`,
+          error: `Binary file (${contentType}, ${formatSize(opened.size)}) — not readable as text`,
         },
       };
     }
 
-    const bytes = await bodyToBytes(
-      { stream: opened.body, length: opened.size },
-      Infinity,
-      ctx.requestSignal,
-    );
+    const bytes = await bodyToBytes(opened.body, Infinity, signal);
     return readText(
       bytes,
-      p,
+      opened.path,
       contentType,
-      st.size,
+      opened.size,
       args.offset,
       args.limit,
       args.maxBytes,
     );
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return { data: { ok: false, error: msg } };
+  } catch (error) {
+    await opened.body.stream.cancel(error).catch(() => {});
+    throw error;
   }
 }
 
@@ -519,8 +586,8 @@ export async function handleFsCopy(
     ctx.requestSignal?.throwIfAborted();
     const source = normalizeCopyEndpoint(args.source, ctx);
     let destination = normalizeCopyEndpoint(args.destination, ctx);
-    assertCanAccessCopyEndpoint(source, ctx);
-    assertCanAccessCopyEndpoint(destination, ctx);
+    assertCanAccessCopyEndpoint(source, ctx, "source");
+    assertCanAccessCopyEndpoint(destination, ctx, "destination");
 
     if (source.target === "gsv" && destination.target === "gsv") {
       destination = await resolveGsvDestinationDirectory(
@@ -923,14 +990,23 @@ function normalizeCopyEndpoint(
 function assertCanAccessCopyEndpoint(
   endpoint: Required<FsCopyEndpoint>,
   ctx: KernelContext,
+  access: "source" | "destination",
 ): void {
   if (endpoint.target === "gsv") {
+    return;
+  }
+  if (isContactTarget(endpoint.target)) {
+    if (access === "destination") throw new Error("Contact resources are read-only");
     return;
   }
   const identity = ctx.identity!.process;
   if (!ctx.devices.canAccess(endpoint.target, identity.uid, identity.gids)) {
     throw new Error(`Access denied to device: ${endpoint.target}`);
   }
+}
+
+function isContactTarget(target: string): boolean {
+  return target.startsWith("contact:") && target.length > "contact:".length;
 }
 
 function assertCanUseDeviceCapabilities(

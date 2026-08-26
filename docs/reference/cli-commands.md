@@ -74,6 +74,7 @@ yield
 message send --to DESTINATION [--message TEXT] [--attach PATH [--mime TYPE]] [--delivery-id ID] [--also]
 contact identity
 contact list [--all] [--json]
+contact alias CONTACT_ID NAME|--clear
 contact invite create [--expires DURATION]
 contact invite accept CODE
 contact invite list [--all] [--json]
@@ -231,7 +232,8 @@ automatic retry. An outcome that may have reached the provider is reported as
 accepts that code while signed in to their own GSV. Pairing and revocation may
 be performed by the signed-in human or their canonical Ship. `contact list` prints the opaque contact id accepted
 by `message send --to`; `message destinations` exposes the same active contacts
-alongside messaging endpoints.
+alongside messaging endpoints. `contact alias` changes only the local display
+name; the remote Ship's authenticated identity remains visible and unchanged.
 
 `contact invite list --all` exposes retained invitation lifecycle metadata but
 never a recoverable code. `message history --with contact:...` reads the Contact

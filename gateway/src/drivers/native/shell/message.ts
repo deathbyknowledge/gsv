@@ -7,6 +7,7 @@ import type {
   ConversationMessage,
   ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
+import { contactDisplayName } from "@humansandmachines/gsv/protocol";
 import type { GsvFs } from "../../../fs/gsv-fs";
 import { hasCapability } from "../../../kernel/capabilities";
 import type { KernelContext } from "../../../kernel/context";
@@ -347,7 +348,7 @@ async function listDestinations(args: string[], ctx: KernelContext): Promise<Exe
     ...contacts.map((contact) => ({
       id: contact.id,
       kind: "contact" as const,
-      label: contact.remoteSubject.displayName,
+      label: contactDisplayName(contact),
       state: contact.state,
       online: null,
     })),

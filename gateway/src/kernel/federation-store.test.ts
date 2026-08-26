@@ -44,6 +44,32 @@ function activateContact(store: FederationStore) {
 }
 
 describe("FederationStore", () => {
+  it("keeps a local alias separate from refreshed remote identity", async () => {
+    await withStore((store) => {
+      const contact = activateContact(store);
+      expect(store.setAlias(contact.id, 1000, "Flynn", 1_100)).toMatchObject({
+        localAlias: "Flynn",
+        remoteSubject: { displayName: "Remote person" },
+      });
+
+      expect(store.activateContact({
+        ownerUid: 1000,
+        remoteShipId: contact.remoteShipId,
+        remoteSubject: { ...contact.remoteSubject, displayName: "Remote person renamed" },
+        remoteOrigin: contact.remoteOrigin,
+        remotePublicKey: PUBLIC_KEY,
+        sharedSecret: "new-secret",
+        generation: "generation:second",
+        threadId: "thread:second",
+        now: 1_200,
+      })).toMatchObject({
+        localAlias: "Flynn",
+        remoteSubject: { displayName: "Remote person renamed" },
+      });
+      expect(store.setAlias(contact.id, 1000, null, 1_300).localAlias).toBeUndefined();
+    });
+  });
+
   it("lists invitation metadata and records explicit cancellation", async () => {
     await withStore((store) => {
       const pending = store.createInvite({
