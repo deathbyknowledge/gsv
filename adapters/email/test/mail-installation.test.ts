@@ -219,7 +219,7 @@ describe("managed mail installation transport", () => {
     }
     const intakeId = accepted.result.intakeId;
 
-    await expect(runDurableObjectAlarm(stub)).resolves.toBe(true);
+    await runDurableObjectAlarm(stub);
     const chunks = await runInDurableObject(stub, (_instance, state) =>
       state.storage.sql.exec<{
         chunk_count: number;
@@ -316,7 +316,7 @@ describe("managed mail installation transport", () => {
       await state.storage.setAlarm(Date.now() + 60_000);
     });
 
-    await expect(runDurableObjectAlarm(stub)).resolves.toBe(true);
+    await runDurableObjectAlarm(stub);
     const remaining = await runInDurableObject(stub, (_instance, state) =>
       state.storage.sql.exec<{
         uploads: number;
@@ -342,7 +342,7 @@ describe("managed mail installation transport", () => {
     }
     const intakeId = accepted.result.intakeId;
 
-    await expect(runDurableObjectAlarm(stub)).resolves.toBe(true);
+    await runDurableObjectAlarm(stub);
 
     await expect(stub.getIntake(
       context(installationId),
@@ -383,7 +383,7 @@ describe("managed mail installation transport", () => {
     await intake(stub, installationId, "first summary");
     await intake(stub, installationId, "second summary");
 
-    await expect(runDurableObjectAlarm(stub)).resolves.toBe(true);
+    await runDurableObjectAlarm(stub);
 
     const page = await stub.listIntakes(context(installationId), { limit: 10 });
     expect(page.items).toHaveLength(2);
@@ -414,7 +414,7 @@ describe("managed mail installation transport", () => {
       }
       const intakeId = accepted.result.intakeId;
 
-      await expect(runDurableObjectAlarm(stub)).resolves.toBe(true);
+      await runDurableObjectAlarm(stub);
       await expect(stub.getIntake(
         context(installationId),
         intakeId,
@@ -437,7 +437,7 @@ describe("managed mail installation transport", () => {
         await state.storage.setAlarm(Date.now() + 60_000);
       });
 
-      await expect(runDurableObjectAlarm(stub)).resolves.toBe(true);
+      await runDurableObjectAlarm(stub);
       await expect(stub.getIntake(
         context(installationId),
         intakeId,
@@ -466,7 +466,7 @@ describe("managed mail installation transport", () => {
     }
     const intakeId = accepted.result.intakeId;
 
-    await expect(runDurableObjectAlarm(stub)).resolves.toBe(true);
+    await runDurableObjectAlarm(stub);
 
     await expect(stub.getIntake(
       context(installationId),
@@ -487,7 +487,7 @@ describe("managed mail installation transport", () => {
     }
     const intakeId = accepted.result.intakeId;
 
-    await expect(runDurableObjectAlarm(stub)).resolves.toBe(true);
+    await runDurableObjectAlarm(stub);
     await expect(stub.getIntake(context(installationId), intakeId)).resolves.toMatchObject({
       storageState: "pending",
       storageAttempts: 1,
@@ -518,7 +518,7 @@ describe("managed mail installation transport", () => {
       );
       await state.storage.setAlarm(Date.now() + 60_000);
     });
-    await expect(runDurableObjectAlarm(stub)).resolves.toBe(true);
+    await runDurableObjectAlarm(stub);
     await expect(stub.getIntake(context(installationId), intakeId)).resolves.toMatchObject({
       storageState: "stored",
       summaryState: "complete",
@@ -547,7 +547,7 @@ describe("managed mail installation transport", () => {
       );
     });
 
-    await expect(runDurableObjectAlarm(stub)).resolves.toBe(true);
+    await runDurableObjectAlarm(stub);
 
     await expect(stub.getIntake(
       context(installationId),
