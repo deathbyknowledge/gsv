@@ -4703,6 +4703,27 @@ describe("managed adapter pairing", () => {
     };
   }
 
+  it("invokes pairing methods through their RPC receiver", async () => {
+    const service = pairingService();
+    Object.defineProperty(service.adapterPairingInfo, "bind", {
+      get() {
+        throw new Error("RPC methods cannot be rebound");
+      },
+    });
+    const ctx = makeContext(
+      { CHANNEL_TELEGRAM: service },
+      { upsert: vi.fn(), list: vi.fn(() => []) },
+      directUserOptions(),
+    );
+
+    await expect(handleAdapterPairInfo({ adapter: "telegram" }, ctx)).resolves.toEqual({
+      adapter: "telegram",
+      accountId: "managed",
+      configured: true,
+      botUsername: "official_gsv_bot",
+    });
+  });
+
   it("discovers the platform bot and confirms the displayed Telegram identity", async () => {
     const service = pairingService();
     let currentLink: IdentityLinkRecord | null = null;
