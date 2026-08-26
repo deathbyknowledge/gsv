@@ -37,8 +37,7 @@
     ],
     "requiredSecrets": [
       "TELEGRAM_BOT_TOKEN",
-      "TELEGRAM_WEBHOOK_SECRET",
-      "TELEGRAM_ALLOWED_ACTOR_IDS"
+      "TELEGRAM_WEBHOOK_SECRET"
     ]
   }
 }
