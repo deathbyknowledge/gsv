@@ -51,7 +51,7 @@ const GSV_DRAWER = "gsv";
 
 /** Unambiguous GSV system surfaces. "settings" is handled separately because it
  *  is overloaded (crew/tasks/config/object-detail all route through it). */
-const GSV_PLAIN_SURFACES: ShellSurfaceId[] = ["files", "repositories", "library", "terminal", "runtime", "responsibilities"];
+const GSV_PLAIN_SURFACES: ShellSurfaceId[] = ["files", "repositories", "library", "terminal", "runtime", "responsibilities", "contacts"];
 
 const GSV_RAIL_ITEMS: { label: string; surface: ShellSurfaceId }[] = [
   { label: "FILES", surface: "files" },
@@ -60,6 +60,7 @@ const GSV_RAIL_ITEMS: { label: string; surface: ShellSurfaceId }[] = [
   { label: "REPOS", surface: "repositories" },
   { label: "WORK", surface: "runtime" },
   { label: "RESPONSIBILITIES", surface: "responsibilities" },
+  { label: "CONTACTS", surface: "contacts" },
   { label: "OVERVIEW", surface: "settings" },
 ];
 

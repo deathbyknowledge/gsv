@@ -114,6 +114,7 @@ describe("CapabilityStore", () => {
         "ai.text.generate",
         "ai.transcription.create",
         "codemode.*",
+        "contact.*",
         "conversation.*",
         "fs.*",
         "mail.send",

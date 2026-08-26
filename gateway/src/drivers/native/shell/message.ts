@@ -4,11 +4,19 @@ import type {
   AdapterMessageDestination,
   AdapterSendArgs,
   AdapterSendResult,
+  ConversationMessage,
   ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
 import type { GsvFs } from "../../../fs/gsv-fs";
+import { hasCapability } from "../../../kernel/capabilities";
 import type { KernelContext } from "../../../kernel/context";
 import { handleAdapterSend } from "../../../kernel/adapter-handlers";
+import {
+  handleContactDeliveryGet,
+  handleContactList,
+  handleContactSend,
+} from "../../../kernel/federation";
+import { handleConversationHistory } from "../../../kernel/conversation-handlers";
 import {
   type VisibleAdapterMessageDestination,
   adapterMessageDestinationId,
@@ -69,11 +77,116 @@ async function runMessageCommand(
       return await manageMessageRoute(rest, ctx);
     case "attach":
       return attachToReply(rest, shellCtx, fs, ctx);
+    case "history":
+      return await showMessageHistory(rest, ctx);
+    case "delivery":
+      return showMessageDelivery(rest, ctx);
     case "send":
       return await sendMessage(rest, shellCtx, fs, ctx);
     default:
       throw new Error(`unknown command: ${subcommand}\n${messageUsage()}`);
   }
+}
+
+async function showMessageHistory(args: string[], ctx: KernelContext): Promise<ExecResult> {
+  requireCommandCapability(ctx, "conversation.history");
+  let target: string | undefined;
+  let beforeSequence: number | undefined;
+  let limit = 50;
+  let outputJson = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const option = args[index];
+    if (option === "--with") {
+      index += 1;
+      target = requireShellOptionValue(args[index], option);
+    } else if (option === "--before") {
+      index += 1;
+      beforeSequence = parsePositiveInteger(requireShellOptionValue(args[index], option), option);
+    } else if (option === "--limit") {
+      index += 1;
+      limit = parsePositiveInteger(requireShellOptionValue(args[index], option), option);
+    } else if (option === "--json") {
+      outputJson = true;
+    } else {
+      throw new Error(`unexpected history option: ${option}`);
+    }
+  }
+  if (!target) throw new Error("message history requires --with CONTACT_OR_CONVERSATION");
+  let conversationId = target.trim();
+  if (conversationId.startsWith("contact:")) {
+    requireCommandCapability(ctx, "contact.list");
+    const contact = handleContactList({ includeRevoked: true }, ctx).contacts
+      .find(({ id }) => id === conversationId);
+    if (!contact) throw new Error(`Contact not found: ${conversationId}`);
+    conversationId = contact.conversationId;
+  }
+  const result = await handleConversationHistory({
+    conversationId,
+    limit,
+    ...(beforeSequence !== undefined ? { beforeSequence } : undefined),
+  }, ctx);
+  if (outputJson) return completed(`${JSON.stringify(result, null, 2)}\n`);
+  const lines = [
+    `conversation=${result.conversation.id}`,
+    `kind=${result.conversation.kind}`,
+    `has_more=${result.hasMore ? "true" : "false"}`,
+    "",
+  ];
+  for (const message of result.messages) {
+    lines.push(formatConversationMessage(message));
+  }
+  if (result.messages.length === 0) lines.push("(no messages)");
+  lines.push("");
+  return completed(lines.join("\n"));
+}
+
+function showMessageDelivery(args: string[], ctx: KernelContext): ExecResult {
+  const [action, deliveryId, ...rest] = args;
+  if (action !== "show" || !deliveryId) {
+    throw new Error("message delivery requires: message delivery show DELIVERY_ID [--json]");
+  }
+  requireCommandCapability(ctx, "contact.delivery.get");
+  const flags = parseOnlyFlags(rest, new Set(["--json"]));
+  const result = handleContactDeliveryGet({ deliveryId }, ctx);
+  if (flags.has("--json")) return completed(`${JSON.stringify(result, null, 2)}\n`);
+  if (!result.delivery) throw new Error(`delivery not found: ${deliveryId}`);
+  const delivery = result.delivery;
+  return completed([
+    "accepted=true",
+    `delivery_confirmed=${delivery.state === "delivered" ? "true" : "false"}`,
+    "transport=federation",
+    `destination=${delivery.contactId}`,
+    `delivery_id=${delivery.deliveryId}`,
+    `delivery_state=${delivery.state}`,
+    `conversation_id=${delivery.conversationId}`,
+    `attempts=${delivery.attemptCount}`,
+    ...(delivery.lastError ? [`last_error=${JSON.stringify(delivery.lastError)}`] : []),
+    "",
+  ].join("\n"));
+}
+
+function parsePositiveInteger(value: string, option: string): number {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error(`${option} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function formatConversationMessage(message: ConversationMessage): string {
+  const author = message.author.kind === "user"
+    ? `user:${message.author.uid}`
+    : message.author.kind === "process"
+      ? message.author.pid
+      : `${message.author.displayName} (${message.author.contactId})`;
+  const lines = [
+    `#${message.sequence} ${new Date(message.createdAt).toISOString()} ${author}`,
+    message.text || "(resource-only message)",
+  ];
+  for (const media of message.media ?? []) {
+    lines.push(`  resource=${JSON.stringify(media)}`);
+  }
+  return lines.join("\n");
 }
 
 async function attachToReply(
@@ -208,25 +321,45 @@ async function showCurrentReplyDestination(
 }
 
 async function listDestinations(args: string[], ctx: KernelContext): Promise<ExecResult> {
-  requireCommandCapability(ctx, "adapter.send");
   const flags = parseOnlyFlags(args, new Set(["--json", "--all"]));
-  const destinations = await listVisibleAdapterMessageDestinations(ctx, {
-    includeOffline: flags.has("--all"),
-  });
+  const capabilities = ctx.identity?.capabilities ?? [];
+  const canListAdapters = hasCapability(capabilities, "adapter.send");
+  const canListContacts = hasCapability(capabilities, "contact.list");
+  if (!canListAdapters && !canListContacts) {
+    throw new Error("Permission denied: no message destination capability");
+  }
+  const adapters = canListAdapters
+    ? await listVisibleAdapterMessageDestinations(ctx, {
+        includeOffline: flags.has("--all"),
+      })
+    : [];
+  const contacts = canListContacts
+    ? handleContactList({ includeRevoked: flags.has("--all") }, ctx).contacts
+    : [];
+  const destinations = [
+    ...adapters.map((entry) => ({
+      id: entry.id,
+      kind: "adapter" as const,
+      label: entry.label,
+      state: entry.online ? "online" : "offline",
+      online: entry.online,
+    })),
+    ...contacts.map((contact) => ({
+      id: contact.id,
+      kind: "contact" as const,
+      label: contact.remoteSubject.displayName,
+      state: contact.state,
+      online: null,
+    })),
+  ];
   if (flags.has("--json")) {
-    return completed(`${JSON.stringify({
-      destinations: destinations.map((entry) => ({
-        id: entry.id,
-        label: entry.label,
-        online: entry.online,
-      })),
-    }, null, 2)}\n`);
+    return completed(`${JSON.stringify({ destinations }, null, 2)}\n`);
   }
   const lines = ["DESTINATION\tSTATE\tLABEL"];
   for (const destination of destinations) {
     lines.push([
       destination.id,
-      destination.online ? "online" : "offline",
+      destination.state,
       destination.label,
     ].join("\t"));
   }
@@ -483,11 +616,37 @@ async function sendMessage(
   if (attachmentMime && !attachmentPath) {
     throw new Error("--mime requires --attach");
   }
+
+  const requestedDestination = to.trim();
+  if (requestedDestination.startsWith("contact:")) {
+    requireCommandCapability(ctx, "contact.send");
+    const media = attachmentPath
+      ? [await referenceAttachment(attachmentPath, attachmentMime, shellCtx, fs)]
+      : undefined;
+    const contactResult = await handleContactSend({
+      contactId: requestedDestination,
+      text: text?.trim() ?? "",
+      ...(media ? { media } : undefined),
+      ...(requestedDeliveryId ? { idempotencyKey: requestedDeliveryId } : undefined),
+    }, ctx);
+    const delivered = contactResult.state === "delivered";
+    return completed([
+      "accepted=true",
+      `delivery_confirmed=${delivered ? "true" : "false"}`,
+      "transport=federation",
+      `destination=${requestedDestination}`,
+      `delivery_id=${contactResult.deliveryId}`,
+      `delivery_state=${contactResult.state}`,
+      `conversation_id=${contactResult.conversationId}`,
+      "",
+    ].join("\n"));
+  }
+
   requireCommandCapability(ctx, "adapter.send");
 
-  const destination = to.trim().toLowerCase() === "here"
+  const destination = requestedDestination.toLowerCase() === "here"
     ? destinationFromCurrentRoute(ctx)
-    : (await resolveVisibleAdapterMessageDestination(to, ctx)).destination;
+    : (await resolveVisibleAdapterMessageDestination(requestedDestination, ctx)).destination;
   const destinationId = await adapterMessageDestinationId(
     destination,
     resolveCallerOwnerUid(ctx),
@@ -538,6 +697,42 @@ async function sendMessage(
     ...(result.deliveryState ? [`delivery_state=${result.deliveryState}`] : []),
     "",
   ].join("\n"));
+}
+
+async function referenceAttachment(
+  requestedPath: string,
+  requestedMime: string | undefined,
+  shellCtx: CommandContext,
+  fs: GsvFs,
+): Promise<ResourceBlock> {
+  const path = shellCtx.fs.resolvePath(shellCtx.cwd, requestedPath);
+  const opened = await fs.openFile(path);
+  if (!opened.body) {
+    throw new Error(`cannot read attachment data for ${path}`);
+  }
+  await opened.body.cancel("Attachment will be resolved by immutable revision").catch(() => {});
+  if (!opened.etag) {
+    throw new Error(`cannot identify an immutable revision for ${path}`);
+  }
+  if (opened.size > MAX_MESSAGE_MEDIA_PART_BYTES) {
+    throw new Error(
+      `attachment exceeds per-file limit (${MAX_MESSAGE_MEDIA_PART_BYTES} bytes): ${path}`,
+    );
+  }
+  const contentType = requestedMime?.trim() || opened.contentType || inferMimeType(path);
+  return {
+    type: "resource",
+    ref: {
+      type: "file",
+      target: "gsv",
+      path,
+      revision: opened.etag,
+      contentType,
+      size: opened.size,
+    },
+    mediaType: mediaTypeForMime(contentType),
+    filename: path.split("/").pop() || "attachment",
+  };
 }
 
 async function openAttachment(
@@ -668,6 +863,8 @@ function messageUsage(): string {
     "  message route set --process PID_OR_LABEL [--to here|DESTINATION] [--json]",
     "  message route clear [--to here|DESTINATION] [--json]",
     "  message attach PATH... [--mime TYPE]",
+    "  message history --with CONTACT_OR_CONVERSATION [--before SEQUENCE] [--limit N] [--json]",
+    "  message delivery show DELIVERY_ID [--json]",
     "  message send [--message TEXT]",
     "  message send --to DESTINATION [--message TEXT] [--attach PATH [--mime TYPE]] [--delivery-id ID] [--also]",
     "",

@@ -22,6 +22,7 @@ import type { RequestFrame, ResponseFrame, ResponseOkFrame } from "../protocol/f
 import type {
   ProcessAdapterDeliverArgs,
   ProcessAdapterDeliverRequestFrame,
+  ProcessResourceRetainRequestFrame,
   ProcessRuntimeEventDeliverArgs,
   ProcessRuntimeEventDeliverRequestFrame,
   ProcessResourceWriteRequestFrame,
@@ -1318,8 +1319,22 @@ describe("Process DO — mechanical", () => {
         const responsibility = {
           id: responsibilityId,
           ownerUid: 0,
-          title: "Review the new mail",
-          source: { kind: "event", eventType: "mail.received", eventId: "mail:1" },
+          title: "Reply to contact message msg:one",
+          details: {
+            eventType: "federation.message.received",
+            contactId: "contact:flynn",
+            conversationId: "conv:flynn",
+            messageId: "msg:one",
+            deliveryId: "delivery:one",
+            remoteDisplayName: "Flynn",
+            resourceCount: 1,
+            contentTrust: "untrusted",
+          },
+          source: {
+            kind: "event",
+            eventType: "federation.received",
+            eventId: "delivery:one",
+          },
           assignee: { kind: "ship" },
           state: "open",
           priority: "high",
@@ -1340,7 +1355,7 @@ describe("Process DO — mechanical", () => {
                     kind: "created",
                     afterState: "open",
                     changedFields: ["created"],
-                    actor: { kind: "system", component: "mail" },
+                    actor: { kind: "system", component: "federation" },
                     record: responsibility,
                     createdAtMs: 200,
                   }],
@@ -1397,10 +1412,26 @@ describe("Process DO — mechanical", () => {
       });
       expect(result.promptBefore).toContain("No unresolved responsibilities");
       expect(result.promptAfter).toBe(result.promptBefore);
-      expect(result.promptAfter).not.toContain("Review the new mail");
+      expect(result.promptAfter).not.toContain("Hello from another Ship");
       expect(result.messages).toHaveLength(1);
-      expect(result.messages[0].content).toContain("Responsibility ledger revision 1");
-      expect(result.messages[0].content).toContain("Review the new mail");
+      expect(result.messages[0].content).toContain("Kind: Contact message");
+      expect(result.messages[0].content).toContain('Contact: "Flynn" (`contact:flynn`)');
+      expect(result.messages[0].content).toContain("Conversation: `conv:flynn`");
+      expect(result.messages[0].content).toContain(
+        "A contact message is available in the Conversation history",
+      );
+      expect(result.messages[0].content).toContain("Resources attached: 1");
+      expect(result.messages[0].content).toContain(
+        "message history --with contact:flynn",
+      );
+      expect(result.messages[0].content).not.toContain("Hello from another Ship");
+      expect(result.messages[0].content).not.toContain("wave.png");
+      expect(result.messages[0].content).toContain(
+        "message send --to contact:flynn --message TEXT --also",
+      );
+      expect(result.messages[0].content).toContain(
+        "Resolving this responsibility does not itself send a reply",
+      );
       expect(result.messages[0].content).not.toContain("Responsibility batch");
       expect(result.currentRun).toMatchObject({
         runId,
@@ -7265,6 +7296,178 @@ describe("Process DO — mechanical", () => {
         });
       } finally {
         if (mediaKey) await env.STORAGE.delete(mediaKey);
+      }
+    });
+
+    it("cancels resource retention by request id", async () => {
+      const pid = "mech-resource-retain-cancel";
+      const sourcePath = "/root/resource-retain-cancel.png";
+      const sourceKey = sourcePath.slice(1);
+      const bytes = new Uint8Array([1, 2, 3]);
+      await env.STORAGE.put(sourceKey, bytes, {
+        httpMetadata: { contentType: "image/png" },
+      });
+      const source = await env.STORAGE.head(sourceKey);
+      if (!source) throw new Error("fixture source was not stored");
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      try {
+        await runInDurableObject(stub, async (instance: Process) => {
+          // SAFETY: this test exercises private Process storage inside its own DO.
+          const process = instance as any;
+          let retainedKey = "";
+          let releaseStored!: () => void;
+          let markStored!: () => void;
+          const stored = new Promise<void>((resolve) => {
+            markStored = resolve;
+          });
+          const storedGate = new Promise<void>((resolve) => {
+            releaseStored = resolve;
+          });
+          const realPut = process.storage.put.bind(process.storage);
+          process.storage.put = vi.fn(async (...args: Parameters<R2Bucket["put"]>) => {
+            const object = await realPut(...args);
+            retainedKey = args[0];
+            markStored();
+            await storedGate;
+            return object;
+          });
+          const request: ProcessResourceRetainRequestFrame = {
+            type: "req",
+            id: "retain-cancelled",
+            call: "proc.resource.retain",
+            args: {
+              resource: {
+                type: "resource",
+                ref: {
+                  type: "file",
+                  target: "gsv",
+                  path: sourcePath,
+                  revision: source.httpEtag,
+                  contentType: "image/png",
+                  size: bytes.byteLength,
+                },
+              },
+            },
+          };
+
+          const retaining = instance.recvFrame(request);
+          await stored;
+          await instance.recvFrame({
+            type: "sig",
+            signal: REQUEST_CANCEL_SIGNAL,
+            payload: { id: request.id, reason: "Send cancelled" },
+          });
+          releaseStored();
+
+          await expect(retaining).resolves.toMatchObject({
+            type: "res",
+            id: request.id,
+            ok: false,
+            error: { message: "Send cancelled" },
+          });
+          expect(retainedKey).toMatch(/^root\/\.gsv\/media\/archived-media:/);
+          expect(await process.storage.head(retainedKey)).toBeNull();
+        });
+      } finally {
+        await env.STORAGE.delete(sourceKey);
+      }
+    });
+
+    it("does not delete another Process's retained copy when cancellation races", async () => {
+      const sourcePath = "/root/resource-retain-cross-process.png";
+      const sourceKey = sourcePath.slice(1);
+      const bytes = new Uint8Array([4, 5, 6]);
+      await env.STORAGE.put(sourceKey, bytes, {
+        httpMetadata: { contentType: "image/png" },
+      });
+      const source = await env.STORAGE.head(sourceKey);
+      if (!source) throw new Error("fixture source was not stored");
+      const successfulStub = await initProcess("mech-resource-retain-owner", ROOT_IDENTITY);
+      const cancelledStub = await initProcess("mech-resource-retain-cancelled", ROOT_IDENTITY);
+      let successfulKey = "";
+      let cancelledKey = "";
+
+      const request = (
+        id: string,
+      ): ProcessResourceRetainRequestFrame => ({
+        type: "req",
+        id,
+        call: "proc.resource.retain",
+        args: {
+          resource: {
+            type: "resource",
+            ref: {
+              type: "file",
+              target: "gsv",
+              path: sourcePath,
+              revision: source.httpEtag,
+              contentType: "image/png",
+              size: bytes.byteLength,
+            },
+          },
+        },
+      });
+
+      try {
+        await runInDurableObject(successfulStub, async (instance: Process) => {
+          const response = await instance.recvFrame(request("retain-successful"));
+          if (!response || response.type !== "res" || !response.ok) {
+            throw new Error("successful Process did not retain the fixture");
+          }
+          successfulKey = response.data.resource.ref.path.replace(/^\/+/, "");
+          expect(await env.STORAGE.head(successfulKey)).not.toBeNull();
+        });
+
+        await runInDurableObject(cancelledStub, async (instance: Process) => {
+          // SAFETY: this test exercises private Process storage inside its own DO.
+          const process = instance as any;
+          let firstArchiveHead = true;
+          let releaseStored!: () => void;
+          let markStored!: () => void;
+          const stored = new Promise<void>((resolve) => {
+            markStored = resolve;
+          });
+          const storedGate = new Promise<void>((resolve) => {
+            releaseStored = resolve;
+          });
+          const realHead = process.storage.head.bind(process.storage);
+          process.storage.head = vi.fn(async (key: string) => {
+            if (firstArchiveHead && key.startsWith("root/.gsv/media/archived-media:")) {
+              firstArchiveHead = false;
+              return null;
+            }
+            return realHead(key);
+          });
+          const realPut = process.storage.put.bind(process.storage);
+          process.storage.put = vi.fn(async (...args: Parameters<R2Bucket["put"]>) => {
+            const object = await realPut(...args);
+            cancelledKey = args[0];
+            markStored();
+            await storedGate;
+            return object;
+          });
+          const retaining = instance.recvFrame(request("retain-cancelled-cross-process"));
+          await stored;
+          await instance.recvFrame({
+            type: "sig",
+            signal: REQUEST_CANCEL_SIGNAL,
+            payload: { id: "retain-cancelled-cross-process", reason: "Send cancelled" },
+          });
+          releaseStored();
+
+          await expect(retaining).resolves.toMatchObject({
+            type: "res",
+            id: "retain-cancelled-cross-process",
+            ok: false,
+            error: { message: "Send cancelled" },
+          });
+          expect(cancelledKey).not.toBe(successfulKey);
+          expect(await env.STORAGE.head(cancelledKey)).toBeNull();
+          expect(await env.STORAGE.head(successfulKey)).not.toBeNull();
+        });
+      } finally {
+        await env.STORAGE.delete([sourceKey, successfulKey, cancelledKey].filter(Boolean));
       }
     });
 

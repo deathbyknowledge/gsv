@@ -14,7 +14,9 @@ export type ResponsibilityRequiredSourcePolicyId =
   | "process.delegation"
   | "schedule.due";
 
-export type ResponsibilityConfigurableSourcePolicyId = "mail.received";
+export type ResponsibilityConfigurableSourcePolicyId =
+  | "mail.received"
+  | "federation.received";
 
 export type ResponsibilitySourcePolicyId =
   | ResponsibilityRequiredSourcePolicyId

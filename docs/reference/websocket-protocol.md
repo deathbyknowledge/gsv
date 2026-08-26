@@ -274,6 +274,7 @@ The websocket protocol is uniform: every operation is a `req` frame with a sysca
 | `shell.exec` | Native on `gsv`, routed to an endpoint when `args.target` names a registered target, or routed by `args.sessionId` for an existing shell session |
 | `proc.*` | Kernel and Process DO control plane |
 | `conversation.*` | Kernel-owned canonical conversation state and media |
+| `contact.*` | Kernel-owned contact pairing, authenticated cross-GSV delivery, requests, and revocation |
 | `repo.*`, `sys.*`, `sched.*`, `signal.*` | Kernel-handled |
 | `adapter.*` | Service-binding / adapter control path |
 | `ai.tools`, `ai.config` | Kernel-internal process bootstrap path |

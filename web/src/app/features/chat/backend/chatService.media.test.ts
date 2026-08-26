@@ -1,4 +1,5 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
+import { MAX_FEDERATION_RESOURCE_BYTES } from "@humansandmachines/gsv/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { frameBodyFromBlob } from "../../../services/gateway/frameBody";
 import { readChatProcessMedia, readChatResource, sendChatMessage } from "./chatService";
@@ -348,6 +349,45 @@ describe("chat process media", () => {
       "Resource response does not match its reference",
     );
     expect(cancelled).toBe(true);
+  });
+
+  it("opens contact resources across the process-media display boundary", async () => {
+    const ref = {
+      type: "file" as const,
+      target: "contact:remote",
+      path: "/_gsv/federation/v1/resources/large",
+      revision: "large-contact-resource",
+      contentType: "video/mp4",
+      size: 25 * 1024 * 1024 + 1,
+    };
+    const request = vi.fn(async () => ({
+      data: { ok: false as const, error: "fixture stops before reading bytes" },
+    }));
+    const client = clientFixture({ request });
+
+    await expect(readChatResource(client, ref)).rejects.toThrow(
+      "fixture stops before reading bytes",
+    );
+    expect(request).toHaveBeenCalledWith("fs.transfer.send", {
+      target: ref.target,
+      path: ref.path,
+      revision: ref.revision,
+    });
+  });
+
+  it("rejects contact resources above the federation transfer limit", async () => {
+    const request = vi.fn();
+    const client = clientFixture({ request });
+
+    await expect(readChatResource(client, {
+      type: "file",
+      target: "contact:remote",
+      path: "/_gsv/federation/v1/resources/too-large",
+      revision: "too-large",
+      contentType: "application/octet-stream",
+      size: MAX_FEDERATION_RESOURCE_BYTES + 1,
+    })).rejects.toThrow("Resource exceeds the 48 MiB display limit");
+    expect(request).not.toHaveBeenCalled();
   });
 
   it("rejects process media above the eager display limit before reading bytes", async () => {

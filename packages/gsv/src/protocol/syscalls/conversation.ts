@@ -1,7 +1,7 @@
 import type { MessageAttachment } from "./proc";
 import type { ResourceBlock } from "../resource";
 
-export type ConversationKind = "ship" | "work" | "group";
+export type ConversationKind = "ship" | "work" | "group" | "contact";
 
 export type ConversationMemberRole = "member" | "handler" | "observer";
 
@@ -24,7 +24,14 @@ export type ConversationSummary = {
 
 export type ConversationMessageAuthor =
   | { kind: "user"; uid: number }
-  | { kind: "process"; pid: string; uid: number };
+  | { kind: "process"; pid: string; uid: number }
+  | {
+      kind: "contact";
+      contactId: string;
+      shipId: string;
+      subjectId: string;
+      displayName: string;
+    };
 
 export type ConversationMessageOrigin =
   | {
@@ -51,7 +58,8 @@ export type ConversationMessageOrigin =
     }
   | { kind: "device"; deviceId: string }
   | { kind: "scheduler"; scheduleId: string }
-  | { kind: "mail"; messageId: string };
+  | { kind: "mail"; messageId: string }
+  | { kind: "federation"; contactId: string; deliveryId: string };
 
 export type ConversationMessage = {
   id: string;

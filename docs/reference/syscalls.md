@@ -500,7 +500,7 @@ client; Process and adapter service callers use private Kernel-owned admission p
 | `conversation.media.read` | Conversation DO through Kernel | Compatibility reader for media copied by older conversation records. New messages carry resource blocks and resolve them with `fs.transfer.send`. |
 
 ```ts
-type ConversationKind = "ship" | "work" | "group";
+type ConversationKind = "ship" | "work" | "group" | "contact";
 type ConversationSummary = {
   id: string;
   kind: ConversationKind;
@@ -515,7 +515,10 @@ type ConversationMessage = {
   id: string;
   conversationId: string;
   sequence: number;
-  author: { kind: "user"; uid: number } | { kind: "process"; pid: string; uid: number };
+  author:
+    | { kind: "user"; uid: number }
+    | { kind: "process"; pid: string; uid: number }
+    | { kind: "contact"; contactId: string; shipId: string; subjectId: string; displayName: string };
   text: string;
   media?: MessageAttachment[];
   origin: ConversationMessageOrigin;
@@ -547,6 +550,182 @@ type ConversationSyscalls = {
   "conversation.media.read": {
     args: { conversationId: string; key: string };
     result: { ok: true; conversationId: string; key: string; mimeType: string; size: number } | OperationError;
+  };
+};
+```
+
+## Contacts And Cross-GSV Requests: `contact.*`
+
+`contact.*` connects an owner on one GSV installation to an owner on another.
+The relationship works between standalone and managed installations without a
+shared account system. Each installation keeps its own conversation, request,
+resource grants, delivery receipts, and Process state.
+
+Pairing is explicit and human-controlled. `contact.invite.create` returns a
+short-lived, one-use code; the other signed-in person accepts it with
+`contact.invite.accept`. The Kernel derives the remote installation and subject
+from the signed exchange. Callers never choose a remote local uid, Process,
+conversation, filesystem path, or installation id.
+
+Trust changes may be initiated by the signed-in human or by that owner's exact
+canonical Ship Process. Delegated work Processes and remote callers cannot
+create, accept, cancel, or revoke Contact trust.
+
+| Syscall | Behavior |
+|---|---|
+| `contact.identity` | Returns this installation's signed Ship document and the caller's local federation subject. |
+| `contact.invite.create` | Creates a one-use pairing code, optionally with a shorter expiry. |
+| `contact.invite.accept` | Verifies and consumes a remote invite, creates both contact records, and ensures the local Contact conversation. |
+| `contact.invite.list` | Lists invitation lifecycle metadata without exposing recoverable invitation secrets. |
+| `contact.invite.cancel` | Cancels one unaccepted invitation. |
+| `contact.list` | Lists the caller's active contacts; `includeRevoked` includes terminal relationships. |
+| `contact.revoke` | Revokes the local relationship immediately, withdraws its resource grants, terminates pending deliveries, and durably notifies the other Ship. |
+| `contact.send` | Commits one local Contact message and queues an authenticated delivery. Reusing an `idempotencyKey` with the same input returns the same logical delivery; changed input is rejected. |
+| `contact.delivery.get` | Reads the owner-scoped queued, delivered, or failed state of one retained Contact delivery. |
+| `contact.request.list` | Lists structured incoming and outgoing cross-GSV requests. |
+| `contact.request.create` | Offers a typed request with a title and optional JSON details. |
+| `contact.request.update` | Applies a valid state transition using an optional expected revision for optimistic concurrency. |
+
+`contact.send` reports `queued` when the sender has durably accepted the work
+and `delivered` only after the receiving Kernel has durably committed it. A
+replay of a retained terminal delivery reports `failed`; inspect
+`contact.delivery.get` for its attempt count and last error. A receipt does not
+mean that the remote human or intelligence has completed any resulting work.
+
+Message resources are immutable references. The sender grants the exact
+contact generation access to the exact retained revision; the receiver stores
+a contact-local reference and streams bytes only when they are opened through
+`fs.transfer.send`. Revocation makes those grants unavailable.
+
+```ts
+type FederationShipDocument = {
+  version: 1;
+  shipId: string;
+  origin: string;
+  publicKey: { kty: "EC"; crv: "P-256"; x: string; y: string };
+  protocols: ["gsv-federation/1"];
+  issuedAtMs: number;
+  signature: string;
+};
+type FederationSubject = { id: string; displayName: string };
+type ContactInviteSummary = {
+  inviteId: string;
+  state: "pending" | "accepted" | "expired" | "cancelled";
+  expiresAtMs: number;
+  createdAtMs: number;
+  cancelledAtMs?: number;
+  acceptedAtMs?: number;
+  contactId?: string;
+};
+type ContactDeliveryStatus = {
+  deliveryId: string;
+  contactId: string;
+  conversationId: string;
+  state: "queued" | "delivered" | "failed";
+  attemptCount: number;
+  createdAtMs: number;
+  updatedAtMs: number;
+  deliveredAtMs?: number;
+  lastError?: string;
+};
+type ContactSummary = {
+  id: string;
+  ownerUid: number;
+  state: "active" | "revoked";
+  generation: string;
+  remoteShipId: string;
+  remoteSubject: FederationSubject;
+  remoteOrigin: string;
+  conversationId: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+  revokedAtMs?: number;
+  lastReceivedAtMs?: number;
+  lastDeliveredAtMs?: number;
+};
+type ContactRequestRecord = {
+  id: string;
+  remoteId?: string;
+  contactId: string;
+  contactGeneration: string;
+  direction: "incoming" | "outgoing";
+  kind: string;
+  title: string;
+  details?: JsonObject;
+  state: "offered" | "accepted" | "rejected" | "active" | "completed" | "cancelled";
+  revision: number;
+  createdAtMs: number;
+  updatedAtMs: number;
+};
+type ContactSyscalls = {
+  "contact.identity": {
+    args: Record<string, never>;
+    result: { document: FederationShipDocument; subject: FederationSubject };
+  };
+  "contact.invite.create": {
+    args: { expiresInSeconds?: number };
+    result: { inviteId: string; code: string; expiresAtMs: number };
+  };
+  "contact.invite.accept": {
+    args: { code: string };
+    result: { contact: ContactSummary };
+  };
+  "contact.invite.list": {
+    args: { includeTerminal?: boolean };
+    result: { invites: ContactInviteSummary[] };
+  };
+  "contact.invite.cancel": {
+    args: { inviteId: string };
+    result: { invite: ContactInviteSummary };
+  };
+  "contact.list": {
+    args: { includeRevoked?: boolean };
+    result: { contacts: ContactSummary[] };
+  };
+  "contact.revoke": {
+    args: { contactId: string };
+    result: { contact: ContactSummary };
+  };
+  "contact.send": {
+    args: {
+      contactId: string;
+      text: string;
+      media?: ResourceBlock[];
+      idempotencyKey?: string;
+    };
+    result: {
+      deliveryId: string;
+      conversationId: string;
+      state: "queued" | "delivered" | "failed";
+    };
+  };
+  "contact.delivery.get": {
+    args: { deliveryId: string };
+    result: { delivery: ContactDeliveryStatus | null };
+  };
+  "contact.request.list": {
+    args: { contactId?: string; includeTerminal?: boolean };
+    result: { requests: ContactRequestRecord[] };
+  };
+  "contact.request.create": {
+    args: {
+      contactId: string;
+      kind: string;
+      title: string;
+      details?: JsonObject;
+      idempotencyKey?: string;
+    };
+    result: { request: ContactRequestRecord; deliveryId: string };
+  };
+  "contact.request.update": {
+    args: {
+      requestId: string;
+      expectedRevision?: number;
+      state: "accepted" | "rejected" | "active" | "completed" | "cancelled";
+      details?: JsonObject;
+      idempotencyKey?: string;
+    };
+    result: { request: ContactRequestRecord; deliveryId: string };
   };
 };
 ```

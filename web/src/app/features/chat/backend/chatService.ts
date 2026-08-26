@@ -26,13 +26,15 @@ import type {
   ConversationMediaReadArgs,
   ConversationSendResult,
   FileResourceReference,
-  ResourceBlock,
-  FsTransferReceiveResult,
   FsTransferStatResult,
   FsTransferSendResult,
 } from "@humansandmachines/gsv/protocol";
-import { fileResourceReferenceSchema } from "@humansandmachines/gsv/protocol";
-import { frameBodyFromBlob, frameBodyToBlob } from "../../../services/gateway/frameBody";
+import {
+  fileResourceReferenceSchema,
+  MAX_FEDERATION_RESOURCE_BYTES,
+} from "@humansandmachines/gsv/protocol";
+import { frameBodyToBlob } from "../../../services/gateway/frameBody";
+import { withStagedResources } from "../../../services/gateway/stagedResources";
 import { z } from "zod";
 
 const mediaReadDataSchema = z.union([
@@ -130,29 +132,14 @@ export async function sendChatMessage(
   const conversationId = draft.conversationId?.trim()
     || (await client.conversation.forProcess({ pid })).conversation.id;
 
-  const stagedPaths: string[] = [];
-  const settled = await Promise.allSettled(uploads.map(async (upload) => {
-    const path = chatUploadPath(upload.filename);
-    stagedPaths.push(path);
-    return uploadChatResource(client, path, upload);
-  }));
-  const media = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
-  const uploadError = settled.find((result) => result.status === "rejected");
-  if (uploadError?.status === "rejected") {
-    await deleteChatUploads(client, stagedPaths);
-    throw uploadError.reason;
-  }
-
-  try {
+  return withStagedResources(client, uploads, async (media) => {
     return await client.conversation.send({
       conversationId,
       text: draft.message,
       ...(media.length > 0 ? { media } : undefined),
       idempotencyKey: crypto.randomUUID(),
     });
-  } finally {
-    await deleteChatUploads(client, stagedPaths);
-  }
+  });
 }
 
 export async function getChatConversation(
@@ -168,60 +155,6 @@ export async function getChatConversationHistory(
   options: { beforeSequence?: number; limit?: number } = {},
 ): Promise<ConversationHistoryResult> {
   return client.conversation.history({ conversationId, ...options });
-}
-
-async function uploadChatResource(
-  client: ChatGsvClient,
-  path: string,
-  upload: NonNullable<ChatSendDraft["media"]>[number],
-): Promise<ResourceBlock> {
-  const received = await client.request("fs.transfer.receive", {
-    path,
-    contentType: upload.mimeType,
-  }, { body: frameBodyFromBlob(upload.body) });
-  await received.body?.stream.cancel("fs.transfer.receive does not return a body").catch(() => {});
-  const receiveResult = throwIfFailed<Extract<FsTransferReceiveResult, { ok: true }>>(
-    received.data,
-  );
-  if (receiveResult.bytesWritten !== upload.body.size) {
-    throw new Error("GSV stored an unexpected attachment length");
-  }
-  const stat = await client.request("fs.transfer.stat", { path: receiveResult.path });
-  await stat.body?.stream.cancel("fs.transfer.stat does not return a body").catch(() => {});
-  const statResult = throwIfFailed<Extract<FsTransferStatResult, { ok: true }>>(stat.data);
-  if (
-    !statResult.isFile
-    || statResult.size !== upload.body.size
-    || statResult.contentType !== upload.mimeType
-    || !statResult.revision
-  ) {
-    throw new Error("GSV could not identify the uploaded attachment revision");
-  }
-  return {
-    type: "resource",
-    ref: {
-      type: "file",
-      target: "gsv",
-      path: statResult.path,
-      revision: statResult.revision,
-      contentType: upload.mimeType,
-      size: statResult.size,
-    },
-    mediaType: upload.type,
-    filename: upload.filename,
-  };
-}
-
-function chatUploadPath(filename: string | undefined): string {
-  const safe = filename?.trim().replaceAll(/[/\\\0]/g, "_") || "attachment";
-  return `~/.gsv/uploads/${crypto.randomUUID()}/${safe}`;
-}
-
-async function deleteChatUploads(client: ChatGsvClient, paths: string[]): Promise<void> {
-  await Promise.allSettled(paths.map(async (path) => {
-    const response = await client.request("fs.delete", { path });
-    await response.body?.stream.cancel("fs.delete does not return a body").catch(() => {});
-  }));
 }
 
 export async function abortChatProcess(
@@ -320,8 +253,11 @@ export async function readChatResource(
   if (ref.expiresAt !== undefined && ref.expiresAt <= Date.now()) {
     throw new Error("Resource reference has expired");
   }
-  if (ref.size > MAX_CHAT_PROCESS_MEDIA_BYTES) {
-    throw new Error("Resource exceeds the 25 MiB display limit");
+  const displayLimit = ref.target.startsWith("contact:")
+    ? MAX_FEDERATION_RESOURCE_BYTES
+    : MAX_CHAT_PROCESS_MEDIA_BYTES;
+  if (ref.size > displayLimit) {
+    throw new Error(`Resource exceeds the ${displayLimit / (1024 * 1024)} MiB display limit`);
   }
   const response = await client.request("fs.transfer.send", {
     target: ref.target,

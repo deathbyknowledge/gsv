@@ -8,6 +8,7 @@ export type ShellSurfaceId =
   | "integrations"
   | "runtime"
   | "responsibilities"
+  | "contacts"
   | "files"
   | "repositories"
   | "library"
@@ -131,6 +132,12 @@ export const SYSTEM_DOCK_ITEMS: SystemDockItem[] = [
     icon: "chat",
     description: "Agents, models, work ownership, and permissions.",
   },
+  {
+    id: "contacts",
+    label: "CONTACTS",
+    icon: "chat",
+    description: "Trusted GSV Ships, pairing, requests, and access.",
+  },
 ];
 
 export function getDesktopObject(objects: readonly DesktopObject[], id: DesktopObjectId | null): DesktopObject | null {
@@ -158,6 +165,8 @@ export function shellSurfaceLabel(surface: ShellSurfaceId): string {
       return "WORK";
     case "responsibilities":
       return "RESPONSIBILITIES";
+    case "contacts":
+      return "CONTACTS";
     case "files":
       return "FILES";
     case "repositories":

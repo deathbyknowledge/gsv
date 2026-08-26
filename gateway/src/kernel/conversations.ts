@@ -91,6 +91,31 @@ export class ConversationRegistry {
     return conversation;
   }
 
+  ensureContact(
+    ownerUid: number,
+    handlerPid: string,
+    title: string,
+    conversationId: string,
+  ): ConversationSummary {
+    const existing = this.get(conversationId);
+    if (existing) {
+      if (existing.ownerUid !== ownerUid || existing.kind !== "contact") {
+        throw new Error("Contact conversation identity does not match its contact");
+      }
+      if (existing.handlerPid !== handlerPid) {
+        this.setHandler(existing.id, handlerPid);
+      }
+      return this.get(existing.id)!;
+    }
+    return this.create({
+      id: conversationId,
+      ownerUid,
+      kind: "contact",
+      title,
+      handlerPid,
+    });
+  }
+
   create(input: {
     id: string;
     ownerUid: number;

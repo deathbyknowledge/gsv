@@ -7,6 +7,7 @@
 
 import type { MCPClientManager } from "agents/mcp/client";
 import type {
+  FederationDeliveryReceipt,
   JsonObject,
   JsonValue,
   SchedulerRunArgs,
@@ -29,6 +30,8 @@ import type { ScheduleStore } from "./scheduler";
 import type { MailboxStore } from "./mailbox-store";
 import type { ResponsibilityStore } from "./responsibility-store";
 import type { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
+import type { FederationStore } from "./federation-store";
+import type { FederationIdentity } from "./federation-crypto";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
 import type { InstallationIdentity } from "../installation/identity";
 import type { KernelConnection, KernelConnectionState } from "./connection";
@@ -58,6 +61,8 @@ export type KernelContext = {
   mailboxes: MailboxStore;
   responsibilities: ResponsibilityStore;
   responsibilitySources: ResponsibilitySourcePolicyStore;
+  federation: FederationStore;
+  federationIdentity: FederationIdentity;
   connection: KernelConnection<KernelConnectionState> | null;
   peer?: PeerContext;
   identity?: ConnectionIdentity;
@@ -82,6 +87,26 @@ export type KernelContext = {
     outboundId: string,
     dueAtMs: number,
   ) => Promise<void>;
+  scheduleFederationDelivery: (
+    deliveryId: string,
+    dueAtMs: number,
+    idempotent?: boolean,
+  ) => Promise<void>;
+  scheduleFederationInbox: (
+    contactId: string,
+    contactGeneration: string,
+    deliveryId: string,
+    dueAtMs: number,
+    idempotent?: boolean,
+  ) => Promise<void>;
+  coordinateFederationInbound: (
+    key: string,
+    operation: () => Promise<FederationDeliveryReceipt>,
+  ) => Promise<FederationDeliveryReceipt>;
+  coordinateFederationContact: <Value>(
+    contactId: string,
+    operation: () => Value | Promise<Value>,
+  ) => Promise<Value>;
   runSchedules: (
     args: SchedulerRunArgs,
     identity?: ConnectionIdentity,

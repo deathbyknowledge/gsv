@@ -10,6 +10,7 @@ import type {
 const TOP_LEVEL_SURFACES = new Map<string, Exclude<ShellSurfaceId, "desktop" | "settings">>([
   ["agent", "agent"],
   ["crew", "crew"],
+  ["contacts", "contacts"],
   ["files", "files"],
   ["integrations", "integrations"],
   ["card-template", "card-template"],

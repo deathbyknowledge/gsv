@@ -141,6 +141,21 @@ import {
   handleConversationMediaRead,
   handleConversationSend,
 } from "./conversation-handlers";
+import {
+  handleContactIdentity,
+  handleContactInviteAccept,
+  handleContactInviteCancel,
+  handleContactInviteCreate,
+  handleContactInviteList,
+  handleContactDeliveryGet,
+  handleContactList,
+  handleContactRequestCreate,
+  handleContactRequestList,
+  handleContactRequestUpdate,
+  handleContactResourceSend,
+  handleContactRevoke,
+  handleContactSend,
+} from "./federation";
 export type DispatchDeps = {
   shellSessions: ShellSessionStore;
   connections: Map<string, KernelConnection<KernelConnectionState>>;
@@ -204,6 +219,8 @@ export async function dispatch(
   const target = frame.call === "ai.text.generate"
     ? frame.args.target
     : routingArgs?.target;
+  const contactResourceTarget = frame.call === "fs.transfer.send"
+    && target?.startsWith("contact:") === true;
   const sessionId = frame.call === "shell.exec"
     ? frame.args.sessionId?.trim() ?? ""
     : "";
@@ -246,7 +263,12 @@ export async function dispatch(
     return routeToTarget(frame, sessionTarget, origin, ctx, deps);
   }
 
-  if (target && target !== "gsv" && isRoutableSyscall(frame.call)) {
+  if (
+    target
+    && target !== "gsv"
+    && isRoutableSyscall(frame.call)
+    && !contactResourceTarget
+  ) {
     if (routingArgs) delete routingArgs.target;
     const routedTarget = getVisibleTarget(ctx, target, { includeOffline: true });
     if (!routedTarget) {
@@ -258,7 +280,7 @@ export async function dispatch(
     return routeToTarget(frame, routedTarget, origin, ctx, deps);
   }
 
-  if (target && frame.call !== "ai.text.generate") {
+  if (target && frame.call !== "ai.text.generate" && !contactResourceTarget) {
     if (routingArgs) delete routingArgs.target;
   }
 
@@ -307,7 +329,9 @@ async function dispatchNative(
         data = await handleFsTransferStat(frame.args, ctx);
         break;
       case "fs.transfer.send":
-        return await handleFsTransferSend(frame.args, ctx, frame.id);
+        return frame.args.target?.startsWith("contact:") === true
+          ? await handleContactResourceSend(frame.args, ctx, frame.id)
+          : await handleFsTransferSend(frame.args, ctx, frame.id);
       case "fs.transfer.receive":
         data = await handleFsTransferReceive(frame.args, ctx, frame.body);
         break;
@@ -608,6 +632,44 @@ async function dispatchNative(
         break;
       case "r12y.source.update":
         data = handleResponsibilitySourceUpdate(frame.args, ctx);
+        break;
+
+      // --- contact.* ---
+      case "contact.identity":
+        data = await handleContactIdentity(ctx);
+        break;
+      case "contact.invite.create":
+        data = await handleContactInviteCreate(frame.args, ctx);
+        break;
+      case "contact.invite.accept":
+        data = await handleContactInviteAccept(frame.args, ctx);
+        break;
+      case "contact.invite.list":
+        data = handleContactInviteList(frame.args, ctx);
+        break;
+      case "contact.invite.cancel":
+        data = handleContactInviteCancel(frame.args, ctx);
+        break;
+      case "contact.list":
+        data = handleContactList(frame.args, ctx);
+        break;
+      case "contact.revoke":
+        data = await handleContactRevoke(frame.args, ctx);
+        break;
+      case "contact.send":
+        data = await handleContactSend(frame.args, ctx);
+        break;
+      case "contact.delivery.get":
+        data = handleContactDeliveryGet(frame.args, ctx);
+        break;
+      case "contact.request.list":
+        data = handleContactRequestList(frame.args, ctx);
+        break;
+      case "contact.request.create":
+        data = await handleContactRequestCreate(frame.args, ctx);
+        break;
+      case "contact.request.update":
+        data = await handleContactRequestUpdate(frame.args, ctx);
         break;
 
       // --- adapter.* ---

@@ -1,0 +1,39 @@
+.gsv-contacts-page { overflow: auto; }
+.gsv-contacts-shell { display: grid; gap: 24px; max-width: 1040px; margin: 0 auto; padding: 32px; }
+.gsv-contacts-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; border-bottom: 1px solid var(--border); padding-bottom: 20px; }
+.gsv-contacts-header h1, .gsv-contacts-pairing h2, .gsv-contacts-card h2 { margin: 5px 0 8px; }
+.gsv-contacts-header p, .gsv-contacts-pairing p, .gsv-contacts-card p { margin: 0; color: var(--text-muted); }
+.gsv-contacts-pairing { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; padding: 22px; border: 1px solid var(--border-raised); background: var(--surface-raised); }
+.gsv-contacts-pairing form { display: grid; align-content: end; gap: 12px; }
+.gsv-contacts-code { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 16px; border: 1px solid var(--primary); }
+.gsv-contacts-code div { display: grid; gap: 8px; min-width: 0; }
+.gsv-contacts-code code { overflow-wrap: anywhere; }
+.gsv-contacts-section-heading { margin-bottom: 10px; }
+.gsv-contacts-list { display: grid; gap: 10px; }
+.gsv-contacts-card { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 18px; border: 1px solid var(--border); background: var(--surface); }
+.gsv-contacts-card-meta { display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: 11px; }
+.gsv-contacts-card-meta .is-active { color: var(--online); }
+.gsv-contacts-card-meta .is-revoked { color: var(--idle); }
+.gsv-contacts-card-meta .is-pending { color: var(--primary); }
+.gsv-contacts-card-meta .is-accepted { color: var(--online); }
+.gsv-contacts-card-meta .is-expired, .gsv-contacts-card-meta .is-cancelled { color: var(--idle); }
+.gsv-contacts-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.gsv-contacts-empty { padding: 28px; border: 1px dashed var(--border); color: var(--text-muted); text-align: center; }
+.gsv-contacts-error { padding: 12px 14px; border: 1px solid var(--error); color: var(--error); }
+.gsv-contact-conversation { display: grid; gap: 14px; min-height: 420px; padding: 20px; border: 1px solid var(--primary); background: var(--surface-raised); }
+.gsv-contact-conversation > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.gsv-contact-conversation h2 { margin: 5px 0 0; }
+.gsv-contact-conversation-messages { display: flex; flex-direction: column; gap: 10px; min-height: 260px; max-height: 520px; overflow-y: auto; padding: 12px; border: 1px solid var(--border); background: var(--surface); }
+.gsv-contact-message { display: grid; gap: 8px; width: min(82%, 720px); padding: 12px 14px; border: 1px solid var(--border); }
+.gsv-contact-message.is-local { align-self: flex-end; border-color: var(--primary); background: var(--surface-raised); }
+.gsv-contact-message.is-remote { align-self: flex-start; }
+.gsv-contact-message p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.gsv-contact-message-meta { display: flex; justify-content: space-between; gap: 14px; color: var(--text-muted); font-size: 10px; }
+.gsv-contact-message-meta strong { color: var(--text); }
+@media (max-width: 760px) {
+  .gsv-contacts-shell { padding: 18px; }
+  .gsv-contacts-pairing { grid-template-columns: 1fr; }
+  .gsv-contacts-card, .gsv-contacts-header { align-items: stretch; flex-direction: column; }
+  .gsv-contacts-actions { justify-content: flex-start; }
+  .gsv-contact-message { width: 94%; }
+}

@@ -50,6 +50,18 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
   cp: command("Copy files locally or between GSV targets.", "Move or copy a file between GSV, a connected machine, or a browser target, including photos and documents.", ["copy", "transfer", "file", "photo", "image", "document", "laptop", "machine", "device", "target"]),
   crontab: command("Manage recurring native shell jobs.", "Run a shell command repeatedly on a cron schedule such as every morning or each weekday.", ["schedule", "recurring", "automation", "cron", "daily", "weekly"], ["sched"]),
   codemode: command("Run a reusable JavaScript GSV tool workflow.", "Combine several shell, filesystem, or connected integration operations in one scripted workflow.", ["script", "workflow", "automation", "tools", "javascript"]),
+  contact: command("Manage trusted contacts with other GSV Ships.", "Pair with another Ship, inspect contacts, exchange structured requests, revoke access, or discover a contact destination for messaging.", ["contact", "ship", "federation", "pair", "invite", "request", "revoke"], [], [
+    "contact identity",
+    "contact list [--all] [--json]",
+    "contact invite create [--expires DURATION]",
+    "contact invite accept CODE",
+    "contact invite list [--all] [--json]",
+    "contact invite cancel INVITE_ID",
+    "contact revoke CONTACT_ID",
+    "contact request list [--contact CONTACT_ID] [--all] [--json]",
+    "contact request create --contact CONTACT_ID --kind KIND --title TITLE [--details JSON] [--delivery-id ID]",
+    "contact request update REQUEST_ID --state STATE [--revision N] [--details JSON] [--delivery-id ID]",
+  ]),
   mcp: command("Discover and call connected MCP integrations.", "Use an external connected service or search its available integration tools.", ["integration", "service", "connector", "api", "tools", "mcp"]),
   proc: command("Inspect, delegate to, message, and control GSV agent processes.", "Create a subagent, delegate a task, contact another agent, or inspect agent history and lifecycle.", ["agent", "subagent", "delegate", "process", "message", "history"]),
   r12y: command("Inspect and maintain durable unresolved responsibilities.", "Record work that must survive the current run, delegate it, defer it to a known wake condition, or close it with a durable outcome.", ["responsibility", "promise", "work", "task", "delegate", "waiting", "deadline", "outcome"], [], [
@@ -62,7 +74,7 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
     "r12y wait ID [--until ISO] [--blocker TEXT]",
     "r12y resolve ID [--json RESOLUTION]",
   ]),
-  message: command("Send messages, attach files, and route adapter chats.", "Send an update to the current conversation without finishing the run, attach files to the next message, send to another destination, inspect the directed endpoint, open a private work direct line, or route a group, channel, or thread to a process.", ["chat", "reply", "send", "update", "attachment", "file", "image", "photo", "audio", "document", "route", "conversation", "work", "group", "channel", "thread"], [], [
+  message: command("Send messages, attach files, and route conversations.", "Send an update to the current conversation without finishing the run, attach files to the next message, send to an adapter or trusted GSV contact, inspect the directed endpoint, open a private work direct line, or route a group, channel, or thread to a process.", ["chat", "reply", "send", "update", "attachment", "file", "image", "photo", "audio", "document", "route", "conversation", "contact", "ship", "work", "group", "channel", "thread"], [], [
     "message current [--json]",
     "message destinations [--all] [--json]",
     "message route show [--to here|DESTINATION] [--json]",
@@ -70,6 +82,8 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
     "message route set --process PID_OR_LABEL [--to here|DESTINATION] [--json]",
     "message route clear [--to here|DESTINATION] [--json]",
     "message attach PATH... [--mime TYPE]",
+    "message history --with CONTACT_OR_CONVERSATION [--before SEQUENCE] [--limit N] [--json]",
+    "message delivery show DELIVERY_ID [--json]",
     "message send [--message TEXT]",
     "message send --to DESTINATION [--message TEXT] [--attach PATH [--mime TYPE]] [--delivery-id ID] [--also]",
   ]),
@@ -118,7 +132,7 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
     "skills create <name> --description <text> [--from <body-file>] [--replace]",
     "skills validate <skill-or-path>",
   ]),
-  wiki: command("Search and maintain durable repo-backed knowledge.", "Remember, retrieve, or organize durable notes, facts, decisions, and reference material.", ["knowledge", "memory", "notes", "search", "wiki", "reference"]),
+  wiki: command("Search and maintain durable repo-backed knowledge.", "Remember, retrieve, organize, or refresh durable notes, facts, decisions, and reference material.", ["knowledge", "memory", "notes", "search", "wiki", "reference", "manual", "refresh"], [], ["wiki refresh gsv-manual"]),
   flynn: command("Print the GSV version banner.", "Inspect the GSV release banner or project easter egg.", ["version", "banner", "gsv"]),
 });
 
