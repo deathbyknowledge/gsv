@@ -48,7 +48,7 @@ impl Engine {
             &model_path,
             &ModelOptions {
                 backend,
-                gpu_device: 0,
+                device: None,
             },
         )
         .map_err(|_| {
