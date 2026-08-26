@@ -46,7 +46,7 @@ export type GsvRuntimeProps = {
   paths: GsvRuntimePaths;
   services?: GsvRuntimeServices;
   compatibility?: typeof GSV_WORKER_COMPATIBILITY;
-  workersDev?: boolean | Cloudflare.Workers.WorkersDevConfig;
+  gatewayWorkersDev?: boolean | Cloudflare.Workers.WorkersDevConfig;
   observability?: Cloudflare.Workers.WorkerObservability;
 };
 
@@ -78,7 +78,7 @@ export const GsvRuntime = (props: GsvRuntimeProps) =>
         main: props.paths.ripgitBundle,
         bundle: false,
         compatibility: { date: compatibility.date },
-        workersDev: props.workersDev ?? false,
+        workersDev: false,
         observability: props.observability ?? {
           enabled: true,
           logs: { enabled: true, invocationLogs: true },
@@ -112,7 +112,7 @@ export const GsvRuntime = (props: GsvRuntimeProps) =>
         main: props.paths.gatewayBundle,
         bundle: false,
         compatibility,
-        workersDev: props.workersDev ?? false,
+        workersDev: props.gatewayWorkersDev ?? false,
         observability: props.observability ?? { enabled: true },
         assets: {
           directory: props.paths.webAssets,

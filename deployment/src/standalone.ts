@@ -47,7 +47,7 @@ export const StandaloneGsvDeployment = (
         storageBucket: "gsv-storage",
       },
       paths: props.manifest.runtime,
-      workersDev: { enabled: true, previewsEnabled: false },
+      gatewayWorkersDev: { enabled: true, previewsEnabled: false },
       services: { adapters },
     });
     return { ...runtime, adapters };
