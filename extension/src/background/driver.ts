@@ -36,10 +36,11 @@ export function createBrowserTargetDriver(
             data: await shell.exec(request.args, {
               currentTargetId: currentTargetId(context),
               abortSignal: context.abortSignal,
-              copyTargetFile: async (source, destination) => await context.client.call("fs.copy", {
-                source,
-                destination,
-              }),
+              copyTargetFile: async (source, destination, signal) => (await context.client.request(
+                "fs.copy",
+                { source, destination },
+                { signal },
+              )).data,
             }),
           };
         } else if (request.call.startsWith("fs.")) {

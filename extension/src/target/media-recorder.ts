@@ -7,6 +7,7 @@ import {
   type OffscreenMediaMessage,
   type OffscreenMediaResponse,
 } from "./media-recorder-protocol";
+import { throwIfAborted } from "./abort";
 import type { CommandContext, TargetCopyEndpoint, TargetFileSystem } from "./types";
 
 export const DEFAULT_RECORDING_MAX_DURATION_MS = 10 * 60 * 1000;
@@ -266,7 +267,8 @@ async function copyCompletedRecording(
     path: status.localPath,
   };
   try {
-    const copy = await ctx.copyTargetFile(source, status.destination);
+    const copy = await ctx.copyTargetFile(source, status.destination, ctx.abortSignal);
+    throwIfAborted(ctx.abortSignal);
     if (copySucceeded(copy)) {
       await acknowledgeRecordingCopy(status.id, copy).catch(() => undefined);
     }

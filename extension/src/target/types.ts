@@ -28,7 +28,11 @@ export type CommandContext = {
   now: () => number;
   currentTargetId?: string;
   abortSignal?: AbortSignal;
-  copyTargetFile?: (source: TargetCopyEndpoint, destination: TargetCopyEndpoint) => Promise<unknown>;
+  copyTargetFile?: (
+    source: TargetCopyEndpoint,
+    destination: TargetCopyEndpoint,
+    signal: AbortSignal | undefined,
+  ) => Promise<unknown>;
 };
 
 export type DriverHandler = GsvEndpointHandler;

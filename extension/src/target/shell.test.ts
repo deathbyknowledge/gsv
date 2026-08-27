@@ -94,7 +94,7 @@ describe("BrowserTargetShell", () => {
     expect(laterRuns).toBe(1);
   });
 
-  it("releases the queue when an active custom command ignores cancellation", async () => {
+  it("keeps a cancelled custom command fenced until its operation stops", async () => {
     const running = deferred<void>();
     const started = deferred<void>();
     let laterRuns = 0;
@@ -129,9 +129,12 @@ describe("BrowserTargetShell", () => {
     controller.abort(new Error("Route expired"));
 
     await expect(within(active)).resolves.toMatchObject({ status: "failed" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(laterRuns).toBe(0);
+
+    running.resolve(undefined);
     await expect(within(next)).resolves.toMatchObject({ status: "completed" });
     expect(laterRuns).toBe(1);
-    running.resolve(undefined);
   });
 
   it("cancels a long page wait, stops polling, and runs the next command", async () => {

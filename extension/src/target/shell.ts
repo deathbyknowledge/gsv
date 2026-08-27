@@ -16,13 +16,18 @@ type BrowserBash = InstanceType<typeof Bash>;
 export type BrowserShellExecContext = {
   currentTargetId?: string;
   abortSignal?: AbortSignal;
-  copyTargetFile?: (source: TargetCopyEndpoint, destination: TargetCopyEndpoint) => Promise<unknown>;
+  copyTargetFile?: (
+    source: TargetCopyEndpoint,
+    destination: TargetCopyEndpoint,
+    signal: AbortSignal | undefined,
+  ) => Promise<unknown>;
 };
 
 export class BrowserTargetShell {
   private bash: BrowserBash | null = null;
   private ready: Promise<void> | null = null;
   private activeExecContext: BrowserShellExecContext = {};
+  private activeCommandCompletion: Promise<void> | null = null;
   private execQueue: Promise<void> = Promise.resolve();
 
   constructor(
@@ -45,7 +50,15 @@ export class BrowserTargetShell {
       return failedResult(error);
     } finally {
       if (acquired) {
-        release();
+        // Cancellation can settle Bash before a custom command's owned work; do not let
+        // the next command overlap that work while it reaches its terminal boundary.
+        const completion = this.activeCommandCompletion;
+        this.activeCommandCompletion = null;
+        if (completion) {
+          void completion.then(release);
+        } else {
+          release();
+        }
       } else {
         void previous.then(release);
       }
@@ -127,8 +140,13 @@ export class BrowserTargetShell {
             copyTargetFile: this.activeExecContext.copyTargetFile,
           };
           try {
+            const execution = Promise.resolve(command.run(args, commandContext));
+            this.activeCommandCompletion = execution.then(
+              () => undefined,
+              () => undefined,
+            );
             return await abortable(
-              Promise.resolve(command.run(args, commandContext)),
+              execution,
               commandContext.abortSignal,
             );
           } catch (error) {
