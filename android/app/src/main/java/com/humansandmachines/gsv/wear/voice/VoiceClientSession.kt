@@ -21,7 +21,6 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
 import okio.ByteString.Companion.toByteString
-import org.json.JSONArray
 import org.json.JSONObject
 
 class VoiceClientSession(
@@ -53,7 +52,11 @@ class VoiceClientSession(
     private var connectInfo: VoiceConnectResult? = null
 
     @Volatile
-    var personalPid: String? = null
+    var shipHandlerPid: String? = null
+        private set
+
+    @Volatile
+    var shipConversationId: String? = null
         private set
 
     fun open() {
@@ -133,7 +136,7 @@ class VoiceClientSession(
     }
 
     suspend fun transcribe(audio: ByteArray, filename: String): String {
-        val pid = personalPid ?: throw VoiceClientFailure("Personal process is unavailable")
+        val pid = shipHandlerPid ?: throw VoiceClientFailure("Ship handler is unavailable")
         val response = request(
             call = "ai.transcription.create",
             args = JSONObject()
@@ -147,14 +150,18 @@ class VoiceClientSession(
             ?: throw VoiceClientFailure("No speech was recognized")
     }
 
-    suspend fun sendToPersonalProcess(message: String): String {
-        val pid = personalPid ?: throw VoiceClientFailure("Personal process is unavailable")
+    suspend fun sendToShip(message: String): String {
+        val conversationId = shipConversationId ?: throw VoiceClientFailure("Ship conversation is unavailable")
         val response = request(
-            call = "proc.send",
-            args = JSONObject().put("pid", pid).put("message", message),
+            call = "conversation.send",
+            args = JSONObject()
+                .put("conversationId", conversationId)
+                .put("text", message)
+                .put("idempotencyKey", UUID.randomUUID().toString()),
         )
+        response.data.optString("handlerPid").takeIf(String::isNotBlank)?.let { shipHandlerPid = it }
         return response.data.optString("runId").takeIf(String::isNotBlank)
-            ?: throw VoiceClientFailure("Personal process did not start a run")
+            ?: throw VoiceClientFailure("Ship conversation did not start a run")
     }
 
     suspend fun awaitRun(runId: String): VoiceRunTerminal {
@@ -191,7 +198,7 @@ class VoiceClientSession(
         return SynthesizedVoice(bytes, mimeType)
     }
 
-    fun supports(call: String): Boolean = connectInfo?.syscalls?.let { VoiceProtocol.allows(it, call) } == true
+    fun supports(call: String): Boolean = connectInfo?.calls?.let { VoiceProtocol.allows(it, call) } == true
 
     fun close() {
         terminate(VoiceClientFailure("Voice client stopped"))
@@ -205,7 +212,7 @@ class VoiceClientSession(
                 return
             }
             val connect = try {
-                VoiceProtocol.validateConnectResponse(json)
+                VoiceProtocol.validateConnectResponse(json, config.clientId)
             } catch (error: Throwable) {
                 terminate(error)
                 return
@@ -255,20 +262,21 @@ class VoiceClientSession(
 
     private suspend fun finishRuntimeHandshake(connect: VoiceConnectResult) {
         try {
-            val missing = REQUIRED_RUNTIME_SYSCALLS.filterNot { VoiceProtocol.allows(connect.syscalls, it) }
-            if (missing.isNotEmpty()) throw VoiceClientFailure("Voice client capabilities are unavailable")
-            val response = request("proc.list")
-            val processes = response.data.optJSONArray("processes") ?: JSONArray()
-            val personal = buildList {
-                for (index in 0 until processes.length()) {
-                    val process = processes.optJSONObject(index) ?: continue
-                    if (process.optBoolean("personal") && process.optInt("uid", -1) == connect.uid) {
-                        process.optString("pid").takeIf(String::isNotBlank)?.let(::add)
-                    }
-                }
+            val missingCalls = REQUIRED_RUNTIME_CALLS.filterNot { VoiceProtocol.allows(connect.calls, it) }
+            if (missingCalls.isNotEmpty()) throw VoiceClientFailure("Voice client call grants are unavailable")
+            if (!connect.signals.containsAll(REQUIRED_RUNTIME_SIGNALS)) {
+                throw VoiceClientFailure("Voice client signal grants are unavailable")
             }
-            if (personal.size != 1) throw VoiceClientFailure("Personal process could not be resolved")
-            personalPid = personal.single()
+            val response = request("conversation.ship")
+            val conversation = response.data.optJSONObject("conversation")
+                ?: throw VoiceClientFailure("Ship conversation could not be resolved")
+            if (conversation.optString("kind") != "ship" || conversation.optInt("ownerUid", -1) != connect.uid) {
+                throw VoiceClientFailure("Gateway returned the wrong Ship conversation")
+            }
+            shipConversationId = conversation.optString("id").takeIf(String::isNotBlank)
+                ?: throw VoiceClientFailure("Ship conversation id was missing")
+            shipHandlerPid = conversation.optString("handlerPid").takeIf(String::isNotBlank)
+                ?: throw VoiceClientFailure("Ship handler was missing")
             ready.complete(connect)
             onReady(epoch)
         } catch (error: Throwable) {
@@ -277,16 +285,11 @@ class VoiceClientSession(
     }
 
     private fun handleSignal(json: JSONObject) {
-        val signal = json.optString("signal")
-        if (signal != "proc.run.finished" && signal != "proc.run.hil.requested") return
-        val payload = json.optJSONObject("payload") ?: return
-        if (payload.optString("pid") != personalPid) return
-        val runId = payload.optString("runId").takeIf(String::isNotBlank) ?: return
-        val terminalEvent = if (signal == "proc.run.finished") {
-            VoiceRunTerminal.Finished(payload)
-        } else {
-            VoiceRunTerminal.ApprovalRequired
-        }
+        val conversationId = shipConversationId ?: return
+        val handlerPid = shipHandlerPid ?: return
+        val event = VoiceProtocol.parseTerminalSignal(json, conversationId, handlerPid) ?: return
+        val runId = event.runId
+        val terminalEvent = event.terminal
         val waiter = runWaiters.remove(runId)
         if (waiter != null) {
             waiter.complete(terminalEvent)
@@ -408,10 +411,16 @@ class VoiceClientSession(
         private const val BODY_CHUNK_BYTES = 64 * 1024
         private const val MAX_RESPONSE_BODY_BYTES = 24L * 1024 * 1024
         private const val MAX_CACHED_RUNS = 16
-        private val REQUIRED_RUNTIME_SYSCALLS = setOf(
-            "proc.list",
-            "proc.send",
+        private val REQUIRED_RUNTIME_CALLS = setOf(
+            "conversation.ship",
+            "conversation.send",
             "ai.transcription.create",
+        )
+        private val REQUIRED_RUNTIME_SIGNALS = setOf(
+            "message.committed",
+            "message.aborted",
+            "proc.run.hil.requested",
+            "proc.run.finished",
         )
     }
 }

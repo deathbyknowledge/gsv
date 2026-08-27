@@ -18,11 +18,12 @@ class GsvProtocolTest {
         )
 
         val args = frame.getJSONObject("args")
-        assertEquals(2, args.getInt("protocol"))
-        assertEquals("driver", args.getJSONObject("client").getString("role"))
+        assertEquals(3, args.getInt("protocol"))
+        assertEquals("pixel-10", args.getJSONObject("peer").getString("id"))
+        assertEquals("android", args.getJSONObject("peer").getString("platform"))
         assertEquals(
             listOf("fs.*", "shell.exec", "net.fetch"),
-            args.getJSONObject("driver").getJSONArray("implements").let { array ->
+            args.getJSONObject("peer").getJSONArray("implements").let { array ->
                 List(array.length()) { array.getString(it) }
             },
         )
@@ -37,8 +38,17 @@ class GsvProtocolTest {
               "id":"connect-1",
               "ok":true,
               "data":{
-                "protocol":2,
-                "identity":{"role":"driver","device":"pixel-10"}
+                "protocol":3,
+                "peer":{
+                  "id":"pixel-10",
+                  "sessionId":"session-1",
+                  "principal":{"kind":"machine","account":{"uid":1000}},
+                  "grant":{
+                    "calls":[],
+                    "signals":["device.status","peer.pong"],
+                    "implements":["fs.*","shell.exec","net.fetch"]
+                  }
+                }
               }
             }
             """.trimIndent(),
@@ -46,6 +56,13 @@ class GsvProtocolTest {
 
         assertNull(GsvProtocol.validateConnectResponse(response, "pixel-10"))
         assertEquals(ConnectFailure.PROTOCOL, GsvProtocol.validateConnectResponse(response, "other"))
+
+        response.getJSONObject("data")
+            .getJSONObject("peer")
+            .getJSONObject("grant")
+            .getJSONArray("implements")
+            .put("camera.capture")
+        assertEquals(ConnectFailure.PROTOCOL, GsvProtocol.validateConnectResponse(response, "pixel-10"))
     }
 
     @Test
@@ -71,14 +88,14 @@ class GsvProtocolTest {
     fun roundTripsTheDriverHeartbeatNonce() {
         val ping = JSONObject(GsvProtocol.heartbeatFrame("heartbeat-1", 1234))
         assertEquals("sig", ping.getString("type"))
-        assertEquals("device.ping", ping.getString("signal"))
+        assertEquals("peer.ping", ping.getString("signal"))
         assertEquals("heartbeat-1", ping.getJSONObject("payload").getString("nonce"))
         assertEquals(1234, ping.getJSONObject("payload").getLong("at"))
 
         val parsed = GsvProtocol.parseText(
-            """{"type":"sig","signal":"device.pong","payload":{"nonce":"heartbeat-1"}}""",
+            """{"type":"sig","signal":"peer.pong","payload":{"nonce":"heartbeat-1"}}""",
         )
-        assertTrue(parsed is IncomingTextFrame.DriverPong)
-        assertEquals("heartbeat-1", (parsed as IncomingTextFrame.DriverPong).nonce)
+        assertTrue(parsed is IncomingTextFrame.PeerPong)
+        assertEquals("heartbeat-1", (parsed as IncomingTextFrame.PeerPong).nonce)
     }
 }

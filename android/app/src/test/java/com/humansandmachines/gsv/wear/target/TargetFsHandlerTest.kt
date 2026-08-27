@@ -27,7 +27,7 @@ class TargetFsHandlerTest {
             temporaryRoot = File(root, "tmp"),
             runtime = TargetTestRuntime(),
         )
-        handler = TargetFsHandler(fileSystem)
+        handler = TargetFsHandler(fileSystem, "pixel-10")
     }
 
     @After
@@ -122,7 +122,86 @@ class TargetFsHandlerTest {
             handler.handle("fs.transfer.send", JSONObject().put("path", "/tmp/image.bin"), null),
         )
         assertEquals(expected.size.toLong(), send.data.getLong("size"))
+        assertTrue(send.data.getString("revision").startsWith("android:"))
         assertArrayEquals(expected, send.readBytes())
+    }
+
+    @Test
+    fun imageResourcesCarryThePeerAndFenceLaterTransfersByRevision() = runBlocking {
+        val original = byteArrayOf(
+            0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1,
+        )
+        fileSystem.write(
+            "/tmp/context.png",
+            ByteArrayInputStream(original),
+            original.size.toLong(),
+            "image/png",
+        )
+
+        val read = data(
+            handler.handle(
+                "fs.read",
+                JSONObject().put("path", "/tmp/context.png").put("representation", "resource"),
+                null,
+            ),
+        )
+        val resource = read.getJSONObject("resource")
+        val revision = resource.getString("revision")
+        assertEquals("file", resource.getString("type"))
+        assertEquals("pixel-10", resource.getString("target"))
+        assertEquals("/tmp/context.png", resource.getString("path"))
+        assertTrue(revision.startsWith("android:"))
+
+        fileSystem.write(
+            "/tmp/context.png",
+            ByteArrayInputStream(original.copyOf().apply { this[lastIndex] = 2 }),
+            original.size.toLong(),
+            "image/png",
+        )
+        val stale = data(
+            handler.handle(
+                "fs.transfer.send",
+                JSONObject().put("path", "/tmp/context.png").put("revision", revision),
+                null,
+            ),
+        )
+        assertFalse(stale.getBoolean("ok"))
+        assertTrue(stale.getString("error").contains("revision"))
+    }
+
+    @Test
+    fun textReadsHonorUtf8ByteBoundsAndExposeContinuation() = runBlocking {
+        fileSystem.writeText("/tmp/bounded.txt", "zero\néé\nthird\nfourth")
+
+        val read = body(
+            handler.handle(
+                "fs.read",
+                JSONObject().put("path", "/tmp/bounded.txt").put("limit", 3).put("maxBytes", 9),
+                null,
+            ),
+        )
+
+        assertEquals("zero\néé", read.readBytes().toString(Charsets.UTF_8))
+        assertEquals(2, read.data.getInt("lines"))
+        assertTrue(read.data.getBoolean("truncated"))
+        assertEquals(2, read.data.getInt("nextOffset"))
+    }
+
+    @Test
+    fun oversizedTextLineUsesAValidUtf8PrefixWithoutSkippingTheLine() = runBlocking {
+        fileSystem.writeText("/tmp/long.txt", "ééé")
+
+        val read = body(
+            handler.handle(
+                "fs.read",
+                JSONObject().put("path", "/tmp/long.txt").put("maxBytes", 3),
+                null,
+            ),
+        )
+
+        assertEquals("é", read.readBytes().toString(Charsets.UTF_8))
+        assertTrue(read.data.getBoolean("truncated"))
+        assertFalse(read.data.has("nextOffset"))
     }
 
     @Test

@@ -27,7 +27,10 @@ interface TargetRequestBody : AutoCloseable {
     fun cancel(reason: String)
 }
 
-class TargetFsHandler(private val fileSystem: TargetFileSystem) {
+class TargetFsHandler(
+    private val fileSystem: TargetFileSystem,
+    private val targetId: String,
+) {
     suspend fun handle(
         call: String,
         args: JSONObject,
@@ -59,7 +62,7 @@ class TargetFsHandler(private val fileSystem: TargetFileSystem) {
                         .put("directories", JSONArray(listing.directories)),
                 )
             } else {
-                readFile(args, stat.path)
+                readFile(args, stat)
             }
         } catch (error: CancellationException) {
             throw error
@@ -68,14 +71,45 @@ class TargetFsHandler(private val fileSystem: TargetFileSystem) {
         }
     }
 
-    private suspend fun readFile(args: JSONObject, path: String): TargetHandlerResponse {
-        val opened = fileSystem.open(path)
-        if (opened.eventProducing && (args.has("offset") || args.has("limit"))) {
-            opened.close()
+    private suspend fun readFile(args: JSONObject, stat: TargetStat): TargetHandlerResponse {
+        val contentType = stat.contentType ?: "application/octet-stream"
+        val image = contentType.startsWith("image/") && !AndroidTargetFileSystem.isTextContentType(contentType)
+        if (image && args.optString("representation") == "resource") {
+            if (stat.eventProducing) {
+                return TargetHandlerResponse.Data(
+                    JSONObject()
+                        .put("ok", false)
+                        .put("error", "Event-producing files must first be copied to /tmp or /home/android"),
+                )
+            }
+            val revision = stat.revision ?: return TargetHandlerResponse.Data(
+                JSONObject().put("ok", false).put("error", "File revision is unavailable: ${stat.path}"),
+            )
             return TargetHandlerResponse.Data(
-                JSONObject().put("ok", false).put("error", "Event-producing files do not support offset or limit"),
+                JSONObject()
+                    .put("ok", true)
+                    .put("path", stat.path)
+                    .put("kind", "image")
+                    .put("contentType", contentType)
+                    .put("size", stat.size)
+                    .put(
+                        "resource",
+                        JSONObject()
+                            .put("type", "file")
+                            .put("target", targetId)
+                            .put("path", stat.path)
+                            .put("revision", revision)
+                            .put("contentType", contentType)
+                            .put("size", stat.size),
+                    ),
             )
         }
+        if (stat.eventProducing && (args.has("offset") || args.has("limit") || args.has("maxBytes"))) {
+            return TargetHandlerResponse.Data(
+                JSONObject().put("ok", false).put("error", "Event-producing files do not support text selection"),
+            )
+        }
+        val opened = fileSystem.open(stat.path)
         if (opened.contentType.startsWith("image/") && !AndroidTargetFileSystem.isTextContentType(opened.contentType)) {
             return TargetHandlerResponse.Body(
                 data = JSONObject()
@@ -118,21 +152,21 @@ class TargetFsHandler(private val fileSystem: TargetFileSystem) {
             val lines = splitLines(text)
             val offset = nonNegativeInteger(args, "offset") ?: 0
             val limit = nonNegativeInteger(args, "limit")
-            val selected = if (offset >= lines.size) {
-                emptyList()
-            } else {
-                val end = limit?.let { (offset + it).coerceAtMost(lines.size) } ?: lines.size
-                lines.subList(offset, end)
-            }
-            val selectedBytes = selected.joinToString("\n").toByteArray(Charsets.UTF_8)
+            val maxBytes = positiveInteger(args, "maxBytes")
+            val selection = selectTextLines(lines, offset, limit, maxBytes)
+            val selectedBytes = selection.content.toByteArray(Charsets.UTF_8)
             TargetHandlerResponse.Body(
                 data = JSONObject()
                     .put("ok", true)
                     .put("path", handle.path)
                     .put("kind", "text")
                     .put("contentType", handle.contentType)
-                    .put("lines", selected.size)
-                    .put("size", handle.length),
+                    .put("lines", selection.lines)
+                    .put("size", handle.length)
+                    .apply {
+                        if (selection.truncated) put("truncated", true)
+                        selection.nextOffset?.let { put("nextOffset", it) }
+                    },
                 body = TargetReadHandle.fromBytes(handle.path, selectedBytes, handle.contentType),
             )
         }
@@ -242,18 +276,38 @@ class TargetFsHandler(private val fileSystem: TargetFileSystem) {
             .put("isFile", stat.isFile)
             .put("isDirectory", stat.isDirectory)
             .apply { stat.contentType?.let { put("contentType", it) } }
+            .apply { stat.revision?.let { put("revision", it) } }
     }
 
     private suspend fun transferSend(args: JSONObject): TargetHandlerResponse {
         val path = requiredPath(args, "fs.transfer.send")
         return try {
+            val stat = fileSystem.stat(path)
+            if (!stat.isFile || stat.eventProducing) {
+                return TargetHandlerResponse.Data(
+                    JSONObject()
+                        .put("ok", false)
+                        .put("error", "Only ordinary files can be transferred"),
+                )
+            }
             val opened = fileSystem.open(path)
+            val revision = opened.revision ?: stat.revision
+            val expectedRevision = (args.opt("revision") as? String)?.takeIf(String::isNotBlank)
+            if (revision == null || expectedRevision != null && expectedRevision != revision) {
+                opened.close()
+                return TargetHandlerResponse.Data(
+                    JSONObject()
+                        .put("ok", false)
+                        .put("error", "Source revision is no longer available: ${stat.path}"),
+                )
+            }
             TargetHandlerResponse.Body(
                 data = JSONObject()
                     .put("ok", true)
                     .put("path", opened.path)
                     .put("size", opened.length)
-                    .put("contentType", opened.contentType),
+                    .put("contentType", opened.contentType)
+                    .put("revision", revision),
                 body = opened,
             )
         } catch (error: CancellationException) {
@@ -344,6 +398,69 @@ class TargetFsHandler(private val fileSystem: TargetFileSystem) {
             is Long -> value.takeIf { it in 0..Int.MAX_VALUE }?.toInt()
             else -> null
         }
+    }
+
+    private fun positiveInteger(args: JSONObject, key: String): Int? {
+        if (!args.has(key)) return null
+        return when (val value = args.opt(key)) {
+            is Int -> value.takeIf { it > 0 }
+            is Long -> value.takeIf { it in 1..Int.MAX_VALUE }?.toInt()
+            else -> null
+        } ?: throw TargetFsException("fs.read $key must be a positive integer")
+    }
+
+    private data class TextSelection(
+        val content: String,
+        val lines: Int,
+        val truncated: Boolean,
+        val nextOffset: Int?,
+    )
+
+    private fun selectTextLines(
+        allLines: List<String>,
+        offset: Int,
+        limit: Int?,
+        maxBytes: Int?,
+    ): TextSelection {
+        val start = offset.coerceAtMost(allLines.size)
+        val end = if (limit == null) allLines.size else (start.toLong() + limit).coerceAtMost(allLines.size.toLong()).toInt()
+        val requested = allLines.subList(start, end)
+        val byteLimit = maxBytes ?: Int.MAX_VALUE
+        val selected = mutableListOf<String>()
+        var usedBytes = 0L
+        var partial = false
+
+        for (line in requested) {
+            val lineBytes = line.toByteArray(Charsets.UTF_8)
+            val separatorBytes = if (selected.isEmpty()) 0 else 1
+            if (usedBytes + separatorBytes + lineBytes.size <= byteLimit) {
+                selected += line
+                usedBytes += separatorBytes + lineBytes.size
+                continue
+            }
+            if (selected.isEmpty()) {
+                selected += utf8Prefix(lineBytes, byteLimit)
+                partial = true
+            }
+            break
+        }
+
+        val lines = selected.size
+        val truncated = partial || lines < requested.size || end < allLines.size
+        val nextOffset = if (!partial && truncated && lines > 0) start + lines else null
+        return TextSelection(selected.joinToString("\n"), lines, truncated, nextOffset)
+    }
+
+    private fun utf8Prefix(bytes: ByteArray, maximum: Int): String {
+        var end = maximum.coerceAtMost(bytes.size)
+        while (end > 0) {
+            try {
+                return AndroidTargetFileSystem.decodeUtf8(bytes.copyOf(end))
+            } catch (_: Exception) {
+                end -= 1
+            }
+        }
+        return ""
     }
 
     private suspend fun readAll(input: InputStream, expectedSize: Long): ByteArray = withContext(Dispatchers.IO) {

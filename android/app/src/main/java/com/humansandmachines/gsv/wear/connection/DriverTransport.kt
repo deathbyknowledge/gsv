@@ -4,6 +4,7 @@ import com.humansandmachines.gsv.wear.protocol.IncomingRequest
 
 interface DriverTransport {
     val epoch: Long
+    val peerId: String
 
     fun sendText(text: String): Boolean
 

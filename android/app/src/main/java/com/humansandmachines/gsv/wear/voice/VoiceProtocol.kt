@@ -19,7 +19,8 @@ data class VoiceSessionConfig(
 
 data class VoiceConnectResult(
     val uid: Int,
-    val syscalls: Set<String>,
+    val calls: Set<String>,
+    val signals: Set<String>,
 )
 
 data class VoiceResponse(
@@ -33,13 +34,20 @@ data class SynthesizedVoice(
 )
 
 sealed interface VoiceRunTerminal {
+    data class Answer(val text: String) : VoiceRunTerminal
+
     data class Finished(val payload: JSONObject) : VoiceRunTerminal
 
     data object ApprovalRequired : VoiceRunTerminal
 }
 
+data class VoiceTerminalEvent(
+    val runId: String,
+    val terminal: VoiceRunTerminal,
+)
+
 object VoiceProtocol {
-    const val VERSION = 2
+    const val VERSION = 3
 
     fun connectFrame(id: String, config: VoiceSessionConfig): String = JSONObject()
         .put("type", "req")
@@ -50,12 +58,11 @@ object VoiceProtocol {
             JSONObject()
                 .put("protocol", VERSION)
                 .put(
-                    "client",
+                    "peer",
                     JSONObject()
                         .put("id", config.clientId)
                         .put("version", "0.1.0")
-                        .put("platform", "android")
-                        .put("role", "user"),
+                        .put("platform", "android"),
                 )
                 .put(
                     "auth",
@@ -99,7 +106,7 @@ object VoiceProtocol {
         .put("payload", JSONObject().put("id", id).put("reason", "Voice request cancelled"))
         .toString()
 
-    fun validateConnectResponse(json: JSONObject): VoiceConnectResult {
+    fun validateConnectResponse(json: JSONObject, expectedPeerId: String): VoiceConnectResult {
         if (!json.optBoolean("ok")) {
             val message = json.optJSONObject("error")?.optString("message").orEmpty()
             throw VoiceClientFailure(message.ifBlank { "Voice client authentication failed" })
@@ -108,20 +115,25 @@ object VoiceProtocol {
         if (data.optInt("protocol", -1) != VERSION) {
             throw VoiceClientFailure("Voice client protocol was rejected")
         }
-        val identity = data.optJSONObject("identity")
-            ?: throw VoiceClientFailure("Voice client identity was missing")
-        if (identity.optString("role") != "user") {
-            throw VoiceClientFailure("Gateway did not establish a user connection")
+        val peer = data.optJSONObject("peer")
+            ?: throw VoiceClientFailure("Voice client peer was missing")
+        if (peer.optString("id") != expectedPeerId) {
+            throw VoiceClientFailure("Gateway established the wrong voice peer")
         }
-        val uid = identity.optJSONObject("process")?.optInt("uid", -1) ?: -1
+        val principal = peer.optJSONObject("principal")
+            ?: throw VoiceClientFailure("Voice client principal was missing")
+        if (principal.optString("kind") != "human") {
+            throw VoiceClientFailure("Gateway did not establish a human peer")
+        }
+        val uid = principal.optJSONObject("account")?.optInt("uid", -1) ?: -1
         if (uid < 0) throw VoiceClientFailure("Voice client identity was invalid")
-        val values = data.optJSONArray("syscalls") ?: throw VoiceClientFailure("Voice client capabilities were missing")
-        val syscalls = buildSet {
-            for (index in 0 until values.length()) {
-                values.optString(index).takeIf(String::isNotBlank)?.let(::add)
-            }
-        }
-        return VoiceConnectResult(uid, syscalls)
+        val grant = peer.optJSONObject("grant")
+            ?: throw VoiceClientFailure("Voice client grants were missing")
+        val calls = grant.optJSONArray("calls")?.strings()
+            ?: throw VoiceClientFailure("Voice client call grants were missing")
+        val signals = grant.optJSONArray("signals")?.strings()
+            ?: throw VoiceClientFailure("Voice client signal grants were missing")
+        return VoiceConnectResult(uid, calls, signals)
     }
 
     fun parseBodyDescriptor(json: JSONObject?): BodyDescriptor? {
@@ -135,10 +147,61 @@ object VoiceProtocol {
         return BodyDescriptor(streamId, length)
     }
 
+    fun parseTerminalSignal(
+        json: JSONObject,
+        shipConversationId: String,
+        shipHandlerPid: String,
+    ): VoiceTerminalEvent? {
+        val payload = json.optJSONObject("payload") ?: return null
+        return when (json.optString("signal")) {
+            "message.committed" -> {
+                if (!payload.optBoolean("directed")) return null
+                val message = payload.optJSONObject("message") ?: return null
+                if (message.optString("conversationId") != shipConversationId) return null
+                if (message.optString("processId") != shipHandlerPid) return null
+                val author = message.optJSONObject("author") ?: return null
+                if (author.optString("kind") != "process" || author.optString("pid") != shipHandlerPid) return null
+                val runId = message.optString("runId").takeIf(String::isNotBlank) ?: return null
+                val text = message.opt("text") as? String ?: return null
+                VoiceTerminalEvent(runId, VoiceRunTerminal.Answer(text.trim()))
+            }
+            "message.aborted" -> {
+                if (payload.optString("conversationId") != shipConversationId) return null
+                if (payload.optString("processId") != shipHandlerPid) return null
+                val runId = payload.optString("runId").takeIf(String::isNotBlank) ?: return null
+                VoiceTerminalEvent(
+                    runId,
+                    VoiceRunTerminal.Finished(
+                        JSONObject()
+                            .put("status", "failed")
+                            .put("reason", payload.optString("reason")),
+                    ),
+                )
+            }
+            "proc.run.hil.requested" -> {
+                if (payload.optString("pid") != shipHandlerPid) return null
+                val runId = payload.optString("runId").takeIf(String::isNotBlank) ?: return null
+                VoiceTerminalEvent(runId, VoiceRunTerminal.ApprovalRequired)
+            }
+            "proc.run.finished" -> {
+                if (payload.optString("pid") != shipHandlerPid) return null
+                val runId = payload.optString("runId").takeIf(String::isNotBlank) ?: return null
+                VoiceTerminalEvent(runId, VoiceRunTerminal.Finished(payload))
+            }
+            else -> null
+        }
+    }
+
     fun allows(capabilities: Set<String>, call: String): Boolean = capabilities.any { capability ->
         capability == "*" ||
             capability == call ||
             capability.endsWith(".*") && call.startsWith(capability.dropLast(1))
+    }
+
+    private fun org.json.JSONArray.strings(): Set<String> = buildSet {
+        for (index in 0 until length()) {
+            optString(index).takeIf(String::isNotBlank)?.let(::add)
+        }
     }
 }
 

@@ -32,7 +32,7 @@ object VoiceProvisioner {
         try {
             session.open()
             val connected = session.awaitReady()
-            if ("sys.token.create" !in connected.syscalls) {
+            if (!VoiceProtocol.allows(connected.calls, "sys.token.create")) {
                 throw VoiceClientFailure("This account cannot create a voice client token")
             }
             val response = session.request(

@@ -17,15 +17,15 @@ sealed interface IncomingTextFrame {
     data class Response(val id: String, val json: JSONObject) : IncomingTextFrame
     data class Request(val request: IncomingRequest) : IncomingTextFrame
     data class RequestCancel(val id: String) : IncomingTextFrame
-    data class DriverPong(val nonce: String) : IncomingTextFrame
+    data class PeerPong(val nonce: String) : IncomingTextFrame
     data object Ignored : IncomingTextFrame
 }
 
 object GsvProtocol {
-    const val VERSION = 2
+    const val VERSION = 3
     const val REQUEST_CANCEL_SIGNAL = "request.cancel"
-    const val DEVICE_PING_SIGNAL = "device.ping"
-    const val DEVICE_PONG_SIGNAL = "device.pong"
+    const val PEER_PING_SIGNAL = "peer.ping"
+    const val PEER_PONG_SIGNAL = "peer.pong"
     val DRIVER_IMPLEMENTS: List<String> = listOf("fs.*", "shell.exec", "net.fetch")
 
     fun connectFrame(id: String, config: DriverConfig): String = JSONObject()
@@ -37,15 +37,13 @@ object GsvProtocol {
             JSONObject()
                 .put("protocol", VERSION)
                 .put(
-                    "client",
+                    "peer",
                     JSONObject()
                         .put("id", config.deviceId)
                         .put("version", "0.1.0")
                         .put("platform", "android")
-                        .put("role", "driver")
-                        .put("channel", "wear"),
+                        .put("implements", JSONArray(DRIVER_IMPLEMENTS)),
                 )
-                .put("driver", JSONObject().put("implements", JSONArray(DRIVER_IMPLEMENTS)))
                 .put(
                     "auth",
                     JSONObject()
@@ -57,7 +55,7 @@ object GsvProtocol {
 
     fun heartbeatFrame(nonce: String, nowMillis: Long): String = JSONObject()
         .put("type", "sig")
-        .put("signal", DEVICE_PING_SIGNAL)
+        .put("signal", PEER_PING_SIGNAL)
         .put(
             "payload",
             JSONObject()
@@ -84,9 +82,9 @@ object GsvProtocol {
                         val id = json.optJSONObject("payload")?.optString("id").orEmpty()
                         if (id.isBlank()) IncomingTextFrame.Ignored else IncomingTextFrame.RequestCancel(id)
                     }
-                    DEVICE_PONG_SIGNAL -> {
+                    PEER_PONG_SIGNAL -> {
                         val nonce = json.optJSONObject("payload")?.optString("nonce").orEmpty()
-                        if (nonce.isBlank()) IncomingTextFrame.Ignored else IncomingTextFrame.DriverPong(nonce)
+                        if (nonce.isBlank()) IncomingTextFrame.Ignored else IncomingTextFrame.PeerPong(nonce)
                     }
                     else -> IncomingTextFrame.Ignored
                 }
@@ -137,10 +135,23 @@ object GsvProtocol {
         }
         val data = json.optJSONObject("data") ?: return ConnectFailure.PROTOCOL
         if (data.optInt("protocol", -1) != VERSION) return ConnectFailure.PROTOCOL
-        val identity = data.optJSONObject("identity") ?: return ConnectFailure.PROTOCOL
-        if (identity.optString("role") != "driver") return ConnectFailure.PROTOCOL
-        if (identity.optString("device") != expectedDeviceId) return ConnectFailure.PROTOCOL
+        val peer = data.optJSONObject("peer") ?: return ConnectFailure.PROTOCOL
+        if (peer.optString("id") != expectedDeviceId) return ConnectFailure.PROTOCOL
+        val principal = peer.optJSONObject("principal") ?: return ConnectFailure.PROTOCOL
+        if (principal.optString("kind") != "machine") return ConnectFailure.PROTOCOL
+        if (principal.optJSONObject("account")?.optInt("uid", -1) == -1) return ConnectFailure.PROTOCOL
+        val grant = peer.optJSONObject("grant") ?: return ConnectFailure.PROTOCOL
+        val implements = grant.optJSONArray("implements")?.strings() ?: return ConnectFailure.PROTOCOL
+        if (implements != DRIVER_IMPLEMENTS.toSet()) return ConnectFailure.PROTOCOL
+        val signals = grant.optJSONArray("signals")?.strings() ?: return ConnectFailure.PROTOCOL
+        if (PEER_PONG_SIGNAL !in signals) return ConnectFailure.PROTOCOL
         return null
+    }
+
+    private fun JSONArray.strings(): Set<String> = buildSet {
+        for (index in 0 until length()) {
+            optString(index).takeIf(String::isNotBlank)?.let(::add)
+        }
     }
 
     private fun parseBodyDescriptor(json: JSONObject): BodyDescriptor {

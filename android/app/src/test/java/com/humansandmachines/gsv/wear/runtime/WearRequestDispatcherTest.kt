@@ -327,6 +327,7 @@ class WearRequestDispatcherTest {
 
     private class FakeTransport : DriverTransport {
         override val epoch = 1L
+        override val peerId = "pixel-10"
         val text = CopyOnWriteArrayList<String>()
         val binary = CopyOnWriteArrayList<BinaryFrame>()
         val response = CountDownLatch(1)

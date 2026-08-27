@@ -60,10 +60,11 @@ class VoiceTurnCoordinator(
             if (!authority.isCurrent(lease)) throw VoiceClientFailure("Wear Mode authority changed")
 
             report(VoiceTurnState.THINKING)
-            val runId = session.sendToPersonalProcess(transcript)
+            val runId = session.sendToShip(transcript)
             val spokenText = when (val terminal = session.awaitRun(runId)) {
                 VoiceRunTerminal.ApprovalRequired ->
                     "I need your approval. Open GSV on a screen to review it."
+                is VoiceRunTerminal.Answer -> terminal.text
                 is VoiceRunTerminal.Finished -> terminalText(terminal)
             }
             speakResponse(session, spokenText, report)
@@ -114,8 +115,6 @@ class VoiceTurnCoordinator(
 
     private fun terminalText(terminal: VoiceRunTerminal.Finished): String {
         val payload = terminal.payload
-        val text = payload.optString("text").trim()
-        if (text.isNotBlank()) return text
         return when (payload.optString("status")) {
             "aborted" -> "That request was stopped."
             "ok" -> "Done."

@@ -30,6 +30,7 @@ class DriverSession(
     private val onReady: (Long) -> Unit,
     private val onTerminated: (Long, ConnectFailure) -> Unit,
 ) : WebSocketListener(), DriverTransport {
+    override val peerId: String = config.deviceId
     private val terminal = AtomicBoolean(false)
     private val connectRequestId = "connect-${UUID.randomUUID()}"
     private val dispatcher = dispatcherFactory.create(this)
@@ -88,7 +89,7 @@ class DriverSession(
         when (frame) {
             is IncomingTextFrame.Request -> dispatcher.onRequest(frame.request)
             is IncomingTextFrame.RequestCancel -> dispatcher.onRequestCancel(frame.id)
-            is IncomingTextFrame.DriverPong -> acknowledgeHeartbeat(frame.nonce)
+            is IncomingTextFrame.PeerPong -> acknowledgeHeartbeat(frame.nonce)
             else -> Unit
         }
     }
