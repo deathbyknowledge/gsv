@@ -11,8 +11,8 @@ The ownership boundary is deliberate:
   route expiry, request cancellation, and body forwarding.
 - Android owns foreground-service lifecycle, local Wear authority, WebSocket
   supervision, the bounded virtual target, target-side HTTP, binary-body
-  spooling, physical sensors, Android actions, local checks, temporary media,
-  and terminal cleanup.
+  spooling, physical sensors, Android actions, assistant speech playback and
+  metering, local checks, temporary media, and terminal cleanup.
 - A remote caller may consume an existing Wear authority lease. It cannot arm
   the phone or recreate authority after process death, reboot, force-stop, or
   permission loss.
@@ -191,8 +191,8 @@ assistant gesture
   -> ai.transcription.create binary request body
   -> transcript-only proc.send to the personal process
   -> proc.run.finished or proc.run.hil.requested
-  -> ai.speech.create binary response body
-  -> headset playback, with Android TTS as fallback
+  -> installed non-network Android voice and playback-timed PCM levels
+  -> ai.speech.create binary response body only when embedded speech cannot start
   -> abandon focus so media playback resumes
 ```
 
@@ -202,6 +202,16 @@ request and are deleted at the turn's terminal outcome. A second invocation
 cancels the earlier turn. Ordinary media play/pause buttons remain owned by the
 active media session; GSV relies on the system assistant gesture instead of
 registering a competing media-button receiver.
+
+The service-lifetime voice audio controller keeps one embedded TTS engine warm,
+selects only an installed voice whose Android metadata says it does not require
+a network connection, and owns its audio focus, cancellation, and shutdown.
+The engine's PCM callbacks are reduced into 40 ms level windows and paced from
+the utterance playback-start callback so `SPEAKING` renders the audio that is
+actually being played rather than a synthetic animation signal. A local failure
+before playback may fall back to gateway synthesis. Once local playback starts,
+the same answer is never replayed through the gateway. A per-turn generation
+fences state and level callbacks from cancelled or superseded invocations.
 
 Bluetooth HFP assistant gestures enter through Android's separate
 `ACTION_VOICE_COMMAND` activity contract rather than through
@@ -238,7 +248,7 @@ camera/audio/motion/location context, Android context/actions, notification
 listener integration, local scheduled checks, and a system-assistant voice
 client for the personal process. It deliberately does not
 provide unrestricted Android shell/root/shared-storage access, Accessibility
-automation, an offline language or vision model, resumable shell sessions,
+automation, a bundled offline language or vision model, resumable shell sessions,
 remote command replay, or FCM wake-up. Multi-frame camera observation currently
 uses bounded repeated still captures rather than one continuously bound video
 stream.

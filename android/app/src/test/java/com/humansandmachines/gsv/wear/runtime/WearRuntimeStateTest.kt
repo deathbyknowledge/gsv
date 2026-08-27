@@ -12,7 +12,7 @@ class WearRuntimeStateTest {
     }
 
     @Test
-    fun voiceLevelExistsOnlyWhileListening() {
+    fun voiceLevelExistsOnlyWhileAudioIsReactive() {
         WearRuntimeState.setVoiceLevel(0.7f)
         assertEquals(0f, WearRuntimeState.snapshot.value.voiceLevel)
 
@@ -21,6 +21,16 @@ class WearRuntimeStateTest {
         assertEquals(1f, WearRuntimeState.snapshot.value.voiceLevel)
 
         WearRuntimeState.setVoiceTurn(VoiceTurnState.THINKING)
+        assertEquals(0f, WearRuntimeState.snapshot.value.voiceLevel)
+
+        WearRuntimeState.setVoiceLevel(0.4f)
+        assertEquals(0f, WearRuntimeState.snapshot.value.voiceLevel)
+
+        WearRuntimeState.setVoiceTurn(VoiceTurnState.SPEAKING)
+        WearRuntimeState.setVoiceLevel(0.65f)
+        assertEquals(0.65f, WearRuntimeState.snapshot.value.voiceLevel)
+
+        WearRuntimeState.setVoiceTurn(VoiceTurnState.IDLE)
         assertEquals(0f, WearRuntimeState.snapshot.value.voiceLevel)
     }
 }
