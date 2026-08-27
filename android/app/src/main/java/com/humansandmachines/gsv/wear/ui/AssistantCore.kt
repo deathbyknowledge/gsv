@@ -98,27 +98,29 @@ fun AssistantCore(
             accent = accent,
             modifier = Modifier.fillMaxSize(),
         )
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                text = "GSV",
-                style = GsvTextStyle.Kicker.copy(
-                    color = GsvColor.White.copy(alpha = 0.95f),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 3.4.sp,
-                    textAlign = TextAlign.Center,
-                ),
-            )
-            Spacer(Modifier.height(28.dp))
-            Text(
-                text = state.shortLabel(),
-                style = GsvTextStyle.Kicker.copy(
-                    color = accent.copy(alpha = 0.86f),
-                    fontSize = 7.sp,
-                    letterSpacing = 2.1.sp,
-                    textAlign = TextAlign.Center,
-                ),
-            )
+        if (state != VoiceTurnState.LISTENING) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = "GSV",
+                    style = GsvTextStyle.Kicker.copy(
+                        color = GsvColor.White.copy(alpha = 0.95f),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 3.4.sp,
+                        textAlign = TextAlign.Center,
+                    ),
+                )
+                Spacer(Modifier.height(28.dp))
+                Text(
+                    text = state.shortLabel(),
+                    style = GsvTextStyle.Kicker.copy(
+                        color = accent.copy(alpha = 0.86f),
+                        fontSize = 7.sp,
+                        letterSpacing = 2.1.sp,
+                        textAlign = TextAlign.Center,
+                    ),
+                )
+            }
         }
     }
 }

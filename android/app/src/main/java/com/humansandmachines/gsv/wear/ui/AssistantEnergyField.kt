@@ -35,17 +35,30 @@ internal fun AssistantEnergyField(
     accent: Color,
     modifier: Modifier = Modifier,
 ) {
-    val shader = rememberAssistantShader()
-    val shaderBrush = remember(shader) { shader?.let(::ShaderBrush) }
+    val assistantShader = rememberRuntimeShader(ASSISTANT_SHADER)
+    val listeningShader = rememberRuntimeShader(LISTENING_ORB_SHADER)
+    val assistantBrush = remember(assistantShader) { assistantShader?.let(::ShaderBrush) }
+    val listeningBrush = remember(listeningShader) { listeningShader?.let(::ShaderBrush) }
 
     Canvas(modifier) {
-        if (shader != null && shaderBrush != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            configureShader(shader, size, phaseSeconds, energy, state, accent)
-            drawRect(brush = shaderBrush, blendMode = BlendMode.Plus)
+        val renderListeningOrb = state == VoiceTurnState.LISTENING &&
+            listeningShader != null && listeningBrush != null &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+        if (renderListeningOrb) {
+            configureListeningShader(listeningShader, size, phaseSeconds, energy, accent)
+            drawRect(brush = listeningBrush, blendMode = BlendMode.SrcOver)
+        } else if (
+            assistantShader != null && assistantBrush != null &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+        ) {
+            configureShader(assistantShader, size, phaseSeconds, energy, state, accent)
+            drawRect(brush = assistantBrush, blendMode = BlendMode.Plus)
         } else {
             drawFallbackGlow(accent, energy, phaseSeconds)
         }
-        drawEngineeredGeometry(state, phaseSeconds, energy, accent)
+        if (!renderListeningOrb) {
+            drawEngineeredGeometry(state, phaseSeconds, energy, accent)
+        }
     }
 }
 
@@ -57,6 +70,10 @@ internal fun AssistantBackdrop(
 ) {
     val accent = state.accentColor()
     Canvas(modifier) {
+        if (state == VoiceTurnState.LISTENING) {
+            drawListeningBackdrop(accent, phaseSeconds)
+            return@Canvas
+        }
         drawRect(
             brush = Brush.verticalGradient(
                 0f to Color(0xFF020405),
@@ -123,9 +140,63 @@ internal fun AssistantBackdrop(
 }
 
 @Composable
-private fun rememberAssistantShader(): RuntimeShader? {
+private fun rememberRuntimeShader(source: String): RuntimeShader? {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return null
-    return remember { runCatching { RuntimeShader(ASSISTANT_SHADER) }.getOrNull() }
+    return remember(source) { runCatching { RuntimeShader(source) }.getOrNull() }
+}
+
+private fun DrawScope.drawListeningBackdrop(accent: Color, phaseSeconds: Float) {
+    val phase = phaseSeconds / 12f * PI.toFloat() * 2f
+    drawRect(
+        brush = Brush.verticalGradient(
+            0f to Color(0xFF010304),
+            0.46f to Color(0xFF031014),
+            1f to Color(0xFF010304),
+        ),
+    )
+    drawCircle(
+        brush = Brush.radialGradient(
+            colors = listOf(accent.copy(alpha = 0.105f), accent.copy(alpha = 0.018f), Color.Transparent),
+            center = Offset(size.width * 0.57f, size.height * 0.40f),
+            radius = size.minDimension * 0.64f,
+        ),
+        center = Offset(size.width * 0.57f, size.height * 0.40f),
+        radius = size.minDimension * 0.64f,
+    )
+    drawCircle(
+        brush = Brush.radialGradient(
+            colors = listOf(Color(0xFFFFB94D).copy(alpha = 0.035f), Color.Transparent),
+            center = Offset(size.width * 0.34f, size.height * 0.39f),
+            radius = size.minDimension * 0.42f,
+        ),
+        center = Offset(size.width * 0.34f, size.height * 0.39f),
+        radius = size.minDimension * 0.42f,
+    )
+    drawCircle(
+        brush = Brush.radialGradient(
+            colors = listOf(Color.Transparent, GsvColor.Void.copy(alpha = 0.94f)),
+            center = center,
+            radius = size.maxDimension * 0.67f,
+        ),
+        center = center,
+        radius = size.maxDimension * 0.67f,
+    )
+
+    repeat(30) { index ->
+        val x = ((index * 73) % 101) / 101f * size.width
+        val y = ((index * 47 + 13) % 97) / 97f * size.height
+        val frequency = 1f + index % 3
+        val twinkle = 0.5f + 0.5f * sin(phase * frequency + index * 1.73f)
+        drawCircle(
+            color = if (index % 6 == 0) {
+                accent.copy(alpha = 0.11f * twinkle)
+            } else {
+                GsvColor.White.copy(alpha = 0.045f * twinkle)
+            },
+            center = Offset(x, y),
+            radius = if (index % 8 == 0) 0.9.dp.toPx() else 0.45.dp.toPx(),
+        )
+    }
 }
 
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
@@ -141,6 +212,20 @@ private fun configureShader(
     shader.setFloatUniform("iTime", phaseSeconds)
     shader.setFloatUniform("iEnergy", energy.coerceIn(0f, 1f))
     shader.setFloatUniform("iMode", state.ordinal.toFloat())
+    shader.setFloatUniform("iAccent", accent.red, accent.green, accent.blue, 1f)
+}
+
+@RequiresApi(Build.VERSION_CODES.TIRAMISU)
+private fun configureListeningShader(
+    shader: RuntimeShader,
+    size: Size,
+    phaseSeconds: Float,
+    energy: Float,
+    accent: Color,
+) {
+    shader.setFloatUniform("iResolution", size.width, size.height)
+    shader.setFloatUniform("iTime", phaseSeconds)
+    shader.setFloatUniform("iEnergy", energy.coerceIn(0f, 1f))
     shader.setFloatUniform("iAccent", accent.red, accent.green, accent.blue, 1f)
 }
 
