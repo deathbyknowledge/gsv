@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.humansandmachines.gsv.wear.R
 import com.humansandmachines.gsv.wear.voice.VoiceTurnState
+import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.sin
 
@@ -77,14 +78,19 @@ fun AssistantCore(
         label = "assistant-accent",
     )
     val shapeParameters = rememberOrbShapeParameters(shapeTarget)
-    val energy = when (state) {
-        VoiceTurnState.LISTENING -> smoothedSignal
-        VoiceTurnState.SPEAKING -> 0.40f + 0.24f * abs(sin(phase * 4.2f))
-        VoiceTurnState.THINKING -> 0.27f + 0.16f * abs(sin(phase * 2.7f))
-        VoiceTurnState.TRANSCRIBING -> 0.31f
-        VoiceTurnState.PREPARING -> 0.22f
-        VoiceTurnState.ERROR -> 0.16f
-        VoiceTurnState.IDLE -> 0.06f
+    val liquidParameters = rememberAssistantLiquidParameters(state)
+    val loopPhase = phase / 12f * PI.toFloat() * 2f
+    val thinkingEnergy = 0.25f +
+        0.11f * abs(sin(loopPhase * 2f)) +
+        0.05f * abs(sin(loopPhase * 3f + 0.9f))
+    val energy = when {
+        state.usesAssistantLiquid() -> smoothedSignal +
+            (thinkingEnergy - smoothedSignal) * liquidParameters.focus.coerceIn(0f, 1f)
+        state == VoiceTurnState.SPEAKING -> 0.40f + 0.24f * abs(sin(phase * 4.2f))
+        state == VoiceTurnState.TRANSCRIBING -> 0.31f
+        state == VoiceTurnState.PREPARING -> 0.22f
+        state == VoiceTurnState.ERROR -> 0.16f
+        else -> 0.06f
     }
 
     Box(
@@ -99,9 +105,10 @@ fun AssistantCore(
             energy = energy,
             accent = accent,
             shapeParameters = shapeParameters,
+            liquidParameters = liquidParameters,
             modifier = Modifier.fillMaxSize(),
         )
-        if (state != VoiceTurnState.LISTENING) {
+        if (!state.usesAssistantLiquid()) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
                     text = "GSV",

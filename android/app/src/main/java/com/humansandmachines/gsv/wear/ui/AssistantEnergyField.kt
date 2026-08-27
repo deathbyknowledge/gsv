@@ -3,8 +3,12 @@ package com.humansandmachines.gsv.wear.ui
 import android.graphics.RuntimeShader
 import android.os.Build
 import androidx.annotation.RequiresApi
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -34,27 +38,29 @@ internal fun AssistantEnergyField(
     energy: Float,
     accent: Color,
     shapeParameters: OrbShapeParameters,
+    liquidParameters: AssistantLiquidParameters,
     modifier: Modifier = Modifier,
 ) {
     val assistantShader = rememberRuntimeShader(ASSISTANT_SHADER)
-    val listeningShader = rememberRuntimeShader(LISTENING_ORB_SHADER)
+    val liquidShader = rememberRuntimeShader(ASSISTANT_LIQUID_SHADER)
     val assistantBrush = remember(assistantShader) { assistantShader?.let(::ShaderBrush) }
-    val listeningBrush = remember(listeningShader) { listeningShader?.let(::ShaderBrush) }
+    val liquidBrush = remember(liquidShader) { liquidShader?.let(::ShaderBrush) }
 
     Canvas(modifier) {
-        val renderListeningOrb = state == VoiceTurnState.LISTENING &&
-            listeningShader != null && listeningBrush != null &&
+        val renderAssistantLiquid = state.usesAssistantLiquid() &&
+            liquidShader != null && liquidBrush != null &&
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
-        if (renderListeningOrb) {
-            configureListeningShader(
-                shader = listeningShader,
+        if (renderAssistantLiquid) {
+            configureAssistantLiquidShader(
+                shader = liquidShader,
                 size = size,
                 phaseSeconds = phaseSeconds,
                 energy = energy,
                 accent = accent,
                 shapeParameters = shapeParameters,
+                liquidParameters = liquidParameters,
             )
-            drawRect(brush = listeningBrush, blendMode = BlendMode.SrcOver)
+            drawRect(brush = liquidBrush, blendMode = BlendMode.SrcOver)
         } else if (
             assistantShader != null && assistantBrush != null &&
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
@@ -64,7 +70,7 @@ internal fun AssistantEnergyField(
         } else {
             drawFallbackGlow(accent, energy, phaseSeconds)
         }
-        if (!renderListeningOrb) {
+        if (!renderAssistantLiquid) {
             drawEngineeredGeometry(state, phaseSeconds, energy, accent)
         }
     }
@@ -76,10 +82,14 @@ internal fun AssistantBackdrop(
     phaseSeconds: Float,
     modifier: Modifier = Modifier,
 ) {
-    val accent = state.accentColor()
+    val accent by animateColorAsState(
+        targetValue = state.accentColor(),
+        animationSpec = tween(480, easing = FastOutSlowInEasing),
+        label = "assistant-backdrop-accent",
+    )
     Canvas(modifier) {
-        if (state == VoiceTurnState.LISTENING) {
-            drawListeningBackdrop(accent, phaseSeconds)
+        if (state.usesAssistantLiquid()) {
+            drawAssistantLiquidBackdrop(accent, phaseSeconds)
             return@Canvas
         }
         drawRect(
@@ -153,7 +163,7 @@ private fun rememberRuntimeShader(source: String): RuntimeShader? {
     return remember(source) { runCatching { RuntimeShader(source) }.getOrNull() }
 }
 
-private fun DrawScope.drawListeningBackdrop(accent: Color, phaseSeconds: Float) {
+private fun DrawScope.drawAssistantLiquidBackdrop(accent: Color, phaseSeconds: Float) {
     val phase = phaseSeconds / 12f * PI.toFloat() * 2f
     drawRect(
         brush = Brush.verticalGradient(
@@ -224,13 +234,14 @@ private fun configureShader(
 }
 
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
-private fun configureListeningShader(
+private fun configureAssistantLiquidShader(
     shader: RuntimeShader,
     size: Size,
     phaseSeconds: Float,
     energy: Float,
     accent: Color,
     shapeParameters: OrbShapeParameters,
+    liquidParameters: AssistantLiquidParameters,
 ) {
     shader.setFloatUniform("iResolution", size.width, size.height)
     shader.setFloatUniform("iTime", phaseSeconds)
@@ -242,6 +253,13 @@ private fun configureListeningShader(
         shapeParameters.symbolPresence.coerceIn(0f, 1f),
         shapeParameters.eyeSpacing.coerceIn(0.08f, 0.18f),
         shapeParameters.smileCurve.coerceIn(0f, 1.4f),
+    )
+    shader.setFloatUniform(
+        "iBehavior",
+        liquidParameters.focus.coerceIn(0f, 1f),
+        liquidParameters.foldComplexity.coerceIn(0f, 1f),
+        liquidParameters.internalActivity.coerceIn(0f, 1f),
+        liquidParameters.projection.coerceIn(0f, 1f),
     )
 }
 
