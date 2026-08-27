@@ -477,7 +477,6 @@ private fun DrawScope.drawStateSignature(
         VoiceTurnState.IDLE -> drawIdleSignature(origin, unit, phaseSeconds, accent)
         VoiceTurnState.PREPARING -> drawPreparingSignature(origin, unit, phaseSeconds, accent)
         VoiceTurnState.LISTENING -> drawListeningSignature(origin, unit, phaseSeconds, energy, accent)
-        VoiceTurnState.TRANSCRIBING -> drawTranscribingSignature(origin, unit, phaseSeconds, accent)
         VoiceTurnState.THINKING -> drawThinkingSignature(origin, unit, phaseSeconds, accent)
         VoiceTurnState.SPEAKING -> drawSpeakingSignature(origin, unit, phaseSeconds, accent)
         VoiceTurnState.ERROR -> drawErrorSignature(origin, unit, phaseSeconds, accent)
@@ -515,33 +514,6 @@ private fun DrawScope.drawListeningSignature(
             style = Stroke((1.4f - travel * 0.8f).dp.toPx()),
         )
     }
-}
-
-private fun DrawScope.drawTranscribingSignature(
-    origin: Offset,
-    unit: Float,
-    phaseSeconds: Float,
-    accent: Color,
-) {
-    repeat(9) { index ->
-        val y = origin.y + (index - 4) * unit * 0.062f
-        val activity = 0.22f + 0.78f * abs(sin(phaseSeconds * 2.7f + index * 0.83f))
-        val half = unit * (0.12f + 0.23f * activity)
-        drawLine(
-            color = accent.copy(alpha = 0.18f + activity * 0.59f),
-            start = Offset(origin.x - half, y),
-            end = Offset(origin.x + half, y),
-            strokeWidth = if (index == 4) 1.7.dp.toPx() else 0.75.dp.toPx(),
-            cap = StrokeCap.Round,
-        )
-    }
-    val scan = sin(phaseSeconds * 2.4f) * unit * 0.29f
-    drawLine(
-        color = GsvColor.White.copy(alpha = 0.74f),
-        start = Offset(origin.x - unit * 0.38f, origin.y + scan),
-        end = Offset(origin.x + unit * 0.38f, origin.y + scan),
-        strokeWidth = 0.8.dp.toPx(),
-    )
 }
 
 private fun DrawScope.drawThinkingSignature(

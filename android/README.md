@@ -61,7 +61,7 @@ adb shell am start -n \
   --es state THINKING
 ```
 
-Use `IDLE`, `PREPARING`, `LISTENING`, `TRANSCRIBING`, `THINKING`, `SPEAKING`,
+Use `IDLE`, `PREPARING`, `LISTENING`, `THINKING`, `SPEAKING`,
 or `ERROR`; add `--ez overlay true` to review the compact invocation surface.
 For the debug-only interruptible shape proof, launch `LISTENING` with both
 `--ez overlay true` and `--ez morph true`, then tap the core repeatedly to

@@ -63,17 +63,16 @@ class VoiceTurnCoordinator(
             } finally {
                 captureRoute?.close()
             }
+            report(VoiceTurnState.THINKING)
             val bytes = try {
                 withContext(Dispatchers.IO) { captured.file.readBytes() }
             } finally {
                 captured.close()
             }
 
-            report(VoiceTurnState.TRANSCRIBING)
             val transcript = session.transcribe(bytes, "wear-voice.wav")
             if (!authority.isCurrent(lease)) throw VoiceClientFailure("Wear Mode authority changed")
 
-            report(VoiceTurnState.THINKING)
             val runId = session.sendToShip(transcript)
             val spokenText = when (val terminal = session.awaitRun(runId)) {
                 VoiceRunTerminal.ApprovalRequired ->
