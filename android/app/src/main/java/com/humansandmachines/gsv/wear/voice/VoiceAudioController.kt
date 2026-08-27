@@ -20,6 +20,7 @@ import kotlin.coroutines.resumeWithException
 
 class VoiceAudioController(private val context: Context) : Closeable {
     private val audioManager = context.getSystemService(AudioManager::class.java)
+    private val embeddedSpeech = EmbeddedSpeechPlayer(context)
 
     @Volatile
     private var activePlayer: MediaPlayer? = null
@@ -69,7 +70,15 @@ class VoiceAudioController(private val context: Context) : Closeable {
         block = block,
     )
 
+    suspend fun speakLocal(text: String, onLevel: (Float) -> Unit = {}) = withAudioFocus(
+        gain = AudioManager.AUDIOFOCUS_GAIN_TRANSIENT,
+        usage = AudioAttributes.USAGE_ASSISTANT,
+    ) {
+        embeddedSpeech.speak(text, onLevel = onLevel)
+    }
+
     fun stopPlayback() {
+        embeddedSpeech.stop()
         activePlayer?.let { player ->
             runCatching { player.stop() }
             player.release()
@@ -78,7 +87,12 @@ class VoiceAudioController(private val context: Context) : Closeable {
     }
 
     override fun close() {
-        stopPlayback()
+        embeddedSpeech.close()
+        activePlayer?.let { player ->
+            runCatching { player.stop() }
+            player.release()
+        }
+        activePlayer = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             runCatching { audioManager.clearCommunicationDevice() }
         }

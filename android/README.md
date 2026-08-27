@@ -70,8 +70,9 @@ To compare the production liquid states without restarting its animation, add
 `--ez overlay true` and `--ez states true`, then tap the core to advance through
 the states included in the current visual review. `LISTENING` requests
 microphone permission and follows live input. `SPEAKING` loops a debug-only
-local voice phrase and drives the acoustic membrane from the exact PCM being
-played; the sample voice is not a product voice choice. Pass `--ef signal 0.82`
+local voice phrase through the same audio controller used by production and
+drives the acoustic membrane from the exact PCM being played. Pass
+`--ef signal 0.82`
 to use a fixed debug level instead; a fixed level disables both live sources
 for that launch.
 
@@ -111,9 +112,12 @@ so later gestures and music routing are not left wedged.
 The voice socket reconnects independently from the machine-driver socket. A
 turn captures a bounded WAV locally, sends its bytes as the transcription
 request body, sends only the transcript to the personal process, waits for the
-matching run terminal signal, and plays the gateway speech response. Android
-TTS is the fallback. A pending approval is announced but never automatically
-approved.
+matching run terminal signal, and speaks the answer with an installed Android
+voice that does not require a network connection. PCM callbacks from that same
+utterance drive the speaking animation in playback time. Gateway
+`ai.speech.create` is retained as a fallback when a compatible embedded voice
+cannot start; the generic Android speech action is the final fallback. A
+pending approval is announced but never automatically approved.
 
 ## Use the Android target
 
@@ -329,18 +333,23 @@ Run this on an actual phone before treating a release as sensor-validated:
     use, recording reconnect latency and battery consumption.
 20. Grant GSV the Android assistant role, and confirm
     the in-app test completes transcription, personal-process execution, and
-    spoken playback without raw audio appearing in process history. Invoke the
-    power-button assistant route over another app, confirm the GSV session shows
-    listening, thinking, and speaking state, and confirm a tap above the lower
-    control region still reaches the underlying app.
+    embedded spoken playback without raw audio appearing in process history.
+    Confirm the speaking liquid follows the played voice and returns to rest at
+    the utterance boundary. Invoke the power-button assistant route over another
+    app, confirm the GSV session shows listening, thinking, and speaking state,
+    and confirm a tap above the lower control region still reaches the
+    underlying app.
 21. While music is playing through a Bluetooth headset, invoke the headset's
     assistant gesture, confirm capture uses the headset microphone, the reply
     plays through the headset, and music resumes afterward. Invoke again during
     a turn and confirm the earlier turn is cancelled. Repeat the gesture without
     reconnecting the headset to confirm HFP recognition is released each time.
-22. Drop and restore the network separately during capture, inference, and
-    speech playback; confirm temporary audio is deleted, the turn fails once,
-    and both voice and driver sockets reconnect for later work without replay.
+22. Drop and restore the network separately during capture and inference;
+    confirm temporary audio is deleted, the turn fails once, and both voice and
+    driver sockets reconnect for later work without replay. Drop the network
+    after embedded speech starts and confirm playback completes locally. On a
+    device without a compatible installed voice, confirm gateway speech is used
+    as the fallback without replaying an utterance that already began locally.
 
 There is intentionally no FCM path. A socket that closes is noticed and
 reconnected manually by the foreground runtime. An in-flight request at the

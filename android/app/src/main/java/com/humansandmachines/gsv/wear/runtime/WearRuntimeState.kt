@@ -65,14 +65,14 @@ object WearRuntimeState {
         mutableSnapshot.update {
             it.copy(
                 voiceTurn = state,
-                voiceLevel = if (state == VoiceTurnState.LISTENING) it.voiceLevel else 0f,
+                voiceLevel = if (state.isAudioReactive()) it.voiceLevel else 0f,
             )
         }
     }
 
     fun setVoiceLevel(level: Float) {
         mutableSnapshot.update {
-            if (it.voiceTurn == VoiceTurnState.LISTENING) {
+            if (it.voiceTurn.isAudioReactive()) {
                 it.copy(voiceLevel = level.coerceIn(0f, 1f))
             } else {
                 it
@@ -83,4 +83,7 @@ object WearRuntimeState {
     fun reset() {
         mutableSnapshot.value = RuntimeSnapshot()
     }
+
+    private fun VoiceTurnState.isAudioReactive(): Boolean =
+        this == VoiceTurnState.LISTENING || this == VoiceTurnState.SPEAKING
 }

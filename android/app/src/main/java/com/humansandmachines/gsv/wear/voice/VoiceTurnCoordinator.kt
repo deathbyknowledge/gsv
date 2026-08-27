@@ -4,6 +4,7 @@ import com.humansandmachines.gsv.wear.actions.AndroidActions
 import com.humansandmachines.gsv.wear.audio.WearMicrophone
 import com.humansandmachines.gsv.wear.authority.WearAuthority
 import java.io.Closeable
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -17,25 +18,36 @@ class VoiceTurnCoordinator(
     private val publishState: (VoiceTurnState) -> Unit = {},
     private val publishLevel: (Float) -> Unit = {},
 ) : VoiceTurnOwner, Closeable {
+    private val turnGeneration = AtomicLong(0)
+
     override suspend fun runVoiceTurn(
         captureRoute: VoiceCaptureRoute?,
         onState: (VoiceTurnState) -> Unit,
     ) {
+        val generation = turnGeneration.incrementAndGet()
         val report: (VoiceTurnState) -> Unit = { state ->
-            publishState(state)
-            onState(state)
+            if (turnGeneration.get() == generation) {
+                publishState(state)
+                onState(state)
+            }
+        }
+        val reportLevel: (Float) -> Unit = { level ->
+            if (turnGeneration.get() == generation) publishLevel(level)
         }
         try {
             report(VoiceTurnState.PREPARING)
             val lease = authority.acquire() ?: return speakLocal(
                 "Wear Mode is not armed.",
                 report,
+                reportLevel,
             )
             val session = try {
                 client()?.awaitSession()
+            } catch (error: CancellationException) {
+                throw error
             } catch (_: Exception) {
                 null
-            } ?: return speakLocal("GSV is offline.", report)
+            } ?: return speakLocal("GSV is offline.", report, reportLevel)
 
             report(VoiceTurnState.LISTENING)
             val captured = try {
@@ -45,7 +57,7 @@ class VoiceTurnCoordinator(
                         timeoutMillis = MAX_LISTEN_MILLIS,
                         trailingMillis = END_OF_SPEECH_MILLIS,
                         preferredDevice = captureRoute?.preferredInputDevice,
-                        onLevel = publishLevel,
+                        onLevel = reportLevel,
                     )
                 }
             } finally {
@@ -69,16 +81,19 @@ class VoiceTurnCoordinator(
                 is VoiceRunTerminal.Answer -> terminal.text
                 is VoiceRunTerminal.Finished -> terminalText(terminal)
             }
-            speakResponse(session, spokenText, report)
+            speakResponse(session, spokenText, report, reportLevel)
             report(VoiceTurnState.IDLE)
         } catch (error: CancellationException) {
             throw error
         } catch (_: Throwable) {
-            speakLocal("That voice request failed. Please try again.", report)
+            speakLocal("That voice request failed. Please try again.", report, reportLevel)
+        } finally {
+            if (turnGeneration.compareAndSet(generation, generation + 1)) publishLevel(0f)
         }
     }
 
     override fun close() {
+        turnGeneration.incrementAndGet()
         publishLevel(0f)
         audio.close()
     }
@@ -87,11 +102,28 @@ class VoiceTurnCoordinator(
         session: VoiceClientSession,
         text: String,
         onState: (VoiceTurnState) -> Unit,
+        onLevel: (Float) -> Unit,
     ) {
         val bounded = boundSpeech(text)
         onState(VoiceTurnState.SPEAKING)
+        try {
+            audio.speakLocal(plainForLocalSpeech(bounded), onLevel)
+            return
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: EmbeddedSpeechFailure) {
+            if (error.playbackStarted) return
+        } catch (_: Exception) {
+            // A gateway voice remains available when the local engine cannot start.
+        }
         val gatewaySpeech = if (session.supports("ai.speech.create")) {
-            runCatching { session.synthesize(bounded) }.getOrNull()
+            try {
+                session.synthesize(bounded)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                null
+            }
         } else {
             null
         }
@@ -99,8 +131,10 @@ class VoiceTurnCoordinator(
             try {
                 audio.play(gatewaySpeech)
                 return
+            } catch (error: CancellationException) {
+                throw error
             } catch (_: Exception) {
-                // The local engine remains available when gateway synthesis or playback fails.
+                // The generic Android action is the final fallback for a failed media response.
             }
         }
         audio.withLocalSpeech {
@@ -108,11 +142,31 @@ class VoiceTurnCoordinator(
         }
     }
 
-    private suspend fun speakLocal(text: String, onState: (VoiceTurnState) -> Unit) {
+    private suspend fun speakLocal(
+        text: String,
+        onState: (VoiceTurnState) -> Unit,
+        onLevel: (Float) -> Unit,
+    ) {
         onState(VoiceTurnState.ERROR)
-        runCatching {
-            audio.withLocalSpeech { actions.speak(text, null, 1.0f, 1.0f) }
+        try {
+            try {
+                audio.speakLocal(text, onLevel)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: EmbeddedSpeechFailure) {
+                if (!error.playbackStarted) {
+                    audio.withLocalSpeech { actions.speak(text, null, 1.0f, 1.0f) }
+                }
+            } catch (_: Exception) {
+                audio.withLocalSpeech { actions.speak(text, null, 1.0f, 1.0f) }
+            }
+        } catch (error: CancellationException) {
+            onLevel(0f)
+            throw error
+        } catch (_: Exception) {
+            // There is no remaining speech path for an offline/error announcement.
         }
+        onLevel(0f)
         onState(VoiceTurnState.IDLE)
     }
 
