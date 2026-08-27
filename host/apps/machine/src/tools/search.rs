@@ -81,17 +81,6 @@ impl SearchTool {
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().is_file())
-            .filter(|entry| {
-                let Some(pattern) = &include_glob else {
-                    return true;
-                };
-                let file_name = entry
-                    .path()
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("");
-                pattern.matches(file_name)
-            })
             .enumerate()
         {
             if cancellation.is_cancelled() {
@@ -102,6 +91,15 @@ impl SearchTool {
                 break;
             }
             let path = entry.path();
+            if let Some(pattern) = &include_glob {
+                let file_name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("");
+                if !pattern.matches(file_name) {
+                    continue;
+                }
+            }
 
             let remaining_bytes = MAX_SEARCH_TOTAL_BYTES.saturating_sub(scanned_bytes);
             if remaining_bytes == 0 {
@@ -309,7 +307,11 @@ mod tests {
         cancellation.cancel();
 
         let error = SearchTool::new(workspace.clone())
-            .execute_with_body_cancellable(json!({ "query": "needle" }), None, &cancellation)
+            .execute_with_body_cancellable(
+                json!({ "query": "needle", "include": "*.md" }),
+                None,
+                &cancellation,
+            )
             .await
             .unwrap_err();
 
