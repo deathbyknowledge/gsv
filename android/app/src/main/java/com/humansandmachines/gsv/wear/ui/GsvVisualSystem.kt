@@ -238,6 +238,7 @@ fun GsvField(
     modifier: Modifier = Modifier,
     placeholder: String = "",
     secret: Boolean = false,
+    enabled: Boolean = true,
     keyboardType: KeyboardType = KeyboardType.Text,
 ) {
     val interaction = remember { MutableInteractionSource() }
@@ -248,8 +249,8 @@ fun GsvField(
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
-            modifier = Modifier.fillMaxWidth(),
-            enabled = true,
+            modifier = Modifier.fillMaxWidth().graphicsLayer { alpha = if (enabled) 1f else 0.5f },
+            enabled = enabled,
             singleLine = true,
             maxLines = 1,
             textStyle = GsvTextStyle.Data,

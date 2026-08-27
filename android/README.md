@@ -13,18 +13,24 @@ phone's headset-triggered GSV voice client while Wear Mode is armed.
 - JDK 17 or newer
 - Android SDK Platform 37 and Build Tools 36.0.0
 - A physical Android phone for the sensor acceptance flow
-- A GSV Gateway WebSocket URL ending in `/ws`
-- A driver-bound device token
+- The hostname used to reach a GSV, such as `mine.gsv.space`
+- A GSV username and password
 
-Create the token once and copy the raw value when it is returned:
+The app enrolls itself after password authentication. It creates a generated,
+driver-bound node identity and a separate user credential for the assistant;
+neither raw token is shown to or entered by the user. Production login requires
+`wss://`.
+
+For local development on a USB-connected phone, keep the password off the LAN
+and reverse the Gateway port over ADB. Debug builds then permit the loopback
+`ws://` address:
 
 ```bash
-gsv auth token create --kind device --device pixel-10 --label "Pixel Wear"
+adb reverse tcp:8787 tcp:8787
 ```
 
-The device id entered in the app must exactly match the token's `--device`
-binding. Production builds require `wss://`; debug builds permit `ws://` for
-local development.
+Enter `localhost:8787` in the app for that setup. The app derives the WebSocket
+scheme and `/ws` path; neither is part of the user-facing address.
 
 If the SDK is not in its conventional location, create an untracked
 `android/local.properties` containing:
@@ -46,9 +52,12 @@ and the launcher label **GSV Wear Dev**. This keeps an existing release install
 and its credentials intact when a development machine has a different debug
 signing key.
 
-Open GSV Wear, enter the Gateway URL, username, exact device id, and token,
-then press **Arm Wear Mode**. Grant camera, microphone, notification, and
-nearby-device permissions and at least approximate location. Precise location is optional.
+Open GSV Wear. On a fresh install it walks through GSV address, username, and
+password; known URL and username values are skipped. The password is used only
+for the authenticated enrollment exchange and is never persisted. When the
+Wear control appears, press **Arm Wear Mode**. Grant camera, microphone,
+notification, and nearby-device permissions and at least approximate location.
+Precise location is optional.
 For dependable screen-off reconnect behavior, use the app's Battery settings
 button and set GSV Wear to unrestricted battery use.
 
@@ -56,17 +65,12 @@ Android notification-listener access is a separate, optional one-time Settings
 grant. Use the app's **Notification access** button only if agents should be
 able to list, reply to, invoke, or dismiss other apps' notifications.
 
-The token is encrypted with Android Keystore and never rendered back into the
-form. Leaving the token field empty preserves the stored token.
-
-To enable headset voice, enter the GSV password once under **Headset voice
-assistant** and press **Enable voice client**. The app creates a separate user
-token, encrypts that token with Android Keystore, and does not persist the
-password. Then press **Choose GSV as assistant** and select GSV in Android's
-default digital-assistant settings. Arm Wear Mode before invoking it. Use
-**Test voice turn** for the first end-to-end check; afterward the device's
-normal assistant gesture, including a headset assistant gesture when the
-headset exposes one, starts the same turn.
+The enrolled credentials are encrypted with Android Keystore and are never
+rendered in the app. To enable OS gestures, expand **Assistant**, press **Make
+GSV default assistant**, and select GSV in Android settings. Arm Wear Mode
+before invoking it. Use **Test assistant** for the first end-to-end check;
+afterward the device's normal assistant gesture, including a headset assistant
+gesture when the headset exposes one, starts the same turn.
 
 Classic Bluetooth headset gestures use Android's `VOICE_COMMAND` route rather
 than the power-button assistant-service route. GSV Wear implements both. On an
@@ -255,7 +259,7 @@ scheduler and primitive classifier, not an offline language or vision model.
 
 Run this on an actual phone before treating a release as sensor-validated:
 
-1. Fresh-install the APK and provision a newly bound device token.
+1. Fresh-install the APK, sign in with a disposable test account, and confirm the phone enrolls without asking for any token or device id.
 2. Confirm the target advertises `fs.*`, `shell.exec`, and `net.fetch` after
    connecting.
 3. Write, read, edit, search, copy, and delete files in both writable mounts;
@@ -293,7 +297,7 @@ Run this on an actual phone before treating a release as sensor-validated:
     request body, redirect modes, cancellation, timeout, and the 32 MiB cap.
 19. Exercise forced Doze and an overnight armed run with unrestricted battery
     use, recording reconnect latency and battery consumption.
-20. Create the voice user token, select GSV as Android's assistant, and confirm
+20. Grant GSV the Android assistant role, and confirm
     the in-app test completes transcription, personal-process execution, and
     spoken playback without raw audio appearing in process history.
 21. While music is playing through a Bluetooth headset, invoke the headset's

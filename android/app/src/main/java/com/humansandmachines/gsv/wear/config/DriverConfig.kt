@@ -20,9 +20,8 @@ class DriverConfig(
     companion object {
         private val DEVICE_ID = Regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
-        fun validate(
+        fun validateFields(
             fields: ConnectionFields,
-            token: String,
             allowCleartext: Boolean,
         ): String? {
             val uri = try {
@@ -50,6 +49,15 @@ class DriverConfig(
             if (!DEVICE_ID.matches(fields.deviceId)) {
                 return "Device ID may contain letters, numbers, dots, dashes, and underscores"
             }
+            return null
+        }
+
+        fun validate(
+            fields: ConnectionFields,
+            token: String,
+            allowCleartext: Boolean,
+        ): String? {
+            validateFields(fields, allowCleartext)?.let { return it }
             if (token.isBlank() || token.length > 4096 || token.hasControlCharacter()) {
                 return "Device token is invalid"
             }

@@ -14,13 +14,17 @@ class CredentialStore(context: Context) {
     private val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
 
     @Synchronized
-    fun saveToken(token: String) {
-        saveSecret(DRIVER_TOKEN_SLOT, token)
-    }
-
-    @Synchronized
-    fun saveVoiceToken(token: String) {
-        saveSecret(VOICE_TOKEN_SLOT, token)
+    fun saveTokens(driverToken: String, voiceToken: String) {
+        val key = getOrCreateKey()
+        val driver = encrypt(driverToken, key)
+        val voice = encrypt(voiceToken, key)
+        val saved = preferences.edit()
+            .putString(DRIVER_TOKEN_SLOT.ivKey, driver.iv)
+            .putString(DRIVER_TOKEN_SLOT.ciphertextKey, driver.ciphertext)
+            .putString(VOICE_TOKEN_SLOT.ivKey, voice.iv)
+            .putString(VOICE_TOKEN_SLOT.ciphertextKey, voice.ciphertext)
+            .commit()
+        check(saved) { "Could not persist the credentials" }
     }
 
     @Synchronized
@@ -29,19 +33,17 @@ class CredentialStore(context: Context) {
     @Synchronized
     fun loadVoiceToken(): String? = loadSecret(VOICE_TOKEN_SLOT)
 
-    fun hasToken(): Boolean = hasSecret(DRIVER_TOKEN_SLOT)
+    @Synchronized
+    fun hasTokens(): Boolean = hasSecret(DRIVER_TOKEN_SLOT) && hasSecret(VOICE_TOKEN_SLOT)
 
-    fun hasVoiceToken(): Boolean = hasSecret(VOICE_TOKEN_SLOT)
-
-    private fun saveSecret(slot: SecretSlot, value: String) {
+    private fun encrypt(value: String, key: SecretKey): EncryptedSecret {
         val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
+        cipher.init(Cipher.ENCRYPT_MODE, key)
         val ciphertext = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
-        val saved = preferences.edit()
-            .putString(slot.ivKey, Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
-            .putString(slot.ciphertextKey, Base64.encodeToString(ciphertext, Base64.NO_WRAP))
-            .commit()
-        check(saved) { "Could not persist the credential" }
+        return EncryptedSecret(
+            iv = Base64.encodeToString(cipher.iv, Base64.NO_WRAP),
+            ciphertext = Base64.encodeToString(ciphertext, Base64.NO_WRAP),
+        )
     }
 
     private fun loadSecret(slot: SecretSlot): String? {
@@ -87,5 +89,10 @@ class CredentialStore(context: Context) {
     private data class SecretSlot(
         val ivKey: String,
         val ciphertextKey: String,
+    )
+
+    private data class EncryptedSecret(
+        val iv: String,
+        val ciphertext: String,
     )
 }

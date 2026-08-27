@@ -13,6 +13,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.humansandmachines.gsv.wear.authority.AuthorityState
+import com.humansandmachines.gsv.wear.config.ConnectionFields
 import com.humansandmachines.gsv.wear.voice.VoiceTurnState
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -62,5 +63,25 @@ class GsvVisualSystemTest {
         compose.onNodeWithContentDescription("GSV assistant agent is thinking").assertExists()
         compose.onNodeWithText("Agent is thinking").assertExists()
         compose.onNodeWithText("CANCEL").assertExists()
+    }
+
+    @Test
+    fun knownConnectionShowsOnlyThePasswordLoginStep() {
+        compose.setContent {
+            GsvLoginScreen(
+                initialFields = ConnectionFields(
+                    gatewayUrl = "wss://example.gsv.dev/ws",
+                    username = "alice",
+                    deviceId = "android-pixel-a1b2",
+                ),
+                uiState = OnboardingUiState(),
+                allowCleartext = false,
+                onLogin = { _, _, _ -> },
+            )
+        }
+
+        compose.onNodeWithText("GSV PASSWORD").assertExists()
+        compose.onNodeWithText("GSV ADDRESS").assertDoesNotExist()
+        compose.onNodeWithText("DEVICE TOKEN").assertDoesNotExist()
     }
 }

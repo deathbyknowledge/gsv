@@ -24,12 +24,10 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicText as Text
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -39,59 +37,38 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.humansandmachines.gsv.wear.authority.AuthorityState
-import com.humansandmachines.gsv.wear.config.ConnectionFields
 import com.humansandmachines.gsv.wear.connection.ConnectionState
 import com.humansandmachines.gsv.wear.runtime.RuntimeSnapshot
 
 data class ControlUiState(
-    val setupNotice: String = "",
-    val voiceNotice: String = "",
+    val runtimeNotice: String = "",
     val notificationStatus: String = "Not granted",
     val assistantSelected: Boolean = false,
-    val deviceTokenStored: Boolean = false,
-    val voiceTokenStored: Boolean = false,
-    val voiceProvisioning: Boolean = false,
     val voiceTestRunning: Boolean = false,
-    val setupError: Boolean = false,
-    val voiceError: Boolean = false,
+    val runtimeError: Boolean = false,
 )
 
 @Composable
 fun GsvControlScreen(
-    initialFields: ConnectionFields?,
     snapshot: RuntimeSnapshot,
     uiState: ControlUiState,
-    onSaveConnection: (ConnectionFields, String) -> Boolean,
-    onArm: (ConnectionFields, String) -> Boolean,
+    onArm: () -> Unit,
     onPauseOrResume: () -> Unit,
     onDisarm: () -> Unit,
     onDisconnect: () -> Unit,
     onActivationStarted: () -> Unit,
-    onProvisionVoice: (ConnectionFields, String, String) -> Boolean,
     onChooseAssistant: () -> Unit,
     onTestVoice: () -> Unit,
     onOpenBatterySettings: () -> Unit,
     onOpenNotificationSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var gatewayUrl by rememberSaveable { mutableStateOf(initialFields?.gatewayUrl.orEmpty()) }
-    var username by rememberSaveable { mutableStateOf(initialFields?.username.orEmpty()) }
-    var deviceId by rememberSaveable { mutableStateOf(initialFields?.deviceId.orEmpty()) }
-    var deviceToken by remember { mutableStateOf("") }
-    var voicePassword by remember { mutableStateOf("") }
-    var linkExpanded by rememberSaveable { mutableStateOf(!uiState.deviceTokenStored) }
     var assistantExpanded by rememberSaveable { mutableStateOf(false) }
     var systemExpanded by rememberSaveable { mutableStateOf(false) }
 
-    val fields = ConnectionFields(
-        gatewayUrl = gatewayUrl.trim(),
-        username = username.trim(),
-        deviceId = deviceId.trim(),
-    )
     val connectionDetail = buildString {
         append(snapshot.connection.displayName())
         snapshot.connectionFailure?.let { append(" // ${it.displayName()}") }
@@ -130,9 +107,7 @@ fun GsvControlScreen(
             Spacer(Modifier.height(22.dp))
             WearCore(
                 authority = snapshot.authority,
-                onArmRequested = {
-                    if (onArm(fields, deviceToken)) deviceToken = ""
-                },
+                onArmRequested = onArm,
                 onActivationStarted = onActivationStarted,
             )
             Spacer(Modifier.height(18.dp))
@@ -140,9 +115,7 @@ fun GsvControlScreen(
             when (snapshot.authority) {
                 AuthorityState.DISARMED -> GsvButton(
                     label = "Arm Wear Mode",
-                    onClick = {
-                        if (onArm(fields, deviceToken)) deviceToken = ""
-                    },
+                    onClick = onArm,
                     modifier = Modifier.fillMaxWidth(),
                     tone = GsvButtonTone.PRIMARY,
                 )
@@ -173,9 +146,9 @@ fun GsvControlScreen(
                 style = GsvTextStyle.Body.copy(textAlign = TextAlign.Center),
             )
             InlineNotice(
-                text = uiState.setupNotice,
+                text = uiState.runtimeNotice,
                 modifier = Modifier.padding(top = 16.dp).semantics { liveRegion = LiveRegionMode.Polite },
-                color = if (uiState.setupError) GsvColor.Red else GsvColor.Cyan,
+                color = if (uiState.runtimeError) GsvColor.Red else GsvColor.Cyan,
             )
 
             Spacer(Modifier.height(30.dp))
@@ -193,57 +166,7 @@ fun GsvControlScreen(
             }
 
             Spacer(Modifier.height(20.dp))
-            GsvSectionHeader("01", "Identity link", linkExpanded, { linkExpanded = !linkExpanded })
-            ExpandableSection(linkExpanded) {
-                Text(
-                    "Bind this phone to a driver identity. Credentials remain in Android Keystore-backed storage.",
-                    style = GsvTextStyle.Body,
-                )
-                Spacer(Modifier.height(18.dp))
-                GsvField(
-                    label = "Gateway WebSocket",
-                    value = gatewayUrl,
-                    onValueChange = { gatewayUrl = it },
-                    placeholder = "wss://your-gsv.example/ws",
-                    keyboardType = KeyboardType.Uri,
-                )
-                Spacer(Modifier.height(14.dp))
-                GsvField(
-                    label = "Username",
-                    value = username,
-                    onValueChange = { username = it },
-                    keyboardType = KeyboardType.Text,
-                )
-                Spacer(Modifier.height(14.dp))
-                GsvField(
-                    label = "Device ID",
-                    value = deviceId,
-                    onValueChange = { deviceId = it },
-                    placeholder = "android-wear",
-                    keyboardType = KeyboardType.Ascii,
-                )
-                Spacer(Modifier.height(14.dp))
-                GsvField(
-                    label = "Device token",
-                    value = deviceToken,
-                    onValueChange = { deviceToken = it },
-                    placeholder = if (uiState.deviceTokenStored) "Stored securely — leave blank to keep" else "Required",
-                    secret = true,
-                    keyboardType = KeyboardType.Password,
-                )
-                Spacer(Modifier.height(18.dp))
-                GsvButton(
-                    label = "Save Identity",
-                    onClick = {
-                        if (onSaveConnection(fields, deviceToken)) deviceToken = ""
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    tone = GsvButtonTone.SECONDARY,
-                )
-                Spacer(Modifier.height(22.dp))
-            }
-
-            GsvSectionHeader("02", "Assistant", assistantExpanded, { assistantExpanded = !assistantExpanded })
+            GsvSectionHeader("01", "Assistant", assistantExpanded, { assistantExpanded = !assistantExpanded })
             ExpandableSection(assistantExpanded) {
                 AssistantCore(
                     state = snapshot.voiceTurn,
@@ -251,8 +174,8 @@ fun GsvControlScreen(
                 )
                 StatusReadout(
                     label = "Voice link",
-                    value = if (uiState.voiceTokenStored) snapshot.voiceConnection.displayName() else "Not configured",
-                    color = if (uiState.voiceTokenStored) snapshot.voiceConnection.statusColor() else GsvColor.MutedDark,
+                    value = snapshot.voiceConnection.displayName(),
+                    color = snapshot.voiceConnection.statusColor(),
                 )
                 Spacer(Modifier.height(12.dp))
                 StatusReadout(
@@ -266,32 +189,11 @@ fun GsvControlScreen(
                     style = GsvTextStyle.Body,
                 )
                 Spacer(Modifier.height(18.dp))
-                GsvField(
-                    label = "GSV password — one-time setup",
-                    value = voicePassword,
-                    onValueChange = { voicePassword = it },
-                    placeholder = if (uiState.voiceTokenStored) "Voice token already stored" else "Create voice client token",
-                    secret = true,
-                    keyboardType = KeyboardType.Password,
-                )
-                Spacer(Modifier.height(14.dp))
                 GsvButton(
-                    label = if (uiState.voiceProvisioning) "Establishing Link…" else "Enable Voice Client",
-                    onClick = {
-                        if (onProvisionVoice(fields, deviceToken, voicePassword)) {
-                            deviceToken = ""
-                            voicePassword = ""
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !uiState.voiceProvisioning,
-                    tone = GsvButtonTone.PRIMARY,
-                )
-                Spacer(Modifier.height(10.dp))
-                GsvButton(
-                    label = "Choose GSV as Assistant",
+                    label = if (uiState.assistantSelected) "GSV is Default Assistant" else "Make GSV Default Assistant",
                     onClick = onChooseAssistant,
                     modifier = Modifier.fillMaxWidth(),
+                    enabled = !uiState.assistantSelected,
                     tone = GsvButtonTone.SECONDARY,
                 )
                 Spacer(Modifier.height(10.dp))
@@ -302,15 +204,10 @@ fun GsvControlScreen(
                     enabled = !uiState.voiceTestRunning,
                     tone = GsvButtonTone.QUIET,
                 )
-                InlineNotice(
-                    text = uiState.voiceNotice,
-                    modifier = Modifier.padding(top = 14.dp).semantics { liveRegion = LiveRegionMode.Polite },
-                    color = if (uiState.voiceError) GsvColor.Red else GsvColor.Cyan,
-                )
                 Spacer(Modifier.height(22.dp))
             }
 
-            GsvSectionHeader("03", "System access", systemExpanded, { systemExpanded = !systemExpanded })
+            GsvSectionHeader("02", "System access", systemExpanded, { systemExpanded = !systemExpanded })
             ExpandableSection(systemExpanded) {
                 StatusReadout(
                     label = "Notifications",
