@@ -1,0 +1,88 @@
+package com.humansandmachines.gsv.wear.ui
+
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector4D
+import androidx.compose.animation.core.TwoWayConverter
+import androidx.compose.animation.core.spring
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.remember
+import com.humansandmachines.gsv.wear.voice.VoiceTurnState
+
+@Immutable
+internal data class AssistantLiquidParameters(
+    val focus: Float,
+    val foldComplexity: Float,
+    val internalActivity: Float,
+    val projection: Float,
+)
+
+private enum class AssistantLiquidTarget(
+    val parameters: AssistantLiquidParameters,
+) {
+    LISTENING(
+        AssistantLiquidParameters(
+            focus = 0f,
+            foldComplexity = 0f,
+            internalActivity = 0f,
+            projection = 0f,
+        ),
+    ),
+    THINKING(
+        AssistantLiquidParameters(
+            focus = 1f,
+            foldComplexity = 1f,
+            internalActivity = 1f,
+            projection = 0f,
+        ),
+    ),
+}
+
+private val AssistantLiquidVectorConverter =
+    TwoWayConverter<AssistantLiquidParameters, AnimationVector4D>(
+        convertToVector = { parameters ->
+            AnimationVector4D(
+                parameters.focus,
+                parameters.foldComplexity,
+                parameters.internalActivity,
+                parameters.projection,
+            )
+        },
+        convertFromVector = { vector ->
+            AssistantLiquidParameters(
+                focus = vector.v1,
+                foldComplexity = vector.v2,
+                internalActivity = vector.v3,
+                projection = vector.v4,
+            )
+        },
+    )
+
+internal fun VoiceTurnState.usesAssistantLiquid(): Boolean =
+    this == VoiceTurnState.LISTENING || this == VoiceTurnState.THINKING
+
+@Composable
+internal fun rememberAssistantLiquidParameters(state: VoiceTurnState): AssistantLiquidParameters {
+    val target = when (state) {
+        VoiceTurnState.THINKING -> AssistantLiquidTarget.THINKING
+        else -> AssistantLiquidTarget.LISTENING
+    }
+    val animated = remember {
+        Animatable(
+            initialValue = target.parameters,
+            typeConverter = AssistantLiquidVectorConverter,
+            label = "assistant-liquid-state",
+        )
+    }
+    LaunchedEffect(target) {
+        animated.animateTo(
+            targetValue = target.parameters,
+            animationSpec = spring(
+                dampingRatio = 0.90f,
+                stiffness = 30f,
+            ),
+        )
+    }
+    return animated.value
+}

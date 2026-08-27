@@ -1,11 +1,12 @@
 package com.humansandmachines.gsv.wear.ui
 
-internal const val LISTENING_ORB_SHADER = """
+internal const val ASSISTANT_LIQUID_SHADER = """
 uniform float2 iResolution;
 uniform float iTime;
 uniform float iEnergy;
 uniform float4 iAccent;
 uniform float4 iShape;
+uniform float4 iBehavior;
 
 const float PI = 3.14159265359;
 const float TAU = 6.28318530718;
@@ -101,40 +102,79 @@ float facialFeatureDistance(float3 point, float phase) {
 float organicDistance(float3 point, float phase, float energy) {
     float organicAmount = clamp(iShape.x, 0.0, 1.0);
     float symbolPresence = clamp(iShape.y, 0.0, 1.0);
+    float focus = clamp(iBehavior.x, 0.0, 1.0);
+    float foldComplexity = clamp(iBehavior.y, 0.0, 1.0);
+    float contraction = 1.0 - focus *
+        (0.080 + 0.012 * (0.5 + 0.5 * sin(phase * 2.0)));
+    point /= contraction;
     float3 anchoredPoint = point;
     float3 animatedPoint = point;
-    animatedPoint.xz = rotate2(phase, animatedPoint.xz);
-    animatedPoint.xy = rotate2(0.24 * sin(phase * 2.0), animatedPoint.xy);
-    animatedPoint.yz = rotate2(0.19 * cos(phase * 3.0), animatedPoint.yz);
+    animatedPoint.xz = rotate2(
+        phase + foldComplexity * 0.30 * sin(phase * 3.0),
+        animatedPoint.xz
+    );
+    animatedPoint.xy = rotate2(
+        0.24 * sin(phase * 2.0) + foldComplexity * 0.20 * sin(phase * 4.0),
+        animatedPoint.xy
+    );
+    animatedPoint.yz = rotate2(
+        0.19 * cos(phase * 3.0) + foldComplexity * 0.17 * cos(phase * 5.0),
+        animatedPoint.yz
+    );
+    float3 focusedAnimatedPoint = animatedPoint;
+    focusedAnimatedPoint.xz = rotate2(
+        phase + 0.20 * sin(phase * 4.0),
+        focusedAnimatedPoint.xz
+    );
+    focusedAnimatedPoint.xy = rotate2(
+        0.16 * sin(phase * 5.0),
+        focusedAnimatedPoint.xy
+    );
+    focusedAnimatedPoint.yz = rotate2(
+        0.12 * cos(phase * 6.0),
+        focusedAnimatedPoint.yz
+    );
+    animatedPoint = mix(animatedPoint, focusedAnimatedPoint, focus);
     point = mix(anchoredPoint, animatedPoint, organicAmount);
 
     float3 foldedTarget = point;
-    foldedTarget.xz = rotate2(0.62 * sin(foldedTarget.y * 4.4 + phase), foldedTarget.xz);
-    foldedTarget.xy = rotate2(0.40 * sin(foldedTarget.z * 5.2 - phase * 2.0), foldedTarget.xy);
+    foldedTarget.xz = rotate2(
+        (0.62 + foldComplexity * 0.16) *
+            sin(foldedTarget.y * (4.4 + foldComplexity * 2.2) + phase),
+        foldedTarget.xz
+    );
+    foldedTarget.xy = rotate2(
+        (0.40 + foldComplexity * 0.14) *
+            sin(foldedTarget.z * (5.2 + foldComplexity * 2.4) - phase * 2.0),
+        foldedTarget.xy
+    );
     float3 folded = mix(point, foldedTarget, organicAmount);
 
-    float breath = 1.0 + 0.025 * sin(phase * 2.0) + energy * 0.025;
+    float breath = 1.0 + (0.025 - focus * 0.009) * sin(phase * 2.0) +
+        energy * 0.025;
     float response = 0.82 + energy * 0.35;
     float liquidDistance = ellipsoidDistance(
         folded,
-        float3(0.24, 0.29, 0.23) * breath
+        mix(float3(0.24, 0.29, 0.23), float3(0.25, 0.265, 0.245), focus) * breath
     );
+
+    float lobeOrbit = 1.0 - focus * 0.28;
 
     float3 firstCenter = float3(
         0.14 * cos(phase),
         0.10 * sin(phase * 2.0),
         0.11 * sin(phase)
-    ) * response;
+    ) * response * lobeOrbit;
     float3 secondCenter = float3(
         -0.13 * sin(phase),
         0.12 * cos(phase * 2.0),
         -0.11 * cos(phase)
-    ) * response;
+    ) * response * lobeOrbit;
     float3 thirdCenter = float3(
         0.09 * sin(phase * 3.0),
         -0.15 * cos(phase),
         0.12 * cos(phase * 2.0)
-    ) * response;
+    ) * response * lobeOrbit;
 
     float3 firstPoint = folded - firstCenter;
     firstPoint.xy = rotate2(0.52 + 0.72 * sin(phase), firstPoint.xy);
@@ -148,15 +188,15 @@ float organicDistance(float3 point, float phase, float energy) {
 
     float firstLobe = ellipsoidDistance(
         firstPoint,
-        float3(0.33, 0.14, 0.22) * breath
+        mix(float3(0.33, 0.14, 0.22), float3(0.29, 0.12, 0.25), focus) * breath
     );
     float secondLobe = ellipsoidDistance(
         secondPoint,
-        float3(0.16, 0.33, 0.23) * breath
+        mix(float3(0.16, 0.33, 0.23), float3(0.13, 0.29, 0.26), focus) * breath
     );
     float thirdLobe = ellipsoidDistance(
         thirdPoint,
-        float3(0.25, 0.15, 0.31) * breath
+        mix(float3(0.25, 0.15, 0.31), float3(0.27, 0.12, 0.27), focus) * breath
     );
 
     liquidDistance = smoothMinimum(liquidDistance, firstLobe, 0.085);
@@ -167,12 +207,12 @@ float organicDistance(float3 point, float phase, float energy) {
         0.28 * cos(phase * 2.0),
         0.21 * sin(phase),
         0.25 * cos(phase)
-    );
+    ) * (1.0 - focus * 0.25);
     float3 secondCavityCenter = float3(
         -0.24 * sin(phase),
         -0.27 * cos(phase * 2.0),
         -0.22 * sin(phase * 2.0)
-    );
+    ) * (1.0 - focus * 0.25);
     float firstCavity = ellipsoidDistance(
         folded - firstCavityCenter,
         float3(0.21, 0.17, 0.20)
@@ -184,10 +224,15 @@ float organicDistance(float3 point, float phase, float energy) {
     liquidDistance = smoothMaximum(liquidDistance, -firstCavity, 0.055);
     liquidDistance = smoothMaximum(liquidDistance, -secondCavity, 0.050);
 
-    float surfaceFold = sin(folded.x * 10.0 + sin(phase) * 2.0) *
-        sin(folded.y * 9.0 - cos(phase * 2.0) * 1.6) *
-        sin(folded.z * 11.0 + sin(phase * 3.0) * 1.4);
-    liquidDistance += surfaceFold * (0.010 + energy * 0.015) * organicAmount;
+    float surfaceFold = sin(
+        folded.x * (10.0 + foldComplexity * 6.0) + sin(phase) * 2.0
+    ) * sin(
+        folded.y * (9.0 + foldComplexity * 5.0) - cos(phase * 2.0) * 1.6
+    ) * sin(
+        folded.z * (11.0 + foldComplexity * 7.0) + sin(phase * 3.0) * 1.4
+    );
+    liquidDistance += surfaceFold *
+        (0.010 + energy * 0.015 + foldComplexity * 0.010) * organicAmount;
 
     float3 symbolPoint = symbolFlowPoint(anchoredPoint, phase, symbolPresence);
     float3 sphereRadii = float3(0.365, 0.375, 0.35) *
@@ -258,20 +303,25 @@ float3 organicNormal(float3 point, float phase, float energy) {
 }
 
 float3 interiorFlowPoint(float3 point, float phase) {
+    float foldComplexity = clamp(iBehavior.y, 0.0, 1.0);
+    float internalActivity = clamp(iBehavior.z, 0.0, 1.0);
     float3 flowingPoint = point;
     flowingPoint.xz = rotate2(
-        0.58 + 0.22 * sin(phase),
+        0.58 + 0.22 * sin(phase) +
+            foldComplexity * 0.24 * sin(phase * 3.0),
         flowingPoint.xz
     );
     flowingPoint.xy = rotate2(
-        -0.37 + 0.17 * cos(phase * 2.0),
+        -0.37 + 0.17 * cos(phase * 2.0) +
+            foldComplexity * 0.18 * cos(phase * 4.0),
         flowingPoint.xy
     );
     flowingPoint.yz = rotate2(
-        0.19 * sin(phase * 3.0),
+        0.19 * sin(phase * 3.0) +
+            foldComplexity * 0.16 * sin(phase * 5.0),
         flowingPoint.yz
     );
-    flowingPoint += float3(
+    float3 flowDisplacement = float3(
         0.026 * sin(flowingPoint.y * 7.0 + phase * 2.0) *
             cos(flowingPoint.z * 5.0 - phase),
         0.022 * sin(flowingPoint.z * 8.0 - phase * 2.0) *
@@ -279,17 +329,46 @@ float3 interiorFlowPoint(float3 point, float phase) {
         0.020 * sin(flowingPoint.x * 9.0 + phase) *
             cos(flowingPoint.y * 5.0 - phase * 3.0)
     );
+    flowingPoint += flowDisplacement * (1.0 + internalActivity * 0.48);
     return flowingPoint;
 }
 
 float4 interiorMembranes(float3 point, float phase) {
+    float focus = clamp(iBehavior.x, 0.0, 1.0);
+    float foldComplexity = clamp(iBehavior.y, 0.0, 1.0);
     float3 flowingPoint = interiorFlowPoint(point, phase);
-    float coolSurface = flowingPoint.y +
-        0.105 * sin(flowingPoint.x * 7.0 + phase) +
-        0.052 * sin(flowingPoint.z * 9.0 - phase * 2.0);
+    float coolPrimary = sin(flowingPoint.x * 7.0 + phase);
+    float coolFocused = sin(
+        (flowingPoint.x + flowingPoint.z * 0.58) * 10.0 + phase * 3.0
+    );
+    float coolSecondary = sin(flowingPoint.z * 9.0 - phase * 2.0);
+    float coolFocusedSecondary = sin(
+        (flowingPoint.z - flowingPoint.y * 0.46) * 13.0 - phase * 4.0
+    );
+    float coolSurface = flowingPoint.y + focus *
+        (flowingPoint.z * 0.30 - flowingPoint.y * 0.16) +
+        0.105 * mix(coolPrimary, coolFocused, foldComplexity) +
+        0.052 * mix(coolSecondary, coolFocusedSecondary, foldComplexity);
     float warmSurface = flowingPoint.x * 0.72 - flowingPoint.z * 0.28 +
-        0.082 * sin(flowingPoint.y * 8.0 - phase * 2.0) +
-        0.038 * cos(flowingPoint.x * 10.0 + phase * 3.0);
+        focus * (flowingPoint.y * 0.26 + flowingPoint.z * 0.18) +
+        0.082 * mix(
+            sin(flowingPoint.y * 8.0 - phase * 2.0),
+            sin((flowingPoint.y - flowingPoint.x * 0.42) * 12.0 - phase * 5.0),
+            foldComplexity
+        ) +
+        0.038 * mix(
+            cos(flowingPoint.x * 10.0 + phase * 3.0),
+            cos((flowingPoint.x + flowingPoint.z) * 14.0 + phase * 4.0),
+            foldComplexity
+        );
+    float thoughtSurface = dot(
+        flowingPoint,
+        float3(0.58, 0.72, -0.38)
+    ) + 0.075 * sin(
+        (flowingPoint.x - flowingPoint.y + flowingPoint.z) * 12.0 + phase * 4.0
+    ) + 0.035 * cos(
+        (flowingPoint.x + flowingPoint.y) * 15.0 - phase * 2.0
+    );
 
     float coolVariation = 0.58 + 0.42 *
         (0.5 + 0.5 * sin((flowingPoint.x - flowingPoint.z) * 8.0 + phase * 3.0));
@@ -299,6 +378,12 @@ float4 interiorMembranes(float3 point, float phase) {
     float coolRidge = (1.0 - smoothstep(0.005, 0.022, abs(coolSurface))) * coolVariation;
     float warmSheet = (1.0 - smoothstep(0.014, 0.076, abs(warmSurface))) * warmVariation;
     float warmRidge = (1.0 - smoothstep(0.004, 0.019, abs(warmSurface))) * warmVariation;
+    float thoughtSheet = 1.0 - smoothstep(0.012, 0.068, abs(thoughtSurface));
+    float thoughtRidge = 1.0 - smoothstep(0.003, 0.017, abs(thoughtSurface));
+    coolSheet = max(coolSheet, thoughtSheet * focus * 0.70);
+    coolRidge = max(coolRidge, thoughtRidge * focus * 0.54);
+    warmSheet = max(warmSheet, thoughtSheet * focus * 0.42);
+    warmRidge = max(warmRidge, thoughtRidge * focus);
     return float4(coolSheet, coolRidge, warmSheet, warmRidge);
 }
 
@@ -330,6 +415,9 @@ half4 main(float2 fragCoord) {
     uv.y = -uv.y;
 
     float energy = clamp(iEnergy, 0.0, 1.0);
+    float focus = clamp(iBehavior.x, 0.0, 1.0);
+    float foldComplexity = clamp(iBehavior.y, 0.0, 1.0);
+    float internalActivity = clamp(iBehavior.z, 0.0, 1.0);
     float phase = TAU * iTime / 12.0;
     float3 origin = float3(0.0, 0.0, 2.35);
     float3 direction = normalize(float3(uv * 1.42, -2.15));
@@ -371,7 +459,7 @@ half4 main(float2 fragCoord) {
         float middleDensity = interiorDensity(middlePoint, phase, energy);
         float deepDensity = middleDensity * (0.35 + facing * 0.65);
         float estimatedThickness = 0.065 + facing * 0.060 +
-            middleDensity * 0.340;
+            middleDensity * 0.340 + focus * 0.055;
         float3 transmittance = exp(
             -estimatedThickness * float3(8.6, 4.1, 2.0)
         );
@@ -401,13 +489,23 @@ half4 main(float2 fragCoord) {
         float organicAmount = clamp(iShape.x, 0.0, 1.0);
         float liquidDetail = 0.28 + organicAmount * 0.72;
         float membraneCrossing = coolRidge * warmRidge;
+        float thoughtWave = 0.5 + 0.5 * sin(
+            phase * 4.0 + dot(middlePoint, float3(19.0, -14.0, 11.0))
+        );
+        float thoughtCharge = focus * internalActivity * pow(thoughtWave, 7.0) *
+            (0.22 + max(coolRidge, warmRidge) * 0.78);
         float thinTransmission = transmittance.g *
             (0.32 + 0.68 * pow(1.0 - facing, 1.35));
         float warmTransmission = transmittance.g *
             pow(max(dot(-normal, warmLight), 0.0), 1.7);
-        float interiorVisibility = 0.50 + transmittance.b * 0.65;
+        float interiorVisibility = (0.50 + transmittance.b * 0.65) *
+            (1.0 + internalActivity * 0.16);
 
-        float3 deepMaterial = float3(0.002, 0.007, 0.021);
+        float3 deepMaterial = mix(
+            float3(0.002, 0.007, 0.021),
+            float3(0.006, 0.003, 0.030),
+            focus
+        );
         float3 cyan = mix(float3(0.05, 0.70, 0.90), iAccent.rgb, 0.48);
         float3 warm = float3(1.0, 0.62, 0.22);
         float3 material = deepMaterial +
@@ -421,6 +519,11 @@ half4 main(float2 fragCoord) {
             (warmSheet * 0.065 + warmRidge * 0.15);
         material += mix(cyan, warm, 0.20) * liquidDetail *
             interiorVisibility * membraneCrossing * 0.12;
+        material += iAccent.rgb * focus * foldComplexity *
+            (coolSheet * 0.035 + coolRidge * 0.10);
+        material += warm * thoughtCharge * 0.54;
+        material += float3(0.78, 0.90, 1.0) * thoughtCharge *
+            membraneCrossing * 0.31;
         material += cyan * liquidDetail * thinTransmission * 0.12;
         material += mix(cyan, warm, 0.58) * liquidDetail * warmTransmission * 0.10;
         material *= 1.0 - liquidDetail * min(coolSheet + warmSheet, 1.0) * 0.030;
@@ -442,7 +545,8 @@ half4 main(float2 fragCoord) {
         );
         float bodyAlpha = clamp(
             0.38 + absorptionAlpha * 0.47 +
-                fresnel * 0.12 + coolSpecular * 0.050 + membraneOpacity,
+                fresnel * 0.12 + coolSpecular * 0.050 + membraneOpacity +
+                focus * 0.045,
             0.0,
             0.94
         );

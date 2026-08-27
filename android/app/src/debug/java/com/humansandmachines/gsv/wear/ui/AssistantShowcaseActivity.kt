@@ -27,6 +27,7 @@ class AssistantShowcaseActivity : ComponentActivity() {
     private var showcaseState by mutableStateOf(VoiceTurnState.LISTENING)
     private var showOverlay by mutableStateOf(false)
     private var morphReview by mutableStateOf(false)
+    private var stateReview by mutableStateOf(false)
     private var shapeTarget by mutableStateOf(OrbShapeTarget.LISTENING)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -35,20 +36,34 @@ class AssistantShowcaseActivity : ComponentActivity() {
         updateShowcase(intent)
         setContent {
             if (showOverlay) {
-                val reviewMorph = morphReview && showcaseState == VoiceTurnState.LISTENING
+                val reviewStates = stateReview
+                val reviewMorph = !reviewStates &&
+                    morphReview && showcaseState == VoiceTurnState.LISTENING
                 ShowcaseHostSurface()
                 AssistantInvocationSurface(
                     state = showcaseState,
-                    detail = if (reviewMorph) {
-                        "Tap again at any point to redirect the liquid."
-                    } else {
-                        showcaseState.detailText(this)
+                    detail = when {
+                        reviewStates -> "Tap to compare states without restarting the liquid."
+                        reviewMorph -> "Tap again at any point to redirect the liquid."
+                        else -> showcaseState.detailText(this)
                     },
                     signal = 0.74f,
                     shapeTarget = shapeTarget,
-                    coreActionDescription = if (reviewMorph) "Morph assistant shape" else "Cancel assistant",
-                    coreActionLabel = if (reviewMorph) "TAP CORE TO MORPH / REVERSE" else "TAP CORE TO DISMISS",
-                    onCancel = if (reviewMorph) ::toggleShape else ::finish,
+                    coreActionDescription = when {
+                        reviewStates -> "Switch assistant state"
+                        reviewMorph -> "Morph assistant shape"
+                        else -> "Cancel assistant"
+                    },
+                    coreActionLabel = when {
+                        reviewStates -> "TAP CORE TO SWITCH STATE"
+                        reviewMorph -> "TAP CORE TO MORPH / REVERSE"
+                        else -> "TAP CORE TO DISMISS"
+                    },
+                    onCancel = when {
+                        reviewStates -> ::toggleReviewState
+                        reviewMorph -> ::toggleShape
+                        else -> ::finish
+                    },
                 )
             } else {
                 AssistantSurface(
@@ -73,7 +88,15 @@ class AssistantShowcaseActivity : ComponentActivity() {
         }.getOrDefault(VoiceTurnState.LISTENING)
         showOverlay = intent.getBooleanExtra(EXTRA_OVERLAY, false)
         morphReview = intent.getBooleanExtra(EXTRA_MORPH, false)
+        stateReview = intent.getBooleanExtra(EXTRA_STATES, false)
         shapeTarget = OrbShapeTarget.LISTENING
+    }
+
+    private fun toggleReviewState() {
+        showcaseState = when (showcaseState) {
+            VoiceTurnState.LISTENING -> VoiceTurnState.THINKING
+            else -> VoiceTurnState.LISTENING
+        }
     }
 
     private fun toggleShape() {
@@ -87,6 +110,7 @@ class AssistantShowcaseActivity : ComponentActivity() {
         private const val EXTRA_STATE = "state"
         private const val EXTRA_OVERLAY = "overlay"
         private const val EXTRA_MORPH = "morph"
+        private const val EXTRA_STATES = "states"
     }
 }
 
