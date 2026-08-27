@@ -82,7 +82,7 @@ Canonical user-facing conversations are not Process histories. Conversations ret
 - `host/apps/cli/`: user, deployment, administration, and OS service-control commands.
 - `host/apps/machine/`: the `gsvd` machine driver, concrete tools, transfer ownership, reconnect, logging, and shutdown.
 - `host/helpers/`: separately supervised local transcription and gesture processes.
-- `host/crates/`: shared gateway transport, host configuration, Desktop IPC, gesture protocol contracts, and the platform-neutral gesture engine. `host/` owns their Cargo workspace and build artifacts.
+- `host/crates/`: shared gateway transport, host configuration, Desktop IPC, gesture protocol contracts, the platform-neutral gesture engine, and its Android JNI adapter. `host/` owns their Cargo workspace and build artifacts.
 - `android/`: the native Android machine driver, bounded filesystem/shell/network target, Wear authority, reconnect supervision, foreground-service lifecycle, on-demand sensors, Android actions and notification access, offline local checks, and the independently connected Mind assistant client used by in-app and OS voice surfaces.
 - `adapters/`: platform-specific messaging workers and identity normalization.
 - `extension/`: browser-backed target and browser integration.
@@ -198,7 +198,7 @@ Validate only the surfaces affected by the change:
 - Gateway: `cd gateway && npx tsc --noEmit && npm run test:run`
 - Web: `cd web && npm run check && npm run test:run && npm run build`
 - Desktop and transcription helper: `cd host && cargo fmt --package desktop --package transcriber --check && cargo test --package desktop --package transcriber && cargo clippy --package desktop --package transcriber --all-targets -- -D warnings`
-- Gesture engine, helper, and protocol: `cd host && cargo fmt --package gesture-engine --package gestures --package gesture-protocol --check && cargo test --package gesture-engine --package gestures --package gesture-protocol && cargo clippy --package gesture-engine --package gestures --package gesture-protocol --all-targets -- -D warnings`
+- Gesture engine, helper, protocol, and Android adapter: `cd host && cargo fmt --package gesture-engine --package gesture-android --package gestures --package gesture-protocol --check && cargo test --package gesture-engine --package gesture-android --package gestures --package gesture-protocol && cargo clippy --package gesture-engine --package gesture-android --package gestures --package gesture-protocol --all-targets -- -D warnings`
 - Public SDK: `npm run gsv:check && npm test --workspace packages/gsv`
 - CLI: `cd host && cargo fmt --package gsv --check && cargo test --package gsv`
 - Machine: `cd host && cargo fmt --package machine --check && cargo test --package machine`

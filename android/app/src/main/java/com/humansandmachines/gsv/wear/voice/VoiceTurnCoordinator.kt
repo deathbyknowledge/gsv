@@ -17,6 +17,15 @@ class VoiceTurnCoordinator(
     private val publishLevel: (Float) -> Unit = {},
 ) : VoiceTurnOwner, Closeable {
     private val turnGeneration = AtomicLong(0)
+    private val listeningGeneration = AtomicLong(0)
+    private val finishRequestedGeneration = AtomicLong(0)
+
+    override fun finishListening(): Boolean {
+        val generation = listeningGeneration.get()
+        if (generation == 0L) return false
+        finishRequestedGeneration.set(generation)
+        return true
+    }
 
     override suspend fun runVoiceTurn(
         captureRoute: VoiceCaptureRoute?,
@@ -42,6 +51,7 @@ class VoiceTurnCoordinator(
                 null
             } ?: return speakLocal("GSV is offline.", report, reportLevel)
 
+            listeningGeneration.set(generation)
             report(VoiceTurnState.LISTENING)
             val captured = try {
                 audio.capture {
@@ -50,9 +60,12 @@ class VoiceTurnCoordinator(
                         trailingMillis = END_OF_SPEECH_MILLIS,
                         preferredDevice = captureRoute?.preferredInputDevice,
                         onLevel = reportLevel,
+                        stopRequested = { finishRequestedGeneration.get() == generation },
                     )
                 }
             } finally {
+                listeningGeneration.compareAndSet(generation, 0)
+                finishRequestedGeneration.compareAndSet(generation, 0)
                 captureRoute?.close()
             }
             report(VoiceTurnState.THINKING)
@@ -77,6 +90,8 @@ class VoiceTurnCoordinator(
         } catch (_: Throwable) {
             speakLocal("That voice request failed. Please try again.", report, reportLevel)
         } finally {
+            listeningGeneration.compareAndSet(generation, 0)
+            finishRequestedGeneration.compareAndSet(generation, 0)
             if (turnGeneration.compareAndSet(generation, generation + 1)) {
                 publishLevel(0f)
                 publishState(VoiceTurnState.IDLE)
@@ -86,6 +101,8 @@ class VoiceTurnCoordinator(
 
     override fun close() {
         turnGeneration.incrementAndGet()
+        listeningGeneration.set(0)
+        finishRequestedGeneration.set(0)
         publishLevel(0f)
         audio.close()
     }

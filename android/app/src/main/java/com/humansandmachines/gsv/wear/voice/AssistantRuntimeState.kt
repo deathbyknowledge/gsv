@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.update
 data class AssistantSnapshot(
     val connection: ConnectionState = ConnectionState.DISCONNECTED,
     val turn: VoiceTurnState = VoiceTurnState.IDLE,
+    val turnId: Long = 0,
     val level: Float = 0f,
 )
 
@@ -24,6 +25,11 @@ object AssistantRuntimeState {
         mutableSnapshot.update {
             it.copy(
                 turn = state,
+                turnId = if (it.turn == VoiceTurnState.IDLE && state != VoiceTurnState.IDLE) {
+                    it.turnId + 1
+                } else {
+                    it.turnId
+                },
                 level = if (state.isAudioReactive()) it.level else 0f,
             )
         }

@@ -62,6 +62,7 @@ interface AssistantMicrophone {
         trailingMillis: Long,
         preferredDevice: AudioDeviceInfo? = null,
         onLevel: (Float) -> Unit = {},
+        stopRequested: () -> Boolean = { false },
     ): CapturedAudio
 }
 
@@ -80,6 +81,7 @@ internal class AudioController(
         trailingMillis: Long,
         preferredDevice: AudioDeviceInfo?,
         onLevel: (Float) -> Unit,
+        stopRequested: () -> Boolean,
     ): CapturedAudio {
         if (trailingMillis !in MIN_TRAILING_MILLIS..MAX_TRAILING_MILLIS) {
             throw AudioCaptureFailure("Speech trailing duration is out of range")
@@ -90,6 +92,7 @@ internal class AudioController(
             preferredDevice = preferredDevice,
             onLevel = onLevel,
             captureIsCurrent = { true },
+            stopRequested = stopRequested,
         )
     }
 
@@ -136,6 +139,7 @@ internal class AudioController(
         preferredDevice: AudioDeviceInfo? = null,
         onLevel: (Float) -> Unit = {},
         captureIsCurrent: () -> Boolean,
+        stopRequested: () -> Boolean = { false },
     ): CapturedAudio {
         if (durationMillis !in MIN_CAPTURE_MILLIS..MAX_CAPTURE_MILLIS) {
             throw AudioCaptureFailure("Microphone duration must be between $MIN_CAPTURE_MILLIS and $MAX_CAPTURE_MILLIS ms")
@@ -148,6 +152,7 @@ internal class AudioController(
                     preferredDevice,
                     onLevel,
                     captureIsCurrent,
+                    stopRequested,
                 )
             }
         }
@@ -159,6 +164,7 @@ internal class AudioController(
         preferredDevice: AudioDeviceInfo?,
         onLevel: (Float) -> Unit,
         captureIsCurrent: () -> Boolean,
+        stopRequested: () -> Boolean,
     ): CapturedAudio {
         if (closed.get()) throw AudioCaptureFailure("Microphone controller is closed")
         if (
@@ -238,6 +244,7 @@ internal class AudioController(
                     if (stopAfterSpeechMillis != null && frameSpeech) {
                         speechStopAt = android.os.SystemClock.elapsedRealtime() + stopAfterSpeechMillis
                     }
+                    if (stopRequested()) break
                 }
                 val dataBytes = wave.length() - WAV_HEADER_BYTES
                 writeWaveHeader(wave, dataBytes)

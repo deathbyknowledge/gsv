@@ -19,12 +19,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.humansandmachines.gsv.wear.authority.AuthorityState
 import com.humansandmachines.gsv.wear.config.ConnectionFields
 import com.humansandmachines.gsv.wear.config.DriverConfig
 import com.humansandmachines.gsv.wear.config.DriverConfigStore
 import com.humansandmachines.gsv.wear.config.OnboardingInput
+import com.humansandmachines.gsv.wear.gesture.GestureCommand
+import com.humansandmachines.gsv.wear.gesture.MindGestureController
+import com.humansandmachines.gsv.wear.gesture.MindGestureIntent
 import com.humansandmachines.gsv.wear.notifications.AndroidNotificationAccess
 import com.humansandmachines.gsv.wear.provisioning.GsvProvisioner
 import com.humansandmachines.gsv.wear.runtime.WearRuntimeService
@@ -38,10 +43,12 @@ import com.humansandmachines.gsv.wear.voice.AssistantRuntimeState
 import com.humansandmachines.gsv.wear.voice.VoiceAssistantRuntime
 import com.humansandmachines.gsv.wear.voice.VoiceTurnState
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private lateinit var configStore: DriverConfigStore
+    private lateinit var gestureController: MindGestureController
     private lateinit var deviceId: String
     private lateinit var deviceLabel: String
     private var pendingArm = false
@@ -53,6 +60,8 @@ class MainActivity : ComponentActivity() {
     private var notificationStatus by mutableStateOf("Not granted")
     private var assistantSelected by mutableStateOf(false)
     private var runtimeError by mutableStateOf(false)
+    private var mindVisible = false
+    private var gestureCameraPermissionPending = false
 
     private val permissionRequest = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -87,10 +96,27 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val gestureCameraPermissionRequest = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        gestureCameraPermissionPending = false
+        gestureController.cameraPermissionChanged()
+        if (!granted && mindVisible) {
+            runtimeNotice = getString(R.string.mind_camera_required)
+            runtimeError = true
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         configStore = DriverConfigStore(applicationContext)
+        gestureController = MindGestureController(this, this, ::handleGestureCommand)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                AssistantRuntimeState.snapshot.collectLatest(gestureController::updateAssistant)
+            }
+        }
         val initialFields = configStore.loadFields()
         deviceId = initialFields?.deviceId ?: configStore.loadOrCreateDeviceId(Build.MODEL)
         deviceLabel = buildDeviceLabel()
@@ -111,6 +137,7 @@ class MainActivity : ComponentActivity() {
             } else {
                 val wearSnapshot by WearRuntimeState.snapshot.collectAsStateWithLifecycle()
                 val assistantSnapshot by AssistantRuntimeState.snapshot.collectAsStateWithLifecycle()
+                val gestureSnapshot by gestureController.snapshot.collectAsStateWithLifecycle()
                 GsvControlScreen(
                     wearSnapshot = wearSnapshot,
                     assistantSnapshot = assistantSnapshot,
@@ -144,6 +171,8 @@ class MainActivity : ComponentActivity() {
                     onOpenNotificationSettings = {
                         startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                     },
+                    gestureSnapshot = gestureSnapshot,
+                    onMindVisibilityChanged = ::setMindVisibility,
                 )
             }
         }
@@ -160,6 +189,11 @@ class MainActivity : ComponentActivity() {
             onboardingNotice = getString(R.string.sign_in_again)
             onboardingError = true
         }
+    }
+
+    override fun onDestroy() {
+        gestureController.close()
+        super.onDestroy()
     }
 
     private fun loginAndEnroll(gatewayUrl: String, username: String, password: String) {
@@ -275,6 +309,42 @@ class MainActivity : ComponentActivity() {
         (application as GsvWearApplication).assistantRuntime.reload()
         VoiceAssistantRuntime.startTurn(scope = lifecycleScope)
     }
+
+    private fun setMindVisibility(visible: Boolean) {
+        mindVisible = visible
+        gestureController.setVisible(visible)
+        if (
+            visible &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) !=
+            PackageManager.PERMISSION_GRANTED &&
+            !gestureCameraPermissionPending
+        ) {
+            gestureCameraPermissionPending = true
+            gestureCameraPermissionRequest.launch(Manifest.permission.CAMERA)
+        }
+    }
+
+    private fun handleGestureCommand(command: GestureCommand) {
+        val snapshot = AssistantRuntimeState.snapshot.value
+        when (command.intent) {
+            MindGestureIntent.START -> {
+                if (snapshot.turn == VoiceTurnState.IDLE) toggleMindTurn()
+            }
+            MindGestureIntent.STOP -> {
+                if (command.matches(snapshot)) VoiceAssistantRuntime.cancelActiveTurn()
+            }
+            MindGestureIntent.SEND -> {
+                if (command.matches(snapshot) && snapshot.turn == VoiceTurnState.LISTENING) {
+                    VoiceAssistantRuntime.finishListeningAndSend()
+                }
+            }
+        }
+    }
+
+    private fun GestureCommand.matches(snapshot: com.humansandmachines.gsv.wear.voice.AssistantSnapshot): Boolean =
+        snapshot.turn != VoiceTurnState.IDLE &&
+            voiceRequestId != null &&
+            voiceRequestId == snapshot.turnId
 
     private fun requestAssistantRole() {
         val intent = AndroidAssistantRole.requestIntent(this)
