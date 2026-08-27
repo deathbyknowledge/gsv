@@ -52,25 +52,25 @@ import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 
 object GsvColor {
-    val Void = Color(0xFF05080A)
-    val Deep = Color(0xFF071116)
-    val Panel = Color(0xE60B171D)
-    val Line = Color(0xFF24404A)
-    val LineSoft = Color(0x552B6672)
-    val Cyan = Color(0xFF66F3FF)
-    val CyanBright = Color(0xFFB8FBFF)
-    val Blue = Color(0xFF6888FF)
-    val Violet = Color(0xFF9C7CFF)
-    val Amber = Color(0xFFFFC66D)
-    val Red = Color(0xFFFF6B7A)
-    val White = Color(0xFFF1F8FA)
-    val Muted = Color(0xFF8AA1AA)
-    val MutedDark = Color(0xFF52666E)
+    val Void = Color(0xFF07061A)
+    val Deep = Color(0xFF0A0820)
+    val Panel = Color(0xE60A0822)
+    val Line = Color(0xFF322E74)
+    val LineSoft = Color(0x5525224D)
+    val Accent = Color(0xFFB3AEFF)
+    val AccentBright = Color(0xFFCBC7FF)
+    val Blue = Color(0xFF8FB6FF)
+    val Violet = Color(0xFF8F8AFF)
+    val Amber = Color(0xFFF0C36A)
+    val Red = Color(0xFFFF6F8C)
+    val White = Color(0xFFF2F0FF)
+    val Muted = Color(0xFF817BA9)
+    val MutedDark = Color(0xFF4E496F)
 }
 
 object GsvTextStyle {
     val Kicker = TextStyle(
-        color = GsvColor.Cyan,
+        color = GsvColor.Accent,
         fontFamily = FontFamily.Monospace,
         fontSize = 11.sp,
         fontWeight = FontWeight.SemiBold,
@@ -132,7 +132,7 @@ fun SignalBackdrop(modifier: Modifier = Modifier) {
         )
         drawCircle(
             brush = Brush.radialGradient(
-                colors = listOf(Color(0x26235E72), Color.Transparent),
+                colors = listOf(Color(0x26403B77), Color.Transparent),
                 center = center.copy(y = size.height * 0.22f),
                 radius = size.maxDimension * 0.7f,
             ),
@@ -155,7 +155,7 @@ fun SignalBackdrop(modifier: Modifier = Modifier) {
         val scanY = size.height * scan
         drawRect(
             brush = Brush.verticalGradient(
-                listOf(Color.Transparent, Color(0x2466F3FF), Color.Transparent),
+                listOf(Color.Transparent, Color(0x24B3AEFF), Color.Transparent),
                 startY = scanY - 36.dp.toPx(),
                 endY = scanY + 36.dp.toPx(),
             ),
@@ -188,16 +188,16 @@ fun GsvButton(
         label = "command-press",
     )
     val accent = when (tone) {
-        GsvButtonTone.PRIMARY -> GsvColor.Cyan
+        GsvButtonTone.PRIMARY -> GsvColor.Accent
         GsvButtonTone.DANGER -> GsvColor.Red
         GsvButtonTone.QUIET -> GsvColor.MutedDark
         GsvButtonTone.SECONDARY -> GsvColor.Blue
     }
     val background = when (tone) {
-        GsvButtonTone.PRIMARY -> Color(0x293DF2FF)
+        GsvButtonTone.PRIMARY -> Color(0x29201C4D)
         GsvButtonTone.DANGER -> Color(0x24FF6B7A)
         GsvButtonTone.QUIET -> Color(0x12000000)
-        GsvButtonTone.SECONDARY -> Color(0x1F6888FF)
+        GsvButtonTone.SECONDARY -> Color(0x1F8F8AFF)
     }
     val alpha = if (enabled) 1f else 0.38f
     val shape = CutCornerShape(topStart = 2.dp, topEnd = 12.dp, bottomEnd = 2.dp, bottomStart = 12.dp)
@@ -225,7 +225,7 @@ fun GsvButton(
     ) {
         Text(
             text = label.uppercase(),
-            style = GsvTextStyle.Button.copy(color = if (tone == GsvButtonTone.PRIMARY) GsvColor.CyanBright else GsvColor.White),
+            style = GsvTextStyle.Button.copy(color = if (tone == GsvButtonTone.PRIMARY) GsvColor.AccentBright else GsvColor.White),
         )
     }
 }
@@ -245,7 +245,7 @@ fun GsvField(
     val focused by interaction.collectIsFocusedAsState()
     val shape = CutCornerShape(topStart = 2.dp, topEnd = 10.dp, bottomEnd = 2.dp, bottomStart = 10.dp)
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        Text(label.uppercase(), style = GsvTextStyle.Kicker.copy(color = if (focused) GsvColor.Cyan else GsvColor.Muted))
+        Text(label.uppercase(), style = GsvTextStyle.Kicker.copy(color = if (focused) GsvColor.Accent else GsvColor.Muted))
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
@@ -256,7 +256,7 @@ fun GsvField(
             textStyle = GsvTextStyle.Data,
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
             visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None,
-            cursorBrush = SolidColor(GsvColor.Cyan),
+            cursorBrush = SolidColor(GsvColor.Accent),
             interactionSource = interaction,
             decorationBox = { inner ->
                 Box(
@@ -267,7 +267,7 @@ fun GsvField(
                         .background(GsvColor.Panel)
                         .border(
                             1.dp,
-                            if (focused) GsvColor.Cyan.copy(alpha = 0.9f) else GsvColor.Line,
+                            if (focused) GsvColor.Accent.copy(alpha = 0.9f) else GsvColor.Line,
                             shape,
                         )
                         .padding(horizontal = 16.dp, vertical = 15.dp),
@@ -301,7 +301,7 @@ fun GsvSectionHeader(
         Text(index, style = GsvTextStyle.Kicker.copy(color = GsvColor.MutedDark))
         Spacer(Modifier.width(14.dp))
         Text(title.uppercase(), style = GsvTextStyle.Button, modifier = Modifier.weight(1f))
-        Text(if (expanded) "−" else "+", style = GsvTextStyle.Title.copy(color = GsvColor.Cyan))
+        Text(if (expanded) "−" else "+", style = GsvTextStyle.Title.copy(color = GsvColor.Accent))
     }
     Box(Modifier.fillMaxWidth().height(1.dp).background(GsvColor.LineSoft))
 }
@@ -311,7 +311,7 @@ fun StatusReadout(
     label: String,
     value: String,
     modifier: Modifier = Modifier,
-    color: Color = GsvColor.Cyan,
+    color: Color = GsvColor.Accent,
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
@@ -332,7 +332,7 @@ fun StatusReadout(
 fun InlineNotice(
     text: String,
     modifier: Modifier = Modifier,
-    color: Color = GsvColor.Cyan,
+    color: Color = GsvColor.Accent,
 ) {
     if (text.isBlank()) return
     Row(

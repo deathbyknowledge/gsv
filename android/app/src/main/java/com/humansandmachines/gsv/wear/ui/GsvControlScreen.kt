@@ -103,9 +103,9 @@ fun GsvControlScreen(
     val accent = when (selected) {
         GsvSurface.MIND -> assistantSnapshot.turn.accentColor()
         GsvSurface.SHIP -> when (wearSnapshot.authority) {
-            AuthorityState.ARMED -> GsvColor.Cyan
+            AuthorityState.ARMED -> GsvColor.Accent
             AuthorityState.PAUSED -> GsvColor.Amber
-            AuthorityState.DISARMED -> Color(0xFF35505A)
+            AuthorityState.DISARMED -> GsvColor.MutedDark
         }
     }
 
@@ -209,7 +209,7 @@ private fun MindCore(
     }
     val accent = when {
         active -> snapshot.turn.accentColor()
-        snapshot.connection == ConnectionState.CONNECTED -> GsvColor.Cyan
+        snapshot.connection == ConnectionState.CONNECTED -> GsvColor.Accent
         snapshot.connection == ConnectionState.OFFLINE -> GsvColor.Amber
         else -> GsvColor.MutedDark
     }
@@ -363,7 +363,7 @@ private fun SurfaceNavigationItem(
             Modifier
                 .width(if (selected) 44.dp else 15.dp)
                 .height(1.dp)
-                .background(if (selected) GsvColor.Cyan.copy(alpha = 0.74f) else GsvColor.Line),
+                .background(if (selected) GsvColor.Accent.copy(alpha = 0.74f) else GsvColor.Line),
         )
     }
 }
@@ -455,7 +455,7 @@ private fun SettingsPortal(
                 repeat(3) { index ->
                     val angle = index / 3f * PI.toFloat() * 2f - PI.toFloat() / 2f
                     drawCircle(
-                        color = if (index == 0) GsvColor.Cyan else GsvColor.Muted,
+                        color = if (index == 0) GsvColor.Accent else GsvColor.Muted,
                         radius = 1.6.dp.toPx(),
                         center = Offset(
                             center.x + cos(angle) * 7.dp.toPx(),
@@ -478,7 +478,7 @@ private fun LiveNotice(text: String, error: Boolean, modifier: Modifier = Modifi
                 .semantics { liveRegion = LiveRegionMode.Polite }
                 .padding(horizontal = 18.dp, vertical = 8.dp),
             style = GsvTextStyle.Body.copy(
-                color = if (error) GsvColor.Red else GsvColor.Cyan,
+                color = if (error) GsvColor.Red else GsvColor.Accent,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
                 textAlign = TextAlign.Center,
@@ -506,7 +506,7 @@ private fun SettingsSurface(
     }
     val mindActive = assistantSnapshot.turn != VoiceTurnState.IDLE
     Box(Modifier.fillMaxSize().background(GsvColor.Void)) {
-        LiveBackdrop(accent = GsvColor.Cyan, modifier = Modifier.fillMaxSize(), quiet = true)
+        LiveBackdrop(accent = GsvColor.Accent, modifier = Modifier.fillMaxSize(), quiet = true)
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -538,7 +538,7 @@ private fun SettingsSurface(
                     "Authority",
                     wearSnapshot.authority.displayName(),
                     color = when (wearSnapshot.authority) {
-                        AuthorityState.ARMED -> GsvColor.Cyan
+                        AuthorityState.ARMED -> GsvColor.Accent
                         AuthorityState.PAUSED -> GsvColor.Amber
                         AuthorityState.DISARMED -> GsvColor.MutedDark
                     },
@@ -580,7 +580,7 @@ private fun SettingsSurface(
                 StatusReadout(
                     "OS role",
                     if (uiState.assistantSelected) "Selected" else "Not selected",
-                    color = if (uiState.assistantSelected) GsvColor.Cyan else GsvColor.Amber,
+                    color = if (uiState.assistantSelected) GsvColor.Accent else GsvColor.Amber,
                 )
                 Spacer(Modifier.height(18.dp))
                 GsvButton(
@@ -603,7 +603,7 @@ private fun SettingsSurface(
                 StatusReadout(
                     "Notifications",
                     uiState.notificationStatus,
-                    color = if (uiState.notificationStatus == "Ready") GsvColor.Cyan else GsvColor.Amber,
+                    color = if (uiState.notificationStatus == "Ready") GsvColor.Accent else GsvColor.Amber,
                 )
                 Spacer(Modifier.height(18.dp))
                 GsvButton(
@@ -637,7 +637,7 @@ private fun SettingsSection(
     ) {
         Text(
             text = title.uppercase(),
-            style = GsvTextStyle.Kicker.copy(color = GsvColor.Cyan, fontSize = 9.sp),
+            style = GsvTextStyle.Kicker.copy(color = GsvColor.Accent, fontSize = 9.sp),
         )
         Spacer(Modifier.height(12.dp))
         Box(
@@ -646,7 +646,7 @@ private fun SettingsSection(
                 .height(1.dp)
                 .background(
                     Brush.horizontalGradient(
-                        listOf(GsvColor.Cyan.copy(alpha = 0.34f), Color.Transparent),
+                        listOf(GsvColor.Accent.copy(alpha = 0.34f), Color.Transparent),
                     ),
                 ),
         )
@@ -671,9 +671,9 @@ private fun LiveBackdrop(
     Canvas(modifier) {
         drawRect(
             brush = Brush.verticalGradient(
-                0f to Color(0xFF020405),
-                0.48f to Color(0xFF041014),
-                1f to Color(0xFF010203),
+                0f to Color(0xFF050414),
+                0.48f to Color(0xFF0A0822),
+                1f to Color(0xFF050414),
             ),
         )
         val intensity = if (quiet) 0.42f else 1f
@@ -748,7 +748,7 @@ private fun ConnectionState.liveLabel(): String = when (this) {
 }
 
 private fun ConnectionState.statusColor(): Color = when (this) {
-    ConnectionState.CONNECTED -> GsvColor.Cyan
+    ConnectionState.CONNECTED -> GsvColor.Accent
     ConnectionState.CONNECTING,
     ConnectionState.RECONNECTING,
     -> GsvColor.Blue
@@ -757,7 +757,7 @@ private fun ConnectionState.statusColor(): Color = when (this) {
 }
 
 private fun Enum<*>.activityColor(): Color = when (name) {
-    "ACTIVE" -> GsvColor.Cyan
+    "ACTIVE" -> GsvColor.Accent
     "OPENING", "CLOSING" -> GsvColor.Blue
     else -> GsvColor.MutedDark
 }

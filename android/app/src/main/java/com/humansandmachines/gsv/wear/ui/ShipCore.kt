@@ -86,9 +86,9 @@ fun ShipCore(
 
     val accent by animateColorAsState(
         targetValue = when (authority) {
-            AuthorityState.ARMED -> GsvColor.Cyan
+            AuthorityState.ARMED -> GsvColor.Accent
             AuthorityState.PAUSED -> GsvColor.Amber
-            AuthorityState.DISARMED -> Color(0xFF35505A)
+            AuthorityState.DISARMED -> GsvColor.MutedDark
         },
         animationSpec = tween(520, easing = FastOutSlowInEasing),
         label = "ship-accent",
@@ -172,7 +172,7 @@ fun ShipCore(
             Text(
                 text = actionLabel,
                 style = GsvTextStyle.Button.copy(
-                    color = if (authority == AuthorityState.DISARMED) GsvColor.CyanBright else GsvColor.White,
+                    color = if (authority == AuthorityState.DISARMED) GsvColor.AccentBright else GsvColor.White,
                     fontSize = 10.sp,
                     letterSpacing = 2.5.sp,
                     textAlign = TextAlign.Center,
@@ -257,9 +257,9 @@ private fun ShipHull(
                 path = wing,
                 brush = Brush.linearGradient(
                     colors = listOf(
-                        Color(0xFF071116).copy(alpha = 0.96f),
+                        GsvColor.Deep.copy(alpha = 0.96f),
                         accent.copy(alpha = 0.08f + unfold * 0.10f),
-                        Color(0xFF020506).copy(alpha = 0.98f),
+                        GsvColor.Void.copy(alpha = 0.98f),
                     ),
                     start = Offset(center.x, center.y - hullHeight),
                     end = Offset(tipX, center.y + hullHeight),
@@ -326,7 +326,7 @@ private fun ShipHull(
                 colors = listOf(
                     GsvColor.White.copy(alpha = (0.18f + ignition * 0.62f) * unfold),
                     accent.copy(alpha = 0.42f + ignition * 0.30f),
-                    Color(0xFF061116),
+                    GsvColor.Deep,
                 ),
                 center = center,
                 radius = coreHeight * 1.3f,
