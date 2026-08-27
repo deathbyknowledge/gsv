@@ -6,10 +6,18 @@ TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
 FIXTURES="$TEST_ROOT/release"
+PINNED_FIXTURES="$TEST_ROOT/pinned-release"
 FAKE_BIN="$TEST_ROOT/bin"
 INSTALL_DIR="$TEST_ROOT/install"
+PINNED_INSTALL_DIR="$TEST_ROOT/pinned-install"
 TEST_HOME="$TEST_ROOT/home"
-mkdir -p "$FIXTURES" "$FAKE_BIN" "$INSTALL_DIR" "$TEST_HOME"
+mkdir -p \
+    "$FIXTURES" \
+    "$PINNED_FIXTURES" \
+    "$FAKE_BIN" \
+    "$INSTALL_DIR" \
+    "$PINNED_INSTALL_DIR" \
+    "$TEST_HOME"
 
 make_fixture() {
     local name="$1"
@@ -21,7 +29,7 @@ make_fixture() {
 write_checksums() {
     (
         cd "$FIXTURES"
-        sha256sum gsv-* gsvd-* > checksums.txt
+        sha256sum gsv-* gsvd-* install.sh > checksums.txt
     )
 }
 
@@ -33,6 +41,7 @@ make_fixture gsv-vision-linux-x64 vision-v1
 printf 'license-v1\n' > "$FIXTURES/gsv-transcribe-THIRD_PARTY.md"
 printf 'vision-license-v1\n' > "$FIXTURES/gsv-vision-LICENSE.apache-2.0"
 printf 'vision-provenance-v1\n' > "$FIXTURES/gsv-vision-PROVENANCE.md"
+cp "$REPOSITORY_ROOT/install.sh" "$FIXTURES/install.sh"
 write_checksums
 
 cat > "$FAKE_BIN/curl" <<'SH'
@@ -53,11 +62,46 @@ cp "$GSV_TEST_RELEASE_DIR/$asset" "$output"
 SH
 chmod 0755 "$FAKE_BIN/curl"
 
+cat > "$PINNED_FIXTURES/install.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+test "${GSV_INSTALLER_RELEASE_BOUND:-0}" = "1"
+printf '%s:%s\n' "$GSV_VERSION" "$GSV_INSTALLER_RELEASE_BOUND" \
+    > "$GSV_INSTALL_DIR/pinned-installer-ran"
+SH
+chmod 0755 "$PINNED_FIXTURES/install.sh"
+(
+    cd "$PINNED_FIXTURES"
+    sha256sum install.sh > checksums.txt
+)
+
+run_pinned_installer() {
+    env \
+        HOME="$TEST_HOME" \
+        PATH="$FAKE_BIN:$PATH" \
+        GSV_INSTALL_DIR="$PINNED_INSTALL_DIR" \
+        GSV_INSTALLER_RELEASE_BOUND=0 \
+        GSV_TEST_RELEASE_DIR="$PINNED_FIXTURES" \
+        GSV_VERSION="v-legacy" \
+        bash "$REPOSITORY_ROOT/install.sh" >/dev/null
+}
+
+run_pinned_installer
+test "$(cat "$PINNED_INSTALL_DIR/pinned-installer-ran")" = "v-legacy:1"
+rm "$PINNED_INSTALL_DIR/pinned-installer-ran"
+printf '\n# changed after checksums were written\n' >> "$PINNED_FIXTURES/install.sh"
+if run_pinned_installer 2>/dev/null; then
+    echo "installer accepted a pinned release installer that did not match checksums.txt" >&2
+    exit 1
+fi
+test ! -e "$PINNED_INSTALL_DIR/pinned-installer-ran"
+
 run_installer() {
     env \
         HOME="$TEST_HOME" \
         PATH="$FAKE_BIN:$PATH" \
         GSV_INSTALL_DIR="$INSTALL_DIR" \
+        GSV_INSTALLER_RELEASE_BOUND=0 \
         GSV_TEST_RELEASE_DIR="$FIXTURES" \
         GSV_VERSION="v-test" \
         bash "$REPOSITORY_ROOT/install.sh" >/dev/null
