@@ -153,5 +153,5 @@ Library/model/backend paths and native diagnostics are not printed.
 
 The artifact and parity contract lives in
 [`scripts/vision-native/README.md`](../../../scripts/vision-native/README.md).
-The macOS development bundle carries the model license and provenance beside
-the executable.
+The Linux/macOS host distribution and macOS development bundle carry the model
+license and provenance beside the executable.

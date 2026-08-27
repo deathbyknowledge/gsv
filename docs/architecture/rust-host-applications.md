@@ -131,13 +131,14 @@ masquerade as terminal transcription events. Its runtime is the Rust helper
 plus two checksum-pinned palm and hand-landmark TFLite models executed by tract;
 the command vocabulary is owned by Rust rather than the upstream canned gesture
 classifier. It has no Python, Java, Bazel, or native MediaPipe build/runtime
-dependency. The unsigned macOS development application includes `gsv-vision`,
-whose two checksum-verified TFLite models are embedded directly in the
-executable for offline, self-contained builds. It starts the helper in a
-disarmed state and provides visible Voice and Gestures affordances rather than
-depending on shell environment variables that Finder does not provide. Public
-distribution waits for Developer ID signing, notarization, and deliberate
-acceptance of the model redistribution policy.
+dependency. The raw Linux and macOS host distributions and the unsigned macOS
+development application include `gsv-vision`, whose two checksum-verified
+TFLite models are embedded directly in the executable for offline,
+self-contained builds. They carry the model license and exact provenance as
+verified release assets. The application starts the helper in a disarmed state
+and provides visible Voice and Gestures affordances rather than depending on
+shell environment variables that Finder does not provide. A signed macOS
+application distribution still requires Developer ID signing and notarization.
 
 The local protocol exposes `activate`, redacted `status`, `new`, `use`, and the
 narrow `microphone list/use/default` operations. Its endpoint must be accessible
@@ -223,9 +224,10 @@ binary transactionally and restart only after the replacement is complete; a
 failed health check restores the previous executable. Desktop updates do not
 silently alter a running agent Process.
 
-Published host artifacts currently cover Linux x64/ARM64 and macOS
-Intel/Apple Silicon for the existing host executables, plus Windows x64 for
-`gsv` and `gsvd`. Checksums cover every release asset. On macOS,
+Published host artifacts cover Linux x64/ARM64 and macOS Intel/Apple Silicon
+for Desktop, `gsv-transcribe`, `gsv-vision`, `gsv`, and `gsvd`, plus Windows x64
+for `gsv` and `gsvd`. Checksums cover every release asset, including the vision
+model license and provenance. On macOS,
 `host/scripts/package-macos.sh` assembles an architecture-native development
 `GSV.app` and ZIP containing Desktop, CLI, daemon, helpers, application
 metadata, and local gesture models. The result is intentionally unsigned and

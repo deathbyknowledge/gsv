@@ -137,6 +137,39 @@ verify_asset() {
     fi
 }
 
+delegate_to_pinned_installer() {
+    if [ -z "$VERSION" ] || [ "${GSV_INSTALLER_RELEASE_BOUND:-0}" = "1" ]; then
+        return
+    fi
+
+    local bootstrap_dir
+    bootstrap_dir="$(mktemp -d)"
+    local checksum_file="${bootstrap_dir}/checksums.txt"
+    local installer_file="${bootstrap_dir}/install.sh"
+    local checksum_url
+    checksum_url="$(cache_bust_url_if_mutable "$VERSION" "$(release_asset_url "$VERSION" checksums.txt)")"
+    local installer_url
+    installer_url="$(cache_bust_url_if_mutable "$VERSION" "$(release_asset_url "$VERSION" install.sh)")"
+
+    info "Downloading installer for pinned release $VERSION"
+    if ! download_file "$checksum_url" "$checksum_file" || \
+        ! download_file "$installer_url" "$installer_file"; then
+        rm -rf "$bootstrap_dir"
+        error "Could not download the installer for $VERSION"
+        exit 1
+    fi
+    if ! verify_asset install.sh "$installer_file" "$checksum_file"; then
+        rm -rf "$bootstrap_dir"
+        exit 1
+    fi
+    success "Verified installer for $VERSION"
+
+    local status=0
+    GSV_INSTALLER_RELEASE_BOUND=1 bash "$installer_file" || status=$?
+    rm -rf "$bootstrap_dir"
+    exit "$status"
+}
+
 prepare_install_dir() {
     if mkdir -p "$INSTALL_DIR" 2>/dev/null && [ -w "$INSTALL_DIR" ]; then
         USE_SUDO=0
@@ -326,6 +359,7 @@ cleanup() {
 main() {
     detect_platform
     validate_channel
+    delegate_to_pinned_installer
     local release_ref
     release_ref="$(resolve_release_ref)"
     TMP_DIR="$(mktemp -d)"
@@ -338,10 +372,22 @@ main() {
         "gsvd-${PLATFORM}"
         "gsv-desktop-${PLATFORM}"
         "gsv-transcribe-${PLATFORM}"
+        "gsv-vision-${PLATFORM}"
         "gsv-transcribe-THIRD_PARTY.md"
+        "gsv-vision-LICENSE.apache-2.0"
+        "gsv-vision-PROVENANCE.md"
     )
-    TARGETS=("gsv" "gsvd" "gsv-desktop" "gsv-transcribe" "gsv-transcribe-THIRD_PARTY.md")
-    EXECUTABLES=(1 1 1 1 0)
+    TARGETS=(
+        "gsv"
+        "gsvd"
+        "gsv-desktop"
+        "gsv-transcribe"
+        "gsv-vision"
+        "gsv-transcribe-THIRD_PARTY.md"
+        "gsv-vision-LICENSE.apache-2.0"
+        "gsv-vision-PROVENANCE.md"
+    )
+    EXECUTABLES=(1 1 1 1 1 0 0 0)
 
     echo ""
     echo -e "  ${BOLD}GSV host installer${NC} · ${PLATFORM} · ${release_ref}"
@@ -387,7 +433,7 @@ main() {
     remove_backups
     ensure_config_file
     persist_release_channel
-    success "Installed gsv, gsvd, Desktop, and local transcription to $INSTALL_DIR"
+    success "Installed gsv, gsvd, Desktop, and local helpers to $INSTALL_DIR"
     echo ""
     echo "  Next: gsv auth setup"
     echo "  Open: gsv desktop"
