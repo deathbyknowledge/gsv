@@ -37,6 +37,14 @@ private enum class AssistantLiquidTarget(
             projection = 0f,
         ),
     ),
+    SPEAKING(
+        AssistantLiquidParameters(
+            focus = 0f,
+            foldComplexity = 0.32f,
+            internalActivity = 0.82f,
+            projection = 1f,
+        ),
+    ),
 }
 
 private val AssistantLiquidVectorConverter =
@@ -60,12 +68,15 @@ private val AssistantLiquidVectorConverter =
     )
 
 internal fun VoiceTurnState.usesAssistantLiquid(): Boolean =
-    this == VoiceTurnState.LISTENING || this == VoiceTurnState.THINKING
+    this == VoiceTurnState.LISTENING ||
+        this == VoiceTurnState.THINKING ||
+        this == VoiceTurnState.SPEAKING
 
 @Composable
 internal fun rememberAssistantLiquidParameters(state: VoiceTurnState): AssistantLiquidParameters {
     val target = when (state) {
         VoiceTurnState.THINKING -> AssistantLiquidTarget.THINKING
+        VoiceTurnState.SPEAKING -> AssistantLiquidTarget.SPEAKING
         else -> AssistantLiquidTarget.LISTENING
     }
     val animated = remember {
