@@ -197,7 +197,9 @@ Runtime behavior:
 
 New commands default to a two-minute maximum runtime. Callers may set
 `timeout` explicitly; the native `gsv` default can also be changed through
-`config/shell/timeout_ms`.
+`config/shell/timeout_ms`. When `timeout` is omitted, the JavaScript SDK leaves
+the execution deadline to the handler instead of imposing the protocol default
+as a transport timeout.
 
 | Syscall | Handler | Behavior |
 |---|---|---|

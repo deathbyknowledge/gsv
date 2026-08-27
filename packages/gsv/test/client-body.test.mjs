@@ -788,7 +788,7 @@ test("cancels an outbound request before rejecting its timeout", async () => {
   client.close();
 });
 
-test("lets shell execution finish before its request transport times out", async () => {
+test("leaves omitted shell deadlines to the server and budgets explicit timeouts", async () => {
   const { client, socket } = await connectedClient();
   const originalSetTimeout = globalThis.setTimeout;
   const scheduledDelays = [];
@@ -798,23 +798,23 @@ test("lets shell execution finish before its request transport times out", async
   };
 
   try {
-    const defaultTimeout = client.request("shell.exec", { input: "sleep 1" });
-    const defaultRequest = JSON.parse(socket.sent.at(-1));
-    assert.equal(scheduledDelays.at(-1), 130_000);
+    const serverDeadline = client.request("shell.exec", { input: "sleep 1" });
+    const serverDeadlineRequest = JSON.parse(socket.sent.at(-1));
+    assert.deepEqual(scheduledDelays, []);
     socket.receive(JSON.stringify({
       type: "res",
-      id: defaultRequest.id,
+      id: serverDeadlineRequest.id,
       ok: true,
       data: { status: "completed", output: "", exitCode: 0 },
     }));
-    await defaultTimeout;
+    await serverDeadline;
 
     const explicitTimeout = client.request("shell.exec", {
       input: "sleep 1",
       timeout: 300_000,
     });
     const explicitRequest = JSON.parse(socket.sent.at(-1));
-    assert.equal(scheduledDelays.at(-1), 310_000);
+    assert.deepEqual(scheduledDelays, [310_000]);
     socket.receive(JSON.stringify({
       type: "res",
       id: explicitRequest.id,

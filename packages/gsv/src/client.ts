@@ -7,7 +7,6 @@ import type {
   ResultOf,
   SyscallName,
 } from "./protocol";
-import { DEFAULT_SHELL_EXEC_TIMEOUT_MS } from "./protocol/syscalls/shell";
 import type { JsonValue } from "./protocol/json";
 import { jsonValueSchema } from "./protocol/json";
 import {
@@ -73,7 +72,7 @@ export type GsvFrame = GsvRequestFrame | GsvResponseFrame | GsvSignalFrame;
 type PendingRequest = {
   resolve: (value: GsvResponse<JsonValue>) => void;
   reject: (error: Error) => void;
-  timeoutId: TimerHandle;
+  timeoutId: TimerHandle | null;
   call: string;
   bodyAbort?: AbortController;
   abortSignal?: AbortSignal;
@@ -973,10 +972,12 @@ export class GSVClient {
         void outgoing?.cancel(error);
         pending.reject(error);
       };
-      const timeoutId = globalThis.setTimeout(() => {
-        const error = new Error(`Request timed out after ${timeoutMs}ms: ${call}`);
-        cancelPending(error);
-      }, timeoutMs);
+      const timeoutId = timeoutMs === null
+        ? null
+        : globalThis.setTimeout(() => {
+          const error = new Error(`Request timed out after ${timeoutMs}ms: ${call}`);
+          cancelPending(error);
+        }, timeoutMs);
 
       const pending: PendingRequest = {
         resolve,
@@ -1038,17 +1039,21 @@ export class GSVClient {
 
     return new Promise<T>((resolve, reject) => {
       let settled = false;
-      const timeoutId = globalThis.setTimeout(() => {
-        cleanup();
-        reject(new Error(`Request timed out after ${timeoutMs}ms: ${call}`));
-      }, timeoutMs);
+      const timeoutId = timeoutMs === null
+        ? null
+        : globalThis.setTimeout(() => {
+          cleanup();
+          reject(new Error(`Request timed out after ${timeoutMs}ms: ${call}`));
+        }, timeoutMs);
 
       const cleanup = (): void => {
         if (settled) {
           return;
         }
         settled = true;
-        globalThis.clearTimeout(timeoutId);
+        if (timeoutId !== null) {
+          globalThis.clearTimeout(timeoutId);
+        }
         socket.removeEventListener("message", onMessage);
         socket.removeEventListener("close", onClose);
         socket.removeEventListener("error", onError);
@@ -1236,7 +1241,7 @@ export class GSVClient {
     socket.send(JSON.stringify(frame));
   }
 
-  private requestTimeoutMs(call: string, args: JsonValue): number {
+  private requestTimeoutMs(call: string, args: JsonValue): number | null {
     const configuredTimeout = this.requestTimeoutsMs[call];
     if (configuredTimeout !== undefined) {
       return configuredTimeout;
@@ -1251,10 +1256,9 @@ export class GSVClient {
         return pollingWait + SHELL_EXEC_RESPONSE_GRACE_MS;
       }
       const parsed = shellExecTimeoutArgumentsSchema.safeParse(args);
-      const executionTimeout = parsed.success
-        ? parsed.data.timeout ?? DEFAULT_SHELL_EXEC_TIMEOUT_MS
-        : DEFAULT_SHELL_EXEC_TIMEOUT_MS;
-      return executionTimeout + SHELL_EXEC_RESPONSE_GRACE_MS;
+      return parsed.success && parsed.data.timeout !== undefined
+        ? parsed.data.timeout + SHELL_EXEC_RESPONSE_GRACE_MS
+        : null;
     }
     return this.defaultRequestTimeoutMs;
   }
@@ -1265,7 +1269,9 @@ export class GSVClient {
       return null;
     }
     this.pending.delete(id);
-    globalThis.clearTimeout(pending.timeoutId);
+    if (pending.timeoutId !== null) {
+      globalThis.clearTimeout(pending.timeoutId);
+    }
     if (pending.abortSignal && pending.abortListener) {
       pending.abortSignal.removeEventListener("abort", pending.abortListener);
     }
