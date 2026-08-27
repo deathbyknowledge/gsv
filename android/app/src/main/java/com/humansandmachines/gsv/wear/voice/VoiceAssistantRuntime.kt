@@ -10,7 +10,6 @@ enum class VoiceTurnState {
     IDLE,
     PREPARING,
     LISTENING,
-    TRANSCRIBING,
     THINKING,
     SPEAKING,
     ERROR,

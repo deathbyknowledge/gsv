@@ -110,7 +110,6 @@ fun AssistantCore(
             focusedEnergy +
                 (speakingEnergy - focusedEnergy) * liquidParameters.projection.coerceIn(0f, 1f)
         }
-        state == VoiceTurnState.TRANSCRIBING -> 0.31f
         state == VoiceTurnState.PREPARING -> 0.22f
         state == VoiceTurnState.ERROR -> 0.16f
         else -> 0.06f
@@ -389,7 +388,6 @@ fun VoiceTurnState.stateLabel(): String = when (this) {
     VoiceTurnState.IDLE -> "Assistant ready"
     VoiceTurnState.PREPARING -> "Establishing neural link"
     VoiceTurnState.LISTENING -> "Listening"
-    VoiceTurnState.TRANSCRIBING -> "Resolving voiceprint"
     VoiceTurnState.THINKING -> "Agent is thinking"
     VoiceTurnState.SPEAKING -> "Responding"
     VoiceTurnState.ERROR -> "Link interrupted"
@@ -399,7 +397,6 @@ fun VoiceTurnState.detailText(context: Context): String = when (this) {
     VoiceTurnState.IDLE -> "Ready for your next command."
     VoiceTurnState.PREPARING -> "Securing a private voice channel…"
     VoiceTurnState.LISTENING -> "Speak naturally. Tap the core to stop."
-    VoiceTurnState.TRANSCRIBING -> "Turning speech into an agent command…"
     VoiceTurnState.THINKING -> "Your personal agent has the floor."
     VoiceTurnState.SPEAKING -> "Response routed to the active audio device."
     VoiceTurnState.ERROR -> context.getString(R.string.voice_error)
@@ -409,7 +406,6 @@ private fun VoiceTurnState.shortLabel(): String = when (this) {
     VoiceTurnState.IDLE -> "READY"
     VoiceTurnState.PREPARING -> "LINK"
     VoiceTurnState.LISTENING -> "VOICE"
-    VoiceTurnState.TRANSCRIBING -> "SYNC"
     VoiceTurnState.THINKING -> "COGNITION"
     VoiceTurnState.SPEAKING -> "TRANSMIT"
     VoiceTurnState.ERROR -> "FAULT"
@@ -419,7 +415,6 @@ fun VoiceTurnState.accentColor(): Color = when (this) {
     VoiceTurnState.ERROR -> GsvColor.Red
     VoiceTurnState.THINKING -> GsvColor.Violet
     VoiceTurnState.SPEAKING -> GsvColor.Blue
-    VoiceTurnState.TRANSCRIBING -> GsvColor.Blue
     VoiceTurnState.IDLE -> GsvColor.Muted
     VoiceTurnState.PREPARING,
     VoiceTurnState.LISTENING,

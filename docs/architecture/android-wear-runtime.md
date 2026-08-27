@@ -27,7 +27,7 @@ Authority   DISARMED | ARMED | PAUSED
 Camera      CLOSED | OPENING | ACTIVE | CLOSING
 Microphone  CLOSED | OPENING | ACTIVE | CLOSING
 Voice       DISCONNECTED | OFFLINE | CONNECTING | CONNECTED | RECONNECTING
-Voice turn  IDLE | PREPARING | LISTENING | TRANSCRIBING | THINKING | SPEAKING | ERROR
+Voice turn  IDLE | PREPARING | LISTENING | THINKING | SPEAKING | ERROR
 ```
 
 `Arm Wear Mode` is accepted only from the visible activity after camera,
