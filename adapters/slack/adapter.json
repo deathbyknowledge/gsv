@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "id": "slack",
+  "displayName": "Slack",
+  "description": "Slack adapter worker",
+  "deployOrder": 4,
+  "wranglerConfig": "wrangler.jsonc",
+  "devStateDirectories": ["gsv-channel-slack-SlackAccount"],
+  "standalone": {
+    "main": "dist/cloudflare/channel-slack/worker/index.js",
+    "bundle": false,
+    "gatewayEntrypoint": "SlackChannel",
+    "adapterEntrypoint": "SlackChannel",
+    "durableObjects": [
+      {
+        "binding": "SLACK_ACCOUNT",
+        "className": "SlackAccount"
+      }
+    ],
+    "requiredSecrets": []
+  },
+  "managed": {
+    "main": "adapters/slack/src/managed.ts",
+    "bundle": true,
+    "gatewayEntrypoint": "ManagedSlackChannel",
+    "adapterEntrypoint": "ManagedSlackChannel",
+    "durableObjects": [
+      {
+        "binding": "MANAGED_SLACK_WORKSPACE",
+        "className": "ManagedSlackWorkspace"
+      },
+      {
+        "binding": "MANAGED_SLACK_PEER",
+        "className": "ManagedSlackPeer"
+      },
+      {
+        "binding": "MANAGED_SLACK_PAIRING",
+        "className": "ManagedSlackPairing"
+      }
+    ],
+    "requiredSecrets": [
+      "SLACK_CLIENT_ID",
+      "SLACK_CLIENT_SECRET",
+      "SLACK_SIGNING_SECRET",
+      "SLACK_OAUTH_STATE_SECRET"
+    ],
+    "selfUrlBinding": "SLACK_PUBLIC_BASE_URL"
+  }
+}

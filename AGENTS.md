@@ -203,7 +203,7 @@ Validate only the surfaces affected by the change:
 - ripgit: `cd ripgit && npm test`
 - Browser extension: `cd extension && npm run check && npm run test:run && npm run build`
 - WhatsApp: `cd adapters/whatsapp && npx tsc --noEmit`
-- Discord, Telegram, or test adapter: `cd adapters/<name> && npm run typecheck`
+- Discord, Telegram, Slack, or test adapter: `cd adapters/<name> && npm run typecheck`
 
 Protocol or client changes may affect gateway, web, CLI, devices, and adapters even when only one type definition changed. Validate each actual consumer.
 

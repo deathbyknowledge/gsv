@@ -101,6 +101,11 @@
       "binding": "CHANNEL_TELEGRAM",
       "service": "gsv-managed-telegram",
       "entrypoint": "ManagedTelegramChannel"
+    },
+    {
+      "binding": "CHANNEL_SLACK",
+      "service": "gsv-managed-slack",
+      "entrypoint": "ManagedSlackChannel"
     }
   ],
   "worker_loaders": [
