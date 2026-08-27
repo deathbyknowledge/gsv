@@ -83,10 +83,14 @@ fun AssistantCore(
     val thinkingEnergy = 0.25f +
         0.11f * abs(sin(loopPhase * 2f)) +
         0.05f * abs(sin(loopPhase * 3f + 0.9f))
+    val speakingEnergy = smoothedSignal
     val energy = when {
-        state.usesAssistantLiquid() -> smoothedSignal +
-            (thinkingEnergy - smoothedSignal) * liquidParameters.focus.coerceIn(0f, 1f)
-        state == VoiceTurnState.SPEAKING -> 0.40f + 0.24f * abs(sin(phase * 4.2f))
+        state.usesAssistantLiquid() -> {
+            val focusedEnergy = smoothedSignal +
+                (thinkingEnergy - smoothedSignal) * liquidParameters.focus.coerceIn(0f, 1f)
+            focusedEnergy +
+                (speakingEnergy - focusedEnergy) * liquidParameters.projection.coerceIn(0f, 1f)
+        }
         state == VoiceTurnState.TRANSCRIBING -> 0.31f
         state == VoiceTurnState.PREPARING -> 0.22f
         state == VoiceTurnState.ERROR -> 0.16f
