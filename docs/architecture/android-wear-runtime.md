@@ -30,6 +30,16 @@ Voice       DISCONNECTED | OFFLINE | CONNECTING | CONNECTED | RECONNECTING
 Voice turn  IDLE | PREPARING | LISTENING | THINKING | SPEAKING | ERROR
 ```
 
+The visible post-onboarding surface projects these axes into one live liquid
+client. The liquid is both the Wear authority control and the assistant-state
+surface: it arms or disarms Wear Mode when tapped, then renders voice-turn
+state and signal without introducing a second assistant panel. Gateway
+reachability remains visible in the header. Pause, disconnect, assistant-role,
+permission, and diagnostic actions remain available behind the system portal;
+they are recovery and setup controls rather than the primary interaction.
+This presentation does not broaden UI authority: the visible activity still
+owns arming, and the runtime service still owns every authority transition.
+
 `Arm Wear Mode` is accepted only from the visible activity after camera,
 microphone, nearby-device, notification, and at least approximate-location
 permissions have been granted. It starts a camera, microphone, and location foreground service

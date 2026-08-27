@@ -27,6 +27,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.humansandmachines.gsv.wear.authority.AuthorityState
+import com.humansandmachines.gsv.wear.connection.ConnectionState
+import com.humansandmachines.gsv.wear.runtime.RuntimeSnapshot
 import com.humansandmachines.gsv.wear.voice.VoiceTurnState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -37,6 +40,8 @@ class AssistantShowcaseActivity : ComponentActivity() {
     private var showOverlay by mutableStateOf(false)
     private var morphReview by mutableStateOf(false)
     private var stateReview by mutableStateOf(false)
+    private var controlReview by mutableStateOf(false)
+    private var controlAuthority by mutableStateOf(AuthorityState.DISARMED)
     private var shapeTarget by mutableStateOf(OrbShapeTarget.LISTENING)
     private var microphoneLevel by mutableStateOf(0f)
     private var playbackLevel by mutableStateOf(0f)
@@ -62,7 +67,34 @@ class AssistantShowcaseActivity : ComponentActivity() {
         enableEdgeToEdge()
         updateShowcase(intent)
         setContent {
-            if (showOverlay) {
+            if (controlReview) {
+                GsvControlScreen(
+                    snapshot = RuntimeSnapshot(
+                        connection = ConnectionState.CONNECTED,
+                        authority = controlAuthority,
+                        voiceConnection = ConnectionState.CONNECTED,
+                    ),
+                    uiState = ControlUiState(
+                        notificationStatus = "Ready",
+                        assistantSelected = true,
+                    ),
+                    onArm = { controlAuthority = AuthorityState.ARMED },
+                    onPauseOrResume = {
+                        controlAuthority = if (controlAuthority == AuthorityState.PAUSED) {
+                            AuthorityState.ARMED
+                        } else {
+                            AuthorityState.PAUSED
+                        }
+                    },
+                    onDisarm = { controlAuthority = AuthorityState.DISARMED },
+                    onDisconnect = {},
+                    onActivationStarted = {},
+                    onChooseAssistant = {},
+                    onTestVoice = {},
+                    onOpenBatterySettings = {},
+                    onOpenNotificationSettings = {},
+                )
+            } else if (showOverlay) {
                 val reviewStates = stateReview
                 val reviewMorph = !reviewStates &&
                     morphReview && showcaseState == VoiceTurnState.LISTENING
@@ -145,6 +177,7 @@ class AssistantShowcaseActivity : ComponentActivity() {
         showOverlay = intent.getBooleanExtra(EXTRA_OVERLAY, false)
         morphReview = intent.getBooleanExtra(EXTRA_MORPH, false)
         stateReview = intent.getBooleanExtra(EXTRA_STATES, false)
+        controlReview = intent.getBooleanExtra(EXTRA_CONTROL, false)
         signalOverride = if (intent.hasExtra(EXTRA_SIGNAL)) {
             intent.getFloatExtra(EXTRA_SIGNAL, 0f).coerceIn(0f, 1f)
         } else {
@@ -176,7 +209,7 @@ class AssistantShowcaseActivity : ComponentActivity() {
 
     private fun syncMicrophone() {
         val shouldSample = showcaseState == VoiceTurnState.LISTENING &&
-            signalOverride == null && activityResumed
+            signalOverride == null && activityResumed && !controlReview
         if (!shouldSample) {
             stopMicrophone()
             return
@@ -231,7 +264,7 @@ class AssistantShowcaseActivity : ComponentActivity() {
 
     private fun syncSpeechSample() {
         val shouldPlay = showcaseState == VoiceTurnState.SPEAKING &&
-            signalOverride == null && activityResumed
+            signalOverride == null && activityResumed && !controlReview
         if (!shouldPlay) {
             stopSpeechSample()
             return
@@ -291,6 +324,7 @@ class AssistantShowcaseActivity : ComponentActivity() {
         private const val EXTRA_OVERLAY = "overlay"
         private const val EXTRA_MORPH = "morph"
         private const val EXTRA_STATES = "states"
+        private const val EXTRA_CONTROL = "control"
         private const val EXTRA_SIGNAL = "signal"
         private const val SPEECH_REVIEW_LOG_TAG = "GsvSpeechReview"
     }

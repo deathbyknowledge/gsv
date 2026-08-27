@@ -8,6 +8,8 @@
         <activity
             android:name=".ui.AssistantShowcaseActivity"
             android:exported="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
             android:theme="@style/Theme.GsvWear.Voice" />
     </application>
 

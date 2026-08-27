@@ -61,6 +61,11 @@ adb shell am start -n \
   --es state THINKING
 ```
 
+Pass `--ez control true` instead to review the production Wear control surface
+with a connected mock runtime; tapping the liquid toggles Arm and Disarm. The
+debug showcase may render over the lock screen so remote visual review does not
+weaken or alter the production activity's keyguard behavior.
+
 Use `IDLE`, `PREPARING`, `LISTENING`, `THINKING`, `SPEAKING`,
 or `ERROR`; add `--ez overlay true` to review the compact invocation surface.
 For the debug-only interruptible shape proof, launch `LISTENING` with both
@@ -79,21 +84,21 @@ for that launch.
 Open GSV Wear. On a fresh install it walks through GSV address, username, and
 password; known URL and username values are skipped. The password is used only
 for the authenticated enrollment exchange and is never persisted. When the
-Wear control appears, press **Arm Wear Mode**. Grant camera, microphone,
-notification, and nearby-device permissions and at least approximate location.
-Precise location is optional.
-For dependable screen-off reconnect behavior, use the app's Battery settings
-button and set GSV Wear to unrestricted battery use.
+live control surface appears, tap **Arm** beneath the liquid assistant. Grant
+camera, microphone, notification, and nearby-device permissions and at least
+approximate location. Precise location is optional.
+For dependable screen-off reconnect behavior, open the upper-right system
+portal, use **Battery settings**, and set GSV Wear to unrestricted battery use.
 
 Android notification-listener access is a separate, optional one-time Settings
-grant. Use the app's **Notification access** button only if agents should be
-able to list, reply to, invoke, or dismiss other apps' notifications.
+grant. Use **Notification access** in the system portal only if agents should
+be able to list, reply to, invoke, or dismiss other apps' notifications.
 
 The enrolled credentials are encrypted with Android Keystore and are never
-rendered in the app. To enable OS gestures, expand **Assistant** and press
+rendered in the app. To enable OS gestures, open the system portal and press
 **Make GSV default assistant**. Android presents its assistant-role consent
 prompt for this app directly. Arm Wear Mode before invoking it. Use **Test
-assistant** for the first end-to-end check; afterward the device's normal
+assistant** there for the first end-to-end check; afterward the device's normal
 assistant gesture, including a headset assistant gesture when the headset
 exposes one, starts the same turn.
 

@@ -1,47 +1,64 @@
 package com.humansandmachines.gsv.wear.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicText as Text
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.humansandmachines.gsv.wear.authority.AuthorityState
 import com.humansandmachines.gsv.wear.connection.ConnectionState
 import com.humansandmachines.gsv.wear.runtime.RuntimeSnapshot
+import com.humansandmachines.gsv.wear.voice.VoiceTurnState
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 
 data class ControlUiState(
     val runtimeNotice: String = "",
@@ -66,127 +83,277 @@ fun GsvControlScreen(
     onOpenNotificationSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var assistantExpanded by rememberSaveable { mutableStateOf(false) }
-    var systemExpanded by rememberSaveable { mutableStateOf(false) }
+    var settingsVisible by rememberSaveable { mutableStateOf(false) }
+    BackHandler(enabled = settingsVisible) { settingsVisible = false }
 
+    val connectionColor = snapshot.connection.statusColor()
+    val liveAccent = when {
+        snapshot.authority == AuthorityState.DISARMED -> Color(0xFF34515A)
+        snapshot.authority == AuthorityState.PAUSED -> GsvColor.Amber
+        snapshot.voiceTurn == VoiceTurnState.IDLE -> GsvColor.Cyan
+        else -> snapshot.voiceTurn.accentColor()
+    }
+
+    Box(modifier.fillMaxSize().background(GsvColor.Void)) {
+        LiveBackdrop(accent = liveAccent, modifier = Modifier.fillMaxSize())
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            LiveHeader(
+                connection = snapshot.connection,
+                connectionColor = connectionColor,
+                onOpenSettings = { settingsVisible = true },
+            )
+            Spacer(Modifier.weight(1f))
+            WearCore(
+                authority = snapshot.authority,
+                voiceState = snapshot.voiceTurn,
+                signal = snapshot.voiceLevel,
+                onToggleRequested = {
+                    if (snapshot.authority == AuthorityState.DISARMED) onArm() else onDisarm()
+                },
+                onActivationStarted = onActivationStarted,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            LiveNotice(
+                text = uiState.runtimeNotice,
+                error = uiState.runtimeError,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+            Spacer(Modifier.weight(1f))
+        }
+
+        AnimatedVisibility(
+            visible = settingsVisible,
+            enter = fadeIn(tween(180)),
+            exit = fadeOut(tween(150)),
+        ) {
+            SettingsSurface(
+                snapshot = snapshot,
+                uiState = uiState,
+                onClose = { settingsVisible = false },
+                onPauseOrResume = onPauseOrResume,
+                onDisconnect = onDisconnect,
+                onChooseAssistant = onChooseAssistant,
+                onTestVoice = onTestVoice,
+                onOpenBatterySettings = onOpenBatterySettings,
+                onOpenNotificationSettings = onOpenNotificationSettings,
+            )
+        }
+    }
+}
+
+@Composable
+private fun LiveHeader(
+    connection: ConnectionState,
+    connectionColor: Color,
+    onOpenSettings: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().height(48.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "GSV",
+            style = GsvTextStyle.Kicker.copy(
+                color = GsvColor.White,
+                fontSize = 12.sp,
+                letterSpacing = 3.8.sp,
+            ),
+        )
+        Spacer(Modifier.weight(1f))
+        Canvas(Modifier.size(7.dp)) {
+            drawCircle(connectionColor.copy(alpha = 0.22f), radius = size.minDimension)
+            drawCircle(connectionColor, radius = size.minDimension * 0.42f)
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = connection.liveLabel(),
+            style = GsvTextStyle.Kicker.copy(
+                color = connectionColor,
+                fontSize = 8.sp,
+                letterSpacing = 1.7.sp,
+            ),
+        )
+        Spacer(Modifier.width(11.dp))
+        SettingsPortal(onClick = onOpenSettings)
+    }
+}
+
+@Composable
+private fun SettingsPortal(
+    onClick: () -> Unit,
+    close: Boolean = false,
+) {
+    Box(
+        modifier = Modifier
+            .size(42.dp)
+            .semantics {
+                contentDescription = if (close) "Close settings" else "Open settings"
+            }
+            .clickable(
+                role = Role.Button,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.size(25.dp)) {
+            if (close) {
+                val inset = 6.dp.toPx()
+                drawLine(
+                    color = GsvColor.Muted,
+                    start = Offset(inset, inset),
+                    end = Offset(size.width - inset, size.height - inset),
+                    strokeWidth = 1.dp.toPx(),
+                    cap = StrokeCap.Round,
+                )
+                drawLine(
+                    color = GsvColor.Muted,
+                    start = Offset(size.width - inset, inset),
+                    end = Offset(inset, size.height - inset),
+                    strokeWidth = 1.dp.toPx(),
+                    cap = StrokeCap.Round,
+                )
+            } else {
+                drawArc(
+                    color = GsvColor.Muted.copy(alpha = 0.72f),
+                    startAngle = 202f,
+                    sweepAngle = 246f,
+                    useCenter = false,
+                    topLeft = Offset(3.dp.toPx(), 3.dp.toPx()),
+                    size = Size(19.dp.toPx(), 19.dp.toPx()),
+                    style = Stroke(0.8.dp.toPx(), cap = StrokeCap.Round),
+                )
+                repeat(3) { index ->
+                    val angle = index / 3f * PI.toFloat() * 2f - PI.toFloat() / 2f
+                    drawCircle(
+                        color = if (index == 0) GsvColor.Cyan else GsvColor.Muted,
+                        radius = 1.6.dp.toPx(),
+                        center = Offset(
+                            center.x + cos(angle) * 7.dp.toPx(),
+                            center.y + sin(angle) * 7.dp.toPx(),
+                        ),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LiveNotice(text: String, error: Boolean, modifier: Modifier = Modifier) {
+    AnimatedVisibility(visible = text.isNotBlank(), modifier = modifier) {
+        Text(
+            text = text,
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { liveRegion = LiveRegionMode.Polite }
+                .padding(horizontal = 18.dp, vertical = 8.dp),
+            style = GsvTextStyle.Body.copy(
+                color = if (error) GsvColor.Red else GsvColor.Cyan,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+                textAlign = TextAlign.Center,
+            ),
+        )
+    }
+}
+
+@Composable
+private fun SettingsSurface(
+    snapshot: RuntimeSnapshot,
+    uiState: ControlUiState,
+    onClose: () -> Unit,
+    onPauseOrResume: () -> Unit,
+    onDisconnect: () -> Unit,
+    onChooseAssistant: () -> Unit,
+    onTestVoice: () -> Unit,
+    onOpenBatterySettings: () -> Unit,
+    onOpenNotificationSettings: () -> Unit,
+) {
     val connectionDetail = buildString {
         append(snapshot.connection.displayName())
         snapshot.connectionFailure?.let { append(" // ${it.displayName()}") }
     }
-    val connectionColor = snapshot.connection.statusColor()
-    val statusScrimHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 10.dp
-    val navigationScrimHeight = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 6.dp
-
-    Box(modifier.fillMaxSize().background(GsvColor.Void)) {
-        SignalBackdrop()
+    Box(Modifier.fillMaxSize().background(GsvColor.Void)) {
+        LiveBackdrop(accent = GsvColor.Cyan, modifier = Modifier.fillMaxSize(), quiet = true)
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
                 .statusBarsPadding()
                 .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 22.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Spacer(Modifier.height(24.dp))
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().height(66.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text("GSV // MOBILE NODE", style = GsvTextStyle.Kicker)
-                    Spacer(Modifier.height(6.dp))
-                    Text("Wear", style = GsvTextStyle.Hero)
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text("LINK", style = GsvTextStyle.Kicker.copy(color = GsvColor.MutedDark))
-                    Text(snapshot.connection.displayName().uppercase(), style = GsvTextStyle.Data.copy(color = connectionColor))
-                }
-            }
-
-            Spacer(Modifier.height(22.dp))
-            WearCore(
-                authority = snapshot.authority,
-                onArmRequested = onArm,
-                onActivationStarted = onActivationStarted,
-            )
-            Spacer(Modifier.height(18.dp))
-
-            when (snapshot.authority) {
-                AuthorityState.DISARMED -> GsvButton(
-                    label = "Arm Wear Mode",
-                    onClick = onArm,
-                    modifier = Modifier.fillMaxWidth(),
-                    tone = GsvButtonTone.PRIMARY,
+                Text(
+                    text = "SYSTEM",
+                    style = GsvTextStyle.Kicker.copy(
+                        color = GsvColor.White,
+                        fontSize = 12.sp,
+                        letterSpacing = 3.2.sp,
+                    ),
                 )
-                AuthorityState.ARMED,
-                AuthorityState.PAUSED,
-                -> Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    GsvButton(
-                        label = if (snapshot.authority == AuthorityState.PAUSED) "Resume" else "Pause",
-                        onClick = onPauseOrResume,
-                        modifier = Modifier.weight(1f),
-                        tone = GsvButtonTone.SECONDARY,
-                    )
-                    GsvButton(
-                        label = "Disarm",
-                        onClick = onDisarm,
-                        modifier = Modifier.weight(1f),
-                        tone = GsvButtonTone.DANGER,
-                    )
-                }
+                Spacer(Modifier.weight(1f))
+                SettingsPortal(onClick = onClose, close = true)
             }
 
-            Spacer(Modifier.height(17.dp))
-            Text(
-                text = "Arm it, put the phone away, and let GSV become a private sensor and action surface.",
-                style = GsvTextStyle.Body.copy(textAlign = TextAlign.Center),
-            )
-            InlineNotice(
-                text = uiState.runtimeNotice,
-                modifier = Modifier.padding(top = 16.dp).semantics { liveRegion = LiveRegionMode.Polite },
-                color = if (uiState.runtimeError) GsvColor.Red else GsvColor.Cyan,
-            )
-
-            Spacer(Modifier.height(30.dp))
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(GsvColor.Panel.copy(alpha = 0.58f))
-                    .padding(horizontal = 17.dp, vertical = 16.dp),
-            ) {
-                StatusReadout("Gateway", connectionDetail, color = connectionColor)
+            SettingsSection("Wear") {
+                StatusReadout("Gateway", connectionDetail, color = snapshot.connection.statusColor())
+                Spacer(Modifier.height(12.dp))
+                StatusReadout(
+                    "Authority",
+                    snapshot.authority.displayName(),
+                    color = when (snapshot.authority) {
+                        AuthorityState.ARMED -> GsvColor.Cyan
+                        AuthorityState.PAUSED -> GsvColor.Amber
+                        AuthorityState.DISARMED -> GsvColor.MutedDark
+                    },
+                )
                 Spacer(Modifier.height(12.dp))
                 StatusReadout("Camera", snapshot.camera.displayName(), color = snapshot.camera.activityColor())
                 Spacer(Modifier.height(12.dp))
                 StatusReadout("Microphone", snapshot.microphone.displayName(), color = snapshot.microphone.activityColor())
+                if (snapshot.authority != AuthorityState.DISARMED) {
+                    Spacer(Modifier.height(18.dp))
+                    GsvButton(
+                        label = if (snapshot.authority == AuthorityState.PAUSED) "Resume Wear" else "Pause Wear",
+                        onClick = onPauseOrResume,
+                        modifier = Modifier.fillMaxWidth(),
+                        tone = GsvButtonTone.SECONDARY,
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                GsvButton(
+                    label = "Disconnect Runtime",
+                    onClick = onDisconnect,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = snapshot.connection != ConnectionState.DISCONNECTED,
+                    tone = GsvButtonTone.DANGER,
+                )
             }
 
-            Spacer(Modifier.height(20.dp))
-            GsvSectionHeader("01", "Assistant", assistantExpanded, { assistantExpanded = !assistantExpanded })
-            ExpandableSection(assistantExpanded) {
-                AssistantCore(
-                    state = snapshot.voiceTurn,
-                    modifier = Modifier.align(Alignment.CenterHorizontally).size(190.dp),
-                )
+            SettingsSection("Assistant") {
                 StatusReadout(
-                    label = "Voice link",
-                    value = snapshot.voiceConnection.displayName(),
+                    "Voice link",
+                    snapshot.voiceConnection.displayName(),
                     color = snapshot.voiceConnection.statusColor(),
                 )
                 Spacer(Modifier.height(12.dp))
                 StatusReadout(
-                    label = "OS assistant",
-                    value = if (uiState.assistantSelected) "Selected" else "Not selected",
+                    "OS role",
+                    if (uiState.assistantSelected) "Selected" else "Not selected",
                     color = if (uiState.assistantSelected) GsvColor.Cyan else GsvColor.Amber,
-                )
-                Spacer(Modifier.height(18.dp))
-                Text(
-                    "The assistant can be invoked by Android's assistant gesture or a compatible headset voice command.",
-                    style = GsvTextStyle.Body,
                 )
                 Spacer(Modifier.height(18.dp))
                 GsvButton(
@@ -204,20 +371,13 @@ fun GsvControlScreen(
                     enabled = !uiState.voiceTestRunning,
                     tone = GsvButtonTone.QUIET,
                 )
-                Spacer(Modifier.height(22.dp))
             }
 
-            GsvSectionHeader("02", "System access", systemExpanded, { systemExpanded = !systemExpanded })
-            ExpandableSection(systemExpanded) {
+            SettingsSection("Access") {
                 StatusReadout(
-                    label = "Notifications",
-                    value = uiState.notificationStatus,
+                    "Notifications",
+                    uiState.notificationStatus,
                     color = if (uiState.notificationStatus == "Ready") GsvColor.Cyan else GsvColor.Amber,
-                )
-                Spacer(Modifier.height(18.dp))
-                Text(
-                    "Allow notification access for agent actions, and unrestricted battery use for dependable screen-off reachability.",
-                    style = GsvTextStyle.Body,
                 )
                 Spacer(Modifier.height(18.dp))
                 GsvButton(
@@ -233,64 +393,133 @@ fun GsvControlScreen(
                     modifier = Modifier.fillMaxWidth(),
                     tone = GsvButtonTone.QUIET,
                 )
-                Spacer(Modifier.height(10.dp))
-                GsvButton(
-                    label = "Disconnect Runtime",
-                    onClick = onDisconnect,
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = snapshot.connection != ConnectionState.DISCONNECTED,
-                    tone = GsvButtonTone.DANGER,
-                )
-                Spacer(Modifier.height(24.dp))
             }
-
             Spacer(Modifier.height(34.dp))
-            Text("USER-OWNED // CAPABILITY-GATED // ALWAYS VISIBLE", style = GsvTextStyle.Kicker.copy(color = GsvColor.MutedDark))
-            Spacer(Modifier.height(30.dp))
         }
-        Box(
-            Modifier
-                .align(Alignment.TopCenter)
-                .fillMaxWidth()
-                .height(statusScrimHeight)
-                .background(
-                    Brush.verticalGradient(
-                        listOf(GsvColor.Void, GsvColor.Void.copy(alpha = 0.92f), Color.Transparent),
-                    ),
-                ),
-        )
-        Box(
-            Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .height(navigationScrimHeight)
-                .background(
-                    Brush.verticalGradient(
-                        listOf(Color.Transparent, GsvColor.Void.copy(alpha = 0.92f), GsvColor.Void),
-                    ),
-                ),
-        )
     }
 }
 
 @Composable
-private fun ExpandableSection(
-    expanded: Boolean,
-    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+private fun SettingsSection(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit,
 ) {
-    AnimatedVisibility(
-        visible = expanded,
-        enter = fadeIn() + expandVertically(),
-        exit = fadeOut() + shrinkVertically(),
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 22.dp, bottom = 12.dp),
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(top = 20.dp),
-            content = content,
+        Text(
+            text = title.uppercase(),
+            style = GsvTextStyle.Kicker.copy(color = GsvColor.Cyan, fontSize = 9.sp),
+        )
+        Spacer(Modifier.height(12.dp))
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(GsvColor.Cyan.copy(alpha = 0.34f), Color.Transparent),
+                    ),
+                ),
+        )
+        Spacer(Modifier.height(18.dp))
+        content()
+    }
+}
+
+@Composable
+private fun LiveBackdrop(
+    accent: Color,
+    modifier: Modifier = Modifier,
+    quiet: Boolean = false,
+) {
+    val transition = rememberInfiniteTransition(label = "living-surface")
+    val phase by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = PI.toFloat() * 2f,
+        animationSpec = infiniteRepeatable(tween(24_000, easing = LinearEasing)),
+        label = "living-surface-phase",
+    )
+    Canvas(modifier) {
+        drawRect(
+            brush = Brush.verticalGradient(
+                0f to Color(0xFF020405),
+                0.48f to Color(0xFF041014),
+                1f to Color(0xFF010203),
+            ),
+        )
+        val intensity = if (quiet) 0.42f else 1f
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    accent.copy(alpha = 0.105f * intensity),
+                    accent.copy(alpha = 0.018f * intensity),
+                    Color.Transparent,
+                ),
+                center = Offset(size.width * 0.56f, size.height * 0.43f),
+                radius = size.minDimension * 0.78f,
+            ),
+            center = Offset(size.width * 0.56f, size.height * 0.43f),
+            radius = size.minDimension * 0.78f,
+        )
+        repeat(4) { index ->
+            val baseY = size.height * (0.21f + index * 0.17f)
+            val motion = sin(phase + index * 1.41f) * size.height * 0.018f
+            val path = Path().apply {
+                moveTo(-size.width * 0.08f, baseY + motion)
+                cubicTo(
+                    size.width * 0.23f,
+                    baseY - size.height * 0.075f + motion,
+                    size.width * 0.64f,
+                    baseY + size.height * 0.082f - motion,
+                    size.width * 1.08f,
+                    baseY - motion,
+                )
+            }
+            drawPath(
+                path = path,
+                color = accent.copy(alpha = (0.025f - index * 0.003f) * intensity),
+                style = Stroke((0.65f + index * 0.1f).dp.toPx(), cap = StrokeCap.Round),
+            )
+        }
+        repeat(22) { index ->
+            val x = ((index * 67 + 11) % 101) / 101f * size.width
+            val baseY = ((index * 43 + 17) % 97) / 97f * size.height
+            val y = baseY + sin(phase * (1f + index % 3) + index) * 5.dp.toPx()
+            val pulse = 0.45f + 0.55f * sin(phase * 1.3f + index * 1.77f).coerceAtLeast(0f)
+            drawCircle(
+                color = if (index % 6 == 0) {
+                    accent.copy(alpha = 0.12f * pulse * intensity)
+                } else {
+                    GsvColor.White.copy(alpha = 0.04f * pulse * intensity)
+                },
+                center = Offset(x, y),
+                radius = if (index % 7 == 0) 0.9.dp.toPx() else 0.45.dp.toPx(),
+            )
+        }
+        drawRect(
+            brush = Brush.radialGradient(
+                colors = listOf(Color.Transparent, GsvColor.Void.copy(alpha = 0.92f)),
+                center = center,
+                radius = size.maxDimension * 0.68f,
+            ),
         )
     }
 }
 
-private fun Enum<*>.displayName(): String = name.lowercase().replace('_', ' ').replaceFirstChar(Char::uppercase)
+private fun Enum<*>.displayName(): String =
+    name.lowercase().replace('_', ' ').replaceFirstChar(Char::uppercase)
+
+private fun ConnectionState.liveLabel(): String = when (this) {
+    ConnectionState.CONNECTED -> "LIVE"
+    ConnectionState.CONNECTING,
+    ConnectionState.RECONNECTING,
+    -> "LINKING"
+    ConnectionState.OFFLINE -> "OFFLINE"
+    ConnectionState.DISCONNECTED -> "NO LINK"
+}
 
 private fun ConnectionState.statusColor(): Color = when (this) {
     ConnectionState.CONNECTED -> GsvColor.Cyan
