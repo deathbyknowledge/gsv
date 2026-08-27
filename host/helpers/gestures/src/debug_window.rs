@@ -6,8 +6,8 @@ use gesture_protocol::{ControlStatus, ScrollState};
 use minifb::{Key, ScaleMode, Window, WindowOptions};
 
 use crate::camera::CameraStats;
-use crate::observation::{FrameView, Observation};
 use crate::overlay::{draw_overlay, ControlOverlay, ControlPresentationDiagnostic, PerfText};
+use gesture_engine::observation::{FrameView, Observation};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DebugWindowConfig {

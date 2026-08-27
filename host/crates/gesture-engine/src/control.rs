@@ -10,12 +10,64 @@
 
 use std::time::{Duration, Instant};
 
-pub use gesture_protocol::{
-    GestureContext as ControlState, GestureIntent as ControlIntent, ScrollState,
-};
-use gesture_protocol::{VoiceRequestGestureIntent, MAX_SCROLL_VELOCITY_MILLIUNITS};
+use crate::observation::{FrameView, HandObservation, HandPose, Handedness, Observation};
+use crate::pipeline::GesturePolicy;
 
-use crate::observation::{HandObservation, HandPose, Handedness};
+/// Application-owned authority for the included voice-control vocabulary.
+///
+/// Request identity is generic so callers can use an integer, UUID, opaque
+/// handle, or any other cheap copied identity without leaking a transport
+/// representation into the policy.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ControlState<RequestId = u64> {
+    Disarmed,
+    Disabled,
+    Standby,
+    Active {
+        voice_request_id: RequestId,
+        muted: bool,
+    },
+}
+
+/// Action scoped to an already-active voice request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VoiceAction {
+    StopTranscription,
+    Send,
+    DeleteBackward,
+    ClearDictation,
+    Mute,
+    Unmute,
+}
+
+/// Semantic proposal emitted by the included voice-control policy.
+///
+/// Emission never grants authority or performs the action. The application
+/// accepts or rejects the proposal and synchronizes its resulting absolute
+/// [`ControlState`] back into the controller.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ControlIntent<RequestId = u64> {
+    SetArmed {
+        armed: bool,
+    },
+    StartTranscription,
+    VoiceRequest {
+        voice_request_id: RequestId,
+        action: VoiceAction,
+    },
+}
+
+pub const MAX_SCROLL_VELOCITY_MILLIUNITS: i16 = 4_000;
+
+/// Absolute, replace-latest scroll state for one recognized control chord.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScrollState {
+    Idle,
+    Active {
+        instance_id: u64,
+        velocity_milliunits: i16,
+    },
+}
 
 const ENTER_SCORE: f32 = 0.50;
 const CONTINUE_SCORE: f32 = 0.50;
@@ -40,7 +92,7 @@ const MIN_PALM_SCALE: f32 = 0.01;
 /// Fixed local-only vocabulary for explaining the temporal controller in the
 /// diagnostic window. Its observation-derived counts, percentages, and
 /// timings are bounded and quantized; labels, landmarks, and request IDs are
-/// omitted, and the value never crosses GSV IPC or logs.
+/// omitted. Applications decide whether and how to present it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ControlChord {
     Arm,
@@ -205,7 +257,7 @@ pub struct ControlSample<'a> {
 /// their inter-hand angle. State is absolute so replace-latest transport can
 /// coalesce camera frames without losing or replaying relative scroll deltas.
 pub struct ScrollControl {
-    authority: ControlState,
+    authority_armed: bool,
     state: ScrollState,
     anchor: Option<ScrollAnchor>,
     last_chord_at: Option<Instant>,
@@ -218,20 +270,23 @@ pub struct ScrollControl {
 
 impl Default for ScrollControl {
     fn default() -> Self {
-        Self::new(ControlState::Disarmed)
+        Self::new(ControlState::<()>::Disarmed)
     }
 }
 
 impl ScrollControl {
     #[must_use]
-    pub const fn new(authority: ControlState) -> Self {
+    pub const fn new<RequestId: Copy>(authority: ControlState<RequestId>) -> Self {
         Self::with_preference(authority, HandPreference::Right)
     }
 
     #[must_use]
-    pub const fn with_preference(authority: ControlState, preference: HandPreference) -> Self {
+    pub const fn with_preference<RequestId: Copy>(
+        authority: ControlState<RequestId>,
+        preference: HandPreference,
+    ) -> Self {
         Self {
-            authority,
+            authority_armed: !matches!(authority, ControlState::Disarmed),
             state: ScrollState::Idle,
             anchor: None,
             last_chord_at: None,
@@ -253,11 +308,14 @@ impl ScrollControl {
         matches!(self.state, ScrollState::Active { .. })
     }
 
-    /// Synchronizes Desktop's outer armed authority. Transcription context
+    /// Synchronizes the application's outer armed authority. Transcription context
     /// changes do not interrupt scrolling, while disarming ends it immediately.
-    pub fn synchronize_state(&mut self, authority: ControlState) -> Option<ScrollState> {
-        self.authority = authority;
-        if authority == ControlState::Disarmed {
+    pub fn synchronize_state<RequestId>(
+        &mut self,
+        authority: ControlState<RequestId>,
+    ) -> Option<ScrollState> {
+        self.authority_armed = !matches!(authority, ControlState::Disarmed);
+        if !self.authority_armed {
             return self.stop();
         }
         None
@@ -291,7 +349,7 @@ impl ScrollControl {
         if age > MAX_FRAME_AGE || gap.is_some_and(|gap| gap > MAX_SAMPLE_GAP) {
             return self.stop();
         }
-        if self.authority == ControlState::Disarmed {
+        if !self.authority_armed {
             return self.stop();
         }
 
@@ -466,9 +524,9 @@ impl ScrollAnchor {
 
 /// Deterministic, allocation-free recognition of the supported two-fist toggle
 /// and single-action-hand control vocabulary.
-pub struct GestureControl {
-    state: ControlState,
-    pending: Option<ControlIntent>,
+pub struct GestureControl<RequestId = u64> {
+    state: ControlState<RequestId>,
+    pending: Option<ControlIntent<RequestId>>,
     release_latched: Option<Chord>,
     scroll_release_latched: bool,
     diagnostic: ControlDiagnostic,
@@ -479,21 +537,30 @@ pub struct GestureControl {
     roles: Option<RoleAssignment>,
 }
 
-impl Default for GestureControl {
+impl<RequestId> Default for GestureControl<RequestId>
+where
+    RequestId: Copy + Eq,
+{
     fn default() -> Self {
         Self::new(ControlState::Disarmed)
     }
 }
 
-impl GestureControl {
-    /// Creates a controller synchronized with Desktop's absolute state echo.
+impl<RequestId> GestureControl<RequestId>
+where
+    RequestId: Copy + Eq,
+{
+    /// Creates a controller synchronized with the application's absolute state.
     #[must_use]
-    pub const fn new(state: ControlState) -> Self {
+    pub const fn new(state: ControlState<RequestId>) -> Self {
         Self::with_preference(state, HandPreference::Right)
     }
 
     #[must_use]
-    pub const fn with_preference(state: ControlState, preference: HandPreference) -> Self {
+    pub const fn with_preference(
+        state: ControlState<RequestId>,
+        preference: HandPreference,
+    ) -> Self {
         Self {
             state,
             pending: None,
@@ -509,7 +576,7 @@ impl GestureControl {
     }
 
     #[must_use]
-    pub const fn state(&self) -> ControlState {
+    pub const fn state(&self) -> ControlState<RequestId> {
         self.state
     }
 
@@ -532,10 +599,10 @@ impl GestureControl {
         })
     }
 
-    /// Commits or rejects one pending request using Desktop's absolute echo.
+    /// Commits or rejects one pending request using the application's absolute echo.
     /// Context changes fence evidence but deliberately preserve the fist-reset
     /// latch, so a held count cannot act again in the new context.
-    pub fn synchronize_state(&mut self, state: ControlState) {
+    pub fn synchronize_state(&mut self, state: ControlState<RequestId>) {
         self.state = state;
         self.pending = None;
         self.candidate = None;
@@ -557,7 +624,7 @@ impl GestureControl {
 
     /// Consumes one fresh, ordered inference result and returns at most one
     /// semantic edge.
-    pub fn observe(&mut self, sample: ControlSample<'_>) -> Option<ControlIntent> {
+    pub fn observe(&mut self, sample: ControlSample<'_>) -> Option<ControlIntent<RequestId>> {
         if !self.accept_order(&sample) {
             self.diagnostic = ControlDiagnostic::InvalidOrder;
             self.candidate = None;
@@ -649,7 +716,11 @@ impl GestureControl {
         }
     }
 
-    fn observe_chord(&mut self, now: Instant, reading: ChordReading) -> Option<ControlIntent> {
+    fn observe_chord(
+        &mut self,
+        now: Instant,
+        reading: ChordReading,
+    ) -> Option<ControlIntent<RequestId>> {
         if let Some(intent) = self.pending {
             self.candidate = None;
             self.diagnostic = ControlDiagnostic::AwaitingAuthority {
@@ -684,7 +755,11 @@ impl GestureControl {
                 .is_none_or(|previous| sample.captured_at > previous)
     }
 
-    fn advance_candidate(&mut self, now: Instant, reading: ChordReading) -> Option<ControlIntent> {
+    fn advance_candidate(
+        &mut self,
+        now: Instant,
+        reading: ChordReading,
+    ) -> Option<ControlIntent<RequestId>> {
         if !self.accepted_target(reading.chord) {
             self.candidate = None;
             self.diagnostic = if self.target_is_satisfied(reading.chord) {
@@ -826,7 +901,7 @@ enum ActionPose {
 }
 
 impl ActionPose {
-    const fn chord(self, state: ControlState) -> Chord {
+    const fn chord<RequestId: Copy>(self, state: ControlState<RequestId>) -> Chord {
         match (self, state) {
             (
                 Self::One,
@@ -863,25 +938,28 @@ impl From<Chord> for ControlChord {
     }
 }
 
-impl From<ControlIntent> for ControlChord {
-    fn from(intent: ControlIntent) -> Self {
+impl<RequestId> From<ControlIntent<RequestId>> for ControlChord {
+    fn from(intent: ControlIntent<RequestId>) -> Self {
         match intent {
             ControlIntent::SetArmed { armed: true } => Self::Arm,
             ControlIntent::SetArmed { armed: false } => Self::Disarm,
             ControlIntent::StartTranscription => Self::StartTranscription,
             ControlIntent::VoiceRequest { action, .. } => match action {
-                VoiceRequestGestureIntent::StopTranscription => Self::StopTranscription,
-                VoiceRequestGestureIntent::Send => Self::Send,
-                VoiceRequestGestureIntent::DeleteBackward => Self::DeleteBackward,
-                VoiceRequestGestureIntent::ClearDictation => Self::ClearDictation,
-                VoiceRequestGestureIntent::Mute => Self::Mute,
-                VoiceRequestGestureIntent::Unmute => Self::Unmute,
+                VoiceAction::StopTranscription => Self::StopTranscription,
+                VoiceAction::Send => Self::Send,
+                VoiceAction::DeleteBackward => Self::DeleteBackward,
+                VoiceAction::ClearDictation => Self::ClearDictation,
+                VoiceAction::Mute => Self::Mute,
+                VoiceAction::Unmute => Self::Unmute,
             },
         }
     }
 }
 
-fn control_intent(state: ControlState, chord: Chord) -> Option<ControlIntent> {
+fn control_intent<RequestId: Copy>(
+    state: ControlState<RequestId>,
+    chord: Chord,
+) -> Option<ControlIntent<RequestId>> {
     match (state, chord) {
         (ControlState::Disarmed, Chord::Arm) => Some(ControlIntent::SetArmed { armed: true }),
         (
@@ -899,12 +977,12 @@ fn control_intent(state: ControlState, chord: Chord) -> Option<ControlIntent> {
         ) => {
             let action = match chord {
                 Chord::Arm | Chord::Disarm => return None,
-                Chord::StopTranscription => VoiceRequestGestureIntent::StopTranscription,
-                Chord::Send => VoiceRequestGestureIntent::Send,
-                Chord::DeleteBackward => VoiceRequestGestureIntent::DeleteBackward,
-                Chord::ClearDictation => VoiceRequestGestureIntent::ClearDictation,
-                Chord::Mute => VoiceRequestGestureIntent::Mute,
-                Chord::Unmute => VoiceRequestGestureIntent::Unmute,
+                Chord::StopTranscription => VoiceAction::StopTranscription,
+                Chord::Send => VoiceAction::Send,
+                Chord::DeleteBackward => VoiceAction::DeleteBackward,
+                Chord::ClearDictation => VoiceAction::ClearDictation,
+                Chord::Mute => VoiceAction::Mute,
+                Chord::Unmute => VoiceAction::Unmute,
                 Chord::StartTranscription => return None,
             };
             Some(ControlIntent::VoiceRequest {
@@ -1033,9 +1111,9 @@ enum ClassificationFailure {
 }
 
 impl ClassificationFailure {
-    fn diagnostic(self, state: ControlState) -> ControlDiagnostic {
+    fn diagnostic<RequestId>(self, state: ControlState<RequestId>) -> ControlDiagnostic {
         match self {
-            Self::HandCount(detected) if state == ControlState::Disarmed => {
+            Self::HandCount(detected) if matches!(state, ControlState::Disarmed) => {
                 ControlDiagnostic::NeedTwoHands {
                     detected: u8::try_from(detected).unwrap_or(u8::MAX),
                 }
@@ -1047,9 +1125,9 @@ impl ClassificationFailure {
     }
 }
 
-fn classify_hands(
+fn classify_hands<RequestId: Copy>(
     hands: &[ControlHand],
-    state: ControlState,
+    state: ControlState<RequestId>,
     preference: HandPreference,
     roles: &mut Option<RoleAssignment>,
 ) -> Result<PairReading, ClassificationFailure> {
@@ -1064,7 +1142,7 @@ fn classify_hands(
             });
         }
     }
-    if state == ControlState::Disarmed {
+    if matches!(state, ControlState::Disarmed) {
         return if hands.len() == 2 {
             Ok(PairReading::KnownOther)
         } else {
@@ -1386,6 +1464,149 @@ fn duration_progress_permille(current: Duration, required: Duration) -> u16 {
     .min(1_000)
 }
 
+/// Complete result from the included voice-control policy for one frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VoiceControlOutput<RequestId = u64> {
+    pub intent: Option<ControlIntent<RequestId>>,
+    pub scroll_update: Option<ScrollState>,
+    pub scroll_state: ScrollState,
+    pub diagnostic: ControlDiagnostic,
+    pub progress: Option<ControlProgress>,
+}
+
+/// Ready-to-use voice and scroll policy built on the generic policy boundary.
+///
+/// The policy proposes semantic actions but never mutates application
+/// authority. Call [`Self::synchronize_state`] with the accepted absolute
+/// state after handling an intent.
+pub struct VoiceControlPolicy<RequestId = u64> {
+    gesture: GestureControl<RequestId>,
+    scroll: ScrollControl,
+}
+
+impl<RequestId> Default for VoiceControlPolicy<RequestId>
+where
+    RequestId: Copy + Eq,
+{
+    fn default() -> Self {
+        Self::new(ControlState::Disarmed)
+    }
+}
+
+impl<RequestId> VoiceControlPolicy<RequestId>
+where
+    RequestId: Copy + Eq,
+{
+    #[must_use]
+    pub const fn new(state: ControlState<RequestId>) -> Self {
+        Self::with_preference(state, HandPreference::Right)
+    }
+
+    #[must_use]
+    pub const fn with_preference(
+        state: ControlState<RequestId>,
+        preference: HandPreference,
+    ) -> Self {
+        Self {
+            gesture: GestureControl::with_preference(state, preference),
+            scroll: ScrollControl::with_preference(state, preference),
+        }
+    }
+
+    #[must_use]
+    pub const fn state(&self) -> ControlState<RequestId> {
+        self.gesture.state()
+    }
+
+    #[must_use]
+    pub const fn diagnostic(&self) -> ControlDiagnostic {
+        self.gesture.diagnostic()
+    }
+
+    #[must_use]
+    pub fn progress(&self, now: Instant) -> Option<ControlProgress> {
+        self.gesture.progress(now)
+    }
+
+    #[must_use]
+    pub const fn scroll_state(&self) -> ScrollState {
+        self.scroll.state()
+    }
+
+    pub fn synchronize_state(&mut self, state: ControlState<RequestId>) -> Option<ScrollState> {
+        self.gesture.synchronize_state(state);
+        self.scroll.synchronize_state(state)
+    }
+
+    pub fn observe(
+        &mut self,
+        frame: &FrameView,
+        observation: &Observation,
+    ) -> VoiceControlOutput<RequestId> {
+        let frame_aspect_ratio = frame.width as f32 / frame.height as f32;
+        let output = match observation.hands.as_slice() {
+            [first, second] => {
+                let hands = [
+                    ControlHand::from_observation(first, frame_aspect_ratio),
+                    ControlHand::from_observation(second, frame_aspect_ratio),
+                ];
+                self.observe_sample(frame, observation, frame_aspect_ratio, &hands)
+            }
+            [hand] => {
+                let hands = [ControlHand::from_observation(hand, frame_aspect_ratio)];
+                self.observe_sample(frame, observation, frame_aspect_ratio, &hands)
+            }
+            _ => self.observe_sample(frame, observation, frame_aspect_ratio, &[]),
+        };
+        VoiceControlOutput {
+            progress: self.gesture.progress(frame.captured_at),
+            diagnostic: self.gesture.diagnostic(),
+            scroll_state: self.scroll.state(),
+            ..output
+        }
+    }
+
+    fn observe_sample(
+        &mut self,
+        frame: &FrameView,
+        observation: &Observation,
+        frame_aspect_ratio: f32,
+        hands: &[ControlHand],
+    ) -> VoiceControlOutput<RequestId> {
+        let sample = ControlSample {
+            frame_sequence: observation.frame_sequence,
+            captured_at: frame.captured_at,
+            observed_at: observation.observed_at,
+            frame_aspect_ratio,
+            hands,
+        };
+        let was_scrolling = self.scroll.is_active();
+        let intent = self.gesture.observe(sample);
+        let scroll_update = self.scroll.observe(sample);
+        if was_scrolling || self.scroll.is_active() {
+            self.gesture.latch_scroll_release();
+        }
+        VoiceControlOutput {
+            intent,
+            scroll_update,
+            scroll_state: self.scroll.state(),
+            diagnostic: self.gesture.diagnostic(),
+            progress: None,
+        }
+    }
+}
+
+impl<RequestId> GesturePolicy for VoiceControlPolicy<RequestId>
+where
+    RequestId: Copy + Eq,
+{
+    type Output = VoiceControlOutput<RequestId>;
+
+    fn update(&mut self, frame: &FrameView, observation: &Observation) -> Self::Output {
+        self.observe(frame, observation)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1401,11 +1622,31 @@ mod tests {
         muted: true,
     };
 
-    fn request(action: VoiceRequestGestureIntent) -> ControlIntent {
+    fn request(action: VoiceAction) -> ControlIntent {
         ControlIntent::VoiceRequest {
             voice_request_id: 41,
             action,
         }
+    }
+
+    #[test]
+    fn request_identity_is_an_application_type_not_a_transport_type() {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        struct Request(&'static str);
+
+        assert_eq!(
+            control_intent(
+                ControlState::Active {
+                    voice_request_id: Request("mind-turn"),
+                    muted: false,
+                },
+                Chord::Send,
+            ),
+            Some(ControlIntent::VoiceRequest {
+                voice_request_id: Request("mind-turn"),
+                action: VoiceAction::Send,
+            })
+        );
     }
 
     fn counted(action: HandPose, score: f32) -> [ControlHand; 1] {
@@ -1566,33 +1807,21 @@ mod tests {
             (
                 ACTIVE,
                 HandPose::OneFinger,
-                request(VoiceRequestGestureIntent::StopTranscription),
+                request(VoiceAction::StopTranscription),
             ),
-            (
-                ACTIVE,
-                HandPose::TwoFingers,
-                request(VoiceRequestGestureIntent::Send),
-            ),
+            (ACTIVE, HandPose::TwoFingers, request(VoiceAction::Send)),
             (
                 ACTIVE,
                 HandPose::ThreeFingers,
-                request(VoiceRequestGestureIntent::DeleteBackward),
+                request(VoiceAction::DeleteBackward),
             ),
             (
                 ACTIVE,
                 HandPose::FourFingers,
-                request(VoiceRequestGestureIntent::ClearDictation),
+                request(VoiceAction::ClearDictation),
             ),
-            (
-                ACTIVE,
-                HandPose::FiveFingers,
-                request(VoiceRequestGestureIntent::Mute),
-            ),
-            (
-                MUTED,
-                HandPose::FiveFingers,
-                request(VoiceRequestGestureIntent::Unmute),
-            ),
+            (ACTIVE, HandPose::FiveFingers, request(VoiceAction::Mute)),
+            (MUTED, HandPose::FiveFingers, request(VoiceAction::Unmute)),
         ];
         for (state, pose, expected) in cases {
             let mut harness = Harness::new(state);
@@ -1617,10 +1846,7 @@ mod tests {
             ControlDiagnostic::AwaitingRelease { .. }
         ));
         assert_eq!(harness.sample(&reset), None);
-        assert_eq!(
-            harness.drive(10, &two),
-            vec![request(VoiceRequestGestureIntent::Send)]
-        );
+        assert_eq!(harness.drive(10, &two), vec![request(VoiceAction::Send)]);
     }
 
     #[test]
@@ -1638,10 +1864,7 @@ mod tests {
             }
         );
         assert_eq!(harness.sample(&fist), None);
-        assert_eq!(
-            harness.drive(10, &five),
-            vec![request(VoiceRequestGestureIntent::Mute)]
-        );
+        assert_eq!(harness.drive(10, &five), vec![request(VoiceAction::Mute)]);
     }
 
     #[test]
@@ -1879,7 +2102,7 @@ mod tests {
         assert_eq!(harness.sample(&reset), None);
         assert_eq!(
             harness.drive(10, &one),
-            vec![request(VoiceRequestGestureIntent::StopTranscription)]
+            vec![request(VoiceAction::StopTranscription)]
         );
     }
 
@@ -1890,7 +2113,7 @@ mod tests {
         assert!(matches!(
             classify_hands(
                 &fists,
-                ControlState::Disarmed,
+                ControlState::<()>::Disarmed,
                 HandPreference::Auto,
                 &mut roles
             ),
@@ -1939,7 +2162,7 @@ mod tests {
     }
 
     #[test]
-    fn two_fists_arm_and_disarm_desktop_owned_control() {
+    fn two_fists_arm_and_disarm_application_owned_control() {
         let fists = toggle(0.95);
         let toggle_release = [
             ControlHand::test(Handedness::Left, HandPose::FiveFingers, 0.95),
@@ -2027,7 +2250,7 @@ mod tests {
         assert!(harness.drive(20, &four).is_empty());
         assert_eq!(
             harness.sample(&four),
-            Some(request(VoiceRequestGestureIntent::ClearDictation))
+            Some(request(VoiceAction::ClearDictation))
         );
     }
 }

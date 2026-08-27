@@ -10,6 +10,8 @@ use std::io::{self, Read, Write};
 
 use serde::{de, de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 
+use gesture_engine::control as engine;
+
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const MAX_FRAME_BYTES: usize = 4 * 1024;
 pub const EVENT_FD: i32 = 3;
@@ -89,6 +91,40 @@ impl<'de> Deserialize<'de> for GestureContext {
     }
 }
 
+impl From<GestureContext> for engine::ControlState<u64> {
+    fn from(context: GestureContext) -> Self {
+        match context {
+            GestureContext::Disarmed => Self::Disarmed,
+            GestureContext::Disabled => Self::Disabled,
+            GestureContext::Standby => Self::Standby,
+            GestureContext::Active {
+                voice_request_id,
+                muted,
+            } => Self::Active {
+                voice_request_id,
+                muted,
+            },
+        }
+    }
+}
+
+impl From<engine::ControlState<u64>> for GestureContext {
+    fn from(context: engine::ControlState<u64>) -> Self {
+        match context {
+            engine::ControlState::Disarmed => Self::Disarmed,
+            engine::ControlState::Disabled => Self::Disabled,
+            engine::ControlState::Standby => Self::Standby,
+            engine::ControlState::Active {
+                voice_request_id,
+                muted,
+            } => Self::Active {
+                voice_request_id,
+                muted,
+            },
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VoiceRequestGestureIntent {
@@ -150,6 +186,35 @@ impl<'de> Deserialize<'de> for GestureIntent {
     }
 }
 
+impl From<engine::ControlIntent<u64>> for GestureIntent {
+    fn from(intent: engine::ControlIntent<u64>) -> Self {
+        match intent {
+            engine::ControlIntent::SetArmed { armed } => Self::SetArmed { armed },
+            engine::ControlIntent::StartTranscription => Self::StartTranscription,
+            engine::ControlIntent::VoiceRequest {
+                voice_request_id,
+                action,
+            } => Self::VoiceRequest {
+                voice_request_id,
+                action: match action {
+                    engine::VoiceAction::StopTranscription => {
+                        VoiceRequestGestureIntent::StopTranscription
+                    }
+                    engine::VoiceAction::Send => VoiceRequestGestureIntent::Send,
+                    engine::VoiceAction::DeleteBackward => {
+                        VoiceRequestGestureIntent::DeleteBackward
+                    }
+                    engine::VoiceAction::ClearDictation => {
+                        VoiceRequestGestureIntent::ClearDictation
+                    }
+                    engine::VoiceAction::Mute => VoiceRequestGestureIntent::Mute,
+                    engine::VoiceAction::Unmute => VoiceRequestGestureIntent::Unmute,
+                },
+            },
+        }
+    }
+}
+
 pub const MAX_SCROLL_VELOCITY_MILLIUNITS: i16 = 4_000;
 
 /// Absolute helper-owned velocity for one bounded scroll chord.
@@ -203,6 +268,21 @@ impl<'de> Deserialize<'de> for ScrollState {
                 ));
             }
         })
+    }
+}
+
+impl From<engine::ScrollState> for ScrollState {
+    fn from(state: engine::ScrollState) -> Self {
+        match state {
+            engine::ScrollState::Idle => Self::Idle,
+            engine::ScrollState::Active {
+                instance_id,
+                velocity_milliunits,
+            } => Self::Active {
+                instance_id,
+                velocity_milliunits,
+            },
+        }
     }
 }
 
@@ -1163,6 +1243,30 @@ mod tests {
             }
         }))
         .is_err());
+    }
+
+    #[test]
+    fn private_wire_types_are_a_lossless_adapter_for_engine_events() {
+        let engine_context: engine::ControlState<u64> = ACTIVE.into();
+        assert_eq!(GestureContext::from(engine_context), ACTIVE);
+
+        assert_eq!(
+            GestureIntent::from(engine::ControlIntent::VoiceRequest {
+                voice_request_id: 22,
+                action: engine::VoiceAction::Send,
+            }),
+            active_intent(VoiceRequestGestureIntent::Send)
+        );
+        assert_eq!(
+            ScrollState::from(engine::ScrollState::Active {
+                instance_id: 9,
+                velocity_milliunits: -750,
+            }),
+            ScrollState::Active {
+                instance_id: 9,
+                velocity_milliunits: -750,
+            }
+        );
     }
 
     #[test]

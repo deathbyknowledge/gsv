@@ -1,0 +1,28 @@
+[package]
+name = "gesture-engine"
+version.workspace = true
+edition = "2021"
+description = "Portable hand tracking, gesture recognition, and temporal gesture policy"
+license = "MIT"
+repository = "https://github.com/deathbyknowledge/gsv"
+publish = false
+
+[features]
+default = ["tract"]
+tract = ["dep:rayon", "dep:tract-linalg", "dep:tract-tflite"]
+
+[dependencies]
+rayon = { version = "1", optional = true }
+tract-linalg = { version = "=0.23.4", features = ["multithread-mm"], optional = true }
+tract-tflite = { version = "=0.23.4", optional = true }
+
+[dev-dependencies]
+image = { version = "=0.25.10", default-features = false, features = ["jpeg"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lints.clippy]
+unwrap_used = "warn"
+panic = "warn"
+todo = "warn"
+dbg_macro = "warn"

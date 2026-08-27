@@ -10,7 +10,7 @@ use cameras::{
     Camera, Device, Error as BackendError, FormatDescriptor, PixelFormat, StreamConfig, Transport,
 };
 
-use crate::observation::FrameView;
+use gesture_engine::observation::FrameView;
 
 const CAPTURE_ERROR_BACKOFF: Duration = Duration::from_millis(25);
 const CAPTURE_FRAME_TIMEOUT: Duration = Duration::from_millis(250);

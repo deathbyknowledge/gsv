@@ -26,9 +26,13 @@ contracts, but they do not embed one another's runtime or state ownership.
   protocol.
 - `host/crates/gesture-protocol/` owns the private, versioned contract between
   Desktop and its gesture helper.
+- `host/crates/gesture-engine/` owns platform-neutral packed-RGB hand tracking,
+  landmark-to-pose recognition, temporal policy, and the traits that compose a
+  vision backend with an application-defined gesture vocabulary.
 
-These crates contain contracts and transport primitives. They do not own a
-machine lifecycle, a CLI interaction, or Desktop UI state.
+These crates contain contracts, transport primitives, and reusable local
+computation. They do not own a camera, operating-system permission, machine
+lifecycle, CLI interaction, Desktop UI state, or application side effect.
 
 The host applications, helpers, and shared crates form one Cargo workspace
 rooted at `host/`. Its lockfile and build output belong to that boundary;
@@ -80,10 +84,12 @@ available as a syscall target.
 
 Platform-native, high-cost Desktop work runs in separately supervised helpers.
 `gsv-transcribe` owns local microphone capture and speech inference. The
-experimental `gsv-vision` helper owns camera capture, native Rust/tract model
-inference, authored landmark-to-pose recognition, and temporal gesture policy;
-camera frames and landmarks never
-enter GPUI or the gateway. Desktop starts it headlessly unless
+experimental `gsv-vision` helper owns camera capture, its isolated process
+lifecycle, and the optional diagnostic window. It feeds packed RGB frames into
+the shared `gesture-engine`, which owns native Rust/tract model inference,
+authored landmark-to-pose recognition, and temporal gesture policy. Camera
+frames and landmarks never enter GPUI or the gateway. Desktop starts the helper
+headlessly unless
 `GSV_GESTURES=0`; the exact `GSV_GESTURE_DEBUG=1` opt-in adds its local
 diagnostic window. A private,
 bounded parent-child protocol carries reliable typed semantic intents plus
@@ -127,18 +133,19 @@ owner, and rebases the continuing voice draft; the same exact boundary lets
 Desktop delete one Unicode grapheme or clear only unsent voice-owned text while
 preserving typed anchors and attachments. A later partial begins on the new
 segment and cannot resurrect corrected text. Gesture send and correction never
-masquerade as terminal transcription events. Its runtime is the Rust helper
-plus two checksum-pinned palm and hand-landmark TFLite models executed by tract;
-the command vocabulary is owned by Rust rather than the upstream canned gesture
-classifier. It has no Python, Java, Bazel, or native MediaPipe build/runtime
-dependency. The raw Linux and macOS host distributions and the unsigned macOS
-development application include `gsv-vision`, whose two checksum-verified
-TFLite models are embedded directly in the executable for offline,
-self-contained builds. They carry the model license and exact provenance as
-verified release assets. The application starts the helper in a disarmed state
-and provides visible Voice and Gestures affordances rather than depending on
-shell environment variables that Finder does not provide. A signed macOS
-application distribution still requires Developer ID signing and notarization.
+masquerade as terminal transcription events. Its runtime is the Rust helper,
+the shared gesture engine, and two checksum-pinned palm and hand-landmark TFLite
+models executed by tract. The command vocabulary is owned by Rust rather than
+the upstream canned gesture classifier. It has no Python, Java, Bazel, or
+native MediaPipe build/runtime dependency. The raw Linux and macOS host
+distributions and the unsigned macOS development application include
+`gsv-vision`, whose two checksum-verified TFLite models are embedded directly
+in the executable for offline, self-contained builds. They carry the model
+license and exact provenance as verified release assets. The application
+starts the helper in a disarmed state and provides visible Voice and Gestures
+affordances rather than depending on shell environment variables that Finder
+does not provide. A signed macOS application distribution still requires
+Developer ID signing and notarization.
 
 The local protocol exposes `activate`, redacted `status`, `new`, `use`, and the
 narrow `microphone list/use/default` operations. Its endpoint must be accessible

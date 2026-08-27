@@ -1,7 +1,6 @@
 mod depthwise;
 mod geometry;
 mod models;
-pub(crate) mod runtime;
 
 use std::error::Error as StdError;
 use std::fmt::{self, Display, Formatter};
@@ -10,6 +9,7 @@ use std::time::Instant;
 use crate::observation::{
     FrameView, HandObservation, Handedness, Landmark, Observation, HAND_LANDMARK_COUNT, MAX_HANDS,
 };
+use crate::pipeline::HandTracker;
 use crate::pose;
 
 use self::geometry::{
@@ -17,8 +17,6 @@ use self::geometry::{
     rotate_world_landmarks, same_projected_hand, sample_rgb, Rect,
 };
 use self::models::{LandmarkOutputs, Models};
-use self::runtime::ModelData;
-
 const MAX_FRAME_WIDTH: u32 = 1_920;
 const MAX_FRAME_HEIGHT: u32 = 1_080;
 const RGB_CHANNELS: usize = 3;
@@ -33,8 +31,39 @@ const LANDMARK_REVALIDATION_INTERVAL_MS: i64 = 100;
 const CROP_SIGNATURE_SIZE: usize = 16;
 const CROP_SIGNATURE_SAMPLES: usize = CROP_SIGNATURE_SIZE * CROP_SIGNATURE_SIZE;
 const CROP_PIXEL_DELTA: u8 = 12;
+/// In-memory TFLite assets used by the tract hand tracker.
+///
+/// The engine does not prescribe how applications package or verify model
+/// assets. GSV embeds checksum-pinned files in its platform helper; another
+/// integrator may load the same contract from its own signed bundle.
+#[derive(Clone, Copy)]
+pub struct ModelData<'a> {
+    palm_detector: &'a [u8],
+    landmark_detector: &'a [u8],
+}
+
+impl<'a> ModelData<'a> {
+    #[must_use]
+    pub const fn new(palm_detector: &'a [u8], landmark_detector: &'a [u8]) -> Self {
+        Self {
+            palm_detector,
+            landmark_detector,
+        }
+    }
+
+    #[must_use]
+    pub const fn palm_detector(self) -> &'a [u8] {
+        self.palm_detector
+    }
+
+    #[must_use]
+    pub const fn landmark_detector(self) -> &'a [u8] {
+        self.landmark_detector
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Error {
+pub enum Error {
     InvalidModel,
     InvalidFrame,
     InvalidTimestamp,
@@ -54,7 +83,11 @@ impl Display for Error {
 
 impl StdError for Error {}
 
-pub(crate) struct GestureRecognizer {
+/// Stateful tract-backed hand tracker.
+///
+/// Tracking caches are stream-local. Create one instance per ordered camera
+/// stream and do not reuse it across discontinuous timestamp epochs.
+pub struct TractHandTracker {
     models: Models,
     tracked_hands: Vec<TrackedHand>,
     last_timestamp_ms: Option<i64>,
@@ -192,8 +225,8 @@ impl RecognitionProfiler for RecognitionTimings {
     }
 }
 
-impl GestureRecognizer {
-    pub(crate) fn load(models: &ModelData) -> Result<Self, Error> {
+impl TractHandTracker {
+    pub fn load(models: &ModelData<'_>) -> Result<Self, Error> {
         Ok(Self {
             models: Models::load(models)?,
             tracked_hands: Vec::new(),
@@ -203,7 +236,7 @@ impl GestureRecognizer {
         })
     }
 
-    pub(crate) fn recognize(
+    pub fn recognize(
         &mut self,
         frame: &FrameView,
         timestamp_ms: i64,
@@ -508,6 +541,43 @@ impl GestureRecognizer {
         };
         profiler.finish(RecognitionStage::PoseRecognition, stage);
         Ok(Some(detected))
+    }
+}
+
+impl HandTracker for TractHandTracker {
+    type Error = Error;
+
+    fn track(&mut self, frame: &FrameView, timestamp_ms: i64) -> Result<Observation, Self::Error> {
+        self.recognize(frame, timestamp_ms)
+    }
+}
+
+#[cfg(test)]
+struct TestModelData {
+    palm_detector: Vec<u8>,
+    landmark_detector: Vec<u8>,
+}
+
+#[cfg(test)]
+impl TestModelData {
+    fn load() -> Self {
+        let root = std::env::var_os("GESTURE_ENGINE_MODEL_DIR").map_or_else(
+            || {
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../helpers/gestures/models")
+            },
+            std::path::PathBuf::from,
+        );
+        Self {
+            palm_detector: std::fs::read(root.join("hand_detector.tflite"))
+                .expect("palm detector model"),
+            landmark_detector: std::fs::read(root.join("hand_landmarks_detector.tflite"))
+                .expect("hand landmark model"),
+        }
+    }
+
+    fn as_model_data(&self) -> ModelData<'_> {
+        ModelData::new(&self.palm_detector, &self.landmark_detector)
     }
 }
 
@@ -935,10 +1005,11 @@ mod tests {
     #[ignore = "run with scripts/vision-native/parity.sh"]
     fn matches_mediapipe_landmark_fixtures() {
         let fixture_root = PathBuf::from(
-            std::env::var_os("GSV_VISION_PARITY_FIXTURES").expect("parity fixture directory"),
+            std::env::var_os("GESTURE_ENGINE_PARITY_FIXTURES").expect("parity fixture directory"),
         );
-        let models = runtime::embedded_models();
-        let mut recognizer = GestureRecognizer::load(&models).expect("native recognizer");
+        let model_bytes = TestModelData::load();
+        let models = model_bytes.as_model_data();
+        let mut recognizer = TractHandTracker::load(&models).expect("native recognizer");
         for (name, expected_pose, actionable, expected_handedness, wrist) in [
             (
                 "fist.jpg",
