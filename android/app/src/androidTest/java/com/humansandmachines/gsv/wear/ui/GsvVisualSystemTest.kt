@@ -66,6 +66,24 @@ class GsvVisualSystemTest {
     }
 
     @Test
+    fun assistantInvocationExposesItsStateAndDismissAction() {
+        var cancelled = false
+        compose.setContent {
+            AssistantInvocationSurface(
+                state = VoiceTurnState.LISTENING,
+                detail = "Speak naturally.",
+                signal = 0.72f,
+                onCancel = { cancelled = true },
+            )
+        }
+
+        compose.onNodeWithText("Listening").assertExists()
+        compose.onNodeWithText("TAP CORE TO DISMISS").assertExists()
+        compose.onNodeWithContentDescription("Cancel assistant").performClick()
+        compose.runOnIdle { assertTrue(cancelled) }
+    }
+
+    @Test
     fun knownConnectionShowsOnlyThePasswordLoginStep() {
         compose.setContent {
             GsvLoginScreen(

@@ -4,6 +4,11 @@
 
     <application
         android:usesCleartextTraffic="true"
-        tools:replace="android:usesCleartextTraffic" />
+        tools:replace="android:usesCleartextTraffic">
+        <activity
+            android:name=".ui.AssistantShowcaseActivity"
+            android:exported="true"
+            android:theme="@style/Theme.GsvWear.Voice" />
+    </application>
 
 </manifest>

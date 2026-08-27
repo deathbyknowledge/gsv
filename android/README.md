@@ -52,6 +52,18 @@ and the launcher label **GSV Wear Dev**. This keeps an existing release install
 and its credentials intact when a development machine has a different debug
 signing key.
 
+Debug builds also include an explicit, non-launcher assistant render harness for
+motion review without a live voice turn:
+
+```bash
+adb shell am start -n \
+  com.humansandmachines.gsv.wear.debug/com.humansandmachines.gsv.wear.ui.AssistantShowcaseActivity \
+  --es state THINKING
+```
+
+Use `IDLE`, `PREPARING`, `LISTENING`, `TRANSCRIBING`, `THINKING`, `SPEAKING`,
+or `ERROR`; add `--ez overlay true` to review the compact invocation surface.
+
 Open GSV Wear. On a fresh install it walks through GSV address, username, and
 password; known URL and username values are skipped. The password is used only
 for the authenticated enrollment exchange and is never persisted. When the
@@ -72,6 +84,12 @@ prompt for this app directly. Arm Wear Mode before invoking it. Use **Test
 assistant** for the first end-to-end check; afterward the device's normal
 assistant gesture, including a headset assistant gesture when the headset
 exposes one, starts the same turn.
+
+The unlocked assistant-service route renders a transparent, voice-reactive GSV
+session over the current app. Only its lower control region consumes touch, so
+the rest of the underlying surface remains available. Android 13 and newer use
+the GPU shader treatment; older supported releases keep the same state and
+interaction contract with a Canvas fallback.
 
 Classic Bluetooth headset gestures use Android's `VOICE_COMMAND` route rather
 than the power-button assistant-service route. GSV Wear implements both. On an
@@ -300,7 +318,10 @@ Run this on an actual phone before treating a release as sensor-validated:
     use, recording reconnect latency and battery consumption.
 20. Grant GSV the Android assistant role, and confirm
     the in-app test completes transcription, personal-process execution, and
-    spoken playback without raw audio appearing in process history.
+    spoken playback without raw audio appearing in process history. Invoke the
+    power-button assistant route over another app, confirm the GSV session shows
+    listening, thinking, and speaking state, and confirm a tap above the lower
+    control region still reaches the underlying app.
 21. While music is playing through a Bluetooth headset, invoke the headset's
     assistant gesture, confirm capture uses the headset microphone, the reply
     plays through the headset, and music resumes afterward. Invoke again during

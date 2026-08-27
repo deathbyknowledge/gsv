@@ -14,9 +14,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import com.humansandmachines.gsv.wear.R
+import com.humansandmachines.gsv.wear.runtime.WearRuntimeState
 import com.humansandmachines.gsv.wear.ui.AssistantSurface
+import com.humansandmachines.gsv.wear.ui.detailText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -45,9 +48,11 @@ class VoiceAssistantActivity : ComponentActivity() {
         }
         assistantDetail = VoiceTurnState.PREPARING.detailText(this)
         setContent {
+            val runtime by WearRuntimeState.snapshot.collectAsStateWithLifecycle()
             AssistantSurface(
                 state = assistantState,
                 detail = assistantDetail,
+                signal = runtime.voiceLevel,
                 onCancel = ::finishVoiceCommand,
             )
         }
@@ -130,14 +135,4 @@ class VoiceAssistantActivity : ComponentActivity() {
     companion object {
         private const val ACTION_STOP_VOICE_COMMAND = "android.intent.action.STOP_VOICE_COMMAND"
     }
-}
-
-private fun VoiceTurnState.detailText(context: Context): String = when (this) {
-    VoiceTurnState.IDLE -> "Ready for your next command."
-    VoiceTurnState.PREPARING -> "Securing a private voice channel…"
-    VoiceTurnState.LISTENING -> "Speak naturally. Tap cancel to stop."
-    VoiceTurnState.TRANSCRIBING -> "Turning speech into an agent command…"
-    VoiceTurnState.THINKING -> "Your personal agent has the floor."
-    VoiceTurnState.SPEAKING -> "Response routed to the active audio device."
-    VoiceTurnState.ERROR -> context.getString(R.string.voice_error)
 }
