@@ -86,7 +86,7 @@ function ContextVariation() {
       className="ds-popover-static"
       ariaLabel="Context state"
       width="menu"
-      header={{ kind: "titled", title: "CONTEXT", count: "63% · HEALTHY" }}
+      header={{ kind: "titled", title: "CONTEXT", count: "71.6K LEFT · 63% USED" }}
       actions={[
         { label: "FREE CONTEXT · KEEP 20", onClick: () => {}, glyph: <FreeContextGlyph size={13} /> },
         { label: "OPEN ARCHIVE", onClick: () => {}, glyph: <ArchiveFolderGlyph size={13} /> },
@@ -96,12 +96,14 @@ function ContextVariation() {
         <Progress value={63} label="" showValue={false} size="medium" width={186} />
       </div>
       <div class="gsv-popover-statgrid">
-        <span>INPUT</span>
+        <span>IN USE</span>
         <strong>128.4K</strong>
-        <span>AVAILABLE</span>
+        <span>REMAINING</span>
         <strong>71.6K</strong>
-        <span>WINDOW</span>
+        <span>BUDGET</span>
         <strong>200K</strong>
+        <span>WINDOW</span>
+        <strong>232K</strong>
         <span>MESSAGES</span>
         <strong>342</strong>
       </div>

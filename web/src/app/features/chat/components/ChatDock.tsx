@@ -477,6 +477,7 @@ export function ChatDock({
   });
   const hasArchivedMessages = (historySegments.data?.length ?? 0) > 0;
   const contextPercent = contextPressurePercent(context?.pressure);
+  const contextRemainingTokens = context?.remainingInputTokens ?? null;
   // Severity tone for the context control: pressure level drives it when we have
   // context data; a load failure with no pressure shows as an error. Everything
   // else (idle / not attached / loading / unknown) stays neutral.
@@ -491,8 +492,8 @@ export function ChatDock({
   // No pressure reading — name the specific reason in the tooltip so the empty
   // "CONTEXT" label isn't ambiguous (not attached / load error / loading /
   // unknown / idle).
-  const contextTitle = contextPercent !== null
-    ? `${contextPercent}% context pressure`
+  const contextTitle = contextPercent !== null && contextRemainingTokens !== null
+    ? `${formatCount(contextRemainingTokens)} tokens remaining · ${contextPercent}% used`
     : !hasActiveProcess
       ? "Context — no process attached"
       : processHistory.isError
@@ -1117,6 +1118,7 @@ export function ChatDock({
         canAbortRun={canAbortRun}
         contextTone={contextTone}
         contextPercent={contextPercent}
+        contextRemainingTokens={contextRemainingTokens}
         contextTitle={contextTitle}
         effectiveStatus={effectiveStatus}
         mobileLayout={mobileLayout}

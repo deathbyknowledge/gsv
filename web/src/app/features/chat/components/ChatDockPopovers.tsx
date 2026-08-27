@@ -6,7 +6,7 @@ import { TwoLevelSelect } from "../../../components/ui/TwoLevelSelect";
 import type { ListRowStatus } from "../../../components/ui/ListRow";
 import type { ChatAgentTaskStatus, ChatAgentViewModel, ChatModelProfileData } from "../domain/agent";
 import type { ChatHistory, ChatProcessAiConfig, ChatProcessSummary } from "../domain/processes";
-import { formatCount } from "./chatUiFormat";
+import { formatCompactCount, formatCount } from "./chatUiFormat";
 
 export type ChatPopoverId = "model" | "tasks" | "context";
 
@@ -221,7 +221,11 @@ export function ChatDockPopovers({
           header={{
             kind: "titled",
             title: "CONTEXT",
-            count: contextPercent !== null ? `${contextPercent}% · ${contextLevel}` : contextLevel,
+            count: context?.remainingInputTokens !== null && context?.remainingInputTokens !== undefined
+              ? contextPercent === null
+                ? `${formatCompactCount(context.remainingInputTokens)} LEFT`
+                : `${formatCompactCount(context.remainingInputTokens)} LEFT · ${contextPercent}% USED`
+              : contextLevel,
           }}
           actions={contextActions}
         >
@@ -236,10 +240,12 @@ export function ChatDockPopovers({
             />
           </div>
           <div class="gsv-popover-statgrid">
-            <span>INPUT</span>
+            <span>IN USE</span>
             <strong>{formatCount(context?.inputTokens)}</strong>
-            <span>AVAILABLE</span>
-            <strong>{formatCount(context?.availableInputTokens)}</strong>
+            <span>REMAINING</span>
+            <strong>{formatCount(context?.remainingInputTokens)}</strong>
+            <span>BUDGET</span>
+            <strong>{formatCount(context?.inputBudgetTokens)}</strong>
             <span>WINDOW</span>
             <strong>{formatCount(context?.contextWindowTokens)}</strong>
             <span>MESSAGES</span>
