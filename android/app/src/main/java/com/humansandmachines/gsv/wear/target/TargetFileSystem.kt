@@ -4,6 +4,7 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.InputStream
+import java.util.concurrent.atomic.AtomicBoolean
 
 data class TargetStat(
     val path: String,
@@ -12,6 +13,7 @@ data class TargetStat(
     val size: Long,
     val contentType: String? = null,
     val eventProducing: Boolean = false,
+    val revision: String? = null,
 )
 
 data class TargetListing(
@@ -37,12 +39,22 @@ class TargetReadHandle(
     val length: Long,
     val contentType: String,
     val eventProducing: Boolean,
+    val revision: String?,
     private val openStream: () -> InputStream,
     private val cleanup: () -> Unit,
 ) : AutoCloseable {
-    fun open(): InputStream = openStream()
+    private val opened = AtomicBoolean(false)
+    private val closed = AtomicBoolean(false)
 
-    override fun close() = cleanup()
+    fun open(): InputStream {
+        check(!closed.get()) { "Target response body is already closed" }
+        check(opened.compareAndSet(false, true)) { "Target response body can only be opened once" }
+        return openStream()
+    }
+
+    override fun close() {
+        if (closed.compareAndSet(false, true)) cleanup()
+    }
 
     companion object {
         fun fromBytes(
@@ -50,11 +62,13 @@ class TargetReadHandle(
             bytes: ByteArray,
             contentType: String,
             eventProducing: Boolean = false,
+            revision: String? = null,
         ): TargetReadHandle = TargetReadHandle(
             path = path,
             length = bytes.size.toLong(),
             contentType = contentType,
             eventProducing = eventProducing,
+            revision = revision,
             openStream = { ByteArrayInputStream(bytes) },
             cleanup = {},
         )
@@ -64,15 +78,31 @@ class TargetReadHandle(
             file: File,
             contentType: String,
             eventProducing: Boolean = false,
+            revision: String? = null,
             cleanup: () -> Unit = {},
-        ): TargetReadHandle = TargetReadHandle(
-            path = path,
-            length = file.length(),
-            contentType = contentType,
-            eventProducing = eventProducing,
-            openStream = { FileInputStream(file) },
-            cleanup = cleanup,
-        )
+        ): TargetReadHandle {
+            val input = try {
+                FileInputStream(file)
+            } catch (error: Throwable) {
+                runCatching(cleanup)
+                throw error
+            }
+            return TargetReadHandle(
+                path = path,
+                length = input.channel.size(),
+                contentType = contentType,
+                eventProducing = eventProducing,
+                revision = revision,
+                openStream = { input },
+                cleanup = {
+                    try {
+                        input.close()
+                    } finally {
+                        cleanup()
+                    }
+                },
+            )
+        }
     }
 }
 

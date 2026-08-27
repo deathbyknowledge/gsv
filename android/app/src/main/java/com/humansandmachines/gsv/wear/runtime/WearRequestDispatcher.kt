@@ -46,12 +46,11 @@ import org.json.JSONObject
 
 class WearRequestDispatcherFactory(
     private val parentScope: CoroutineScope,
-    fileSystem: TargetFileSystem,
+    private val fileSystem: TargetFileSystem,
     private val incomingDirectory: File,
     private val shell: TargetShell = TargetShell(fileSystem),
     private val netHandler: TargetNetHandler = TargetNetHandler(File(incomingDirectory, "net")),
 ) : DriverRequestDispatcherFactory {
-    private val fsHandler = TargetFsHandler(fileSystem)
     private val dispatchers = ConcurrentHashMap<Long, WearRequestDispatcher>()
 
     override fun create(transport: DriverTransport): DriverRequestDispatcher {
@@ -59,7 +58,7 @@ class WearRequestDispatcherFactory(
         dispatcher = WearRequestDispatcher(
             transport = transport,
             parentScope = parentScope,
-            fsHandler = fsHandler,
+            fsHandler = TargetFsHandler(fileSystem, transport.peerId),
             shell = shell,
             netHandler = netHandler,
             incomingDirectory = incomingDirectory,

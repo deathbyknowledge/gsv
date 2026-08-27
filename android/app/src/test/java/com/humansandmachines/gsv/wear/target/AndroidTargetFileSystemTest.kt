@@ -7,6 +7,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -111,6 +112,23 @@ class AndroidTargetFileSystemTest {
 
         assertEquals("keep", readText("/home/android/keep.txt"))
         assertTrue(fileSystem.list("/tmp").files.isEmpty())
+    }
+
+    @Test
+    fun revisionsTrackExactBytesAndOpenHandlesKeepTheirSnapshot() = runBlocking {
+        fileSystem.writeText("/tmp/revision.txt", "first")
+        val firstRevision = fileSystem.stat("/tmp/revision.txt").revision
+        val opened = fileSystem.open("/tmp/revision.txt")
+
+        fileSystem.writeText("/tmp/revision.txt", "other")
+        val secondRevision = fileSystem.stat("/tmp/revision.txt").revision
+
+        assertNotEquals(firstRevision, secondRevision)
+        val snapshot = opened.use { handle ->
+            handle.open().use { it.readBytes().toString(Charsets.UTF_8) }
+        }
+        assertEquals("first", snapshot)
+        assertEquals("other", readText("/tmp/revision.txt"))
     }
 
     @Test

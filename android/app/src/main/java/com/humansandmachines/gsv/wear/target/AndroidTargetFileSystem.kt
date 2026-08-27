@@ -9,6 +9,7 @@ import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -61,13 +62,18 @@ class AndroidTargetFileSystem(
         return withContext(Dispatchers.IO) {
             when {
                 physical.isDirectory -> TargetStat(normalized, isFile = false, isDirectory = true, size = 0)
-                physical.isFile -> TargetStat(
-                    path = normalized,
-                    isFile = true,
-                    isDirectory = false,
-                    size = physical.length(),
-                    contentType = mimeOverrides[normalized] ?: inferContentType(normalized, physical),
-                )
+                physical.isFile -> {
+                    val snapshot = snapshotFile(physical)
+                    val contentType = mimeOverrides[normalized] ?: inferContentType(normalized, snapshot.header)
+                    TargetStat(
+                        path = normalized,
+                        isFile = true,
+                        isDirectory = false,
+                        size = snapshot.size,
+                        contentType = contentType,
+                        revision = fileRevision(snapshot.digest, contentType),
+                    )
+                }
                 else -> throw TargetFsException("No such file or directory: $normalized")
             }
         }
@@ -106,11 +112,23 @@ class AndroidTargetFileSystem(
         return withContext(Dispatchers.IO) {
             if (physical.isDirectory) throw TargetFsException("Is a directory: $normalized")
             if (!physical.isFile) throw TargetFsException("No such file: $normalized")
-            TargetReadHandle.fromFile(
-                path = normalized,
-                file = physical,
-                contentType = mimeOverrides[normalized] ?: inferContentType(normalized, physical),
-            )
+            val input = FileInputStream(physical)
+            try {
+                val snapshot = snapshotInput(input, rewind = true)
+                val contentType = mimeOverrides[normalized] ?: inferContentType(normalized, snapshot.header)
+                TargetReadHandle(
+                    path = normalized,
+                    length = snapshot.size,
+                    contentType = contentType,
+                    eventProducing = false,
+                    revision = fileRevision(snapshot.digest, contentType),
+                    openStream = { input },
+                    cleanup = input::close,
+                )
+            } catch (error: Throwable) {
+                input.close()
+                throw error
+            }
         }
     }
 
@@ -173,7 +191,7 @@ class AndroidTargetFileSystem(
                     isDirectory = false,
                     size = written,
                     contentType = normalizedContentType
-                        ?: inferContentType(normalized, destination),
+                        ?: inferContentType(normalized, readHeader(destination)),
                 )
             } finally {
                 temporary.delete()
@@ -187,7 +205,7 @@ class AndroidTargetFileSystem(
             path = path,
             input = ByteArrayInputStream(bytes),
             expectedSize = bytes.size.toLong(),
-            contentType = inferContentType(resolve(path), null),
+            contentType = inferContentType(resolve(path), byteArrayOf()),
         )
     }
 
@@ -445,23 +463,63 @@ class AndroidTargetFileSystem(
         }
     }
 
-    private fun inferContentType(path: String, file: File?): String {
+    private fun inferContentType(path: String, header: ByteArray): String {
         mimeOverrides[path]?.let { return it }
-        val header = if (file?.isFile == true) {
-            runCatching {
-                FileInputStream(file).use { input ->
-                    ByteArray(16).let { bytes ->
-                        val count = input.read(bytes)
-                        if (count <= 0) byteArrayOf() else bytes.copyOf(count)
-                    }
-                }
-            }.getOrDefault(byteArrayOf())
-        } else {
-            byteArrayOf()
-        }
         sniffContentType(header)?.let { return it }
         return extensionContentType(path)
     }
+
+    private fun readHeader(file: File): ByteArray = runCatching {
+        FileInputStream(file).use { input ->
+            ByteArray(SNIFF_BYTES).let { bytes ->
+                val count = input.read(bytes)
+                if (count <= 0) byteArrayOf() else bytes.copyOf(count)
+            }
+        }
+    }.getOrDefault(byteArrayOf())
+
+    private suspend fun snapshotFile(file: File): FileSnapshot =
+        FileInputStream(file).use { input -> snapshotInput(input, rewind = false) }
+
+    private suspend fun snapshotInput(input: FileInputStream, rewind: Boolean): FileSnapshot {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val header = ByteArray(SNIFF_BYTES)
+        var headerSize = 0
+        var size = 0L
+        val buffer = ByteArray(COPY_BUFFER_BYTES)
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            val count = input.read(buffer)
+            if (count < 0) break
+            if (count == 0) continue
+            if (headerSize < header.size) {
+                val copied = minOf(count, header.size - headerSize)
+                buffer.copyInto(header, headerSize, 0, copied)
+                headerSize += copied
+            }
+            digest.update(buffer, 0, count)
+            size += count
+        }
+        if (rewind) input.channel.position(0)
+        return FileSnapshot(size, header.copyOf(headerSize), digest.digest())
+    }
+
+    private fun fileRevision(digest: ByteArray, contentType: String): String {
+        val revisionDigest = MessageDigest.getInstance("SHA-256")
+            .apply {
+                update(digest)
+                update(0)
+                update(contentType.toByteArray(Charsets.UTF_8))
+            }
+            .digest()
+        return "android:${revisionDigest.joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }}"
+    }
+
+    private data class FileSnapshot(
+        val size: Long,
+        val header: ByteArray,
+        val digest: ByteArray,
+    )
 
     private data class Mount(
         val virtualRoot: String,
@@ -481,6 +539,7 @@ class AndroidTargetFileSystem(
         private const val MAX_SEARCH_MATCHES = 200
         private const val MAX_MATCH_CHARS = 200
         private const val COPY_BUFFER_BYTES = 64 * 1024
+        private const val SNIFF_BYTES = 16
         private const val MAX_CONTENT_TYPE_CHARS = 256
         private val BASE_DIRECTORIES = setOf("/", "/home", HOME, TMP)
 

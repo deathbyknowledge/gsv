@@ -25,10 +25,12 @@ class VoiceProtocolTest {
         )
 
         val args = frame.getJSONObject("args")
-        assertEquals("user", args.getJSONObject("client").getString("role"))
+        assertEquals(3, args.getInt("protocol"))
+        assertEquals("pixel-voice-setup", args.getJSONObject("peer").getString("id"))
+        assertFalse(args.getJSONObject("peer").has("implements"))
         assertEquals("secret", args.getJSONObject("auth").getString("password"))
         assertFalse(args.getJSONObject("auth").has("token"))
-        assertFalse(args.has("driver"))
+        assertFalse(args.has("client"))
     }
 
     @Test
@@ -51,24 +53,34 @@ class VoiceProtocolTest {
     }
 
     @Test
-    fun validatesUserHandshakeAndAdvertisedSyscalls() {
+    fun validatesHumanPeerHandshakeAndIndependentGrants() {
         val result = VoiceProtocol.validateConnectResponse(
             JSONObject(
                 """
                 {
                   "ok":true,
                   "data":{
-                    "protocol":2,
-                    "identity":{"role":"user","process":{"uid":1000}},
-                    "syscalls":["proc.list","proc.send","ai.transcription.create"]
+                    "protocol":3,
+                    "peer":{
+                      "id":"pixel-voice",
+                      "sessionId":"session-1",
+                      "principal":{"kind":"human","account":{"uid":1000}},
+                      "grant":{
+                        "calls":["conversation.*","ai.transcription.create"],
+                        "signals":["message.committed","proc.run.hil.requested"],
+                        "implements":[]
+                      }
+                    }
                   }
                 }
                 """.trimIndent(),
             ),
+            "pixel-voice",
         )
 
         assertEquals(1000, result.uid)
-        assertTrue("proc.send" in result.syscalls)
+        assertTrue("conversation.*" in result.calls)
+        assertTrue("message.committed" in result.signals)
     }
 
     @Test
@@ -100,5 +112,65 @@ class VoiceProtocolTest {
         assertTrue(VoiceProtocol.allows(setOf("proc.*"), "proc.send"))
         assertTrue(VoiceProtocol.allows(setOf("adapter.pair.*"), "adapter.pair.confirm"))
         assertFalse(VoiceProtocol.allows(setOf("proc.*"), "ai.speech.create"))
+    }
+
+    @Test
+    fun consumesOnlyDirectedShipMessagesAsVoiceAnswers() {
+        val directed = JSONObject(
+            """
+            {
+              "type":"sig",
+              "signal":"message.committed",
+              "payload":{
+                "directed":true,
+                "message":{
+                  "conversationId":"ship-1",
+                  "processId":"pid-1",
+                  "runId":"run-1",
+                  "author":{"kind":"process","pid":"pid-1","uid":1000},
+                  "text":"The answer"
+                }
+              }
+            }
+            """.trimIndent(),
+        )
+        val event = VoiceProtocol.parseTerminalSignal(directed, "ship-1", "pid-1")
+
+        assertEquals("run-1", event?.runId)
+        assertEquals(VoiceRunTerminal.Answer("The answer"), event?.terminal)
+
+        directed.getJSONObject("payload").put("directed", false)
+        assertNull(VoiceProtocol.parseTerminalSignal(directed, "ship-1", "pid-1"))
+
+        directed.getJSONObject("payload")
+            .put("directed", true)
+            .getJSONObject("message")
+            .put("processId", "another-pid")
+        assertNull(VoiceProtocol.parseTerminalSignal(directed, "ship-1", "pid-1"))
+    }
+
+    @Test
+    fun scopesAbortedVoiceRunsToTheShipHandler() {
+        val aborted = JSONObject(
+            """
+            {
+              "type":"sig",
+              "signal":"message.aborted",
+              "payload":{
+                "conversationId":"ship-1",
+                "processId":"pid-1",
+                "runId":"run-1",
+                "reason":"superseded"
+              }
+            }
+            """.trimIndent(),
+        )
+
+        val event = VoiceProtocol.parseTerminalSignal(aborted, "ship-1", "pid-1")
+        assertEquals("run-1", event?.runId)
+        assertTrue(event?.terminal is VoiceRunTerminal.Finished)
+
+        aborted.getJSONObject("payload").put("processId", "another-pid")
+        assertNull(VoiceProtocol.parseTerminalSignal(aborted, "ship-1", "pid-1"))
     }
 }
