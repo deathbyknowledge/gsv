@@ -255,6 +255,51 @@ float3 organicNormal(float3 point, float phase, float energy) {
     ));
 }
 
+float3 interiorFlowPoint(float3 point, float phase) {
+    float3 flowingPoint = point;
+    flowingPoint.xz = rotate2(
+        0.58 + 0.22 * sin(phase),
+        flowingPoint.xz
+    );
+    flowingPoint.xy = rotate2(
+        -0.37 + 0.17 * cos(phase * 2.0),
+        flowingPoint.xy
+    );
+    flowingPoint.yz = rotate2(
+        0.19 * sin(phase * 3.0),
+        flowingPoint.yz
+    );
+    flowingPoint += float3(
+        0.026 * sin(flowingPoint.y * 7.0 + phase * 2.0) *
+            cos(flowingPoint.z * 5.0 - phase),
+        0.022 * sin(flowingPoint.z * 8.0 - phase * 2.0) *
+            cos(flowingPoint.x * 6.0 + phase * 3.0),
+        0.020 * sin(flowingPoint.x * 9.0 + phase) *
+            cos(flowingPoint.y * 5.0 - phase * 3.0)
+    );
+    return flowingPoint;
+}
+
+float4 interiorMembranes(float3 point, float phase) {
+    float3 flowingPoint = interiorFlowPoint(point, phase);
+    float coolSurface = flowingPoint.y +
+        0.105 * sin(flowingPoint.x * 7.0 + phase) +
+        0.052 * sin(flowingPoint.z * 9.0 - phase * 2.0);
+    float warmSurface = flowingPoint.x * 0.72 - flowingPoint.z * 0.28 +
+        0.082 * sin(flowingPoint.y * 8.0 - phase * 2.0) +
+        0.038 * cos(flowingPoint.x * 10.0 + phase * 3.0);
+
+    float coolVariation = 0.58 + 0.42 *
+        (0.5 + 0.5 * sin((flowingPoint.x - flowingPoint.z) * 8.0 + phase * 3.0));
+    float warmVariation = 0.54 + 0.46 *
+        (0.5 + 0.5 * cos((flowingPoint.y + flowingPoint.z) * 9.0 - phase));
+    float coolSheet = (1.0 - smoothstep(0.016, 0.088, abs(coolSurface))) * coolVariation;
+    float coolRidge = (1.0 - smoothstep(0.005, 0.022, abs(coolSurface))) * coolVariation;
+    float warmSheet = (1.0 - smoothstep(0.014, 0.076, abs(warmSurface))) * warmVariation;
+    float warmRidge = (1.0 - smoothstep(0.004, 0.019, abs(warmSurface))) * warmVariation;
+    return float4(coolSheet, coolRidge, warmSheet, warmRidge);
+}
+
 float shellCurrent(float3 normal, float phase) {
     float3 first = normal;
     first.xy = rotate2(0.68, first.xy);
@@ -332,14 +377,45 @@ half4 main(float2 fragCoord) {
             58.0
         );
         float silhouette = pow(1.0 - abs(dot(normal, view)), 1.7);
+        float4 nearMembranes = interiorMembranes(point + direction * 0.030, phase);
+        float4 middleMembranes = interiorMembranes(point + direction * 0.090, phase);
+        float4 deepMembranes = interiorMembranes(point + direction * 0.165, phase);
+        float coolSheet = clamp(
+            nearMembranes.x * 0.16 +
+                middleMembranes.x * 0.52 +
+                deepMembranes.x * 0.22,
+            0.0,
+            1.0
+        );
+        float coolRidge = middleMembranes.y;
+        float warmSheet = clamp(
+            nearMembranes.z * 0.20 +
+                middleMembranes.z * 0.46 +
+                deepMembranes.z * 0.24,
+            0.0,
+            1.0
+        );
+        float warmRidge = nearMembranes.w * 0.72 + deepMembranes.w * 0.16;
+        float organicAmount = clamp(iShape.x, 0.0, 1.0);
+        float liquidDetail = 0.28 + organicAmount * 0.72;
+        float membraneCrossing = coolRidge * warmRidge;
+        float facing = clamp(dot(normal, view), 0.0, 1.0);
+        float thinTransmission = pow(1.0 - facing, 1.35);
+        float warmTransmission = pow(max(dot(-normal, warmLight), 0.0), 1.7);
 
-        float3 deepMaterial = float3(0.004, 0.010, 0.027);
+        float3 deepMaterial = float3(0.002, 0.007, 0.021);
         float3 cyan = mix(float3(0.05, 0.70, 0.90), iAccent.rgb, 0.48);
         float3 warm = float3(1.0, 0.62, 0.22);
         float3 material = deepMaterial;
-        material += cyan * (coolDiffuse * 0.22 + fresnel * 0.62 + coolSpecular * 1.15);
-        material += warm * (warmDiffuse * 0.075 + warmSpecular * 0.62);
-        material += float3(0.26, 0.46, 0.72) * silhouette * 0.16;
+        material += cyan * (coolDiffuse * 0.13 + fresnel * 0.54 + coolSpecular * 0.96);
+        material += warm * (warmDiffuse * 0.052 + warmSpecular * 0.52);
+        material += float3(0.26, 0.46, 0.72) * silhouette * 0.12;
+        material += cyan * liquidDetail * (coolSheet * 0.10 + coolRidge * 0.21);
+        material += warm * liquidDetail * (warmSheet * 0.052 + warmRidge * 0.14);
+        material += mix(cyan, warm, 0.20) * liquidDetail * membraneCrossing * 0.12;
+        material += cyan * liquidDetail * thinTransmission * 0.12;
+        material += mix(cyan, warm, 0.58) * liquidDetail * warmTransmission * 0.10;
+        material *= 1.0 - liquidDetail * min(coolSheet + warmSheet, 1.0) * 0.030;
         float symbolPresence = clamp(iShape.y, 0.0, 1.0);
         if (symbolPresence > 0.001) {
             float3 symbolPoint = symbolFlowPoint(point, phase, symbolPresence);
@@ -351,7 +427,12 @@ half4 main(float2 fragCoord) {
             material += mix(cyan, warm, 0.24) * featureGlow * symbolPresence * 0.17;
         }
 
-        float bodyAlpha = clamp(0.88 + fresnel * 0.10 + coolSpecular * 0.06, 0.0, 0.98);
+        float membraneOpacity = min(coolSheet + warmSheet, 1.0) * liquidDetail * 0.055;
+        float bodyAlpha = clamp(
+            0.76 + fresnel * 0.15 + coolSpecular * 0.055 + membraneOpacity,
+            0.0,
+            0.96
+        );
         color = material * bodyAlpha;
         alpha = bodyAlpha;
     }
