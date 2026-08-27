@@ -191,7 +191,7 @@ import {
 } from "./media";
 import {
   buildProcContextState,
-  estimateContextInputTokens,
+  measureContextInputTokens,
 } from "./context-pressure";
 import {
   hasWorkersAiModelPricing,
@@ -1281,7 +1281,10 @@ function assistantUsageToProcUsageState(
   const outputTokens = normalizeNonNegativeNumber(usage.output) ?? 0;
   const cacheReadTokens = normalizeNonNegativeNumber(usage.cacheRead) ?? 0;
   const cacheWriteTokens = normalizeNonNegativeNumber(usage.cacheWrite) ?? 0;
-  const totalTokens = normalizeNonNegativeNumber(usage.totalTokens) ?? inputTokens + outputTokens;
+  const componentTotal = inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens;
+  const totalTokens = componentTotal > 0
+    ? componentTotal
+    : normalizeNonNegativeNumber(usage.totalTokens) ?? 0;
   const cost = costSource
     ? {
         input: normalizeNonNegativeNumber(usage.cost?.input) ?? 0,
@@ -3424,6 +3427,7 @@ export class Process extends DurableObject<ProcessEnv> {
       activeRunId: activeRun?.runId ?? null,
       pendingHil: this.toProcHilRequest(this.store.getPendingHil()),
       context: this.getContextStateForHistory(),
+      contextRevision: this.store.getContextStateRevision(),
     };
   }
 
@@ -6231,8 +6235,10 @@ export class Process extends DurableObject<ProcessEnv> {
           runId,
           activeConfig,
           context,
-          failedResponse.usage,
-          overflowUsage,
+          {
+            confirmedUsage: failedResponse.usage,
+            usageState: overflowUsage,
+          },
         );
         if (this.handleRunStopped(runId)) {
           return "stopped";
@@ -6664,7 +6670,9 @@ export class Process extends DurableObject<ProcessEnv> {
       return;
     }
     context = finalContext;
-    await this.updateContextState(runId, activeConfig, context, response.usage, assistantMetadata?.usage);
+    await this.updateContextState(runId, activeConfig, context, {
+      usageState: assistantMetadata?.usage,
+    });
     if (this.handleRunStopped(runId)) {
       return;
     }
@@ -7432,12 +7440,16 @@ export class Process extends DurableObject<ProcessEnv> {
     runId: string,
     config: AiConfigResult,
     context: Context,
-    usage?: AssistantMessage["usage"],
-    usageState?: ProcUsageState,
+    options: {
+      confirmedUsage?: AssistantMessage["usage"];
+      usageState?: ProcUsageState;
+    } = {},
   ): Promise<ProcContextState> {
     const pid = this.pid;
     const { count: messageCount, lastMessageId } = this.store.messageStats();
+    const revision = this.store.nextContextStateRevision();
     const state = buildProcContextState({
+      revision,
       runId,
       messageCount,
       lastMessageId,
@@ -7446,9 +7458,12 @@ export class Process extends DurableObject<ProcessEnv> {
       reasoning: config.reasoning,
       contextWindowTokens: config.contextWindowTokens,
       maxOutputTokens: config.maxTokens,
-      estimatedInputTokens: estimateContextInputTokens(context),
-      usage,
-      usageState,
+      measurement: measureContextInputTokens(
+        context,
+        { provider: config.provider, model: config.model },
+        options.confirmedUsage,
+      ),
+      usageState: options.usageState,
       historyUsage: this.store.getHistoryUsage(),
     });
     this.store.setContextState(state);

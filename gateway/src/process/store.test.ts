@@ -2,6 +2,16 @@ import { describe, it, expect } from "vitest";
 import { runInDurableObject } from "cloudflare:test";
 import type { Process } from "./do";
 import { getProcessByPid } from "../shared/utils";
+import { normalizeUsageState } from "./store";
+
+it("includes cached tokens when reconstructing a missing usage total", () => {
+  expect(normalizeUsageState({
+    inputTokens: 100,
+    outputTokens: 20,
+    cacheReadTokens: 800,
+    cacheWriteTokens: 40,
+  })?.totalTokens).toBe(960);
+});
 
 describe("ProcessStore", () => {
   describe("history", () => {
@@ -1123,6 +1133,53 @@ describe("ProcessStore", () => {
         store.setValue("key", "v1");
         store.setValue("key", "v2");
         expect(store.getValue("key")).toBe("v2");
+      });
+    });
+
+    it("upgrades a stored legacy context state with absolute budget fields", async () => {
+      const stub = await getProcessByPid("kv-context-state-upgrade");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
+      await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
+        const store = (instance as any).store;
+        store.setValue("contextState", JSON.stringify({
+          provider: "openai",
+          model: "gpt-test",
+          contextWindowTokens: 1000,
+          maxOutputTokens: 100,
+          estimatedInputTokens: 400,
+          inputTokens: 400,
+          availableInputTokens: 900,
+          pressure: 400 / 900,
+          level: "ok",
+          source: "estimate",
+          updatedAt: 1,
+        }));
+
+        expect(store.getContextState()).toMatchObject({
+          revision: 0,
+          confirmedInputTokens: 0,
+          estimatedTrailingInputTokens: 400,
+          inputBudgetTokens: 900,
+          remainingInputTokens: 500,
+          availableInputTokens: 900,
+        });
+      });
+    });
+
+    it("keeps context revisions monotonic when a snapshot is deleted", async () => {
+      const stub = await getProcessByPid("kv-context-state-revision");
+      // SAFETY: test fixture exercises the internal ProcessStore contract.
+      await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture exercises the internal ProcessStore contract.
+        const store = (instance as any).store;
+        expect(store.nextContextStateRevision()).toBe(1);
+        store.deleteContextState();
+        expect(store.getContextStateRevision()).toBe(1);
+        expect(store.nextContextStateRevision()).toBe(2);
+        store.resetHistory();
+        expect(store.getContextStateRevision()).toBe(2);
+        expect(store.nextContextStateRevision()).toBe(3);
       });
     });
 

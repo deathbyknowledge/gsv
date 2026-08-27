@@ -255,7 +255,7 @@ export type ProcContextPressureLevel =
   | "critical"
   | "full";
 
-export type ProcContextUsageSource = "estimate" | "provider";
+export type ProcContextUsageSource = "estimate" | "provider" | "mixed";
 
 export type ProcUsageCostSource =
   | "provider"
@@ -312,6 +312,7 @@ export type ProcMessageMetadata = {
 };
 
 export type ProcContextState = {
+  revision: number;
   runId?: string;
   messageCount?: number;
   lastMessageId?: number | null;
@@ -322,10 +323,15 @@ export type ProcContextState = {
   maxOutputTokens: number;
   estimatedInputTokens: number;
   inputTokens: number;
+  confirmedInputTokens: number;
+  estimatedTrailingInputTokens: number;
   outputTokens?: number;
   totalTokens?: number;
   usage?: ProcUsageState;
   historyUsage?: ProcUsageState;
+  inputBudgetTokens: number | null;
+  remainingInputTokens: number | null;
+  /** @deprecated Use inputBudgetTokens. */
   availableInputTokens: number | null;
   pressure: number | null;
   level: ProcContextPressureLevel;
@@ -408,6 +414,7 @@ export type ProcHistoryResult =
       activeRunId?: string | null;
       pendingHil?: ProcHilRequest | null;
       context?: ProcContextState | null;
+      contextRevision?: number;
     }
   | { ok: false; error: string };
 

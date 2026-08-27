@@ -7,6 +7,7 @@ import {
   applyChatSignal,
   classifySystemError,
   emptyChatRuntimeState,
+  newerContextSnapshot,
   transcriptRowsFromHistory,
 } from "./transcript";
 
@@ -22,6 +23,7 @@ function history(messages: ChatHistory["messages"]): ChatHistory {
     runState: "idle",
     pendingHil: null,
     context: null,
+    contextRevision: 0,
   };
 }
 
@@ -917,6 +919,117 @@ describe("chat transcript rows", () => {
       expect.objectContaining({ id: "message:42", role: "user", text: "hello" }),
     ]));
     expect(state.rows.filter((row) => row.id.startsWith("optimistic:user:"))).toHaveLength(1);
+  });
+
+  it("normalizes context state from a gateway without token-budget fields", () => {
+    const state = applyChatSignal(emptyChatRuntimeState("pid-1"), "proc.changed", {
+      pid: "pid-1",
+      changes: ["context"],
+      context: {
+        provider: "openai",
+        model: "gpt-5",
+        contextWindowTokens: 1_000,
+        maxOutputTokens: 100,
+        estimatedInputTokens: 400,
+        inputTokens: 400,
+        availableInputTokens: 900,
+        pressure: 400 / 900,
+        level: "ok",
+        source: "provider",
+        updatedAt: 100,
+      },
+    }, { pid: "pid-1" }).state;
+
+    expect(state.context).toMatchObject({
+      revision: 0,
+      confirmedInputTokens: 400,
+      estimatedTrailingInputTokens: 0,
+      inputBudgetTokens: 900,
+      remainingInputTokens: 500,
+    });
+  });
+
+  it("does not let a stale context signal replace a newer snapshot", () => {
+    const context = {
+      provider: "openai",
+      model: "gpt-5",
+      contextWindowTokens: 1_000,
+      maxOutputTokens: 100,
+      estimatedInputTokens: 400,
+      inputTokens: 400,
+      confirmedInputTokens: 400,
+      estimatedTrailingInputTokens: 0,
+      inputBudgetTokens: 900,
+      remainingInputTokens: 500,
+      availableInputTokens: 900,
+      pressure: 400 / 900,
+      level: "ok",
+      source: "provider",
+    };
+    let state = applyChatSignal(emptyChatRuntimeState("pid-1"), "proc.changed", {
+      pid: "pid-1",
+      changes: ["context"],
+      context: { ...context, revision: 2, updatedAt: 200 },
+    }, { pid: "pid-1" }).state;
+
+    state = applyChatSignal(state, "proc.changed", {
+      pid: "pid-1",
+      changes: ["context"],
+      context: {
+        ...context,
+        revision: 1,
+        inputTokens: 100,
+        confirmedInputTokens: 100,
+        remainingInputTokens: 800,
+        updatedAt: 300,
+      },
+    }, { pid: "pid-1" }).state;
+
+    expect(state.context).toMatchObject({
+      revision: 2,
+      inputTokens: 400,
+      remainingInputTokens: 500,
+      updatedAt: 200,
+    });
+    expect(state.contextRevision).toBe(2);
+  });
+
+  it("accepts a revisioned empty history snapshot after reset", () => {
+    const current = {
+      context: {
+        revision: 2,
+        provider: "openai",
+        model: "gpt-5",
+        contextWindowTokens: 1_000,
+        maxOutputTokens: 100,
+        estimatedInputTokens: 400,
+        inputTokens: 400,
+        confirmedInputTokens: 400,
+        estimatedTrailingInputTokens: 0,
+        inputBudgetTokens: 900,
+        remainingInputTokens: 500,
+        availableInputTokens: 900,
+        pressure: 400 / 900,
+        level: "ok" as const,
+        source: "provider" as const,
+        updatedAt: 200,
+      },
+      contextRevision: 2,
+    };
+
+    const tombstone = {
+      context: null,
+      contextRevision: 2,
+    };
+    expect(newerContextSnapshot(current, tombstone)).toEqual({
+      context: null,
+      contextRevision: 2,
+    });
+    expect(newerContextSnapshot(tombstone, current)).toBe(tombstone);
+    expect(newerContextSnapshot(current, {
+      context: null,
+      contextRevision: 1,
+    })).toBe(current);
   });
 });
 

@@ -3219,9 +3219,9 @@ describe("Process DO — mechanical", () => {
             return {
               role: "assistant",
               content: [{ type: "text", text: "done" }],
-              api: "test",
-              provider: "test",
-              model: "test",
+              api: "workers-ai-binding",
+              provider: "workers-ai",
+              model: "@cf/nvidia/nemotron-3-120b-a12b",
               usage: {
                 input: 1234,
                 output: 56,
@@ -3273,12 +3273,19 @@ describe("Process DO — mechanical", () => {
       const history = (await stub.recvFrame(makeReq("proc.history", {}))) as ResponseOkFrame;
       expect(history.ok).toBe(true);
       // SAFETY: test fixture is constructed with the asserted domain shape.
+      expect((history.data as any).contextRevision).toBe(2);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((history.data as any).context).toMatchObject({
         provider: "workers-ai",
         model: "@cf/nvidia/nemotron-3-120b-a12b",
         reasoning: "off",
         contextWindowTokens: 256000,
+        revision: 2,
         inputTokens: 1290,
+        confirmedInputTokens: 1290,
+        estimatedTrailingInputTokens: 0,
+        inputBudgetTokens: 247808,
+        remainingInputTokens: 246518,
         outputTokens: 56,
         totalTokens: 1290,
         source: "provider",
@@ -3289,8 +3296,12 @@ describe("Process DO — mechanical", () => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         .filter((entry) => entry.signal === "proc.changed" && Array.isArray((entry.payload as { changes?: unknown[] }).changes) && ((entry.payload as { changes?: unknown[] }).changes ?? []).includes("context"));
       expect(contextSignals).toHaveLength(2);
-      expect(contextSignals[0].payload.context.source).toBe("estimate");
+      expect(contextSignals[0].payload.context).toMatchObject({
+        revision: 1,
+        source: "estimate",
+      });
       expect(contextSignals[1].payload.context).toMatchObject({
+        revision: 2,
         inputTokens: 1290,
         source: "provider",
       });

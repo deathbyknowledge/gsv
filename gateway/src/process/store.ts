@@ -291,7 +291,8 @@ const usageStateSchema = z.object({
   costIncomplete: z.literal(true).optional(),
   updatedAt: z.number().nonnegative().optional(),
 });
-const contextStateSchema = z.object({
+const contextStateInputSchema = z.object({
+  revision: z.number().finite().nonnegative().transform(Math.trunc).optional().catch(undefined),
   runId: z.string().optional(),
   messageCount: z.number().int().nonnegative().optional(),
   lastMessageId: z.number().int().nonnegative().nullable().optional(),
@@ -302,14 +303,18 @@ const contextStateSchema = z.object({
   maxOutputTokens: z.number().nonnegative(),
   estimatedInputTokens: z.number().nonnegative(),
   inputTokens: z.number().nonnegative(),
+  confirmedInputTokens: optionalNonNegativeNumberSchema,
+  estimatedTrailingInputTokens: optionalNonNegativeNumberSchema,
   outputTokens: z.number().nonnegative().optional(),
   totalTokens: z.number().nonnegative().optional(),
   usage: usageStateSchema.optional(),
   historyUsage: usageStateSchema.optional(),
-  availableInputTokens: z.number().nullable(),
+  inputBudgetTokens: z.number().finite().nonnegative().nullable().optional().catch(undefined),
+  remainingInputTokens: z.number().finite().nonnegative().nullable().optional().catch(undefined),
+  availableInputTokens: z.number().finite().nonnegative().nullable(),
   pressure: z.number().nullable(),
   level: z.enum(["unknown", "ok", "warn", "critical", "full"]),
-  source: z.enum(["estimate", "provider"]),
+  source: z.enum(["estimate", "provider", "mixed"]),
   updatedAt: z.number().nonnegative(),
 });
 const providerMetadataSchema = z.object({
@@ -1397,7 +1402,7 @@ export class ProcessStore {
       return null;
     }
     try {
-      return contextStateSchema.parse(JSON.parse(raw));
+      return normalizeContextState(JSON.parse(raw));
     } catch {
       return null;
     }
@@ -1405,6 +1410,24 @@ export class ProcessStore {
 
   setContextState(state: ProcContextState): void {
     this.setValue("contextState", JSON.stringify(state));
+  }
+
+  getContextStateRevision(): number {
+    const stored = Number.parseInt(this.getValue("contextStateRevision") ?? "", 10);
+    return Math.max(
+      Number.isSafeInteger(stored) && stored >= 0 ? stored : 0,
+      this.getContextState()?.revision ?? 0,
+    );
+  }
+
+  nextContextStateRevision(): number {
+    const current = this.getContextStateRevision();
+    if (current >= Number.MAX_SAFE_INTEGER) {
+      throw new Error("Context state revision exhausted");
+    }
+    const revision = current + 1;
+    this.setValue("contextStateRevision", String(revision));
+    return revision;
   }
 
   deleteContextState(): void {
@@ -1856,6 +1879,54 @@ function normalizeModelMetadata(
   return model;
 }
 
+function normalizeContextState(value: JsonValue): ProcContextState | null {
+  const parsed = contextStateInputSchema.safeParse(value);
+  if (!parsed.success) {
+    return null;
+  }
+  const inputBudgetTokens = parsed.data.inputBudgetTokens === undefined
+    ? parsed.data.availableInputTokens
+    : parsed.data.inputBudgetTokens;
+  const remainingInputTokens = parsed.data.remainingInputTokens === undefined
+    ? inputBudgetTokens === null
+      ? null
+      : Math.max(0, inputBudgetTokens - parsed.data.inputTokens)
+    : parsed.data.remainingInputTokens;
+  const confirmedInputTokens = parsed.data.confirmedInputTokens
+    ?? (parsed.data.source === "provider" ? parsed.data.inputTokens : 0);
+  const estimatedTrailingInputTokens = parsed.data.estimatedTrailingInputTokens
+    ?? (parsed.data.source === "estimate"
+      ? parsed.data.inputTokens
+      : Math.max(0, parsed.data.inputTokens - confirmedInputTokens));
+  const state: ProcContextState = {
+    revision: parsed.data.revision ?? 0,
+    provider: parsed.data.provider,
+    model: parsed.data.model,
+    contextWindowTokens: parsed.data.contextWindowTokens,
+    maxOutputTokens: parsed.data.maxOutputTokens,
+    estimatedInputTokens: parsed.data.estimatedInputTokens,
+    inputTokens: parsed.data.inputTokens,
+    confirmedInputTokens,
+    estimatedTrailingInputTokens,
+    inputBudgetTokens,
+    remainingInputTokens,
+    availableInputTokens: inputBudgetTokens,
+    pressure: parsed.data.pressure,
+    level: parsed.data.level,
+    source: parsed.data.source,
+    updatedAt: parsed.data.updatedAt,
+  };
+  if (parsed.data.runId !== undefined) state.runId = parsed.data.runId;
+  if (parsed.data.messageCount !== undefined) state.messageCount = parsed.data.messageCount;
+  if (parsed.data.lastMessageId !== undefined) state.lastMessageId = parsed.data.lastMessageId;
+  if (parsed.data.reasoning !== undefined) state.reasoning = parsed.data.reasoning;
+  if (parsed.data.outputTokens !== undefined) state.outputTokens = parsed.data.outputTokens;
+  if (parsed.data.totalTokens !== undefined) state.totalTokens = parsed.data.totalTokens;
+  if (parsed.data.usage !== undefined) state.usage = parsed.data.usage;
+  if (parsed.data.historyUsage !== undefined) state.historyUsage = parsed.data.historyUsage;
+  return state;
+}
+
 export function normalizeUsageState(
   value: Parameters<typeof usageStateInputSchema.safeParse>[0],
 ): ProcUsageState | null {
@@ -1872,7 +1943,8 @@ export function normalizeUsageState(
     outputTokens,
     cacheReadTokens,
     cacheWriteTokens,
-    totalTokens: parsed.data.totalTokens ?? inputTokens + outputTokens,
+    totalTokens: parsed.data.totalTokens
+      ?? inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens,
     cost: normalizeUsageCost(parsed.data.cost),
   };
   if (parsed.data.generations !== undefined) usage.generations = parsed.data.generations;

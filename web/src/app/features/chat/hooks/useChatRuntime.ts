@@ -8,6 +8,7 @@ import {
   applyChatSignal,
   chatRuntimeStateFromHistory,
   emptyChatRuntimeState,
+  newerContextSnapshot,
   transcriptRowsFromHistory,
   type ChatTranscriptRow,
   type ChatRuntimeState,
@@ -48,7 +49,7 @@ function historyStateKey(state: ChatRuntimeState): string {
     state.messageCount,
     state.activeRunId ?? "",
     state.pendingHil?.requestId ?? "",
-    state.context?.updatedAt ?? "",
+    state.contextRevision,
   ].join(":");
 }
 
@@ -283,8 +284,10 @@ function mergeHistoryRuntime(
   if (currentTargetKey !== targetKey) {
     return next;
   }
+  const contextSnapshot = newerContextSnapshot(current, next);
   return {
     ...next,
+    ...contextSnapshot,
     rows: mergeTranscriptRows(current.rows, next.rows),
   };
 }
@@ -460,7 +463,6 @@ export function useChatRuntime({
       }
       setRuntime((current) => ({
         ...current,
-        context: olderHistory.context ?? current.context,
         messageCount: olderHistory.messageCount,
         rows: mergeTranscriptRows(transcriptRowsFromHistory(olderHistory), current.rows),
       }));
