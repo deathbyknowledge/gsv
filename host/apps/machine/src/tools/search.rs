@@ -7,7 +7,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use tokio_util::sync::CancellationToken;
-use walkdir::WalkDir;
+use walkdir::{DirEntry, WalkDir};
 
 const MAX_MATCHES: usize = 100;
 const MAX_SEARCH_FILES: usize = 25_000;
@@ -76,20 +76,16 @@ impl SearchTool {
         let mut scanned_bytes = 0_u64;
         let mut truncated = false;
 
-        for (scanned_files, entry) in WalkDir::new(&base_path)
-            .follow_links(false)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
-            .enumerate()
-        {
-            if cancellation.is_cancelled() {
-                return Err("Search cancelled".to_string());
-            }
+        let mut scanned_files = 0_usize;
+        for entry in WalkDir::new(&base_path).follow_links(false) {
+            let Some(entry) = cancellable_file_entry(entry, cancellation)? else {
+                continue;
+            };
             if scanned_files >= MAX_SEARCH_FILES {
                 truncated = true;
                 break;
             }
+            scanned_files += 1;
             let path = entry.path();
             if let Some(pattern) = &include_glob {
                 let file_name = path
@@ -124,6 +120,22 @@ impl SearchTool {
 
         Ok(search_output(matches, truncated))
     }
+}
+
+fn cancellable_file_entry(
+    entry: Result<DirEntry, walkdir::Error>,
+    cancellation: &CancellationToken,
+) -> Result<Option<DirEntry>, String> {
+    if cancellation.is_cancelled() {
+        return Err("Search cancelled".to_string());
+    }
+    let Ok(entry) = entry else {
+        return Ok(None);
+    };
+    if !entry.file_type().is_file() {
+        return Ok(None);
+    }
+    Ok(Some(entry))
 }
 
 struct FileSearchResult {
@@ -317,6 +329,21 @@ mod tests {
 
         assert_eq!(error, "Search cancelled");
         tokio::fs::remove_dir_all(workspace).await.unwrap();
+    }
+
+    #[test]
+    fn search_checks_cancellation_before_filtering_directories() {
+        let workspace = std::env::temp_dir().join(format!("gsv-search-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&workspace).unwrap();
+        let directory = WalkDir::new(&workspace).into_iter().next().unwrap();
+        assert!(directory.as_ref().unwrap().file_type().is_dir());
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+
+        let error = cancellable_file_entry(directory, &cancellation).unwrap_err();
+
+        assert_eq!(error, "Search cancelled");
+        fs::remove_dir_all(workspace).unwrap();
     }
 
     #[tokio::test]
