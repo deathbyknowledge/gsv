@@ -33,6 +33,7 @@ internal fun AssistantEnergyField(
     phaseSeconds: Float,
     energy: Float,
     accent: Color,
+    shapeParameters: OrbShapeParameters,
     modifier: Modifier = Modifier,
 ) {
     val assistantShader = rememberRuntimeShader(ASSISTANT_SHADER)
@@ -45,7 +46,14 @@ internal fun AssistantEnergyField(
             listeningShader != null && listeningBrush != null &&
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
         if (renderListeningOrb) {
-            configureListeningShader(listeningShader, size, phaseSeconds, energy, accent)
+            configureListeningShader(
+                shader = listeningShader,
+                size = size,
+                phaseSeconds = phaseSeconds,
+                energy = energy,
+                accent = accent,
+                shapeParameters = shapeParameters,
+            )
             drawRect(brush = listeningBrush, blendMode = BlendMode.SrcOver)
         } else if (
             assistantShader != null && assistantBrush != null &&
@@ -222,11 +230,19 @@ private fun configureListeningShader(
     phaseSeconds: Float,
     energy: Float,
     accent: Color,
+    shapeParameters: OrbShapeParameters,
 ) {
     shader.setFloatUniform("iResolution", size.width, size.height)
     shader.setFloatUniform("iTime", phaseSeconds)
     shader.setFloatUniform("iEnergy", energy.coerceIn(0f, 1f))
     shader.setFloatUniform("iAccent", accent.red, accent.green, accent.blue, 1f)
+    shader.setFloatUniform(
+        "iShape",
+        shapeParameters.organicAmount.coerceIn(0f, 1f),
+        shapeParameters.symbolPresence.coerceIn(0f, 1f),
+        shapeParameters.eyeSpacing.coerceIn(0.08f, 0.18f),
+        shapeParameters.smileCurve.coerceIn(0f, 1.4f),
+    )
 }
 
 private fun DrawScope.drawFallbackGlow(accent: Color, energy: Float, phaseSeconds: Float) {

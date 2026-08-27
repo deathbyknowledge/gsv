@@ -63,6 +63,9 @@ adb shell am start -n \
 
 Use `IDLE`, `PREPARING`, `LISTENING`, `TRANSCRIBING`, `THINKING`, `SPEAKING`,
 or `ERROR`; add `--ez overlay true` to review the compact invocation surface.
+For the debug-only interruptible shape proof, launch `LISTENING` with both
+`--ez overlay true` and `--ez morph true`, then tap the core repeatedly to
+redirect the in-progress morph between the production liquid and smile targets.
 
 Open GSV Wear. On a fresh install it walks through GSV address, username, and
 password; known URL and username values are skipped. The password is used only

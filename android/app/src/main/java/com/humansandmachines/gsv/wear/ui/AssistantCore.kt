@@ -57,6 +57,7 @@ fun AssistantCore(
     state: VoiceTurnState,
     modifier: Modifier = Modifier,
     signal: Float = 0f,
+    shapeTarget: OrbShapeTarget = OrbShapeTarget.LISTENING,
 ) {
     val transition = rememberInfiniteTransition(label = "assistant-engine")
     val phase by transition.animateFloat(
@@ -75,6 +76,7 @@ fun AssistantCore(
         animationSpec = tween(480, easing = FastOutSlowInEasing),
         label = "assistant-accent",
     )
+    val shapeParameters = rememberOrbShapeParameters(shapeTarget)
     val energy = when (state) {
         VoiceTurnState.LISTENING -> smoothedSignal
         VoiceTurnState.SPEAKING -> 0.40f + 0.24f * abs(sin(phase * 4.2f))
@@ -96,6 +98,7 @@ fun AssistantCore(
             phaseSeconds = phase,
             energy = energy,
             accent = accent,
+            shapeParameters = shapeParameters,
             modifier = Modifier.fillMaxSize(),
         )
         if (state != VoiceTurnState.LISTENING) {
@@ -132,6 +135,7 @@ fun AssistantSurface(
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
     signal: Float = 0f,
+    shapeTarget: OrbShapeTarget = OrbShapeTarget.LISTENING,
 ) {
     val transition = rememberInfiniteTransition(label = "assistant-surface")
     val phase by transition.animateFloat(
@@ -152,7 +156,12 @@ fun AssistantSurface(
         ) {
             AssistantHeader(state)
             Spacer(Modifier.weight(1f))
-            AssistantCore(state = state, signal = signal, modifier = Modifier.size(336.dp))
+            AssistantCore(
+                state = state,
+                signal = signal,
+                shapeTarget = shapeTarget,
+                modifier = Modifier.size(336.dp),
+            )
             Spacer(Modifier.height(18.dp))
             AssistantStateCopy(state, detail)
             Spacer(Modifier.weight(1f))
@@ -168,6 +177,9 @@ fun AssistantInvocationSurface(
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
     signal: Float = 0f,
+    shapeTarget: OrbShapeTarget = OrbShapeTarget.LISTENING,
+    coreActionDescription: String = "Cancel assistant",
+    coreActionLabel: String = "TAP CORE TO DISMISS",
 ) {
     Box(
         modifier = modifier.fillMaxSize(),
@@ -199,7 +211,7 @@ fun AssistantInvocationSurface(
                     .size(238.dp)
                     .semantics {
                         role = Role.Button
-                        contentDescription = "Cancel assistant"
+                        contentDescription = coreActionDescription
                     }
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
@@ -210,13 +222,14 @@ fun AssistantInvocationSurface(
                 AssistantCore(
                     state = state,
                     signal = signal,
+                    shapeTarget = shapeTarget,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
             AssistantStateCopy(state, detail, compact = true)
             Spacer(Modifier.height(12.dp))
             Text(
-                text = "TAP CORE TO DISMISS",
+                text = coreActionLabel,
                 style = GsvTextStyle.Kicker.copy(
                     color = GsvColor.MutedDark.copy(alpha = 0.86f),
                     fontSize = 8.sp,
