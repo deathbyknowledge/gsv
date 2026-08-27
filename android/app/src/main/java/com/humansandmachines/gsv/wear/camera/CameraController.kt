@@ -84,11 +84,14 @@ class CameraController(
     private val captureMutex = Mutex()
     private val cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private var provider: ProcessCameraProvider? = null
+    private var activeCapture: ImageCapture? = null
 
     override suspend fun capture(lease: AuthorityLease): CapturedSnapshot {
         return try {
             withTimeout(CAPTURE_TIMEOUT_MILLIS) {
-                captureMutex.withLock { captureWithLease(lease) }
+                captureMutex.withLock {
+                    CameraSessionArbiter.withExclusiveCamera { captureWithLease(lease) }
+                }
             }
         } catch (_: TimeoutCancellationException) {
             throw CameraCaptureFailure("Camera capture timed out")
@@ -157,12 +160,12 @@ class CameraController(
             withContext(Dispatchers.Main.immediate) {
                 val cameraProvider = awaitProvider()
                 provider = cameraProvider
-                cameraProvider.unbindAll()
                 cameraProvider.bindToLifecycle(
                     lifecycleOwner,
                     CameraSelector.DEFAULT_BACK_CAMERA,
                     imageCapture,
                 )
+                activeCapture = imageCapture
             }
             output = withContext(Dispatchers.IO) {
                 File.createTempFile("gsv-wear-snapshot-", ".jpg", context.cacheDir)
@@ -189,7 +192,8 @@ class CameraController(
         } finally {
             onState(CameraState.CLOSING)
             withContext(NonCancellable + Dispatchers.Main.immediate) {
-                provider?.unbindAll()
+                activeCapture?.let { capture -> provider?.unbind(capture) }
+                activeCapture = null
                 provider = null
             }
             if (!callerOwnsOutput) output?.delete()
@@ -267,7 +271,8 @@ class CameraController(
 
     override fun close() {
         ContextCompat.getMainExecutor(context).execute {
-            provider?.unbindAll()
+            activeCapture?.let { capture -> provider?.unbind(capture) }
+            activeCapture = null
             provider = null
             onState(CameraState.CLOSED)
         }

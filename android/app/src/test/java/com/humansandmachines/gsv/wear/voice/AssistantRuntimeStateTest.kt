@@ -32,4 +32,17 @@ class AssistantRuntimeStateTest {
         AssistantRuntimeState.setTurn(VoiceTurnState.IDLE)
         assertEquals(0f, AssistantRuntimeState.snapshot.value.level)
     }
+
+    @Test
+    fun eachActiveTurnReceivesANewStableIdentity() {
+        AssistantRuntimeState.setTurn(VoiceTurnState.PREPARING)
+        val first = AssistantRuntimeState.snapshot.value.turnId
+        AssistantRuntimeState.setTurn(VoiceTurnState.LISTENING)
+        AssistantRuntimeState.setTurn(VoiceTurnState.THINKING)
+        assertEquals(first, AssistantRuntimeState.snapshot.value.turnId)
+
+        AssistantRuntimeState.setTurn(VoiceTurnState.IDLE)
+        AssistantRuntimeState.setTurn(VoiceTurnState.PREPARING)
+        assertEquals(first + 1, AssistantRuntimeState.snapshot.value.turnId)
+    }
 }

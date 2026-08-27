@@ -7,7 +7,10 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -33,6 +36,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicText as Text
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -60,6 +65,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.humansandmachines.gsv.wear.authority.AuthorityState
 import com.humansandmachines.gsv.wear.connection.ConnectionState
+import com.humansandmachines.gsv.wear.gesture.GestureLinkState
+import com.humansandmachines.gsv.wear.gesture.GestureSnapshot
 import com.humansandmachines.gsv.wear.runtime.RuntimeSnapshot
 import com.humansandmachines.gsv.wear.voice.AssistantSnapshot
 import com.humansandmachines.gsv.wear.voice.VoiceTurnState
@@ -93,12 +100,20 @@ fun GsvControlScreen(
     onChooseAssistant: () -> Unit,
     onOpenBatterySettings: () -> Unit,
     onOpenNotificationSettings: () -> Unit,
+    gestureSnapshot: GestureSnapshot = GestureSnapshot(),
+    onMindVisibilityChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var selectedIndex by rememberSaveable { mutableIntStateOf(0) }
     var settingsVisible by rememberSaveable { mutableStateOf(false) }
     val selected = GsvSurface.entries[selectedIndex.coerceIn(GsvSurface.entries.indices)]
     BackHandler(enabled = settingsVisible) { settingsVisible = false }
+    LaunchedEffect(selected, settingsVisible) {
+        onMindVisibilityChanged(selected == GsvSurface.MIND && !settingsVisible)
+    }
+    DisposableEffect(Unit) {
+        onDispose { onMindVisibilityChanged(false) }
+    }
 
     val accent = when (selected) {
         GsvSurface.MIND -> assistantSnapshot.turn.accentColor()
@@ -119,6 +134,7 @@ fun GsvControlScreen(
             when (destination) {
                 GsvSurface.MIND -> MindSurface(
                     snapshot = assistantSnapshot,
+                    gestureSnapshot = gestureSnapshot,
                     notice = uiState.runtimeNotice,
                     noticeIsError = uiState.runtimeError,
                     onToggle = onMindToggle,
@@ -163,6 +179,7 @@ fun GsvControlScreen(
 @Composable
 private fun MindSurface(
     snapshot: AssistantSnapshot,
+    gestureSnapshot: GestureSnapshot,
     notice: String,
     noticeIsError: Boolean,
     onToggle: () -> Unit,
@@ -183,7 +200,7 @@ private fun MindSurface(
             onOpenSettings = onOpenSettings,
         )
         Spacer(Modifier.weight(1f))
-        MindCore(snapshot = snapshot, onToggle = onToggle)
+        MindCore(snapshot = snapshot, gestureSnapshot = gestureSnapshot, onToggle = onToggle)
         LiveNotice(
             text = notice,
             error = noticeIsError,
@@ -197,6 +214,7 @@ private fun MindSurface(
 @Composable
 private fun MindCore(
     snapshot: AssistantSnapshot,
+    gestureSnapshot: GestureSnapshot,
     onToggle: () -> Unit,
 ) {
     val active = snapshot.turn != VoiceTurnState.IDLE
@@ -230,11 +248,17 @@ private fun MindCore(
             ),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        AssistantCore(
-            state = snapshot.turn,
-            signal = snapshot.level,
-            modifier = Modifier.size(330.dp),
-        )
+        Box(Modifier.size(350.dp), contentAlignment = Alignment.Center) {
+            AssistantCore(
+                state = snapshot.turn,
+                signal = snapshot.level,
+                modifier = Modifier.size(330.dp),
+            )
+            MindGestureFeedback(
+                snapshot = gestureSnapshot,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
         Text(
             text = status,
             style = GsvTextStyle.Kicker.copy(
@@ -254,6 +278,45 @@ private fun MindCore(
                 textAlign = TextAlign.Center,
             ),
         )
+    }
+}
+
+@Composable
+private fun MindGestureFeedback(
+    snapshot: GestureSnapshot,
+    modifier: Modifier = Modifier,
+) {
+    val progress by animateFloatAsState(
+        targetValue = if (snapshot.state == GestureLinkState.TRACKING) snapshot.progress else 0f,
+        animationSpec = tween(100, easing = FastOutSlowInEasing),
+        label = "gesture-evidence",
+    )
+    val commit = remember { Animatable(0f) }
+    LaunchedEffect(snapshot.commitSequence) {
+        if (snapshot.commitSequence == 0L) return@LaunchedEffect
+        commit.snapTo(1f)
+        commit.animateTo(0f, tween(620, easing = FastOutSlowInEasing))
+    }
+    Canvas(modifier) {
+        val stroke = 1.dp.toPx()
+        if (progress > 0.01f) {
+            drawArc(
+                color = GsvColor.Accent.copy(alpha = 0.22f + progress * 0.62f),
+                startAngle = -90f,
+                sweepAngle = 360f * progress,
+                useCenter = false,
+                topLeft = Offset(stroke * 2f, stroke * 2f),
+                size = Size(size.width - stroke * 4f, size.height - stroke * 4f),
+                style = Stroke(width = stroke, cap = StrokeCap.Round),
+            )
+        }
+        if (commit.value > 0.01f) {
+            drawCircle(
+                color = GsvColor.AccentBright.copy(alpha = commit.value * 0.55f),
+                radius = size.minDimension * (0.46f + (1f - commit.value) * 0.05f),
+                style = Stroke(width = stroke * (0.8f + commit.value)),
+            )
+        }
     }
 }
 

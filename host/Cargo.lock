@@ -2587,6 +2587,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "gesture-android"
+version = "0.4.1"
+dependencies = [
+ "gesture-engine",
+ "jni 0.21.1",
+]
+
+[[package]]
 name = "gesture-engine"
 version = "0.4.1"
 dependencies = [

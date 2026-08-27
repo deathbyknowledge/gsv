@@ -1,0 +1,21 @@
+[package]
+name = "gesture-android"
+version.workspace = true
+edition = "2021"
+description = "Android JNI adapter for the portable GSV gesture engine"
+license = "MIT"
+repository = "https://github.com/deathbyknowledge/gsv"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+gesture-engine = { path = "../gesture-engine" }
+jni = "0.21.1"
+
+[lints.clippy]
+unwrap_used = "warn"
+panic = "warn"
+todo = "warn"
+dbg_macro = "warn"

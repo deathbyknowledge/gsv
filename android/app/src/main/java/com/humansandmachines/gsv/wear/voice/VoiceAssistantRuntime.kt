@@ -17,6 +17,8 @@ enum class VoiceTurnState {
 
 fun interface VoiceTurnOwner {
     suspend fun runVoiceTurn(captureRoute: VoiceCaptureRoute?, onState: (VoiceTurnState) -> Unit)
+
+    fun finishListening(): Boolean = false
 }
 
 interface VoiceCaptureRoute : Closeable {
@@ -83,4 +85,7 @@ object VoiceAssistantRuntime {
         activeJob?.cancel()
         activeJob = null
     }
+
+    @Synchronized
+    fun finishListeningAndSend(): Boolean = owner?.finishListening() == true
 }

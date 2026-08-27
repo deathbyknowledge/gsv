@@ -13,6 +13,7 @@ Wear Mode is either armed or disarmed.
 
 - JDK 17 or newer
 - Android SDK Platform 37 and Build Tools 36.0.0
+- Rust with the `aarch64-linux-android` target and `cargo-ndk`
 - A physical Android phone for the sensor acceptance flow
 - The hostname used to reach a GSV, such as `mine.gsv.space`
 - A GSV username and password
@@ -21,6 +22,16 @@ The app enrolls itself after password authentication. It creates a generated,
 driver-bound node identity and a separate user credential for the assistant;
 neither raw token is shown to or entered by the user. Production login requires
 `wss://`.
+
+Install the native gesture build prerequisites once:
+
+```bash
+rustup target add aarch64-linux-android
+cargo install cargo-ndk
+```
+
+Gradle then builds the arm64 JNI adapter from `host/crates/gesture-android`
+and packages the checksum-pinned models owned by `host/helpers/gestures`.
 
 For local development on a USB-connected phone, keep the password off the LAN
 and reverse the Gateway port over ADB. Debug builds then permit the loopback
@@ -91,6 +102,14 @@ launches do not ask the user to sign in again. Tap the Mind liquid to begin an
 assistant turn without arming Wear Mode. Select **Ship**, tap **Arm**, and grant
 camera, microphone, notification, nearby-device, and at least approximate
 location permission. Precise location is optional.
+
+While the Mind surface is visible, the front camera runs the portable gesture
+engine entirely on-device without a preview. No frame or landmark leaves the
+phone. Hold up one finger to start a turn, return to a fist to reset, hold up
+two fingers to send the current utterance early, or use one finger during an
+active turn to interrupt it. Leaving Mind closes the front camera; arming or
+disarming Ship does not change the Mind connection or gesture authority.
+
 For dependable screen-off reconnect behavior, open the upper-right system
 portal, use **Battery settings**, and set GSV Wear to unrestricted battery use.
 

@@ -3,6 +3,38 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val gestureHostDir = rootProject.layout.projectDirectory.dir("../host")
+val gestureModelsDir = gestureHostDir.dir("helpers/gestures/models")
+val gestureJniDir = layout.buildDirectory.dir("generated/gesture/jniLibs")
+
+val buildGestureNative by tasks.registering(Exec::class) {
+    inputs.files(
+        fileTree(gestureHostDir) {
+            include("Cargo.toml", "Cargo.lock")
+            include("crates/gesture-android/**")
+            include("crates/gesture-engine/**")
+            include("vendor/tract-tflite/**")
+            exclude("target/**")
+        },
+    )
+    outputs.dir(gestureJniDir)
+    workingDir(gestureHostDir.asFile)
+    commandLine(
+        "cargo",
+        "ndk",
+        "-t",
+        "arm64-v8a",
+        "-P",
+        "26",
+        "-o",
+        gestureJniDir.get().asFile.absolutePath,
+        "build",
+        "--package",
+        "gesture-android",
+        "--release",
+    )
+}
+
 android {
     namespace = "com.humansandmachines.gsv.wear"
     compileSdk = 37
@@ -29,10 +61,21 @@ android {
         compose = true
     }
 
+    sourceSets {
+        getByName("main") {
+            assets.directories.add(gestureModelsDir.asFile.absolutePath)
+            jniLibs.directories.add(gestureJniDir.get().asFile.absolutePath)
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(buildGestureNative)
 }
 
 dependencies {
