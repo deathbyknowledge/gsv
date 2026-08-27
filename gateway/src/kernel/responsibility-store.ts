@@ -177,6 +177,23 @@ export class ResponsibilityStore {
     return row ? recordFromRow(row) : null;
   }
 
+  listActiveByDedupeKeyPrefix(
+    ownerUid: number,
+    dedupeKeyPrefix: string,
+  ): ResponsibilityRecord[] {
+    return this.storage.sql.exec<ResponsibilityRow>(
+      `SELECT * FROM responsibilities
+       WHERE owner_uid = ?
+         AND state NOT IN ('resolved', 'cancelled')
+         AND dedupe_key IS NOT NULL
+         AND substr(dedupe_key, 1, length(?)) = ?
+       ORDER BY created_at ASC, responsibility_id ASC`,
+      ownerUid,
+      dedupeKeyPrefix,
+      dedupeKeyPrefix,
+    ).toArray().map(recordFromRow);
+  }
+
   list(input: {
     ownerUid: number;
     ids?: string[];

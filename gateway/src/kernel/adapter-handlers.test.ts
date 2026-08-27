@@ -34,6 +34,7 @@ import { PrivateAdapterDestinationStore } from "./private-adapter-destinations";
 import type { AdapterOutboundMessage } from "../adapter-interface";
 import type { SurfaceRouteRecord } from "./surface-routes";
 import type { IdentityLinkRecord } from "./identity-links";
+import type { AdapterStatusRecord } from "./adapter-status";
 
 const ensurePersonalControllerMock = vi.spyOn(personalController, "ensurePersonalController");
 const getConversationByIdMock = vi.spyOn(sharedUtils, "getConversationById");
@@ -470,8 +471,10 @@ function makeContext(
       status: {
         get: vi.fn(() => null),
         setOwner: vi.fn(),
+        markReadyForOwner: vi.fn(),
         beginLifecycle: vi.fn(),
         endLifecycle: vi.fn(),
+        isLifecycleActive: vi.fn(() => false),
         listByOwner: vi.fn(() => []),
         ...status,
       },
@@ -524,6 +527,16 @@ function makeContext(
       },
       ingressReceipts: ingressReceiptStore,
     },
+    responsibilities: {
+      create: vi.fn(() => ({ created: false })),
+      update: vi.fn(() => ({ changed: false })),
+      getByDedupeKey: vi.fn(() => null),
+      listActiveByDedupeKeyPrefix: vi.fn(() => []),
+    },
+    responsibilitySources: {
+      isEnabled: vi.fn(() => false),
+    },
+    reconcileResponsibilityWake: vi.fn(async () => undefined),
     runRoutes: {
       setAdapterRoute: vi.fn(),
       get: vi.fn(() => options.runRoute ?? null),
@@ -608,7 +621,7 @@ describe("adapter lifecycle handlers", () => {
     }));
   });
 
-  it("notifies root and linked users when adapter state changes", () => {
+  it("notifies root and linked users when adapter state changes", async () => {
     const status = {
       upsert: vi.fn(() => ({ ownerUid: 1000 })),
     };
@@ -621,7 +634,7 @@ describe("adapter lifecycle handlers", () => {
       },
     });
 
-    handleAdapterStateUpdate({
+    await handleAdapterStateUpdate({
       adapter: "WhatsApp",
       accountId: "primary",
       status: {
@@ -647,6 +660,57 @@ describe("adapter lifecycle handlers", () => {
       adapter: "whatsapp",
       accountId: "primary",
     });
+  });
+
+  it("turns an autonomous authentication loss into Ship work", async () => {
+    let stored = {
+      adapter: "whatsapp",
+      accountId: "primary",
+      connected: true,
+      authenticated: true,
+      lifecycleId: "adapter-account:test",
+      readyOwnerUid: 1000,
+      ownerUid: 1000,
+      updatedAt: 1,
+    };
+    const status = {
+      get: vi.fn(() => stored),
+      upsert: vi.fn((_adapter, _accountId, next) => {
+        stored = {
+          ...stored,
+          ...next,
+          adapter: "whatsapp",
+          ownerUid: 1000,
+          updatedAt: 2,
+        };
+        return stored;
+      }),
+    };
+    const ctx = makeContext({}, status);
+    vi.mocked(ctx.responsibilitySources.isEnabled).mockReturnValue(true);
+    // SAFETY: the handler reads only the created flag from this responsibility outcome.
+    vi.mocked(ctx.responsibilities.create).mockReturnValue({
+      created: true,
+    } as ReturnType<KernelContext["responsibilities"]["create"]>);
+
+    await handleAdapterStateUpdate({
+      adapter: "WhatsApp",
+      accountId: "primary",
+      status: {
+        accountId: "primary",
+        connected: false,
+        authenticated: false,
+      },
+    }, ctx);
+
+    expect(ctx.responsibilities.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ownerUid: 1000,
+        priority: "high",
+        source: expect.objectContaining({ eventType: "adapter.auth_required" }),
+      }),
+    );
+    expect(ctx.reconcileResponsibilityWake).toHaveBeenCalledWith(1000);
   });
 
   it("adapter.list discovers deployed adapter bindings and cached accounts", async () => {
@@ -1110,6 +1174,45 @@ describe("adapter lifecycle handlers", () => {
       JSON.stringify({ component: "adapter", event: "status_invalid_response" }),
     );
     errorLog.mockRestore();
+  });
+
+  it("keeps cached authentication state when the live status query fails", async () => {
+    const cached = {
+      adapter: "telegram",
+      accountId: "primary",
+      connected: true,
+      authenticated: true,
+      mode: "webhook",
+      lastActivity: 123,
+      error: null,
+      extra: null,
+      updatedAt: 456,
+    };
+    const status = {
+      upsert: vi.fn(),
+      list: vi.fn(() => [cached]),
+      listAll: vi.fn(() => [cached]),
+    };
+    const ctx = makeContext({
+      CHANNEL_TELEGRAM: {
+        adapterStatus: vi.fn(async () => {
+          throw new Error("temporary account RPC failure");
+        }),
+      },
+    }, status, { identity: userIdentity(0) });
+
+    const result = await handleAdapterStatus(
+      { adapter: "telegram", accountId: "primary" },
+      ctx,
+    );
+
+    expect(status.upsert).not.toHaveBeenCalled();
+    expect(ctx.responsibilities.create).not.toHaveBeenCalled();
+    expect(result.accounts).toEqual([expect.objectContaining({
+      accountId: "primary",
+      connected: true,
+      authenticated: true,
+    })]);
   });
 
   it("adapter.status uses owning human links for agent process callers", async () => {
@@ -1589,6 +1692,63 @@ describe("adapter lifecycle handlers", () => {
     expect(adapterDisconnect).toHaveBeenCalledTimes(1);
     expect(beginLifecycle).toHaveBeenCalledTimes(1);
     expect(endLifecycle).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels authentication recovery after an owned adapter disconnect", async () => {
+    let stored: AdapterStatusRecord = {
+      adapter: "whatsapp",
+      accountId: "default",
+      connected: false,
+      authenticated: false,
+      lifecycleId: "adapter-account:owned-disconnect",
+      readyOwnerUid: 1000,
+      ownerUid: 1000,
+      updatedAt: 1,
+    };
+    const status = {
+      get: vi.fn(() => stored),
+      upsert: vi.fn((adapter: string, accountId: string, next) => {
+        stored = {
+          ...stored,
+          ...next,
+          adapter,
+          accountId,
+          updatedAt: stored.updatedAt + 1,
+        };
+        return stored;
+      }),
+      beginLifecycle: vi.fn(),
+      endLifecycle: vi.fn(),
+    };
+    const ctx = makeContext({
+      CHANNEL_WHATSAPP: {
+        adapterDisconnect: vi.fn(async () => ({ ok: true as const })),
+      },
+    }, status, { identity: userIdentity() });
+    vi.mocked(ctx.responsibilities.listActiveByDedupeKeyPrefix).mockReturnValue([
+      // SAFETY: the lifecycle helper reads only the responsibility identity from this fixture.
+      { id: "r12y:authentication" } as ReturnType<
+        KernelContext["responsibilities"]["listActiveByDedupeKeyPrefix"]
+      >[number],
+    ]);
+    // SAFETY: the lifecycle helper reads only the changed flag from this update result.
+    vi.mocked(ctx.responsibilities.update).mockReturnValue({
+      changed: true,
+    } as ReturnType<KernelContext["responsibilities"]["update"]>);
+
+    await expect(handleAdapterDisconnect({
+      adapter: "whatsapp",
+      accountId: "default",
+    }, ctx)).resolves.toMatchObject({ ok: true });
+
+    expect(ctx.responsibilities.update).toHaveBeenCalledWith(expect.objectContaining({
+      ownerUid: 1000,
+      id: "r12y:authentication",
+      patch: expect.objectContaining({
+        state: "cancelled",
+        resolution: expect.objectContaining({ eventType: "adapter.disconnected" }),
+      }),
+    }));
   });
 
   it("rejects malformed disconnect results without exposing worker data", async () => {
@@ -4841,6 +5001,88 @@ describe("managed adapter pairing", () => {
       }),
     );
     expect(identityLinks.unlink).toHaveBeenCalledWith("telegram", "managed", "12345");
+  });
+
+  it("cancels authentication recovery when the last managed link disconnects", async () => {
+    const service = pairingService();
+    const link: IdentityLinkRecord = {
+      adapter: "telegram",
+      accountId: "managed",
+      actorId: "12345",
+      uid: 1000,
+      linkedByUid: 1000,
+      metadata: {
+        managed: true,
+        surfaceKind: "dm",
+        surfaceId: "12345",
+        routeGeneration: "generation-new",
+      },
+      createdAt: 1,
+    };
+    let currentLink: IdentityLinkRecord | null = link;
+    const identityLinks = {
+      get: vi.fn(() => currentLink),
+      unlink: vi.fn(() => {
+        currentLink = null;
+        return true;
+      }),
+      listByAccount: vi.fn(() => currentLink ? [currentLink] : []),
+    };
+    let stored: AdapterStatusRecord = {
+      adapter: "telegram",
+      accountId: "managed",
+      connected: false,
+      authenticated: false,
+      lifecycleId: "adapter-account:managed-disconnect",
+      readyOwnerUid: 1000,
+      ownerUid: 1000,
+      updatedAt: 1,
+    };
+    const status = {
+      get: vi.fn(() => stored),
+      upsert: vi.fn((adapter: string, accountId: string, next) => {
+        stored = {
+          ...stored,
+          ...next,
+          adapter,
+          accountId,
+          updatedAt: stored.updatedAt + 1,
+        };
+        return stored;
+      }),
+      beginLifecycle: vi.fn(),
+      endLifecycle: vi.fn(),
+    };
+    const ctx = makeContext(
+      { CHANNEL_TELEGRAM: service },
+      status,
+      directUserOptions({ identityLinks }),
+    );
+    vi.mocked(ctx.responsibilities.listActiveByDedupeKeyPrefix).mockReturnValue([
+      // SAFETY: the lifecycle helper reads only the responsibility identity from this fixture.
+      { id: "r12y:managed-authentication" } as ReturnType<
+        KernelContext["responsibilities"]["listActiveByDedupeKeyPrefix"]
+      >[number],
+    ]);
+    // SAFETY: the lifecycle helper reads only the changed flag from this update result.
+    vi.mocked(ctx.responsibilities.update).mockReturnValue({
+      changed: true,
+    } as ReturnType<KernelContext["responsibilities"]["update"]>);
+
+    await expect(handleAdapterPairDisconnect({
+      adapter: "telegram",
+      accountId: "managed",
+      actorId: "12345",
+    }, ctx)).resolves.toMatchObject({ disconnected: true });
+
+    expect(ctx.responsibilities.update).toHaveBeenCalledWith(expect.objectContaining({
+      ownerUid: 1000,
+      id: "r12y:managed-authentication",
+      patch: expect.objectContaining({
+        state: "cancelled",
+        resolution: expect.objectContaining({ eventType: "adapter.disconnected" }),
+      }),
+    }));
   });
 
   it("never exposes pairing to agents, background processes, root, or standalone", async () => {

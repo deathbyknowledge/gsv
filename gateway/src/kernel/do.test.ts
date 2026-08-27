@@ -119,6 +119,57 @@ describe("Kernel responsibility wakes", () => {
   });
 });
 
+describe("Kernel service peer identity", () => {
+  it("rejects an adapter frame that claims another binding identity", async () => {
+    // SAFETY: this fixture isolates the service-frame admission boundary on Kernel.
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.managedWorkGate = vi.fn(async () => ({ allowed: true }));
+    kernel.buildServiceBindingIdentity = vi.fn(() => ({
+      role: "service",
+      process: {
+        uid: 0,
+        gid: 0,
+        gids: [0, 102],
+        username: "root",
+        home: "/root",
+        cwd: "/root",
+      },
+      capabilities: ["adapter.state.update"],
+      channel: "telegram",
+    }));
+    kernel.dispatchPeerRequest = vi.fn();
+
+    const response = await kernel.peerFrame(
+      { id: "telegram", calls: ["adapter.state.update"] },
+      {
+        type: "req",
+        id: "cross-adapter-state",
+        call: "adapter.state.update",
+        args: {
+          adapter: "whatsapp",
+          accountId: "primary",
+          status: {
+            accountId: "primary",
+            connected: false,
+            authenticated: false,
+          },
+        },
+      },
+    );
+
+    expect(response).toMatchObject({
+      type: "res",
+      id: "cross-adapter-state",
+      ok: false,
+      error: {
+        code: 403,
+        message: "Service peer cannot act as another adapter",
+      },
+    });
+    expect(kernel.dispatchPeerRequest).not.toHaveBeenCalled();
+  });
+});
+
 function connectedPeer(
   kind: "human" | "machine" | "service",
   id: string,

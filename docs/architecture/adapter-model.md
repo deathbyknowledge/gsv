@@ -106,6 +106,11 @@ binding. A descriptor must agree with that identity and cannot grant its Worker
 additional authority. Adding an adapter therefore extends deployment metadata
 and provider code rather than a Kernel enum.
 
+A successful `adapterStatus` result is an authoritative account observation. If
+the account RPC itself fails, the adapter propagates that failure instead of
+synthesizing a disconnected or unauthenticated status; the Gateway retains its
+last known state. Autonomous provider state changes use `adapter.state.update`.
+
 Every call in either direction begins with a validated installation context.
 The Kernel supplies that context from its durable installation identity; it is
 not read from adapter message arguments or a public request. First-party
@@ -400,6 +405,12 @@ the one-per-owner last-active private adapter destination. Its timestamp-aware
 upsert prevents an older provider replay from replacing newer private activity,
 and future timestamps are clamped to receipt time so they cannot freeze the
 pointer. Every fallback still rechecks the live identity link before delivery.
+
+V035 gives each adapter account an opaque lifecycle identity and records the owner
+for whom that account has already been observed connected and authenticated. The
+migration backfills this owner-scoped readiness for existing ready human-owned
+accounts, so a transport-only reconnect after upgrade cannot look like a newly
+connected account.
 
 ## Platform-specific quirks stay inside the adapter
 

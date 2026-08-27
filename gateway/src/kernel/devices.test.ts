@@ -19,6 +19,7 @@ describe("DeviceRegistry", () => {
       "0.1.0",
     );
     expect(result.ok).toBe(true);
+    if (result.ok) expect(result.created).toBe(true);
 
     const device = registry.get("macbook");
     expect(device).not.toBeNull();
@@ -54,7 +55,7 @@ describe("DeviceRegistry", () => {
       const device = registry.get("server");
       expect(device!.online).toBe(false);
 
-      registry.register(
+      const reconnected = registry.register(
         "server",
         1000,
         1000,
@@ -62,6 +63,7 @@ describe("DeviceRegistry", () => {
         "linux",
         "0.2.0",
       );
+      expect(reconnected).toMatchObject({ ok: true, created: false });
       const updated = registry.get("server");
       expect(updated!.online).toBe(true);
       expect(updated!.version).toBe("0.2.0");

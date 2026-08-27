@@ -251,9 +251,11 @@ and each enabled Ship schedule must produce its due responsibility. These rows a
 Kernel-defined runtime guarantees rather than user-configurable automation.
 
 Configurable sources are Kernel-defined producers with per-owner enablement
-policies. `mail.received` is enabled by default. Disabling it does not discard
-mail: mailbox ingestion and classification still complete, but no responsibility
-is created and Ship is not woken for that message.
+policies. Incoming mail, federation ingress, new contacts, new machines,
+connected adapters, and adapter authentication loss are enabled by default.
+Disabling a source does not discard its underlying state: the owning subsystem
+still records the event, but no responsibility is created and Ship is not woken
+for it.
 
 Recurring custom responsibilities are ordinary `every` or `cron` schedules whose
 target is `responsibility`. The Web responsibilities workspace presents three

@@ -126,6 +126,6 @@ export default defineConfig({
     }),
   ],
   test: {
-    include: ["test/managed-flow.test.ts"],
+    include: ["test/managed-flow.test.ts", "test/status-query.test.ts"],
   },
 });

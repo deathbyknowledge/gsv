@@ -4,12 +4,14 @@ import { adapterMetadataSchema } from "@humansandmachines/gsv/protocol";
 
 export type AdapterStatusRecord = AdapterAccountStatus & {
   adapter: string;
+  lifecycleId: string;
+  readyOwnerUid: number | null;
   ownerUid: number | null;
   updatedAt: number;
 };
 
 const STATUS_COLUMNS = `adapter, account_id, connected, authenticated, mode,
-  last_activity, error, extra_json, owner_uid, updated_at`;
+  last_activity, error, extra_json, lifecycle_id, ready_owner_uid, owner_uid, updated_at`;
 
 export class AdapterStatusStore {
   private readonly activeLifecycles = new Set<string>();
@@ -18,10 +20,12 @@ export class AdapterStatusStore {
 
   upsert(adapter: string, accountId: string, status: AdapterAccountStatus): AdapterStatusRecord {
     const now = Date.now();
+    const lifecycleId = `adapter-account:${crypto.randomUUID()}`;
     const rows = this.sql.exec<AdapterStatusRow>(
       `INSERT INTO adapter_status
-       (adapter, account_id, connected, authenticated, mode, last_activity, error, extra_json, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (adapter, account_id, connected, authenticated, mode, last_activity, error,
+        extra_json, lifecycle_id, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(adapter, account_id) DO UPDATE SET
          connected = excluded.connected,
          authenticated = excluded.authenticated,
@@ -29,6 +33,7 @@ export class AdapterStatusStore {
          last_activity = excluded.last_activity,
          error = excluded.error,
          extra_json = excluded.extra_json,
+         lifecycle_id = COALESCE(adapter_status.lifecycle_id, excluded.lifecycle_id),
          updated_at = excluded.updated_at
        RETURNING ${STATUS_COLUMNS}`,
       adapter,
@@ -39,6 +44,7 @@ export class AdapterStatusStore {
       status.lastActivity ?? null,
       status.error ?? null,
       status.extra ? JSON.stringify(status.extra) : null,
+      lifecycleId,
       now,
     ).toArray();
     return toRecord(rows[0]);
@@ -57,16 +63,36 @@ export class AdapterStatusStore {
   }
 
   setOwner(adapter: string, accountId: string, ownerUid: number): void {
+    const lifecycleId = `adapter-account:${crypto.randomUUID()}`;
     this.sql.exec(
       `INSERT INTO adapter_status
-       (adapter, account_id, connected, authenticated, owner_uid, updated_at)
-       VALUES (?, ?, 0, 0, ?, ?)
-       ON CONFLICT(adapter, account_id) DO UPDATE SET owner_uid = excluded.owner_uid`,
+       (adapter, account_id, connected, authenticated, lifecycle_id, owner_uid, updated_at)
+       VALUES (?, ?, 0, 0, ?, ?, ?)
+       ON CONFLICT(adapter, account_id) DO UPDATE SET
+         lifecycle_id = COALESCE(adapter_status.lifecycle_id, excluded.lifecycle_id),
+         owner_uid = excluded.owner_uid`,
       adapter,
       accountId,
+      lifecycleId,
       ownerUid,
       Date.now(),
     );
+  }
+
+  markReadyForOwner(adapter: string, accountId: string, ownerUid: number): void {
+    const cursor = this.sql.exec(
+      `UPDATE adapter_status
+       SET ready_owner_uid = ?
+       WHERE adapter = ? AND account_id = ? AND owner_uid = ?
+         AND connected = 1 AND authenticated = 1`,
+      ownerUid,
+      adapter,
+      accountId,
+      ownerUid,
+    );
+    if (cursor.rowsWritten !== 1) {
+      throw new Error(`Adapter account ${adapter}/${accountId} readiness changed`);
+    }
   }
 
   beginLifecycle(adapter: string, accountId: string): void {
@@ -79,6 +105,10 @@ export class AdapterStatusStore {
 
   endLifecycle(adapter: string, accountId: string): void {
     this.activeLifecycles.delete(`${adapter}\0${accountId}`);
+  }
+
+  isLifecycleActive(adapter: string, accountId: string): boolean {
+    return this.activeLifecycles.has(`${adapter}\0${accountId}`);
   }
 
   listByOwner(ownerUid: number): AdapterStatusRecord[] {
@@ -130,13 +160,18 @@ type AdapterStatusRow = {
   last_activity: number | null;
   error: string | null;
   extra_json: string | null;
+  lifecycle_id: string | null;
+  ready_owner_uid: number | null;
   owner_uid: number | null;
   updated_at: number;
 };
 
 function toRecord(row: AdapterStatusRow): AdapterStatusRecord {
+  if (!row.lifecycle_id) throw new Error("Adapter status is missing its lifecycle identity");
   return {
     adapter: row.adapter,
+    lifecycleId: row.lifecycle_id,
+    readyOwnerUid: row.ready_owner_uid,
     accountId: row.account_id,
     connected: row.connected === 1,
     authenticated: row.authenticated === 1,

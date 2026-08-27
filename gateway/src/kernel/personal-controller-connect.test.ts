@@ -125,4 +125,72 @@ describe("Kernel personal controller connect lifecycle", () => {
     expect(kernel.activateConnection).not.toHaveBeenCalled();
     expect(kernel.sendOk).not.toHaveBeenCalled();
   });
+
+  it("records a first machine registration as Ship work before accepting it", async () => {
+    const machine = {
+      device_id: "workstation",
+      owner_uid: 1000,
+      label: "Workstation",
+      description: "",
+      implements: ["shell.exec"],
+      platform: "linux",
+      version: "test",
+      online: true,
+      first_seen_at: 1_700_000_000_000,
+      last_seen_at: 1_700_000_000_000,
+      connected_at: 1_700_000_000_000,
+      disconnected_at: null,
+    };
+    const peer = {
+      id: machine.device_id,
+      sessionId: "connection-1",
+      principal: { kind: "machine" as const, account: PROCESS_IDENTITY },
+      grant: { calls: [], signals: ["device.status"], implements: ["shell.exec"] },
+    };
+    handleConnectMock.mockResolvedValueOnce({
+      ok: true,
+      peer,
+      newMachine: machine,
+      result: {
+        protocol: 3,
+        server: {
+          version: "test",
+          release: "dev",
+          connectionId: "connection-1",
+        },
+        peer,
+      },
+    });
+
+    const create = vi.fn(() => ({ created: true }));
+    const ctx = {
+      auth: { isPersonalAgentUid: vi.fn(() => false) },
+      responsibilitySources: { isEnabled: vi.fn(() => true) },
+      responsibilities: { create },
+      reconcileResponsibilityWake: vi.fn(async () => undefined),
+      defer: vi.fn((promise: Promise<unknown>) => {
+        void promise;
+      }),
+    };
+    const connection = { id: "connection-1", setState: vi.fn() };
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.buildContext = vi.fn(() => ctx);
+    kernel.activateConnection = vi.fn();
+    kernel.broadcastDeviceStatus = vi.fn();
+    kernel.reconcileOwnedIdentities = vi.fn();
+    kernel.sendOk = vi.fn();
+    kernel.sendError = vi.fn();
+
+    await kernel.handleSysConnect(connection, connectFrame());
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      ownerUid: 1000,
+      dedupeKey: expect.stringMatching(/^machine\.added:machine-added:[0-9a-f]{64}$/),
+      source: expect.objectContaining({ eventType: "machine.added" }),
+    }));
+    expect(ctx.reconcileResponsibilityWake).toHaveBeenCalledWith(1000);
+    expect(kernel.activateConnection).toHaveBeenCalledOnce();
+    expect(kernel.sendOk).toHaveBeenCalledOnce();
+  });
 });

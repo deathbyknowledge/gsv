@@ -21,6 +21,7 @@ import type {
 import type { CapabilityStore } from "./capabilities";
 import { isValidCapability } from "./capabilities";
 import type { KernelContext } from "./context";
+import type { DeviceRecord } from "./devices";
 import { SERVER_RELEASE } from "../version";
 import { ensureAccountHomeLayout } from "./account-home";
 import { ensurePublicAssetStorageLayout } from "../public-assets";
@@ -32,6 +33,7 @@ export type ConnectOutcome =
       ok: true;
       peer: ConnectedPeer;
       result: ConnectResult;
+      newMachine?: DeviceRecord;
     }
   | { ok: false; code: number; message: string; details?: JsonValue };
 
@@ -144,6 +146,7 @@ export async function handleConnect(
 
   const capabilities = resolvePeerCalls(principalKind, identity, caps);
   const signals = buildSignalList(principalKind);
+  let newMachine: DeviceRecord | undefined;
 
   if (implementsList.length > 0) {
     const registered = devices.register(
@@ -155,7 +158,10 @@ export async function handleConnect(
       args.peer.version,
     );
     if (!registered.ok) {
-      return { ok: false, code: 103, message: registered.error! };
+      return { ok: false, code: 103, message: registered.error };
+    }
+    if (principalKind === "machine" && registered.created) {
+      newMachine = registered.device;
     }
   }
 
@@ -184,7 +190,7 @@ export async function handleConnect(
     result.server.features = serverFeatures;
   }
 
-  return { ok: true, peer, result };
+  return { ok: true, peer, result, ...(newMachine ? { newMachine } : undefined) };
 }
 
 type PeerAuthenticationOutcome =

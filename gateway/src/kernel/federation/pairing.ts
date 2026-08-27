@@ -7,28 +7,36 @@ import type {
   FederationPairingAttemptRecord,
   FederationStore,
 } from "../federation-store";
+import {
+  recordContactAddedResponsibility,
+  type ContactInviteDirection,
+} from "../lifecycle-responsibilities";
 import { cancelRequestResponsibilities } from "./requests";
 
 export function activateFederationContact(
-  input: Parameters<FederationStore["activateContact"]>[0],
+  input: Parameters<FederationStore["activateContact"]>[0] & {
+    inviteDirection: ContactInviteDirection;
+  },
   ctx: KernelContext,
 ): FederationContactRecord {
+  const { inviteDirection, ...activation } = input;
   const existing = ctx.federation.getByRemote(
-    input.ownerUid,
-    input.remoteShipId,
-    input.remoteSubject.id,
+    activation.ownerUid,
+    activation.remoteShipId,
+    activation.remoteSubject.id,
   );
-  const superseded = existing && existing.generation !== input.generation
-    ? ctx.federation.listRequests(input.ownerUid, existing.id)
+  const superseded = existing && existing.generation !== activation.generation
+    ? ctx.federation.listRequests(activation.ownerUid, existing.id)
     : [];
-  const contact = ctx.federation.activateContact(input);
+  const contact = ctx.federation.activateContact(activation);
   cancelRequestResponsibilities(
-    input.ownerUid,
+    activation.ownerUid,
     superseded,
     "contact-generation-changed",
-    input.now ?? Date.now(),
+    activation.now ?? Date.now(),
     ctx,
   );
+  recordContactAddedResponsibility(contact, inviteDirection, ctx);
   return contact;
 }
 

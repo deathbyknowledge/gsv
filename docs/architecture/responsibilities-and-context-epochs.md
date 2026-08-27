@@ -176,6 +176,20 @@ System-owned producers use the same ledger contract:
   immutable message id. The title contains no sender-controlled text. Bounded summary
   metadata is marked untrusted and is available only when the Ship inspects the record;
   exact content stays in the mailbox.
+- Activating either side of a contact invite creates one generation-scoped
+  `contact.added` responsibility. It asks Ship to learn about the contact and preserve
+  useful context in the owner's existing knowledge system without assuming a specific
+  wiki or inventing missing facts. Acceptance retries return the same responsibility;
+  pairing again after revocation creates another for the new generation.
+- The first registration of a physical machine creates one `machine.added`
+  responsibility. Browser-backed targets and later reconnects do not create another.
+- An owned messaging account first becoming connected and authenticated creates one
+  `adapter.connected` responsibility. A later authentication loss creates a recurring,
+  deduplicated `adapter.auth_required` responsibility that resolves automatically when
+  authentication returns. The adapter status persists which owner has already observed
+  readiness, and upgrades backfill ready owned accounts, so transport-only reconnects
+  do not create new-account work. An intentional disconnect cancels obsolete recovery
+  work instead of leaving Ship responsible for reconnecting it.
 - A Ship-directed schedule occurrence creates one `schedule.due` responsibility keyed
   by schedule id and occurrence id. Replaying the occurrence returns the same record.
   Schedules explicitly bound to an adapter reply route retain that transport event so

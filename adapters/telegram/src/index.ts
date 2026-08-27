@@ -159,7 +159,13 @@ export class TelegramChannel
       };
     }
 
-    const [status] = await this.#adapterStatusForInstallation(installation, accountId);
+    let status: AdapterAccountStatus | undefined;
+    try {
+      [status] = await this.#adapterStatusForInstallation(installation, accountId);
+    } catch {
+      // start() completed authoritatively; the Gateway will preserve cached state
+      // if its best-effort follow-up status query also fails.
+    }
     return {
       ok: true,
       connected: status?.connected ?? true,
@@ -225,20 +231,8 @@ export class TelegramChannel
       return [];
     }
 
-    try {
-      const { account } = this.getAccountDO(parsedInstallation, accountId);
-      return [await account.getStatus()];
-    } catch (error) {
-      return [
-        {
-          accountId,
-          connected: false,
-          authenticated: false,
-          mode: "webhook",
-          error: error instanceof Error ? error.message : String(error),
-        },
-      ];
-    }
+    const { account } = this.getAccountDO(parsedInstallation, accountId);
+    return [await account.getStatus()];
   }
 
   async adapterSend(

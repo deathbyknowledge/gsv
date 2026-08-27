@@ -447,6 +447,7 @@ export async function handleContactInviteAccept(
     );
     const activated = activateFederationContact({
       ownerUid,
+      inviteDirection: "incoming",
       generation: accepted.generation,
       remoteShipId: accepted.document.shipId,
       remoteSubject: accepted.subject,
@@ -1364,6 +1365,7 @@ async function acceptRemoteInvite(
     );
     const activated = activateFederationContact({
       ownerUid: currentInvite.ownerUid,
+      inviteDirection: "outgoing",
       generation,
       remoteShipId: input.document.shipId,
       remoteSubject,

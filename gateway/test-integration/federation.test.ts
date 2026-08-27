@@ -98,9 +98,58 @@ describe("cross-GSV federation integration", () => {
       second.contact.invite.accept({ code: invite.code }),
     ]);
     expect(acceptanceReplay.contact).toEqual(accepted.contact);
+    const [initialInviterResponsibilities, initialAccepterResponsibilities] = await Promise.all([
+      contactAddedResponsibilities(first),
+      contactAddedResponsibilities(second),
+    ]);
+    expect(initialInviterResponsibilities).toEqual([
+      expect.objectContaining({
+        details: expect.objectContaining({
+          eventType: "contact.added",
+          contactGeneration: accepted.contact.generation,
+          displayName: SECOND_USER,
+          inviteDirection: "outgoing",
+          contentTrust: "untrusted",
+        }),
+      }),
+    ]);
+    expect(initialAccepterResponsibilities).toEqual([
+      expect.objectContaining({
+        details: expect.objectContaining({
+          eventType: "contact.added",
+          contactGeneration: accepted.contact.generation,
+          displayName: FIRST_USER,
+          inviteDirection: "incoming",
+          contentTrust: "untrusted",
+        }),
+      }),
+    ]);
     const replacementInvite = await first.contact.invite.create({ expiresInSeconds: 300 });
     const replacement = await second.contact.invite.accept({ code: replacementInvite.code });
     expect(replacement.contact.generation).not.toBe(accepted.contact.generation);
+    const [replacementInviterResponsibilities, replacementAccepterResponsibilities] =
+      await Promise.all([
+        contactAddedResponsibilities(first),
+        contactAddedResponsibilities(second),
+      ]);
+    expect(replacementInviterResponsibilities).toHaveLength(2);
+    expect(replacementInviterResponsibilities).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        details: expect.objectContaining({
+          contactGeneration: replacement.contact.generation,
+          inviteDirection: "outgoing",
+        }),
+      }),
+    ]));
+    expect(replacementAccepterResponsibilities).toHaveLength(2);
+    expect(replacementAccepterResponsibilities).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        details: expect.objectContaining({
+          contactGeneration: replacement.contact.generation,
+          inviteDirection: "incoming",
+        }),
+      }),
+    ]));
     await expect(second.contact.invite.accept({ code: invite.code }))
       .rejects.toThrow("pairing attempt was superseded");
     const currentContacts = await second.contact.list({});
@@ -388,6 +437,14 @@ async function waitForRequest(
       && (!expected.state || request.state === expected.state)
     )) ?? null;
   }, `contact request ${JSON.stringify(expected)}`);
+}
+
+async function contactAddedResponsibilities(client: GSVClient) {
+  const listed = await client.r12y.list({ includeTerminal: true, limit: 500 });
+  return listed.responsibilities.filter((responsibility) => (
+    responsibility.source.kind === "event"
+    && responsibility.source.eventType === "contact.added"
+  ));
 }
 
 async function readBody(body: GsvBody | undefined): Promise<Uint8Array> {

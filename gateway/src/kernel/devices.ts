@@ -37,7 +37,9 @@ type RawDeviceRow = Omit<DeviceRecord, "implements" | "online" | "label" | "desc
   label?: string | null;
   description?: string | null;
 };
-type DeviceMutationResult = { ok: boolean; error?: string };
+type DeviceMutationResult =
+  | { ok: true; created: boolean; device: DeviceRecord }
+  | { ok: false; error: string };
 
 export class DeviceRegistry {
   constructor(private sql: SqlStorage) { }
@@ -110,7 +112,9 @@ export class DeviceRegistry {
       );
     }
 
-    return { ok: true };
+    const device = this.get(deviceId);
+    if (!device) throw new Error(`Device registration disappeared: ${deviceId}`);
+    return { ok: true, created: existing === null, device };
   }
 
   setOnline(deviceId: string, online: boolean): void {

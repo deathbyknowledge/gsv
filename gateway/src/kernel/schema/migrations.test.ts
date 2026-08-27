@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(34);
+    expect(KERNEL_MIGRATIONS).toHaveLength(35);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -163,6 +163,14 @@ describe("kernel schema migrations", () => {
     expect(KERNEL_MIGRATIONS[32]).toMatchObject({
       id: 33,
       name: "add_federation",
+    });
+    expect(KERNEL_MIGRATIONS[33]).toMatchObject({
+      id: 34,
+      name: "add_process_approval_routes",
+    });
+    expect(KERNEL_MIGRATIONS[34]).toMatchObject({
+      id: 35,
+      name: "add_adapter_lifecycle_ids",
     });
   });
 
@@ -442,6 +450,23 @@ describe("kernel schema migrations", () => {
       "UPDATE adapter_status SET owner_uid = COALESCE( ( SELECT CASE WHEN COUNT(DISTINCT identity_links.uid) = 1 THEN MIN(identity_links.uid) END FROM identity_links WHERE identity_links.adapter = adapter_status.adapter AND identity_links.account_id = adapter_status.account_id ), 0 )",
     );
     expect(createTableStatement("adapter_status")).not.toContain("owner_uid");
+  });
+
+  it("assigns opaque lifecycle identities to adapter accounts", () => {
+    const statements = normalizedStatements();
+    expect(statements).toContain(
+      "ALTER TABLE adapter_status ADD COLUMN lifecycle_id TEXT",
+    );
+    expect(statements).toContain(
+      "UPDATE adapter_status SET lifecycle_id = 'adapter-account:' || LOWER(HEX(randomblob(16))) WHERE lifecycle_id IS NULL",
+    );
+    expect(statements).toContain(
+      "ALTER TABLE adapter_status ADD COLUMN ready_owner_uid INTEGER",
+    );
+    expect(statements).toContain(
+      "UPDATE adapter_status SET ready_owner_uid = owner_uid WHERE connected = 1 AND authenticated = 1 AND owner_uid >= 1000 AND NOT EXISTS ( SELECT 1 FROM personal_agents WHERE personal_agents.agent_uid = adapter_status.owner_uid )",
+    );
+    expect(createdIndexes()).toContain("idx_adapter_status_lifecycle_id");
   });
 
   it("adds run correlation and retires legacy IPC calls", () => {

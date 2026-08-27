@@ -385,6 +385,13 @@ not overload direct contacts.
 
 ## Responsibilities
 
+Each successful pairing creates one local `contact.added` responsibility on both
+Ships, keyed by the local contact id and contact generation. It gives the local
+intelligence durable work to learn who the contact is and preserve useful verified
+context in the owner's existing knowledge system. Exact acceptance replays return the
+same record, while pairing again after revocation creates a new generation-scoped
+responsibility.
+
 An inbound message creates one delivery-scoped Kernel responsibility for the
 local subject. A structured request has at most one stable responsibility for
 its complete lifecycle, keyed by the local contact and request ids. Federation
