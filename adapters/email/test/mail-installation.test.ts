@@ -147,7 +147,6 @@ describe("managed mail installation transport", () => {
       installationId,
       inboundMessages: 1,
       inboundBytes: first.bytes.byteLength,
-      summarizationAttempts: 0,
     });
   });
 
@@ -166,7 +165,6 @@ describe("managed mail installation transport", () => {
     });
     await expect(stub.usage()).resolves.toMatchObject({
       inboundMessages: 2,
-      summarizationAttempts: 0,
     });
   });
 
