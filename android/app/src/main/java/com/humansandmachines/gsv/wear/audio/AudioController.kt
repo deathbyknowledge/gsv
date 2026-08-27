@@ -54,6 +54,7 @@ interface WearMicrophone {
         timeoutMillis: Long,
         trailingMillis: Long,
         preferredDevice: AudioDeviceInfo? = null,
+        onLevel: (Float) -> Unit = {},
     ): CapturedAudio
 }
 
@@ -79,6 +80,7 @@ class AudioController(
         timeoutMillis: Long,
         trailingMillis: Long,
         preferredDevice: AudioDeviceInfo?,
+        onLevel: (Float) -> Unit,
     ): CapturedAudio {
         if (trailingMillis !in MIN_TRAILING_MILLIS..MAX_TRAILING_MILLIS) {
             throw AudioCaptureFailure("Speech trailing duration is out of range")
@@ -88,6 +90,7 @@ class AudioController(
             timeoutMillis,
             stopAfterSpeechMillis = trailingMillis,
             preferredDevice = preferredDevice,
+            onLevel = onLevel,
         )
     }
 
@@ -96,13 +99,14 @@ class AudioController(
         durationMillis: Long,
         stopAfterSpeechMillis: Long?,
         preferredDevice: AudioDeviceInfo? = null,
+        onLevel: (Float) -> Unit = {},
     ): CapturedAudio {
         if (durationMillis !in MIN_CAPTURE_MILLIS..MAX_CAPTURE_MILLIS) {
             throw AudioCaptureFailure("Microphone duration must be between $MIN_CAPTURE_MILLIS and $MAX_CAPTURE_MILLIS ms")
         }
         return captureMutex.withLock {
             withContext(Dispatchers.IO) {
-                recordLocked(lease, durationMillis, stopAfterSpeechMillis, preferredDevice)
+                recordLocked(lease, durationMillis, stopAfterSpeechMillis, preferredDevice, onLevel)
             }
         }
     }
@@ -112,6 +116,7 @@ class AudioController(
         durationMillis: Long,
         stopAfterSpeechMillis: Long?,
         preferredDevice: AudioDeviceInfo?,
+        onLevel: (Float) -> Unit,
     ): CapturedAudio {
         if (closed.get()) throw AudioCaptureFailure("Microphone controller is closed")
         if (
@@ -167,6 +172,7 @@ class AudioController(
                 val started = android.os.SystemClock.elapsedRealtime()
                 val deadline = started + durationMillis
                 var speechStopAt: Long? = null
+                var nextLevelAt = started
                 val samples = ShortArray(FRAME_SAMPLES)
                 val bytes = ByteArray(FRAME_SAMPLES * 2)
                 while (true) {
@@ -183,6 +189,10 @@ class AudioController(
                     wave.write(bytes, 0, count * 2)
                     val elapsed = android.os.SystemClock.elapsedRealtime() - started
                     val frameSpeech = features.add(samples, count, elapsed)
+                    if (now >= nextLevelAt) {
+                        runCatching { onLevel(normalizeVoiceLevel(features.currentFrameRms)) }
+                        nextLevelAt = now + LEVEL_PUBLISH_INTERVAL_MILLIS
+                    }
                     if (stopAfterSpeechMillis != null && frameSpeech) {
                         speechStopAt = android.os.SystemClock.elapsedRealtime() + stopAfterSpeechMillis
                     }
@@ -205,6 +215,7 @@ class AudioController(
         } catch (_: Exception) {
             throw AudioCaptureFailure("Microphone capture failed")
         } finally {
+            runCatching { onLevel(0f) }
             onState(MicrophoneState.CLOSING)
             runCatching {
                 if (activeRecorder.recordingState == AudioRecord.RECORDSTATE_RECORDING) activeRecorder.stop()
@@ -246,6 +257,9 @@ class AudioController(
         private var consecutiveSpeechFrames = 0
         private var firstSpeechAtMillis: Long? = null
 
+        var currentFrameRms = 0.0
+            private set
+
         val speechDetected: Boolean
             get() = firstSpeechAtMillis != null
 
@@ -266,6 +280,7 @@ class AudioController(
             }
             sampleCount += count
             val rms = sqrt(frameSquares / count)
+            currentFrameRms = rms
             val zeroCrossingRate = zeroCrossings.toDouble() / count
             maximumFrameRms = maxOf(maximumFrameRms, rms)
             val speechLike = rms >= SPEECH_RMS && zeroCrossingRate in 0.015..0.45
@@ -313,6 +328,7 @@ class AudioController(
         private const val MAX_TRAILING_MILLIS = 10_000L
         private const val SAMPLE_RATE_HZ = 16_000
         private const val FRAME_SAMPLES = 320
+        private const val LEVEL_PUBLISH_INTERVAL_MILLIS = 50L
         private const val WAV_HEADER_BYTES = 44
         private const val SPEECH_RMS = 0.025
         private const val LOUD_RMS = 0.18
@@ -358,3 +374,6 @@ class AudioController(
         }
     }
 }
+
+internal fun normalizeVoiceLevel(rms: Double): Float =
+    ((rms - 0.008) / 0.14).coerceIn(0.0, 1.0).toFloat()

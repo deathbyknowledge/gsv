@@ -100,6 +100,7 @@ class WearRuntimeService : LifecycleService() {
             audio = VoiceAudioController(applicationContext),
             client = { voiceConnection },
             publishState = WearRuntimeState::setVoiceTurn,
+            publishLevel = WearRuntimeState::setVoiceLevel,
         )
         VoiceAssistantRuntime.attach(voiceCoordinator)
         val deviceContext = DeviceContextController(applicationContext)

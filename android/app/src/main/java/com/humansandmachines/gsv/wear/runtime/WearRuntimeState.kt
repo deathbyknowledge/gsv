@@ -32,6 +32,7 @@ data class RuntimeSnapshot(
     val microphone: MicrophoneState = MicrophoneState.CLOSED,
     val voiceConnection: ConnectionState = ConnectionState.DISCONNECTED,
     val voiceTurn: VoiceTurnState = VoiceTurnState.IDLE,
+    val voiceLevel: Float = 0f,
 )
 
 object WearRuntimeState {
@@ -61,7 +62,22 @@ object WearRuntimeState {
     }
 
     fun setVoiceTurn(state: VoiceTurnState) {
-        mutableSnapshot.update { it.copy(voiceTurn = state) }
+        mutableSnapshot.update {
+            it.copy(
+                voiceTurn = state,
+                voiceLevel = if (state == VoiceTurnState.LISTENING) it.voiceLevel else 0f,
+            )
+        }
+    }
+
+    fun setVoiceLevel(level: Float) {
+        mutableSnapshot.update {
+            if (it.voiceTurn == VoiceTurnState.LISTENING) {
+                it.copy(voiceLevel = level.coerceIn(0f, 1f))
+            } else {
+                it
+            }
+        }
     }
 
     fun reset() {

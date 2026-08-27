@@ -205,6 +205,7 @@ class ExtendedTargetCommandsTest {
             timeoutMillis: Long,
             trailingMillis: Long,
             preferredDevice: android.media.AudioDeviceInfo?,
+            onLevel: (Float) -> Unit,
         ): CapturedAudio = audio()
 
         private fun audio(): CapturedAudio {

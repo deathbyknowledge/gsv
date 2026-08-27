@@ -15,6 +15,7 @@ class VoiceTurnCoordinator(
     private val audio: VoiceAudioController,
     private val client: () -> VoiceClientSupervisor?,
     private val publishState: (VoiceTurnState) -> Unit = {},
+    private val publishLevel: (Float) -> Unit = {},
 ) : VoiceTurnOwner, Closeable {
     override suspend fun runVoiceTurn(
         captureRoute: VoiceCaptureRoute?,
@@ -44,6 +45,7 @@ class VoiceTurnCoordinator(
                         timeoutMillis = MAX_LISTEN_MILLIS,
                         trailingMillis = END_OF_SPEECH_MILLIS,
                         preferredDevice = captureRoute?.preferredInputDevice,
+                        onLevel = publishLevel,
                     )
                 }
             } finally {
@@ -77,6 +79,7 @@ class VoiceTurnCoordinator(
     }
 
     override fun close() {
+        publishLevel(0f)
         audio.close()
     }
 
