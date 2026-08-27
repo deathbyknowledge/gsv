@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -38,18 +39,22 @@ class AssistantShowcaseActivity : ComponentActivity() {
     private var stateReview by mutableStateOf(false)
     private var shapeTarget by mutableStateOf(OrbShapeTarget.LISTENING)
     private var microphoneLevel by mutableStateOf(0f)
+    private var playbackLevel by mutableStateOf(0f)
     private var signalOverride by mutableStateOf<Float?>(null)
     private var microphonePermissionDenied by mutableStateOf(false)
+    private var speechSampleUnavailable by mutableStateOf(false)
     private var microphonePermissionPending = false
     private var activityResumed = false
     private var microphoneSampler: DebugMicrophoneLevelSampler? = null
     private var microphoneJob: Job? = null
+    private var speechSamplePlayer: DebugSpeechSamplePlayer? = null
+    private var speechSampleJob: Job? = null
     private val microphonePermissionRequest = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         microphonePermissionPending = false
         microphonePermissionDenied = !granted
-        if (granted) syncMicrophone()
+        if (granted) syncSignalSources()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -65,21 +70,23 @@ class AssistantShowcaseActivity : ComponentActivity() {
                 AssistantInvocationSurface(
                     state = showcaseState,
                     detail = when {
-                        reviewStates && showcaseState == VoiceTurnState.SPEAKING ->
+                        reviewStates && showcaseState == VoiceTurnState.LISTENING ->
                             if (microphonePermissionDenied) {
-                                "Microphone permission is required for live surface review."
+                                "Microphone permission is required for live listening review."
                             } else {
-                                "Speak to excite the liquid membrane."
+                                "Speak to test the receptive liquid."
+                            }
+                        reviewStates && showcaseState == VoiceTurnState.SPEAKING ->
+                            if (speechSampleUnavailable) {
+                                "The local voice sample is unavailable on this device."
+                            } else {
+                                "Assistant playback drives the liquid membrane."
                             }
                         reviewStates -> "Tap to compare states without restarting the liquid."
                         reviewMorph -> "Tap again at any point to redirect the liquid."
                         else -> showcaseState.detailText(this)
                     },
-                    signal = if (showcaseState == VoiceTurnState.SPEAKING) {
-                        signalOverride ?: microphoneLevel
-                    } else {
-                        0.74f
-                    },
+                    signal = reviewSignal(),
                     shapeTarget = shapeTarget,
                     coreActionDescription = when {
                         reviewStates -> "Switch assistant state"
@@ -101,11 +108,7 @@ class AssistantShowcaseActivity : ComponentActivity() {
                 AssistantSurface(
                     state = showcaseState,
                     detail = showcaseState.detailText(this),
-                    signal = if (showcaseState == VoiceTurnState.SPEAKING) {
-                        signalOverride ?: microphoneLevel
-                    } else {
-                        0.74f
-                    },
+                    signal = reviewSignal(),
                     onCancel = ::finish,
                 )
             }
@@ -121,17 +124,17 @@ class AssistantShowcaseActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         activityResumed = true
-        syncMicrophone()
+        syncSignalSources()
     }
 
     override fun onPause() {
         activityResumed = false
-        stopMicrophone()
+        stopSignalSources()
         super.onPause()
     }
 
     override fun onDestroy() {
-        stopMicrophone()
+        stopSignalSources()
         super.onDestroy()
     }
 
@@ -148,7 +151,7 @@ class AssistantShowcaseActivity : ComponentActivity() {
             null
         }
         shapeTarget = OrbShapeTarget.LISTENING
-        if (activityResumed) syncMicrophone()
+        if (activityResumed) syncSignalSources()
     }
 
     private fun toggleReviewState() {
@@ -157,11 +160,22 @@ class AssistantShowcaseActivity : ComponentActivity() {
             VoiceTurnState.THINKING -> VoiceTurnState.SPEAKING
             else -> VoiceTurnState.LISTENING
         }
+        syncSignalSources()
+    }
+
+    private fun reviewSignal(): Float = when (showcaseState) {
+        VoiceTurnState.LISTENING -> signalOverride ?: microphoneLevel
+        VoiceTurnState.SPEAKING -> signalOverride ?: playbackLevel
+        else -> 0.74f
+    }
+
+    private fun syncSignalSources() {
         syncMicrophone()
+        syncSpeechSample()
     }
 
     private fun syncMicrophone() {
-        val shouldSample = showcaseState == VoiceTurnState.SPEAKING &&
+        val shouldSample = showcaseState == VoiceTurnState.LISTENING &&
             signalOverride == null && activityResumed
         if (!shouldSample) {
             stopMicrophone()
@@ -215,6 +229,56 @@ class AssistantShowcaseActivity : ComponentActivity() {
         microphoneLevel = 0f
     }
 
+    private fun syncSpeechSample() {
+        val shouldPlay = showcaseState == VoiceTurnState.SPEAKING &&
+            signalOverride == null && activityResumed
+        if (!shouldPlay) {
+            stopSpeechSample()
+            return
+        }
+        if (speechSampleJob?.isActive == true) return
+
+        speechSampleUnavailable = false
+        val player = DebugSpeechSamplePlayer(this)
+        speechSamplePlayer = player
+        speechSampleJob = lifecycleScope.launch {
+            try {
+                player.playLoop { level ->
+                    runOnUiThread {
+                        if (speechSamplePlayer === player) playbackLevel = level
+                    }
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.w(SPEECH_REVIEW_LOG_TAG, "Local speech review failed", error)
+                speechSampleUnavailable = true
+                playbackLevel = 0f
+            } finally {
+                player.close()
+                if (speechSamplePlayer === player) {
+                    speechSamplePlayer = null
+                    speechSampleJob = null
+                    playbackLevel = 0f
+                }
+            }
+        }
+    }
+
+    private fun stopSpeechSample() {
+        val player = speechSamplePlayer
+        speechSamplePlayer = null
+        player?.close()
+        speechSampleJob?.cancel()
+        speechSampleJob = null
+        playbackLevel = 0f
+    }
+
+    private fun stopSignalSources() {
+        stopMicrophone()
+        stopSpeechSample()
+    }
+
     private fun toggleShape() {
         shapeTarget = when (shapeTarget) {
             OrbShapeTarget.LISTENING -> OrbShapeTarget.SMILE
@@ -228,6 +292,7 @@ class AssistantShowcaseActivity : ComponentActivity() {
         private const val EXTRA_MORPH = "morph"
         private const val EXTRA_STATES = "states"
         private const val EXTRA_SIGNAL = "signal"
+        private const val SPEECH_REVIEW_LOG_TAG = "GsvSpeechReview"
     }
 }
 
