@@ -1,10 +1,6 @@
 package com.humansandmachines.gsv.wear.ui
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -41,6 +37,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -117,13 +115,6 @@ object GsvTextStyle {
 
 @Composable
 fun SignalBackdrop(modifier: Modifier = Modifier) {
-    val transition = rememberInfiniteTransition(label = "signal-field")
-    val scan by transition.animateFloat(
-        initialValue = -0.15f,
-        targetValue = 1.15f,
-        animationSpec = infiniteRepeatable(tween(7_000, easing = LinearEasing)),
-        label = "scan",
-    )
     Canvas(modifier.fillMaxSize()) {
         drawRect(
             brush = Brush.verticalGradient(
@@ -152,16 +143,6 @@ fun SignalBackdrop(modifier: Modifier = Modifier) {
             y += grid
         }
 
-        val scanY = size.height * scan
-        drawRect(
-            brush = Brush.verticalGradient(
-                listOf(Color.Transparent, Color(0x24B3AEFF), Color.Transparent),
-                startY = scanY - 36.dp.toPx(),
-                endY = scanY + 36.dp.toPx(),
-            ),
-            topLeft = androidx.compose.ui.geometry.Offset(0f, scanY - 36.dp.toPx()),
-            size = androidx.compose.ui.geometry.Size(size.width, 72.dp.toPx()),
-        )
     }
 }
 
@@ -240,16 +221,22 @@ fun GsvField(
     secret: Boolean = false,
     enabled: Boolean = true,
     keyboardType: KeyboardType = KeyboardType.Text,
+    showLabel: Boolean = true,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
     val shape = CutCornerShape(topStart = 2.dp, topEnd = 10.dp, bottomEnd = 2.dp, bottomStart = 10.dp)
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        Text(label.uppercase(), style = GsvTextStyle.Kicker.copy(color = if (focused) GsvColor.Accent else GsvColor.Muted))
+        if (showLabel) {
+            Text(label.uppercase(), style = GsvTextStyle.Kicker.copy(color = if (focused) GsvColor.Accent else GsvColor.Muted))
+        }
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
-            modifier = Modifier.fillMaxWidth().graphicsLayer { alpha = if (enabled) 1f else 0.5f },
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { contentDescription = label }
+                .graphicsLayer { alpha = if (enabled) 1f else 0.5f },
             enabled = enabled,
             singleLine = true,
             maxLines = 1,
