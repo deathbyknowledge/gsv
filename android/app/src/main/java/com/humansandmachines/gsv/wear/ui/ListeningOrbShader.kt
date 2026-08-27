@@ -300,6 +300,22 @@ float4 interiorMembranes(float3 point, float phase) {
     return float4(coolSheet, coolRidge, warmSheet, warmRidge);
 }
 
+float3 refractIntoLiquid(float3 incident, float3 normal, float energy) {
+    float eta = 0.84 - energy * 0.025;
+    float incidentCosine = dot(normal, incident);
+    float discriminant = 1.0 - eta * eta *
+        (1.0 - incidentCosine * incidentCosine);
+    return normalize(
+        eta * incident -
+            (eta * incidentCosine + sqrt(max(discriminant, 0.0))) * normal
+    );
+}
+
+float interiorDensity(float3 point, float phase, float energy) {
+    float distance = organicDistance(point, phase, energy);
+    return 1.0 - smoothstep(-0.002, 0.015, distance);
+}
+
 float shellCurrent(float3 normal, float phase) {
     float3 first = normal;
     first.xy = rotate2(0.68, first.xy);
@@ -339,7 +355,10 @@ half4 main(float2 fragCoord) {
     float2 shell = sphereRange(origin, direction, 0.69);
 
     float screenRadius = length(uv);
-    float aura = exp(-abs(screenRadius - 0.355) * 24.0) * (0.025 + energy * 0.018);
+    float containmentRadius = 0.355 +
+        0.004 * energy * sin(phase * 2.0);
+    float aura = exp(-abs(screenRadius - containmentRadius) * 24.0) *
+        (0.020 + energy * 0.015);
     if (shell.x < 0.0) {
         float alpha = clamp(aura, 0.0, 0.08);
         return half4(iAccent.rgb * alpha, alpha);
@@ -377,21 +396,37 @@ half4 main(float2 fragCoord) {
             58.0
         );
         float silhouette = pow(1.0 - abs(dot(normal, view)), 1.7);
-        float4 nearMembranes = interiorMembranes(point + direction * 0.030, phase);
-        float4 middleMembranes = interiorMembranes(point + direction * 0.090, phase);
-        float4 deepMembranes = interiorMembranes(point + direction * 0.165, phase);
+        float facing = clamp(dot(normal, view), 0.0, 1.0);
+        float3 interiorDirection = refractIntoLiquid(direction, normal, energy);
+        float3 nearPoint = point + interiorDirection * 0.035;
+        float3 middlePoint = point + interiorDirection * 0.140;
+        float3 deepPoint = point + interiorDirection * 0.240;
+        float middleDensity = interiorDensity(middlePoint, phase, energy);
+        float deepDensity = middleDensity * (0.35 + facing * 0.65);
+        float estimatedThickness = 0.065 + facing * 0.060 +
+            middleDensity * 0.340;
+        float3 transmittance = exp(
+            -estimatedThickness * float3(8.6, 4.1, 2.0)
+        );
+        float thicknessFactor = 1.0 - exp(-estimatedThickness * 5.2);
+        float4 nearMembranes = interiorMembranes(nearPoint, phase);
+        float4 middleMembranes = interiorMembranes(middlePoint, phase) * middleDensity;
+        float4 deepMembranes = interiorMembranes(deepPoint, phase) * deepDensity;
         float coolSheet = clamp(
-            nearMembranes.x * 0.16 +
-                middleMembranes.x * 0.52 +
-                deepMembranes.x * 0.22,
+            nearMembranes.x * 0.25 +
+                middleMembranes.x * 0.65 +
+                deepMembranes.x * 0.28,
             0.0,
             1.0
         );
-        float coolRidge = middleMembranes.y;
+        float coolRidge = max(
+            nearMembranes.y * 0.25,
+            middleMembranes.y
+        );
         float warmSheet = clamp(
-            nearMembranes.z * 0.20 +
-                middleMembranes.z * 0.46 +
-                deepMembranes.z * 0.24,
+            nearMembranes.z * 0.28 +
+                middleMembranes.z * 0.60 +
+                deepMembranes.z * 0.30,
             0.0,
             1.0
         );
@@ -399,20 +434,26 @@ half4 main(float2 fragCoord) {
         float organicAmount = clamp(iShape.x, 0.0, 1.0);
         float liquidDetail = 0.28 + organicAmount * 0.72;
         float membraneCrossing = coolRidge * warmRidge;
-        float facing = clamp(dot(normal, view), 0.0, 1.0);
-        float thinTransmission = pow(1.0 - facing, 1.35);
-        float warmTransmission = pow(max(dot(-normal, warmLight), 0.0), 1.7);
+        float thinTransmission = transmittance.g *
+            (0.32 + 0.68 * pow(1.0 - facing, 1.35));
+        float warmTransmission = transmittance.g *
+            pow(max(dot(-normal, warmLight), 0.0), 1.7);
+        float interiorVisibility = 0.50 + transmittance.b * 0.65;
 
         float3 deepMaterial = float3(0.002, 0.007, 0.021);
         float3 cyan = mix(float3(0.05, 0.70, 0.90), iAccent.rgb, 0.48);
         float3 warm = float3(1.0, 0.62, 0.22);
-        float3 material = deepMaterial;
+        float3 material = deepMaterial +
+            float3(0.004, 0.026, 0.060) * thicknessFactor;
         material += cyan * (coolDiffuse * 0.13 + fresnel * 0.54 + coolSpecular * 0.96);
         material += warm * (warmDiffuse * 0.052 + warmSpecular * 0.52);
         material += float3(0.26, 0.46, 0.72) * silhouette * 0.12;
-        material += cyan * liquidDetail * (coolSheet * 0.10 + coolRidge * 0.21);
-        material += warm * liquidDetail * (warmSheet * 0.052 + warmRidge * 0.14);
-        material += mix(cyan, warm, 0.20) * liquidDetail * membraneCrossing * 0.12;
+        material += cyan * liquidDetail * interiorVisibility *
+            (coolSheet * 0.13 + coolRidge * 0.23);
+        material += warm * liquidDetail * interiorVisibility *
+            (warmSheet * 0.065 + warmRidge * 0.15);
+        material += mix(cyan, warm, 0.20) * liquidDetail *
+            interiorVisibility * membraneCrossing * 0.12;
         material += cyan * liquidDetail * thinTransmission * 0.12;
         material += mix(cyan, warm, 0.58) * liquidDetail * warmTransmission * 0.10;
         material *= 1.0 - liquidDetail * min(coolSheet + warmSheet, 1.0) * 0.030;
@@ -428,20 +469,30 @@ half4 main(float2 fragCoord) {
         }
 
         float membraneOpacity = min(coolSheet + warmSheet, 1.0) * liquidDetail * 0.055;
+        float absorptionAlpha = 1.0 - dot(
+            transmittance,
+            float3(0.18, 0.55, 0.27)
+        );
         float bodyAlpha = clamp(
-            0.76 + fresnel * 0.15 + coolSpecular * 0.055 + membraneOpacity,
+            0.38 + absorptionAlpha * 0.47 +
+                fresnel * 0.12 + coolSpecular * 0.050 + membraneOpacity,
             0.0,
-            0.96
+            0.94
         );
         color = material * bodyAlpha;
         alpha = bodyAlpha;
     }
 
-    float shellLight = shellFresnel * (0.30 + energy * 0.20) + current * shellPulse * 0.13;
-    float warmEdge = pow(max(shellNormal.x, 0.0), 3.0) * shellFresnel * 0.22;
+    float shellVisibility = bodyHit ? 0.54 : 1.0;
+    float shellLight = (
+        shellFresnel * (0.21 + energy * 0.15) +
+            current * shellPulse * (0.075 + energy * 0.035)
+    ) * shellVisibility;
+    float warmEdge = pow(max(shellNormal.x, 0.0), 3.0) *
+        shellFresnel * 0.15 * shellVisibility;
     color += iAccent.rgb * shellLight;
     color += float3(1.0, 0.64, 0.24) * warmEdge;
-    alpha = clamp(alpha + shellLight * 0.48 + warmEdge * 0.34, 0.0, 0.99);
+    alpha = clamp(alpha + shellLight * 0.38 + warmEdge * 0.26, 0.0, 0.98);
 
     float grain = (spatialGrain(fragCoord) - 0.5) * 0.012;
     color += grain * alpha;
