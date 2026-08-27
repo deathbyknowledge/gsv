@@ -5,6 +5,7 @@ uniform float2 iResolution;
 uniform float iTime;
 uniform float iEnergy;
 uniform float4 iAccent;
+uniform float4 iShape;
 
 const float PI = 3.14159265359;
 const float TAU = 6.28318530718;
@@ -30,18 +31,91 @@ float ellipsoidDistance(float3 point, float3 radii) {
     return normalized * (normalized - 1.0) / max(gradient, 0.0001);
 }
 
-float organicDistance(float3 point, float phase, float energy) {
-    point.xz = rotate2(phase, point.xz);
-    point.xy = rotate2(0.24 * sin(phase * 2.0), point.xy);
-    point.yz = rotate2(0.19 * cos(phase * 3.0), point.yz);
+float3 symbolFlowPoint(float3 point, float phase, float presence) {
+    float3 flowingPoint = point;
+    flowingPoint.xz = rotate2(
+        0.055 * sin(flowingPoint.y * 6.0 + phase),
+        flowingPoint.xz
+    );
+    flowingPoint.xy = rotate2(
+        0.038 * sin(flowingPoint.z * 7.0 - phase * 2.0),
+        flowingPoint.xy
+    );
+    flowingPoint += float3(
+        0.0045 * sin(point.y * 9.0 + phase * 3.0),
+        0.0040 * sin(point.z * 8.0 - phase),
+        0.0030 * sin(point.x * 10.0 + phase * 2.0)
+    );
+    return mix(point, flowingPoint, presence);
+}
 
-    float3 folded = point;
-    folded.xz = rotate2(0.62 * sin(folded.y * 4.4 + phase), folded.xz);
-    folded.xy = rotate2(0.40 * sin(folded.z * 5.2 - phase * 2.0), folded.xy);
+float facialFeatureDistance(float3 point, float phase) {
+    float eyeSpacing = clamp(iShape.z, 0.08, 0.18);
+    float smileCurve = clamp(iShape.w, 0.0, 1.4);
+    float3 leftEyeCenter = float3(
+        -eyeSpacing * 0.96 + 0.004 * sin(phase * 2.0),
+        0.088 + 0.005 * sin(phase * 3.0),
+        0.335 + 0.003 * cos(phase)
+    );
+    float3 rightEyeCenter = float3(
+        eyeSpacing * 1.04 + 0.005 * cos(phase * 3.0),
+        0.076 + 0.004 * cos(phase * 2.0),
+        0.338 + 0.003 * sin(phase * 2.0)
+    );
+    float leftEye = ellipsoidDistance(
+        point - leftEyeCenter,
+        float3(
+            0.043 + 0.002 * sin(phase),
+            0.064 + 0.003 * cos(phase * 2.0),
+            0.091
+        )
+    );
+    float rightEye = ellipsoidDistance(
+        point - rightEyeCenter,
+        float3(
+            0.048 + 0.002 * cos(phase * 2.0),
+            0.058 + 0.003 * sin(phase * 3.0),
+            0.088
+        )
+    );
+    float eyes = min(leftEye, rightEye);
+
+    float leftMouthWidth = 0.142 + 0.004 * sin(phase * 2.0);
+    float rightMouthWidth = 0.150 + 0.003 * cos(phase * 3.0);
+    float mouthX = clamp(point.x, -leftMouthWidth, rightMouthWidth);
+    float mouthSideWidth = mix(leftMouthWidth, rightMouthWidth, step(0.0, mouthX));
+    float normalizedMouthX = mouthX / mouthSideWidth;
+    float mouthY = -0.133 + 0.003 * sin(phase) +
+        0.058 * smileCurve * normalizedMouthX * normalizedMouthX +
+        0.006 * normalizedMouthX +
+        0.005 * sin(phase * 2.0 + normalizedMouthX * 2.6);
+    float mouthZ = 0.340 +
+        0.003 * cos(phase * 3.0 - normalizedMouthX * 2.0);
+    float mouth = ellipsoidDistance(
+        float3(point.x - mouthX, point.y - mouthY, point.z - mouthZ),
+        float3(0.027, 0.024, 0.078)
+    );
+    return min(eyes, mouth);
+}
+
+float organicDistance(float3 point, float phase, float energy) {
+    float organicAmount = clamp(iShape.x, 0.0, 1.0);
+    float symbolPresence = clamp(iShape.y, 0.0, 1.0);
+    float3 anchoredPoint = point;
+    float3 animatedPoint = point;
+    animatedPoint.xz = rotate2(phase, animatedPoint.xz);
+    animatedPoint.xy = rotate2(0.24 * sin(phase * 2.0), animatedPoint.xy);
+    animatedPoint.yz = rotate2(0.19 * cos(phase * 3.0), animatedPoint.yz);
+    point = mix(anchoredPoint, animatedPoint, organicAmount);
+
+    float3 foldedTarget = point;
+    foldedTarget.xz = rotate2(0.62 * sin(foldedTarget.y * 4.4 + phase), foldedTarget.xz);
+    foldedTarget.xy = rotate2(0.40 * sin(foldedTarget.z * 5.2 - phase * 2.0), foldedTarget.xy);
+    float3 folded = mix(point, foldedTarget, organicAmount);
 
     float breath = 1.0 + 0.025 * sin(phase * 2.0) + energy * 0.025;
     float response = 0.82 + energy * 0.35;
-    float distance = ellipsoidDistance(
+    float liquidDistance = ellipsoidDistance(
         folded,
         float3(0.24, 0.29, 0.23) * breath
     );
@@ -85,9 +159,9 @@ float organicDistance(float3 point, float phase, float energy) {
         float3(0.25, 0.15, 0.31) * breath
     );
 
-    distance = smoothMinimum(distance, firstLobe, 0.085);
-    distance = smoothMinimum(distance, secondLobe, 0.090);
-    distance = smoothMinimum(distance, thirdLobe, 0.082);
+    liquidDistance = smoothMinimum(liquidDistance, firstLobe, 0.085);
+    liquidDistance = smoothMinimum(liquidDistance, secondLobe, 0.090);
+    liquidDistance = smoothMinimum(liquidDistance, thirdLobe, 0.082);
 
     float3 firstCavityCenter = float3(
         0.28 * cos(phase * 2.0),
@@ -107,13 +181,33 @@ float organicDistance(float3 point, float phase, float energy) {
         folded - secondCavityCenter,
         float3(0.17, 0.22, 0.18)
     );
-    distance = smoothMaximum(distance, -firstCavity, 0.055);
-    distance = smoothMaximum(distance, -secondCavity, 0.050);
+    liquidDistance = smoothMaximum(liquidDistance, -firstCavity, 0.055);
+    liquidDistance = smoothMaximum(liquidDistance, -secondCavity, 0.050);
 
     float surfaceFold = sin(folded.x * 10.0 + sin(phase) * 2.0) *
         sin(folded.y * 9.0 - cos(phase * 2.0) * 1.6) *
         sin(folded.z * 11.0 + sin(phase * 3.0) * 1.4);
-    distance += surfaceFold * (0.010 + energy * 0.015);
+    liquidDistance += surfaceFold * (0.010 + energy * 0.015) * organicAmount;
+
+    float3 symbolPoint = symbolFlowPoint(anchoredPoint, phase, symbolPresence);
+    float3 sphereRadii = float3(0.365, 0.375, 0.35) *
+        (1.0 + energy * 0.012) *
+        float3(
+            1.0 + symbolPresence * 0.012 * sin(phase * 2.0),
+            1.0 + symbolPresence * 0.010 * cos(phase * 3.0),
+            1.0 + symbolPresence * 0.009 * sin(phase)
+        );
+    float sphereDistance = ellipsoidDistance(symbolPoint, sphereRadii);
+    float symbolSurface = sin(symbolPoint.x * 9.0 + phase) *
+        sin(symbolPoint.y * 8.0 - phase * 2.0) *
+        sin(symbolPoint.z * 10.0 + phase * 3.0);
+    sphereDistance += symbolSurface * symbolPresence * (0.0045 + energy * 0.0025);
+    float distance = mix(sphereDistance, liquidDistance, organicAmount);
+    if (symbolPresence > 0.001) {
+        float featureCut = -facialFeatureDistance(symbolPoint, phase) -
+            (1.0 - symbolPresence) * 0.30;
+        distance = smoothMaximum(distance, featureCut, 0.026);
+    }
     return distance;
 }
 
@@ -246,6 +340,16 @@ half4 main(float2 fragCoord) {
         material += cyan * (coolDiffuse * 0.22 + fresnel * 0.62 + coolSpecular * 1.15);
         material += warm * (warmDiffuse * 0.075 + warmSpecular * 0.62);
         material += float3(0.26, 0.46, 0.72) * silhouette * 0.16;
+        float symbolPresence = clamp(iShape.y, 0.0, 1.0);
+        if (symbolPresence > 0.001) {
+            float3 symbolPoint = symbolFlowPoint(point, phase, symbolPresence);
+            float featureGlow = 1.0 - smoothstep(
+                0.006,
+                0.050,
+                abs(facialFeatureDistance(symbolPoint, phase))
+            );
+            material += mix(cyan, warm, 0.24) * featureGlow * symbolPresence * 0.17;
+        }
 
         float bodyAlpha = clamp(0.88 + fresnel * 0.10 + coolSpecular * 0.06, 0.0, 0.98);
         color = material * bodyAlpha;

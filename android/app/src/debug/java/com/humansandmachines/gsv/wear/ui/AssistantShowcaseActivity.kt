@@ -26,6 +26,8 @@ import com.humansandmachines.gsv.wear.voice.VoiceTurnState
 class AssistantShowcaseActivity : ComponentActivity() {
     private var showcaseState by mutableStateOf(VoiceTurnState.LISTENING)
     private var showOverlay by mutableStateOf(false)
+    private var morphReview by mutableStateOf(false)
+    private var shapeTarget by mutableStateOf(OrbShapeTarget.LISTENING)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -33,12 +35,20 @@ class AssistantShowcaseActivity : ComponentActivity() {
         updateShowcase(intent)
         setContent {
             if (showOverlay) {
+                val reviewMorph = morphReview && showcaseState == VoiceTurnState.LISTENING
                 ShowcaseHostSurface()
                 AssistantInvocationSurface(
                     state = showcaseState,
-                    detail = showcaseState.detailText(this),
+                    detail = if (reviewMorph) {
+                        "Tap again at any point to redirect the liquid."
+                    } else {
+                        showcaseState.detailText(this)
+                    },
                     signal = 0.74f,
-                    onCancel = ::finish,
+                    shapeTarget = shapeTarget,
+                    coreActionDescription = if (reviewMorph) "Morph assistant shape" else "Cancel assistant",
+                    coreActionLabel = if (reviewMorph) "TAP CORE TO MORPH / REVERSE" else "TAP CORE TO DISMISS",
+                    onCancel = if (reviewMorph) ::toggleShape else ::finish,
                 )
             } else {
                 AssistantSurface(
@@ -62,11 +72,21 @@ class AssistantShowcaseActivity : ComponentActivity() {
             VoiceTurnState.valueOf(intent.getStringExtra(EXTRA_STATE) ?: VoiceTurnState.LISTENING.name)
         }.getOrDefault(VoiceTurnState.LISTENING)
         showOverlay = intent.getBooleanExtra(EXTRA_OVERLAY, false)
+        morphReview = intent.getBooleanExtra(EXTRA_MORPH, false)
+        shapeTarget = OrbShapeTarget.LISTENING
+    }
+
+    private fun toggleShape() {
+        shapeTarget = when (shapeTarget) {
+            OrbShapeTarget.LISTENING -> OrbShapeTarget.SMILE
+            OrbShapeTarget.SMILE -> OrbShapeTarget.LISTENING
+        }
     }
 
     companion object {
         private const val EXTRA_STATE = "state"
         private const val EXTRA_OVERLAY = "overlay"
+        private const val EXTRA_MORPH = "morph"
     }
 }
 
