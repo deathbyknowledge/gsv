@@ -1,19 +1,19 @@
 # Install and upgrade GSV host applications
 
 The GSV release is one versioned host distribution. The operator CLI (`gsv`),
-machine daemon (`gsvd`), Desktop, and Desktop transcription helper share the
-version in the repository root `VERSION` file. The CLI refuses to manage a
-mismatched daemon.
+machine daemon (`gsvd`), Desktop, and Desktop's transcription and gesture-vision
+helpers share the version in the repository root `VERSION` file. The CLI
+refuses to manage a mismatched daemon.
 
 ## Supported release artifacts
 
-| Platform | `gsv` | `gsvd` | Desktop | Transcription |
-| --- | --- | --- | --- | --- |
-| Linux x64 | yes | yes | yes | yes |
-| Linux ARM64 | yes | yes | yes | yes |
-| macOS Intel | yes | yes | yes | yes |
-| macOS Apple Silicon | yes | yes | yes | yes |
-| Windows x64 | yes | yes | not yet | not yet |
+| Platform | `gsv` | `gsvd` | Desktop | Transcription | Gestures |
+| --- | --- | --- | --- | --- | --- |
+| Linux x64 | yes | yes | yes | yes | yes |
+| Linux ARM64 | yes | yes | yes | yes | yes |
+| macOS Intel | yes | yes | yes | yes | yes |
+| macOS Apple Silicon | yes | yes | yes | yes | yes |
+| Windows x64 | yes | yes | not yet | not yet | not yet |
 
 Windows ARM64 can run the Windows x64 CLI and daemon through emulation, but it
 is not a native release target. Other operating systems and architectures are
@@ -67,6 +67,10 @@ gsv desktop
 
 `gsv desktop status`, `new`, and `use PID` use same-user local IPC. Desktop
 connects to the gateway as a user; it does not route chat through `gsvd`.
+The installer places `gsv-transcribe` and `gsv-vision` beside Desktop so it can
+supervise the exact same-version helpers. The vision executable embeds its
+checksum-pinned models; their Apache 2.0 license and provenance are installed
+as verified sidecar assets.
 
 The current Desktop release is a command-line executable rather than a macOS
 `.app` bundle. It is not code-signed or notarized. A signed/notarized macOS

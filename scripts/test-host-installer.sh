@@ -29,7 +29,10 @@ make_fixture gsv-linux-x64 gsv-v1
 make_fixture gsvd-linux-x64 gsvd-v1
 make_fixture gsv-desktop-linux-x64 desktop-v1
 make_fixture gsv-transcribe-linux-x64 transcribe-v1
+make_fixture gsv-vision-linux-x64 vision-v1
 printf 'license-v1\n' > "$FIXTURES/gsv-transcribe-THIRD_PARTY.md"
+printf 'vision-license-v1\n' > "$FIXTURES/gsv-vision-LICENSE.apache-2.0"
+printf 'vision-provenance-v1\n' > "$FIXTURES/gsv-vision-PROVENANCE.md"
 write_checksums
 
 cat > "$FAKE_BIN/curl" <<'SH'
@@ -65,7 +68,10 @@ test "$("$INSTALL_DIR/gsv")" = "gsv-v1"
 test "$("$INSTALL_DIR/gsvd")" = "gsvd-v1"
 test "$("$INSTALL_DIR/gsv-desktop")" = "desktop-v1"
 test "$("$INSTALL_DIR/gsv-transcribe")" = "transcribe-v1"
+test "$("$INSTALL_DIR/gsv-vision")" = "vision-v1"
 test "$(cat "$INSTALL_DIR/gsv-transcribe-THIRD_PARTY.md")" = "license-v1"
+test "$(cat "$INSTALL_DIR/gsv-vision-LICENSE.apache-2.0")" = "vision-license-v1"
+test "$(cat "$INSTALL_DIR/gsv-vision-PROVENANCE.md")" = "vision-provenance-v1"
 
 make_fixture gsv-linux-x64 gsv-corrupt
 if run_installer 2>/dev/null; then
@@ -78,12 +84,15 @@ make_fixture gsv-linux-x64 gsv-v2
 make_fixture gsvd-linux-x64 gsvd-v2
 make_fixture gsv-desktop-linux-x64 desktop-v2
 make_fixture gsv-transcribe-linux-x64 transcribe-v2
+make_fixture gsv-vision-linux-x64 vision-v2
 printf 'license-v2\n' > "$FIXTURES/gsv-transcribe-THIRD_PARTY.md"
+printf 'vision-license-v2\n' > "$FIXTURES/gsv-vision-LICENSE.apache-2.0"
+printf 'vision-provenance-v2\n' > "$FIXTURES/gsv-vision-PROVENANCE.md"
 write_checksums
 cat > "$FAKE_BIN/chmod" <<'SH'
 #!/usr/bin/env sh
 case "$*" in
-    *gsvd.new.*) exit 1 ;;
+    *gsv-vision.new.*) exit 1 ;;
 esac
 exec /usr/bin/chmod "$@"
 SH
@@ -97,5 +106,9 @@ test "$("$INSTALL_DIR/gsv")" = "gsv-v1"
 test "$("$INSTALL_DIR/gsvd")" = "gsvd-v1"
 test "$("$INSTALL_DIR/gsv-desktop")" = "desktop-v1"
 test "$("$INSTALL_DIR/gsv-transcribe")" = "transcribe-v1"
+test "$("$INSTALL_DIR/gsv-vision")" = "vision-v1"
+test "$(cat "$INSTALL_DIR/gsv-transcribe-THIRD_PARTY.md")" = "license-v1"
+test "$(cat "$INSTALL_DIR/gsv-vision-LICENSE.apache-2.0")" = "vision-license-v1"
+test "$(cat "$INSTALL_DIR/gsv-vision-PROVENANCE.md")" = "vision-provenance-v1"
 
 echo "host installer checksum and replacement smoke passed"

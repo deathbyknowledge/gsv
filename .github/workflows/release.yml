@@ -148,6 +148,7 @@ jobs:
 
   # GPUI 0.2.2 supports Linux and macOS. Build Desktop and its isolated
   # transcription helper natively for both architectures on those systems.
+  # The gesture-vision helper uses the same native release matrix.
   build-desktop:
     needs: [resolve]
     env:
@@ -190,6 +191,7 @@ jobs:
             clang \
             cmake \
             libasound2-dev \
+            libclang-dev \
             libfontconfig1-dev \
             libssl-dev \
             libwayland-dev \
@@ -197,13 +199,14 @@ jobs:
             libx11-xcb-dev \
             libxkbcommon-dev \
             libxkbcommon-x11-dev \
+            linux-libc-dev \
             pkg-config
 
-      - name: Build Desktop and transcription helper
+      - name: Build Desktop and local helpers
         working-directory: host
         run: >-
           cargo build --locked --release --target ${{ matrix.target }}
-          --package desktop --package transcriber
+          --package desktop --package transcriber --package gestures
 
       - name: Stage Desktop
         shell: bash
@@ -212,8 +215,11 @@ jobs:
           mkdir -p release
           cp "host/target/${{ matrix.target }}/release/gsv-desktop" "release/gsv-desktop-${{ matrix.platform }}"
           cp "host/target/${{ matrix.target }}/release/gsv-transcribe" "release/gsv-transcribe-${{ matrix.platform }}"
+          cp "host/target/${{ matrix.target }}/release/gsv-vision" "release/gsv-vision-${{ matrix.platform }}"
           if [ "${{ matrix.platform }}" = "linux-x64" ]; then
             cp host/helpers/transcriber/THIRD_PARTY.md release/gsv-transcribe-THIRD_PARTY.md
+            cp host/helpers/gestures/models/LICENSE.apache-2.0 release/gsv-vision-LICENSE.apache-2.0
+            cp host/helpers/gestures/models/PROVENANCE.md release/gsv-vision-PROVENANCE.md
           fi
 
       - name: Upload Desktop
@@ -319,6 +325,7 @@ jobs:
           cp artifacts/gsv-host-tools-windows-x64/* release/
 
           # Desktop and isolated local transcription helper
+          # Gesture-vision helper and its model metadata
           cp artifacts/gsv-desktop-linux-x64/* release/
           cp artifacts/gsv-desktop-linux-arm64/* release/
           cp artifacts/gsv-desktop-darwin-x64/* release/
@@ -336,8 +343,11 @@ jobs:
           chmod +x release/gsv-linux-* release/gsvd-linux-* \
             release/gsv-darwin-* release/gsvd-darwin-* \
             release/gsv-desktop-* release/gsv-transcribe-linux-* \
-            release/gsv-transcribe-darwin-*
-          chmod -x release/gsv-transcribe-THIRD_PARTY.md
+            release/gsv-transcribe-darwin-* release/gsv-vision-linux-* \
+            release/gsv-vision-darwin-*
+          chmod -x release/gsv-transcribe-THIRD_PARTY.md \
+            release/gsv-vision-LICENSE.apache-2.0 \
+            release/gsv-vision-PROVENANCE.md
 
           # Include install script
           cp install.sh release/
@@ -412,17 +422,19 @@ jobs:
           ### Host applications
 
           The installer verifies every downloaded artifact, replaces \`gsv\`, \`gsvd\`,
-          Desktop, and the transcription helper as one versioned set, and migrates an
-          existing device service to execute \`gsvd --foreground\` directly. Linux and
-          macOS receive Desktop; Windows currently receives the CLI and daemon only.
+          Desktop, and both local helpers as one versioned set, and migrates an existing
+          device service to execute \`gsvd --foreground\` directly. Linux and macOS
+          receive Desktop, \`gsv-transcribe\`, and \`gsv-vision\`; the vision model
+          license and provenance are included as verified assets. Windows currently
+          receives the CLI and daemon only.
 
           ### Manual Installation
 
           Download the binary for your platform:
-          - **macOS (Apple Silicon)**: \`gsv-darwin-arm64\`, \`gsvd-darwin-arm64\`, \`gsv-desktop-darwin-arm64\`
-          - **macOS (Intel)**: \`gsv-darwin-x64\`, \`gsvd-darwin-x64\`, \`gsv-desktop-darwin-x64\`
-          - **Linux (x64)**: \`gsv-linux-x64\`, \`gsvd-linux-x64\`, \`gsv-desktop-linux-x64\`
-          - **Linux (ARM64)**: \`gsv-linux-arm64\`, \`gsvd-linux-arm64\`, \`gsv-desktop-linux-arm64\`
+          - **macOS (Apple Silicon)**: \`gsv-darwin-arm64\`, \`gsvd-darwin-arm64\`, \`gsv-desktop-darwin-arm64\`, \`gsv-transcribe-darwin-arm64\`, \`gsv-vision-darwin-arm64\`
+          - **macOS (Intel)**: \`gsv-darwin-x64\`, \`gsvd-darwin-x64\`, \`gsv-desktop-darwin-x64\`, \`gsv-transcribe-darwin-x64\`, \`gsv-vision-darwin-x64\`
+          - **Linux (x64)**: \`gsv-linux-x64\`, \`gsvd-linux-x64\`, \`gsv-desktop-linux-x64\`, \`gsv-transcribe-linux-x64\`, \`gsv-vision-linux-x64\`
+          - **Linux (ARM64)**: \`gsv-linux-arm64\`, \`gsvd-linux-arm64\`, \`gsv-desktop-linux-arm64\`, \`gsv-transcribe-linux-arm64\`, \`gsv-vision-linux-arm64\`
           - **Windows (x64)**: \`gsv-windows-x64.exe\`, \`gsvd-windows-x64.exe\`
 
           The macOS command-line Desktop builds are not yet code-signed or notarized.
@@ -487,6 +499,12 @@ jobs:
             release/gsv-transcribe-darwin-x64
             release/gsv-transcribe-darwin-arm64
             release/gsv-transcribe-THIRD_PARTY.md
+            release/gsv-vision-linux-x64
+            release/gsv-vision-linux-arm64
+            release/gsv-vision-darwin-x64
+            release/gsv-vision-darwin-arm64
+            release/gsv-vision-LICENSE.apache-2.0
+            release/gsv-vision-PROVENANCE.md
             release/gsv-cloudflare-*.tar.gz
             release/gsv-cloudflare-deployment-manifest.json
             release/cloudflare-checksums.txt

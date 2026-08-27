@@ -58,8 +58,8 @@ curl -fsSL https://install.gsv.space | bash
 
 The verified host installer ships matching versions of `gsv` and `gsvd` on
 Linux x64/ARM64, macOS Intel/Apple Silicon, and Windows x64. Linux and macOS
-also receive the native Desktop and its isolated local transcription helper;
-launch it with `gsv desktop`. See the
+also receive the native Desktop plus its isolated local transcription and
+gesture-vision helpers; launch it with `gsv desktop`. See the
 [host application install and upgrade guide](docs/how-to/install-host-apps.md)
 for platform details and service rollback behavior.
 

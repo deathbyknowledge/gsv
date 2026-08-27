@@ -338,10 +338,22 @@ main() {
         "gsvd-${PLATFORM}"
         "gsv-desktop-${PLATFORM}"
         "gsv-transcribe-${PLATFORM}"
+        "gsv-vision-${PLATFORM}"
         "gsv-transcribe-THIRD_PARTY.md"
+        "gsv-vision-LICENSE.apache-2.0"
+        "gsv-vision-PROVENANCE.md"
     )
-    TARGETS=("gsv" "gsvd" "gsv-desktop" "gsv-transcribe" "gsv-transcribe-THIRD_PARTY.md")
-    EXECUTABLES=(1 1 1 1 0)
+    TARGETS=(
+        "gsv"
+        "gsvd"
+        "gsv-desktop"
+        "gsv-transcribe"
+        "gsv-vision"
+        "gsv-transcribe-THIRD_PARTY.md"
+        "gsv-vision-LICENSE.apache-2.0"
+        "gsv-vision-PROVENANCE.md"
+    )
+    EXECUTABLES=(1 1 1 1 1 0 0 0)
 
     echo ""
     echo -e "  ${BOLD}GSV host installer${NC} · ${PLATFORM} · ${release_ref}"
@@ -387,7 +399,7 @@ main() {
     remove_backups
     ensure_config_file
     persist_release_channel
-    success "Installed gsv, gsvd, Desktop, and local transcription to $INSTALL_DIR"
+    success "Installed gsv, gsvd, Desktop, and local helpers to $INSTALL_DIR"
     echo ""
     echo "  Next: gsv auth setup"
     echo "  Open: gsv desktop"
