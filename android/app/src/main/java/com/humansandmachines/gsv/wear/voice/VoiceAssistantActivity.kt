@@ -1,27 +1,33 @@
 package com.humansandmachines.gsv.wear.voice
 
-import android.content.Context
 import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import android.os.Bundle
-import android.view.Gravity
 import android.view.WindowManager
-import android.widget.TextView
-import androidx.appcompat.app.AppCompatActivity
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.humansandmachines.gsv.wear.R
+import com.humansandmachines.gsv.wear.ui.AssistantSurface
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-class VoiceAssistantActivity : AppCompatActivity() {
-    private lateinit var status: TextView
+class VoiceAssistantActivity : ComponentActivity() {
     private var setup: Job? = null
     private var turn: Job? = null
     private var stopReceiverRegistered = false
+    private var assistantState by mutableStateOf(VoiceTurnState.PREPARING)
+    private var assistantDetail by mutableStateOf("")
     private val stopVoiceCommandReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == ACTION_STOP_VOICE_COMMAND) finishVoiceCommand()
@@ -30,20 +36,21 @@ class VoiceAssistantActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
         } else {
             @Suppress("DEPRECATION")
             window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED)
         }
-        status = TextView(this).apply {
-            gravity = Gravity.CENTER
-            setPadding(48, 48, 48, 48)
-            setTextColor(getColor(R.color.gsv_text))
-            textSize = 22f
-            text = getString(R.string.voice_preparing)
+        assistantDetail = VoiceTurnState.PREPARING.detailText(this)
+        setContent {
+            AssistantSurface(
+                state = assistantState,
+                detail = assistantDetail,
+                onCancel = ::finishVoiceCommand,
+            )
         }
-        setContentView(status)
         startInvocation(intent)
     }
 
@@ -83,12 +90,16 @@ class VoiceAssistantActivity : AppCompatActivity() {
     private fun startInvocation(intent: Intent) {
         setup?.cancel()
         turn?.cancel()
+        updateState(VoiceTurnState.PREPARING)
         setup = lifecycleScope.launch {
             val captureRoute = if (intent.action == Intent.ACTION_VOICE_COMMAND) {
                 try {
                     HeadsetVoiceCommandSession.open(this@VoiceAssistantActivity, intent)
+                } catch (error: CancellationException) {
+                    throw error
                 } catch (_: Exception) {
-                    status.text = getString(R.string.voice_headset_error)
+                    assistantState = VoiceTurnState.ERROR
+                    assistantDetail = getString(R.string.voice_headset_error)
                     delay(1_500)
                     finish()
                     return@launch
@@ -98,11 +109,16 @@ class VoiceAssistantActivity : AppCompatActivity() {
             }
             turn = VoiceAssistantRuntime.startTurn(
                 scope = lifecycleScope,
-                onState = { state -> status.text = state.displayText(this@VoiceAssistantActivity) },
+                onState = ::updateState,
                 onFinished = { finish() },
                 captureRoute = captureRoute,
             )
         }
+    }
+
+    private fun updateState(state: VoiceTurnState) {
+        assistantState = state
+        assistantDetail = state.detailText(this)
     }
 
     private fun finishVoiceCommand() {
@@ -116,14 +132,12 @@ class VoiceAssistantActivity : AppCompatActivity() {
     }
 }
 
-fun VoiceTurnState.displayText(context: Context): String = context.getString(
-    when (this) {
-        VoiceTurnState.IDLE -> R.string.voice_ready
-        VoiceTurnState.PREPARING -> R.string.voice_preparing
-        VoiceTurnState.LISTENING -> R.string.voice_listening
-        VoiceTurnState.TRANSCRIBING -> R.string.voice_transcribing
-        VoiceTurnState.THINKING -> R.string.voice_thinking
-        VoiceTurnState.SPEAKING -> R.string.voice_speaking
-        VoiceTurnState.ERROR -> R.string.voice_error
-    },
-)
+private fun VoiceTurnState.detailText(context: Context): String = when (this) {
+    VoiceTurnState.IDLE -> "Ready for your next command."
+    VoiceTurnState.PREPARING -> "Securing a private voice channel…"
+    VoiceTurnState.LISTENING -> "Speak naturally. Tap cancel to stop."
+    VoiceTurnState.TRANSCRIBING -> "Turning speech into an agent command…"
+    VoiceTurnState.THINKING -> "Your personal agent has the floor."
+    VoiceTurnState.SPEAKING -> "Response routed to the active audio device."
+    VoiceTurnState.ERROR -> context.getString(R.string.voice_error)
+}

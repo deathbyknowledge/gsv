@@ -11,7 +11,7 @@ phone's headset-triggered GSV voice client while Wear Mode is armed.
 ## Prerequisites
 
 - JDK 17 or newer
-- Android SDK Platform 36 and Build Tools 36.0.0
+- Android SDK Platform 37 and Build Tools 36.0.0
 - A physical Android phone for the sensor acceptance flow
 - A GSV Gateway WebSocket URL ending in `/ws`
 - A driver-bound device token
@@ -40,6 +40,11 @@ cd android
 ./gradlew testDebugUnitTest lintDebug assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
+
+Debug builds use the side-by-side package `com.humansandmachines.gsv.wear.debug`
+and the launcher label **GSV Wear Dev**. This keeps an existing release install
+and its credentials intact when a development machine has a different debug
+signing key.
 
 Open GSV Wear, enter the Gateway URL, username, exact device id, and token,
 then press **Arm Wear Mode**. Grant camera, microphone, notification, and
