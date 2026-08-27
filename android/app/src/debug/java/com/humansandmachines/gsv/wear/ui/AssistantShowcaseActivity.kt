@@ -30,6 +30,7 @@ import androidx.lifecycle.lifecycleScope
 import com.humansandmachines.gsv.wear.authority.AuthorityState
 import com.humansandmachines.gsv.wear.connection.ConnectionState
 import com.humansandmachines.gsv.wear.runtime.RuntimeSnapshot
+import com.humansandmachines.gsv.wear.voice.AssistantSnapshot
 import com.humansandmachines.gsv.wear.voice.VoiceTurnState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -69,15 +70,16 @@ class AssistantShowcaseActivity : ComponentActivity() {
         setContent {
             if (controlReview) {
                 GsvControlScreen(
-                    snapshot = RuntimeSnapshot(
+                    wearSnapshot = RuntimeSnapshot(
                         connection = ConnectionState.CONNECTED,
                         authority = controlAuthority,
-                        voiceConnection = ConnectionState.CONNECTED,
                     ),
+                    assistantSnapshot = AssistantSnapshot(connection = ConnectionState.CONNECTED),
                     uiState = ControlUiState(
                         notificationStatus = "Ready",
                         assistantSelected = true,
                     ),
+                    onMindToggle = {},
                     onArm = { controlAuthority = AuthorityState.ARMED },
                     onPauseOrResume = {
                         controlAuthority = if (controlAuthority == AuthorityState.PAUSED) {
@@ -90,7 +92,6 @@ class AssistantShowcaseActivity : ComponentActivity() {
                     onDisconnect = {},
                     onActivationStarted = {},
                     onChooseAssistant = {},
-                    onTestVoice = {},
                     onOpenBatterySettings = {},
                     onOpenNotificationSettings = {},
                 )

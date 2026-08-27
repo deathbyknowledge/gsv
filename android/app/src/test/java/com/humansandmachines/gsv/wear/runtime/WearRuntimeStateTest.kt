@@ -1,5 +1,6 @@
 package com.humansandmachines.gsv.wear.runtime
 
+import com.humansandmachines.gsv.wear.voice.AssistantRuntimeState
 import com.humansandmachines.gsv.wear.voice.VoiceTurnState
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -9,28 +10,15 @@ class WearRuntimeStateTest {
     @After
     fun tearDown() {
         WearRuntimeState.reset()
+        AssistantRuntimeState.reset()
     }
 
     @Test
-    fun voiceLevelExistsOnlyWhileAudioIsReactive() {
-        WearRuntimeState.setVoiceLevel(0.7f)
-        assertEquals(0f, WearRuntimeState.snapshot.value.voiceLevel)
+    fun resettingWearDoesNotResetMind() {
+        AssistantRuntimeState.setTurn(VoiceTurnState.LISTENING)
 
-        WearRuntimeState.setVoiceTurn(VoiceTurnState.LISTENING)
-        WearRuntimeState.setVoiceLevel(1.4f)
-        assertEquals(1f, WearRuntimeState.snapshot.value.voiceLevel)
+        WearRuntimeState.reset()
 
-        WearRuntimeState.setVoiceTurn(VoiceTurnState.THINKING)
-        assertEquals(0f, WearRuntimeState.snapshot.value.voiceLevel)
-
-        WearRuntimeState.setVoiceLevel(0.4f)
-        assertEquals(0f, WearRuntimeState.snapshot.value.voiceLevel)
-
-        WearRuntimeState.setVoiceTurn(VoiceTurnState.SPEAKING)
-        WearRuntimeState.setVoiceLevel(0.65f)
-        assertEquals(0.65f, WearRuntimeState.snapshot.value.voiceLevel)
-
-        WearRuntimeState.setVoiceTurn(VoiceTurnState.IDLE)
-        assertEquals(0f, WearRuntimeState.snapshot.value.voiceLevel)
+        assertEquals(VoiceTurnState.LISTENING, AssistantRuntimeState.snapshot.value.turn)
     }
 }

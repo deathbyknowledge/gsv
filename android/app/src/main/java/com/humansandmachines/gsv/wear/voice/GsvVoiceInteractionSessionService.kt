@@ -23,7 +23,6 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.humansandmachines.gsv.wear.R
-import com.humansandmachines.gsv.wear.runtime.WearRuntimeState
 import com.humansandmachines.gsv.wear.ui.AssistantInvocationSurface
 import com.humansandmachines.gsv.wear.ui.detailText
 import kotlinx.coroutines.CoroutineScope
@@ -61,11 +60,11 @@ private class GsvVoiceInteractionSession(
         view.setViewTreeViewModelStoreOwner(lifecycleOwner)
         view.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
         view.setContent {
-            val runtime by WearRuntimeState.snapshot.collectAsState()
+            val runtime by AssistantRuntimeState.snapshot.collectAsState()
             AssistantInvocationSurface(
                 state = state,
                 detail = state.detailText(sessionContext),
-                signal = runtime.voiceLevel,
+                signal = runtime.level,
                 onCancel = ::cancelTurn,
             )
         }

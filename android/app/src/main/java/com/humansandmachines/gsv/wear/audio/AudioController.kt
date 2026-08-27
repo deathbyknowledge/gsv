@@ -22,8 +22,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -58,25 +56,26 @@ interface WearMicrophone {
     ): CapturedAudio
 }
 
-class AudioController(
+interface AssistantMicrophone {
+    suspend fun listenUntilSpeech(
+        timeoutMillis: Long,
+        trailingMillis: Long,
+        preferredDevice: AudioDeviceInfo? = null,
+        onLevel: (Float) -> Unit = {},
+    ): CapturedAudio
+}
+
+internal class AudioController(
     private val context: Context,
-    private val authority: WearAuthority,
     private val onState: (MicrophoneState) -> Unit,
-) : WearMicrophone, Closeable {
-    private val captureMutex = Mutex()
+    private val priority: MicrophoneCapturePriority = MicrophoneCapturePriority.DRIVER,
+) : AssistantMicrophone, Closeable {
     private val closed = AtomicBoolean(false)
 
     @Volatile
     private var currentRecord: AudioRecord? = null
 
-    override suspend fun sample(lease: AuthorityLease, durationMillis: Long): CapturedAudio =
-        record(lease, durationMillis, stopAfterSpeechMillis = null)
-
-    override suspend fun observe(lease: AuthorityLease, durationMillis: Long): CapturedAudio =
-        record(lease, durationMillis, stopAfterSpeechMillis = null)
-
     override suspend fun listenUntilSpeech(
-        lease: AuthorityLease,
         timeoutMillis: Long,
         trailingMillis: Long,
         preferredDevice: AudioDeviceInfo?,
@@ -86,37 +85,80 @@ class AudioController(
             throw AudioCaptureFailure("Speech trailing duration is out of range")
         }
         return record(
-            lease,
             timeoutMillis,
             stopAfterSpeechMillis = trailingMillis,
             preferredDevice = preferredDevice,
             onLevel = onLevel,
+            captureIsCurrent = { true },
+        )
+    }
+
+    internal suspend fun sampleGuarded(
+        durationMillis: Long,
+        captureIsCurrent: () -> Boolean,
+    ): CapturedAudio = record(
+        durationMillis = durationMillis,
+        stopAfterSpeechMillis = null,
+        captureIsCurrent = captureIsCurrent,
+    )
+
+    internal suspend fun observeGuarded(
+        durationMillis: Long,
+        captureIsCurrent: () -> Boolean,
+    ): CapturedAudio = record(
+        durationMillis = durationMillis,
+        stopAfterSpeechMillis = null,
+        captureIsCurrent = captureIsCurrent,
+    )
+
+    internal suspend fun listenUntilSpeechGuarded(
+        timeoutMillis: Long,
+        trailingMillis: Long,
+        preferredDevice: AudioDeviceInfo?,
+        onLevel: (Float) -> Unit,
+        captureIsCurrent: () -> Boolean,
+    ): CapturedAudio {
+        if (trailingMillis !in MIN_TRAILING_MILLIS..MAX_TRAILING_MILLIS) {
+            throw AudioCaptureFailure("Speech trailing duration is out of range")
+        }
+        return record(
+            durationMillis = timeoutMillis,
+            stopAfterSpeechMillis = trailingMillis,
+            preferredDevice = preferredDevice,
+            onLevel = onLevel,
+            captureIsCurrent = captureIsCurrent,
         )
     }
 
     private suspend fun record(
-        lease: AuthorityLease,
         durationMillis: Long,
         stopAfterSpeechMillis: Long?,
         preferredDevice: AudioDeviceInfo? = null,
         onLevel: (Float) -> Unit = {},
+        captureIsCurrent: () -> Boolean,
     ): CapturedAudio {
         if (durationMillis !in MIN_CAPTURE_MILLIS..MAX_CAPTURE_MILLIS) {
             throw AudioCaptureFailure("Microphone duration must be between $MIN_CAPTURE_MILLIS and $MAX_CAPTURE_MILLIS ms")
         }
-        return captureMutex.withLock {
+        return MicrophoneCaptureArbiter.capture(priority) {
             withContext(Dispatchers.IO) {
-                recordLocked(lease, durationMillis, stopAfterSpeechMillis, preferredDevice, onLevel)
+                recordLocked(
+                    durationMillis,
+                    stopAfterSpeechMillis,
+                    preferredDevice,
+                    onLevel,
+                    captureIsCurrent,
+                )
             }
         }
     }
 
     private suspend fun recordLocked(
-        lease: AuthorityLease,
         durationMillis: Long,
         stopAfterSpeechMillis: Long?,
         preferredDevice: AudioDeviceInfo?,
         onLevel: (Float) -> Unit,
+        captureIsCurrent: () -> Boolean,
     ): CapturedAudio {
         if (closed.get()) throw AudioCaptureFailure("Microphone controller is closed")
         if (
@@ -125,7 +167,7 @@ class AudioController(
         ) {
             throw AudioCaptureFailure("Microphone permission is unavailable")
         }
-        if (!authority.isCurrent(lease)) throw AudioCaptureFailure("Wear Mode is not armed")
+        if (!captureIsCurrent()) throw AudioCaptureFailure("Microphone capture is no longer authorized")
 
         onState(MicrophoneState.OPENING)
         val minimumBuffer = AudioRecord.getMinBufferSize(
@@ -177,8 +219,8 @@ class AudioController(
                 val bytes = ByteArray(FRAME_SAMPLES * 2)
                 while (true) {
                     currentCoroutineContext().ensureActive()
-                    if (!authority.isCurrent(lease)) {
-                        throw AudioCaptureFailure("Wear Mode authority changed during microphone capture")
+                    if (!captureIsCurrent()) {
+                        throw AudioCaptureFailure("Microphone capture authority changed")
                     }
                     val now = android.os.SystemClock.elapsedRealtime()
                     if (now >= deadline || (speechStopAt != null && now >= speechStopAt)) break
@@ -373,6 +415,31 @@ class AudioController(
             write((value ushr 8) and 0xff)
         }
     }
+}
+
+internal class AuthorityBoundMicrophone(
+    private val recorder: AudioController,
+    private val authority: WearAuthority,
+) : WearMicrophone {
+    override suspend fun sample(lease: AuthorityLease, durationMillis: Long): CapturedAudio =
+        recorder.sampleGuarded(durationMillis) { authority.isCurrent(lease) }
+
+    override suspend fun observe(lease: AuthorityLease, durationMillis: Long): CapturedAudio =
+        recorder.observeGuarded(durationMillis) { authority.isCurrent(lease) }
+
+    override suspend fun listenUntilSpeech(
+        lease: AuthorityLease,
+        timeoutMillis: Long,
+        trailingMillis: Long,
+        preferredDevice: AudioDeviceInfo?,
+        onLevel: (Float) -> Unit,
+    ): CapturedAudio = recorder.listenUntilSpeechGuarded(
+        timeoutMillis = timeoutMillis,
+        trailingMillis = trailingMillis,
+        preferredDevice = preferredDevice,
+        onLevel = onLevel,
+        captureIsCurrent = { authority.isCurrent(lease) },
+    )
 }
 
 internal fun normalizeVoiceLevel(rms: Double): Float =

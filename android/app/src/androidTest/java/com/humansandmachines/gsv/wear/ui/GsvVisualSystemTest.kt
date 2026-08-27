@@ -15,6 +15,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.humansandmachines.gsv.wear.authority.AuthorityState
 import com.humansandmachines.gsv.wear.config.ConnectionFields
 import com.humansandmachines.gsv.wear.runtime.RuntimeSnapshot
+import com.humansandmachines.gsv.wear.voice.AssistantSnapshot
 import com.humansandmachines.gsv.wear.voice.VoiceTurnState
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -27,14 +28,12 @@ class GsvVisualSystemTest {
     val compose = createComposeRule()
 
     @Test
-    fun disarmedWearCoreExposesItsAction() {
+    fun disarmedShipCoreExposesItsAction() {
         var armRequested = false
         compose.setContent {
             Box {
-                WearCore(
+                ShipCore(
                     authority = AuthorityState.DISARMED,
-                    voiceState = VoiceTurnState.IDLE,
-                    signal = 0f,
                     onToggleRequested = { armRequested = true },
                     onActivationStarted = {},
                     modifier = Modifier.size(270.dp),
@@ -42,7 +41,7 @@ class GsvVisualSystemTest {
             }
         }
 
-        compose.onNodeWithContentDescription("Wear Mode control")
+        compose.onNodeWithContentDescription("Ship Wear Mode control")
             .assert(
                 SemanticsMatcher.expectValue(
                     SemanticsProperties.StateDescription,
@@ -57,25 +56,28 @@ class GsvVisualSystemTest {
     fun controlSurfaceKeepsSystemControlsBehindSettings() {
         compose.setContent {
             GsvControlScreen(
-                snapshot = RuntimeSnapshot(),
+                wearSnapshot = RuntimeSnapshot(),
+                assistantSnapshot = AssistantSnapshot(),
                 uiState = ControlUiState(),
+                onMindToggle = {},
                 onArm = {},
                 onPauseOrResume = {},
                 onDisarm = {},
                 onDisconnect = {},
                 onActivationStarted = {},
                 onChooseAssistant = {},
-                onTestVoice = {},
                 onOpenBatterySettings = {},
                 onOpenNotificationSettings = {},
             )
         }
 
+        compose.onNodeWithText("TAP TO SPEAK").assertExists()
+        compose.onNodeWithContentDescription("Open ship").performClick()
         compose.onNodeWithText("ARM").assertExists()
         compose.onNodeWithText("SYSTEM").assertDoesNotExist()
         compose.onNodeWithContentDescription("Open settings").performClick()
         compose.onNodeWithText("SYSTEM").assertExists()
-        compose.onNodeWithText("ASSISTANT").assertExists()
+        compose.onNodeWithText("PRIVATE LINK").assertExists()
     }
 
     @Test

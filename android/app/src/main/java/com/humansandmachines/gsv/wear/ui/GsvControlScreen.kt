@@ -1,9 +1,11 @@
 package com.humansandmachines.gsv.wear.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -13,6 +15,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -31,6 +34,7 @@ import androidx.compose.foundation.text.BasicText as Text
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -48,13 +52,16 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.humansandmachines.gsv.wear.authority.AuthorityState
 import com.humansandmachines.gsv.wear.connection.ConnectionState
 import com.humansandmachines.gsv.wear.runtime.RuntimeSnapshot
+import com.humansandmachines.gsv.wear.voice.AssistantSnapshot
 import com.humansandmachines.gsv.wear.voice.VoiceTurnState
 import kotlin.math.PI
 import kotlin.math.cos
@@ -64,68 +71,72 @@ data class ControlUiState(
     val runtimeNotice: String = "",
     val notificationStatus: String = "Not granted",
     val assistantSelected: Boolean = false,
-    val voiceTestRunning: Boolean = false,
     val runtimeError: Boolean = false,
 )
 
+private enum class GsvSurface {
+    MIND,
+    SHIP,
+}
+
 @Composable
 fun GsvControlScreen(
-    snapshot: RuntimeSnapshot,
+    wearSnapshot: RuntimeSnapshot,
+    assistantSnapshot: AssistantSnapshot,
     uiState: ControlUiState,
+    onMindToggle: () -> Unit,
     onArm: () -> Unit,
     onPauseOrResume: () -> Unit,
     onDisarm: () -> Unit,
     onDisconnect: () -> Unit,
     onActivationStarted: () -> Unit,
     onChooseAssistant: () -> Unit,
-    onTestVoice: () -> Unit,
     onOpenBatterySettings: () -> Unit,
     onOpenNotificationSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var selectedIndex by rememberSaveable { mutableIntStateOf(0) }
     var settingsVisible by rememberSaveable { mutableStateOf(false) }
+    val selected = GsvSurface.entries[selectedIndex.coerceIn(GsvSurface.entries.indices)]
     BackHandler(enabled = settingsVisible) { settingsVisible = false }
 
-    val connectionColor = snapshot.connection.statusColor()
-    val liveAccent = when {
-        snapshot.authority == AuthorityState.DISARMED -> Color(0xFF34515A)
-        snapshot.authority == AuthorityState.PAUSED -> GsvColor.Amber
-        snapshot.voiceTurn == VoiceTurnState.IDLE -> GsvColor.Cyan
-        else -> snapshot.voiceTurn.accentColor()
+    val accent = when (selected) {
+        GsvSurface.MIND -> assistantSnapshot.turn.accentColor()
+        GsvSurface.SHIP -> when (wearSnapshot.authority) {
+            AuthorityState.ARMED -> GsvColor.Cyan
+            AuthorityState.PAUSED -> GsvColor.Amber
+            AuthorityState.DISARMED -> Color(0xFF35505A)
+        }
     }
 
     Box(modifier.fillMaxSize().background(GsvColor.Void)) {
-        LiveBackdrop(accent = liveAccent, modifier = Modifier.fillMaxSize())
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-                .navigationBarsPadding()
-                .padding(horizontal = 20.dp, vertical = 12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            LiveHeader(
-                connection = snapshot.connection,
-                connectionColor = connectionColor,
-                onOpenSettings = { settingsVisible = true },
-            )
-            Spacer(Modifier.weight(1f))
-            WearCore(
-                authority = snapshot.authority,
-                voiceState = snapshot.voiceTurn,
-                signal = snapshot.voiceLevel,
-                onToggleRequested = {
-                    if (snapshot.authority == AuthorityState.DISARMED) onArm() else onDisarm()
-                },
-                onActivationStarted = onActivationStarted,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            LiveNotice(
-                text = uiState.runtimeNotice,
-                error = uiState.runtimeError,
-                modifier = Modifier.padding(top = 8.dp),
-            )
-            Spacer(Modifier.weight(1f))
+        LiveBackdrop(accent = accent, modifier = Modifier.fillMaxSize())
+        AnimatedContent(
+            targetState = selected,
+            transitionSpec = { fadeIn(tween(230)) togetherWith fadeOut(tween(170)) },
+            label = "gsv-surface",
+        ) { destination ->
+            when (destination) {
+                GsvSurface.MIND -> MindSurface(
+                    snapshot = assistantSnapshot,
+                    notice = uiState.runtimeNotice,
+                    noticeIsError = uiState.runtimeError,
+                    onToggle = onMindToggle,
+                    onOpenSettings = { settingsVisible = true },
+                    onSelect = { selectedIndex = it.ordinal },
+                )
+                GsvSurface.SHIP -> ShipSurface(
+                    snapshot = wearSnapshot,
+                    notice = uiState.runtimeNotice,
+                    noticeIsError = uiState.runtimeError,
+                    onToggle = {
+                        if (wearSnapshot.authority == AuthorityState.DISARMED) onArm() else onDisarm()
+                    },
+                    onActivationStarted = onActivationStarted,
+                    onOpenSettings = { settingsVisible = true },
+                    onSelect = { selectedIndex = it.ordinal },
+                )
+            }
         }
 
         AnimatedVisibility(
@@ -134,13 +145,14 @@ fun GsvControlScreen(
             exit = fadeOut(tween(150)),
         ) {
             SettingsSurface(
-                snapshot = snapshot,
+                wearSnapshot = wearSnapshot,
+                assistantSnapshot = assistantSnapshot,
                 uiState = uiState,
                 onClose = { settingsVisible = false },
                 onPauseOrResume = onPauseOrResume,
                 onDisconnect = onDisconnect,
                 onChooseAssistant = onChooseAssistant,
-                onTestVoice = onTestVoice,
+                onMindToggle = onMindToggle,
                 onOpenBatterySettings = onOpenBatterySettings,
                 onOpenNotificationSettings = onOpenNotificationSettings,
             )
@@ -149,21 +161,230 @@ fun GsvControlScreen(
 }
 
 @Composable
+private fun MindSurface(
+    snapshot: AssistantSnapshot,
+    notice: String,
+    noticeIsError: Boolean,
+    onToggle: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onSelect: (GsvSurface) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        LiveHeader(
+            name = "MIND",
+            connection = snapshot.connection,
+            onOpenSettings = onOpenSettings,
+        )
+        Spacer(Modifier.weight(1f))
+        MindCore(snapshot = snapshot, onToggle = onToggle)
+        LiveNotice(
+            text = notice,
+            error = noticeIsError,
+            modifier = Modifier.padding(top = 7.dp),
+        )
+        Spacer(Modifier.weight(1f))
+        SurfaceNavigation(selected = GsvSurface.MIND, onSelect = onSelect)
+    }
+}
+
+@Composable
+private fun MindCore(
+    snapshot: AssistantSnapshot,
+    onToggle: () -> Unit,
+) {
+    val active = snapshot.turn != VoiceTurnState.IDLE
+    val status = when {
+        active -> snapshot.turn.stateLabel().uppercase()
+        snapshot.connection == ConnectionState.CONNECTED -> "AVAILABLE"
+        snapshot.connection == ConnectionState.OFFLINE -> "OFFLINE"
+        snapshot.connection == ConnectionState.DISCONNECTED -> "DORMANT"
+        else -> "LINKING"
+    }
+    val accent = when {
+        active -> snapshot.turn.accentColor()
+        snapshot.connection == ConnectionState.CONNECTED -> GsvColor.Cyan
+        snapshot.connection == ConnectionState.OFFLINE -> GsvColor.Amber
+        else -> GsvColor.MutedDark
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics(mergeDescendants = true) {
+                contentDescription = "Mind conversation control"
+                stateDescription = status
+                role = Role.Button
+            }
+            .clickable(
+                role = Role.Button,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onToggle,
+            ),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        AssistantCore(
+            state = snapshot.turn,
+            signal = snapshot.level,
+            modifier = Modifier.size(330.dp),
+        )
+        Text(
+            text = status,
+            style = GsvTextStyle.Kicker.copy(
+                color = accent,
+                fontSize = 9.sp,
+                letterSpacing = 3.0.sp,
+                textAlign = TextAlign.Center,
+            ),
+        )
+        Spacer(Modifier.height(14.dp))
+        Text(
+            text = if (active) "TAP TO INTERRUPT" else "TAP TO SPEAK",
+            style = GsvTextStyle.Kicker.copy(
+                color = GsvColor.Muted,
+                fontSize = 8.sp,
+                letterSpacing = 2.0.sp,
+                textAlign = TextAlign.Center,
+            ),
+        )
+    }
+}
+
+@Composable
+private fun ShipSurface(
+    snapshot: RuntimeSnapshot,
+    notice: String,
+    noticeIsError: Boolean,
+    onToggle: () -> Unit,
+    onActivationStarted: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onSelect: (GsvSurface) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        LiveHeader(
+            name = "SHIP",
+            connection = snapshot.connection,
+            onOpenSettings = onOpenSettings,
+        )
+        Spacer(Modifier.weight(1f))
+        ShipCore(
+            authority = snapshot.authority,
+            onToggleRequested = onToggle,
+            onActivationStarted = onActivationStarted,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        LiveNotice(
+            text = notice,
+            error = noticeIsError,
+            modifier = Modifier.padding(top = 5.dp),
+        )
+        if (snapshot.authority != AuthorityState.DISARMED) {
+            Spacer(Modifier.height(13.dp))
+            Text(
+                text = "KEEP GSV FOREGROUNDED WHILE WORN",
+                style = GsvTextStyle.Kicker.copy(
+                    color = GsvColor.MutedDark,
+                    fontSize = 7.sp,
+                    letterSpacing = 1.5.sp,
+                    textAlign = TextAlign.Center,
+                ),
+            )
+        }
+        Spacer(Modifier.weight(1f))
+        SurfaceNavigation(selected = GsvSurface.SHIP, onSelect = onSelect)
+    }
+}
+
+@Composable
+private fun SurfaceNavigation(
+    selected: GsvSurface,
+    onSelect: (GsvSurface) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().height(58.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        GsvSurface.entries.forEachIndexed { index, destination ->
+            SurfaceNavigationItem(
+                destination = destination,
+                selected = destination == selected,
+                onClick = { onSelect(destination) },
+            )
+            if (index == 0) Spacer(Modifier.width(34.dp))
+        }
+    }
+}
+
+@Composable
+private fun SurfaceNavigationItem(
+    destination: GsvSurface,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .width(82.dp)
+            .height(46.dp)
+            .semantics { contentDescription = "Open ${destination.name.lowercase()}" }
+            .clickable(
+                role = Role.Tab,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            ),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            text = destination.name,
+            style = GsvTextStyle.Kicker.copy(
+                color = if (selected) GsvColor.White else GsvColor.MutedDark,
+                fontSize = 9.sp,
+                letterSpacing = 2.4.sp,
+            ),
+        )
+        Spacer(Modifier.height(8.dp))
+        Box(
+            Modifier
+                .width(if (selected) 44.dp else 15.dp)
+                .height(1.dp)
+                .background(if (selected) GsvColor.Cyan.copy(alpha = 0.74f) else GsvColor.Line),
+        )
+    }
+}
+
+@Composable
 private fun LiveHeader(
+    name: String,
     connection: ConnectionState,
-    connectionColor: Color,
     onOpenSettings: () -> Unit,
 ) {
+    val connectionColor = connection.statusColor()
     Row(
         modifier = Modifier.fillMaxWidth().height(48.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "GSV",
+            text = "GSV // $name",
             style = GsvTextStyle.Kicker.copy(
                 color = GsvColor.White,
-                fontSize = 12.sp,
-                letterSpacing = 3.8.sp,
+                fontSize = 11.sp,
+                letterSpacing = 3.0.sp,
             ),
         )
         Spacer(Modifier.weight(1f))
@@ -268,20 +489,22 @@ private fun LiveNotice(text: String, error: Boolean, modifier: Modifier = Modifi
 
 @Composable
 private fun SettingsSurface(
-    snapshot: RuntimeSnapshot,
+    wearSnapshot: RuntimeSnapshot,
+    assistantSnapshot: AssistantSnapshot,
     uiState: ControlUiState,
     onClose: () -> Unit,
     onPauseOrResume: () -> Unit,
     onDisconnect: () -> Unit,
     onChooseAssistant: () -> Unit,
-    onTestVoice: () -> Unit,
+    onMindToggle: () -> Unit,
     onOpenBatterySettings: () -> Unit,
     onOpenNotificationSettings: () -> Unit,
 ) {
     val connectionDetail = buildString {
-        append(snapshot.connection.displayName())
-        snapshot.connectionFailure?.let { append(" // ${it.displayName()}") }
+        append(wearSnapshot.connection.displayName())
+        wearSnapshot.connectionFailure?.let { append(" // ${it.displayName()}") }
     }
+    val mindActive = assistantSnapshot.turn != VoiceTurnState.IDLE
     Box(Modifier.fillMaxSize().background(GsvColor.Void)) {
         LiveBackdrop(accent = GsvColor.Cyan, modifier = Modifier.fillMaxSize(), quiet = true)
         Column(
@@ -308,26 +531,30 @@ private fun SettingsSurface(
                 SettingsPortal(onClick = onClose, close = true)
             }
 
-            SettingsSection("Wear") {
-                StatusReadout("Gateway", connectionDetail, color = snapshot.connection.statusColor())
+            SettingsSection("Ship") {
+                StatusReadout("Gateway", connectionDetail, color = wearSnapshot.connection.statusColor())
                 Spacer(Modifier.height(12.dp))
                 StatusReadout(
                     "Authority",
-                    snapshot.authority.displayName(),
-                    color = when (snapshot.authority) {
+                    wearSnapshot.authority.displayName(),
+                    color = when (wearSnapshot.authority) {
                         AuthorityState.ARMED -> GsvColor.Cyan
                         AuthorityState.PAUSED -> GsvColor.Amber
                         AuthorityState.DISARMED -> GsvColor.MutedDark
                     },
                 )
                 Spacer(Modifier.height(12.dp))
-                StatusReadout("Camera", snapshot.camera.displayName(), color = snapshot.camera.activityColor())
+                StatusReadout("Camera", wearSnapshot.camera.displayName(), color = wearSnapshot.camera.activityColor())
                 Spacer(Modifier.height(12.dp))
-                StatusReadout("Microphone", snapshot.microphone.displayName(), color = snapshot.microphone.activityColor())
-                if (snapshot.authority != AuthorityState.DISARMED) {
+                StatusReadout(
+                    "Microphone",
+                    wearSnapshot.microphone.displayName(),
+                    color = wearSnapshot.microphone.activityColor(),
+                )
+                if (wearSnapshot.authority != AuthorityState.DISARMED) {
                     Spacer(Modifier.height(18.dp))
                     GsvButton(
-                        label = if (snapshot.authority == AuthorityState.PAUSED) "Resume Wear" else "Pause Wear",
+                        label = if (wearSnapshot.authority == AuthorityState.PAUSED) "Resume Wear" else "Pause Wear",
                         onClick = onPauseOrResume,
                         modifier = Modifier.fillMaxWidth(),
                         tone = GsvButtonTone.SECONDARY,
@@ -338,16 +565,16 @@ private fun SettingsSurface(
                     label = "Disconnect Runtime",
                     onClick = onDisconnect,
                     modifier = Modifier.fillMaxWidth(),
-                    enabled = snapshot.connection != ConnectionState.DISCONNECTED,
+                    enabled = wearSnapshot.connection != ConnectionState.DISCONNECTED,
                     tone = GsvButtonTone.DANGER,
                 )
             }
 
-            SettingsSection("Assistant") {
+            SettingsSection("Mind") {
                 StatusReadout(
-                    "Voice link",
-                    snapshot.voiceConnection.displayName(),
-                    color = snapshot.voiceConnection.statusColor(),
+                    "Private link",
+                    assistantSnapshot.connection.displayName(),
+                    color = assistantSnapshot.connection.statusColor(),
                 )
                 Spacer(Modifier.height(12.dp))
                 StatusReadout(
@@ -365,10 +592,9 @@ private fun SettingsSurface(
                 )
                 Spacer(Modifier.height(10.dp))
                 GsvButton(
-                    label = if (uiState.voiceTestRunning) "Voice Turn Active" else "Test Assistant",
-                    onClick = onTestVoice,
+                    label = if (mindActive) "Interrupt Mind" else "Start Mind",
+                    onClick = onMindToggle,
                     modifier = Modifier.fillMaxWidth(),
-                    enabled = !uiState.voiceTestRunning,
                     tone = GsvButtonTone.QUIET,
                 )
             }

@@ -34,7 +34,9 @@ import com.humansandmachines.gsv.wear.ui.GsvControlScreen
 import com.humansandmachines.gsv.wear.ui.GsvLoginScreen
 import com.humansandmachines.gsv.wear.ui.OnboardingUiState
 import com.humansandmachines.gsv.wear.voice.AndroidAssistantRole
+import com.humansandmachines.gsv.wear.voice.AssistantRuntimeState
 import com.humansandmachines.gsv.wear.voice.VoiceAssistantRuntime
+import com.humansandmachines.gsv.wear.voice.VoiceTurnState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -50,7 +52,6 @@ class MainActivity : ComponentActivity() {
     private var runtimeNotice by mutableStateOf("")
     private var notificationStatus by mutableStateOf("Not granted")
     private var assistantSelected by mutableStateOf(false)
-    private var voiceTestRunning by mutableStateOf(false)
     private var runtimeError by mutableStateOf(false)
 
     private val permissionRequest = registerForActivityResult(
@@ -75,6 +76,17 @@ class MainActivity : ComponentActivity() {
         renderAssistantSelection()
     }
 
+    private val mindPermissionRequest = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            startMindTurn()
+        } else {
+            runtimeNotice = getString(R.string.mind_microphone_required)
+            runtimeError = true
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -97,19 +109,21 @@ class MainActivity : ComponentActivity() {
                     onLogin = ::loginAndEnroll,
                 )
             } else {
-                val snapshot by WearRuntimeState.snapshot.collectAsStateWithLifecycle()
+                val wearSnapshot by WearRuntimeState.snapshot.collectAsStateWithLifecycle()
+                val assistantSnapshot by AssistantRuntimeState.snapshot.collectAsStateWithLifecycle()
                 GsvControlScreen(
-                    snapshot = snapshot,
+                    wearSnapshot = wearSnapshot,
+                    assistantSnapshot = assistantSnapshot,
                     uiState = ControlUiState(
                         runtimeNotice = runtimeNotice,
                         notificationStatus = notificationStatus,
                         assistantSelected = assistantSelected,
-                        voiceTestRunning = voiceTestRunning,
                         runtimeError = runtimeError,
                     ),
+                    onMindToggle = ::toggleMindTurn,
                     onArm = ::armWearMode,
                     onPauseOrResume = {
-                        val action = if (snapshot.authority == AuthorityState.PAUSED) {
+                        val action = if (wearSnapshot.authority == AuthorityState.PAUSED) {
                             WearRuntimeService.ACTION_RESUME
                         } else {
                             WearRuntimeService.ACTION_PAUSE
@@ -124,7 +138,6 @@ class MainActivity : ComponentActivity() {
                     },
                     onActivationStarted = ::playActivationHaptic,
                     onChooseAssistant = ::requestAssistantRole,
-                    onTestVoice = ::testVoiceAssistant,
                     onOpenBatterySettings = {
                         startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
                     },
@@ -141,6 +154,7 @@ class MainActivity : ComponentActivity() {
         if (!::configStore.isInitialized) return
         renderNotificationAccess()
         renderAssistantSelection()
+        if (setupComplete) (application as GsvWearApplication).assistantRuntime.reload()
         if (setupComplete && !configStore.isProvisioned(BuildConfig.DEBUG)) {
             setupComplete = false
             onboardingNotice = getString(R.string.sign_in_again)
@@ -171,6 +185,7 @@ class MainActivity : ComponentActivity() {
                 check(configStore.isProvisioned(BuildConfig.DEBUG)) {
                     "Android could not verify the saved connection"
                 }
+                (application as GsvWearApplication).assistantRuntime.reload()
                 setupComplete = true
                 onboardingNotice = ""
                 onboardingError = false
@@ -233,13 +248,32 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun testVoiceAssistant() {
-        voiceTestRunning = true
-        VoiceAssistantRuntime.startTurn(
-            scope = lifecycleScope,
-            onState = WearRuntimeState::setVoiceTurn,
-            onFinished = { voiceTestRunning = false },
-        )
+    private fun toggleMindTurn() {
+        if (AssistantRuntimeState.snapshot.value.turn != VoiceTurnState.IDLE) {
+            VoiceAssistantRuntime.cancelActiveTurn()
+            return
+        }
+        runtimeNotice = ""
+        runtimeError = false
+        if (
+            ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            startMindTurn()
+        } else {
+            mindPermissionRequest.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    private fun startMindTurn() {
+        if (!configStore.isProvisioned(BuildConfig.DEBUG)) {
+            setupComplete = false
+            onboardingNotice = getString(R.string.sign_in_again)
+            onboardingError = true
+            return
+        }
+        (application as GsvWearApplication).assistantRuntime.reload()
+        VoiceAssistantRuntime.startTurn(scope = lifecycleScope)
     }
 
     private fun requestAssistantRole() {

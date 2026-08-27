@@ -7,6 +7,7 @@
     <string name="resume_wear">Resume</string>
     <string name="disarm_wear">Disarm</string>
     <string name="permissions_required">Camera, microphone, nearby-device, approximate-location, and notification permission are required to arm Wear Mode. Precise location is optional.</string>
+    <string name="mind_microphone_required">Microphone permission is required to speak with Mind.</string>
     <string name="notification_channel">GSV Wear runtime</string>
     <string name="notification_channel_description">Shows when this phone is connected as a GSV machine and when sensors are active.</string>
     <string name="notification_armed">GSV Wear armed</string>
