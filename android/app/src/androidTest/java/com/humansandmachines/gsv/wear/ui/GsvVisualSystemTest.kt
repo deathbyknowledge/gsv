@@ -128,8 +128,13 @@ class GsvVisualSystemTest {
             )
         }
 
-        compose.onNodeWithText("GSV PASSWORD").assertExists()
+        compose.onNodeWithText("Authorize this phone").assertExists()
+        compose.onNodeWithText("GSV PASSWORD").assertDoesNotExist()
+        compose.onNodeWithContentDescription("GSV password").assertExists()
         compose.onNodeWithText("GSV ADDRESS").assertDoesNotExist()
         compose.onNodeWithText("DEVICE TOKEN").assertDoesNotExist()
+        compose.onNodeWithText("GSV // SECURE LINK").assertDoesNotExist()
+        compose.onNodeWithText("PASSWORD USED ONCE // NEVER STORED // CREDENTIALS DEVICE-BOUND")
+            .assertDoesNotExist()
     }
 }

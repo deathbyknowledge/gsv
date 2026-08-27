@@ -93,8 +93,6 @@ fun GsvLoginScreen(
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("GSV // SECURE LINK", style = GsvTextStyle.Kicker)
-                    Spacer(Modifier.height(6.dp))
                     Text("Sign in", style = GsvTextStyle.Hero)
                 }
                 Text(
@@ -139,6 +137,7 @@ fun GsvLoginScreen(
                     placeholder = "mine.gsv.space",
                     enabled = !uiState.connecting,
                     keyboardType = KeyboardType.Uri,
+                    showLabel = false,
                 )
                 LoginStep.USERNAME -> GsvField(
                     label = "Username",
@@ -149,6 +148,7 @@ fun GsvLoginScreen(
                     },
                     enabled = !uiState.connecting,
                     keyboardType = KeyboardType.Text,
+                    showLabel = false,
                 )
                 LoginStep.PASSWORD -> GsvField(
                     label = "GSV password",
@@ -161,6 +161,7 @@ fun GsvLoginScreen(
                     secret = true,
                     enabled = !uiState.connecting,
                     keyboardType = KeyboardType.Password,
+                    showLabel = false,
                 )
             }
 
@@ -214,14 +215,6 @@ fun GsvLoginScreen(
                     tone = GsvButtonTone.QUIET,
                 )
             }
-            Spacer(Modifier.height(28.dp))
-            Text(
-                text = "PASSWORD USED ONCE // NEVER STORED // CREDENTIALS DEVICE-BOUND",
-                style = GsvTextStyle.Kicker.copy(
-                    color = GsvColor.MutedDark,
-                    textAlign = TextAlign.Center,
-                ),
-            )
         }
     }
 }
