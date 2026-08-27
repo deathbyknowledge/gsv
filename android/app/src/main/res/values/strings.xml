@@ -1,6 +1,8 @@
 <resources>
     <string name="app_name">GSV Wear</string>
-    <string name="saved">Connection saved</string>
+    <string name="phone_enrolling">Authenticating and enrolling this phone…</string>
+    <string name="phone_enrollment_failed">Sign in failed: %1$s</string>
+    <string name="sign_in_again">The saved connection is incomplete. Sign in again.</string>
     <string name="pause_wear">Pause</string>
     <string name="resume_wear">Resume</string>
     <string name="disarm_wear">Disarm</string>
@@ -16,9 +18,6 @@
     <string name="notification_access_not_granted">Not granted</string>
     <string name="notification_access_connecting">Connecting</string>
     <string name="notification_access_ready">Ready</string>
-    <string name="voice_client_saved">Token saved; arm Wear Mode to connect</string>
-    <string name="voice_client_setting_up">Creating voice token…</string>
-    <string name="voice_client_setup_failed">Voice setup failed: %1$s</string>
     <string name="voice_error">Voice request failed</string>
     <string name="voice_headset_error">Headset voice command could not start</string>
     <string name="voice_assistant_label">GSV</string>

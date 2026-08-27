@@ -24,31 +24,36 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import com.humansandmachines.gsv.wear.authority.AuthorityState
 import com.humansandmachines.gsv.wear.config.ConnectionFields
+import com.humansandmachines.gsv.wear.config.DriverConfig
 import com.humansandmachines.gsv.wear.config.DriverConfigStore
+import com.humansandmachines.gsv.wear.config.OnboardingInput
 import com.humansandmachines.gsv.wear.notifications.AndroidNotificationAccess
+import com.humansandmachines.gsv.wear.provisioning.GsvProvisioner
 import com.humansandmachines.gsv.wear.runtime.WearRuntimeService
 import com.humansandmachines.gsv.wear.runtime.WearRuntimeState
 import com.humansandmachines.gsv.wear.ui.ControlUiState
 import com.humansandmachines.gsv.wear.ui.GsvControlScreen
+import com.humansandmachines.gsv.wear.ui.GsvLoginScreen
+import com.humansandmachines.gsv.wear.ui.OnboardingUiState
 import com.humansandmachines.gsv.wear.voice.GsvVoiceInteractionService
 import com.humansandmachines.gsv.wear.voice.VoiceAssistantRuntime
-import com.humansandmachines.gsv.wear.voice.VoiceProvisioner
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private lateinit var configStore: DriverConfigStore
+    private lateinit var deviceId: String
+    private lateinit var deviceLabel: String
     private var pendingArm = false
-    private var setupNotice by mutableStateOf("")
-    private var voiceNotice by mutableStateOf("")
+    private var setupComplete by mutableStateOf(false)
+    private var onboardingBusy by mutableStateOf(false)
+    private var onboardingNotice by mutableStateOf("")
+    private var onboardingError by mutableStateOf(false)
+    private var runtimeNotice by mutableStateOf("")
     private var notificationStatus by mutableStateOf("Not granted")
     private var assistantSelected by mutableStateOf(false)
-    private var deviceTokenStored by mutableStateOf(false)
-    private var voiceTokenStored by mutableStateOf(false)
-    private var voiceProvisioning by mutableStateOf(false)
     private var voiceTestRunning by mutableStateOf(false)
-    private var setupError by mutableStateOf(false)
-    private var voiceError by mutableStateOf(false)
+    private var runtimeError by mutableStateOf(false)
 
     private val permissionRequest = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -60,8 +65,8 @@ class MainActivity : ComponentActivity() {
         if (pendingArm && granted) {
             WearRuntimeService.arm(this)
         } else if (pendingArm) {
-            setupNotice = getString(R.string.permissions_required)
-            setupError = true
+            runtimeNotice = getString(R.string.permissions_required)
+            runtimeError = true
         }
         pendingArm = false
     }
@@ -71,53 +76,59 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         configStore = DriverConfigStore(applicationContext)
         val initialFields = configStore.loadFields()
-        deviceTokenStored = configStore.hasToken()
-        voiceTokenStored = configStore.hasVoiceToken()
+        deviceId = initialFields?.deviceId ?: configStore.loadOrCreateDeviceId(Build.MODEL)
+        deviceLabel = buildDeviceLabel()
+        setupComplete = configStore.isProvisioned(BuildConfig.DEBUG)
 
         setContent {
-            val snapshot by WearRuntimeState.snapshot.collectAsStateWithLifecycle()
-            GsvControlScreen(
-                initialFields = initialFields,
-                snapshot = snapshot,
-                uiState = ControlUiState(
-                    setupNotice = setupNotice,
-                    voiceNotice = voiceNotice,
-                    notificationStatus = notificationStatus,
-                    assistantSelected = assistantSelected,
-                    deviceTokenStored = deviceTokenStored,
-                    voiceTokenStored = voiceTokenStored,
-                    voiceProvisioning = voiceProvisioning,
-                    voiceTestRunning = voiceTestRunning,
-                    setupError = setupError,
-                    voiceError = voiceError,
-                ),
-                onSaveConnection = ::saveConnection,
-                onArm = ::armWearMode,
-                onPauseOrResume = {
-                    val action = if (snapshot.authority == AuthorityState.PAUSED) {
-                        WearRuntimeService.ACTION_RESUME
-                    } else {
-                        WearRuntimeService.ACTION_PAUSE
-                    }
-                    WearRuntimeService.command(this, action)
-                },
-                onDisarm = {
-                    WearRuntimeService.command(this, WearRuntimeService.ACTION_DISARM)
-                },
-                onDisconnect = {
-                    WearRuntimeService.command(this, WearRuntimeService.ACTION_DISCONNECT)
-                },
-                onActivationStarted = ::playActivationHaptic,
-                onProvisionVoice = ::provisionVoiceClient,
-                onChooseAssistant = ::openAssistantSettings,
-                onTestVoice = ::testVoiceAssistant,
-                onOpenBatterySettings = {
-                    startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-                },
-                onOpenNotificationSettings = {
-                    startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                },
-            )
+            if (!setupComplete) {
+                GsvLoginScreen(
+                    initialFields = initialFields,
+                    uiState = OnboardingUiState(
+                        connecting = onboardingBusy,
+                        notice = onboardingNotice,
+                        error = onboardingError,
+                    ),
+                    allowCleartext = BuildConfig.DEBUG,
+                    onLogin = ::loginAndEnroll,
+                )
+            } else {
+                val snapshot by WearRuntimeState.snapshot.collectAsStateWithLifecycle()
+                GsvControlScreen(
+                    snapshot = snapshot,
+                    uiState = ControlUiState(
+                        runtimeNotice = runtimeNotice,
+                        notificationStatus = notificationStatus,
+                        assistantSelected = assistantSelected,
+                        voiceTestRunning = voiceTestRunning,
+                        runtimeError = runtimeError,
+                    ),
+                    onArm = ::armWearMode,
+                    onPauseOrResume = {
+                        val action = if (snapshot.authority == AuthorityState.PAUSED) {
+                            WearRuntimeService.ACTION_RESUME
+                        } else {
+                            WearRuntimeService.ACTION_PAUSE
+                        }
+                        WearRuntimeService.command(this, action)
+                    },
+                    onDisarm = {
+                        WearRuntimeService.command(this, WearRuntimeService.ACTION_DISARM)
+                    },
+                    onDisconnect = {
+                        WearRuntimeService.command(this, WearRuntimeService.ACTION_DISCONNECT)
+                    },
+                    onActivationStarted = ::playActivationHaptic,
+                    onChooseAssistant = ::openAssistantSettings,
+                    onTestVoice = ::testVoiceAssistant,
+                    onOpenBatterySettings = {
+                        startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                    },
+                    onOpenNotificationSettings = {
+                        startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                    },
+                )
+            }
         }
     }
 
@@ -126,23 +137,62 @@ class MainActivity : ComponentActivity() {
         if (!::configStore.isInitialized) return
         renderNotificationAccess()
         renderAssistantSelection()
-        deviceTokenStored = configStore.hasToken()
-        voiceTokenStored = configStore.hasVoiceToken()
+        if (setupComplete && !configStore.isProvisioned(BuildConfig.DEBUG)) {
+            setupComplete = false
+            onboardingNotice = getString(R.string.sign_in_again)
+            onboardingError = true
+        }
     }
 
-    private fun saveConnection(fields: ConnectionFields, deviceToken: String): Boolean {
-        val replacementToken = deviceToken.trim().ifBlank { null }
-        val error = runCatching {
-            configStore.save(fields, replacementToken, BuildConfig.DEBUG)
-        }.getOrElse { "Could not secure the device credential" }
-        setupNotice = error ?: getString(R.string.saved)
-        setupError = error != null
-        if (error == null) deviceTokenStored = configStore.hasToken()
-        return error == null
+    private fun loginAndEnroll(gatewayUrl: String, username: String, password: String) {
+        if (onboardingBusy) return
+        val fields = ConnectionFields(gatewayUrl, username, deviceId)
+        val inputError = OnboardingInput.usernameError(username)
+            ?: OnboardingInput.passwordError(password)
+            ?: DriverConfig.validateFields(fields, BuildConfig.DEBUG)
+        if (inputError != null) {
+            onboardingNotice = inputError
+            onboardingError = true
+            return
+        }
+
+        onboardingBusy = true
+        onboardingNotice = getString(R.string.phone_enrolling)
+        onboardingError = false
+        lifecycleScope.launch {
+            try {
+                GsvProvisioner.provision(fields, password, deviceLabel) { issued ->
+                    configStore.saveProvisioned(fields, issued, BuildConfig.DEBUG)
+                }
+                check(configStore.isProvisioned(BuildConfig.DEBUG)) {
+                    "Android could not verify the saved connection"
+                }
+                setupComplete = true
+                onboardingNotice = ""
+                onboardingError = false
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                onboardingNotice = getString(
+                    R.string.phone_enrollment_failed,
+                    error.message ?: "unknown error",
+                )
+                onboardingError = true
+            } finally {
+                onboardingBusy = false
+            }
+        }
     }
 
-    private fun armWearMode(fields: ConnectionFields, deviceToken: String): Boolean {
-        if (!saveConnection(fields, deviceToken)) return false
+    private fun armWearMode() {
+        if (!configStore.isProvisioned(BuildConfig.DEBUG)) {
+            setupComplete = false
+            onboardingNotice = getString(R.string.sign_in_again)
+            onboardingError = true
+            return
+        }
+        runtimeNotice = ""
+        runtimeError = false
         pendingArm = true
         val missing = armPermissions().filter { permission ->
             ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED
@@ -165,7 +215,6 @@ class MainActivity : ComponentActivity() {
             }
             permissionRequest.launch(requested.distinct().toTypedArray())
         }
-        return true
     }
 
     private fun armPermissions(): List<String> = buildList {
@@ -178,41 +227,6 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             add(Manifest.permission.POST_NOTIFICATIONS)
         }
-    }
-
-    private fun provisionVoiceClient(
-        fields: ConnectionFields,
-        deviceToken: String,
-        password: String,
-    ): Boolean {
-        if (!saveConnection(fields, deviceToken)) return false
-        val savedFields = configStore.loadFields() ?: return false
-        voiceProvisioning = true
-        voiceNotice = getString(R.string.voice_client_setting_up)
-        voiceError = false
-        lifecycleScope.launch {
-            try {
-                val token = VoiceProvisioner.provision(savedFields, password)
-                configStore.saveVoiceToken(token)
-                voiceTokenStored = true
-                voiceNotice = getString(R.string.voice_client_saved)
-                voiceError = false
-                if (WearRuntimeState.snapshot.value.authority != AuthorityState.DISARMED) {
-                    WearRuntimeService.command(this@MainActivity, WearRuntimeService.ACTION_RELOAD_VOICE)
-                }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Throwable) {
-                voiceNotice = getString(
-                    R.string.voice_client_setup_failed,
-                    error.message ?: "unknown error",
-                )
-                voiceError = true
-            } finally {
-                voiceProvisioning = false
-            }
-        }
-        return true
     }
 
     private fun testVoiceAssistant() {
@@ -244,6 +258,14 @@ class MainActivity : ComponentActivity() {
             this,
             ComponentName(this, GsvVoiceInteractionService::class.java),
         )
+    }
+
+    private fun buildDeviceLabel(): String {
+        val parts = listOf(Build.MANUFACTURER, Build.MODEL)
+            .map { value -> value.trim().filterNot(Char::isISOControl) }
+            .filter(String::isNotBlank)
+            .distinctBy { value -> value.lowercase() }
+        return parts.joinToString(" ").take(64).ifBlank { "Android phone" }
     }
 
     private fun playActivationHaptic() {
