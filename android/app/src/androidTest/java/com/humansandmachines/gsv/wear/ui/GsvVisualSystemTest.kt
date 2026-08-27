@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.humansandmachines.gsv.wear.authority.AuthorityState
 import com.humansandmachines.gsv.wear.config.ConnectionFields
+import com.humansandmachines.gsv.wear.runtime.RuntimeSnapshot
 import com.humansandmachines.gsv.wear.voice.VoiceTurnState
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -32,7 +33,9 @@ class GsvVisualSystemTest {
             Box {
                 WearCore(
                     authority = AuthorityState.DISARMED,
-                    onArmRequested = { armRequested = true },
+                    voiceState = VoiceTurnState.IDLE,
+                    signal = 0f,
+                    onToggleRequested = { armRequested = true },
                     onActivationStarted = {},
                     modifier = Modifier.size(270.dp),
                 )
@@ -43,11 +46,36 @@ class GsvVisualSystemTest {
             .assert(
                 SemanticsMatcher.expectValue(
                     SemanticsProperties.StateDescription,
-                    "WEAR MODE // STANDBY",
+                    "DORMANT",
                 ),
             )
             .performClick()
         compose.runOnIdle { assertTrue(armRequested) }
+    }
+
+    @Test
+    fun controlSurfaceKeepsSystemControlsBehindSettings() {
+        compose.setContent {
+            GsvControlScreen(
+                snapshot = RuntimeSnapshot(),
+                uiState = ControlUiState(),
+                onArm = {},
+                onPauseOrResume = {},
+                onDisarm = {},
+                onDisconnect = {},
+                onActivationStarted = {},
+                onChooseAssistant = {},
+                onTestVoice = {},
+                onOpenBatterySettings = {},
+                onOpenNotificationSettings = {},
+            )
+        }
+
+        compose.onNodeWithText("ARM").assertExists()
+        compose.onNodeWithText("SYSTEM").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Open settings").performClick()
+        compose.onNodeWithText("SYSTEM").assertExists()
+        compose.onNodeWithText("ASSISTANT").assertExists()
     }
 
     @Test

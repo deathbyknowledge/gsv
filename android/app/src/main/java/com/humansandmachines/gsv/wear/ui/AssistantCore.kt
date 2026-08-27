@@ -61,6 +61,7 @@ fun AssistantCore(
     modifier: Modifier = Modifier,
     signal: Float = 0f,
     shapeTarget: OrbShapeTarget = OrbShapeTarget.LISTENING,
+    accentOverride: Color? = null,
 ) {
     val transition = rememberInfiniteTransition(label = "assistant-engine")
     val phase by transition.animateFloat(
@@ -92,7 +93,7 @@ fun AssistantCore(
         )
     }
     val accent by animateColorAsState(
-        targetValue = state.accentColor(),
+        targetValue = accentOverride ?: state.accentColor(),
         animationSpec = tween(480, easing = FastOutSlowInEasing),
         label = "assistant-accent",
     )
@@ -103,17 +104,16 @@ fun AssistantCore(
         0.11f * abs(sin(loopPhase * 2f)) +
         0.05f * abs(sin(loopPhase * 3f + 0.9f))
     val speakingEnergy = speakingEnvelope.value
-    val energy = when {
-        state.usesAssistantLiquid() -> {
-            val focusedEnergy = smoothedSignal +
-                (thinkingEnergy - smoothedSignal) * liquidParameters.focus.coerceIn(0f, 1f)
-            focusedEnergy +
-                (speakingEnergy - focusedEnergy) * liquidParameters.projection.coerceIn(0f, 1f)
-        }
-        state == VoiceTurnState.PREPARING -> 0.22f
-        state == VoiceTurnState.ERROR -> 0.16f
-        else -> 0.06f
+    val receptiveEnergy = when (state) {
+        VoiceTurnState.IDLE -> 0.06f
+        VoiceTurnState.PREPARING -> 0.22f
+        VoiceTurnState.ERROR -> 0.16f
+        else -> smoothedSignal
     }
+    val focusedEnergy = receptiveEnergy +
+        (thinkingEnergy - receptiveEnergy) * liquidParameters.focus.coerceIn(0f, 1f)
+    val energy = focusedEnergy +
+        (speakingEnergy - focusedEnergy) * liquidParameters.projection.coerceIn(0f, 1f)
 
     Box(
         modifier = modifier.semantics {
@@ -130,30 +130,6 @@ fun AssistantCore(
             liquidParameters = liquidParameters,
             modifier = Modifier.fillMaxSize(),
         )
-        if (!state.usesAssistantLiquid()) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    text = "GSV",
-                    style = GsvTextStyle.Kicker.copy(
-                        color = GsvColor.White.copy(alpha = 0.95f),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 3.4.sp,
-                        textAlign = TextAlign.Center,
-                    ),
-                )
-                Spacer(Modifier.height(28.dp))
-                Text(
-                    text = state.shortLabel(),
-                    style = GsvTextStyle.Kicker.copy(
-                        color = accent.copy(alpha = 0.86f),
-                        fontSize = 7.sp,
-                        letterSpacing = 2.1.sp,
-                        textAlign = TextAlign.Center,
-                    ),
-                )
-            }
-        }
     }
 }
 

@@ -67,10 +67,15 @@ private val AssistantLiquidVectorConverter =
         },
     )
 
-internal fun VoiceTurnState.usesAssistantLiquid(): Boolean =
-    this == VoiceTurnState.LISTENING ||
-        this == VoiceTurnState.THINKING ||
-        this == VoiceTurnState.SPEAKING
+internal fun VoiceTurnState.usesAssistantLiquid(): Boolean = when (this) {
+    VoiceTurnState.IDLE,
+    VoiceTurnState.PREPARING,
+    VoiceTurnState.LISTENING,
+    VoiceTurnState.THINKING,
+    VoiceTurnState.SPEAKING,
+    VoiceTurnState.ERROR,
+    -> true
+}
 
 @Composable
 internal fun rememberAssistantLiquidParameters(state: VoiceTurnState): AssistantLiquidParameters {
