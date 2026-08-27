@@ -170,7 +170,7 @@ fn search_text_file(
     }
 
     let mut reader = BufReader::new(file.take(max_bytes.saturating_add(1)));
-    let mut line = String::new();
+    let mut line = Vec::new();
     let mut line_number = 0_usize;
     let mut bytes_read = 0_u64;
     let mut matches = Vec::new();
@@ -180,11 +180,8 @@ fn search_text_file(
         }
 
         line.clear();
-        let read = match reader.read_line(&mut line) {
+        let read = match reader.read_until(b'\n', &mut line) {
             Ok(read) => read,
-            Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
-                return Ok(empty(bytes_read, false));
-            }
             Err(_) => return Ok(empty(bytes_read, false)),
         };
         if read == 0 {
@@ -202,9 +199,12 @@ fn search_text_file(
                 truncated: true,
             });
         }
-        if line.as_bytes().contains(&0) {
+        if line.contains(&0) {
             return Ok(empty(bytes_read, false));
         }
+        let Ok(line) = std::str::from_utf8(&line) else {
+            return Ok(empty(bytes_read, false));
+        };
 
         line_number += 1;
         if line.contains(query) {
@@ -371,5 +371,27 @@ mod tests {
         );
         assert_eq!(output.data["truncated"], true);
         tokio::fs::remove_dir_all(workspace).await.unwrap();
+    }
+
+    #[test]
+    fn search_counts_bytes_consumed_before_invalid_utf8() {
+        let workspace = std::env::temp_dir().join(format!("gsv-search-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&workspace).unwrap();
+        let path = workspace.join("invalid.txt");
+        let contents = b"valid line\ninvalid \xff line\n";
+        fs::write(&path, contents).unwrap();
+
+        let result = search_text_file(
+            &path,
+            "valid",
+            &CancellationToken::new(),
+            MAX_SEARCH_FILE_BYTES,
+            MAX_MATCHES,
+        )
+        .unwrap();
+
+        assert!(result.matches.is_empty());
+        assert_eq!(result.bytes_read, contents.len() as u64);
+        fs::remove_dir_all(workspace).unwrap();
     }
 }
