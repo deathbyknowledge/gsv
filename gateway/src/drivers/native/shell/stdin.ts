@@ -3,7 +3,7 @@ import type { CommandContext } from "just-bash";
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 
 export function decodeShellStdin(stdin: CommandContext["stdin"]): string {
-  const value = stdin as unknown as string;
+  const value = String(stdin);
   let hasHighByte = false;
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);

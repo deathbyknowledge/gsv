@@ -229,6 +229,9 @@ const binaryFrameDescriptorSchema = z.strictObject({
   streamId: z.int().check(z.positive()),
   length: z.optional(z.int().check(z.nonnegative())),
 });
+const shellExecTimeoutArgumentsSchema = z.looseObject({
+  timeout: z.optional(z.number().check(z.positive())),
+});
 const gsvErrorSchema = z.strictObject({
   code: z.number(),
   message: z.string(),
@@ -944,7 +947,7 @@ export class GSVClient {
       args: wireArgs,
     };
     if (outgoing) frame.body = outgoing.descriptor;
-    const timeoutMs = this.requestTimeoutMs(call, args);
+    const timeoutMs = this.requestTimeoutMs(call, wireArgs);
     const bodyAbort = body ? new AbortController() : undefined;
 
     return new Promise((resolve, reject) => {
@@ -1018,13 +1021,14 @@ export class GSVClient {
     args: GsvOutgoingArguments,
   ): Promise<T> {
     const id = makeId();
+    const wireArgs = serializeOutgoingArguments(args);
     const frame: GsvRequestFrame = {
       type: "req",
       id,
       call,
-      args: serializeOutgoingArguments(args),
+      args: wireArgs,
     };
-    const timeoutMs = this.requestTimeoutMs(call, args);
+    const timeoutMs = this.requestTimeoutMs(call, wireArgs);
 
     return new Promise<T>((resolve, reject) => {
       let settled = false;
@@ -1226,17 +1230,15 @@ export class GSVClient {
     socket.send(JSON.stringify(frame));
   }
 
-  private requestTimeoutMs(call: string, args: GsvOutgoingArguments): number {
+  private requestTimeoutMs(call: string, args: JsonValue): number {
     const configuredTimeout = this.requestTimeoutsMs[call];
     if (configuredTimeout !== undefined) {
       return configuredTimeout;
     }
     if (call === "shell.exec") {
-      const requestedTimeout = (args as GsvRequestArguments).timeout;
-      const executionTimeout = typeof requestedTimeout === "number"
-        && Number.isFinite(requestedTimeout)
-        && requestedTimeout > 0
-        ? requestedTimeout
+      const parsed = shellExecTimeoutArgumentsSchema.safeParse(args);
+      const executionTimeout = parsed.success
+        ? parsed.data.timeout ?? DEFAULT_SHELL_EXEC_TIMEOUT_MS
         : DEFAULT_SHELL_EXEC_TIMEOUT_MS;
       return executionTimeout + SHELL_EXEC_RESPONSE_GRACE_MS;
     }
