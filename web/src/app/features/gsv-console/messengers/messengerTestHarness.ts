@@ -9,6 +9,7 @@ export type TestNodeProps = {
   boxed?: boolean;
   children?: ComponentChildren;
   disabled?: boolean;
+  href?: string;
   label?: string;
   message?: string;
   onChange?: (value: string) => void;

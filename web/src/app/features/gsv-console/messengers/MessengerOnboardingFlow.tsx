@@ -7,13 +7,26 @@ import { ListRow } from "../../../components/ui/ListRow";
 import { TextInput } from "../../../components/ui/TextInput";
 import { ConnectFlowShell } from "../connect-flows/ConnectFlowShell";
 import type { ConnectFlowDef } from "../connect-flows/connectFlowTypes";
-import type { ConnectConsoleAdapterResult, IdentityLinkMutationResult } from "../backend/consoleService";
+import type {
+  ConnectConsoleAdapterInput,
+  ConnectConsoleAdapterResult,
+  IdentityLinkMutationResult,
+} from "../backend/consoleService";
 import { useConnectConsoleAdapter, useConsumeIdentityLinkCode } from "../hooks/useConsoleData";
 import { useUnsavedGuard, useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
-import { BOTFATHER_URL, DISCORD_DEVELOPER_URL, MESSENGER_CAPABILITIES, adapterDocUrl } from "./messengerDocs";
+import {
+  BOTFATHER_URL,
+  DISCORD_DEVELOPER_URL,
+  MESSENGER_CAPABILITIES,
+  SLACK_APPS_URL,
+  adapterDocUrl,
+} from "./messengerDocs";
 import { adapterDetailId, adapterName, deriveAccountId, iconForAdapterName } from "./messengerPresentation";
 import { WhatsAppOnboardingFlow } from "./WhatsAppOnboardingFlow";
-import { ManagedTelegramOnboardingFlow } from "./ManagedTelegramOnboardingFlow";
+import {
+  ManagedSlackOnboardingFlow,
+  ManagedTelegramOnboardingFlow,
+} from "./ManagedTelegramOnboardingFlow";
 
 export type MessengerOnboardingDependencies = {
   ConnectFlowShell: typeof ConnectFlowShell;
@@ -90,6 +103,15 @@ export function MessengerOnboardingFlow({
     );
   }
 
+  if (adapterId === "slack" && managedPairing) {
+    return (
+      <ManagedSlackOnboardingFlow
+        onBack={onBack}
+        onConnected={onConnected}
+      />
+    );
+  }
+
   return (
     <BotMessengerOnboardingFlow
       adapterId={adapterId}
@@ -115,6 +137,7 @@ function BotMessengerOnboardingFlow({
   const consumeLinkCode = dependencies.useConsumeLinkCode();
   const [step, setStep] = useState(STEP_CREATE);
   const [token, setToken] = useState("");
+  const [appToken, setAppToken] = useState("");
   const [linkCode, setLinkCode] = useState("");
   const [result, setResult] = useState<ConnectConsoleAdapterResult | null>(null);
   const [formError, setFormError] = useState("");
@@ -122,15 +145,23 @@ function BotMessengerOnboardingFlow({
   const [linkResultText, setLinkResultText] = useState("");
 
   dependencies.useUnsavedGuard(
-    () => !linked && (step > STEP_CREATE || token.trim() !== "" || linkCode.trim() !== ""),
+    () => !linked && (
+      step > STEP_CREATE
+      || token.trim() !== ""
+      || appToken.trim() !== ""
+      || linkCode.trim() !== ""
+    ),
   );
 
   const isTelegram = adapterId === "telegram";
+  const isSlack = adapterId === "slack";
   const name = adapterName(adapterId);
   const docUrl = adapterDocUrl(adapterId);
   const botConnected = Boolean(result?.ok && result.connected && result.authenticated);
   const linked = linkResultText.length > 0;
-  const canSubmit = token.trim().length > 0 && !connect.isPending;
+  const canSubmit = token.trim().length > 0
+    && (!isSlack || appToken.trim().length > 0)
+    && !connect.isPending;
   const canLinkUser = botConnected && linkCode.trim().length > 0 && !consumeLinkCode.isPending;
   // Steps 1-2 are performed on the messaging platform; 3-4 happen inside GSV.
   const onPlatform = step <= STEP_TOKEN;
@@ -158,10 +189,14 @@ function BotMessengerOnboardingFlow({
     setFormError("");
     try {
       const accountId = initialAccountId?.trim() || deriveAccountId(adapterId, token.trim());
+      const config: NonNullable<ConnectConsoleAdapterInput["config"]> = {
+        botToken: token.trim(),
+      };
+      if (isSlack) config.appToken = appToken.trim();
       const next = await connect.mutateAsync({
         adapter: adapterId,
         accountId,
-        config: { botToken: token.trim() },
+        config,
       });
       if (next.ok && next.connected && next.authenticated) {
         setResult(next);
@@ -235,13 +270,15 @@ function BotMessengerOnboardingFlow({
     navLabel: "MESSENGER",
     parentLabel: "MESSENGERS",
     icon: iconForAdapterName(adapterId),
-    title: `Connect ${name} bot`,
-    blurb: `Link a ${name} bot so you can check files and approve tasks from anywhere · ${name} messenger.`,
+    title: isSlack ? "Connect Slack app" : `Connect ${name} bot`,
+    blurb: isSlack
+      ? "Connect your own Slack app so mentions and direct messages reach this standalone GSV."
+      : `Link a ${name} bot so you can check files and approve tasks from anywhere · ${name} messenger.`,
     steps: [
       {
         key: "create",
         label: "CREATE BOT",
-        title: "Create your GSV messenger bot",
+        title: isSlack ? "Create your GSV Slack app" : "Create your GSV messenger bot",
         meta: stepMeta(STEP_CREATE),
         status,
         tone: botConnected ? "online" : "idle",
@@ -251,11 +288,13 @@ function BotMessengerOnboardingFlow({
             <p class="gsv-cf-desc">
               {isTelegram
                 ? "Open BotFather in Telegram and create a new bot to act as your GSV's messenger."
-                : "Create a new bot application in the Discord developer portal to act as your GSV's messenger."}
+                : isSlack
+                  ? "Create a Slack app for your workspace, enable Socket Mode, and subscribe it to app mentions and direct messages."
+                  : "Create a new bot application in the Discord developer portal to act as your GSV's messenger."}
             </p>
             <div style={stepLinksStyle}>
-              <Link href={isTelegram ? BOTFATHER_URL : DISCORD_DEVELOPER_URL}>
-                {isTelegram ? "Open BotFather" : "Open Discord Developer Portal"}
+              <Link href={isTelegram ? BOTFATHER_URL : isSlack ? SLACK_APPS_URL : DISCORD_DEVELOPER_URL}>
+                {isTelegram ? "Open BotFather" : isSlack ? "Open Slack Apps" : "Open Discord Developer Portal"}
               </Link>
               <Link href={docUrl} arrow>Need help? Documentation</Link>
             </div>
@@ -268,8 +307,8 @@ function BotMessengerOnboardingFlow({
       },
       {
         key: "token",
-        label: "GET TOKEN",
-        title: "Generate an access token",
+        label: isSlack ? "GET TOKENS" : "GET TOKEN",
+        title: isSlack ? "Generate the Slack tokens" : "Generate an access token",
         meta: stepMeta(STEP_TOKEN),
         status,
         tone: botConnected ? "online" : "idle",
@@ -279,7 +318,9 @@ function BotMessengerOnboardingFlow({
             <p class="gsv-cf-desc">
               {isTelegram
                 ? "BotFather hands you an access token once the bot is created. Copy it — you'll paste it in the next step."
-                : "In your bot's settings, create a bot token and copy it — you'll paste it in the next step."}
+                : isSlack
+                  ? "Install the app to get its bot token, then generate an app-level token with connections:write for Socket Mode."
+                  : "In your bot's settings, create a bot token and copy it — you'll paste it in the next step."}
             </p>
             <div style={stepLinksStyle}>
               <Link href={docUrl} arrow>Need help? Documentation</Link>
@@ -303,15 +344,17 @@ function BotMessengerOnboardingFlow({
           <>
             {platformAlert}
             <p class="gsv-cf-desc">
-              Paste the token below to connect your {name} bot to GSV.
+              {isSlack
+                ? "Paste both Slack tokens below. They stay in your standalone adapter deployment."
+                : `Paste the token below to connect your ${name} bot to GSV.`}
             </p>
             <div style={tokenFieldStyle}>
               <TextInput
-                label="ACCESS TOKEN"
+                label={isSlack ? "BOT TOKEN" : "ACCESS TOKEN"}
                 size="large"
                 requirement="required"
                 value={token}
-                placeholder="123456789:AA…"
+                placeholder={isSlack ? "xoxb-…" : "123456789:AA…"}
                 type="password"
                 clearable
                 status={formError ? "error" : "none"}
@@ -322,6 +365,23 @@ function BotMessengerOnboardingFlow({
                 }}
                 inputProps={{ name: "botToken", autoComplete: "off" }}
               />
+              {isSlack ? (
+                <TextInput
+                  label="APP-LEVEL TOKEN"
+                  size="large"
+                  requirement="required"
+                  value={appToken}
+                  placeholder="xapp-…"
+                  type="password"
+                  clearable
+                  status={formError ? "error" : "none"}
+                  onChange={(value) => {
+                    if (formError) setFormError("");
+                    setAppToken(value);
+                  }}
+                  inputProps={{ name: "appToken", autoComplete: "off" }}
+                />
+              ) : null}
             </div>
             <div class="gsv-cf-footer">
               <Button variant="secondary" label="BACK" disabled={connect.isPending} onClick={goBack} />

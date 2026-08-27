@@ -14,13 +14,18 @@ import {
   useConsoleAdapterPairingInfo,
   useInspectConsoleAdapterPairing,
 } from "../hooks/useConsoleData";
-import { MESSENGER_CAPABILITIES } from "./messengerDocs";
+import { MESSENGER_CAPABILITIES, adapterDocUrl } from "./messengerDocs";
 import { adapterDetailId } from "./messengerPresentation";
 
 type ManagedTelegramOnboardingFlowProps = {
   onBack: () => void;
   onConnected: (detailId: string) => void;
   dependencies?: ManagedTelegramDependencies;
+};
+
+type ManagedMessengerOnboardingFlowProps = Omit<ManagedTelegramOnboardingFlowProps, "dependencies"> & {
+  adapterId: "telegram" | "slack";
+  dependencies: ManagedTelegramDependencies;
 };
 
 export type ManagedTelegramDependencies = {
@@ -50,7 +55,38 @@ export function ManagedTelegramOnboardingFlow({
   onConnected,
   dependencies = defaultDependencies,
 }: ManagedTelegramOnboardingFlowProps): JSX.Element {
-  const info = dependencies.useConsoleAdapterPairingInfo("telegram");
+  return (
+    <ManagedMessengerOnboardingFlow
+      adapterId="telegram"
+      onBack={onBack}
+      onConnected={onConnected}
+      dependencies={dependencies}
+    />
+  );
+}
+
+export function ManagedSlackOnboardingFlow({
+  onBack,
+  onConnected,
+  dependencies = defaultDependencies,
+}: ManagedTelegramOnboardingFlowProps): JSX.Element {
+  return (
+    <ManagedMessengerOnboardingFlow
+      adapterId="slack"
+      onBack={onBack}
+      onConnected={onConnected}
+      dependencies={dependencies}
+    />
+  );
+}
+
+function ManagedMessengerOnboardingFlow({
+  adapterId,
+  onBack,
+  onConnected,
+  dependencies,
+}: ManagedMessengerOnboardingFlowProps): JSX.Element {
+  const info = dependencies.useConsoleAdapterPairingInfo(adapterId);
   const inspect = dependencies.useInspectConsoleAdapterPairing();
   const confirm = dependencies.useConfirmConsoleAdapterPairing();
   const [step, setStep] = useState(STEP_MESSAGE);
@@ -60,17 +96,21 @@ export function ManagedTelegramOnboardingFlow({
   const paired = step === STEP_DONE;
   dependencies.useUnsavedGuard(() => !paired && (step > STEP_MESSAGE || code.trim().length > 0));
 
+  const isSlack = adapterId === "slack";
+  const platform = isSlack ? "Slack" : "Telegram";
   const botUsername = info.data?.botUsername?.replace(/^@/, "") ?? "";
-  const botUrl = botUsername ? `https://t.me/${botUsername}` : "https://telegram.org/";
+  const launchUrl = isSlack
+    ? info.data?.installUrl ?? adapterDocUrl("slack")
+    : botUsername ? `https://t.me/${botUsername}` : "https://telegram.org/";
   const displayIdentity = candidate?.actorHandle
     || candidate?.actorName
-    || (candidate ? `Telegram user ${candidate.actorId}` : "Telegram identity");
+    || (candidate ? `${platform} user ${candidate.actorId}` : `${platform} identity`);
 
   const inspectCode = async () => {
     if (!code.trim() || inspect.isPending) return;
     setFormError("");
     try {
-      const next = await inspect.mutateAsync({ adapter: "telegram", code });
+      const next = await inspect.mutateAsync({ adapter: adapterId, code });
       setCandidate(next);
       setStep(STEP_CONFIRM);
     } catch (error) {
@@ -83,7 +123,7 @@ export function ManagedTelegramOnboardingFlow({
     if (!candidate || confirm.isPending) return;
     setFormError("");
     try {
-      await confirm.mutateAsync({ adapter: "telegram", code });
+      await confirm.mutateAsync({ adapter: adapterId, code });
       setStep(STEP_DONE);
     } catch (error) {
       setFormError(error instanceof Error ? error.message : String(error));
@@ -91,47 +131,53 @@ export function ManagedTelegramOnboardingFlow({
   };
 
   const detailId = adapterDetailId({
-    adapter: "telegram",
-    accountId: info.data?.accountId ?? "managed",
+    adapter: adapterId,
+    accountId: candidate?.accountId ?? info.data?.accountId ?? "managed",
     connected: true,
     authenticated: true,
     mode: "managed-shared",
     lastActivity: null,
     error: "",
-    extra: botUsername ? { botUsername } : {},
+    extra: !isSlack && botUsername ? { botUsername } : {},
   });
 
   const flow: ConnectFlowDef = {
-    key: "managed-telegram",
-    navLabel: "TELEGRAM",
+    key: `managed-${adapterId}`,
+    navLabel: platform.toUpperCase(),
     parentLabel: "MESSENGERS",
-    icon: "telegram",
-    title: "Connect Telegram",
-    blurb: "Message the official GSV bot, then confirm that Telegram identity here.",
+    icon: isSlack ? "chat" : "telegram",
+    title: `Connect ${platform}`,
+    blurb: isSlack
+      ? "Install the official GSV app, mention it in Slack, then confirm your identity here."
+      : "Message the official GSV bot, then confirm that Telegram identity here.",
     steps: [
       {
         key: "message",
-        label: "MESSAGE GSV",
-        title: "Message the GSV bot",
-        meta: "IN TELEGRAM",
+        label: isSlack ? "INSTALL & MENTION" : "MESSAGE GSV",
+        title: isSlack ? "Install and mention GSV" : "Message the GSV bot",
+        meta: `IN ${platform.toUpperCase()}`,
         status: paired ? "CONNECTED" : "NOT CONNECTED",
         tone: paired ? "online" : "idle",
         render: () => (
           <>
             <Alert
               variant="attention"
-              title="START IN TELEGRAM"
-              text="Send the official GSV bot any private message. It will reply with a short-lived pairing code."
+              title={`START IN ${platform.toUpperCase()}`}
+              text={isSlack
+                ? "Install the official GSV app in your workspace, then mention @GSV in a channel or message it directly. GSV sends you a short-lived pairing code by DM."
+                : "Send the official GSV bot any private message. It will reply with a short-lived pairing code."}
             />
             {info.isError ? (
-              <Alert variant="error" text={info.error?.message ?? "Unable to load Telegram pairing details."} />
+              <Alert variant="error" text={info.error?.message ?? `Unable to load ${platform} pairing details.`} />
             ) : !info.data?.configured ? (
-              <Alert variant="warning" text="Managed Telegram is not configured for this GSV environment yet." />
+              <Alert variant="warning" text={`Managed ${platform} is not configured for this GSV environment yet.`} />
             ) : null}
             <div class="gsv-cf-footer">
               <Button variant="secondary" label="BACK" onClick={onBack} />
               <span class="gsv-cf-footer-spacer" />
-              <Link href={botUrl}>{botUsername ? `OPEN @${botUsername}` : "OPEN TELEGRAM"}</Link>
+              <Link href={launchUrl}>{isSlack
+                ? info.data?.installUrl ? "INSTALL GSV IN SLACK" : "VIEW SLACK SETUP"
+                : botUsername ? `OPEN @${botUsername}` : "OPEN TELEGRAM"}</Link>
               <Button
                 variant="primary"
                 label="I HAVE A CODE"
@@ -145,14 +191,14 @@ export function ManagedTelegramOnboardingFlow({
       {
         key: "code",
         label: "ENTER CODE",
-        title: "Enter the code from Telegram",
+        title: `Enter the code from ${platform}`,
         meta: "IN GSV",
         status: paired ? "CONNECTED" : "PAIRING",
         tone: paired ? "online" : "idle",
         render: () => (
           <>
             <p class="gsv-cf-desc">
-              Codes expire after 10 minutes. Entering one only reveals the Telegram identity;
+              Codes expire after 10 minutes. Entering one only reveals the {platform} identity;
               nothing is linked until you confirm it on the next step.
             </p>
             <div style={fieldStyle}>
@@ -171,7 +217,7 @@ export function ManagedTelegramOnboardingFlow({
                 }}
                 inputProps={{
                   autoComplete: "one-time-code",
-                  name: "managedTelegramPairingCode",
+                  name: `managed${platform}PairingCode`,
                   onKeyDown: (event) => {
                     if (event.key === "Enter") {
                       event.preventDefault();
@@ -197,7 +243,7 @@ export function ManagedTelegramOnboardingFlow({
       {
         key: "confirm",
         label: "CONFIRM",
-        title: "Confirm your Telegram identity",
+        title: `Confirm your ${platform} identity`,
         meta: "IN GSV",
         status: paired ? "CONNECTED" : "CONFIRM IDENTITY",
         tone: paired ? "online" : "idle",
@@ -205,15 +251,15 @@ export function ManagedTelegramOnboardingFlow({
           <>
             <Alert
               variant={candidate?.linked ? "warning" : "attention"}
-              title={candidate?.linked ? "MOVE THIS TELEGRAM IDENTITY?" : "IS THIS YOU?"}
+              title={candidate?.linked ? `MOVE THIS ${platform.toUpperCase()} IDENTITY?` : "IS THIS YOU?"}
               text={candidate?.linked
                 ? `${displayIdentity} is linked to another GSV. Confirming moves future messages here; the old link stays active until this confirmation succeeds.`
-                : `Telegram reported ${displayIdentity}. Confirm only if this is the account that messaged the bot.`}
+                : `${platform} reported ${displayIdentity}. Confirm only if this is the account that contacted GSV.`}
             />
             <div class="gsv-cf-framed">
               <ListRow
                 label={displayIdentity}
-                sub={candidate ? `Telegram ID ${candidate.actorId}` : "No identity loaded"}
+                sub={candidate ? `${platform} ID ${candidate.actorId}` : "No identity loaded"}
                 status="none"
               />
             </div>
@@ -234,7 +280,7 @@ export function ManagedTelegramOnboardingFlow({
       {
         key: "done",
         label: "DONE",
-        title: "Telegram is connected",
+        title: `${platform} is connected`,
         meta: "READY",
         status: "CONNECTED",
         tone: "online",
@@ -243,7 +289,7 @@ export function ManagedTelegramOnboardingFlow({
             <Alert
               variant="success"
               title="CONNECTED"
-              text={`${displayIdentity} now reaches your personal intelligence. You can move between GSV and Telegram without choosing another agent.`}
+              text={`${displayIdentity} now reaches your personal intelligence. You can move between GSV and ${platform} without choosing another agent.`}
             />
             <div class="gsv-cf-framed">
               {MESSENGER_CAPABILITIES.map((cap) => (
@@ -251,7 +297,7 @@ export function ManagedTelegramOnboardingFlow({
               ))}
             </div>
             <div class="gsv-cf-footer">
-              <Button variant="secondary" label="VIEW TELEGRAM" onClick={() => onConnected(detailId)} />
+              <Button variant="secondary" label={`VIEW ${platform.toUpperCase()}`} onClick={() => onConnected(detailId)} />
               <span class="gsv-cf-footer-spacer" />
               <Button variant="primary" label="DONE" onClick={onBack} />
             </div>

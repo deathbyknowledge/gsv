@@ -161,7 +161,7 @@ afterEach(async () => {
 });
 
 describe("MessengersPage onboarding routes", () => {
-  it.each(["telegram", "discord", "whatsapp"])(
+  it.each(["telegram", "slack", "discord", "whatsapp"])(
     "keeps bare %s platform onboarding open when the first account appears",
     async (adapterId) => {
       const onSelectionChange = vi.fn();

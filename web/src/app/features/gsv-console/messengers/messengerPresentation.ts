@@ -21,7 +21,9 @@ export function adapterName(adapter: string): string {
 }
 
 export function messengerAccountNoun(adapter: string, count = 1): string {
-  const noun = adapter === "whatsapp" ? "account" : "bot";
+  const noun = adapter === "whatsapp"
+    ? "account"
+    : adapter === "slack" ? "workspace" : "bot";
   return count === 1 ? noun : `${noun}s`;
 }
 
@@ -149,6 +151,9 @@ export function adapterLabel(adapter: ConsoleAdapterAccount): string {
     return whatsappAccountPhone(adapter)
       || whatsappAccountIdLabel(adapter.accountId);
   }
+  if (adapter.adapter === "slack") {
+    return extraString(adapter, "teamName") || "Slack workspace";
+  }
   return adapter.accountId;
 }
 
@@ -161,6 +166,14 @@ export function adapterSub(adapter: ConsoleAdapterAccount): string {
       adapter.lastActivity !== null ? `active ${formatAge(adapter.lastActivity)}` : "",
       actionableAdapterError(adapter.adapter, adapter.error),
     ], "WhatsApp account");
+  }
+  if (adapter.adapter === "slack") {
+    return compactText([
+      extraString(adapter, "teamName"),
+      adapter.mode ? `mode ${adapter.mode}` : "",
+      adapter.lastActivity !== null ? `active ${formatAge(adapter.lastActivity)}` : "",
+      adapter.error,
+    ], "Slack workspace");
   }
   return compactText([
     formatTokenLabel(adapter.adapter),
@@ -342,7 +355,7 @@ export function familyStatusFromAccounts(
 /** Messenger platforms GSV supports, in display order. These are always shown;
  *  availability distinguishes a deployed adapter with no accounts from an
  *  adapter Worker that is absent. */
-export const SUPPORTED_MESSENGER_ADAPTERS = ["telegram", "discord", "whatsapp"] as const;
+export const SUPPORTED_MESSENGER_ADAPTERS = ["telegram", "slack", "discord", "whatsapp"] as const;
 
 export interface MessengerFamily {
   adapter: string;
@@ -400,5 +413,7 @@ export function deriveDiscordAccountId(botToken: string): string {
 
 /** Pick a stable per-bot account id from the bot token for the given adapter. */
 export function deriveAccountId(adapter: string, botToken: string): string {
-  return adapter === "telegram" ? deriveTelegramAccountId(botToken) : deriveDiscordAccountId(botToken);
+  if (adapter === "telegram") return deriveTelegramAccountId(botToken);
+  if (adapter === "discord") return deriveDiscordAccountId(botToken);
+  return "default";
 }

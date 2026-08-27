@@ -83,22 +83,27 @@ describe("buildDesktopObjectsFromConsole", () => {
       kind: "machines",
       detailId: "hank-linux",
     });
-    expect(objects.find((object) => object.id === "messengers")?.children).toHaveLength(3);
+    expect(objects.find((object) => object.id === "messengers")?.children).toHaveLength(4);
     expect(objects.find((object) => object.id === "messengers")?.children[0]?.route).toEqual({
       kind: "messengers",
       detailId: "telegram",
     });
     expect(objects.find((object) => object.id === "messengers")?.children[1]?.route).toEqual({
       kind: "messengers",
-      detailId: "discord",
+      detailId: "slack",
     });
     expect(objects.find((object) => object.id === "messengers")?.children[2]?.route).toEqual({
+      kind: "messengers",
+      detailId: "discord",
+    });
+    expect(objects.find((object) => object.id === "messengers")?.children[3]?.route).toEqual({
       kind: "messengers",
       detailId: "whatsapp",
     });
     expect(objects.find((object) => object.id === "messengers")?.children[0]?.statusLabel).toBe("UNAVAILABLE");
-    expect(objects.find((object) => object.id === "messengers")?.children[1]?.statusLabel).toBe("CONNECTED");
-    expect(objects.find((object) => object.id === "messengers")?.children[2]).toMatchObject({
+    expect(objects.find((object) => object.id === "messengers")?.children[1]?.statusLabel).toBe("UNAVAILABLE");
+    expect(objects.find((object) => object.id === "messengers")?.children[2]?.statusLabel).toBe("CONNECTED");
+    expect(objects.find((object) => object.id === "messengers")?.children[3]).toMatchObject({
       statusLabel: "UNAVAILABLE",
       blurb: expect.stringContaining("deploy it"),
     });

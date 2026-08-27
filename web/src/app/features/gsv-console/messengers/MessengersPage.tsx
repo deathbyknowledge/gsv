@@ -109,6 +109,9 @@ function platformBlurb(adapter: string): string {
   if (adapter === "discord") {
     return "Bring your GSV into Discord — check files, approve tasks, and stay in control from anywhere.";
   }
+  if (adapter === "slack") {
+    return "Mention GSV in Slack channels and threads, or continue privately by direct message.";
+  }
   if (adapter === "whatsapp") {
     return "Message your GSV through a dedicated WhatsApp account linked with a QR code.";
   }

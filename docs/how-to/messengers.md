@@ -139,6 +139,54 @@ When a direct-message approval is pending, copy one of the full commands shown
 in that prompt. Each includes a unique `hil[...]` token; do not omit it or reuse
 a command from an older prompt.
 
+## Slack
+
+### Managed GSV
+
+1. In GSV, open **Messengers → Slack** and choose **Install GSV in Slack**.
+2. Approve the official GSV app for the intended Slack workspace. If another
+   member already installed it there, you can continue with that installation.
+3. Mention `@GSV` in a channel, or send the app a direct message. GSV sends a
+   short-lived pairing code to your Slack direct messages.
+4. Enter the code back in GSV. Check the Slack user ID shown before confirming.
+5. Confirm only if it is your Slack identity. The code itself cannot select an
+   installation or local user; the signed-in GSV session supplies both.
+6. Mention `@GSV` again to start a conversation. In a channel, replies remain
+   in the originating thread. The first mention only requested pairing and is
+   not replayed to the agent.
+
+The app installation belongs to the Slack workspace, while the pairing belongs
+to one human author. If Alice and Bob use the same workspace, each pairs
+separately and each author's mentions keep routing to their own GSV. Making
+Alice and Bob Contacts does not change that default Slack route. A linked GSV
+can still contact the other explicitly through GSV's normal federation model.
+
+Public channel and thread responses identify whose GSV produced them, for
+example **From @Alice's GSV:**. Direct-message responses omit that prefix.
+Relinking a Slack identity moves future messages only after confirmation
+succeeds; delayed messages and replies from the old link are rejected.
+
+### Standalone GSV
+
+Standalone keeps the same Slack behavior but uses an app you own:
+
+1. Create a Slack app at [Slack API Apps](https://api.slack.com/apps).
+2. Add the bot scopes `app_mentions:read`, `chat:write`, `im:history`, and
+   `im:write`.
+3. Enable the App Home Messages tab and allow users to send messages.
+4. Subscribe the bot to `app_mention`, `message.im`, and `app_uninstalled`, then
+   enable Socket Mode.
+5. Create an app-level `xapp-…` token with `connections:write`, install the app
+   in your workspace, and copy its `xoxb-…` bot token.
+6. In **GSV → Messengers → Slack**, paste both tokens. They are stored by your
+   own Slack adapter deployment, not the managed service.
+7. Direct-message the app once and enter its one-time authorization code in
+   GSV. You can then use DMs or public `@GSV` mentions.
+
+Slack file and GSV attachment transfer are not supported in this first version.
+Operators can find deployment configuration and security details in
+`adapters/slack/README.md` in the source tree.
+
 ## Discord
 
 1. In GSV, open **Messengers** and click **Connect messenger → Discord.**
