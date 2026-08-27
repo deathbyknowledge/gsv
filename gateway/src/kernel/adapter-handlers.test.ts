@@ -1176,6 +1176,45 @@ describe("adapter lifecycle handlers", () => {
     errorLog.mockRestore();
   });
 
+  it("keeps cached authentication state when the live status query fails", async () => {
+    const cached = {
+      adapter: "telegram",
+      accountId: "primary",
+      connected: true,
+      authenticated: true,
+      mode: "webhook",
+      lastActivity: 123,
+      error: null,
+      extra: null,
+      updatedAt: 456,
+    };
+    const status = {
+      upsert: vi.fn(),
+      list: vi.fn(() => [cached]),
+      listAll: vi.fn(() => [cached]),
+    };
+    const ctx = makeContext({
+      CHANNEL_TELEGRAM: {
+        adapterStatus: vi.fn(async () => {
+          throw new Error("temporary account RPC failure");
+        }),
+      },
+    }, status, { identity: userIdentity(0) });
+
+    const result = await handleAdapterStatus(
+      { adapter: "telegram", accountId: "primary" },
+      ctx,
+    );
+
+    expect(status.upsert).not.toHaveBeenCalled();
+    expect(ctx.responsibilities.create).not.toHaveBeenCalled();
+    expect(result.accounts).toEqual([expect.objectContaining({
+      accountId: "primary",
+      connected: true,
+      authenticated: true,
+    })]);
+  });
+
   it("adapter.status uses owning human links for agent process callers", async () => {
     const rows = [
       {

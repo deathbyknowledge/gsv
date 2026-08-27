@@ -106,6 +106,11 @@ binding. A descriptor must agree with that identity and cannot grant its Worker
 additional authority. Adding an adapter therefore extends deployment metadata
 and provider code rather than a Kernel enum.
 
+A successful `adapterStatus` result is an authoritative account observation. If
+the account RPC itself fails, the adapter propagates that failure instead of
+synthesizing a disconnected or unauthenticated status; the Gateway retains its
+last known state. Autonomous provider state changes use `adapter.state.update`.
+
 Every call in either direction begins with a validated installation context.
 The Kernel supplies that context from its durable installation identity; it is
 not read from adapter message arguments or a public request. First-party

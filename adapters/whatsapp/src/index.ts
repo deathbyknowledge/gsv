@@ -185,20 +185,10 @@ export class WhatsAppChannelEntrypoint
   ): Promise<AdapterAccountStatus[]> {
     const parsedInstallation = parseAdapterInstallationContext(installation);
     if (!accountId) return [];
-    try {
-      return [await this.getAccount(
-        parsedInstallation,
-        accountId,
-      ).getAccountStatus(accountId)];
-    } catch (error) {
-      return [{
-        accountId,
-        connected: false,
-        authenticated: false,
-        mode: "websocket",
-        error: errorMessage(error),
-      }];
-    }
+    return [await this.getAccount(
+      parsedInstallation,
+      accountId,
+    ).getAccountStatus(accountId)];
   }
 
   async adapterSend(
