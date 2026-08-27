@@ -13,6 +13,7 @@ type SlackEventFixture = {
   event_ts?: string;
   thread_ts?: string;
   subtype?: string;
+  files?: Array<{ id?: string; size?: number }>;
 };
 
 function envelope(event: SlackEventFixture) {
@@ -97,6 +98,29 @@ describe("Slack event normalization", () => {
       ts: "1700000001.000200",
       subtype: "message_changed",
     }), BOT)).toEqual({ kind: "ignored" });
+  });
+
+  it("accepts file-share messages and retains only stable file references", () => {
+    expect(normalizeSlackEvent(envelope({
+      type: "message",
+      channel_type: "im",
+      user: "UALICE01",
+      channel: "DALICE01",
+      text: "",
+      ts: "1700000001.000201",
+      subtype: "file_share",
+      files: [
+        { id: "FFILE001", size: 12 },
+        { id: "invalid", size: 4 },
+      ],
+    }), BOT)).toMatchObject({
+      kind: "accepted",
+      inbound: {
+        text: "[Attachments]",
+        media: [{ fileId: "FFILE001", size: 12 }],
+        skippedMedia: 1,
+      },
+    });
   });
 
   it("recognizes workspace uninstall events without inventing an actor", () => {

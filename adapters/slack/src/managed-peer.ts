@@ -10,7 +10,13 @@ import {
   type InboundDeliveryDisposition,
 } from "../../shared/src/inbound-delivery";
 import { callAdapterGateway, type AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
-import { cancelBinaryBody } from "../../shared/src/media-body";
+import {
+  cancelBinaryBody,
+  readAdapterMediaBody,
+  SAFE_MATERIALIZED_MEDIA_PART_BYTES,
+  SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
+  validateAdapterMediaBody,
+} from "../../shared/src/media-body";
 import type {
   AdapterOutboundMessage,
   AdapterPairingActivateInput,
@@ -45,9 +51,19 @@ import {
 } from "./managed-peer-state";
 import type {
   ManagedSlackWorkspaceAdmission,
+  ManagedSlackWorkspaceDownloadResult,
   ManagedSlackWorkspacePostResult,
+  ManagedSlackWorkspaceUploadResult,
 } from "./managed-workspace";
-import { renderSlackMessageText } from "./slack-delivery";
+import {
+  prepareSlackUploadFiles,
+  renderSlackMessageText,
+} from "./slack-delivery";
+import {
+  appendSlackMediaNotice,
+  loadSlackInboundMedia,
+  MAX_SLACK_MEDIA_ITEMS,
+} from "./slack-media";
 import {
   isSlackPairCommand,
   type SlackInbound,
@@ -98,6 +114,20 @@ type ManagedWorkspaceStub = {
     expectedGeneration: string,
     input: { channel: string; text: string; threadTs?: string },
   ): Promise<ManagedSlackWorkspacePostResult>;
+  downloadFile(
+    expectedGeneration: string,
+    fileId: string,
+    maxBytes: number,
+  ): Promise<ManagedSlackWorkspaceDownloadResult>;
+  uploadFiles(
+    expectedGeneration: string,
+    input: {
+      channel: string;
+      text: string;
+      threadTs?: string;
+      files: Array<{ filename: string; mimeType: string; bytes: Uint8Array }>;
+    },
+  ): Promise<ManagedSlackWorkspaceUploadResult>;
 };
 
 const STATE_KEY = "managed_slack_peer:v1:state";
@@ -350,15 +380,41 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       return { terminal: true };
     }
 
-    const current = await this.requireState();
+    const transfer = await loadSlackInboundMedia(
+      payload.inbound.media ?? [],
+      async (fileId, maxBytes) => {
+        const result = await this.workspace(state.accountId).downloadFile(
+          payload.workspaceGeneration,
+          fileId,
+          maxBytes,
+        );
+        if (result.ok) return result.file;
+        if (result.kind === "permanent") return null;
+        throw new Error("Slack file download should be retried");
+      },
+    );
+
+    let current: ManagedSlackPeerState;
+    let currentAdmission: ManagedSlackWorkspaceAdmission;
+    try {
+      current = await this.requireState();
+      currentAdmission = await this.workspace(current.accountId).admitEvent(current.teamId);
+    } catch (error) {
+      await cancelBinaryBody(transfer.body, error);
+      throw error;
+    }
     if (
       current.workspaceGeneration !== payload.workspaceGeneration
       || current.activeRoute?.installationId !== route.installationId
       || current.activeRoute.generation !== route.generation
+      || !currentAdmission.accepted
+      || currentAdmission.generation !== payload.workspaceGeneration
     ) {
+      await cancelBinaryBody(transfer.body, "Slack route changed before media delivery");
       return { terminal: true };
     }
     const inbound = payload.inbound;
+    const skipped = (inbound.skippedMedia ?? 0) + transfer.skipped;
     const result = await callAdapterGateway(
       this.env.GATEWAY,
       { installationId: route.installationId },
@@ -376,12 +432,14 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
             name: current.actorName,
             handle: current.actorHandle,
           },
-          text: inbound.text,
+          text: appendSlackMediaNotice(inbound.text, skipped),
+          media: transfer.media.length > 0 ? transfer.media : undefined,
           replyToId: inbound.replyToId,
           timestamp: inbound.timestamp,
           wasMentioned: true,
         },
       },
+      transfer.body,
     );
     if (result.challenge) return await this.pairingResponse(inbound);
     const disposition = adapterInboundResultDisposition(result, {
@@ -523,15 +581,53 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       await cancelBinaryBody(body, error);
       return { ok: false, error: "Slack destination is not authorized" };
     }
-    if ((message.media?.length ?? 0) > 0 || body) {
-      await cancelBinaryBody(body, "Slack media delivery is not supported yet");
-      return { ok: false, error: "Slack media delivery is not supported yet" };
+    const media = message.media ?? [];
+    if (!renderedText && media.length === 0) {
+      await cancelBinaryBody(body, "Slack messages require text or media");
+      return { ok: false, error: "Slack messages require text or media" };
     }
-    if (!renderedText) return { ok: false, error: "Slack messages require text" };
+    if (media.length > MAX_SLACK_MEDIA_ITEMS) {
+      await cancelBinaryBody(body, "Slack supports at most 20 attachments per message");
+      return { ok: false, error: "Slack supports at most 20 attachments per message" };
+    }
+    try {
+      validateAdapterMediaBody(media, body, {
+        maxBytes: SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
+        maxPartBytes: SAFE_MATERIALIZED_MEDIA_PART_BYTES,
+      });
+    } catch (error) {
+      await cancelBinaryBody(body, error);
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : "Slack media body is invalid",
+      };
+    }
+
+    let mediaBytes: Array<Uint8Array | undefined>;
+    try {
+      mediaBytes = await readAdapterMediaBody(media, body, {
+        maxBytes: SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
+        maxPartBytes: SAFE_MATERIALIZED_MEDIA_PART_BYTES,
+      });
+    } catch {
+      return { ok: false, error: "Could not read Slack media body", retryable: true };
+    }
+    let uploadFiles: ReturnType<typeof prepareSlackUploadFiles>;
+    try {
+      uploadFiles = prepareSlackUploadFiles(media, mediaBytes);
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : "Slack media delivery is invalid",
+      };
+    }
 
     let fingerprint: string;
     try {
-      fingerprint = await fingerprintOutboundDelivery({ ...message, text: renderedText });
+      fingerprint = await fingerprintOutboundDelivery(
+        { ...message, text: renderedText },
+        mediaBytes,
+      );
     } catch {
       return { ok: false, error: "Could not fingerprint Slack delivery", retryable: true };
     }
@@ -564,22 +660,37 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     } catch {
       return await fail("permanent");
     }
-    let delivered: ManagedSlackWorkspacePostResult;
+    let providerMessageId: string | undefined;
     try {
-      delivered = await this.workspace(current.accountId).postMessage(
-        current.workspaceGeneration,
-        {
-          channel: message.surface.id,
-          text: renderedText,
-          threadTs: message.surface.threadId,
-        },
-      );
+      if (uploadFiles.length > 0) {
+        const delivered = await this.workspace(current.accountId).uploadFiles(
+          current.workspaceGeneration,
+          {
+            channel: message.surface.id,
+            text: renderedText,
+            threadTs: message.surface.threadId,
+            files: uploadFiles,
+          },
+        );
+        if (!delivered.ok) return await fail(delivered.kind);
+        providerMessageId = delivered.fileIds[0];
+      } else {
+        const delivered = await this.workspace(current.accountId).postMessage(
+          current.workspaceGeneration,
+          {
+            channel: message.surface.id,
+            text: renderedText,
+            threadTs: message.surface.threadId,
+          },
+        );
+        if (!delivered.ok) return await fail(delivered.kind);
+        providerMessageId = delivered.ts;
+      }
     } catch {
       return await fail("ambiguous");
     }
-    if (!delivered.ok) return await fail(delivered.kind);
-    await this.deliveries.succeed(message.deliveryId, claim.attemptId, delivered.ts);
-    return { ok: true, messageId: delivered.ts };
+    await this.deliveries.succeed(message.deliveryId, claim.attemptId, providerMessageId);
+    return { ok: true, messageId: providerMessageId };
   }
 
   private assertDestination(

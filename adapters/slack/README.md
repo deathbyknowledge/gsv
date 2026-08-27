@@ -8,8 +8,10 @@ The Slack adapter supports two deliberately separate deployments:
 - Standalone GSV uses a Slack app owned by that deployment. It connects through
   Socket Mode, so the standalone adapter does not need a public Slack webhook.
 
-Version one supports text in direct messages, channels, and threads. It does
-not transfer Slack files or GSV attachments.
+Slack supports text and files in direct messages, channels, and threads.
+Files attached to a direct message or an explicit `@GSV` message are retained
+once as immutable GSV resources. GSV resource attachments are uploaded as
+native Slack files into the originating channel or thread.
 
 ## Managed app setup
 
@@ -18,7 +20,8 @@ from `slack-app.managed.example.yaml` (replace `SLACK_ORIGIN`), or configure it
 manually:
 
 1. Under **OAuth & Permissions**, add these bot token scopes:
-   `app_mentions:read`, `chat:write`, `im:history`, and `im:write`.
+   `app_mentions:read`, `chat:write`, `files:read`, `files:write`,
+   `im:history`, and `im:write`.
 2. Add this OAuth redirect URL, using the managed Slack Worker's public origin:
    `https://SLACK_ORIGIN/slack/oauth/callback`.
 3. Under **Event Subscriptions**, set the Request URL to
@@ -108,6 +111,30 @@ The Slack account Durable Object durably queues an event before acknowledging
 its Socket Mode envelope. It retries the Gateway handoff with the event's stable
 Slack identity. Outbound delivery uses an account-local idempotency ledger and
 does not retry an ambiguous provider outcome.
+
+## Files and attachments
+
+The adapter handles only files carried by an addressed `app_mention` or
+`message.im` event. It does not subscribe to workspace-wide `file_shared`
+events and does not download arbitrary link-unfurl URLs.
+
+Inbound private Slack URLs are refreshed with `files.info`, downloaded with the
+workspace bot token, and streamed through the adapter's single owned binary
+body. The Gateway retains the bytes under the run-as agent and commits only the
+immutable resource reference to conversation history. Private Slack URLs and
+bot credentials never become resource metadata.
+
+Outbound resources are hydrated only for delivery. The adapter uses
+`files.getUploadURLExternal`, uploads each file, and calls
+`files.completeUploadExternal` once for the batch with the authorized channel
+and parent thread. Text and shared-channel attribution become the file
+message's initial comment. The common GSV message-media limits apply: at most
+20 items and 48 MiB total.
+
+Existing managed workspace installations must use the install link again to
+approve the new file scopes. Existing standalone apps must add `files:read`
+and `files:write`, reinstall the app in the workspace, and reconnect the
+adapter so Slack issues a token with those permissions.
 
 ## Endpoints
 

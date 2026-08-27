@@ -1,5 +1,6 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
+import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
 
 type AccountStub = {
   start(botToken: string, appToken: string, accountId: string): Promise<void>;
@@ -10,6 +11,21 @@ type AccountStub = {
     authenticated: boolean;
     mode: string;
   }>;
+  sendMessage(
+    message: {
+      deliveryId: string;
+      surface: { kind: "channel"; id: string; threadId: string };
+      actorId: string;
+      text: string;
+      media: Array<{
+        type: "document";
+        mimeType: string;
+        filename: string;
+        body: { offset: number; length: number };
+      }>;
+    },
+    body: ReturnType<typeof binaryBodyFromOwnedBytes>,
+  ): Promise<{ ok: boolean; messageId?: string }>;
 };
 
 type GatewayCall = {
@@ -22,13 +38,28 @@ type GatewayCall = {
     message?: {
       actor?: { id?: string };
       surface?: { kind?: string; id?: string; threadId?: string };
+      media?: Array<{
+        type?: string;
+        mimeType?: string;
+        filename?: string;
+        body?: { offset?: number; length?: number };
+      }>;
     };
   };
+  mediaBody?: number[];
 };
 
 type SlackApiCall = {
   method?: string;
-  body?: { channel?: string; text?: string; thread_ts?: string };
+  body?: {
+    channel?: string;
+    text?: string;
+    thread_ts?: string;
+    files?: Array<{ id: string }>;
+    initial_comment?: string;
+    bytes?: number[];
+    authorization?: string;
+  };
 };
 
 function fetcherBinding<T>(value: T): T & Fetcher {
@@ -117,8 +148,16 @@ describe("standalone Slack clean-instance flow", () => {
               id: "CGENERAL1",
               threadId: "1700000000.000102",
             },
+            media: [{
+              type: "document",
+              mimeType: "text/plain",
+              filename: "standalone.txt",
+              size: 23,
+              body: { offset: 0, length: 23 },
+            }],
           }),
         }),
+        mediaBody: [...new TextEncoder().encode("standalone inbound file")],
       }));
       expect(await slackApiCalls()).toContainEqual(expect.objectContaining({
         method: "chat.postMessage",
@@ -129,6 +168,39 @@ describe("standalone Slack clean-instance flow", () => {
         }),
       }));
     });
+
+    const outboundFileBytes = new TextEncoder().encode("standalone outbound file");
+    await expect(slack.sendMessage({
+      deliveryId: "standalone-slack-file-output",
+      surface: {
+        kind: "channel",
+        id: "CGENERAL1",
+        threadId: "1700000000.000102",
+      },
+      actorId: "UALICE01",
+      text: "Standalone file",
+      media: [{
+        type: "document",
+        mimeType: "text/plain",
+        filename: "standalone-result.txt",
+        body: { offset: 0, length: outboundFileBytes.byteLength },
+      }],
+    }, binaryBodyFromOwnedBytes(outboundFileBytes.slice()))).resolves.toEqual({
+      ok: true,
+      messageId: "FUPLOAD1",
+    });
+    expect(await slackApiCalls()).toContainEqual({
+      method: "file.upload",
+      body: { bytes: [...outboundFileBytes] },
+    });
+    expect(await slackApiCalls()).toContainEqual(expect.objectContaining({
+      method: "files.completeUploadExternal",
+      body: expect.objectContaining({
+        files: [{ id: "FUPLOAD1" }],
+        initial_comment: "*From <@UALICE01>'s GSV:*\nStandalone file",
+        thread_ts: "1700000000.000102",
+      }),
+    }));
 
     const uninstalled = await fetcherBinding(env.SLACK_SOCKET).fetch(
       "https://socket.test/uninstall",

@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { DeliveryFailureKind } from "../../shared/src/delivery-ledger";
 import {
+  downloadSlackFile,
   openSlackDm,
   postSlackMessage,
   requireSlackId,
@@ -8,8 +9,11 @@ import {
   SlackApiError,
   workspaceAccountId,
   type SlackFetch,
+  type SlackDownloadedFile,
   type SlackOAuthInstallation,
   type SlackPostMessageInput,
+  type SlackUploadFilesInput,
+  uploadSlackFiles,
 } from "./slack-api";
 import {
   managedSlackWorkspaceObjectName,
@@ -46,6 +50,14 @@ export type ManagedSlackWorkspacePostResult =
   | { ok: true; channel: string; ts: string }
   | { ok: false; kind: DeliveryFailureKind; error: string };
 
+export type ManagedSlackWorkspaceDownloadResult =
+  | { ok: true; file: SlackDownloadedFile }
+  | { ok: false; kind: DeliveryFailureKind; error: string };
+
+export type ManagedSlackWorkspaceUploadResult =
+  | { ok: true; fileIds: string[] }
+  | { ok: false; kind: DeliveryFailureKind; error: string };
+
 export type ManagedSlackWorkspaceStatus = {
   accountId: string;
   teamId?: string;
@@ -64,6 +76,8 @@ const STATE_KEY = "managed_slack_workspace:v1:state";
 const REQUIRED_SCOPES = new Set([
   "app_mentions:read",
   "chat:write",
+  "files:read",
+  "files:write",
   "im:history",
   "im:write",
 ]);
@@ -79,11 +93,8 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
     if (await workspaceAccountId(teamId) !== normalizedAccountId) {
       throw new Error("Slack workspace account identity mismatch");
     }
-    const scopes = new Set((installation.scope ?? "")
-      .split(",")
-      .map((scope) => scope.trim())
-      .filter(Boolean));
-    const missing = [...REQUIRED_SCOPES].filter((scope) => !scopes.has(scope));
+    const scopes = normalizedScopes(installation.scope);
+    const missing = missingRequiredScopes(scopes);
     if (missing.length > 0) throw new Error("Slack installation is missing required scopes");
 
     const state: ManagedSlackWorkspaceState = {
@@ -107,7 +118,13 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
 
   async admitEvent(teamIdInput: string): Promise<ManagedSlackWorkspaceAdmission> {
     const state = await this.ctx.storage.get<ManagedSlackWorkspaceState>(STATE_KEY);
-    if (!state || !state.active) return { accepted: false };
+    if (
+      !state
+      || !state.active
+      || missingRequiredScopes(normalizedScopes(state.scope)).length > 0
+    ) {
+      return { accepted: false };
+    }
     const teamId = requireSlackId(teamIdInput, "Slack workspace");
     if (state.teamId !== teamId) return { accepted: false };
     this.assertObjectName(state.accountId);
@@ -139,14 +156,20 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
         error: "Slack workspace is not installed",
       };
     }
+    const missing = missingRequiredScopes(normalizedScopes(state.scope));
+    const connected = state.active && missing.length === 0;
     return {
       accountId: state.accountId,
       teamId: state.teamId,
       teamName: state.teamName,
       botUserId: state.botUserId,
-      connected: state.active,
+      connected,
       generation: state.generation,
-      error: state.active ? undefined : "Slack app is not installed in this workspace",
+      error: !state.active
+        ? "Slack app is not installed in this workspace"
+        : missing.length > 0
+          ? "Slack app must be reinstalled to grant file access"
+          : undefined,
     };
   }
 
@@ -190,6 +213,66 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
     }
   }
 
+  async downloadFile(
+    expectedGeneration: string,
+    fileId: string,
+    maxBytes: number,
+  ): Promise<ManagedSlackWorkspaceDownloadResult> {
+    let state: ManagedSlackWorkspaceState;
+    try {
+      state = await this.requireActive(expectedGeneration);
+    } catch {
+      return { ok: false, kind: "permanent", error: "Slack workspace route changed" };
+    }
+    try {
+      const file = await downloadSlackFile(
+        state.botToken,
+        fileId,
+        maxBytes,
+        this.slackFetch(),
+        async () => {
+          await this.requireActive(expectedGeneration);
+        },
+      );
+      return { ok: true, file };
+    } catch (error) {
+      return {
+        ok: false,
+        kind: error instanceof SlackApiError ? error.kind : "permanent",
+        error: "Slack file download failed",
+      };
+    }
+  }
+
+  async uploadFiles(
+    expectedGeneration: string,
+    input: SlackUploadFilesInput,
+  ): Promise<ManagedSlackWorkspaceUploadResult> {
+    let state: ManagedSlackWorkspaceState;
+    try {
+      state = await this.requireActive(expectedGeneration);
+    } catch {
+      return { ok: false, kind: "permanent", error: "Slack workspace route changed" };
+    }
+    try {
+      const result = await uploadSlackFiles(
+        state.botToken,
+        input,
+        this.slackFetch(),
+        async () => {
+          await this.requireActive(expectedGeneration);
+        },
+      );
+      return { ok: true, fileIds: result.fileIds };
+    } catch (error) {
+      return {
+        ok: false,
+        kind: error instanceof SlackApiError ? error.kind : "permanent",
+        error: "Slack file delivery failed",
+      };
+    }
+  }
+
   private async requireActive(expectedGeneration: string): Promise<ManagedSlackWorkspaceState> {
     const state = await this.ctx.storage.get<ManagedSlackWorkspaceState>(STATE_KEY);
     if (
@@ -198,6 +281,7 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
       || !expectedGeneration
       || state.generation !== expectedGeneration
       || !state.botToken
+      || missingRequiredScopes(normalizedScopes(state.scope)).length > 0
     ) {
       throw new Error("Slack workspace route changed");
     }
@@ -237,4 +321,15 @@ function admission(state: ManagedSlackWorkspaceState): ManagedSlackWorkspaceAdmi
 function normalizedOptionalText(value: string | undefined, maxLength: number): string | undefined {
   const normalized = value?.trim().slice(0, maxLength) ?? "";
   return normalized || undefined;
+}
+
+function normalizedScopes(value: string | undefined): Set<string> {
+  return new Set((value ?? "")
+    .split(",")
+    .map((scope) => scope.trim())
+    .filter(Boolean));
+}
+
+function missingRequiredScopes(scopes: ReadonlySet<string>): string[] {
+  return [...REQUIRED_SCOPES].filter((scope) => !scopes.has(scope));
 }

@@ -2,6 +2,11 @@ import {
   classifyNonIdempotentProviderStatus,
   type DeliveryFailureKind,
 } from "../../shared/src/delivery-ledger";
+import {
+  cancelResponseBody,
+  responseBodyToBinaryBody,
+} from "../../shared/src/media-body";
+import type { BinaryBody } from "./types";
 
 const SLACK_API_BASE = "https://slack.com/api";
 
@@ -13,6 +18,16 @@ export type SlackFetch = (
 type SlackApiEnvelope = {
   ok?: boolean;
   error?: string;
+};
+
+type SlackFileApiObject = {
+  id?: string;
+  name?: string;
+  title?: string;
+  mimetype?: string;
+  size?: number;
+  url_private?: string;
+  url_private_download?: string;
 };
 
 export type SlackBotIdentity = {
@@ -46,15 +61,42 @@ type SlackPostMessagePayload = {
   thread_ts?: string;
 };
 
-type SlackApiPayload = {
-  channel?: string;
-  text?: string;
-  unfurl_links?: false;
-  unfurl_media?: false;
-  thread_ts?: string;
-  users?: string;
-  return_im?: false;
+type SlackApiJson =
+  | string
+  | number
+  | boolean
+  | null
+  | SlackApiJson[]
+  | { [key: string]: SlackApiJson | undefined };
+
+type SlackApiPayload = { [key: string]: SlackApiJson | undefined };
+
+export type SlackDownloadedFile = {
+  fileId: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  body: BinaryBody & { length: number };
 };
+
+export type SlackUploadFile = {
+  filename: string;
+  mimeType: string;
+  bytes: Uint8Array;
+};
+
+export type SlackUploadFilesInput = {
+  channel: string;
+  text: string;
+  threadTs?: string;
+  files: SlackUploadFile[];
+};
+
+export type SlackUploadFilesResult = {
+  fileIds: string[];
+};
+
+export type SlackProviderGuard = () => void | Promise<void>;
 
 export class SlackApiError extends Error {
   constructor(
@@ -137,6 +179,166 @@ export async function postSlackMessage(
     channel: requireSlackId(result.channel, "Slack response channel"),
     ts: requireSlackTimestamp(result.ts),
   };
+}
+
+export async function downloadSlackFile(
+  botToken: string,
+  fileIdInput: string,
+  maxBytes: number,
+  slackFetch: SlackFetch = fetch,
+  guard?: SlackProviderGuard,
+): Promise<SlackDownloadedFile> {
+  const fileId = requireSlackId(fileIdInput, "Slack file");
+  const limit = requireNonNegativeInteger(maxBytes, "Slack file limit");
+  await guard?.();
+  const result = await callSlackApi<{ file?: SlackFileApiObject }>(
+    "files.info",
+    botToken,
+    { file: fileId },
+    slackFetch,
+  );
+  const file = parseSlackFile(result.file, fileId);
+  if (file.size !== undefined && file.size > limit) {
+    throw new SlackApiError("Slack file exceeds the GSV media limit", "permanent");
+  }
+
+  await guard?.();
+  let response: Response;
+  try {
+    response = await slackFetch(file.downloadUrl, {
+      headers: { Authorization: `Bearer ${normalizedSlackToken(botToken)}` },
+    });
+  } catch {
+    throw new SlackApiError("Slack file download transport failed", "retryable");
+  }
+  if (!response.ok) {
+    await cancelResponseBody(response, "Slack file download failed");
+    throw new SlackApiError(
+      "Slack file download failed",
+      response.status === 408 || response.status === 429 || response.status >= 500
+        ? "retryable"
+        : "permanent",
+      undefined,
+      response.status,
+    );
+  }
+  try {
+    await guard?.();
+  } catch (error) {
+    await cancelResponseBody(response, error instanceof Error ? error : String(error));
+    throw error;
+  }
+  const body = await responseBodyToBinaryBody(response, {
+    maxBytes: limit,
+    expectedBytes: file.size,
+    label: "Slack file",
+  });
+  return {
+    fileId,
+    filename: file.filename,
+    mimeType: file.mimeType,
+    size: body.length,
+    body,
+  };
+}
+
+export async function uploadSlackFiles(
+  botToken: string,
+  input: SlackUploadFilesInput,
+  slackFetch: SlackFetch = fetch,
+  guard?: SlackProviderGuard,
+): Promise<SlackUploadFilesResult> {
+  const channel = requireSlackId(input.channel, "Slack channel");
+  const text = input.text.trim();
+  if (text.length > 40_000) throw new Error("Slack message is invalid");
+  const threadTs = input.threadTs
+    ? requireSlackTimestamp(input.threadTs)
+    : undefined;
+  if (input.files.length === 0 || input.files.length > 20) {
+    throw new Error("Slack deliveries require 1-20 files");
+  }
+
+  const tickets: Array<{ id: string }> = [];
+  for (const file of input.files) {
+    const filename = requireSlackFilename(file.filename);
+    const length = requireNonNegativeInteger(file.bytes.byteLength, "Slack file length");
+    if (length === 0) throw new Error("Slack cannot upload an empty file");
+    await guard?.();
+    let ticket: { upload_url?: string; file_id?: string };
+    try {
+      ticket = await callSlackApi<{ upload_url?: string; file_id?: string }>(
+        "files.getUploadURLExternal",
+        botToken,
+        { filename, length },
+        slackFetch,
+      );
+    } catch (error) {
+      throw preparationError(error, "Slack upload ticket request failed");
+    }
+    const uploadUrl = requireSlackHostedUrl(ticket.upload_url, "Slack upload URL");
+    const ticketId = requireSlackId(ticket.file_id, "Slack upload file");
+
+    await guard?.();
+    let response: Response;
+    try {
+      response = await slackFetch(uploadUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": normalizedMimeType(file.mimeType),
+        },
+        body: new Blob([file.bytes], { type: normalizedMimeType(file.mimeType) }),
+      });
+    } catch {
+      throw new SlackApiError("Slack file upload transport failed", "retryable");
+    }
+    await cancelResponseBody(
+      response,
+      response.ok ? "Slack upload response consumed" : "Slack file upload failed",
+    );
+    if (!response.ok) {
+      throw new SlackApiError(
+        "Slack file upload failed",
+        response.status === 408 || response.status === 429 || response.status >= 500
+          ? "retryable"
+          : "permanent",
+        undefined,
+        response.status,
+      );
+    }
+    tickets.push({ id: ticketId });
+  }
+
+  await guard?.();
+  const payload: SlackApiPayload = {
+    channel_id: channel,
+    files: tickets,
+  };
+  if (text) payload.initial_comment = text;
+  if (threadTs) payload.thread_ts = threadTs;
+  let completed: { files?: Array<{ id?: string }> };
+  try {
+    completed = await callSlackApi<{ files?: Array<{ id?: string }> }>(
+      "files.completeUploadExternal",
+      botToken,
+      payload,
+      slackFetch,
+    );
+  } catch (error) {
+    if (
+      error instanceof SlackApiError
+      && (error.code === "ratelimited" || error.code === "rate_limited")
+    ) {
+      throw error;
+    }
+    if (error instanceof SlackApiError && error.kind === "permanent") throw error;
+    throw new SlackApiError("Slack file completion outcome is unknown", "ambiguous");
+  }
+  const fileIds = (completed.files ?? []).map((file) =>
+    requireSlackId(file.id, "Slack completed file"));
+  if (fileIds.length !== tickets.length) {
+    throw new SlackApiError("Slack file completion outcome is unknown", "ambiguous");
+  }
+  return { fileIds };
 }
 
 export async function exchangeSlackOAuthCode(
@@ -234,10 +436,7 @@ async function callSlackApi<T extends object>(
   payload: SlackApiPayload,
   slackFetch: SlackFetch,
 ): Promise<T> {
-  const normalizedToken = token.trim();
-  if (!normalizedToken || normalizedToken.length > 1_024) {
-    throw new SlackApiError("Slack token is invalid", "permanent");
-  }
+  const normalizedToken = normalizedSlackToken(token);
   let response: Response;
   try {
     response = await slackFetch(`${SLACK_API_BASE}/${method}`, {
@@ -309,6 +508,106 @@ function requireHttpsUrl(value: string, label: string): string {
     throw new Error(`${label} is invalid`);
   }
   return url.toString();
+}
+
+function parseSlackFile(
+  value: SlackFileApiObject | undefined,
+  expectedFileId: string,
+): {
+  filename: string;
+  mimeType: string;
+  size?: number;
+  downloadUrl: string;
+} {
+  if (!value || typeof value !== "object") {
+    throw new SlackApiError("Slack file metadata is unavailable", "permanent");
+  }
+  const fileId = requireSlackId(value.id, "Slack file");
+  if (fileId !== expectedFileId) {
+    throw new SlackApiError("Slack file identity changed", "permanent");
+  }
+  const size = value.size === undefined
+    ? undefined
+    : requireNonNegativeInteger(value.size, "Slack file size");
+  const filename = requireSlackFilename(
+    optionalText(value.name, 255)
+      ?? optionalText(value.title, 255)
+      ?? `slack-file-${fileId}`,
+  );
+  return {
+    filename,
+    mimeType: normalizedMimeType(value.mimetype),
+    size,
+    downloadUrl: requireSlackHostedUrl(
+      value.url_private_download ?? value.url_private,
+      "Slack file download URL",
+    ),
+  };
+}
+
+function requireSlackHostedUrl(value: string | undefined, label: string): string {
+  let url: URL;
+  try {
+    url = new URL(value ?? "");
+  } catch {
+    throw new SlackApiError(`${label} is invalid`, "permanent");
+  }
+  const hostname = url.hostname.toLowerCase();
+  if (
+    url.protocol !== "https:"
+    || url.username
+    || url.password
+    || url.hash
+    || (hostname !== "slack.com" && !hostname.endsWith(".slack.com"))
+  ) {
+    throw new SlackApiError(`${label} is invalid`, "permanent");
+  }
+  return url.toString();
+}
+
+function requireSlackFilename(value: string): string {
+  const leaf = value.replaceAll("\\", "/").split("/").at(-1) ?? "";
+  const normalized = leaf
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/[<>:"|?*]/g, "-")
+    .trim()
+    .slice(0, 255);
+  if (!normalized || normalized === "." || normalized === "..") {
+    throw new Error("Slack filename is invalid");
+  }
+  return normalized;
+}
+
+function normalizedMimeType(value: string | undefined): string {
+  const normalized = value?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  return /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/.test(normalized)
+    ? normalized
+    : "application/octet-stream";
+}
+
+function requireNonNegativeInteger(value: number, label: string): number {
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${label} is invalid`);
+  return value;
+}
+
+function normalizedSlackToken(token: string): string {
+  const normalized = token.trim();
+  if (!normalized || normalized.length > 1_024) {
+    throw new SlackApiError("Slack token is invalid", "permanent");
+  }
+  return normalized;
+}
+
+function preparationError(error: unknown, message: string): SlackApiError {
+  if (error instanceof SlackApiError) {
+    return new SlackApiError(
+      message,
+      error.kind === "permanent" ? "permanent" : "retryable",
+      error.code,
+      error.status,
+    );
+  }
+  return new SlackApiError(message, "permanent");
 }
 
 function bytesToBase64Url(bytes: Uint8Array): string {

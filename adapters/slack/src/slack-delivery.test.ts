@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { DeliveryLedger } from "../../shared/src/delivery-ledger";
+import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
 import type { AdapterOutboundMessage } from "./types";
 import { deliverSlackMessage } from "./slack-delivery";
 
@@ -119,5 +120,64 @@ describe("Slack delivery", () => {
       { attributedActorId: "UBOB0001", slackFetch: provider },
     )).resolves.toMatchObject({ ok: false, error: expect.stringContaining("attribution") });
     expect(provider).not.toHaveBeenCalled();
+  });
+
+  it("uploads GSV resource bytes once and attributes media-only channel output", async () => {
+    const bytes = new TextEncoder().encode("resource bytes");
+    const provider = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/files.getUploadURLExternal")) {
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          filename: "report.txt",
+          length: bytes.byteLength,
+        });
+        return Response.json({
+          ok: true,
+          upload_url: "https://files.slack.com/upload/v1/report",
+          file_id: "FREPORT1",
+        });
+      }
+      if (url.pathname === "/upload/v1/report") {
+        await expect(new Response(init?.body).text()).resolves.toBe("resource bytes");
+        return new Response("OK");
+      }
+      expect(url.pathname).toMatch(/files\.completeUploadExternal$/);
+      expect(JSON.parse(String(init?.body))).toEqual({
+        channel_id: "CGENERAL1",
+        files: [{ id: "FREPORT1" }],
+        initial_comment: "*From <@UALICE01>'s GSV:*",
+        thread_ts: "1700000000.000100",
+      });
+      return Response.json({ ok: true, files: [{ id: "FREPORT1" }] });
+    });
+    const message: AdapterOutboundMessage = {
+      ...publicMessage,
+      deliveryId: "slack-public-file-1",
+      text: "",
+      media: [{
+        type: "document",
+        mimeType: "text/plain",
+        filename: "report.txt",
+        body: { offset: 0, length: bytes.byteLength },
+      }],
+    };
+    const deliveries = ledger();
+    const first = await deliverSlackMessage(
+      deliveries,
+      "xoxb-valid-token-value",
+      message,
+      binaryBodyFromOwnedBytes(bytes.slice()),
+      { attributedActorId: "UALICE01", slackFetch: provider },
+    );
+    expect(first).toEqual({ ok: true, messageId: "FREPORT1" });
+    const replay = await deliverSlackMessage(
+      deliveries,
+      "xoxb-valid-token-value",
+      message,
+      binaryBodyFromOwnedBytes(bytes.slice()),
+      { attributedActorId: "UALICE01", slackFetch: provider },
+    );
+    expect(replay).toEqual({ ok: true, messageId: "FREPORT1", deduplicated: true });
+    expect(provider).toHaveBeenCalledTimes(3);
   });
 });

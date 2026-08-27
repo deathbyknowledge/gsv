@@ -15,7 +15,10 @@ export default defineConfig({
               const calls = [];
               export class AdapterGatewayEntrypoint extends WorkerEntrypoint {
                 async serviceFrame(installation, frame) {
-                  calls.push({ installation, call: frame.call, args: frame.args });
+                  const mediaBody = frame.body
+                    ? Array.from(new Uint8Array(await new Response(frame.body.stream).arrayBuffer()))
+                    : undefined;
+                  calls.push({ installation, call: frame.call, args: frame.args, mediaBody });
                   return {
                     type: "res",
                     id: frame.id,
@@ -46,11 +49,27 @@ export default defineConfig({
             script: `
               const calls = [];
               let nextTs = 1700001000;
+              let nextFile = 0;
               export default {
                 async fetch(request) {
                   const url = new URL(request.url);
                   if (request.method === "GET" && url.pathname === "/calls") {
                     return Response.json(calls);
+                  }
+                  if (request.method === "GET" && url.pathname.startsWith("/files-pri/")) {
+                    const bytes = new TextEncoder().encode("managed inbound file");
+                    calls.push({
+                      method: "file.download",
+                      body: { authorization: request.headers.get("Authorization") },
+                    });
+                    return new Response(bytes, {
+                      headers: { "Content-Length": String(bytes.byteLength) },
+                    });
+                  }
+                  if (request.method === "POST" && url.pathname.startsWith("/upload/v1/")) {
+                    const bytes = new Uint8Array(await request.arrayBuffer());
+                    calls.push({ method: "file.upload", body: { bytes: Array.from(bytes) } });
+                    return new Response("OK");
                   }
                   const method = url.pathname.split("/").at(-1);
                   const contentType = request.headers.get("Content-Type") || "";
@@ -64,7 +83,7 @@ export default defineConfig({
                       access_token: "xoxb-managed-test-token",
                       bot_user_id: "UGSVBOT1",
                       app_id: "AGSV1234",
-                      scope: "app_mentions:read,chat:write,im:history,im:write",
+                      scope: "app_mentions:read,chat:write,files:read,files:write,im:history,im:write",
                       is_enterprise_install: false,
                       team: { id: "TWORK123", name: "Acme" },
                     });
@@ -83,6 +102,31 @@ export default defineConfig({
                       channel: body.channel,
                       ts: String(nextTs) + ".000100",
                     });
+                  }
+                  if (method === "files.info") {
+                    const bytes = new TextEncoder().encode("managed inbound file");
+                    return Response.json({
+                      ok: true,
+                      file: {
+                        id: body.file,
+                        name: "managed.txt",
+                        mimetype: "text/plain",
+                        size: bytes.byteLength,
+                        url_private_download: "https://files.slack.com/files-pri/TWORK123-FFILE001/managed.txt",
+                      },
+                    });
+                  }
+                  if (method === "files.getUploadURLExternal") {
+                    nextFile += 1;
+                    const fileId = "FUPLOAD" + nextFile;
+                    return Response.json({
+                      ok: true,
+                      upload_url: "https://files.slack.com/upload/v1/" + fileId,
+                      file_id: fileId,
+                    });
+                  }
+                  if (method === "files.completeUploadExternal") {
+                    return Response.json({ ok: true, files: body.files });
                   }
                   return Response.json({ ok: false, error: "unknown_method" });
                 },

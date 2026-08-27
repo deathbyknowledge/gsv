@@ -8,6 +8,7 @@ export type {
   AdapterInboundMessage,
   AdapterInboundResult,
   AdapterInstallationContext,
+  AdapterMedia,
   AdapterOutboundMessage,
   AdapterPairingActivateInput,
   AdapterPairingCandidate,

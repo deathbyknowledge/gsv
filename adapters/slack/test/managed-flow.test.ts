@@ -1,5 +1,6 @@
 import { env, SELF } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
+import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
 import { workspaceAccountId } from "../src/slack-api";
 import {
   managedSlackPeerObjectName,
@@ -7,7 +8,17 @@ import {
 
 type SlackApiCall = {
   method: string;
-  body: { channel?: string; text?: string; thread_ts?: string; users?: string };
+  body: {
+    channel?: string;
+    text?: string;
+    thread_ts?: string;
+    users?: string;
+    file?: string;
+    files?: Array<{ id: string }>;
+    initial_comment?: string;
+    bytes?: number[];
+    authorization?: string;
+  };
 };
 
 type GatewayCall = {
@@ -19,6 +30,12 @@ type GatewayCall = {
     message?: {
       actor?: { id?: string };
       surface?: { kind?: string; id?: string; threadId?: string };
+      media?: Array<{
+        type?: string;
+        mimeType?: string;
+        filename?: string;
+        body?: { offset?: number; length?: number };
+      }>;
     };
   };
   input?: {
@@ -26,6 +43,7 @@ type GatewayCall = {
     actorId?: string;
     expectedGeneration?: string;
   };
+  mediaBody?: number[];
 };
 
 type PairingStub = {
@@ -72,8 +90,15 @@ type PeerStub = {
       actorId: string;
       routeGeneration: string;
       text: string;
+      media?: Array<{
+        type: "document";
+        mimeType: string;
+        filename: string;
+        body: { offset: number; length: number };
+      }>;
     },
-  ): Promise<{ ok: boolean; error?: string }>;
+    body?: ReturnType<typeof binaryBodyFromOwnedBytes>,
+  ): Promise<{ ok: boolean; error?: string; messageId?: string }>;
 };
 
 const SIGNING_SECRET = "signing_secret_123456789";
@@ -133,6 +158,8 @@ async function signedEvent(input: {
   ts: string;
   type?: "app_mention" | "message";
   channelType?: "im";
+  subtype?: "file_share";
+  files?: Array<{ id: string; size: number }>;
 }): Promise<Request> {
   const event = {
     type: input.type ?? "app_mention",
@@ -141,6 +168,8 @@ async function signedEvent(input: {
     channel_type: input.channelType,
     text: input.text ?? "<@UGSVBOT1> help",
     ts: input.ts,
+    subtype: input.subtype,
+    files: input.files,
   };
   const body = JSON.stringify({
     type: "event_callback",
@@ -284,6 +313,76 @@ describe("managed Slack clean-instance flow", () => {
     expect((await gatewayCalls()).filter((call) => (
       call.args?.deliveryId === "event:EvALICE002"
     ))).toHaveLength(1);
+
+    const inboundFileBytes = new TextEncoder().encode("managed inbound file");
+    expect((await SELF.fetch(await signedEvent({
+      eventId: "EvALFILE01",
+      actorId: "UALICE01",
+      text: "<@UGSVBOT1> inspect this",
+      ts: "1700000001.000200",
+      subtype: "file_share",
+      files: [{ id: "FFILE001", size: inboundFileBytes.byteLength }],
+    }))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
+        installation: { installationId: "installation-alice" },
+        args: expect.objectContaining({
+          deliveryId: "event:EvALFILE01",
+          message: expect.objectContaining({
+            media: [{
+              type: "document",
+              mimeType: "text/plain",
+              filename: "managed.txt",
+              size: inboundFileBytes.byteLength,
+              body: { offset: 0, length: inboundFileBytes.byteLength },
+            }],
+          }),
+        }),
+        mediaBody: [...inboundFileBytes],
+      }));
+      expect(await slackApiCalls()).toContainEqual({
+        method: "file.download",
+        body: { authorization: "Bearer xoxb-managed-test-token" },
+      });
+    });
+
+    const outboundFileBytes = new TextEncoder().encode("managed outbound file");
+    const mediaPeers = namespaceBinding(env.MANAGED_SLACK_PEER);
+    const mediaPeer = peerBinding(mediaPeers.get(
+      mediaPeers.idFromName(managedSlackPeerObjectName(accountId, "UALICE01")),
+    ));
+    await expect(mediaPeer.sendMessage("installation-alice", {
+      deliveryId: "managed-slack-file-output",
+      surface: {
+        kind: "channel",
+        id: "CGENERAL1",
+        threadId: "1700000001.000200",
+      },
+      actorId: "UALICE01",
+      routeGeneration: alice.generation,
+      text: "File result",
+      media: [{
+        type: "document",
+        mimeType: "text/plain",
+        filename: "result.txt",
+        body: { offset: 0, length: outboundFileBytes.byteLength },
+      }],
+    }, binaryBodyFromOwnedBytes(outboundFileBytes.slice()))).resolves.toEqual({
+      ok: true,
+      messageId: "FUPLOAD1",
+    });
+    expect(await slackApiCalls()).toContainEqual({
+      method: "file.upload",
+      body: { bytes: [...outboundFileBytes] },
+    });
+    expect(await slackApiCalls()).toContainEqual(expect.objectContaining({
+      method: "files.completeUploadExternal",
+      body: expect.objectContaining({
+        files: [{ id: "FUPLOAD1" }],
+        initial_comment: "*From <@UALICE01>'s GSV:*\nFile result",
+        thread_ts: "1700000001.000200",
+      }),
+    }));
 
     expect((await SELF.fetch(await signedEvent({
       eventId: "EvBOB00001",

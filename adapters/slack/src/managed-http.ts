@@ -49,6 +49,8 @@ const OAUTH_COOKIE = "gsv_slack_oauth";
 const OAUTH_SCOPES = [
   "app_mentions:read",
   "chat:write",
+  "files:read",
+  "files:write",
   "im:history",
   "im:write",
 ].join(",");

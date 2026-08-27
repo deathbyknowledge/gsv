@@ -94,7 +94,10 @@ export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements Adapte
         activity: false,
         pairing: true,
         surfaces: ["dm", "channel", "thread"],
-        media: { inbound: [], outbound: [] },
+        media: {
+          inbound: ["image", "audio", "video", "document"],
+          outbound: ["image", "audio", "video", "document"],
+        },
       },
     };
   }

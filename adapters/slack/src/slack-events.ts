@@ -1,8 +1,17 @@
 import type { AdapterSurface } from "./types";
 import { requireSlackId, requireSlackTimestamp } from "./slack-api";
+import {
+  MAX_SLACK_MEDIA_ITEMS,
+  type SlackInboundMediaSource,
+} from "./slack-media";
 import { z } from "zod";
 
 const MAX_TEXT_LENGTH = 16_384;
+
+const slackFileSchema = z.object({
+  id: z.string().optional(),
+  size: z.number().optional(),
+}).passthrough();
 
 const slackMessageEventSchema = z.object({
   type: z.string(),
@@ -16,6 +25,7 @@ const slackMessageEventSchema = z.object({
   subtype: z.string().optional(),
   bot_id: z.string().optional(),
   hidden: z.boolean().optional(),
+  files: z.array(slackFileSchema).max(100).optional(),
 }).passthrough();
 
 const slackEventCallbackSchema = z.object({
@@ -45,6 +55,8 @@ export type SlackInbound = {
   replyToId?: string;
   timestamp?: number;
   wasMentioned: true;
+  media?: SlackInboundMediaSource[];
+  skippedMedia?: number;
 };
 
 export type SlackEventDisposition =
@@ -88,7 +100,13 @@ export function normalizeSlackEvent<T>(
   const isMention = event.type === "app_mention";
   const isDm = event.type === "message" && event.channel_type === "im";
   if (!isMention && !isDm) return { kind: "ignored" };
-  if (event.subtype || event.bot_id || event.hidden === true) return { kind: "ignored" };
+  if (
+    (event.subtype && event.subtype !== "file_share")
+    || event.bot_id
+    || event.hidden === true
+  ) {
+    return { kind: "ignored" };
+  }
 
   let actorId: string;
   let channelId: string;
@@ -120,8 +138,12 @@ export function normalizeSlackEvent<T>(
   const withoutMention = isMention
     ? rawText.replace(new RegExp(`<@${escapeRegExp(normalizedBotUserId)}>`, "g"), " ")
     : rawText;
+  const extractedMedia = extractSlackMedia(event.files);
+  const hasFiles = (event.files?.length ?? 0) > 0;
   const text = decodeSlackText(withoutMention).trim().slice(0, MAX_TEXT_LENGTH)
-    || (isMention ? "[Mention]" : "[Message]");
+    || (hasFiles
+      ? event.files?.length === 1 ? "[Attachment]" : "[Attachments]"
+      : isMention ? "[Mention]" : "[Message]");
   const timestamp = slackTimestampMilliseconds(messageId)
     ?? safeEpochMilliseconds(envelope.event_time);
   return {
@@ -137,6 +159,8 @@ export function normalizeSlackEvent<T>(
       replyToId: event.thread_ts ? messageId : undefined,
       timestamp,
       wasMentioned: true,
+      ...(extractedMedia.media.length > 0 ? { media: extractedMedia.media } : undefined),
+      ...(extractedMedia.skipped > 0 ? { skippedMedia: extractedMedia.skipped } : undefined),
     },
   };
 }
@@ -169,4 +193,29 @@ function decodeSlackText(value: string): string {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function extractSlackMedia(
+  files: ReadonlyArray<z.infer<typeof slackFileSchema>> | undefined,
+): { media: SlackInboundMediaSource[]; skipped: number } {
+  const media: SlackInboundMediaSource[] = [];
+  let skipped = 0;
+  for (const [index, file] of (files ?? []).entries()) {
+    if (index >= MAX_SLACK_MEDIA_ITEMS) {
+      skipped += 1;
+      continue;
+    }
+    let fileId: string;
+    try {
+      fileId = requireSlackId(file.id, "Slack file");
+    } catch {
+      skipped += 1;
+      continue;
+    }
+    const size = Number.isSafeInteger(file.size) && (file.size ?? -1) >= 0
+      ? file.size
+      : undefined;
+    media.push({ fileId, size });
+  }
+  return { media, skipped };
 }

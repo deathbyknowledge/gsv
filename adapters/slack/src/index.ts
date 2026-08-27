@@ -59,7 +59,10 @@ export class SlackChannel extends WorkerEntrypoint<Env> implements AdapterServic
         activity: false,
         pairing: false,
         surfaces: ["dm", "channel", "thread"],
-        media: { inbound: [], outbound: [] },
+        media: {
+          inbound: ["image", "audio", "video", "document"],
+          outbound: ["image", "audio", "video", "document"],
+        },
       },
     };
   }

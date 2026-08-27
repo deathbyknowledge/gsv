@@ -5,6 +5,7 @@ import {
   InboundDeliveryLedger,
 } from "../../shared/src/inbound-delivery";
 import { callAdapterGateway, type AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
+import { cancelBinaryBody } from "../../shared/src/media-body";
 import {
   assertAdapterAccountDurableObjectIdentity,
   resolveAdapterAccountDurableObjectIdentity,
@@ -18,11 +19,17 @@ import type {
 } from "./types";
 import {
   authenticateSlackBot,
+  downloadSlackFile,
   openSlackSocket,
   requireSlackToken,
+  SlackApiError,
   type SlackFetch,
 } from "./slack-api";
 import { deliverSlackMessage } from "./slack-delivery";
+import {
+  appendSlackMediaNotice,
+  loadSlackInboundMedia,
+} from "./slack-media";
 import {
   normalizeSlackEvent,
   type SlackInbound,
@@ -331,6 +338,29 @@ export class SlackAccount extends DurableObject<Env> {
 
   private async forwardInbound(inbound: SlackInbound) {
     if (inbound.teamId !== this.state.teamId) return { terminal: true };
+    const botToken = this.state.botToken;
+    if (!botToken) return { terminal: true };
+    const transfer = await loadSlackInboundMedia(
+      inbound.media ?? [],
+      async (fileId, maxBytes) => {
+        try {
+          return await downloadSlackFile(
+            botToken,
+            fileId,
+            maxBytes,
+            this.slackFetch(),
+          );
+        } catch (error) {
+          if (error instanceof SlackApiError && error.kind === "permanent") return null;
+          throw error;
+        }
+      },
+    );
+    const skipped = (inbound.skippedMedia ?? 0) + transfer.skipped;
+    if (this.state.botToken !== botToken || inbound.teamId !== this.state.teamId) {
+      await cancelBinaryBody(transfer.body, "Slack account changed before media delivery");
+      return { terminal: true };
+    }
     const result = await callAdapterGateway(
       this.env.GATEWAY,
       this.installationContext(),
@@ -343,12 +373,14 @@ export class SlackAccount extends DurableObject<Env> {
           messageId: inbound.messageId,
           surface: inbound.surface,
           actor: { id: inbound.actorId },
-          text: inbound.text,
+          text: appendSlackMediaNotice(inbound.text, skipped),
+          media: transfer.media.length > 0 ? transfer.media : undefined,
           replyToId: inbound.replyToId,
           timestamp: inbound.timestamp,
           wasMentioned: true,
         },
       },
+      transfer.body,
     );
     return adapterInboundResultDisposition(result, {
       surface: inbound.surface,
