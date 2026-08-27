@@ -173,6 +173,7 @@ import {
   type ResponsibilityWakeBatch,
 } from "./responsibility-store";
 import { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
+import { recordMachineAddedResponsibility } from "./lifecycle-responsibilities";
 import { FederationStore } from "./federation-store";
 import { FederationIdentity } from "./federation-crypto";
 import {
@@ -3606,6 +3607,10 @@ export class Kernel extends DurableObject<Env> {
     if (!outcome.ok) {
       this.sendError(connection, frame.id, outcome.code, outcome.message, outcome.details);
       return;
+    }
+
+    if (outcome.newMachine) {
+      await recordMachineAddedResponsibility(outcome.newMachine, ctx);
     }
 
     const clientId = frame.args.peer.id.trim();

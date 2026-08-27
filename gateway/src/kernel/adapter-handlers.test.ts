@@ -472,6 +472,7 @@ function makeContext(
         setOwner: vi.fn(),
         beginLifecycle: vi.fn(),
         endLifecycle: vi.fn(),
+        isLifecycleActive: vi.fn(() => false),
         listByOwner: vi.fn(() => []),
         ...status,
       },
@@ -524,6 +525,16 @@ function makeContext(
       },
       ingressReceipts: ingressReceiptStore,
     },
+    responsibilities: {
+      create: vi.fn(() => ({ created: false })),
+      update: vi.fn(() => ({ changed: false })),
+      getByDedupeKey: vi.fn(() => null),
+      listActiveByDedupeKeyPrefix: vi.fn(() => []),
+    },
+    responsibilitySources: {
+      isEnabled: vi.fn(() => false),
+    },
+    reconcileResponsibilityWake: vi.fn(async () => undefined),
     runRoutes: {
       setAdapterRoute: vi.fn(),
       get: vi.fn(() => options.runRoute ?? null),
@@ -608,7 +619,7 @@ describe("adapter lifecycle handlers", () => {
     }));
   });
 
-  it("notifies root and linked users when adapter state changes", () => {
+  it("notifies root and linked users when adapter state changes", async () => {
     const status = {
       upsert: vi.fn(() => ({ ownerUid: 1000 })),
     };
@@ -621,7 +632,7 @@ describe("adapter lifecycle handlers", () => {
       },
     });
 
-    handleAdapterStateUpdate({
+    await handleAdapterStateUpdate({
       adapter: "WhatsApp",
       accountId: "primary",
       status: {
@@ -647,6 +658,56 @@ describe("adapter lifecycle handlers", () => {
       adapter: "whatsapp",
       accountId: "primary",
     });
+  });
+
+  it("turns an autonomous authentication loss into Ship work", async () => {
+    let stored = {
+      adapter: "whatsapp",
+      accountId: "primary",
+      connected: true,
+      authenticated: true,
+      lifecycleId: "adapter-account:test",
+      ownerUid: 1000,
+      updatedAt: 1,
+    };
+    const status = {
+      get: vi.fn(() => stored),
+      upsert: vi.fn((_adapter, _accountId, next) => {
+        stored = {
+          ...stored,
+          ...next,
+          adapter: "whatsapp",
+          ownerUid: 1000,
+          updatedAt: 2,
+        };
+        return stored;
+      }),
+    };
+    const ctx = makeContext({}, status);
+    vi.mocked(ctx.responsibilitySources.isEnabled).mockReturnValue(true);
+    // SAFETY: the handler reads only the created flag from this responsibility outcome.
+    vi.mocked(ctx.responsibilities.create).mockReturnValue({
+      created: true,
+    } as ReturnType<KernelContext["responsibilities"]["create"]>);
+
+    await handleAdapterStateUpdate({
+      adapter: "WhatsApp",
+      accountId: "primary",
+      status: {
+        accountId: "primary",
+        connected: false,
+        authenticated: false,
+      },
+    }, ctx);
+
+    expect(ctx.responsibilities.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ownerUid: 1000,
+        priority: "high",
+        source: expect.objectContaining({ eventType: "adapter.auth_required" }),
+      }),
+    );
+    expect(ctx.reconcileResponsibilityWake).toHaveBeenCalledWith(1000);
   });
 
   it("adapter.list discovers deployed adapter bindings and cached accounts", async () => {

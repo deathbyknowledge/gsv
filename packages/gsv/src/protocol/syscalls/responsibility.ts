@@ -16,7 +16,10 @@ export type ResponsibilityRequiredSourcePolicyId =
 
 export type ResponsibilityConfigurableSourcePolicyId =
   | "mail.received"
-  | "federation.received";
+  | "federation.received"
+  | "machine.added"
+  | "adapter.connected"
+  | "adapter.auth_required";
 
 export type ResponsibilitySourcePolicyId =
   | ResponsibilityRequiredSourcePolicyId

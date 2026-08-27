@@ -1043,7 +1043,12 @@ type ResponsibilitySourcePolicy =
       defaultEnabled: true;
     }
   | {
-      id: "mail.received";
+      id:
+        | "mail.received"
+        | "federation.received"
+        | "machine.added"
+        | "adapter.connected"
+        | "adapter.auth_required";
       name: string;
       description: string;
       control: "configurable";
@@ -1106,7 +1111,15 @@ type ResponsibilitySyscalls = {
     result: { sources: ResponsibilitySourcePolicy[] };
   };
   "r12y.source.update": {
-    args: { id: "mail.received"; enabled: boolean };
+    args: {
+      id:
+        | "mail.received"
+        | "federation.received"
+        | "machine.added"
+        | "adapter.connected"
+        | "adapter.auth_required";
+      enabled: boolean;
+    };
     result: { source: ResponsibilitySourcePolicy };
   };
 };

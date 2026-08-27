@@ -81,6 +81,7 @@ import { ensurePersonalController } from "./personal-controller";
 import type { ProcessRecord } from "./processes";
 import type { SurfaceRouteRecord } from "./surface-routes";
 import type { AdapterStatusRecord } from "./adapter-status";
+import { recordAdapterStatusTransition } from "./lifecycle-responsibilities";
 import type { IdentityLinkRecord } from "./identity-links";
 import {
   assertAdapterMessageDestinationAccess,
@@ -357,6 +358,7 @@ export async function handleAdapterConnect(
     return { ok: false, error: `Adapter service does not implement connect: ${adapter}` };
   }
 
+  const previousStatus = ctx.adapters.status.get(adapter, accountId);
   const needsOwnerClaim = adapterAccountNeedsOwnerClaim(ctx, adapter, accountId, ownerUid);
   ctx.adapters.status.beginLifecycle(adapter, accountId);
   try {
@@ -398,6 +400,12 @@ export async function handleAdapterConnect(
     const status = await refreshAdapterStatus(service, ctx, adapter, accountId);
     const connected = status?.connected ?? connectResult.connected;
     const authenticated = status?.authenticated ?? connectResult.authenticated;
+    const currentStatus = ctx.adapters.status.get(adapter, accountId);
+    if (currentStatus) {
+      recordAdapterStatusTransition(previousStatus, currentStatus, ctx, {
+        suppressAuthenticationRequired: true,
+      });
+    }
 
     return {
       ok: true,
@@ -663,6 +671,16 @@ export async function handleAdapterPairConfirm(
   ) {
     throw new Error("Adapter pairing changed during confirmation");
   }
+  await service.adapterPairingFinalize!(adapterInstallationContext(ctx), {
+    code,
+    operationId,
+    route: activated.route,
+    canonicalOrigin,
+  });
+  const previousStatus = ctx.adapters.status.get(
+    adapter,
+    activated.candidate.accountId,
+  );
   ctx.adapters.status.setOwner(adapter, activated.candidate.accountId, uid);
   ctx.adapters.status.upsert(adapter, activated.candidate.accountId, {
     accountId: activated.candidate.accountId,
@@ -671,13 +689,15 @@ export async function handleAdapterPairConfirm(
     mode: "managed-shared",
     lastActivity: Date.now(),
   });
-
-  await service.adapterPairingFinalize!(adapterInstallationContext(ctx), {
-    code,
-    operationId,
-    route: activated.route,
-    canonicalOrigin,
-  });
+  const currentStatus = ctx.adapters.status.get(
+    adapter,
+    activated.candidate.accountId,
+  );
+  if (currentStatus) {
+    recordAdapterStatusTransition(previousStatus, currentStatus, ctx, {
+      suppressAuthenticationRequired: true,
+    });
+  }
   ctx.broadcastToUserUid(uid, "adapter.status", {
     adapter,
     accountId: activated.candidate.accountId,
@@ -717,31 +737,36 @@ export async function handleAdapterPairDisconnect(
     actorId,
     generation,
   ]);
-  const result = await service.adapterPairingDisconnect!(adapterInstallationContext(ctx), {
-    operationId,
-    installationId: ctx.installationId,
-    actorId,
-    surfaceId,
-    localUid: uid,
-    generation,
-  });
-  const current = ctx.adapters.identityLinks.get(adapter, accountId, actorId);
-  if (
-    current?.uid === uid
-    && current.metadata?.routeGeneration === generation
-  ) {
-    ctx.adapters.identityLinks.unlink(adapter, accountId, actorId);
+  ctx.adapters.status.beginLifecycle(adapter, accountId);
+  try {
+    const result = await service.adapterPairingDisconnect!(adapterInstallationContext(ctx), {
+      operationId,
+      installationId: ctx.installationId,
+      actorId,
+      surfaceId,
+      localUid: uid,
+      generation,
+    });
+    const current = ctx.adapters.identityLinks.get(adapter, accountId, actorId);
+    if (
+      current?.uid === uid
+      && current.metadata?.routeGeneration === generation
+    ) {
+      ctx.adapters.identityLinks.unlink(adapter, accountId, actorId);
+    }
+    const stillLinked = ctx.adapters.identityLinks.listByAccount(adapter, accountId).length > 0;
+    ctx.adapters.status.upsert(adapter, accountId, {
+      accountId,
+      connected: true,
+      authenticated: stillLinked,
+      mode: "managed-shared",
+      lastActivity: Date.now(),
+    });
+    ctx.broadcastToUserUid(uid, "adapter.status", { adapter, accountId });
+    return { disconnected: result.disconnected, adapter, accountId, actorId };
+  } finally {
+    ctx.adapters.status.endLifecycle(adapter, accountId);
   }
-  const stillLinked = ctx.adapters.identityLinks.listByAccount(adapter, accountId).length > 0;
-  ctx.adapters.status.upsert(adapter, accountId, {
-    accountId,
-    connected: true,
-    authenticated: stillLinked,
-    mode: "managed-shared",
-    lastActivity: Date.now(),
-  });
-  ctx.broadcastToUserUid(uid, "adapter.status", { adapter, accountId });
-  return { disconnected: result.disconnected, adapter, accountId, actorId };
 }
 
 export async function handleAdapterSend(
@@ -1060,7 +1085,15 @@ export async function handleAdapterStatus(
             continue;
           }
           const localized = localizeAdapterStatus(ctx, adapter, status);
-          ctx.adapters.status.upsert(adapter, localized.accountId, localized);
+          const previous = ctx.adapters.status.get(adapter, localized.accountId);
+          const current = ctx.adapters.status.upsert(
+            adapter,
+            localized.accountId,
+            localized,
+          );
+          if (!ctx.adapters.status.isLifecycleActive(adapter, localized.accountId)) {
+            recordAdapterStatusTransition(previous, current, ctx);
+          }
         }
       } catch {
         // status syscall should still return last known state when live check fails
@@ -2138,10 +2171,15 @@ export function handleAdapterStateUpdate(
     throw new Error("accountId is required");
   }
 
-  const status = ctx.adapters.status.upsert(adapter, accountId, {
+  const localized = localizeAdapterStatus(ctx, adapter, {
     ...args.status,
     accountId,
   });
+  const previous = ctx.adapters.status.get(adapter, accountId);
+  const status = ctx.adapters.status.upsert(adapter, accountId, localized);
+  if (!ctx.adapters.status.isLifecycleActive(adapter, accountId)) {
+    recordAdapterStatusTransition(previous, status, ctx);
+  }
   const uids = new Set([0]);
   if (status.ownerUid !== null) {
     uids.add(status.ownerUid);

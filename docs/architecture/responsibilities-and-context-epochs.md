@@ -176,6 +176,13 @@ System-owned producers use the same ledger contract:
   immutable message id. The title contains no sender-controlled text. Bounded summary
   metadata is marked untrusted and is available only when the Ship inspects the record;
   exact content stays in the mailbox.
+- The first registration of a physical machine creates one `machine.added`
+  responsibility. Browser-backed targets and later reconnects do not create another.
+- An owned messaging account first becoming connected and authenticated creates one
+  `adapter.connected` responsibility. A later authentication loss creates a recurring,
+  deduplicated `adapter.auth_required` responsibility that resolves automatically when
+  authentication returns. Explicit disconnects and transport-only reconnects do not
+  create recovery work.
 - A Ship-directed schedule occurrence creates one `schedule.due` responsibility keyed
   by schedule id and occurrence id. Replaying the occurrence returns the same record.
   Schedules explicitly bound to an adapter reply route retain that transport event so

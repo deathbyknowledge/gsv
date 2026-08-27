@@ -1,6 +1,7 @@
 import { defineCommand } from "just-bash";
 import type { ExecResult } from "just-bash";
 import type {
+  ResponsibilityConfigurableSourcePolicyId,
   ResponsibilityCreateArgs,
   ResponsibilityPatch,
   ResponsibilityRecord,
@@ -287,11 +288,17 @@ function requireProcessId(value: string | undefined): string {
 
 function requireSourceId(
   value: string | undefined,
-): "mail.received" | "federation.received" {
-  if (value !== "mail.received" && value !== "federation.received") {
-    throw new Error(`unknown responsibility source: ${value ?? ""}`);
+): ResponsibilityConfigurableSourcePolicyId {
+  switch (value) {
+    case "mail.received":
+    case "federation.received":
+    case "machine.added":
+    case "adapter.connected":
+    case "adapter.auth_required":
+      return value;
+    default:
+      throw new Error(`unknown responsibility source: ${value ?? ""}`);
   }
-  return value;
 }
 
 function requireArgumentCount(args: string[], count: number, message: string): void {

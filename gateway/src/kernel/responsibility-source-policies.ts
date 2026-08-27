@@ -56,6 +56,27 @@ const POLICY_DEFINITIONS = [
     control: "configurable",
     defaultEnabled: true,
   },
+  {
+    id: "machine.added",
+    name: "New machines",
+    description: "Triggers when a physical machine is added so Ship can confirm that it is connected.",
+    control: "configurable",
+    defaultEnabled: true,
+  },
+  {
+    id: "adapter.connected",
+    name: "Connected adapters",
+    description: "Triggers when a messaging adapter account first becomes connected and authenticated.",
+    control: "configurable",
+    defaultEnabled: true,
+  },
+  {
+    id: "adapter.auth_required",
+    name: "Adapter authentication",
+    description: "Triggers when a messaging adapter loses authentication and needs user action.",
+    control: "configurable",
+    defaultEnabled: true,
+  },
 ] as const satisfies readonly PolicyDefinition[];
 
 type PolicyRow = {
