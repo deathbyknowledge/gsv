@@ -1,9 +1,10 @@
 # Native gesture models
 
-`gsv-vision` implements the complete gesture pipeline in Rust. tract executes
-the two TFLite palm and hand-landmark models; GSV's authored pose recognizer
-maps their geometry into the local control vocabulary. It does not build or
-load MediaPipe, TensorFlow, Python, Java, or Bazel.
+`gesture-engine` implements the reusable gesture pipeline in Rust, while
+`gsv-vision` owns the desktop camera and process adapter. tract executes the two
+TFLite palm and hand-landmark models; GSV's authored pose recognizer maps their
+geometry into the local control vocabulary. It does not build or load
+MediaPipe, TensorFlow, Python, Java, or Bazel.
 
 The checksum-pinned models live in normal Git under
 `host/helpers/gestures/models/` and are embedded in `gsv-vision`. Build the
@@ -14,11 +15,11 @@ cd host
 cargo build --workspace
 ```
 
-The gesture crate's build script verifies both files by size and SHA-256 before
-the compiler embeds them. They add roughly 7.8 MB to the helper and do not need
-to be copied beside it at runtime. Their Apache 2.0 license and exact source,
-bundle checksum, extracted checksums, and update procedure live beside the
-weights.
+The `gsv-vision` package's build script verifies both files by size and SHA-256
+before the compiler embeds them. They add roughly 7.8 MB to the helper and do
+not need to be copied beside it at runtime. Their Apache 2.0 license and exact
+source, bundle checksum, extracted checksums, and update procedure live beside
+the weights.
 
 Maintainers can reproduce or deliberately update the vendored files with:
 
@@ -66,12 +67,12 @@ Production recognition uses a compile-time no-op profiler, so stage measurement
 adds no runtime timers to normal builds.
 
 Native inference uses up to four worker threads. For controlled benchmark
-experiments only, `GSV_VISION_BENCHMARK_THREADS=1` (or another bounded count)
+experiments only, `GESTURE_ENGINE_BENCHMARK_THREADS=1` (or another bounded count)
 overrides that selection and is recorded in the report.
 
 Eligible float32 NHWC depthwise convolutions use the native channel-SIMD
 kernel; all other operations remain in tract. The report records the selected
-depthwise kernel. Set `GSV_VISION_BENCHMARK_DEPTHWISE=tract` when running the
+depthwise kernel. Set `GESTURE_ENGINE_BENCHMARK_DEPTHWISE=tract` when running the
 benchmark to produce a stock-tract comparison without changing production.
 The upstream TFLite graph is intentionally embedded because it
 preserves this NHWC execution shape; alternative deployment formats must clear

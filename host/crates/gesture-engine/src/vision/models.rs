@@ -9,8 +9,7 @@ use tract_linalg::multithread::Executor;
 use tract_tflite::prelude::*;
 
 use super::depthwise::replace_depthwise_convolutions;
-use super::runtime::ModelData;
-use super::Error;
+use super::{Error, ModelData};
 
 type Plan = Arc<TypedRunnableModel>;
 
@@ -44,12 +43,12 @@ pub(super) struct NodeProfileSamples {
 }
 
 impl Models {
-    pub(super) fn load(models: &ModelData) -> Result<Self, Error> {
+    pub(super) fn load(models: &ModelData<'_>) -> Result<Self, Error> {
         let (executor, inference_pool) = inference_executor()?;
         Ok(Self {
             inference_pool,
-            palm_detector: load(models.palm_detector, &executor)?,
-            landmark_detector: load(models.landmark_detector, &executor)?,
+            palm_detector: load(models.palm_detector(), &executor)?,
+            landmark_detector: load(models.landmark_detector(), &executor)?,
         })
     }
 
@@ -147,7 +146,7 @@ pub(super) fn selected_depthwise_kernel() -> &'static str {
 
 #[cfg(test)]
 fn channel_depthwise_enabled() -> bool {
-    std::env::var("GSV_VISION_BENCHMARK_DEPTHWISE").map_or(true, |value| value != "tract")
+    std::env::var("GESTURE_ENGINE_BENCHMARK_DEPTHWISE").map_or(true, |value| value != "tract")
 }
 
 #[cfg(not(test))]
@@ -185,7 +184,7 @@ fn selected_inference_threads(available: usize, requested: Option<usize>) -> usi
 
 #[cfg(test)]
 fn benchmark_thread_override() -> Option<usize> {
-    std::env::var("GSV_VISION_BENCHMARK_THREADS")
+    std::env::var("GESTURE_ENGINE_BENCHMARK_THREADS")
         .ok()
         .and_then(|value| value.parse().ok())
 }
@@ -287,13 +286,7 @@ fn tensor_array<const N: usize>(value: &TValue) -> Result<[f32; N], Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{selected_inference_threads, Models};
-    use crate::native::runtime::embedded_models;
-
-    #[test]
-    fn embedded_models_load_from_memory() {
-        Models::load(&embedded_models()).expect("embedded models");
-    }
+    use super::selected_inference_threads;
 
     #[test]
     fn inference_threads_default_to_four_and_stay_within_hardware_bounds() {

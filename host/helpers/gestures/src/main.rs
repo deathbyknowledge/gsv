@@ -1,11 +1,8 @@
 mod camera;
-mod control;
 mod control_transport;
 mod debug_window;
-mod native;
-mod observation;
+mod embedded_models;
 mod overlay;
-mod pose;
 
 use std::env;
 use std::error::Error as StdError;
@@ -18,20 +15,18 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError, TrySendError};
+use gesture_engine::control::{
+    ControlChord, ControlDiagnostic, ControlState, HandPreference, VoiceControlPolicy,
+};
+use gesture_engine::observation::{FrameView, Observation};
+use gesture_engine::vision::{ModelData, TractHandTracker};
 use gesture_protocol::{
     ControlStatus, GestureCandidate, GestureContext, GestureProgress, ScrollState,
 };
 
 use crate::camera::{CameraConfig, CameraError, CameraFailure, CameraStream, FrameReader};
-use crate::control::{
-    ControlDiagnostic, ControlHand, ControlIntent, ControlSample, GestureControl, HandPreference,
-    ScrollControl,
-};
 use crate::control_transport::{ControlContext, HelperControl};
 use crate::debug_window::{DebugWindow, DebugWindowConfig};
-use crate::native::runtime::ModelData;
-use crate::native::GestureRecognizer;
-use crate::observation::{FrameView, Observation};
 use crate::overlay::ControlPresentationDiagnostic;
 
 const PARENT_STDIN_WATCHDOG: &str = "GSV_VISION_PARENT_STDIN";
@@ -92,7 +87,7 @@ struct AnnotatedFrame {
 }
 
 struct InferenceWorkerConfig {
-    models: ModelData,
+    models: ModelData<'static>,
     hand_preference: HandPreference,
 }
 
@@ -129,7 +124,7 @@ fn run() -> Result<(), VisionError> {
 }
 
 fn run_pipeline(control: Option<HelperControl>, debug_window: bool) -> Result<(), VisionError> {
-    let models = native::runtime::embedded_models();
+    let models = embedded_models::embedded_models();
     let camera_index = parse_camera_index(env::var_os("GSV_VISION_CAMERA").as_deref())?;
     let hand_preference = parse_hand_preference(env::var_os(DOMINANT_HAND).as_deref())?;
 
@@ -324,7 +319,7 @@ fn inference_worker(
     failure: Sender<VisionError>,
     control_link: Option<HelperControl>,
 ) {
-    let Ok(mut recognizer) = GestureRecognizer::load(&config.models) else {
+    let Ok(mut recognizer) = TractHandTracker::load(&config.models) else {
         let _ = failure.try_send(VisionError::InferenceUnavailable);
         return;
     };
@@ -333,10 +328,10 @@ fn inference_worker(
     let mut ready_published = false;
     let mut first_capture = None;
     let mut last_timestamp = None;
-    let mut gesture_control =
-        GestureControl::with_preference(GestureContext::Disabled, config.hand_preference);
-    let mut scroll_control =
-        ScrollControl::with_preference(GestureContext::Disabled, config.hand_preference);
+    let mut gesture_policy = VoiceControlPolicy::with_preference(
+        GestureContext::Disabled.into(),
+        config.hand_preference,
+    );
     let mut control_revision = 0;
     let mut published_control_status = None;
     while !stop.load(Ordering::Acquire) {
@@ -382,32 +377,27 @@ fn inference_worker(
                     ),
                     ControlContext::Authoritative { revision, gesture } => {
                         let synchronized_scroll = sync_control_context(
-                            &mut gesture_control,
-                            &mut scroll_control,
+                            &mut gesture_policy,
                             &mut control_revision,
                             revision,
                             gesture,
                         );
-                        let (intent, observed_scroll) = observe_controls(
-                            &mut gesture_control,
-                            &mut scroll_control,
-                            &observation,
-                            delivery.frame.captured_at,
-                            delivery.frame.width,
-                            delivery.frame.height,
-                        );
-                        if let Some(intent) = intent {
-                            if !control_link.publish_intent(intent) {
+                        let policy_output = gesture_policy.observe(&delivery.frame, &observation);
+                        if let Some(intent) = policy_output.intent {
+                            if !control_link.publish_intent(intent.into()) {
                                 let _ = failure.try_send(VisionError::ProtocolUnavailable);
                                 return;
                             }
                         }
                         (
                             Some(revision),
-                            control_status(&gesture_control, delivery.frame.captured_at),
-                            gesture_control.diagnostic(),
-                            scroll_control.state(),
-                            observed_scroll.or(synchronized_scroll),
+                            control_status(&gesture_policy, delivery.frame.captured_at),
+                            policy_output.diagnostic,
+                            policy_output.scroll_state.into(),
+                            policy_output
+                                .scroll_update
+                                .map(Into::into)
+                                .or(synchronized_scroll),
                         )
                     }
                 }
@@ -460,28 +450,27 @@ fn first_frame_timed_out(last_sequence: u64, started_at: Instant, checked_at: In
 }
 
 fn sync_control_context(
-    control: &mut GestureControl,
-    scroll: &mut ScrollControl,
+    policy: &mut VoiceControlPolicy,
     current_revision: &mut u64,
     revision: u64,
     gesture: GestureContext,
 ) -> Option<ScrollState> {
     if revision != *current_revision {
-        control.synchronize_state(gesture);
-        let scroll_state = scroll.synchronize_state(gesture);
+        let state = gesture.into();
+        let scroll_state = policy.synchronize_state(state).map(Into::into);
         *current_revision = revision;
         return scroll_state;
     }
     None
 }
 
-fn control_status(control: &GestureControl, now: Instant) -> ControlStatus {
-    let progress = control_progress(control, now);
-    match control.state() {
-        GestureContext::Disarmed => ControlStatus::Disarmed { progress },
-        GestureContext::Disabled => ControlStatus::Disabled { progress },
-        GestureContext::Standby => ControlStatus::Standby { progress },
-        GestureContext::Active {
+fn control_status(policy: &VoiceControlPolicy, now: Instant) -> ControlStatus {
+    let progress = control_progress(policy, now);
+    match policy.state() {
+        ControlState::Disarmed => ControlStatus::Disarmed { progress },
+        ControlState::Disabled => ControlStatus::Disabled { progress },
+        ControlState::Standby => ControlStatus::Standby { progress },
+        ControlState::Active {
             voice_request_id,
             muted,
         } => ControlStatus::Active {
@@ -492,31 +481,28 @@ fn control_status(control: &GestureControl, now: Instant) -> ControlStatus {
     }
 }
 
-fn control_progress(control: &GestureControl, now: Instant) -> Option<GestureProgress> {
-    let progress = control.progress(now)?;
-    let candidate = gesture_candidate(control.state(), progress.chord)?;
+fn control_progress(policy: &VoiceControlPolicy, now: Instant) -> Option<GestureProgress> {
+    let progress = policy.progress(now)?;
+    let candidate = gesture_candidate(policy.state(), progress.chord)?;
     GestureProgress::new(candidate, progress.progress_permille).ok()
 }
 
-fn gesture_candidate(
-    state: crate::control::ControlState,
-    chord: crate::control::ControlChord,
-) -> Option<GestureCandidate> {
+fn gesture_candidate(state: ControlState, chord: ControlChord) -> Option<GestureCandidate> {
     let candidate = match chord {
-        crate::control::ControlChord::Arm => GestureCandidate::Arm,
-        crate::control::ControlChord::Disarm => GestureCandidate::Disarm,
-        crate::control::ControlChord::StartTranscription => GestureCandidate::StartTranscription,
-        crate::control::ControlChord::StopTranscription => GestureCandidate::StopTranscription,
-        crate::control::ControlChord::Send => GestureCandidate::Send,
-        crate::control::ControlChord::DeleteBackward => GestureCandidate::DeleteBackward,
-        crate::control::ControlChord::ClearDictation => GestureCandidate::ClearDictation,
-        crate::control::ControlChord::Mute => GestureCandidate::Mute,
-        crate::control::ControlChord::Unmute => GestureCandidate::Unmute,
-        crate::control::ControlChord::Scroll => return None,
+        ControlChord::Arm => GestureCandidate::Arm,
+        ControlChord::Disarm => GestureCandidate::Disarm,
+        ControlChord::StartTranscription => GestureCandidate::StartTranscription,
+        ControlChord::StopTranscription => GestureCandidate::StopTranscription,
+        ControlChord::Send => GestureCandidate::Send,
+        ControlChord::DeleteBackward => GestureCandidate::DeleteBackward,
+        ControlChord::ClearDictation => GestureCandidate::ClearDictation,
+        ControlChord::Mute => GestureCandidate::Mute,
+        ControlChord::Unmute => GestureCandidate::Unmute,
+        ControlChord::Scroll => return None,
     };
     GestureProgress::new(candidate, 0)
         .expect("zero is bounded")
-        .is_compatible_with(state)
+        .is_compatible_with(state.into())
         .then_some(candidate)
 }
 
@@ -531,75 +517,6 @@ fn control_status_publish_due(
             || previous != current
             || now.saturating_duration_since(published_at) >= CONTROL_STATUS_HEARTBEAT
     })
-}
-
-fn observe_controls(
-    gesture: &mut GestureControl,
-    scroll: &mut ScrollControl,
-    observation: &Observation,
-    captured_at: Instant,
-    frame_width: u32,
-    frame_height: u32,
-) -> (Option<ControlIntent>, Option<ScrollState>) {
-    fn observe(
-        gesture: &mut GestureControl,
-        scroll: &mut ScrollControl,
-        sample: ControlSample<'_>,
-    ) -> (Option<ControlIntent>, Option<ScrollState>) {
-        let was_scrolling = scroll.is_active();
-        let intent = gesture.observe(sample);
-        let scroll_state = scroll.observe(sample);
-        if was_scrolling || scroll.is_active() {
-            gesture.latch_scroll_release();
-        }
-        (intent, scroll_state)
-    }
-
-    let frame_aspect_ratio = frame_width as f32 / frame_height as f32;
-    match observation.hands.as_slice() {
-        [first, second] => {
-            let hands = [
-                ControlHand::from_observation(first, frame_aspect_ratio),
-                ControlHand::from_observation(second, frame_aspect_ratio),
-            ];
-            observe(
-                gesture,
-                scroll,
-                ControlSample {
-                    frame_sequence: observation.frame_sequence,
-                    captured_at,
-                    observed_at: observation.observed_at,
-                    frame_aspect_ratio,
-                    hands: &hands,
-                },
-            )
-        }
-        [hand] => {
-            let hands = [ControlHand::from_observation(hand, frame_aspect_ratio)];
-            observe(
-                gesture,
-                scroll,
-                ControlSample {
-                    frame_sequence: observation.frame_sequence,
-                    captured_at,
-                    observed_at: observation.observed_at,
-                    frame_aspect_ratio,
-                    hands: &hands,
-                },
-            )
-        }
-        _ => observe(
-            gesture,
-            scroll,
-            ControlSample {
-                frame_sequence: observation.frame_sequence,
-                captured_at,
-                observed_at: observation.observed_at,
-                frame_aspect_ratio,
-                hands: &[],
-            },
-        ),
-    }
 }
 
 impl VisionError {
@@ -687,12 +604,22 @@ fn parse_hand_preference(value: Option<&OsStr>) -> Result<HandPreference, Vision
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::observation::{HandPose, Handedness};
+    use gesture_engine::observation::{HandObservation, HandPose, Handedness, Landmark};
 
-    const ACTIVE: GestureContext = GestureContext::Active {
+    const ACTIVE: ControlState = ControlState::Active {
         voice_request_id: 12,
         muted: false,
     };
+
+    fn test_frame(sequence: u64, captured_at: Instant) -> FrameView {
+        FrameView {
+            sequence,
+            captured_at,
+            width: 1,
+            height: 1,
+            rgb: Arc::from([0_u8, 0, 0]),
+        }
+    }
 
     #[test]
     fn camera_index_is_bounded_and_exact() {
@@ -806,24 +733,21 @@ mod tests {
 
     #[test]
     fn context_revision_applies_strict_absolute_modes() {
-        let mut control = GestureControl::default();
-        let mut scroll = ScrollControl::default();
+        let mut policy = VoiceControlPolicy::default();
         let mut current_revision = 0;
 
         sync_control_context(
-            &mut control,
-            &mut scroll,
+            &mut policy,
             &mut current_revision,
             1,
             GestureContext::Standby,
         );
-        assert_eq!(control.state(), GestureContext::Standby);
+        assert_eq!(policy.state(), ControlState::Standby);
         assert_eq!(current_revision, 1);
 
         // An unchanged revision cannot smuggle in a different request.
         sync_control_context(
-            &mut control,
-            &mut scroll,
+            &mut policy,
             &mut current_revision,
             1,
             GestureContext::Active {
@@ -831,11 +755,10 @@ mod tests {
                 muted: true,
             },
         );
-        assert_eq!(control.state(), GestureContext::Standby);
+        assert_eq!(policy.state(), ControlState::Standby);
 
         sync_control_context(
-            &mut control,
-            &mut scroll,
+            &mut policy,
             &mut current_revision,
             2,
             GestureContext::Active {
@@ -844,8 +767,8 @@ mod tests {
             },
         );
         assert_eq!(
-            control.state(),
-            GestureContext::Active {
+            policy.state(),
+            ControlState::Active {
                 voice_request_id: 9,
                 muted: true,
             }
@@ -855,27 +778,27 @@ mod tests {
     #[test]
     fn semantic_status_mirrors_all_four_authority_modes() {
         let now = Instant::now();
-        let mut control = GestureControl::default();
+        let mut policy = VoiceControlPolicy::default();
         assert_eq!(
-            control_status(&control, now),
+            control_status(&policy, now),
             ControlStatus::Disarmed { progress: None }
         );
 
-        control.synchronize_state(GestureContext::Disabled);
+        policy.synchronize_state(ControlState::Disabled);
         assert_eq!(
-            control_status(&control, now),
+            control_status(&policy, now),
             ControlStatus::Disabled { progress: None }
         );
 
-        control.synchronize_state(GestureContext::Standby);
+        policy.synchronize_state(ControlState::Standby);
         assert_eq!(
-            control_status(&control, now),
+            control_status(&policy, now),
             ControlStatus::Standby { progress: None }
         );
 
-        control.synchronize_state(ACTIVE);
+        policy.synchronize_state(ACTIVE);
         assert_eq!(
-            control_status(&control, now),
+            control_status(&policy, now),
             ControlStatus::Active {
                 voice_request_id: 12,
                 muted: false,
@@ -883,12 +806,12 @@ mod tests {
             }
         );
 
-        control.synchronize_state(GestureContext::Active {
+        policy.synchronize_state(ControlState::Active {
             voice_request_id: 12,
             muted: true,
         });
         assert_eq!(
-            control_status(&control, now),
+            control_status(&policy, now),
             ControlStatus::Active {
                 voice_request_id: 12,
                 muted: true,
@@ -899,7 +822,7 @@ mod tests {
 
     #[test]
     fn controller_chords_map_only_to_context_compatible_candidates() {
-        use crate::control::{ControlChord, ControlState};
+        use gesture_engine::control::{ControlChord, ControlState};
 
         let cases = [
             (
@@ -941,7 +864,7 @@ mod tests {
             ),
             (ACTIVE, ControlChord::Mute, Some(GestureCandidate::Mute)),
             (
-                GestureContext::Active {
+                ControlState::Active {
                     voice_request_id: 12,
                     muted: true,
                 },
@@ -949,7 +872,7 @@ mod tests {
                 Some(GestureCandidate::Unmute),
             ),
             (
-                GestureContext::Disabled,
+                ControlState::Disabled,
                 ControlChord::StartTranscription,
                 None,
             ),
@@ -957,7 +880,7 @@ mod tests {
             (ControlState::Standby, ControlChord::DeleteBackward, None),
             (ControlState::Standby, ControlChord::ClearDictation, None),
             (
-                GestureContext::Active {
+                ControlState::Active {
                     voice_request_id: 12,
                     muted: true,
                 },
@@ -973,25 +896,24 @@ mod tests {
     #[test]
     fn standby_status_carries_only_bounded_start_progress() {
         let now = Instant::now();
-        let mut control = GestureControl::new(GestureContext::Standby);
-        let hands = [ControlHand::test(
-            Handedness::Right,
-            HandPose::OneFinger,
-            0.9,
-        )];
-        assert_eq!(
-            control.observe(ControlSample {
-                frame_sequence: 1,
-                captured_at: now,
-                observed_at: now + Duration::from_millis(20),
-                frame_aspect_ratio: 1.0,
-                hands: &hands,
-            }),
-            None
-        );
+        let mut policy = VoiceControlPolicy::<u64>::new(ControlState::Standby);
+        let frame = test_frame(1, now);
+        let observation = Observation {
+            frame_sequence: 1,
+            observed_at: now + Duration::from_millis(20),
+            hands: vec![HandObservation {
+                handedness: Handedness::Right,
+                handedness_score: 0.95,
+                pose: HandPose::OneFinger,
+                pose_score: 0.9,
+                landmarks: [Landmark::default(); 21],
+            }],
+            inference_time: Duration::from_millis(20),
+        };
+        assert_eq!(policy.observe(&frame, &observation).intent, None);
 
         assert_eq!(
-            control_status(&control, now),
+            control_status(&policy, now),
             ControlStatus::Standby {
                 progress: Some(
                     GestureProgress::new(GestureCandidate::StartTranscription, 0)
@@ -1011,7 +933,7 @@ mod tests {
             progress: Some(progress),
         };
         let diagnostic = ControlDiagnostic::Stabilizing {
-            chord: crate::control::ControlChord::Send,
+            chord: ControlChord::Send,
             confidence_percent: 88,
             progress_percent: 64,
         };
@@ -1064,8 +986,6 @@ mod tests {
 
     #[test]
     fn the_wrong_visible_hand_reaches_the_controller_diagnostic() {
-        use crate::observation::{HandObservation, HandPose, Handedness, Landmark};
-
         let captured_at = Instant::now();
         let observation = Observation {
             frame_sequence: 1,
@@ -1079,21 +999,12 @@ mod tests {
             }],
             inference_time: Duration::from_millis(20),
         };
-        let mut control = GestureControl::new(GestureContext::Standby);
-        let mut scroll = ScrollControl::new(GestureContext::Standby);
-
-        assert_eq!(
-            observe_controls(
-                &mut control,
-                &mut scroll,
-                &observation,
-                captured_at,
-                640,
-                480,
-            ),
-            (None, None)
-        );
-        assert_eq!(control.diagnostic(), ControlDiagnostic::NeedActionHand);
+        let mut policy = VoiceControlPolicy::<u64>::new(ControlState::Standby);
+        let frame = test_frame(1, captured_at);
+        let output = policy.observe(&frame, &observation);
+        assert_eq!(output.intent, None);
+        assert_eq!(output.scroll_update, None);
+        assert_eq!(output.diagnostic, ControlDiagnostic::NeedActionHand);
     }
 
     #[test]

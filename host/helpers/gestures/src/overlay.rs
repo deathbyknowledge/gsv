@@ -3,8 +3,8 @@ use std::time::Duration;
 use font8x8::{UnicodeFonts, BASIC_FONTS};
 use gesture_protocol::{ControlStatus, GestureCandidate, GestureProgress, ScrollState};
 
-use crate::control::{ControlChord, ControlDiagnostic};
-use crate::observation::{HandObservation, Handedness, Landmark, Observation};
+use gesture_engine::control::{ControlChord, ControlDiagnostic};
+use gesture_engine::observation::{HandObservation, Handedness, Landmark, Observation};
 
 pub const HAND_CONNECTIONS: [(usize, usize); 21] = [
     (0, 1),
@@ -851,7 +851,7 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
-    use crate::observation::{HandObservation, HandPose};
+    use gesture_engine::observation::{HandObservation, HandPose};
 
     #[test]
     fn all_skeleton_connections_use_valid_landmark_indices() {

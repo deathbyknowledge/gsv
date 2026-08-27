@@ -1,8 +1,10 @@
 # GSV gesture helper
 
 The `gestures` package builds the experimental `gsv-vision` local hand-control
-helper. It is a separate Rust process that owns the camera, native Rust/tract
-inference, temporal gesture policy, and optional diagnostic window. Camera
+helper. It is a separate Rust process that owns camera integration, process
+lifecycle, private Desktop transport, and the optional
+diagnostic window. The platform-neutral `gesture-engine` crate owns inference,
+pose recognition, and temporal gesture policy. Camera
 pixels never enter GPUI, the gateway, logs, files, or GSV application IPC. They
 are handed only to local inference and, in debug mode, the OS display
 system. A bounded private pipe carries a reliable session-scoped
@@ -15,11 +17,11 @@ the random helper session. Reliable lifecycle and intent events
 share a strict monotonic sequence, while Desktop applies its bounded local
 freshness policy before acting on received control.
 
-The runtime is one Rust executable with two verified TFLite models embedded
-from the pinned Gesture Recognizer bundle. tract executes palm and hand-landmark
-inference, then GSV's authored Rust recognizer maps landmark geometry into its
-small pose vocabulary. Python, Java, Bazel, and MediaPipe native code are not
-build or runtime dependencies.
+The runtime is one Rust executable linked to the shared engine, with two
+verified TFLite models embedded from the pinned Gesture Recognizer bundle.
+tract executes palm and hand-landmark inference, then GSV's authored Rust
+recognizer maps landmark geometry into its small pose vocabulary. Python, Java,
+Bazel, and MediaPipe native code are not build or runtime dependencies.
 
 ## Build and run locally
 

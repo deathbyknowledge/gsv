@@ -24,7 +24,8 @@ readonly fixtures="$($script_dir/fixtures.sh)"
 readonly revision="$(git -C "$repository_root" rev-parse HEAD)"
 readonly rustc_version="$(rustc --version)"
 if [[ -n "$(git -C "$repository_root" status --porcelain -- \
-  host/helpers/gestures host/Cargo.toml host/Cargo.lock scripts/vision-native)" ]]; then
+  host/crates/gesture-engine host/helpers/gestures host/Cargo.toml host/Cargo.lock \
+  scripts/vision-native)" ]]; then
   readonly dirty=true
 else
   readonly dirty=false
@@ -38,13 +39,14 @@ else
   readonly processor="$(uname -m)"
 fi
 
-GSV_VISION_BENCHMARK_FIXTURES="$fixtures" \
-GSV_VISION_BENCHMARK_OUTPUT="$output" \
-GSV_VISION_BENCHMARK_REVISION="$revision" \
-GSV_VISION_BENCHMARK_DIRTY="$dirty" \
-GSV_VISION_BENCHMARK_RUSTC="$rustc_version" \
-GSV_VISION_BENCHMARK_CPU="$processor" \
-  cargo test --release --manifest-path "$repository_root/host/Cargo.toml" --package gestures \
-  native::benchmark::benchmarks_native_pipeline -- --ignored --exact --nocapture
+GESTURE_ENGINE_BENCHMARK_FIXTURES="$fixtures" \
+GESTURE_ENGINE_BENCHMARK_OUTPUT="$output" \
+GESTURE_ENGINE_BENCHMARK_REVISION="$revision" \
+GESTURE_ENGINE_BENCHMARK_DIRTY="$dirty" \
+GESTURE_ENGINE_BENCHMARK_RUSTC="$rustc_version" \
+GESTURE_ENGINE_BENCHMARK_CPU="$processor" \
+  cargo test --release --manifest-path "$repository_root/host/Cargo.toml" \
+  --package gesture-engine \
+  vision::benchmark::benchmarks_native_pipeline -- --ignored --exact --nocapture
 
 printf 'Native gesture benchmark report: %s\n' "$output"
