@@ -245,14 +245,16 @@ float marchOrganic(
 
 float3 organicNormal(float3 point, float phase, float energy) {
     const float offset = 0.004;
-    float3 xStep = float3(offset, 0.0, 0.0);
-    float3 yStep = float3(0.0, offset, 0.0);
-    float3 zStep = float3(0.0, 0.0, offset);
-    return normalize(float3(
-        organicDistance(point + xStep, phase, energy) - organicDistance(point - xStep, phase, energy),
-        organicDistance(point + yStep, phase, energy) - organicDistance(point - yStep, phase, energy),
-        organicDistance(point + zStep, phase, energy) - organicDistance(point - zStep, phase, energy)
-    ));
+    float3 first = float3(1.0, -1.0, -1.0);
+    float3 second = float3(-1.0, -1.0, 1.0);
+    float3 third = float3(-1.0, 1.0, -1.0);
+    float3 fourth = float3(1.0, 1.0, 1.0);
+    return normalize(
+        first * organicDistance(point + first * offset, phase, energy) +
+            second * organicDistance(point + second * offset, phase, energy) +
+            third * organicDistance(point + third * offset, phase, energy) +
+            fourth * organicDistance(point + fourth * offset, phase, energy)
+    );
 }
 
 float3 interiorFlowPoint(float3 point, float phase) {
@@ -316,27 +318,6 @@ float interiorDensity(float3 point, float phase, float energy) {
     return 1.0 - smoothstep(-0.002, 0.015, distance);
 }
 
-float shellCurrent(float3 normal, float phase) {
-    float3 first = normal;
-    first.xy = rotate2(0.68, first.xy);
-    first.xz = rotate2(phase, first.xz);
-    float firstPath = 1.0 - smoothstep(
-        0.014,
-        0.042,
-        abs(first.y + 0.075 * sin(first.x * 5.0 + phase * 2.0))
-    );
-
-    float3 second = normal;
-    second.yz = rotate2(-0.82, second.yz);
-    second.xy = rotate2(-phase * 2.0, second.xy);
-    float secondPath = 1.0 - smoothstep(
-        0.010,
-        0.034,
-        abs(second.z + 0.055 * sin(second.y * 6.0 - phase * 3.0))
-    );
-    return max(firstPath * 0.74, secondPath * 0.46);
-}
-
 float spatialGrain(float2 coordinate) {
     float2 cell = fract(coordinate * float2(0.06711056, 0.00583715));
     cell += dot(cell, cell.yx + 19.19);
@@ -351,31 +332,17 @@ half4 main(float2 fragCoord) {
     float energy = clamp(iEnergy, 0.0, 1.0);
     float phase = TAU * iTime / 12.0;
     float3 origin = float3(0.0, 0.0, 2.35);
-    float3 direction = normalize(float3(uv * 1.82, -2.15));
-    float2 shell = sphereRange(origin, direction, 0.69);
-
-    float screenRadius = length(uv);
-    float containmentRadius = 0.355 +
-        0.004 * energy * sin(phase * 2.0);
-    float aura = exp(-abs(screenRadius - containmentRadius) * 24.0) *
-        (0.020 + energy * 0.015);
-    if (shell.x < 0.0) {
-        float alpha = clamp(aura, 0.0, 0.08);
-        return half4(iAccent.rgb * alpha, alpha);
+    float3 direction = normalize(float3(uv * 1.42, -2.15));
+    float2 bounds = sphereRange(origin, direction, 0.56);
+    if (bounds.x < 0.0) {
+        return half4(0.0, 0.0, 0.0, 0.0);
     }
 
-    float3 shellPoint = origin + direction * shell.x;
-    float3 shellNormal = normalize(shellPoint);
-    float shellFacing = clamp(dot(shellNormal, -direction), 0.0, 1.0);
-    float shellFresnel = pow(1.0 - shellFacing, 3.0);
-    float current = shellCurrent(shellNormal, phase);
-    float shellPulse = 0.86 + 0.14 * sin(phase * 3.0);
+    float travel = marchOrganic(origin, direction, bounds.x, bounds.y, phase, energy);
+    bool bodyHit = travel <= bounds.y;
 
-    float travel = marchOrganic(origin, direction, shell.x, shell.y, phase, energy);
-    bool bodyHit = travel <= shell.y;
-
-    float3 color = iAccent.rgb * aura;
-    float alpha = aura;
+    float3 color = float3(0.0, 0.0, 0.0);
+    float alpha = 0.0;
 
     if (bodyHit) {
         float3 point = origin + direction * travel;
@@ -482,17 +449,6 @@ half4 main(float2 fragCoord) {
         color = material * bodyAlpha;
         alpha = bodyAlpha;
     }
-
-    float shellVisibility = bodyHit ? 0.54 : 1.0;
-    float shellLight = (
-        shellFresnel * (0.21 + energy * 0.15) +
-            current * shellPulse * (0.075 + energy * 0.035)
-    ) * shellVisibility;
-    float warmEdge = pow(max(shellNormal.x, 0.0), 3.0) *
-        shellFresnel * 0.15 * shellVisibility;
-    color += iAccent.rgb * shellLight;
-    color += float3(1.0, 0.64, 0.24) * warmEdge;
-    alpha = clamp(alpha + shellLight * 0.38 + warmEdge * 0.26, 0.0, 0.98);
 
     float grain = (spatialGrain(fragCoord) - 0.5) * 0.012;
     color += grain * alpha;
