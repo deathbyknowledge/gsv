@@ -828,6 +828,37 @@ test("lets shell execution finish before its request transport times out", async
   }
 });
 
+test("uses the polling wait budget for shell continuation transport timeouts", async () => {
+  const { client, socket } = await connectedClient();
+  const originalSetTimeout = globalThis.setTimeout;
+  const scheduledDelays = [];
+  globalThis.setTimeout = (callback, delay, ...args) => {
+    scheduledDelays.push(delay);
+    return originalSetTimeout(callback, delay, ...args);
+  };
+
+  try {
+    const continuation = client.request("shell.exec", {
+      input: "",
+      sessionId: "session-1",
+      timeout: 1_000,
+      yieldMs: 30_000,
+    });
+    const request = JSON.parse(socket.sent.at(-1));
+    assert.equal(scheduledDelays.at(-1), 40_000);
+    socket.receive(JSON.stringify({
+      type: "res",
+      id: request.id,
+      ok: true,
+      data: { status: "running", output: "", sessionId: "session-1" },
+    }));
+    await continuation;
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    client.close();
+  }
+});
+
 test("keeps a caller-owned mail delivery id after a lost response", async () => {
   const client = new GSVClient({
     WebSocket: FakeWebSocket,

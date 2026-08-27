@@ -232,6 +232,12 @@ const binaryFrameDescriptorSchema = z.strictObject({
 const shellExecTimeoutArgumentsSchema = z.looseObject({
   timeout: z.optional(z.number().check(z.positive())),
 });
+const shellExecSessionArgumentsSchema = z.looseObject({
+  sessionId: z.string(),
+});
+const shellExecPollingArgumentsSchema = z.looseObject({
+  yieldMs: z.optional(z.number().check(z.positive())),
+});
 const gsvErrorSchema = z.strictObject({
   code: z.number(),
   message: z.string(),
@@ -1236,6 +1242,14 @@ export class GSVClient {
       return configuredTimeout;
     }
     if (call === "shell.exec") {
+      const session = shellExecSessionArgumentsSchema.safeParse(args);
+      if (session.success && session.data.sessionId.trim()) {
+        const polling = shellExecPollingArgumentsSchema.safeParse(args);
+        const pollingWait = polling.success
+          ? polling.data.yieldMs ?? this.defaultRequestTimeoutMs
+          : this.defaultRequestTimeoutMs;
+        return pollingWait + SHELL_EXEC_RESPONSE_GRACE_MS;
+      }
       const parsed = shellExecTimeoutArgumentsSchema.safeParse(args);
       const executionTimeout = parsed.success
         ? parsed.data.timeout ?? DEFAULT_SHELL_EXEC_TIMEOUT_MS
