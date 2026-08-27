@@ -1,7 +1,6 @@
 package com.humansandmachines.gsv.wear
 
 import android.Manifest
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -11,7 +10,6 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.provider.Settings
-import android.service.voice.VoiceInteractionService
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -35,7 +33,7 @@ import com.humansandmachines.gsv.wear.ui.ControlUiState
 import com.humansandmachines.gsv.wear.ui.GsvControlScreen
 import com.humansandmachines.gsv.wear.ui.GsvLoginScreen
 import com.humansandmachines.gsv.wear.ui.OnboardingUiState
-import com.humansandmachines.gsv.wear.voice.GsvVoiceInteractionService
+import com.humansandmachines.gsv.wear.voice.AndroidAssistantRole
 import com.humansandmachines.gsv.wear.voice.VoiceAssistantRuntime
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -69,6 +67,12 @@ class MainActivity : ComponentActivity() {
             runtimeError = true
         }
         pendingArm = false
+    }
+
+    private val assistantRoleRequest = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) {
+        renderAssistantSelection()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -119,7 +123,7 @@ class MainActivity : ComponentActivity() {
                         WearRuntimeService.command(this, WearRuntimeService.ACTION_DISCONNECT)
                     },
                     onActivationStarted = ::playActivationHaptic,
-                    onChooseAssistant = ::openAssistantSettings,
+                    onChooseAssistant = ::requestAssistantRole,
                     onTestVoice = ::testVoiceAssistant,
                     onOpenBatterySettings = {
                         startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
@@ -238,10 +242,11 @@ class MainActivity : ComponentActivity() {
         )
     }
 
-    private fun openAssistantSettings() {
-        val primary = Intent(Settings.ACTION_VOICE_INPUT_SETTINGS)
-        val fallback = Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS)
-        runCatching { startActivity(primary) }.getOrElse { startActivity(fallback) }
+    private fun requestAssistantRole() {
+        val intent = AndroidAssistantRole.requestIntent(this)
+        runCatching { assistantRoleRequest.launch(intent) }.getOrElse {
+            startActivity(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
+        }
     }
 
     private fun renderNotificationAccess() {
@@ -254,10 +259,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun renderAssistantSelection() {
-        assistantSelected = VoiceInteractionService.isActiveService(
-            this,
-            ComponentName(this, GsvVoiceInteractionService::class.java),
-        )
+        assistantSelected = AndroidAssistantRole.isSelected(this)
     }
 
     private fun buildDeviceLabel(): String {
