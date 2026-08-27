@@ -401,6 +401,12 @@ upsert prevents an older provider replay from replacing newer private activity,
 and future timestamps are clamped to receipt time so they cannot freeze the
 pointer. Every fallback still rechecks the live identity link before delivery.
 
+V035 gives each adapter account an opaque lifecycle identity and records the owner
+for whom that account has already been observed connected and authenticated. The
+migration backfills this owner-scoped readiness for existing ready human-owned
+accounts, so a transport-only reconnect after upgrade cannot look like a newly
+connected account.
+
 ## Platform-specific quirks stay inside the adapter
 
 Adapters exist partly because messaging platforms are messy.

@@ -5,12 +5,13 @@ import { adapterMetadataSchema } from "@humansandmachines/gsv/protocol";
 export type AdapterStatusRecord = AdapterAccountStatus & {
   adapter: string;
   lifecycleId: string;
+  readyOwnerUid: number | null;
   ownerUid: number | null;
   updatedAt: number;
 };
 
 const STATUS_COLUMNS = `adapter, account_id, connected, authenticated, mode,
-  last_activity, error, extra_json, lifecycle_id, owner_uid, updated_at`;
+  last_activity, error, extra_json, lifecycle_id, ready_owner_uid, owner_uid, updated_at`;
 
 export class AdapterStatusStore {
   private readonly activeLifecycles = new Set<string>();
@@ -76,6 +77,22 @@ export class AdapterStatusStore {
       ownerUid,
       Date.now(),
     );
+  }
+
+  markReadyForOwner(adapter: string, accountId: string, ownerUid: number): void {
+    const cursor = this.sql.exec(
+      `UPDATE adapter_status
+       SET ready_owner_uid = ?
+       WHERE adapter = ? AND account_id = ? AND owner_uid = ?
+         AND connected = 1 AND authenticated = 1`,
+      ownerUid,
+      adapter,
+      accountId,
+      ownerUid,
+    );
+    if (cursor.rowsWritten !== 1) {
+      throw new Error(`Adapter account ${adapter}/${accountId} readiness changed`);
+    }
   }
 
   beginLifecycle(adapter: string, accountId: string): void {
@@ -144,6 +161,7 @@ type AdapterStatusRow = {
   error: string | null;
   extra_json: string | null;
   lifecycle_id: string | null;
+  ready_owner_uid: number | null;
   owner_uid: number | null;
   updated_at: number;
 };
@@ -153,6 +171,7 @@ function toRecord(row: AdapterStatusRow): AdapterStatusRecord {
   return {
     adapter: row.adapter,
     lifecycleId: row.lifecycle_id,
+    readyOwnerUid: row.ready_owner_uid,
     accountId: row.account_id,
     connected: row.connected === 1,
     authenticated: row.authenticated === 1,

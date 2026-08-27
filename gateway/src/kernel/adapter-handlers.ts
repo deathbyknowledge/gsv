@@ -432,7 +432,8 @@ export async function handleAdapterDisconnect(
   if (!accountId) return { ok: false, error: "accountId is required" };
 
   const ownerUid = requireAdapterControlOwnerUid(ctx, "adapter.disconnect");
-  if (ownerUid !== 0 && ctx.adapters.status.get(adapter, accountId)?.ownerUid !== ownerUid) {
+  const previousStatus = ctx.adapters.status.get(adapter, accountId);
+  if (ownerUid !== 0 && previousStatus?.ownerUid !== ownerUid) {
     throw new Error(`Permission denied: adapter account ${adapter}/${accountId}`);
   }
 
@@ -473,6 +474,13 @@ export async function handleAdapterDisconnect(
       lastActivity: Date.now(),
     });
     await refreshAdapterStatus(service, ctx, adapter, accountId);
+    const currentStatus = ctx.adapters.status.get(adapter, accountId);
+    if (currentStatus) {
+      recordAdapterStatusTransition(previousStatus, currentStatus, ctx, {
+        suppressAuthenticationRequired: true,
+        intentionalDisconnect: true,
+      });
+    }
 
     return {
       ok: true,
@@ -737,6 +745,7 @@ export async function handleAdapterPairDisconnect(
     actorId,
     generation,
   ]);
+  const previousStatus = ctx.adapters.status.get(adapter, accountId);
   ctx.adapters.status.beginLifecycle(adapter, accountId);
   try {
     const result = await service.adapterPairingDisconnect!(adapterInstallationContext(ctx), {
@@ -762,6 +771,13 @@ export async function handleAdapterPairDisconnect(
       mode: "managed-shared",
       lastActivity: Date.now(),
     });
+    const currentStatus = ctx.adapters.status.get(adapter, accountId);
+    if (currentStatus) {
+      recordAdapterStatusTransition(previousStatus, currentStatus, ctx, {
+        suppressAuthenticationRequired: true,
+        intentionalDisconnect: !stillLinked,
+      });
+    }
     ctx.broadcastToUserUid(uid, "adapter.status", { adapter, accountId });
     return { disconnected: result.disconnected, adapter, accountId, actorId };
   } finally {

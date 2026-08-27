@@ -6,6 +6,7 @@ import { stableOpaqueId } from "../shared/stable-id";
 
 type AdapterTransitionOptions = {
   suppressAuthenticationRequired?: boolean;
+  intentionalDisconnect?: boolean;
 };
 
 export type ContactInviteDirection = "incoming" | "outgoing";
@@ -109,24 +110,34 @@ export function recordAdapterStatusTransition(
 
   const identity = current.lifecycleId;
   const authenticationPrefix = `adapter.auth_required:${identity}:`;
-  let changed = false;
-
-  if (current.authenticated) {
-    for (const responsibility of ctx.responsibilities.listActiveByDedupeKeyPrefix(
+  const authenticationResponsibilities =
+    ctx.responsibilities.listActiveByDedupeKeyPrefix(
       ownerUid,
       authenticationPrefix,
-    )) {
+    );
+  let changed = false;
+
+  if (options.intentionalDisconnect || current.authenticated) {
+    const disconnected = options.intentionalDisconnect === true;
+    for (const responsibility of authenticationResponsibilities) {
       const outcome = ctx.responsibilities.update({
         ownerUid,
         id: responsibility.id,
         patch: {
-          state: "resolved",
-          resolution: {
-            eventType: "adapter.authentication_restored",
-            adapter: boundedUntrustedText(current.adapter, 128),
-            accountId: boundedUntrustedText(current.accountId, 512),
-            restoredAt: current.updatedAt,
-          },
+          state: disconnected ? "cancelled" : "resolved",
+          resolution: disconnected
+            ? {
+                eventType: "adapter.disconnected",
+                adapter: boundedUntrustedText(current.adapter, 128),
+                accountId: boundedUntrustedText(current.accountId, 512),
+                disconnectedAt: current.updatedAt,
+              }
+            : {
+                eventType: "adapter.authentication_restored",
+                adapter: boundedUntrustedText(current.adapter, 128),
+                accountId: boundedUntrustedText(current.accountId, 512),
+                restoredAt: current.updatedAt,
+              },
         },
         actor: { kind: "system", component: "adapter-lifecycle" },
         observedByShip: false,
@@ -136,40 +147,40 @@ export function recordAdapterStatusTransition(
     }
   }
 
-  const wasReady = previous?.ownerUid === ownerUid
-    && previous.connected
-    && previous.authenticated;
   const isReady = current.connected && current.authenticated;
   if (
     isReady
-    && !wasReady
-    && ctx.responsibilitySources.isEnabled(ownerUid, "adapter.connected")
+    && !options.intentionalDisconnect
+    && current.readyOwnerUid !== ownerUid
   ) {
-    const dedupeKey = `adapter.connected:${identity}`;
-    const outcome = ctx.responsibilities.create({
-      ownerUid,
-      title: "Confirm that a messaging adapter is connected",
-      details: {
-        eventType: "adapter.connected",
-        adapter: boundedUntrustedText(current.adapter, 128),
-        accountId: boundedUntrustedText(current.accountId, 512),
-        connectedAt: current.updatedAt,
-        contentTrust: "untrusted",
-      },
-      source: {
-        kind: "event",
-        eventType: "adapter.connected",
-        eventId: dedupeKey,
-      },
-      assignee: { kind: "ship" },
-      state: "open",
-      priority: "normal",
-      dedupeKey,
-      actor: { kind: "system", component: "adapter-lifecycle" },
-      observedByShip: false,
-      now: current.updatedAt,
-    });
-    changed ||= outcome.created;
+    if (ctx.responsibilitySources.isEnabled(ownerUid, "adapter.connected")) {
+      const dedupeKey = `adapter.connected:${identity}`;
+      const outcome = ctx.responsibilities.create({
+        ownerUid,
+        title: "Confirm that a messaging adapter is connected",
+        details: {
+          eventType: "adapter.connected",
+          adapter: boundedUntrustedText(current.adapter, 128),
+          accountId: boundedUntrustedText(current.accountId, 512),
+          connectedAt: current.updatedAt,
+          contentTrust: "untrusted",
+        },
+        source: {
+          kind: "event",
+          eventType: "adapter.connected",
+          eventId: dedupeKey,
+        },
+        assignee: { kind: "ship" },
+        state: "open",
+        priority: "normal",
+        dedupeKey,
+        actor: { kind: "system", component: "adapter-lifecycle" },
+        observedByShip: false,
+        now: current.updatedAt,
+      });
+      changed ||= outcome.created;
+    }
+    ctx.adapters.status.markReadyForOwner(current.adapter, current.accountId, ownerUid);
   }
 
   const authenticationLost = previous?.ownerUid === ownerUid
@@ -178,11 +189,9 @@ export function recordAdapterStatusTransition(
   if (
     authenticationLost
     && !options.suppressAuthenticationRequired
+    && !options.intentionalDisconnect
     && ctx.responsibilitySources.isEnabled(ownerUid, "adapter.auth_required")
-    && ctx.responsibilities.listActiveByDedupeKeyPrefix(
-      ownerUid,
-      authenticationPrefix,
-    ).length === 0
+    && authenticationResponsibilities.length === 0
   ) {
     const baseDedupeKey = `${authenticationPrefix}${current.updatedAt}`;
     const dedupeKey = ctx.responsibilities.getByDedupeKey(ownerUid, baseDedupeKey)

@@ -21,6 +21,8 @@ describe("AdapterStatusStore ownership", () => {
         authenticated: true,
       });
       const lifecycleId = status.get("whatsapp", "primary")?.lifecycleId;
+      expect(status.get("whatsapp", "primary")?.readyOwnerUid).toBeNull();
+      status.markReadyForOwner("whatsapp", "primary", 1000);
       status.upsert("whatsapp", "primary", {
         accountId: "primary",
         connected: false,
@@ -35,6 +37,7 @@ describe("AdapterStatusStore ownership", () => {
       expect(status.get("whatsapp", "primary")).toMatchObject({ ownerUid: 1000 });
       expect(lifecycleId).toMatch(/^adapter-account:[0-9a-f-]{36}$/);
       expect(status.get("whatsapp", "primary")?.lifecycleId).toBe(lifecycleId);
+      expect(status.get("whatsapp", "primary")?.readyOwnerUid).toBe(1000);
       expect(status.get("telegram", "bot")).toMatchObject({ ownerUid: null });
       expect(status.listByOwner(1000).map((record) => record.accountId)).toEqual(["primary"]);
 

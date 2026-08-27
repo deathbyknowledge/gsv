@@ -460,6 +460,12 @@ describe("kernel schema migrations", () => {
     expect(statements).toContain(
       "UPDATE adapter_status SET lifecycle_id = 'adapter-account:' || LOWER(HEX(randomblob(16))) WHERE lifecycle_id IS NULL",
     );
+    expect(statements).toContain(
+      "ALTER TABLE adapter_status ADD COLUMN ready_owner_uid INTEGER",
+    );
+    expect(statements).toContain(
+      "UPDATE adapter_status SET ready_owner_uid = owner_uid WHERE connected = 1 AND authenticated = 1 AND owner_uid >= 1000 AND NOT EXISTS ( SELECT 1 FROM personal_agents WHERE personal_agents.agent_uid = adapter_status.owner_uid )",
+    );
     expect(createdIndexes()).toContain("idx_adapter_status_lifecycle_id");
   });
 

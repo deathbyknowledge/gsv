@@ -155,6 +155,74 @@ describe("Kernel lifecycle responsibilities", () => {
     });
   });
 
+  it("preserves migrated ready state across the first transport reconnect", async () => {
+    await runWithRealKernelSql((sql, storage) => {
+      const ctx = lifecycleContext(sql, storage);
+      ctx.adapters.status.setOwner("telegram", "existing", 1000);
+      const existing = ctx.adapters.status.upsert("telegram", "existing", {
+        accountId: "existing",
+        connected: true,
+        authenticated: true,
+      });
+      ctx.adapters.status.markReadyForOwner("telegram", "existing", 1000);
+
+      const transportOffline = ctx.adapters.status.upsert("telegram", "existing", {
+        accountId: "existing",
+        connected: false,
+        authenticated: true,
+      });
+      recordAdapterStatusTransition(existing, transportOffline, ctx);
+      const reconnected = ctx.adapters.status.upsert("telegram", "existing", {
+        accountId: "existing",
+        connected: true,
+        authenticated: true,
+      });
+      recordAdapterStatusTransition(transportOffline, reconnected, ctx);
+
+      expect(ctx.responsibilities.list({
+        ownerUid: 1000,
+        includeTerminal: true,
+      }).records.some((record) => record.source.kind === "event"
+        && record.source.eventType === "adapter.connected")).toBe(false);
+    });
+  });
+
+  it("remembers first readiness while connected responsibilities are disabled", async () => {
+    await runWithRealKernelSql((sql, storage) => {
+      const ctx = lifecycleContext(sql, storage);
+      ctx.adapters.status.setOwner("telegram", "disabled", 1000);
+      ctx.responsibilitySources.set(1000, "adapter.connected", false);
+      const initial = ctx.adapters.status.get("telegram", "disabled");
+      const connected = ctx.adapters.status.upsert("telegram", "disabled", {
+        accountId: "disabled",
+        connected: true,
+        authenticated: true,
+      });
+      recordAdapterStatusTransition(initial, connected, ctx);
+      expect(ctx.adapters.status.get("telegram", "disabled")?.readyOwnerUid).toBe(1000);
+
+      ctx.responsibilitySources.set(1000, "adapter.connected", true);
+      const transportOffline = ctx.adapters.status.upsert("telegram", "disabled", {
+        accountId: "disabled",
+        connected: false,
+        authenticated: true,
+      });
+      recordAdapterStatusTransition(connected, transportOffline, ctx);
+      const reconnected = ctx.adapters.status.upsert("telegram", "disabled", {
+        accountId: "disabled",
+        connected: true,
+        authenticated: true,
+      });
+      recordAdapterStatusTransition(transportOffline, reconnected, ctx);
+
+      expect(ctx.responsibilities.list({
+        ownerUid: 1000,
+        includeTerminal: true,
+      }).records.some((record) => record.source.kind === "event"
+        && record.source.eventType === "adapter.connected")).toBe(false);
+    });
+  });
+
   it("tracks recurring authentication loss and resolves stale recovery work", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       const ctx = lifecycleContext(sql, storage);
@@ -209,7 +277,7 @@ describe("Kernel lifecycle responsibilities", () => {
     });
   });
 
-  it("does not report an explicit adapter disconnect as lost authentication", async () => {
+  it("cancels authentication recovery after an explicit adapter disconnect", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       const ctx = lifecycleContext(sql, storage);
       ctx.adapters.status.setOwner("discord", "primary", 1000);
@@ -220,21 +288,36 @@ describe("Kernel lifecycle responsibilities", () => {
         authenticated: true,
       });
       recordAdapterStatusTransition(initial, connected, ctx);
+      const lost = ctx.adapters.status.upsert("discord", "primary", {
+        accountId: "primary",
+        connected: false,
+        authenticated: false,
+      });
+      recordAdapterStatusTransition(connected, lost, ctx);
       const disconnected = ctx.adapters.status.upsert("discord", "primary", {
         accountId: "primary",
         connected: false,
         authenticated: false,
       });
 
-      recordAdapterStatusTransition(connected, disconnected, ctx, {
+      recordAdapterStatusTransition(lost, disconnected, ctx, {
         suppressAuthenticationRequired: true,
+        intentionalDisconnect: true,
       });
 
-      expect(ctx.responsibilities.list({
+      const recovery = ctx.responsibilities.list({
         ownerUid: 1000,
         includeTerminal: true,
-      }).records.some((record) => record.source.kind === "event"
-        && record.source.eventType === "adapter.auth_required")).toBe(false);
+      }).records.find((record) => record.source.kind === "event"
+        && record.source.eventType === "adapter.auth_required");
+      expect(recovery).toMatchObject({
+        state: "cancelled",
+        resolution: {
+          eventType: "adapter.disconnected",
+          adapter: "discord",
+          accountId: "primary",
+        },
+      });
     });
   });
 });

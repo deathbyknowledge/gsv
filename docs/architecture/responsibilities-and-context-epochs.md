@@ -186,8 +186,10 @@ System-owned producers use the same ledger contract:
 - An owned messaging account first becoming connected and authenticated creates one
   `adapter.connected` responsibility. A later authentication loss creates a recurring,
   deduplicated `adapter.auth_required` responsibility that resolves automatically when
-  authentication returns. Explicit disconnects and transport-only reconnects do not
-  create recovery work.
+  authentication returns. The adapter status persists which owner has already observed
+  readiness, and upgrades backfill ready owned accounts, so transport-only reconnects
+  do not create new-account work. An intentional disconnect cancels obsolete recovery
+  work instead of leaving Ship responsible for reconnecting it.
 - A Ship-directed schedule occurrence creates one `schedule.due` responsibility keyed
   by schedule id and occurrence id. Replaying the occurrence returns the same record.
   Schedules explicitly bound to an adapter reply route retain that transport event so
