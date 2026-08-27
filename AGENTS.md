@@ -83,7 +83,7 @@ Canonical user-facing conversations are not Process histories. Conversations ret
 - `host/apps/machine/`: the `gsvd` machine driver, concrete tools, transfer ownership, reconnect, logging, and shutdown.
 - `host/helpers/`: separately supervised local transcription and gesture processes.
 - `host/crates/`: shared gateway transport, host configuration, Desktop IPC, gesture protocol contracts, and the platform-neutral gesture engine. `host/` owns their Cargo workspace and build artifacts.
-- `android/`: the native Android machine driver, bounded filesystem/shell/network target, Wear authority, reconnect supervision, foreground-service lifecycle, on-demand sensors, Android actions and notification access, and offline local checks.
+- `android/`: the native Android machine driver, bounded filesystem/shell/network target, Wear authority, reconnect supervision, foreground-service lifecycle, on-demand sensors, Android actions and notification access, offline local checks, and the independently connected Mind assistant client used by in-app and OS voice surfaces.
 - `adapters/`: platform-specific messaging workers and identity normalization.
 - `extension/`: browser-backed target and browser integration.
 - `ripgit/`: git-backed repositories and filesystem storage operations.

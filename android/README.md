@@ -5,8 +5,9 @@ runtime. It currently supports persistent WebSocket reconnect, a bounded
 `fs.*` virtual target, device-side `net.fetch`, a discoverable virtual shell,
 cross-target file transfer, on-demand camera/audio/motion/location context,
 Android actions and notification access, and persisted local checks that can
-continue while the Gateway is temporarily offline. It can also act as the
-phone's headset-triggered GSV voice client while Wear Mode is armed.
+continue while the Gateway is temporarily offline. Its independent Mind client
+also handles in-app, Android-assistant, and headset-triggered voice turns while
+Wear Mode is either armed or disarmed.
 
 ## Prerequisites
 
@@ -61,10 +62,11 @@ adb shell am start -n \
   --es state THINKING
 ```
 
-Pass `--ez control true` instead to review the production Wear control surface
-with a connected mock runtime; tapping the liquid toggles Arm and Disarm. The
-debug showcase may render over the lock screen so remote visual review does not
-weaken or alter the production activity's keyguard behavior.
+Pass `--ez control true` instead to review the production two-surface UI with
+mock Mind and Ship links. It opens on Mind; select Ship at the bottom to review
+its arm and disarm sequence. The debug showcase may render over the lock screen
+so remote visual review does not weaken or alter the production activity's
+keyguard behavior.
 
 Use `IDLE`, `PREPARING`, `LISTENING`, `THINKING`, `SPEAKING`,
 or `ERROR`; add `--ez overlay true` to review the compact invocation surface.
@@ -83,10 +85,12 @@ for that launch.
 
 Open GSV Wear. On a fresh install it walks through GSV address, username, and
 password; known URL and username values are skipped. The password is used only
-for the authenticated enrollment exchange and is never persisted. When the
-live control surface appears, tap **Arm** beneath the liquid assistant. Grant
-camera, microphone, notification, and nearby-device permissions and at least
-approximate location. Precise location is optional.
+for the authenticated enrollment exchange and is never persisted. The issued
+Mind and Ship credentials remain encrypted by Android Keystore, so later
+launches do not ask the user to sign in again. Tap the Mind liquid to begin an
+assistant turn without arming Wear Mode. Select **Ship**, tap **Arm**, and grant
+camera, microphone, notification, nearby-device, and at least approximate
+location permission. Precise location is optional.
 For dependable screen-off reconnect behavior, open the upper-right system
 portal, use **Battery settings**, and set GSV Wear to unrestricted battery use.
 
@@ -97,10 +101,10 @@ be able to list, reply to, invoke, or dismiss other apps' notifications.
 The enrolled credentials are encrypted with Android Keystore and are never
 rendered in the app. To enable OS gestures, open the system portal and press
 **Make GSV default assistant**. Android presents its assistant-role consent
-prompt for this app directly. Arm Wear Mode before invoking it. Use **Test
-assistant** there for the first end-to-end check; afterward the device's normal
-assistant gesture, including a headset assistant gesture when the headset
-exposes one, starts the same turn.
+prompt for this app directly. Use **Start Mind** there for the first end-to-end
+check; afterward the device's normal assistant gesture, including a headset
+assistant gesture when the headset exposes one, starts the same turn. Ship does
+not need to be armed.
 
 The unlocked assistant-service route renders a transparent, voice-reactive GSV
 session over the current app. Only its lower control region consumes touch, so
@@ -114,7 +118,8 @@ HFP invocation it acknowledges the headset recognition session, selects the
 matching SCO microphone, and releases that session immediately after capture
 so later gestures and music routing are not left wedged.
 
-The voice socket reconnects independently from the machine-driver socket. A
+The application-level Mind socket reconnects independently from the
+foreground Ship machine-driver socket. A
 turn captures a bounded WAV locally, sends its bytes as the transcription
 request body, sends only the transcript to the personal process, waits for the
 matching run terminal signal, and speaks the answer with an installed Android
@@ -336,8 +341,8 @@ Run this on an actual phone before treating a release as sensor-validated:
     request body, redirect modes, cancellation, timeout, and the 32 MiB cap.
 19. Exercise forced Doze and an overnight armed run with unrestricted battery
     use, recording reconnect latency and battery consumption.
-20. Grant GSV the Android assistant role, and confirm
-    the in-app test completes transcription, personal-process execution, and
+20. Disarm Ship, grant GSV the Android assistant role, and confirm
+    the in-app Mind surface completes transcription, personal-process execution, and
     embedded spoken playback without raw audio appearing in process history.
     Confirm the speaking liquid follows the played voice and returns to rest at
     the utterance boundary. Invoke the power-button assistant route over another
@@ -356,7 +361,6 @@ Run this on an actual phone before treating a release as sensor-validated:
     device without a compatible installed voice, confirm gateway speech is used
     as the fallback without replaying an utterance that already began locally.
 
-There is intentionally no FCM path. A socket that closes is noticed and
-reconnected manually by the foreground runtime. An in-flight request at the
-moment of disconnect fails rather than being replayed with an uncertain
-physical outcome.
+There is intentionally no FCM path. Each active runtime supervisor notices and
+reconnects its own socket. An in-flight request at the moment of disconnect
+fails rather than being replayed with an uncertain physical outcome.

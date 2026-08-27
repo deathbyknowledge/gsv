@@ -17,7 +17,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import com.humansandmachines.gsv.wear.R
-import com.humansandmachines.gsv.wear.runtime.WearRuntimeState
 import com.humansandmachines.gsv.wear.ui.AssistantSurface
 import com.humansandmachines.gsv.wear.ui.detailText
 import kotlinx.coroutines.CancellationException
@@ -48,11 +47,11 @@ class VoiceAssistantActivity : ComponentActivity() {
         }
         assistantDetail = VoiceTurnState.PREPARING.detailText(this)
         setContent {
-            val runtime by WearRuntimeState.snapshot.collectAsStateWithLifecycle()
+            val runtime by AssistantRuntimeState.snapshot.collectAsStateWithLifecycle()
             AssistantSurface(
                 state = assistantState,
                 detail = assistantDetail,
-                signal = runtime.voiceLevel,
+                signal = runtime.level,
                 onCancel = ::finishVoiceCommand,
             )
         }

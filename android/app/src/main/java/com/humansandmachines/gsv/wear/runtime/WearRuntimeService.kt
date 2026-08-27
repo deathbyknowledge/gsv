@@ -23,11 +23,12 @@ import com.humansandmachines.gsv.wear.authority.AuthorityState
 import com.humansandmachines.gsv.wear.authority.WearAuthority
 import com.humansandmachines.gsv.wear.actions.AndroidActionController
 import com.humansandmachines.gsv.wear.audio.AudioController
+import com.humansandmachines.gsv.wear.audio.AuthorityBoundMicrophone
+import com.humansandmachines.gsv.wear.audio.WearMicrophone
 import com.humansandmachines.gsv.wear.camera.CameraController
 import com.humansandmachines.gsv.wear.checks.LocalCheckScheduler
 import com.humansandmachines.gsv.wear.config.DriverConfig
 import com.humansandmachines.gsv.wear.config.DriverConfigStore
-import com.humansandmachines.gsv.wear.config.VoiceClientConfig
 import com.humansandmachines.gsv.wear.connection.ConnectionState
 import com.humansandmachines.gsv.wear.connection.ConnectionSupervisor
 import com.humansandmachines.gsv.wear.device.DeviceContextController
@@ -40,10 +41,6 @@ import com.humansandmachines.gsv.wear.target.AndroidTargetFileSystem
 import com.humansandmachines.gsv.wear.target.TargetShell
 import com.humansandmachines.gsv.wear.target.WearMediaCommands
 import com.humansandmachines.gsv.wear.target.WearTargetRuntimeFiles
-import com.humansandmachines.gsv.wear.voice.VoiceAssistantRuntime
-import com.humansandmachines.gsv.wear.voice.VoiceAudioController
-import com.humansandmachines.gsv.wear.voice.VoiceClientSupervisor
-import com.humansandmachines.gsv.wear.voice.VoiceTurnCoordinator
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
@@ -57,7 +54,8 @@ class WearRuntimeService : LifecycleService() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val authority = WearAuthority()
     private lateinit var camera: CameraController
-    private lateinit var microphone: AudioController
+    private lateinit var microphoneRecorder: AudioController
+    private lateinit var microphone: WearMicrophone
     private lateinit var sensors: SensorController
     private lateinit var actions: AndroidActionController
     private lateinit var checks: LocalCheckScheduler
@@ -65,9 +63,6 @@ class WearRuntimeService : LifecycleService() {
     private lateinit var dispatcherFactory: WearRequestDispatcherFactory
     private var connection: ConnectionSupervisor? = null
     private var connectionConfig: DriverConfig? = null
-    private var voiceConnection: VoiceClientSupervisor? = null
-    private var voiceConnectionConfig: VoiceClientConfig? = null
-    private lateinit var voiceCoordinator: VoiceTurnCoordinator
     private var foregroundStarted = false
 
     override fun onCreate() {
@@ -83,26 +78,16 @@ class WearRuntimeService : LifecycleService() {
                 refreshNotification()
             },
         )
-        microphone = AudioController(
+        microphoneRecorder = AudioController(
             context = applicationContext,
-            authority = authority,
             onState = { state ->
                 WearRuntimeState.setMicrophone(state)
                 refreshNotification()
             },
         )
+        microphone = AuthorityBoundMicrophone(microphoneRecorder, authority)
         sensors = SensorController(applicationContext, authority)
         actions = AndroidActionController(applicationContext)
-        voiceCoordinator = VoiceTurnCoordinator(
-            authority = authority,
-            microphone = microphone,
-            actions = actions,
-            audio = VoiceAudioController(applicationContext),
-            client = { voiceConnection },
-            publishState = WearRuntimeState::setVoiceTurn,
-            publishLevel = WearRuntimeState::setVoiceLevel,
-        )
-        VoiceAssistantRuntime.attach(voiceCoordinator)
         val deviceContext = DeviceContextController(applicationContext)
         val notificationAccess = AndroidNotificationAccess(applicationContext)
         val runtimeFiles = WearTargetRuntimeFiles(authority, camera, ::deviceInfo)
@@ -155,11 +140,7 @@ class WearRuntimeService : LifecycleService() {
                 authority.disarm()
                 dispatcherFactory.cancelAll()
                 checks.stop()
-                stopVoiceConnection()
                 publishAuthority()
-            }
-            ACTION_RELOAD_VOICE -> {
-                if (authority.state() != AuthorityState.DISARMED) startVoiceConnection()
             }
             ACTION_DISCONNECT -> disconnectRuntime()
             else -> stopSelf()
@@ -174,13 +155,8 @@ class WearRuntimeService : LifecycleService() {
         connection?.stop()
         connection = null
         connectionConfig = null
-        stopVoiceConnection()
-        if (::voiceCoordinator.isInitialized) {
-            VoiceAssistantRuntime.detach(voiceCoordinator)
-            voiceCoordinator.close()
-        }
         if (::camera.isInitialized) camera.close()
-        if (::microphone.isInitialized) microphone.close()
+        if (::microphoneRecorder.isInitialized) microphoneRecorder.close()
         if (::sensors.isInitialized) sensors.close()
         if (::actions.isInitialized) actions.close()
         if (::targetFileSystem.isInitialized) targetFileSystem.clearTemporary()
@@ -228,7 +204,6 @@ class WearRuntimeService : LifecycleService() {
         } else if (connection == null) {
             startConnection(config)
         }
-        startVoiceConnection()
     }
 
     private fun startConnection(config: DriverConfig) {
@@ -245,35 +220,6 @@ class WearRuntimeService : LifecycleService() {
         ).also(ConnectionSupervisor::start)
     }
 
-    private fun startVoiceConnection() {
-        val config = runCatching {
-            DriverConfigStore(applicationContext).loadVoice(BuildConfig.DEBUG)
-        }.getOrNull()
-        if (config == null) {
-            stopVoiceConnection()
-            return
-        }
-        if (sameVoiceConnection(config, voiceConnectionConfig) && voiceConnection != null) return
-        stopVoiceConnection()
-        voiceConnectionConfig = config
-        voiceConnection = VoiceClientSupervisor(
-            context = applicationContext,
-            scope = serviceScope,
-            config = config,
-            onStatus = { status ->
-                WearRuntimeState.setVoiceConnection(status)
-                refreshNotification()
-            },
-        ).also(VoiceClientSupervisor::start)
-    }
-
-    private fun stopVoiceConnection() {
-        voiceConnection?.stop()
-        voiceConnection = null
-        voiceConnectionConfig = null
-        WearRuntimeState.setVoiceConnection(ConnectionState.DISCONNECTED)
-    }
-
     private fun disconnectRuntime() {
         authority.disarm()
         dispatcherFactory.cancelAll()
@@ -281,7 +227,6 @@ class WearRuntimeService : LifecycleService() {
         connection?.stop()
         connection = null
         connectionConfig = null
-        stopVoiceConnection()
         WearRuntimeState.reset()
         if (foregroundStarted) {
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -320,7 +265,7 @@ class WearRuntimeService : LifecycleService() {
         }
         val content =
             "${snapshot.connection.displayName()} · Camera ${snapshot.camera.displayName()} · " +
-                "Microphone ${snapshot.microphone.displayName()} · Voice ${snapshot.voiceConnection.displayName()}"
+                "Microphone ${snapshot.microphone.displayName()}"
         val builder = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL)
             .setSmallIcon(R.drawable.ic_gsv_wear)
             .setContentTitle(title)
@@ -413,13 +358,6 @@ class WearRuntimeService : LifecycleService() {
             first.deviceId == second.deviceId &&
             first.token == second.token
 
-    private fun sameVoiceConnection(first: VoiceClientConfig, second: VoiceClientConfig?): Boolean =
-        second != null &&
-            first.gatewayUrl == second.gatewayUrl &&
-            first.username == second.username &&
-            first.clientId == second.clientId &&
-            first.token == second.token
-
     private fun deviceInfo(): JSONObject = JSONObject()
         .put("platform", "android")
         .put("manufacturer", Build.MANUFACTURER)
@@ -452,7 +390,6 @@ class WearRuntimeService : LifecycleService() {
         const val ACTION_RESUME = "com.humansandmachines.gsv.wear.action.RESUME"
         const val ACTION_DISARM = "com.humansandmachines.gsv.wear.action.DISARM"
         const val ACTION_DISCONNECT = "com.humansandmachines.gsv.wear.action.DISCONNECT"
-        const val ACTION_RELOAD_VOICE = "com.humansandmachines.gsv.wear.action.RELOAD_VOICE"
 
         fun arm(context: Context) {
             ContextCompat.startForegroundService(

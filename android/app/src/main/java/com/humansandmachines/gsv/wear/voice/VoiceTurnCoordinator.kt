@@ -1,8 +1,7 @@
 package com.humansandmachines.gsv.wear.voice
 
 import com.humansandmachines.gsv.wear.actions.AndroidActions
-import com.humansandmachines.gsv.wear.audio.WearMicrophone
-import com.humansandmachines.gsv.wear.authority.WearAuthority
+import com.humansandmachines.gsv.wear.audio.AssistantMicrophone
 import java.io.Closeable
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
@@ -10,8 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class VoiceTurnCoordinator(
-    private val authority: WearAuthority,
-    private val microphone: WearMicrophone,
+    private val microphone: AssistantMicrophone,
     private val actions: AndroidActions,
     private val audio: VoiceAudioController,
     private val client: () -> VoiceClientSupervisor?,
@@ -36,11 +34,6 @@ class VoiceTurnCoordinator(
         }
         try {
             report(VoiceTurnState.PREPARING)
-            val lease = authority.acquire() ?: return speakLocal(
-                "Wear Mode is not armed.",
-                report,
-                reportLevel,
-            )
             val session = try {
                 client()?.awaitSession()
             } catch (error: CancellationException) {
@@ -53,7 +46,6 @@ class VoiceTurnCoordinator(
             val captured = try {
                 audio.capture {
                     microphone.listenUntilSpeech(
-                        lease = lease,
                         timeoutMillis = MAX_LISTEN_MILLIS,
                         trailingMillis = END_OF_SPEECH_MILLIS,
                         preferredDevice = captureRoute?.preferredInputDevice,
@@ -71,8 +63,6 @@ class VoiceTurnCoordinator(
             }
 
             val transcript = session.transcribe(bytes, "wear-voice.wav")
-            if (!authority.isCurrent(lease)) throw VoiceClientFailure("Wear Mode authority changed")
-
             val runId = session.sendToShip(transcript)
             val spokenText = when (val terminal = session.awaitRun(runId)) {
                 VoiceRunTerminal.ApprovalRequired ->
@@ -87,7 +77,10 @@ class VoiceTurnCoordinator(
         } catch (_: Throwable) {
             speakLocal("That voice request failed. Please try again.", report, reportLevel)
         } finally {
-            if (turnGeneration.compareAndSet(generation, generation + 1)) publishLevel(0f)
+            if (turnGeneration.compareAndSet(generation, generation + 1)) {
+                publishLevel(0f)
+                publishState(VoiceTurnState.IDLE)
+            }
         }
     }
 

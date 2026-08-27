@@ -2,6 +2,8 @@ package com.humansandmachines.gsv.wear.voice
 
 import android.media.AudioDeviceInfo
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -30,6 +32,28 @@ class VoiceAssistantRuntimeTest {
         VoiceAssistantRuntime.startTurn(this, captureRoute = route).join()
 
         assertTrue(route.closed.get())
+    }
+
+    @Test
+    fun cancellingTheActiveTurnClosesItsCaptureRoute() = runBlocking {
+        val route = FakeCaptureRoute()
+        val started = CompletableDeferred<Unit>()
+        val owner = VoiceTurnOwner { _, _ ->
+            started.complete(Unit)
+            awaitCancellation()
+        }
+        VoiceAssistantRuntime.attach(owner)
+        try {
+            val turn = VoiceAssistantRuntime.startTurn(this, captureRoute = route)
+            started.await()
+
+            VoiceAssistantRuntime.cancelActiveTurn()
+            turn.join()
+
+            assertTrue(route.closed.get())
+        } finally {
+            VoiceAssistantRuntime.detach(owner)
+        }
     }
 
     private class FakeCaptureRoute : VoiceCaptureRoute {

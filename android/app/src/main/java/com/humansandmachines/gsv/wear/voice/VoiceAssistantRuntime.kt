@@ -77,4 +77,10 @@ object VoiceAssistantRuntime {
         }
         return job
     }
+
+    @Synchronized
+    fun cancelActiveTurn() {
+        activeJob?.cancel()
+        activeJob = null
+    }
 }
