@@ -103,6 +103,13 @@ export default defineConfig({
                       ts: String(nextTs) + ".000100",
                     });
                   }
+                  if (method === "chat.update") {
+                    return Response.json({
+                      ok: true,
+                      channel: body.channel,
+                      ts: body.ts,
+                    });
+                  }
                   if (method === "files.info") {
                     const bytes = new TextEncoder().encode("managed inbound file");
                     return Response.json({

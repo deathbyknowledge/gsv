@@ -25,6 +25,7 @@ import {
   uploadSlackFiles,
 } from "./slack-api";
 import { MAX_SLACK_MEDIA_ITEMS } from "./slack-media";
+import { buildSlackApprovalBlocks } from "./slack-interactions";
 
 export type SlackDeliveryOptions = {
   slackFetch?: SlackFetch;
@@ -121,6 +122,9 @@ export async function deliverSlackMessage(
   };
 
   try {
+    const approvalBlocks = message.surface.kind === "dm" && uploadFiles.length === 0
+      ? buildSlackApprovalBlocks(renderedText, message.routeGeneration)
+      : undefined;
     const providerMessageId = uploadFiles.length > 0
       ? (await uploadSlackFiles(botToken, {
           channel,
@@ -132,6 +136,7 @@ export async function deliverSlackMessage(
           channel,
           text: renderedText,
           threadTs: message.surface.threadId,
+          blocks: approvalBlocks,
         }, options.slackFetch)).ts;
     await deliveries.succeed(message.deliveryId, claim.attemptId, providerMessageId);
     return { ok: true, messageId: providerMessageId };

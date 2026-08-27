@@ -26,9 +26,11 @@ manually:
    `https://SLACK_ORIGIN/slack/oauth/callback`.
 3. Under **Event Subscriptions**, set the Request URL to
    `https://SLACK_ORIGIN/slack/events`.
-4. Under **App Home**, enable the Messages tab and allow users to send messages.
-5. Subscribe to `app_mention`, `message.im`, and `app_uninstalled` events.
-6. Enable app distribution for every workspace that should be able to install
+4. Under **Interactivity & Shortcuts**, enable Interactivity and set the Request
+   URL to `https://SLACK_ORIGIN/slack/interactions`.
+5. Under **App Home**, enable the Messages tab and allow users to send messages.
+6. Subscribe to `app_mention`, `message.im`, and `app_uninstalled` events.
+7. Enable app distribution for every workspace that should be able to install
    the official GSV app.
 
 The managed deployment supplies these secrets:
@@ -78,16 +80,18 @@ generation and cannot cross to the old or new installation accidentally.
 1. Create an app at [Slack API Apps](https://api.slack.com/apps), optionally
    using `slack-app.standalone.example.yaml` as its manifest.
 2. Add the same bot scopes used above: `app_mentions:read`, `chat:write`,
-   `im:history`, and `im:write`.
+   `files:read`, `files:write`, `im:history`, and `im:write`.
 3. Under **App Home**, enable the Messages tab and allow users to send messages.
 4. Under **Event Subscriptions**, subscribe the bot to `app_mention`,
    `message.im`, and `app_uninstalled`.
-5. Enable **Socket Mode**.
-6. Create an app-level token with the `connections:write` scope. This is the
+5. Under **Interactivity & Shortcuts**, enable Interactivity. Socket Mode carries
+   the interaction payload, so no public Request URL is needed.
+6. Enable **Socket Mode**.
+7. Create an app-level token with the `connections:write` scope. This is the
    `xapp-…` token.
-7. Install the app in the workspace and copy its `xoxb-…` bot token.
-8. In **GSV → Messengers → Slack**, enter both tokens.
-9. Direct-message the app once and enter the one-time authorization code in
+8. Install the app in the workspace and copy its `xoxb-…` bot token.
+9. In **GSV → Messengers → Slack**, enter both tokens.
+10. Direct-message the app once and enter the one-time authorization code in
    GSV. After linking, direct messages and public `@GSV` mentions reach the
    standalone installation.
 
@@ -136,6 +140,21 @@ approve the new file scopes. Existing standalone apps must add `files:read`
 and `files:write`, reinstall the app in the workspace, and reconnect the
 adapter so Slack issues a token with those permissions.
 
+## Approval buttons
+
+Human-approval prompts in direct messages keep their complete text fallback and
+add **Approve once**, **Always approve**, and **Deny** buttons. A click becomes
+the same exact `approve hil[requestId]`, `approve always hil[requestId]`, or
+`deny hil[requestId]`
+command accepted by the Gateway; typed token-bearing replies continue to work.
+Once submitted, the original message is updated to remove its buttons.
+
+The adapter durably records an interaction before acknowledging it. Managed
+button values are also bound to the linked route generation, so a delayed click
+from before a relink cannot reach the previous or replacement installation.
+The Gateway remains authoritative for the current HIL token and rejects stale
+or repeated decisions.
+
 ## Endpoints
 
 The standalone Worker exposes only health responses; Slack traffic enters over
@@ -147,9 +166,6 @@ The managed Worker exposes:
 GET  /slack/install
 GET  /slack/oauth/callback
 POST /slack/events
+POST /slack/interactions
 GET  /health
 ```
-
-Human-approval prompts in direct messages include a `hil[requestId]` token.
-Replies must include the exact current token; bare decisions and stale tokens
-are rejected by the Gateway.

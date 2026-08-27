@@ -92,6 +92,13 @@ export default defineConfig({
                       ts: String(nextTs) + ".000100",
                     });
                   }
+                  if (method === "chat.update") {
+                    return Response.json({
+                      ok: true,
+                      channel: body.channel,
+                      ts: body.ts,
+                    });
+                  }
                   if (method === "files.info") {
                     const bytes = new TextEncoder().encode("standalone inbound file");
                     return Response.json({
@@ -154,6 +161,38 @@ export default defineConfig({
                           event_id: "EvUNINST01",
                           event_time: 1700000001,
                           event: { type: "app_uninstalled" },
+                        },
+                      }));
+                    }
+                    return Response.json({ sent: this.ctx.getWebSockets().length });
+                  }
+                  if (request.method === "POST" && url.pathname === "/interaction") {
+                    const input = await request.json();
+                    for (const socket of this.ctx.getWebSockets()) {
+                      socket.send(JSON.stringify({
+                        type: "interactive",
+                        envelope_id: "socket-interaction",
+                        payload: {
+                          type: "block_actions",
+                          team: { id: "TWORK123" },
+                          user: { id: "UALICE01" },
+                          channel: { id: "DALICE01" },
+                          container: {
+                            type: "message",
+                            channel_id: "DALICE01",
+                            message_ts: input.sourceMessageId,
+                          },
+                          message: {
+                            user: "UGSVBOT1",
+                            text: input.sourceText,
+                            ts: input.sourceMessageId,
+                          },
+                          actions: [{
+                            type: "button",
+                            action_id: "gsv_hil_approve_always",
+                            value: input.value,
+                            action_ts: input.actionTs,
+                          }],
                         },
                       }));
                     }

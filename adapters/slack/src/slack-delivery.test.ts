@@ -110,6 +110,44 @@ describe("Slack delivery", () => {
     )).resolves.toMatchObject({ ok: true });
   });
 
+  it("adds approval buttons to exact private HIL prompts", async () => {
+    const prompt = [
+      "I need your confirmation before I can continue.",
+      "",
+      "Run the requested shell command.",
+      "",
+      "Reply \"approve hil[request-1]\" to continue, \"approve always hil[request-1]\" to remember it for this conversation, or \"deny hil[request-1]\" to stop this action.",
+    ].join("\n");
+    const provider = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const payload = JSON.parse(String(init?.body));
+      expect(payload.text).toBe(prompt);
+      expect(payload.blocks).toMatchObject([
+        { type: "section", text: { text: prompt } },
+        {
+          type: "actions",
+          elements: [
+            { action_id: "gsv_hil_approve" },
+            { action_id: "gsv_hil_approve_always" },
+            { action_id: "gsv_hil_deny" },
+          ],
+        },
+      ]);
+      return Response.json({ ok: true, channel: "DALICE01", ts: "1700000001.000202" });
+    });
+    await expect(deliverSlackMessage(
+      ledger(),
+      "xoxb-valid-token-value",
+      {
+        deliveryId: "slack-private-approval-1",
+        surface: { kind: "dm", id: "DALICE01" },
+        actorId: "UALICE01",
+        text: prompt,
+      },
+      undefined,
+      { slackFetch: provider },
+    )).resolves.toEqual({ ok: true, messageId: "1700000001.000202" });
+  });
+
   it("rejects a public delivery attributed to another actor", async () => {
     const provider = vi.fn();
     await expect(deliverSlackMessage(

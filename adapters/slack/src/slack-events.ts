@@ -57,6 +57,12 @@ export type SlackInbound = {
   wasMentioned: true;
   media?: SlackInboundMediaSource[];
   skippedMedia?: number;
+  interaction?: {
+    sourceMessageId: string;
+    sourceText: string;
+    action: "approve" | "approve_always" | "deny";
+    expectedRouteGeneration?: string;
+  };
 };
 
 export type SlackEventDisposition =

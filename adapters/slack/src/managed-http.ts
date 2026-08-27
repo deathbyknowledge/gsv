@@ -8,6 +8,7 @@ import {
   parseSlackEventCallback,
   parseSlackUrlVerification,
 } from "./slack-events";
+import { normalizeSlackInteraction } from "./slack-interactions";
 import type { ManagedSlackAcceptedEvent } from "./managed-peer";
 import type {
   ManagedSlackWorkspaceAdmission,
@@ -29,6 +30,7 @@ type ManagedWorkspaceStub = DurableObjectStub & {
 
 type ManagedPeerStub = DurableObjectStub & {
   acceptEvent(input: ManagedSlackAcceptedEvent): Promise<{ accepted: true }>;
+  acceptInteraction(input: ManagedSlackAcceptedEvent): Promise<{ accepted: boolean }>;
 };
 
 export type ManagedSlackHttpEnv = {
@@ -59,6 +61,9 @@ const oauthStateSchema = z.object({
   nonce: z.string().regex(/^[A-Za-z0-9_-]{32}$/),
   issuedAt: z.number().int(),
 });
+const slackInteractionTeamSchema = z.object({
+  team: z.object({ id: z.string() }).passthrough(),
+}).passthrough();
 
 export async function handleManagedSlackRequest(
   request: Request,
@@ -80,6 +85,9 @@ export async function handleManagedSlackRequest(
   }
   if (request.method === "POST" && url.pathname === "/slack/events") {
     return await receiveSlackEvent(request, env);
+  }
+  if (request.method === "POST" && url.pathname === "/slack/interactions") {
+    return await receiveSlackInteraction(request, env);
   }
   return new Response("Not Found", { status: 404 });
 }
@@ -251,6 +259,78 @@ async function receiveSlackEvent(
     return Response.json({ ok: false }, { status: 503 });
   }
   return Response.json({ ok: true });
+}
+
+async function receiveSlackInteraction(
+  request: Request,
+  env: ManagedSlackHttpEnv,
+): Promise<Response> {
+  let config: ManagedSlackConfig;
+  try {
+    config = requireManagedSlackConfig(env);
+  } catch {
+    await request.body?.cancel("Slack interactions are not configured").catch(() => undefined);
+    return new Response(null, { status: 503 });
+  }
+  if (!request.headers.get("Content-Type")?.toLowerCase().startsWith(
+    "application/x-www-form-urlencoded",
+  )) {
+    await request.body?.cancel("Slack interaction content type is invalid").catch(() => undefined);
+    return slackError(400);
+  }
+  let raw: string;
+  try {
+    raw = await readBoundedRequestText(request, MAX_REQUEST_BODY_BYTES);
+  } catch (error) {
+    return slackError(error instanceof BodyTooLargeError ? 413 : 400);
+  }
+  if (!await verifySlackSignature(request.headers, raw, config.signingSecret)) {
+    return slackError(403);
+  }
+  const params = new URLSearchParams(raw);
+  const payloadValues = params.getAll("payload");
+  if (payloadValues.length !== 1) return slackError(400);
+  let payload: unknown;
+  try {
+    payload = JSON.parse(payloadValues[0]!);
+  } catch {
+    return slackError(400);
+  }
+  const team = slackInteractionTeamSchema.safeParse(payload);
+  if (!team.success) return slackError(400);
+  const accountId = await workspaceAccountId(team.data.team.id).catch(() => null);
+  if (!accountId) return slackError(400);
+  const workspaceStub = workspace(env, accountId);
+  let admission: ManagedSlackWorkspaceAdmission;
+  try {
+    admission = await workspaceStub.admitEvent(team.data.team.id);
+  } catch {
+    return new Response(null, { status: 503 });
+  }
+  if (!admission.accepted) return new Response(null, { status: 200 });
+
+  const normalized = normalizeSlackInteraction(payload, admission.botUserId);
+  if (normalized.kind === "ignored") return new Response(null, { status: 200 });
+  if (normalized.kind === "invalid") return slackError(400);
+  const inbound = normalized.inbound;
+  const id = env.MANAGED_SLACK_PEER.idFromName(
+    managedSlackPeerObjectName(admission.accountId, inbound.actorId),
+  );
+  // SAFETY: the peer namespace is owned by this worker and exposes acceptInteraction.
+  const peer = env.MANAGED_SLACK_PEER.get(id) as ManagedPeerStub;
+  try {
+    await peer.acceptInteraction({
+      accountId: admission.accountId,
+      teamId: admission.teamId,
+      teamName: admission.teamName,
+      botUserId: admission.botUserId,
+      workspaceGeneration: admission.generation,
+      inbound,
+    });
+  } catch {
+    return new Response(null, { status: 503 });
+  }
+  return new Response(null, { status: 200 });
 }
 
 type ManagedSlackConfig = {

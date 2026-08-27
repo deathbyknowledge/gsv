@@ -23,6 +23,9 @@ oauth_config:
       - im:history
       - im:write
 settings:
+  interactivity:
+    is_enabled: true
+    request_url: https://SLACK_ORIGIN/slack/interactions
   event_subscriptions:
     request_url: https://SLACK_ORIGIN/slack/events
     bot_events:

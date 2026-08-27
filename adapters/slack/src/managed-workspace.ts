@@ -7,11 +7,13 @@ import {
   requireSlackId,
   requireSlackToken,
   SlackApiError,
+  updateSlackMessage,
   workspaceAccountId,
   type SlackFetch,
   type SlackDownloadedFile,
   type SlackOAuthInstallation,
   type SlackPostMessageInput,
+  type SlackUpdateMessageInput,
   type SlackUploadFilesInput,
   uploadSlackFiles,
 } from "./slack-api";
@@ -209,6 +211,30 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
         ok: false,
         kind: error instanceof SlackApiError ? error.kind : "permanent",
         error: "Slack delivery failed",
+      };
+    }
+  }
+
+  async updateMessage(
+    expectedGeneration: string,
+    input: SlackUpdateMessageInput,
+  ): Promise<ManagedSlackWorkspacePostResult> {
+    let state: ManagedSlackWorkspaceState;
+    try {
+      state = await this.requireActive(expectedGeneration);
+    } catch {
+      return { ok: false, kind: "permanent", error: "Slack workspace route changed" };
+    }
+    try {
+      return {
+        ok: true,
+        ...await updateSlackMessage(state.botToken, input, this.slackFetch()),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        kind: error instanceof SlackApiError ? error.kind : "permanent",
+        error: "Slack message update failed",
       };
     }
   }

@@ -7,10 +7,12 @@ import {
   type MessengerOnboardingDependencies,
 } from "./MessengerOnboardingFlow";
 import {
+  collectText,
   createTestRoot,
   deferred,
   flowStepNodes,
   nodeWithLabel,
+  unusedConnectNav,
 } from "./messengerTestHarness";
 
 type OnboardingTestState = {
@@ -109,6 +111,12 @@ describe("messenger onboarding platform switches", () => {
     });
     await renderFlow("slack");
     expect(currentFlow().title).toBe("Connect Slack app");
+    expect(collectText(currentFlow().steps[0]!.render(unusedConnectNav))).toContain(
+      "enable Socket Mode and Interactivity",
+    );
+    expect(collectText(currentFlow().steps[1]!.render(unusedConnectNav))).toContain(
+      "files:read, files:write",
+    );
     await reachConnectStep();
 
     const nodes = currentStepNodes();

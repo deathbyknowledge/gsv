@@ -32,8 +32,9 @@ async function makeEnv() {
   }));
   const deactivate = vi.fn(async () => ({ deactivated: true }));
   const acceptEvent = vi.fn(async () => ({ accepted: true as const }));
+  const acceptInteraction = vi.fn(async () => ({ accepted: true }));
   const workspaceGet = vi.fn(() => ({ install, admitEvent, deactivate }));
-  const peerGet = vi.fn(() => ({ acceptEvent }));
+  const peerGet = vi.fn(() => ({ acceptEvent, acceptInteraction }));
   const workspaceIdFromName = vi.fn((name: string) => ({ name }));
   const peerIdFromName = vi.fn((name: string) => ({ name }));
   const slackApi = vi.fn(async () => Response.json({
@@ -41,7 +42,7 @@ async function makeEnv() {
     access_token: "xoxb-valid-oauth-bot-token",
     bot_user_id: "UGSVBOT1",
     app_id: "AGSV1234",
-    scope: "app_mentions:read,chat:write,im:history,im:write",
+    scope: "app_mentions:read,chat:write,files:read,files:write,im:history,im:write",
     is_enterprise_install: false,
     team: { id: "TWORK123", name: "Acme" },
   }));
@@ -68,11 +69,41 @@ async function makeEnv() {
     admitEvent,
     deactivate,
     acceptEvent,
+    acceptInteraction,
     workspaceGet,
     peerGet,
     workspaceIdFromName,
     peerIdFromName,
     slackApi,
+  };
+}
+
+function interactionPayload() {
+  return {
+    type: "block_actions",
+    team: { id: "TWORK123" },
+    user: { id: "UALICE01" },
+    channel: { id: "DALICE01" },
+    container: {
+      type: "message",
+      channel_id: "DALICE01",
+      message_ts: "1700000000.000100",
+    },
+    message: {
+      user: "UGSVBOT1",
+      text: "Reply \"approve hil[request-1]\" or \"deny hil[request-1]\".",
+      ts: "1700000000.000100",
+    },
+    actions: [{
+      type: "button",
+      action_id: "gsv_hil_approve",
+      value: JSON.stringify({
+        v: 1,
+        token: "hil[request-1]",
+        routeGeneration: "route-generation-1",
+      }),
+      action_ts: "1700000001.000200",
+    }],
   };
 }
 
@@ -114,6 +145,33 @@ async function signedEventRequest<T>(payload: T, secret = SIGNING_SECRET): Promi
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      "X-Slack-Request-Timestamp": timestamp,
+      "X-Slack-Signature": signature,
+    },
+    body,
+  });
+}
+
+async function signedInteractionRequest<T>(payload: T): Promise<Request> {
+  const body = new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
+  const timestamp = String(Math.floor(Date.now() / 1_000));
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(SIGNING_SECRET),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const digest = new Uint8Array(await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(`v0:${timestamp}:${body}`),
+  ));
+  const signature = `v0=${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+  return new Request("https://slack.gsv.test/slack/interactions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
       "X-Slack-Request-Timestamp": timestamp,
       "X-Slack-Signature": signature,
     },
@@ -178,6 +236,32 @@ describe("managed Slack HTTP boundary", () => {
     expect(response.status).toBe(200);
     expect(deactivate).toHaveBeenCalledWith("TWORK123");
     expect(peerGet).not.toHaveBeenCalled();
+  });
+
+  it("durably routes a signed approval interaction to the actor peer", async () => {
+    const {
+      env,
+      accountId,
+      acceptInteraction,
+      peerIdFromName,
+    } = await makeEnv();
+    const response = await handleManagedSlackRequest(
+      await signedInteractionRequest(interactionPayload()),
+      env,
+    );
+    expect(response.status).toBe(200);
+    expect(peerIdFromName).toHaveBeenCalledWith(`peer:${accountId}:UALICE01`);
+    expect(acceptInteraction).toHaveBeenCalledWith(expect.objectContaining({
+      accountId,
+      workspaceGeneration: "workspace-generation",
+      inbound: expect.objectContaining({
+        actorId: "UALICE01",
+        text: "approve hil[request-1]",
+        interaction: expect.objectContaining({
+          expectedRouteGeneration: "route-generation-1",
+        }),
+      }),
+    }));
   });
 
   it("binds OAuth callback state to the initiating browser before installing", async () => {

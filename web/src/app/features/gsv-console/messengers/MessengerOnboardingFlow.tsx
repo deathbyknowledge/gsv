@@ -289,7 +289,7 @@ function BotMessengerOnboardingFlow({
               {isTelegram
                 ? "Open BotFather in Telegram and create a new bot to act as your GSV's messenger."
                 : isSlack
-                  ? "Create a Slack app for your workspace, enable Socket Mode, and subscribe it to app mentions and direct messages."
+                  ? "Create a Slack app for your workspace, enable Socket Mode and Interactivity, and subscribe it to app mentions and direct messages."
                   : "Create a new bot application in the Discord developer portal to act as your GSV's messenger."}
             </p>
             <div style={stepLinksStyle}>
@@ -319,7 +319,7 @@ function BotMessengerOnboardingFlow({
               {isTelegram
                 ? "BotFather hands you an access token once the bot is created. Copy it — you'll paste it in the next step."
                 : isSlack
-                  ? "Install the app to get its bot token, then generate an app-level token with connections:write for Socket Mode."
+                  ? "Grant app_mentions:read, chat:write, files:read, files:write, im:history, and im:write; install the app for its bot token, then generate an app-level token with connections:write."
                   : "In your bot's settings, create a bot token and copy it — you'll paste it in the next step."}
             </p>
             <div style={stepLinksStyle}>

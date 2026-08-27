@@ -7,6 +7,7 @@ import {
   responseBodyToBinaryBody,
 } from "../../shared/src/media-body";
 import type { BinaryBody } from "./types";
+import type { SlackBlock } from "./slack-interactions";
 
 const SLACK_API_BASE = "https://slack.com/api";
 
@@ -46,11 +47,19 @@ export type SlackPostMessageInput = {
   channel: string;
   text: string;
   threadTs?: string;
+  blocks?: SlackBlock[];
 };
 
 export type SlackPostMessageResult = {
   channel: string;
   ts: string;
+};
+
+export type SlackUpdateMessageInput = {
+  channel: string;
+  messageTs: string;
+  text: string;
+  blocks: SlackBlock[];
 };
 
 type SlackPostMessagePayload = {
@@ -59,6 +68,7 @@ type SlackPostMessagePayload = {
   unfurl_links: false;
   unfurl_media: false;
   thread_ts?: string;
+  blocks?: SlackBlock[];
 };
 
 type SlackApiJson =
@@ -169,10 +179,35 @@ export async function postSlackMessage(
     unfurl_media: false,
   };
   if (input.threadTs) payload.thread_ts = requireSlackTimestamp(input.threadTs);
+  if (input.blocks?.length) payload.blocks = requireSlackBlocks(input.blocks);
   const result = await callSlackApi<{ channel?: string; ts?: string }>(
     "chat.postMessage",
     botToken,
     payload,
+    slackFetch,
+  );
+  return {
+    channel: requireSlackId(result.channel, "Slack response channel"),
+    ts: requireSlackTimestamp(result.ts),
+  };
+}
+
+export async function updateSlackMessage(
+  botToken: string,
+  input: SlackUpdateMessageInput,
+  slackFetch: SlackFetch = fetch,
+): Promise<SlackPostMessageResult> {
+  const channel = requireSlackId(input.channel, "Slack channel");
+  const ts = requireSlackTimestamp(input.messageTs);
+  const result = await callSlackApi<{ channel?: string; ts?: string }>(
+    "chat.update",
+    botToken,
+    {
+      channel,
+      ts,
+      text: requireText(input.text, "Slack message", 40_000),
+      blocks: requireSlackBlocks(input.blocks),
+    },
     slackFetch,
   );
   return {
@@ -583,6 +618,13 @@ function normalizedMimeType(value: string | undefined): string {
   return /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/.test(normalized)
     ? normalized
     : "application/octet-stream";
+}
+
+function requireSlackBlocks(value: SlackBlock[]): SlackBlock[] {
+  if (value.length === 0 || value.length > 50) {
+    throw new Error("Slack blocks are invalid");
+  }
+  return value;
 }
 
 function requireNonNegativeInteger(value: number, label: string): number {

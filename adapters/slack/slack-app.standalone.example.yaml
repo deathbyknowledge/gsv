@@ -21,6 +21,8 @@ oauth_config:
       - im:history
       - im:write
 settings:
+  interactivity:
+    is_enabled: true
   event_subscriptions:
     bot_events:
       - app_mention

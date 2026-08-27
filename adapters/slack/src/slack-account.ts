@@ -23,6 +23,7 @@ import {
   openSlackSocket,
   requireSlackToken,
   SlackApiError,
+  updateSlackMessage,
   type SlackFetch,
 } from "./slack-api";
 import { deliverSlackMessage } from "./slack-delivery";
@@ -30,6 +31,10 @@ import {
   appendSlackMediaNotice,
   loadSlackInboundMedia,
 } from "./slack-media";
+import {
+  buildSlackApprovalSubmittedMessage,
+  normalizeSlackInteraction,
+} from "./slack-interactions";
 import {
   normalizeSlackEvent,
   type SlackInbound,
@@ -274,6 +279,26 @@ export class SlackAccount extends DurableObject<Env> {
       return;
     }
     if (!envelope.envelope_id) return;
+    if (envelope.type === "interactive" && envelope.payload) {
+      const botUserId = this.state.botUserId;
+      if (!botUserId) return;
+      const interaction = normalizeSlackInteraction(envelope.payload, botUserId);
+      let enqueued = false;
+      if (
+        interaction.kind === "accepted"
+        && interaction.inbound.teamId === this.state.teamId
+      ) {
+        await this.inboundDeliveries.enqueueAndArm(
+          interaction.inbound.deliveryId,
+          interaction.inbound,
+          Date.now() + INBOUND_WAKE_DELAY_MS,
+        );
+        enqueued = true;
+      }
+      source.send(JSON.stringify({ envelope_id: envelope.envelope_id }));
+      if (enqueued) this.ctx.waitUntil(this.drainInbound());
+      return;
+    }
     if (envelope.type !== "events_api" || !envelope.payload) {
       source.send(JSON.stringify({ envelope_id: envelope.envelope_id }));
       return;
@@ -382,11 +407,45 @@ export class SlackAccount extends DurableObject<Env> {
       },
       transfer.body,
     );
-    return adapterInboundResultDisposition(result, {
+    const disposition = adapterInboundResultDisposition(result, {
       surface: inbound.surface,
       providerMessageId: inbound.messageId,
       actorId: inbound.actorId,
     });
+    if (inbound.interaction && disposition.terminal) {
+      await this.markInteractionSubmitted(inbound, botToken);
+    }
+    if (inbound.interaction && result.challenge) {
+      return { terminal: disposition.terminal, error: disposition.error };
+    }
+    return disposition;
+  }
+
+  private async markInteractionSubmitted(
+    inbound: SlackInbound,
+    expectedBotToken: string,
+  ): Promise<void> {
+    const interaction = inbound.interaction;
+    if (!interaction || inbound.surface.kind !== "dm") return;
+    try {
+      if (
+        this.state.botToken !== expectedBotToken
+        || this.state.teamId !== inbound.teamId
+      ) {
+        return;
+      }
+      const rendered = buildSlackApprovalSubmittedMessage(
+        interaction.sourceText,
+        interaction.action,
+      );
+      await updateSlackMessage(expectedBotToken, {
+        channel: inbound.surface.id,
+        messageTs: interaction.sourceMessageId,
+        ...rendered,
+      }, this.slackFetch());
+    } catch {
+      // The durable approval delivery is authoritative; clearing buttons is best effort.
+    }
   }
 
   private async handleSocketClosed(): Promise<void> {

@@ -65,12 +65,18 @@ import {
   MAX_SLACK_MEDIA_ITEMS,
 } from "./slack-media";
 import {
+  buildSlackApprovalBlocks,
+  buildSlackApprovalSubmittedMessage,
+} from "./slack-interactions";
+import {
   isSlackPairCommand,
   type SlackInbound,
 } from "./slack-events";
 import {
   requireSlackId,
   requireSlackTimestamp,
+  type SlackPostMessageInput,
+  type SlackUpdateMessageInput,
 } from "./slack-api";
 
 export interface ManagedSlackPeerEnv extends ManagedSlackPairingEnv {
@@ -112,7 +118,11 @@ type ManagedWorkspaceStub = {
   openDm(actorId: string, expectedGeneration: string): Promise<{ channelId: string }>;
   postMessage(
     expectedGeneration: string,
-    input: { channel: string; text: string; threadTs?: string },
+    input: SlackPostMessageInput,
+  ): Promise<ManagedSlackWorkspacePostResult>;
+  updateMessage(
+    expectedGeneration: string,
+    input: SlackUpdateMessageInput,
   ): Promise<ManagedSlackWorkspacePostResult>;
   downloadFile(
     expectedGeneration: string,
@@ -174,6 +184,42 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
         inbound: input.inbound,
         workspaceGeneration: input.workspaceGeneration,
         routeGeneration,
+      },
+      Date.now() + INBOUND_WAKE_DELAY_MS,
+    );
+    this.ctx.waitUntil(this.drainInbound());
+    return { accepted: true };
+  }
+
+  async acceptInteraction(
+    input: ManagedSlackAcceptedEvent,
+  ): Promise<{ accepted: boolean }> {
+    const state = await this.ctx.storage.get<ManagedSlackPeerState>(STATE_KEY);
+    if (!state) return { accepted: false };
+    this.assertObjectIdentity(state);
+    const interaction = input.inbound.interaction;
+    const route = state.activeRoute;
+    if (
+      !interaction
+      || !route
+      || input.accountId !== state.accountId
+      || input.teamId !== state.teamId
+      || input.botUserId !== state.botUserId
+      || input.workspaceGeneration !== state.workspaceGeneration
+      || input.inbound.actorId !== state.actorId
+      || input.inbound.surface.kind !== "dm"
+      || input.inbound.surface.id !== state.dmSurfaceId
+      || !interaction.expectedRouteGeneration
+      || interaction.expectedRouteGeneration !== route.generation
+    ) {
+      return { accepted: false };
+    }
+    await this.inboundDeliveries.enqueueAndArm(
+      input.inbound.deliveryId,
+      {
+        inbound: input.inbound,
+        workspaceGeneration: input.workspaceGeneration,
+        routeGeneration: route.generation,
       },
       Date.now() + INBOUND_WAKE_DELAY_MS,
     );
@@ -441,12 +487,20 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       },
       transfer.body,
     );
-    if (result.challenge) return await this.pairingResponse(inbound);
     const disposition = adapterInboundResultDisposition(result, {
       surface: inbound.surface,
       providerMessageId: inbound.messageId,
       actorId: inbound.actorId,
     });
+    if (inbound.interaction && disposition.terminal) {
+      await this.markInteractionSubmitted(payload);
+    }
+    if (result.challenge) {
+      if (inbound.interaction) {
+        return { terminal: disposition.terminal, error: disposition.error };
+      }
+      return await this.pairingResponse(inbound);
+    }
     return {
       terminal: disposition.terminal,
       error: disposition.error,
@@ -460,6 +514,40 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
         },
       })),
     };
+  }
+
+  private async markInteractionSubmitted(payload: InboundPayload): Promise<void> {
+    const interaction = payload.inbound.interaction;
+    if (!interaction || !payload.routeGeneration) return;
+    try {
+      const state = await this.requireState();
+      const route = state.activeRoute;
+      if (
+        !route
+        || route.generation !== payload.routeGeneration
+        || interaction.expectedRouteGeneration !== route.generation
+        || state.workspaceGeneration !== payload.workspaceGeneration
+        || payload.inbound.actorId !== state.actorId
+        || payload.inbound.surface.kind !== "dm"
+        || payload.inbound.surface.id !== state.dmSurfaceId
+      ) {
+        return;
+      }
+      const rendered = buildSlackApprovalSubmittedMessage(
+        interaction.sourceText,
+        interaction.action,
+      );
+      await this.workspace(state.accountId).updateMessage(
+        state.workspaceGeneration,
+        {
+          channel: payload.inbound.surface.id,
+          messageTs: interaction.sourceMessageId,
+          ...rendered,
+        },
+      );
+    } catch {
+      // The durable approval delivery is authoritative; clearing buttons is best effort.
+    }
   }
 
   private async pairingResponse(
@@ -675,12 +763,17 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
         if (!delivered.ok) return await fail(delivered.kind);
         providerMessageId = delivered.fileIds[0];
       } else {
+        const approvalBlocks = message.surface.kind === "dm"
+          && context.kind === "installation"
+          ? buildSlackApprovalBlocks(renderedText, context.generation)
+          : undefined;
         const delivered = await this.workspace(current.accountId).postMessage(
           current.workspaceGeneration,
           {
             channel: message.surface.id,
             text: renderedText,
             threadTs: message.surface.threadId,
+            blocks: approvalBlocks,
           },
         );
         if (!delivered.ok) return await fail(delivered.kind);
