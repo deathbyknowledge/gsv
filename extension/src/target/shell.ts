@@ -127,7 +127,10 @@ export class BrowserTargetShell {
             copyTargetFile: this.activeExecContext.copyTargetFile,
           };
           try {
-            return await command.run(args, commandContext);
+            return await abortable(
+              Promise.resolve(command.run(args, commandContext)),
+              commandContext.abortSignal,
+            );
           } catch (error) {
             return commandError(error instanceof Error ? error.message : String(error));
           }

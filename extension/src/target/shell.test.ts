@@ -94,6 +94,46 @@ describe("BrowserTargetShell", () => {
     expect(laterRuns).toBe(1);
   });
 
+  it("releases the queue when an active custom command ignores cancellation", async () => {
+    const running = deferred<void>();
+    const started = deferred<void>();
+    let laterRuns = 0;
+    const commands: BrowserCommand[] = [
+      {
+        name: "block",
+        summary: "Ignore cancellation until released.",
+        async run() {
+          started.resolve(undefined);
+          await running.promise;
+          return commandResult();
+        },
+      },
+      {
+        name: "later",
+        summary: "Record execution.",
+        run() {
+          laterRuns += 1;
+          return commandResult();
+        },
+      },
+    ];
+    const shell = new BrowserTargetShell(directoryOnlyFileSystem(), commands);
+    const controller = new AbortController();
+    const active = shell.exec({ input: "block" }, { abortSignal: controller.signal });
+    await expect(within(Promise.race([
+      started.promise.then(() => "started"),
+      active.then(() => "finished"),
+    ]))).resolves.toBe("started");
+
+    const next = shell.exec({ input: "later" });
+    controller.abort(new Error("Route expired"));
+
+    await expect(within(active)).resolves.toMatchObject({ status: "failed" });
+    await expect(within(next)).resolves.toMatchObject({ status: "completed" });
+    expect(laterRuns).toBe(1);
+    running.resolve(undefined);
+  });
+
   it("cancels a long page wait, stops polling, and runs the next command", async () => {
     const firstPoll = deferred<void>();
     const executeScript = vi.fn(async () => {
