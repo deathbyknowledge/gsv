@@ -394,5 +394,5 @@ fun VoiceTurnState.accentColor(): Color = when (this) {
     VoiceTurnState.IDLE -> GsvColor.Muted
     VoiceTurnState.PREPARING,
     VoiceTurnState.LISTENING,
-    -> GsvColor.Cyan
+    -> GsvColor.Accent
 }

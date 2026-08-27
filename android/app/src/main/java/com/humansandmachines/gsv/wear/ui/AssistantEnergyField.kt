@@ -94,9 +94,9 @@ internal fun AssistantBackdrop(
         }
         drawRect(
             brush = Brush.verticalGradient(
-                0f to Color(0xFF020405),
-                0.48f to Color(0xFF061014),
-                1f to Color(0xFF020405),
+                0f to Color(0xFF050414),
+                0.48f to Color(0xFF0A0822),
+                1f to Color(0xFF050414),
             ),
         )
         drawCircle(
@@ -167,9 +167,9 @@ private fun DrawScope.drawAssistantLiquidBackdrop(accent: Color, phaseSeconds: F
     val phase = phaseSeconds / 12f * PI.toFloat() * 2f
     drawRect(
         brush = Brush.verticalGradient(
-            0f to Color(0xFF010304),
-            0.46f to Color(0xFF031014),
-            1f to Color(0xFF010304),
+            0f to Color(0xFF050414),
+            0.46f to Color(0xFF0A0822),
+            1f to Color(0xFF050414),
         ),
     )
     drawCircle(

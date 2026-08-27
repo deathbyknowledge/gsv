@@ -167,7 +167,7 @@ fun GsvLoginScreen(
             InlineNotice(
                 text = localNotice.ifBlank { uiState.notice },
                 modifier = Modifier.padding(top = 14.dp).semantics { liveRegion = LiveRegionMode.Polite },
-                color = if (localNotice.isNotBlank() || uiState.error) GsvColor.Red else GsvColor.Cyan,
+                color = if (localNotice.isNotBlank() || uiState.error) GsvColor.Red else GsvColor.Accent,
             )
             Spacer(Modifier.height(18.dp))
             GsvButton(
