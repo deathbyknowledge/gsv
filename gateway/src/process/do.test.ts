@@ -3307,6 +3307,142 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("alerts once per context epoch and rearms after compaction", async () => {
+      const pid = "mech-context-runway-alert";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
+        const generationContexts: string[] = [];
+        const inputBudgetTokens = 1_000_000;
+        let remainingInputTokens = 164_001;
+        let revision = 0;
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
+          emitted.push({ signal, payload });
+        };
+        process.updateContextState = vi.fn(async (runId: string) => {
+          const inputTokens = inputBudgetTokens - remainingInputTokens;
+          revision += 1;
+          return {
+            revision,
+            runId,
+            provider: "test",
+            model: "test",
+            contextWindowTokens: 1_008_192,
+            maxOutputTokens: 8_192,
+            estimatedInputTokens: inputTokens,
+            inputTokens,
+            confirmedInputTokens: 0,
+            estimatedTrailingInputTokens: inputTokens,
+            inputBudgetTokens,
+            remainingInputTokens,
+            availableInputTokens: inputBudgetTokens,
+            pressure: inputTokens / inputBudgetTokens,
+            level: "warn",
+            source: "estimate",
+            updatedAt: Date.now(),
+          };
+        });
+        process.generation = {
+          async generate(request: any) {
+            generationContexts.push(JSON.stringify(request.context));
+            return terminalTestResponse([
+              { type: "text", text: "done" },
+              messageAction("done"),
+            ]);
+          },
+          async generateText() {
+            return "done";
+          },
+        };
+
+        const run = async (runId: string, message: string) => {
+          process.store.appendMessage("user", message, { runId });
+          process.currentRun = {
+            runId,
+            config: {
+              ...terminalTestConfig(pid),
+              contextWindowTokens: 1_008_192,
+            },
+            tools: [],
+            devices: [],
+            systemPrompt: "Test system prompt.",
+            approvalPolicy: { default: "auto", rules: [] },
+          };
+          await process.runTick(runId);
+        };
+
+        await run("run-before-runway-alert", "not quite yet");
+        remainingInputTokens = 164_000;
+        await run("run-at-runway-alert", "cross the threshold");
+        remainingInputTokens = 150_000;
+        await run("run-after-runway-alert", "keep going");
+        const runwayEventsBeforeCompaction = emitted.filter((entry) => {
+          // SAFETY: emitted Process test payloads use the asserted optional lifecycle-event shape.
+          return entry.signal === "proc.changed"
+            && (entry.payload as { event?: string }).event === "context.runway";
+        }).length;
+
+        await expect(process.handleHistoryCompact({
+          keepLast: 1,
+          summary: "Checkpoint summary.",
+        })).resolves.toMatchObject({ ok: true });
+        remainingInputTokens = 164_000;
+        await run("run-rearmed-runway-alert", "new context epoch");
+
+        return {
+          emitted,
+          generationContexts,
+          messages: process.store.getMessages(),
+          segments: process.store.listHistorySegments(),
+          runwayEventsBeforeCompaction,
+        };
+      });
+
+      expect(result.generationContexts).toHaveLength(4);
+      expect(result.generationContexts[0]).not.toContain("Context runway is getting low.");
+      expect(result.generationContexts[1]).toContain("[GSV EVENT]");
+      expect(result.generationContexts[1]).toContain("Context runway is getting low.");
+      expect(result.generationContexts[1]).toContain("About 164,000 input tokens remain");
+      expect(result.generationContexts[1]).toContain(
+        "About 64,000 tokens of that runway remain before GSV automatically compacts",
+      );
+      expect(result.generationContexts[2].match(/Context runway is getting low\./gu))
+        .toHaveLength(1);
+      expect(result.generationContexts[3].match(/Context runway is getting low\./gu))
+        .toHaveLength(1);
+      expect(result.messages.filter((message: any) => (
+        message.role === "system" && message.content.includes("Context runway is getting low.")
+      ))).toHaveLength(1);
+      expect(result.segments).toHaveLength(1);
+      expect(result.runwayEventsBeforeCompaction).toBe(1);
+
+      const runwayEvents = result.emitted.filter((entry) => {
+        // SAFETY: emitted Process test payloads use the asserted optional lifecycle-event shape.
+        return entry.signal === "proc.changed"
+          && (entry.payload as { event?: string }).event === "context.runway";
+      });
+      expect(runwayEvents).toHaveLength(2);
+      expect(new Set(runwayEvents.map((entry) => (
+        // SAFETY: context.runway lifecycle payloads always carry their context epoch id.
+        (entry.payload as { epochId: string }).epochId
+      ))).size).toBe(2);
+      runwayEvents.forEach((entry) => {
+        expect(entry.payload).toMatchObject({
+          inputBudgetTokens: 1_000_000,
+          remainingInputTokens: 164_000,
+          boundaryRemainingTokens: 100_000,
+          thresholdRemainingTokens: 164_000,
+          compactAtPressure: 0.9,
+          overflow: "auto-compact",
+        });
+      });
+    });
+
     it("includes interaction origin in model context without rewriting stored content", async () => {
       const pid = "mech-origin-context";
       const stub = await initProcess(pid, ROOT_IDENTITY);

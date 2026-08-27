@@ -590,6 +590,9 @@ const MEDIA_PREPARATION_TIMEOUT_MS = 10 * 60_000;
 const COMPACTION_SUMMARY_WINDOW_CHARS = 24_000;
 const COMPACTION_GENERATION_TIMEOUT_MS = 30_000;
 const CONTEXT_PROVIDER_OVERFLOW_REASON = "context.provider_overflow";
+const CONTEXT_RUNWAY_ALERT_EPOCH_KEY = "contextRunwayAlertEpoch";
+const CONTEXT_RUNWAY_ALERT_MAX_TOKENS_BEFORE_BOUNDARY = 64_000;
+const CONTEXT_RUNWAY_ALERT_BUDGET_RATIO_BEFORE_BOUNDARY = 0.2;
 const MAX_RETRYABLE_GENERATION_ATTEMPTS = 3;
 const MAX_CANCELLED_REQUESTS = 128;
 const AUTO_TASK_TITLE_KEY = "autoTaskTitle";
@@ -1733,6 +1736,50 @@ function formatCompactionSummaryMessage(input: {
     "",
     "Summary:",
     input.summary,
+  ].join("\n");
+}
+
+function contextBoundaryRemainingTokens(
+  inputBudgetTokens: number,
+  compactAtPressure: number,
+): number {
+  return Math.max(
+    0,
+    inputBudgetTokens - Math.ceil(inputBudgetTokens * compactAtPressure),
+  );
+}
+
+function contextRunwayAlertThreshold(
+  inputBudgetTokens: number,
+  compactAtPressure: number,
+): number {
+  const boundaryRemainingTokens = contextBoundaryRemainingTokens(
+    inputBudgetTokens,
+    compactAtPressure,
+  );
+  const runwayBeforeBoundary = Math.min(
+    CONTEXT_RUNWAY_ALERT_MAX_TOKENS_BEFORE_BOUNDARY,
+    Math.floor(inputBudgetTokens * CONTEXT_RUNWAY_ALERT_BUDGET_RATIO_BEFORE_BOUNDARY),
+  );
+  return Math.min(inputBudgetTokens, boundaryRemainingTokens + runwayBeforeBoundary);
+}
+
+function formatContextRunwayAlertMessage(input: {
+  remainingInputTokens: number;
+  runwayBeforeBoundaryTokens: number;
+  policy: ProcHistoryContextPolicy;
+}): string {
+  const safetyBoundary = input.policy.overflow === "auto-compact"
+    ? `About ${input.runwayBeforeBoundaryTokens.toLocaleString("en-US")} tokens of that runway remain before GSV automatically compacts older Process history at the configured ${Math.round(input.policy.compactAtPressure * 100)}% safety boundary.`
+    : `About ${input.runwayBeforeBoundaryTokens.toLocaleString("en-US")} tokens of that runway remain before this Process stops at its configured ${Math.round(input.policy.compactAtPressure * 100)}% context-pressure boundary.`;
+  return [
+    "Context runway is getting low.",
+    "",
+    `About ${input.remainingInputTokens.toLocaleString("en-US")} input tokens remain before the model's reserved output budget.`,
+    "Preserve anything that should survive compaction now: use the Personal wiki for durable knowledge, standing context only for explicit stable facts or preferences, and the responsibility ledger for unresolved commitments.",
+    "Do not promote transient details merely because the context window is filling.",
+    safetyBoundary,
+    "Continue normally if there is nothing worth preserving.",
   ].join("\n");
 }
 
@@ -6155,7 +6202,7 @@ export class Process extends DurableObject<ProcessEnv> {
     const prepareGenerationContext = async (
       config: AiConfigResult,
     ): Promise<"ready" | "stopped"> => {
-      const preparedContext = await buildGenerationContext();
+      let preparedContext = await buildGenerationContext();
       if (!preparedContext || this.handleRunStopped(runId)) {
         return "stopped";
       }
@@ -6163,6 +6210,24 @@ export class Process extends DurableObject<ProcessEnv> {
       contextState = await this.updateContextState(runId, config, context);
       if (this.handleRunStopped(runId)) {
         return "stopped";
+      }
+      const appendedRunwayAlert = await this.maybeAppendContextRunwayAlert(
+        runId,
+        contextState,
+      );
+      if (this.handleRunStopped(runId)) {
+        return "stopped";
+      }
+      if (appendedRunwayAlert) {
+        preparedContext = await buildGenerationContext();
+        if (!preparedContext || this.handleRunStopped(runId)) {
+          return "stopped";
+        }
+        context = preparedContext;
+        contextState = await this.updateContextState(runId, config, context);
+        if (this.handleRunStopped(runId)) {
+          return "stopped";
+        }
       }
       const result = await applyGenerationContextPolicy(config, "preflight");
       return result === "stopped" ? "stopped" : "ready";
@@ -7310,6 +7375,95 @@ export class Process extends DurableObject<ProcessEnv> {
         error: message,
       });
     }
+  }
+
+  private async maybeAppendContextRunwayAlert(
+    runId: string,
+    state: ProcContextState,
+  ): Promise<boolean> {
+    const inputBudgetTokens = state.inputBudgetTokens;
+    const remainingInputTokens = state.remainingInputTokens;
+    const pressure = state.pressure;
+    if (
+      inputBudgetTokens === null
+      || remainingInputTokens === null
+      || pressure === null
+      || !Number.isFinite(inputBudgetTokens)
+      || !Number.isFinite(remainingInputTokens)
+      || !Number.isFinite(pressure)
+      || inputBudgetTokens <= 0
+      || remainingInputTokens < 0
+    ) {
+      return false;
+    }
+
+    const policy = this.getHistoryContextPolicy();
+    const boundaryRemainingTokens = contextBoundaryRemainingTokens(
+      inputBudgetTokens,
+      policy.compactAtPressure,
+    );
+    const thresholdRemainingTokens = contextRunwayAlertThreshold(
+      inputBudgetTokens,
+      policy.compactAtPressure,
+    );
+    if (
+      remainingInputTokens > thresholdRemainingTokens
+      || pressure >= policy.compactAtPressure
+    ) {
+      return false;
+    }
+
+    const epoch = this.store.getLiveContextEpoch();
+    if (!epoch || this.handleRunStopped(runId)) {
+      return false;
+    }
+
+    const content = formatContextRunwayAlertMessage({
+      remainingInputTokens,
+      runwayBeforeBoundaryTokens: Math.max(
+        0,
+        remainingInputTokens - boundaryRemainingTokens,
+      ),
+      policy,
+    });
+    const timestamp = Date.now();
+    let messageId: number | null = null;
+    this.ctx.storage.transactionSync(() => {
+      const liveEpoch = this.store.getLiveContextEpoch();
+      if (
+        !liveEpoch
+        || liveEpoch.id !== epoch.id
+        || this.store.getValue(CONTEXT_RUNWAY_ALERT_EPOCH_KEY) === epoch.id
+      ) {
+        return;
+      }
+      messageId = this.store.appendMessage("system", content, {
+        runId,
+        createdAt: timestamp,
+      });
+      this.store.setValue(CONTEXT_RUNWAY_ALERT_EPOCH_KEY, epoch.id);
+    });
+    if (messageId === null) {
+      return false;
+    }
+
+    await this.emitProcessLifecycle({
+      event: "context.runway",
+      pid: this.pid,
+      runId,
+      epochId: epoch.id,
+      messageId,
+      provider: state.provider,
+      model: state.model,
+      inputBudgetTokens,
+      remainingInputTokens,
+      boundaryRemainingTokens,
+      thresholdRemainingTokens,
+      pressure,
+      compactAtPressure: policy.compactAtPressure,
+      overflow: policy.overflow,
+    });
+    return true;
   }
 
   private async applyHistoryContextPolicy(

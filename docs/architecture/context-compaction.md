@@ -44,6 +44,22 @@ limit. If the provider reports that the assembled request exceeds its context
 window, the Process applies the same history policy regardless of the estimate.
 Context overflow does not advance the main generation fallback chain.
 
+## Context runway event
+
+Before the hard overflow-policy boundary, the Process emits one
+`[GSV EVENT]` per context epoch so the agent can preserve durable knowledge,
+standing facts, or unresolved commitments deliberately. The event reports
+absolute remaining input tokens and is included in the current model call. It
+does not itself write memory, create a responsibility, or compact history.
+
+The alert threshold targets up to 64,000 tokens before the configured boundary,
+capped at 20% of the model's usable input budget. With the default `0.9` compaction
+boundary, smaller windows therefore alert around `0.7` pressure; larger windows
+alert later while retaining the same bounded token runway. A persisted context
+epoch marker prevents corrected estimates, repeated tool turns, or Durable
+Object eviction from repeating the alert. Compaction closes the epoch and
+re-arms the alert for the replacement context.
+
 ## Overflow policy
 
 Each process has an `auto-compact` or `fail` policy, a pressure threshold, and a
