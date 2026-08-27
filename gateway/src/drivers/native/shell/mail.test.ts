@@ -5,7 +5,7 @@ import type {
   ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
 import { env } from "cloudflare:test";
-import type { CommandContext } from "just-bash";
+import { createCommandContext, InMemoryFs, type CommandContext } from "just-bash";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createAccountHomeBackend } from "../../../fs/backends/account-home";
 import { GsvFs } from "../../../fs/gsv-fs";
@@ -483,16 +483,11 @@ function commandContext(
 }
 
 function shellCommandContext(signal?: AbortSignal): CommandContext {
-  // SAFETY: this fixture supplies the CommandContext fields used by mail commands.
-  return {
+  return createCommandContext({
+    fs: new InMemoryFs(),
     cwd: "/",
-    env: new Map(),
-    stdin: "",
-    fs: {
-      resolvePath: (_cwd: string, path: string) => path,
-    },
     signal,
-  } as CommandContext;
+  });
 }
 
 function messageInput(

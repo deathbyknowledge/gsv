@@ -1,6 +1,8 @@
 import { Bash, defineCommand, type BashExecResult } from "just-bash/browser";
+import { DEFAULT_SHELL_EXEC_TIMEOUT_MS } from "@humansandmachines/gsv/protocol";
 import { abortable, throwIfAborted } from "./abort";
 import { JustBashFileSystemAdapter } from "./fs-adapter";
+import { decodeJustBashStdin } from "./just-bash-stdin";
 import type {
   BrowserCommand,
   CommandContext,
@@ -12,6 +14,9 @@ import { commandError } from "./types";
 import { commandCatalog, helpText } from "./commands";
 
 type BrowserBash = InstanceType<typeof Bash>;
+
+export const DEFAULT_BROWSER_SHELL_TIMEOUT_MS = DEFAULT_SHELL_EXEC_TIMEOUT_MS;
+const JUST_BASH_EXTENSION_CLEANUP_TIME_MS = 100;
 
 export type BrowserShellExecContext = {
   currentTargetId?: string;
@@ -27,7 +32,7 @@ export class BrowserTargetShell {
   private bash: BrowserBash | null = null;
   private ready: Promise<void> | null = null;
   private activeExecContext: BrowserShellExecContext = {};
-  private activeCommandCompletion: Promise<void> | null = null;
+  private readonly activeCommandCompletions = new Set<Promise<void>>();
   private execQueue: Promise<void> = Promise.resolve();
 
   constructor(
@@ -52,10 +57,9 @@ export class BrowserTargetShell {
       if (acquired) {
         // Cancellation can settle Bash before a custom command's owned work; do not let
         // the next command overlap that work while it reaches its terminal boundary.
-        const completion = this.activeCommandCompletion;
-        this.activeCommandCompletion = null;
-        if (completion) {
-          void completion.then(release);
+        const completions = [...this.activeCommandCompletions];
+        if (completions.length > 0) {
+          void Promise.all(completions).then(() => release());
         } else {
           release();
         }
@@ -70,12 +74,16 @@ export class BrowserTargetShell {
     const input = typeof record.input === "string" ? record.input : "";
     const cwd = typeof record.cwd === "string" && record.cwd.trim() ? this.fs.resolvePath("/", record.cwd) : "/";
     const sessionId = typeof record.sessionId === "string" ? record.sessionId.trim() : "";
+    const timeoutMs = resolveShellTimeout(record.timeout);
 
     if (sessionId) {
       return { status: "failed", output: "", error: "Browser shell sessions are not supported yet" };
     }
     if (!input.trim()) {
       return { status: "failed", output: "", error: "shell.exec requires input" };
+    }
+    if (timeoutMs === null) {
+      return { status: "failed", output: "", error: "shell.exec timeout must be a positive number" };
     }
     if (input.trim() === "help") {
       return { status: "completed", output: helpText(this.commands), exitCode: 0 };
@@ -87,10 +95,21 @@ export class BrowserTargetShell {
         await this.fs.mkdir(cwd);
       }
       throwIfAborted(context.abortSignal);
-      this.activeExecContext = context;
-      const result = await this.requireBash().exec(input, { cwd, signal: context.abortSignal });
-      throwIfAborted(context.abortSignal);
-      return toShellResult(result);
+      const deadline = new AbortController();
+      const timer = setTimeout(() => {
+        deadline.abort(new Error(`Command timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      const signal = context.abortSignal
+        ? AbortSignal.any([context.abortSignal, deadline.signal])
+        : deadline.signal;
+      this.activeExecContext = { ...context, abortSignal: signal };
+      try {
+        const result = await this.requireBash().exec(input, { cwd, signal });
+        throwIfAborted(signal);
+        return toShellResult(result);
+      } finally {
+        clearTimeout(timer);
+      }
     } catch (error) {
       return failedResult(error);
     } finally {
@@ -132,19 +151,21 @@ export class BrowserTargetShell {
         defineCommand(command.name, async (args, ctx) => {
           const commandContext: CommandContext = {
             cwd: ctx.cwd,
-            stdin: ctx.stdin,
+            stdin: decodeJustBashStdin(ctx.stdin),
             fs: this.fs,
             now: () => Date.now(),
             currentTargetId: this.activeExecContext.currentTargetId,
-            abortSignal: this.activeExecContext.abortSignal,
+            abortSignal: ctx.signal ?? this.activeExecContext.abortSignal,
             copyTargetFile: this.activeExecContext.copyTargetFile,
           };
           try {
             const execution = Promise.resolve(command.run(args, commandContext));
-            this.activeCommandCompletion = execution.then(
+            const completion = execution.then(
               () => undefined,
               () => undefined,
             );
+            this.activeCommandCompletions.add(completion);
+            void completion.then(() => this.activeCommandCompletions.delete(completion));
             return await abortable(
               execution,
               commandContext.abortSignal,
@@ -186,6 +207,7 @@ export class BrowserTargetShell {
         maxCommandCount: 10_000,
         maxLoopIterations: 10_000,
         maxCallDepth: 50,
+        maxExtensionCleanupTimeMs: JUST_BASH_EXTENSION_CLEANUP_TIME_MS,
       },
     });
   }
@@ -221,4 +243,11 @@ function failedResult(error: unknown): ShellResult {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function resolveShellTimeout(value: unknown): number | null {
+  if (value === undefined) return DEFAULT_BROWSER_SHELL_TIMEOUT_MS;
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : null;
 }

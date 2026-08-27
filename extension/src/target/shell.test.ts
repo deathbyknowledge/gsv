@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { pageCommand } from "./commands/page";
-import { BrowserTargetShell } from "./shell";
+import { BrowserTargetShell, DEFAULT_BROWSER_SHELL_TIMEOUT_MS } from "./shell";
 import type { BrowserCommand, CommandResult, TargetFileSystem } from "./types";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("BrowserTargetShell", () => {
+  it("uses a two-minute default runtime", () => {
+    expect(DEFAULT_BROWSER_SHELL_TIMEOUT_MS).toBe(120_000);
+  });
+
   it("exposes browser commands through help and structured discovery", async () => {
     const commands: BrowserCommand[] = [{
       name: "example",
@@ -135,6 +139,103 @@ describe("BrowserTargetShell", () => {
     running.resolve(undefined);
     await expect(within(next)).resolves.toMatchObject({ status: "completed" });
     expect(laterRuns).toBe(1);
+  });
+
+  it("stops later pipeline stages and keeps the active stage fenced", async () => {
+    const running = deferred<void>();
+    const started = deferred<void>();
+    let pipelineLaterRuns = 0;
+    let nextRuns = 0;
+    const commands: BrowserCommand[] = [
+      {
+        name: "block",
+        summary: "Block the active pipeline stage.",
+        async run() {
+          started.resolve(undefined);
+          await running.promise;
+          return { stdout: "left\n", stderr: "", exitCode: 0 };
+        },
+      },
+      {
+        name: "pipeline-later",
+        summary: "Record a later pipeline stage.",
+        run() {
+          pipelineLaterRuns += 1;
+          return commandResult();
+        },
+      },
+      {
+        name: "next",
+        summary: "Record the next execution.",
+        run() {
+          nextRuns += 1;
+          return commandResult();
+        },
+      },
+    ];
+    const shell = new BrowserTargetShell(directoryOnlyFileSystem(), commands);
+    const controller = new AbortController();
+    const active = shell.exec(
+      { input: "block | pipeline-later" },
+      { abortSignal: controller.signal },
+    );
+    await expect(within(started.promise)).resolves.toBeUndefined();
+
+    const next = shell.exec({ input: "next" });
+    controller.abort(new Error("Route expired"));
+    await expect(within(active)).resolves.toMatchObject({ status: "failed" });
+    expect(pipelineLaterRuns).toBe(0);
+    expect(nextRuns).toBe(0);
+
+    running.resolve(undefined);
+    await expect(within(next)).resolves.toMatchObject({ status: "completed" });
+    expect(pipelineLaterRuns).toBe(0);
+    expect(nextRuns).toBe(1);
+  });
+
+  it("honors an explicit runtime timeout through the command signal", async () => {
+    let observedAbort = false;
+    const command: BrowserCommand = {
+      name: "wait-for-abort",
+      summary: "Wait for cancellation.",
+      async run(_args, ctx) {
+        await new Promise<void>((resolve) => {
+          ctx.abortSignal?.addEventListener("abort", () => {
+            observedAbort = true;
+            resolve();
+          }, { once: true });
+        });
+        return commandResult();
+      },
+    };
+    const shell = new BrowserTargetShell(directoryOnlyFileSystem(), [command]);
+
+    await expect(within(shell.exec({
+      input: "wait-for-abort",
+      timeout: 10,
+    }))).resolves.toMatchObject({
+      status: "failed",
+      error: "Command timed out after 10ms",
+    });
+    expect(observedAbort).toBe(true);
+  });
+
+  it("decodes UTF-8 stdin for browser commands", async () => {
+    let stdin = "";
+    const command: BrowserCommand = {
+      name: "capture-stdin",
+      summary: "Capture text from stdin.",
+      run(_args, ctx) {
+        stdin = ctx.stdin;
+        return commandResult();
+      },
+    };
+    const shell = new BrowserTargetShell(directoryOnlyFileSystem(), [command]);
+
+    await expect(shell.exec({
+      input: "printf 'café ☕' | capture-stdin",
+    })).resolves.toMatchObject({ status: "completed" });
+    expect(stdin).toBe("café ☕");
   });
 
   it("cancels a long page wait, stops polling, and runs the next command", async () => {

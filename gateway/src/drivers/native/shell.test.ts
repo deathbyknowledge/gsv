@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:workers";
 import { Bash } from "just-bash";
-import { handleShellExec, NATIVE_SHELL_NETWORK_CONFIG } from "./shell";
+import {
+  DEFAULT_NATIVE_SHELL_TIMEOUT_MS,
+  handleShellExec,
+  NATIVE_SHELL_NETWORK_CONFIG,
+} from "./shell";
 import {
   handleFsCopy,
   handleFsRead,
@@ -206,6 +210,7 @@ function makeContext(options?: {
   identity?: ProcessIdentity;
   aiRun?: (model: string, input: ShellAiInput) => Promise<ShellAiResult>;
   ripgit?: Fetcher;
+  requestSignal?: AbortSignal;
 }): KernelContext {
   const identity = options?.identity ?? IDENTITY;
   const installationIdentity: InstallationIdentity = {
@@ -339,6 +344,7 @@ function makeContext(options?: {
     },
     processId: options?.processId === null ? undefined : options?.processId ?? "task:shell",
     processRunId: options?.processRunId,
+    requestSignal: options?.requestSignal,
     serverVersion: "0.4.1",
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
@@ -533,6 +539,48 @@ function enablePrivateDmHandoff(
 }
 
 describe("native shell execution", () => {
+  it("uses a two-minute default runtime", () => {
+    expect(DEFAULT_NATIVE_SHELL_TIMEOUT_MS).toBe(120_000);
+  });
+
+  it("reports the configured command timeout under just-bash cancellation", async () => {
+    const result = await handleShellExec(
+      { input: "sleep 1", timeout: 10 },
+      makeContext(),
+    );
+
+    expect(result).toMatchObject({
+      status: "failed",
+      error: "Command timed out after 10ms",
+    });
+  });
+
+  it("preserves the request cancellation reason under just-bash cancellation", async () => {
+    const controller = new AbortController();
+    const resultPromise = handleShellExec(
+      { input: "sleep 1" },
+      makeContext({ requestSignal: controller.signal }),
+    );
+    controller.abort(new Error("User interrupted"));
+
+    await expect(resultPromise).resolves.toMatchObject({
+      status: "failed",
+      error: "User interrupted",
+    });
+  });
+
+  it("supports process substitution through the native filesystem", async () => {
+    const result = await handleShellExec(
+      { input: "cat <(printf 'substitution works')" },
+      makeContext(),
+    );
+
+    expect(result).toMatchObject({
+      status: "completed",
+      stdout: "substitution works",
+    });
+  });
+
   it("keeps command stderr visible on non-zero exits", async () => {
     const result = await handleShellExec(
       { input: "printf 'real failure\\n' >&2; exit 7" },
@@ -1056,6 +1104,37 @@ describe("media native commands", () => {
     );
     expect(denied.exitCode).toBe(1);
     expect(denied.stderr).toContain("Permission denied: ai.text.generate");
+  });
+
+  it("decodes UTF-8 stdin before invoking llm", async () => {
+    generateMock.mockImplementationOnce(async (request: any) => {
+      expect(request.context.messages[0].content).toBe("café ☕");
+      return {
+        role: "assistant",
+        content: [{ type: "text", text: "received" }],
+        api: "test",
+        provider: "workers-ai",
+        model: "@cf/test/model",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: 1,
+      };
+    });
+
+    const result = await handleShellExec(
+      { input: "printf 'café ☕' | llm" },
+      makeContext({ capabilities: ["ai.text.generate"] }),
+    );
+
+    expect(result.status, result.stderr).toBe("completed");
+    expect(result.stdout).toBe("received\n");
   });
 
   it("fails llm when text generation returns an error message", async () => {
