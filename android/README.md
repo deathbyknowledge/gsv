@@ -68,10 +68,12 @@ For the debug-only interruptible shape proof, launch `LISTENING` with both
 redirect the in-progress morph between the production liquid and smile targets.
 To compare the production liquid states without restarting its animation, add
 `--ez overlay true` and `--ez states true`, then tap the core to advance through
-the states included in the current visual review. While `SPEAKING` is visible,
-the harness requests microphone permission and drives the acoustic membrane
-from the live input level. Pass `--ef signal 0.82` to use a fixed debug level
-instead; a fixed level disables microphone capture for that launch.
+the states included in the current visual review. `LISTENING` requests
+microphone permission and follows live input. `SPEAKING` loops a debug-only
+local voice phrase and drives the acoustic membrane from the exact PCM being
+played; the sample voice is not a product voice choice. Pass `--ef signal 0.82`
+to use a fixed debug level instead; a fixed level disables both live sources
+for that launch.
 
 Open GSV Wear. On a fresh install it walks through GSV address, username, and
 password; known URL and username values are skipped. The password is used only
