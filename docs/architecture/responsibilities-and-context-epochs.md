@@ -176,6 +176,11 @@ System-owned producers use the same ledger contract:
   immutable message id. The title contains no sender-controlled text. Bounded summary
   metadata is marked untrusted and is available only when the Ship inspects the record;
   exact content stays in the mailbox.
+- Activating either side of a contact invite creates one generation-scoped
+  `contact.added` responsibility. It asks Ship to learn about the contact and preserve
+  useful context in the owner's existing knowledge system without assuming a specific
+  wiki or inventing missing facts. Acceptance retries return the same responsibility;
+  pairing again after revocation creates another for the new generation.
 - The first registration of a physical machine creates one `machine.added`
   responsibility. Browser-backed targets and later reconnects do not create another.
 - An owned messaging account first becoming connected and authenticated creates one

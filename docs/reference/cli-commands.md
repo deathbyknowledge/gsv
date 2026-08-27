@@ -144,8 +144,8 @@ assigns an already-existing owned process with an explicit recovery deadline.
 producers as `configurable`. Only configurable producers can be changed. Use
 `r12y source disable mail.received` to keep accepting mail without creating a
 Ship responsibility for each message; enabling it affects future completions.
-Other configurable sources cover federation ingress, new machines, connected
-adapters, and adapter authentication loss.
+Other configurable sources cover federation ingress, new contacts, new machines,
+connected adapters, and adapter authentication loss.
 
 `message current` reports the current run's directed endpoint. For an adapter
 run, both text and JSON output include an opaque

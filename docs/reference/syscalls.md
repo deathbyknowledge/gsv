@@ -1046,6 +1046,7 @@ type ResponsibilitySourcePolicy =
       id:
         | "mail.received"
         | "federation.received"
+        | "contact.added"
         | "machine.added"
         | "adapter.connected"
         | "adapter.auth_required";
@@ -1115,6 +1116,7 @@ type ResponsibilitySyscalls = {
       id:
         | "mail.received"
         | "federation.received"
+        | "contact.added"
         | "machine.added"
         | "adapter.connected"
         | "adapter.auth_required";

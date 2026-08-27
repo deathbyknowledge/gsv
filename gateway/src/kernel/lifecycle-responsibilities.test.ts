@@ -5,8 +5,10 @@ import { stableOpaqueId } from "../shared/stable-id";
 import { AdapterStore } from "./adapter-store";
 import type { KernelContext } from "./context";
 import type { DeviceRecord } from "./devices";
+import type { FederationContactRecord } from "./federation-store";
 import {
   recordAdapterStatusTransition,
+  recordContactAddedResponsibility,
   recordMachineAddedResponsibility,
 } from "./lifecycle-responsibilities";
 import { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
@@ -59,6 +61,55 @@ describe("Kernel lifecycle responsibilities", () => {
         }),
       ]);
       expect(ctx.reconcileResponsibilityWake).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("creates one learning responsibility for each contact generation", async () => {
+    await runWithRealKernelSql((sql, storage) => {
+      const ctx = lifecycleContext(sql, storage);
+      const initial = contactRecord({
+        generation: "generation:initial",
+        updatedAtMs: 1_700_000_000_000,
+      });
+
+      recordContactAddedResponsibility(initial, "incoming", ctx);
+      recordContactAddedResponsibility(initial, "incoming", ctx);
+      const replacement = contactRecord({
+        generation: "generation:replacement",
+        updatedAtMs: initial.updatedAtMs + 1,
+      });
+      recordContactAddedResponsibility(replacement, "outgoing", ctx);
+      ctx.responsibilitySources.set(1000, "contact.added", false);
+      recordContactAddedResponsibility(contactRecord({
+        generation: "generation:disabled",
+        updatedAtMs: replacement.updatedAtMs + 1,
+      }), "incoming", ctx);
+
+      const responsibilities = ctx.responsibilities.list({
+        ownerUid: 1000,
+        includeTerminal: true,
+      }).records;
+      expect(responsibilities).toHaveLength(2);
+      expect(responsibilities).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          title: "Learn about a new contact and preserve useful context",
+          dedupeKey: `contact.added:${initial.id}:${initial.generation}`,
+          details: expect.objectContaining({
+            eventType: "contact.added",
+            contactGeneration: initial.generation,
+            displayName: "Remote Person",
+            inviteDirection: "incoming",
+            contentTrust: "untrusted",
+          }),
+        }),
+        expect.objectContaining({
+          dedupeKey: `contact.added:${replacement.id}:${replacement.generation}`,
+          details: expect.objectContaining({
+            contactGeneration: replacement.generation,
+            inviteDirection: "outgoing",
+          }),
+        }),
+      ]));
     });
   });
 
@@ -205,4 +256,33 @@ function lifecycleContext(
       void promise;
     }),
   } as KernelContext;
+}
+
+function contactRecord(
+  overrides: Partial<FederationContactRecord> = {},
+): FederationContactRecord {
+  return {
+    id: "contact:remote",
+    ownerUid: 1000,
+    state: "active",
+    generation: "generation:remote",
+    remoteShipId: "ship:remote",
+    remoteSubject: {
+      id: "subject:remote",
+      displayName: "Remote Person",
+    },
+    remoteOrigin: "https://remote.example",
+    remotePublicKey: {
+      kty: "EC",
+      crv: "P-256",
+      x: "remote-x",
+      y: "remote-y",
+    },
+    sharedSecret: "shared-secret",
+    conversationId: "conversation:remote",
+    threadId: "thread:remote",
+    createdAtMs: 1_700_000_000_000,
+    updatedAtMs: 1_700_000_000_000,
+    ...overrides,
+  };
 }
