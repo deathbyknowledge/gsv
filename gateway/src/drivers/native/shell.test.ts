@@ -569,6 +569,50 @@ describe("native shell execution", () => {
     });
   });
 
+  it("fences native custom command completion after timeout", async () => {
+    let generationSignal: AbortSignal | undefined;
+    let finishGeneration: () => void = () => {};
+    generateMock.mockImplementationOnce(async (request: { signal?: AbortSignal }) => await new Promise((resolve) => {
+      generationSignal = request.signal;
+      finishGeneration = () => resolve({
+        role: "assistant",
+        content: [{ type: "text", text: "late response" }],
+        api: "test",
+        provider: "workers-ai",
+        model: "@cf/test/model",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: 1,
+      });
+    }));
+
+    const resultPromise = handleShellExec(
+      { input: "llm wait", timeout: 10 },
+      makeContext({ capabilities: ["ai.text.generate"] }),
+    );
+    await vi.waitFor(() => expect(generateMock).toHaveBeenCalledOnce());
+
+    const earlyOutcome = await Promise.race([
+      resultPromise.then(() => "settled"),
+      new Promise<string>((resolve) => setTimeout(() => resolve("pending"), 150)),
+    ]);
+    expect(earlyOutcome).toBe("pending");
+    expect(generationSignal?.aborted).toBe(true);
+
+    finishGeneration();
+    await expect(resultPromise).resolves.toMatchObject({
+      status: "failed",
+      error: "Command timed out after 10ms",
+    });
+  });
+
   it("supports process substitution through the native filesystem", async () => {
     const result = await handleShellExec(
       { input: "cat <(printf 'substitution works')" },
@@ -2472,7 +2516,7 @@ describe("fs copy", () => {
     expect(openContactSource).toHaveBeenCalledWith({
       target: contact.id,
       path: "/resources/resource:shared",
-    }, undefined);
+    }, expect.any(AbortSignal));
     expect(await (await env.STORAGE.get(destinationKey))?.text()).toBe("from contact");
   });
 

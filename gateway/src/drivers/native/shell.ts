@@ -9,7 +9,11 @@
  */
 
 import { Bash } from "just-bash";
-import type { BashExecResult, NetworkConfig } from "just-bash";
+import type {
+  BashExecResult,
+  Command,
+  NetworkConfig,
+} from "just-bash";
 import { resolveUserPath } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
@@ -71,16 +75,24 @@ export async function handleShellExec(
   if (!Number.isFinite(timeout) || timeout <= 0) {
     return { status: "failed", output: "", error: "timeout must be a positive number" };
   }
-  const bash = createBash(ctx, identity, cwd, timeout, options);
   const controller = new AbortController();
+  const signal = ctx.requestSignal
+    ? AbortSignal.any([controller.signal, ctx.requestSignal])
+    : controller.signal;
+  const commandFence = new NativeCommandFence();
+  const bash = createBash(
+    { ...ctx, requestSignal: signal },
+    identity,
+    cwd,
+    timeout,
+    commandFence,
+    options,
+  );
 
   try {
     const timer = setTimeout(() => {
       controller.abort(new Error(`Command timed out after ${timeout}ms`));
     }, timeout);
-    const signal = ctx.requestSignal
-      ? AbortSignal.any([controller.signal, ctx.requestSignal])
-      : controller.signal;
 
     let result: BashExecResult;
     try {
@@ -90,6 +102,7 @@ export async function handleShellExec(
       });
     } finally {
       clearTimeout(timer);
+      await commandFence.waitForCompletion();
     }
 
     if (ctx.requestSignal?.aborted) {
@@ -149,6 +162,7 @@ function createBash(
   identity: ProcessIdentity,
   cwd: string,
   timeoutMs: number,
+  commandFence: NativeCommandFence,
   options?: NativeShellCommandOptions,
 ): Bash {
   const fs = createNativeFileSystem(ctx);
@@ -197,8 +211,32 @@ function createBash(
       maxExecutionTimeMs: timeoutMs + JUST_BASH_EXECUTION_BACKSTOP_GRACE_MS,
       maxExtensionCleanupTimeMs: JUST_BASH_EXTENSION_CLEANUP_TIME_MS,
     },
-    customCommands: buildCustomCommands(fs, identity, ctx, options),
+    customCommands: commandFence.wrap(buildCustomCommands(fs, identity, ctx, options)),
   });
+}
+
+class NativeCommandFence {
+  private readonly activeCompletions = new Set<Promise<void>>();
+
+  wrap(commands: Command[]): Command[] {
+    return commands.map((command) => ({
+      ...command,
+      execute: (args, ctx) => {
+        const execution = command.execute(args, ctx);
+        const completion = execution.then(
+          () => undefined,
+          () => undefined,
+        );
+        this.activeCompletions.add(completion);
+        void completion.then(() => this.activeCompletions.delete(completion));
+        return execution;
+      },
+    }));
+  }
+
+  async waitForCompletion(): Promise<void> {
+    await Promise.all(this.activeCompletions);
+  }
 }
 
 function requestCancelledResult(signal: AbortSignal): ShellExecResult {
