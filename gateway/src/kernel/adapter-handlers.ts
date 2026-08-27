@@ -211,11 +211,13 @@ const pairingInfoSchema = z.object({
   accountId: z.string().check(z.minLength(1)),
   configured: z.boolean(),
   botUsername: z.optional(z.string()),
+  installUrl: z.optional(z.string().check(z.minLength(1))),
 });
 const pairingCandidateSchema = z.object({
-  accountId: z.string().check(z.minLength(1)),
-  actorId: z.string().check(z.regex(/^[1-9][0-9]{0,19}$/)),
-  surfaceId: z.string(),
+  accountId: z.string().check(z.minLength(1), z.maxLength(200)),
+  actorId: z.string().check(z.minLength(1), z.maxLength(200)),
+  surfaceId: z.string().check(z.minLength(1), z.maxLength(200)),
+  routeScope: z.optional(z.enum(["surface", "actor"])),
   actorName: z.optional(z.string()),
   actorHandle: z.optional(z.string()),
   expiresAt: z.number(),
@@ -236,6 +238,7 @@ const pairingPreparationSchema = z.object({
 const managedIdentityLinkMetadataSchema = z.looseObject({
   managed: z.literal(true),
   surfaceId: z.string().check(z.minLength(1)),
+  routeScope: z.optional(z.enum(["surface", "actor"])),
   routeGeneration: z.string().check(z.minLength(1)),
 });
 const resourceBlockRecoverySchema = z.object({
@@ -573,6 +576,7 @@ export async function handleAdapterPairInfo(
     configured: info.data.configured,
   };
   if (info.data.botUsername) result.botUsername = info.data.botUsername;
+  if (info.data.installUrl) result.installUrl = info.data.installUrl;
   return result;
 }
 
@@ -628,7 +632,7 @@ export async function handleAdapterPairConfirm(
     existingCandidate.actorId,
   );
   if (existingLink && existingLink.uid !== uid) {
-    throw new Error("This Telegram identity is linked to another user in this GSV");
+    throw new Error("This external identity is linked to another user in this GSV");
   }
 
   const prepared = requirePairingPreparation(await service.adapterPairingPrepare!(
@@ -645,6 +649,7 @@ export async function handleAdapterPairConfirm(
     prepared.candidate.actorId !== existingCandidate.actorId
     || prepared.candidate.surfaceId !== existingCandidate.surfaceId
     || prepared.candidate.accountId !== existingCandidate.accountId
+    || pairingRouteScope(prepared.candidate) !== pairingRouteScope(existingCandidate)
   ) {
     throw new Error("Adapter pairing changed during preparation");
   }
@@ -659,6 +664,7 @@ export async function handleAdapterPairConfirm(
       managed: true,
       surfaceKind: "dm",
       surfaceId: prepared.candidate.surfaceId,
+      routeScope: pairingRouteScope(prepared.candidate),
       routeGeneration: prepared.route.generation,
       operationId,
     },
@@ -675,6 +681,8 @@ export async function handleAdapterPairConfirm(
   if (
     activated.candidate.actorId !== prepared.candidate.actorId
     || activated.candidate.surfaceId !== prepared.candidate.surfaceId
+    || activated.candidate.accountId !== prepared.candidate.accountId
+    || pairingRouteScope(activated.candidate) !== pairingRouteScope(prepared.candidate)
     || activated.route.generation !== prepared.route.generation
   ) {
     throw new Error("Adapter pairing changed during confirmation");
@@ -751,6 +759,7 @@ export async function handleAdapterPairDisconnect(
     const result = await service.adapterPairingDisconnect!(adapterInstallationContext(ctx), {
       operationId,
       installationId: ctx.installationId,
+      accountId,
       actorId,
       surfaceId,
       localUid: uid,
@@ -2461,10 +2470,25 @@ function normalizePairingCode(value: string): string {
 
 function requirePairingCandidate(value: AdapterPairingCandidate): AdapterPairingCandidate {
   const parsed = pairingCandidateSchema.safeParse(value);
-  if (!parsed.success || parsed.data.surfaceId !== parsed.data.actorId) {
+  if (!parsed.success) {
     throw new Error("Adapter returned an invalid pairing candidate");
   }
-  return parsed.data;
+  const accountId = parsed.data.accountId.trim();
+  const actorId = parsed.data.actorId.trim();
+  const surfaceId = parsed.data.surfaceId.trim();
+  if (!accountId || !actorId || !surfaceId) {
+    throw new Error("Adapter returned an invalid pairing candidate");
+  }
+  return {
+    ...parsed.data,
+    accountId,
+    actorId,
+    surfaceId,
+  };
+}
+
+function pairingRouteScope(candidate: AdapterPairingCandidate): "surface" | "actor" {
+  return candidate.routeScope ?? "surface";
 }
 
 function requirePairingPreparation(

@@ -44,6 +44,8 @@ import type {
   ManagedOutboundMailClaimOutcome,
   ManagedOutboundMailCompletion,
   ManagedOutboundMailReference,
+  UnlinkManagedAdapterIdentityInput,
+  UnlinkManagedAdapterIdentityResult,
   UnlinkManagedTelegramIdentityInput,
   UnlinkManagedTelegramIdentityResult,
   NetFetchArgs,
@@ -589,6 +591,14 @@ const managedTelegramUnlinkSchema = z.object({
   operationId: z.string().min(1),
   actorId: z.string().regex(/^[1-9][0-9]{0,19}$/),
   surfaceId: z.string(),
+  expectedLocalUid: z.number().int().nonnegative(),
+  expectedGeneration: z.string().min(1),
+});
+const managedAdapterUnlinkSchema = z.object({
+  operationId: z.string().min(1),
+  accountId: z.string().trim().min(1).max(200),
+  actorId: z.string().trim().min(1).max(200),
+  surfaceId: z.string().trim().min(1).max(200),
   expectedLocalUid: z.number().int().nonnegative(),
   expectedGeneration: z.string().min(1),
 });
@@ -1550,7 +1560,30 @@ export class Kernel extends DurableObject<Env> {
     if (parsed.surfaceId !== parsed.actorId) {
       throw new Error("Managed Telegram unlink input is invalid");
     }
-    const link = this.adapters.identityLinks.get("telegram", "managed", parsed.actorId);
+    return await this.unlinkManagedAdapterIdentity("telegram", {
+      operationId: parsed.operationId,
+      accountId: "managed",
+      actorId: parsed.actorId,
+      surfaceId: parsed.surfaceId,
+      expectedLocalUid: parsed.expectedLocalUid,
+      expectedGeneration: parsed.expectedGeneration,
+    });
+  }
+
+  async unlinkManagedAdapterIdentity(
+    adapter: string,
+    input: UnlinkManagedAdapterIdentityInput,
+  ): Promise<UnlinkManagedAdapterIdentityResult> {
+    const normalizedAdapter = adapter.trim().toLowerCase();
+    if (!/^[a-z][a-z0-9-]{0,63}$/.test(normalizedAdapter)) {
+      throw new Error("Managed adapter identity is invalid");
+    }
+    const parsed = managedAdapterUnlinkSchema.parse(input);
+    const link = this.adapters.identityLinks.get(
+      normalizedAdapter,
+      parsed.accountId,
+      parsed.actorId,
+    );
     if (
       !link
       || link.uid !== parsed.expectedLocalUid
@@ -1561,7 +1594,11 @@ export class Kernel extends DurableObject<Env> {
       return { removed: false };
     }
     return {
-      removed: this.adapters.identityLinks.unlink("telegram", "managed", parsed.actorId),
+      removed: this.adapters.identityLinks.unlink(
+        normalizedAdapter,
+        parsed.accountId,
+        parsed.actorId,
+      ),
     };
   }
 

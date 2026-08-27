@@ -34,8 +34,8 @@ export default defineConfig({
                     },
                   };
                 }
-                async unlinkManagedTelegramIdentity(input) {
-                  calls.push({ call: "unlinkManagedTelegramIdentity", input });
+                async unlinkManagedAdapterIdentity(installation, input) {
+                  calls.push({ call: "unlinkManagedAdapterIdentity", installation, input });
                   return { removed: true };
                 }
                 async fetch() {

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { identityLinkAllowsSurface } from "./adapter-destinations";
+import {
+  identityLinkAllowsSurface,
+  identityLinkRouteGeneration,
+} from "./adapter-destinations";
 import { IdentityLinkStore } from "./identity-links";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 
@@ -35,5 +38,28 @@ describe("IdentityLinkStore", () => {
         surfaceId: "chat-1",
       });
     });
+  });
+
+  it("fences an actor-scoped managed route across observed surfaces without authorizing them", () => {
+    const link = {
+      adapter: "slack",
+      accountId: "workspace-1",
+      actorId: "U123",
+      uid: 1000,
+      createdAt: 1,
+      linkedByUid: 1000,
+      metadata: {
+        managed: true,
+        surfaceKind: "dm",
+        surfaceId: "D123",
+        routeScope: "actor",
+        routeGeneration: "generation-1",
+      },
+    };
+
+    expect(identityLinkAllowsSurface(link, { kind: "dm", id: "D123" })).toBe(true);
+    expect(identityLinkAllowsSurface(link, { kind: "channel", id: "C123" })).toBe(false);
+    expect(identityLinkRouteGeneration(link, { kind: "channel", id: "C123" }))
+      .toBe("generation-1");
   });
 });

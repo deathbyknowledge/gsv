@@ -8,12 +8,15 @@ import type {
   ManagedInboundMailAccepted,
   ManagedInboundMailCompletion,
   ManagedInboundMailMetadata,
+  ManagedAdapterGatewayService,
   ManagedTelegramGatewayService,
   ManagedOutboundMailClaimOutcome,
   ManagedOutboundMailCompletion,
   ManagedOutboundMailReference,
   UnlinkManagedTelegramIdentityInput,
   UnlinkManagedTelegramIdentityResult,
+  UnlinkManagedAdapterIdentityInput,
+  UnlinkManagedAdapterIdentityResult,
 } from "@humansandmachines/gsv/protocol";
 import type { MailGatewayService } from "@humansandmachines/gsv/services/mail";
 import {
@@ -308,13 +311,34 @@ export class GatewayEntrypoint
   }
 }
 
-export class AdapterGatewayEntrypoint extends AdapterServiceEntrypoint<ServicePeerProfile> {
+export class AdapterGatewayEntrypoint
+  extends AdapterServiceEntrypoint<ServicePeerProfile>
+  implements ManagedAdapterGatewayService
+{
   protected override resolveServicePeerProfile(): ServicePeerProfile {
     const parsed = adapterServicePeerProfileSchema.safeParse(this.ctx.props);
     if (!parsed.success || new Set(parsed.data.calls).size !== parsed.data.calls.length) {
       throw new Error("Adapter service binding props are invalid");
     }
     return parsed.data;
+  }
+
+  async unlinkManagedAdapterIdentity(
+    installation: AdapterInstallationContext,
+    input: UnlinkManagedAdapterIdentityInput,
+  ): Promise<UnlinkManagedAdapterIdentityResult> {
+    const directory = this.env.INSTALLATION_DIRECTORY;
+    if (!directory) throw new Error("Managed adapter pairing is not enabled");
+    const installationId = resolveAdapterInstallationId(this.env, installation);
+    const resolved = await directory.resolveInstallation(installationId);
+    if (!resolved.found || resolved.installationId !== installationId) {
+      return { removed: false };
+    }
+    const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
+    return await kernel.unlinkManagedAdapterIdentity(
+      this.resolveServicePeerProfile().id,
+      input,
+    );
   }
 }
 

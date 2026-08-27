@@ -70,6 +70,7 @@ describe("Gateway adapter RPC compatibility", () => {
 
     expect("serviceFrame" in gateway).toBe(true);
     expect("acceptManagedInboundMail" in gateway).toBe(false);
+    expect("unlinkManagedAdapterIdentity" in gateway).toBe(true);
     expect("unlinkManagedTelegramIdentity" in gateway).toBe(false);
   });
 

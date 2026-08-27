@@ -1,4 +1,5 @@
 import type { AiStopReason } from "./syscalls/ai";
+import type { AdapterInstallationContext } from "./adapters";
 import type {
   ManagedInferenceActor,
   ManagedInferencePurpose,
@@ -163,6 +164,27 @@ export type {
   InstallationOnboardingAuthorization,
   InstallationOnboardingService,
 } from "../services/onboarding";
+
+export type UnlinkManagedAdapterIdentityInput = {
+  operationId: string;
+  accountId: string;
+  actorId: string;
+  surfaceId: string;
+  expectedLocalUid: number;
+  expectedGeneration: string;
+};
+
+export type UnlinkManagedAdapterIdentityResult = {
+  removed: boolean;
+};
+
+/** Attenuated cleanup RPC exposed only on a deployment-owned adapter binding. */
+export interface ManagedAdapterGatewayService {
+  unlinkManagedAdapterIdentity(
+    installation: AdapterInstallationContext,
+    input: UnlinkManagedAdapterIdentityInput,
+  ): Promise<UnlinkManagedAdapterIdentityResult>;
+}
 
 export type UnlinkManagedTelegramIdentityInput = {
   installationId: string;
