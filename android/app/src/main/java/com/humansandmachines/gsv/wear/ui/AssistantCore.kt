@@ -2,6 +2,7 @@ package com.humansandmachines.gsv.wear.ui
 
 import android.content.Context
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
@@ -29,6 +30,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicText as Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -72,6 +74,23 @@ fun AssistantCore(
         animationSpec = tween(90, easing = FastOutSlowInEasing),
         label = "assistant-signal",
     )
+    val speakingEnvelope = remember { Animatable(0f) }
+    val speakingTarget = if (state == VoiceTurnState.SPEAKING) {
+        signal.coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+    LaunchedEffect(state == VoiceTurnState.SPEAKING, speakingTarget) {
+        val durationMillis = if (speakingTarget > speakingEnvelope.value) {
+            SPEAKING_ATTACK_MILLIS
+        } else {
+            SPEAKING_RELEASE_MILLIS
+        }
+        speakingEnvelope.animateTo(
+            targetValue = speakingTarget,
+            animationSpec = tween(durationMillis, easing = LinearEasing),
+        )
+    }
     val accent by animateColorAsState(
         targetValue = state.accentColor(),
         animationSpec = tween(480, easing = FastOutSlowInEasing),
@@ -83,7 +102,7 @@ fun AssistantCore(
     val thinkingEnergy = 0.25f +
         0.11f * abs(sin(loopPhase * 2f)) +
         0.05f * abs(sin(loopPhase * 3f + 0.9f))
-    val speakingEnergy = smoothedSignal
+    val speakingEnergy = speakingEnvelope.value
     val energy = when {
         state.usesAssistantLiquid() -> {
             val focusedEnergy = smoothedSignal +
@@ -138,6 +157,9 @@ fun AssistantCore(
         }
     }
 }
+
+private const val SPEAKING_ATTACK_MILLIS = 240
+private const val SPEAKING_RELEASE_MILLIS = 520
 
 @Composable
 fun AssistantSurface(
