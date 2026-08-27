@@ -7,6 +7,7 @@ import type {
   ResultOf,
   SyscallName,
 } from "./protocol";
+import { DEFAULT_SHELL_EXEC_TIMEOUT_MS } from "./protocol/syscalls/shell";
 import type { JsonValue } from "./protocol/json";
 import { jsonValueSchema } from "./protocol/json";
 import {
@@ -296,6 +297,7 @@ const PROTOCOL_VERSION = 3;
 const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
 const LONG_RUNNING_REQUEST_TIMEOUT_MS = 120_000;
 const AI_TEXT_GENERATION_REQUEST_TIMEOUT_MS = 180_000;
+const SHELL_EXEC_RESPONSE_GRACE_MS = 10_000;
 const DEFAULT_ENDPOINT_KEEPALIVE_MS = 240_000;
 const DEFAULT_ENDPOINT_ACKNOWLEDGEMENT_TIMEOUT_MS = 10_000;
 const WEBSOCKET_CONNECTING = 0;
@@ -942,7 +944,7 @@ export class GSVClient {
       args: wireArgs,
     };
     if (outgoing) frame.body = outgoing.descriptor;
-    const timeoutMs = this.requestTimeoutMs(call);
+    const timeoutMs = this.requestTimeoutMs(call, args);
     const bodyAbort = body ? new AbortController() : undefined;
 
     return new Promise((resolve, reject) => {
@@ -1022,7 +1024,7 @@ export class GSVClient {
       call,
       args: serializeOutgoingArguments(args),
     };
-    const timeoutMs = this.requestTimeoutMs(call);
+    const timeoutMs = this.requestTimeoutMs(call, args);
 
     return new Promise<T>((resolve, reject) => {
       let settled = false;
@@ -1224,8 +1226,21 @@ export class GSVClient {
     socket.send(JSON.stringify(frame));
   }
 
-  private requestTimeoutMs(call: string): number {
-    return this.requestTimeoutsMs[call] ?? this.defaultRequestTimeoutMs;
+  private requestTimeoutMs(call: string, args: GsvOutgoingArguments): number {
+    const configuredTimeout = this.requestTimeoutsMs[call];
+    if (configuredTimeout !== undefined) {
+      return configuredTimeout;
+    }
+    if (call === "shell.exec") {
+      const requestedTimeout = (args as GsvRequestArguments).timeout;
+      const executionTimeout = typeof requestedTimeout === "number"
+        && Number.isFinite(requestedTimeout)
+        && requestedTimeout > 0
+        ? requestedTimeout
+        : DEFAULT_SHELL_EXEC_TIMEOUT_MS;
+      return executionTimeout + SHELL_EXEC_RESPONSE_GRACE_MS;
+    }
+    return this.defaultRequestTimeoutMs;
   }
 
   private takePending(id: string): PendingRequest | null {

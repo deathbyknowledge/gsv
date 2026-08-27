@@ -195,6 +195,10 @@ It does not derive either value from an agent-supplied hostname.
 
 Runtime behavior:
 
+New commands default to a two-minute maximum runtime. Callers may set
+`timeout` explicitly; the native `gsv` default can also be changed through
+`config/shell/timeout_ms`.
+
 | Syscall | Handler | Behavior |
 |---|---|---|
 | `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env and built-in commands such as `codemode`, `mail`, `mcp`, and `wiki`. Device targets run a real local shell through the CLI. Device start calls return within a runtime-owned wait budget. If the command is still running, the result includes a `sessionId`; later calls with that `sessionId` poll or write stdin. |
@@ -207,6 +211,7 @@ type ShellSyscalls = {
       cwd?: string;
       input: string;
       sessionId?: string;
+      timeout?: number;
     };
     result:
       | { status: "completed"; output: string; exitCode: number; sessionId?: string; truncated?: boolean }

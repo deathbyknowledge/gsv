@@ -108,7 +108,7 @@ Default policies:
 | `config/server/name` | `gsv` | Server name used by hostname-style tools and client metadata. |
 | `config/server/timezone` | `UTC` | Runtime timezone value. |
 | `config/server/version` | current `VERSION` | Semantic server version exposed to runtime tools. |
-| `config/shell/timeout_ms` | `30000` | Default native shell timeout. |
+| `config/shell/timeout_ms` | `120000` | Default native shell timeout. |
 | `config/shell/network_enabled` | `true` | Enables network tools in native shell execution. |
 | `config/shell/max_output_bytes` | `524288` | Maximum captured shell output. |
 | `config/process/max_per_user` | `0` | Maximum processes per user. `0` means unlimited. |

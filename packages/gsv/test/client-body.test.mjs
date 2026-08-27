@@ -788,6 +788,46 @@ test("cancels an outbound request before rejecting its timeout", async () => {
   client.close();
 });
 
+test("lets shell execution finish before its request transport times out", async () => {
+  const { client, socket } = await connectedClient();
+  const originalSetTimeout = globalThis.setTimeout;
+  const scheduledDelays = [];
+  globalThis.setTimeout = (callback, delay, ...args) => {
+    scheduledDelays.push(delay);
+    return originalSetTimeout(callback, delay, ...args);
+  };
+
+  try {
+    const defaultTimeout = client.request("shell.exec", { input: "sleep 1" });
+    const defaultRequest = JSON.parse(socket.sent.at(-1));
+    assert.equal(scheduledDelays.at(-1), 130_000);
+    socket.receive(JSON.stringify({
+      type: "res",
+      id: defaultRequest.id,
+      ok: true,
+      data: { status: "completed", output: "", exitCode: 0 },
+    }));
+    await defaultTimeout;
+
+    const explicitTimeout = client.request("shell.exec", {
+      input: "sleep 1",
+      timeout: 300_000,
+    });
+    const explicitRequest = JSON.parse(socket.sent.at(-1));
+    assert.equal(scheduledDelays.at(-1), 310_000);
+    socket.receive(JSON.stringify({
+      type: "res",
+      id: explicitRequest.id,
+      ok: true,
+      data: { status: "completed", output: "", exitCode: 0 },
+    }));
+    await explicitTimeout;
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    client.close();
+  }
+});
+
 test("keeps a caller-owned mail delivery id after a lost response", async () => {
   const client = new GSVClient({
     WebSocket: FakeWebSocket,

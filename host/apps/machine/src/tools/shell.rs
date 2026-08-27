@@ -15,7 +15,7 @@ use tokio::process::{ChildStdin, Command};
 use tokio::sync::{broadcast, Mutex as AsyncMutex};
 use uuid::Uuid;
 
-const DEFAULT_TIMEOUT_MS: u64 = 5 * 60 * 1000;
+const DEFAULT_TIMEOUT_MS: u64 = 2 * 60 * 1000;
 const DEFAULT_YIELD_MS: u64 = 5_000;
 const MIN_YIELD_MS: u64 = 250;
 const MAX_YIELD_MS: u64 = 30_000;
@@ -770,6 +770,11 @@ impl Tool for ShellTool {
 #[cfg(test)]
 mod result_tests {
     use super::*;
+
+    #[test]
+    fn default_runtime_matches_shell_contract() {
+        assert_eq!(DEFAULT_TIMEOUT_MS, 120_000);
+    }
 
     fn snapshot(status: &str) -> ProcessSnapshot {
         ProcessSnapshot {
