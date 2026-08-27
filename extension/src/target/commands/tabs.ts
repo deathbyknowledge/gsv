@@ -9,6 +9,7 @@ import {
 } from "../../shared/chrome";
 import { inferContentType } from "../../shared/content-types";
 import { basename, normalizePath } from "../../shared/paths";
+import { throwIfAborted } from "../abort";
 import type { BrowserCommand, CommandContext, CommandResult, FileStat, TargetCopyEndpoint } from "../types";
 import { commandError, commandJson, commandOk } from "../types";
 import { hasHelpFlag, requiredInteger, splitOption } from "./args";
@@ -323,7 +324,8 @@ async function renderableFromTargetEndpoint(
     copy = await ctx.copyTargetFile(endpoint, {
       target: ctx.currentTargetId,
       path: destination,
-    });
+    }, ctx.abortSignal);
+    throwIfAborted(ctx.abortSignal);
   } catch (error) {
     throw new Error(remoteCopyErrorMessage(error));
   }

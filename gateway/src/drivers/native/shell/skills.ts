@@ -12,6 +12,7 @@ import {
 } from "../../../kernel/skills";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { nativeCommandSynopsis } from "./discovery";
+import { decodeShellStdin } from "./stdin";
 
 export type SkillFs = Pick<GsvFs, "resolvePath" | "exists" | "mkdir" | "writeFile" | "readdir" | "stat" | "readFile">;
 
@@ -241,7 +242,7 @@ async function readSkillBody(
   fs: SkillFs,
   identity: ProcessIdentity,
 ): Promise<string> {
-  const stdin = commandCtx.stdin.trim();
+  const stdin = decodeShellStdin(commandCtx.stdin).trim();
   if (from && stdin) {
     throw new Error("provide workflow instructions with either --from or stdin, not both");
   }

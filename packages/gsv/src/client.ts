@@ -72,7 +72,7 @@ export type GsvFrame = GsvRequestFrame | GsvResponseFrame | GsvSignalFrame;
 type PendingRequest = {
   resolve: (value: GsvResponse<JsonValue>) => void;
   reject: (error: Error) => void;
-  timeoutId: TimerHandle;
+  timeoutId: TimerHandle | null;
   call: string;
   bodyAbort?: AbortController;
   abortSignal?: AbortSignal;
@@ -228,6 +228,15 @@ const binaryFrameDescriptorSchema = z.strictObject({
   streamId: z.int().check(z.positive()),
   length: z.optional(z.int().check(z.nonnegative())),
 });
+const shellExecTimeoutArgumentsSchema = z.looseObject({
+  timeout: z.optional(z.number().check(z.positive())),
+});
+const shellExecSessionArgumentsSchema = z.looseObject({
+  sessionId: z.string(),
+});
+const shellExecPollingArgumentsSchema = z.looseObject({
+  yieldMs: z.optional(z.number().check(z.positive())),
+});
 const gsvErrorSchema = z.strictObject({
   code: z.number(),
   message: z.string(),
@@ -296,6 +305,7 @@ const PROTOCOL_VERSION = 3;
 const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
 const LONG_RUNNING_REQUEST_TIMEOUT_MS = 120_000;
 const AI_TEXT_GENERATION_REQUEST_TIMEOUT_MS = 180_000;
+const SHELL_EXEC_RESPONSE_GRACE_MS = 10_000;
 const DEFAULT_ENDPOINT_KEEPALIVE_MS = 240_000;
 const DEFAULT_ENDPOINT_ACKNOWLEDGEMENT_TIMEOUT_MS = 10_000;
 const WEBSOCKET_CONNECTING = 0;
@@ -942,7 +952,7 @@ export class GSVClient {
       args: wireArgs,
     };
     if (outgoing) frame.body = outgoing.descriptor;
-    const timeoutMs = this.requestTimeoutMs(call);
+    const timeoutMs = this.requestTimeoutMs(call, wireArgs);
     const bodyAbort = body ? new AbortController() : undefined;
 
     return new Promise((resolve, reject) => {
@@ -962,10 +972,12 @@ export class GSVClient {
         void outgoing?.cancel(error);
         pending.reject(error);
       };
-      const timeoutId = globalThis.setTimeout(() => {
-        const error = new Error(`Request timed out after ${timeoutMs}ms: ${call}`);
-        cancelPending(error);
-      }, timeoutMs);
+      const timeoutId = timeoutMs === null
+        ? null
+        : globalThis.setTimeout(() => {
+          const error = new Error(`Request timed out after ${timeoutMs}ms: ${call}`);
+          cancelPending(error);
+        }, timeoutMs);
 
       const pending: PendingRequest = {
         resolve,
@@ -1016,27 +1028,32 @@ export class GSVClient {
     args: GsvOutgoingArguments,
   ): Promise<T> {
     const id = makeId();
+    const wireArgs = serializeOutgoingArguments(args);
     const frame: GsvRequestFrame = {
       type: "req",
       id,
       call,
-      args: serializeOutgoingArguments(args),
+      args: wireArgs,
     };
-    const timeoutMs = this.requestTimeoutMs(call);
+    const timeoutMs = this.requestTimeoutMs(call, wireArgs);
 
     return new Promise<T>((resolve, reject) => {
       let settled = false;
-      const timeoutId = globalThis.setTimeout(() => {
-        cleanup();
-        reject(new Error(`Request timed out after ${timeoutMs}ms: ${call}`));
-      }, timeoutMs);
+      const timeoutId = timeoutMs === null
+        ? null
+        : globalThis.setTimeout(() => {
+          cleanup();
+          reject(new Error(`Request timed out after ${timeoutMs}ms: ${call}`));
+        }, timeoutMs);
 
       const cleanup = (): void => {
         if (settled) {
           return;
         }
         settled = true;
-        globalThis.clearTimeout(timeoutId);
+        if (timeoutId !== null) {
+          globalThis.clearTimeout(timeoutId);
+        }
         socket.removeEventListener("message", onMessage);
         socket.removeEventListener("close", onClose);
         socket.removeEventListener("error", onError);
@@ -1224,8 +1241,26 @@ export class GSVClient {
     socket.send(JSON.stringify(frame));
   }
 
-  private requestTimeoutMs(call: string): number {
-    return this.requestTimeoutsMs[call] ?? this.defaultRequestTimeoutMs;
+  private requestTimeoutMs(call: string, args: JsonValue): number | null {
+    const configuredTimeout = this.requestTimeoutsMs[call];
+    if (configuredTimeout !== undefined) {
+      return configuredTimeout;
+    }
+    if (call === "shell.exec") {
+      const session = shellExecSessionArgumentsSchema.safeParse(args);
+      if (session.success && session.data.sessionId.trim()) {
+        const polling = shellExecPollingArgumentsSchema.safeParse(args);
+        const pollingWait = polling.success
+          ? polling.data.yieldMs ?? this.defaultRequestTimeoutMs
+          : this.defaultRequestTimeoutMs;
+        return pollingWait + SHELL_EXEC_RESPONSE_GRACE_MS;
+      }
+      const parsed = shellExecTimeoutArgumentsSchema.safeParse(args);
+      return parsed.success && parsed.data.timeout !== undefined
+        ? parsed.data.timeout + SHELL_EXEC_RESPONSE_GRACE_MS
+        : null;
+    }
+    return this.defaultRequestTimeoutMs;
   }
 
   private takePending(id: string): PendingRequest | null {
@@ -1234,7 +1269,9 @@ export class GSVClient {
       return null;
     }
     this.pending.delete(id);
-    globalThis.clearTimeout(pending.timeoutId);
+    if (pending.timeoutId !== null) {
+      globalThis.clearTimeout(pending.timeoutId);
+    }
     if (pending.abortSignal && pending.abortListener) {
       pending.abortSignal.removeEventListener("abort", pending.abortListener);
     }

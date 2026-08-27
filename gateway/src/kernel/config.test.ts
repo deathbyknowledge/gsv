@@ -9,6 +9,10 @@ import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { MAIL_STATUS } from "../syscalls/constants";
 
 describe("ConfigStore", () => {
+  it("defaults native shell execution to two minutes", () => {
+    expect(SYSTEM_CONFIG_DEFAULTS["config/shell/timeout_ms"]).toBe("120000");
+  });
+
   const configuredStoreTest = it.extend<{ store: ConfigStore }>({
     store: async ({ task: _task }, use) => {
       await runWithRealKernelSql(async (sql) => {

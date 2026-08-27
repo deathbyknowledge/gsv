@@ -1,4 +1,9 @@
-import { defineCommand, type Command, type CommandContext, type ExecResult } from "just-bash";
+import {
+  defineCommand,
+  type Command,
+  type CommandContext,
+  type ExecResult,
+} from "just-bash";
 import type {
   AiTextGenerateConfig,
   AiTextGenerateResult,
@@ -8,6 +13,7 @@ import { handleAiTextGenerate } from "../../../kernel/ai";
 import type { KernelContext } from "../../../kernel/context";
 import type { NetFetchDeviceTransport } from "../../../kernel/net";
 import { requireCommandCapability, requireShellOptionValue } from "./common";
+import { decodeShellStdin } from "./stdin";
 
 type ParsedArgs = {
   options: Map<string, string | true>;
@@ -212,7 +218,7 @@ function normalizeReasoning(value: string): NonNullable<AiTextGenerateOptions["r
 }
 
 function readTextArgument(positionals: string[], ctx: CommandContext): string {
-  const text = positionals.join(" ").trim() || ctx.stdin.trim();
+  const text = positionals.join(" ").trim() || decodeShellStdin(ctx.stdin).trim();
   if (!text) {
     throw new Error("prompt is required");
   }

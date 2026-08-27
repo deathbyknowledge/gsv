@@ -34,6 +34,31 @@ describe("tabs open", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  it("passes request cancellation to remote file copies", async () => {
+    const controller = new AbortController();
+    const copyTargetFile = vi.fn(async () => {
+      throw new Error("copy stopped");
+    });
+    const ctx = context(vi.fn(), {
+      fs: { mkdir: vi.fn() } as unknown as TargetFileSystem,
+      currentTargetId: "browser",
+      abortSignal: controller.signal,
+      copyTargetFile,
+    });
+
+    const result = await runTabs(["open", "machine:/report.txt"], ctx);
+
+    expect(copyTargetFile).toHaveBeenCalledWith(
+      { target: "machine", path: "/report.txt" },
+      {
+        target: "browser",
+        path: expect.stringMatching(/^\/tmp\/render\/\d{14}-[a-f0-9]{8}-report\.txt$/),
+      },
+      controller.signal,
+    );
+    expect(result).toMatchObject({ exitCode: 1, stderr: expect.stringContaining("copy stopped") });
+  });
+
 });
 
 describe("page screenshot", () => {
@@ -81,20 +106,21 @@ describe("page screenshot", () => {
   });
 });
 
-async function runTabs(args: string[]) {
+async function runTabs(args: string[], ctx = context()) {
   const command = tabCommands[0];
   if (!command) {
     throw new Error("tabs command is unavailable");
   }
-  return await command.run(args, context());
+  return await command.run(args, ctx);
 }
 
-function context(write = vi.fn()): CommandContext {
+function context(write = vi.fn(), overrides: Partial<CommandContext> = {}): CommandContext {
   return {
     cwd: "/",
     stdin: "",
     fs: { write } as unknown as TargetFileSystem,
     now: () => 0,
+    ...overrides,
   };
 }
 

@@ -9,11 +9,18 @@
  */
 
 import { Bash } from "just-bash";
-import type { BashExecResult, NetworkConfig } from "just-bash";
+import type {
+  BashExecResult,
+  Command,
+  NetworkConfig,
+} from "just-bash";
 import { resolveUserPath } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import {
+  DEFAULT_SHELL_EXEC_TIMEOUT_MS,
+  type ProcessIdentity,
+} from "@humansandmachines/gsv/protocol";
 import { createNativeFileSystem } from "./filesystem";
 import {
   buildCustomCommands,
@@ -28,6 +35,10 @@ export const NATIVE_SHELL_NETWORK_CONFIG = {
   // public hostnames instead of failing before fetch.
   denyPrivateRanges: false,
 } satisfies NetworkConfig;
+
+export const DEFAULT_NATIVE_SHELL_TIMEOUT_MS = DEFAULT_SHELL_EXEC_TIMEOUT_MS;
+const JUST_BASH_EXTENSION_CLEANUP_TIME_MS = 100;
+const JUST_BASH_EXECUTION_BACKSTOP_GRACE_MS = 1_000;
 
 export async function handleShellExec(
   args: ShellExecArgs,
@@ -52,10 +63,8 @@ export async function handleShellExec(
   const cwd = args.cwd
     ? resolveUserPath(args.cwd, identity.home, identity.cwd)
     : identity.cwd;
-  const bash = createBash(ctx, identity, cwd, options);
-
   const timeoutMs = parseInt(
-    ctx.config.get("config/shell/timeout_ms") ?? "30000",
+    ctx.config.get("config/shell/timeout_ms") ?? String(DEFAULT_NATIVE_SHELL_TIMEOUT_MS),
     10,
   );
   const maxOutput = parseInt(
@@ -63,13 +72,27 @@ export async function handleShellExec(
     10,
   );
   const timeout = args.timeout ?? timeoutMs;
+  if (!Number.isFinite(timeout) || timeout <= 0) {
+    return { status: "failed", output: "", error: "timeout must be a positive number" };
+  }
+  const controller = new AbortController();
+  const signal = ctx.requestSignal
+    ? AbortSignal.any([controller.signal, ctx.requestSignal])
+    : controller.signal;
+  const commandFence = new NativeCommandFence();
+  const bash = createBash(
+    { ...ctx, requestSignal: signal },
+    identity,
+    cwd,
+    timeout,
+    commandFence,
+    options,
+  );
 
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeout);
-    const signal = ctx.requestSignal
-      ? AbortSignal.any([controller.signal, ctx.requestSignal])
-      : controller.signal;
+    const timer = setTimeout(() => {
+      controller.abort(new Error(`Command timed out after ${timeout}ms`));
+    }, timeout);
 
     let result: BashExecResult;
     try {
@@ -79,6 +102,14 @@ export async function handleShellExec(
       });
     } finally {
       clearTimeout(timer);
+      await commandFence.waitForCompletion();
+    }
+
+    if (ctx.requestSignal?.aborted) {
+      return requestCancelledResult(ctx.requestSignal);
+    }
+    if (controller.signal.aborted) {
+      return commandTimedOutResult(timeout);
     }
 
     const stdout = truncate(result.stdout, maxOutput);
@@ -114,16 +145,13 @@ export async function handleShellExec(
     };
   } catch (err) {
     if (ctx.requestSignal?.aborted) {
-      return {
-        status: "failed",
-        output: "",
-        error: ctx.requestSignal.reason instanceof Error
-          ? ctx.requestSignal.reason.message
-          : "Request cancelled",
-      };
+      return requestCancelledResult(ctx.requestSignal);
+    }
+    if (controller.signal.aborted) {
+      return commandTimedOutResult(timeout);
     }
     if (err instanceof Error && err.name === "AbortError") {
-      return { status: "failed", output: "", error: `Command timed out after ${timeout}ms` };
+      return commandTimedOutResult(timeout);
     }
     return { status: "failed", output: "", error: err instanceof Error ? err.message : String(err) };
   }
@@ -133,6 +161,8 @@ function createBash(
   ctx: KernelContext,
   identity: ProcessIdentity,
   cwd: string,
+  timeoutMs: number,
+  commandFence: NativeCommandFence,
   options?: NativeShellCommandOptions,
 ): Bash {
   const fs = createNativeFileSystem(ctx);
@@ -178,11 +208,54 @@ function createBash(
       maxCallDepth: 64,
       maxLoopIterations: 10_000,
       maxOutputSize: maxOutput,
+      maxExecutionTimeMs: timeoutMs + JUST_BASH_EXECUTION_BACKSTOP_GRACE_MS,
+      maxExtensionCleanupTimeMs: JUST_BASH_EXTENSION_CLEANUP_TIME_MS,
     },
-    customCommands: buildCustomCommands(fs, identity, ctx, options),
+    customCommands: commandFence.wrap(buildCustomCommands(fs, identity, ctx, options)),
   });
 }
 
+class NativeCommandFence {
+  private readonly activeCompletions = new Set<Promise<void>>();
+
+  wrap(commands: Command[]): Command[] {
+    return commands.map((command) => ({
+      ...command,
+      execute: (args, ctx) => {
+        const execution = command.execute(args, ctx);
+        const completion = execution.then(
+          () => undefined,
+          () => undefined,
+        );
+        this.activeCompletions.add(completion);
+        void completion.then(() => this.activeCompletions.delete(completion));
+        return execution;
+      },
+    }));
+  }
+
+  async waitForCompletion(): Promise<void> {
+    await Promise.all(this.activeCompletions);
+  }
+}
+
+function requestCancelledResult(signal: AbortSignal): ShellExecResult {
+  return {
+    status: "failed",
+    output: "",
+    error: signal.reason instanceof Error
+      ? signal.reason.message
+      : "Request cancelled",
+  };
+}
+
+function commandTimedOutResult(timeoutMs: number): ShellExecResult {
+  return {
+    status: "failed",
+    output: "",
+    error: `Command timed out after ${timeoutMs}ms`,
+  };
+}
 
 function truncate(str: string, maxBytes: number): string {
   if (new TextEncoder().encode(str).length <= maxBytes) return str;

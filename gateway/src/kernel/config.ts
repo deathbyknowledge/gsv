@@ -27,6 +27,7 @@ import {
   DEFAULT_WORKERS_AI_MODEL,
 } from "../inference/default-models";
 import { MAIL_SEND } from "../syscalls/constants";
+import { DEFAULT_SHELL_EXEC_TIMEOUT_MS } from "@humansandmachines/gsv/protocol";
 
 // =============================================================================
 // System config defaults — every field documented.
@@ -146,7 +147,7 @@ export const SYSTEM_CONFIG_DEFAULTS = defineSystemConfigDefaults({
 
   // -- Shell ------------------------------------------------------------------
   // Default shell timeout in ms for native shell.exec.
-  "config/shell/timeout_ms": "30000",
+  "config/shell/timeout_ms": String(DEFAULT_SHELL_EXEC_TIMEOUT_MS),
   // Whether curl/wget are enabled in the native bash shell (true/false).
   "config/shell/network_enabled": "true",
   // Max output size in bytes for shell command results.

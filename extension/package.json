@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@humansandmachines/gsv": "file:../packages/gsv",
-    "just-bash": "^2.12.6"
+    "just-bash": "^3.4.2"
   },
   "devDependencies": {
     "@types/chrome": "^0.1.34",

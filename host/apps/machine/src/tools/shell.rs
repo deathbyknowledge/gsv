@@ -15,7 +15,7 @@ use tokio::process::{ChildStdin, Command};
 use tokio::sync::{broadcast, Mutex as AsyncMutex};
 use uuid::Uuid;
 
-const DEFAULT_TIMEOUT_MS: u64 = 5 * 60 * 1000;
+const DEFAULT_TIMEOUT_MS: u64 = 2 * 60 * 1000;
 const DEFAULT_YIELD_MS: u64 = 5_000;
 const MIN_YIELD_MS: u64 = 250;
 const MAX_YIELD_MS: u64 = 30_000;
@@ -32,8 +32,6 @@ struct ProcessHandle {
 #[derive(Clone)]
 struct ProcessSnapshot {
     session_id: String,
-    cwd: String,
-    pid: Option<u32>,
     started_at: i64,
     ended_at: Option<i64>,
     status: String,
@@ -49,7 +47,6 @@ struct ProcessSnapshot {
 
 struct ProcessState {
     session_id: String,
-    cwd: String,
     pid: Option<u32>,
     started_at: i64,
     ended_at: Option<i64>,
@@ -171,8 +168,6 @@ fn append_output(state: &mut ProcessState, chunk: &str, stream: OutputStream) {
 fn snapshot_from_state(state: &ProcessState) -> ProcessSnapshot {
     ProcessSnapshot {
         session_id: state.session_id.clone(),
-        cwd: state.cwd.clone(),
-        pid: state.pid,
         started_at: state.started_at,
         ended_at: state.ended_at,
         status: state.status.clone(),
@@ -191,8 +186,6 @@ fn snapshot_and_drain_from_state(state: &mut ProcessState) -> ProcessSnapshot {
     let output = std::mem::take(&mut state.pending_output);
     ProcessSnapshot {
         session_id: state.session_id.clone(),
-        cwd: state.cwd.clone(),
-        pid: state.pid,
         started_at: state.started_at,
         ended_at: state.ended_at,
         status: state.status.clone(),
@@ -217,42 +210,46 @@ fn running_result(snapshot: &ProcessSnapshot) -> Value {
         "status": "running",
         "sessionId": snapshot.session_id,
         "output": snapshot.output,
-        "pid": snapshot.pid,
-        "startedAt": snapshot.started_at,
-        "tail": snapshot.tail,
-        "cwd": snapshot.cwd,
         "truncated": snapshot.truncated,
     })
 }
 
 fn completed_result(snapshot: &ProcessSnapshot) -> Value {
-    json!({
-        "ok": true,
-      "pid": snapshot.pid.unwrap_or_default(),
+    if snapshot.status == "completed" {
+        return json!({
+            "status": "completed",
+            "output": snapshot.output,
+            "exitCode": snapshot.exit_code.unwrap_or_default(),
+            "sessionId": snapshot.session_id,
+            "truncated": snapshot.truncated,
+            "stdout": snapshot.stdout,
+            "stderr": snapshot.stderr,
+        });
+    }
+
+    let error = if snapshot.timed_out {
+        "Command timed out".to_string()
+    } else if let Some(signal) = &snapshot.signal {
+        format!("Command failed: {}", signal)
+    } else {
+        format!(
+            "Command exited with code {}",
+            snapshot.exit_code.unwrap_or(-1)
+        )
+    };
+    let mut result = json!({
+        "status": "failed",
+        "output": snapshot.output,
+        "error": error,
+        "sessionId": snapshot.session_id,
+        "truncated": snapshot.truncated,
         "stdout": snapshot.stdout,
         "stderr": snapshot.stderr,
-        "status": if snapshot.status == "completed" { "completed" } else { "failed" },
-        "sessionId": snapshot.session_id,
-        "exitCode": snapshot.exit_code,
-        "error": if snapshot.status == "completed" {
-            Value::Null
-        } else if snapshot.timed_out {
-            json!("Command timed out")
-        } else if let Some(signal) = &snapshot.signal {
-            json!(format!("Command failed: {}", signal))
-        } else {
-            json!(format!("Command exited with code {}", snapshot.exit_code.unwrap_or(-1)))
-        },
-        "signal": snapshot.signal,
-        "timedOut": snapshot.timed_out,
-      "startedAt": snapshot.started_at,
-      "endedAt": snapshot.ended_at,
-      "durationMs": snapshot.ended_at.map(|ended| ended.saturating_sub(snapshot.started_at)),
-      "output": snapshot.output,
-      "tail": snapshot.tail,
-      "truncated": snapshot.truncated,
-      "cwd": snapshot.cwd,
-    })
+    });
+    if let Some(exit_code) = snapshot.exit_code {
+        result["exitCode"] = json!(exit_code);
+    }
+    result
 }
 
 fn normalize_signal_name(_status: &std::process::ExitStatus) -> Option<String> {
@@ -499,7 +496,6 @@ async fn launch_managed_process(
 
     let state = Arc::new(AsyncMutex::new(ProcessState {
         session_id: session_id.clone(),
-        cwd: cwd.display().to_string(),
         pid,
         started_at,
         ended_at: None,
@@ -771,6 +767,76 @@ impl Tool for ShellTool {
     }
 }
 
+#[cfg(test)]
+mod result_tests {
+    use super::*;
+
+    #[test]
+    fn default_runtime_matches_shell_contract() {
+        assert_eq!(DEFAULT_TIMEOUT_MS, 120_000);
+    }
+
+    fn snapshot(status: &str) -> ProcessSnapshot {
+        ProcessSnapshot {
+            session_id: "session-1".to_string(),
+            started_at: 100,
+            ended_at: Some(125),
+            status: status.to_string(),
+            exit_code: Some(if status == "completed" { 0 } else { 7 }),
+            signal: None,
+            timed_out: false,
+            stdout: "stdout".to_string(),
+            stderr: "stderr".to_string(),
+            output: "stdoutstderr".to_string(),
+            tail: "tail".to_string(),
+            truncated: false,
+        }
+    }
+
+    #[test]
+    fn shell_results_use_only_public_protocol_fields() {
+        let mut running = snapshot("running");
+        running.ended_at = None;
+        running.exit_code = None;
+        assert_eq!(
+            running_result(&running),
+            json!({
+                "status": "running",
+                "sessionId": "session-1",
+                "output": "stdoutstderr",
+                "truncated": false,
+            })
+        );
+
+        assert_eq!(
+            completed_result(&snapshot("completed")),
+            json!({
+                "status": "completed",
+                "output": "stdoutstderr",
+                "exitCode": 0,
+                "sessionId": "session-1",
+                "truncated": false,
+                "stdout": "stdout",
+                "stderr": "stderr",
+            })
+        );
+
+        assert_eq!(
+            completed_result(&snapshot("failed")),
+            json!({
+                "status": "failed",
+                "output": "stdoutstderr",
+                "error": "Command exited with code 7",
+                "exitCode": 7,
+                "sessionId": "session-1",
+                "truncated": false,
+                "stdout": "stdout",
+                "stderr": "stderr",
+            })
+        );
+    }
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
@@ -907,7 +973,7 @@ mod tests {
             .unwrap();
         let session_id = started.data["sessionId"].as_str().unwrap().to_string();
         let handle = get_process(&session_id).await.unwrap();
-        let pid = started.data["pid"].as_u64().unwrap() as u32;
+        let pid = handle.state.lock().await.pid.unwrap();
 
         let poll = tokio::spawn(async move {
             ShellTool::new(std::env::temp_dir())

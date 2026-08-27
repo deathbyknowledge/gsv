@@ -1,4 +1,9 @@
-import { defineCommand, type Command, type CommandContext, type ExecResult } from "just-bash";
+import {
+  defineCommand,
+  type Command,
+  type CommandContext,
+  type ExecResult,
+} from "just-bash";
 import {
   bodyToText,
   jsonObjectSchema,
@@ -21,6 +26,7 @@ import type { KernelContext } from "../../../kernel/context";
 import { openFsSource, type FsDeviceTransport } from "../fs";
 import { requireCommandCapability, requireShellOptionValue } from "./common";
 import { parseShellFsEndpoint } from "./fs-path";
+import { decodeShellStdin } from "./stdin";
 
 export type MediaHandlers = {
   imageGenerate: typeof handleAiImageGenerate;
@@ -642,7 +648,7 @@ function parseSchemaOption(value: string | undefined): JsonObject | undefined {
 }
 
 function readTextArgument(positionals: string[], ctx: CommandContext, label: string): string {
-  const text = positionals.join(" ").trim() || ctx.stdin.trim();
+  const text = positionals.join(" ").trim() || decodeShellStdin(ctx.stdin).trim();
   if (!text) {
     throw new Error(`${label} is required`);
   }

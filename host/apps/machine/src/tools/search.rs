@@ -4,10 +4,15 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::fs;
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use tokio_util::sync::CancellationToken;
-use walkdir::WalkDir;
+use walkdir::{DirEntry, WalkDir};
+
+const MAX_MATCHES: usize = 100;
+const MAX_SEARCH_FILES: usize = 25_000;
+const MAX_SEARCH_FILE_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_SEARCH_TOTAL_BYTES: u64 = 128 * 1024 * 1024;
 
 pub struct SearchTool {
     workspace: PathBuf,
@@ -68,75 +73,172 @@ impl SearchTool {
             .and_then(|inc| glob::Pattern::new(inc).ok());
 
         let mut matches: Vec<SearchMatch> = Vec::new();
+        let mut scanned_bytes = 0_u64;
+        let mut truncated = false;
 
-        for entry in WalkDir::new(&base_path)
-            .follow_links(true)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
-        {
-            if cancellation.is_cancelled() {
-                return Err("Search cancelled".to_string());
+        let mut scanned_files = 0_usize;
+        for entry in WalkDir::new(&base_path).follow_links(false) {
+            let Some(entry) = cancellable_file_entry(entry, cancellation)? else {
+                continue;
+            };
+            if scanned_files >= MAX_SEARCH_FILES {
+                truncated = true;
+                break;
             }
+            scanned_files += 1;
             let path = entry.path();
-
-            if let Some(ref glob_pattern) = include_glob {
-                let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if !glob_pattern.matches(file_name) {
+            if let Some(pattern) = &include_glob {
+                let file_name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("");
+                if !pattern.matches(file_name) {
                     continue;
                 }
             }
 
-            if let Some(content) = read_text(path, cancellation)? {
-                for (line_num, line) in content.lines().enumerate() {
-                    if cancellation.is_cancelled() {
-                        return Err("Search cancelled".to_string());
-                    }
-                    if line.contains(&query) {
-                        matches.push(SearchMatch {
-                            path: path.display().to_string(),
-                            line: line_num + 1,
-                            content: line.chars().take(200).collect(),
-                        });
-
-                        if matches.len() >= 100 {
-                            return Ok(ToolOutput::json(json!({
-                                "ok": true,
-                                "matches": matches,
-                                "count": matches.len(),
-                                "truncated": true
-                            })));
-                        }
-                    }
-                }
+            let remaining_bytes = MAX_SEARCH_TOTAL_BYTES.saturating_sub(scanned_bytes);
+            if remaining_bytes == 0 {
+                truncated = true;
+                break;
+            }
+            let result = search_text_file(
+                path,
+                &query,
+                cancellation,
+                remaining_bytes.min(MAX_SEARCH_FILE_BYTES),
+                MAX_MATCHES - matches.len(),
+            )?;
+            scanned_bytes = scanned_bytes.saturating_add(result.bytes_read);
+            truncated |= result.truncated;
+            matches.extend(result.matches);
+            if matches.len() >= MAX_MATCHES {
+                truncated = true;
+                break;
             }
         }
 
-        Ok(ToolOutput::json(json!({
-            "ok": true,
-            "matches": matches,
-            "count": matches.len()
-        })))
+        Ok(search_output(matches, truncated))
     }
 }
 
-fn read_text(path: &Path, cancellation: &CancellationToken) -> Result<Option<String>, String> {
-    let mut file = match fs::File::open(path) {
-        Ok(file) => file,
-        Err(_) => return Ok(None),
+fn cancellable_file_entry(
+    entry: Result<DirEntry, walkdir::Error>,
+    cancellation: &CancellationToken,
+) -> Result<Option<DirEntry>, String> {
+    if cancellation.is_cancelled() {
+        return Err("Search cancelled".to_string());
+    }
+    let Ok(entry) = entry else {
+        return Ok(None);
     };
-    let mut bytes = Vec::new();
-    let mut chunk = [0; 64 * 1024];
+    if !entry.file_type().is_file() {
+        return Ok(None);
+    }
+    Ok(Some(entry))
+}
+
+struct FileSearchResult {
+    matches: Vec<SearchMatch>,
+    bytes_read: u64,
+    truncated: bool,
+}
+
+fn search_text_file(
+    path: &Path,
+    query: &str,
+    cancellation: &CancellationToken,
+    max_bytes: u64,
+    max_matches: usize,
+) -> Result<FileSearchResult, String> {
+    let empty = |bytes_read, truncated| FileSearchResult {
+        matches: Vec::new(),
+        bytes_read,
+        truncated,
+    };
+
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => return Ok(empty(0, false)),
+    };
+    if file
+        .metadata()
+        .map(|metadata| metadata.len() > max_bytes)
+        .unwrap_or(false)
+    {
+        return Ok(empty(0, true));
+    }
+
+    let mut reader = BufReader::new(file.take(max_bytes.saturating_add(1)));
+    let mut line = Vec::new();
+    let mut line_number = 0_usize;
+    let mut bytes_read = 0_u64;
+    let mut matches = Vec::new();
     loop {
         if cancellation.is_cancelled() {
             return Err("Search cancelled".to_string());
         }
-        match file.read(&mut chunk) {
-            Ok(0) => return Ok(String::from_utf8(bytes).ok()),
-            Ok(read) => bytes.extend_from_slice(&chunk[..read]),
-            Err(_) => return Ok(None),
+
+        line.clear();
+        let read = match reader.read_until(b'\n', &mut line) {
+            Ok(read) => read,
+            Err(_) => return Ok(empty(bytes_read, false)),
+        };
+        if read == 0 {
+            return Ok(FileSearchResult {
+                matches,
+                bytes_read,
+                truncated: false,
+            });
+        }
+        bytes_read = bytes_read.saturating_add(read as u64);
+        if bytes_read > max_bytes {
+            return Ok(FileSearchResult {
+                matches,
+                bytes_read: max_bytes,
+                truncated: true,
+            });
+        }
+        if line.contains(&0) {
+            return Ok(empty(bytes_read, false));
+        }
+        let Ok(line) = std::str::from_utf8(&line) else {
+            return Ok(empty(bytes_read, false));
+        };
+
+        line_number += 1;
+        if line.contains(query) {
+            matches.push(SearchMatch {
+                path: path.display().to_string(),
+                line: line_number,
+                content: line
+                    .trim_end_matches(['\r', '\n'])
+                    .chars()
+                    .take(200)
+                    .collect(),
+            });
+            if matches.len() >= max_matches {
+                return Ok(FileSearchResult {
+                    matches,
+                    bytes_read,
+                    truncated: true,
+                });
+            }
         }
     }
+}
+
+fn search_output(matches: Vec<SearchMatch>, truncated: bool) -> ToolOutput {
+    let count = matches.len();
+    let mut output = json!({
+        "ok": true,
+        "matches": matches,
+        "count": count,
+    });
+    if truncated {
+        output["truncated"] = json!(true);
+    }
+    ToolOutput::json(output)
 }
 
 #[derive(Deserialize)]
@@ -217,11 +319,79 @@ mod tests {
         cancellation.cancel();
 
         let error = SearchTool::new(workspace.clone())
-            .execute_with_body_cancellable(json!({ "query": "needle" }), None, &cancellation)
+            .execute_with_body_cancellable(
+                json!({ "query": "needle", "include": "*.md" }),
+                None,
+                &cancellation,
+            )
             .await
             .unwrap_err();
 
         assert_eq!(error, "Search cancelled");
         tokio::fs::remove_dir_all(workspace).await.unwrap();
+    }
+
+    #[test]
+    fn search_checks_cancellation_before_filtering_directories() {
+        let workspace = std::env::temp_dir().join(format!("gsv-search-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&workspace).unwrap();
+        let directory = WalkDir::new(&workspace).into_iter().next().unwrap();
+        assert!(directory.as_ref().unwrap().file_type().is_dir());
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+
+        let error = cancellable_file_entry(directory, &cancellation).unwrap_err();
+
+        assert_eq!(error, "Search cancelled");
+        fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[tokio::test]
+    async fn search_skips_binary_and_oversized_files() {
+        let workspace = std::env::temp_dir().join(format!("gsv-search-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&workspace).await.unwrap();
+        tokio::fs::write(workspace.join("text.txt"), "needle\n")
+            .await
+            .unwrap();
+        tokio::fs::write(workspace.join("binary.bin"), b"needle\0binary")
+            .await
+            .unwrap();
+        let oversized = fs::File::create(workspace.join("oversized.txt")).unwrap();
+        oversized.set_len(MAX_SEARCH_FILE_BYTES + 1).unwrap();
+
+        let output = SearchTool::new(workspace.clone())
+            .execute(json!({ "query": "needle" }))
+            .await
+            .unwrap();
+
+        assert_eq!(output.data["count"], 1);
+        assert_eq!(
+            output.data["matches"][0]["path"],
+            workspace.join("text.txt").display().to_string()
+        );
+        assert_eq!(output.data["truncated"], true);
+        tokio::fs::remove_dir_all(workspace).await.unwrap();
+    }
+
+    #[test]
+    fn search_counts_bytes_consumed_before_invalid_utf8() {
+        let workspace = std::env::temp_dir().join(format!("gsv-search-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&workspace).unwrap();
+        let path = workspace.join("invalid.txt");
+        let contents = b"valid line\ninvalid \xff line\n";
+        fs::write(&path, contents).unwrap();
+
+        let result = search_text_file(
+            &path,
+            "valid",
+            &CancellationToken::new(),
+            MAX_SEARCH_FILE_BYTES,
+            MAX_MATCHES,
+        )
+        .unwrap();
+
+        assert!(result.matches.is_empty());
+        assert_eq!(result.bytes_read, contents.len() as u64);
+        fs::remove_dir_all(workspace).unwrap();
     }
 }

@@ -95,6 +95,29 @@ describe("decodeWireFrameJson", () => {
       .toThrowError(new InvalidWireFrameError("Invalid fs.write response"));
   });
 
+  it("accepts the public shell result and rejects host-only response fields", () => {
+    const response = {
+      type: "res" as const,
+      id: "shell-1",
+      ok: true as const,
+      data: {
+        status: "completed",
+        output: "done\n",
+        exitCode: 0,
+        sessionId: "session-1",
+        truncated: false,
+        stdout: "done\n",
+        stderr: "",
+      },
+    };
+
+    expect(decodeWireResponse("shell.exec", response)).toEqual(response);
+    expect(() => decodeWireResponse("shell.exec", {
+      ...response,
+      data: { ...response.data, cwd: "/workspace" },
+    })).toThrowError(new InvalidWireFrameError("Invalid shell.exec response"));
+  });
+
   it("retains a request id when call-specific arguments are invalid", () => {
     try {
       decodeWireFrameJson(JSON.stringify({

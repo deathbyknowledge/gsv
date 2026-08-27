@@ -788,6 +788,77 @@ test("cancels an outbound request before rejecting its timeout", async () => {
   client.close();
 });
 
+test("leaves omitted shell deadlines to the server and budgets explicit timeouts", async () => {
+  const { client, socket } = await connectedClient();
+  const originalSetTimeout = globalThis.setTimeout;
+  const scheduledDelays = [];
+  globalThis.setTimeout = (callback, delay, ...args) => {
+    scheduledDelays.push(delay);
+    return originalSetTimeout(callback, delay, ...args);
+  };
+
+  try {
+    const serverDeadline = client.request("shell.exec", { input: "sleep 1" });
+    const serverDeadlineRequest = JSON.parse(socket.sent.at(-1));
+    assert.deepEqual(scheduledDelays, []);
+    socket.receive(JSON.stringify({
+      type: "res",
+      id: serverDeadlineRequest.id,
+      ok: true,
+      data: { status: "completed", output: "", exitCode: 0 },
+    }));
+    await serverDeadline;
+
+    const explicitTimeout = client.request("shell.exec", {
+      input: "sleep 1",
+      timeout: 300_000,
+    });
+    const explicitRequest = JSON.parse(socket.sent.at(-1));
+    assert.deepEqual(scheduledDelays, [310_000]);
+    socket.receive(JSON.stringify({
+      type: "res",
+      id: explicitRequest.id,
+      ok: true,
+      data: { status: "completed", output: "", exitCode: 0 },
+    }));
+    await explicitTimeout;
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    client.close();
+  }
+});
+
+test("uses the polling wait budget for shell continuation transport timeouts", async () => {
+  const { client, socket } = await connectedClient();
+  const originalSetTimeout = globalThis.setTimeout;
+  const scheduledDelays = [];
+  globalThis.setTimeout = (callback, delay, ...args) => {
+    scheduledDelays.push(delay);
+    return originalSetTimeout(callback, delay, ...args);
+  };
+
+  try {
+    const continuation = client.request("shell.exec", {
+      input: "",
+      sessionId: "session-1",
+      timeout: 1_000,
+      yieldMs: 30_000,
+    });
+    const request = JSON.parse(socket.sent.at(-1));
+    assert.equal(scheduledDelays.at(-1), 40_000);
+    socket.receive(JSON.stringify({
+      type: "res",
+      id: request.id,
+      ok: true,
+      data: { status: "running", output: "", sessionId: "session-1" },
+    }));
+    await continuation;
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    client.close();
+  }
+});
+
 test("keeps a caller-owned mail delivery id after a lost response", async () => {
   const client = new GSVClient({
     WebSocket: FakeWebSocket,
