@@ -66,11 +66,12 @@ grant. Use the app's **Notification access** button only if agents should be
 able to list, reply to, invoke, or dismiss other apps' notifications.
 
 The enrolled credentials are encrypted with Android Keystore and are never
-rendered in the app. To enable OS gestures, expand **Assistant**, press **Make
-GSV default assistant**, and select GSV in Android settings. Arm Wear Mode
-before invoking it. Use **Test assistant** for the first end-to-end check;
-afterward the device's normal assistant gesture, including a headset assistant
-gesture when the headset exposes one, starts the same turn.
+rendered in the app. To enable OS gestures, expand **Assistant** and press
+**Make GSV default assistant**. Android presents its assistant-role consent
+prompt for this app directly. Arm Wear Mode before invoking it. Use **Test
+assistant** for the first end-to-end check; afterward the device's normal
+assistant gesture, including a headset assistant gesture when the headset
+exposes one, starts the same turn.
 
 Classic Bluetooth headset gestures use Android's `VOICE_COMMAND` route rather
 than the power-button assistant-service route. GSV Wear implements both. On an
