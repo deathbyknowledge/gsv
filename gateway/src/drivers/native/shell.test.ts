@@ -954,7 +954,7 @@ describe("native shell capability discovery", () => {
     expect(result.stdout).toContain("--attach PATH");
   });
 
-  it("keeps messaging destinations separate from execution targets", async () => {
+  it("keeps transport-only messaging adapters out of the current target inventory", async () => {
     const targets = await handleShellExec(
       { input: "man targets" },
       makeContext({ capabilities: ["shell.exec"] }),
@@ -965,7 +965,7 @@ describe("native shell capability discovery", () => {
     );
 
     expect(targets.ok).toBe(true);
-    expect(targets.stdout).toContain("device   User-owned registered devices");
+    expect(targets.stdout).toContain("device   Registered targets backed by machines or browser profiles");
     expect(targets.stdout).not.toContain("adapter  External messaging surfaces");
     expect(targets.stdout).not.toContain("targets search whatsapp");
     expect(sched.stdout).toContain("creates a direct scheduled delivery");
@@ -1475,6 +1475,14 @@ describe("targets native command", () => {
     expect(result.stdout).toContain("owner: sam (uid 1000)");
     expect(result.stdout).toContain("- shell.exec");
     expect(result.stdout).toContain("- fs.read");
+
+    const native = await handleShellExec(
+      { input: "targets show gsv" },
+      makeContext({ capabilities: ["sys.device.get"] }),
+    );
+    expect(native.stdout).toContain("description: Native GSV capability environment.");
+    expect(native.stdout).toContain("- net.fetch");
+    expect(native.stdout).not.toContain("- codemode.exec");
   });
 });
 

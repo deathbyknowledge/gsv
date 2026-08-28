@@ -7,6 +7,9 @@ import { hasCapability } from "./capabilities";
 import type { KernelContext } from "./context";
 import type { DeviceRecord } from "./devices";
 
+export const GSV_TARGET_ID = "gsv";
+export const GSV_TARGET_IMPLEMENTATIONS = ["fs.*", "shell.exec", "net.fetch"] as const;
+
 export type TargetDescriptor = {
   targetId: string;
   ownerUid: number;

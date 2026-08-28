@@ -1,6 +1,6 @@
 # GSV Engineering Contract
 
-GSV is an open-source, user-owned personal intelligence operating environment. Its gateway is a lightweight, globally reachable control plane; agents are durable processes; capabilities gate syscalls; machines and browsers implement common primitives behind target routing; and adapters own messaging transport.
+GSV is an open-source, user-owned personal intelligence operating environment. Its gateway is a lightweight, globally reachable control plane; agents are durable processes; capabilities gate syscalls; targets are Unix-shaped capability environments backed by GSV, machines, browsers, or services; and adapters own messaging transport.
 
 This document is the root engineering contract for the repository. It explains how to change GSV without eroding that model. Use the code as the source of truth, and update this file when the architecture deliberately changes.
 
@@ -37,10 +37,18 @@ This document is the root engineering contract for the repository. It explains h
 - Model browsers, native clients, machines, and adapter services as protocol peers. Principal, callable syscalls, receivable signals, implemented syscalls, transport, and provenance are independent axes; transport or a claimed peer id never grants authority.
 - First-party adapter service bindings use one `AdapterGatewayEntrypoint`. Deployment-owned binding props supply the adapter identity and attenuated syscall grant; the adapter frame cannot choose either. Kernel-owned `CHANNEL_<ADAPTER>` binding lookup selects the outbound service without a source-level adapter registry.
 - A linked adapter actor may invoke an ordinary syscall only through a Kernel-derived, interaction-scoped human peer whose grant is intersected with the linked account's capabilities.
-- A targetable syscall must mean the same thing on `gsv`, a connected device, and a browser-backed target.
 - Shell, agent tools, CodeMode, apps, and SDK clients may present results differently, but they must share the same underlying primitive behavior.
 - Structured frames carry metadata. Potentially large or binary payloads travel through frame bodies and streams.
 - Whoever accepts a body, request, media object, or background operation owns its completion, cancellation, and cleanup.
+
+### Treat targets as Unix-shaped capability environments
+
+- A target is an addressable environment that exposes a coherent subset of GSV's filesystem, shell, network, and related primitives. It is not synonymous with a physical machine.
+- `gsv`, a laptop daemon, a browser profile, or an external service account may back a target. A machine is one hardware-backed target provider, not the definition of target-ness.
+- Peers and targets are independent projections. A protocol peer supplies principal, grant, transport, provenance, and live implementations; it may offer no target, one target, or multiple targets.
+- A targetable syscall must retain the same contract on every target. Do not call an arbitrary provider RPC `shell.exec` or invent file semantics solely to make a service appear Unix-like.
+- Unix-shaped means familiar paths, commands, streams, cancellation, and composition where those concepts are real. It does not promise POSIX compatibility or require every target to implement every primitive.
+- An adapter owns messaging transport. An adapter account may additionally provide a target when it exposes a coherent capability environment; that target projection does not move provider identity, credentials, formatting, retry, or delivery policy into the Kernel.
 
 ### Keep the agent interface small and composable
 
@@ -73,6 +81,7 @@ Canonical user-facing conversations are not Process histories. Conversations ret
 - `packages/gsv/src/services/`: public Worker RPC contracts for installation directories, onboarding, entitlements, funded inference, mail, and adapters. Managed implementations belong to the deployment operator.
 - `gateway/src/kernel/`: authentication, capabilities, syscall dispatch, configuration, process registry, routing, schedules, adapters, and user connections.
 - `gateway/src/process/`: agent loop, history, queued input, pending tools, approvals, cancellation, context assembly, and process-scoped media.
+- `gateway/src/drivers/native/`: the in-process `gsv` target provider, including its filesystem, shell, and network-backed command environment.
 - `gateway/src/conversation/`: canonical user-visible message history, immutable resource references, hot SQLite retention, and immutable R2 archive segments.
 - `gateway/src/syscalls/` and `gateway/src/protocol/`: public runtime contracts and frame transport.
 - `gateway/src/inference/`: provider integration and model transport.

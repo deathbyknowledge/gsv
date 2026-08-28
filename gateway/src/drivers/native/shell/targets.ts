@@ -2,6 +2,8 @@ import { defineCommand } from "just-bash";
 import type { ExecResult } from "just-bash";
 import type { KernelContext } from "../../../kernel/context";
 import {
+  GSV_TARGET_ID,
+  GSV_TARGET_IMPLEMENTATIONS,
   getVisibleTarget,
   listVisibleTargets,
   type TargetDescriptor,
@@ -94,8 +96,8 @@ function listTargets(options: ListOptions, ctx: KernelContext): ExecResult {
     .filter((entry) => options.includeOffline || entry.online)
     .filter((entry) => !options.query || targetMatchesQuery(entry, options.query))
     .sort((left, right) => {
-      if (left.id === "gsv") return -1;
-      if (right.id === "gsv") return 1;
+      if (left.id === GSV_TARGET_ID) return -1;
+      if (right.id === GSV_TARGET_ID) return 1;
       return left.id.localeCompare(right.id);
     });
 
@@ -140,7 +142,7 @@ function showTarget(args: string[], ctx: KernelContext, commandName: "targets" |
   requireCommandCapability(ctx, "sys.device.get");
 
   const { targetId, json } = parseTargetShowOptions(args, commandName);
-  const entry = targetId === "gsv"
+  const entry = targetId === GSV_TARGET_ID
     ? gsvTarget(ctx)
     : targetToEntryOrNull(getVisibleTarget(ctx, targetId, { includeOffline: true }));
 
@@ -301,15 +303,15 @@ function targetToEntry(target: TargetDescriptor): TargetListEntry {
 function gsvTarget(ctx: KernelContext): TargetListEntry {
   const now = Date.now();
   return {
-    id: "gsv",
+    id: GSV_TARGET_ID,
     provider: "kernel",
     owner: "system",
     label: "GSV",
-    description: "Native GSV cloud target.",
+    description: "Native GSV capability environment.",
     platform: "cloudflare-worker",
     version: ctx.config.get("config/server/version") ?? ctx.serverVersion ?? "",
     online: true,
-    implements: ["fs.*", "shell.exec", "codemode.exec"],
+    implements: [...GSV_TARGET_IMPLEMENTATIONS],
     firstSeenAt: now,
     lastSeenAt: now,
     connectedAt: now,
@@ -342,7 +344,7 @@ function targetsUsage(commandName: "targets" | "devices"): string {
     `Usage: ${commandName} search <query> [--all|--online] [--limit N] [--offset N] [--json]`,
     `Usage: ${commandName} show <target-id> [--json]`,
     "",
-    "Lists registered target ids visible to this process and their online state.",
+    "Lists Unix-shaped capability environments visible to this process.",
     "Offline targets cannot accept target-aware operations until they reconnect.",
     "Use --online to show only targets that are currently reachable.",
   ].join("\n") + "\n";

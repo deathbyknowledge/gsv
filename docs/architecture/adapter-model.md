@@ -32,10 +32,12 @@ An adapter is responsible for:
 The Kernel does not need to know how WhatsApp or Discord work internally. It only
 needs a normalized control surface.
 
-Adapters are not execution targets. They do not appear in `sys.device.list`,
-the `targets`/`devices` shell inventory, the model's available-target list, or
-the Machines console. Those surfaces contain only places where targetable
-syscalls can run: GSV, connected devices, and browser-backed targets.
+An adapter's messaging projection is not automatically an execution target.
+The bundled adapters currently do not appear in `sys.device.list`, the
+`targets`/`devices` shell inventory, the model's available-target list, or the
+Machines console because they do not implement targetable syscalls. Those
+surfaces currently contain GSV, connected computers, and browser-backed
+targets.
 
 Messaging has its own two deliberate views:
 
@@ -44,8 +46,15 @@ Messaging has its own two deliberate views:
 - Adapter APIs and the Messengers console expose account connection, health,
   identity-link, and administration state.
 
-This keeps a Telegram account from masquerading as a machine while preserving
-the adapter as the platform-specific owner of delivery.
+This keeps a transport-only Telegram account from masquerading as a capability
+environment while preserving the adapter as the platform-specific owner of
+delivery. An adapter account may independently provide a target when it exposes
+a coherent filesystem, command environment, or other target primitives. The
+adapter still owns provider identity, credentials, formatting, retries, and
+delivery policy; target routing does not move those concerns into the Kernel.
+
+See [Targets and Capability Environments](./targets.md) for the target-provider
+contract and the distinction between peers, adapters, machines, and targets.
 
 ## Why deployment names still say `channel-*`
 

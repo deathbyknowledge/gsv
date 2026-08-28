@@ -41,17 +41,17 @@ function domainOf(syscall: SyscallName): SyscallDomain {
 }
 
 /**
- * Domains that support device routing via the `target` field.
- * `shell` always requires a device target. `fs` can be native (R2) or device.
- * `net` can exit either from the gateway Worker or from a connected device.
- * `proc` is kernel-internal (no device routing).
+ * Domains that support environment routing via the `target` field.
+ * `shell` and `fs` can run in the native GSV environment or a registered target.
+ * `net` can exit from the Gateway Worker or another target's network position.
+ * `proc` is a Kernel control-plane domain and is not target-routed.
  */
 const ROUTABLE_DOMAINS: SyscallDomain[] = ["fs", "shell", "net"];
 const TARGET_SCHEMA_DESCRIPTION = "Target to execute on. Use \"gsv\" for the native cloud target, or preserve the exact target from an authorized file reference. Run `targets list` in Shell to inspect accessible targets and their current online status.";
 
 /**
  * Inject a `target` property into a tool definition so the LLM can choose
- * where to execute the syscall. Only applicable to routable domains (fs, shell).
+ * where to execute the syscall. Only applicable to target-routable domains.
  *
  * @param tool - The base tool definition (without target)
  */

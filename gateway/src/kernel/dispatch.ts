@@ -3,7 +3,8 @@
  *
  * Switch-based — every syscall is explicitly mapped for full visibility.
  * `target` is extracted at the dispatch boundary and stripped before
- * native handlers see it unless the native syscall explicitly consumes it.
+ * target providers see it unless the syscall explicitly consumes a target
+ * reference of its own.
  *
  * Returns a ResponseFrame for native-handled syscalls, or `null` when
  * the request was forwarded to a device (response will arrive later via
@@ -22,18 +23,7 @@ import type { RouteOrigin } from "./routing";
 import type { KernelConnection, KernelConnectionState } from "./connection";
 import type { ShellSessionRecord, ShellSessionStore } from "./shell-sessions";
 import type { NetFetchArgs } from "@humansandmachines/gsv/protocol";
-import {
-  handleFsRead,
-  handleFsWrite,
-  handleFsEdit,
-  handleFsDelete,
-  handleFsSearch,
-  handleFsCopy,
-  handleFsTransferStat,
-  handleFsTransferSend,
-  handleFsTransferReceive,
-} from "../drivers/native/fs";
-import { handleShellExec } from "../drivers/native/shell";
+import { dispatchGsvTarget } from "../drivers/native/target";
 import {
   handleAiContext,
   handleAiConfig,
@@ -55,7 +45,7 @@ import {
 import { handleAccountCreate, handleAccountList } from "./agents";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysDeviceDelete, handleSysDeviceGet, handleSysDeviceList, handleSysDeviceUpdate } from "./sys/device";
-import { handleNetFetch, normalizeNetFetchTimeoutMs } from "./net";
+import { normalizeNetFetchTimeoutMs } from "./net";
 import { handleSysBootstrap } from "./sys/bootstrap";
 import { handleSysSetupAssist } from "./sys/setup-assist";
 import {
@@ -128,6 +118,7 @@ import {
   handleResponsibilityUpdate,
 } from "./responsibilities";
 import {
+  GSV_TARGET_ID,
   getVisibleTarget,
   targetCanHandle,
   type TargetDescriptor,
@@ -269,7 +260,7 @@ export async function dispatch(
 
   if (
     target
-    && target !== "gsv"
+    && target !== GSV_TARGET_ID
     && isRoutableSyscall(frame.call)
     && !contactResourceTarget
   ) {
@@ -288,20 +279,18 @@ export async function dispatch(
     if (routingArgs) delete routingArgs.target;
   }
 
-  const result = await dispatchNative(frame, origin, ctx, deps);
+  const result = await dispatchLocal(frame, ctx, deps);
   return {
     handled: true,
     response: result,
   };
 }
 
-async function dispatchNative(
+async function dispatchLocal(
   frame: RequestFrame,
-  origin: RouteOrigin,
   ctx: KernelContext,
   deps: DispatchDeps,
 ): Promise<ResponseFrame> {
-  const frameId = frame.id;
   const fsTransport = {
     ...deps,
     openContactSource: async (source: Parameters<typeof openContactResourceSource>[0]) => (
@@ -310,60 +299,45 @@ async function dispatchNative(
   };
 
   try {
+    if (frame.call === "fs.read" && frame.args.target?.startsWith("contact:") === true) {
+      return {
+        type: "res",
+        id: frame.id,
+        ok: true,
+        ...await handleContactResourceRead(frame.args, ctx, frame.id),
+      };
+    }
+    if (frame.call === "fs.transfer.send" && frame.args.target?.startsWith("contact:") === true) {
+      return await handleContactResourceSend(frame.args, ctx, frame.id);
+    }
+    if (isRoutableSyscall(frame.call)) {
+      return await dispatchGsvTarget(frame, ctx, {
+        fsTransport,
+        netFetchTransport: deps,
+        request: (request, signal) => deps.request(request, ctx, signal),
+      });
+    }
+
+    return await dispatchKernel(frame, ctx, deps);
+  } catch (err) {
+    if (ctx.requestSignal?.aborted) {
+      return errFrame(frame.id, 499, requestCancelMessage(ctx.requestSignal));
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    return errFrame(frame.id, 500, message);
+  }
+}
+
+async function dispatchKernel(
+  frame: RequestFrame,
+  ctx: KernelContext,
+  deps: DispatchDeps,
+): Promise<ResponseFrame> {
+  const frameId = frame.id;
+  try {
     let data: unknown;
 
     switch (frame.call) {
-      case "fs.read":
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          ...await (frame.args.target?.startsWith("contact:") === true
-            ? handleContactResourceRead(frame.args, ctx, frame.id)
-            : handleFsRead(frame.args, ctx)),
-        };
-      case "fs.write":
-        data = await handleFsWrite(frame.args, ctx);
-        break;
-      case "fs.edit":
-        data = await handleFsEdit(frame.args, ctx);
-        break;
-      case "fs.delete":
-        data = await handleFsDelete(frame.args, ctx);
-        break;
-      case "fs.search":
-        data = await handleFsSearch(frame.args, ctx);
-        break;
-      case "fs.copy":
-        data = await handleFsCopy(frame.args, ctx, fsTransport);
-        break;
-      case "fs.transfer.stat":
-        data = await handleFsTransferStat(frame.args, ctx);
-        break;
-      case "fs.transfer.send":
-        return frame.args.target?.startsWith("contact:") === true
-          ? await handleContactResourceSend(frame.args, ctx, frame.id)
-          : await handleFsTransferSend(frame.args, ctx, frame.id);
-      case "fs.transfer.receive":
-        data = await handleFsTransferReceive(frame.args, ctx, frame.body);
-        break;
-
-      case "shell.exec":
-        data = await handleShellExec(frame.args, ctx, {
-          fsTransport,
-          netFetchTransport: deps,
-          request: (request, signal) => deps.request(request, ctx, signal),
-        });
-        break;
-
-      case "net.fetch":
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          ...await handleNetFetch(frame.args, ctx, frame.body),
-        };
-
       case "codemode.run":
         return {
           type: "res",

@@ -1,14 +1,15 @@
 # Architecture Overview
 
 GSV is a personal cloud computer: an always-on operating system for humans,
-machines, and agents. It runs on Cloudflare, but it is intentionally modeled like
-a Linux-like computer rather than a chatbot backend. Users have identities,
-agents are processes, storage is exposed as a filesystem, capabilities are
-reached through syscalls, and external machines appear as devices.
+machines, services, and agents. It runs on Cloudflare, but it is intentionally
+modeled like a Linux-like computer rather than a chatbot backend. Users have
+identities, agents are processes, storage is exposed as a filesystem,
+capabilities are reached through syscalls, and external capability environments
+appear as targets.
 
 This is a mental model, not POSIX compatibility. The point is to give humans and
 AI processes familiar operating-system affordances: inspectable files, stable
-paths, process IDs, permissions, device targets, repositories, and command surfaces.
+paths, process IDs, permissions, targets, repositories, and command surfaces.
 
 ## When to read this
 
@@ -28,7 +29,9 @@ A good order is:
 5. [The Adapter Model](./adapter-model.md)
 6. [Context and Knowledge](./context-and-knowledge.md)
 7. [Responsibilities and Context Epochs](./responsibilities-and-context-epochs.md)
-8. [Security Model](./security-model.md)
+8. [Targets and Capability Environments](./targets.md)
+9. [Unified Protocol Peers](./unified-protocol-peers.md)
+10. [Security Model](./security-model.md)
 
 ## The Current Pillars
 
@@ -115,11 +118,16 @@ Different path families are backed by different stores:
 This split matters operationally, but it should be hidden from agents whenever
 possible. The filesystem is the stable interface.
 
-### Devices
+### Targets
 
-Devices are connected machines that implement part of the syscall surface. A
-device driver connects over WebSocket with a hardware descriptor containing its
-device id, platform, version, owner, and `implements` list such as:
+A target is an addressable, Unix-shaped capability environment, not necessarily
+a physical machine. The native GSV runtime, a connected computer, a browser
+profile, or a service account can provide one when it implements a coherent
+subset of the syscall surface.
+
+The current external target registry retains `device` terminology for upgrade
+compatibility. A registered endpoint connects over WebSocket with a descriptor
+containing its id, platform, version, owner, and `implements` list such as:
 
 ```json
 { "deviceId": "macbook", "implements": ["fs.*", "shell.exec", "net.fetch"] }
@@ -133,14 +141,18 @@ syscall runs.
 syscall to that device after ownership, group ACL, online-state, and capability
 checks.
 
-This is the hardware abstraction layer. Devices can be laptops, servers, or any
-CLI-run machine, but agents do not need a different API for each one.
+This is the target abstraction layer. A laptop is a hardware-backed target; the
+browser extension is a pseudo-computer backed by a browser profile. Agents do
+not need a different model-facing API for either one.
 
-Messaging adapters are deliberately outside this target inventory. They do not
-execute targetable syscalls and therefore do not appear as devices or available
-targets. Agents discover authorized messaging surfaces with
-`message destinations`; users inspect and administer adapter accounts in the
-Messengers console and adapter APIs.
+An adapter's messaging projection is independent from target-ness. Bundled
+adapters currently remain transport-only, so agents discover their authorized
+messaging surfaces with `message destinations` and users administer them in the
+Messengers console. A future adapter account may additionally register a target
+when it offers a coherent environment without moving provider-specific policy
+into the Kernel.
+
+See [Targets and Capability Environments](./targets.md) for the complete model.
 
 ### Git and Distribution
 
