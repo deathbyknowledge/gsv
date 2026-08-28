@@ -6,10 +6,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -68,13 +65,10 @@ fun AssistantCore(
     shipElevationOffsetRadians: Float = 0f,
     shipRenderMode: ShipRenderMode = ShipRenderMode.PHYSICAL,
 ) {
-    val transition = rememberInfiniteTransition(label = "assistant-engine")
-    val phase by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 12f,
-        animationSpec = infiniteRepeatable(tween(12_000, easing = LinearEasing)),
-        label = "assistant-engine-time",
-    )
+    val phase = rememberVisualLoopFraction(
+        durationNanos = ASSISTANT_LOOP_NANOS,
+        frameIntervalNanos = assistantFrameIntervalNanos(state, shapeTarget),
+    ) * ASSISTANT_LOOP_SECONDS
     val smoothedSignal by animateFloatAsState(
         targetValue = signal.coerceIn(0f, 1f),
         animationSpec = tween(90, easing = FastOutSlowInEasing),
@@ -160,6 +154,8 @@ fun AssistantCore(
 private const val SPEAKING_ATTACK_MILLIS = 240
 private const val SPEAKING_RELEASE_MILLIS = 520
 private const val SHIP_MATERIALIZATION_MILLIS = 1_800
+private const val ASSISTANT_LOOP_SECONDS = 12f
+private const val ASSISTANT_LOOP_NANOS = 12_000_000_000L
 
 @Composable
 fun AssistantSurface(
@@ -170,13 +166,10 @@ fun AssistantSurface(
     signal: Float = 0f,
     shapeTarget: OrbShapeTarget = OrbShapeTarget.LISTENING,
 ) {
-    val transition = rememberInfiniteTransition(label = "assistant-surface")
-    val phase by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 12f,
-        animationSpec = infiniteRepeatable(tween(12_000, easing = LinearEasing)),
-        label = "assistant-surface-time",
-    )
+    val phase = rememberVisualLoopFraction(
+        durationNanos = ASSISTANT_LOOP_NANOS,
+        frameIntervalNanos = assistantFrameIntervalNanos(state, shapeTarget),
+    ) * ASSISTANT_LOOP_SECONDS
     Box(modifier.fillMaxSize().background(GsvColor.Void)) {
         AssistantBackdrop(state, phase, Modifier.fillMaxSize())
         Column(

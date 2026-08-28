@@ -862,6 +862,9 @@ float organicDistance(float3 point, float phase, float energy) {
     if (projection > 0.999) {
         return speakingDistance(sourcePoint, phase, energy);
     }
+    if (shipPresence > 0.999 && projection <= 0.001) {
+        return shipDistance(sourcePoint, phase, energy);
+    }
     float materialScale = 1.0 - focus *
         (0.080 + 0.012 * (0.5 + 0.5 * sin(phase * 2.0)));
     point /= materialScale;
@@ -1123,6 +1126,9 @@ float4 interiorMembranes(float3 point, float phase) {
     float foldComplexity = clamp(iBehavior.y, 0.0, 1.0);
     float projection = clamp(iBehavior.w, 0.0, 1.0);
     float shipPresence = clamp(iShape.z, 0.0, 1.0);
+    if (shipPresence > 0.999) {
+        return shipMembraneField(point, phase);
+    }
     float3 flowingPoint = interiorFlowPoint(point, phase);
     float coolPrimary = sin(flowingPoint.x * 7.0 + phase);
     float coolFocused = sin(

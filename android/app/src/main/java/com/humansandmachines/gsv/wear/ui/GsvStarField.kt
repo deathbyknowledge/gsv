@@ -1,13 +1,7 @@
 package com.humansandmachines.gsv.wear.ui
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -24,13 +18,7 @@ internal fun GsvStarField(
     horizontalParallax: Float = 0f,
     verticalParallax: Float = 0f,
 ) {
-    val transition = rememberInfiniteTransition(label = "gsv-star-field")
-    val phase by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = PI.toFloat() * 2f,
-        animationSpec = infiniteRepeatable(tween(48_000, easing = LinearEasing)),
-        label = "gsv-star-phase",
-    )
+    val phase = rememberVisualLoopFraction(48_000_000_000L) * PI.toFloat() * 2f
     val stars = remember { createGsvStars() }
 
     Canvas(modifier) {
