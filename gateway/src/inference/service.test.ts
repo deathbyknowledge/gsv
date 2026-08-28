@@ -38,8 +38,11 @@ import {
   GSV_INFERENCE_PROVIDER,
   type AiConfigResult,
   type ManagedInferenceResult,
-  type ManagedInferenceService,
 } from "@humansandmachines/gsv/protocol";
+import type {
+  InferenceService as ManagedInferenceService,
+  InferenceTarget as ManagedInferenceTarget,
+} from "@humansandmachines/gsv/services/inference";
 import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
 import { createGsvInferenceProviderFactory } from "./gsv-provider";
 
@@ -190,13 +193,17 @@ describe("createGenerationService", () => {
       stopReason: "stop",
       timestamp: 1,
     };
-    const generateStream = vi.fn<ManagedInferenceService["generateStream"]>(
+    const generateStream = vi.fn<ManagedInferenceTarget["generateStream"]>(
       async () => managedResultStream(managedResult),
     );
-    const managedInference: ManagedInferenceService = {
+    const target: ManagedInferenceTarget = {
       generate: vi.fn(),
       generateStream,
       abort: vi.fn(),
+    };
+    const getInstallation = vi.fn(async () => target);
+    const managedInference: ManagedInferenceService = {
+      getInstallation,
     };
     completePiAiSimpleMock.mockImplementationOnce((model, context, options, models) =>
       models.completeSimple(model, context, options)
@@ -226,6 +233,7 @@ describe("createGenerationService", () => {
     });
 
     expect(result.content).toEqual([{ type: "text", text: "managed pong" }]);
+    expect(getInstallation).toHaveBeenCalledWith("inst_test");
     expect(generateStream).toHaveBeenCalledWith(expect.objectContaining({
       installationId: "inst_test",
       logicalRequestId: "request_test",
@@ -262,10 +270,9 @@ describe("createGenerationService", () => {
   });
 
   it("requires trusted attribution for a registered provider", async () => {
+    const getInstallation = vi.fn<ManagedInferenceService["getInstallation"]>();
     const managedInference: ManagedInferenceService = {
-      generate: vi.fn(),
-      generateStream: vi.fn(),
-      abort: vi.fn(),
+      getInstallation,
     };
 
     await expect(createGenerationService({
@@ -279,7 +286,7 @@ describe("createGenerationService", () => {
       },
       context: CONTEXT,
     })).rejects.toThrow("Inference attribution is unavailable for provider: gsv");
-    expect(managedInference.generateStream).not.toHaveBeenCalled();
+    expect(getInstallation).not.toHaveBeenCalled();
   });
 
   it("passes a routed fetch to built-in provider completions", async () => {

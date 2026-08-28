@@ -20,11 +20,15 @@ import {
   type ManagedInferenceResult,
   type ManagedInferenceStreamEvent,
 } from "@humansandmachines/gsv/protocol";
-import type { InferenceService as ManagedInferenceService } from "@humansandmachines/gsv/services/inference";
+import type {
+  InferenceService as ManagedInferenceService,
+  InferenceTarget as ManagedInferenceTarget,
+} from "@humansandmachines/gsv/services/inference";
 import type {
   InferenceAttribution,
   InferenceProviderFactory,
 } from "./provider";
+import { raceWithAbort } from "../shared/abort";
 
 const GSV_INFERENCE_API = "gsv-inference";
 
@@ -48,6 +52,14 @@ const GSV_INFERENCE_MODEL_METADATA: Model<typeof GSV_INFERENCE_API> = {
 
 type GsvInferenceBindings = {
   MANAGED_INFERENCE?: ManagedInferenceService;
+};
+
+type DisposableManagedInferenceTarget = ManagedInferenceTarget & {
+  [Symbol.dispose]?(): void;
+};
+
+type DisposableManagedInferenceAcquisition = Promise<ManagedInferenceTarget> & {
+  [Symbol.dispose]?(): void;
 };
 
 type AppliedManagedInferenceEvent = {
@@ -163,17 +175,15 @@ async function pumpGsvInference(
   stream: AssistantMessageEventStream,
   signal?: AbortSignal,
 ): Promise<void> {
+  let target: ManagedInferenceTarget | undefined;
+  let acquisitionDisposesLateTarget = false;
   let generationStarted = false;
   let generationAbort: Promise<void> | undefined;
   const abortGeneration = () => {
-    if (generationStarted && !generationAbort) {
+    if (target && generationStarted && !generationAbort) {
       generationAbort = (async () => {
         try {
-          await service.abort({
-            version: 1,
-            installationId: request.installationId,
-            logicalRequestId: request.logicalRequestId,
-          });
+          await target.abort(request.logicalRequestId);
         } catch {}
       })();
     }
@@ -185,7 +195,24 @@ async function pumpGsvInference(
       stream.push(gsvInferenceErrorEvent(true));
       return;
     }
-    const bodyPromise = service.generateStream(request);
+    const acquisition = service.getInstallation(request.installationId);
+    target = await raceWithAbort(acquisition, signal, {
+      onAbort: () => {
+        acquisitionDisposesLateTarget = disposeManagedInferenceAcquisition(
+          acquisition,
+        );
+      },
+      onLateResolve: (lateTarget) => {
+        if (!acquisitionDisposesLateTarget) {
+          disposeManagedInferenceTarget(lateTarget);
+        }
+      },
+    });
+    if (signal?.aborted) {
+      stream.push(gsvInferenceErrorEvent(true));
+      return;
+    }
+    const bodyPromise = target.generateStream(request);
     generationStarted = true;
     if (signal?.aborted) abortGeneration();
     const body = await bodyPromise;
@@ -210,7 +237,28 @@ async function pumpGsvInference(
   } finally {
     signal?.removeEventListener("abort", abortGeneration);
     await generationAbort;
+    disposeManagedInferenceTarget(target);
   }
+}
+
+function disposeManagedInferenceAcquisition(
+  acquisition: Promise<ManagedInferenceTarget>,
+): boolean {
+  // SAFETY: Workers RPC promises implement Symbol.dispose. Disposing a pending
+  // promise also disposes an RpcTarget result if it arrives later.
+  const disposable = acquisition as DisposableManagedInferenceAcquisition;
+  const dispose = disposable[Symbol.dispose];
+  if (!dispose) return false;
+  dispose.call(disposable);
+  return true;
+}
+
+function disposeManagedInferenceTarget(
+  target: ManagedInferenceTarget | undefined,
+): void {
+  // SAFETY: Workers RPC stubs implement Symbol.dispose; local test targets may omit it.
+  const disposable = target as DisposableManagedInferenceTarget | undefined;
+  disposable?.[Symbol.dispose]?.();
 }
 
 function toAssistantMessage(
