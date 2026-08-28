@@ -152,6 +152,58 @@ describe("GSV inference provider", () => {
     expect(dispose).toHaveBeenCalledOnce();
   });
 
+  it("settles cancellation while acquiring the inference target", async () => {
+    const disposeAcquisition = vi.fn();
+    const acquisition = new Promise<ManagedInferenceTarget>(() => {});
+    Object.defineProperty(acquisition, Symbol.dispose, {
+      value: disposeAcquisition,
+    });
+    const service = {
+      getInstallation: vi.fn(() => acquisition),
+    } satisfies ManagedInferenceService;
+    const controller = new AbortController();
+    const stream = providerStream(service, controller.signal);
+
+    await vi.waitFor(() => {
+      expect(service.getInstallation).toHaveBeenCalledOnce();
+    });
+    controller.abort(new Error("test cancellation"));
+
+    await expect(stream.result()).resolves.toMatchObject({
+      stopReason: "aborted",
+      errorMessage: "GSV inference cancelled",
+    });
+    expect(disposeAcquisition).toHaveBeenCalledOnce();
+  });
+
+  it("disposes a target that arrives after acquisition was cancelled", async () => {
+    let resolveTarget: (target: ManagedInferenceTarget) => void = () => {};
+    const acquisition = new Promise<ManagedInferenceTarget>((resolve) => {
+      resolveTarget = resolve;
+    });
+    const { target, dispose } = managedService(
+      vi.fn<ManagedInferenceTarget["generateStream"]>(),
+    );
+    const service = {
+      getInstallation: vi.fn(() => acquisition),
+    } satisfies ManagedInferenceService;
+    const controller = new AbortController();
+    const stream = providerStream(service, controller.signal);
+
+    await vi.waitFor(() => {
+      expect(service.getInstallation).toHaveBeenCalledOnce();
+    });
+    controller.abort(new Error("test cancellation"));
+    await expect(stream.result()).resolves.toMatchObject({
+      stopReason: "aborted",
+    });
+    resolveTarget(target);
+
+    await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce());
+    expect(target.generateStream).not.toHaveBeenCalled();
+    expect(target.abort).not.toHaveBeenCalled();
+  });
+
   it("aborts when cancellation overtakes the stream RPC", async () => {
     let markStarted: () => void = () => {};
     const started = new Promise<void>((resolve) => {

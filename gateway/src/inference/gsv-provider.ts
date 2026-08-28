@@ -28,6 +28,7 @@ import type {
   InferenceAttribution,
   InferenceProviderFactory,
 } from "./provider";
+import { raceWithAbort } from "../shared/abort";
 
 const GSV_INFERENCE_API = "gsv-inference";
 
@@ -54,6 +55,10 @@ type GsvInferenceBindings = {
 };
 
 type DisposableManagedInferenceTarget = ManagedInferenceTarget & {
+  [Symbol.dispose]?(): void;
+};
+
+type DisposableManagedInferenceAcquisition = Promise<ManagedInferenceTarget> & {
   [Symbol.dispose]?(): void;
 };
 
@@ -171,6 +176,7 @@ async function pumpGsvInference(
   signal?: AbortSignal,
 ): Promise<void> {
   let target: ManagedInferenceTarget | undefined;
+  let acquisitionDisposesLateTarget = false;
   let generationStarted = false;
   let generationAbort: Promise<void> | undefined;
   const abortGeneration = () => {
@@ -189,7 +195,19 @@ async function pumpGsvInference(
       stream.push(gsvInferenceErrorEvent(true));
       return;
     }
-    target = await service.getInstallation(request.installationId);
+    const acquisition = service.getInstallation(request.installationId);
+    target = await raceWithAbort(acquisition, signal, {
+      onAbort: () => {
+        acquisitionDisposesLateTarget = disposeManagedInferenceAcquisition(
+          acquisition,
+        );
+      },
+      onLateResolve: (lateTarget) => {
+        if (!acquisitionDisposesLateTarget) {
+          disposeManagedInferenceTarget(lateTarget);
+        }
+      },
+    });
     if (signal?.aborted) {
       stream.push(gsvInferenceErrorEvent(true));
       return;
@@ -221,6 +239,18 @@ async function pumpGsvInference(
     await generationAbort;
     disposeManagedInferenceTarget(target);
   }
+}
+
+function disposeManagedInferenceAcquisition(
+  acquisition: Promise<ManagedInferenceTarget>,
+): boolean {
+  // SAFETY: Workers RPC promises implement Symbol.dispose. Disposing a pending
+  // promise also disposes an RpcTarget result if it arrives later.
+  const disposable = acquisition as DisposableManagedInferenceAcquisition;
+  const dispose = disposable[Symbol.dispose];
+  if (!dispose) return false;
+  dispose.call(disposable);
+  return true;
 }
 
 function disposeManagedInferenceTarget(
