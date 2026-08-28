@@ -1,12 +1,5 @@
 import { defineCommand } from "just-bash";
 import type { ExecResult } from "just-bash";
-import {
-  commitRepoSourceChanges,
-  diffRepoSourceChanges,
-  discardRepoSourceChanges,
-  getRepoSourceStatus,
-  RipgitClient,
-} from "../../../fs";
 import type { KernelContext } from "../../../kernel/context";
 import {
   handleRepoCompare,
@@ -34,19 +27,16 @@ import { requireCommandCapability } from "./common";
 type RepoTarget = {
   repo: string;
   nextIndex: number;
-  sourcePath?: string;
 };
 
 type RepoListArgs = { owner?: string };
-type RepoReadArgs = { repo: string; ref?: string; path?: string; sourcePath?: string };
-type RepoSearchArgs = { repo: string; ref?: string; query: string; prefix?: string; sourcePath?: string };
-type RepoLogArgs = { repo: string; ref?: string; limit?: number; offset?: number; sourcePath?: string };
-type RepoDiffCommandArgs = { repo: string; commit?: string; context?: number; sourcePath?: string };
+type RepoReadArgs = { repo: string; ref?: string; path?: string };
+type RepoSearchArgs = { repo: string; ref?: string; query: string; prefix?: string };
+type RepoLogArgs = { repo: string; ref?: string; limit?: number; offset?: number };
+type RepoDiffCommandArgs = { repo: string; commit: string; context?: number };
 type RepoCompareArgs = { repo: string; base: string; head: string; context?: number; stat?: boolean };
-type RepoCommitArgs = { repo: string; message: string; branch?: string; sourcePath?: string };
 type RepoCreateArgs = { repo: string; ref?: string; description?: string };
 type RepoImportArgs = { repo: string; ref?: string; remoteUrl?: string; remoteRef?: string; message?: string };
-type RepoCommitOptions = { message: string; branch?: string; sourcePath?: string };
 
 export function buildRgitCommands(ctx: KernelContext) {
   return [
@@ -124,65 +114,24 @@ async function runRgitCommand(
       const result = await handleRepoLog(withDefaultRepoRef(parsed, ctx), ctx);
       return { stdout: formatRepoLog(result), stderr: "", exitCode: 0 };
     }
-    case "status": {
-      requireCommandCapability(ctx, "repo.list");
-      const target = parseRepoTarget(rest, cwd);
-      const result = await getRepoSourceStatus(processSourceOptions(ctx), target.repo, target.sourcePath);
-      return { stdout: formatRepoStatus(result), stderr: "", exitCode: 0 };
-    }
     case "diff": {
+      requireCommandCapability(ctx, "repo.diff");
       const parsed = parseDiffArgs(rest, cwd);
-      if (parsed.commit) {
-        requireCommandCapability(ctx, "repo.diff");
-        const diffArgs: RepoDiffRequestArgs = {
-          repo: parsed.repo,
-          commit: parsed.commit,
-        };
-        if (parsed.context !== undefined) {
-          diffArgs.context = parsed.context;
-        }
-        const result = await handleRepoDiff(diffArgs, ctx);
-        return { stdout: formatRepoDiff(result), stderr: "", exitCode: 0 };
+      const diffArgs: RepoDiffRequestArgs = {
+        repo: parsed.repo,
+        commit: parsed.commit,
+      };
+      if (parsed.context !== undefined) {
+        diffArgs.context = parsed.context;
       }
-      requireCommandCapability(ctx, "repo.read");
-      const diff = await diffRepoSourceChanges(processSourceOptions(ctx), parsed.repo, parsed.sourcePath);
-      return { stdout: diff, stderr: "", exitCode: 0 };
+      const result = await handleRepoDiff(diffArgs, ctx);
+      return { stdout: formatRepoDiff(result), stderr: "", exitCode: 0 };
     }
     case "compare": {
       requireCommandCapability(ctx, "repo.compare");
       const parsed = parseCompareArgs(rest, cwd);
       const result = await handleRepoCompare(parsed, ctx);
       return { stdout: formatRepoCompare(result), stderr: "", exitCode: 0 };
-    }
-    case "commit": {
-      requireCommandCapability(ctx, "repo.apply");
-      const parsed = parseCommitArgs(rest, cwd);
-      const commitOptions: RepoCommitOptions = { message: parsed.message };
-      if (parsed.branch) {
-        commitOptions.branch = parsed.branch;
-      }
-      if (parsed.sourcePath) {
-        commitOptions.sourcePath = parsed.sourcePath;
-      }
-      const result = await commitRepoSourceChanges(processSourceOptions(ctx), parsed.repo, commitOptions);
-      return {
-        stdout: result.committed
-          ? `committed ${result.repo} to ${result.branch ?? result.sourceRef} ${result.commitHead ?? "-"} (${result.ops} ops)\n`
-          : `no staged repo changes for ${result.repo}\n`,
-        stderr: "",
-        exitCode: 0,
-      };
-    }
-    case "discard": {
-      requireCommandCapability(ctx, "repo.apply");
-      const target = parseRepoTarget(rest, cwd);
-      const before = await getRepoSourceStatus(processSourceOptions(ctx), target.repo, target.sourcePath);
-      await discardRepoSourceChanges(processSourceOptions(ctx), target.repo, target.sourcePath);
-      return {
-        stdout: `discarded ${before.changes.length} staged repo change(s) for ${target.repo}\n`,
-        stderr: "",
-        exitCode: 0,
-      };
     }
     case "create": {
       requireCommandCapability(ctx, "repo.create");
@@ -219,19 +168,7 @@ async function runRgitCommand(
   }
 }
 
-function processSourceOptions(ctx: KernelContext) {
-  const identity = ctx.identity!.process;
-  return {
-    identity,
-    storage: ctx.env.STORAGE,
-    ripgit: ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null,
-    repos: handleRepoList(undefined, ctx).repos,
-    processId: ctx.processId ?? null,
-    config: ctx.config,
-  };
-}
-
-function withDefaultRepoRef<T extends { repo: string; ref?: string; sourcePath?: string }>(parsed: T, ctx: KernelContext): T {
+function withDefaultRepoRef<T extends { repo: string; ref?: string }>(parsed: T, ctx: KernelContext): T {
   if (parsed.ref) {
     return parsed;
   }
@@ -265,7 +202,6 @@ function repoTargetFromCwd(cwd: string) {
   }
   return {
     repo: `${match[1]}/${match[2]}`,
-    sourcePath: cwd,
   };
 }
 
@@ -298,7 +234,6 @@ function parseListArgs(args: string[]): RepoListArgs {
 function parseReadArgs(args: string[], cwd: string): RepoReadArgs {
   const target = parseRepoTarget(args, cwd);
   const parsed: RepoReadArgs = { repo: target.repo };
-  if (target.sourcePath) parsed.sourcePath = target.sourcePath;
   for (let index = target.nextIndex; index < args.length; index += 1) {
     const current = args[index];
     if (current === "--ref") {
@@ -344,7 +279,6 @@ function parseSearchArgs(args: string[], cwd: string): RepoSearchArgs {
     throw new Error("Usage: rgit search <repo|--here> <query> [--prefix PATH] [--ref REF]");
   }
   const parsed: RepoSearchArgs = { repo: target.repo, query };
-  if (target.sourcePath) parsed.sourcePath = target.sourcePath;
   if (ref) parsed.ref = ref;
   if (prefix) parsed.prefix = prefix;
   return parsed;
@@ -353,7 +287,6 @@ function parseSearchArgs(args: string[], cwd: string): RepoSearchArgs {
 function parseLogArgs(args: string[], cwd: string): RepoLogArgs {
   const target = parseRepoTarget(args, cwd);
   const parsed: RepoLogArgs = { repo: target.repo };
-  if (target.sourcePath) parsed.sourcePath = target.sourcePath;
   for (let index = target.nextIndex; index < args.length; index += 1) {
     const current = args[index];
     if (current === "--ref") {
@@ -378,12 +311,11 @@ function parseLogArgs(args: string[], cwd: string): RepoLogArgs {
 
 function parseDiffArgs(args: string[], cwd: string): RepoDiffCommandArgs {
   const target = parseRepoTarget(args, cwd);
-  const parsed: RepoDiffCommandArgs = { repo: target.repo };
-  if (target.sourcePath) parsed.sourcePath = target.sourcePath;
+  const parsed: RepoDiffCommandArgs = { repo: target.repo, commit: "" };
   for (let index = target.nextIndex; index < args.length; index += 1) {
     const current = args[index];
     if (current === "--context") {
-      parsed.context = parseInteger(requireValue(args, index, "Usage: rgit diff <repo|--here> [commit] [--context N]"), "context");
+      parsed.context = parseInteger(requireValue(args, index, "Usage: rgit diff <repo|--here> <commit> [--context N]"), "context");
       index += 1;
       continue;
     }
@@ -392,6 +324,9 @@ function parseDiffArgs(args: string[], cwd: string): RepoDiffCommandArgs {
       continue;
     }
     throw new Error(`Unknown rgit diff argument: ${current}`);
+  }
+  if (!parsed.commit) {
+    throw new Error("Usage: rgit diff <repo|--here> <commit> [--context N]");
   }
   return parsed;
 }
@@ -419,33 +354,6 @@ function parseCompareArgs(args: string[], cwd: string): RepoCompareArgs {
   }
   parsed.base = base;
   parsed.head = head;
-  return parsed;
-}
-
-function parseCommitArgs(args: string[], cwd: string): RepoCommitArgs {
-  const target = parseRepoTarget(args, cwd);
-  let message = "";
-  let branch: string | undefined;
-  for (let index = target.nextIndex; index < args.length; index += 1) {
-    const current = args[index];
-    if (current === "--message" || current === "-m") {
-      message = requireValue(args, index, "Usage: rgit commit <repo|--here> --message TEXT [--branch BRANCH]");
-      index += 1;
-      continue;
-    }
-    if (current === "--branch") {
-      branch = requireValue(args, index, "Usage: rgit commit <repo|--here> --message TEXT [--branch BRANCH]");
-      index += 1;
-      continue;
-    }
-    throw new Error(`Unknown rgit commit argument: ${current}`);
-  }
-  if (!message) {
-    throw new Error("Usage: rgit commit <repo|--here> --message TEXT [--branch BRANCH]");
-  }
-  const parsed: RepoCommitArgs = { repo: target.repo, message };
-  if (target.sourcePath) parsed.sourcePath = target.sourcePath;
-  if (branch) parsed.branch = branch;
   return parsed;
 }
 
@@ -592,27 +500,6 @@ function formatRepoLog(result: RepoLogResult): string {
   ).join("\n")}\n`;
 }
 
-function formatRepoStatus(result: Awaited<ReturnType<typeof getRepoSourceStatus>>): string {
-  const lines = [
-    `Repo: ${result.repo}`,
-    `Ref: ${result.sourceRef}`,
-    `Base: ${result.baseRef}`,
-    `Branch: ${result.branch ?? "-"}`,
-    `Head: ${result.head ?? "-"}`,
-    "",
-  ];
-  if (result.changes.length === 0) {
-    lines.push("No staged changes.");
-  } else {
-    lines.push("Changes:");
-    for (const change of result.changes) {
-      lines.push(`  ${change.type === "put" ? "M" : "D"} ${change.path}`);
-    }
-  }
-  lines.push("");
-  return lines.join("\n");
-}
-
 function formatRepoDiff(result: RepoDiffResult): string {
   return formatDiffFiles(result.stats.filesChanged, result.stats.additions, result.stats.deletions, result.files);
 }
@@ -641,6 +528,7 @@ function rgitUsage(commandName: "rgit" | "ripgit"): string {
     `Usage: ${commandName} <subcommand> [args]`,
     "",
     "Repos live under /src/repos/{owner}/{repo}. Pass owner/repo explicitly, or use --here from inside a repo.",
+    "Writable filesystem mutations commit immediately to ripgit.",
     "",
     "Read-only:",
     `  ${commandName} list [--owner USER]`,
@@ -650,13 +538,10 @@ function rgitUsage(commandName: "rgit" | "ripgit"): string {
     `  ${commandName} search <repo|--here> <query> [--prefix PATH] [--ref REF]`,
     `  ${commandName} refs <repo|--here>`,
     `  ${commandName} log <repo|--here> [--ref REF] [--limit N] [--offset N]`,
-    `  ${commandName} status <repo|--here>`,
-    `  ${commandName} diff <repo|--here> [commit] [--context N]`,
+    `  ${commandName} diff <repo|--here> <commit> [--context N]`,
     `  ${commandName} compare <repo|--here> <base> <head> [--stat] [--context N]`,
     "",
     "Mutating:",
-    `  ${commandName} commit <repo|--here> --message TEXT [--branch BRANCH]`,
-    `  ${commandName} discard <repo|--here>`,
     `  ${commandName} create owner/repo [--ref main] [--description TEXT]`,
     `  ${commandName} import <repo|--here> --from URL [--ref REF] [--remote-ref REF]`,
     `  ${commandName} pull <repo|--here> [--ref REF] [--remote-ref REF]`,

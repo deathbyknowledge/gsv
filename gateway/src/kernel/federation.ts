@@ -1706,7 +1706,7 @@ async function commitInboundMessage(
   if (ctx.responsibilitySources.isEnabled(contact.ownerUid, "federation.received")) {
     createFederationResponsibility({
       ownerUid: contact.ownerUid,
-      title: `Reply to contact message ${messageId}`,
+      title: `Review contact message ${messageId} with the owner`,
       details: {
         eventType: "federation.message.received",
         contactId: contact.id,

@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
-  commitRepoSourceChanges,
   createProcessSourceBackend,
-  getRepoSourceStatus,
+  type RipgitApplyOp,
+  type RipgitClient,
+  type RipgitRepoRef,
 } from "./index";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
-import type { RepoSummary } from "@humansandmachines/gsv/protocol";
+import type {
+  ProcessIdentity,
+  RepoSummary,
+} from "@humansandmachines/gsv/protocol";
 
 const IDENTITY: ProcessIdentity = {
   uid: 1000,
@@ -14,6 +17,14 @@ const IDENTITY: ProcessIdentity = {
   username: "sam",
   home: "/home/sam",
   cwd: "/home/sam",
+};
+
+type ApplyCall = {
+  repo: RipgitRepoRef;
+  author: string;
+  email: string;
+  message: string;
+  ops: RipgitApplyOp[];
 };
 
 function makeRepo(repo: string, partial?: Partial<RepoSummary>): RepoSummary {
@@ -29,79 +40,121 @@ function makeRepo(repo: string, partial?: Partial<RepoSummary>): RepoSummary {
   };
 }
 
-function makeConfig() {
-  const values = new Map<string, string>();
-  return {
-    get(key: string) {
-      return values.get(key) ?? null;
-    },
-    set(key: string, value: string) {
-      values.set(key, value);
-    },
-    values,
-  };
-}
+function makeRipgitFixture(
+  initial: Record<string, string> = {},
+  options?: { conflict?: boolean },
+) {
+  const files = new Map(Object.entries(initial));
+  const readCalls: Array<{ repo: RipgitRepoRef; path: string }> = [];
+  const searchCalls: Array<{
+    repo: RipgitRepoRef;
+    query: string;
+    prefix?: string;
+  }> = [];
+  const applyCalls: ApplyCall[] = [];
+  const client = {
+    async readPath(repo: RipgitRepoRef, path: string) {
+      readCalls.push({ repo, path });
+      const content = files.get(path);
+      if (content !== undefined) {
+        return {
+          kind: "file" as const,
+          bytes: new TextEncoder().encode(content),
+          size: content.length,
+        };
+      }
 
-function makeBucket() {
-  const objects = new Map<string, { bytes: Uint8Array; httpMetadata?: R2HTTPMetadata }>();
-  const bucket = {
-    objects,
-    async get(key: string) {
-      const stored = objects.get(key);
-      if (!stored) {
-        return null;
+      const prefix = path ? `${path}/` : "";
+      const entries = new Map<string, "blob" | "tree">();
+      for (const filePath of files.keys()) {
+        if (!filePath.startsWith(prefix)) {
+          continue;
+        }
+        const remainder = filePath.slice(prefix.length);
+        const [name = "", nested] = remainder.split("/", 2);
+        if (name) {
+          entries.set(name, nested ? "tree" : "blob");
+        }
+      }
+      if (entries.size === 0) {
+        return { kind: "missing" as const };
       }
       return {
-        key,
-        size: stored.bytes.byteLength,
-        uploaded: new Date(),
-        httpMetadata: stored.httpMetadata,
-        customMetadata: {},
-        async text() {
-          return new TextDecoder().decode(stored.bytes);
-        },
-        async arrayBuffer() {
-          return stored.bytes.buffer.slice(
-            stored.bytes.byteOffset,
-            stored.bytes.byteOffset + stored.bytes.byteLength,
-          );
-        },
+        kind: "tree" as const,
+        entries: [...entries].map(([name, type]) => ({
+          name,
+          mode: type === "tree" ? "040000" : "100644",
+          hash: `${type}:${name}`,
+          type,
+        })),
       };
     },
-    async put(key: string, value: string | Uint8Array, options?: { httpMetadata?: R2HTTPMetadata }) {
-      const bytes = value instanceof Uint8Array ? value : new TextEncoder().encode(value);
-      objects.set(key, { bytes, httpMetadata: options?.httpMetadata });
-      return null;
-    },
-    async delete(key: string | string[]) {
-      for (const entry of Array.isArray(key) ? key : [key]) {
-        objects.delete(entry);
+    async search(
+      repo: RipgitRepoRef,
+      query: string,
+      prefix?: string,
+    ) {
+      searchCalls.push({ repo, query, prefix });
+      const matches = [];
+      for (const [path, content] of files) {
+        if (prefix && path !== prefix && !path.startsWith(`${prefix}/`)) {
+          continue;
+        }
+        for (const [index, line] of content.split("\n").entries()) {
+          if (line.includes(query)) {
+            matches.push({ path, line: index + 1, content: line });
+          }
+        }
       }
+      return { matches, truncated: false };
+    },
+    async apply(
+      repo: RipgitRepoRef,
+      author: string,
+      email: string,
+      message: string,
+      ops: RipgitApplyOp[],
+    ) {
+      applyCalls.push({ repo, author, email, message, ops });
+      if (options?.conflict) {
+        return { head: "moved-head", conflict: true };
+      }
+      for (const op of ops) {
+        if (op.type === "put") {
+          files.set(op.path, new TextDecoder().decode(new Uint8Array(op.contentBytes)));
+        } else if (op.type === "delete") {
+          for (const path of files.keys()) {
+            if (path === op.path || (op.recursive && path.startsWith(`${op.path}/`))) {
+              files.delete(path);
+            }
+          }
+        }
+      }
+      return { head: `head-${applyCalls.length}`, conflict: false };
     },
   };
-  // SAFETY: this test bucket implements the R2 operations exercised by the source backend.
-  return bucket as R2Bucket & { objects: typeof objects };
+  // SAFETY: this fixture implements every RipgitClient method exercised by these tests.
+  return {
+    client: client as RipgitClient,
+    files,
+    readCalls,
+    searchCalls,
+    applyCalls,
+  };
 }
 
 describe("createProcessSourceBackend", () => {
   it("lists visible ripgit repo owners and repos under /src/repos", async () => {
+    const ripgit = makeRipgitFixture();
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
-      storage: makeBucket(),
       repos: [
         makeRepo("sam/docs"),
         makeRepo("sam/tools"),
         makeRepo("root/gsv-manual", { public: true, writable: false }),
         makeRepo("bob/public", { public: true, writable: false }),
       ],
-      processId: "task:source",
-      config: makeConfig(),
-      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
-      ripgit: {
-        readPath: async () => {
-          throw new Error("readPath should not be called for virtual repo dirs");
-        },
-      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
+      ripgit: ripgit.client,
     });
 
     expect(backend).not.toBeNull();
@@ -116,44 +169,17 @@ describe("createProcessSourceBackend", () => {
       isDirectory: true,
       mode: 0o555,
     });
+    expect(ripgit.readCalls).toHaveLength(0);
   });
 
-  it("reads and searches repo content through /src/repos/owner/repo", async () => {
-    const calls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
-    const searchCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; query: string; prefix?: string }> = [];
+  it("reads and searches repo content through the configured ref", async () => {
+    const ripgit = makeRipgitFixture({
+      "README.md": "# Docs\nvisible repo file\n",
+    });
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
-      storage: makeBucket(),
-      repos: [makeRepo("sam/docs")],
-      processId: "task:source",
-      config: makeConfig(),
-      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
-      ripgit: {
-        readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
-          calls.push({ repo, path });
-          if (path === "") {
-            return {
-              kind: "tree",
-              entries: [{ name: "README.md", mode: "100644", hash: "readme", type: "blob" }],
-            };
-          }
-          if (repo.owner === "sam" && repo.repo === "docs" && path === "README.md") {
-            return {
-              kind: "file",
-              bytes: new TextEncoder().encode("# Docs\nvisible repo file\n"),
-              size: 25,
-            };
-          }
-          return { kind: "missing" };
-        },
-        search: async (repo: { owner: string; repo: string; branch?: string }, query: string, prefix?: string) => {
-          searchCalls.push({ repo, query, prefix });
-          return {
-            truncated: false,
-            matches: [{ path: "README.md", line: 2, content: "visible repo file" }],
-          };
-        },
-      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
+      repos: [makeRepo("sam/docs", { ref: "feature/docs", baseRef: "ignored-base" })],
+      ripgit: ripgit.client,
     });
 
     await expect(backend!.readdir("/src/repos/sam/docs")).resolves.toEqual(["README.md"]);
@@ -165,879 +191,178 @@ describe("createProcessSourceBackend", () => {
         content: "visible repo file",
       }],
     });
-
-    expect(calls).toEqual([
-      {
-        repo: { owner: "sam", repo: "docs", branch: "main" },
-        path: "",
-      },
-      {
-        repo: { owner: "sam", repo: "docs", branch: "main" },
-        path: "README.md",
-      },
-    ]);
-    expect(searchCalls).toEqual([{
-      repo: { owner: "sam", repo: "docs", branch: "main" },
+    expect(ripgit.readCalls.every((call) => call.repo.branch === "feature/docs")).toBe(true);
+    expect(ripgit.searchCalls).toEqual([{
+      repo: { owner: "sam", repo: "docs", branch: "feature/docs" },
       query: "visible",
       prefix: undefined,
     }]);
   });
 
-  it("stages owned repo writes before committing through ripgit", async () => {
-    const files = new Map<string, string>([
-      ["notes.md", "old\n"],
-      ["old.md", "remove me\n"],
-    ]);
-    const applyCalls: any[] = [];
-    const config = makeConfig();
-    const storage = makeBucket();
+  it("commits writes, appends, and deletes directly to ripgit", async () => {
+    const ripgit = makeRipgitFixture({
+      "notes.md": "old\n",
+      "old.md": "remove me\n",
+    });
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
-      storage,
       repos: [makeRepo("sam/docs")],
-      processId: "task:source",
-      config,
-      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
-      ripgit: {
-        readPath: async (_repo: { owner: string; repo: string; branch?: string }, path: string) => {
-          const content = files.get(path);
-          if (content !== undefined) {
-            return {
-              kind: "file",
-              bytes: new TextEncoder().encode(content),
-              size: content.length,
-            };
-          }
-          return { kind: "missing" };
-        },
-        apply: async (...args: any[]) => {
-          applyCalls.push(args);
-          // SAFETY: Ripgit apply receives ops as its fifth argument by contract.
-          const ops = args[4] as Array<{ type: string; path: string; contentBytes?: number[] }>;
-          for (const op of ops) {
-            if (op.type === "put" && op.contentBytes) {
-              files.set(op.path, new TextDecoder().decode(new Uint8Array(op.contentBytes)));
-            } else if (op.type === "delete") {
-              files.delete(op.path);
-            }
-          }
-          return { head: `repohead${applyCalls.length}` };
-        },
-        refs: async () => ({ heads: { main: "mainhead123" }, tags: {} }),
-      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
+      ripgit: ripgit.client,
     });
 
     await backend!.writeFile("/src/repos/sam/docs/new.md", "created\n");
     await backend!.appendFile("/src/repos/sam/docs/notes.md", "more\n");
     await backend!.rm("/src/repos/sam/docs/old.md");
 
-    const manifest = await storage.get(
-      "process-source-overlays/task%3Asource/global%3Arepo%3Asam%2Fdocs/manifest.json",
-    );
-    expect(JSON.parse(await manifest!.text())).toMatchObject({
-      version: 1,
-      packageId: "repo:sam/docs",
-      packageKey: "global:repo:sam/docs",
-    });
-
-    expect(applyCalls).toHaveLength(0);
-    await expect(backend!.readFile("/src/repos/sam/docs/new.md")).resolves.toBe("created\n");
-    await expect(backend!.readFile("/src/repos/sam/docs/notes.md")).resolves.toBe("old\nmore\n");
-    await expect(backend!.readFile("/src/repos/sam/docs/old.md")).rejects.toThrow("ENOENT");
-
-    await expect(getRepoSourceStatus({
-      identity: IDENTITY,
-      storage: makeBucket(),
-      repos: [makeRepo("sam/docs")],
-      processId: "other-process",
-      config,
-      ripgit: null,
-    }, "sam/docs")).resolves.toMatchObject({
-      changes: [],
-    });
-
-    const status = await getRepoSourceStatus({
-      identity: IDENTITY,
-      storage,
-      repos: [makeRepo("sam/docs")],
-      processId: "task:source",
-      config,
-      ripgit: null,
-    }, "sam/docs");
-    expect(status.changes.map((change) => `${change.type}:${change.path}`)).toEqual([
-      "put:new.md",
-      "put:notes.md",
-      "delete:old.md",
+    expect(ripgit.applyCalls).toHaveLength(3);
+    expect(ripgit.applyCalls.map((call) => call.message)).toEqual([
+      "gsv: write new.md",
+      "gsv: append notes.md",
+      "gsv: rm old.md",
     ]);
-
-    const result = await commitRepoSourceChanges({
-      identity: IDENTITY,
-      storage,
-      repos: [makeRepo("sam/docs")],
-      processId: "task:source",
-      config,
-      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
-      ripgit: {
-        readPath: async (_repo: { owner: string; repo: string; branch?: string }, path: string) => {
-          const content = files.get(path);
-          if (content !== undefined) {
-            return {
-              kind: "file",
-              bytes: new TextEncoder().encode(content),
-              size: content.length,
-            };
-          }
-          return { kind: "missing" };
-        },
-        apply: async (...args: any[]) => {
-          applyCalls.push(args);
-          // SAFETY: Ripgit apply receives ops as its fifth argument by contract.
-          const ops = args[4] as Array<{ type: string; path: string; contentBytes?: number[] }>;
-          for (const op of ops) {
-            if (op.type === "put" && op.contentBytes) {
-              files.set(op.path, new TextDecoder().decode(new Uint8Array(op.contentBytes)));
-            } else if (op.type === "delete") {
-              files.delete(op.path);
-            }
-          }
-          return { head: `repohead${applyCalls.length}` };
-        },
-        refs: async () => ({ heads: { main: "mainhead123" }, tags: {} }),
-      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
-    }, "sam/docs", { message: "update docs" });
-
-    expect(result).toMatchObject({
-      committed: true,
-      branch: "main",
-      commitHead: "repohead1",
-      ops: 3,
-      changes: [],
-    });
-    expect(files.get("new.md")).toBe("created\n");
-    expect(files.get("notes.md")).toBe("old\nmore\n");
-    expect(files.has("old.md")).toBe(false);
-    expect(applyCalls).toHaveLength(1);
-    expect(applyCalls[0][0]).toEqual({ owner: "sam", repo: "docs", branch: "main" });
-    expect(applyCalls[0][3]).toBe("update docs");
-    expect(applyCalls[0][5]).toEqual({ baseRef: "mainhead123", expectedHead: "mainhead123" });
+    expect(ripgit.applyCalls.every((call) => call.repo.branch === "main")).toBe(true);
+    expect(ripgit.applyCalls[0].ops).toEqual([{
+      type: "put",
+      path: "new.md",
+      contentBytes: Array.from(new TextEncoder().encode("created\n")),
+    }]);
+    expect(ripgit.files.get("new.md")).toBe("created\n");
+    expect(ripgit.files.get("notes.md")).toBe("old\nmore\n");
+    expect(ripgit.files.has("old.md")).toBe(false);
   });
 
-  it("keeps public non-owned repos read-only through /src/repos", async () => {
-    const applyCalls: any[] = [];
+  it("surfaces a ripgit conflict without a second storage path", async () => {
+    const ripgit = makeRipgitFixture({}, { conflict: true });
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
-      storage: makeBucket(),
-      repos: [makeRepo("root/gsv-manual", { public: true, writable: false })],
-      processId: "task:source",
-      config: makeConfig(),
-      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
-      // SAFETY: typed ripgit fixture implements only methods exercised by this test.
-      ripgit: {
-        readPath: async () => ({ kind: "missing" }),
-        apply: async (...args: any[]) => {
-          applyCalls.push(args);
-          return { head: "repohead123" };
-        },
-      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
+      repos: [makeRepo("sam/docs")],
+      ripgit: ripgit.client,
     });
 
+    await expect(backend!.writeFile("/src/repos/sam/docs/new.md", "new\n"))
+      .rejects.toThrow("Repo ref moved while committing sam/docs");
+    expect(ripgit.applyCalls).toHaveLength(1);
+    expect(ripgit.files.has("new.md")).toBe(false);
+  });
+
+  it("keeps public non-owned repos read-only", async () => {
+    const ripgit = makeRipgitFixture({ "README.md": "manual\n" });
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      repos: [makeRepo("root/gsv-manual", { public: true, writable: false })],
+      ripgit: ripgit.client,
+    });
+
+    await expect(backend!.readFile("/src/repos/root/gsv-manual/README.md"))
+      .resolves.toBe("manual\n");
     await expect(backend!.writeFile("/src/repos/root/gsv-manual/README.md", "x"))
       .rejects.toThrow("read-only");
     await expect(backend!.appendFile("/src/repos/root/gsv-manual/README.md", "x"))
       .rejects.toThrow("read-only");
     await expect(backend!.rm("/src/repos/root/gsv-manual/README.md", { force: true }))
       .rejects.toThrow("read-only");
-    expect(applyCalls).toHaveLength(0);
+    expect(ripgit.applyCalls).toHaveLength(0);
   });
 
-  it("exposes public manual repos supplied by repo visibility and hides absent private repos", async () => {
+  it("hides repos absent from the visibility list", async () => {
+    const ripgit = makeRipgitFixture({ "README.md": "visible\n" });
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
-      storage: makeBucket(),
-      repos: [
-        makeRepo("root/gsv-manual", { kind: "user", public: true, writable: false }),
-        makeRepo("bob/public", { public: true, writable: false }),
-      ],
-      processId: "task:source",
-      config: makeConfig(),
-      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
-      ripgit: {
-        readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
-          if (repo.owner === "root" && repo.repo === "gsv-manual" && path === "README.md") {
-            return {
-              kind: "file",
-              bytes: new TextEncoder().encode("manual\n"),
-              size: 7,
-            };
-          }
-          return { kind: "missing" };
-        },
-      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
+      repos: [makeRepo("bob/public", { public: true, writable: false })],
+      ripgit: ripgit.client,
     });
 
-    await expect(backend!.readdir("/src/repos/root")).resolves.toEqual(["gsv-manual"]);
-    await expect(backend!.readdir("/src/repos/bob")).resolves.toEqual(["public"]);
-    await expect(backend!.readFile("/src/repos/root/gsv-manual/README.md")).resolves.toBe("manual\n");
-    await expect(backend!.readFile("/src/repos/bob/private/README.md")).rejects.toThrow("no such source repo");
-  });
-
-  it("keeps listed repos visible under /src/repos", async () => {
-    const backend = createProcessSourceBackend({
-      identity: IDENTITY,
-      storage: makeBucket(),
-      repos: [
-        makeRepo("root/gsv", { kind: "user", public: false, writable: false }),
-        makeRepo("root/gsv-manual", { kind: "user", public: true, writable: false }),
-      ],
-      processId: "task:source",
-      config: makeConfig(),
-      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
-      ripgit: {
-        readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
-          if (repo.owner === "root" && repo.repo === "gsv" && path === "README.md") {
-            return {
-              kind: "file",
-              bytes: new TextEncoder().encode("gsv source\n"),
-              size: 11,
-            };
-          }
-          if (repo.owner === "root" && repo.repo === "gsv" && path === "packages/chat/package.json") {
-            return {
-              kind: "file",
-              bytes: new TextEncoder().encode("{\"name\":\"chat\"}\n"),
-              size: 16,
-            };
-          }
-          return { kind: "missing" };
-        },
-      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
-    });
-
-    await expect(backend!.readdir("/src/repos/root")).resolves.toEqual(["gsv", "gsv-manual"]);
-    await expect(backend!.readFile("/src/repos/root/gsv/README.md")).resolves.toBe("gsv source\n");
-    await expect(backend!.readFile("/src/repos/root/gsv/packages/chat/package.json")).resolves.toContain("chat");
-  });
-
-  it("reads repos at their configured base ref", async () => {
-    const readCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
-    const backend = createProcessSourceBackend({
-      identity: IDENTITY,
-      storage: makeBucket(),
-      repos: [makeRepo("root/gsv", { kind: "user", writable: false, ref: "feature/review", baseRef: "commit123" })],
-      processId: "task:source",
-      config: makeConfig(),
-      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
-      ripgit: {
-        readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
-          readCalls.push({ repo, path });
-          if (repo.branch === "commit123" && path === "packages/chat/package.json") {
-            return {
-              kind: "file",
-              bytes: new TextEncoder().encode("{\"name\":\"chat\"}\n"),
-              size: 16,
-            };
-          }
-          return { kind: "missing" };
-        },
-      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
-    });
-
-    await expect(backend!.readFile("/src/repos/root/gsv/packages/chat/package.json")).resolves.toContain("chat");
-    expect(readCalls).toEqual([{
-      repo: { owner: "root", repo: "gsv", branch: "commit123" },
-      path: "packages/chat/package.json",
-    }]);
-  });
-
-  it("commits repos to their configured source ref by default", async () => {
-    const config = makeConfig();
-    const storage = makeBucket();
-    const applyCalls: any[] = [];
-    const readCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
-    // SAFETY: typed ripgit fixture implements only methods exercised by this test.
-    const ripgit = {
-      readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
-        readCalls.push({ repo, path });
-        return { kind: "missing" };
-      },
-      refs: async () => ({ heads: {}, tags: {} }),
-      apply: async (...args: any[]) => {
-        applyCalls.push(args);
-        return { head: "featurehead123" };
-      },
-    } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any;
-    const repos = [makeRepo("sam/pkg-test", {
-      kind: "user",
-      writable: true,
-      ref: "feature/review",
-      baseRef: "commit123",
-    })];
-    const backend = createProcessSourceBackend({
-      identity: IDENTITY,
-      storage,
-      repos,
-      processId: "task:source",
-      config,
-      ripgit,
-    });
-
-    await backend!.writeFile("/src/repos/sam/pkg-test/packages/sample-console/src/index.ts", "export const review = true;\n");
-    const result = await commitRepoSourceChanges({
-      identity: IDENTITY,
-      storage,
-      repos,
-      processId: "task:source",
-      config,
-      ripgit,
-    }, "sam/pkg-test", { message: "repo: update source" });
-
-    expect(result).toMatchObject({
-      sourceRef: "feature/review",
-      baseRef: "commit123",
-      branch: "feature/review",
-      head: "featurehead123",
-    });
-    expect(readCalls).toEqual([{
-      repo: { owner: "sam", repo: "pkg-test", branch: "commit123" },
-      path: "packages/sample-console/src/index.ts",
-    }]);
-    expect(applyCalls).toHaveLength(1);
-    expect(applyCalls[0][0]).toEqual({
-      owner: "sam",
-      repo: "pkg-test",
-      branch: "feature/review",
-    });
-    expect(applyCalls[0][5]).toEqual({ baseRef: "commit123" });
-  });
-
-  it("locks default repo commits to the configured branch head", async () => {
-    const config = makeConfig();
-    const storage = makeBucket();
-    const applyCalls: any[] = [];
-    const readCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
-    // SAFETY: typed ripgit fixture implements only methods exercised by this test.
-    const ripgit = {
-      readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
-        readCalls.push({ repo, path });
-        return { kind: "missing" };
-      },
-      refs: async () => ({ heads: { "feature/review": "movedhead456" }, tags: {} }),
-      apply: async (...args: any[]) => {
-        applyCalls.push(args);
-        return { head: "featurehead123" };
-      },
-    } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any;
-    const repos = [makeRepo("sam/pkg-test", {
-      kind: "user",
-      writable: true,
-      ref: "feature/review",
-      baseRef: "commit123",
-    })];
-    const backend = createProcessSourceBackend({
-      identity: IDENTITY,
-      storage,
-      repos,
-      processId: "task:source",
-      config,
-      ripgit,
-    });
-
-    await backend!.writeFile("/src/repos/sam/pkg-test/packages/sample-console/src/index.ts", "export const review = true;\n");
-    await commitRepoSourceChanges({
-      identity: IDENTITY,
-      storage,
-      repos,
-      processId: "task:source",
-      config,
-      ripgit,
-    }, "sam/pkg-test", { message: "repo: update source" });
-
-    expect(readCalls).toEqual([{
-      repo: { owner: "sam", repo: "pkg-test", branch: "commit123" },
-      path: "packages/sample-console/src/index.ts",
-    }]);
-    expect(applyCalls).toHaveLength(1);
-    expect(applyCalls[0][0]).toEqual({
-      owner: "sam",
-      repo: "pkg-test",
-      branch: "feature/review",
-    });
-    expect(applyCalls[0][5]).toEqual({ baseRef: "commit123", expectedHead: "commit123" });
+    await expect(backend!.readFile("/src/repos/bob/public/README.md"))
+      .resolves.toBe("visible\n");
+    await expect(backend!.readFile("/src/repos/bob/private/README.md"))
+      .rejects.toThrow("no such source repo");
   });
 
   it("reads nested subdirectories through the canonical repo path", async () => {
-    const readCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
+    const ripgit = makeRipgitFixture({
+      "packages/app/index.ts": "export const app = true;\n",
+      "packages/other/index.ts": "export const other = true;\n",
+    });
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
-      storage: makeBucket(),
       repos: [makeRepo("sam/mono")],
-      processId: "task:source",
-      config: makeConfig(),
-      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
-      ripgit: {
-        readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
-          readCalls.push({ repo, path });
-          if (path === "packages/app/index.ts") {
-            return {
-              kind: "file",
-              bytes: new TextEncoder().encode("export const app = true;\n"),
-              size: 25,
-            };
-          }
-          if (path === "packages/other/index.ts") {
-            return {
-              kind: "file",
-              bytes: new TextEncoder().encode("export const other = true;\n"),
-              size: 27,
-            };
-          }
-          return { kind: "missing" };
-        },
-      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
+      ripgit: ripgit.client,
     });
 
     await expect(backend!.readFile("/src/repos/sam/mono/packages/app/index.ts"))
       .resolves.toContain("app = true");
     await expect(backend!.readFile("/src/repos/sam/mono/packages/other/index.ts"))
       .resolves.toContain("other = true");
-    expect(readCalls).toEqual([
-      {
-        repo: { owner: "sam", repo: "mono", branch: "main" },
-        path: "packages/app/index.ts",
-      },
-      {
-        repo: { owner: "sam", repo: "mono", branch: "main" },
-        path: "packages/other/index.ts",
-      },
-    ]);
   });
 
-  it("does not reuse expectedHead when committing to a different branch", async () => {
-    const config = makeConfig();
-    const storage = makeBucket();
-    const applyCalls: any[] = [];
-    const heads = ["processhead123", "featurehead456", "featurehead789"];
-    // SAFETY: typed ripgit fixture implements only methods exercised by this test.
-    const ripgit = {
-      readPath: async () => ({ kind: "missing" }),
-      refs: async () => ({ heads: {}, tags: {} }),
-      apply: async (...args: any[]) => {
-        applyCalls.push(args);
-        return { head: heads[applyCalls.length - 1] };
-      },
-    } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any;
+  it("commits recursive directory deletes immediately", async () => {
+    const ripgit = makeRipgitFixture({
+      "packages/sample/src/index.ts": "index\n",
+      "packages/sample/src/nested/other.ts": "other\n",
+    });
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
-      storage,
       repos: [makeRepo("sam/pkg-test")],
-      processId: "task:source",
-      config,
-      ripgit,
+      ripgit: ripgit.client,
     });
 
-    await backend!.writeFile("/src/repos/sam/pkg-test/packages/sample-console/src/one.ts", "export const one = true;\n");
-    await commitRepoSourceChanges({
-      identity: IDENTITY,
-      storage,
-      repos: [makeRepo("sam/pkg-test")],
-      processId: "task:source",
-      config,
-      ripgit,
-    }, "sam/pkg-test", { message: "repo: commit one" });
+    await backend!.rm("/src/repos/sam/pkg-test/packages/sample/src", { recursive: true });
 
-    await backend!.writeFile("/src/repos/sam/pkg-test/packages/sample-console/src/two.ts", "export const two = true;\n");
-    await commitRepoSourceChanges({
-      identity: IDENTITY,
-      storage,
-      repos: [makeRepo("sam/pkg-test")],
-      processId: "task:source",
-      config,
-      ripgit,
-    }, "sam/pkg-test", { message: "repo: commit two", branch: "feature/package-work" });
-
-    expect(applyCalls).toHaveLength(2);
-    expect(applyCalls[1][0]).toEqual({
-      owner: "sam",
-      repo: "pkg-test",
-      branch: "feature/package-work",
-    });
-    expect(applyCalls[1][5]).toEqual({ baseRef: "processhead123" });
-
-    await backend!.writeFile("/src/repos/sam/pkg-test/packages/sample-console/src/three.ts", "export const three = true;\n");
-    await commitRepoSourceChanges({
-      identity: IDENTITY,
-      storage,
-      repos: [makeRepo("sam/pkg-test")],
-      processId: "task:source",
-      config,
-      ripgit,
-    }, "sam/pkg-test", { message: "repo: commit three" });
-
-    expect(applyCalls).toHaveLength(3);
-    expect(applyCalls[2][0]).toEqual({
-      owner: "sam",
-      repo: "pkg-test",
-      branch: "feature/package-work",
-    });
-    expect(applyCalls[2][5]).toEqual({ baseRef: "featurehead456", expectedHead: "featurehead456" });
-  });
-
-  it("compares staged source changes against an existing target branch", async () => {
-    const config = makeConfig();
-    const storage = makeBucket();
-    const applyCalls: any[] = [];
-    const readCalls: Array<{ repo: { branch?: string }; path: string }> = [];
-    // SAFETY: typed ripgit fixture implements only methods exercised by this test.
-    const ripgit = {
-      readPath: async (repo: { branch?: string }, path: string) => {
-        readCalls.push({ repo, path });
-        if (repo.branch === "base123") {
-          return {
-            kind: "file",
-            bytes: new TextEncoder().encode("export const changed = true;\n"),
-            size: 29,
-          };
-        }
-        return {
-          kind: "file",
-          bytes: new TextEncoder().encode("export const changed = false;\n"),
-          size: 30,
-        };
-      },
-      refs: async () => ({ heads: { "feature/package-work": "featurehead456" }, tags: {} }),
-      apply: async (...args: any[]) => {
-        applyCalls.push(args);
-        return { head: "featurehead789" };
-      },
-    } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any;
-    const backend = createProcessSourceBackend({
-      identity: IDENTITY,
-      storage,
-      repos: [makeRepo("sam/pkg-test")],
-      processId: "task:source",
-      config,
-      ripgit,
-    });
-
-    await backend!.writeFile("/src/repos/sam/pkg-test/packages/sample-console/src/index.ts", "export const changed = true;\n");
-    await commitRepoSourceChanges({
-      identity: IDENTITY,
-      storage,
-      repos: [makeRepo("sam/pkg-test")],
-      processId: "task:source",
-      config,
-      ripgit,
-    }, "sam/pkg-test", { message: "repo: commit to existing branch", branch: "feature/package-work" });
-
-    expect(readCalls).toEqual([
-      {
-        repo: { owner: "sam", repo: "pkg-test", branch: "featurehead456" },
-        path: "packages/sample-console/src/index.ts",
-      },
-    ]);
-    expect(applyCalls).toHaveLength(1);
-    expect(applyCalls[0][0]).toEqual({
-      owner: "sam",
-      repo: "pkg-test",
-      branch: "feature/package-work",
-    });
-    expect(applyCalls[0][4]).toEqual([
-      {
-        type: "put",
-        path: "packages/sample-console/src/index.ts",
-        contentBytes: Array.from(new TextEncoder().encode("export const changed = true;\n")),
-      },
-    ]);
-    expect(applyCalls[0][5]).toEqual({ baseRef: "featurehead456", expectedHead: "featurehead456" });
-  });
-
-  it("reads from the active process branch head after committing source changes", async () => {
-    const config = makeConfig();
-    const storage = makeBucket();
-    const applyCalls: any[] = [];
-    const readCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
-    const filePath = "packages/sample-console/src/index.ts";
-    // SAFETY: typed ripgit fixture implements only methods exercised by this test.
-    const ripgit = {
-      readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
-        readCalls.push({ repo, path });
-        if (path !== filePath) {
-          return { kind: "missing" };
-        }
-        const text = repo.branch === "processhead123" ? "branch\n" : "main\n";
-        return {
-          kind: "file",
-          bytes: new TextEncoder().encode(text),
-          size: text.length,
-        };
-      },
-      refs: async () => ({ heads: {}, tags: {} }),
-      apply: async (...args: any[]) => {
-        applyCalls.push(args);
-        return { head: applyCalls.length === 1 ? "processhead123" : "processhead456" };
-      },
-    } as any;
-    const backend = createProcessSourceBackend({
-      identity: IDENTITY,
-      storage,
-      repos: [makeRepo("sam/pkg-test")],
-      processId: "task:source",
-      config,
-      ripgit,
-    });
-
-    await backend!.writeFile(`/src/repos/sam/pkg-test/${filePath}`, "branch\n");
-    await commitRepoSourceChanges({
-      identity: IDENTITY,
-      storage,
-      repos: [makeRepo("sam/pkg-test")],
-      processId: "task:source",
-      config,
-      ripgit,
-    }, "sam/pkg-test", { message: "repo: commit branch base", branch: "feature/package-work" });
-    expect(readCalls).toEqual([{
-      repo: { owner: "sam", repo: "pkg-test", branch: "main" },
-      path: filePath,
-    }]);
-
-    readCalls.length = 0;
-    await backend!.appendFile(`/src/repos/sam/pkg-test/${filePath}`, "next\n");
-    await commitRepoSourceChanges({
-      identity: IDENTITY,
-      storage,
-      repos: [makeRepo("sam/pkg-test")],
-      processId: "task:source",
-      config,
-      ripgit,
-    }, "sam/pkg-test", { message: "repo: append on branch" });
-
-    expect(readCalls.length).toBeGreaterThan(0);
-    expect(readCalls.every((call) => call.repo.branch === "processhead123")).toBe(true);
-    expect(applyCalls[1][4]).toEqual([{
-      type: "put",
-      path: filePath,
-      contentBytes: Array.from(new TextEncoder().encode("branch\nnext\n")),
-    }]);
-    expect(applyCalls[1][5]).toEqual({ baseRef: "processhead123", expectedHead: "processhead123" });
-  });
-
-  it("remembers an explicit target branch even when staged source edits are no-ops", async () => {
-    const config = makeConfig();
-    const storage = makeBucket();
-    const applyCalls: any[] = [];
-    // SAFETY: typed ripgit fixture implements only methods exercised by this test.
-    const ripgit = {
-      readPath: async (repo: { branch?: string }) => {
-        if (repo.branch === "featurehead456") {
-          return {
-            kind: "file",
-            bytes: new TextEncoder().encode("export const same = true;\n"),
-            size: 26,
-          };
-        }
-        return { kind: "missing" };
-      },
-      refs: async () => ({ heads: { "feature/package-work": "featurehead456" }, tags: {} }),
-      apply: async (...args: any[]) => {
-        applyCalls.push(args);
-        return { head: "processhead123" };
-      },
-    } as any;
-    const backend = createProcessSourceBackend({
-      identity: IDENTITY,
-      storage,
-      repos: [makeRepo("sam/pkg-test")],
-      processId: "task:source",
-      config,
-      ripgit,
-    });
-
-    await backend!.writeFile("/src/repos/sam/pkg-test/packages/sample-console/src/one.ts", "export const one = true;\n");
-    await commitRepoSourceChanges({
-      identity: IDENTITY,
-      storage,
-      repos: [makeRepo("sam/pkg-test")],
-      processId: "task:source",
-      config,
-      ripgit,
-    }, "sam/pkg-test", { message: "repo: commit one" });
-
-    await backend!.writeFile("/src/repos/sam/pkg-test/packages/sample-console/src/index.ts", "export const same = true;\n");
-    const result = await commitRepoSourceChanges({
-      identity: IDENTITY,
-      storage,
-      repos: [makeRepo("sam/pkg-test")],
-      processId: "task:source",
-      config,
-      ripgit,
-    }, "sam/pkg-test", { message: "repo: select feature", branch: "feature/package-work" });
-
-    expect(result).toMatchObject({
-      committed: false,
-      branch: "feature/package-work",
-      baseRef: "featurehead456",
-      head: "featurehead456",
-      commitHead: "featurehead456",
-      ops: 0,
-      changes: [],
-    });
-    expect(applyCalls).toHaveLength(1);
-    await expect(getRepoSourceStatus({
-      identity: IDENTITY,
-      storage,
-      repos: [makeRepo("sam/pkg-test")],
-      processId: "task:source",
-      config,
-      ripgit,
-    }, "sam/pkg-test")).resolves.toMatchObject({
-      branch: "feature/package-work",
-      baseRef: "featurehead456",
-      head: "featurehead456",
-    });
-  });
-
-  it("treats recursively deleted overlay directories as missing in readdir", async () => {
-    const backend = createProcessSourceBackend({
-      identity: IDENTITY,
-      storage: makeBucket(),
-      repos: [makeRepo("sam/pkg-test")],
-      processId: "task:source",
-      config: makeConfig(),
-      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
-      ripgit: {
-        readPath: async (_repo: { owner: string; repo: string; branch?: string }, path: string) => {
-          if (path === "packages/sample-console") {
-            return {
-              kind: "tree",
-              entries: [{ name: "src", mode: "040000", hash: "tree1", type: "tree" }],
-            };
-          }
-          if (path === "packages/sample-console/src") {
-            return {
-              kind: "tree",
-              entries: [{ name: "index.ts", mode: "100644", hash: "blob1", type: "blob" }],
-            };
-          }
-          return { kind: "missing" };
-        },
-      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
-    });
-
-    await expect(backend!.readdir("/src/repos/sam/pkg-test/packages/sample-console/src")).resolves.toEqual(["index.ts"]);
-    await backend!.rm("/src/repos/sam/pkg-test/packages/sample-console/src", { recursive: true });
-
-    await expect(backend!.stat("/src/repos/sam/pkg-test/packages/sample-console/src")).rejects.toThrow("ENOENT");
-    await expect(backend!.readdir("/src/repos/sam/pkg-test/packages/sample-console/src")).rejects.toThrow("ENOENT");
-    await expect(backend!.readdir("/src/repos/sam/pkg-test/packages/sample-console")).resolves.toEqual([]);
-  });
-
-  it("preserves parent directories when deleting nested source files", async () => {
-    const backend = createProcessSourceBackend({
-      identity: IDENTITY,
-      storage: makeBucket(),
-      repos: [makeRepo("sam/pkg-test")],
-      processId: "task:source",
-      config: makeConfig(),
-      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
-      ripgit: {
-        readPath: async (_repo: { owner: string; repo: string; branch?: string }, path: string) => {
-          if (path === "packages/sample-console") {
-            return {
-              kind: "tree",
-              entries: [{ name: "src", mode: "040000", hash: "tree1", type: "tree" }],
-            };
-          }
-          if (path === "packages/sample-console/src") {
-            return {
-              kind: "tree",
-              entries: [
-                { name: "index.ts", mode: "100644", hash: "blob1", type: "blob" },
-                { name: "other.ts", mode: "100644", hash: "blob2", type: "blob" },
-              ],
-            };
-          }
-          if (path === "packages/sample-console/src/index.ts") {
-            return {
-              kind: "file",
-              bytes: new TextEncoder().encode("export const index = true;\n"),
-              size: 27,
-            };
-          }
-          return { kind: "missing" };
-        },
-      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
-    });
-
-    await backend!.rm("/src/repos/sam/pkg-test/packages/sample-console/src/index.ts");
-
-    await expect(backend!.readdir("/src/repos/sam/pkg-test/packages/sample-console")).resolves.toEqual(["src"]);
-    await expect(backend!.readdir("/src/repos/sam/pkg-test/packages/sample-console/src")).resolves.toEqual(["other.ts"]);
-  });
-
-  it("rejects source rm for missing paths unless forced", async () => {
-    const storage = makeBucket();
-    const backend = createProcessSourceBackend({
-      identity: IDENTITY,
-      storage,
-      repos: [makeRepo("sam/pkg-test")],
-      processId: "task:source",
-      config: makeConfig(),
-      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
-      ripgit: {
-        readPath: async () => ({ kind: "missing" }),
-      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
-    });
-
-    await expect(backend!.rm("/src/repos/sam/pkg-test/packages/sample-console/missing.ts"))
+    await expect(backend!.stat("/src/repos/sam/pkg-test/packages/sample/src"))
       .rejects.toThrow("ENOENT");
-    expect(storage.objects.size).toBe(0);
-
-    await expect(backend!.rm("/src/repos/sam/pkg-test/packages/sample-console/missing.ts", { force: true }))
-      .resolves.toBeUndefined();
-    expect(storage.objects.size).toBe(0);
+    expect(ripgit.applyCalls[0].ops).toEqual([{
+      type: "delete",
+      path: "packages/sample/src",
+      recursive: true,
+    }]);
   });
 
-  it("rejects non-recursive source rm for non-empty directories", async () => {
-    const storage = makeBucket();
+  it("preserves parent directories when deleting a nested file", async () => {
+    const ripgit = makeRipgitFixture({
+      "packages/sample/src/index.ts": "index\n",
+      "packages/sample/src/other.ts": "other\n",
+    });
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
-      storage,
       repos: [makeRepo("sam/pkg-test")],
-      processId: "task:source",
-      config: makeConfig(),
-      // SAFETY: typed ripgit fixture implements only methods exercised by this test.
-      ripgit: {
-        readPath: async (_repo: { owner: string; repo: string; branch?: string }, path: string) => {
-          if (path === "packages/sample-console/src") {
-            return {
-              kind: "tree",
-              entries: [{ name: "index.ts", mode: "100644", hash: "blob1", type: "blob" }],
-            };
-          }
-          return { kind: "missing" };
-        },
-      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
+      ripgit: ripgit.client,
     });
 
-    await expect(backend!.rm("/src/repos/sam/pkg-test/packages/sample-console/src"))
-      .rejects.toThrow("ENOTEMPTY");
-    expect(storage.objects.size).toBe(0);
+    await backend!.rm("/src/repos/sam/pkg-test/packages/sample/src/index.ts");
+
+    await expect(backend!.readdir("/src/repos/sam/pkg-test/packages/sample"))
+      .resolves.toEqual(["src"]);
+    await expect(backend!.readdir("/src/repos/sam/pkg-test/packages/sample/src"))
+      .resolves.toEqual(["other.ts"]);
   });
 
-  it("keeps repos from other owners read-only", async () => {
-    // SAFETY: this fixture supplies only the readPath method exercised by the test.
+  it("rejects rm for missing paths unless forced", async () => {
+    const ripgit = makeRipgitFixture();
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
-      storage: makeBucket(),
-      repos: [makeRepo("root/gsv", { kind: "user", writable: false })],
-      processId: "task:source",
-      config: makeConfig(),
-      // SAFETY: typed ripgit fixture implements only methods exercised by this test.
-      ripgit: {
-        readPath: async () => ({ kind: "missing" }),
-      } /* SAFETY: typed ripgit fixture implements only methods exercised here. */ as any,
+      repos: [makeRepo("sam/pkg-test")],
+      ripgit: ripgit.client,
     });
 
-    await expect(backend!.writeFile("/src/repos/root/gsv/packages/wiki/src/index.ts", "x")).rejects.toThrow("read-only");
+    await expect(backend!.rm("/src/repos/sam/pkg-test/missing.ts"))
+      .rejects.toThrow("ENOENT");
+    await expect(backend!.rm("/src/repos/sam/pkg-test/missing.ts", { force: true }))
+      .resolves.toBeUndefined();
+    expect(ripgit.applyCalls).toHaveLength(0);
+  });
+
+  it("rejects non-recursive rm for non-empty directories", async () => {
+    const ripgit = makeRipgitFixture({
+      "packages/sample/src/index.ts": "index\n",
+    });
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      repos: [makeRepo("sam/pkg-test")],
+      ripgit: ripgit.client,
+    });
+
+    await expect(backend!.rm("/src/repos/sam/pkg-test/packages/sample/src"))
+      .rejects.toThrow("ENOTEMPTY");
+    expect(ripgit.applyCalls).toHaveLength(0);
   });
 });

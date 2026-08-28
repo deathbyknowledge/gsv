@@ -3,8 +3,10 @@ import type {
   MkdirOptions,
   RmOptions,
 } from "just-bash";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
-import type { RepoSummary } from "@humansandmachines/gsv/protocol";
+import type {
+  ProcessIdentity,
+  RepoSummary,
+} from "@humansandmachines/gsv/protocol";
 import type { ExtendedMountStat, FsSearchBackendResult, MountBackend } from "../mount";
 import {
   RipgitClient,
@@ -12,49 +14,15 @@ import {
   type RipgitRepoRef,
 } from "../ripgit/client";
 import { concatBytes, normalizePath } from "../utils";
-import { z } from "zod";
 
 const TEXT_DECODER = new TextDecoder();
 const TEXT_ENCODER = new TextEncoder();
 const DEFAULT_REPO_REF = "main";
-const sourceBranchStateSchema = z.object({
-  branch: z.string(),
-  baseRef: z.string(),
-  head: z.string().nullable().optional(),
-  createdAt: z.number().optional(),
-  updatedAt: z.number().optional(),
-});
-const sourceOverlayChangeSchema = z.object({
-  type: z.enum(["put", "delete"]),
-  path: z.string().optional(),
-  contentKey: z.string().optional(),
-  size: z.number().optional(),
-  recursive: z.boolean().optional(),
-  updatedAt: z.number().optional(),
-});
-const sourceOverlayManifestSchema = z.object({
-  version: z.literal(1),
-  packageId: z.string(),
-  packageKey: z.string(),
-  baseRef: z.string().optional(),
-  createdAt: z.number().optional(),
-  updatedAt: z.number().optional(),
-  changes: z.record(z.string(), z.json()),
-});
-
-type SourceConfig = {
-  get(key: string): string | null;
-  set(key: string, value: string): void;
-};
-type SourceApplyOptions = { baseRef: string; expectedHead?: string };
 
 export type ProcessSourceBackendOptions = {
   identity: ProcessIdentity;
-  storage?: R2Bucket | null;
   ripgit: RipgitClient | null;
   repos?: RepoSummary[] | null;
-  processId?: string | null;
-  config?: SourceConfig | null;
 };
 
 type SourceRepo = {
@@ -63,67 +31,7 @@ type SourceRepo = {
   repo: string;
   rootPath: string;
   ref: string;
-  baseRef: string;
-  matchSubdir: string;
-  sourceKey: string;
-  defaultSource: boolean;
   writable: boolean;
-};
-
-type SourceBranchState = {
-  branch: string;
-  baseRef: string;
-  head: string | null;
-  createdAt: number;
-  updatedAt: number;
-};
-
-type SourceOverlayChange =
-  | {
-      type: "put";
-      path: string;
-      contentKey: string;
-      size: number;
-      updatedAt: number;
-    }
-  | {
-      type: "delete";
-      path: string;
-      recursive: boolean;
-      updatedAt: number;
-    };
-
-type SourceOverlayManifest = {
-  version: 1;
-  packageId: string;
-  packageKey: string;
-  baseRef: string;
-  createdAt: number;
-  updatedAt: number;
-  changes: Record<string, SourceOverlayChange>;
-};
-
-export type SourceChangeSummary = {
-  path: string;
-  type: "put" | "delete";
-  size?: number;
-  recursive?: boolean;
-  updatedAt: number;
-};
-
-export type RepoSourceStatus = {
-  repo: string;
-  sourceRef: string;
-  baseRef: string;
-  branch: string | null;
-  head: string | null;
-  changes: SourceChangeSummary[];
-};
-
-export type RepoSourceCommitResult = RepoSourceStatus & {
-  committed: boolean;
-  commitHead: string | null;
-  ops: number;
 };
 
 export function createProcessSourceBackend(
@@ -143,18 +51,15 @@ export function isProcessSourcePath(path: string): boolean {
 
 class ProcessSourceBackend implements MountBackend {
   private readonly identity: ProcessIdentity;
-  private readonly storage: R2Bucket | null;
   private readonly ripgit: RipgitClient;
   private readonly repos: SourceRepo[];
-  private readonly processId: string | null;
-  private readonly config: SourceConfig | null;
 
   constructor(options: ProcessSourceBackendOptions) {
+    if (!options.ripgit) {
+      throw new Error("Process source backend requires ripgit");
+    }
     this.identity = options.identity;
-    this.storage = options.storage ?? null;
-    this.ripgit = options.ripgit!;
-    this.processId = options.processId ?? null;
-    this.config = options.config ?? null;
+    this.ripgit = options.ripgit;
     this.repos = visibleSourceRepos(options.repos);
   }
 
@@ -168,33 +73,16 @@ class ProcessSourceBackend implements MountBackend {
   }
 
   async readFileBuffer(path: string): Promise<Uint8Array> {
-    const repoResolved = this.resolveRepoPathOrNull(path);
-    if (repoResolved) {
-      return this.readRepoFileBuffer(repoResolved);
+    const resolved = this.resolveRepoPathOrNull(path);
+    if (!resolved) {
+      throwMissingSourcePath(path);
     }
-    throwMissingSourcePath(path);
-  }
-
-  private async readRepoFileBuffer(resolved: {
-    repo: SourceRepo;
-    relativePath: string;
-    normalizedPath: string;
-  }): Promise<Uint8Array> {
     if (!resolved.relativePath) {
       throw new Error(`EISDIR: illegal operation on a directory, read '${resolved.normalizedPath}'`);
     }
 
-    const overlay = await this.readOverlay(resolved.repo);
-    const put = await this.readOverlayPut(overlay, resolved.relativePath);
-    if (put) {
-      return put;
-    }
-    if (isDeletedByOverlay(overlay, resolved.relativePath)) {
-      throw new Error(`ENOENT: no such file or directory, open '${resolved.normalizedPath}'`);
-    }
-
     const result = await this.ripgit.readPath(
-      this.repoRefForSourceRepo(resolved.repo),
+      repoRefForSourceRepo(resolved.repo),
       resolved.relativePath,
     );
     if (result.kind === "missing") {
@@ -207,18 +95,34 @@ class ProcessSourceBackend implements MountBackend {
   }
 
   async writeFile(path: string, content: FileContent): Promise<void> {
-    const repoResolved = this.resolveWritableRepoPath(path, "write");
-    await this.stageOverlayPut(repoResolved.repo, repoResolved.relativePath, asBytes(content));
+    const resolved = this.resolveWritableRepoPath(path, "write");
+    await this.applyRepoOps(
+      resolved.repo,
+      `gsv: write ${resolved.relativePath}`,
+      [{
+        type: "put",
+        path: resolved.relativePath,
+        contentBytes: Array.from(asBytes(content)),
+      }],
+    );
   }
 
   async appendFile(path: string, content: FileContent): Promise<void> {
-    const repoResolved = this.resolveWritableRepoPath(path, "append");
+    const resolved = this.resolveWritableRepoPath(path, "append");
     let current: Uint8Array<ArrayBufferLike> = new Uint8Array();
     if (await this.exists(path)) {
       current = await this.readFileBuffer(path);
     }
     const next = concatBytes(current, asBytes(content));
-    await this.stageOverlayPut(repoResolved.repo, repoResolved.relativePath, next);
+    await this.applyRepoOps(
+      resolved.repo,
+      `gsv: append ${resolved.relativePath}`,
+      [{
+        type: "put",
+        path: resolved.relativePath,
+        contentBytes: Array.from(next),
+      }],
+    );
   }
 
   async exists(path: string): Promise<boolean> {
@@ -236,36 +140,16 @@ class ProcessSourceBackend implements MountBackend {
       return makeDirectoryStat(this.identity.uid, this.identity.gid, true);
     }
 
-    const repoResolved = this.resolveRepoPathOrNull(normalizedPath);
-    if (repoResolved) {
-      return this.statRepoPath(repoResolved);
+    const resolved = this.resolveRepoPathOrNull(normalizedPath);
+    if (!resolved) {
+      throwMissingSourcePath(normalizedPath);
     }
-    throwMissingSourcePath(normalizedPath);
-  }
-
-  private async statRepoPath(resolved: {
-    repo: SourceRepo;
-    relativePath: string;
-    normalizedPath: string;
-  }): Promise<ExtendedMountStat> {
     if (!resolved.relativePath) {
       return makeDirectoryStat(this.identity.uid, this.identity.gid, resolved.repo.writable);
     }
 
-    const overlay = await this.readOverlay(resolved.repo);
-    const putChange = overlay.changes[resolved.relativePath];
-    if (putChange?.type === "put") {
-      return makeFileStat(this.identity.uid, this.identity.gid, putChange.size, resolved.repo.writable);
-    }
-    if (hasOverlayDescendant(overlay, resolved.relativePath)) {
-      return makeDirectoryStat(this.identity.uid, this.identity.gid, resolved.repo.writable);
-    }
-    if (isDeletedByOverlay(overlay, resolved.relativePath)) {
-      throw new Error(`ENOENT: no such file or directory, stat '${resolved.normalizedPath}'`);
-    }
-
     const result = await this.ripgit.readPath(
-      this.repoRefForSourceRepo(resolved.repo),
+      repoRefForSourceRepo(resolved.repo),
       resolved.relativePath,
     );
     if (result.kind === "missing") {
@@ -278,11 +162,11 @@ class ProcessSourceBackend implements MountBackend {
   }
 
   async mkdir(path: string, _options?: MkdirOptions): Promise<void> {
-    const repoResolved = this.resolveRepoPath(path);
-    if (!repoResolved.relativePath) {
+    const resolved = this.resolveRepoPath(path);
+    if (!resolved.relativePath) {
       return;
     }
-    this.assertWritableRepoPath(repoResolved, "mkdir");
+    this.assertWritableRepoPath(resolved, "mkdir");
     // ripgit tracks files, not empty directories. Directory creation is accepted
     // so normal shell workflows can create parents before writing files.
   }
@@ -294,61 +178,40 @@ class ProcessSourceBackend implements MountBackend {
       return virtualEntries;
     }
 
-    const repoResolved = this.resolveRepoPathOrNull(normalizedPath);
-    if (repoResolved) {
-      return this.readdirRepoPath(repoResolved);
+    const resolved = this.resolveRepoPathOrNull(normalizedPath);
+    if (!resolved) {
+      throwMissingSourcePath(normalizedPath);
     }
-    throwMissingSourcePath(normalizedPath);
-  }
-
-  private async readdirRepoPath(resolved: {
-    repo: SourceRepo;
-    relativePath: string;
-    normalizedPath: string;
-  }): Promise<string[]> {
-    const overlay = await this.readOverlay(resolved.repo);
-    const putChange = overlay.changes[resolved.relativePath];
-    if (putChange?.type === "put") {
-      throw new Error(`ENOTDIR: not a directory, scandir '${resolved.normalizedPath}'`);
-    }
-    const deletedByOverlay = isDeletedByOverlay(overlay, resolved.relativePath);
-    const hasStagedChildren = hasOverlayDescendant(overlay, resolved.relativePath);
-    if (deletedByOverlay && !hasStagedChildren) {
+    const result = await this.ripgit.readPath(
+      repoRefForSourceRepo(resolved.repo),
+      resolved.relativePath,
+    );
+    if (result.kind === "missing") {
+      if (!resolved.relativePath) {
+        return [];
+      }
       throw new Error(`ENOENT: no such file or directory, scandir '${resolved.normalizedPath}'`);
     }
-
-    const entries = new Set<string>();
-    if (!deletedByOverlay) {
-      const result = await this.ripgit.readPath(
-        this.repoRefForSourceRepo(resolved.repo),
-        resolved.relativePath,
-      );
-      if (result.kind === "missing") {
-        if (!resolved.relativePath) {
-          return [];
-        }
-        if (!hasStagedChildren) {
-          throw new Error(`ENOENT: no such file or directory, scandir '${resolved.normalizedPath}'`);
-        }
-      } else if (result.kind !== "tree") {
-        throw new Error(`ENOTDIR: not a directory, scandir '${resolved.normalizedPath}'`);
-      } else {
-        for (const entry of result.entries) {
-          entries.add(entry.name);
-        }
-      }
+    if (result.kind !== "tree") {
+      throw new Error(`ENOTDIR: not a directory, scandir '${resolved.normalizedPath}'`);
     }
-    mergeOverlayDirectoryEntries(entries, overlay, resolved.relativePath);
-    return [...entries].sort();
+    return result.entries.map((entry) => entry.name).sort();
   }
 
   async rm(path: string, options?: RmOptions): Promise<void> {
-    const repoResolved = this.resolveWritableRepoPath(path, "rm");
-    const removable = await this.assertRemovableRepoPath(repoResolved, options);
-    if (!removable) {
+    const resolved = this.resolveWritableRepoPath(path, "rm");
+    if (!await this.assertRemovableRepoPath(resolved, options)) {
       return;
     }
-    await this.stageOverlayDelete(repoResolved.repo, repoResolved.relativePath, options?.recursive === true);
+    await this.applyRepoOps(
+      resolved.repo,
+      `gsv: rm ${resolved.relativePath}`,
+      [{
+        type: "delete",
+        path: resolved.relativePath,
+        recursive: options?.recursive === true,
+      }],
+    );
   }
 
   async chmod(path: string): Promise<void> {
@@ -383,16 +246,16 @@ class ProcessSourceBackend implements MountBackend {
         signal?.throwIfAborted();
         const result = await this.searchRepo(repo, "", query, signal);
         matches.push(...result.matches);
-        truncated = truncated || result.truncated === true;
+        truncated ||= result.truncated === true;
       }
       return { matches, truncated };
     }
 
-    const repoResolved = this.resolveRepoPathOrNull(normalizedPath);
-    if (repoResolved) {
-      return this.searchRepo(repoResolved.repo, repoResolved.relativePath, query, signal);
+    const resolved = this.resolveRepoPathOrNull(normalizedPath);
+    if (!resolved) {
+      throwMissingSourcePath(normalizedPath);
     }
-    throwMissingSourcePath(normalizedPath);
+    return this.searchRepo(resolved.repo, resolved.relativePath, query, signal);
   }
 
   private async searchRepo(
@@ -401,10 +264,9 @@ class ProcessSourceBackend implements MountBackend {
     query: string,
     signal?: AbortSignal,
   ): Promise<FsSearchBackendResult> {
-    const overlay = await this.readOverlay(repo);
     signal?.throwIfAborted();
     const result = await this.ripgit.search(
-      this.repoRefForSourceRepo(repo),
+      repoRefForSourceRepo(repo),
       query,
       relativePath || undefined,
       signal,
@@ -412,19 +274,11 @@ class ProcessSourceBackend implements MountBackend {
     signal?.throwIfAborted();
     return {
       truncated: result.truncated,
-      matches: [
-        ...result.matches
-          .filter((match) =>
-            !overlayHasPut(overlay, match.path) &&
-            !isDeletedByOverlay(overlay, match.path)
-          )
-          .map((match) => ({
-            path: `${repo.rootPath}/${match.path}`.replace(/\/+$/g, ""),
-            line: match.line,
-            content: match.content,
-          })),
-        ...await this.searchOverlay(repo.rootPath, overlay, relativePath, query),
-      ],
+      matches: result.matches.map((match) => ({
+        path: `${repo.rootPath}/${match.path}`.replace(/\/+$/g, ""),
+        line: match.line,
+        content: match.content,
+      })),
     };
   }
 
@@ -457,10 +311,8 @@ class ProcessSourceBackend implements MountBackend {
       return null;
     }
     const entries = new Set<string>();
-    if (normalizedPath === "/src") {
-      if (this.repos.length > 0) {
-        entries.add("repos");
-      }
+    if (normalizedPath === "/src" && this.repos.length > 0) {
+      entries.add("repos");
     }
     if (normalizedPath === "/src/repos") {
       for (const repo of this.repos) {
@@ -492,10 +344,7 @@ class ProcessSourceBackend implements MountBackend {
     if (!entries) {
       return null;
     }
-    if (normalizedPath === "/src") {
-      return this.repos;
-    }
-    if (normalizedPath === "/src/repos") {
+    if (normalizedPath === "/src" || normalizedPath === "/src/repos") {
       return this.repos;
     }
     const ownerMatch = normalizedPath.match(/^\/src\/repos\/([^/]+)$/);
@@ -528,25 +377,10 @@ class ProcessSourceBackend implements MountBackend {
     if (!resolved.relativePath) {
       throw new Error(`EISDIR: illegal operation on a directory, ${operation} '${resolved.normalizedPath}'`);
     }
-    this.assertRepoPathWriteContext(resolved);
-    return resolved;
-  }
-
-  private assertRepoPathWriteContext(
-    resolved: {
-      repo: SourceRepo;
-      normalizedPath: string;
-    },
-  ): void {
     if (!resolved.repo.writable) {
       throw new Error(`EPERM: source repo is read-only '${resolved.normalizedPath}'`);
     }
-    if (!this.processId) {
-      throw new Error(`EPERM: repo writes require a process context '${resolved.normalizedPath}'`);
-    }
-    if (!this.storage) {
-      throw new Error(`ENOSYS: repo overlay storage is unavailable '${resolved.normalizedPath}'`);
-    }
+    return resolved;
   }
 
   private async assertRemovableRepoPath(
@@ -574,381 +408,49 @@ class ProcessSourceBackend implements MountBackend {
     return true;
   }
 
-  private repoRefForSourceRepo(repo: SourceRepo): RipgitRepoRef {
-    return {
-      owner: repo.owner,
-      repo: repo.name,
-      branch: this.overlayBaseRef(repo),
-    };
-  }
-
-  private async readOverlay(repo: SourceRepo): Promise<SourceOverlayManifest> {
-    return readOverlayManifest(this.storage, this.processId, repo, this.overlayBaseRef(repo));
-  }
-
-  private overlayBaseRef(repo: SourceRepo): string {
-    return sourceBaseRefForRepo(repo, this.readBranchState(repo));
-  }
-
-  private async readOverlayPut(
-    overlay: SourceOverlayManifest,
-    relativePath: string,
-  ): Promise<Uint8Array | null> {
-    const change = overlay.changes[relativePath];
-    if (change?.type !== "put") {
-      return null;
-    }
-    return readOverlayContent(this.storage, change);
-  }
-
-  private async stageOverlayPut(
+  private async applyRepoOps(
     repo: SourceRepo,
-    relativePath: string,
-    content: Uint8Array,
+    message: string,
+    ops: RipgitApplyOp[],
   ): Promise<void> {
-    const storage = this.storage!;
-    const overlay = await this.readOverlay(repo);
-    const contentKey = overlayContentKey(this.processId!, repo, relativePath);
-    await storage.put(contentKey, content);
-    const now = Date.now();
-    overlay.changes[relativePath] = {
-      type: "put",
-      path: relativePath,
-      contentKey,
-      size: content.byteLength,
-      updatedAt: now,
-    };
-    overlay.updatedAt = now;
-    await writeOverlayManifest(storage, this.processId!, repo, overlay);
-  }
-
-  private async stageOverlayDelete(
-    repo: SourceRepo,
-    relativePath: string,
-    recursive: boolean,
-  ): Promise<void> {
-    const storage = this.storage!;
-    const overlay = await this.readOverlay(repo);
-    for (const change of sortedOverlayChanges(overlay)) {
-      if (change.path === relativePath || (recursive && pathIsDescendant(change.path, relativePath))) {
-        if (change.type === "put") {
-          await storage.delete(change.contentKey);
-        }
-        delete overlay.changes[change.path];
-      }
+    const result = await this.ripgit.apply(
+      repoRefForSourceRepo(repo),
+      this.identity.username,
+      `${this.identity.username}@gsv.local`,
+      message,
+      ops,
+    );
+    if (result.conflict) {
+      throw new Error(`Repo ref moved while committing ${repo.repo}`);
     }
-    const now = Date.now();
-    overlay.changes[relativePath] = {
-      type: "delete",
-      path: relativePath,
-      recursive,
-      updatedAt: now,
-    };
-    overlay.updatedAt = now;
-    await writeOverlayManifest(storage, this.processId!, repo, overlay);
-  }
-
-  private async searchOverlay(
-    repoRoot: string,
-    overlay: SourceOverlayManifest,
-    relativePath: string,
-    query: string,
-  ): Promise<FsSearchBackendResult["matches"]> {
-    const matches: FsSearchBackendResult["matches"] = [];
-    for (const change of sortedOverlayChanges(overlay)) {
-      if (change.type !== "put" || !pathIsWithin(change.path, relativePath)) {
-        continue;
-      }
-      const bytes = await this.readOverlayPut(overlay, change.path);
-      if (!bytes) {
-        continue;
-      }
-      const text = TEXT_DECODER.decode(bytes);
-      const lines = text.split("\n");
-      for (let index = 0; index < lines.length; index += 1) {
-        if (lines[index].includes(query)) {
-          matches.push({
-            path: `${repoRoot}/${change.path}`.replace(/\/+$/g, ""),
-            line: index + 1,
-            content: lines[index],
-          });
-        }
-      }
-    }
-    return matches;
-  }
-
-  private readBranchState(repo: SourceRepo): SourceBranchState | null {
-    return readSourceBranchState(this.config, this.processId, repo);
   }
 }
 
-export async function getRepoSourceStatus(
-  options: ProcessSourceBackendOptions,
-  repoSlug: string,
-  sourcePath?: string,
-): Promise<RepoSourceStatus> {
-  const repo = sourceRepoForOptions(options, repoSlug, sourcePath);
-  const state = readSourceBranchState(options.config ?? null, options.processId ?? null, repo);
-  const overlay = await readOverlayManifest(
-    options.storage ?? null,
-    options.processId ?? null,
-    repo,
-    sourceBaseRefForRepo(repo, state),
-  );
-  return sourceStatusForRepo(repo, overlay, state);
-}
-
-export async function diffRepoSourceChanges(
-  options: ProcessSourceBackendOptions,
-  repoSlug: string,
-  sourcePath?: string,
-): Promise<string> {
-  if (!options.ripgit) {
-    throw new Error("RIPGIT binding is required");
-  }
-  const repo = sourceRepoForOptions(options, repoSlug, sourcePath);
-  const state = readSourceBranchState(options.config ?? null, options.processId ?? null, repo);
-  const overlay = await readOverlayManifest(
-    options.storage ?? null,
-    options.processId ?? null,
-    repo,
-    sourceBaseRefForRepo(repo, state),
-  );
-  const changes = sortedOverlayChanges(overlay);
-  if (changes.length === 0) {
-    return `No staged repo changes for ${repo.repo}\n`;
-  }
-
-  const repoRef = repoRefForOverlay(repo, overlay.baseRef);
-  const lines: string[] = [];
-  for (const change of changes) {
-    if (change.type === "delete") {
-      lines.push(`D ${change.path}`);
-      const base = await options.ripgit.readPath(repoRef, change.path);
-      if (base.kind === "file") {
-        lines.push(...formatSimpleDiff(change.path, base.bytes, null));
-      }
-      continue;
-    }
-
-    const bytes = await readOverlayContent(options.storage ?? null, change);
-    if (!bytes) {
-      continue;
-    }
-    const base = await options.ripgit.readPath(repoRef, change.path);
-    if (base.kind === "file") {
-      if (bytesEqual(base.bytes, bytes)) {
-        continue;
-      }
-      lines.push(`M ${change.path}`);
-      lines.push(...formatSimpleDiff(change.path, base.bytes, bytes));
-    } else {
-      lines.push(`A ${change.path}`);
-      lines.push(...formatSimpleDiff(change.path, null, bytes));
-    }
-  }
-
-  return lines.length > 0 ? `${lines.join("\n")}\n` : `No staged repo changes for ${repo.repo}\n`;
-}
-
-export async function commitRepoSourceChanges(
-  options: ProcessSourceBackendOptions,
-  repoSlug: string,
-  args: { message: string; branch?: string; sourcePath?: string },
-): Promise<RepoSourceCommitResult> {
-  if (!options.ripgit) {
-    throw new Error("RIPGIT binding is required");
-  }
-  if (!options.storage) {
-    throw new Error("Repo overlay storage is required");
-  }
-  if (!options.config) {
-    throw new Error("Repo branch state storage is required");
-  }
-  if (!options.processId) {
-    throw new Error("Repo changes require a process context");
-  }
-  const message = args.message.trim();
-  if (!message) {
-    throw new Error("message is required");
-  }
-
-  const repo = sourceRepoForOptions(options, repoSlug, args.sourcePath);
-  if (!repo.writable) {
-    throw new Error(`Repo is read-only: ${repo.repo}`);
-  }
-  const state = readSourceBranchState(options.config, options.processId, repo);
-  const overlay = await readOverlayManifest(
-    options.storage,
-    options.processId,
-    repo,
-    sourceBaseRefForRepo(repo, state),
-  );
-  const explicitBranch = args.branch?.trim();
-  const branch = explicitBranch
-    ? normalizeSourceBranch(explicitBranch)
-    : state?.branch ?? repo.ref;
-  const requestedBranch = explicitBranch || (!state && repo.baseRef === repo.ref)
-    ? branch
-    : undefined;
-  const expectedBranchBaseRef = !explicitBranch && !state && repo.baseRef !== repo.ref
-    ? repo.baseRef
-    : undefined;
-  const repoRef = parseRepoSlug(repo.repo);
-  const targetRef = await resolveSourceCommitTarget(
-    options.ripgit,
-    repoRef,
-    branch,
-    state,
-    overlay,
-    requestedBranch,
-    expectedBranchBaseRef,
-  );
-  const ops = await overlayApplyOps(options.storage, options.ripgit, repo, overlay, targetRef.opsBaseRef);
-  if (ops.length === 0) {
-    const nextState = sourceBranchStateForTarget(state, branch, targetRef, null);
-    writeSourceBranchState(options.config, options.processId, repo, nextState);
-    await discardOverlay(options.storage, options.processId, repo, overlay);
-    return {
-      ...sourceStatusForRepo(repo, emptyOverlayManifest(repo, sourceBaseRefForRepo(repo, nextState)), nextState),
-      committed: false,
-      commitHead: nextState.head,
-      ops: 0,
-    };
-  }
-
-  const applyOptions: SourceApplyOptions = { baseRef: targetRef.applyBaseRef };
-  if (targetRef.expectedHead) {
-    applyOptions.expectedHead = targetRef.expectedHead;
-  }
-  const result = await options.ripgit.apply(
-    { ...repoRef, branch },
-    options.identity.username,
-    `${options.identity.username}@gsv.local`,
-    message,
-    ops,
-    applyOptions,
-  );
-  const nextState = sourceBranchStateForTarget(state, branch, targetRef, result.head ?? null);
-  writeSourceBranchState(options.config, options.processId, repo, nextState);
-  await discardOverlay(options.storage, options.processId, repo, overlay);
-
-  return {
-    ...sourceStatusForRepo(repo, emptyOverlayManifest(repo, sourceBaseRefForRepo(repo, nextState)), nextState),
-    committed: true,
-    commitHead: nextState.head,
-    ops: ops.length,
-  };
-}
-
-export async function discardRepoSourceChanges(
-  options: ProcessSourceBackendOptions,
-  repoSlug: string,
-  sourcePath?: string,
-): Promise<RepoSourceStatus> {
-  if (!options.storage) {
-    throw new Error("Repo overlay storage is required");
-  }
-  if (!options.processId) {
-    throw new Error("Repo changes require a process context");
-  }
-  const repo = sourceRepoForOptions(options, repoSlug, sourcePath);
-  const state = readSourceBranchState(options.config ?? null, options.processId, repo);
-  const overlay = await readOverlayManifest(
-    options.storage,
-    options.processId,
-    repo,
-    sourceBaseRefForRepo(repo, state),
-  );
-  await discardOverlay(options.storage, options.processId, repo, overlay);
-  return sourceStatusForRepo(repo, emptyOverlayManifest(repo, sourceBaseRefForRepo(repo, state)), state);
-}
-
-function visibleSourceRepos(
-  summaries?: RepoSummary[] | null,
-): SourceRepo[] {
+function visibleSourceRepos(summaries?: RepoSummary[] | null): SourceRepo[] {
   const repos = new Map<string, SourceRepo>();
   for (const summary of summaries ?? []) {
     const parsed = sourceRepoForSummary(summary);
-    if (!parsed) {
-      continue;
+    if (parsed) {
+      repos.set(parsed.repo, parsed);
     }
-    repos.set(parsed.sourceKey, parsed);
   }
-  return [...repos.values()].sort((left, right) => {
-    const owner = left.owner.localeCompare(right.owner);
-    if (owner !== 0) {
-      return owner;
-    }
-    const name = left.name.localeCompare(right.name);
-    if (name !== 0) {
-      return name;
-    }
-    if (left.defaultSource !== right.defaultSource) {
-      return left.defaultSource ? -1 : 1;
-    }
-    return left.matchSubdir.localeCompare(right.matchSubdir);
-  });
+  return [...repos.values()].sort((left, right) => left.repo.localeCompare(right.repo));
 }
 
 function sourceRepoForSummary(summary: RepoSummary): SourceRepo | null {
   try {
     const parsed = parseRepoSlug(summary.repo || `${summary.owner}/${summary.name}`);
-    const ref = sourceRefForSummary(summary);
     return {
       owner: parsed.owner,
       name: parsed.repo,
       repo: `${parsed.owner}/${parsed.repo}`,
       rootPath: `/src/repos/${parsed.owner}/${parsed.repo}`,
-      ref,
-      baseRef: sourceBaseRefForSummary(summary, ref),
-      matchSubdir: "",
-      sourceKey: `repo:${parsed.owner}/${parsed.repo}`,
-      defaultSource: true,
+      ref: summary.ref?.trim() || DEFAULT_REPO_REF,
       writable: summary.writable,
     };
   } catch {
     return null;
   }
-}
-
-function sourceRefForSummary(summary: RepoSummary): string {
-  return summary.ref?.trim()
-    && summary.ref.trim().length > 0
-    ? summary.ref.trim()
-    : DEFAULT_REPO_REF;
-}
-
-function sourceBaseRefForSummary(summary: RepoSummary, fallback: string): string {
-  return summary.baseRef?.trim()
-    && summary.baseRef.trim().length > 0
-    ? summary.baseRef.trim()
-    : fallback;
-}
-
-function throwMissingSourcePath(path: string): never {
-  const normalizedPath = normalizePath(path);
-  throw new Error(`ENOENT: no such source repo '${normalizedPath}'. Create repos with rgit create owner/repo and edit them under /src/repos/{owner}/{repo}.`);
-}
-
-function sourceRepoForOptions(
-  options: ProcessSourceBackendOptions,
-  repoSlug: string,
-  sourcePath?: string,
-): SourceRepo {
-  const normalizedRepo = normalizeRepoSlug(repoSlug);
-  const repos = visibleSourceRepos(options.repos);
-  const resolved = sourcePath ? resolveSourceRepoPath(repos, sourcePath) : null;
-  if (resolved?.repo.repo === normalizedRepo) {
-    return resolved.repo;
-  }
-  const found = repos.find((repo) => repo.repo === normalizedRepo && repo.defaultSource)
-    ?? repos.find((repo) => repo.repo === normalizedRepo);
-  if (!found) {
-    throw new Error(`Repo is not visible: ${normalizedRepo}`);
-  }
-  return found;
 }
 
 function resolveSourceRepoPath(repos: SourceRepo[], path: string): {
@@ -957,83 +459,22 @@ function resolveSourceRepoPath(repos: SourceRepo[], path: string): {
   normalizedPath: string;
 } | null {
   const normalizedPath = normalizePath(path);
-  const matches = repos
-    .map((repo) => {
-      if (normalizedPath !== repo.rootPath && !normalizedPath.startsWith(`${repo.rootPath}/`)) {
-        return null;
-      }
-      const relativePath = normalizedPath === repo.rootPath
-        ? ""
-        : normalizeRepoPath(normalizedPath.slice(repo.rootPath.length + 1));
-      if (!sourceRepoMatchesRelativePath(repo, relativePath)) {
-        return null;
-      }
-      return { repo, relativePath, normalizedPath };
-    })
-    .filter((match): match is { repo: SourceRepo; relativePath: string; normalizedPath: string } => !!match)
-    .sort(compareResolvedSourceRepoMatches);
-
-  if (matches.length === 0) {
+  const repo = repos.find((candidate) =>
+    normalizedPath === candidate.rootPath || normalizedPath.startsWith(`${candidate.rootPath}/`)
+  );
+  if (!repo) {
     return null;
   }
-  const best = matches[0];
-  const tied = matches.filter((match) =>
-    match.repo.matchSubdir.length === best.repo.matchSubdir.length
-  );
-  const identities = new Set(tied.map((match) => sourceRepoIdentity(match.repo)));
-  if (identities.size > 1 && normalizedPath !== best.repo.rootPath) {
-    throw new Error(`Ambiguous source refs for '${normalizedPath}'`);
-  }
-  return best;
-}
-
-function sourceRepoMatchesRelativePath(repo: SourceRepo, relativePath: string): boolean {
-  return pathIsWithin(relativePath, repo.matchSubdir);
-}
-
-function compareResolvedSourceRepoMatches(
-  left: { repo: SourceRepo },
-  right: { repo: SourceRepo },
-): number {
-  const subdir = right.repo.matchSubdir.length - left.repo.matchSubdir.length;
-  if (subdir !== 0) {
-    return subdir;
-  }
-  if (left.repo.defaultSource !== right.repo.defaultSource) {
-    return left.repo.defaultSource ? 1 : -1;
-  }
-  return left.repo.sourceKey.localeCompare(right.repo.sourceKey);
-}
-
-function sourceRepoIdentity(repo: SourceRepo): string {
-  return `${repo.ref}\0${repo.baseRef}`;
-}
-
-function sourceRepoStorageKey(repo: SourceRepo): string {
-  return `global:${repo.sourceKey}`;
-}
-
-function sourceStatusForRepo(
-  repo: SourceRepo,
-  overlay: SourceOverlayManifest,
-  explicitState?: SourceBranchState | null,
-): RepoSourceStatus {
   return {
-    repo: repo.repo,
-    sourceRef: repo.ref,
-    baseRef: explicitState?.baseRef ?? repo.baseRef,
-    branch: explicitState?.branch ?? null,
-    head: explicitState?.head ?? null,
-    changes: sortedOverlayChanges(overlay).map((change) => ({
-      path: change.path,
-      type: change.type,
-      ...(change.type === "put" ? { size: change.size } : { recursive: change.recursive }),
-      updatedAt: change.updatedAt,
-    })),
+    repo,
+    relativePath: normalizedPath === repo.rootPath
+      ? ""
+      : normalizeRepoPath(normalizedPath.slice(repo.rootPath.length + 1)),
+    normalizedPath,
   };
 }
 
-function parseRepoSlug(raw: string): RipgitRepoRef {
+function parseRepoSlug(raw: string) {
   const [owner, repo, extra] = raw.trim().split("/");
   if (!owner || !repo || extra) {
     throw new Error(`Invalid source repo: ${raw}`);
@@ -1041,435 +482,17 @@ function parseRepoSlug(raw: string): RipgitRepoRef {
   return { owner, repo };
 }
 
-function normalizeRepoSlug(raw: string): string {
-  const parsed = parseRepoSlug(raw);
-  return `${parsed.owner}/${parsed.repo}`;
-}
-
-function repoRefForOverlay(repo: SourceRepo, baseRef: string): RipgitRepoRef {
+function repoRefForSourceRepo(repo: SourceRepo): RipgitRepoRef {
   return {
-    ...parseRepoSlug(repo.repo),
-    branch: baseRef,
+    owner: repo.owner,
+    repo: repo.name,
+    branch: repo.ref,
   };
 }
 
-function sourceBaseRefForRepo(repo: SourceRepo, state: SourceBranchState | null): string {
-  return state?.head ?? repo.baseRef;
-}
-
-async function resolveSourceCommitTarget(
-  ripgit: RipgitClient,
-  repo: RipgitRepoRef,
-  branch: string,
-  state: SourceBranchState | null,
-  overlay: SourceOverlayManifest,
-  requestedBranch: string | undefined,
-  expectedBranchBaseRef: string | undefined,
-): Promise<{
-  opsBaseRef: string;
-  applyBaseRef: string;
-  branchBaseRef: string;
-  expectedHead: string | null;
-}> {
-  if (state?.branch === branch) {
-    return {
-      opsBaseRef: overlay.baseRef,
-      applyBaseRef: overlay.baseRef,
-      branchBaseRef: state.baseRef,
-      expectedHead: state.head,
-    };
-  }
-
-  if (expectedBranchBaseRef?.trim()) {
-    const refs = await ripgit.refs(repo);
-    const targetHead = refs.heads?.[branch] ?? null;
-    return {
-      opsBaseRef: expectedBranchBaseRef,
-      applyBaseRef: expectedBranchBaseRef,
-      branchBaseRef: expectedBranchBaseRef,
-      expectedHead: targetHead ? expectedBranchBaseRef : null,
-    };
-  }
-
-  if (requestedBranch?.trim()) {
-    const refs = await ripgit.refs(repo);
-    const targetHead = refs.heads?.[branch] ?? null;
-    const targetBaseRef = targetHead ?? overlay.baseRef;
-    return {
-      opsBaseRef: targetBaseRef,
-      applyBaseRef: targetBaseRef,
-      branchBaseRef: targetBaseRef,
-      expectedHead: targetHead,
-    };
-  }
-
-  return {
-    opsBaseRef: overlay.baseRef,
-    applyBaseRef: overlay.baseRef,
-    branchBaseRef: state?.baseRef ?? overlay.baseRef,
-    expectedHead: null,
-  };
-}
-
-function sourceBranchStateForTarget(
-  previous: SourceBranchState | null,
-  branch: string,
-  target: {
-    branchBaseRef: string;
-    expectedHead: string | null;
-  },
-  resultHead: string | null,
-): SourceBranchState {
-  const now = Date.now();
-  return {
-    branch,
-    baseRef: target.branchBaseRef,
-    head: resultHead ?? target.expectedHead ?? (previous?.branch === branch ? previous.head : null),
-    createdAt: previous?.branch === branch ? previous.createdAt : now,
-    updatedAt: now,
-  };
-}
-
-function sourceBranchStateKey(
-  processId: string,
-  repo: SourceRepo,
-): string {
-  return `process-source-branches/${encodeURIComponent(processId)}/${encodeURIComponent(sourceRepoStorageKey(repo))}`;
-}
-
-function readSourceBranchState(
-  config: SourceConfig | null,
-  processId: string | null,
-  repo: SourceRepo,
-): SourceBranchState | null {
-  if (!config || !processId) {
-    return null;
-  }
-  const raw = config.get(sourceBranchStateKey(processId, repo));
-  if (!raw) {
-    return null;
-  }
-  try {
-    const parsed = sourceBranchStateSchema.safeParse(JSON.parse(raw));
-    if (!parsed.success || parsed.data.branch.trim().length === 0 || parsed.data.baseRef.trim().length === 0) {
-      return null;
-    }
-    const value = parsed.data;
-    return {
-      branch: value.branch,
-      baseRef: value.baseRef,
-      head: value.head ?? null,
-      createdAt: value.createdAt ?? Date.now(),
-      updatedAt: value.updatedAt ?? Date.now(),
-    };
-  } catch {
-    return null;
-  }
-}
-
-function writeSourceBranchState(
-  config: SourceConfig,
-  processId: string,
-  repo: SourceRepo,
-  state: SourceBranchState,
-): void {
-  config.set(sourceBranchStateKey(processId, repo), JSON.stringify(state));
-}
-
-function normalizeSourceBranch(branch: string): string {
-  const value = branch.startsWith("refs/heads/") ? branch.slice("refs/heads/".length) : branch;
-  if (!/^[A-Za-z0-9._/-]+$/.test(value) || value.includes("..")) {
-    throw new Error(`Invalid branch ref: ${branch}`);
-  }
-  return value;
-}
-
-async function readOverlayManifest(
-  storage: R2Bucket | null,
-  processId: string | null,
-  repo: SourceRepo,
-  baseRef = sourceBaseRefForRepo(repo, null),
-): Promise<SourceOverlayManifest> {
-  const empty = emptyOverlayManifest(repo, baseRef);
-  if (!storage || !processId) {
-    return empty;
-  }
-  const obj = await storage.get(overlayManifestKey(processId, repo));
-  if (!obj) {
-    return empty;
-  }
-  try {
-    const parsed = sourceOverlayManifestSchema.safeParse(JSON.parse(await obj.text()));
-    if (!parsed.success || parsed.data.packageId !== repo.sourceKey || parsed.data.packageKey !== sourceRepoStorageKey(repo)) {
-      return empty;
-    }
-    const changes: Record<string, SourceOverlayChange> = {};
-    for (const [path, value] of Object.entries(parsed.data.changes)) {
-      const normalizedPath = normalizeRepoPath(path);
-      if (!normalizedPath) {
-        continue;
-      }
-      const change = sourceOverlayChangeSchema.safeParse(value);
-      if (!change.success) {
-        continue;
-      }
-      if (change.data.type === "put" && change.data.contentKey) {
-        changes[normalizedPath] = {
-          type: "put",
-          path: normalizedPath,
-          contentKey: change.data.contentKey,
-          size: change.data.size ?? 0,
-          updatedAt: change.data.updatedAt ?? Date.now(),
-        };
-      } else if (change.data.type === "delete") {
-        changes[normalizedPath] = {
-          type: "delete",
-          path: normalizedPath,
-          recursive: change.data.recursive === true,
-          updatedAt: change.data.updatedAt ?? Date.now(),
-        };
-      }
-    }
-    return {
-      version: 1,
-      packageId: repo.sourceKey,
-      packageKey: sourceRepoStorageKey(repo),
-      baseRef: parsed.data.baseRef || empty.baseRef,
-      createdAt: parsed.data.createdAt ?? Date.now(),
-      updatedAt: parsed.data.updatedAt ?? Date.now(),
-      changes,
-    };
-  } catch {
-    return empty;
-  }
-}
-
-function emptyOverlayManifest(repo: SourceRepo, baseRef = sourceBaseRefForRepo(repo, null)): SourceOverlayManifest {
-  const now = Date.now();
-  return {
-    version: 1,
-    packageId: repo.sourceKey,
-    packageKey: sourceRepoStorageKey(repo),
-    baseRef,
-    createdAt: now,
-    updatedAt: now,
-    changes: {},
-  };
-}
-
-async function writeOverlayManifest(
-  storage: R2Bucket,
-  processId: string,
-  repo: SourceRepo,
-  overlay: SourceOverlayManifest,
-): Promise<void> {
-  const key = overlayManifestKey(processId, repo);
-  if (Object.keys(overlay.changes).length === 0) {
-    await storage.delete(key);
-    return;
-  }
-  await storage.put(key, `${JSON.stringify(overlay, null, 2)}\n`, {
-    httpMetadata: { contentType: "application/json" },
-  });
-}
-
-async function discardOverlay(
-  storage: R2Bucket,
-  processId: string,
-  repo: SourceRepo,
-  overlay: SourceOverlayManifest,
-): Promise<void> {
-  const keys = sortedOverlayChanges(overlay)
-    .flatMap((change) => change.type === "put" ? [change.contentKey] : []);
-  if (keys.length > 0) {
-    await storage.delete(keys);
-  }
-  await storage.delete(overlayManifestKey(processId, repo));
-}
-
-function overlayManifestKey(
-  processId: string,
-  repo: SourceRepo,
-): string {
-  return `process-source-overlays/${encodeURIComponent(processId)}/${encodeURIComponent(sourceRepoStorageKey(repo))}/manifest.json`;
-}
-
-function overlayContentKey(
-  processId: string,
-  repo: SourceRepo,
-  relativePath: string,
-): string {
-  return `process-source-overlays/${encodeURIComponent(processId)}/${encodeURIComponent(sourceRepoStorageKey(repo))}/files/${encodeURIComponent(relativePath)}`;
-}
-
-function sortedOverlayChanges(overlay: SourceOverlayManifest): SourceOverlayChange[] {
-  return Object.values(overlay.changes).sort((left, right) => left.path.localeCompare(right.path));
-}
-
-function overlayHasPut(overlay: SourceOverlayManifest, path: string): boolean {
-  return overlay.changes[normalizeRepoPath(path)]?.type === "put";
-}
-
-function isDeletedByOverlay(overlay: SourceOverlayManifest, path: string): boolean {
-  const normalizedPath = normalizeRepoPath(path);
-  const exact = overlay.changes[normalizedPath];
-  if (exact?.type === "delete") {
-    return true;
-  }
-  for (const change of Object.values(overlay.changes)) {
-    if (change.type === "delete" && change.recursive && pathIsWithin(normalizedPath, change.path)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function hasOverlayDescendant(overlay: SourceOverlayManifest, path: string): boolean {
-  const normalizedPath = normalizeRepoPath(path);
-  return Object.values(overlay.changes).some((change) =>
-    change.type === "put" && pathIsDescendant(change.path, normalizedPath)
-  );
-}
-
-function mergeOverlayDirectoryEntries(
-  entries: Set<string>,
-  overlay: SourceOverlayManifest,
-  directoryPath: string,
-): void {
-  const normalizedDirectory = normalizeRepoPath(directoryPath);
-  for (const change of sortedOverlayChanges(overlay)) {
-    const child = childNameWithin(change.path, normalizedDirectory);
-    if (!child) {
-      continue;
-    }
-    if (change.type === "delete") {
-      if (isDirectChild(change.path, normalizedDirectory)) {
-        entries.delete(child);
-      }
-      continue;
-    }
-    entries.add(child);
-  }
-}
-
-function isDirectChild(path: string, directoryPath: string): boolean {
-  const normalizedPath = normalizeRepoPath(path);
-  const normalizedDirectory = normalizeRepoPath(directoryPath);
-  const relativePath = normalizedDirectory
-    ? normalizedPath.startsWith(`${normalizedDirectory}/`)
-      ? normalizedPath.slice(normalizedDirectory.length + 1)
-      : ""
-    : normalizedPath;
-  return relativePath.length > 0 && !relativePath.includes("/");
-}
-
-function childNameWithin(path: string, directoryPath: string): string | null {
-  const normalizedPath = normalizeRepoPath(path);
-  const normalizedDirectory = normalizeRepoPath(directoryPath);
-  if (!normalizedDirectory) {
-    return normalizedPath.split("/", 1)[0] || null;
-  }
-  if (!normalizedPath.startsWith(`${normalizedDirectory}/`)) {
-    return null;
-  }
-  return normalizedPath.slice(normalizedDirectory.length + 1).split("/", 1)[0] || null;
-}
-
-function pathIsWithin(path: string, maybeParent: string): boolean {
-  const normalizedPath = normalizeRepoPath(path);
-  const normalizedParent = normalizeRepoPath(maybeParent);
-  return !normalizedParent || normalizedPath === normalizedParent || normalizedPath.startsWith(`${normalizedParent}/`);
-}
-
-function pathIsDescendant(path: string, maybeParent: string): boolean {
-  const normalizedPath = normalizeRepoPath(path);
-  const normalizedParent = normalizeRepoPath(maybeParent);
-  return !normalizedParent ? normalizedPath.length > 0 : normalizedPath.startsWith(`${normalizedParent}/`);
-}
-
-async function readOverlayContent(
-  storage: R2Bucket | null,
-  change: Extract<SourceOverlayChange, { type: "put" }>,
-): Promise<Uint8Array | null> {
-  if (!storage) {
-    return null;
-  }
-  const obj = await storage.get(change.contentKey);
-  if (!obj) {
-    return null;
-  }
-  return new Uint8Array(await obj.arrayBuffer());
-}
-
-async function overlayApplyOps(
-  storage: R2Bucket,
-  ripgit: RipgitClient,
-  repo: SourceRepo,
-  overlay: SourceOverlayManifest,
-  baseRef = overlay.baseRef,
-): Promise<RipgitApplyOp[]> {
-  const repoRef = repoRefForOverlay(repo, baseRef);
-  const ops: RipgitApplyOp[] = [];
-  for (const change of sortedOverlayChanges(overlay)) {
-    const repoPath = change.path;
-    const base = await ripgit.readPath(repoRef, repoPath);
-    if (change.type === "delete") {
-      if (base.kind !== "missing") {
-        ops.push({ type: "delete", path: repoPath, recursive: change.recursive });
-      }
-      continue;
-    }
-    const bytes = await readOverlayContent(storage, change);
-    if (!bytes) {
-      continue;
-    }
-    if (base.kind === "file" && bytesEqual(base.bytes, bytes)) {
-      continue;
-    }
-    ops.push({
-      type: "put",
-      path: repoPath,
-      contentBytes: Array.from(bytes),
-    });
-  }
-  return ops;
-}
-
-function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
-  if (left.byteLength !== right.byteLength) {
-    return false;
-  }
-  for (let index = 0; index < left.byteLength; index += 1) {
-    if (left[index] !== right[index]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function formatSimpleDiff(path: string, before: Uint8Array | null, after: Uint8Array | null): string[] {
-  if ((before && isProbablyBinary(before)) || (after && isProbablyBinary(after))) {
-    return [`Binary files differ: ${path}`];
-  }
-  const lines = [
-    `--- ${before ? `a/${path}` : "/dev/null"}`,
-    `+++ ${after ? `b/${path}` : "/dev/null"}`,
-  ];
-  for (const line of before ? TEXT_DECODER.decode(before).split("\n") : []) {
-    if (line.length > 0) {
-      lines.push(`-${line}`);
-    }
-  }
-  for (const line of after ? TEXT_DECODER.decode(after).split("\n") : []) {
-    if (line.length > 0) {
-      lines.push(`+${line}`);
-    }
-  }
-  return lines;
-}
-
-function isProbablyBinary(bytes: Uint8Array): boolean {
-  return bytes.subarray(0, Math.min(bytes.byteLength, 1024)).includes(0);
+function throwMissingSourcePath(path: string): never {
+  const normalizedPath = normalizePath(path);
+  throw new Error(`ENOENT: no such source repo '${normalizedPath}'. Create repos with rgit create owner/repo and edit them under /src/repos/{owner}/{repo}.`);
 }
 
 function normalizeRepoPath(path: string | null | undefined): string {

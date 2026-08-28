@@ -639,6 +639,7 @@ describe("federation inbound boundary", () => {
       resourceCount: 0,
       contentTrust: "untrusted",
     });
+    expect(responsibility?.title).toMatch(/^Review contact message .* with the owner$/);
     expect(responsibility?.details).not.toHaveProperty("text");
     expect(responsibility?.details).not.toHaveProperty("resources");
     expect(JSON.stringify(responsibility)).not.toContain(text);

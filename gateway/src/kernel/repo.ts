@@ -88,6 +88,7 @@ export function handleRepoList(
     const repo = { owner: parsed.owner, repo: parsed.repo };
     add({
       ...toSummary(repo, "user", ctx),
+      ref: normalizeRef(ctx.config.get(repoConfigKey(repo, "ref")) ?? undefined),
       description: ctx.config.get(repoConfigKey(repo, "description")) ?? undefined,
       updatedAt: parseOptionalNumber(ctx.config.get(repoConfigKey(repo, "updated_at"))) ?? parseOptionalNumber(row.value),
     });
@@ -109,7 +110,7 @@ export async function handleRepoCreate(
   const refs = await ripgit.refs(repo);
   const currentHead = refs.heads?.[ref] ?? null;
   if (currentHead) {
-    registerRepo(ctx, repo, args.description);
+    registerRepo(ctx, { ...repo, branch: ref }, args.description);
     return { repo: repoSlug(repo), ref, head: currentHead, created: false };
   }
 
@@ -122,7 +123,7 @@ export async function handleRepoCreate(
     [],
     { allowEmpty: true },
   );
-  registerRepo(ctx, repo, args.description);
+  registerRepo(ctx, { ...repo, branch: ref }, args.description);
   return { repo: repoSlug(repo), ref, head: result.head ?? null, created: true };
 }
 
@@ -313,7 +314,7 @@ export async function handleRepoApply(
       allowEmpty: args.allowEmpty === true,
     },
   );
-  registerRepo(ctx, repo);
+  registerRepo(ctx, { ...repo, branch: ref });
   return {
     ok: true,
     repo: repoSlug(repo),
@@ -346,7 +347,7 @@ export async function handleRepoImport(
     remoteUrl || undefined,
     remoteRef,
   );
-  registerRepo(ctx, repo);
+  registerRepo(ctx, { ...repo, branch: ref });
   const result: RepoImportResult = {
     repo: repoSlug(repo),
     ref,
@@ -689,7 +690,7 @@ function clampContext(context: number | undefined): number {
 
 export function registerRepo(
   ctx: KernelContext,
-  repo: Pick<RipgitRepoRef, "owner" | "repo">,
+  repo: RipgitRepoRef,
   description?: string,
 ): void {
   const now = String(Date.now());
@@ -698,6 +699,7 @@ export function registerRepo(
     ctx.config.set(createdKey, now);
   }
   ctx.config.set(repoConfigKey(repo, "updated_at"), now);
+  ctx.config.set(repoConfigKey(repo, "ref"), normalizeRef(repo.branch));
   const normalizedDescription = description?.trim();
   if (normalizedDescription) {
     ctx.config.set(repoConfigKey(repo, "description"), normalizedDescription);
@@ -708,7 +710,7 @@ function unregisterRepo(
   ctx: KernelContext,
   repo: Pick<RipgitRepoRef, "owner" | "repo">,
 ): void {
-  for (const field of ["created_at", "updated_at", "description"]) {
+  for (const field of ["created_at", "updated_at", "ref", "description"]) {
     ctx.config.delete(repoConfigKey(repo, field));
   }
   ctx.config.delete(repoVisibilityConfigKey(repo));

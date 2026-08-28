@@ -35,9 +35,9 @@ The native `fs.*` and `shell.exec` handlers use `GsvFs`, a Linux-like virtual fi
 | `/home` | Account-home namespace | Virtual ancestor that exists without an R2 marker and lists only account homes the caller may manage. |
 | `~/context.d/*` | ripgit home repo, with R2 fallback | Account context. Human account context is shared with its owned agents; agent account context is role-local. |
 | `~/skills.d/*` | ripgit home repo, with R2 fallback | Reusable process skills layered from the owner and run-as agent. |
-| `/src/repos/{human}/personal/*` | ripgit Personal wiki repo plus R2 overlay | Human-owned durable personal memory shared by all owned agents. |
+| `/src/repos/{human}/personal/*` | ripgit Personal wiki repo | Human-owned durable personal memory shared by all owned agents. |
 | Other home files | R2 | Stored as ordinary objects with uid/gid/mode metadata. |
-| `/src/repos/{owner}/{repo}` | ripgit repo plus R2 overlay | Visible source repositories. Writable repos stage process-local edits in R2 until explicit `rgit commit`. |
+| `/src/repos/{owner}/{repo}` | ripgit repo | Visible source repositories. Each writable filesystem mutation creates an immediate ripgit commit. |
 | `/workspaces/{workspaceId}` | ripgit workspace repo | Mutable, versioned task workspace. |
 | `/var/media/{uid}/{pid}/{id}` | Process media mount over R2 | Read-only attachment bytes. Visibility follows process ownership (root, self, or another process owned by the same user). |
 | Everything else | R2 | Default object-backed filesystem. |
@@ -88,8 +88,6 @@ R2 remains the byte store. The current runtime uses these key families:
 | `var/media/{uid}/{pid}/{uuid}` | Process media handling | Uploaded, adapter-provided, or tool-result media attached to process messages and exposed at the matching absolute `/var/media/...` path. |
 | `home/{agent}/.gsv/media/archived-media:{hash}` | Process resource retention and history archiving | Immutable resource revisions retained by messages and transcripts, scoped to the run-as agent home. |
 | `home/{agent}/processes/{pid}/history/*.jsonl.gz` | Process reset, kill, compaction, and fork | Gzipped JSONL transcript archives scoped to the owning process. |
-| `process-source-overlays/{pid}/{sourceKey}/manifest.json` | `/src/repos`, `rgit` | Manifest of staged source edits for one process/repo. |
-| `process-source-overlays/{pid}/{sourceKey}/files/{path}` | `/src/repos`, `rgit` | Staged file content for source puts. |
 
 Temporary process media is deleted by prefix when the process is reset or killed. New producers retain the exact source revision directly in the run-as agent's immutable `.gsv/media` namespace; legacy process-media records are promoted before a transcript archive or terminal Message drops their last live reference. The archive identity includes the retaining Process, source key, and revision, so two reads of a mutable path before and after an edit remain distinct immutable resources while cancellation cleanup stays exclusive to one Process. Every Process, Kernel, and filesystem read validates the archive path plus its `purpose`, owning `uid` and `gid`, read-only mode `0400`, required source revision metadata, stored source content type, and current object HTTP content type. A missing legacy live object is archived as metadata-only rather than preventing reset or teardown. The `/var/media` view remains read-only for supported stored histories.
 
@@ -111,7 +109,7 @@ into user home repos under `skills.d/` when they are missing.
 Workspace repos contain normal versioned task files. Process transcript
 archives live under the run-as agent's home rather than in workspace metadata.
 
-Generic visible repos are available under `/src/repos/{owner}/{repo}`. Repos writable by the process identity accept `fs.write`, `fs.edit`, and `fs.delete`, but those writes stage into a process-local R2 overlay. Use `rgit status`, `rgit diff`, `rgit commit`, and `rgit discard` to inspect, commit, or discard staged repo edits. Read-only visible repos still support read and search. Wiki-specific behavior uses the higher-level Wiki UI and CLI on top of the same repo storage.
+Generic visible repos are available under `/src/repos/{owner}/{repo}`. Repos writable by the process identity accept `fs.write`, `fs.edit`, and `fs.delete`; each filesystem mutation commits directly to the configured ripgit ref. Read-only visible repos still support read and search. Wiki-specific behavior uses the higher-level Wiki UI and CLI on top of the same repo storage.
 
 ## Practical Rules
 

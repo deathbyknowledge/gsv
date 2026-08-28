@@ -201,6 +201,10 @@ System-owned producers use the same ledger contract:
   useful context in the owner's existing knowledge system without assuming a specific
   wiki or inventing missing facts. Acceptance retries return the same responsibility;
   pairing again after revocation creates another for the new generation.
+- Receiving a contact message or request asks Ship to inspect it and consult the owner.
+  Ship does not reply or decide for the owner by default. It may continue directly only
+  when the owner explicitly authorizes the action or has granted applicable standing
+  permission.
 - The first registration of a physical machine creates one `machine.added`
   responsibility. Browser-backed targets and later reconnects do not create another.
 - An owned messaging account first becoming connected and authenticated creates one

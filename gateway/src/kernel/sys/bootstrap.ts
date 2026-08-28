@@ -1,6 +1,7 @@
 import type { SysBootstrapArgs, SysBootstrapResult } from "@humansandmachines/gsv/protocol";
 import { RipgitClient, type RipgitRepoRef } from "../../fs/ripgit/client";
 import type { KernelContext } from "../context";
+import { registerRepo } from "../repo";
 import { setRepoVisibility } from "../repo-visibility";
 import { seedBuiltinSkillsToHome } from "./skills-seed";
 
@@ -71,7 +72,7 @@ export async function handleSysBootstrap(
       remoteUrl,
       ref,
     ));
-    registerBootstrapRepo(ctx, ROOT_GSV_MANUAL_REPO, "GSV Manual");
+    registerRepo(ctx, ROOT_GSV_MANUAL_REPO, "GSV Manual");
     setPublicRepo(ctx, ROOT_GSV_MANUAL_REPO);
     await timeBootstrapStep(timings, "seed-skills", () => seedBuiltinSkillsToHome(
       ripgit,
@@ -109,26 +110,8 @@ function resolveManualBootstrapUpstream(env: Env): BootstrapResolvedUpstream {
   };
 }
 
-function registerBootstrapRepo(
-  ctx: KernelContext,
-  repo: Pick<RipgitRepoRef, "owner" | "repo">,
-  description: string,
-): void {
-  const now = String(Date.now());
-  const createdKey = repoConfigKey(repo, "created_at");
-  if (ctx.config.get(createdKey) === null) {
-    ctx.config.set(createdKey, now);
-  }
-  ctx.config.set(repoConfigKey(repo, "updated_at"), now);
-  ctx.config.set(repoConfigKey(repo, "description"), description);
-}
-
 function setPublicRepo(ctx: KernelContext, repo: Pick<RipgitRepoRef, "owner" | "repo">): void {
   setRepoVisibility(repo, "public", ctx.config);
-}
-
-function repoConfigKey(repo: Pick<RipgitRepoRef, "owner" | "repo">, field: string): string {
-  return `repos/${repo.owner}/${repo.repo}/${field}`;
 }
 
 function parseConfiguredUpstream(value: string): BootstrapUpstream {

@@ -17,16 +17,7 @@ export { isProcessMediaPath } from "../shared/process-media-path";
 export { createAccountHomeBackend } from "./backends/account-home";
 export {
   createProcessSourceBackend,
-  commitRepoSourceChanges,
-  diffRepoSourceChanges,
-  discardRepoSourceChanges,
-  getRepoSourceStatus,
   isProcessSourcePath,
-} from "./backends/process-sources";
-export type {
-  RepoSourceCommitResult,
-  RepoSourceStatus,
-  SourceChangeSummary,
 } from "./backends/process-sources";
 export { R2MountBackend } from "./backends/r2";
 export { RipgitClient } from "./ripgit/client";

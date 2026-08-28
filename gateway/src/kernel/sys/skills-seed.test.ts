@@ -148,6 +148,6 @@ describe("seedBuiltinSkillsToHome", () => {
       path: "skills.d/memory/SKILL.md",
     });
     expect(new TextDecoder().decode(new Uint8Array(operations[0]?.contentBytes ?? [])))
-      .toContain("human, not to an individual agent");
+      .toContain("Process history is lossless recovery evidence");
   });
 });

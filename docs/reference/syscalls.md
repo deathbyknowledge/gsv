@@ -1129,25 +1129,25 @@ type ResponsibilitySyscalls = {
 
 ## Repositories: `repo.*`
 
-`repo.*` is the kernel-level interface to ripgit repositories. It exposes versioned content, history, diffs, imports, and atomic commits without modeling a Git index or separate `add` step. In the native GSV shell, `/src/repos/{owner}/{repo}` edits are staged per process and committed through `rgit commit`; direct `repo.apply` callers still submit one explicit atomic commit.
+`repo.*` is the kernel-level interface to ripgit repositories. It exposes versioned content, history, diffs, imports, and atomic commits without modeling a Git index or separate `add` step. In the native GSV shell, each filesystem mutation under a writable `/src/repos/{owner}/{repo}` path commits immediately to that repo's configured ref. Direct `repo.apply` callers submit one explicit atomic commit that may contain multiple operations.
 
 Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `repo.list` | `handleRepoList` | Lists home, workspace, public, and registered user repositories visible to the caller. Optional `owner` filters by repo owner. |
-| `repo.create` | `handleRepoCreate` | Creates a repository by writing an empty initial commit to `ref`, default `main`. Existing refs return `created: false`. Only root, wildcard, or the username owner can write. |
+| `repo.list` | `handleRepoList` | Lists home, workspace, public, and registered user repositories visible to the caller, including each registered repo's configured ref. Optional `owner` filters by repo owner. |
+| `repo.create` | `handleRepoCreate` | Creates a repository by writing an empty initial commit to `ref`, default `main`, and records that ref for the `/src/repos` mount. Existing refs return `created: false`. Only root, wildcard, or the username owner can write. |
 | `repo.refs` | `handleRepoRefs` | Reads heads and tags. Allows owned and public repositories. |
 | `repo.read` | `handleRepoRead` | Reads a tree or file at `repo`, `ref`, and `path`. Defaults `ref` to `main` and `path` to root. Binary files return `content: null`. |
 | `repo.search` | `handleRepoSearch` | Searches text in a repo, optionally under `prefix`. Requires a non-empty query. |
 | `repo.log` | `handleRepoLog` | Reads first-parent commit history. `limit` defaults to 30 and clamps to 1-100; `offset` defaults to 0. |
 | `repo.diff` | `handleRepoDiff` | Reads one commit diff. Requires `commit`; `context` defaults to 3 and clamps to 0-20. |
 | `repo.compare` | `handleRepoCompare` | Compares `base` and `head` refs or hashes. `stat: true` omits hunks from ripgit. |
-| `repo.apply` | `handleRepoApply` | Atomically commits `put`, `delete`, and `move` operations to one ref. `expectedHead` enables optimistic concurrency. `allowEmpty` permits an empty commit. |
-| `repo.import` | `handleRepoImport` | Imports or refreshes a repo from an upstream Git URL/ref into a local ripgit repo. Omit `remoteUrl` to pull from the repo's stored upstream. |
+| `repo.apply` | `handleRepoApply` | Atomically commits `put`, `delete`, and `move` operations to one ref and records that ref for the `/src/repos` mount. `expectedHead` enables optimistic concurrency. `allowEmpty` permits an empty commit. |
+| `repo.import` | `handleRepoImport` | Imports or refreshes a repo from an upstream Git URL/ref into a local ripgit repo and records the local ref for the `/src/repos` mount. Omit `remoteUrl` to pull from the repo's stored upstream. |
 | `repo.delete` | `handleRepoDelete` | Deletes a writable ripgit repository and unregisters its repo metadata. |
 
-Write access is intentionally narrower than read access. Non-root users can write repos owned by their username. Public repos are readable but not writable unless ownership also matches. Native shell writes under `/src/repos` stage in a process-local overlay until `rgit commit` or `rgit discard`.
+Write access is intentionally narrower than read access. Non-root users can write repos owned by their username. Public repos are readable but not writable unless ownership also matches. Native filesystem writes have no separate index or working tree: each write commits directly to the repo ref exposed at `/src/repos/{owner}/{repo}`.
 
 ```ts
 type RepoDiffFile = {
