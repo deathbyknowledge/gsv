@@ -6378,6 +6378,13 @@ export class Process extends DurableObject<ProcessEnv> {
       if (this.handleRunStopped(runId)) {
         return "stopped";
       }
+      const policyResult = await applyGenerationContextPolicy(config, "preflight");
+      if (policyResult === "stopped") {
+        return "stopped";
+      }
+
+      // The runway event must reach the model in the generation it warns. Apply
+      // the soft boundary before appending it so the event cannot trip itself.
       const appendedRunwayAlert = await this.maybeAppendContextRunwayAlert(
         runId,
         contextState,
@@ -6396,8 +6403,7 @@ export class Process extends DurableObject<ProcessEnv> {
           return "stopped";
         }
       }
-      const result = await applyGenerationContextPolicy(config, "preflight");
-      return result === "stopped" ? "stopped" : "ready";
+      return "ready";
     };
 
     const contextPreflight = await prepareGenerationContext(activeConfig);

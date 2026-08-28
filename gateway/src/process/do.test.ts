@@ -7,7 +7,10 @@ import {
   runInDurableObject,
   runDurableObjectAlarm,
 } from "cloudflare:test";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import {
+  createAssistantMessageEventStream,
+  type Context,
+} from "@earendil-works/pi-ai";
 import type { Process } from "./do";
 import { Kernel } from "../kernel/do";
 import {
@@ -15,6 +18,7 @@ import {
   bodyFromText,
   bodyToText,
   REQUEST_CANCEL_SIGNAL,
+  type AiConfigResult,
   type ProcAbortResult,
   type ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
@@ -3675,6 +3679,97 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("delivers a runway alert before its own tokens cross the soft boundary", async () => {
+      const pid = "mech-context-runway-alert-headroom";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
+        const process = instance as any;
+        const generationContexts: string[] = [];
+        const inputBudgetTokens = 1_000_000;
+        let revision = 0;
+        process.sendSignal = async () => {};
+        process.store.setValue("historyPolicy", JSON.stringify({
+          overflow: "fail",
+          compactAtPressure: 0.9,
+          keepLast: 80,
+          updatedAt: Date.now(),
+        }));
+        process.updateContextState = vi.fn(async (
+          runId: string,
+          _config: AiConfigResult,
+          context: Context,
+        ) => {
+          const includesRunwayAlert = JSON.stringify(context)
+            .includes("Context runway is getting low.");
+          const inputTokens = includesRunwayAlert ? 900_100 : 899_999;
+          revision += 1;
+          return {
+            revision,
+            runId,
+            provider: "test",
+            model: "test",
+            contextWindowTokens: 1_008_192,
+            maxOutputTokens: 8_192,
+            estimatedInputTokens: inputTokens,
+            inputTokens,
+            confirmedInputTokens: 0,
+            estimatedTrailingInputTokens: inputTokens,
+            inputBudgetTokens,
+            remainingInputTokens: inputBudgetTokens - inputTokens,
+            availableInputTokens: inputBudgetTokens,
+            pressure: inputTokens / inputBudgetTokens,
+            level: "critical",
+            source: "estimate",
+            updatedAt: Date.now(),
+          };
+        });
+        process.generation = {
+          async generate(request: any) {
+            generationContexts.push(JSON.stringify(request.context));
+            return terminalTestResponse([
+              { type: "text", text: "done" },
+              messageAction("done"),
+            ]);
+          },
+          async generateText() {
+            return "done";
+          },
+        };
+
+        process.store.appendMessage("user", "Preserve the warning for this turn.", {
+          runId: "run-context-runway-alert-headroom",
+        });
+        process.currentRun = {
+          runId: "run-context-runway-alert-headroom",
+          config: {
+            ...terminalTestConfig(pid),
+            contextWindowTokens: 1_008_192,
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.runTick("run-context-runway-alert-headroom");
+
+        return {
+          generationContexts,
+          messages: process.store.getMessages(),
+        };
+      });
+
+      expect(result.generationContexts).toHaveLength(1);
+      expect(result.generationContexts[0]).toContain("Context runway is getting low.");
+      expect(result.messages.some((message: any) => (
+        message.role === "system"
+        && message.content.includes("Context limit policy stopped this run.")
+      ))).toBe(false);
+    });
+
     it("includes interaction origin in model context without rewriting stored content", async () => {
       const pid = "mech-origin-context";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -4963,6 +5058,7 @@ describe("Process DO — mechanical", () => {
       expect(result.calls[1]).toMatchObject({ provider: "openrouter", model: "small-fallback" });
       expect(result.calls[1].context).toContain("Fallback compact summary.");
       expect(result.calls[1].context).toContain("Context that must stay live.");
+      expect(result.calls[1].context).toContain("Context runway is getting low.");
       expect(result.calls[1].context).not.toContain("old context A");
       expect(result.compactionConfigs).toEqual([
         { provider: "openrouter", model: "small-fallback" },
@@ -4971,6 +5067,7 @@ describe("Process DO — mechanical", () => {
         .map((message: any) => [message.role, message.content])).toEqual([
         ["system", expect.stringContaining("Fallback compact summary.")],
         ["user", "Context that must stay live."],
+        ["system", expect.stringContaining("Context runway is getting low.")],
         ["assistant", "fallback after compaction"],
       ]);
       expect(result.segments).toHaveLength(1);
@@ -4983,6 +5080,7 @@ describe("Process DO — mechanical", () => {
       expect(lifecycleEvents).toEqual([
         "history.compacted",
         "history.auto_compacted",
+        "context.runway",
       ]);
     });
 

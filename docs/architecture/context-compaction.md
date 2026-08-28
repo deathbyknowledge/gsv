@@ -61,7 +61,9 @@ boundary, smaller windows therefore alert around `0.7` pressure; larger windows
 alert later while retaining the same bounded token runway. A persisted context
 epoch marker prevents corrected estimates, repeated tool turns, or Durable
 Object eviction from repeating the alert. Compaction closes the epoch and
-re-arms the alert for the replacement context.
+re-arms the alert for the replacement context. Preflight evaluates the soft
+overflow boundary before appending the event, so the event itself cannot be
+compacted or fail the run before the model sees it.
 
 ## Overflow policy
 
