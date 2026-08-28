@@ -8,12 +8,18 @@ uniform float4 iAccent;
 uniform float4 iShape;
 uniform float4 iBehavior;
 uniform float2 iShipView;
+uniform float iShipMaterialization;
 
 const float PI = 3.14159265359;
 const float TAU = 6.28318530718;
 const float SHIP_HABITAT_CENTER_X = 0.0;
 const float SHIP_KEEL_HALF_WIDTH = 0.023;
 const float SHIP_KEEL_HALF_LENGTH = 0.360;
+const float SHIP_HULL_CENTER_Y = -0.205;
+const float SHIP_HULL_NOSE_LENGTH = 0.375;
+const float SHIP_HULL_TAIL_LENGTH = 0.805;
+const float SHIP_HULL_HALF_WIDTH = 0.164;
+const float SHIP_HULL_HALF_HEIGHT = 0.080;
 
 float2 rotate2(float angle, float2 point) {
     float sine = sin(angle);
@@ -232,11 +238,50 @@ float3 shipObjectPoint(float3 point, float phase) {
     return shipPoint;
 }
 
+float shipHullLongitudinalCoordinate(float longitudinal) {
+    float centered = longitudinal - SHIP_HULL_CENTER_Y;
+    float hullLength = mix(
+        SHIP_HULL_NOSE_LENGTH,
+        SHIP_HULL_TAIL_LENGTH,
+        step(0.0, centered)
+    );
+    return centered / hullLength;
+}
+
+float shipHullLongitudinalExponent(float coordinate) {
+    return mix(3.6, 1.65, step(0.0, coordinate));
+}
+
 float shipHullScale(float longitudinal) {
-    float progress = clamp((longitudinal + 0.58) / 1.18, 0.0, 1.0);
-    float asymmetricLens = pow(progress, 0.34) *
-        pow(1.0 - progress, 0.79) / 0.506;
-    return max(min(asymmetricLens, 1.0), 0.002);
+    float coordinate = shipHullLongitudinalCoordinate(longitudinal);
+    float exponent = shipHullLongitudinalExponent(coordinate);
+    float longitudinalShape = pow(abs(coordinate), exponent);
+    return sqrt(max(1.0 - longitudinalShape, 0.0));
+}
+
+float shipBaseHullDistance(float3 shipPoint) {
+    float coordinate = shipHullLongitudinalCoordinate(shipPoint.y);
+    float exponent = shipHullLongitudinalExponent(coordinate);
+    float absoluteCoordinate = abs(coordinate);
+    float normalizedX = shipPoint.x / SHIP_HULL_HALF_WIDTH;
+    float normalizedZ = (shipPoint.z + 0.012) / SHIP_HULL_HALF_HEIGHT;
+    float longitudinalShape = pow(absoluteCoordinate, exponent);
+    float implicitSurface = normalizedX * normalizedX +
+        normalizedZ * normalizedZ + longitudinalShape - 1.0;
+    float hullLength = mix(
+        SHIP_HULL_NOSE_LENGTH,
+        SHIP_HULL_TAIL_LENGTH,
+        step(0.0, coordinate)
+    );
+    float longitudinalGradient = exponent *
+        pow(max(absoluteCoordinate, 0.0001), exponent - 1.0) *
+        sign(coordinate) / hullLength;
+    float3 gradient = float3(
+        2.0 * normalizedX / SHIP_HULL_HALF_WIDTH,
+        longitudinalGradient,
+        2.0 * normalizedZ / SHIP_HULL_HALF_HEIGHT
+    );
+    return implicitSurface / max(length(gradient), 0.0001);
 }
 
 float shipHullBottomAt(
@@ -265,21 +310,9 @@ float shipKeelFootprintRadius(float3 shipPoint) {
 float shipDistance(float3 point, float phase, float energy) {
     float3 shipPoint = shipObjectPoint(point, phase);
     float hullScale = shipHullScale(shipPoint.y);
-    float hullHeightScale = pow(hullScale, 0.72);
-    float hullWidth = 0.164 * hullScale;
-    float hullHeight = 0.080 * hullHeightScale;
-    float crossSection = length(
-        float2(
-            shipPoint.x / hullWidth,
-            (shipPoint.z + 0.012) / hullHeight
-        )
-    ) - 1.0;
-    float distance = crossSection * min(hullWidth, hullHeight);
-    distance = smoothMaximum(
-        distance,
-        max(-0.58 - shipPoint.y, shipPoint.y - 0.60),
-        0.003
-    );
+    float hullWidth = SHIP_HULL_HALF_WIDTH * hullScale;
+    float hullHeight = SHIP_HULL_HALF_HEIGHT * hullScale;
+    float distance = shipBaseHullDistance(shipPoint);
 
     float3 firstCutPoint = shipPoint - float3(SHIP_HABITAT_CENTER_X, -0.340, 0.055);
     firstCutPoint.xy = rotate2(-0.18, firstCutPoint.xy);
@@ -559,7 +592,7 @@ float4 shipHabitatField(float3 shipPoint) {
 
 float shipBeltSignal(float3 point, float phase) {
     float3 shipPoint = shipObjectPoint(point, phase);
-    float hullWidth = 0.164 * shipHullScale(shipPoint.y);
+    float hullWidth = SHIP_HULL_HALF_WIDTH * shipHullScale(shipPoint.y);
     float sideWindow = smoothstep(
         hullWidth * 0.70,
         hullWidth * 0.86,
@@ -597,8 +630,8 @@ float4 shipLowerHullField(float3 shipPoint) {
         underside;
 
     float hullScale = shipHullScale(shipPoint.y);
-    float hullWidth = 0.164 * hullScale;
-    float hullHeight = 0.080 * pow(hullScale, 0.72);
+    float hullWidth = SHIP_HULL_HALF_WIDTH * hullScale;
+    float hullHeight = SHIP_HULL_HALF_HEIGHT * hullScale;
     float localHullBottom = shipHullBottomAt(
         shipPoint,
         hullWidth,
@@ -660,8 +693,16 @@ float4 shipMembraneField(float3 point, float phase) {
     float2 deckPoint = shipPoint.xy;
     float deckSeamDistance = lineSegmentDistance(
         deckPoint,
-        float2(-0.145, -0.430),
-        float2(0.140, -0.405)
+        float2(-0.105, -0.525),
+        float2(0.105, -0.510)
+    );
+    deckSeamDistance = min(
+        deckSeamDistance,
+        lineSegmentDistance(
+            deckPoint,
+            float2(-0.145, -0.430),
+            float2(0.140, -0.405)
+        )
     );
     deckSeamDistance = min(
         deckSeamDistance,
@@ -715,97 +756,23 @@ float4 shipMembraneField(float3 point, float phase) {
         deckSeamDistance,
         lineSegmentDistance(
             deckPoint,
-            float2(-0.145, -0.430),
-            float2(-0.135, -0.300)
+            float2(-0.010, 0.535),
+            float2(0.010, 0.542)
         )
     );
-    deckSeamDistance = min(
-        deckSeamDistance,
-        lineSegmentDistance(
-            deckPoint,
-            float2(-0.135, -0.300),
-            float2(-0.115, -0.145)
-        )
+    float deckHullWidth = SHIP_HULL_HALF_WIDTH *
+        shipHullScale(shipPoint.y);
+    float deckLongitudinalWindow =
+        smoothstep(-0.575, -0.545, shipPoint.y) *
+        (1.0 - smoothstep(0.545, 0.590, shipPoint.y));
+    float deckLongitudinalSeam = abs(
+        abs(shipPoint.x) - deckHullWidth * 0.78
     );
+    deckLongitudinalSeam +=
+        (1.0 - deckLongitudinalWindow) * 0.020;
     deckSeamDistance = min(
         deckSeamDistance,
-        lineSegmentDistance(
-            deckPoint,
-            float2(-0.115, -0.145),
-            float2(-0.095, 0.015)
-        )
-    );
-    deckSeamDistance = min(
-        deckSeamDistance,
-        lineSegmentDistance(
-            deckPoint,
-            float2(-0.095, 0.015),
-            float2(-0.074, 0.170)
-        )
-    );
-    deckSeamDistance = min(
-        deckSeamDistance,
-        lineSegmentDistance(
-            deckPoint,
-            float2(-0.074, 0.170),
-            float2(-0.050, 0.315)
-        )
-    );
-    deckSeamDistance = min(
-        deckSeamDistance,
-        lineSegmentDistance(
-            deckPoint,
-            float2(-0.050, 0.315),
-            float2(-0.024, 0.440)
-        )
-    );
-    deckSeamDistance = min(
-        deckSeamDistance,
-        lineSegmentDistance(
-            deckPoint,
-            float2(0.140, -0.405),
-            float2(0.125, -0.270)
-        )
-    );
-    deckSeamDistance = min(
-        deckSeamDistance,
-        lineSegmentDistance(
-            deckPoint,
-            float2(0.125, -0.270),
-            float2(0.110, -0.115)
-        )
-    );
-    deckSeamDistance = min(
-        deckSeamDistance,
-        lineSegmentDistance(
-            deckPoint,
-            float2(0.110, -0.115),
-            float2(0.094, 0.045)
-        )
-    );
-    deckSeamDistance = min(
-        deckSeamDistance,
-        lineSegmentDistance(
-            deckPoint,
-            float2(0.094, 0.045),
-            float2(0.074, 0.200)
-        )
-    );
-    deckSeamDistance = min(
-        deckSeamDistance,
-        lineSegmentDistance(
-            deckPoint,
-            float2(0.074, 0.200),
-            float2(0.049, 0.340)
-        )
-    );
-    deckSeamDistance = min(
-        deckSeamDistance,
-        lineSegmentDistance(
-            deckPoint,
-            float2(0.049, 0.340),
-            float2(0.024, 0.455)
-        )
+        deckLongitudinalSeam
     );
     float deckSurface = smoothstep(-0.004, 0.020, shipPoint.z);
     float deckSeamSoft = (1.0 - smoothstep(0.0007, 0.0018, deckSeamDistance)) *
@@ -1261,6 +1228,8 @@ half4 main(float2 fragCoord) {
     float internalActivity = clamp(iBehavior.z, 0.0, 1.0);
     float projection = clamp(iBehavior.w, 0.0, 1.0);
     float shipPresence = clamp(iShape.z, 0.0, 1.0);
+    float shipGeometry = smoothstep(0.0, 1.0, shipPresence);
+    float shipMaterialization = clamp(iShipMaterialization, 0.0, 1.0);
     float phase = TAU * iTime / 12.0;
     float shipCamera = smoothstep(0.0, 1.0, shipPresence);
     float cameraDistance = mix(2.35, 1.58, shipCamera);
@@ -1283,9 +1252,56 @@ half4 main(float2 fragCoord) {
         float3 point = origin + direction * travel;
         float3 normal = organicNormal(point, phase, energy);
         float3 view = -direction;
-        float4 shipSurfaceField = shipMembraneField(point, phase) * shipPresence;
-        float shipBelt = shipBeltSignal(point, phase) * shipPresence;
-        float shipAperture = shipApertureSignal(point, phase) * shipPresence;
+        float3 shipMaterialPoint = shipObjectPoint(point, phase);
+        float shipLongitudinal = clamp(
+            (shipMaterialPoint.y + 0.58) / 1.18,
+            0.0,
+            1.0
+        );
+        float materializationFront = mix(
+            0.015,
+            0.985,
+            shipMaterialization
+        );
+        float sweptPhysicalLock = 1.0 - smoothstep(
+            materializationFront - 0.085,
+            materializationFront + 0.035,
+            shipLongitudinal
+        );
+        float physicalLock = sweptPhysicalLock * smoothstep(
+            0.0,
+            0.018,
+            shipMaterialization
+        );
+        physicalLock = mix(
+            physicalLock,
+            1.0,
+            smoothstep(0.982, 1.0, shipMaterialization)
+        );
+        float materializationWindow = smoothstep(
+            0.0,
+            0.018,
+            shipMaterialization
+        ) * (1.0 - smoothstep(0.982, 1.0, shipMaterialization));
+        float materializationFlash = exp(
+            -abs(shipLongitudinal - materializationFront) * 34.0
+        ) * materializationWindow;
+        float habitatThreshold = 0.52 + shipLongitudinal * 0.30;
+        float habitatIgnition = smoothstep(
+            habitatThreshold,
+            habitatThreshold + 0.075,
+            shipMaterialization
+        );
+        float keelProgress = smoothstep(0.30, 0.88, shipMaterialization);
+        float keelFront = mix(-0.08, 1.08, keelProgress);
+        float keelWindow = smoothstep(0.27, 0.37, shipMaterialization) *
+            (1.0 - smoothstep(0.89, 0.98, shipMaterialization));
+        float keelPulse = exp(
+            -abs(shipLongitudinal - keelFront) * 38.0
+        ) * keelWindow;
+        float4 shipSurfaceField = shipMembraneField(point, phase) * shipGeometry;
+        float shipBelt = shipBeltSignal(point, phase) * shipGeometry;
+        float shipAperture = shipApertureSignal(point, phase) * shipGeometry;
 
         float3 cyanLight = normalize(float3(-0.55, 0.72, 0.84));
         float3 warmLight = normalize(float3(0.72, -0.20, 0.54));
@@ -1311,7 +1327,7 @@ half4 main(float2 fragCoord) {
         float shipCore = max(
             shipCoreSignal(middlePoint, phase),
             shipCoreSignal(deepPoint, phase) * 0.72
-        ) * shipPresence;
+        ) * shipGeometry;
         float estimatedThickness = 0.065 + facing * 0.060 +
             middleDensity * 0.340 + focus * 0.055;
         float3 transmittance = exp(
@@ -1342,7 +1358,7 @@ half4 main(float2 fragCoord) {
         float warmRidge = nearMembranes.w * 0.72 + deepMembranes.w * 0.16;
         float organicAmount = clamp(iShape.x, 0.0, 1.0);
         float liquidDetail = (0.28 + organicAmount * 0.72) *
-            (1.0 - shipPresence * 0.88);
+            (1.0 - shipGeometry * 0.74);
         float membraneCrossing = coolRidge * warmRidge;
         float thoughtWave = 0.5 + 0.5 * sin(
             phase * 4.0 + dot(middlePoint, float3(19.0, -14.0, 11.0))
@@ -1431,13 +1447,12 @@ half4 main(float2 fragCoord) {
         shipMaterial += shipSilver * (0.690 + shipFacet * 0.170);
         shipMaterial += shipLight *
             (shipContour * 0.36 + silhouette * 0.055);
-        float3 shipMaterialPoint = shipObjectPoint(point, phase);
-        float4 shipLowerHull = shipLowerHullField(shipMaterialPoint) * shipPresence;
+        float4 shipLowerHull = shipLowerHullField(shipMaterialPoint) * shipGeometry;
         float lowerHull = (1.0 - smoothstep(
             -0.030,
             -0.006,
             shipMaterialPoint.z
-        )) * shipPresence;
+        )) * shipGeometry;
         shipMaterial *= 1.0 - lowerHull * 0.070;
         float panelCut = clamp(
             shipSurfaceField.x * 0.14 + shipSurfaceField.y * 0.30 +
@@ -1500,7 +1515,10 @@ half4 main(float2 fragCoord) {
             shipLowerHull.w * 0.90
         );
         shipMaterial += shipLight * shipLowerHull.y * 0.075;
-        float4 habitatField = shipHabitatField(shipMaterialPoint) * shipPresence;
+        shipMaterial += mix(shipLight, shipPower, 0.48) *
+            materializationFlash * 0.38;
+        shipMaterial += shipPower * keelPulse * shipLowerHull.z * 0.62;
+        float4 habitatField = shipHabitatField(shipMaterialPoint) * shipGeometry;
         float apertureTexture = 0.5 + 0.5 * sin(
             dot(shipMaterialPoint, float3(31.0, -23.0, 19.0)) +
                 phase * 0.45
@@ -1516,6 +1534,11 @@ half4 main(float2 fragCoord) {
             apertureTexture * 0.72
         );
         apertureMaterial += shipPower * 0.035;
+        apertureMaterial = mix(
+            float3(0.006, 0.009, 0.016),
+            apertureMaterial,
+            habitatIgnition
+        );
         shipMaterial = mix(
             shipMaterial,
             apertureMaterial,
@@ -1544,9 +1567,60 @@ half4 main(float2 fragCoord) {
         shipMaterial = mix(
             shipMaterial,
             habitatMaterial,
-            habitatField.x * 0.92
+            habitatField.x * habitatIgnition * 0.92
         );
         shipMaterial *= hologramStability;
+        float hologramScan = pow(
+            0.5 + 0.5 * sin(
+                shipMaterialPoint.z * 260.0 - phase * 3.2
+            ),
+            13.0
+        );
+        float hologramSweep = pow(
+            0.5 + 0.5 * sin(
+                shipMaterialPoint.y * 24.0 - phase * 1.7
+            ),
+            18.0
+        );
+        float hologramStructure = clamp(
+            shipSurfaceField.x * 1.20 +
+                shipSurfaceField.y * 0.75 +
+                shipLowerHull.x * 0.82 +
+                shipLowerHull.y * 0.72 +
+                shipLowerHull.z * 0.42,
+            0.0,
+            1.0
+        );
+        float hologramHabitat = clamp(
+            shipAperture * 0.52 + habitatField.x * habitatIgnition,
+            0.0,
+            1.0
+        );
+        float hologramEdge = pow(1.0 - facing, 0.72);
+        float hologramBreakup = 0.88 + 0.12 * spatialGrain(
+            fragCoord * 0.21 + float2(phase * 7.0, -phase * 13.0)
+        );
+        float3 hologramColor = mix(
+            float3(0.12, 0.62, 0.94),
+            shipPower,
+            0.64
+        );
+        float3 hologramMaterial = hologramColor * (
+            0.075 + hologramEdge * 0.82 +
+                hologramScan * 0.18 + hologramSweep * 0.11 +
+                hologramStructure * 0.58 + hologramHabitat * 0.34
+        );
+        hologramMaterial += shipLight * (
+            hologramEdge * 0.16 +
+                hologramStructure * hologramScan * 0.12
+        );
+        hologramMaterial += hologramColor * materializationFlash * 0.42;
+        hologramMaterial *= hologramBreakup;
+        shipMaterial = mix(
+            hologramMaterial,
+            shipMaterial,
+            physicalLock
+        );
         material = mix(material, shipMaterial, shipPresence);
 
         float symbolPresence = clamp(iShape.y, 0.0, 1.0);
@@ -1579,6 +1653,14 @@ half4 main(float2 fragCoord) {
             0.0,
             0.90
         );
+        float hologramAlpha = clamp(
+            0.15 + hologramEdge * 0.48 +
+                hologramStructure * 0.17 + hologramHabitat * 0.12 +
+                hologramScan * 0.055 + hologramSweep * 0.035,
+            0.13,
+            0.76
+        ) * (0.90 + hologramStability * 0.10);
+        shipAlpha = mix(hologramAlpha, shipAlpha, physicalLock);
         bodyAlpha = mix(bodyAlpha, shipAlpha, shipPresence);
         color = material * bodyAlpha;
         alpha = bodyAlpha;

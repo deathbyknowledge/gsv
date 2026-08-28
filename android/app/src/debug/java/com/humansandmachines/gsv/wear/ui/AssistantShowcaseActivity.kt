@@ -81,10 +81,7 @@ class AssistantShowcaseActivity : ComponentActivity() {
         updateShowcase(intent)
         setContent {
             if (shipReview) {
-                ShipGooReviewSurface(
-                    shapeTarget = shapeTarget,
-                    onToggle = ::toggleShape,
-                )
+                ShipReviewSurface()
             } else if (controlReview) {
                 GsvControlScreen(
                     wearSnapshot = RuntimeSnapshot(
@@ -332,16 +329,9 @@ class AssistantShowcaseActivity : ComponentActivity() {
     }
 
     private fun toggleShape() {
-        shapeTarget = if (shipReview) {
-            when (shapeTarget) {
-                OrbShapeTarget.SHIP -> OrbShapeTarget.LISTENING
-                else -> OrbShapeTarget.SHIP
-            }
-        } else {
-            when (shapeTarget) {
-                OrbShapeTarget.LISTENING -> OrbShapeTarget.SMILE
-                else -> OrbShapeTarget.LISTENING
-            }
+        shapeTarget = when (shapeTarget) {
+            OrbShapeTarget.LISTENING -> OrbShapeTarget.SMILE
+            else -> OrbShapeTarget.LISTENING
         }
     }
 
@@ -358,10 +348,8 @@ class AssistantShowcaseActivity : ComponentActivity() {
 }
 
 @androidx.compose.runtime.Composable
-private fun ShipGooReviewSurface(
-    shapeTarget: OrbShapeTarget,
-    onToggle: () -> Unit,
-) {
+private fun ShipReviewSurface() {
+    var shipRenderMode by remember { mutableStateOf(ShipRenderMode.HOLOGRAM) }
     var shipOrbitRadians by remember { mutableFloatStateOf(0f) }
     var shipElevationRadians by remember {
         mutableFloatStateOf(DEFAULT_SHIP_ELEVATION_RADIANS)
@@ -372,14 +360,22 @@ private fun ShipGooReviewSurface(
             .background(GsvColor.Void)
             .semantics {
                 role = Role.Button
-                contentDescription = "Morph procedural Ship"
+                contentDescription = when (shipRenderMode) {
+                    ShipRenderMode.PHYSICAL -> "Disarm Ship"
+                    ShipRenderMode.HOLOGRAM -> "Arm Ship"
+                }
             }
             .clickable(
                 interactionSource = androidx.compose.runtime.remember {
                     MutableInteractionSource()
                 },
                 indication = null,
-                onClick = onToggle,
+                onClick = {
+                    shipRenderMode = when (shipRenderMode) {
+                        ShipRenderMode.PHYSICAL -> ShipRenderMode.HOLOGRAM
+                        ShipRenderMode.HOLOGRAM -> ShipRenderMode.PHYSICAL
+                    }
+                },
             )
             .pointerInput(Unit) {
                 detectDragGestures { change, dragAmount ->
@@ -407,18 +403,29 @@ private fun ShipGooReviewSurface(
         )
         AssistantCore(
             state = VoiceTurnState.LISTENING,
-            shapeTarget = shapeTarget,
+            shapeTarget = OrbShapeTarget.SHIP,
             accentOverride = GsvColor.Accent,
             shipOrbitRadians = shipOrbitRadians,
             shipElevationOffsetRadians =
                 shipElevationRadians - DEFAULT_SHIP_ELEVATION_RADIANS,
+            shipRenderMode = shipRenderMode,
             modifier = Modifier.fillMaxWidth().height(360.dp).padding(horizontal = 8.dp),
         )
         Text(
-            text = if (shapeTarget == OrbShapeTarget.SHIP) {
-                "DRAG IN 3D // TAP TO RELEASE"
-            } else {
-                "LIQUID FIELD // TAP TO FORM"
+            text = when (shipRenderMode) {
+                ShipRenderMode.PHYSICAL -> "SHIP // ARMED"
+                ShipRenderMode.HOLOGRAM -> "SHIP // DISARMED"
+            },
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 58.dp, start = 18.dp, end = 18.dp, bottom = 18.dp)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            style = GsvTextStyle.Kicker.copy(color = GsvColor.Muted),
+        )
+        Text(
+            text = when (shipRenderMode) {
+                ShipRenderMode.PHYSICAL -> "TAP TO DISARM // DRAG TO ORBIT"
+                ShipRenderMode.HOLOGRAM -> "TAP TO ARM // DRAG TO ORBIT"
             },
             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 52.dp),
             style = GsvTextStyle.Kicker.copy(color = GsvColor.MutedDark),
