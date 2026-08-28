@@ -64,6 +64,7 @@ fun AssistantCore(
     shipOrbitRadians: Float = 0f,
     shipElevationOffsetRadians: Float = 0f,
     shipRenderMode: ShipRenderMode = ShipRenderMode.PHYSICAL,
+    exposeStateSemantics: Boolean = true,
 ) {
     val phase = rememberVisualLoopFraction(
         durationNanos = ASSISTANT_LOOP_NANOS,
@@ -130,10 +131,15 @@ fun AssistantCore(
     val energy = focusedEnergy +
         (speakingEnergy - focusedEnergy) * liquidParameters.projection.coerceIn(0f, 1f)
 
-    Box(
-        modifier = modifier.semantics {
+    val semanticsModifier = if (exposeStateSemantics) {
+        Modifier.semantics {
             contentDescription = "GSV assistant ${state.stateLabel().lowercase()}"
-        },
+        }
+    } else {
+        Modifier
+    }
+    Box(
+        modifier = modifier.then(semanticsModifier),
         contentAlignment = Alignment.Center,
     ) {
         AssistantEnergyField(
@@ -153,7 +159,6 @@ fun AssistantCore(
 
 private const val SPEAKING_ATTACK_MILLIS = 240
 private const val SPEAKING_RELEASE_MILLIS = 520
-private const val SHIP_MATERIALIZATION_MILLIS = 1_800
 private const val ASSISTANT_LOOP_SECONDS = 12f
 private const val ASSISTANT_LOOP_NANOS = 12_000_000_000L
 

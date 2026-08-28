@@ -53,6 +53,8 @@ enum class ShipRenderMode {
     HOLOGRAM,
 }
 
+internal const val SHIP_MATERIALIZATION_MILLIS = 1_800
+
 private val OrbShapeVectorConverter = TwoWayConverter<OrbShapeParameters, AnimationVector4D>(
     convertToVector = { parameters ->
         AnimationVector4D(

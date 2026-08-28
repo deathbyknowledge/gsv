@@ -1,8 +1,5 @@
 package com.humansandmachines.gsv.wear.ui
 
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.size
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
@@ -10,7 +7,6 @@ import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.humansandmachines.gsv.wear.authority.AuthorityState
 import com.humansandmachines.gsv.wear.config.ConnectionFields
@@ -28,19 +24,26 @@ class GsvVisualSystemTest {
     val compose = createComposeRule()
 
     @Test
-    fun disarmedShipCoreExposesItsAction() {
+    fun disarmedShipSurfaceExposesItsAction() {
         var armRequested = false
         compose.setContent {
-            Box {
-                ShipCore(
-                    authority = AuthorityState.DISARMED,
-                    onToggleRequested = { armRequested = true },
-                    onActivationStarted = {},
-                    modifier = Modifier.size(270.dp),
-                )
-            }
+            GsvControlScreen(
+                wearSnapshot = RuntimeSnapshot(authority = AuthorityState.DISARMED),
+                assistantSnapshot = AssistantSnapshot(),
+                uiState = ControlUiState(),
+                onMindToggle = {},
+                onArm = { armRequested = true },
+                onPauseOrResume = {},
+                onDisarm = {},
+                onDisconnect = {},
+                onActivationStarted = {},
+                onChooseAssistant = {},
+                onOpenBatterySettings = {},
+                onOpenNotificationSettings = {},
+            )
         }
 
+        compose.onNodeWithContentDescription("Open ship").performClick()
         compose.onNodeWithContentDescription("Ship Wear Mode control")
             .assert(
                 SemanticsMatcher.expectValue(
