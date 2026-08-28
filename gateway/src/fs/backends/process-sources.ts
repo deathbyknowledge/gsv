@@ -208,7 +208,12 @@ class ProcessSourceBackend implements MountBackend {
 
   async writeFile(path: string, content: FileContent): Promise<void> {
     const repoResolved = this.resolveWritableRepoPath(path, "write");
-    await this.stageOverlayPut(repoResolved.repo, repoResolved.relativePath, asBytes(content));
+    await this.applyRepoPut(
+      repoResolved.repo,
+      repoResolved.relativePath,
+      asBytes(content),
+      "write",
+    );
   }
 
   async appendFile(path: string, content: FileContent): Promise<void> {
@@ -218,7 +223,7 @@ class ProcessSourceBackend implements MountBackend {
       current = await this.readFileBuffer(path);
     }
     const next = concatBytes(current, asBytes(content));
-    await this.stageOverlayPut(repoResolved.repo, repoResolved.relativePath, next);
+    await this.applyRepoPut(repoResolved.repo, repoResolved.relativePath, next, "append");
   }
 
   async exists(path: string): Promise<boolean> {
@@ -348,7 +353,11 @@ class ProcessSourceBackend implements MountBackend {
     if (!removable) {
       return;
     }
-    await this.stageOverlayDelete(repoResolved.repo, repoResolved.relativePath, options?.recursive === true);
+    await this.applyRepoDelete(
+      repoResolved.repo,
+      repoResolved.relativePath,
+      options?.recursive === true,
+    );
   }
 
   async chmod(path: string): Promise<void> {
@@ -544,8 +553,8 @@ class ProcessSourceBackend implements MountBackend {
     if (!this.processId) {
       throw new Error(`EPERM: repo writes require a process context '${resolved.normalizedPath}'`);
     }
-    if (!this.storage) {
-      throw new Error(`ENOSYS: repo overlay storage is unavailable '${resolved.normalizedPath}'`);
+    if (!this.config) {
+      throw new Error(`ENOSYS: repo branch state storage is unavailable '${resolved.normalizedPath}'`);
     }
   }
 
@@ -575,10 +584,11 @@ class ProcessSourceBackend implements MountBackend {
   }
 
   private repoRefForSourceRepo(repo: SourceRepo): RipgitRepoRef {
+    const state = this.readBranchState(repo);
     return {
       owner: repo.owner,
       repo: repo.name,
-      branch: this.overlayBaseRef(repo),
+      branch: state?.head ? state.branch : state?.baseRef ?? repo.baseRef,
     };
   }
 
@@ -601,51 +611,69 @@ class ProcessSourceBackend implements MountBackend {
     return readOverlayContent(this.storage, change);
   }
 
-  private async stageOverlayPut(
+  private async applyRepoPut(
     repo: SourceRepo,
     relativePath: string,
     content: Uint8Array,
+    operation: "write" | "append",
   ): Promise<void> {
-    const storage = this.storage!;
-    const overlay = await this.readOverlay(repo);
-    const contentKey = overlayContentKey(this.processId!, repo, relativePath);
-    await storage.put(contentKey, content);
-    const now = Date.now();
-    overlay.changes[relativePath] = {
-      type: "put",
-      path: relativePath,
-      contentKey,
-      size: content.byteLength,
-      updatedAt: now,
-    };
-    overlay.updatedAt = now;
-    await writeOverlayManifest(storage, this.processId!, repo, overlay);
+    await this.migrateLegacyOverlay(repo);
+    await applySourceRepoOps(
+      {
+        identity: this.identity,
+        ripgit: this.ripgit,
+        processId: this.processId!,
+        config: this.config!,
+      },
+      repo,
+      `gsv: ${operation} ${relativePath}`,
+      [{
+        type: "put",
+        path: relativePath,
+        contentBytes: Array.from(content),
+      }],
+    );
   }
 
-  private async stageOverlayDelete(
+  private async applyRepoDelete(
     repo: SourceRepo,
     relativePath: string,
     recursive: boolean,
   ): Promise<void> {
-    const storage = this.storage!;
+    await this.migrateLegacyOverlay(repo);
+    await applySourceRepoOps(
+      {
+        identity: this.identity,
+        ripgit: this.ripgit,
+        processId: this.processId!,
+        config: this.config!,
+      },
+      repo,
+      `gsv: rm ${relativePath}`,
+      [{ type: "delete", path: relativePath, recursive }],
+    );
+  }
+
+  private async migrateLegacyOverlay(repo: SourceRepo): Promise<void> {
     const overlay = await this.readOverlay(repo);
-    for (const change of sortedOverlayChanges(overlay)) {
-      if (change.path === relativePath || (recursive && pathIsDescendant(change.path, relativePath))) {
-        if (change.type === "put") {
-          await storage.delete(change.contentKey);
-        }
-        delete overlay.changes[change.path];
-      }
+    if (sortedOverlayChanges(overlay).length === 0) {
+      return;
     }
-    const now = Date.now();
-    overlay.changes[relativePath] = {
-      type: "delete",
-      path: relativePath,
-      recursive,
-      updatedAt: now,
-    };
-    overlay.updatedAt = now;
-    await writeOverlayManifest(storage, this.processId!, repo, overlay);
+    if (!this.storage) {
+      throw new Error(`Repo has legacy staged changes but overlay storage is unavailable: ${repo.repo}`);
+    }
+    await commitSourceOverlay(
+      {
+        identity: this.identity,
+        storage: this.storage,
+        ripgit: this.ripgit,
+        processId: this.processId!,
+        config: this.config!,
+      },
+      repo,
+      overlay,
+      { message: "gsv: recover staged source changes" },
+    );
   }
 
   private async searchOverlay(
@@ -717,7 +745,7 @@ export async function diffRepoSourceChanges(
   );
   const changes = sortedOverlayChanges(overlay);
   if (changes.length === 0) {
-    return `No staged repo changes for ${repo.repo}\n`;
+    return `No legacy staged repo changes for ${repo.repo}\n`;
   }
 
   const repoRef = repoRefForOverlay(repo, overlay.baseRef);
@@ -749,7 +777,7 @@ export async function diffRepoSourceChanges(
     }
   }
 
-  return lines.length > 0 ? `${lines.join("\n")}\n` : `No staged repo changes for ${repo.repo}\n`;
+  return lines.length > 0 ? `${lines.join("\n")}\n` : `No legacy staged repo changes for ${repo.repo}\n`;
 }
 
 export async function commitRepoSourceChanges(
@@ -785,6 +813,33 @@ export async function commitRepoSourceChanges(
     repo,
     sourceBaseRefForRepo(repo, state),
   );
+  return commitSourceOverlay(
+    {
+      identity: options.identity,
+      storage: options.storage,
+      ripgit: options.ripgit,
+      processId: options.processId,
+      config: options.config,
+    },
+    repo,
+    overlay,
+    { message, branch: args.branch },
+  );
+}
+
+async function commitSourceOverlay(
+  options: {
+    identity: ProcessIdentity;
+    storage: R2Bucket;
+    ripgit: RipgitClient;
+    processId: string;
+    config: SourceConfig;
+  },
+  repo: SourceRepo,
+  overlay: SourceOverlayManifest,
+  args: { message: string; branch?: string },
+): Promise<RepoSourceCommitResult> {
+  const state = readSourceBranchState(options.config, options.processId, repo);
   const explicitBranch = args.branch?.trim();
   const branch = explicitBranch
     ? normalizeSourceBranch(explicitBranch)
@@ -826,10 +881,13 @@ export async function commitRepoSourceChanges(
     { ...repoRef, branch },
     options.identity.username,
     `${options.identity.username}@gsv.local`,
-    message,
+    args.message,
     ops,
     applyOptions,
   );
+  if (result.conflict) {
+    throw new Error(`Repo ref moved while committing ${repo.repo}`);
+  }
   const nextState = sourceBranchStateForTarget(state, branch, targetRef, result.head ?? null);
   writeSourceBranchState(options.config, options.processId, repo, nextState);
   await discardOverlay(options.storage, options.processId, repo, overlay);
@@ -840,6 +898,63 @@ export async function commitRepoSourceChanges(
     commitHead: nextState.head,
     ops: ops.length,
   };
+}
+
+async function applySourceRepoOps(
+  options: {
+    identity: ProcessIdentity;
+    ripgit: RipgitClient;
+    processId: string;
+    config: SourceConfig;
+  },
+  repo: SourceRepo,
+  message: string,
+  requestedOps: RipgitApplyOp[],
+): Promise<void> {
+  const state = readSourceBranchState(options.config, options.processId, repo);
+  const branch = state?.branch ?? repo.ref;
+  const overlay = emptyOverlayManifest(repo, sourceBaseRefForRepo(repo, state));
+  const expectedBranchBaseRef = !state && repo.baseRef !== repo.ref ? repo.baseRef : undefined;
+  const requestedBranch = expectedBranchBaseRef ? undefined : branch;
+  const repoRef = parseRepoSlug(repo.repo);
+  const targetRef = await resolveSourceCommitTarget(
+    options.ripgit,
+    repoRef,
+    branch,
+    null,
+    overlay,
+    requestedBranch,
+    expectedBranchBaseRef,
+  );
+  const ops = await effectiveSourceApplyOps(
+    options.ripgit,
+    repo,
+    targetRef.opsBaseRef,
+    requestedOps,
+  );
+  if (ops.length === 0) {
+    const nextState = sourceBranchStateForTarget(state, branch, targetRef, null);
+    writeSourceBranchState(options.config, options.processId, repo, nextState);
+    return;
+  }
+
+  const applyOptions: SourceApplyOptions = { baseRef: targetRef.applyBaseRef };
+  if (targetRef.expectedHead) {
+    applyOptions.expectedHead = targetRef.expectedHead;
+  }
+  const result = await options.ripgit.apply(
+    { ...repoRef, branch },
+    options.identity.username,
+    `${options.identity.username}@gsv.local`,
+    message,
+    ops,
+    applyOptions,
+  );
+  if (result.conflict) {
+    throw new Error(`Repo ref moved while committing ${repo.repo}`);
+  }
+  const nextState = sourceBranchStateForTarget(state, branch, targetRef, result.head ?? null);
+  writeSourceBranchState(options.config, options.processId, repo, nextState);
 }
 
 export async function discardRepoSourceChanges(
@@ -1054,7 +1169,7 @@ function repoRefForOverlay(repo: SourceRepo, baseRef: string): RipgitRepoRef {
 }
 
 function sourceBaseRefForRepo(repo: SourceRepo, state: SourceBranchState | null): string {
-  return state?.head ?? repo.baseRef;
+  return state?.head ?? state?.baseRef ?? repo.baseRef;
 }
 
 async function resolveSourceCommitTarget(
@@ -1201,17 +1316,17 @@ async function readOverlayManifest(
   try {
     const parsed = sourceOverlayManifestSchema.safeParse(JSON.parse(await obj.text()));
     if (!parsed.success || parsed.data.packageId !== repo.sourceKey || parsed.data.packageKey !== sourceRepoStorageKey(repo)) {
-      return empty;
+      throw new Error("manifest identity or schema is invalid");
     }
     const changes: Record<string, SourceOverlayChange> = {};
     for (const [path, value] of Object.entries(parsed.data.changes)) {
       const normalizedPath = normalizeRepoPath(path);
       if (!normalizedPath) {
-        continue;
+        throw new Error("manifest contains an empty path");
       }
       const change = sourceOverlayChangeSchema.safeParse(value);
       if (!change.success) {
-        continue;
+        throw new Error(`manifest change is invalid: ${normalizedPath}`);
       }
       if (change.data.type === "put" && change.data.contentKey) {
         changes[normalizedPath] = {
@@ -1228,6 +1343,8 @@ async function readOverlayManifest(
           recursive: change.data.recursive === true,
           updatedAt: change.data.updatedAt ?? Date.now(),
         };
+      } else {
+        throw new Error(`manifest put is missing content: ${normalizedPath}`);
       }
     }
     return {
@@ -1239,8 +1356,9 @@ async function readOverlayManifest(
       updatedAt: parsed.data.updatedAt ?? Date.now(),
       changes,
     };
-  } catch {
-    return empty;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid legacy source overlay for ${repo.repo}: ${detail}`);
   }
 }
 
@@ -1257,22 +1375,6 @@ function emptyOverlayManifest(repo: SourceRepo, baseRef = sourceBaseRefForRepo(r
   };
 }
 
-async function writeOverlayManifest(
-  storage: R2Bucket,
-  processId: string,
-  repo: SourceRepo,
-  overlay: SourceOverlayManifest,
-): Promise<void> {
-  const key = overlayManifestKey(processId, repo);
-  if (Object.keys(overlay.changes).length === 0) {
-    await storage.delete(key);
-    return;
-  }
-  await storage.put(key, `${JSON.stringify(overlay, null, 2)}\n`, {
-    httpMetadata: { contentType: "application/json" },
-  });
-}
-
 async function discardOverlay(
   storage: R2Bucket,
   processId: string,
@@ -1281,10 +1383,12 @@ async function discardOverlay(
 ): Promise<void> {
   const keys = sortedOverlayChanges(overlay)
     .flatMap((change) => change.type === "put" ? [change.contentKey] : []);
+  // Stop advertising the overlay before deleting its bytes so interrupted
+  // cleanup cannot leave a manifest that points at only some staged content.
+  await storage.delete(overlayManifestKey(processId, repo));
   if (keys.length > 0) {
     await storage.delete(keys);
   }
-  await storage.delete(overlayManifestKey(processId, repo));
 }
 
 function overlayManifestKey(
@@ -1292,14 +1396,6 @@ function overlayManifestKey(
   repo: SourceRepo,
 ): string {
   return `process-source-overlays/${encodeURIComponent(processId)}/${encodeURIComponent(sourceRepoStorageKey(repo))}/manifest.json`;
-}
-
-function overlayContentKey(
-  processId: string,
-  repo: SourceRepo,
-  relativePath: string,
-): string {
-  return `process-source-overlays/${encodeURIComponent(processId)}/${encodeURIComponent(sourceRepoStorageKey(repo))}/files/${encodeURIComponent(relativePath)}`;
 }
 
 function sortedOverlayChanges(overlay: SourceOverlayManifest): SourceOverlayChange[] {
@@ -1421,7 +1517,7 @@ async function overlayApplyOps(
     }
     const bytes = await readOverlayContent(storage, change);
     if (!bytes) {
-      continue;
+      throw new Error(`Legacy staged content is unavailable: ${repo.repo}/${repoPath}`);
     }
     if (base.kind === "file" && bytesEqual(base.bytes, bytes)) {
       continue;
@@ -1431,6 +1527,32 @@ async function overlayApplyOps(
       path: repoPath,
       contentBytes: Array.from(bytes),
     });
+  }
+  return ops;
+}
+
+async function effectiveSourceApplyOps(
+  ripgit: RipgitClient,
+  repo: SourceRepo,
+  baseRef: string,
+  requestedOps: RipgitApplyOp[],
+): Promise<RipgitApplyOp[]> {
+  const repoRef = repoRefForOverlay(repo, baseRef);
+  const ops: RipgitApplyOp[] = [];
+  for (const op of requestedOps) {
+    if (op.type === "put") {
+      const base = await ripgit.readPath(repoRef, op.path);
+      const bytes = new Uint8Array(op.contentBytes);
+      if (base.kind === "file" && bytesEqual(base.bytes, bytes)) {
+        continue;
+      }
+    } else if (op.type === "delete") {
+      const base = await ripgit.readPath(repoRef, op.path);
+      if (base.kind === "missing") {
+        continue;
+      }
+    }
+    ops.push(op);
   }
   return ops;
 }

@@ -168,7 +168,7 @@ async function runRgitCommand(
       return {
         stdout: result.committed
           ? `committed ${result.repo} to ${result.branch ?? result.sourceRef} ${result.commitHead ?? "-"} (${result.ops} ops)\n`
-          : `no staged repo changes for ${result.repo}\n`,
+          : `no legacy staged repo changes for ${result.repo}\n`,
         stderr: "",
         exitCode: 0,
       };
@@ -179,7 +179,7 @@ async function runRgitCommand(
       const before = await getRepoSourceStatus(processSourceOptions(ctx), target.repo, target.sourcePath);
       await discardRepoSourceChanges(processSourceOptions(ctx), target.repo, target.sourcePath);
       return {
-        stdout: `discarded ${before.changes.length} staged repo change(s) for ${target.repo}\n`,
+        stdout: `discarded ${before.changes.length} legacy staged repo change(s) for ${target.repo}\n`,
         stderr: "",
         exitCode: 0,
       };
@@ -602,9 +602,9 @@ function formatRepoStatus(result: Awaited<ReturnType<typeof getRepoSourceStatus>
     "",
   ];
   if (result.changes.length === 0) {
-    lines.push("No staged changes.");
+    lines.push("No legacy staged changes.");
   } else {
-    lines.push("Changes:");
+    lines.push("Legacy staged changes:");
     for (const change of result.changes) {
       lines.push(`  ${change.type === "put" ? "M" : "D"} ${change.path}`);
     }
@@ -641,6 +641,7 @@ function rgitUsage(commandName: "rgit" | "ripgit"): string {
     `Usage: ${commandName} <subcommand> [args]`,
     "",
     "Repos live under /src/repos/{owner}/{repo}. Pass owner/repo explicitly, or use --here from inside a repo.",
+    "Writable filesystem mutations commit immediately; status, diff, commit, and discard recover legacy staged edits.",
     "",
     "Read-only:",
     `  ${commandName} list [--owner USER]`,

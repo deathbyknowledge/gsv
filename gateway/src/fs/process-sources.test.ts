@@ -83,6 +83,71 @@ function makeBucket() {
   return bucket as R2Bucket & { objects: typeof objects };
 }
 
+type LegacyManifestChange =
+  | {
+      type: "put";
+      path: string;
+      contentKey: string;
+      size: number;
+      updatedAt: number;
+    }
+  | {
+      type: "delete";
+      path: string;
+      recursive: boolean;
+      updatedAt: number;
+    };
+
+async function seedLegacyOverlay(
+  storage: ReturnType<typeof makeBucket>,
+  repo: string,
+  changes: Array<
+    | { type: "put"; path: string; content: string }
+    | { type: "delete"; path: string; recursive?: boolean }
+  >,
+  processId = "task:source",
+  baseRef = "main",
+) {
+  const sourceKey = `repo:${repo}`;
+  const packageKey = `global:${sourceKey}`;
+  const root = `process-source-overlays/${encodeURIComponent(processId)}/${encodeURIComponent(packageKey)}`;
+  const manifestKey = `${root}/manifest.json`;
+  const manifestChanges: Record<string, LegacyManifestChange> = {};
+  const contentKeys: string[] = [];
+  for (const change of changes) {
+    if (change.type === "put") {
+      const bytes = new TextEncoder().encode(change.content);
+      const contentKey = `${root}/files/${encodeURIComponent(change.path)}`;
+      await storage.put(contentKey, bytes);
+      contentKeys.push(contentKey);
+      manifestChanges[change.path] = {
+        type: "put",
+        path: change.path,
+        contentKey,
+        size: bytes.byteLength,
+        updatedAt: 1,
+      };
+    } else {
+      manifestChanges[change.path] = {
+        type: "delete",
+        path: change.path,
+        recursive: change.recursive === true,
+        updatedAt: 1,
+      };
+    }
+  }
+  await storage.put(manifestKey, JSON.stringify({
+    version: 1,
+    packageId: sourceKey,
+    packageKey,
+    baseRef,
+    createdAt: 1,
+    updatedAt: 1,
+    changes: manifestChanges,
+  }));
+  return { manifestKey, contentKeys };
+}
+
 describe("createProcessSourceBackend", () => {
   it("lists visible ripgit repo owners and repos under /src/repos", async () => {
     const backend = createProcessSourceBackend({
@@ -183,7 +248,7 @@ describe("createProcessSourceBackend", () => {
     }]);
   });
 
-  it("stages owned repo writes before committing through ripgit", async () => {
+  it("commits owned repo writes directly through ripgit", async () => {
     const files = new Map<string, string>([
       ["notes.md", "old\n"],
       ["old.md", "remove me\n"],
@@ -223,7 +288,10 @@ describe("createProcessSourceBackend", () => {
           }
           return { head: `repohead${applyCalls.length}` };
         },
-        refs: async () => ({ heads: { main: "mainhead123" }, tags: {} }),
+        refs: async () => ({
+          heads: { main: applyCalls.length === 0 ? "mainhead123" : `repohead${applyCalls.length}` },
+          tags: {},
+        }),
       } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
     });
 
@@ -231,16 +299,11 @@ describe("createProcessSourceBackend", () => {
     await backend!.appendFile("/src/repos/sam/docs/notes.md", "more\n");
     await backend!.rm("/src/repos/sam/docs/old.md");
 
-    const manifest = await storage.get(
+    await expect(storage.get(
       "process-source-overlays/task%3Asource/global%3Arepo%3Asam%2Fdocs/manifest.json",
-    );
-    expect(JSON.parse(await manifest!.text())).toMatchObject({
-      version: 1,
-      packageId: "repo:sam/docs",
-      packageKey: "global:repo:sam/docs",
-    });
-
-    expect(applyCalls).toHaveLength(0);
+    )).resolves.toBeNull();
+    expect(storage.objects.size).toBe(0);
+    expect(applyCalls).toHaveLength(3);
     await expect(backend!.readFile("/src/repos/sam/docs/new.md")).resolves.toBe("created\n");
     await expect(backend!.readFile("/src/repos/sam/docs/notes.md")).resolves.toBe("old\nmore\n");
     await expect(backend!.readFile("/src/repos/sam/docs/old.md")).rejects.toThrow("ENOENT");
@@ -264,62 +327,238 @@ describe("createProcessSourceBackend", () => {
       config,
       ripgit: null,
     }, "sam/docs");
-    expect(status.changes.map((change) => `${change.type}:${change.path}`)).toEqual([
-      "put:new.md",
-      "put:notes.md",
-      "delete:old.md",
-    ]);
-
-    const result = await commitRepoSourceChanges({
-      identity: IDENTITY,
-      storage,
-      repos: [makeRepo("sam/docs")],
-      processId: "task:source",
-      config,
-      // SAFETY: this fixture implements only the RipgitClient methods exercised here.
-      ripgit: {
-        readPath: async (_repo: { owner: string; repo: string; branch?: string }, path: string) => {
-          const content = files.get(path);
-          if (content !== undefined) {
-            return {
-              kind: "file",
-              bytes: new TextEncoder().encode(content),
-              size: content.length,
-            };
-          }
-          return { kind: "missing" };
-        },
-        apply: async (...args: any[]) => {
-          applyCalls.push(args);
-          // SAFETY: Ripgit apply receives ops as its fifth argument by contract.
-          const ops = args[4] as Array<{ type: string; path: string; contentBytes?: number[] }>;
-          for (const op of ops) {
-            if (op.type === "put" && op.contentBytes) {
-              files.set(op.path, new TextDecoder().decode(new Uint8Array(op.contentBytes)));
-            } else if (op.type === "delete") {
-              files.delete(op.path);
-            }
-          }
-          return { head: `repohead${applyCalls.length}` };
-        },
-        refs: async () => ({ heads: { main: "mainhead123" }, tags: {} }),
-      } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
-    }, "sam/docs", { message: "update docs" });
-
-    expect(result).toMatchObject({
-      committed: true,
+    expect(status).toMatchObject({
       branch: "main",
-      commitHead: "repohead1",
-      ops: 3,
+      head: "repohead3",
       changes: [],
     });
     expect(files.get("new.md")).toBe("created\n");
     expect(files.get("notes.md")).toBe("old\nmore\n");
     expect(files.has("old.md")).toBe(false);
-    expect(applyCalls).toHaveLength(1);
     expect(applyCalls[0][0]).toEqual({ owner: "sam", repo: "docs", branch: "main" });
-    expect(applyCalls[0][3]).toBe("update docs");
+    expect(applyCalls.map((call) => call[3])).toEqual([
+      "gsv: write new.md",
+      "gsv: append notes.md",
+      "gsv: rm old.md",
+    ]);
     expect(applyCalls[0][5]).toEqual({ baseRef: "mainhead123", expectedHead: "mainhead123" });
+    expect(applyCalls[1][5]).toEqual({ baseRef: "repohead1", expectedHead: "repohead1" });
+    expect(applyCalls[2][5]).toEqual({ baseRef: "repohead2", expectedHead: "repohead2" });
+  });
+
+  it("refreshes the active branch head before each automatic commit", async () => {
+    let branchHead = "mainhead123";
+    const applyCalls: any[] = [];
+    const readRefs: string[] = [];
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage: makeBucket(),
+      repos: [makeRepo("sam/docs")],
+      processId: "task:source",
+      config: makeConfig(),
+      // SAFETY: typed ripgit fixture implements only methods exercised by this test.
+      ripgit: {
+        readPath: async (repo: { branch?: string }) => {
+          readRefs.push(repo.branch ?? "");
+          return { kind: "missing" };
+        },
+        refs: async () => ({ heads: { main: branchHead }, tags: {} }),
+        apply: async (...args: any[]) => {
+          applyCalls.push(args);
+          branchHead = `writehead${applyCalls.length}`;
+          return { head: branchHead };
+        },
+      } as any,
+    });
+
+    await backend!.writeFile("/src/repos/sam/docs/one.md", "one\n");
+    branchHead = "externalhead456";
+    await backend!.writeFile("/src/repos/sam/docs/two.md", "two\n");
+
+    expect(readRefs).toEqual(["mainhead123", "externalhead456"]);
+    expect(applyCalls[0][5]).toEqual({ baseRef: "mainhead123", expectedHead: "mainhead123" });
+    expect(applyCalls[1][5]).toEqual({ baseRef: "externalhead456", expectedHead: "externalhead456" });
+  });
+
+  it("commits a legacy overlay before applying the next direct write", async () => {
+    const files = new Map<string, string>();
+    const applyCalls: any[] = [];
+    const config = makeConfig();
+    const storage = makeBucket();
+    const overlay = await seedLegacyOverlay(storage, "sam/docs", [{
+      type: "put",
+      path: "legacy.md",
+      content: "recover me\n",
+    }]);
+    // SAFETY: typed ripgit fixture implements only methods exercised by this test.
+    const ripgit = {
+      readPath: async (_repo: { branch?: string }, path: string) => {
+        const content = files.get(path);
+        if (content === undefined) {
+          return { kind: "missing" };
+        }
+        return {
+          kind: "file",
+          bytes: new TextEncoder().encode(content),
+          size: content.length,
+        };
+      },
+      refs: async () => ({
+        heads: { main: applyCalls.length === 0 ? "mainhead123" : `repohead${applyCalls.length}` },
+        tags: {},
+      }),
+      apply: async (...args: any[]) => {
+        applyCalls.push(args);
+        // SAFETY: Ripgit apply receives ops as its fifth argument by contract.
+        const ops = args[4] as Array<{ type: string; path: string; contentBytes?: number[] }>;
+        for (const op of ops) {
+          if (op.type === "put" && op.contentBytes) {
+            files.set(op.path, new TextDecoder().decode(new Uint8Array(op.contentBytes)));
+          }
+        }
+        return { head: `repohead${applyCalls.length}` };
+      },
+    } as any;
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage,
+      repos: [makeRepo("sam/docs")],
+      processId: "task:source",
+      config,
+      ripgit,
+    });
+
+    await backend!.writeFile("/src/repos/sam/docs/new.md", "new\n");
+
+    expect(applyCalls).toHaveLength(2);
+    expect(applyCalls.map((call) => call[3])).toEqual([
+      "gsv: recover staged source changes",
+      "gsv: write new.md",
+    ]);
+    expect(applyCalls[0][4]).toEqual([{
+      type: "put",
+      path: "legacy.md",
+      contentBytes: Array.from(new TextEncoder().encode("recover me\n")),
+    }]);
+    expect(applyCalls[0][5]).toEqual({ baseRef: "mainhead123", expectedHead: "mainhead123" });
+    expect(applyCalls[1][5]).toEqual({ baseRef: "repohead1", expectedHead: "repohead1" });
+    expect(files.get("legacy.md")).toBe("recover me\n");
+    expect(files.get("new.md")).toBe("new\n");
+    await expect(storage.get(overlay.manifestKey)).resolves.toBeNull();
+    await expect(storage.get(overlay.contentKeys[0])).resolves.toBeNull();
+  });
+
+  it("preserves a legacy overlay when its migration conflicts", async () => {
+    const config = makeConfig();
+    const storage = makeBucket();
+    const overlay = await seedLegacyOverlay(storage, "sam/docs", [{
+      type: "put",
+      path: "legacy.md",
+      content: "recover me\n",
+    }]);
+    const applyCalls: any[] = [];
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage,
+      repos: [makeRepo("sam/docs")],
+      processId: "task:source",
+      config,
+      // SAFETY: typed ripgit fixture implements only methods exercised by this test.
+      ripgit: {
+        readPath: async () => ({ kind: "missing" }),
+        refs: async () => ({ heads: { main: "moved-head" }, tags: {} }),
+        apply: async (...args: any[]) => {
+          applyCalls.push(args);
+          throw new Error("ref moved during apply");
+        },
+      } as any,
+    });
+
+    await expect(backend!.writeFile("/src/repos/sam/docs/new.md", "new\n"))
+      .rejects.toThrow("ref moved during apply");
+
+    expect(applyCalls).toHaveLength(1);
+    expect(applyCalls[0][3]).toBe("gsv: recover staged source changes");
+    await expect(storage.get(overlay.manifestKey)).resolves.not.toBeNull();
+    await expect(storage.get(overlay.contentKeys[0])).resolves.not.toBeNull();
+    await expect(getRepoSourceStatus({
+      identity: IDENTITY,
+      storage,
+      repos: [makeRepo("sam/docs")],
+      processId: "task:source",
+      config,
+      ripgit: null,
+    }, "sam/docs")).resolves.toMatchObject({
+      changes: [{ type: "put", path: "legacy.md" }],
+    });
+  });
+
+  it("refuses to discard a legacy overlay whose staged bytes are missing", async () => {
+    const config = makeConfig();
+    const storage = makeBucket();
+    const overlay = await seedLegacyOverlay(storage, "sam/docs", [{
+      type: "put",
+      path: "legacy.md",
+      content: "recover me\n",
+    }]);
+    await storage.delete(overlay.contentKeys[0]);
+    const applyCalls: any[] = [];
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage,
+      repos: [makeRepo("sam/docs")],
+      processId: "task:source",
+      config,
+      // SAFETY: typed ripgit fixture implements only methods exercised by this test.
+      ripgit: {
+        readPath: async () => ({ kind: "missing" }),
+        refs: async () => ({ heads: { main: "mainhead123" }, tags: {} }),
+        apply: async (...args: any[]) => {
+          applyCalls.push(args);
+          return { head: "unexpected" };
+        },
+      } as any,
+    });
+
+    await expect(backend!.writeFile("/src/repos/sam/docs/new.md", "new\n"))
+      .rejects.toThrow("Legacy staged content is unavailable: sam/docs/legacy.md");
+
+    expect(applyCalls).toHaveLength(0);
+    await expect(storage.get(overlay.manifestKey)).resolves.not.toBeNull();
+  });
+
+  it("preserves an invalid legacy overlay for explicit recovery", async () => {
+    const storage = makeBucket();
+    const overlay = await seedLegacyOverlay(storage, "sam/docs", [{
+      type: "put",
+      path: "legacy.md",
+      content: "recover me\n",
+    }]);
+    await storage.put(overlay.manifestKey, "{");
+    const applyCalls: any[] = [];
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage,
+      repos: [makeRepo("sam/docs")],
+      processId: "task:source",
+      config: makeConfig(),
+      // SAFETY: typed ripgit fixture implements only methods exercised by this test.
+      ripgit: {
+        readPath: async () => ({ kind: "missing" }),
+        refs: async () => ({ heads: { main: "mainhead123" }, tags: {} }),
+        apply: async (...args: any[]) => {
+          applyCalls.push(args);
+          return { head: "unexpected" };
+        },
+      } as any,
+    });
+
+    await expect(backend!.writeFile("/src/repos/sam/docs/new.md", "new\n"))
+      .rejects.toThrow("Invalid legacy source overlay for sam/docs");
+
+    expect(applyCalls).toHaveLength(0);
+    await expect(storage.get(overlay.manifestKey)).resolves.not.toBeNull();
+    await expect(storage.get(overlay.contentKeys[0])).resolves.not.toBeNull();
   });
 
   it("keeps public non-owned repos read-only through /src/repos", async () => {
@@ -449,7 +688,7 @@ describe("createProcessSourceBackend", () => {
     }]);
   });
 
-  it("commits repos to their configured source ref by default", async () => {
+  it("auto-commits repos to their configured source ref by default", async () => {
     const config = makeConfig();
     const storage = makeBucket();
     const applyCalls: any[] = [];
@@ -482,14 +721,14 @@ describe("createProcessSourceBackend", () => {
     });
 
     await backend!.writeFile("/src/repos/sam/pkg-test/packages/sample-console/src/index.ts", "export const review = true;\n");
-    const result = await commitRepoSourceChanges({
+    const result = await getRepoSourceStatus({
       identity: IDENTITY,
       storage,
       repos,
       processId: "task:source",
       config,
       ripgit,
-    }, "sam/pkg-test", { message: "repo: update source" });
+    }, "sam/pkg-test");
 
     expect(result).toMatchObject({
       sourceRef: "feature/review",
@@ -507,10 +746,11 @@ describe("createProcessSourceBackend", () => {
       repo: "pkg-test",
       branch: "feature/review",
     });
+    expect(applyCalls[0][3]).toBe("gsv: write packages/sample-console/src/index.ts");
     expect(applyCalls[0][5]).toEqual({ baseRef: "commit123" });
   });
 
-  it("locks default repo commits to the configured branch head", async () => {
+  it("locks the first automatic commit to the configured branch head", async () => {
     const config = makeConfig();
     const storage = makeBucket();
     const applyCalls: any[] = [];
@@ -543,14 +783,6 @@ describe("createProcessSourceBackend", () => {
     });
 
     await backend!.writeFile("/src/repos/sam/pkg-test/packages/sample-console/src/index.ts", "export const review = true;\n");
-    await commitRepoSourceChanges({
-      identity: IDENTITY,
-      storage,
-      repos,
-      processId: "task:source",
-      config,
-      ripgit,
-    }, "sam/pkg-test", { message: "repo: update source" });
 
     expect(readCalls).toEqual([{
       repo: { owner: "sam", repo: "pkg-test", branch: "commit123" },
@@ -612,18 +844,21 @@ describe("createProcessSourceBackend", () => {
     ]);
   });
 
-  it("does not reuse expectedHead when committing to a different branch", async () => {
+  it("does not reuse expectedHead after selecting a different branch", async () => {
     const config = makeConfig();
     const storage = makeBucket();
     const applyCalls: any[] = [];
     const heads = ["processhead123", "featurehead456", "featurehead789"];
+    const branchHeads = new Map<string, string>();
     // SAFETY: typed ripgit fixture implements only methods exercised by this test.
     const ripgit = {
       readPath: async () => ({ kind: "missing" }),
-      refs: async () => ({ heads: {}, tags: {} }),
+      refs: async () => ({ heads: Object.fromEntries(branchHeads), tags: {} }),
       apply: async (...args: any[]) => {
         applyCalls.push(args);
-        return { head: heads[applyCalls.length - 1] };
+        const head = heads[applyCalls.length - 1];
+        branchHeads.set(args[0].branch, head);
+        return { head };
       },
     } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any;
     const backend = createProcessSourceBackend({
@@ -643,17 +878,12 @@ describe("createProcessSourceBackend", () => {
       processId: "task:source",
       config,
       ripgit,
-    }, "sam/pkg-test", { message: "repo: commit one" });
+    }, "sam/pkg-test", {
+      message: "repo: select feature",
+      branch: "feature/package-work",
+    });
 
     await backend!.writeFile("/src/repos/sam/pkg-test/packages/sample-console/src/two.ts", "export const two = true;\n");
-    await commitRepoSourceChanges({
-      identity: IDENTITY,
-      storage,
-      repos: [makeRepo("sam/pkg-test")],
-      processId: "task:source",
-      config,
-      ripgit,
-    }, "sam/pkg-test", { message: "repo: commit two", branch: "feature/package-work" });
 
     expect(applyCalls).toHaveLength(2);
     expect(applyCalls[1][0]).toEqual({
@@ -664,14 +894,6 @@ describe("createProcessSourceBackend", () => {
     expect(applyCalls[1][5]).toEqual({ baseRef: "processhead123" });
 
     await backend!.writeFile("/src/repos/sam/pkg-test/packages/sample-console/src/three.ts", "export const three = true;\n");
-    await commitRepoSourceChanges({
-      identity: IDENTITY,
-      storage,
-      repos: [makeRepo("sam/pkg-test")],
-      processId: "task:source",
-      config,
-      ripgit,
-    }, "sam/pkg-test", { message: "repo: commit three" });
 
     expect(applyCalls).toHaveLength(3);
     expect(applyCalls[2][0]).toEqual({
@@ -682,7 +904,7 @@ describe("createProcessSourceBackend", () => {
     expect(applyCalls[2][5]).toEqual({ baseRef: "featurehead456", expectedHead: "featurehead456" });
   });
 
-  it("compares staged source changes against an existing target branch", async () => {
+  it("compares automatic writes against the selected branch head", async () => {
     const config = makeConfig();
     const storage = makeBucket();
     const applyCalls: any[] = [];
@@ -719,7 +941,6 @@ describe("createProcessSourceBackend", () => {
       ripgit,
     });
 
-    await backend!.writeFile("/src/repos/sam/pkg-test/packages/sample-console/src/index.ts", "export const changed = true;\n");
     await commitRepoSourceChanges({
       identity: IDENTITY,
       storage,
@@ -727,7 +948,8 @@ describe("createProcessSourceBackend", () => {
       processId: "task:source",
       config,
       ripgit,
-    }, "sam/pkg-test", { message: "repo: commit to existing branch", branch: "feature/package-work" });
+    }, "sam/pkg-test", { message: "repo: select existing branch", branch: "feature/package-work" });
+    await backend!.writeFile("/src/repos/sam/pkg-test/packages/sample-console/src/index.ts", "export const changed = true;\n");
 
     expect(readCalls).toEqual([
       {
@@ -751,7 +973,7 @@ describe("createProcessSourceBackend", () => {
     expect(applyCalls[0][5]).toEqual({ baseRef: "featurehead456", expectedHead: "featurehead456" });
   });
 
-  it("reads from the active process branch head after committing source changes", async () => {
+  it("reads from the active process branch head between automatic commits", async () => {
     const config = makeConfig();
     const storage = makeBucket();
     const applyCalls: any[] = [];
@@ -764,14 +986,19 @@ describe("createProcessSourceBackend", () => {
         if (path !== filePath) {
           return { kind: "missing" };
         }
-        const text = repo.branch === "processhead123" ? "branch\n" : "main\n";
+        const text = repo.branch === "main" ? "main\n" : "branch\n";
         return {
           kind: "file",
           bytes: new TextEncoder().encode(text),
           size: text.length,
         };
       },
-      refs: async () => ({ heads: {}, tags: {} }),
+      refs: async () => ({
+        heads: applyCalls.length === 0
+          ? {}
+          : { "feature/package-work": "processhead123" },
+        tags: {},
+      }),
       apply: async (...args: any[]) => {
         applyCalls.push(args);
         return { head: applyCalls.length === 1 ? "processhead123" : "processhead456" };
@@ -786,7 +1013,6 @@ describe("createProcessSourceBackend", () => {
       ripgit,
     });
 
-    await backend!.writeFile(`/src/repos/sam/pkg-test/${filePath}`, "branch\n");
     await commitRepoSourceChanges({
       identity: IDENTITY,
       storage,
@@ -794,7 +1020,8 @@ describe("createProcessSourceBackend", () => {
       processId: "task:source",
       config,
       ripgit,
-    }, "sam/pkg-test", { message: "repo: commit branch base", branch: "feature/package-work" });
+    }, "sam/pkg-test", { message: "repo: select branch", branch: "feature/package-work" });
+    await backend!.writeFile(`/src/repos/sam/pkg-test/${filePath}`, "branch\n");
     expect(readCalls).toEqual([{
       repo: { owner: "sam", repo: "pkg-test", branch: "main" },
       path: filePath,
@@ -802,17 +1029,13 @@ describe("createProcessSourceBackend", () => {
 
     readCalls.length = 0;
     await backend!.appendFile(`/src/repos/sam/pkg-test/${filePath}`, "next\n");
-    await commitRepoSourceChanges({
-      identity: IDENTITY,
-      storage,
-      repos: [makeRepo("sam/pkg-test")],
-      processId: "task:source",
-      config,
-      ripgit,
-    }, "sam/pkg-test", { message: "repo: append on branch" });
 
     expect(readCalls.length).toBeGreaterThan(0);
-    expect(readCalls.every((call) => call.repo.branch === "processhead123")).toBe(true);
+    expect(readCalls.map((call) => call.repo.branch)).toEqual([
+      "feature/package-work",
+      "feature/package-work",
+      "processhead123",
+    ]);
     expect(applyCalls[1][4]).toEqual([{
       type: "put",
       path: filePath,
@@ -821,7 +1044,7 @@ describe("createProcessSourceBackend", () => {
     expect(applyCalls[1][5]).toEqual({ baseRef: "processhead123", expectedHead: "processhead123" });
   });
 
-  it("remembers an explicit target branch even when staged source edits are no-ops", async () => {
+  it("remembers an explicit target branch when an automatic write is a no-op", async () => {
     const config = makeConfig();
     const storage = makeBucket();
     const applyCalls: any[] = [];
@@ -853,16 +1076,6 @@ describe("createProcessSourceBackend", () => {
     });
 
     await backend!.writeFile("/src/repos/sam/pkg-test/packages/sample-console/src/one.ts", "export const one = true;\n");
-    await commitRepoSourceChanges({
-      identity: IDENTITY,
-      storage,
-      repos: [makeRepo("sam/pkg-test")],
-      processId: "task:source",
-      config,
-      ripgit,
-    }, "sam/pkg-test", { message: "repo: commit one" });
-
-    await backend!.writeFile("/src/repos/sam/pkg-test/packages/sample-console/src/index.ts", "export const same = true;\n");
     const result = await commitRepoSourceChanges({
       identity: IDENTITY,
       storage,
@@ -871,6 +1084,8 @@ describe("createProcessSourceBackend", () => {
       config,
       ripgit,
     }, "sam/pkg-test", { message: "repo: select feature", branch: "feature/package-work" });
+
+    await backend!.writeFile("/src/repos/sam/pkg-test/packages/sample-console/src/index.ts", "export const same = true;\n");
 
     expect(result).toMatchObject({
       committed: false,
@@ -896,10 +1111,13 @@ describe("createProcessSourceBackend", () => {
     });
   });
 
-  it("treats recursively deleted overlay directories as missing in readdir", async () => {
+  it("commits recursive directory deletes immediately", async () => {
+    let deleted = false;
+    const applyCalls: any[] = [];
+    const storage = makeBucket();
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
-      storage: makeBucket(),
+      storage,
       repos: [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config: makeConfig(),
@@ -909,16 +1127,24 @@ describe("createProcessSourceBackend", () => {
           if (path === "packages/sample-console") {
             return {
               kind: "tree",
-              entries: [{ name: "src", mode: "040000", hash: "tree1", type: "tree" }],
+              entries: deleted
+                ? []
+                : [{ name: "src", mode: "040000", hash: "tree1", type: "tree" }],
             };
           }
-          if (path === "packages/sample-console/src") {
+          if (!deleted && path === "packages/sample-console/src") {
             return {
               kind: "tree",
               entries: [{ name: "index.ts", mode: "100644", hash: "blob1", type: "blob" }],
             };
           }
           return { kind: "missing" };
+        },
+        refs: async () => ({ heads: { main: "mainhead123" }, tags: {} }),
+        apply: async (...args: any[]) => {
+          applyCalls.push(args);
+          deleted = true;
+          return { head: "deletehead123" };
         },
       } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
     });
@@ -929,9 +1155,18 @@ describe("createProcessSourceBackend", () => {
     await expect(backend!.stat("/src/repos/sam/pkg-test/packages/sample-console/src")).rejects.toThrow("ENOENT");
     await expect(backend!.readdir("/src/repos/sam/pkg-test/packages/sample-console/src")).rejects.toThrow("ENOENT");
     await expect(backend!.readdir("/src/repos/sam/pkg-test/packages/sample-console")).resolves.toEqual([]);
+    expect(applyCalls).toHaveLength(1);
+    expect(applyCalls[0][4]).toEqual([{
+      type: "delete",
+      path: "packages/sample-console/src",
+      recursive: true,
+    }]);
+    expect(storage.objects.size).toBe(0);
   });
 
   it("preserves parent directories when deleting nested source files", async () => {
+    let hasIndex = true;
+    const applyCalls: any[] = [];
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
@@ -951,12 +1186,14 @@ describe("createProcessSourceBackend", () => {
             return {
               kind: "tree",
               entries: [
-                { name: "index.ts", mode: "100644", hash: "blob1", type: "blob" },
+                ...(hasIndex
+                  ? [{ name: "index.ts", mode: "100644", hash: "blob1", type: "blob" as const }]
+                  : []),
                 { name: "other.ts", mode: "100644", hash: "blob2", type: "blob" },
               ],
             };
           }
-          if (path === "packages/sample-console/src/index.ts") {
+          if (hasIndex && path === "packages/sample-console/src/index.ts") {
             return {
               kind: "file",
               bytes: new TextEncoder().encode("export const index = true;\n"),
@@ -965,6 +1202,12 @@ describe("createProcessSourceBackend", () => {
           }
           return { kind: "missing" };
         },
+        refs: async () => ({ heads: { main: "mainhead123" }, tags: {} }),
+        apply: async (...args: any[]) => {
+          applyCalls.push(args);
+          hasIndex = false;
+          return { head: "deletehead123" };
+        },
       } /* SAFETY: typed ripgit fixture implements only exercised methods. */ as any,
     });
 
@@ -972,6 +1215,12 @@ describe("createProcessSourceBackend", () => {
 
     await expect(backend!.readdir("/src/repos/sam/pkg-test/packages/sample-console")).resolves.toEqual(["src"]);
     await expect(backend!.readdir("/src/repos/sam/pkg-test/packages/sample-console/src")).resolves.toEqual(["other.ts"]);
+    expect(applyCalls).toHaveLength(1);
+    expect(applyCalls[0][4]).toEqual([{
+      type: "delete",
+      path: "packages/sample-console/src/index.ts",
+      recursive: false,
+    }]);
   });
 
   it("rejects source rm for missing paths unless forced", async () => {
