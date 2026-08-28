@@ -62,6 +62,8 @@ fun AssistantCore(
     signal: Float = 0f,
     shapeTarget: OrbShapeTarget = OrbShapeTarget.LISTENING,
     accentOverride: Color? = null,
+    shipOrbitRadians: Float = 0f,
+    shipElevationOffsetRadians: Float = 0f,
 ) {
     val transition = rememberInfiniteTransition(label = "assistant-engine")
     val phase by transition.animateFloat(
@@ -128,6 +130,8 @@ fun AssistantCore(
             accent = accent,
             shapeParameters = shapeParameters,
             liquidParameters = liquidParameters,
+            shipOrbitRadians = shipOrbitRadians,
+            shipElevationOffsetRadians = shipElevationOffsetRadians,
             modifier = Modifier.fillMaxSize(),
         )
     }

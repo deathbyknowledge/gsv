@@ -84,6 +84,9 @@ or `ERROR`; add `--ez overlay true` to review the compact invocation surface.
 For the debug-only interruptible shape proof, launch `LISTENING` with both
 `--ez overlay true` and `--ez morph true`, then tap the core repeatedly to
 redirect the in-progress morph between the production liquid and smile targets.
+Pass `--ez ship true` instead to open the isolated procedural Ship target; tap
+the core repeatedly to redirect its in-progress morph between liquid and Ship,
+or drag in any direction to orbit the formed Ship in three dimensions.
 To compare the production liquid states without restarting its animation, add
 `--ez overlay true` and `--ez states true`, then tap the core to advance through
 the states included in the current visual review. `LISTENING` requests

@@ -7,6 +7,7 @@ uniform float iEnergy;
 uniform float4 iAccent;
 uniform float4 iShape;
 uniform float4 iBehavior;
+uniform float2 iShipView;
 
 const float PI = 3.14159265359;
 const float TAU = 6.28318530718;
@@ -15,6 +16,13 @@ float2 rotate2(float angle, float2 point) {
     float sine = sin(angle);
     float cosine = cos(angle);
     return float2(cosine * point.x - sine * point.y, sine * point.x + cosine * point.y);
+}
+
+float3 rotateAroundAxis(float3 point, float3 axis, float angle) {
+    float sine = sin(angle);
+    float cosine = cos(angle);
+    return point * cosine + cross(axis, point) * sine +
+        axis * dot(axis, point) * (1.0 - cosine);
 }
 
 float smoothMinimum(float first, float second, float radius) {
@@ -30,6 +38,49 @@ float ellipsoidDistance(float3 point, float3 radii) {
     float normalized = length(point / radii);
     float gradient = length(point / (radii * radii));
     return normalized * (normalized - 1.0) / max(gradient, 0.0001);
+}
+
+float roundedBoxDistance(float3 point, float3 halfSize, float radius) {
+    float3 outside = abs(point) - halfSize + radius;
+    return length(max(outside, float3(0.0))) +
+        min(max(outside.x, max(outside.y, outside.z)), 0.0) - radius;
+}
+
+float ovalPrismDistance(
+    float3 point,
+    float2 radii,
+    float halfHeight,
+    float bevel
+) {
+    float planar = (length(point.xy / radii) - 1.0) * min(radii.x, radii.y);
+    return smoothMaximum(planar, abs(point.z) - halfHeight, bevel);
+}
+
+float hexagonalPrismDistance(float3 point, float radius, float halfHeight) {
+    float2 planarPoint = abs(point.xy);
+    float planar = max(
+        planarPoint.y,
+        dot(planarPoint, float2(0.8660254, 0.5))
+    ) - radius;
+    return max(planar, abs(point.z) - halfHeight);
+}
+
+float hexagonalDistance(float2 point, float radius) {
+    float2 planarPoint = abs(point);
+    return max(
+        planarPoint.y,
+        dot(planarPoint, float2(0.8660254, 0.5))
+    ) - radius;
+}
+
+float lineSegmentDistance(float2 point, float2 start, float2 end) {
+    float2 span = end - start;
+    float projection = clamp(
+        dot(point - start, span) / max(dot(span, span), 0.0001),
+        0.0,
+        1.0
+    );
+    return length(point - (start + span * projection));
 }
 
 float voicePressureField(float3 direction, float phase) {
@@ -98,7 +149,7 @@ float3 symbolFlowPoint(float3 point, float phase, float presence) {
 }
 
 float facialFeatureDistance(float3 point, float phase) {
-    float eyeSpacing = clamp(iShape.z, 0.08, 0.18);
+    float eyeSpacing = 0.115;
     float smileCurve = clamp(iShape.w, 0.0, 1.4);
     float3 leftEyeCenter = float3(
         -eyeSpacing * 0.96 + 0.004 * sin(phase * 2.0),
@@ -146,10 +197,289 @@ float facialFeatureDistance(float3 point, float phase) {
     return min(eyes, mouth);
 }
 
+float3 shipObjectPoint(float3 point, float phase) {
+    float heading = 1.355 + 0.005 * sin(phase);
+    float sideAngle = 0.300 + 0.006 * sin(phase * 2.0);
+    float elevationAngle = -0.833 + 0.008 * cos(phase);
+    float3 shipPoint = point;
+    shipPoint.xy = rotate2(heading, shipPoint.xy);
+    shipPoint.yz = rotate2(sideAngle, shipPoint.yz);
+    shipPoint.xz = rotate2(elevationAngle, shipPoint.xz);
+    shipPoint.xy = rotate2(iShipView.x, shipPoint.xy);
+
+    float3 cameraAxis = float3(0.0, 0.0, 1.0);
+    cameraAxis.xy = rotate2(heading, cameraAxis.xy);
+    cameraAxis.yz = rotate2(sideAngle, cameraAxis.yz);
+    cameraAxis.xz = rotate2(elevationAngle, cameraAxis.xz);
+    cameraAxis.xy = rotate2(iShipView.x, cameraAxis.xy);
+    float3 elevationAxis = normalize(float3(-cameraAxis.y, cameraAxis.x, 0.0));
+    shipPoint = rotateAroundAxis(shipPoint, elevationAxis, -iShipView.y);
+    return shipPoint;
+}
+
+float shipHullScale(float longitudinal) {
+    float progress = clamp((longitudinal + 0.58) / 1.18, 0.0, 1.0);
+    float safeProgress = clamp(progress, 0.0001, 0.9999);
+    float asymmetricLens = pow(safeProgress, 0.34) *
+        pow(1.0 - safeProgress, 0.79) / 0.506;
+    return max(min(asymmetricLens, 1.0), 0.018);
+}
+
+float shipDistance(float3 point, float phase, float energy) {
+    float3 shipPoint = shipObjectPoint(point, phase);
+    float hullScale = shipHullScale(shipPoint.y);
+    float hullHeightScale = pow(hullScale, 0.72);
+    float hullWidth = 0.164 * hullScale;
+    float hullHeight = 0.080 * hullHeightScale;
+    float crossSection = length(
+        float2(
+            shipPoint.x / hullWidth,
+            (shipPoint.z + 0.012) / hullHeight
+        )
+    ) - 1.0;
+    float distance = crossSection * min(hullWidth, hullHeight);
+    distance = max(
+        distance,
+        max(-0.58 - shipPoint.y, shipPoint.y - 0.60)
+    );
+
+    float3 firstCutPoint = shipPoint - float3(-0.030, -0.340, 0.055);
+    firstCutPoint.xy = rotate2(-0.18, firstCutPoint.xy);
+    float firstCut = hexagonalPrismDistance(firstCutPoint, 0.050, 0.020);
+
+    float3 secondCutPoint = shipPoint - float3(0.036, -0.165, 0.066);
+    secondCutPoint.xy = rotate2(0.14, secondCutPoint.xy);
+    float secondCut = hexagonalPrismDistance(secondCutPoint, 0.052, 0.020);
+
+    float3 thirdCutPoint = shipPoint - float3(-0.026, 0.015, 0.057);
+    thirdCutPoint.xy = rotate2(-0.10, thirdCutPoint.xy);
+    float thirdCut = hexagonalPrismDistance(thirdCutPoint, 0.044, 0.019);
+
+    float3 fourthCutPoint = shipPoint - float3(0.020, 0.190, 0.044);
+    fourthCutPoint.xy = rotate2(0.16, fourthCutPoint.xy);
+    float fourthCut = hexagonalPrismDistance(fourthCutPoint, 0.036, 0.017);
+
+    float3 fifthCutPoint = shipPoint - float3(-0.010, 0.365, 0.026);
+    fifthCutPoint.xy = rotate2(-0.12, fifthCutPoint.xy);
+    float fifthCut = hexagonalPrismDistance(fifthCutPoint, 0.025, 0.014);
+
+    float apertureCut = min(
+        min(min(firstCut, secondCut), min(thirdCut, fourthCut)),
+        fifthCut
+    );
+    distance = smoothMaximum(distance, -apertureCut, 0.003);
+
+    float3 firstPanePoint = shipPoint - float3(-0.030, -0.340, 0.038);
+    firstPanePoint.xy = rotate2(-0.18, firstPanePoint.xy);
+    float firstPane = hexagonalPrismDistance(firstPanePoint, 0.043, 0.004);
+
+    float3 secondPanePoint = shipPoint - float3(0.036, -0.165, 0.050);
+    secondPanePoint.xy = rotate2(0.14, secondPanePoint.xy);
+    float secondPane = hexagonalPrismDistance(secondPanePoint, 0.045, 0.004);
+
+    float3 thirdPanePoint = shipPoint - float3(-0.026, 0.015, 0.042);
+    thirdPanePoint.xy = rotate2(-0.10, thirdPanePoint.xy);
+    float thirdPane = hexagonalPrismDistance(thirdPanePoint, 0.038, 0.004);
+
+    float3 fourthPanePoint = shipPoint - float3(0.020, 0.190, 0.031);
+    fourthPanePoint.xy = rotate2(0.16, fourthPanePoint.xy);
+    float fourthPane = hexagonalPrismDistance(fourthPanePoint, 0.030, 0.004);
+
+    float3 fifthPanePoint = shipPoint - float3(-0.010, 0.365, 0.016);
+    fifthPanePoint.xy = rotate2(-0.12, fifthPanePoint.xy);
+    float fifthPane = hexagonalPrismDistance(fifthPanePoint, 0.020, 0.003);
+
+    float aperturePane = min(
+        min(min(firstPane, secondPane), min(thirdPane, fourthPane)),
+        fifthPane
+    );
+    return smoothMinimum(distance, aperturePane, 0.002);
+}
+
+float shipCoreSignal(float3 point, float phase) {
+    float3 shipPoint = shipObjectPoint(point, phase);
+    float radius = length(
+        (shipPoint - float3(0.0, 0.035, -0.050)) /
+            float3(0.045, 0.105, 0.052)
+    );
+    return 1.0 - smoothstep(0.42, 1.55, radius);
+}
+
+float shipApertureSignal(float3 point, float phase) {
+    float3 shipPoint = shipObjectPoint(point, phase);
+    float2 firstPoint = shipPoint.xy - float2(-0.030, -0.340);
+    firstPoint = rotate2(-0.18, firstPoint);
+    float2 secondPoint = shipPoint.xy - float2(0.036, -0.165);
+    secondPoint = rotate2(0.14, secondPoint);
+    float2 thirdPoint = shipPoint.xy - float2(-0.026, 0.015);
+    thirdPoint = rotate2(-0.10, thirdPoint);
+    float2 fourthPoint = shipPoint.xy - float2(0.020, 0.190);
+    fourthPoint = rotate2(0.16, fourthPoint);
+    float2 fifthPoint = shipPoint.xy - float2(-0.010, 0.365);
+    fifthPoint = rotate2(-0.12, fifthPoint);
+    float nearest = min(
+        min(
+            hexagonalDistance(firstPoint, 0.043),
+            hexagonalDistance(secondPoint, 0.045)
+        ),
+        min(
+            min(
+                hexagonalDistance(thirdPoint, 0.038),
+                hexagonalDistance(fourthPoint, 0.030)
+            ),
+            hexagonalDistance(fifthPoint, 0.020)
+        )
+    );
+    float topWindow = smoothstep(-0.006, 0.012, shipPoint.z);
+    return (1.0 - smoothstep(-0.006, 0.016, nearest)) * topWindow;
+}
+
+float shipBeltSignal(float3 point, float phase) {
+    float3 shipPoint = shipObjectPoint(point, phase);
+    float sideWindow = smoothstep(0.055, 0.120, abs(shipPoint.x));
+    float belt = 1.0 - smoothstep(0.007, 0.023, abs(shipPoint.z + 0.018));
+    return sideWindow * belt;
+}
+
+float shipDriveSignal(float3 point, float phase) {
+    float3 shipPoint = shipObjectPoint(point, phase);
+    float radius = length(
+        (shipPoint - float3(0.0, 0.535, -0.012)) /
+            float3(0.050, 0.065, 0.040)
+    );
+    return 1.0 - smoothstep(0.52, 1.50, radius);
+}
+
+float4 shipMembraneField(float3 point, float phase) {
+    float3 shipPoint = shipObjectPoint(point, phase);
+    float2 deckPoint = shipPoint.xy;
+    float deckSeamDistance = lineSegmentDistance(
+        deckPoint,
+        float2(-0.142, -0.360),
+        float2(-0.048, -0.260)
+    );
+    deckSeamDistance = min(
+        deckSeamDistance,
+        lineSegmentDistance(
+            deckPoint,
+            float2(-0.048, -0.260),
+            float2(-0.048, -0.075)
+        )
+    );
+    deckSeamDistance = min(
+        deckSeamDistance,
+        lineSegmentDistance(
+            deckPoint,
+            float2(-0.048, -0.075),
+            float2(0.082, -0.012)
+        )
+    );
+    deckSeamDistance = min(
+        deckSeamDistance,
+        lineSegmentDistance(
+            deckPoint,
+            float2(0.118, -0.290),
+            float2(0.118, -0.105)
+        )
+    );
+    deckSeamDistance = min(
+        deckSeamDistance,
+        lineSegmentDistance(
+            deckPoint,
+            float2(-0.126, 0.050),
+            float2(-0.030, 0.122)
+        )
+    );
+    deckSeamDistance = min(
+        deckSeamDistance,
+        lineSegmentDistance(
+            deckPoint,
+            float2(-0.030, 0.122),
+            float2(-0.030, 0.310)
+        )
+    );
+    float deckSurface = smoothstep(-0.004, 0.020, shipPoint.z);
+    float deckSeamSoft = (1.0 - smoothstep(0.003, 0.013, deckSeamDistance)) *
+        deckSurface;
+    float deckSeamRidge = (1.0 - smoothstep(0.001, 0.004, deckSeamDistance)) *
+        deckSurface;
+
+    float2 sidePoint = shipPoint.yz;
+    float sideSeamDistance = lineSegmentDistance(
+        sidePoint,
+        float2(-0.445, 0.034),
+        float2(-0.285, -0.024)
+    );
+    sideSeamDistance = min(
+        sideSeamDistance,
+        lineSegmentDistance(
+            sidePoint,
+            float2(-0.255, -0.072),
+            float2(-0.070, -0.072)
+        )
+    );
+    sideSeamDistance = min(
+        sideSeamDistance,
+        lineSegmentDistance(
+            sidePoint,
+            float2(-0.030, -0.080),
+            float2(0.155, -0.080)
+        )
+    );
+    sideSeamDistance = min(
+        sideSeamDistance,
+        lineSegmentDistance(
+            sidePoint,
+            float2(-0.055, 0.046),
+            float2(-0.055, -0.050)
+        )
+    );
+    sideSeamDistance = min(
+        sideSeamDistance,
+        lineSegmentDistance(
+            sidePoint,
+            float2(0.285, 0.040),
+            float2(0.395, -0.018)
+        )
+    );
+    float nearSide = smoothstep(0.055, 0.128, shipPoint.x) *
+        (1.0 - smoothstep(0.052, 0.088, shipPoint.z));
+    float sideSeamSoft = (1.0 - smoothstep(0.003, 0.012, sideSeamDistance)) *
+        nearSide;
+    float sideSeamRidge = (1.0 - smoothstep(0.001, 0.004, sideSeamDistance)) *
+        nearSide;
+
+    float windowRow = 1.0 - smoothstep(0.006, 0.020, abs(shipPoint.z - 0.010));
+    windowRow *= nearSide;
+    float windowPulse = pow(
+        0.5 + 0.5 * sin((shipPoint.y + 0.42) * 116.0),
+        10.0
+    );
+    float forwardLightCluster = smoothstep(-0.370, -0.325, shipPoint.y) *
+        (1.0 - smoothstep(-0.125, -0.080, shipPoint.y));
+    float aftLightCluster = smoothstep(0.235, 0.270, shipPoint.y) *
+        (1.0 - smoothstep(0.365, 0.405, shipPoint.y));
+    float scaleLights = windowRow * windowPulse *
+        max(forwardLightCluster, aftLightCluster);
+
+    float core = shipCoreSignal(point, phase);
+    float drive = shipDriveSignal(point, phase);
+    return float4(
+        max(deckSeamSoft * 0.32, sideSeamSoft * 0.30),
+        max(
+            max(deckSeamRidge * 0.48, sideSeamRidge * 0.44),
+            scaleLights * 0.18
+        ),
+        max(core * 0.20, drive * 0.20),
+        drive * 0.18
+    );
+}
+
 float organicDistance(float3 point, float phase, float energy) {
     float3 sourcePoint = point;
     float organicAmount = clamp(iShape.x, 0.0, 1.0);
     float symbolPresence = clamp(iShape.y, 0.0, 1.0);
+    float shipPresence = clamp(iShape.z, 0.0, 1.0);
     float focus = clamp(iBehavior.x, 0.0, 1.0);
     float foldComplexity = clamp(iBehavior.y, 0.0, 1.0);
     float projection = clamp(iBehavior.w, 0.0, 1.0);
@@ -305,6 +635,14 @@ float organicDistance(float3 point, float phase, float energy) {
             (1.0 - symbolPresence) * 0.30;
         distance = smoothMaximum(distance, featureCut, 0.026);
     }
+    if (shipPresence > 0.001) {
+        float shipMorph = smoothstep(0.0, 1.0, shipPresence);
+        distance = mix(
+            distance,
+            shipDistance(sourcePoint, phase, energy),
+            shipMorph
+        );
+    }
     if (projection > 0.001) {
         distance = mix(
             distance,
@@ -403,6 +741,7 @@ float4 interiorMembranes(float3 point, float phase) {
     float focus = clamp(iBehavior.x, 0.0, 1.0);
     float foldComplexity = clamp(iBehavior.y, 0.0, 1.0);
     float projection = clamp(iBehavior.w, 0.0, 1.0);
+    float shipPresence = clamp(iShape.z, 0.0, 1.0);
     float3 flowingPoint = interiorFlowPoint(point, phase);
     float coolPrimary = sin(flowingPoint.x * 7.0 + phase);
     float coolFocused = sin(
@@ -462,7 +801,17 @@ float4 interiorMembranes(float3 point, float phase) {
     coolSheet = max(coolSheet, voiceSheet * projection * 0.82);
     coolRidge = max(coolRidge, voiceRidge * projection);
     warmSheet = max(warmSheet, voiceSheet * projection * 0.18);
-    return float4(coolSheet, coolRidge, warmSheet, warmRidge);
+    float4 organicMembranes = float4(
+        coolSheet,
+        coolRidge,
+        warmSheet,
+        warmRidge
+    );
+    return mix(
+        organicMembranes,
+        shipMembraneField(point, phase),
+        smoothstep(0.0, 1.0, shipPresence)
+    );
 }
 
 float3 refractIntoLiquid(float3 incident, float3 normal, float energy) {
@@ -497,10 +846,15 @@ half4 main(float2 fragCoord) {
     float foldComplexity = clamp(iBehavior.y, 0.0, 1.0);
     float internalActivity = clamp(iBehavior.z, 0.0, 1.0);
     float projection = clamp(iBehavior.w, 0.0, 1.0);
+    float shipPresence = clamp(iShape.z, 0.0, 1.0);
     float phase = TAU * iTime / 12.0;
-    float3 origin = float3(0.0, 0.0, 2.35);
-    float3 direction = normalize(float3(uv * 1.42, -2.15));
-    float2 bounds = sphereRange(origin, direction, 0.56);
+    float shipCamera = smoothstep(0.0, 1.0, shipPresence);
+    float cameraDistance = mix(2.35, 1.58, shipCamera);
+    float focalLength = mix(2.15, 1.32, shipCamera);
+    float3 origin = float3(0.0, 0.0, cameraDistance);
+    float cameraScale = mix(1.42, 1.08, shipPresence);
+    float3 direction = normalize(float3(uv * cameraScale, -focalLength));
+    float2 bounds = sphereRange(origin, direction, 0.72);
     if (bounds.x < 0.0) {
         return half4(0.0, 0.0, 0.0, 0.0);
     }
@@ -515,6 +869,9 @@ half4 main(float2 fragCoord) {
         float3 point = origin + direction * travel;
         float3 normal = organicNormal(point, phase, energy);
         float3 view = -direction;
+        float4 shipSurfaceField = shipMembraneField(point, phase) * shipPresence;
+        float shipBelt = shipBeltSignal(point, phase) * shipPresence;
+        float shipAperture = shipApertureSignal(point, phase) * shipPresence;
 
         float3 cyanLight = normalize(float3(-0.55, 0.72, 0.84));
         float3 warmLight = normalize(float3(0.72, -0.20, 0.54));
@@ -537,6 +894,10 @@ half4 main(float2 fragCoord) {
         float3 deepPoint = point + interiorDirection * 0.240;
         float middleDensity = interiorDensity(middlePoint, phase, energy);
         float deepDensity = middleDensity * (0.35 + facing * 0.65);
+        float shipCore = max(
+            shipCoreSignal(middlePoint, phase),
+            shipCoreSignal(deepPoint, phase) * 0.72
+        ) * shipPresence;
         float estimatedThickness = 0.065 + facing * 0.060 +
             middleDensity * 0.340 + focus * 0.055;
         float3 transmittance = exp(
@@ -566,7 +927,8 @@ half4 main(float2 fragCoord) {
         );
         float warmRidge = nearMembranes.w * 0.72 + deepMembranes.w * 0.16;
         float organicAmount = clamp(iShape.x, 0.0, 1.0);
-        float liquidDetail = 0.28 + organicAmount * 0.72;
+        float liquidDetail = (0.28 + organicAmount * 0.72) *
+            (1.0 - shipPresence * 0.88);
         float membraneCrossing = coolRidge * warmRidge;
         float thoughtWave = 0.5 + 0.5 * sin(
             phase * 4.0 + dot(middlePoint, float3(19.0, -14.0, 11.0))
@@ -601,8 +963,16 @@ half4 main(float2 fragCoord) {
             float3(0.002, 0.010, 0.032),
             projection * 0.72
         );
-        float3 cyan = mix(float3(0.05, 0.70, 0.90), iAccent.rgb, 0.48);
-        float3 warm = float3(1.0, 0.62, 0.22);
+        float3 cyan = mix(
+            float3(0.05, 0.70, 0.90),
+            iAccent.rgb,
+            0.48 + shipPresence * 0.42
+        );
+        float3 warm = mix(
+            float3(1.0, 0.62, 0.22),
+            mix(iAccent.rgb, float3(0.86, 0.82, 1.0), 0.58),
+            shipPresence
+        );
         float3 material = deepMaterial +
             float3(0.004, 0.026, 0.060) * thicknessFactor;
         material += cyan * (coolDiffuse * 0.13 + fresnel * 0.54 + coolSpecular * 0.96);
@@ -627,6 +997,62 @@ half4 main(float2 fragCoord) {
         material += cyan * liquidDetail * thinTransmission * 0.12;
         material += mix(cyan, warm, 0.58) * liquidDetail * warmTransmission * 0.10;
         material *= 1.0 - liquidDetail * min(coolSheet + warmSheet, 1.0) * 0.030;
+
+        float3 shipSilver = float3(0.75, 0.78, 0.83);
+        float3 shipLight = float3(0.86, 0.88, 0.93);
+        float3 shipPower = mix(
+            iAccent.rgb,
+            float3(0.66, 0.55, 1.0),
+            0.22
+        );
+        float shipContour = pow(1.0 - facing, 2.15);
+        float shipFacet = 0.5 + 0.5 * dot(
+            normal,
+            normalize(float3(-0.36, 0.52, 0.78))
+        );
+        float hologramStability = 0.95 + 0.05 * spatialGrain(
+            fragCoord * 0.37 + float2(phase * 19.0, -phase * 11.0)
+        );
+        float3 shipMaterial = float3(0.006, 0.007, 0.011);
+        shipMaterial += shipSilver * (0.690 + shipFacet * 0.170);
+        shipMaterial += shipLight *
+            (shipContour * 0.36 + silhouette * 0.055);
+        float panelCut = clamp(
+            shipSurfaceField.x * 0.14 + shipSurfaceField.y * 0.30,
+            0.0,
+            0.32
+        );
+        shipMaterial *= 1.0 - panelCut;
+        shipMaterial += shipPower *
+            (shipSurfaceField.z * 0.22 + shipSurfaceField.w * 0.52);
+        shipMaterial += mix(shipSilver, shipPower, 0.42) *
+            shipCore * (0.14 + internalActivity * 0.06);
+        shipMaterial *= 1.0 - shipBelt * 0.76;
+        shipMaterial += shipPower * shipBelt * 0.018;
+        float3 shipMaterialPoint = shipObjectPoint(point, phase);
+        float apertureTexture = 0.5 + 0.5 * sin(
+            dot(shipMaterialPoint, float3(31.0, -23.0, 19.0)) +
+                phase * 0.45
+        );
+        apertureTexture = mix(
+            apertureTexture,
+            spatialGrain(fragCoord * 0.16),
+            0.34
+        );
+        float3 apertureMaterial = mix(
+            float3(0.008, 0.032, 0.070),
+            float3(0.045, 0.220, 0.285),
+            apertureTexture * 0.72
+        );
+        apertureMaterial += shipPower * 0.035;
+        shipMaterial = mix(
+            shipMaterial,
+            apertureMaterial,
+            shipAperture * 0.96
+        );
+        shipMaterial *= hologramStability;
+        material = mix(material, shipMaterial, shipPresence);
+
         float symbolPresence = clamp(iShape.y, 0.0, 1.0);
         if (symbolPresence > 0.001) {
             float3 symbolPoint = symbolFlowPoint(point, phase, symbolPresence);
@@ -650,6 +1076,14 @@ half4 main(float2 fragCoord) {
             0.0,
             0.94
         );
+        float shipAlpha = clamp(
+            0.67 + shipContour * 0.20 + shipSurfaceField.x * 0.035 +
+                shipSurfaceField.y * 0.18 + shipSurfaceField.w * 0.17 +
+                shipCore * 0.045 + shipAperture * 0.11 - shipBelt * 0.050,
+            0.0,
+            0.90
+        );
+        bodyAlpha = mix(bodyAlpha, shipAlpha, shipPresence);
         color = material * bodyAlpha;
         alpha = bodyAlpha;
     }
