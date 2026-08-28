@@ -1071,7 +1071,8 @@ float2 sphereRange(float3 origin, float3 direction, float radius) {
     return float2(-projected - root, -projected + root);
 }
 
-float marchOrganic(
+// Returns hit travel, closest travel, and closest signed distance.
+float3 marchOrganic(
     float3 origin,
     float3 direction,
     float start,
@@ -1080,21 +1081,28 @@ float marchOrganic(
     float energy
 ) {
     float travel = start;
+    float closestTravel = start;
+    float closestDistance = 1000.0;
     float shipQuality = clamp(iShape.z, 0.0, 1.0);
     float hitThreshold = mix(0.0018, 0.00145, shipQuality);
     float stepScale = mix(0.66, 0.65, shipQuality);
     float minimumStep = mix(0.0045, 0.0042, shipQuality);
     for (int index = 0; index < 36; ++index) {
         float distance = organicDistance(origin + direction * travel, phase, energy);
+        if (distance < closestDistance) {
+            closestDistance = distance;
+            closestTravel = travel;
+        }
         if (distance < hitThreshold) {
-            return travel + distance * 0.5;
+            float hitTravel = travel + distance * 0.5;
+            return float3(hitTravel, hitTravel, distance);
         }
         travel += max(distance * stepScale, minimumStep);
         if (travel > end) {
             break;
         }
     }
-    return end + 1.0;
+    return float3(end + 1.0, closestTravel, closestDistance);
 }
 
 float3 organicNormal(float3 point, float phase, float energy) {
@@ -1427,9 +1435,29 @@ half4 main(float2 fragCoord) {
     float2 bounds = sphereRange(origin, direction, 0.72);
     float travel = 0.0;
     bool bodyHit = false;
+    float surfaceConfidence = 1.0;
     if (bounds.x >= 0.0) {
-        travel = marchOrganic(origin, direction, bounds.x, bounds.y, phase, energy);
+        float3 marchResult = marchOrganic(
+            origin,
+            direction,
+            bounds.x,
+            bounds.y,
+            phase,
+            energy
+        );
+        travel = marchResult.x;
         bodyHit = travel <= bounds.y;
+        float organicRecovery = 1.0 - smoothstep(0.12, 0.72, shipGeometry);
+        float recoveryThreshold = max(0.0062, 4.2 / shortest) * organicRecovery;
+        if (!bodyHit && marchResult.z < recoveryThreshold) {
+            travel = marchResult.y + marchResult.z * 0.35;
+            bodyHit = true;
+            surfaceConfidence = 1.0 - smoothstep(
+                recoveryThreshold * 0.52,
+                recoveryThreshold,
+                marchResult.z
+            );
+        }
     }
 
     float3 color = propulsionField.rgb;
@@ -1845,6 +1873,7 @@ half4 main(float2 fragCoord) {
             0.0,
             0.94
         );
+        bodyAlpha *= mix(0.74, 1.0, surfaceConfidence);
         float shipAlpha = clamp(
             0.67 + shipContour * 0.20 + shipSurfaceField.x * 0.035 +
                 shipSurfaceField.y * 0.18 + shipSurfaceField.w * 0.17 +
