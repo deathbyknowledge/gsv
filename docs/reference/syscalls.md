@@ -1129,7 +1129,7 @@ type ResponsibilitySyscalls = {
 
 ## Repositories: `repo.*`
 
-`repo.*` is the kernel-level interface to ripgit repositories. It exposes versioned content, history, diffs, imports, and atomic commits without modeling a Git index or separate `add` step. In the native GSV shell, each filesystem mutation under a writable `/src/repos/{owner}/{repo}` path commits immediately to the active ripgit branch. Direct `repo.apply` callers submit one explicit atomic commit that may contain multiple operations.
+`repo.*` is the kernel-level interface to ripgit repositories. It exposes versioned content, history, diffs, imports, and atomic commits without modeling a Git index or separate `add` step. In the native GSV shell, each filesystem mutation under a writable `/src/repos/{owner}/{repo}` path commits immediately to that repo's configured ref. Direct `repo.apply` callers submit one explicit atomic commit that may contain multiple operations.
 
 Runtime behavior:
 
@@ -1147,7 +1147,7 @@ Runtime behavior:
 | `repo.import` | `handleRepoImport` | Imports or refreshes a repo from an upstream Git URL/ref into a local ripgit repo. Omit `remoteUrl` to pull from the repo's stored upstream. |
 | `repo.delete` | `handleRepoDelete` | Deletes a writable ripgit repository and unregisters its repo metadata. |
 
-Write access is intentionally narrower than read access. Non-root users can write repos owned by their username. Public repos are readable but not writable unless ownership also matches. The `rgit status`, `diff`, `commit`, and `discard` compatibility paths expose only legacy process overlays left by older installations. The next filesystem mutation first commits such an overlay exactly; an unavailable staged object or ripgit conflict leaves the overlay intact for recovery.
+Write access is intentionally narrower than read access. Non-root users can write repos owned by their username. Public repos are readable but not writable unless ownership also matches. Native filesystem writes have no separate index or working tree: each write commits directly to the repo ref exposed at `/src/repos/{owner}/{repo}`.
 
 ```ts
 type RepoDiffFile = {

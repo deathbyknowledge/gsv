@@ -15,11 +15,8 @@ export function createNativeFileSystem(ctx: KernelContext): GsvFs {
   const ownerUid = resolveCallerOwnerUid(ctx);
   const sourceBackend = createProcessSourceBackend({
     identity,
-    storage: ctx.env.STORAGE,
     ripgit: ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null,
     repos: handleRepoList(undefined, ctx).repos,
-    processId: ctx.processId ?? null,
-    config: ctx.config,
   });
 
   return new GsvFs(

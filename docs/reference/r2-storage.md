@@ -88,8 +88,6 @@ R2 remains the byte store. The current runtime uses these key families:
 | `var/media/{uid}/{pid}/{uuid}` | Process media handling | Uploaded, adapter-provided, or tool-result media attached to process messages and exposed at the matching absolute `/var/media/...` path. |
 | `home/{agent}/.gsv/media/archived-media:{hash}` | Process resource retention and history archiving | Immutable resource revisions retained by messages and transcripts, scoped to the run-as agent home. |
 | `home/{agent}/processes/{pid}/history/*.jsonl.gz` | Process reset, kill, compaction, and fork | Gzipped JSONL transcript archives scoped to the owning process. |
-| `process-source-overlays/{pid}/{sourceKey}/manifest.json` | Legacy `/src/repos`, `rgit` compatibility | Pre-cutover manifest retained only until its exact staged edits are committed or explicitly discarded. New filesystem writes do not create overlays. |
-| `process-source-overlays/{pid}/{sourceKey}/files/{path}` | Legacy `/src/repos`, `rgit` compatibility | Pre-cutover staged bytes retained for safe migration. |
 
 Temporary process media is deleted by prefix when the process is reset or killed. New producers retain the exact source revision directly in the run-as agent's immutable `.gsv/media` namespace; legacy process-media records are promoted before a transcript archive or terminal Message drops their last live reference. The archive identity includes the retaining Process, source key, and revision, so two reads of a mutable path before and after an edit remain distinct immutable resources while cancellation cleanup stays exclusive to one Process. Every Process, Kernel, and filesystem read validates the archive path plus its `purpose`, owning `uid` and `gid`, read-only mode `0400`, required source revision metadata, stored source content type, and current object HTTP content type. A missing legacy live object is archived as metadata-only rather than preventing reset or teardown. The `/var/media` view remains read-only for supported stored histories.
 
@@ -111,7 +109,7 @@ into user home repos under `skills.d/` when they are missing.
 Workspace repos contain normal versioned task files. Process transcript
 archives live under the run-as agent's home rather than in workspace metadata.
 
-Generic visible repos are available under `/src/repos/{owner}/{repo}`. Repos writable by the process identity accept `fs.write`, `fs.edit`, and `fs.delete`; each filesystem mutation commits directly to the active ripgit branch. Read-only visible repos still support read and search. `rgit status`, `rgit diff`, `rgit commit`, and `rgit discard` remain available to recover legacy process overlays created before this cutover. Before a new mutation, the backend commits a legacy overlay and deletes it only after ripgit accepts the exact staged bytes. Wiki-specific behavior uses the higher-level Wiki UI and CLI on top of the same repo storage.
+Generic visible repos are available under `/src/repos/{owner}/{repo}`. Repos writable by the process identity accept `fs.write`, `fs.edit`, and `fs.delete`; each filesystem mutation commits directly to the configured ripgit ref. Read-only visible repos still support read and search. Wiki-specific behavior uses the higher-level Wiki UI and CLI on top of the same repo storage.
 
 ## Practical Rules
 
