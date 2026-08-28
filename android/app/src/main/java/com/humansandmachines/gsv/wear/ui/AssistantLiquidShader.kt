@@ -271,23 +271,23 @@ float shipDistance(float3 point, float phase, float energy) {
 
     float3 firstPanePoint = shipPoint - float3(-0.030, -0.340, 0.038);
     firstPanePoint.xy = rotate2(-0.18, firstPanePoint.xy);
-    float firstPane = hexagonalPrismDistance(firstPanePoint, 0.043, 0.004);
+    float firstPane = hexagonalPrismDistance(firstPanePoint, 0.047, 0.004);
 
     float3 secondPanePoint = shipPoint - float3(0.036, -0.165, 0.050);
     secondPanePoint.xy = rotate2(0.14, secondPanePoint.xy);
-    float secondPane = hexagonalPrismDistance(secondPanePoint, 0.045, 0.004);
+    float secondPane = hexagonalPrismDistance(secondPanePoint, 0.049, 0.004);
 
     float3 thirdPanePoint = shipPoint - float3(-0.026, 0.015, 0.042);
     thirdPanePoint.xy = rotate2(-0.10, thirdPanePoint.xy);
-    float thirdPane = hexagonalPrismDistance(thirdPanePoint, 0.038, 0.004);
+    float thirdPane = hexagonalPrismDistance(thirdPanePoint, 0.041, 0.004);
 
     float3 fourthPanePoint = shipPoint - float3(0.020, 0.190, 0.031);
     fourthPanePoint.xy = rotate2(0.16, fourthPanePoint.xy);
-    float fourthPane = hexagonalPrismDistance(fourthPanePoint, 0.030, 0.004);
+    float fourthPane = hexagonalPrismDistance(fourthPanePoint, 0.0335, 0.004);
 
     float3 fifthPanePoint = shipPoint - float3(-0.010, 0.365, 0.016);
     fifthPanePoint.xy = rotate2(-0.12, fifthPanePoint.xy);
-    float fifthPane = hexagonalPrismDistance(fifthPanePoint, 0.020, 0.003);
+    float fifthPane = hexagonalPrismDistance(fifthPanePoint, 0.0225, 0.003);
 
     float aperturePane = min(
         min(min(firstPane, secondPane), min(thirdPane, fourthPane)),
@@ -368,37 +368,106 @@ float habitatTerrain(float2 point) {
     return terrain;
 }
 
-float4 shipHabitatField(float3 shipPoint) {
-    float2 habitatPoint = shipPoint.xy - float2(0.036, -0.165);
-    habitatPoint = rotate2(0.14, habitatPoint);
+float4 sampleShipHabitat(
+    float3 shipPoint,
+    float2 center,
+    float angle,
+    float radius,
+    float paneTop,
+    float2 seed,
+    float landLevel
+) {
+    float2 habitatPoint = shipPoint.xy - center;
+    habitatPoint = rotate2(angle, habitatPoint);
     float habitatMask = 1.0 - smoothstep(
         -0.004,
         0.002,
-        hexagonalDistance(habitatPoint, 0.040)
+        hexagonalDistance(habitatPoint, radius)
     );
-    habitatMask *= smoothstep(0.030, 0.047, shipPoint.z);
+    habitatMask *= 1.0 - smoothstep(
+        0.006,
+        0.014,
+        abs(shipPoint.z - paneTop)
+    );
     if (habitatMask < 0.001) {
         return float4(0.0);
     }
 
-    float2 terrainPoint = habitatPoint / 0.040;
+    float2 terrainPoint = habitatPoint / radius;
     float elevation = habitatTerrain(
-        terrainPoint * 1.46 + float2(7.4, -3.2)
+        terrainPoint * 1.46 + seed
     );
     elevation += 0.055 * sin(
-        terrainPoint.x * 3.4 - terrainPoint.y * 2.6
+        terrainPoint.x * (3.2 + seed.x * 0.03) -
+            terrainPoint.y * (2.5 + seed.y * 0.02)
     );
-    float land = smoothstep(0.48, 0.59, elevation);
+    float land = smoothstep(landLevel - 0.055, landLevel + 0.055, elevation);
     float relief = habitatTerrain(
-        terrainPoint * 4.2 + float2(-6.8, 9.1)
+        terrainPoint * 4.2 + seed.yx * float2(-0.82, 1.17)
     );
     float highland = land * smoothstep(0.61, 0.82, relief);
-    float coastline = 1.0 - smoothstep(0.018, 0.064, abs(elevation - 0.535));
+    float coastline = 1.0 - smoothstep(
+        0.018,
+        0.064,
+        abs(elevation - landLevel)
+    );
     return float4(
         habitatMask,
         land * habitatMask,
         highland * habitatMask,
         coastline * habitatMask
+    );
+}
+
+float4 shipHabitatField(float3 shipPoint) {
+    float4 habitat = sampleShipHabitat(
+        shipPoint,
+        float2(-0.030, -0.340),
+        -0.18,
+        0.044,
+        0.042,
+        float2(2.3, -7.1),
+        0.525
+    );
+    if (habitat.x > 0.001) return habitat;
+    habitat = sampleShipHabitat(
+        shipPoint,
+        float2(0.036, -0.165),
+        0.14,
+        0.046,
+        0.054,
+        float2(7.4, -3.2),
+        0.535
+    );
+    if (habitat.x > 0.001) return habitat;
+    habitat = sampleShipHabitat(
+        shipPoint,
+        float2(-0.026, 0.015),
+        -0.10,
+        0.038,
+        0.046,
+        float2(-4.6, 5.8),
+        0.505
+    );
+    if (habitat.x > 0.001) return habitat;
+    habitat = sampleShipHabitat(
+        shipPoint,
+        float2(0.020, 0.190),
+        0.16,
+        0.031,
+        0.035,
+        float2(9.2, 3.7),
+        0.550
+    );
+    if (habitat.x > 0.001) return habitat;
+    return sampleShipHabitat(
+        shipPoint,
+        float2(-0.010, 0.365),
+        -0.12,
+        0.0205,
+        0.019,
+        float2(-8.3, -5.4),
+        0.515
     );
 }
 
@@ -423,53 +492,157 @@ float4 shipMembraneField(float3 point, float phase) {
     float2 deckPoint = shipPoint.xy;
     float deckSeamDistance = lineSegmentDistance(
         deckPoint,
-        float2(-0.142, -0.360),
-        float2(-0.048, -0.260)
+        float2(-0.145, -0.430),
+        float2(0.140, -0.405)
     );
     deckSeamDistance = min(
         deckSeamDistance,
         lineSegmentDistance(
             deckPoint,
-            float2(-0.048, -0.260),
-            float2(-0.048, -0.075)
+            float2(-0.135, -0.300),
+            float2(0.125, -0.270)
         )
     );
     deckSeamDistance = min(
         deckSeamDistance,
         lineSegmentDistance(
             deckPoint,
-            float2(-0.048, -0.075),
-            float2(0.082, -0.012)
+            float2(-0.115, -0.145),
+            float2(0.110, -0.115)
         )
     );
     deckSeamDistance = min(
         deckSeamDistance,
         lineSegmentDistance(
             deckPoint,
-            float2(0.118, -0.290),
-            float2(0.118, -0.105)
+            float2(-0.095, 0.015),
+            float2(0.094, 0.045)
         )
     );
     deckSeamDistance = min(
         deckSeamDistance,
         lineSegmentDistance(
             deckPoint,
-            float2(-0.126, 0.050),
-            float2(-0.030, 0.122)
+            float2(-0.074, 0.170),
+            float2(0.074, 0.200)
         )
     );
     deckSeamDistance = min(
         deckSeamDistance,
         lineSegmentDistance(
             deckPoint,
-            float2(-0.030, 0.122),
-            float2(-0.030, 0.310)
+            float2(-0.050, 0.315),
+            float2(0.049, 0.340)
+        )
+    );
+    deckSeamDistance = min(
+        deckSeamDistance,
+        lineSegmentDistance(
+            deckPoint,
+            float2(-0.024, 0.440),
+            float2(0.024, 0.455)
+        )
+    );
+    deckSeamDistance = min(
+        deckSeamDistance,
+        lineSegmentDistance(
+            deckPoint,
+            float2(-0.145, -0.430),
+            float2(-0.135, -0.300)
+        )
+    );
+    deckSeamDistance = min(
+        deckSeamDistance,
+        lineSegmentDistance(
+            deckPoint,
+            float2(-0.135, -0.300),
+            float2(-0.115, -0.145)
+        )
+    );
+    deckSeamDistance = min(
+        deckSeamDistance,
+        lineSegmentDistance(
+            deckPoint,
+            float2(-0.115, -0.145),
+            float2(-0.095, 0.015)
+        )
+    );
+    deckSeamDistance = min(
+        deckSeamDistance,
+        lineSegmentDistance(
+            deckPoint,
+            float2(-0.095, 0.015),
+            float2(-0.074, 0.170)
+        )
+    );
+    deckSeamDistance = min(
+        deckSeamDistance,
+        lineSegmentDistance(
+            deckPoint,
+            float2(-0.074, 0.170),
+            float2(-0.050, 0.315)
+        )
+    );
+    deckSeamDistance = min(
+        deckSeamDistance,
+        lineSegmentDistance(
+            deckPoint,
+            float2(-0.050, 0.315),
+            float2(-0.024, 0.440)
+        )
+    );
+    deckSeamDistance = min(
+        deckSeamDistance,
+        lineSegmentDistance(
+            deckPoint,
+            float2(0.140, -0.405),
+            float2(0.125, -0.270)
+        )
+    );
+    deckSeamDistance = min(
+        deckSeamDistance,
+        lineSegmentDistance(
+            deckPoint,
+            float2(0.125, -0.270),
+            float2(0.110, -0.115)
+        )
+    );
+    deckSeamDistance = min(
+        deckSeamDistance,
+        lineSegmentDistance(
+            deckPoint,
+            float2(0.110, -0.115),
+            float2(0.094, 0.045)
+        )
+    );
+    deckSeamDistance = min(
+        deckSeamDistance,
+        lineSegmentDistance(
+            deckPoint,
+            float2(0.094, 0.045),
+            float2(0.074, 0.200)
+        )
+    );
+    deckSeamDistance = min(
+        deckSeamDistance,
+        lineSegmentDistance(
+            deckPoint,
+            float2(0.074, 0.200),
+            float2(0.049, 0.340)
+        )
+    );
+    deckSeamDistance = min(
+        deckSeamDistance,
+        lineSegmentDistance(
+            deckPoint,
+            float2(0.049, 0.340),
+            float2(0.024, 0.455)
         )
     );
     float deckSurface = smoothstep(-0.004, 0.020, shipPoint.z);
-    float deckSeamSoft = (1.0 - smoothstep(0.003, 0.013, deckSeamDistance)) *
+    float deckSeamSoft = (1.0 - smoothstep(0.0007, 0.0018, deckSeamDistance)) *
         deckSurface;
-    float deckSeamRidge = (1.0 - smoothstep(0.001, 0.004, deckSeamDistance)) *
+    float deckSeamRidge = (1.0 - smoothstep(0.0002, 0.0009, deckSeamDistance)) *
         deckSurface;
 
     float2 sidePoint = shipPoint.yz;
@@ -512,9 +685,9 @@ float4 shipMembraneField(float3 point, float phase) {
     );
     float nearSide = smoothstep(0.055, 0.128, shipPoint.x) *
         (1.0 - smoothstep(0.052, 0.088, shipPoint.z));
-    float sideSeamSoft = (1.0 - smoothstep(0.003, 0.012, sideSeamDistance)) *
+    float sideSeamSoft = (1.0 - smoothstep(0.0007, 0.0018, sideSeamDistance)) *
         nearSide;
-    float sideSeamRidge = (1.0 - smoothstep(0.001, 0.004, sideSeamDistance)) *
+    float sideSeamRidge = (1.0 - smoothstep(0.0002, 0.0009, sideSeamDistance)) *
         nearSide;
 
     float windowRow = 1.0 - smoothstep(0.006, 0.020, abs(shipPoint.z - 0.010));
@@ -1120,22 +1293,29 @@ half4 main(float2 fragCoord) {
             shipAperture * 0.96
         );
         float3 habitatMaterial = mix(
-            float3(0.008, 0.047, 0.066),
-            float3(0.027, 0.094, 0.071),
-            habitatField.y * 0.82
+            float3(0.018, 0.145, 0.205),
+            float3(0.060, 0.285, 0.145),
+            habitatField.y * 0.88
         );
         habitatMaterial = mix(
             habitatMaterial,
-            float3(0.105, 0.116, 0.099),
-            habitatField.z * 0.48
+            float3(0.285, 0.335, 0.175),
+            habitatField.z * 0.68
         );
-        habitatMaterial += float3(0.055, 0.135, 0.145) *
-            habitatField.w * 0.10;
-        habitatMaterial += shipPower * 0.012;
+        habitatMaterial += float3(0.280, 0.590, 0.470) *
+            habitatField.w * 0.20;
+        habitatMaterial += shipPower * 0.022;
+        float glazing = 0.045 + fresnel * 0.11 + coolSpecular * 0.035;
+        habitatMaterial = mix(
+            habitatMaterial,
+            float3(0.075, 0.225, 0.255),
+            glazing
+        );
+        habitatMaterial += shipLight * coolSpecular * 0.050;
         shipMaterial = mix(
             shipMaterial,
             habitatMaterial,
-            habitatField.x * 0.90
+            habitatField.x * 0.92
         );
         shipMaterial *= hologramStability;
         material = mix(material, shipMaterial, shipPresence);
