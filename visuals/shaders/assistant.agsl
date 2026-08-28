@@ -4,6 +4,7 @@ uniform float iEnergy;
 uniform float4 iAccent;
 uniform float4 iShape;
 uniform float4 iBehavior;
+uniform float4 iActivity;
 uniform float2 iShipView;
 uniform float iShipMaterialization;
 uniform float iShipPropulsion;
@@ -880,6 +881,82 @@ float4 shipMembraneField(float3 point, float phase) {
     );
 }
 
+float3 readingDocumentPoint(float3 point, float phase) {
+    point.xy = rotate2(-0.10 + 0.025 * sin(phase * 2.0), point.xy);
+    point.xz = rotate2(0.30 + 0.035 * sin(phase), point.xz);
+    point.yz = rotate2(-0.18 + 0.028 * cos(phase * 2.0), point.yz);
+    float2 planarPoint = point.xy;
+    point.x += 0.008 * sin(planarPoint.y * 14.0 + phase * 2.0);
+    point.y += 0.007 * sin(planarPoint.x * 13.0 - phase * 3.0);
+    point.z += 0.011 * sin(
+        planarPoint.x * 11.0 + planarPoint.y * 8.0 + phase * 2.0
+    );
+    return point;
+}
+
+float readingDocumentDistance(float3 point, float phase) {
+    float3 documentPoint = readingDocumentPoint(point, phase);
+    float breath = 1.0 + 0.014 * sin(phase * 2.0);
+    float document = roundedBoxDistance(
+        documentPoint,
+        float3(0.235, 0.305, 0.055) * breath,
+        0.034
+    );
+    float cornerCut = (documentPoint.x + documentPoint.y - 0.360) *
+        0.70710678;
+    document = smoothMaximum(document, cornerCut, 0.010);
+
+    float2 foldPoint = documentPoint.xy - float2(0.055, 0.125);
+    float foldTriangle = max(
+        max(-foldPoint.x, -foldPoint.y),
+        (foldPoint.x + foldPoint.y - 0.180) * 0.70710678
+    );
+    float fold = smoothMaximum(
+        foldTriangle,
+        abs(documentPoint.z - 0.060) - 0.020,
+        0.006
+    );
+    return smoothMinimum(document, fold, 0.010);
+}
+
+float2 readingDocumentSurface(float3 point, float phase) {
+    float3 documentPoint = readingDocumentPoint(point, phase);
+    float front = 1.0 - smoothstep(0.020, 0.090, abs(documentPoint.z - 0.060));
+    float foldBounds = smoothstep(0.045, 0.075, documentPoint.x) *
+        smoothstep(0.115, 0.145, documentPoint.y);
+    float foldSeam = (1.0 - smoothstep(
+        0.004,
+        0.014,
+        abs(documentPoint.x + documentPoint.y - 0.360) * 0.70710678
+    )) * foldBounds * front;
+
+    float2 contentPoint = documentPoint.xy;
+    contentPoint.y += 0.006 * sin(contentPoint.x * 17.0 - phase * 3.0);
+    float contentDistance = lineSegmentDistance(
+        contentPoint,
+        float2(-0.145, 0.070),
+        float2(0.080, 0.070)
+    );
+    contentDistance = min(
+        contentDistance,
+        lineSegmentDistance(
+            contentPoint,
+            float2(-0.145, -0.010),
+            float2(0.135, -0.010)
+        )
+    );
+    contentDistance = min(
+        contentDistance,
+        lineSegmentDistance(
+            contentPoint,
+            float2(-0.145, -0.090),
+            float2(0.030, -0.090)
+        )
+    );
+    float content = (1.0 - smoothstep(0.004, 0.013, contentDistance)) * front;
+    return float2(content, foldSeam);
+}
+
 float organicDistance(float3 point, float phase, float energy) {
     float3 sourcePoint = point;
     float organicAmount = clamp(iShape.x, 0.0, 1.0);
@@ -888,6 +965,8 @@ float organicDistance(float3 point, float phase, float energy) {
     float focus = clamp(iBehavior.x, 0.0, 1.0);
     float foldComplexity = clamp(iBehavior.y, 0.0, 1.0);
     float projection = clamp(iBehavior.w, 0.0, 1.0);
+    float reading = clamp(iActivity.x, 0.0, 1.0) *
+        (1.0 - smoothstep(0.0, 0.72, shipPresence));
     if (projection > 0.999) {
         return speakingDistance(sourcePoint, phase, energy);
     }
@@ -1003,13 +1082,20 @@ float organicDistance(float3 point, float phase, float energy) {
         -0.27 * cos(phase * 2.0),
         -0.22 * sin(phase * 2.0)
     ) * (1.0 - focus * 0.25);
+    float readingDraw = mix(
+        1.0,
+        0.72 + 0.12 * (0.5 + 0.5 * sin(phase * 2.0)),
+        reading
+    );
+    firstCavityCenter *= readingDraw;
+    secondCavityCenter *= readingDraw;
     float firstCavity = ellipsoidDistance(
         folded - firstCavityCenter,
-        float3(0.21, 0.17, 0.20)
+        float3(0.21, 0.17, 0.20) * mix(1.0, 0.68, reading)
     );
     float secondCavity = ellipsoidDistance(
         folded - secondCavityCenter,
-        float3(0.17, 0.22, 0.18)
+        float3(0.17, 0.22, 0.18) * mix(1.0, 0.68, reading)
     );
     liquidDistance = smoothMaximum(liquidDistance, -firstCavity, 0.055);
     liquidDistance = smoothMaximum(liquidDistance, -secondCavity, 0.050);
@@ -1023,6 +1109,19 @@ float organicDistance(float3 point, float phase, float energy) {
     );
     liquidDistance += surfaceFold *
         (0.010 + energy * 0.015 + foldComplexity * 0.010) * organicAmount;
+
+    float3 readingAxis = float3(0.732, 0.565, -0.379);
+    float readingLongitudinal = dot(folded, readingAxis);
+    float3 readingRadialPoint = folded - readingAxis * readingLongitudinal;
+    float readingConvergence = sqrt(
+        readingLongitudinal * readingLongitudinal + 0.0016
+    );
+    float readingFold = sin(
+        readingConvergence * 27.0 + length(readingRadialPoint) * 15.0 +
+            sin(dot(readingRadialPoint, float3(-7.0, 9.0, 5.0)) - phase * 2.0) +
+            phase * 5.0
+    );
+    liquidDistance += reading * readingFold * 0.0065 * organicAmount;
 
     float3 symbolPoint = symbolFlowPoint(anchoredPoint, phase, symbolPresence);
     float3 sphereRadii = float3(0.365, 0.375, 0.35) *
@@ -1038,6 +1137,11 @@ float organicDistance(float3 point, float phase, float energy) {
         sin(symbolPoint.z * 10.0 + phase * 3.0);
     sphereDistance += symbolSurface * symbolPresence * (0.0045 + energy * 0.0025);
     float distance = mix(sphereDistance, liquidDistance, organicAmount);
+    distance = mix(
+        distance,
+        readingDocumentDistance(sourcePoint, phase),
+        smoothstep(0.0, 1.0, reading)
+    );
     if (symbolPresence > 0.001) {
         float featureCut = -facialFeatureDistance(symbolPoint, phase) -
             (1.0 - symbolPresence) * 0.30;
@@ -1158,6 +1262,32 @@ float3 interiorFlowPoint(float3 point, float phase) {
     return flowingPoint;
 }
 
+float4 readingFlowField(float3 point, float phase) {
+    float reading = clamp(iActivity.x, 0.0, 1.0) *
+        (1.0 - smoothstep(0.0, 0.72, clamp(iShape.z, 0.0, 1.0)));
+    float3 axis = float3(0.732, 0.565, -0.379);
+    float longitudinal = dot(point, axis);
+    float3 radialPoint = point - axis * longitudinal;
+    float radial = length(radialPoint);
+    float convergence = sqrt(longitudinal * longitudinal + 0.0016);
+    float lateralWarp = sin(
+        dot(radialPoint, float3(-7.0, 9.0, 5.0)) - phase * 2.0
+    );
+    float coordinate = convergence * 30.0 + radial * 13.0 +
+        lateralWarp * 1.15 + phase * 5.0;
+    float carrier = sin(coordinate);
+    float variation = 0.58 + 0.42 * (
+        0.5 + 0.5 * sin(radial * 17.0 - phase * 3.0 + longitudinal * 9.0)
+    );
+    float sheet = (1.0 - smoothstep(0.12, 0.64, abs(carrier))) * variation;
+    float ridge = (1.0 - smoothstep(0.025, 0.19, abs(carrier))) * variation;
+    float packet = pow(0.5 + 0.5 * cos(coordinate), 12.0) *
+        (0.45 + variation * 0.55);
+    float intake = (1.0 - smoothstep(0.045, 0.19, convergence)) *
+        (0.55 + packet * 0.45);
+    return float4(sheet, ridge, packet, intake) * reading;
+}
+
 float4 interiorMembranes(float3 point, float phase) {
     float focus = clamp(iBehavior.x, 0.0, 1.0);
     float foldComplexity = clamp(iBehavior.y, 0.0, 1.0);
@@ -1205,6 +1335,7 @@ float4 interiorMembranes(float3 point, float phase) {
     float voiceSurface = sin(
         voiceRadius * 34.0 - phase * 8.0 + voicePressure * 2.4
     );
+    float4 readingFlow = readingFlowField(flowingPoint, phase);
 
     float coolVariation = 0.58 + 0.42 *
         (0.5 + 0.5 * sin((flowingPoint.x - flowingPoint.z) * 8.0 + phase * 3.0));
@@ -1225,6 +1356,10 @@ float4 interiorMembranes(float3 point, float phase) {
     coolSheet = max(coolSheet, voiceSheet * projection * 0.82);
     coolRidge = max(coolRidge, voiceRidge * projection);
     warmSheet = max(warmSheet, voiceSheet * projection * 0.18);
+    coolSheet = max(coolSheet, readingFlow.x * 0.78);
+    coolRidge = max(coolRidge, readingFlow.y * 0.94);
+    warmSheet = max(warmSheet, readingFlow.x * 0.20);
+    warmRidge = max(warmRidge, readingFlow.z * 0.42);
     float4 organicMembranes = float4(
         coolSheet,
         coolRidge,
@@ -1414,6 +1549,7 @@ half4 main(float2 fragCoord) {
     float projection = clamp(iBehavior.w, 0.0, 1.0);
     float shipPresence = clamp(iShape.z, 0.0, 1.0);
     float shipGeometry = smoothstep(0.0, 1.0, shipPresence);
+    float reading = clamp(iActivity.x, 0.0, 1.0) * (1.0 - shipGeometry);
     float shipMaterialization = clamp(iShipMaterialization, 0.0, 1.0);
     float drivePower = clamp(iShipPropulsion, 0.0, 1.0) * shipGeometry *
         mix(0.35, 1.0, smoothstep(0.05, 0.82, shipMaterialization));
@@ -1518,6 +1654,7 @@ half4 main(float2 fragCoord) {
         float shipBelt = shipBeltSignal(point, phase) * shipGeometry;
         float shipAperture = shipApertureSignal(point, phase) * shipGeometry;
         float shipDrive = shipDriveSignal(point, phase) * shipGeometry;
+        float2 readingDocument = readingDocumentSurface(point, phase) * reading;
 
         float3 cyanLight = normalize(float3(-0.55, 0.72, 0.84));
         float3 warmLight = normalize(float3(0.72, -0.20, 0.54));
@@ -1553,6 +1690,8 @@ half4 main(float2 fragCoord) {
         float4 nearMembranes = interiorMembranes(nearPoint, phase);
         float4 middleMembranes = interiorMembranes(middlePoint, phase) * middleDensity;
         float4 deepMembranes = interiorMembranes(deepPoint, phase) * deepDensity;
+        float4 middleReadingFlow = readingFlowField(middlePoint, phase);
+        float4 deepReadingFlow = readingFlowField(deepPoint, phase) * deepDensity;
         float coolSheet = clamp(
             nearMembranes.x * 0.25 +
                 middleMembranes.x * 0.65 +
@@ -1592,6 +1731,14 @@ half4 main(float2 fragCoord) {
         float voiceFront = projection * (0.28 + energy * 0.72) *
             pow(voiceWave, 6.0) * voiceWindow *
             (0.24 + max(coolSheet, coolRidge) * 0.76);
+        float readingPacket = max(
+            middleReadingFlow.z,
+            deepReadingFlow.z * 0.72
+        );
+        float readingIntake = max(
+            middleReadingFlow.w,
+            deepReadingFlow.w * 0.64
+        );
         float thinTransmission = transmittance.g *
             (0.32 + 0.68 * pow(1.0 - facing, 1.35));
         float warmTransmission = transmittance.g *
@@ -1608,6 +1755,11 @@ half4 main(float2 fragCoord) {
             deepMaterial,
             float3(0.002, 0.010, 0.032),
             projection * 0.72
+        );
+        deepMaterial = mix(
+            deepMaterial,
+            float3(0.003, 0.008, 0.034),
+            reading * 0.48
         );
         float3 cyan = mix(
             float3(0.05, 0.70, 0.90),
@@ -1638,6 +1790,17 @@ half4 main(float2 fragCoord) {
         material += cyan * voiceFront * 0.48;
         material += float3(0.72, 0.94, 1.0) * voiceFront *
             (0.14 + coolRidge * 0.20);
+        float3 readingLight = mix(
+            iAccent.rgb,
+            float3(0.72, 0.90, 1.0),
+            0.62
+        );
+        material += readingLight * readingPacket *
+            (0.18 + coolRidge * 0.20);
+        material += mix(readingLight, warm, 0.16) * readingIntake *
+            (0.08 + membraneCrossing * 0.14);
+        material += readingLight * readingDocument.x * 0.34;
+        material += mix(readingLight, warm, 0.28) * readingDocument.y * 0.52;
         material += cyan * projection * energy *
             (coolRidge * 0.055 + fresnel * 0.070);
         material += cyan * liquidDetail * thinTransmission * 0.12;
