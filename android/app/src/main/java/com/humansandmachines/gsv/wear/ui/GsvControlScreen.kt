@@ -3,6 +3,7 @@ package com.humansandmachines.gsv.wear.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -13,6 +14,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,6 +52,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -66,6 +70,7 @@ import com.humansandmachines.gsv.wear.gesture.GestureSnapshot
 import com.humansandmachines.gsv.wear.runtime.RuntimeSnapshot
 import com.humansandmachines.gsv.wear.voice.AssistantSnapshot
 import com.humansandmachines.gsv.wear.voice.VoiceTurnState
+import kotlinx.coroutines.delay
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -81,6 +86,17 @@ private enum class GsvSurface {
     MIND,
     SHIP,
 }
+
+private const val DEFAULT_SHIP_ELEVATION_RADIANS = 0.6981317f
+private const val MIN_SHIP_ELEVATION_RADIANS = -1.3962634f
+private const val MAX_SHIP_ELEVATION_RADIANS = 1.4835298f
+
+internal fun shipRenderModeFor(authority: AuthorityState): ShipRenderMode =
+    if (authority == AuthorityState.DISARMED) {
+        ShipRenderMode.HOLOGRAM
+    } else {
+        ShipRenderMode.PHYSICAL
+    }
 
 @Composable
 fun GsvControlScreen(
@@ -119,44 +135,42 @@ fun GsvControlScreen(
             AuthorityState.DISARMED -> GsvColor.MutedDark
         }
     }
+    var shipOrbitRadians by remember { mutableFloatStateOf(0f) }
+    var shipElevationRadians by remember {
+        mutableFloatStateOf(DEFAULT_SHIP_ELEVATION_RADIANS)
+    }
 
     Box(modifier.fillMaxSize().background(GsvColor.Void)) {
         LiveBackdrop(accent = accent, modifier = Modifier.fillMaxSize())
-        AnimatedVisibility(
-            visible = selected == GsvSurface.SHIP,
-            enter = fadeIn(tween(520)),
-            exit = fadeOut(tween(240)),
-        ) {
-            GsvStarField(modifier = Modifier.fillMaxSize())
-        }
-        AnimatedContent(
-            targetState = selected,
-            transitionSpec = { fadeIn(tween(230)) togetherWith fadeOut(tween(170)) },
-            label = "gsv-surface",
-        ) { destination ->
-            when (destination) {
-                GsvSurface.MIND -> MindSurface(
-                    snapshot = assistantSnapshot,
-                    gestureSnapshot = gestureSnapshot,
-                    notice = uiState.runtimeNotice,
-                    noticeIsError = uiState.runtimeError,
-                    onToggle = onMindToggle,
-                    onOpenSettings = { settingsVisible = true },
-                    onSelect = { selectedIndex = it.ordinal },
+        GsvStarField(
+            modifier = Modifier.fillMaxSize(),
+            horizontalParallax = sin(shipOrbitRadians),
+            verticalParallax = sin(shipElevationRadians - DEFAULT_SHIP_ELEVATION_RADIANS),
+        )
+        LiveSurface(
+            selected = selected,
+            wearSnapshot = wearSnapshot,
+            assistantSnapshot = assistantSnapshot,
+            gestureSnapshot = gestureSnapshot,
+            notice = uiState.runtimeNotice,
+            noticeIsError = uiState.runtimeError,
+            shipOrbitRadians = shipOrbitRadians,
+            shipElevationRadians = shipElevationRadians,
+            onShipViewDragged = { orbitDelta, elevationDelta ->
+                shipOrbitRadians += orbitDelta
+                shipElevationRadians = (shipElevationRadians + elevationDelta).coerceIn(
+                    MIN_SHIP_ELEVATION_RADIANS,
+                    MAX_SHIP_ELEVATION_RADIANS,
                 )
-                GsvSurface.SHIP -> ShipSurface(
-                    snapshot = wearSnapshot,
-                    notice = uiState.runtimeNotice,
-                    noticeIsError = uiState.runtimeError,
-                    onToggle = {
-                        if (wearSnapshot.authority == AuthorityState.DISARMED) onArm() else onDisarm()
-                    },
-                    onActivationStarted = onActivationStarted,
-                    onOpenSettings = { settingsVisible = true },
-                    onSelect = { selectedIndex = it.ordinal },
-                )
-            }
-        }
+            },
+            onMindToggle = onMindToggle,
+            onShipToggle = {
+                if (wearSnapshot.authority == AuthorityState.DISARMED) onArm() else onDisarm()
+            },
+            onActivationStarted = onActivationStarted,
+            onOpenSettings = { settingsVisible = true },
+            onSelect = { selectedIndex = it.ordinal },
+        )
 
         AnimatedVisibility(
             visible = settingsVisible,
@@ -180,15 +194,41 @@ fun GsvControlScreen(
 }
 
 @Composable
-private fun MindSurface(
-    snapshot: AssistantSnapshot,
+private fun LiveSurface(
+    selected: GsvSurface,
+    wearSnapshot: RuntimeSnapshot,
+    assistantSnapshot: AssistantSnapshot,
     gestureSnapshot: GestureSnapshot,
     notice: String,
     noticeIsError: Boolean,
-    onToggle: () -> Unit,
+    shipOrbitRadians: Float,
+    shipElevationRadians: Float,
+    onShipViewDragged: (Float, Float) -> Unit,
+    onMindToggle: () -> Unit,
+    onShipToggle: () -> Unit,
+    onActivationStarted: () -> Unit,
     onOpenSettings: () -> Unit,
     onSelect: (GsvSurface) -> Unit,
 ) {
+    var previousAuthority by remember { mutableStateOf(wearSnapshot.authority) }
+    var materializing by remember { mutableStateOf(false) }
+    LaunchedEffect(wearSnapshot.authority) {
+        val justArmed = previousAuthority == AuthorityState.DISARMED &&
+            wearSnapshot.authority == AuthorityState.ARMED
+        previousAuthority = wearSnapshot.authority
+        materializing = justArmed
+        if (justArmed) {
+            onActivationStarted()
+            delay(SHIP_MATERIALIZATION_MILLIS.toLong())
+            materializing = false
+        }
+    }
+
+    val connection = when (selected) {
+        GsvSurface.MIND -> assistantSnapshot.connection
+        GsvSurface.SHIP -> wearSnapshot.connection
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -198,48 +238,145 @@ private fun MindSurface(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         LiveHeader(
-            name = "MIND",
-            connection = snapshot.connection,
+            name = selected.name,
+            connection = connection,
             onOpenSettings = onOpenSettings,
         )
         Spacer(Modifier.weight(1f))
-        MindCore(snapshot = snapshot, gestureSnapshot = gestureSnapshot, onToggle = onToggle)
+        LiveCore(
+            selected = selected,
+            wearAuthority = wearSnapshot.authority,
+            assistantSnapshot = assistantSnapshot,
+            gestureSnapshot = gestureSnapshot,
+            materializing = materializing,
+            shipOrbitRadians = shipOrbitRadians,
+            shipElevationRadians = shipElevationRadians,
+            onShipViewDragged = onShipViewDragged,
+            onToggle = when (selected) {
+                GsvSurface.MIND -> onMindToggle
+                GsvSurface.SHIP -> onShipToggle
+            },
+        )
         LiveNotice(
             text = notice,
             error = noticeIsError,
-            modifier = Modifier.padding(top = 7.dp),
+            modifier = Modifier.padding(top = 6.dp),
+        )
+        WearForegroundHint(
+            visible = selected == GsvSurface.SHIP &&
+                wearSnapshot.authority != AuthorityState.DISARMED,
         )
         Spacer(Modifier.weight(1f))
-        SurfaceNavigation(selected = GsvSurface.MIND, onSelect = onSelect)
+        SurfaceNavigation(selected = selected, onSelect = onSelect)
     }
 }
 
 @Composable
-private fun MindCore(
-    snapshot: AssistantSnapshot,
+private fun WearForegroundHint(visible: Boolean) {
+    Box(
+        modifier = Modifier.fillMaxWidth().height(32.dp),
+        contentAlignment = Alignment.TopCenter,
+    ) {
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(tween(260)),
+            exit = fadeOut(tween(180)),
+        ) {
+            Text(
+                text = "KEEP GSV FOREGROUNDED WHILE WORN",
+                modifier = Modifier.padding(top = 13.dp),
+                style = GsvTextStyle.Kicker.copy(
+                    color = GsvColor.MutedDark,
+                    fontSize = 7.sp,
+                    letterSpacing = 1.5.sp,
+                    textAlign = TextAlign.Center,
+                ),
+            )
+        }
+    }
+}
+
+@Composable
+private fun LiveCore(
+    selected: GsvSurface,
+    wearAuthority: AuthorityState,
+    assistantSnapshot: AssistantSnapshot,
     gestureSnapshot: GestureSnapshot,
+    materializing: Boolean,
+    shipOrbitRadians: Float,
+    shipElevationRadians: Float,
+    onShipViewDragged: (Float, Float) -> Unit,
     onToggle: () -> Unit,
 ) {
-    val active = snapshot.turn != VoiceTurnState.IDLE
-    val status = when {
-        active -> snapshot.turn.stateLabel().uppercase()
-        snapshot.connection == ConnectionState.CONNECTED -> "AVAILABLE"
-        snapshot.connection == ConnectionState.OFFLINE -> "OFFLINE"
-        snapshot.connection == ConnectionState.DISCONNECTED -> "DORMANT"
+    val mindActive = assistantSnapshot.turn != VoiceTurnState.IDLE
+    val mindStatus = when {
+        mindActive -> assistantSnapshot.turn.stateLabel().uppercase()
+        assistantSnapshot.connection == ConnectionState.CONNECTED -> "AVAILABLE"
+        assistantSnapshot.connection == ConnectionState.OFFLINE -> "OFFLINE"
+        assistantSnapshot.connection == ConnectionState.DISCONNECTED -> "DORMANT"
         else -> "LINKING"
     }
-    val accent = when {
-        active -> snapshot.turn.accentColor()
-        snapshot.connection == ConnectionState.CONNECTED -> GsvColor.Accent
-        snapshot.connection == ConnectionState.OFFLINE -> GsvColor.Amber
-        else -> GsvColor.MutedDark
+    val shipStatus = when {
+        materializing -> "ARMING"
+        wearAuthority == AuthorityState.ARMED -> "AUTHORIZED"
+        wearAuthority == AuthorityState.PAUSED -> "STANDBY"
+        else -> "DORMANT"
+    }
+    val status = when (selected) {
+        GsvSurface.MIND -> mindStatus
+        GsvSurface.SHIP -> shipStatus
+    }
+    val targetAccent = when (selected) {
+        GsvSurface.MIND -> when {
+            mindActive -> assistantSnapshot.turn.accentColor()
+            assistantSnapshot.connection == ConnectionState.CONNECTED -> GsvColor.Accent
+            assistantSnapshot.connection == ConnectionState.OFFLINE -> GsvColor.Amber
+            else -> GsvColor.MutedDark
+        }
+        GsvSurface.SHIP -> when (wearAuthority) {
+            AuthorityState.ARMED -> GsvColor.Accent
+            AuthorityState.PAUSED -> GsvColor.Amber
+            AuthorityState.DISARMED -> GsvColor.MutedDark
+        }
+    }
+    val accent by animateColorAsState(
+        targetValue = targetAccent,
+        animationSpec = tween(520, easing = FastOutSlowInEasing),
+        label = "live-core-accent",
+    )
+    val actionDescription = when (selected) {
+        GsvSurface.MIND -> "Mind conversation control"
+        GsvSurface.SHIP -> "Ship Wear Mode control"
+    }
+    val shapeTarget = when (selected) {
+        GsvSurface.MIND -> OrbShapeTarget.LISTENING
+        GsvSurface.SHIP -> OrbShapeTarget.SHIP
+    }
+    val renderAccent = when {
+        selected != GsvSurface.SHIP -> null
+        wearAuthority == AuthorityState.PAUSED -> GsvColor.Amber
+        else -> GsvColor.Accent
+    }
+    val dragModifier = if (selected == GsvSurface.SHIP) {
+        Modifier.pointerInput(Unit) {
+            detectDragGestures { change, dragAmount ->
+                change.consume()
+                val orbitDelta = dragAmount.x / size.width.coerceAtLeast(1) *
+                    (2f * PI.toFloat())
+                val elevationDelta = -dragAmount.y / size.height.coerceAtLeast(1) *
+                    PI.toFloat()
+                onShipViewDragged(orbitDelta, elevationDelta)
+            }
+        }
+    } else {
+        Modifier
     }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .semantics(mergeDescendants = true) {
-                contentDescription = "Mind conversation control"
+                contentDescription = actionDescription
                 stateDescription = status
                 role = Role.Button
             }
@@ -248,19 +385,38 @@ private fun MindCore(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = onToggle,
-            ),
+            )
+            .then(dragModifier),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Box(Modifier.size(350.dp), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(350.dp),
+            contentAlignment = Alignment.Center,
+        ) {
             AssistantCore(
-                state = snapshot.turn,
-                signal = snapshot.level,
-                modifier = Modifier.size(330.dp),
+                state = if (selected == GsvSurface.MIND) {
+                    assistantSnapshot.turn
+                } else {
+                    VoiceTurnState.LISTENING
+                },
+                signal = if (selected == GsvSurface.MIND) assistantSnapshot.level else 0f,
+                shapeTarget = shapeTarget,
+                accentOverride = renderAccent,
+                shipOrbitRadians = shipOrbitRadians,
+                shipElevationOffsetRadians =
+                    shipElevationRadians - DEFAULT_SHIP_ELEVATION_RADIANS,
+                shipRenderMode = shipRenderModeFor(wearAuthority),
+                exposeStateSemantics = false,
+                modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
             )
-            MindGestureFeedback(
-                snapshot = gestureSnapshot,
-                modifier = Modifier.fillMaxSize(),
-            )
+            if (selected == GsvSurface.MIND) {
+                MindGestureFeedback(
+                    snapshot = gestureSnapshot,
+                    modifier = Modifier.size(350.dp),
+                )
+            }
         }
         Text(
             text = status,
@@ -272,12 +428,75 @@ private fun MindCore(
             ),
         )
         Spacer(Modifier.height(14.dp))
+        Box(
+            modifier = Modifier.fillMaxWidth().height(40.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            AnimatedContent(
+                targetState = selected,
+                transitionSpec = { fadeIn(tween(230)) togetherWith fadeOut(tween(170)) },
+                label = "live-core-action",
+            ) { destination ->
+                if (destination == GsvSurface.MIND) {
+                    Text(
+                        text = if (mindActive) "TAP TO INTERRUPT" else "TAP TO SPEAK",
+                        style = GsvTextStyle.Kicker.copy(
+                            color = GsvColor.Muted,
+                            fontSize = 8.sp,
+                            letterSpacing = 2.0.sp,
+                            textAlign = TextAlign.Center,
+                        ),
+                    )
+                } else {
+                    ShipActionLabel(
+                        label = if (wearAuthority == AuthorityState.DISARMED) "ARM" else "DISARM",
+                        accent = accent,
+                        disarmed = wearAuthority == AuthorityState.DISARMED,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShipActionLabel(
+    label: String,
+    accent: Color,
+    disarmed: Boolean,
+) {
+    Box(
+        modifier = Modifier.width(190.dp).height(40.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            val gap = 41.dp.toPx()
+            val y = center.y
+            drawLine(
+                color = accent.copy(alpha = 0.44f),
+                start = Offset(3.dp.toPx(), y),
+                end = Offset(center.x - gap, y),
+                strokeWidth = 0.8.dp.toPx(),
+            )
+            drawLine(
+                color = accent.copy(alpha = 0.44f),
+                start = Offset(center.x + gap, y),
+                end = Offset(size.width - 3.dp.toPx(), y),
+                strokeWidth = 0.8.dp.toPx(),
+            )
+            drawCircle(accent.copy(alpha = 0.78f), 1.4.dp.toPx(), Offset(3.dp.toPx(), y))
+            drawCircle(
+                accent.copy(alpha = 0.78f),
+                1.4.dp.toPx(),
+                Offset(size.width - 3.dp.toPx(), y),
+            )
+        }
         Text(
-            text = if (active) "TAP TO INTERRUPT" else "TAP TO SPEAK",
-            style = GsvTextStyle.Kicker.copy(
-                color = GsvColor.Muted,
-                fontSize = 8.sp,
-                letterSpacing = 2.0.sp,
+            text = label,
+            style = GsvTextStyle.Button.copy(
+                color = if (disarmed) GsvColor.AccentBright else GsvColor.White,
+                fontSize = 10.sp,
+                letterSpacing = 2.5.sp,
                 textAlign = TextAlign.Center,
             ),
         )
@@ -320,58 +539,6 @@ private fun MindGestureFeedback(
                 style = Stroke(width = stroke * (0.8f + commit.value)),
             )
         }
-    }
-}
-
-@Composable
-private fun ShipSurface(
-    snapshot: RuntimeSnapshot,
-    notice: String,
-    noticeIsError: Boolean,
-    onToggle: () -> Unit,
-    onActivationStarted: () -> Unit,
-    onOpenSettings: () -> Unit,
-    onSelect: (GsvSurface) -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .padding(horizontal = 20.dp, vertical = 12.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        LiveHeader(
-            name = "SHIP",
-            connection = snapshot.connection,
-            onOpenSettings = onOpenSettings,
-        )
-        Spacer(Modifier.weight(1f))
-        ShipCore(
-            authority = snapshot.authority,
-            onToggleRequested = onToggle,
-            onActivationStarted = onActivationStarted,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        LiveNotice(
-            text = notice,
-            error = noticeIsError,
-            modifier = Modifier.padding(top = 5.dp),
-        )
-        if (snapshot.authority != AuthorityState.DISARMED) {
-            Spacer(Modifier.height(13.dp))
-            Text(
-                text = "KEEP GSV FOREGROUNDED WHILE WORN",
-                style = GsvTextStyle.Kicker.copy(
-                    color = GsvColor.MutedDark,
-                    fontSize = 7.sp,
-                    letterSpacing = 1.5.sp,
-                    textAlign = TextAlign.Center,
-                ),
-            )
-        }
-        Spacer(Modifier.weight(1f))
-        SurfaceNavigation(selected = GsvSurface.SHIP, onSelect = onSelect)
     }
 }
 
