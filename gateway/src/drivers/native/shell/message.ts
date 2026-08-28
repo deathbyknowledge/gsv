@@ -2,7 +2,6 @@ import { defineCommand } from "just-bash";
 import type { CommandContext, ExecResult } from "just-bash";
 import type {
   AdapterMessageDestination,
-  AdapterSendArgs,
   AdapterSendResult,
   ConversationMessage,
   ResourceBlock,
@@ -11,7 +10,7 @@ import { contactDisplayName } from "@humansandmachines/gsv/protocol";
 import type { GsvFs } from "../../../fs/gsv-fs";
 import { hasCapability } from "../../../kernel/capabilities";
 import type { KernelContext } from "../../../kernel/context";
-import { handleAdapterSend } from "../../../kernel/adapter-handlers";
+import { deliverAdapterDestination } from "../../../kernel/adapter-handlers";
 import {
   handleContactDeliveryGet,
   handleContactList,
@@ -666,16 +665,18 @@ async function sendMessage(
         + `(delivery_id=${deliveryId}; retry with --delivery-id using this value)`,
       );
     }
-    const sendArgs: AdapterSendArgs = {
-      adapter: destination.adapter,
-      accountId: destination.accountId,
+    const sendArgs: Parameters<typeof deliverAdapterDestination>[2] = {
       deliveryId,
-      surface: destination.surface,
       text: text?.trim() ?? "",
-      also,
     };
     if (attachment) sendArgs.media = [attachment.media];
-    result = await handleAdapterSend(sendArgs, ctx, attachment?.body);
+    result = await deliverAdapterDestination(
+      destination,
+      resolveCallerOwnerUid(ctx),
+      sendArgs,
+      ctx,
+      attachment?.body,
+    );
     if (result.ok || !result.retryable) break;
   }
   if (!result) {

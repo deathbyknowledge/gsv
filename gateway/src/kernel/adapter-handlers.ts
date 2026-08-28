@@ -836,11 +836,11 @@ export async function handleAdapterSend(
 }
 
 /**
- * Deliver a committed message for a run to its trusted directed endpoint.
- * This deliberately bypasses the explicit-send duplicate guard while still
- * rechecking that the linked actor belongs to the route owner.
+ * Deliver to a trusted, Kernel-resolved adapter destination. This deliberately
+ * bypasses the explicit-send duplicate guard while still rechecking that the
+ * linked actor belongs to the destination owner.
  */
-export async function deliverAdapterReply(
+export async function deliverAdapterDestination(
   destination: AdapterMessageDestination,
   ownerUid: number,
   message: Pick<AdapterSendArgs, "deliveryId" | "text" | "media" | "replyToId"> & {

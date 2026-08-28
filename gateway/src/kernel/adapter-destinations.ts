@@ -151,10 +151,12 @@ export async function listVisibleAdapterMessageDestinations(
       `${route.adapter.trim().toLowerCase()}\0${route.accountId.trim()}\0${route.actorId.trim()}`,
     );
     if (!link) continue;
-    addCandidate(link, {
+    const surface: AdapterSurface = {
       kind: route.surfaceKind,
       id: route.surfaceId,
-    });
+    };
+    if (route.threadId) surface.threadId = route.threadId;
+    addCandidate(link, surface);
   }
 
   return (await Promise.all([...candidateMap.values()]

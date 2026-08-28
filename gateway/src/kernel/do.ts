@@ -147,7 +147,7 @@ import { installMcpDiscoveryCompatibility } from "./mcp-compat";
 import { oauthCallbackHtmlResponse } from "../oauth-http";
 import { isInternalOnlySyscall } from "./syscall-exposure";
 import {
-  deliverAdapterReply,
+  deliverAdapterDestination,
   normalizeAdapterHilRequest,
   prefixAdapterDmProcessReply,
   renderAdapterHilPrompt,
@@ -2323,7 +2323,7 @@ export class Kernel extends DurableObject<Env> {
       };
     }
 
-    const result = await deliverAdapterReply(route.destination, route.uid, {
+    const result = await deliverAdapterDestination(route.destination, route.uid, {
       ...message,
       text: prefixAdapterDmProcessReply(
         message.text,
@@ -4534,7 +4534,7 @@ export class Kernel extends DurableObject<Env> {
       if (!hasCapability(ctx.identity?.capabilities ?? [], "adapter.send")) {
         throw new Error("Permission denied: adapter.send");
       }
-      const delivery = await deliverAdapterReply(
+      const delivery = await deliverAdapterDestination(
         target.destination,
         record.ownerUid,
         {

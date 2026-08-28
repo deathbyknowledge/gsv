@@ -5,7 +5,7 @@ import type { KernelContext } from "./context";
 import {
   handleAdapterConnect,
   handleAdapterDisconnect,
-  deliverAdapterReply,
+  deliverAdapterDestination,
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   handleAdapterInbound as handleAdapterInboundImpl,
   handleAdapterList,
@@ -4846,7 +4846,7 @@ describe("adapter lifecycle handlers", () => {
       surface: { kind: "dm" as const, id: "chat-42" },
     };
 
-    const result = await deliverAdapterReply(
+    const result = await deliverAdapterDestination(
       destination,
       1000,
       {
@@ -4899,7 +4899,7 @@ describe("adapter lifecycle handlers", () => {
       surface: { kind: "dm" as const, id: "chat-42" },
     };
 
-    await expect(deliverAdapterReply(destination, 1000, { text: "hello" }, ctx)).resolves.toEqual({
+    await expect(deliverAdapterDestination(destination, 1000, { text: "hello" }, ctx)).resolves.toEqual({
       ok: false,
       error: "Adapter destination is not authorized",
     });
