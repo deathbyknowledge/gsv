@@ -107,9 +107,46 @@ internal enum class NativeGestureEvent(val requiresVoiceRequest: Boolean = false
     ;
 }
 
+internal enum class NativeGestureChord(val code: Int) {
+    NONE(0),
+    ARM(1),
+    DISARM(2),
+    START(3),
+    STOP(4),
+    SEND(5),
+    DELETE_BACKWARD(6),
+    CLEAR(7),
+    MUTE(8),
+    UNMUTE(9),
+    SCROLL(10),
+    UNKNOWN(-1),
+    ;
+
+    val isCandidate: Boolean
+        get() = this != NONE && this != UNKNOWN
+
+    companion object {
+        fun decode(code: Int): NativeGestureChord = when (code) {
+            0 -> NONE
+            1 -> ARM
+            2 -> DISARM
+            3 -> START
+            4 -> STOP
+            5 -> SEND
+            6 -> DELETE_BACKWARD
+            7 -> CLEAR
+            8 -> MUTE
+            9 -> UNMUTE
+            10 -> SCROLL
+            else -> UNKNOWN
+        }
+    }
+}
+
 internal data class NativeGestureResult(
     val failed: Boolean,
     val event: NativeGestureEvent,
+    val chord: NativeGestureChord,
     val progress: Float,
     val handCount: Int,
     val inferenceMillis: Int,
@@ -130,6 +167,7 @@ internal data class NativeGestureResult(
             return NativeGestureResult(
                 failed = false,
                 event = event,
+                chord = NativeGestureChord.decode(((packed ushr 4) and 0x0f).toInt()),
                 progress = ((packed ushr 8) and 0x03ff).toFloat().div(1_000f).coerceIn(0f, 1f),
                 handCount = ((packed ushr 18) and 0x03).toInt(),
                 inferenceMillis = ((packed ushr 20) and 0x0fff).toInt(),
@@ -139,6 +177,7 @@ internal data class NativeGestureResult(
         fun error() = NativeGestureResult(
             failed = true,
             event = NativeGestureEvent.NONE,
+            chord = NativeGestureChord.NONE,
             progress = 0f,
             handCount = 0,
             inferenceMillis = 0,

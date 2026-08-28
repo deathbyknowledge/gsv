@@ -74,7 +74,6 @@ import com.humansandmachines.gsv.wear.voice.VoiceTurnState
 import kotlinx.coroutines.delay
 import kotlin.math.PI
 import kotlin.math.cos
-import kotlin.math.roundToInt
 import kotlin.math.sin
 
 data class ControlUiState(
@@ -512,17 +511,27 @@ private fun MindGestureFeedback(
 ) {
     val evidence = remember { Animatable(0f) }
     var evidenceCommitSequence by remember { mutableLongStateOf(snapshot.commitSequence) }
-    LaunchedEffect(snapshot.state, snapshot.progress, snapshot.commitSequence) {
+    // Sampled progress deliberately is not an animation key. One candidate owns
+    // one uninterrupted visual timeline until loss or semantic completion.
+    LaunchedEffect(
+        snapshot.state == GestureLinkState.TRACKING,
+        snapshot.candidateSequence,
+        snapshot.commitSequence,
+    ) {
         if (snapshot.commitSequence != evidenceCommitSequence) {
             evidenceCommitSequence = snapshot.commitSequence
-            evidence.snapTo(1f)
-            delay(GESTURE_COMMIT_HOLD_MILLIS)
+            if (evidence.value < GESTURE_EVIDENCE_COMPLETE_THRESHOLD) {
+                evidence.animateTo(
+                    1f,
+                    tween(GESTURE_COMMIT_FINISH_MILLIS, easing = LinearEasing),
+                )
+            }
             evidence.animateTo(0f, tween(GESTURE_COMMIT_RELEASE_MILLIS, easing = FastOutSlowInEasing))
         } else if (snapshot.state == GestureLinkState.TRACKING) {
             evidence.animateTo(
                 1f,
                 tween(
-                    gestureEvidenceAdvanceDurationMillis(snapshot.progress),
+                    snapshot.candidateFillDurationMillis.coerceAtLeast(1),
                     easing = LinearEasing,
                 ),
             )
@@ -565,21 +574,9 @@ private fun MindGestureFeedback(
     }
 }
 
-internal fun gestureEvidenceAdvanceDurationMillis(progress: Float): Int =
-    (GESTURE_EVIDENCE_COMPLETION_HORIZON_MILLIS * (1f - progress.coerceIn(0f, 1f)))
-        .roundToInt()
-        .coerceIn(
-            GESTURE_EVIDENCE_MIN_ADVANCE_MILLIS,
-            GESTURE_EVIDENCE_COMPLETION_HORIZON_MILLIS,
-        )
-
-// These timings extrapolate presentation only. The Rust gesture engine remains
-// the sole authority for evidence loss and semantic completion; the commit glow
-// distinguishes accepted input from an in-progress ring reaching its endpoint.
-private const val GESTURE_EVIDENCE_COMPLETION_HORIZON_MILLIS = 350
-private const val GESTURE_EVIDENCE_MIN_ADVANCE_MILLIS = 140
 private const val GESTURE_EVIDENCE_RETREAT_MILLIS = 150
-private const val GESTURE_COMMIT_HOLD_MILLIS = 80L
+private const val GESTURE_EVIDENCE_COMPLETE_THRESHOLD = 0.999f
+private const val GESTURE_COMMIT_FINISH_MILLIS = 45
 private const val GESTURE_COMMIT_RELEASE_MILLIS = 260
 
 @Composable
