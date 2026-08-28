@@ -1,0 +1,20 @@
+[package]
+name = "visual-engine"
+version.workspace = true
+edition = "2021"
+publish = false
+
+[dependencies]
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
+tokio = { version = "1", features = ["sync"] }
+wgpu = { version = "25.0.2", features = ["glsl"] }
+
+[dev-dependencies]
+naga = { version = "25.0.1", features = ["glsl-in"] }
+
+[lints.clippy]
+unwrap_used = "warn"
+panic = "warn"
+todo = "warn"
+dbg_macro = "warn"

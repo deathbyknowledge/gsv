@@ -20,6 +20,18 @@ The demo uses deterministic local fixture responses and does not need a gateway.
 disable the procedural typing sounds. Add `--reduce-motion` (or set `GSV_REDUCE_MOTION=1`) to
 disable canvas entrance motion.
 
+To review the shared Android/Desktop procedural visuals without starting a gateway or any local
+helpers:
+
+```bash
+cargo run --manifest-path host/Cargo.toml --package desktop -- --visuals
+```
+
+Choose a state along the bottom, or use the left/right arrow keys and Space. Ship states support
+horizontal orbit and vertical elevation by dragging the render; press `R` to restore its authored
+view. The review surface renders the canonical `visuals/shaders/assistant.agsl` program through the
+Rust GPU engine and reports its render time and internal resolution in the lower-right corner.
+
 To connect to GSV instead, omit `--demo`. Desktop uses the shared `gateway-client` and `host-config`
 crates, reads the normal CLI config at `~/.config/gsv/config.toml`, and chooses the most recently
 active interactive process. If none exists, it starts one.
