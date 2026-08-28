@@ -1270,8 +1270,8 @@ float4 shipPropulsionField(
         return float4(0.0);
     }
 
-    float3 sourceObject = float3(0.0, 0.555, -0.012);
-    float3 wakeObject = float3(0.0, 1.145, -0.012);
+    float3 sourceObject = float3(0.0, 0.558, -0.012);
+    float3 wakeObject = float3(0.0, 0.905, -0.012);
     float2 source = projectShipPoint(
         sourceObject,
         phase,
@@ -1287,9 +1287,9 @@ float4 shipPropulsionField(
         cameraScale
     );
     float2 span = wakeEnd - source;
-    float spanLengthSquared = max(dot(span, span), 0.0001);
-    float progress = clamp(dot(uv - source, span) / spanLengthSquared, 0.0, 1.0);
-    float2 nearest = source + span * progress;
+    float spanLength = max(length(span), 0.001);
+    float2 tangent = span / spanLength;
+    float2 transverseAxis = float2(-tangent.y, tangent.x);
 
     float transverseScale = max(
         length(
@@ -1312,82 +1312,91 @@ float4 shipPropulsionField(
         )
     );
     transverseScale = max(transverseScale, 0.0025);
-    float wakeWidth = transverseScale * mix(
-        0.42,
-        2.55,
-        pow(progress, 0.78)
-    );
-    float radial = length(uv - nearest) / max(wakeWidth, 0.001);
-    float axialFade = pow(max(1.0 - progress, 0.0), 0.68);
-    float flow = 0.76 + 0.24 * pow(
-        0.5 + 0.5 * sin(phase * 18.0 - progress * 34.0),
-        3.0
-    );
+    float2 fieldPoint = uv - source;
+    float longitudinal = dot(fieldPoint, tangent) / spanLength;
+    float transverse = dot(fieldPoint, transverseAxis) / transverseScale;
+    float progress = clamp(longitudinal, 0.0, 1.0);
+    float sourceRadius = length(fieldPoint) /
+        max(transverseScale * 0.84, 0.001);
+    float lensRadius = 0.78 + 0.055 * sin(phase * 8.0);
+    float driveLens = exp(-abs(sourceRadius - lensRadius) * 7.5);
+    float sourceBloom = exp(-sourceRadius * sourceRadius * 1.7);
+
+    float meander = 0.16 * sin(
+        longitudinal * 10.0 - phase * 5.0
+    ) + 0.07 * sin(longitudinal * 17.0 + phase * 7.0);
+    float pressureWidth = 1.05 + progress * 1.75;
+    float normalizedTransverse =
+        (transverse - meander) / pressureWidth;
+    float axialWindow = smoothstep(-0.10, 0.08, longitudinal) *
+        (1.0 - smoothstep(0.62, 1.10, longitudinal));
+    float pressureBody = exp(
+        -normalizedTransverse * normalizedTransverse * 1.55
+    ) * axialWindow;
     float turbulence = 0.90 + 0.10 * spatialGrain(
         uv * iResolution.x * 0.17 +
             float2(phase * 11.0, -phase * 7.0)
     );
-    float halo = exp(-radial * radial * 1.42) * axialFade * turbulence;
-    float core = exp(-radial * radial * 6.8) *
-        pow(max(1.0 - progress, 0.0), 0.42) * flow;
-    float rippleRadius = 0.72 + 0.10 * sin(
-        phase * 6.0 - progress * 13.0
+    float breakup = 0.45 + 0.55 * smoothstep(
+        0.16,
+        0.86,
+        0.5 + 0.5 * sin(
+            longitudinal * 18.0 - phase * 8.0 + transverse * 0.72
+        )
     );
-    float ripple = exp(-abs(radial - rippleRadius) * 9.0) *
-        pow(max(1.0 - progress, 0.0), 1.18);
+    pressureBody *= breakup * turbulence;
 
-    float2 portSource = projectShipPoint(
-        float3(-0.020, 0.558, -0.012),
-        phase,
-        cameraDistance,
-        focalLength,
-        cameraScale
+    float firstShellCoordinate = sqrt(
+        pow(longitudinal / 0.34, 2.0) +
+            pow(transverse / 2.15, 2.0)
     );
-    float2 starboardSource = projectShipPoint(
-        float3(0.020, 0.558, -0.012),
-        phase,
-        cameraDistance,
-        focalLength,
-        cameraScale
+    float secondShellCoordinate = sqrt(
+        pow(longitudinal / 0.68, 2.0) +
+            pow(transverse / 3.10, 2.0)
     );
-    float2 portEnd = projectShipPoint(
-        float3(-0.058, 1.045, -0.012),
-        phase,
-        cameraDistance,
-        focalLength,
-        cameraScale
+    float shellGate = smoothstep(-0.08, 0.045, longitudinal) *
+        (1.0 - smoothstep(0.88, 1.12, longitudinal));
+    float firstShell = exp(-abs(
+        firstShellCoordinate -
+            (0.88 + 0.055 * sin(phase * 6.0))
+    ) * 8.5);
+    float secondShell = exp(-abs(
+        secondShellCoordinate -
+            (0.96 + 0.045 * sin(phase * 4.0 + 1.2))
+    ) * 9.5);
+    float distortionShells = max(
+        firstShell * 0.82,
+        secondShell * 0.62
+    ) * shellGate * turbulence;
+    float shellBreak = smoothstep(
+        0.24,
+        0.76,
+        0.5 + 0.5 * sin(
+            transverse * 2.8 + longitudinal * 11.0 - phase * 5.0
+        )
     );
-    float2 starboardEnd = projectShipPoint(
-        float3(0.058, 1.045, -0.012),
-        phase,
-        cameraDistance,
-        focalLength,
-        cameraScale
-    );
-    float filamentDistance = min(
-        lineSegmentDistance(uv, portSource, portEnd),
-        lineSegmentDistance(uv, starboardSource, starboardEnd)
-    );
-    float filament = exp(
-        -pow(filamentDistance / max(transverseScale * 0.19, 0.001), 2.0) * 2.6
-    ) * pow(max(1.0 - progress, 0.0), 0.48) * flow;
+    distortionShells *= 0.58 + shellBreak * 0.42;
 
     float wakeAlpha = clamp(
         power * (
-            halo * 0.16 + core * 0.34 +
-                ripple * 0.075 + filament * 0.30
+            sourceBloom * 0.12 + driveLens * 0.30 +
+                pressureBody * 0.105 + distortionShells * 0.15
         ),
         0.0,
-        0.72
+        0.48
     );
     float3 driveViolet = mix(
         iAccent.rgb,
-        float3(0.43, 0.25, 1.0),
-        0.36
+        float3(0.40, 0.22, 0.94),
+        0.28
     );
-    float3 driveWhite = float3(0.84, 0.82, 1.0);
-    float whitening = clamp(core * 0.82 + filament * 0.66, 0.0, 1.0);
-    float3 wakeColor = mix(driveViolet, driveWhite, whitening);
+    float3 lensLight = float3(0.66, 0.59, 0.94);
+    float whitening = clamp(
+        driveLens * 0.36 + distortionShells * 0.14,
+        0.0,
+        0.48
+    );
+    float3 wakeColor = mix(driveViolet, lensLight, whitening);
     return float4(wakeColor * wakeAlpha, wakeAlpha);
 }
 
