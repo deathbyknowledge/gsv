@@ -6,6 +6,7 @@ plugins {
 val gestureHostDir = rootProject.layout.projectDirectory.dir("../host")
 val gestureModelsDir = gestureHostDir.dir("helpers/gestures/models")
 val gestureJniDir = layout.buildDirectory.dir("generated/gesture/jniLibs")
+val visualShadersDir = rootProject.layout.projectDirectory.dir("../visuals/shaders")
 
 val buildGestureNative by tasks.registering(Exec::class) {
     inputs.files(
@@ -64,6 +65,7 @@ android {
     sourceSets {
         getByName("main") {
             assets.directories.add(gestureModelsDir.asFile.absolutePath)
+            assets.directories.add(visualShadersDir.asFile.absolutePath)
             jniLibs.directories.add(gestureJniDir.get().asFile.absolutePath)
         }
     }
