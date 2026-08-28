@@ -48,6 +48,11 @@ enum class OrbShapeTarget(
     ),
 }
 
+enum class ShipRenderMode {
+    PHYSICAL,
+    HOLOGRAM,
+}
+
 private val OrbShapeVectorConverter = TwoWayConverter<OrbShapeParameters, AnimationVector4D>(
     convertToVector = { parameters ->
         AnimationVector4D(

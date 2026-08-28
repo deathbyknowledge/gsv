@@ -5,6 +5,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -53,6 +54,7 @@ import com.humansandmachines.gsv.wear.R
 import com.humansandmachines.gsv.wear.voice.VoiceTurnState
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 @Composable
@@ -64,6 +66,7 @@ fun AssistantCore(
     accentOverride: Color? = null,
     shipOrbitRadians: Float = 0f,
     shipElevationOffsetRadians: Float = 0f,
+    shipRenderMode: ShipRenderMode = ShipRenderMode.PHYSICAL,
 ) {
     val transition = rememberInfiniteTransition(label = "assistant-engine")
     val phase by transition.animateFloat(
@@ -99,6 +102,22 @@ fun AssistantCore(
         animationSpec = tween(480, easing = FastOutSlowInEasing),
         label = "assistant-accent",
     )
+    val shipMaterialization = remember {
+        Animatable(if (shipRenderMode == ShipRenderMode.PHYSICAL) 1f else 0f)
+    }
+    LaunchedEffect(shipRenderMode) {
+        val target = if (shipRenderMode == ShipRenderMode.PHYSICAL) 1f else 0f
+        val remainingDistance = abs(target - shipMaterialization.value)
+        shipMaterialization.animateTo(
+            targetValue = target,
+            animationSpec = tween(
+                durationMillis = (
+                    SHIP_MATERIALIZATION_MILLIS * remainingDistance
+                ).roundToInt().coerceAtLeast(1),
+                easing = LinearOutSlowInEasing,
+            ),
+        )
+    }
     val shapeParameters = rememberOrbShapeParameters(shapeTarget)
     val liquidParameters = rememberAssistantLiquidParameters(state)
     val loopPhase = phase / 12f * PI.toFloat() * 2f
@@ -132,6 +151,7 @@ fun AssistantCore(
             liquidParameters = liquidParameters,
             shipOrbitRadians = shipOrbitRadians,
             shipElevationOffsetRadians = shipElevationOffsetRadians,
+            shipMaterialization = shipMaterialization.value,
             modifier = Modifier.fillMaxSize(),
         )
     }
@@ -139,6 +159,7 @@ fun AssistantCore(
 
 private const val SPEAKING_ATTACK_MILLIS = 240
 private const val SPEAKING_RELEASE_MILLIS = 520
+private const val SHIP_MATERIALIZATION_MILLIS = 1_800
 
 @Composable
 fun AssistantSurface(
