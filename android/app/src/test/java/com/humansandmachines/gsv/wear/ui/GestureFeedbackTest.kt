@@ -8,7 +8,7 @@ class GestureFeedbackTest {
     fun sparseRecognitionSamplesKeepAdvancingTowardConfirmation() {
         assertEquals(350, gestureEvidenceAdvanceDurationMillis(0f))
         assertEquals(231, gestureEvidenceAdvanceDurationMillis(0.34f))
-        assertEquals(109, gestureEvidenceAdvanceDurationMillis(0.69f))
-        assertEquals(45, gestureEvidenceAdvanceDurationMillis(1f))
+        assertEquals(140, gestureEvidenceAdvanceDurationMillis(0.69f))
+        assertEquals(140, gestureEvidenceAdvanceDurationMillis(1f))
     }
 }

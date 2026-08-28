@@ -520,7 +520,7 @@ private fun MindGestureFeedback(
             evidence.animateTo(0f, tween(GESTURE_COMMIT_RELEASE_MILLIS, easing = FastOutSlowInEasing))
         } else if (snapshot.state == GestureLinkState.TRACKING) {
             evidence.animateTo(
-                GESTURE_EVIDENCE_CEILING,
+                1f,
                 tween(
                     gestureEvidenceAdvanceDurationMillis(snapshot.progress),
                     easing = LinearEasing,
@@ -573,11 +573,11 @@ internal fun gestureEvidenceAdvanceDurationMillis(progress: Float): Int =
             GESTURE_EVIDENCE_COMPLETION_HORIZON_MILLIS,
         )
 
-// These values extrapolate presentation only. The Rust gesture engine remains
-// the sole authority for evidence loss and semantic completion.
-private const val GESTURE_EVIDENCE_CEILING = 0.94f
+// These timings extrapolate presentation only. The Rust gesture engine remains
+// the sole authority for evidence loss and semantic completion; the commit glow
+// distinguishes accepted input from an in-progress ring reaching its endpoint.
 private const val GESTURE_EVIDENCE_COMPLETION_HORIZON_MILLIS = 350
-private const val GESTURE_EVIDENCE_MIN_ADVANCE_MILLIS = 45
+private const val GESTURE_EVIDENCE_MIN_ADVANCE_MILLIS = 140
 private const val GESTURE_EVIDENCE_RETREAT_MILLIS = 150
 private const val GESTURE_COMMIT_HOLD_MILLIS = 80L
 private const val GESTURE_COMMIT_RELEASE_MILLIS = 260
