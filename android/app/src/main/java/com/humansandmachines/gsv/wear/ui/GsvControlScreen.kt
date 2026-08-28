@@ -99,6 +99,9 @@ internal fun shipRenderModeFor(authority: AuthorityState): ShipRenderMode =
         ShipRenderMode.PHYSICAL
     }
 
+internal fun shipPropulsionActiveFor(authority: AuthorityState): Boolean =
+    authority == AuthorityState.ARMED
+
 @Composable
 fun GsvControlScreen(
     wearSnapshot: RuntimeSnapshot,
@@ -147,6 +150,10 @@ fun GsvControlScreen(
             modifier = Modifier.fillMaxSize(),
             horizontalParallax = sin(shipOrbitRadians),
             verticalParallax = sin(shipElevationRadians - DEFAULT_SHIP_ELEVATION_RADIANS),
+            shipOrbitRadians = shipOrbitRadians,
+            shipElevationOffsetRadians =
+                shipElevationRadians - DEFAULT_SHIP_ELEVATION_RADIANS,
+            propulsionActive = shipPropulsionActiveFor(wearSnapshot.authority),
         )
         LiveSurface(
             selected = selected,
@@ -409,6 +416,7 @@ private fun LiveCore(
                 shipElevationOffsetRadians =
                     shipElevationRadians - DEFAULT_SHIP_ELEVATION_RADIANS,
                 shipRenderMode = shipRenderModeFor(wearAuthority),
+                shipPropulsionActive = shipPropulsionActiveFor(wearAuthority),
                 exposeStateSemantics = false,
                 modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
             )

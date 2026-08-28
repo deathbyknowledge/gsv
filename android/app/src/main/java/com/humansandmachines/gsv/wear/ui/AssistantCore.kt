@@ -64,6 +64,7 @@ fun AssistantCore(
     shipOrbitRadians: Float = 0f,
     shipElevationOffsetRadians: Float = 0f,
     shipRenderMode: ShipRenderMode = ShipRenderMode.PHYSICAL,
+    shipPropulsionActive: Boolean = false,
     exposeStateSemantics: Boolean = true,
 ) {
     val phase = rememberVisualLoopFraction(
@@ -113,6 +114,27 @@ fun AssistantCore(
             ),
         )
     }
+    val shipPropulsion = remember {
+        Animatable(if (shipPropulsionActive) 1f else 0f)
+    }
+    LaunchedEffect(shipPropulsionActive) {
+        val target = if (shipPropulsionActive) 1f else 0f
+        val remainingDistance = abs(target - shipPropulsion.value)
+        val fullDuration = if (shipPropulsionActive) {
+            SHIP_PROPULSION_IGNITION_MILLIS
+        } else {
+            SHIP_PROPULSION_SHUTDOWN_MILLIS
+        }
+        shipPropulsion.animateTo(
+            targetValue = target,
+            animationSpec = tween(
+                durationMillis = (fullDuration * remainingDistance)
+                    .roundToInt()
+                    .coerceAtLeast(1),
+                easing = FastOutSlowInEasing,
+            ),
+        )
+    }
     val shapeParameters = rememberOrbShapeParameters(shapeTarget)
     val liquidParameters = rememberAssistantLiquidParameters(state)
     val loopPhase = phase / 12f * PI.toFloat() * 2f
@@ -152,6 +174,7 @@ fun AssistantCore(
             shipOrbitRadians = shipOrbitRadians,
             shipElevationOffsetRadians = shipElevationOffsetRadians,
             shipMaterialization = shipMaterialization.value,
+            shipPropulsion = shipPropulsion.value,
             modifier = Modifier.fillMaxSize(),
         )
     }
@@ -159,6 +182,8 @@ fun AssistantCore(
 
 private const val SPEAKING_ATTACK_MILLIS = 240
 private const val SPEAKING_RELEASE_MILLIS = 520
+private const val SHIP_PROPULSION_IGNITION_MILLIS = 1_100
+private const val SHIP_PROPULSION_SHUTDOWN_MILLIS = 780
 private const val ASSISTANT_LOOP_SECONDS = 12f
 private const val ASSISTANT_LOOP_NANOS = 12_000_000_000L
 

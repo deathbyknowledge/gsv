@@ -2,6 +2,8 @@ package com.humansandmachines.gsv.wear.ui
 
 import com.humansandmachines.gsv.wear.authority.AuthorityState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OrbShapeTest {
@@ -33,5 +35,12 @@ class OrbShapeTest {
             ShipRenderMode.PHYSICAL,
             shipRenderModeFor(AuthorityState.PAUSED),
         )
+    }
+
+    @Test
+    fun shipPropulsionRunsOnlyWhileWearAuthorityIsArmed() {
+        assertFalse(shipPropulsionActiveFor(AuthorityState.DISARMED))
+        assertTrue(shipPropulsionActiveFor(AuthorityState.ARMED))
+        assertFalse(shipPropulsionActiveFor(AuthorityState.PAUSED))
     }
 }
