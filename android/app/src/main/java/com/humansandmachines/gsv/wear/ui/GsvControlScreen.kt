@@ -6,13 +6,9 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -731,13 +727,7 @@ private fun LiveBackdrop(
     modifier: Modifier = Modifier,
     quiet: Boolean = false,
 ) {
-    val transition = rememberInfiniteTransition(label = "living-surface")
-    val phase by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = PI.toFloat() * 2f,
-        animationSpec = infiniteRepeatable(tween(24_000, easing = LinearEasing)),
-        label = "living-surface-phase",
-    )
+    val phase = rememberVisualLoopFraction(24_000_000_000L) * PI.toFloat() * 2f
     Canvas(modifier) {
         drawRect(
             brush = Brush.verticalGradient(

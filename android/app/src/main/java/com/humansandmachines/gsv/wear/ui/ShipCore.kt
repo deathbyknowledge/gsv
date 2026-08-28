@@ -3,10 +3,6 @@ package com.humansandmachines.gsv.wear.ui
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
@@ -57,13 +53,7 @@ fun ShipCore(
     val activation = remember { Animatable(if (authority == AuthorityState.DISARMED) 0f else 1f) }
     var previous by remember { mutableStateOf(authority) }
     var activating by remember { mutableStateOf(false) }
-    val ambient = rememberInfiniteTransition(label = "ship-engine")
-    val phase by ambient.animateFloat(
-        initialValue = 0f,
-        targetValue = PI.toFloat() * 2f,
-        animationSpec = infiniteRepeatable(tween(8_000, easing = LinearEasing)),
-        label = "ship-engine-phase",
-    )
+    val phase = rememberVisualLoopFraction(8_000_000_000L) * PI.toFloat() * 2f
 
     LaunchedEffect(authority) {
         val justArmed = previous == AuthorityState.DISARMED && authority == AuthorityState.ARMED
