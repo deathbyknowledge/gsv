@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.SystemClock
 import android.util.Log
 import android.util.Size
+import android.view.Choreographer
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -281,8 +282,26 @@ internal class MindGestureController(
             commitSequence = mutableSnapshot.value.commitSequence + 1,
             lastCommit = intent,
         )
+        dispatchCommand(GestureCommand(intent, result.voiceRequestId))
+    }
+
+    private fun dispatchCommand(command: GestureCommand) {
         mainExecutor.execute {
-            if (shouldRun()) onCommand(GestureCommand(intent, result.voiceRequestId))
+            if (!shouldRun()) return@execute
+            if (command.intent != MindGestureIntent.START) {
+                onCommand(command)
+                return@execute
+            }
+
+            val dispatchGeneration = generation
+            val choreographer = Choreographer.getInstance()
+            // Let the committed snapshot draw once before microphone startup can
+            // contend with the acknowledgement frame.
+            choreographer.postFrameCallback {
+                choreographer.postFrameCallback {
+                    if (shouldRun() && generation == dispatchGeneration) onCommand(command)
+                }
+            }
         }
     }
 

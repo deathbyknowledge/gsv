@@ -5,10 +5,10 @@ import org.junit.Test
 
 class GestureFeedbackTest {
     @Test
-    fun sparseRecognitionSamplesProjectIntoContinuousVisualEvidence() {
-        assertEquals(0f, projectedGestureEvidence(0f), 0.001f)
-        assertEquals(0.58f, projectedGestureEvidence(0.34f), 0.001f)
-        assertEquals(0.93f, projectedGestureEvidence(0.69f), 0.001f)
-        assertEquals(0.94f, projectedGestureEvidence(1f), 0.001f)
+    fun sparseRecognitionSamplesKeepAdvancingTowardConfirmation() {
+        assertEquals(350, gestureEvidenceAdvanceDurationMillis(0f))
+        assertEquals(231, gestureEvidenceAdvanceDurationMillis(0.34f))
+        assertEquals(109, gestureEvidenceAdvanceDurationMillis(0.69f))
+        assertEquals(45, gestureEvidenceAdvanceDurationMillis(1f))
     }
 }
