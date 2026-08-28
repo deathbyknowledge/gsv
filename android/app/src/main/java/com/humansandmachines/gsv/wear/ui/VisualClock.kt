@@ -1,12 +1,12 @@
 package com.humansandmachines.gsv.wear.ui
 
+import androidx.compose.animation.core.withInfiniteAnimationFrameNanos
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import com.humansandmachines.gsv.wear.voice.VoiceTurnState
 
 internal const val ACTIVE_VISUAL_FRAME_INTERVAL_NANOS = 16_666_667L
@@ -33,9 +33,9 @@ internal fun rememberVisualLoopFraction(
     LaunchedEffect(durationNanos, frameIntervalNanos) {
         var renderedTick = -1L
         while (true) {
-            val frameTimeNanos = withFrameNanos { it }
+            val frameTimeNanos = withInfiniteAnimationFrameNanos { it }
             val elapsedNanos = (frameTimeNanos - phaseOriginNanos).coerceAtLeast(0L)
-            val tick = elapsedNanos / frameIntervalNanos
+            val tick = frameTimeNanos / frameIntervalNanos
             if (tick != renderedTick) {
                 phase = (elapsedNanos % durationNanos).toFloat() / durationNanos
                 renderedTick = tick
