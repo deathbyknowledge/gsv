@@ -74,6 +74,7 @@ import com.humansandmachines.gsv.wear.voice.VoiceTurnState
 import kotlinx.coroutines.delay
 import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 data class ControlUiState(
@@ -514,25 +515,17 @@ private fun MindGestureFeedback(
     LaunchedEffect(snapshot.state, snapshot.progress, snapshot.commitSequence) {
         if (snapshot.commitSequence != evidenceCommitSequence) {
             evidenceCommitSequence = snapshot.commitSequence
-            val remaining = (1f - evidence.value).coerceIn(0f, 1f)
-            val fillMillis = (GESTURE_COMMIT_FILL_MILLIS * remaining)
-                .toInt()
-                .coerceAtLeast(GESTURE_COMMIT_MIN_FILL_MILLIS)
-            evidence.animateTo(1f, tween(fillMillis, easing = LinearEasing))
+            evidence.snapTo(1f)
+            delay(GESTURE_COMMIT_HOLD_MILLIS)
             evidence.animateTo(0f, tween(GESTURE_COMMIT_RELEASE_MILLIS, easing = FastOutSlowInEasing))
         } else if (snapshot.state == GestureLinkState.TRACKING) {
-            val target = projectedGestureEvidence(snapshot.progress)
-            if (target >= evidence.value) {
-                evidence.animateTo(
-                    target,
-                    tween(GESTURE_EVIDENCE_ADVANCE_MILLIS, easing = LinearEasing),
-                )
-            } else {
-                evidence.animateTo(
-                    target,
-                    tween(GESTURE_EVIDENCE_RETREAT_MILLIS, easing = FastOutSlowInEasing),
-                )
-            }
+            evidence.animateTo(
+                GESTURE_EVIDENCE_CEILING,
+                tween(
+                    gestureEvidenceAdvanceDurationMillis(snapshot.progress),
+                    easing = LinearEasing,
+                ),
+            )
         } else {
             evidence.animateTo(
                 0f,
@@ -572,18 +565,21 @@ private fun MindGestureFeedback(
     }
 }
 
-internal fun projectedGestureEvidence(progress: Float): Float {
-    val bounded = progress.coerceIn(0f, 1f)
-    if (bounded == 0f) return 0f
-    return (bounded + GESTURE_EVIDENCE_LOOKAHEAD).coerceAtMost(GESTURE_EVIDENCE_CEILING)
-}
+internal fun gestureEvidenceAdvanceDurationMillis(progress: Float): Int =
+    (GESTURE_EVIDENCE_COMPLETION_HORIZON_MILLIS * (1f - progress.coerceIn(0f, 1f)))
+        .roundToInt()
+        .coerceIn(
+            GESTURE_EVIDENCE_MIN_ADVANCE_MILLIS,
+            GESTURE_EVIDENCE_COMPLETION_HORIZON_MILLIS,
+        )
 
-private const val GESTURE_EVIDENCE_LOOKAHEAD = 0.24f
+// These values extrapolate presentation only. The Rust gesture engine remains
+// the sole authority for evidence loss and semantic completion.
 private const val GESTURE_EVIDENCE_CEILING = 0.94f
-private const val GESTURE_EVIDENCE_ADVANCE_MILLIS = 240
+private const val GESTURE_EVIDENCE_COMPLETION_HORIZON_MILLIS = 350
+private const val GESTURE_EVIDENCE_MIN_ADVANCE_MILLIS = 45
 private const val GESTURE_EVIDENCE_RETREAT_MILLIS = 150
-private const val GESTURE_COMMIT_FILL_MILLIS = 120
-private const val GESTURE_COMMIT_MIN_FILL_MILLIS = 45
+private const val GESTURE_COMMIT_HOLD_MILLIS = 80L
 private const val GESTURE_COMMIT_RELEASE_MILLIS = 260
 
 @Composable
