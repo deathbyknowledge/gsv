@@ -287,6 +287,7 @@ private fun configureAssistantLiquidShader(
         liquidParameters.internalActivity.coerceIn(0f, 1f),
         liquidParameters.projection.coerceIn(0f, 1f),
     )
+    shader.setFloatUniform("iActivity", 0f, 0f, 0f, 0f)
     shader.setFloatUniform(
         "iShipView",
         shipOrbitRadians,

@@ -12,6 +12,7 @@ use wgpu::util::DeviceExt;
 const LOOP_SECONDS: f32 = 12.0;
 const ACCENT: [f32; 4] = [0.702, 0.682, 1.0, 1.0];
 const VIOLET: [f32; 4] = [0.561, 0.541, 1.0, 1.0];
+const READING_BLUE: [f32; 4] = [0.596, 0.710, 1.0, 1.0];
 const BLUE: [f32; 4] = [0.561, 0.714, 1.0, 1.0];
 
 const FULLSCREEN_VERTEX_SHADER: &str = r#"
@@ -30,6 +31,7 @@ fn main(@builtin(vertex_index) vertex_index: u32) -> @builtin(position) vec4<f32
 pub enum VisualPreset {
     Listening,
     Thinking,
+    Reading,
     Speaking,
     ShipHologram,
     ShipPhysical,
@@ -37,9 +39,10 @@ pub enum VisualPreset {
 }
 
 impl VisualPreset {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Listening,
         Self::Thinking,
+        Self::Reading,
         Self::Speaking,
         Self::ShipHologram,
         Self::ShipPhysical,
@@ -50,6 +53,7 @@ impl VisualPreset {
         match self {
             Self::Listening => "LISTENING",
             Self::Thinking => "THINKING",
+            Self::Reading => "READING",
             Self::Speaking => "SPEAKING",
             Self::ShipHologram => "SHIP // DISARMED",
             Self::ShipPhysical => "SHIP // PHYSICAL",
@@ -184,6 +188,7 @@ struct VisualUniforms {
     accent: [f32; 4],
     shape: [f32; 4],
     behavior: [f32; 4],
+    activity: [f32; 4],
     ship_view_materialization_propulsion: [f32; 4],
 }
 
@@ -192,6 +197,7 @@ struct VisualRecipe {
     accent: [f32; 4],
     shape: [f32; 4],
     behavior: [f32; 4],
+    activity: [f32; 4],
     materialization: f32,
     propulsion: f32,
 }
@@ -204,6 +210,7 @@ impl VisualRecipe {
                 accent: ACCENT,
                 shape: listening_shape,
                 behavior: [0.0, 0.0, 0.0, 0.0],
+                activity: [0.0; 4],
                 materialization: 1.0,
                 propulsion: 0.0,
             },
@@ -211,6 +218,15 @@ impl VisualRecipe {
                 accent: VIOLET,
                 shape: listening_shape,
                 behavior: [1.0, 1.0, 1.0, 0.0],
+                activity: [0.0; 4],
+                materialization: 1.0,
+                propulsion: 0.0,
+            },
+            VisualPreset::Reading => Self {
+                accent: READING_BLUE,
+                shape: [0.78, 0.0, 0.0, 0.92],
+                behavior: [0.34, 0.38, 0.72, 0.0],
+                activity: [1.0, 0.0, 0.0, 0.0],
                 materialization: 1.0,
                 propulsion: 0.0,
             },
@@ -218,6 +234,7 @@ impl VisualRecipe {
                 accent: BLUE,
                 shape: listening_shape,
                 behavior: [0.0, 0.32, 0.82, 1.0],
+                activity: [0.0; 4],
                 materialization: 1.0,
                 propulsion: 0.0,
             },
@@ -225,6 +242,7 @@ impl VisualRecipe {
                 accent: ACCENT,
                 shape: [1.0, 0.0, 1.0, 0.92],
                 behavior: [0.0, 0.0, 0.0, 0.0],
+                activity: [0.0; 4],
                 materialization: 0.0,
                 propulsion: 0.0,
             },
@@ -232,6 +250,7 @@ impl VisualRecipe {
                 accent: ACCENT,
                 shape: [1.0, 0.0, 1.0, 0.92],
                 behavior: [0.0, 0.0, 0.0, 0.0],
+                activity: [0.0; 4],
                 materialization: 1.0,
                 propulsion: 0.0,
             },
@@ -239,6 +258,7 @@ impl VisualRecipe {
                 accent: ACCENT,
                 shape: [1.0, 0.0, 1.0, 0.92],
                 behavior: [0.0, 0.0, 0.0, 0.0],
+                activity: [0.0; 4],
                 materialization: 1.0,
                 propulsion: 1.0,
             },
@@ -250,6 +270,7 @@ impl VisualRecipe {
         lerp_slice(&mut self.accent, target.accent, blend);
         lerp_slice(&mut self.shape, target.shape, blend);
         lerp_slice(&mut self.behavior, target.behavior, blend);
+        lerp_slice(&mut self.activity, target.activity, blend);
         self.materialization +=
             (target.materialization - self.materialization) * (1.0 - (-delta_seconds * 2.6).exp());
         self.propulsion +=
@@ -534,6 +555,10 @@ fn render_loop(
                 0.25 + 0.11 * (loop_phase * 2.0).sin().abs()
                     + 0.05 * (loop_phase * 3.0 + 0.9).sin().abs()
             }
+            VisualPreset::Reading => {
+                0.18 + 0.10 * (loop_phase * 3.0).sin().abs()
+                    + 0.04 * (loop_phase * 5.0 + 0.7).sin().abs()
+            }
             VisualPreset::Speaking => {
                 let carrier = (phase * 5.7).sin() * 0.5 + (phase * 11.3 + 0.8).sin() * 0.3;
                 (0.42 + carrier.abs() * 0.58).clamp(0.0, 1.0)
@@ -546,6 +571,7 @@ fn render_loop(
             accent: recipe.accent,
             shape: recipe.shape,
             behavior: recipe.behavior,
+            activity: recipe.activity,
             ship_view_materialization_propulsion: [
                 orbit,
                 elevation,
