@@ -196,6 +196,7 @@ import {
   buildProcContextState,
   measureContextInputTokens,
 } from "./context-pressure";
+import { deriveGenerationContextId } from "./context-message-metadata";
 import {
   hasWorkersAiModelPricing,
   isWorkersAiProvider,
@@ -318,6 +319,7 @@ type RunState = {
   mcpServers?: string[];
   systemPrompt?: string;
   contextEpochId?: string;
+  generationContextId?: string;
   approvalPolicy?: ToolApprovalPolicy;
   outputMedia?: RunOutputMedia[];
   stagedOutputMediaKeys?: string[];
@@ -823,6 +825,7 @@ const runStateSchema: z.ZodType<RunState> = z.object({
   mcpServers: z.array(z.string()).optional(),
   systemPrompt: z.string().optional(),
   contextEpochId: z.string().optional(),
+  generationContextId: z.string().optional(),
   approvalPolicy: toolApprovalPolicySchema.optional(),
   outputMedia: z.array(runOutputMediaSchema).optional(),
   stagedOutputMediaKeys: z.array(z.string()).optional(),
@@ -1259,6 +1262,7 @@ function buildAssistantMessageMetadata(
   config: AiConfigResult,
   fallback?: MessageMetadata["fallback"],
   contextEpochId?: string,
+  generationContextId?: string,
 ): MessageMetadata | undefined {
   const usage = assistantUsageToProcUsageState(
     response.usage,
@@ -1266,6 +1270,7 @@ function buildAssistantMessageMetadata(
   );
   const metadata = normalizeMessageMetadata({
     contextEpochId,
+    generationContextId,
     provider: {
       api: response.api,
       provider: response.provider || config.provider,
@@ -4284,6 +4289,7 @@ export class Process extends DurableObject<ProcessEnv> {
         if (options.activeRunId && this.currentRun?.runId === options.activeRunId) {
           delete this.currentRun.systemPrompt;
           delete this.currentRun.contextEpochId;
+          delete this.currentRun.generationContextId;
         }
         installed = true;
       } finally {
@@ -5931,6 +5937,9 @@ export class Process extends DurableObject<ProcessEnv> {
 
     if (!epoch) throw new Error("Context epoch was not created");
     run.systemPrompt = epoch.systemPrompt;
+    if (run.contextEpochId !== epoch.id) {
+      delete run.generationContextId;
+    }
     run.contextEpochId = epoch.id;
     this.currentRun = run;
     return epoch;
@@ -6254,11 +6263,24 @@ export class Process extends DurableObject<ProcessEnv> {
         const generationSystemPrompt = run.returnToCaller
           ? `${epoch.systemPrompt}\n\n${GSV_DELEGATED_TASK_CONTEXT}`
           : epoch.systemPrompt;
+        const generationContextId = await deriveGenerationContextId(
+          epoch.id,
+          generationSystemPrompt,
+          tools.length > 0 ? tools : undefined,
+        );
+        if (this.handleRunStopped(runId)) {
+          return null;
+        }
+        run.generationContextId = generationContextId;
+        this.currentRun = run;
         const activeRun = this.killed ? null : this.currentRun;
         const pendingRuntimeEventsInContext = activeRun?.runId === runId
           ? activeRun.pendingRuntimeEvents ?? 0
           : 0;
-        const messages = await this.buildContextMessages(epoch.id);
+        const messages = await this.buildContextMessages(
+          epoch.id,
+          generationContextId,
+        );
         this.consumeRuntimeEventsInContext(runId, pendingRuntimeEventsInContext);
         attributes = {
           messages: messages.length,
@@ -6740,6 +6762,7 @@ export class Process extends DurableObject<ProcessEnv> {
       activeConfig,
       activeFallbackMetadata,
       run.contextEpochId,
+      run.generationContextId,
     );
     let assistantMessageId: number | null = null;
     this.ctx.storage.transactionSync(() => {
@@ -7775,6 +7798,9 @@ export class Process extends DurableObject<ProcessEnv> {
           model: config.model,
           contextEpochId: this.currentRun?.runId === runId
             ? this.currentRun.contextEpochId
+            : undefined,
+          generationContextId: this.currentRun?.runId === runId
+            ? this.currentRun.generationContextId
             : undefined,
         },
         options.confirmedUsage,
@@ -9192,9 +9218,16 @@ export class Process extends DurableObject<ProcessEnv> {
     }
   }
 
-  private async buildContextMessages(contextEpochId?: string): Promise<Context["messages"]> {
+  private async buildContextMessages(
+    contextEpochId?: string,
+    generationContextId?: string,
+  ): Promise<Context["messages"]> {
     const records = this.store.getMessages({ limit: null });
-    const messages = this.store.toMessages({ limit: null, contextEpochId });
+    const messages = this.store.toMessages({
+      limit: null,
+      contextEpochId,
+      generationContextId,
+    });
     const mediaBudget = { remainingBytes: MAX_PROCESS_MEDIA_READ_BYTES };
 
     for (let index = 0; index < records.length; index += 1) {

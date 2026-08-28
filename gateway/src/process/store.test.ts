@@ -330,7 +330,7 @@ describe("ProcessStore", () => {
       });
     });
 
-    it("exposes assistant usage only inside the exact context epoch", async () => {
+    it("exposes assistant usage only inside the exact generation context", async () => {
       const stub = await getProcessByPid("msg-context-epoch-usage");
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test exercises ProcessStore's provider-accounting projection.
@@ -338,6 +338,7 @@ describe("ProcessStore", () => {
         store.appendMessage("assistant", "old epoch", {
           metadata: {
             contextEpochId: "epoch-a",
+            generationContextId: "generation-context:interactive",
             provider: { provider: "openai", model: "gpt-test" },
             usage: {
               inputTokens: 900,
@@ -351,13 +352,23 @@ describe("ProcessStore", () => {
         });
 
         // SAFETY: both fixtures are assistant records created immediately above.
-        const matching = store.toMessages({ contextEpochId: "epoch-a" })[0] as any;
+        const matching = store.toMessages({
+          contextEpochId: "epoch-a",
+          generationContextId: "generation-context:interactive",
+        })[0] as any;
         // SAFETY: both fixtures are assistant records created immediately above.
         const different = store.toMessages({ contextEpochId: "epoch-b" })[0] as any;
+        // SAFETY: both fixtures are assistant records created immediately above.
+        const delegated = store.toMessages({
+          contextEpochId: "epoch-a",
+          generationContextId: "generation-context:delegated",
+        })[0] as any;
         expect(matching.usage.totalTokens).toBe(1000);
         expect(different.usage.totalTokens).toBe(0);
+        expect(delegated.usage.totalTokens).toBe(0);
         expect(JSON.parse(store.getMessages()[0].metadata)).toMatchObject({
           contextEpochId: "epoch-a",
+          generationContextId: "generation-context:interactive",
         });
       });
     });

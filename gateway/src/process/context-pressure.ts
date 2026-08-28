@@ -10,7 +10,10 @@ import type {
   ProcUsageState,
 } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
-import { assistantContextEpochId } from "./context-message-metadata";
+import {
+  assistantContextEpochId,
+  assistantGenerationContextId,
+} from "./context-message-metadata";
 
 const TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4;
 const TOKEN_ESTIMATE_SAFETY_FACTOR = 1.15;
@@ -35,7 +38,12 @@ export function estimateContextInputTokens(context: Context): number {
 
 export function measureContextInputTokens(
   context: Context,
-  target?: { provider: string; model: string; contextEpochId?: string },
+  target?: {
+    provider: string;
+    model: string;
+    contextEpochId?: string;
+    generationContextId?: string;
+  },
   confirmedUsage?: Usage,
 ): ContextInputMeasurement {
   const estimatedInputTokens = applyEstimateSafety(estimateWholeContextTokens(context));
@@ -89,7 +97,12 @@ export function measureContextInputTokens(
 
 function lastApplicableUsage(
   messages: readonly Message[],
-  target?: { provider: string; model: string; contextEpochId?: string },
+  target?: {
+    provider: string;
+    model: string;
+    contextEpochId?: string;
+    generationContextId?: string;
+  },
 ): { index: number; tokens: number } | null {
   let latestPrefixTimestamp = Number.NEGATIVE_INFINITY;
   let result: { index: number; tokens: number } | null = null;
@@ -103,6 +116,10 @@ function lastApplicableUsage(
         && (
           target.contextEpochId === undefined
           || assistantContextEpochId(message) === target.contextEpochId
+        )
+        && (
+          target.generationContextId === undefined
+          || assistantGenerationContextId(message) === target.generationContextId
         )
       );
       if (

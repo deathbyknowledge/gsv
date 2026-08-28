@@ -41,7 +41,7 @@ import type {
   ThinkingContent,
   ToolCall,
 } from "@earendil-works/pi-ai";
-import { tagAssistantContextEpoch } from "./context-message-metadata";
+import { tagAssistantContextIdentity } from "./context-message-metadata";
 import {
   buildFallbackMediaBlocks,
   describeStoredProcessMedia,
@@ -340,6 +340,7 @@ const fallbackMetadataSchema = z.object({
 });
 const messageMetadataInputSchema = z.object({
   contextEpochId: optionalNonEmptyStringSchema,
+  generationContextId: optionalNonEmptyStringSchema,
   provider: z.unknown().optional(),
   fallback: z.unknown().optional(),
   usage: z.unknown().optional(),
@@ -1517,6 +1518,8 @@ export class ProcessStore {
     offset?: number;
     /** Only usage confirmed against this exact prompt epoch is reusable. */
     contextEpochId?: string;
+    /** Only usage confirmed against this exact system-prompt/tool shape is reusable. */
+    generationContextId?: string;
   }): Message[] {
     const records = this.getMessages(opts);
     const messages: Message[] = [];
@@ -1572,8 +1575,13 @@ export class ProcessStore {
             provider: metadata?.provider?.provider ?? "",
             model: metadata?.provider?.model ?? "",
             usage: usageStateToPiUsage(
-              opts?.contextEpochId === undefined
+              (
+                opts?.contextEpochId === undefined
                 || metadata?.contextEpochId === opts.contextEpochId
+              ) && (
+                opts?.generationContextId === undefined
+                || metadata?.generationContextId === opts.generationContextId
+              )
                 ? metadata?.usage
                 : undefined,
             ),
@@ -1586,7 +1594,11 @@ export class ProcessStore {
           if (metadata?.provider?.responseId) {
             message.responseId = metadata.provider.responseId;
           }
-          tagAssistantContextEpoch(message, metadata?.contextEpochId);
+          tagAssistantContextIdentity(
+            message,
+            metadata?.contextEpochId,
+            metadata?.generationContextId,
+          );
           messages.push(message);
           break;
         }
@@ -1873,11 +1885,13 @@ export function normalizeMessageMetadata(
   const fallback = normalizeFallbackMetadata(parsed.data.fallback);
   const usage = normalizeUsageState(parsed.data.usage);
   const contextEpochId = parsed.data.contextEpochId?.trim() || undefined;
-  if (!contextEpochId && !provider && !fallback && !usage) {
+  const generationContextId = parsed.data.generationContextId?.trim() || undefined;
+  if (!contextEpochId && !generationContextId && !provider && !fallback && !usage) {
     return null;
   }
   const metadata: MessageMetadata = {};
   if (contextEpochId) metadata.contextEpochId = contextEpochId;
+  if (generationContextId) metadata.generationContextId = generationContextId;
   if (provider) metadata.provider = provider;
   if (fallback) metadata.fallback = fallback;
   if (usage) metadata.usage = usage;

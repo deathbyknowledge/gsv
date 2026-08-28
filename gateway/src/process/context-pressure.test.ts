@@ -5,7 +5,7 @@ import {
   estimateContextInputTokens,
   measureContextInputTokens,
 } from "./context-pressure";
-import { tagAssistantContextEpoch } from "./context-message-metadata";
+import { tagAssistantContextIdentity } from "./context-message-metadata";
 
 const USAGE: Usage = {
   input: 920,
@@ -163,7 +163,7 @@ describe("context pressure", () => {
       stopReason: "stop" as const,
       timestamp: 2,
     };
-    tagAssistantContextEpoch(assistant, "epoch-old");
+    tagAssistantContextIdentity(assistant, "epoch-old", "generation-context:ordinary");
     const context: Context = {
       ...BASE_CONTEXT,
       messages: [...BASE_CONTEXT.messages, assistant],
@@ -173,6 +173,38 @@ describe("context pressure", () => {
       provider: "openai",
       model: "gpt-test",
       contextEpochId: "epoch-current",
+    });
+
+    expect(measurement.source).toBe("estimate");
+    expect(measurement.confirmedInputTokens).toBe(0);
+  });
+
+  it("does not reuse usage from a different prompt and tool shape in the same epoch", () => {
+    const assistant = {
+      role: "assistant" as const,
+      content: [{ type: "text" as const, text: "Delegated answer" }],
+      api: "openai-responses",
+      provider: "openai",
+      model: "gpt-test",
+      usage: USAGE,
+      stopReason: "stop" as const,
+      timestamp: 2,
+    };
+    tagAssistantContextIdentity(
+      assistant,
+      "epoch-current",
+      "generation-context:delegated",
+    );
+    const context: Context = {
+      ...BASE_CONTEXT,
+      messages: [...BASE_CONTEXT.messages, assistant],
+    };
+
+    const measurement = measureContextInputTokens(context, {
+      provider: "openai",
+      model: "gpt-test",
+      contextEpochId: "epoch-current",
+      generationContextId: "generation-context:interactive",
     });
 
     expect(measurement.source).toBe("estimate");
