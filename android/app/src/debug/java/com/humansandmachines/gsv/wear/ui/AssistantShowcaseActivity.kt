@@ -400,6 +400,10 @@ private fun ShipReviewSurface() {
             verticalParallax = kotlin.math.sin(
                 shipElevationRadians - DEFAULT_SHIP_ELEVATION_RADIANS,
             ),
+            shipOrbitRadians = shipOrbitRadians,
+            shipElevationOffsetRadians =
+                shipElevationRadians - DEFAULT_SHIP_ELEVATION_RADIANS,
+            propulsionActive = shipRenderMode == ShipRenderMode.PHYSICAL,
         )
         AssistantCore(
             state = VoiceTurnState.LISTENING,
@@ -409,6 +413,7 @@ private fun ShipReviewSurface() {
             shipElevationOffsetRadians =
                 shipElevationRadians - DEFAULT_SHIP_ELEVATION_RADIANS,
             shipRenderMode = shipRenderMode,
+            shipPropulsionActive = shipRenderMode == ShipRenderMode.PHYSICAL,
             modifier = Modifier.fillMaxWidth().height(360.dp).padding(horizontal = 8.dp),
         )
         Text(

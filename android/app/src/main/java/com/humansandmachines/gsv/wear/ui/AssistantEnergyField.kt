@@ -42,6 +42,7 @@ internal fun AssistantEnergyField(
     shipOrbitRadians: Float,
     shipElevationOffsetRadians: Float,
     shipMaterialization: Float,
+    shipPropulsion: Float,
     modifier: Modifier = Modifier,
 ) {
     val assistantShader = rememberRuntimeShader(ASSISTANT_SHADER)
@@ -65,6 +66,7 @@ internal fun AssistantEnergyField(
                 shipOrbitRadians = shipOrbitRadians,
                 shipElevationOffsetRadians = shipElevationOffsetRadians,
                 shipMaterialization = shipMaterialization,
+                shipPropulsion = shipPropulsion,
             )
             drawRect(brush = liquidBrush, blendMode = BlendMode.SrcOver)
         } else if (
@@ -251,6 +253,7 @@ private fun configureAssistantLiquidShader(
     shipOrbitRadians: Float,
     shipElevationOffsetRadians: Float,
     shipMaterialization: Float,
+    shipPropulsion: Float,
 ) {
     shader.setFloatUniform("iResolution", size.width, size.height)
     shader.setFloatUniform("iTime", phaseSeconds)
@@ -278,6 +281,10 @@ private fun configureAssistantLiquidShader(
     shader.setFloatUniform(
         "iShipMaterialization",
         shipMaterialization.coerceIn(0f, 1f),
+    )
+    shader.setFloatUniform(
+        "iShipPropulsion",
+        shipPropulsion.coerceIn(0f, 1f),
     )
 }
 

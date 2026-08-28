@@ -1,6 +1,6 @@
 package com.humansandmachines.gsv.wear.ui
 
-internal const val ASSISTANT_LIQUID_SHADER = """
+private const val ASSISTANT_LIQUID_SHADER_GEOMETRY = """
 uniform float2 iResolution;
 uniform float iTime;
 uniform float iEnergy;
@@ -9,6 +9,7 @@ uniform float4 iShape;
 uniform float4 iBehavior;
 uniform float2 iShipView;
 uniform float iShipMaterialization;
+uniform float iShipPropulsion;
 
 const float PI = 3.14159265359;
 const float TAU = 6.28318530718;
@@ -236,6 +237,37 @@ float3 shipObjectPoint(float3 point, float phase) {
     float3 elevationAxis = normalize(float3(-cameraAxis.y, cameraAxis.x, 0.0));
     shipPoint = rotateAroundAxis(shipPoint, elevationAxis, -iShipView.y);
     return shipPoint;
+}
+
+float3 shipWorldPoint(float3 shipPoint, float phase) {
+    float heading = 1.355 + 0.005 * sin(phase);
+    float sideAngle = 0.300 + 0.006 * sin(phase * 2.0);
+    float elevationAngle = -0.833 + 0.008 * cos(phase);
+    float3 cameraAxis = float3(0.0, 0.0, 1.0);
+    cameraAxis.xy = rotate2(heading, cameraAxis.xy);
+    cameraAxis.yz = rotate2(sideAngle, cameraAxis.yz);
+    cameraAxis.xz = rotate2(elevationAngle, cameraAxis.xz);
+    cameraAxis.xy = rotate2(iShipView.x, cameraAxis.xy);
+    float3 elevationAxis = normalize(float3(-cameraAxis.y, cameraAxis.x, 0.0));
+
+    shipPoint = rotateAroundAxis(shipPoint, elevationAxis, iShipView.y);
+    shipPoint.xy = rotate2(-iShipView.x, shipPoint.xy);
+    shipPoint.xz = rotate2(-elevationAngle, shipPoint.xz);
+    shipPoint.yz = rotate2(-sideAngle, shipPoint.yz);
+    shipPoint.xy = rotate2(-heading, shipPoint.xy);
+    return shipPoint;
+}
+
+float2 projectShipPoint(
+    float3 shipPoint,
+    float phase,
+    float cameraDistance,
+    float focalLength,
+    float cameraScale
+) {
+    float3 worldPoint = shipWorldPoint(shipPoint, phase);
+    float perspective = max(cameraDistance - worldPoint.z, 0.05);
+    return worldPoint.xy * focalLength / (cameraScale * perspective);
 }
 
 float shipHullLongitudinalCoordinate(float longitudinal) {
@@ -851,6 +883,9 @@ float4 shipMembraneField(float3 point, float phase) {
     );
 }
 
+"""
+
+private const val ASSISTANT_LIQUID_SHADER_MATERIAL = """
 float organicDistance(float3 point, float phase, float energy) {
     float3 sourcePoint = point;
     float organicAmount = clamp(iShape.x, 0.0, 1.0);
@@ -1223,6 +1258,139 @@ float spatialGrain(float2 coordinate) {
     return fract(cell.x * cell.y * 95.4337);
 }
 
+float4 shipPropulsionField(
+    float2 uv,
+    float phase,
+    float power,
+    float cameraDistance,
+    float focalLength,
+    float cameraScale
+) {
+    if (power < 0.001) {
+        return float4(0.0);
+    }
+
+    float3 sourceObject = float3(0.0, 0.555, -0.012);
+    float3 wakeObject = float3(0.0, 1.145, -0.012);
+    float2 source = projectShipPoint(
+        sourceObject,
+        phase,
+        cameraDistance,
+        focalLength,
+        cameraScale
+    );
+    float2 wakeEnd = projectShipPoint(
+        wakeObject,
+        phase,
+        cameraDistance,
+        focalLength,
+        cameraScale
+    );
+    float2 span = wakeEnd - source;
+    float spanLengthSquared = max(dot(span, span), 0.0001);
+    float progress = clamp(dot(uv - source, span) / spanLengthSquared, 0.0, 1.0);
+    float2 nearest = source + span * progress;
+
+    float transverseScale = max(
+        length(
+            projectShipPoint(
+                sourceObject + float3(0.050, 0.0, 0.0),
+                phase,
+                cameraDistance,
+                focalLength,
+                cameraScale
+            ) - source
+        ),
+        length(
+            projectShipPoint(
+                sourceObject + float3(0.0, 0.0, 0.050),
+                phase,
+                cameraDistance,
+                focalLength,
+                cameraScale
+            ) - source
+        )
+    );
+    transverseScale = max(transverseScale, 0.0025);
+    float wakeWidth = transverseScale * mix(
+        0.42,
+        2.55,
+        pow(progress, 0.78)
+    );
+    float radial = length(uv - nearest) / max(wakeWidth, 0.001);
+    float axialFade = pow(max(1.0 - progress, 0.0), 0.68);
+    float flow = 0.76 + 0.24 * pow(
+        0.5 + 0.5 * sin(phase * 18.0 - progress * 34.0),
+        3.0
+    );
+    float turbulence = 0.90 + 0.10 * spatialGrain(
+        uv * iResolution.x * 0.17 +
+            float2(phase * 11.0, -phase * 7.0)
+    );
+    float halo = exp(-radial * radial * 1.42) * axialFade * turbulence;
+    float core = exp(-radial * radial * 6.8) *
+        pow(max(1.0 - progress, 0.0), 0.42) * flow;
+    float rippleRadius = 0.72 + 0.10 * sin(
+        phase * 6.0 - progress * 13.0
+    );
+    float ripple = exp(-abs(radial - rippleRadius) * 9.0) *
+        pow(max(1.0 - progress, 0.0), 1.18);
+
+    float2 portSource = projectShipPoint(
+        float3(-0.020, 0.558, -0.012),
+        phase,
+        cameraDistance,
+        focalLength,
+        cameraScale
+    );
+    float2 starboardSource = projectShipPoint(
+        float3(0.020, 0.558, -0.012),
+        phase,
+        cameraDistance,
+        focalLength,
+        cameraScale
+    );
+    float2 portEnd = projectShipPoint(
+        float3(-0.058, 1.045, -0.012),
+        phase,
+        cameraDistance,
+        focalLength,
+        cameraScale
+    );
+    float2 starboardEnd = projectShipPoint(
+        float3(0.058, 1.045, -0.012),
+        phase,
+        cameraDistance,
+        focalLength,
+        cameraScale
+    );
+    float filamentDistance = min(
+        lineSegmentDistance(uv, portSource, portEnd),
+        lineSegmentDistance(uv, starboardSource, starboardEnd)
+    );
+    float filament = exp(
+        -pow(filamentDistance / max(transverseScale * 0.19, 0.001), 2.0) * 2.6
+    ) * pow(max(1.0 - progress, 0.0), 0.48) * flow;
+
+    float wakeAlpha = clamp(
+        power * (
+            halo * 0.16 + core * 0.34 +
+                ripple * 0.075 + filament * 0.30
+        ),
+        0.0,
+        0.72
+    );
+    float3 driveViolet = mix(
+        iAccent.rgb,
+        float3(0.43, 0.25, 1.0),
+        0.36
+    );
+    float3 driveWhite = float3(0.84, 0.82, 1.0);
+    float whitening = clamp(core * 0.82 + filament * 0.66, 0.0, 1.0);
+    float3 wakeColor = mix(driveViolet, driveWhite, whitening);
+    return float4(wakeColor * wakeAlpha, wakeAlpha);
+}
+
 half4 main(float2 fragCoord) {
     float shortest = min(iResolution.x, iResolution.y);
     float2 uv = (fragCoord - iResolution * 0.5) / shortest;
@@ -1236,6 +1404,8 @@ half4 main(float2 fragCoord) {
     float shipPresence = clamp(iShape.z, 0.0, 1.0);
     float shipGeometry = smoothstep(0.0, 1.0, shipPresence);
     float shipMaterialization = clamp(iShipMaterialization, 0.0, 1.0);
+    float drivePower = clamp(iShipPropulsion, 0.0, 1.0) * shipGeometry *
+        mix(0.35, 1.0, smoothstep(0.05, 0.82, shipMaterialization));
     float phase = TAU * iTime / 12.0;
     float shipCamera = smoothstep(0.0, 1.0, shipPresence);
     float cameraDistance = mix(2.35, 1.58, shipCamera);
@@ -1243,16 +1413,24 @@ half4 main(float2 fragCoord) {
     float3 origin = float3(0.0, 0.0, cameraDistance);
     float cameraScale = mix(1.42, 1.08, shipPresence);
     float3 direction = normalize(float3(uv * cameraScale, -focalLength));
+    float4 propulsionField = shipPropulsionField(
+        uv,
+        phase,
+        drivePower,
+        cameraDistance,
+        focalLength,
+        cameraScale
+    );
     float2 bounds = sphereRange(origin, direction, 0.72);
-    if (bounds.x < 0.0) {
-        return half4(0.0, 0.0, 0.0, 0.0);
+    float travel = 0.0;
+    bool bodyHit = false;
+    if (bounds.x >= 0.0) {
+        travel = marchOrganic(origin, direction, bounds.x, bounds.y, phase, energy);
+        bodyHit = travel <= bounds.y;
     }
 
-    float travel = marchOrganic(origin, direction, bounds.x, bounds.y, phase, energy);
-    bool bodyHit = travel <= bounds.y;
-
-    float3 color = float3(0.0, 0.0, 0.0);
-    float alpha = 0.0;
+    float3 color = propulsionField.rgb;
+    float alpha = propulsionField.a;
 
     if (bodyHit) {
         float3 point = origin + direction * travel;
@@ -1308,6 +1486,7 @@ half4 main(float2 fragCoord) {
         float4 shipSurfaceField = shipMembraneField(point, phase) * shipGeometry;
         float shipBelt = shipBeltSignal(point, phase) * shipGeometry;
         float shipAperture = shipApertureSignal(point, phase) * shipGeometry;
+        float shipDrive = shipDriveSignal(point, phase) * shipGeometry;
 
         float3 cyanLight = normalize(float3(-0.55, 0.72, 0.84));
         float3 warmLight = normalize(float3(0.72, -0.20, 0.54));
@@ -1469,6 +1648,17 @@ half4 main(float2 fragCoord) {
         shipMaterial *= 1.0 - panelCut;
         shipMaterial += shipPower *
             (shipSurfaceField.z * 0.22 + shipSurfaceField.w * 0.52);
+        float drivePulse = 0.82 + 0.18 * sin(phase * 18.0);
+        float driveWave = pow(
+            0.5 + 0.5 * sin(
+                (shipMaterialPoint.y + 0.58) * 38.0 - phase * 10.0
+            ),
+            12.0
+        ) * drivePower;
+        shipMaterial += shipPower * shipDrive * drivePower *
+            (0.52 + drivePulse * 0.18);
+        shipMaterial += shipLight * shipDrive * drivePower * 0.22;
+        shipMaterial += shipPower * shipSurfaceField.x * driveWave * 0.12;
         shipMaterial += mix(shipSilver, shipPower, 0.42) *
             shipCore * (0.14 + internalActivity * 0.06);
         float3 trenchMaterial = shipSilver * 0.34 +
@@ -1655,7 +1845,8 @@ half4 main(float2 fragCoord) {
         float shipAlpha = clamp(
             0.67 + shipContour * 0.20 + shipSurfaceField.x * 0.035 +
                 shipSurfaceField.y * 0.18 + shipSurfaceField.w * 0.17 +
-                shipCore * 0.045 + shipAperture * 0.11 - shipBelt * 0.050,
+                shipCore * 0.045 + shipAperture * 0.11 +
+                shipDrive * drivePower * 0.050 - shipBelt * 0.050,
             0.0,
             0.90
         );
@@ -1668,8 +1859,8 @@ half4 main(float2 fragCoord) {
         ) * (0.90 + hologramStability * 0.10);
         shipAlpha = mix(hologramAlpha, shipAlpha, physicalLock);
         bodyAlpha = mix(bodyAlpha, shipAlpha, shipPresence);
-        color = material * bodyAlpha;
-        alpha = bodyAlpha;
+        color = material * bodyAlpha + color * (1.0 - bodyAlpha);
+        alpha = bodyAlpha + alpha * (1.0 - bodyAlpha);
     }
 
     float grain = (spatialGrain(fragCoord) - 0.5) * 0.012;
@@ -1678,3 +1869,6 @@ half4 main(float2 fragCoord) {
     return half4(color, alpha);
 }
 """
+
+internal val ASSISTANT_LIQUID_SHADER =
+    ASSISTANT_LIQUID_SHADER_GEOMETRY + ASSISTANT_LIQUID_SHADER_MATERIAL
