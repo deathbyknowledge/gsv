@@ -16,6 +16,7 @@ mod theme;
 mod transcription;
 mod typography;
 mod vision_debug;
+mod visual_showcase;
 
 use std::borrow::Cow;
 use std::env;
@@ -47,6 +48,10 @@ fn main() {
     }
     if !graphical_session_available() {
         eprintln!("GSV native needs a graphical session (DISPLAY or WAYLAND_DISPLAY).");
+        return;
+    }
+    if arguments.iter().any(|argument| argument == "--visuals") {
+        run_visual_showcase();
         return;
     }
 
@@ -134,6 +139,41 @@ fn main() {
         if let Err(error) = window {
             eprintln!("GSV native window could not open: {error}");
             cx.quit();
+        }
+    });
+}
+
+fn run_visual_showcase() {
+    Application::new().run(|cx: &mut App| {
+        gpui_component::init(cx);
+        system_status::configure_application(cx);
+        register_fonts(cx);
+        configure_theme(cx);
+        visual_showcase::bind_keys(cx);
+
+        let bounds = Bounds::centered(None, size(px(1_280.0), px(820.0)), cx);
+        let window = cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("GSV Visual Core".into()),
+                    appears_transparent: true,
+                    ..Default::default()
+                }),
+                app_id: Some("gsv-visual-core".to_string()),
+                window_min_size: Some(size(px(900.0), px(600.0))),
+                ..Default::default()
+            },
+            |window, cx| {
+                let view = cx.new(|cx| visual_showcase::VisualShowcase::new(window, cx));
+                cx.new(|cx| Root::new(view, window, cx))
+            },
+        );
+        if let Err(error) = window {
+            eprintln!("GSV visual core could not open: {error}");
+            cx.quit();
+        } else {
+            cx.activate(true);
         }
     });
 }
