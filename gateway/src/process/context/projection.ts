@@ -62,6 +62,7 @@ const contextProjectionSchema = z.object({
 export function createContextProjection(
   snapshot: AiContextResult,
   now = new Date(),
+  fallbackSkills?: ContextProjection["skills"],
 ): ContextProjection {
   const timezone = normalizeContextTimezone(snapshot.system.timezone);
   return {
@@ -72,10 +73,7 @@ export function createContextProjection(
     },
     targets: normalizeTargets(snapshot.devices),
     mcpServers: normalizeStringSet(snapshot.mcpServers),
-    skills: {
-      mode: normalizeSkillIndexMode(snapshot.skillIndexMode),
-      entries: normalizeSkills(snapshot.skillIndex, snapshot.skillIndexMode),
-    },
+    skills: normalizeSkillProjection(snapshot, fallbackSkills),
   };
 }
 
@@ -143,7 +141,7 @@ function normalizeTargets(devices: AiToolsDevice[]): ContextProjectionTarget[] {
 }
 
 function normalizeSkills(
-  entries: AiContextResult["skillIndex"],
+  entries: NonNullable<AiContextResult["skillIndex"]>,
   mode: AiSkillIndexMode,
 ): ContextProjectionSkill[] {
   if (mode === "off") return [];
@@ -154,6 +152,23 @@ function normalizeSkills(
     }))
     .filter((entry) => entry.id.length > 0)
     .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function normalizeSkillProjection(
+  snapshot: AiContextResult,
+  fallback: ContextProjection["skills"] | undefined,
+): ContextProjection["skills"] {
+  if (snapshot.skillIndex === undefined && fallback) {
+    return {
+      mode: fallback.mode,
+      entries: fallback.entries.map((entry) => ({ ...entry })),
+    };
+  }
+  const mode = normalizeSkillIndexMode(snapshot.skillIndexMode);
+  return {
+    mode,
+    entries: normalizeSkills(snapshot.skillIndex ?? [], mode),
+  };
 }
 
 function normalizeStringSet(values: string[]): string[] {

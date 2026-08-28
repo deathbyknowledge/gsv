@@ -67,6 +67,7 @@ type SkillRoot = {
 
 type SkillCollectionOptions = {
   includeNested: boolean;
+  strictReads?: boolean;
 };
 
 type SkillHomeLayer = {
@@ -83,7 +84,10 @@ type FsReader = {
 export async function collectPromptSkillIndex(
   ctx: KernelContext,
 ): Promise<SkillIndexEntry[]> {
-  const docs = await collectKernelSkillDocuments(ctx, { includeNested: false });
+  const docs = await collectKernelSkillDocuments(ctx, {
+    includeNested: false,
+    strictReads: true,
+  });
   return docs.map(({ id, name, description, source }) => ({ id, name, description, source }));
 }
 
@@ -549,7 +553,7 @@ async function walkRipgitSkillRoot(
     return;
   }
 
-  const tree = await ripgit.readPath(repo, absolutePath).catch(() => ({ kind: "missing" as const }));
+  const tree = await readRipgitSkillPath(ripgit, repo, absolutePath, options);
   if (tree.kind !== "tree") {
     return;
   }
@@ -558,7 +562,7 @@ async function walkRipgitSkillRoot(
     const path = joinPath(absolutePath, entry.name);
     const rel = relativePath ? `${relativePath}/${entry.name}` : entry.name;
     if (entry.type === "blob" && entry.name.endsWith(".md") && entry.name !== "DESCRIPTION.md" && entry.name !== "SKILL.md") {
-      const file = await ripgit.readPath(repo, path).catch(() => ({ kind: "missing" as const }));
+      const file = await readRipgitSkillPath(ripgit, repo, path, options);
       if (file.kind === "file") {
         const content = decodeTextFile(file.bytes);
         if (content !== null) {
@@ -580,7 +584,7 @@ async function walkRipgitSkillRoot(
     }
     if (entry.type === "tree") {
       const skillPath = joinPath(path, "SKILL.md");
-      const file = await ripgit.readPath(repo, skillPath).catch(() => ({ kind: "missing" as const }));
+      const file = await readRipgitSkillPath(ripgit, repo, skillPath, options);
       if (file.kind !== "file") {
         continue;
       }
@@ -620,6 +624,18 @@ async function walkRipgitSkillRoot(
       }
     }
   }
+}
+
+async function readRipgitSkillPath(
+  ripgit: RipgitClient,
+  repo: RipgitRepoRef,
+  path: string,
+  options: SkillCollectionOptions,
+) {
+  if (options.strictReads) {
+    return await ripgit.readPath(repo, path);
+  }
+  return await ripgit.readPath(repo, path).catch(() => ({ kind: "missing" as const }));
 }
 
 async function walkFsSupportingFiles(

@@ -512,6 +512,32 @@ describe("handleAiConfig", () => {
     expect(result).not.toHaveProperty("model");
   });
 
+  it("keeps context refresh usable when the skill catalog cannot be read", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // SAFETY: fixture implements the single service-binding method used by RipgitClient.
+    const ripgit = {
+      fetch: vi.fn(async () => {
+        throw new Error("ripgit temporarily unavailable");
+      }),
+    } as Fetcher;
+
+    try {
+      const result = await handleAiContext({}, makeAiConfigContext({}, { ripgit }));
+
+      expect(result).toMatchObject({
+        devices: [],
+        mcpServers: [],
+        skillIndexMode: "summary",
+      });
+      expect(result).not.toHaveProperty("skillIndex");
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("failed to refresh skills.d index"),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("resolves prompt skill enumeration independently from live skills", async () => {
     await expect(handleAiConfig({}, makeAiConfigContext()))
       .resolves.toMatchObject({ skillIndexMode: "summary" });

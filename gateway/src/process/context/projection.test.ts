@@ -76,4 +76,22 @@ describe("context epoch projection", () => {
     expect(contextProjectionsEqual(first, second)).toBe(false);
     expect(contextProjectionFromManifest({ version: 1 })).toBeNull();
   });
+
+  it("retains the last observed skills when catalog refresh is unavailable", () => {
+    const fallback = {
+      mode: "summary" as const,
+      entries: [{ id: "research", description: "Gather sources" }],
+    };
+    const projection = createContextProjection({
+      devices: [],
+      mcpServers: ["Calendar"],
+      system: { timezone: "UTC" },
+      skillIndexMode: "summary",
+    }, new Date("2026-08-28T12:00:00Z"), fallback);
+
+    expect(projection.mcpServers).toEqual(["Calendar"]);
+    expect(projection.skills).toEqual(fallback);
+    expect(projection.skills).not.toBe(fallback);
+    expect(projection.skills.entries[0]).not.toBe(fallback.entries[0]);
+  });
 });

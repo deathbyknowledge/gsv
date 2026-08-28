@@ -148,6 +148,10 @@ observations therefore produces no artificial activity. These changes do not rot
 the epoch or mutate tool definitions; routable tools keep a stable target schema and
 the agent uses `targets list` for the authoritative live view.
 
+An unavailable projection source is not an empty source. If a catalog refresh fails,
+Process retains that component of the last observed projection and emits no removal
+event until the Kernel can provide another authoritative snapshot.
+
 The epoch source manifest retains the initial projection that rendered its prompt,
 while the epoch row and archive retain the last observed projection. Projection event
 messages remain ordinary Process Activity until the epoch is archived. Compaction,

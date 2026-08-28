@@ -231,21 +231,27 @@ export async function handleAiContext(
   const skillIndexMode = normalizeSkillIndexMode(resolveConfig("skills/index_mode"));
   const skillIndex = skillIndexMode === "off"
     ? []
-    : await collectPromptSkillIndex(ctx);
+    : await collectPromptSkillIndex(ctx).catch((error) => {
+        console.warn(
+          `[Prompt] failed to refresh skills.d index: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return undefined;
+      });
   const canUseMcpTools = hasCapability(ctx.identity?.capabilities ?? [], "sys.mcp.list")
     && hasCapability(ctx.identity?.capabilities ?? [], "sys.mcp.call");
   const mcpUid = resolveCallerOwnerUid(ctx);
 
-  return {
+  const result: AiContextResult = {
     devices: listVisibleTargets(ctx).map(targetToAiDevice),
     mcpServers: canUseMcpTools ? listReadyMcpServerNames(ctx, mcpUid) : [],
     systemContextFiles: listConfigContextFiles(config, "config/ai/context.d"),
     system: {
       timezone: config.get("config/server/timezone") ?? "UTC",
     },
-    skillIndex,
     skillIndexMode,
   };
+  if (skillIndex !== undefined) result.skillIndex = skillIndex;
+  return result;
 }
 
 export async function handleAiConfig(

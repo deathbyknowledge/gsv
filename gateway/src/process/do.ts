@@ -6207,7 +6207,14 @@ export class Process extends DurableObject<ProcessEnv> {
           run.devices = contextSnapshot.devices;
           run.mcpServers = contextSnapshot.mcpServers;
           this.currentRun = run;
-          const currentProjection = createContextProjection(contextSnapshot);
+          const fallbackProjection = parseContextProjection(
+            this.store.getLiveContextEpoch()?.observedProjection,
+          ) ?? createContextProjection(contextSnapshotFromRun(run, activeConfig));
+          const currentProjection = createContextProjection(
+            contextSnapshot,
+            new Date(),
+            fallbackProjection.skills,
+          );
           epoch = await this.ensureContextEpoch(
             runId,
             run,
