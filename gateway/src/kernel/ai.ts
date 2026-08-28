@@ -227,7 +227,6 @@ export async function handleAiContext(
     accountProfileOverrides,
     processOverrides,
   );
-  await ensureBuiltinSkillsForPrompt(ctx, owner);
   const skillIndexMode = normalizeSkillIndexMode(resolveConfig("skills/index_mode"));
   const skillIndex = skillIndexMode === "off"
     ? []

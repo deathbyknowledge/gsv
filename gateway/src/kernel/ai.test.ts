@@ -530,12 +530,31 @@ describe("handleAiConfig", () => {
         skillIndexMode: "summary",
       });
       expect(result).not.toHaveProperty("skillIndex");
+      expect(seedBuiltinSkillsToHomeMock).not.toHaveBeenCalled();
       expect(warn).toHaveBeenCalledWith(
         expect.stringContaining("failed to refresh skills.d index"),
       );
     } finally {
       warn.mockRestore();
     }
+  });
+
+  it("skips built-in reconciliation and catalog reads when skill indexing is off", async () => {
+    // SAFETY: fixture implements the single service-binding method used by RipgitClient.
+    const ripgit = {
+      fetch: vi.fn(async () => new Response("missing", { status: 404 })),
+    } as Fetcher;
+
+    const result = await handleAiContext({}, makeAiConfigContext({
+      "config/ai/skills/index_mode": "off",
+    }, { ripgit }));
+
+    expect(result).toMatchObject({
+      skillIndexMode: "off",
+      skillIndex: [],
+    });
+    expect(seedBuiltinSkillsToHomeMock).not.toHaveBeenCalled();
+    expect(ripgit.fetch).not.toHaveBeenCalled();
   });
 
   it("resolves prompt skill enumeration independently from live skills", async () => {
