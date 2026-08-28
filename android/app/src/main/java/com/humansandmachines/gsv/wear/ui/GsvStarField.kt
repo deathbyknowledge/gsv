@@ -122,7 +122,7 @@ private fun createGsvStars(): List<GsvStar> {
             phase = random.nextFloat() * PI.toFloat() * 2f,
             rate = 1f + (random.nextFloat() * 3f).toInt(),
             alpha = 0.15f + depth * 0.25f + random.nextFloat() * 0.12f,
-            radiusDp = 0.20f + depth * 0.42f + random.nextFloat() * 0.12f,
+            radiusDp = 0.27f + depth * 0.50f + random.nextFloat() * 0.15f,
             tint = random.nextFloat() * 0.72f,
             bright = random.nextFloat() > 0.955f,
         )

@@ -334,6 +334,74 @@ float shipApertureSignal(float3 point, float phase) {
     return (1.0 - smoothstep(-0.006, 0.016, nearest)) * topWindow;
 }
 
+float habitatHash(float2 point) {
+    point = fract(point * float2(123.34, 345.45));
+    point += dot(point, point + 34.345);
+    return fract(point.x * point.y);
+}
+
+float habitatNoise(float2 point) {
+    float2 cell = floor(point);
+    float2 local = fract(point);
+    local = local * local * (3.0 - 2.0 * local);
+    return mix(
+        mix(
+            habitatHash(cell),
+            habitatHash(cell + float2(1.0, 0.0)),
+            local.x
+        ),
+        mix(
+            habitatHash(cell + float2(0.0, 1.0)),
+            habitatHash(cell + float2(1.0, 1.0)),
+            local.x
+        ),
+        local.y
+    );
+}
+
+float habitatTerrain(float2 point) {
+    float terrain = habitatNoise(point) * 0.56;
+    point = rotate2(0.73, point * 2.03) + float2(3.7, -1.9);
+    terrain += habitatNoise(point) * 0.29;
+    point = rotate2(-0.41, point * 2.07) + float2(-2.4, 4.1);
+    terrain += habitatNoise(point) * 0.15;
+    return terrain;
+}
+
+float4 shipHabitatField(float3 shipPoint) {
+    float2 habitatPoint = shipPoint.xy - float2(0.036, -0.165);
+    habitatPoint = rotate2(0.14, habitatPoint);
+    float habitatMask = 1.0 - smoothstep(
+        -0.004,
+        0.002,
+        hexagonalDistance(habitatPoint, 0.040)
+    );
+    habitatMask *= smoothstep(0.030, 0.047, shipPoint.z);
+    if (habitatMask < 0.001) {
+        return float4(0.0);
+    }
+
+    float2 terrainPoint = habitatPoint / 0.040;
+    float elevation = habitatTerrain(
+        terrainPoint * 1.46 + float2(7.4, -3.2)
+    );
+    elevation += 0.055 * sin(
+        terrainPoint.x * 3.4 - terrainPoint.y * 2.6
+    );
+    float land = smoothstep(0.48, 0.59, elevation);
+    float relief = habitatTerrain(
+        terrainPoint * 4.2 + float2(-6.8, 9.1)
+    );
+    float highland = land * smoothstep(0.61, 0.82, relief);
+    float coastline = 1.0 - smoothstep(0.018, 0.064, abs(elevation - 0.535));
+    return float4(
+        habitatMask,
+        land * habitatMask,
+        highland * habitatMask,
+        coastline * habitatMask
+    );
+}
+
 float shipBeltSignal(float3 point, float phase) {
     float3 shipPoint = shipObjectPoint(point, phase);
     float sideWindow = smoothstep(0.055, 0.120, abs(shipPoint.x));
@@ -1030,6 +1098,7 @@ half4 main(float2 fragCoord) {
         shipMaterial *= 1.0 - shipBelt * 0.76;
         shipMaterial += shipPower * shipBelt * 0.018;
         float3 shipMaterialPoint = shipObjectPoint(point, phase);
+        float4 habitatField = shipHabitatField(shipMaterialPoint) * shipPresence;
         float apertureTexture = 0.5 + 0.5 * sin(
             dot(shipMaterialPoint, float3(31.0, -23.0, 19.0)) +
                 phase * 0.45
@@ -1049,6 +1118,24 @@ half4 main(float2 fragCoord) {
             shipMaterial,
             apertureMaterial,
             shipAperture * 0.96
+        );
+        float3 habitatMaterial = mix(
+            float3(0.008, 0.047, 0.066),
+            float3(0.027, 0.094, 0.071),
+            habitatField.y * 0.82
+        );
+        habitatMaterial = mix(
+            habitatMaterial,
+            float3(0.105, 0.116, 0.099),
+            habitatField.z * 0.48
+        );
+        habitatMaterial += float3(0.055, 0.135, 0.145) *
+            habitatField.w * 0.10;
+        habitatMaterial += shipPower * 0.012;
+        shipMaterial = mix(
+            shipMaterial,
+            habitatMaterial,
+            habitatField.x * 0.90
         );
         shipMaterial *= hologramStability;
         material = mix(material, shipMaterial, shipPresence);
