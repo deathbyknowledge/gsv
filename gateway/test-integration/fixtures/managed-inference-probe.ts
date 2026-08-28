@@ -1,8 +1,10 @@
 import {
   GSV_INFERENCE_PRODUCT_MODEL,
   type ManagedInferenceRequest,
-  type ManagedInferenceService,
 } from "@humansandmachines/gsv/protocol";
+import type {
+  InferenceService as ManagedInferenceService,
+} from "@humansandmachines/gsv/services/inference";
 
 interface Env {
   MANAGED_INFERENCE: ManagedInferenceService;
@@ -23,24 +25,27 @@ export default {
       maxOutputTokens: 128,
       timeoutMs: 5_000,
     };
-    if (url.pathname === "/abort-first") {
-      await env.MANAGED_INFERENCE.abort({
-        version: 1,
-        installationId: input.installationId,
-        logicalRequestId: input.logicalRequestId,
-      });
-      const result = await env.MANAGED_INFERENCE.generate(input);
-      return new Response(null, {
-        status: result.stopReason === "aborted" ? 204 : 500,
-      });
+    const target = await env.MANAGED_INFERENCE.getInstallation(
+      input.installationId,
+    );
+    try {
+      if (url.pathname === "/abort-first") {
+        await target.abort(input.logicalRequestId);
+        const result = await target.generate(input);
+        return new Response(null, {
+          status: result.stopReason === "aborted" ? 204 : 500,
+        });
+      }
+      const result = target.generate(input);
+      await target.abort(input.logicalRequestId);
+      await result;
+      return new Response(null, { status: 204 });
+    } finally {
+      // SAFETY: Workers RPC stubs implement Symbol.dispose.
+      const disposable = target as typeof target & {
+        [Symbol.dispose]?(): void;
+      };
+      disposable[Symbol.dispose]?.();
     }
-    const result = env.MANAGED_INFERENCE.generate(input);
-    await env.MANAGED_INFERENCE.abort({
-      version: 1,
-      installationId: input.installationId,
-      logicalRequestId: input.logicalRequestId,
-    });
-    await result;
-    return new Response(null, { status: 204 });
   },
 } satisfies ExportedHandler<Env>;

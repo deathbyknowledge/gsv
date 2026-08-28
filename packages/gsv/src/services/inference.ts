@@ -90,13 +90,18 @@ export type ManagedInferenceAbortRequest = {
   logicalRequestId: string;
 };
 
-/** Platform inference contract consumed by a Gateway deployment. */
-export interface InferenceService {
+/** Installation-scoped inference capability returned to a Gateway deployment. */
+export interface InferenceTarget {
   generate(input: ManagedInferenceRequest): Promise<ManagedInferenceResult>;
   generateStream(
     input: ManagedInferenceRequest,
   ): Promise<ReadableStream<Uint8Array>>;
-  abort(input: ManagedInferenceAbortRequest): Promise<void>;
+  abort(logicalRequestId: string): Promise<void>;
+}
+
+/** Platform inference contract consumed by a Gateway deployment. */
+export interface InferenceService {
+  getInstallation(installationId: string): Promise<InferenceTarget>;
 }
 
 /** @deprecated Import `InferenceService` from `@humansandmachines/gsv/services/inference`. */

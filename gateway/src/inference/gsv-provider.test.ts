@@ -6,9 +6,12 @@ import {
   GSV_INFERENCE_PRODUCT_MODEL,
   GSV_INFERENCE_PROVIDER,
   type ManagedInferenceResult,
-  type ManagedInferenceService,
   type ManagedInferenceStreamEvent,
 } from "@humansandmachines/gsv/protocol";
+import type {
+  InferenceService as ManagedInferenceService,
+  InferenceTarget as ManagedInferenceTarget,
+} from "@humansandmachines/gsv/services/inference";
 import { describe, expect, it, vi } from "vitest";
 import {
   createGsvInferenceProviderFactory,
@@ -47,9 +50,7 @@ const RESULT: ManagedInferenceResult = {
 describe("GSV inference provider", () => {
   it("registers only when its service binding is present", () => {
     const service: ManagedInferenceService = {
-      generate: vi.fn(),
-      generateStream: vi.fn(),
-      abort: vi.fn(),
+      getInstallation: vi.fn<ManagedInferenceService["getInstallation"]>(),
     };
 
     // SAFETY: The fixture implements the Env binding consumed by provider registration.
@@ -73,7 +74,7 @@ describe("GSV inference provider", () => {
         bodyController = controller;
       },
     });
-    const service = managedService(vi.fn(async () => body));
+    const { service, target, dispose } = managedService(vi.fn(async () => body));
     const stream = providerStream(service, new AbortController().signal);
     const events = stream[Symbol.asyncIterator]();
 
@@ -113,8 +114,12 @@ describe("GSV inference provider", () => {
       content: [{ type: "text", text: "pong" }],
       stopReason: "stop",
     });
-    expect(service.generateStream).toHaveBeenCalledOnce();
-    expect(service.generate).not.toHaveBeenCalled();
+    expect(service.getInstallation).toHaveBeenCalledWith(
+      ATTRIBUTION.installationId,
+    );
+    expect(target.generateStream).toHaveBeenCalledOnce();
+    expect(target.generate).not.toHaveBeenCalled();
+    expect(dispose).toHaveBeenCalledOnce();
   });
 
   it("aborts an active byte stream on request cancellation", async () => {
@@ -122,7 +127,7 @@ describe("GSV inference provider", () => {
     const started = new Promise<void>((resolve) => {
       markStarted = resolve;
     });
-    const generateStream = vi.fn<ManagedInferenceService["generateStream"]>(
+    const generateStream = vi.fn<ManagedInferenceTarget["generateStream"]>(
       async () => new ReadableStream({
         start() {
           markStarted();
@@ -131,11 +136,8 @@ describe("GSV inference provider", () => {
     );
     const controller = new AbortController();
     const abort = vi.fn(async () => {});
-    const stream = providerStream({
-      generate: vi.fn(),
-      generateStream,
-      abort,
-    }, controller.signal);
+    const { service, dispose } = managedService(generateStream, abort);
+    const stream = providerStream(service, controller.signal);
     const completion = stream.result();
 
     await started;
@@ -146,11 +148,8 @@ describe("GSV inference provider", () => {
       errorMessage: "GSV inference cancelled",
     });
     expect(abort).toHaveBeenCalledTimes(1);
-    expect(abort).toHaveBeenCalledWith({
-      version: 1,
-      installationId: ATTRIBUTION.installationId,
-      logicalRequestId: ATTRIBUTION.logicalRequestId,
-    });
+    expect(abort).toHaveBeenCalledWith(ATTRIBUTION.logicalRequestId);
+    expect(dispose).toHaveBeenCalledOnce();
   });
 
   it("aborts when cancellation overtakes the stream RPC", async () => {
@@ -161,7 +160,7 @@ describe("GSV inference provider", () => {
     const controller = new AbortController();
     const reason = new Error("test cancellation");
     let releaseStream: (value: ReadableStream<Uint8Array>) => void = () => {};
-    const generateStream = vi.fn<ManagedInferenceService["generateStream"]>(
+    const generateStream = vi.fn<ManagedInferenceTarget["generateStream"]>(
       () => new Promise((resolve) => {
         releaseStream = resolve;
         markStarted();
@@ -169,11 +168,8 @@ describe("GSV inference provider", () => {
     );
     const abort = vi.fn(async () => {});
 
-    const stream = providerStream({
-      generate: vi.fn(),
-      generateStream,
-      abort,
-    }, controller.signal);
+    const { service, dispose } = managedService(generateStream, abort);
+    const stream = providerStream(service, controller.signal);
     await started;
     controller.abort(reason);
     releaseStream(eventStream({ type: "done", reason: "stop", message: RESULT }));
@@ -183,6 +179,7 @@ describe("GSV inference provider", () => {
       errorMessage: "GSV inference cancelled",
     });
     expect(abort).toHaveBeenCalledTimes(1);
+    expect(dispose).toHaveBeenCalledOnce();
   });
 });
 
@@ -202,9 +199,20 @@ function providerStream(
 }
 
 function managedService(
-  generateStream: ManagedInferenceService["generateStream"],
-): ManagedInferenceService {
-  return { generate: vi.fn(), generateStream, abort: vi.fn() };
+  generateStream: ManagedInferenceTarget["generateStream"],
+  abort: ManagedInferenceTarget["abort"] = vi.fn(async () => {}),
+) {
+  const dispose = vi.fn();
+  const target = {
+    generate: vi.fn(),
+    generateStream,
+    abort,
+    [Symbol.dispose]: dispose,
+  } satisfies ManagedInferenceTarget & { [Symbol.dispose](): void };
+  const service = {
+    getInstallation: vi.fn(async () => target),
+  } satisfies ManagedInferenceService;
+  return { service, target, dispose };
 }
 
 function encoded(event: ManagedInferenceStreamEvent): Uint8Array {

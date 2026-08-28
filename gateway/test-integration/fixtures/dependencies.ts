@@ -1,4 +1,4 @@
-import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
+import { DurableObject, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 import {
   encodeManagedInferenceStreamEvent,
   GSV_INFERENCE_PRODUCT_MODEL,
@@ -21,11 +21,13 @@ import type {
   InstallationDirectoryResult,
   InstallationOnboardingAuthorization,
   ManagedInstallationState,
-  ManagedInferenceAbortRequest,
   ManagedInferenceRequest,
   ManagedInferenceResult,
-  ManagedInferenceService,
 } from "@humansandmachines/gsv/protocol";
+import type {
+  InferenceService as ManagedInferenceService,
+  InferenceTarget as ManagedInferenceTargetContract,
+} from "@humansandmachines/gsv/services/inference";
 import { SINGLETON_INSTALLATION_ID } from "../../src/installation/identity";
 import {
   resolveAdapterActivityRpcArgs,
@@ -125,13 +127,42 @@ export class ManagedInferenceFixture
   extends WorkerEntrypoint<Env>
   implements ManagedInferenceService
 {
-  async generate(input: ManagedInferenceRequest): Promise<ManagedInferenceResult> {
+  async getInstallation(
+    installationId: string,
+  ): Promise<ManagedInferenceTargetContract> {
+    return new ManagedInferenceTarget(this.env, installationId);
+  }
+}
+
+class ManagedInferenceTarget
+  extends RpcTarget
+  implements ManagedInferenceTargetContract
+{
+  readonly #env: Env;
+  readonly #installationId: string;
+
+  constructor(env: Env, installationId: string) {
+    super();
+    this.#env = env;
+    this.#installationId = installationId;
+  }
+
+  async generate(
+    input: ManagedInferenceRequest,
+  ): Promise<ManagedInferenceResult> {
+    if (input.installationId !== this.#installationId) {
+      throw new Error(
+        "Managed inference installation does not match its target",
+      );
+    }
     const waitsForCancellation = input.messages.some((message) => (
       message.role === "user" && message.content === "wait for cancellation"
     ));
     if (waitsForCancellation) {
-      const id = this.env.INTEGRATION_STATE.idFromName(SINGLETON_INSTALLATION_ID);
-      const state = this.env.INTEGRATION_STATE.get(id);
+      const id = this.#env.INTEGRATION_STATE.idFromName(
+        SINGLETON_INSTALLATION_ID,
+      );
+      const state = this.#env.INTEGRATION_STATE.get(id);
       while (!await state.wasManagedInferenceCancelled(input.installationId)) {
         await scheduler.wait(10);
       }
@@ -229,10 +260,12 @@ export class ManagedInferenceFixture
     });
   }
 
-  async abort(input: ManagedInferenceAbortRequest): Promise<void> {
-    const id = this.env.INTEGRATION_STATE.idFromName(SINGLETON_INSTALLATION_ID);
-    await this.env.INTEGRATION_STATE.get(id).recordManagedInferenceCancellation(
-      input.installationId,
+  async abort(_logicalRequestId: string): Promise<void> {
+    const id = this.#env.INTEGRATION_STATE.idFromName(
+      SINGLETON_INSTALLATION_ID,
+    );
+    await this.#env.INTEGRATION_STATE.get(id).recordManagedInferenceCancellation(
+      this.#installationId,
     );
   }
 }
