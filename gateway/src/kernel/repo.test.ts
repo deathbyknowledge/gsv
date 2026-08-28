@@ -143,6 +143,9 @@ describe("repo syscalls", () => {
     ]);
     expect(ctx.config.get("repos/alice/demo/created_at")).not.toBeNull();
     expect(ctx.config.get("repos/alice/demo/updated_at")).not.toBeNull();
+    expect(ctx.config.get("repos/alice/demo/ref")).toBe("feature/docs");
+    expect(handleRepoList({}, ctx).repos.find((repo) => repo.repo === "alice/demo"))
+      .toMatchObject({ ref: "feature/docs" });
   });
 
   it("creates a repository with an empty initial commit", async () => {
@@ -158,23 +161,27 @@ describe("repo syscalls", () => {
 
     const result = await handleRepoCreate({
       repo: "alice/empty",
+      ref: "develop",
       description: "Empty repo",
     }, ctx);
 
     expect(result).toEqual({
       repo: "alice/empty",
-      ref: "main",
+      ref: "develop",
       head: "created123",
       created: true,
     });
     const body = JSON.parse(String(fetcher.calls[1].init?.body));
     expect(body).toMatchObject({
-      defaultBranch: "main",
+      defaultBranch: "develop",
       message: "repo: create alice/empty",
       ops: [],
       allowEmpty: true,
     });
     expect(ctx.config.get("repos/alice/empty/description")).toBe("Empty repo");
+    expect(ctx.config.get("repos/alice/empty/ref")).toBe("develop");
+    expect(handleRepoList({}, ctx).repos.find((repo) => repo.repo === "alice/empty"))
+      .toMatchObject({ ref: "develop" });
   });
 
   it("imports an explicit upstream and records repo metadata", async () => {
@@ -186,32 +193,36 @@ describe("repo syscalls", () => {
         head: "imported123",
         changed: true,
         remote_url: "https://github.com/example/demo",
-        remote_ref: "main",
+        remote_ref: "release",
       });
     });
     const ctx = makeContext(fetcher);
 
     const result = await handleRepoImport({
       repo: "alice/demo",
+      ref: "release",
       remoteUrl: "https://github.com/example/demo",
     }, ctx);
 
     expect(result).toEqual({
       repo: "alice/demo",
-      ref: "main",
+      ref: "release",
       head: "imported123",
       changed: true,
       remoteUrl: "https://github.com/example/demo",
-      remoteRef: "main",
+      remoteRef: "release",
     });
     const body = JSON.parse(String(fetcher.calls[0].init?.body));
     expect(body).toMatchObject({
-      defaultBranch: "main",
-      message: "repo: import https://github.com/example/demo#main",
+      defaultBranch: "release",
+      message: "repo: import https://github.com/example/demo#release",
       remoteUrl: "https://github.com/example/demo",
-      remoteRef: "main",
+      remoteRef: "release",
     });
     expect(ctx.config.get("repos/alice/demo/created_at")).not.toBeNull();
+    expect(ctx.config.get("repos/alice/demo/ref")).toBe("release");
+    expect(handleRepoList({}, ctx).repos.find((repo) => repo.repo === "alice/demo"))
+      .toMatchObject({ ref: "release" });
   });
 
   it("deletes a writable repository and unregisters repo metadata", async () => {
@@ -225,6 +236,7 @@ describe("repo syscalls", () => {
     const ctx = makeContext(fetcher, {
       "repos/alice/demo/created_at": "1",
       "repos/alice/demo/updated_at": "2",
+      "repos/alice/demo/ref": "develop",
       "repos/alice/demo/description": "Demo",
       "repos/alice/demo/visibility": "public",
     });
@@ -237,6 +249,7 @@ describe("repo syscalls", () => {
     });
     expect(ctx.config.get("repos/alice/demo/created_at")).toBeNull();
     expect(ctx.config.get("repos/alice/demo/updated_at")).toBeNull();
+    expect(ctx.config.get("repos/alice/demo/ref")).toBeNull();
     expect(ctx.config.get("repos/alice/demo/description")).toBeNull();
     expect(ctx.config.get("repos/alice/demo/visibility")).toBeNull();
   });
@@ -367,6 +380,7 @@ describe("repo syscalls", () => {
       kind: "user",
       writable: true,
       public: false,
+      ref: "main",
       description: "Agent memory",
       updatedAt: 100,
     });
