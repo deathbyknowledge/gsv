@@ -23,6 +23,7 @@ import com.humansandmachines.gsv.wear.voice.AssistantSnapshot
 import java.io.Closeable
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,6 +45,8 @@ internal class MindGestureController(
     val snapshot: StateFlow<GestureSnapshot> = mutableSnapshot.asStateFlow()
     private val sequence = AtomicLong(0)
     private val stateRevision = AtomicLong(1)
+    private val activeCandidateCode = AtomicInteger(NativeGestureChord.NONE.code)
+    private val candidateSequence = AtomicLong(0)
 
     @Volatile
     private var assistant = AssistantSnapshot()
@@ -232,6 +235,11 @@ internal class MindGestureController(
             ) {
                 return
             }
+            val sampleIntervalNanos = if (lastInferenceTimestampNanos == 0L) {
+                0L
+            } else {
+                elapsedSinceInference
+            }
             lastInferenceTimestampNanos = timestampNanos
             val activeEngine = engine ?: return
             val plane = image.planes.singleOrNull() ?: return recordFailure()
@@ -254,9 +262,27 @@ internal class MindGestureController(
             }
             consecutiveFailures = 0
             val progress = result.progress.coerceIn(0f, 1f)
-            mutableSnapshot.value = mutableSnapshot.value.copy(
-                state = if (progress > 0f) GestureLinkState.TRACKING else GestureLinkState.READY,
+            val previousCandidateCode = activeCandidateCode.getAndSet(result.chord.code)
+            val candidateStarted = result.chord.isCandidate &&
+                result.chord.code != previousCandidateCode
+            val current = mutableSnapshot.value
+            mutableSnapshot.value = current.copy(
+                state = if (result.chord.isCandidate) {
+                    GestureLinkState.TRACKING
+                } else {
+                    GestureLinkState.READY
+                },
                 progress = progress,
+                candidateSequence = if (candidateStarted) {
+                    candidateSequence.incrementAndGet()
+                } else {
+                    current.candidateSequence
+                },
+                candidateFillDurationMillis = if (candidateStarted) {
+                    gestureCandidateFillDurationMillis(sampleIntervalNanos)
+                } else {
+                    current.candidateFillDurationMillis
+                },
             )
             handleEvent(result)
         } finally {
@@ -295,12 +321,15 @@ internal class MindGestureController(
 
             val dispatchGeneration = generation
             val choreographer = Choreographer.getInstance()
-            // Let the committed snapshot draw once before microphone startup can
-            // contend with the acknowledgement frame.
+            // Let the committed timeline finish before microphone startup can
+            // contend with its acknowledgement frames.
             choreographer.postFrameCallback {
-                choreographer.postFrameCallback {
-                    if (shouldRun() && generation == dispatchGeneration) onCommand(command)
-                }
+                choreographer.postFrameCallbackDelayed(
+                    {
+                        if (shouldRun() && generation == dispatchGeneration) onCommand(command)
+                    },
+                    START_PRESENTATION_HANDOFF_MILLIS,
+                )
             }
         }
     }
@@ -328,6 +357,7 @@ internal class MindGestureController(
 
     private fun stopSession() {
         generation += 1
+        activeCandidateCode.set(NativeGestureChord.NONE.code)
         exclusivePaused = false
         if (registered) {
             CameraSessionArbiter.unregister(this)
@@ -354,6 +384,7 @@ internal class MindGestureController(
         private const val MAX_CONSECUTIVE_FAILURES = 3
         private const val TIMING_LOG_INTERVAL_MILLIS = 5_000L
         private const val MIN_INFERENCE_INTERVAL_NANOS = 120_000_000L
+        private const val START_PRESENTATION_HANDOFF_MILLIS = 50L
         private const val LOG_TAG = "GsvMindGesture"
     }
 }
