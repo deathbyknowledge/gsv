@@ -1,6 +1,3 @@
-package com.humansandmachines.gsv.wear.ui
-
-private const val ASSISTANT_LIQUID_SHADER_GEOMETRY = """
 uniform float2 iResolution;
 uniform float iTime;
 uniform float iEnergy;
@@ -883,9 +880,6 @@ float4 shipMembraneField(float3 point, float phase) {
     );
 }
 
-"""
-
-private const val ASSISTANT_LIQUID_SHADER_MATERIAL = """
 float organicDistance(float3 point, float phase, float energy) {
     float3 sourcePoint = point;
     float organicAmount = clamp(iShape.x, 0.0, 1.0);
@@ -1877,7 +1871,3 @@ half4 main(float2 fragCoord) {
     color = max(color, float3(0.0, 0.0, 0.0));
     return half4(color, alpha);
 }
-"""
-
-internal val ASSISTANT_LIQUID_SHADER =
-    ASSISTANT_LIQUID_SHADER_GEOMETRY + ASSISTANT_LIQUID_SHADER_MATERIAL

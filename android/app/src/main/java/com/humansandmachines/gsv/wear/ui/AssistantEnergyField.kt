@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.humansandmachines.gsv.wear.voice.VoiceTurnState
 import kotlin.math.PI
@@ -46,7 +47,7 @@ internal fun AssistantEnergyField(
     modifier: Modifier = Modifier,
 ) {
     val assistantShader = rememberRuntimeShader(ASSISTANT_SHADER)
-    val liquidShader = rememberRuntimeShader(ASSISTANT_LIQUID_SHADER)
+    val liquidShader = rememberAssistantLiquidRuntimeShader()
     val assistantBrush = remember(assistantShader) { assistantShader?.let(::ShaderBrush) }
     val liquidBrush = remember(liquidShader) { liquidShader?.let(::ShaderBrush) }
 
@@ -169,6 +170,19 @@ internal fun AssistantBackdrop(
 private fun rememberRuntimeShader(source: String): RuntimeShader? {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return null
     return remember(source) { runCatching { RuntimeShader(source) }.getOrNull() }
+}
+
+@Composable
+private fun rememberAssistantLiquidRuntimeShader(): RuntimeShader? {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return null
+    val context = LocalContext.current
+    return remember(context) {
+        runCatching {
+            context.assets.open("assistant.agsl").bufferedReader().use { reader ->
+                RuntimeShader(reader.readText())
+            }
+        }.getOrNull()
+    }
 }
 
 private fun DrawScope.drawAssistantLiquidBackdrop(accent: Color, phaseSeconds: Float) {
