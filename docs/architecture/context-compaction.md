@@ -15,24 +15,55 @@ boundary is the `proc.history.*` syscall family.
 
 ## Context pressure
 
-Before a model call, the process estimates tokens from the same assembled system
-prompt, messages, and tools it will send to inference. The estimate uses
-serialized character length with a safety factor and replaces embedded image data
-with a small placeholder. The usable input budget is:
+Before a model call, the process measures the same assembled system prompt,
+messages, and tools it will send to inference. It reuses provider-confirmed usage
+for the latest matching assistant prefix, then estimates only content added after
+that response. If no matching prefix exists, it estimates the whole request.
+The estimate uses serialized character length with a safety factor; images use a
+fixed conservative token cost instead of counting encoded bytes.
+The usable input budget is:
 
 ```text
 context window - configured maximum output tokens
 ```
 
-Pressure is estimated input tokens divided by that budget. Its state is persisted
-for the process, returned by `proc.history`, and emitted through `proc.changed`.
-Provider usage updates the state after a response; preflight always recomputes
-the estimate for the next request.
+Pressure is measured input tokens divided by that budget. The state exposes the
+confirmed prefix, estimated trailing input, absolute input budget, and absolute
+remaining input. It is persisted for the process, returned by `proc.history`, and
+emitted through `proc.changed` with a monotonic revision so delayed history loads
+cannot replace newer state. The revision survives compaction and reset even though
+those operations discard the obsolete pressure snapshot.
+
+Provider usage confirms only the exact request it measured. Once a response or
+tool result has been appended, the Process builds a new snapshot from the
+confirmed prefix plus estimated trailing content rather than applying the old
+request total to the newer context. Reuse also requires the same provider, model,
+context epoch, and opaque generation-context identity derived from the effective
+system prompt and offered tools. A matching model response from another epoch or
+from an IPC/interactive context variant cannot confirm the live prompt prefix.
 
 An unknown model context window produces unknown pressure, not an invented
 limit. If the provider reports that the assembled request exceeds its context
 window, the Process applies the same history policy regardless of the estimate.
 Context overflow does not advance the main generation fallback chain.
+
+## Context runway event
+
+Before the hard overflow-policy boundary, the Process emits one
+`[GSV EVENT]` per context epoch so the agent can preserve durable knowledge,
+standing facts, or unresolved commitments deliberately. The event reports
+absolute remaining input tokens and is included in the current model call. It
+does not itself write memory, create a responsibility, or compact history.
+
+The alert threshold targets up to 64,000 tokens before the configured boundary,
+capped at 20% of the model's usable input budget. With the default `0.9` compaction
+boundary, smaller windows therefore alert around `0.7` pressure; larger windows
+alert later while retaining the same bounded token runway. A persisted context
+epoch marker prevents corrected estimates, repeated tool turns, or Durable
+Object eviction from repeating the alert. Compaction closes the epoch and
+re-arms the alert for the replacement context. Preflight evaluates the soft
+overflow boundary before appending the event, so the event itself cannot be
+compacted or fail the run before the model sees it.
 
 ## Overflow policy
 

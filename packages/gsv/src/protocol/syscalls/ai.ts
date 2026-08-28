@@ -24,6 +24,21 @@ export type AiToolsResult = {
   mcpServers: string[];
 };
 
+/** Internal prompt-relevant snapshot used to keep a Process epoch current. */
+export type AiContextArgs = AiConfigArgs;
+
+export type AiContextResult = {
+  devices: AiToolsDevice[];
+  mcpServers: string[];
+  systemContextFiles?: ContextFile[];
+  system: {
+    timezone: string;
+  };
+  /** Omitted when the catalog could not be read; retain the last observed projection. */
+  skillIndex?: AiSkillIndexEntry[];
+  skillIndexMode: AiSkillIndexMode;
+};
+
 export type AiSkillIndexEntry = {
   id: string;
   name: string;

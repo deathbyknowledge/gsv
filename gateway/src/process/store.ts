@@ -41,6 +41,7 @@ import type {
   ThinkingContent,
   ToolCall,
 } from "@earendil-works/pi-ai";
+import { tagAssistantContextIdentity } from "./context-message-metadata";
 import {
   buildFallbackMediaBlocks,
   describeStoredProcessMedia,
@@ -173,6 +174,7 @@ export type ContextEpochRecord = {
   observedR12yRevision: number;
   r12yBaseline: ResponsibilityRecord[];
   sourceManifest: JsonObject;
+  observedProjection: JsonObject | null;
   state: "live" | "closed";
   createdAt: number;
   closedAt?: number;
@@ -189,6 +191,7 @@ type ContextEpochRow = {
   observed_r12y_revision: number;
   r12y_baseline_json: string;
   source_manifest_json: string;
+  observed_projection_json: string | null;
   state: "live" | "closed";
   created_at: number;
   closed_at: number | null;
@@ -291,7 +294,8 @@ const usageStateSchema = z.object({
   costIncomplete: z.literal(true).optional(),
   updatedAt: z.number().nonnegative().optional(),
 });
-const contextStateSchema = z.object({
+const contextStateInputSchema = z.object({
+  revision: z.number().finite().nonnegative().transform(Math.trunc).optional().catch(undefined),
   runId: z.string().optional(),
   messageCount: z.number().int().nonnegative().optional(),
   lastMessageId: z.number().int().nonnegative().nullable().optional(),
@@ -302,14 +306,18 @@ const contextStateSchema = z.object({
   maxOutputTokens: z.number().nonnegative(),
   estimatedInputTokens: z.number().nonnegative(),
   inputTokens: z.number().nonnegative(),
+  confirmedInputTokens: optionalNonNegativeNumberSchema,
+  estimatedTrailingInputTokens: optionalNonNegativeNumberSchema,
   outputTokens: z.number().nonnegative().optional(),
   totalTokens: z.number().nonnegative().optional(),
   usage: usageStateSchema.optional(),
   historyUsage: usageStateSchema.optional(),
-  availableInputTokens: z.number().nullable(),
+  inputBudgetTokens: z.number().finite().nonnegative().nullable().optional().catch(undefined),
+  remainingInputTokens: z.number().finite().nonnegative().nullable().optional().catch(undefined),
+  availableInputTokens: z.number().finite().nonnegative().nullable(),
   pressure: z.number().nullable(),
   level: z.enum(["unknown", "ok", "warn", "critical", "full"]),
-  source: z.enum(["estimate", "provider"]),
+  source: z.enum(["estimate", "provider", "mixed"]),
   updatedAt: z.number().nonnegative(),
 });
 const providerMetadataSchema = z.object({
@@ -331,6 +339,8 @@ const fallbackMetadataSchema = z.object({
   reason: optionalNonEmptyStringSchema,
 });
 const messageMetadataInputSchema = z.object({
+  contextEpochId: optionalNonEmptyStringSchema,
+  generationContextId: optionalNonEmptyStringSchema,
   provider: z.unknown().optional(),
   fallback: z.unknown().optional(),
   usage: z.unknown().optional(),
@@ -530,6 +540,7 @@ export class ProcessStore {
     r12yCount: number;
     r12yBaseline: ResponsibilityRecord[];
     sourceManifest: JsonObject;
+    observedProjection: JsonObject;
     now: number;
   }): ContextEpochRecord {
     if (this.getLiveContextEpoch()) {
@@ -539,9 +550,10 @@ export class ProcessStore {
       `INSERT INTO context_epochs (
         epoch_id, generation, system_prompt, r12y_revision, r12y_count,
         observed_r12y_revision, r12y_baseline_json,
-        source_manifest_json, state, created_at, closed_at, close_reason,
+        source_manifest_json, observed_projection_json,
+        state, created_at, closed_at, close_reason,
         archive_path
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'live', ?, NULL, NULL, NULL)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'live', ?, NULL, NULL, NULL)`,
       input.id,
       input.generation,
       input.systemPrompt,
@@ -550,6 +562,7 @@ export class ProcessStore {
       input.r12yRevision,
       JSON.stringify(input.r12yBaseline),
       JSON.stringify(input.sourceManifest),
+      JSON.stringify(input.observedProjection),
       input.now,
     );
     const epoch = this.getLiveContextEpoch();
@@ -637,6 +650,43 @@ export class ProcessStore {
     );
   }
 
+  appendContextEpochMessage(input: {
+    epochId: string;
+    kind: string;
+    observedProjection?: JsonObject;
+    content: string;
+    runId: string;
+    createdAt: number;
+  }): number {
+    const epoch = this.getContextEpoch(input.epochId);
+    if (!epoch || epoch.state !== "live") {
+      throw new Error(`Live context epoch not found: ${input.epochId}`);
+    }
+    const messageId = this.appendMessage("system", input.content, {
+      runId: input.runId,
+      createdAt: input.createdAt,
+    });
+    this.sql.exec(
+      `INSERT INTO context_epoch_message_refs (
+        epoch_id, message_id, kind, created_at
+      ) VALUES (?, ?, ?, ?)`,
+      input.epochId,
+      messageId,
+      input.kind,
+      input.createdAt,
+    );
+    if (input.observedProjection) {
+      this.sql.exec(
+        `UPDATE context_epochs
+         SET observed_projection_json = ?
+         WHERE epoch_id = ? AND state = 'live'`,
+        JSON.stringify(input.observedProjection),
+        input.epochId,
+      );
+    }
+    return messageId;
+  }
+
   listContextEpochTransitions(epochId: string): ResponsibilityTransition[] {
     return this.sql.exec<{ transition_json: string }>(
       `SELECT transition_json
@@ -673,12 +723,15 @@ export class ProcessStore {
     ).toArray().map((row) => parseContextEpochJson<JsonObject>(row.finish_json));
   }
 
-  deleteContextEpochProjectionMessages(epochId: string): void {
+  deleteContextEpochOwnedMessages(epochId: string): void {
     this.sql.exec(
       `DELETE FROM messages
        WHERE id IN (
          SELECT message_id FROM context_epoch_transitions WHERE epoch_id = ?
+         UNION
+         SELECT message_id FROM context_epoch_message_refs WHERE epoch_id = ?
        )`,
+      epochId,
       epochId,
     );
   }
@@ -1397,7 +1450,7 @@ export class ProcessStore {
       return null;
     }
     try {
-      return contextStateSchema.parse(JSON.parse(raw));
+      return normalizeContextState(JSON.parse(raw));
     } catch {
       return null;
     }
@@ -1405,6 +1458,24 @@ export class ProcessStore {
 
   setContextState(state: ProcContextState): void {
     this.setValue("contextState", JSON.stringify(state));
+  }
+
+  getContextStateRevision(): number {
+    const stored = Number.parseInt(this.getValue("contextStateRevision") ?? "", 10);
+    return Math.max(
+      Number.isSafeInteger(stored) && stored >= 0 ? stored : 0,
+      this.getContextState()?.revision ?? 0,
+    );
+  }
+
+  nextContextStateRevision(): number {
+    const current = this.getContextStateRevision();
+    if (current >= Number.MAX_SAFE_INTEGER) {
+      throw new Error("Context state revision exhausted");
+    }
+    const revision = current + 1;
+    this.setValue("contextStateRevision", String(revision));
+    return revision;
   }
 
   deleteContextState(): void {
@@ -1445,6 +1516,10 @@ export class ProcessStore {
   toMessages(opts?: {
     limit?: number | null;
     offset?: number;
+    /** Only usage confirmed against this exact prompt epoch is reusable. */
+    contextEpochId?: string;
+    /** Only usage confirmed against this exact system-prompt/tool shape is reusable. */
+    generationContextId?: string;
   }): Message[] {
     const records = this.getMessages(opts);
     const messages: Message[] = [];
@@ -1499,7 +1574,17 @@ export class ProcessStore {
             api: metadata?.provider?.api ?? "",
             provider: metadata?.provider?.provider ?? "",
             model: metadata?.provider?.model ?? "",
-            usage: usageStateToPiUsage(metadata?.usage),
+            usage: usageStateToPiUsage(
+              (
+                opts?.contextEpochId === undefined
+                || metadata?.contextEpochId === opts.contextEpochId
+              ) && (
+                opts?.generationContextId === undefined
+                || metadata?.generationContextId === opts.generationContextId
+              )
+                ? metadata?.usage
+                : undefined,
+            ),
             stopReason: normalizeAssistantStopReason(metadata?.provider?.stopReason),
             timestamp: r.createdAt,
           };
@@ -1509,6 +1594,11 @@ export class ProcessStore {
           if (metadata?.provider?.responseId) {
             message.responseId = metadata.provider.responseId;
           }
+          tagAssistantContextIdentity(
+            message,
+            metadata?.contextEpochId,
+            metadata?.generationContextId,
+          );
           messages.push(message);
           break;
         }
@@ -1794,10 +1884,14 @@ export function normalizeMessageMetadata(
   const provider = normalizeProviderMetadata(parsed.data.provider);
   const fallback = normalizeFallbackMetadata(parsed.data.fallback);
   const usage = normalizeUsageState(parsed.data.usage);
-  if (!provider && !fallback && !usage) {
+  const contextEpochId = parsed.data.contextEpochId?.trim() || undefined;
+  const generationContextId = parsed.data.generationContextId?.trim() || undefined;
+  if (!contextEpochId && !generationContextId && !provider && !fallback && !usage) {
     return null;
   }
   const metadata: MessageMetadata = {};
+  if (contextEpochId) metadata.contextEpochId = contextEpochId;
+  if (generationContextId) metadata.generationContextId = generationContextId;
   if (provider) metadata.provider = provider;
   if (fallback) metadata.fallback = fallback;
   if (usage) metadata.usage = usage;
@@ -1856,6 +1950,54 @@ function normalizeModelMetadata(
   return model;
 }
 
+function normalizeContextState(value: JsonValue): ProcContextState | null {
+  const parsed = contextStateInputSchema.safeParse(value);
+  if (!parsed.success) {
+    return null;
+  }
+  const inputBudgetTokens = parsed.data.inputBudgetTokens === undefined
+    ? parsed.data.availableInputTokens
+    : parsed.data.inputBudgetTokens;
+  const remainingInputTokens = parsed.data.remainingInputTokens === undefined
+    ? inputBudgetTokens === null
+      ? null
+      : Math.max(0, inputBudgetTokens - parsed.data.inputTokens)
+    : parsed.data.remainingInputTokens;
+  const confirmedInputTokens = parsed.data.confirmedInputTokens
+    ?? (parsed.data.source === "provider" ? parsed.data.inputTokens : 0);
+  const estimatedTrailingInputTokens = parsed.data.estimatedTrailingInputTokens
+    ?? (parsed.data.source === "estimate"
+      ? parsed.data.inputTokens
+      : Math.max(0, parsed.data.inputTokens - confirmedInputTokens));
+  const state: ProcContextState = {
+    revision: parsed.data.revision ?? 0,
+    provider: parsed.data.provider,
+    model: parsed.data.model,
+    contextWindowTokens: parsed.data.contextWindowTokens,
+    maxOutputTokens: parsed.data.maxOutputTokens,
+    estimatedInputTokens: parsed.data.estimatedInputTokens,
+    inputTokens: parsed.data.inputTokens,
+    confirmedInputTokens,
+    estimatedTrailingInputTokens,
+    inputBudgetTokens,
+    remainingInputTokens,
+    availableInputTokens: inputBudgetTokens,
+    pressure: parsed.data.pressure,
+    level: parsed.data.level,
+    source: parsed.data.source,
+    updatedAt: parsed.data.updatedAt,
+  };
+  if (parsed.data.runId !== undefined) state.runId = parsed.data.runId;
+  if (parsed.data.messageCount !== undefined) state.messageCount = parsed.data.messageCount;
+  if (parsed.data.lastMessageId !== undefined) state.lastMessageId = parsed.data.lastMessageId;
+  if (parsed.data.reasoning !== undefined) state.reasoning = parsed.data.reasoning;
+  if (parsed.data.outputTokens !== undefined) state.outputTokens = parsed.data.outputTokens;
+  if (parsed.data.totalTokens !== undefined) state.totalTokens = parsed.data.totalTokens;
+  if (parsed.data.usage !== undefined) state.usage = parsed.data.usage;
+  if (parsed.data.historyUsage !== undefined) state.historyUsage = parsed.data.historyUsage;
+  return state;
+}
+
 export function normalizeUsageState(
   value: Parameters<typeof usageStateInputSchema.safeParse>[0],
 ): ProcUsageState | null {
@@ -1872,7 +2014,8 @@ export function normalizeUsageState(
     outputTokens,
     cacheReadTokens,
     cacheWriteTokens,
-    totalTokens: parsed.data.totalTokens ?? inputTokens + outputTokens,
+    totalTokens: parsed.data.totalTokens
+      ?? inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens,
     cost: normalizeUsageCost(parsed.data.cost),
   };
   if (parsed.data.generations !== undefined) usage.generations = parsed.data.generations;
@@ -2032,6 +2175,9 @@ function contextEpochFromRow(row: ContextEpochRow): ContextEpochRecord {
     observedR12yRevision: row.observed_r12y_revision,
     r12yBaseline: parseContextEpochJson<ResponsibilityRecord[]>(row.r12y_baseline_json),
     sourceManifest: parseContextEpochJson<JsonObject>(row.source_manifest_json),
+    observedProjection: row.observed_projection_json
+      ? parseContextEpochJson<JsonObject>(row.observed_projection_json)
+      : null,
     state: row.state,
     createdAt: row.created_at,
   };

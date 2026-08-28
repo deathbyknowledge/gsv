@@ -2,6 +2,16 @@ import { describe, it, expect } from "vitest";
 import { runInDurableObject } from "cloudflare:test";
 import type { Process } from "./do";
 import { getProcessByPid } from "../shared/utils";
+import { normalizeUsageState } from "./store";
+
+it("includes cached tokens when reconstructing a missing usage total", () => {
+  expect(normalizeUsageState({
+    inputTokens: 100,
+    outputTokens: 20,
+    cacheReadTokens: 800,
+    cacheWriteTokens: 40,
+  })?.totalTokens).toBe(960);
+});
 
 describe("ProcessStore", () => {
   describe("history", () => {
@@ -29,7 +39,14 @@ describe("ProcessStore", () => {
           r12yRevision: 1,
           r12yCount: 1,
           r12yBaseline: [responsibility],
-          sourceManifest: { version: 1 },
+          sourceManifest: { version: 2 },
+          observedProjection: {
+            version: 1,
+            runtime: { date: "2026-08-28", timezone: "UTC" },
+            targets: [],
+            mcpServers: [],
+            skills: { mode: "off", entries: [] },
+          },
           now: 100,
         });
         const transition = {
@@ -63,6 +80,22 @@ describe("ProcessStore", () => {
           "run-1",
         )).toBe(2);
         expect(store.listContextEpochTransitions(epoch.id)).toEqual([transition]);
+        const nextProjection = {
+          version: 1,
+          runtime: { date: "2026-08-29", timezone: "UTC" },
+          targets: [],
+          mcpServers: [],
+          skills: { mode: "off", entries: [] },
+        };
+        store.appendContextEpochMessage({
+          epochId: epoch.id,
+          kind: "context.projection",
+          observedProjection: nextProjection,
+          content: "Current date: 2026-08-29",
+          runId: "run-1",
+          createdAt: 225,
+        });
+        expect(store.getLiveContextEpoch().observedProjection).toEqual(nextProjection);
         store.recordContextEpochRun("run-1", {
           runId: "run-1",
           status: "ok",
@@ -76,9 +109,10 @@ describe("ProcessStore", () => {
         }]);
         expect(store.getMessages().map((message: any) => message.content)).toEqual([
           "Responsibility changed.",
+          "Current date: 2026-08-29",
         ]);
 
-        store.deleteContextEpochProjectionMessages(epoch.id);
+        store.deleteContextEpochOwnedMessages(epoch.id);
         expect(store.getMessages()).toEqual([]);
         expect(store.closeLiveContextEpoch("process.reset", 300, "/epoch.json.gz"))
           .toMatchObject({
@@ -293,6 +327,49 @@ describe("ProcessStore", () => {
         expect(piMessage.provider).toBe("workers-ai");
         expect(piMessage.model).toBe("@cf/nvidia/nemotron-3-120b-a12b");
         expect(piMessage.usage.cost.total).toBe(0.000875);
+      });
+    });
+
+    it("exposes assistant usage only inside the exact generation context", async () => {
+      const stub = await getProcessByPid("msg-context-epoch-usage");
+      await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test exercises ProcessStore's provider-accounting projection.
+        const store = (instance as any).store;
+        store.appendMessage("assistant", "old epoch", {
+          metadata: {
+            contextEpochId: "epoch-a",
+            generationContextId: "generation-context:interactive",
+            provider: { provider: "openai", model: "gpt-test" },
+            usage: {
+              inputTokens: 900,
+              outputTokens: 100,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              totalTokens: 1000,
+              cost: null,
+            },
+          },
+        });
+
+        // SAFETY: both fixtures are assistant records created immediately above.
+        const matching = store.toMessages({
+          contextEpochId: "epoch-a",
+          generationContextId: "generation-context:interactive",
+        })[0] as any;
+        // SAFETY: both fixtures are assistant records created immediately above.
+        const different = store.toMessages({ contextEpochId: "epoch-b" })[0] as any;
+        // SAFETY: both fixtures are assistant records created immediately above.
+        const delegated = store.toMessages({
+          contextEpochId: "epoch-a",
+          generationContextId: "generation-context:delegated",
+        })[0] as any;
+        expect(matching.usage.totalTokens).toBe(1000);
+        expect(different.usage.totalTokens).toBe(0);
+        expect(delegated.usage.totalTokens).toBe(0);
+        expect(JSON.parse(store.getMessages()[0].metadata)).toMatchObject({
+          contextEpochId: "epoch-a",
+          generationContextId: "generation-context:interactive",
+        });
       });
     });
 
@@ -1123,6 +1200,53 @@ describe("ProcessStore", () => {
         store.setValue("key", "v1");
         store.setValue("key", "v2");
         expect(store.getValue("key")).toBe("v2");
+      });
+    });
+
+    it("upgrades a stored legacy context state with absolute budget fields", async () => {
+      const stub = await getProcessByPid("kv-context-state-upgrade");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
+      await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
+        const store = (instance as any).store;
+        store.setValue("contextState", JSON.stringify({
+          provider: "openai",
+          model: "gpt-test",
+          contextWindowTokens: 1000,
+          maxOutputTokens: 100,
+          estimatedInputTokens: 400,
+          inputTokens: 400,
+          availableInputTokens: 900,
+          pressure: 400 / 900,
+          level: "ok",
+          source: "estimate",
+          updatedAt: 1,
+        }));
+
+        expect(store.getContextState()).toMatchObject({
+          revision: 0,
+          confirmedInputTokens: 0,
+          estimatedTrailingInputTokens: 400,
+          inputBudgetTokens: 900,
+          remainingInputTokens: 500,
+          availableInputTokens: 900,
+        });
+      });
+    });
+
+    it("keeps context revisions monotonic when a snapshot is deleted", async () => {
+      const stub = await getProcessByPid("kv-context-state-revision");
+      // SAFETY: test fixture exercises the internal ProcessStore contract.
+      await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture exercises the internal ProcessStore contract.
+        const store = (instance as any).store;
+        expect(store.nextContextStateRevision()).toBe(1);
+        store.deleteContextState();
+        expect(store.getContextStateRevision()).toBe(1);
+        expect(store.nextContextStateRevision()).toBe(2);
+        store.resetHistory();
+        expect(store.getContextStateRevision()).toBe(2);
+        expect(store.nextContextStateRevision()).toBe(3);
       });
     });
 

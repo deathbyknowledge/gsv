@@ -7,6 +7,16 @@ export function formatCount<T>(value: T): string {
   return parsed.success ? parsed.data.toLocaleString() : "UNKNOWN";
 }
 
+export function formatCompactCount<T>(value: T): string {
+  const parsed = z.number().finite().safeParse(value);
+  return parsed.success
+    ? new Intl.NumberFormat(undefined, {
+        maximumFractionDigits: 1,
+        notation: "compact",
+      }).format(parsed.data)
+    : "UNKNOWN";
+}
+
 export function formatCurrencyCost<T>(value: T): string {
   const parsed = z.number().finite().safeParse(value);
   if (!parsed.success || parsed.data <= 0) {

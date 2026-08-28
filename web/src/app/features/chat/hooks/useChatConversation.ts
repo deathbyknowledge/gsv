@@ -224,6 +224,7 @@ export function useChatConversationRuntime(
       rows: addOptimisticUserMessage({
         activeRunId: null,
         context: null,
+        contextRevision: 0,
         messageCount: current.rows.length,
         pendingHil: null,
         rows: current.rows,

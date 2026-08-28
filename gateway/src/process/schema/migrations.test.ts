@@ -9,6 +9,7 @@ import { PROCESS_V008_SINGLE_PROCESS_HISTORY } from "./v008_single_process_histo
 import { PROCESS_V009_TYPED_MESSAGE_QUEUE } from "./v009_typed_message_queue";
 import { PROCESS_V011_ADD_CONTEXT_EPOCHS } from "./v011_add_context_epochs";
 import { PROCESS_V012_ADD_PROCESS_TRACE } from "./v012_add_process_trace";
+import { PROCESS_V013_ADD_CONTEXT_PROJECTIONS } from "./v013_add_context_projections";
 
 function normalizedStatements(): string[] {
   return PROCESS_MIGRATIONS.flatMap((migration) => migration.statements)
@@ -40,7 +41,7 @@ function createTableStatement(name: string): string {
 describe("process schema migrations", () => {
   it("starts the process component at a v1 baseline with ordered migrations", () => {
     expect(PROCESS_SCHEMA_COMPONENT).toBe("process");
-    expect(PROCESS_MIGRATIONS).toHaveLength(12);
+    expect(PROCESS_MIGRATIONS).toHaveLength(13);
     expect(PROCESS_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_process_schema",
@@ -88,6 +89,10 @@ describe("process schema migrations", () => {
     expect(PROCESS_MIGRATIONS[11]).toMatchObject({
       id: 12,
       name: "add_process_trace",
+    });
+    expect(PROCESS_MIGRATIONS[12]).toMatchObject({
+      id: 13,
+      name: "add_context_projections",
     });
   });
 
@@ -253,6 +258,21 @@ describe("process schema migrations", () => {
     expect(table).toContain("started_at INTEGER NOT NULL");
     expect(statements).toContain(
       "CREATE INDEX process_trace_spans_run_idx ON process_trace_spans (run_id, started_at, span_id)",
+    );
+  });
+
+  it("adds context projection state and epoch-owned message references in v13", () => {
+    const statements = PROCESS_V013_ADD_CONTEXT_PROJECTIONS.statements
+      .map((statement) => statement.trim().replace(/\s+/g, " "));
+    expect(statements).toContain(
+      "ALTER TABLE context_epochs ADD COLUMN observed_projection_json TEXT",
+    );
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE context_epoch_message_refs")
+      && statement.includes("PRIMARY KEY (epoch_id, message_id)")
+    ))).toBe(true);
+    expect(statements).toContain(
+      "CREATE INDEX context_epoch_message_refs_message_idx ON context_epoch_message_refs (message_id)",
     );
   });
 });

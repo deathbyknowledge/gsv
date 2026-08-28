@@ -9,6 +9,7 @@ import { Hint } from "../../../components/ui/Tooltip";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { ChatAgentViewModel } from "../domain/agent";
 import type { ChatPopoverId } from "./ChatDockPopovers";
+import { formatCompactCount } from "./chatUiFormat";
 
 type ChatDockHeaderProps = {
   activeAgent: ChatAgentViewModel;
@@ -17,6 +18,7 @@ type ChatDockHeaderProps = {
   canAbortRun: boolean;
   contextTone: "default" | "attention" | "error";
   contextPercent: number | null;
+  contextRemainingTokens: number | null;
   contextTitle: string;
   effectiveStatus: StatusTone;
   mobileLayout: boolean;
@@ -57,6 +59,7 @@ export function ChatDockHeader({
   canAbortRun,
   contextTone,
   contextPercent,
+  contextRemainingTokens,
   contextTitle,
   effectiveStatus,
   mobileLayout,
@@ -157,10 +160,10 @@ export function ChatDockHeader({
       aria-haspopup="menu"
       aria-expanded={openPopover === "context"}
     >
-      {contextPercent !== null ? (
+      {contextPercent !== null && contextRemainingTokens !== null ? (
         <>
           <Progress value={contextPercent} label="" showValue={false} size="medium" width={46} />
-          <span>{`${contextPercent}%`}</span>
+          <span>{formatCompactCount(contextRemainingTokens)}</span>
         </>
       ) : (
         <span class="gsv-chat-context-empty">Context</span>

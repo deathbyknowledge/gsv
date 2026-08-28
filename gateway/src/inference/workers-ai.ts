@@ -74,6 +74,7 @@ type WorkersAiRunInput = Omit<AiTextGenerationInput, "messages" | "tools"> & {
 type WorkersAiUsage = {
   prompt_tokens?: number;
   completion_tokens?: number;
+  cached_tokens?: number;
   total_tokens?: number;
 };
 
@@ -425,7 +426,10 @@ class WorkersAiPiEventEmitter {
 
     const message = snapshotAssistantMessage(this.partial);
     if (message.usage.totalTokens === 0) {
-      message.usage.totalTokens = message.usage.input + message.usage.output;
+      message.usage.totalTokens = message.usage.input
+        + message.usage.output
+        + message.usage.cacheRead
+        + message.usage.cacheWrite;
     }
     applyWorkersAiUsageCost(this.modelName, message.usage);
     message.stopReason = this.resolveStopReason(message);
@@ -866,13 +870,17 @@ function normalizeWorkersAiUsage(
 ): AssistantMessage["usage"] | null {
   const record = asRecord(usage);
   if (!record) return null;
-  const input = asNumber(record.prompt_tokens) || asNumber(record.input_tokens);
+  const promptTokens = asNumber(record.prompt_tokens) || asNumber(record.input_tokens);
   const output = asNumber(record.completion_tokens) || asNumber(record.output_tokens);
-  const totalTokens = asNumber(record.total_tokens) || asNumber(record.totalTokens) || input + output;
+  const cacheRead = Math.min(promptTokens, asNumber(record.cached_tokens));
+  const input = Math.max(0, promptTokens - cacheRead);
+  const totalTokens = asNumber(record.total_tokens)
+    || asNumber(record.totalTokens)
+    || input + output + cacheRead;
   const normalized = {
     input,
     output,
-    cacheRead: asNumber(record.cached_tokens),
+    cacheRead,
     cacheWrite: 0,
     totalTokens,
     cost: {
@@ -1149,24 +1157,7 @@ export function normalizeWorkersAiResponse(
 
   content.push(...toolCalls);
 
-  const usage = {
-    input: asNumber(response.usage?.prompt_tokens),
-    output: asNumber(response.usage?.completion_tokens),
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens: asNumber(response.usage?.total_tokens),
-    cost: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      total: 0,
-    },
-  };
-
-  if (usage.totalTokens === 0) {
-    usage.totalTokens = usage.input + usage.output;
-  }
+  const usage = normalizeWorkersAiUsage(response.usage) ?? emptyUsage();
 
   applyWorkersAiUsageCost(modelName, usage);
 

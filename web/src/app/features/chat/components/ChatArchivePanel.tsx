@@ -33,6 +33,7 @@ function archiveHistoryFromSegment(
     runState: "idle",
     pendingHil: null,
     context: null,
+    contextRevision: 0,
   };
 }
 

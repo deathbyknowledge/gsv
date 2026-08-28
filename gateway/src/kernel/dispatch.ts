@@ -35,6 +35,7 @@ import {
 } from "../drivers/native/fs";
 import { handleShellExec } from "../drivers/native/shell";
 import {
+  handleAiContext,
   handleAiConfig,
   handleAiImageGenerate,
   handleAiImageRead,
@@ -485,6 +486,9 @@ async function dispatchNative(
       // --- ai.* ---
       case "ai.tools":
         data = await handleAiTools(ctx);
+        break;
+      case "ai.context":
+        data = await handleAiContext(frame.args, ctx);
         break;
       case "ai.config":
         data = await handleAiConfig(frame.args, ctx);

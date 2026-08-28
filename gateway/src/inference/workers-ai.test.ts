@@ -610,6 +610,29 @@ describe("normalizeWorkersAiResponse", () => {
     expect(response.usage.cost.total).toBeGreaterThan(0);
   });
 
+  it("keeps cached prompt tokens out of uncached input usage", () => {
+    const response = normalizeWorkersAiResponse(
+      {
+        response: "cached answer",
+        usage: {
+          prompt_tokens: 1000,
+          completion_tokens: 200,
+          cached_tokens: 800,
+          total_tokens: 1200,
+        },
+      },
+      DEFAULT_WORKERS_AI_MODEL,
+    );
+
+    expect(response.usage).toMatchObject({
+      input: 200,
+      output: 200,
+      cacheRead: 800,
+      cacheWrite: 0,
+      totalTokens: 1200,
+    });
+  });
+
   it("leaves cost unknown for Workers AI models without pi-ai pricing", () => {
     expect(hasWorkersAiModelPricing(DEFAULT_WORKERS_AI_MODEL)).toBe(true);
     expect(hasWorkersAiModelPricing("@cf/example/not-priced")).toBe(false);

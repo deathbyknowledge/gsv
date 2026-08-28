@@ -7,7 +7,10 @@ import {
   runInDurableObject,
   runDurableObjectAlarm,
 } from "cloudflare:test";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import {
+  createAssistantMessageEventStream,
+  type Context,
+} from "@earendil-works/pi-ai";
 import type { Process } from "./do";
 import { Kernel } from "../kernel/do";
 import {
@@ -15,6 +18,7 @@ import {
   bodyFromText,
   bodyToText,
   REQUEST_CANCEL_SIGNAL,
+  type AiConfigResult,
   type ProcAbortResult,
   type ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
@@ -1571,6 +1575,238 @@ describe("Process DO — mechanical", () => {
       expect(result.deltaMessages).toHaveLength(1);
       expect(result.calls.filter(([call]: [string]) => call === "r12y.list"))
         .toHaveLength(1);
+    });
+
+    it("appends availability deltas without rotating the frozen epoch", async () => {
+      const pid = "mech-context-projection-delta";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test exercises Process-owned context epoch internals.
+        const process = instance as any;
+        process.kernelRpc = vi.fn(async (call: string) => {
+          const responsibilityResult = responsibilityKernelResult(call);
+          if (responsibilityResult) return responsibilityResult;
+          throw new Error(`unexpected kernel call: ${call}`);
+        });
+        const config = {
+          ...terminalTestConfig(pid),
+          systemContextFiles: [{
+            name: "00-runtime.md",
+            text: "Date: {{current.date}}\nTargets:\n{{devices}}\nMCP:\n{{mcpServers}}",
+          }],
+          skillIndexMode: "summary" as const,
+          skillIndex: [{
+            id: "alpha",
+            name: "Alpha",
+            description: "Alpha workflow",
+            source: { kind: "home" as const, label: "home", writable: true },
+          }],
+        };
+        const firstSnapshot = {
+          devices: [{
+            id: "laptop",
+            label: "Laptop",
+            platform: "linux",
+            implements: ["shell.exec"],
+          }],
+          mcpServers: ["Search"],
+          systemContextFiles: config.systemContextFiles,
+          system: { timezone: "UTC" },
+          skillIndex: config.skillIndex,
+          skillIndexMode: config.skillIndexMode,
+        };
+        const firstProjection = {
+          version: 1 as const,
+          runtime: { date: "2026-08-28", timezone: "UTC" },
+          targets: [{
+            id: "laptop",
+            implements: ["shell.exec"],
+            label: "Laptop",
+            platform: "linux",
+          }],
+          mcpServers: firstSnapshot.mcpServers,
+          skills: {
+            mode: config.skillIndexMode,
+            entries: [{ id: "alpha", description: "Alpha workflow" }],
+          },
+        };
+        const firstRun = {
+          runId: "run-projection-a",
+          config,
+          tools: [],
+          devices: firstSnapshot.devices,
+          mcpServers: firstSnapshot.mcpServers,
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        process.currentRun = firstRun;
+        const firstEpoch = await process.ensureContextEpoch(
+          firstRun.runId,
+          firstRun,
+          config,
+          firstSnapshot,
+          firstProjection,
+        );
+
+        const nextSnapshot = {
+          ...firstSnapshot,
+          devices: [{
+            id: "desktop",
+            label: "Desktop",
+            platform: "linux",
+            implements: ["fs.read", "shell.exec"],
+          }],
+          mcpServers: ["Calendar"],
+          skillIndex: [{
+            id: "beta",
+            name: "Beta",
+            description: "Beta workflow",
+            source: { kind: "home" as const, label: "home", writable: true },
+          }],
+        };
+        const nextProjection = {
+          version: 1 as const,
+          runtime: { date: "2026-08-29", timezone: "UTC" },
+          targets: [{
+            id: "desktop",
+            implements: ["fs.read", "shell.exec"],
+            label: "Desktop",
+            platform: "linux",
+          }],
+          mcpServers: nextSnapshot.mcpServers,
+          skills: {
+            mode: config.skillIndexMode,
+            entries: [{ id: "beta", description: "Beta workflow" }],
+          },
+        };
+        const nextRun = {
+          ...firstRun,
+          runId: "run-projection-b",
+          systemPrompt: undefined,
+          contextEpochId: undefined,
+          devices: nextSnapshot.devices,
+          mcpServers: nextSnapshot.mcpServers,
+        };
+        process.currentRun = nextRun;
+        const sameEpoch = await process.ensureContextEpoch(
+          nextRun.runId,
+          nextRun,
+          config,
+          nextSnapshot,
+          nextProjection,
+        );
+        await process.syncContextProjection(nextRun.runId, sameEpoch, nextProjection);
+
+        return {
+          firstEpoch,
+          liveEpoch: process.store.getLiveContextEpoch(),
+          epochs: process.store.listContextEpochs(),
+          messages: process.store.getMessages(),
+        };
+      });
+
+      expect(result.liveEpoch.id).toBe(result.firstEpoch.id);
+      expect(result.epochs).toHaveLength(1);
+      expect(result.liveEpoch.systemPrompt).toContain("Date: 2026-08-28");
+      expect(result.liveEpoch.systemPrompt).toContain("laptop: Laptop (linux)");
+      expect(result.liveEpoch.systemPrompt).toContain("- Search");
+      expect(result.liveEpoch.systemPrompt).toContain("<name>alpha</name>");
+      expect(result.liveEpoch.systemPrompt).not.toContain("desktop");
+      expect(result.liveEpoch.observedProjection).toMatchObject({
+        runtime: { date: "2026-08-29" },
+        targets: [{ id: "desktop" }],
+        mcpServers: ["Calendar"],
+        skills: { entries: [{ id: "beta" }] },
+      });
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0].content).toContain("Context availability changed.");
+      expect(result.messages[0].content).toContain("- Added: `desktop`");
+      expect(result.messages[0].content).toContain("- Removed: `laptop`");
+      expect(result.messages[0].content).toContain("Current date: 2026-08-29");
+    });
+
+    it("archives and replaces a legacy epoch before installing projection state", async () => {
+      const pid = "mech-context-projection-upgrade";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test exercises the supported context-epoch migration boundary.
+        const process = instance as any;
+        process.kernelRpc = vi.fn(async (call: string) => {
+          const responsibilityResult = responsibilityKernelResult(call);
+          if (responsibilityResult) return responsibilityResult;
+          throw new Error(`unexpected kernel call: ${call}`);
+        });
+        const legacyProjection = {
+          version: 1,
+          runtime: { date: "2026-08-28", timezone: "UTC" },
+          targets: [],
+          mcpServers: [],
+          skills: { mode: "off", entries: [] },
+        };
+        const legacy = process.store.createContextEpoch({
+          id: "epoch-legacy",
+          generation: 1,
+          systemPrompt: "legacy prompt",
+          r12yRevision: 0,
+          r12yCount: 0,
+          r12yBaseline: [],
+          sourceManifest: { version: 1 },
+          observedProjection: legacyProjection,
+          now: 100,
+        });
+        process.store.appendMessage("user", "Old epoch activity", {
+          runId: "run-legacy",
+        });
+        const config = {
+          ...terminalTestConfig(pid),
+          skillIndexMode: "off" as const,
+          systemContextFiles: [{ name: "00-test.md", text: "current prompt" }],
+        };
+        const snapshot = {
+          devices: [],
+          mcpServers: [],
+          systemContextFiles: config.systemContextFiles,
+          system: { timezone: "UTC" },
+          skillIndex: [],
+          skillIndexMode: "off" as const,
+        };
+        const run = {
+          runId: "run-current",
+          config,
+          tools: [],
+          devices: [],
+          mcpServers: [],
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        process.store.appendMessage("user", "New epoch activity", { runId: run.runId });
+        process.currentRun = run;
+        const replacement = await process.ensureContextEpoch(
+          run.runId,
+          run,
+          config,
+          snapshot,
+          legacyProjection,
+        );
+        return {
+          legacy,
+          replacement,
+          epochs: process.store.listContextEpochs(),
+        };
+      });
+
+      expect(result.replacement.id).not.toBe(result.legacy.id);
+      expect(result.replacement.sourceManifest).toMatchObject({
+        version: 2,
+        contextProjection: { version: 1 },
+      });
+      expect(result.epochs).toHaveLength(2);
+      expect(result.epochs[0]).toMatchObject({
+        id: "epoch-legacy",
+        state: "closed",
+        closeReason: "context.changed",
+        archivePath: expect.stringContaining("/epochs/epoch-legacy.json.gz"),
+      });
     });
 
     it("closes and archives the exact epoch when standing context changes", async () => {
@@ -3219,9 +3455,9 @@ describe("Process DO — mechanical", () => {
             return {
               role: "assistant",
               content: [{ type: "text", text: "done" }],
-              api: "test",
-              provider: "test",
-              model: "test",
+              api: "workers-ai-binding",
+              provider: "workers-ai",
+              model: "@cf/nvidia/nemotron-3-120b-a12b",
               usage: {
                 input: 1234,
                 output: 56,
@@ -3273,12 +3509,19 @@ describe("Process DO — mechanical", () => {
       const history = (await stub.recvFrame(makeReq("proc.history", {}))) as ResponseOkFrame;
       expect(history.ok).toBe(true);
       // SAFETY: test fixture is constructed with the asserted domain shape.
+      expect((history.data as any).contextRevision).toBe(2);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((history.data as any).context).toMatchObject({
         provider: "workers-ai",
         model: "@cf/nvidia/nemotron-3-120b-a12b",
         reasoning: "off",
         contextWindowTokens: 256000,
+        revision: 2,
         inputTokens: 1290,
+        confirmedInputTokens: 1290,
+        estimatedTrailingInputTokens: 0,
+        inputBudgetTokens: 247808,
+        remainingInputTokens: 246518,
         outputTokens: 56,
         totalTokens: 1290,
         source: "provider",
@@ -3289,11 +3532,242 @@ describe("Process DO — mechanical", () => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         .filter((entry) => entry.signal === "proc.changed" && Array.isArray((entry.payload as { changes?: unknown[] }).changes) && ((entry.payload as { changes?: unknown[] }).changes ?? []).includes("context"));
       expect(contextSignals).toHaveLength(2);
-      expect(contextSignals[0].payload.context.source).toBe("estimate");
+      expect(contextSignals[0].payload.context).toMatchObject({
+        revision: 1,
+        source: "estimate",
+      });
       expect(contextSignals[1].payload.context).toMatchObject({
+        revision: 2,
         inputTokens: 1290,
         source: "provider",
       });
+    });
+
+    it("alerts once per context epoch and rearms after compaction", async () => {
+      const pid = "mech-context-runway-alert";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
+        const generationContexts: string[] = [];
+        const inputBudgetTokens = 1_000_000;
+        let remainingInputTokens = 164_001;
+        let revision = 0;
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
+          emitted.push({ signal, payload });
+        };
+        process.updateContextState = vi.fn(async (runId: string) => {
+          const inputTokens = inputBudgetTokens - remainingInputTokens;
+          revision += 1;
+          return {
+            revision,
+            runId,
+            provider: "test",
+            model: "test",
+            contextWindowTokens: 1_008_192,
+            maxOutputTokens: 8_192,
+            estimatedInputTokens: inputTokens,
+            inputTokens,
+            confirmedInputTokens: 0,
+            estimatedTrailingInputTokens: inputTokens,
+            inputBudgetTokens,
+            remainingInputTokens,
+            availableInputTokens: inputBudgetTokens,
+            pressure: inputTokens / inputBudgetTokens,
+            level: "warn",
+            source: "estimate",
+            updatedAt: Date.now(),
+          };
+        });
+        process.generation = {
+          async generate(request: any) {
+            generationContexts.push(JSON.stringify(request.context));
+            return terminalTestResponse([
+              { type: "text", text: "done" },
+              messageAction("done"),
+            ]);
+          },
+          async generateText() {
+            return "done";
+          },
+        };
+
+        const run = async (runId: string, message: string) => {
+          process.store.appendMessage("user", message, { runId });
+          process.currentRun = {
+            runId,
+            config: {
+              ...terminalTestConfig(pid),
+              contextWindowTokens: 1_008_192,
+            },
+            tools: [],
+            devices: [],
+            systemPrompt: "Test system prompt.",
+            approvalPolicy: { default: "auto", rules: [] },
+          };
+          await process.runTick(runId);
+        };
+
+        await run("run-before-runway-alert", "not quite yet");
+        remainingInputTokens = 164_000;
+        await run("run-at-runway-alert", "cross the threshold");
+        remainingInputTokens = 150_000;
+        await run("run-after-runway-alert", "keep going");
+        const runwayEventsBeforeCompaction = emitted.filter((entry) => {
+          // SAFETY: emitted Process test payloads use the asserted optional lifecycle-event shape.
+          return entry.signal === "proc.changed"
+            && (entry.payload as { event?: string }).event === "context.runway";
+        }).length;
+
+        await expect(process.handleHistoryCompact({
+          keepLast: 1,
+          summary: "Checkpoint summary.",
+        })).resolves.toMatchObject({ ok: true });
+        remainingInputTokens = 164_000;
+        await run("run-rearmed-runway-alert", "new context epoch");
+
+        return {
+          emitted,
+          generationContexts,
+          messages: process.store.getMessages(),
+          segments: process.store.listHistorySegments(),
+          runwayEventsBeforeCompaction,
+        };
+      });
+
+      expect(result.generationContexts).toHaveLength(4);
+      expect(result.generationContexts[0]).not.toContain("Context runway is getting low.");
+      expect(result.generationContexts[1]).toContain("[GSV EVENT]");
+      expect(result.generationContexts[1]).toContain("Context runway is getting low.");
+      expect(result.generationContexts[1]).toContain("About 164,000 input tokens remain");
+      expect(result.generationContexts[1]).toContain(
+        "About 64,000 tokens of that runway remain before GSV automatically compacts",
+      );
+      expect(result.generationContexts[2].match(/Context runway is getting low\./gu))
+        .toHaveLength(1);
+      expect(result.generationContexts[3].match(/Context runway is getting low\./gu))
+        .toHaveLength(1);
+      expect(result.messages.filter((message: any) => (
+        message.role === "system" && message.content.includes("Context runway is getting low.")
+      ))).toHaveLength(1);
+      expect(result.segments).toHaveLength(1);
+      expect(result.runwayEventsBeforeCompaction).toBe(1);
+
+      const runwayEvents = result.emitted.filter((entry) => {
+        // SAFETY: emitted Process test payloads use the asserted optional lifecycle-event shape.
+        return entry.signal === "proc.changed"
+          && (entry.payload as { event?: string }).event === "context.runway";
+      });
+      expect(runwayEvents).toHaveLength(2);
+      expect(new Set(runwayEvents.map((entry) => (
+        // SAFETY: context.runway lifecycle payloads always carry their context epoch id.
+        (entry.payload as { epochId: string }).epochId
+      ))).size).toBe(2);
+      runwayEvents.forEach((entry) => {
+        expect(entry.payload).toMatchObject({
+          inputBudgetTokens: 1_000_000,
+          remainingInputTokens: 164_000,
+          boundaryRemainingTokens: 100_000,
+          thresholdRemainingTokens: 164_000,
+          compactAtPressure: 0.9,
+          overflow: "auto-compact",
+        });
+      });
+    });
+
+    it("delivers a runway alert before its own tokens cross the soft boundary", async () => {
+      const pid = "mech-context-runway-alert-headroom";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
+        const process = instance as any;
+        const generationContexts: string[] = [];
+        const inputBudgetTokens = 1_000_000;
+        let revision = 0;
+        process.sendSignal = async () => {};
+        process.store.setValue("historyPolicy", JSON.stringify({
+          overflow: "fail",
+          compactAtPressure: 0.9,
+          keepLast: 80,
+          updatedAt: Date.now(),
+        }));
+        process.updateContextState = vi.fn(async (
+          runId: string,
+          _config: AiConfigResult,
+          context: Context,
+        ) => {
+          const includesRunwayAlert = JSON.stringify(context)
+            .includes("Context runway is getting low.");
+          const inputTokens = includesRunwayAlert ? 900_100 : 899_999;
+          revision += 1;
+          return {
+            revision,
+            runId,
+            provider: "test",
+            model: "test",
+            contextWindowTokens: 1_008_192,
+            maxOutputTokens: 8_192,
+            estimatedInputTokens: inputTokens,
+            inputTokens,
+            confirmedInputTokens: 0,
+            estimatedTrailingInputTokens: inputTokens,
+            inputBudgetTokens,
+            remainingInputTokens: inputBudgetTokens - inputTokens,
+            availableInputTokens: inputBudgetTokens,
+            pressure: inputTokens / inputBudgetTokens,
+            level: "critical",
+            source: "estimate",
+            updatedAt: Date.now(),
+          };
+        });
+        process.generation = {
+          async generate(request: any) {
+            generationContexts.push(JSON.stringify(request.context));
+            return terminalTestResponse([
+              { type: "text", text: "done" },
+              messageAction("done"),
+            ]);
+          },
+          async generateText() {
+            return "done";
+          },
+        };
+
+        process.store.appendMessage("user", "Preserve the warning for this turn.", {
+          runId: "run-context-runway-alert-headroom",
+        });
+        process.currentRun = {
+          runId: "run-context-runway-alert-headroom",
+          config: {
+            ...terminalTestConfig(pid),
+            contextWindowTokens: 1_008_192,
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.runTick("run-context-runway-alert-headroom");
+
+        return {
+          generationContexts,
+          messages: process.store.getMessages(),
+        };
+      });
+
+      expect(result.generationContexts).toHaveLength(1);
+      expect(result.generationContexts[0]).toContain("Context runway is getting low.");
+      expect(result.messages.some((message: any) => (
+        message.role === "system"
+        && message.content.includes("Context limit policy stopped this run.")
+      ))).toBe(false);
     });
 
     it("includes interaction origin in model context without rewriting stored content", async () => {
@@ -4584,6 +5058,7 @@ describe("Process DO — mechanical", () => {
       expect(result.calls[1]).toMatchObject({ provider: "openrouter", model: "small-fallback" });
       expect(result.calls[1].context).toContain("Fallback compact summary.");
       expect(result.calls[1].context).toContain("Context that must stay live.");
+      expect(result.calls[1].context).toContain("Context runway is getting low.");
       expect(result.calls[1].context).not.toContain("old context A");
       expect(result.compactionConfigs).toEqual([
         { provider: "openrouter", model: "small-fallback" },
@@ -4592,6 +5067,7 @@ describe("Process DO — mechanical", () => {
         .map((message: any) => [message.role, message.content])).toEqual([
         ["system", expect.stringContaining("Fallback compact summary.")],
         ["user", "Context that must stay live."],
+        ["system", expect.stringContaining("Context runway is getting low.")],
         ["assistant", "fallback after compaction"],
       ]);
       expect(result.segments).toHaveLength(1);
@@ -4604,6 +5080,7 @@ describe("Process DO — mechanical", () => {
       expect(lifecycleEvents).toEqual([
         "history.compacted",
         "history.auto_compacted",
+        "context.runway",
       ]);
     });
 
@@ -6166,6 +6643,15 @@ describe("Process DO — mechanical", () => {
         process.kernelRpc = async (call: string, args: any) => {
           const responsibilityResult = responsibilityKernelResult(call);
           if (responsibilityResult) return responsibilityResult;
+          if (call === "ai.context") {
+            return {
+              devices: [],
+              mcpServers: [],
+              system: { timezone: "UTC" },
+              skillIndex: [],
+              skillIndexMode: "off",
+            };
+          }
           kernelCalls.push({ call, args });
           if (call !== "ai.text.generate") {
             throw new Error(`unexpected kernel syscall: ${call}`);
@@ -6395,6 +6881,15 @@ describe("Process DO — mechanical", () => {
         process.kernelRpc = async (call: string, _args: any) => {
           const responsibilityResult = responsibilityKernelResult(call);
           if (responsibilityResult) return responsibilityResult;
+          if (call === "ai.context") {
+            return {
+              devices: [],
+              mcpServers: [],
+              system: { timezone: "UTC" },
+              skillIndex: [],
+              skillIndexMode: "off",
+            };
+          }
           throw new Error(`unexpected synchronous kernel syscall: ${call}`);
         };
         process.requestKernelNetFetch = async (
@@ -14009,6 +14504,13 @@ describe("Process DO — mechanical", () => {
           r12yCount: 0,
           r12yBaseline: [],
           sourceManifest: { version: 1 },
+          observedProjection: {
+            version: 1,
+            runtime: { date: "2026-08-28", timezone: "UTC" },
+            targets: [],
+            mcpServers: [],
+            skills: { mode: "off", entries: [] },
+          },
           now: 100,
         });
         process.currentRun = { runId };

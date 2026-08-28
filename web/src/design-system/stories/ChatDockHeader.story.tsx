@@ -49,7 +49,8 @@ function headerProps(overrides: VariantProps = {}): Parameters<typeof ChatDockHe
     canAbortRun: false,
     contextTone: "default",
     contextPercent: 63,
-    contextTitle: "Context 63% · healthy",
+    contextRemainingTokens: 92_000,
+    contextTitle: "92K context tokens remaining · 63% used",
     effectiveStatus: "idle",
     mobileLayout: true,
     modelLabel: "@CF/ZAI-ORG/GLM-5.2",
@@ -99,7 +100,8 @@ const story: Story = {
             canAbortRun: true,
             contextTone: "attention",
             contextPercent: 82,
-            contextTitle: "Context 82% · elevated",
+            contextRemainingTokens: 44_000,
+            contextTitle: "44K context tokens remaining · 82% used",
             effectiveStatus: "live",
           })} />
         </MobileFrame>

@@ -50,7 +50,8 @@ const usageStateSchema = z.object({
   costIncomplete: z.boolean().optional(),
   updatedAt: z.number().optional(),
 });
-const contextStateSchema: z.ZodType<ProcContextState> = z.object({
+const contextStateSchema = z.object({
+  revision: z.number().finite().nonnegative().transform(Math.trunc).optional(),
   runId: z.string().optional(),
   messageCount: z.number().optional(),
   lastMessageId: z.number().nullable().optional(),
@@ -61,14 +62,18 @@ const contextStateSchema: z.ZodType<ProcContextState> = z.object({
   maxOutputTokens: z.number(),
   estimatedInputTokens: z.number(),
   inputTokens: z.number(),
+  confirmedInputTokens: z.number().optional(),
+  estimatedTrailingInputTokens: z.number().optional(),
   outputTokens: z.number().optional(),
   totalTokens: z.number().optional(),
   usage: usageStateSchema.optional(),
   historyUsage: usageStateSchema.optional(),
+  inputBudgetTokens: z.number().nullable().optional(),
+  remainingInputTokens: z.number().nullable().optional(),
   availableInputTokens: z.number().nullable(),
   pressure: z.number().nullable(),
   level: z.enum(["unknown", "ok", "warn", "critical", "full"]),
-  source: z.enum(["estimate", "provider"]),
+  source: z.enum(["estimate", "provider", "mixed"]),
   updatedAt: z.number(),
 });
 const adapterSurfaceSchema = z.object({
@@ -160,6 +165,7 @@ export type ChatTranscriptRow = {
 export type ChatRuntimeState = {
   activeRunId: string | null;
   context: ProcContextState | null;
+  contextRevision: number;
   messageCount: number;
   pendingHil: ProcHilRequest | null;
   rows: ChatTranscriptRow[];
@@ -205,6 +211,7 @@ export function emptyChatRuntimeState(processId = ""): ChatRuntimeState {
   return {
     activeRunId: null,
     context: null,
+    contextRevision: 0,
     messageCount: 0,
     pendingHil: null,
     rows: [],
@@ -219,7 +226,8 @@ export function chatRuntimeStateFromHistory(history: ChatHistory | null): ChatRu
 
   return {
     activeRunId: history.activeRunId,
-    context: history.context ?? null,
+    context: normalizeContextState(history.context),
+    contextRevision: history.contextRevision,
     messageCount: history.messageCount,
     pendingHil: history.pendingHil,
     rows: transcriptRowsFromHistory(history),
@@ -632,10 +640,14 @@ function applyProcChanged(state: ChatRuntimeState, payload: TranscriptRpcPayload
   if (changes.includes("context")) {
     const context = normalizeContextState(record?.context ?? record);
     if (context) {
+      const contextSnapshot = newerContextSnapshot(next, {
+        context,
+        contextRevision: context.revision,
+      });
       next = {
         ...next,
-        context,
-        messageCount: context.messageCount ?? next.messageCount,
+        ...contextSnapshot,
+        messageCount: contextSnapshot.context?.messageCount ?? next.messageCount,
       };
       refreshHistory = true;
     }
@@ -1213,7 +1225,64 @@ function extractThinkingBlocks(value: TranscriptRpcPayload): string[] {
 
 function normalizeContextState(value: TranscriptRpcPayload): ProcContextState | null {
   const parsed = contextStateSchema.safeParse(value);
-  return parsed.success ? parsed.data : null;
+  if (!parsed.success) {
+    return null;
+  }
+  const inputBudgetTokens = parsed.data.inputBudgetTokens === undefined
+    ? parsed.data.availableInputTokens
+    : parsed.data.inputBudgetTokens;
+  const remainingInputTokens = parsed.data.remainingInputTokens === undefined
+    ? inputBudgetTokens === null
+      ? null
+      : Math.max(0, inputBudgetTokens - parsed.data.inputTokens)
+    : parsed.data.remainingInputTokens;
+  const confirmedInputTokens = parsed.data.confirmedInputTokens
+    ?? (parsed.data.source === "provider" ? parsed.data.inputTokens : 0);
+  return {
+    ...parsed.data,
+    revision: parsed.data.revision ?? 0,
+    confirmedInputTokens,
+    estimatedTrailingInputTokens: parsed.data.estimatedTrailingInputTokens
+      ?? (parsed.data.source === "estimate"
+        ? parsed.data.inputTokens
+        : Math.max(0, parsed.data.inputTokens - confirmedInputTokens)),
+    inputBudgetTokens,
+    remainingInputTokens,
+    availableInputTokens: inputBudgetTokens,
+  };
+}
+
+export function newerContextState(
+  current: ProcContextState | null | undefined,
+  candidate: ProcContextState | null | undefined,
+): ProcContextState | null {
+  if (!candidate) return current ?? null;
+  if (!current) return candidate;
+  const currentRevision = Number.isFinite(current.revision) ? current.revision : 0;
+  const candidateRevision = Number.isFinite(candidate.revision) ? candidate.revision : 0;
+  if (candidateRevision !== currentRevision) {
+    return candidateRevision > currentRevision ? candidate : current;
+  }
+  return candidate.updatedAt >= current.updatedAt ? candidate : current;
+}
+
+export function newerContextSnapshot(
+  current: Pick<ChatRuntimeState, "context" | "contextRevision">,
+  candidate: Pick<ChatRuntimeState, "context" | "contextRevision">,
+): Pick<ChatRuntimeState, "context" | "contextRevision"> {
+  if (candidate.contextRevision !== current.contextRevision) {
+    return candidate.contextRevision > current.contextRevision ? candidate : current;
+  }
+  if (!candidate.context) {
+    return candidate;
+  }
+  if (!current.context && current.contextRevision > 0) {
+    return current;
+  }
+  return {
+    context: newerContextState(current.context, candidate.context),
+    contextRevision: candidate.contextRevision,
+  };
 }
 
 function signalMatchesTarget(payload: TranscriptRpcPayload, target: ChatSignalTarget): boolean {

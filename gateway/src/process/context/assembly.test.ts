@@ -350,6 +350,10 @@ function makeInput(overrides: Partial<PromptAssemblyInput> = {}): PromptAssembly
     identity: IDENTITY,
     devices: [],
     mcpServers: [],
+    runtime: {
+      date: currentDateInTimezone("Europe/Amsterdam"),
+      timezone: "Europe/Amsterdam",
+    },
     r12y: "Ledger revision 0.\n\nNo unresolved responsibilities.",
     storage: {
       async get() {

@@ -69,6 +69,7 @@ export type ChatHistory = {
   runState: ChatRunState;
   pendingHil: ProcHilRequest | null;
   context: Extract<ProcHistoryResult, { ok: true }>["context"];
+  contextRevision: number;
 };
 
 export type ChatProcessTraceArgs = ProcTraceArgs;
@@ -277,6 +278,10 @@ export function normalizeHistoryMessage(message: ProcHistoryMessage, index: numb
 
 export function normalizeHistory(result: Extract<ProcHistoryResult, { ok: true }>): ChatHistory {
   const pendingHil = normalizeHilRequest(result.pendingHil);
+  const contextRevision = Math.max(
+    nonNegativeInteger(result.contextRevision),
+    nonNegativeInteger(result.context?.revision),
+  );
   return {
     pid: result.pid,
     messages: result.messages.map(normalizeHistoryMessage),
@@ -291,7 +296,13 @@ export function normalizeHistory(result: Extract<ProcHistoryResult, { ok: true }
     }),
     pendingHil,
     context: result.context ?? null,
+    contextRevision,
   };
+}
+
+function nonNegativeInteger(value: number | null | undefined): number {
+  const parsed = z.number().finite().nonnegative().safeParse(value);
+  return parsed.success ? Math.trunc(parsed.data) : 0;
 }
 
 export function didAbortActiveRun(result: ProcAbortResult): boolean {
