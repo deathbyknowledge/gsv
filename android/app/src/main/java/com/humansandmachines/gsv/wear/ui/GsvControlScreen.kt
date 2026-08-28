@@ -9,7 +9,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -39,6 +39,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -508,24 +509,53 @@ private fun MindGestureFeedback(
     snapshot: GestureSnapshot,
     modifier: Modifier = Modifier,
 ) {
-    val progress by animateFloatAsState(
-        targetValue = if (snapshot.state == GestureLinkState.TRACKING) snapshot.progress else 0f,
-        animationSpec = tween(100, easing = FastOutSlowInEasing),
-        label = "gesture-evidence",
-    )
+    val evidence = remember { Animatable(0f) }
+    var evidenceCommitSequence by remember { mutableLongStateOf(snapshot.commitSequence) }
+    LaunchedEffect(snapshot.state, snapshot.progress, snapshot.commitSequence) {
+        if (snapshot.commitSequence != evidenceCommitSequence) {
+            evidenceCommitSequence = snapshot.commitSequence
+            val remaining = (1f - evidence.value).coerceIn(0f, 1f)
+            val fillMillis = (GESTURE_COMMIT_FILL_MILLIS * remaining)
+                .toInt()
+                .coerceAtLeast(GESTURE_COMMIT_MIN_FILL_MILLIS)
+            evidence.animateTo(1f, tween(fillMillis, easing = LinearEasing))
+            evidence.animateTo(0f, tween(GESTURE_COMMIT_RELEASE_MILLIS, easing = FastOutSlowInEasing))
+        } else if (snapshot.state == GestureLinkState.TRACKING) {
+            val target = projectedGestureEvidence(snapshot.progress)
+            if (target >= evidence.value) {
+                evidence.animateTo(
+                    target,
+                    tween(GESTURE_EVIDENCE_ADVANCE_MILLIS, easing = LinearEasing),
+                )
+            } else {
+                evidence.animateTo(
+                    target,
+                    tween(GESTURE_EVIDENCE_RETREAT_MILLIS, easing = FastOutSlowInEasing),
+                )
+            }
+        } else {
+            evidence.animateTo(
+                0f,
+                tween(GESTURE_EVIDENCE_RETREAT_MILLIS, easing = FastOutSlowInEasing),
+            )
+        }
+    }
+
     val commit = remember { Animatable(0f) }
+    var glowCommitSequence by remember { mutableLongStateOf(snapshot.commitSequence) }
     LaunchedEffect(snapshot.commitSequence) {
-        if (snapshot.commitSequence == 0L) return@LaunchedEffect
+        if (snapshot.commitSequence == glowCommitSequence) return@LaunchedEffect
+        glowCommitSequence = snapshot.commitSequence
         commit.snapTo(1f)
         commit.animateTo(0f, tween(620, easing = FastOutSlowInEasing))
     }
     Canvas(modifier) {
         val stroke = 1.dp.toPx()
-        if (progress > 0.01f) {
+        if (evidence.value > 0.01f) {
             drawArc(
-                color = GsvColor.Accent.copy(alpha = 0.22f + progress * 0.62f),
+                color = GsvColor.Accent.copy(alpha = 0.22f + evidence.value * 0.62f),
                 startAngle = -90f,
-                sweepAngle = 360f * progress,
+                sweepAngle = 360f * evidence.value,
                 useCenter = false,
                 topLeft = Offset(stroke * 2f, stroke * 2f),
                 size = Size(size.width - stroke * 4f, size.height - stroke * 4f),
@@ -541,6 +571,20 @@ private fun MindGestureFeedback(
         }
     }
 }
+
+internal fun projectedGestureEvidence(progress: Float): Float {
+    val bounded = progress.coerceIn(0f, 1f)
+    if (bounded == 0f) return 0f
+    return (bounded + GESTURE_EVIDENCE_LOOKAHEAD).coerceAtMost(GESTURE_EVIDENCE_CEILING)
+}
+
+private const val GESTURE_EVIDENCE_LOOKAHEAD = 0.24f
+private const val GESTURE_EVIDENCE_CEILING = 0.94f
+private const val GESTURE_EVIDENCE_ADVANCE_MILLIS = 240
+private const val GESTURE_EVIDENCE_RETREAT_MILLIS = 150
+private const val GESTURE_COMMIT_FILL_MILLIS = 120
+private const val GESTURE_COMMIT_MIN_FILL_MILLIS = 45
+private const val GESTURE_COMMIT_RELEASE_MILLIS = 260
 
 @Composable
 private fun SurfaceNavigation(
