@@ -39,6 +39,8 @@ internal fun AssistantEnergyField(
     accent: Color,
     shapeParameters: OrbShapeParameters,
     liquidParameters: AssistantLiquidParameters,
+    shipOrbitRadians: Float,
+    shipElevationOffsetRadians: Float,
     modifier: Modifier = Modifier,
 ) {
     val assistantShader = rememberRuntimeShader(ASSISTANT_SHADER)
@@ -59,6 +61,8 @@ internal fun AssistantEnergyField(
                 accent = accent,
                 shapeParameters = shapeParameters,
                 liquidParameters = liquidParameters,
+                shipOrbitRadians = shipOrbitRadians,
+                shipElevationOffsetRadians = shipElevationOffsetRadians,
             )
             drawRect(brush = liquidBrush, blendMode = BlendMode.SrcOver)
         } else if (
@@ -242,6 +246,8 @@ private fun configureAssistantLiquidShader(
     accent: Color,
     shapeParameters: OrbShapeParameters,
     liquidParameters: AssistantLiquidParameters,
+    shipOrbitRadians: Float,
+    shipElevationOffsetRadians: Float,
 ) {
     shader.setFloatUniform("iResolution", size.width, size.height)
     shader.setFloatUniform("iTime", phaseSeconds)
@@ -251,7 +257,7 @@ private fun configureAssistantLiquidShader(
         "iShape",
         shapeParameters.organicAmount.coerceIn(0f, 1f),
         shapeParameters.symbolPresence.coerceIn(0f, 1f),
-        shapeParameters.eyeSpacing.coerceIn(0.08f, 0.18f),
+        shapeParameters.shipPresence.coerceIn(0f, 1f),
         shapeParameters.smileCurve.coerceIn(0f, 1.4f),
     )
     shader.setFloatUniform(
@@ -260,6 +266,11 @@ private fun configureAssistantLiquidShader(
         liquidParameters.foldComplexity.coerceIn(0f, 1f),
         liquidParameters.internalActivity.coerceIn(0f, 1f),
         liquidParameters.projection.coerceIn(0f, 1f),
+    )
+    shader.setFloatUniform(
+        "iShipView",
+        shipOrbitRadians,
+        shipElevationOffsetRadians,
     )
 }
 

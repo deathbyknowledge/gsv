@@ -10,6 +10,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -17,13 +19,22 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.shape.CutCornerShape
 import androidx.compose.foundation.text.BasicText as Text
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
@@ -40,6 +51,7 @@ class AssistantShowcaseActivity : ComponentActivity() {
     private var showcaseState by mutableStateOf(VoiceTurnState.LISTENING)
     private var showOverlay by mutableStateOf(false)
     private var morphReview by mutableStateOf(false)
+    private var shipReview by mutableStateOf(false)
     private var stateReview by mutableStateOf(false)
     private var controlReview by mutableStateOf(false)
     private var controlAuthority by mutableStateOf(AuthorityState.DISARMED)
@@ -68,7 +80,12 @@ class AssistantShowcaseActivity : ComponentActivity() {
         enableEdgeToEdge()
         updateShowcase(intent)
         setContent {
-            if (controlReview) {
+            if (shipReview) {
+                ShipGooReviewSurface(
+                    shapeTarget = shapeTarget,
+                    onToggle = ::toggleShape,
+                )
+            } else if (controlReview) {
                 GsvControlScreen(
                     wearSnapshot = RuntimeSnapshot(
                         connection = ConnectionState.CONNECTED,
@@ -175,6 +192,7 @@ class AssistantShowcaseActivity : ComponentActivity() {
         showcaseState = runCatching {
             VoiceTurnState.valueOf(intent.getStringExtra(EXTRA_STATE) ?: VoiceTurnState.LISTENING.name)
         }.getOrDefault(VoiceTurnState.LISTENING)
+        shipReview = intent.getBooleanExtra(EXTRA_SHIP, false)
         showOverlay = intent.getBooleanExtra(EXTRA_OVERLAY, false)
         morphReview = intent.getBooleanExtra(EXTRA_MORPH, false)
         stateReview = intent.getBooleanExtra(EXTRA_STATES, false)
@@ -184,7 +202,7 @@ class AssistantShowcaseActivity : ComponentActivity() {
         } else {
             null
         }
-        shapeTarget = OrbShapeTarget.LISTENING
+        shapeTarget = if (shipReview) OrbShapeTarget.SHIP else OrbShapeTarget.LISTENING
         if (activityResumed) syncSignalSources()
     }
 
@@ -210,7 +228,7 @@ class AssistantShowcaseActivity : ComponentActivity() {
 
     private fun syncMicrophone() {
         val shouldSample = showcaseState == VoiceTurnState.LISTENING &&
-            signalOverride == null && activityResumed && !controlReview
+            signalOverride == null && activityResumed && !controlReview && !shipReview
         if (!shouldSample) {
             stopMicrophone()
             return
@@ -265,7 +283,7 @@ class AssistantShowcaseActivity : ComponentActivity() {
 
     private fun syncSpeechSample() {
         val shouldPlay = showcaseState == VoiceTurnState.SPEAKING &&
-            signalOverride == null && activityResumed && !controlReview
+            signalOverride == null && activityResumed && !controlReview && !shipReview
         if (!shouldPlay) {
             stopSpeechSample()
             return
@@ -314,9 +332,16 @@ class AssistantShowcaseActivity : ComponentActivity() {
     }
 
     private fun toggleShape() {
-        shapeTarget = when (shapeTarget) {
-            OrbShapeTarget.LISTENING -> OrbShapeTarget.SMILE
-            OrbShapeTarget.SMILE -> OrbShapeTarget.LISTENING
+        shapeTarget = if (shipReview) {
+            when (shapeTarget) {
+                OrbShapeTarget.SHIP -> OrbShapeTarget.LISTENING
+                else -> OrbShapeTarget.SHIP
+            }
+        } else {
+            when (shapeTarget) {
+                OrbShapeTarget.LISTENING -> OrbShapeTarget.SMILE
+                else -> OrbShapeTarget.LISTENING
+            }
         }
     }
 
@@ -324,12 +349,86 @@ class AssistantShowcaseActivity : ComponentActivity() {
         private const val EXTRA_STATE = "state"
         private const val EXTRA_OVERLAY = "overlay"
         private const val EXTRA_MORPH = "morph"
+        private const val EXTRA_SHIP = "ship"
         private const val EXTRA_STATES = "states"
         private const val EXTRA_CONTROL = "control"
         private const val EXTRA_SIGNAL = "signal"
         private const val SPEECH_REVIEW_LOG_TAG = "GsvSpeechReview"
     }
 }
+
+@androidx.compose.runtime.Composable
+private fun ShipGooReviewSurface(
+    shapeTarget: OrbShapeTarget,
+    onToggle: () -> Unit,
+) {
+    var shipOrbitRadians by remember { mutableFloatStateOf(0f) }
+    var shipElevationRadians by remember {
+        mutableFloatStateOf(DEFAULT_SHIP_ELEVATION_RADIANS)
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(GsvColor.Void)
+            .semantics {
+                role = Role.Button
+                contentDescription = "Morph procedural Ship"
+            }
+            .clickable(
+                interactionSource = androidx.compose.runtime.remember {
+                    MutableInteractionSource()
+                },
+                indication = null,
+                onClick = onToggle,
+            )
+            .pointerInput(Unit) {
+                detectDragGestures { change, dragAmount ->
+                    change.consume()
+                    shipOrbitRadians += dragAmount.x / size.width.coerceAtLeast(1) *
+                        (2f * kotlin.math.PI.toFloat())
+                    shipElevationRadians = (
+                        shipElevationRadians -
+                            dragAmount.y / size.height.coerceAtLeast(1) *
+                            kotlin.math.PI.toFloat()
+                        ).coerceIn(
+                        MIN_SHIP_ELEVATION_RADIANS,
+                        MAX_SHIP_ELEVATION_RADIANS,
+                    )
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        GsvStarField(
+            modifier = Modifier.fillMaxSize(),
+            horizontalParallax = kotlin.math.sin(shipOrbitRadians),
+            verticalParallax = kotlin.math.sin(
+                shipElevationRadians - DEFAULT_SHIP_ELEVATION_RADIANS,
+            ),
+        )
+        AssistantCore(
+            state = VoiceTurnState.LISTENING,
+            shapeTarget = shapeTarget,
+            accentOverride = GsvColor.Accent,
+            shipOrbitRadians = shipOrbitRadians,
+            shipElevationOffsetRadians =
+                shipElevationRadians - DEFAULT_SHIP_ELEVATION_RADIANS,
+            modifier = Modifier.fillMaxWidth().height(360.dp).padding(horizontal = 8.dp),
+        )
+        Text(
+            text = if (shapeTarget == OrbShapeTarget.SHIP) {
+                "DRAG IN 3D // TAP TO RELEASE"
+            } else {
+                "LIQUID FIELD // TAP TO FORM"
+            },
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 52.dp),
+            style = GsvTextStyle.Kicker.copy(color = GsvColor.MutedDark),
+        )
+    }
+}
+
+private const val DEFAULT_SHIP_ELEVATION_RADIANS = 0.6981317f
+private const val MIN_SHIP_ELEVATION_RADIANS = -1.3962634f
+private const val MAX_SHIP_ELEVATION_RADIANS = 1.4835298f
 
 @androidx.compose.runtime.Composable
 private fun ShowcaseHostSurface() {

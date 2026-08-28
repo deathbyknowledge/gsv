@@ -126,6 +126,13 @@ fun GsvControlScreen(
 
     Box(modifier.fillMaxSize().background(GsvColor.Void)) {
         LiveBackdrop(accent = accent, modifier = Modifier.fillMaxSize())
+        AnimatedVisibility(
+            visible = selected == GsvSurface.SHIP,
+            enter = fadeIn(tween(520)),
+            exit = fadeOut(tween(240)),
+        ) {
+            GsvStarField(modifier = Modifier.fillMaxSize())
+        }
         AnimatedContent(
             targetState = selected,
             transitionSpec = { fadeIn(tween(230)) togetherWith fadeOut(tween(170)) },

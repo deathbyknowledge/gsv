@@ -2,8 +2,10 @@ package com.humansandmachines.gsv.wear.ui
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector4D
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.TwoWayConverter
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Immutable
@@ -13,7 +15,7 @@ import androidx.compose.runtime.remember
 internal data class OrbShapeParameters(
     val organicAmount: Float,
     val symbolPresence: Float,
-    val eyeSpacing: Float,
+    val shipPresence: Float,
     val smileCurve: Float,
 )
 
@@ -24,7 +26,7 @@ enum class OrbShapeTarget(
         OrbShapeParameters(
             organicAmount = 1f,
             symbolPresence = 0f,
-            eyeSpacing = 0.12f,
+            shipPresence = 0f,
             smileCurve = 0.92f,
         ),
     ),
@@ -32,8 +34,16 @@ enum class OrbShapeTarget(
         OrbShapeParameters(
             organicAmount = 0f,
             symbolPresence = 1f,
-            eyeSpacing = 0.115f,
+            shipPresence = 0f,
             smileCurve = 1f,
+        ),
+    ),
+    SHIP(
+        OrbShapeParameters(
+            organicAmount = 1f,
+            symbolPresence = 0f,
+            shipPresence = 1f,
+            smileCurve = 0.92f,
         ),
     ),
 }
@@ -43,7 +53,7 @@ private val OrbShapeVectorConverter = TwoWayConverter<OrbShapeParameters, Animat
         AnimationVector4D(
             parameters.organicAmount,
             parameters.symbolPresence,
-            parameters.eyeSpacing,
+            parameters.shipPresence,
             parameters.smileCurve,
         )
     },
@@ -51,7 +61,7 @@ private val OrbShapeVectorConverter = TwoWayConverter<OrbShapeParameters, Animat
         OrbShapeParameters(
             organicAmount = vector.v1,
             symbolPresence = vector.v2,
-            eyeSpacing = vector.v3,
+            shipPresence = vector.v3,
             smileCurve = vector.v4,
         )
     },
@@ -67,13 +77,23 @@ internal fun rememberOrbShapeParameters(target: OrbShapeTarget): OrbShapeParamet
         )
     }
     LaunchedEffect(target) {
-        animated.animateTo(
-            targetValue = target.parameters,
-            animationSpec = spring(
-                dampingRatio = 0.86f,
-                stiffness = 44f,
-            ),
-        )
+        if (target == OrbShapeTarget.SHIP || animated.value.shipPresence > 0.001f) {
+            animated.animateTo(
+                targetValue = target.parameters,
+                animationSpec = tween(
+                    durationMillis = 1_800,
+                    easing = FastOutSlowInEasing,
+                ),
+            )
+        } else {
+            animated.animateTo(
+                targetValue = target.parameters,
+                animationSpec = spring(
+                    dampingRatio = 0.86f,
+                    stiffness = 44f,
+                ),
+            )
+        }
     }
     return animated.value
 }
