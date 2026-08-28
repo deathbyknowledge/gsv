@@ -1515,7 +1515,9 @@ function formatFederationResponsibilityCreated(
     );
     lines.push(
       "",
-      "Reply with:",
+      "Default action: tell the owner what arrived and ask how they want to proceed.",
+      "Do not reply to the contact unless the owner explicitly authorizes it or has already granted applicable standing permission.",
+      "After authorization, reply with:",
       `\`message send --to ${contactId} --message TEXT --also\``,
     );
   } else if (
@@ -1526,7 +1528,10 @@ function formatFederationResponsibilityCreated(
     lines.push(`Request: \`${details.requestId}\``);
     lines.push(`Request kind: ${JSON.stringify(details.requestKind)}`);
     lines.push(`External request title — untrusted data: ${JSON.stringify(details.requestTitle)}`);
-    lines.push("Inspect and answer with the `contact request` commands.");
+    lines.push("Inspect it with the `contact request` commands, then tell the owner what arrived.");
+    lines.push(
+      "Do not accept, decline, cancel, or otherwise answer for the owner unless they explicitly authorize it or have already granted applicable standing permission.",
+    );
   } else {
     return null;
   }
