@@ -11,6 +11,9 @@ uniform float2 iShipView;
 
 const float PI = 3.14159265359;
 const float TAU = 6.28318530718;
+const float SHIP_HABITAT_CENTER_X = 0.0;
+const float SHIP_KEEL_HALF_WIDTH = 0.023;
+const float SHIP_KEEL_HALF_LENGTH = 0.360;
 
 float2 rotate2(float angle, float2 point) {
     float sine = sin(angle);
@@ -44,6 +47,18 @@ float roundedBoxDistance(float3 point, float3 halfSize, float radius) {
     float3 outside = abs(point) - halfSize + radius;
     return length(max(outside, float3(0.0))) +
         min(max(outside.x, max(outside.y, outside.z)), 0.0) - radius;
+}
+
+float chamferedPrismDistance(
+    float3 point,
+    float2 halfSize,
+    float halfHeight,
+    float chamfer
+) {
+    float2 planarPoint = abs(point.xy) - halfSize;
+    float corner = (planarPoint.x + planarPoint.y + chamfer) * 0.70710678;
+    float planar = max(max(planarPoint.x, planarPoint.y), corner);
+    return max(planar, abs(point.z) - halfHeight);
 }
 
 float ovalPrismDistance(
@@ -219,10 +234,32 @@ float3 shipObjectPoint(float3 point, float phase) {
 
 float shipHullScale(float longitudinal) {
     float progress = clamp((longitudinal + 0.58) / 1.18, 0.0, 1.0);
-    float safeProgress = clamp(progress, 0.0001, 0.9999);
-    float asymmetricLens = pow(safeProgress, 0.34) *
-        pow(1.0 - safeProgress, 0.79) / 0.506;
-    return max(min(asymmetricLens, 1.0), 0.018);
+    float asymmetricLens = pow(progress, 0.34) *
+        pow(1.0 - progress, 0.79) / 0.506;
+    return max(min(asymmetricLens, 1.0), 0.002);
+}
+
+float shipHullBottomAt(
+    float3 shipPoint,
+    float hullWidth,
+    float hullHeight
+) {
+    float normalizedHullX = clamp(
+        shipPoint.x / max(hullWidth, 0.0001),
+        -1.0,
+        1.0
+    );
+    return -0.012 - hullHeight * sqrt(max(
+        1.0 - normalizedHullX * normalizedHullX,
+        0.0
+    ));
+}
+
+float shipKeelFootprintRadius(float3 shipPoint) {
+    return length(float2(
+        shipPoint.x / SHIP_KEEL_HALF_WIDTH,
+        shipPoint.y / SHIP_KEEL_HALF_LENGTH
+    ));
 }
 
 float shipDistance(float3 point, float phase, float energy) {
@@ -238,28 +275,29 @@ float shipDistance(float3 point, float phase, float energy) {
         )
     ) - 1.0;
     float distance = crossSection * min(hullWidth, hullHeight);
-    distance = max(
+    distance = smoothMaximum(
         distance,
-        max(-0.58 - shipPoint.y, shipPoint.y - 0.60)
+        max(-0.58 - shipPoint.y, shipPoint.y - 0.60),
+        0.003
     );
 
-    float3 firstCutPoint = shipPoint - float3(-0.030, -0.340, 0.055);
+    float3 firstCutPoint = shipPoint - float3(SHIP_HABITAT_CENTER_X, -0.340, 0.055);
     firstCutPoint.xy = rotate2(-0.18, firstCutPoint.xy);
     float firstCut = hexagonalPrismDistance(firstCutPoint, 0.050, 0.020);
 
-    float3 secondCutPoint = shipPoint - float3(0.036, -0.165, 0.066);
+    float3 secondCutPoint = shipPoint - float3(SHIP_HABITAT_CENTER_X, -0.165, 0.066);
     secondCutPoint.xy = rotate2(0.14, secondCutPoint.xy);
     float secondCut = hexagonalPrismDistance(secondCutPoint, 0.052, 0.020);
 
-    float3 thirdCutPoint = shipPoint - float3(-0.026, 0.015, 0.057);
+    float3 thirdCutPoint = shipPoint - float3(SHIP_HABITAT_CENTER_X, 0.015, 0.057);
     thirdCutPoint.xy = rotate2(-0.10, thirdCutPoint.xy);
     float thirdCut = hexagonalPrismDistance(thirdCutPoint, 0.044, 0.019);
 
-    float3 fourthCutPoint = shipPoint - float3(0.020, 0.190, 0.044);
+    float3 fourthCutPoint = shipPoint - float3(SHIP_HABITAT_CENTER_X, 0.190, 0.044);
     fourthCutPoint.xy = rotate2(0.16, fourthCutPoint.xy);
     float fourthCut = hexagonalPrismDistance(fourthCutPoint, 0.036, 0.017);
 
-    float3 fifthCutPoint = shipPoint - float3(-0.010, 0.365, 0.026);
+    float3 fifthCutPoint = shipPoint - float3(SHIP_HABITAT_CENTER_X, 0.365, 0.026);
     fifthCutPoint.xy = rotate2(-0.12, fifthCutPoint.xy);
     float fifthCut = hexagonalPrismDistance(fifthCutPoint, 0.025, 0.014);
 
@@ -269,23 +307,23 @@ float shipDistance(float3 point, float phase, float energy) {
     );
     distance = smoothMaximum(distance, -apertureCut, 0.003);
 
-    float3 firstPanePoint = shipPoint - float3(-0.030, -0.340, 0.038);
+    float3 firstPanePoint = shipPoint - float3(SHIP_HABITAT_CENTER_X, -0.340, 0.038);
     firstPanePoint.xy = rotate2(-0.18, firstPanePoint.xy);
     float firstPane = hexagonalPrismDistance(firstPanePoint, 0.047, 0.004);
 
-    float3 secondPanePoint = shipPoint - float3(0.036, -0.165, 0.050);
+    float3 secondPanePoint = shipPoint - float3(SHIP_HABITAT_CENTER_X, -0.165, 0.050);
     secondPanePoint.xy = rotate2(0.14, secondPanePoint.xy);
     float secondPane = hexagonalPrismDistance(secondPanePoint, 0.049, 0.004);
 
-    float3 thirdPanePoint = shipPoint - float3(-0.026, 0.015, 0.042);
+    float3 thirdPanePoint = shipPoint - float3(SHIP_HABITAT_CENTER_X, 0.015, 0.042);
     thirdPanePoint.xy = rotate2(-0.10, thirdPanePoint.xy);
     float thirdPane = hexagonalPrismDistance(thirdPanePoint, 0.041, 0.004);
 
-    float3 fourthPanePoint = shipPoint - float3(0.020, 0.190, 0.031);
+    float3 fourthPanePoint = shipPoint - float3(SHIP_HABITAT_CENTER_X, 0.190, 0.031);
     fourthPanePoint.xy = rotate2(0.16, fourthPanePoint.xy);
     float fourthPane = hexagonalPrismDistance(fourthPanePoint, 0.0335, 0.004);
 
-    float3 fifthPanePoint = shipPoint - float3(-0.010, 0.365, 0.016);
+    float3 fifthPanePoint = shipPoint - float3(SHIP_HABITAT_CENTER_X, 0.365, 0.016);
     fifthPanePoint.xy = rotate2(-0.12, fifthPanePoint.xy);
     float fifthPane = hexagonalPrismDistance(fifthPanePoint, 0.0225, 0.003);
 
@@ -293,7 +331,55 @@ float shipDistance(float3 point, float phase, float energy) {
         min(min(firstPane, secondPane), min(thirdPane, fourthPane)),
         fifthPane
     );
-    return smoothMinimum(distance, aperturePane, 0.002);
+    distance = smoothMinimum(distance, aperturePane, 0.002);
+
+    float trenchTaper = smoothstep(-0.53, -0.44, shipPoint.y) *
+        (1.0 - smoothstep(0.41, 0.51, shipPoint.y));
+    float trenchCut = max(
+        hullWidth * mix(0.99, 0.88, trenchTaper) - abs(shipPoint.x),
+        abs(shipPoint.z + 0.018) - 0.0075 * trenchTaper
+    );
+    distance = smoothMaximum(distance, -trenchCut, 0.0012);
+
+    float3 portDockPoint = shipPoint - float3(-0.055, -0.035, -0.079);
+    float3 starboardDockPoint = shipPoint - float3(0.055, -0.035, -0.079);
+    portDockPoint.xy = rotate2(-0.055, portDockPoint.xy);
+    starboardDockPoint.xy = rotate2(0.055, starboardDockPoint.xy);
+    float portDock = chamferedPrismDistance(
+        portDockPoint,
+        float2(0.024, 0.120),
+        0.021,
+        0.014
+    );
+    float starboardDock = chamferedPrismDistance(
+        starboardDockPoint,
+        float2(0.024, 0.120),
+        0.021,
+        0.014
+    );
+    distance = smoothMaximum(distance, -min(portDock, starboardDock), 0.002);
+
+    float keelFootprintRadius = shipKeelFootprintRadius(shipPoint);
+    float keelFootprint = (keelFootprintRadius - 1.0) *
+        SHIP_KEEL_HALF_WIDTH;
+    float keelProfile = sqrt(max(
+        1.0 - keelFootprintRadius * keelFootprintRadius,
+        0.0
+    ));
+    float localHullBottom = shipHullBottomAt(
+        shipPoint,
+        hullWidth,
+        hullHeight
+    );
+    float keelTop = localHullBottom + 0.004;
+    float keelBottom = localHullBottom - 0.007 * keelProfile;
+    float keelCenter = (keelTop + keelBottom) * 0.5;
+    float keelHalfHeight = (keelTop - keelBottom) * 0.5;
+    float keel = max(
+        keelFootprint,
+        abs(shipPoint.z - keelCenter) - keelHalfHeight
+    );
+    return smoothMinimum(distance, keel, 0.0022);
 }
 
 float shipCoreSignal(float3 point, float phase) {
@@ -307,15 +393,15 @@ float shipCoreSignal(float3 point, float phase) {
 
 float shipApertureSignal(float3 point, float phase) {
     float3 shipPoint = shipObjectPoint(point, phase);
-    float2 firstPoint = shipPoint.xy - float2(-0.030, -0.340);
+    float2 firstPoint = shipPoint.xy - float2(SHIP_HABITAT_CENTER_X, -0.340);
     firstPoint = rotate2(-0.18, firstPoint);
-    float2 secondPoint = shipPoint.xy - float2(0.036, -0.165);
+    float2 secondPoint = shipPoint.xy - float2(SHIP_HABITAT_CENTER_X, -0.165);
     secondPoint = rotate2(0.14, secondPoint);
-    float2 thirdPoint = shipPoint.xy - float2(-0.026, 0.015);
+    float2 thirdPoint = shipPoint.xy - float2(SHIP_HABITAT_CENTER_X, 0.015);
     thirdPoint = rotate2(-0.10, thirdPoint);
-    float2 fourthPoint = shipPoint.xy - float2(0.020, 0.190);
+    float2 fourthPoint = shipPoint.xy - float2(SHIP_HABITAT_CENTER_X, 0.190);
     fourthPoint = rotate2(0.16, fourthPoint);
-    float2 fifthPoint = shipPoint.xy - float2(-0.010, 0.365);
+    float2 fifthPoint = shipPoint.xy - float2(SHIP_HABITAT_CENTER_X, 0.365);
     fifthPoint = rotate2(-0.12, fifthPoint);
     float nearest = min(
         min(
@@ -422,7 +508,7 @@ float4 sampleShipHabitat(
 float4 shipHabitatField(float3 shipPoint) {
     float4 habitat = sampleShipHabitat(
         shipPoint,
-        float2(-0.030, -0.340),
+        float2(SHIP_HABITAT_CENTER_X, -0.340),
         -0.18,
         0.044,
         0.042,
@@ -432,7 +518,7 @@ float4 shipHabitatField(float3 shipPoint) {
     if (habitat.x > 0.001) return habitat;
     habitat = sampleShipHabitat(
         shipPoint,
-        float2(0.036, -0.165),
+        float2(SHIP_HABITAT_CENTER_X, -0.165),
         0.14,
         0.046,
         0.054,
@@ -442,7 +528,7 @@ float4 shipHabitatField(float3 shipPoint) {
     if (habitat.x > 0.001) return habitat;
     habitat = sampleShipHabitat(
         shipPoint,
-        float2(-0.026, 0.015),
+        float2(SHIP_HABITAT_CENTER_X, 0.015),
         -0.10,
         0.038,
         0.046,
@@ -452,7 +538,7 @@ float4 shipHabitatField(float3 shipPoint) {
     if (habitat.x > 0.001) return habitat;
     habitat = sampleShipHabitat(
         shipPoint,
-        float2(0.020, 0.190),
+        float2(SHIP_HABITAT_CENTER_X, 0.190),
         0.16,
         0.031,
         0.035,
@@ -462,7 +548,7 @@ float4 shipHabitatField(float3 shipPoint) {
     if (habitat.x > 0.001) return habitat;
     return sampleShipHabitat(
         shipPoint,
-        float2(-0.010, 0.365),
+        float2(SHIP_HABITAT_CENTER_X, 0.365),
         -0.12,
         0.0205,
         0.019,
@@ -473,9 +559,91 @@ float4 shipHabitatField(float3 shipPoint) {
 
 float shipBeltSignal(float3 point, float phase) {
     float3 shipPoint = shipObjectPoint(point, phase);
-    float sideWindow = smoothstep(0.055, 0.120, abs(shipPoint.x));
-    float belt = 1.0 - smoothstep(0.007, 0.023, abs(shipPoint.z + 0.018));
-    return sideWindow * belt;
+    float hullWidth = 0.164 * shipHullScale(shipPoint.y);
+    float sideWindow = smoothstep(
+        hullWidth * 0.70,
+        hullWidth * 0.86,
+        abs(shipPoint.x)
+    );
+    float longitudinalWindow = smoothstep(-0.53, -0.44, shipPoint.y) *
+        (1.0 - smoothstep(0.41, 0.51, shipPoint.y));
+    float belt = 1.0 - smoothstep(0.006, 0.014, abs(shipPoint.z + 0.018));
+    return sideWindow * longitudinalWindow * belt;
+}
+
+float4 shipLowerHullField(float3 shipPoint) {
+    float underside = 1.0 - smoothstep(-0.044, -0.024, shipPoint.z);
+    float transverseSeam = min(
+        min(abs(shipPoint.y + 0.340), abs(shipPoint.y + 0.140)),
+        min(abs(shipPoint.y - 0.080), abs(shipPoint.y - 0.270))
+    );
+    float longitudinalSeam = lineSegmentDistance(
+        shipPoint.xy,
+        float2(-0.085, -0.400),
+        float2(-0.040, 0.380)
+    );
+    longitudinalSeam = min(
+        longitudinalSeam,
+        lineSegmentDistance(
+            shipPoint.xy,
+            float2(0.085, -0.400),
+            float2(0.040, 0.380)
+        )
+    );
+    float seamDistance = min(transverseSeam, longitudinalSeam);
+    float seamSoft = (1.0 - smoothstep(0.0007, 0.0018, seamDistance)) *
+        underside;
+    float seamRidge = (1.0 - smoothstep(0.0002, 0.0009, seamDistance)) *
+        underside;
+
+    float hullScale = shipHullScale(shipPoint.y);
+    float hullWidth = 0.164 * hullScale;
+    float hullHeight = 0.080 * pow(hullScale, 0.72);
+    float localHullBottom = shipHullBottomAt(
+        shipPoint,
+        hullWidth,
+        hullHeight
+    );
+    float keelCore = 1.0 - smoothstep(
+        0.54,
+        0.90,
+        shipKeelFootprintRadius(shipPoint)
+    );
+    float keelFace = 1.0 - smoothstep(
+        localHullBottom - 0.0055,
+        localHullBottom - 0.0008,
+        shipPoint.z
+    );
+    float keel = keelCore * keelFace * underside;
+
+    float3 portDockPoint = float3(
+        shipPoint.xy - float2(-0.055, -0.035),
+        0.0
+    );
+    float3 starboardDockPoint = float3(
+        shipPoint.xy - float2(0.055, -0.035),
+        0.0
+    );
+    portDockPoint.xy = rotate2(-0.055, portDockPoint.xy);
+    starboardDockPoint.xy = rotate2(0.055, starboardDockPoint.xy);
+    float dockDistance = min(
+        chamferedPrismDistance(
+            portDockPoint,
+            float2(0.024, 0.120),
+            0.012,
+            0.014
+        ),
+        chamferedPrismDistance(
+            starboardDockPoint,
+            float2(0.024, 0.120),
+            0.012,
+            0.014
+        )
+    );
+    float dock = (1.0 - smoothstep(-0.002, 0.004, dockDistance)) * underside;
+    float dockRim = (1.0 - smoothstep(0.001, 0.007, abs(dockDistance))) *
+        underside;
+    return float4(max(seamSoft * 0.55, seamRidge), dockRim, keel, dock);
 }
 
 float shipDriveSignal(float3 point, float phase) {
@@ -913,12 +1081,16 @@ float marchOrganic(
     float energy
 ) {
     float travel = start;
+    float shipQuality = clamp(iShape.z, 0.0, 1.0);
+    float hitThreshold = mix(0.0018, 0.00145, shipQuality);
+    float stepScale = mix(0.66, 0.65, shipQuality);
+    float minimumStep = mix(0.0045, 0.0042, shipQuality);
     for (int index = 0; index < 36; ++index) {
         float distance = organicDistance(origin + direction * travel, phase, energy);
-        if (distance < 0.0018) {
-            return travel;
+        if (distance < hitThreshold) {
+            return travel + distance * 0.5;
         }
-        travel += max(distance * 0.66, 0.0045);
+        travel += max(distance * stepScale, minimumStep);
         if (travel > end) {
             break;
         }
@@ -927,7 +1099,8 @@ float marchOrganic(
 }
 
 float3 organicNormal(float3 point, float phase, float energy) {
-    const float offset = 0.004;
+    float shipQuality = clamp(iShape.z, 0.0, 1.0);
+    float offset = mix(0.004, 0.0030, shipQuality);
     float3 first = float3(1.0, -1.0, -1.0);
     float3 second = float3(-1.0, -1.0, 1.0);
     float3 third = float3(-1.0, 1.0, -1.0);
@@ -1258,8 +1431,17 @@ half4 main(float2 fragCoord) {
         shipMaterial += shipSilver * (0.690 + shipFacet * 0.170);
         shipMaterial += shipLight *
             (shipContour * 0.36 + silhouette * 0.055);
+        float3 shipMaterialPoint = shipObjectPoint(point, phase);
+        float4 shipLowerHull = shipLowerHullField(shipMaterialPoint) * shipPresence;
+        float lowerHull = (1.0 - smoothstep(
+            -0.030,
+            -0.006,
+            shipMaterialPoint.z
+        )) * shipPresence;
+        shipMaterial *= 1.0 - lowerHull * 0.070;
         float panelCut = clamp(
-            shipSurfaceField.x * 0.14 + shipSurfaceField.y * 0.30,
+            shipSurfaceField.x * 0.14 + shipSurfaceField.y * 0.30 +
+                shipLowerHull.x * 0.26,
             0.0,
             0.32
         );
@@ -1268,9 +1450,56 @@ half4 main(float2 fragCoord) {
             (shipSurfaceField.z * 0.22 + shipSurfaceField.w * 0.52);
         shipMaterial += mix(shipSilver, shipPower, 0.42) *
             shipCore * (0.14 + internalActivity * 0.06);
-        shipMaterial *= 1.0 - shipBelt * 0.76;
-        shipMaterial += shipPower * shipBelt * 0.018;
-        float3 shipMaterialPoint = shipObjectPoint(point, phase);
+        float3 trenchMaterial = shipSilver * 0.34 +
+            shipPower * 0.035 + float3(0.004, 0.005, 0.010);
+        shipMaterial = mix(
+            shipMaterial,
+            trenchMaterial,
+            shipBelt * 0.70
+        );
+        float trenchRibDistance = min(
+            min(
+                abs(shipMaterialPoint.y + 0.315),
+                abs(shipMaterialPoint.y + 0.090)
+            ),
+            min(
+                abs(shipMaterialPoint.y - 0.145),
+                abs(shipMaterialPoint.y - 0.335)
+            )
+        );
+        float trenchRib = (1.0 - smoothstep(
+            0.006,
+            0.014,
+            trenchRibDistance
+        )) * shipBelt;
+        shipMaterial = mix(
+            shipMaterial,
+            shipSilver * 0.52 + shipPower * 0.040,
+            trenchRib * 0.74
+        );
+        float3 keelMaterial = shipSilver * 0.60 +
+            shipLight * 0.035 + shipPower * 0.055;
+        shipMaterial = mix(
+            shipMaterial,
+            keelMaterial,
+            shipLowerHull.z * 0.58
+        );
+        float dockDepth = smoothstep(
+            -0.087,
+            -0.058,
+            shipMaterialPoint.z
+        );
+        float3 dockMaterial = mix(
+            float3(0.006, 0.012, 0.026) + shipPower * 0.035,
+            shipSilver * 0.25 + shipPower * 0.055,
+            dockDepth * 0.78
+        );
+        shipMaterial = mix(
+            shipMaterial,
+            dockMaterial,
+            shipLowerHull.w * 0.90
+        );
+        shipMaterial += shipLight * shipLowerHull.y * 0.075;
         float4 habitatField = shipHabitatField(shipMaterialPoint) * shipPresence;
         float apertureTexture = 0.5 + 0.5 * sin(
             dot(shipMaterialPoint, float3(31.0, -23.0, 19.0)) +
