@@ -30,6 +30,8 @@ Use `wiki info personal` when the page location is unknown. Once a relevant page
 
 Write immediately when the user explicitly says to remember an unambiguous fact or corrects an existing fact. Also write a concrete, stable fact or preference that the user states explicitly when it will improve future help.
 
+When work reveals durable context about a person or relationship, preserve it promptly even if the user did not explicitly ask you to remember it. This includes identity, alternate names or handles, how the person relates to the user, ongoing shared projects, and meaningful interaction outcomes. Do not wait for compaction or a later request to make the information durable. Record inferred context as an inference rather than omitting it, and include a date or source when it will help resolve future ambiguity.
+
 Search and merge before writing when the fact may already exist, refers to an ambiguous person or project, supersedes older information, or belongs on more than one existing page. In a direct user interaction, the personal intelligence should delegate this investigative memory work; a worker already assigned the work may perform it directly.
 
 Append a journal entry for a meaningful event or outcome whose chronology may matter later. Use ISO dates:
@@ -37,6 +39,28 @@ Append a journal entry for a meaningful event or outcome whose chronology may ma
 ```bash
 pages/journal/YYYY/MM/YYYY-MM-DD.md
 ```
+
+## Recover Missing Memory from Process History
+
+Process history is lossless recovery evidence, not the primary memory system. Search the Personal wiki first. If relevant memory is missing and earlier Process work likely contains the answer, inspect that history and then repair the wiki with the durable facts you recover.
+
+For compacted history belonging to a visible Process, prefer the structured Process interface:
+
+```bash
+proc segments --pid <pid>
+proc segment <segment-id> --pid <pid> --json
+```
+
+Reset and terminated Process transcripts are stored as gzipped JSONL under the run-as agent's home. Locate candidate archives and stream them through `zcat`; do not try to read compressed bytes as text or modify the immutable archive:
+
+```bash
+find "$HOME/processes" -name '*.jsonl.gz'
+zcat "$HOME/processes/<pid>/history/<archive>.jsonl.gz" \
+  | jq -r '[.ts, .role, .content] | @tsv' \
+  | rg -i '<term>'
+```
+
+Search narrowly by likely Process or date when possible. Once the missing context is recovered, merge the useful facts into the appropriate Personal wiki page. Do not copy raw transcripts, reasoning, or tool noise into memory.
 
 ## Organize the Wiki
 

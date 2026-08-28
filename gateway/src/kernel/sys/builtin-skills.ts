@@ -79,6 +79,8 @@ export const BUILTIN_SKILL_FILES = [
     previousSha256s: [
       // Exact untouched human-owned memory skill shipped before the r12y ledger.
       "32be7b318bfcc8e09a0d14c4f4853b6d8cc7e5e170f48e653a7e4b9514e77e25",
+      // Exact untouched Personal wiki skill shipped before archive recovery guidance.
+      "2da2c30829f569a94e698f0e1eb6b0fe4d471dd99904b44825406495a5cd598a",
     ],
   },
   {
