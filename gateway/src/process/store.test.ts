@@ -39,7 +39,14 @@ describe("ProcessStore", () => {
           r12yRevision: 1,
           r12yCount: 1,
           r12yBaseline: [responsibility],
-          sourceManifest: { version: 1 },
+          sourceManifest: { version: 2 },
+          observedProjection: {
+            version: 1,
+            runtime: { date: "2026-08-28", timezone: "UTC" },
+            targets: [],
+            mcpServers: [],
+            skills: { mode: "off", entries: [] },
+          },
           now: 100,
         });
         const transition = {
@@ -73,6 +80,22 @@ describe("ProcessStore", () => {
           "run-1",
         )).toBe(2);
         expect(store.listContextEpochTransitions(epoch.id)).toEqual([transition]);
+        const nextProjection = {
+          version: 1,
+          runtime: { date: "2026-08-29", timezone: "UTC" },
+          targets: [],
+          mcpServers: [],
+          skills: { mode: "off", entries: [] },
+        };
+        store.appendContextEpochMessage({
+          epochId: epoch.id,
+          kind: "context.projection",
+          observedProjection: nextProjection,
+          content: "Current date: 2026-08-29",
+          runId: "run-1",
+          createdAt: 225,
+        });
+        expect(store.getLiveContextEpoch().observedProjection).toEqual(nextProjection);
         store.recordContextEpochRun("run-1", {
           runId: "run-1",
           status: "ok",
@@ -86,9 +109,10 @@ describe("ProcessStore", () => {
         }]);
         expect(store.getMessages().map((message: any) => message.content)).toEqual([
           "Responsibility changed.",
+          "Current date: 2026-08-29",
         ]);
 
-        store.deleteContextEpochProjectionMessages(epoch.id);
+        store.deleteContextEpochOwnedMessages(epoch.id);
         expect(store.getMessages()).toEqual([]);
         expect(store.closeLiveContextEpoch("process.reset", 300, "/epoch.json.gz"))
           .toMatchObject({
@@ -303,6 +327,38 @@ describe("ProcessStore", () => {
         expect(piMessage.provider).toBe("workers-ai");
         expect(piMessage.model).toBe("@cf/nvidia/nemotron-3-120b-a12b");
         expect(piMessage.usage.cost.total).toBe(0.000875);
+      });
+    });
+
+    it("exposes assistant usage only inside the exact context epoch", async () => {
+      const stub = await getProcessByPid("msg-context-epoch-usage");
+      await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test exercises ProcessStore's provider-accounting projection.
+        const store = (instance as any).store;
+        store.appendMessage("assistant", "old epoch", {
+          metadata: {
+            contextEpochId: "epoch-a",
+            provider: { provider: "openai", model: "gpt-test" },
+            usage: {
+              inputTokens: 900,
+              outputTokens: 100,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              totalTokens: 1000,
+              cost: null,
+            },
+          },
+        });
+
+        // SAFETY: both fixtures are assistant records created immediately above.
+        const matching = store.toMessages({ contextEpochId: "epoch-a" })[0] as any;
+        // SAFETY: both fixtures are assistant records created immediately above.
+        const different = store.toMessages({ contextEpochId: "epoch-b" })[0] as any;
+        expect(matching.usage.totalTokens).toBe(1000);
+        expect(different.usage.totalTokens).toBe(0);
+        expect(JSON.parse(store.getMessages()[0].metadata)).toMatchObject({
+          contextEpochId: "epoch-a",
+        });
       });
     });
 

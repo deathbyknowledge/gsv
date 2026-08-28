@@ -2,6 +2,7 @@ import type { SyscallName } from "../syscalls";
 
 const INTERNAL_ONLY_SYSCALLS = new Set<SyscallName>([
   "ai.config",
+  "ai.context",
   "ai.tools",
   "codemode.exec",
   "proc.ipc.deliver",

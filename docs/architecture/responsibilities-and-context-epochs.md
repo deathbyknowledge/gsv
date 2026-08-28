@@ -138,6 +138,22 @@ The model's current view is the frozen baseline plus ordered deltas. These event
 after the previously cached prompt and history, preserving provider prefix/KV cache
 reuse. `r12y list` remains the authoritative on-demand query.
 
+The same epoch owns a normalized availability projection for accessible online
+targets, ready MCP servers, current date and timezone, and the visible skill catalog.
+Before every provider turn, Process asks the Kernel for the current prompt-relevant
+snapshot and compares it with the last observed projection. A meaningful change is
+persisted as one bounded `[GSV EVENT]` in the Process Activity, and the event message
+and observed projection advance commit atomically. A disconnect and reconnect between
+observations therefore produces no artificial activity. These changes do not rotate
+the epoch or mutate tool definitions; routable tools keep a stable target schema and
+the agent uses `targets list` for the authoritative live view.
+
+The epoch source manifest retains the initial projection that rendered its prompt,
+while the epoch row and archive retain the last observed projection. Projection event
+messages remain ordinary Process Activity until the epoch is archived. Compaction,
+reset, or a real standing-context replacement archives those exact messages before
+removing them from live history and rendering the replacement baseline.
+
 If a responsibility is created while a provider call is already running, Process does
 not mutate that call's system prompt. The ready batch prevents the run from yielding
 the new work unseen. The next provider turn synchronizes and appends its transition.
@@ -208,6 +224,7 @@ transcript fragment. The archive manifest identifies:
 - source context sections, sizes, and content hashes;
 - the initial responsibility snapshot and revision;
 - ordered responsibility and GSV event deltas;
+- the initial and last-observed availability projections;
 - Process messages, reasoning, tools, results, and run boundaries;
 - offered tool schemas, targets, and model parameters;
 - committed user-visible Message references; and

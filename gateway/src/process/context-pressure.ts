@@ -10,6 +10,7 @@ import type {
   ProcUsageState,
 } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
+import { assistantContextEpochId } from "./context-message-metadata";
 
 const TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4;
 const TOKEN_ESTIMATE_SAFETY_FACTOR = 1.15;
@@ -34,7 +35,7 @@ export function estimateContextInputTokens(context: Context): number {
 
 export function measureContextInputTokens(
   context: Context,
-  target?: { provider: string; model: string },
+  target?: { provider: string; model: string; contextEpochId?: string },
   confirmedUsage?: Usage,
 ): ContextInputMeasurement {
   const estimatedInputTokens = applyEstimateSafety(estimateWholeContextTokens(context));
@@ -88,7 +89,7 @@ export function measureContextInputTokens(
 
 function lastApplicableUsage(
   messages: readonly Message[],
-  target?: { provider: string; model: string },
+  target?: { provider: string; model: string; contextEpochId?: string },
 ): { index: number; tokens: number } | null {
   let latestPrefixTimestamp = Number.NEGATIVE_INFINITY;
   let result: { index: number; tokens: number } | null = null;
@@ -99,6 +100,10 @@ function lastApplicableUsage(
       const targetMatches = !target || (
         message.provider === target.provider
         && message.model === target.model
+        && (
+          target.contextEpochId === undefined
+          || assistantContextEpochId(message) === target.contextEpochId
+        )
       );
       if (
         targetMatches

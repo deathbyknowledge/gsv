@@ -20,6 +20,7 @@ vi.spyOn(inferenceService, "createGenerationService").mockImplementation(createG
 vi.spyOn(skillsSeed, "seedBuiltinSkillsToHome").mockImplementation(seedBuiltinSkillsToHomeMock);
 
 import {
+  handleAiContext,
   handleAiConfig,
   handleAiImageGenerate,
   handleAiImageRead,
@@ -292,7 +293,7 @@ describe("handleAiTools", () => {
     expect(ctx.mcp.listTools).not.toHaveBeenCalled();
   });
 
-  it("caps routable tool target descriptions when many targets are online", async () => {
+  it("keeps routable tool schemas stable as online targets change", async () => {
     const records = Array.from({ length: 12 }, (_value, index) =>
       makeDevice({ device_id: `node-${String(index + 1).padStart(2, "0")}` })
     );
@@ -309,13 +310,23 @@ describe("handleAiTools", () => {
     const shell = result.tools.find((tool) => tool.name === "Shell");
     const description = JSON.stringify(shell?.inputSchema);
 
-    expect(description).toContain("node-01");
-    expect(description).toContain("node-10");
-    expect(description).toContain("and 2 more");
     expect(description).toContain("targets list");
     expect(description).toContain("online status");
+    expect(description).toContain("accessible targets");
+    expect(description).not.toContain("node-01");
     expect(description).not.toContain("node-11");
     expect(description).not.toContain("node-12");
+    expect(result.devices).toHaveLength(12);
+
+    // SAFETY: fixture replaces only the typed device-store method used by handleAiTools.
+    const withoutTargets = await handleAiTools({
+      ...ctx,
+      devices: {
+        listForUser: vi.fn(() => []),
+      },
+    } as KernelContext);
+    expect(withoutTargets.tools.find((tool) => tool.name === "Shell")?.inputSchema)
+      .toEqual(shell?.inputSchema);
   });
 });
 
@@ -371,6 +382,15 @@ describe("handleAiConfig", () => {
       },
       procs: {
         getOwnerUid: vi.fn(() => ownerUid),
+      },
+      devices: {
+        listForUser: vi.fn(() => []),
+      },
+      mcpServers: {
+        list: vi.fn(() => []),
+      },
+      mcp: {
+        mcpConnections: {},
       },
       oauth: {
         findAccountByIdentity: vi.fn((
@@ -451,6 +471,45 @@ describe("handleAiConfig", () => {
     await expect(handleAiConfig({}, makeAiConfigContext({
       "config/ai/generation/streaming": "invalid",
     }))).resolves.toMatchObject({ generationStreaming: "auto" });
+  });
+
+  it("returns prompt-relevant context without model credentials", async () => {
+    const ctx = makeAiConfigContext({
+      "config/server/timezone": "Europe/Amsterdam",
+      "config/ai/context.d/00-runtime.md": "Date: {{current.date}}",
+    });
+    // SAFETY: fixture implements the device-store method exercised by handleAiContext.
+    ctx.devices = {
+      listForUser: vi.fn(() => [makeDevice({ device_id: "desktop" })]),
+    } as KernelContext["devices"];
+    // SAFETY: fixture implements the MCP store method exercised by handleAiContext.
+    ctx.mcpServers = {
+      list: vi.fn(() => [{
+        serverId: "server-1",
+        uid: 1000,
+        name: "Search",
+        createdAt: 1,
+        updatedAt: 2,
+      }]),
+    } as KernelContext["mcpServers"];
+    // SAFETY: fixture provides the ready-connection projection read by handleAiContext.
+    ctx.mcp = {
+      mcpConnections: {
+        "server-1": { connectionState: "ready" },
+      },
+    } as KernelContext["mcp"];
+
+    const result = await handleAiContext({}, ctx);
+
+    expect(result).toMatchObject({
+      devices: [expect.objectContaining({ id: "desktop" })],
+      mcpServers: ["Search"],
+      system: { timezone: "Europe/Amsterdam" },
+      systemContextFiles: [{ name: "00-runtime.md", text: "Date: {{current.date}}" }],
+      skillIndexMode: "summary",
+    });
+    expect(result).not.toHaveProperty("apiKey");
+    expect(result).not.toHaveProperty("model");
   });
 
   it("resolves prompt skill enumeration independently from live skills", async () => {

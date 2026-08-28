@@ -306,6 +306,8 @@ export type ProcMessageFallbackMetadata = {
 };
 
 export type ProcMessageMetadata = {
+  /** Context epoch whose exact provider input produced this assistant message. */
+  contextEpochId?: string;
   provider?: ProcMessageProviderMetadata;
   fallback?: ProcMessageFallbackMetadata;
   usage?: ProcUsageState;

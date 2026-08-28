@@ -24,9 +24,12 @@ import type {
 import type { ArgsOf, ResultOf, SyscallName, ToolDefinition } from "../syscalls";
 import type { CodeModeExecArgs, CodeModeRunArgs, CodeModeRunResult } from "../syscalls/codemode";
 import { COMPACTION_SUMMARY_SYSTEM_PROMPT } from "../prompts/compaction";
+import { formatContextProjectionEvent } from "../prompts/context-events";
+import { formatContextRunwayAlertMessage } from "../prompts/context-runway";
 import { GSV_DELEGATED_TASK_CONTEXT } from "../prompts/system";
 import type {
   AiConfigResult,
+  AiContextResult,
   AiTextMessage,
   AiTextTool,
   AiTextGenerateConfig,
@@ -209,7 +212,14 @@ import {
   MAX_MESSAGE_MEDIA_PART_BYTES,
   MAX_MESSAGE_MEDIA_TOTAL_BYTES,
 } from "../shared/message-media-limits";
-import { assembleSystemPromptSnapshot } from "./context";
+import {
+  assembleSystemPromptSnapshot,
+  contextProjectionFromManifest,
+  contextProjectionsEqual,
+  createContextProjection,
+  parseContextProjection,
+  type ContextProjection,
+} from "./context";
 import {
   attachProcessRunStream,
   cancelProcessRequests,
@@ -307,6 +317,7 @@ type RunState = {
   devices?: AiToolsDevice[];
   mcpServers?: string[];
   systemPrompt?: string;
+  contextEpochId?: string;
   approvalPolicy?: ToolApprovalPolicy;
   outputMedia?: RunOutputMedia[];
   stagedOutputMediaKeys?: string[];
@@ -811,6 +822,7 @@ const runStateSchema: z.ZodType<RunState> = z.object({
   devices: z.array(aiToolsDeviceSchema).optional(),
   mcpServers: z.array(z.string()).optional(),
   systemPrompt: z.string().optional(),
+  contextEpochId: z.string().optional(),
   approvalPolicy: toolApprovalPolicySchema.optional(),
   outputMedia: z.array(runOutputMediaSchema).optional(),
   stagedOutputMediaKeys: z.array(z.string()).optional(),
@@ -1246,12 +1258,14 @@ function buildAssistantMessageMetadata(
   response: AssistantMessage,
   config: AiConfigResult,
   fallback?: MessageMetadata["fallback"],
+  contextEpochId?: string,
 ): MessageMetadata | undefined {
   const usage = assistantUsageToProcUsageState(
     response.usage,
     resolveUsageCostSource(response, config),
   );
   const metadata = normalizeMessageMetadata({
+    contextEpochId,
     provider: {
       api: response.api,
       provider: response.provider || config.provider,
@@ -1762,25 +1776,6 @@ function contextRunwayAlertThreshold(
     Math.floor(inputBudgetTokens * CONTEXT_RUNWAY_ALERT_BUDGET_RATIO_BEFORE_BOUNDARY),
   );
   return Math.min(inputBudgetTokens, boundaryRemainingTokens + runwayBeforeBoundary);
-}
-
-function formatContextRunwayAlertMessage(input: {
-  remainingInputTokens: number;
-  runwayBeforeBoundaryTokens: number;
-  policy: ProcHistoryContextPolicy;
-}): string {
-  const safetyBoundary = input.policy.overflow === "auto-compact"
-    ? `About ${input.runwayBeforeBoundaryTokens.toLocaleString("en-US")} tokens of that runway remain before GSV automatically compacts older Process history at the configured ${Math.round(input.policy.compactAtPressure * 100)}% safety boundary.`
-    : `About ${input.runwayBeforeBoundaryTokens.toLocaleString("en-US")} tokens of that runway remain before this Process stops at its configured ${Math.round(input.policy.compactAtPressure * 100)}% context-pressure boundary.`;
-  return [
-    "Context runway is getting low.",
-    "",
-    `About ${input.remainingInputTokens.toLocaleString("en-US")} input tokens remain before the model's reserved output budget.`,
-    "Preserve anything that should survive compaction now: use the Personal wiki for durable knowledge, standing context only for explicit stable facts or preferences, and the responsibility ledger for unresolved commitments.",
-    "Do not promote transient details merely because the context window is filling.",
-    safetyBoundary,
-    "Continue normally if there is nothing worth preserving.",
-  ].join("\n");
 }
 
 function defaultHistoryPolicy(): ProcHistoryContextPolicy {
@@ -4243,6 +4238,8 @@ export class Process extends DurableObject<ProcessEnv> {
               ? currentContextEpoch === null
               : currentContextEpoch?.id === contextEpoch.id
                 && currentContextEpoch.observedR12yRevision === contextEpoch.observedR12yRevision
+                && JSON.stringify(currentContextEpoch.observedProjection)
+                  === JSON.stringify(contextEpoch.observedProjection)
           );
         if (
           stopped() ||
@@ -4254,7 +4251,7 @@ export class Process extends DurableObject<ProcessEnv> {
 
         this.ctx.storage.transactionSync(() => {
           if (contextEpoch) {
-            this.store.deleteContextEpochProjectionMessages(contextEpoch.id);
+            this.store.deleteContextEpochOwnedMessages(contextEpoch.id);
           }
           summaryMessageId = this.store.compactHistoryPrefix({
             generation,
@@ -4286,6 +4283,7 @@ export class Process extends DurableObject<ProcessEnv> {
         });
         if (options.activeRunId && this.currentRun?.runId === options.activeRunId) {
           delete this.currentRun.systemPrompt;
+          delete this.currentRun.contextEpochId;
         }
         installed = true;
       } finally {
@@ -4798,7 +4796,7 @@ export class Process extends DurableObject<ProcessEnv> {
       try {
         this.ctx.storage.transactionSync(() => {
           if (contextEpoch) {
-            this.store.deleteContextEpochProjectionMessages(contextEpoch.id);
+            this.store.deleteContextEpochOwnedMessages(contextEpoch.id);
             this.store.closeLiveContextEpoch(
               "process.reset",
               epochClosedAt,
@@ -5803,17 +5801,34 @@ export class Process extends DurableObject<ProcessEnv> {
     runId: string,
     run: RunState,
     config: AiConfigResult,
+    contextSnapshot: AiContextResult = contextSnapshotFromRun(run, config),
+    currentProjection: ContextProjection = createContextProjection(contextSnapshot),
   ): Promise<ContextEpochRecord | null> {
     let epoch = this.store.getLiveContextEpoch();
-    if (epoch && !run.systemPrompt) {
-      const candidate = await this.assembleContextEpochCandidate(run, config, {
-        responsibilities: epoch.r12yBaseline,
-        count: epoch.r12yCount,
-        revision: epoch.r12yRevision,
-      });
+    const initialProjection = epoch
+      ? contextProjectionFromManifest(epoch.sourceManifest)
+      : null;
+    const observedProjection = epoch
+      ? parseContextProjection(epoch.observedProjection)
+      : null;
+    if (epoch && (!run.systemPrompt || !initialProjection || !observedProjection)) {
+      const candidate = initialProjection && observedProjection
+        ? await this.assembleContextEpochCandidate(
+            run,
+            config,
+            {
+              responsibilities: epoch.r12yBaseline,
+              count: epoch.r12yCount,
+              revision: epoch.r12yRevision,
+            },
+            contextSnapshot,
+            initialProjection,
+          )
+        : null;
       if (this.handleRunStopped(runId)) return null;
       if (
-        candidate.prompt !== epoch.systemPrompt
+        !candidate
+        || candidate.prompt !== epoch.systemPrompt
         || JSON.stringify(candidate.sourceManifest) !== JSON.stringify(epoch.sourceManifest)
       ) {
         const priorEpoch = epoch;
@@ -5822,7 +5837,13 @@ export class Process extends DurableObject<ProcessEnv> {
           limit: 500,
         });
         if (this.handleRunStopped(runId)) return null;
-        const replacement = await this.assembleContextEpochCandidate(run, config, ledger);
+        const replacement = await this.assembleContextEpochCandidate(
+          run,
+          config,
+          ledger,
+          contextSnapshot,
+          currentProjection,
+        );
         if (this.handleRunStopped(runId)) return null;
         const closedAt = Date.now();
         const generationMessages = this.store.getMessagesForGeneration(priorEpoch.generation);
@@ -5850,10 +5871,12 @@ export class Process extends DurableObject<ProcessEnv> {
               !current
               || current.id !== priorEpoch.id
               || current.observedR12yRevision !== priorEpoch.observedR12yRevision
+              || JSON.stringify(current.observedProjection)
+                !== JSON.stringify(priorEpoch.observedProjection)
             ) {
               throw new Error("Context epoch changed while installing its replacement");
             }
-            this.store.deleteContextEpochProjectionMessages(current.id);
+            this.store.deleteContextEpochOwnedMessages(current.id);
             this.store.closeLiveContextEpoch("context.changed", closedAt, archivePath);
             epoch = this.store.createContextEpoch({
               id: crypto.randomUUID(),
@@ -5863,6 +5886,7 @@ export class Process extends DurableObject<ProcessEnv> {
               r12yCount: ledger.count,
               r12yBaseline: ledger.responsibilities,
               sourceManifest: replacement.sourceManifest,
+              observedProjection: jsonObjectSchema.parse(currentProjection),
               now: closedAt,
             });
           });
@@ -5885,6 +5909,8 @@ export class Process extends DurableObject<ProcessEnv> {
         run,
         config,
         ledger,
+        contextSnapshot,
+        currentProjection,
         run.systemPrompt,
       );
       if (this.handleRunStopped(runId)) return null;
@@ -5897,6 +5923,7 @@ export class Process extends DurableObject<ProcessEnv> {
           r12yCount: ledger.count,
           r12yBaseline: ledger.responsibilities,
           sourceManifest: candidate.sourceManifest,
+          observedProjection: jsonObjectSchema.parse(currentProjection),
           now: Date.now(),
         });
       });
@@ -5904,6 +5931,7 @@ export class Process extends DurableObject<ProcessEnv> {
 
     if (!epoch) throw new Error("Context epoch was not created");
     run.systemPrompt = epoch.systemPrompt;
+    run.contextEpochId = epoch.id;
     this.currentRun = run;
     return epoch;
   }
@@ -5912,16 +5940,35 @@ export class Process extends DurableObject<ProcessEnv> {
     run: RunState,
     config: AiConfigResult,
     ledger: ResponsibilityListResult,
+    contextSnapshot: AiContextResult,
+    projection: ContextProjection,
     promptOverride?: string,
   ): Promise<{ prompt: string; sourceManifest: JsonObject }> {
+    const promptConfig: AiConfigResult = {
+      ...config,
+      system: { timezone: projection.runtime.timezone },
+      skillIndex: projection.skills.entries.map((entry) => ({
+        id: entry.id,
+        name: entry.id,
+        description: entry.description,
+        source: { kind: "home", label: "home", writable: true },
+      })),
+      skillIndexMode: projection.skills.mode,
+    };
+    if (contextSnapshot.systemContextFiles !== undefined) {
+      promptConfig.systemContextFiles = contextSnapshot.systemContextFiles;
+    } else {
+      delete promptConfig.systemContextFiles;
+    }
     const snapshot = promptOverride
       ? { prompt: promptOverride, sources: [] }
       : await assembleSystemPromptSnapshot({
-          config,
+          config: promptConfig,
           identity: this.identity,
           ownerIdentity: config.owner ?? undefined,
-          devices: run.devices ?? [],
-          mcpServers: run.mcpServers ?? [],
+          devices: projection.targets,
+          mcpServers: projection.mcpServers,
+          runtime: projection.runtime,
           r12y: formatResponsibilityBaseline(ledger),
           storage: this.storage,
           ripgit: this.ripgit,
@@ -5942,7 +5989,7 @@ export class Process extends DurableObject<ProcessEnv> {
       return record;
     });
     const sourceManifest = jsonObjectSchema.parse({
-      version: 1,
+      version: 2,
       process: {
         pid: this.pid,
         uid: this.identity.uid,
@@ -5950,17 +5997,66 @@ export class Process extends DurableObject<ProcessEnv> {
       },
       historyGeneration: this.store.getHistoryGeneration(),
       model: modelManifest,
-      targets: (run.devices ?? []).map((device) => ({
-        id: device.id,
-        label: device.label ?? "",
-        implements: device.implements,
-      })),
-      mcpServers: run.mcpServers ?? [],
+      contextProjection: projection,
       offeredTools,
       promptSources: snapshot.sources,
       recoveredRunPrompt: promptOverride !== undefined,
     });
     return { prompt: snapshot.prompt, sourceManifest };
+  }
+
+  private async syncContextProjection(
+    runId: string,
+    epoch: ContextEpochRecord,
+    current: ContextProjection,
+  ): Promise<boolean> {
+    const observed = parseContextProjection(epoch.observedProjection);
+    if (!observed) {
+      throw new Error(`Context epoch ${epoch.id} has no observed projection`);
+    }
+    if (contextProjectionsEqual(observed, current)) {
+      return true;
+    }
+
+    const content = formatContextProjectionEvent(observed, current);
+    if (!content) {
+      throw new Error("Context projection changed without a renderable event");
+    }
+    let appended = false;
+    const createdAt = Date.now();
+    this.ctx.storage.transactionSync(() => {
+      const live = this.store.getLiveContextEpoch();
+      if (!live || live.id !== epoch.id) {
+        throw new Error("Context epoch changed while appending a context event");
+      }
+      const liveObserved = parseContextProjection(live.observedProjection);
+      if (!liveObserved) {
+        throw new Error(`Context epoch ${epoch.id} has no observed projection`);
+      }
+      if (contextProjectionsEqual(liveObserved, current)) {
+        return;
+      }
+      if (!contextProjectionsEqual(liveObserved, observed)) {
+        throw new Error("Context projection changed while appending its event");
+      }
+      this.store.appendContextEpochMessage({
+        epochId: epoch.id,
+        kind: "context.projection",
+        observedProjection: jsonObjectSchema.parse(current),
+        content,
+        runId,
+        createdAt,
+      });
+      appended = true;
+    });
+    if (appended) {
+      await this.emitProcChanged(["messages"], {
+        runId,
+        event: "context.projection",
+        epochId: epoch.id,
+      });
+    }
+    return true;
   }
 
   private async syncResponsibilityDeltas(
@@ -6064,7 +6160,7 @@ export class Process extends DurableObject<ProcessEnv> {
       throw new Error("Process AI configuration was not loaded");
     }
 
-    if (!run.tools || !run.devices) {
+    if (!run.tools) {
       const toolsResult = await this.kernelRpc("ai.tools", {});
       if (this.handleRunStopped(runId)) {
         return;
@@ -6090,6 +6186,7 @@ export class Process extends DurableObject<ProcessEnv> {
     this.currentRun = run;
     const buildGenerationContext = async (
       recoverResponsibilities = true,
+      refreshProjection = true,
     ): Promise<Context | null> => {
       const spanId = this.startTraceSpan({
         runId,
@@ -6099,8 +6196,46 @@ export class Process extends DurableObject<ProcessEnv> {
       let status: Exclude<ProcTraceSpanStatus, "running"> = "aborted";
       let attributes: JsonObject | undefined;
       try {
-        const epoch = await this.ensureContextEpoch(runId, run, activeConfig);
+        let epoch: ContextEpochRecord | null;
+        if (refreshProjection) {
+          const contextSnapshot = await this.resolveAiContext(
+            this.runAbortSignal(runId),
+          );
+          if (this.handleRunStopped(runId)) {
+            return null;
+          }
+          run.devices = contextSnapshot.devices;
+          run.mcpServers = contextSnapshot.mcpServers;
+          this.currentRun = run;
+          const currentProjection = createContextProjection(contextSnapshot);
+          epoch = await this.ensureContextEpoch(
+            runId,
+            run,
+            activeConfig,
+            contextSnapshot,
+            currentProjection,
+          );
+          if (!epoch || this.handleRunStopped(runId)) {
+            return null;
+          }
+          const projectionSynced = await this.syncContextProjection(
+            runId,
+            epoch,
+            currentProjection,
+          );
+          if (!projectionSynced || this.handleRunStopped(runId)) {
+            return null;
+          }
+        } else {
+          epoch = this.store.getLiveContextEpoch();
+        }
         if (!epoch || this.handleRunStopped(runId)) {
+          return null;
+        }
+        if (run.contextEpochId !== epoch.id) {
+          throw new Error("Context epoch changed before context accounting completed");
+        }
+        if (this.handleRunStopped(runId)) {
           return null;
         }
         if (recoverResponsibilities) {
@@ -6116,7 +6251,7 @@ export class Process extends DurableObject<ProcessEnv> {
         const pendingRuntimeEventsInContext = activeRun?.runId === runId
           ? activeRun.pendingRuntimeEvents ?? 0
           : 0;
-        const messages = await this.buildContextMessages();
+        const messages = await this.buildContextMessages(epoch.id);
         this.consumeRuntimeEventsInContext(runId, pendingRuntimeEventsInContext);
         attributes = {
           messages: messages.length,
@@ -6130,6 +6265,9 @@ export class Process extends DurableObject<ProcessEnv> {
           tools: tools.length > 0 ? tools : undefined,
         };
       } catch (error) {
+        if (this.handleRunStopped(runId)) {
+          return null;
+        }
         status = "error";
         throw error;
       } finally {
@@ -6590,7 +6728,12 @@ export class Process extends DurableObject<ProcessEnv> {
       }
     }
 
-    const assistantMetadata = buildAssistantMessageMetadata(response, activeConfig, activeFallbackMetadata);
+    const assistantMetadata = buildAssistantMessageMetadata(
+      response,
+      activeConfig,
+      activeFallbackMetadata,
+      run.contextEpochId,
+    );
     let assistantMessageId: number | null = null;
     this.ctx.storage.transactionSync(() => {
       const messageOptions: Parameters<ProcessStore["appendMessage"]>[2] = {
@@ -6730,7 +6873,7 @@ export class Process extends DurableObject<ProcessEnv> {
       if (this.handleRunStopped(runId)) return;
     }
 
-    const finalContext = await buildGenerationContext(false);
+    const finalContext = await buildGenerationContext(false, false);
     if (!finalContext || this.handleRunStopped(runId)) {
       return;
     }
@@ -7437,7 +7580,13 @@ export class Process extends DurableObject<ProcessEnv> {
       ) {
         return;
       }
-      messageId = this.store.appendMessage("system", content, {
+      if (!liveEpoch.observedProjection) {
+        return;
+      }
+      messageId = this.store.appendContextEpochMessage({
+        epochId: liveEpoch.id,
+        kind: "context.runway",
+        content,
         runId,
         createdAt: timestamp,
       });
@@ -7614,7 +7763,13 @@ export class Process extends DurableObject<ProcessEnv> {
       maxOutputTokens: config.maxTokens,
       measurement: measureContextInputTokens(
         context,
-        { provider: config.provider, model: config.model },
+        {
+          provider: config.provider,
+          model: config.model,
+          contextEpochId: this.currentRun?.runId === runId
+            ? this.currentRun.contextEpochId
+            : undefined,
+        },
         options.confirmedUsage,
       ),
       usageState: options.usageState,
@@ -7795,6 +7950,16 @@ export class Process extends DurableObject<ProcessEnv> {
   private async resolveAiConfig(signal?: AbortSignal): Promise<AiConfigResult> {
     const snapshot = this.store.getAiConfigSnapshot();
     return await this.kernelRpc("ai.config", snapshot
+      ? {
+          processOverrides: snapshot.values,
+          processProfile: snapshot.profile ?? null,
+        }
+      : {}, signal);
+  }
+
+  private async resolveAiContext(signal?: AbortSignal): Promise<AiContextResult> {
+    const snapshot = this.store.getAiConfigSnapshot();
+    return await this.kernelRpc("ai.context", snapshot
       ? {
           processOverrides: snapshot.values,
           processProfile: snapshot.profile ?? null,
@@ -8853,6 +9018,7 @@ export class Process extends DurableObject<ProcessEnv> {
         r12yTransitions: snapshot?.transitions
           ?? this.store.listContextEpochTransitions(epoch.id),
         sourceManifest: epoch.sourceManifest,
+        observedProjection: epoch.observedProjection,
         processActivity: messages.map((message) => (
           serializeArchivedMessage(message, mediaRewrites)
         )),
@@ -9019,9 +9185,9 @@ export class Process extends DurableObject<ProcessEnv> {
     }
   }
 
-  private async buildContextMessages(): Promise<Context["messages"]> {
+  private async buildContextMessages(contextEpochId?: string): Promise<Context["messages"]> {
     const records = this.store.getMessages({ limit: null });
-    const messages = this.store.toMessages({ limit: null });
+    const messages = this.store.toMessages({ limit: null, contextEpochId });
     const mediaBudget = { remainingBytes: MAX_PROCESS_MEDIA_READ_BYTES };
 
     for (let index = 0; index < records.length; index += 1) {
@@ -10421,6 +10587,25 @@ export class Process extends DurableObject<ProcessEnv> {
 
 function snapshotAssistantMessageEvent<T extends AssistantMessageEvent>(event: T): T {
   return structuredClone(event);
+}
+
+function contextSnapshotFromRun(
+  run: RunState,
+  config: AiConfigResult,
+): AiContextResult {
+  const snapshot: AiContextResult = {
+    devices: run.devices ?? [],
+    mcpServers: run.mcpServers ?? [],
+    system: {
+      timezone: config.system?.timezone ?? "UTC",
+    },
+    skillIndex: config.skillIndex ?? [],
+    skillIndexMode: config.skillIndexMode ?? "summary",
+  };
+  if (config.systemContextFiles !== undefined) {
+    snapshot.systemContextFiles = config.systemContextFiles;
+  }
+  return snapshot;
 }
 
 function conversationRunState(

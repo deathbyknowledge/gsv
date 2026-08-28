@@ -2,6 +2,7 @@
  * ai.* syscall handlers.
  *
  * ai.tools — returns available tool schemas, online devices, and ready MCP servers accessible to caller.
+ * ai.context — returns the current prompt-relevant Kernel projection without model credentials.
  * ai.config — reads model/provider/apiKey from /sys/ (kernel SQLite via ConfigStore).
  *
  * Config resolution order:
@@ -22,6 +23,8 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import type {
   ProcessIdentity,
+  AiContextArgs,
+  AiContextResult,
   AiToolsResult,
   AiToolsDevice,
   AiConfigArgs,
@@ -181,7 +184,6 @@ export async function handleAiTools(
 
   const visibleTargets = listVisibleTargets(ctx);
   const onlineDevices: AiToolsDevice[] = visibleTargets.map(targetToAiDevice);
-  const deviceIds = visibleTargets.map((target) => target.targetId);
 
   const tools: ToolDefinition[] = [];
 
@@ -190,7 +192,7 @@ export async function handleAiTools(
     if (syscall === "codemode.exec" && !isCodeModeAvailable(ctx.env)) continue;
 
     if (isRoutableSyscall(syscall)) {
-      tools.push(intoSyscallTool(definition, deviceIds));
+      tools.push(intoSyscallTool(definition));
     } else {
       tools.push(definition);
     }
@@ -200,6 +202,49 @@ export async function handleAiTools(
     tools,
     devices: onlineDevices,
     mcpServers: canUseMcpTools ? listReadyMcpServerNames(ctx, mcpUid) : [],
+  };
+}
+
+export async function handleAiContext(
+  args: AiContextArgs,
+  ctx: KernelContext,
+): Promise<AiContextResult> {
+  const config = ctx.config;
+  const uid = ctx.identity?.process.uid ?? 0;
+  const owner = resolveOwnerIdentity(ctx);
+  const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
+  const processOverrides = resolveEffectiveAiProcessOverrides(
+    ctx,
+    uid,
+    owner,
+    args.processOverrides,
+    args.processProfile,
+  );
+  const accountProfileOverrides = resolveAiAccountProfileOverrides(config, accountConfigUids);
+  const resolveConfig = createAiConfigValueResolver(
+    config,
+    accountConfigUids,
+    accountProfileOverrides,
+    processOverrides,
+  );
+  await ensureBuiltinSkillsForPrompt(ctx, owner);
+  const skillIndexMode = normalizeSkillIndexMode(resolveConfig("skills/index_mode"));
+  const skillIndex = skillIndexMode === "off"
+    ? []
+    : await collectPromptSkillIndex(ctx);
+  const canUseMcpTools = hasCapability(ctx.identity?.capabilities ?? [], "sys.mcp.list")
+    && hasCapability(ctx.identity?.capabilities ?? [], "sys.mcp.call");
+  const mcpUid = resolveCallerOwnerUid(ctx);
+
+  return {
+    devices: listVisibleTargets(ctx).map(targetToAiDevice),
+    mcpServers: canUseMcpTools ? listReadyMcpServerNames(ctx, mcpUid) : [],
+    systemContextFiles: listConfigContextFiles(config, "config/ai/context.d"),
+    system: {
+      timezone: config.get("config/server/timezone") ?? "UTC",
+    },
+    skillIndex,
+    skillIndexMode,
   };
 }
 

@@ -5,6 +5,7 @@ describe("internal syscall exposure", () => {
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it("marks ai bootstrap syscalls as internal-only", () => {
     expect(isInternalOnlySyscall("ai.config")).toBe(true);
+    expect(isInternalOnlySyscall("ai.context")).toBe(true);
     expect(isInternalOnlySyscall("ai.tools")).toBe(true);
     expect(isInternalOnlySyscall("codemode.exec")).toBe(true);
     expect(isInternalOnlySyscall("proc.ipc.deliver")).toBe(true);

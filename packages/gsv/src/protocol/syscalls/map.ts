@@ -193,6 +193,8 @@ import type {
   ResponsibilityUpdateResult,
 } from "./responsibility";
 import type {
+  AiContextArgs,
+  AiContextResult,
   AiConfigArgs,
   AiConfigResult,
   AiImageGenerateArgs,
@@ -414,6 +416,7 @@ export type SyscallDomains = {
   "r12y.source.update": { args: ResponsibilitySourceUpdateArgs; result: ResponsibilitySourceUpdateResult };
 
   "ai.tools": { args: AiToolsArgs; result: AiToolsResult };
+  "ai.context": { args: AiContextArgs; result: AiContextResult };
   "ai.config": { args: AiConfigArgs; result: AiConfigResult };
   "ai.text.generate": { args: AiTextGenerateArgs; result: AiTextGenerateResult };
   "ai.transcription.create": { args: AiTranscriptionCreateArgs; result: AiTranscriptionCreateResult };

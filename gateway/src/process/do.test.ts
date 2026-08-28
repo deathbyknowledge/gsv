@@ -1573,6 +1573,238 @@ describe("Process DO — mechanical", () => {
         .toHaveLength(1);
     });
 
+    it("appends availability deltas without rotating the frozen epoch", async () => {
+      const pid = "mech-context-projection-delta";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test exercises Process-owned context epoch internals.
+        const process = instance as any;
+        process.kernelRpc = vi.fn(async (call: string) => {
+          const responsibilityResult = responsibilityKernelResult(call);
+          if (responsibilityResult) return responsibilityResult;
+          throw new Error(`unexpected kernel call: ${call}`);
+        });
+        const config = {
+          ...terminalTestConfig(pid),
+          systemContextFiles: [{
+            name: "00-runtime.md",
+            text: "Date: {{current.date}}\nTargets:\n{{devices}}\nMCP:\n{{mcpServers}}",
+          }],
+          skillIndexMode: "summary" as const,
+          skillIndex: [{
+            id: "alpha",
+            name: "Alpha",
+            description: "Alpha workflow",
+            source: { kind: "home" as const, label: "home", writable: true },
+          }],
+        };
+        const firstSnapshot = {
+          devices: [{
+            id: "laptop",
+            label: "Laptop",
+            platform: "linux",
+            implements: ["shell.exec"],
+          }],
+          mcpServers: ["Search"],
+          systemContextFiles: config.systemContextFiles,
+          system: { timezone: "UTC" },
+          skillIndex: config.skillIndex,
+          skillIndexMode: config.skillIndexMode,
+        };
+        const firstProjection = {
+          version: 1 as const,
+          runtime: { date: "2026-08-28", timezone: "UTC" },
+          targets: [{
+            id: "laptop",
+            implements: ["shell.exec"],
+            label: "Laptop",
+            platform: "linux",
+          }],
+          mcpServers: firstSnapshot.mcpServers,
+          skills: {
+            mode: config.skillIndexMode,
+            entries: [{ id: "alpha", description: "Alpha workflow" }],
+          },
+        };
+        const firstRun = {
+          runId: "run-projection-a",
+          config,
+          tools: [],
+          devices: firstSnapshot.devices,
+          mcpServers: firstSnapshot.mcpServers,
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        process.currentRun = firstRun;
+        const firstEpoch = await process.ensureContextEpoch(
+          firstRun.runId,
+          firstRun,
+          config,
+          firstSnapshot,
+          firstProjection,
+        );
+
+        const nextSnapshot = {
+          ...firstSnapshot,
+          devices: [{
+            id: "desktop",
+            label: "Desktop",
+            platform: "linux",
+            implements: ["fs.read", "shell.exec"],
+          }],
+          mcpServers: ["Calendar"],
+          skillIndex: [{
+            id: "beta",
+            name: "Beta",
+            description: "Beta workflow",
+            source: { kind: "home" as const, label: "home", writable: true },
+          }],
+        };
+        const nextProjection = {
+          version: 1 as const,
+          runtime: { date: "2026-08-29", timezone: "UTC" },
+          targets: [{
+            id: "desktop",
+            implements: ["fs.read", "shell.exec"],
+            label: "Desktop",
+            platform: "linux",
+          }],
+          mcpServers: nextSnapshot.mcpServers,
+          skills: {
+            mode: config.skillIndexMode,
+            entries: [{ id: "beta", description: "Beta workflow" }],
+          },
+        };
+        const nextRun = {
+          ...firstRun,
+          runId: "run-projection-b",
+          systemPrompt: undefined,
+          contextEpochId: undefined,
+          devices: nextSnapshot.devices,
+          mcpServers: nextSnapshot.mcpServers,
+        };
+        process.currentRun = nextRun;
+        const sameEpoch = await process.ensureContextEpoch(
+          nextRun.runId,
+          nextRun,
+          config,
+          nextSnapshot,
+          nextProjection,
+        );
+        await process.syncContextProjection(nextRun.runId, sameEpoch, nextProjection);
+
+        return {
+          firstEpoch,
+          liveEpoch: process.store.getLiveContextEpoch(),
+          epochs: process.store.listContextEpochs(),
+          messages: process.store.getMessages(),
+        };
+      });
+
+      expect(result.liveEpoch.id).toBe(result.firstEpoch.id);
+      expect(result.epochs).toHaveLength(1);
+      expect(result.liveEpoch.systemPrompt).toContain("Date: 2026-08-28");
+      expect(result.liveEpoch.systemPrompt).toContain("laptop: Laptop (linux)");
+      expect(result.liveEpoch.systemPrompt).toContain("- Search");
+      expect(result.liveEpoch.systemPrompt).toContain("<name>alpha</name>");
+      expect(result.liveEpoch.systemPrompt).not.toContain("desktop");
+      expect(result.liveEpoch.observedProjection).toMatchObject({
+        runtime: { date: "2026-08-29" },
+        targets: [{ id: "desktop" }],
+        mcpServers: ["Calendar"],
+        skills: { entries: [{ id: "beta" }] },
+      });
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0].content).toContain("Context availability changed.");
+      expect(result.messages[0].content).toContain("- Added: `desktop`");
+      expect(result.messages[0].content).toContain("- Removed: `laptop`");
+      expect(result.messages[0].content).toContain("Current date: 2026-08-29");
+    });
+
+    it("archives and replaces a legacy epoch before installing projection state", async () => {
+      const pid = "mech-context-projection-upgrade";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test exercises the supported context-epoch migration boundary.
+        const process = instance as any;
+        process.kernelRpc = vi.fn(async (call: string) => {
+          const responsibilityResult = responsibilityKernelResult(call);
+          if (responsibilityResult) return responsibilityResult;
+          throw new Error(`unexpected kernel call: ${call}`);
+        });
+        const legacyProjection = {
+          version: 1,
+          runtime: { date: "2026-08-28", timezone: "UTC" },
+          targets: [],
+          mcpServers: [],
+          skills: { mode: "off", entries: [] },
+        };
+        const legacy = process.store.createContextEpoch({
+          id: "epoch-legacy",
+          generation: 1,
+          systemPrompt: "legacy prompt",
+          r12yRevision: 0,
+          r12yCount: 0,
+          r12yBaseline: [],
+          sourceManifest: { version: 1 },
+          observedProjection: legacyProjection,
+          now: 100,
+        });
+        process.store.appendMessage("user", "Old epoch activity", {
+          runId: "run-legacy",
+        });
+        const config = {
+          ...terminalTestConfig(pid),
+          skillIndexMode: "off" as const,
+          systemContextFiles: [{ name: "00-test.md", text: "current prompt" }],
+        };
+        const snapshot = {
+          devices: [],
+          mcpServers: [],
+          systemContextFiles: config.systemContextFiles,
+          system: { timezone: "UTC" },
+          skillIndex: [],
+          skillIndexMode: "off" as const,
+        };
+        const run = {
+          runId: "run-current",
+          config,
+          tools: [],
+          devices: [],
+          mcpServers: [],
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        process.store.appendMessage("user", "New epoch activity", { runId: run.runId });
+        process.currentRun = run;
+        const replacement = await process.ensureContextEpoch(
+          run.runId,
+          run,
+          config,
+          snapshot,
+          legacyProjection,
+        );
+        return {
+          legacy,
+          replacement,
+          epochs: process.store.listContextEpochs(),
+        };
+      });
+
+      expect(result.replacement.id).not.toBe(result.legacy.id);
+      expect(result.replacement.sourceManifest).toMatchObject({
+        version: 2,
+        contextProjection: { version: 1 },
+      });
+      expect(result.epochs).toHaveLength(2);
+      expect(result.epochs[0]).toMatchObject({
+        id: "epoch-legacy",
+        state: "closed",
+        closeReason: "context.changed",
+        archivePath: expect.stringContaining("/epochs/epoch-legacy.json.gz"),
+      });
+    });
+
     it("closes and archives the exact epoch when standing context changes", async () => {
       const pid = "mech-context-epoch-rotation";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -6313,6 +6545,15 @@ describe("Process DO — mechanical", () => {
         process.kernelRpc = async (call: string, args: any) => {
           const responsibilityResult = responsibilityKernelResult(call);
           if (responsibilityResult) return responsibilityResult;
+          if (call === "ai.context") {
+            return {
+              devices: [],
+              mcpServers: [],
+              system: { timezone: "UTC" },
+              skillIndex: [],
+              skillIndexMode: "off",
+            };
+          }
           kernelCalls.push({ call, args });
           if (call !== "ai.text.generate") {
             throw new Error(`unexpected kernel syscall: ${call}`);
@@ -6542,6 +6783,15 @@ describe("Process DO — mechanical", () => {
         process.kernelRpc = async (call: string, _args: any) => {
           const responsibilityResult = responsibilityKernelResult(call);
           if (responsibilityResult) return responsibilityResult;
+          if (call === "ai.context") {
+            return {
+              devices: [],
+              mcpServers: [],
+              system: { timezone: "UTC" },
+              skillIndex: [],
+              skillIndexMode: "off",
+            };
+          }
           throw new Error(`unexpected synchronous kernel syscall: ${call}`);
         };
         process.requestKernelNetFetch = async (
@@ -14156,6 +14406,13 @@ describe("Process DO — mechanical", () => {
           r12yCount: 0,
           r12yBaseline: [],
           sourceManifest: { version: 1 },
+          observedProjection: {
+            version: 1,
+            runtime: { date: "2026-08-28", timezone: "UTC" },
+            targets: [],
+            mcpServers: [],
+            skills: { mode: "off", entries: [] },
+          },
           now: 100,
         });
         process.currentRun = { runId };

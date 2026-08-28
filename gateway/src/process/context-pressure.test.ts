@@ -5,6 +5,7 @@ import {
   estimateContextInputTokens,
   measureContextInputTokens,
 } from "./context-pressure";
+import { tagAssistantContextEpoch } from "./context-message-metadata";
 
 const USAGE: Usage = {
   input: 920,
@@ -149,6 +150,33 @@ describe("context pressure", () => {
     expect(state.remainingInputTokens).toBe(0);
     expect(state.level).toBe("full");
     expect(state.source).toBe("provider");
+  });
+
+  it("does not reuse matching provider usage from a different context epoch", () => {
+    const assistant = {
+      role: "assistant" as const,
+      content: [{ type: "text" as const, text: "Old answer" }],
+      api: "openai-responses",
+      provider: "openai",
+      model: "gpt-test",
+      usage: USAGE,
+      stopReason: "stop" as const,
+      timestamp: 2,
+    };
+    tagAssistantContextEpoch(assistant, "epoch-old");
+    const context: Context = {
+      ...BASE_CONTEXT,
+      messages: [...BASE_CONTEXT.messages, assistant],
+    };
+
+    const measurement = measureContextInputTokens(context, {
+      provider: "openai",
+      model: "gpt-test",
+      contextEpochId: "epoch-current",
+    });
+
+    expect(measurement.source).toBe("estimate");
+    expect(measurement.confirmedInputTokens).toBe(0);
   });
 
   it("adds trailing tool results without discarding the confirmed prefix", () => {

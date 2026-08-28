@@ -37,7 +37,9 @@ those operations discard the obsolete pressure snapshot.
 Provider usage confirms only the exact request it measured. Once a response or
 tool result has been appended, the Process builds a new snapshot from the
 confirmed prefix plus estimated trailing content rather than applying the old
-request total to the newer context.
+request total to the newer context. Reuse also requires the same provider, model,
+and context epoch; a matching model response from an archived prompt epoch cannot
+confirm the live prompt prefix.
 
 An unknown model context window produces unknown pressure, not an invented
 limit. If the provider reports that the assembled request exceeds its context

@@ -47,18 +47,16 @@ function domainOf(syscall: SyscallName): SyscallDomain {
  * `proc` is kernel-internal (no device routing).
  */
 const ROUTABLE_DOMAINS: SyscallDomain[] = ["fs", "shell", "net"];
-const TARGET_SCHEMA_INLINE_LIMIT = 10;
+const TARGET_SCHEMA_DESCRIPTION = "Target to execute on. Use \"gsv\" for the native cloud target, or preserve the exact target from an authorized file reference. Run `targets list` in Shell to inspect accessible targets and their current online status.";
 
 /**
  * Inject a `target` property into a tool definition so the LLM can choose
  * where to execute the syscall. Only applicable to routable domains (fs, shell).
  *
  * @param tool - The base tool definition (without target)
- * @param devices - List of accessible online device IDs for this user
  */
 export function intoSyscallTool(
   tool: ToolDefinition,
-  devices: string[],
 ): ToolDefinition {
   const { required, properties } = parseSyscallInputSchema(tool.inputSchema);
   if (
@@ -81,23 +79,12 @@ export function intoSyscallTool(
         ...properties,
         target: {
           type: "string",
-          description: formatTargetSchemaDescription(devices),
+          description: TARGET_SCHEMA_DESCRIPTION,
         },
       },
       required: targetRequired ? [...required, "target"] : required,
     },
   };
-}
-
-function formatTargetSchemaDescription(devices: string[]): string {
-  if (devices.length === 0) {
-    return "Target to execute on. Use \"gsv\" for the native cloud target, or preserve the exact target from an authorized file reference. Run `targets list` in Shell to inspect registered targets and their online status.";
-  }
-  const listed = devices.slice(0, TARGET_SCHEMA_INLINE_LIMIT);
-  const suffix = devices.length > listed.length
-    ? `, and ${devices.length - listed.length} more`
-    : "";
-  return `Target to execute on. Use "gsv" for the native cloud target, preserve the exact target from an authorized file reference, or use one of: ${listed.join(", ")}${suffix}. Run \`targets list\` in Shell to inspect registered targets and their online status.`;
 }
 
 export function isRoutableSyscall(call: SyscallName): boolean {

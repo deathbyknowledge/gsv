@@ -95,9 +95,12 @@ System-provided skills are bundled into the gateway and seeded into user home
 any missing built-in paths while preserving existing files.
 
 The rendered standing prompt belongs to the live context epoch and may be reused
-across ordinary runs. Resolved model config, tool list, device list, and approval
-policy are run state. Responsibility changes after epoch creation are appended as
-ordered events; they never rewrite that epoch's prompt.
+across ordinary runs. Resolved model config, tool list, and approval policy are run
+state. Before each provider turn, Process snapshots current target availability,
+ready MCP servers, date and timezone, and the skill catalog. Changes after epoch
+creation are appended as ordered GSV events alongside responsibility changes; they
+never rewrite that epoch's prompt. Routable tool schemas remain stable and direct the
+agent to `targets list` instead of embedding the current target ids.
 
 Managed mail completion creates a Kernel responsibility rather than injecting a
 separate mail event into Process history. Its stable title contains only the opaque

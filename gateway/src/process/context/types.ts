@@ -15,6 +15,11 @@ export type PromptAssemblyInput = {
   ownerIdentity?: ProcessIdentity;
   devices: AiToolsDevice[];
   mcpServers: string[];
+  /** Frozen runtime facts rendered into this exact epoch baseline. */
+  runtime: {
+    date: string;
+    timezone: string;
+  };
   /** Frozen responsibility-ledger projection for this context epoch. */
   r12y: string;
   storage: PromptStorage;

@@ -41,6 +41,7 @@ import type {
   ThinkingContent,
   ToolCall,
 } from "@earendil-works/pi-ai";
+import { tagAssistantContextEpoch } from "./context-message-metadata";
 import {
   buildFallbackMediaBlocks,
   describeStoredProcessMedia,
@@ -173,6 +174,7 @@ export type ContextEpochRecord = {
   observedR12yRevision: number;
   r12yBaseline: ResponsibilityRecord[];
   sourceManifest: JsonObject;
+  observedProjection: JsonObject | null;
   state: "live" | "closed";
   createdAt: number;
   closedAt?: number;
@@ -189,6 +191,7 @@ type ContextEpochRow = {
   observed_r12y_revision: number;
   r12y_baseline_json: string;
   source_manifest_json: string;
+  observed_projection_json: string | null;
   state: "live" | "closed";
   created_at: number;
   closed_at: number | null;
@@ -336,6 +339,7 @@ const fallbackMetadataSchema = z.object({
   reason: optionalNonEmptyStringSchema,
 });
 const messageMetadataInputSchema = z.object({
+  contextEpochId: optionalNonEmptyStringSchema,
   provider: z.unknown().optional(),
   fallback: z.unknown().optional(),
   usage: z.unknown().optional(),
@@ -535,6 +539,7 @@ export class ProcessStore {
     r12yCount: number;
     r12yBaseline: ResponsibilityRecord[];
     sourceManifest: JsonObject;
+    observedProjection: JsonObject;
     now: number;
   }): ContextEpochRecord {
     if (this.getLiveContextEpoch()) {
@@ -544,9 +549,10 @@ export class ProcessStore {
       `INSERT INTO context_epochs (
         epoch_id, generation, system_prompt, r12y_revision, r12y_count,
         observed_r12y_revision, r12y_baseline_json,
-        source_manifest_json, state, created_at, closed_at, close_reason,
+        source_manifest_json, observed_projection_json,
+        state, created_at, closed_at, close_reason,
         archive_path
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'live', ?, NULL, NULL, NULL)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'live', ?, NULL, NULL, NULL)`,
       input.id,
       input.generation,
       input.systemPrompt,
@@ -555,6 +561,7 @@ export class ProcessStore {
       input.r12yRevision,
       JSON.stringify(input.r12yBaseline),
       JSON.stringify(input.sourceManifest),
+      JSON.stringify(input.observedProjection),
       input.now,
     );
     const epoch = this.getLiveContextEpoch();
@@ -642,6 +649,43 @@ export class ProcessStore {
     );
   }
 
+  appendContextEpochMessage(input: {
+    epochId: string;
+    kind: string;
+    observedProjection?: JsonObject;
+    content: string;
+    runId: string;
+    createdAt: number;
+  }): number {
+    const epoch = this.getContextEpoch(input.epochId);
+    if (!epoch || epoch.state !== "live") {
+      throw new Error(`Live context epoch not found: ${input.epochId}`);
+    }
+    const messageId = this.appendMessage("system", input.content, {
+      runId: input.runId,
+      createdAt: input.createdAt,
+    });
+    this.sql.exec(
+      `INSERT INTO context_epoch_message_refs (
+        epoch_id, message_id, kind, created_at
+      ) VALUES (?, ?, ?, ?)`,
+      input.epochId,
+      messageId,
+      input.kind,
+      input.createdAt,
+    );
+    if (input.observedProjection) {
+      this.sql.exec(
+        `UPDATE context_epochs
+         SET observed_projection_json = ?
+         WHERE epoch_id = ? AND state = 'live'`,
+        JSON.stringify(input.observedProjection),
+        input.epochId,
+      );
+    }
+    return messageId;
+  }
+
   listContextEpochTransitions(epochId: string): ResponsibilityTransition[] {
     return this.sql.exec<{ transition_json: string }>(
       `SELECT transition_json
@@ -678,12 +722,15 @@ export class ProcessStore {
     ).toArray().map((row) => parseContextEpochJson<JsonObject>(row.finish_json));
   }
 
-  deleteContextEpochProjectionMessages(epochId: string): void {
+  deleteContextEpochOwnedMessages(epochId: string): void {
     this.sql.exec(
       `DELETE FROM messages
        WHERE id IN (
          SELECT message_id FROM context_epoch_transitions WHERE epoch_id = ?
+         UNION
+         SELECT message_id FROM context_epoch_message_refs WHERE epoch_id = ?
        )`,
+      epochId,
       epochId,
     );
   }
@@ -1468,6 +1515,8 @@ export class ProcessStore {
   toMessages(opts?: {
     limit?: number | null;
     offset?: number;
+    /** Only usage confirmed against this exact prompt epoch is reusable. */
+    contextEpochId?: string;
   }): Message[] {
     const records = this.getMessages(opts);
     const messages: Message[] = [];
@@ -1522,7 +1571,12 @@ export class ProcessStore {
             api: metadata?.provider?.api ?? "",
             provider: metadata?.provider?.provider ?? "",
             model: metadata?.provider?.model ?? "",
-            usage: usageStateToPiUsage(metadata?.usage),
+            usage: usageStateToPiUsage(
+              opts?.contextEpochId === undefined
+                || metadata?.contextEpochId === opts.contextEpochId
+                ? metadata?.usage
+                : undefined,
+            ),
             stopReason: normalizeAssistantStopReason(metadata?.provider?.stopReason),
             timestamp: r.createdAt,
           };
@@ -1532,6 +1586,7 @@ export class ProcessStore {
           if (metadata?.provider?.responseId) {
             message.responseId = metadata.provider.responseId;
           }
+          tagAssistantContextEpoch(message, metadata?.contextEpochId);
           messages.push(message);
           break;
         }
@@ -1817,10 +1872,12 @@ export function normalizeMessageMetadata(
   const provider = normalizeProviderMetadata(parsed.data.provider);
   const fallback = normalizeFallbackMetadata(parsed.data.fallback);
   const usage = normalizeUsageState(parsed.data.usage);
-  if (!provider && !fallback && !usage) {
+  const contextEpochId = parsed.data.contextEpochId?.trim() || undefined;
+  if (!contextEpochId && !provider && !fallback && !usage) {
     return null;
   }
   const metadata: MessageMetadata = {};
+  if (contextEpochId) metadata.contextEpochId = contextEpochId;
   if (provider) metadata.provider = provider;
   if (fallback) metadata.fallback = fallback;
   if (usage) metadata.usage = usage;
@@ -2104,6 +2161,9 @@ function contextEpochFromRow(row: ContextEpochRow): ContextEpochRecord {
     observedR12yRevision: row.observed_r12y_revision,
     r12yBaseline: parseContextEpochJson<ResponsibilityRecord[]>(row.r12y_baseline_json),
     sourceManifest: parseContextEpochJson<JsonObject>(row.source_manifest_json),
+    observedProjection: row.observed_projection_json
+      ? parseContextEpochJson<JsonObject>(row.observed_projection_json)
+      : null,
     state: row.state,
     createdAt: row.created_at,
   };
