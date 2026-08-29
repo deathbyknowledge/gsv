@@ -89,11 +89,11 @@ export default defineConfig({
                       access_token: "xoxb-managed-test-token",
                       bot_user_id: "UGSVBOT1",
                       app_id: "AGSV1234",
-                      scope: "app_mentions:read,chat:write,files:read,files:write,im:history,im:write",
+                      scope: "app_mentions:read,chat:write,chat:write.public,files:read,files:write,im:history,im:write,reactions:write",
                       authed_user: {
                         id: "UALICE01",
                         access_token: "xoxp-managed-alice-user-token",
-                        scope: "channels:history,channels:read,chat:write,groups:history,groups:read,im:history,im:read,mpim:history,mpim:read,reactions:write,users:read",
+                        scope: "channels:history,channels:read,groups:history,groups:read,im:history,im:read,mpim:history,mpim:read,users:read",
                       },
                       is_enterprise_install: false,
                       team: { id: "TWORK123", name: "Acme" },

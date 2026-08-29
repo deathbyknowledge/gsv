@@ -298,13 +298,13 @@ export async function getSlackConversationReplies(
 }
 
 export async function addSlackReaction(
-  userToken: string,
+  botToken: string,
   input: { channel: string; timestamp: string; name: string },
   slackFetch: SlackFetch = fetch,
 ): Promise<void> {
   await callSlackApi(
     "reactions.add",
-    userToken,
+    botToken,
     {
       channel: requireSlackId(input.channel, "Slack channel"),
       timestamp: requireSlackTimestamp(input.timestamp),

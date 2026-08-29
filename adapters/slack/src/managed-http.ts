@@ -51,22 +51,22 @@ const OAUTH_COOKIE = "gsv_slack_oauth";
 const OAUTH_SCOPES = [
   "app_mentions:read",
   "chat:write",
+  "chat:write.public",
   "files:read",
   "files:write",
   "im:history",
   "im:write",
+  "reactions:write",
 ].join(",");
 const OAUTH_USER_SCOPES = [
   "channels:history",
   "channels:read",
-  "chat:write",
   "groups:history",
   "groups:read",
   "im:history",
   "im:read",
   "mpim:history",
   "mpim:read",
-  "reactions:write",
   "users:read",
 ].join(",");
 const oauthStateSchema = z.object({

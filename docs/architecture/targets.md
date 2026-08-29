@@ -73,8 +73,10 @@ GSV currently projects these environments:
   machine.
 - Managed Slack projects a personally authorized workspace as a service-backed
   `shell.exec` target. Its ephemeral just-bash environment exposes a composable
-  `slack` CLI for conversations, threads, messages, reactions, and users while
-  the adapter retains the OAuth token and provider policy.
+  `slack` CLI for conversations, threads, messages, reactions, and users. The
+  paired user's OAuth token supplies read visibility; mutations use the
+  installed GSV app identity, and the adapter retains both credentials and
+  provider policy.
 
 The persisted registry and compatibility syscalls still use `device` names for
 non-native targets. That is an implementation and upgrade constraint, not the
@@ -116,6 +118,11 @@ automatically grant that person's GSV every workspace resource visible to a
 shared bot token. A rich service target needs authority that actually matches
 its advertised environment, such as a user OAuth connection or an explicitly
 installation-owned administrative account.
+
+Authority and authorship must remain independent inside a service target. A
+personally authorized Slack target may borrow that person's visibility without
+silently writing as them. Its write commands use the installed app identity;
+private resources remain read-only until the user explicitly admits that app.
 
 ## Target discovery and lifecycle
 

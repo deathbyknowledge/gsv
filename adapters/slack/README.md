@@ -20,11 +20,11 @@ from `slack-app.managed.example.yaml` (replace `SLACK_ORIGIN`), or configure it
 manually:
 
 1. Under **OAuth & Permissions**, add these bot token scopes:
-   `app_mentions:read`, `chat:write`, `files:read`, `files:write`,
-   `im:history`, and `im:write`.
+   `app_mentions:read`, `chat:write`, `chat:write.public`, `files:read`,
+   `files:write`, `im:history`, `im:write`, and `reactions:write`.
 2. Add these user token scopes: `channels:history`, `channels:read`,
-   `chat:write`, `groups:history`, `groups:read`, `im:history`, `im:read`,
-   `mpim:history`, `mpim:read`, `reactions:write`, and `users:read`.
+   `groups:history`, `groups:read`, `im:history`, `im:read`, `mpim:history`,
+   `mpim:read`, and `users:read`.
 3. Add this OAuth redirect URL, using the managed Slack Worker's public origin:
    `https://SLACK_ORIGIN/slack/oauth/callback`.
 4. Under **Event Subscriptions**, set the Request URL to
@@ -98,17 +98,18 @@ slack users list --json
 slack users info --user U123 --json
 ```
 
-Run `slack --help` inside the target for the exact inventory. Commands execute
-with the paired person's `xoxp-…` OAuth authority; the token stays in the
-workspace Durable Object and is never placed in the shell environment or
-output. Adapter replies continue to use the app's `xoxb-…` bot token. A route
-change, disconnect, reauthorization, timeout, or Process cancellation fences
-late output and cancels the owning provider request.
+Run `slack --help` inside the target for the exact inventory. Reads use the
+paired person's `xoxp-…` OAuth visibility, while messages and reactions use the
+installed GSV app's `xoxb-…` identity. Neither token is placed in the shell
+environment or output. The app can post in public channels without joining;
+reactions and private-channel mutations require it to be explicitly invited.
+A route change, disconnect, reauthorization, timeout, or Process cancellation
+fences late output and cancels the owning provider request.
 
 The target is distinct from messaging. `message destinations` discovers
 authorized conversation delivery surfaces and `message send` commits a
 user-visible GSV Message. A `slack messages send` command is inspectable external
-tool activity performed as the Slack user. The standalone shared bot remains
+tool activity performed by the GSV Slack app. The standalone shared bot remains
 transport-only until it has an explicit policy for granting bot-wide authority.
 
 ## Standalone app setup
@@ -172,10 +173,10 @@ message's initial comment. The common GSV message-media limits apply: at most
 20 items and 48 MiB total.
 
 Existing managed workspace installations must use the install link again to
-approve the file and user target scopes. Every managed user who wants the target
-must authorize once. Existing standalone apps must add `files:read` and
-`files:write`, reinstall the app in the workspace, and reconnect the adapter so
-Slack issues a token with those permissions.
+approve the file and app-owned target scopes. Every managed user who wants the
+target must authorize its read scopes once. Existing standalone apps must add
+`files:read` and `files:write`, reinstall the app in the workspace, and reconnect
+the adapter so Slack issues a token with those permissions.
 
 ## Approval buttons
 

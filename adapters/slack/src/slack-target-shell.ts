@@ -31,7 +31,9 @@ import {
 type SlackTargetShellInput = {
   args: ShellExecArgs;
   userToken: string;
+  botToken: string;
   actorId: string;
+  botUserId: string;
   teamId: string;
   teamName?: string;
   signal: AbortSignal;
@@ -65,8 +67,13 @@ type SlackReactionResult = {
   timestamp: string;
   name: string;
 };
+type SlackTargetIdentity = {
+  workspace: { id: string; name?: string };
+  reader: { kind: "user"; id: string; name?: string };
+  writer: { kind: "app"; id: string };
+};
 type SlackTargetJsonOutput =
-  | SlackUserIdentity
+  | SlackTargetIdentity
   | SlackPage<SlackConversationSummary>
   | SlackPage<SlackMessageSummary>
   | SlackPage<SlackUserSummary>
@@ -104,6 +111,7 @@ export async function executeSlackTargetShell(
       SLACK_TEAM_ID: input.teamId,
       SLACK_TEAM_NAME: input.teamName ?? input.teamId,
       SLACK_USER_ID: input.actorId,
+      SLACK_BOT_USER_ID: input.botUserId,
     },
     executionLimits: {
       maxCommandCount: 1_000,
@@ -139,6 +147,17 @@ function buildSlackCommand(input: SlackTargetShellInput) {
       await input.guard();
       return result;
     };
+    const authenticateReader = async (): Promise<SlackUserIdentity> => {
+      const identity = await authenticateSlackUser(input.userToken, slackFetch);
+      if (identity.teamId !== input.teamId || identity.actorId !== input.actorId) {
+        throw new Error("Slack reader authorization no longer matches this target");
+      }
+      return identity;
+    };
+    const authorizeMutation = async (): Promise<void> => {
+      await authenticateReader();
+      await input.guard();
+    };
 
     try {
       if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
@@ -147,11 +166,16 @@ function buildSlackCommand(input: SlackTargetShellInput) {
       const [group, action, ...rest] = args;
       if (group === "whoami") {
         const options = parseWhoamiOptions(args.slice(1));
-        const identity = await guarded(() => authenticateSlackUser(input.userToken, slackFetch));
-        return renderIdentity(identity, options.json, [
-          `workspace: ${identity.teamName ?? identity.teamId} (${identity.teamId})`,
-          `user: ${identity.actorName ?? identity.actorId} (${identity.actorId})`,
-        ]);
+        const identity = await guarded(authenticateReader);
+        const targetIdentity = slackTargetIdentity(identity, input.botUserId);
+        return options.json
+          ? json(targetIdentity)
+          : ok([
+            `workspace: ${identity.teamName ?? identity.teamId} (${identity.teamId})`,
+            `reads as: ${identity.actorName ?? identity.actorId} (${identity.actorId})`,
+            `writes as: GSV app (${input.botUserId})`,
+            "",
+          ].join("\n"));
       }
       if ((group === "conversations" || group === "channels") && action === "list") {
         const options = parseConversationListOptions(rest);
@@ -204,18 +228,24 @@ function buildSlackCommand(input: SlackTargetShellInput) {
       }
       if (group === "messages" && action === "send") {
         const send = parseSendOptions(rest, decodeCommandStdin(commandContext.stdin, 40_001));
-        const result = await guarded(() => postSlackMessage(input.userToken, {
-          channel: send.channel,
-          text: send.message,
-          threadTs: send.threadTs,
-        }, slackFetch));
+        const result = await guarded(async () => {
+          await authorizeMutation();
+          return await postSlackMessage(input.botToken, {
+            channel: send.channel,
+            text: send.message,
+            threadTs: send.threadTs,
+          }, slackFetch);
+        });
         return send.json
           ? json(result)
           : ok(`sent ${result.channel} ${result.ts}\n`);
       }
       if (group === "reactions" && action === "add") {
         const reaction = parseReactionOptions(rest);
-        await guarded(() => addSlackReaction(input.userToken, reaction, slackFetch));
+        await guarded(async () => {
+          await authorizeMutation();
+          await addSlackReaction(input.botToken, reaction, slackFetch);
+        });
         return reaction.json
           ? json({
             ok: true,
@@ -397,12 +427,15 @@ function appendCursor(lines: string[], cursor: string | undefined): void {
   if (cursor) lines.push(`next cursor: ${cursor}`);
 }
 
-function renderIdentity(
-  value: SlackUserIdentity,
-  jsonOutput: boolean,
-  lines: string[],
-): ExecResult {
-  return jsonOutput ? json(value) : ok(`${lines.join("\n")}\n`);
+function slackTargetIdentity(
+  reader: SlackUserIdentity,
+  botUserId: string,
+): SlackTargetIdentity {
+  return {
+    workspace: { id: reader.teamId, name: reader.teamName },
+    reader: { kind: "user", id: reader.actorId, name: reader.actorName },
+    writer: { kind: "app", id: botUserId },
+  };
 }
 
 function json(value: SlackTargetJsonOutput): ExecResult {
@@ -482,7 +515,10 @@ function slackUsage(): string {
     "Usage: slack users list [--limit N] [--cursor CURSOR] [--json]",
     "Usage: slack users info --user ID [--json]",
     "",
-    "This target acts with the paired user's Slack OAuth authority.",
+    "Reads use the paired user's Slack visibility.",
+    "Messages and reactions are performed by the GSV app.",
+    "The app can post to public channels without joining.",
+    "Invite GSV before reacting or mutating private channels.",
     "Use --json for scripts and pipelines.",
     "Posting here is external tool activity; `message send` remains canonical GSV delivery.",
     "",

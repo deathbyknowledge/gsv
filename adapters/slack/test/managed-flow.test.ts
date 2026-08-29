@@ -4,6 +4,7 @@ import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
 import { workspaceAccountId } from "../src/slack-api";
 import {
   managedSlackPeerObjectName,
+  managedSlackWorkspaceObjectName,
 } from "../src/managed-identity";
 import { managedSlackTargetRequestSchema } from "../src/managed";
 
@@ -142,6 +143,25 @@ type PeerStub = {
   ): Promise<{ cancelled: boolean }>;
 };
 
+type WorkspaceStub = {
+  install(
+    accountId: string,
+    installation: {
+      teamId: string;
+      teamName: string;
+      botUserId: string;
+      botToken: string;
+      scope: string;
+      user: { id: string; token: string; scope: string };
+    },
+  ): Promise<{ accepted: true; generation: string }>;
+  getStatus(): Promise<{ connected: boolean }>;
+  getTargetAuthorization(
+    actorId: string,
+    generation: string,
+  ): Promise<{ available: boolean }>;
+};
+
 const SIGNING_SECRET = "signing_secret_123456789";
 const APPROVAL_PROMPT = [
   "I need your confirmation before I can continue.",
@@ -169,6 +189,11 @@ function pairingBinding<T>(value: T): T & PairingStub {
 function peerBinding<T extends object>(value: T): T & Rpc.Provider<PeerStub> {
   // SAFETY: the selected Durable Object exposes the peer RPC used by this flow.
   return value as T & Rpc.Provider<PeerStub>;
+}
+
+function workspaceBinding<T extends object>(value: T): T & Rpc.Provider<WorkspaceStub> {
+  // SAFETY: the selected Durable Object exposes the workspace RPCs used by this flow.
+  return value as T & Rpc.Provider<WorkspaceStub>;
 }
 
 async function slackApiCalls(): Promise<SlackApiCall[]> {
@@ -362,6 +387,34 @@ async function pair(
 }
 
 describe("managed Slack clean-instance flow", () => {
+  it("keeps transport connected while target-specific app scopes await reauthorization", async () => {
+    const accountId = await workspaceAccountId("TLEGACY1");
+    const workspaces = namespaceBinding(env.MANAGED_SLACK_WORKSPACE);
+    const workspace = workspaceBinding(workspaces.get(
+      workspaces.idFromName(managedSlackWorkspaceObjectName(accountId)),
+    ));
+    using installed = await workspace.install(accountId, {
+      teamId: "TLEGACY1",
+      teamName: "Legacy",
+      botUserId: "UGSVBOT1",
+      botToken: "xoxb-legacy-bot-token-value",
+      scope: "app_mentions:read,chat:write,files:read,files:write,im:history,im:write",
+      user: {
+        id: "UALICE01",
+        token: "xoxp-legacy-user-token-value",
+        scope: "channels:history,channels:read,groups:history,groups:read,im:history,im:read,mpim:history,mpim:read,users:read",
+      },
+    });
+
+    using status = await workspace.getStatus();
+    expect(status).toEqual(expect.objectContaining({ connected: true }));
+    using target = await workspace.getTargetAuthorization(
+      "UALICE01",
+      installed.generation,
+    );
+    expect(target).toEqual({ available: false });
+  });
+
   it("keeps Alice and Bob on their own GSV routes and attributes shared output", async () => {
     const accountId = await installWorkspace();
 
@@ -413,6 +466,28 @@ describe("managed Slack clean-instance flow", () => {
       ok: true,
       data: { status: "completed", output: "general\n", exitCode: 0 },
     });
+    using targetIdentity = await peer.executeTarget(
+      "installation-alice",
+      alice.generation,
+      "workspace",
+      {
+        type: "req",
+        id: "target-identity",
+        call: "shell.exec",
+        args: {
+          input: "slack whoami --json | jq -r '[.reader.id, .writer.kind, .writer.id] | @tsv'",
+        },
+        deadlineAt: Date.now() + 120_000,
+      },
+    );
+    expect(targetIdentity).toMatchObject({
+      ok: true,
+      data: {
+        status: "completed",
+        output: "UALICE01\tapp\tUGSVBOT1\n",
+        exitCode: 0,
+      },
+    });
     using targetSend = await peer.executeTarget(
       "installation-alice",
       alice.generation,
@@ -436,7 +511,36 @@ describe("managed Slack clean-instance flow", () => {
       body: expect.objectContaining({
         channel: "CGENERAL1",
         text: "hello from target",
-        authorization: "Bearer xoxp-managed-alice-user-token",
+        authorization: "Bearer xoxb-managed-test-token",
+      }),
+    }));
+    using targetReaction = await peer.executeTarget(
+      "installation-alice",
+      alice.generation,
+      "workspace",
+      {
+        type: "req",
+        id: "target-reaction",
+        call: "shell.exec",
+        args: {
+          input: "slack reactions add --channel CGENERAL1 --timestamp 1700000001.000100 --name eyes",
+        },
+        deadlineAt: Date.now() + 120_000,
+      },
+    );
+    expect(targetReaction).toMatchObject({
+      ok: true,
+      data: {
+        status: "completed",
+        output: "reacted eyes to CGENERAL1 1700000001.000100\n",
+        exitCode: 0,
+      },
+    });
+    expect(await slackApiCalls()).toContainEqual(expect.objectContaining({
+      method: "reactions.add",
+      body: expect.objectContaining({
+        channel: "CGENERAL1",
+        authorization: "Bearer xoxb-managed-test-token",
       }),
     }));
     const cancelledExecution = peer.executeTarget(

@@ -42,11 +42,11 @@ async function makeEnv() {
     access_token: "xoxb-valid-oauth-bot-token",
     bot_user_id: "UGSVBOT1",
     app_id: "AGSV1234",
-    scope: "app_mentions:read,chat:write,files:read,files:write,im:history,im:write",
+    scope: "app_mentions:read,chat:write,chat:write.public,files:read,files:write,im:history,im:write,reactions:write",
     authed_user: {
       id: "UALICE01",
       access_token: "xoxp-valid-oauth-user-token",
-      scope: "channels:history,channels:read,chat:write,groups:history,groups:read,im:history,im:read,mpim:history,mpim:read,reactions:write,users:read",
+      scope: "channels:history,channels:read,groups:history,groups:read,im:history,im:read,mpim:history,mpim:read,users:read",
     },
     is_enterprise_install: false,
     team: { id: "TWORK123", name: "Acme" },
@@ -279,8 +279,11 @@ describe("managed Slack HTTP boundary", () => {
     const location = new URL(start.headers.get("Location")!);
     expect(location.origin).toBe("https://slack.com");
     expect(location.searchParams.get("scope")).toContain("app_mentions:read");
+    expect(location.searchParams.get("scope")).toContain("chat:write.public");
+    expect(location.searchParams.get("scope")).toContain("reactions:write");
     expect(location.searchParams.get("user_scope")).toContain("channels:history");
-    expect(location.searchParams.get("user_scope")).toContain("chat:write");
+    expect(location.searchParams.get("user_scope")).not.toContain("chat:write");
+    expect(location.searchParams.get("user_scope")).not.toContain("reactions:write");
     const state = location.searchParams.get("state")!;
     const cookie = start.headers.get("Set-Cookie")!.split(";", 1)[0];
     const callback = new Request(

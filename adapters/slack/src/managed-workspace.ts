@@ -116,17 +116,20 @@ const REQUIRED_SCOPES = new Set([
   "im:history",
   "im:write",
 ]);
+const TARGET_BOT_SCOPES = new Set([
+  "chat:write",
+  "chat:write.public",
+  "reactions:write",
+]);
 const TARGET_USER_SCOPES = new Set([
   "channels:history",
   "channels:read",
-  "chat:write",
   "groups:history",
   "groups:read",
   "im:history",
   "im:read",
   "mpim:history",
   "mpim:read",
-  "reactions:write",
   "users:read",
 ]);
 
@@ -317,7 +320,9 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
       const data = await executeSlackTargetShell({
         args: frame.args,
         userToken: credential.token,
+        botToken: workspace.botToken,
         actorId,
+        botUserId: workspace.botUserId,
         teamId: workspace.teamId,
         teamName: workspace.teamName,
         signal: controller.signal,
@@ -559,6 +564,7 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
         && credential.generation !== expectedCredentialGeneration
       )
       || missingScopes(normalizedScopes(credential.scope), TARGET_USER_SCOPES).length > 0
+      || missingScopes(normalizedScopes(workspace.scope), TARGET_BOT_SCOPES).length > 0
     ) {
       throw new Error("Slack target authorization is unavailable");
     }

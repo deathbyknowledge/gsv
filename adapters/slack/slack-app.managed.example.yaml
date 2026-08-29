@@ -18,21 +18,21 @@ oauth_config:
     bot:
       - app_mentions:read
       - chat:write
+      - chat:write.public
       - files:read
       - files:write
       - im:history
       - im:write
+      - reactions:write
     user:
       - channels:history
       - channels:read
-      - chat:write
       - groups:history
       - groups:read
       - im:history
       - im:read
       - mpim:history
       - mpim:read
-      - reactions:write
       - users:read
 settings:
   interactivity:
