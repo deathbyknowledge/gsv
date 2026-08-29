@@ -13,7 +13,13 @@ import type {
 import type {
   AdapterService,
   AdapterServiceDescriptor,
+  AdapterTargetCancelResult,
+  AdapterTargetDescriptor,
+  AdapterTargetIdentity,
+  AdapterTargetRequestFrame,
+  AdapterTargetResponseFrame,
 } from "../../../packages/gsv/src/services/adapters.js";
+import { adapterTargetIdentitySchema } from "../../../packages/gsv/src/services/adapters.js";
 import { cancelBinaryBody } from "../../shared/src/media-body";
 import {
   LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
@@ -38,6 +44,7 @@ import {
   requireWorkspaceAccountId,
 } from "./managed-identity";
 import { requireSlackId } from "./slack-api";
+import { z } from "zod";
 
 export { ManagedSlackWorkspace } from "./managed-workspace";
 export { ManagedSlackPeer } from "./managed-peer";
@@ -56,6 +63,44 @@ type ManagedSlackPeerStub = {
     body?: BinaryBody,
   ): Promise<AdapterSendResult>;
   disconnect(input: AdapterPairingDisconnectInput): Promise<AdapterPairingDisconnectResult>;
+  listTargets(
+    installationId: string,
+    routeGeneration: string,
+  ): Promise<AdapterTargetDescriptor[]>;
+  executeTarget(
+    installationId: string,
+    routeGeneration: string,
+    targetId: string,
+    frame: AdapterTargetRequestFrame<"shell.exec">,
+  ): Promise<AdapterTargetResponseFrame<"shell.exec">>;
+  cancelTarget(
+    installationId: string,
+    routeGeneration: string,
+    targetId: string,
+    requestId: string,
+  ): Promise<AdapterTargetCancelResult>;
+};
+
+type ManagedSlackPeerClient = Omit<
+  ManagedSlackPeerStub,
+  "listTargets" | "executeTarget" | "cancelTarget"
+> & {
+  listTargets(
+    installationId: string,
+    routeGeneration: string,
+  ): Promise<AdapterTargetDescriptor[] & Disposable>;
+  executeTarget(
+    installationId: string,
+    routeGeneration: string,
+    targetId: string,
+    frame: AdapterTargetRequestFrame<"shell.exec">,
+  ): Promise<AdapterTargetResponseFrame<"shell.exec"> & Disposable>;
+  cancelTarget(
+    installationId: string,
+    routeGeneration: string,
+    targetId: string,
+    requestId: string,
+  ): Promise<AdapterTargetCancelResult & Disposable>;
 };
 
 type ManagedSlackPairingStub = {
@@ -77,6 +122,27 @@ type ManagedSlackWorkspaceStub = {
 };
 
 const PAIRING_ACCOUNT_ID = "managed";
+const SLACK_TARGET_ID = "workspace";
+type ParsedTargetIdentity = {
+  accountId: string;
+  actorId: string;
+  routeGeneration: string;
+};
+const shellExecArgsSchema = z.object({
+  input: z.string().min(1).max(1024 * 1024),
+  cwd: z.string().max(4_096).optional(),
+  sessionId: z.string().min(1).max(512).optional(),
+  timeout: z.number().finite().int().positive().max(120_000).optional(),
+  background: z.boolean().optional(),
+  yieldMs: z.number().finite().int().nonnegative().max(120_000).optional(),
+}).strict();
+const slackTargetRequestSchema = z.object({
+  type: z.literal("req"),
+  id: z.string().min(1).max(512),
+  call: z.literal("shell.exec"),
+  args: shellExecArgsSchema,
+  deadlineAt: z.number().finite(),
+}).strict();
 
 export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements AdapterService {
   readonly adapterId = "slack";
@@ -93,6 +159,7 @@ export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements Adapte
         status: true,
         activity: false,
         pairing: true,
+        targets: true,
         surfaces: ["dm", "channel", "thread"],
         media: {
           inbound: ["image", "audio", "video", "document"],
@@ -215,11 +282,80 @@ export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements Adapte
     return await this.peer(accountId, actorId).disconnect(input);
   }
 
-  private peer(accountId: string, actorId: string): ManagedSlackPeerStub {
+  async adapterTargetList(
+    installation: AdapterInstallationContext,
+    identity: AdapterTargetIdentity,
+  ): Promise<AdapterTargetDescriptor[]> {
+    const parsedInstallation = parseManagedInstallation(installation);
+    const parsedIdentity = parseTargetIdentity(identity);
+    using targets = await this.peer(parsedIdentity.accountId, parsedIdentity.actorId).listTargets(
+      parsedInstallation.installationId,
+      parsedIdentity.routeGeneration,
+    );
+    return targets.map((target) => ({ ...target, implements: [...target.implements] }));
+  }
+
+  async adapterTargetExecute(
+    installation: AdapterInstallationContext,
+    identity: AdapterTargetIdentity,
+    targetId: string,
+    frame: AdapterTargetRequestFrame,
+  ): Promise<AdapterTargetResponseFrame> {
+    const parsed = slackTargetRequestSchema.safeParse(frame);
+    if (!parsed.success || targetId !== SLACK_TARGET_ID) {
+      await cancelBinaryBody(frame.body, "Slack target request is invalid");
+      return targetError(frame.id, targetId === SLACK_TARGET_ID ? 400 : 404);
+    }
+    let parsedInstallation: ReturnType<typeof parseManagedInstallation>;
+    let parsedIdentity: ParsedTargetIdentity;
+    try {
+      parsedInstallation = parseManagedInstallation(installation);
+      parsedIdentity = parseTargetIdentity(identity);
+    } catch {
+      return targetError(frame.id, 403);
+    }
+    // SAFETY: the managed Slack target exposes only shell.exec, whose complete
+    // request envelope and arguments were validated above.
+    using response = await this.peer(parsedIdentity.accountId, parsedIdentity.actorId).executeTarget(
+      parsedInstallation.installationId,
+      parsedIdentity.routeGeneration,
+      targetId,
+      parsed.data as AdapterTargetRequestFrame<"shell.exec">,
+    );
+    return structuredClone(response);
+  }
+
+  async adapterTargetCancel(
+    installation: AdapterInstallationContext,
+    identity: AdapterTargetIdentity,
+    targetId: string,
+    requestId: string,
+  ): Promise<AdapterTargetCancelResult> {
+    if (targetId !== SLACK_TARGET_ID) return { cancelled: false };
+    try {
+      const parsedInstallation = parseManagedInstallation(installation);
+      const parsedIdentity = parseTargetIdentity(identity);
+      const normalizedRequestId = requireRequestId(requestId);
+      using result = await this.peer(parsedIdentity.accountId, parsedIdentity.actorId).cancelTarget(
+        parsedInstallation.installationId,
+        parsedIdentity.routeGeneration,
+        targetId,
+        normalizedRequestId,
+      );
+      return { cancelled: result.cancelled };
+    } catch {
+      return { cancelled: false };
+    }
+  }
+
+  private peer(
+    accountId: string,
+    actorId: string,
+  ): ManagedSlackPeerClient & DurableObjectStub {
     const id = this.env.MANAGED_SLACK_PEER.idFromName(
       managedSlackPeerObjectName(accountId, actorId),
     );
-    return typedStub<ManagedSlackPeerStub>(this.env.MANAGED_SLACK_PEER.get(id));
+    return typedStub<ManagedSlackPeerClient>(this.env.MANAGED_SLACK_PEER.get(id));
   }
 
   private workspace(accountId: string): ManagedSlackWorkspaceStub {
@@ -254,6 +390,41 @@ function normalizePairingCode(value: string): string {
   const normalized = value.trim().toUpperCase().replace(/[\s-]+/g, "");
   if (!/^[A-HJ-NP-Z2-9]{12}$/.test(normalized)) throw new Error("Pairing code is invalid");
   return normalized;
+}
+
+function parseTargetIdentity(value: AdapterTargetIdentity): ParsedTargetIdentity {
+  const parsed = adapterTargetIdentitySchema.parse(value);
+  const routeGeneration = parsed.routeGeneration?.trim() ?? "";
+  if (!routeGeneration) throw new Error("Slack target route generation is required");
+  return {
+    accountId: requireWorkspaceAccountId(parsed.accountId),
+    actorId: requireSlackId(parsed.actorId, "Slack actor"),
+    routeGeneration,
+  };
+}
+
+function requireRequestId(value: string): string {
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 512 || normalized.includes("\0")) {
+    throw new Error("Slack target request ID is invalid");
+  }
+  return normalized;
+}
+
+function targetError(id: string, code: number): AdapterTargetResponseFrame<"shell.exec"> {
+  return {
+    type: "res",
+    id,
+    ok: false,
+    error: {
+      code,
+      message: code === 404
+        ? "Slack target is unavailable"
+        : code === 403
+          ? "Slack target authorization is unavailable"
+          : "Slack target request is invalid",
+    },
+  };
 }
 
 function typedStub<T>(value: DurableObjectStub): T & DurableObjectStub {

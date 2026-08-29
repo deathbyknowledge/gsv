@@ -1,8 +1,46 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   downloadSlackFile,
+  exchangeSlackOAuthCode,
   uploadSlackFiles,
 } from "./slack-api";
+
+describe("Slack OAuth API", () => {
+  it("retains the authorizing user's token separately from the bot installation", async () => {
+    const provider = vi.fn(async () => Response.json({
+      ok: true,
+      access_token: "xoxb-valid-bot-token-value",
+      bot_user_id: "UGSVBOT1",
+      app_id: "AGSV1234",
+      scope: "chat:write",
+      team: { id: "TWORK123", name: "Acme" },
+      authed_user: {
+        id: "UALICE01",
+        access_token: "xoxp-valid-user-token-value",
+        scope: "channels:read,chat:write",
+      },
+    }));
+
+    await expect(exchangeSlackOAuthCode({
+      clientId: "12345.67890",
+      clientSecret: "client-secret-value",
+      code: "oauth-code",
+      redirectUri: "https://slack.gsv.test/slack/oauth/callback",
+    }, provider)).resolves.toEqual({
+      teamId: "TWORK123",
+      teamName: "Acme",
+      botUserId: "UGSVBOT1",
+      botToken: "xoxb-valid-bot-token-value",
+      appId: "AGSV1234",
+      scope: "chat:write",
+      user: {
+        id: "UALICE01",
+        token: "xoxp-valid-user-token-value",
+        scope: "channels:read,chat:write",
+      },
+    });
+  });
+});
 
 describe("Slack file API", () => {
   it("downloads authenticated private files from fresh Slack metadata", async () => {

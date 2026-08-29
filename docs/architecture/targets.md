@@ -71,6 +71,10 @@ GSV currently projects these environments:
   implements `fs.*` and `shell.exec` over a virtual filesystem and
   browser-specific commands even though the browser is not an operating-system
   machine.
+- Managed Slack projects a personally authorized workspace as a service-backed
+  `shell.exec` target. Its ephemeral just-bash environment exposes a composable
+  `slack` CLI for conversations, threads, messages, reactions, and users while
+  the adapter retains the OAuth token and provider policy.
 
 The persisted registry and compatibility syscalls still use `device` names for
 non-native targets. That is an implementation and upgrade constraint, not the
@@ -81,10 +85,10 @@ device-registry record. The Kernel selects it through the same `target`
 boundary, while external providers additionally require routing, liveness, and
 transport ownership.
 
-Bundled messaging adapters currently remain transport-only and therefore do not
-register targets. The protocol permits a future adapter or other service peer to
-advertise implementations and provide one after its account authority and
-environment semantics are defined end to end.
+Telegram, WhatsApp, Discord, standalone Slack, and other adapter deployments
+remain transport-only until each has truthful account authority and coherent
+environment semantics. Adapter target support is optional and advertised by the
+service descriptor; transport support alone never creates one.
 
 ## Adapter-backed targets
 

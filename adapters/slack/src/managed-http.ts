@@ -56,6 +56,19 @@ const OAUTH_SCOPES = [
   "im:history",
   "im:write",
 ].join(",");
+const OAUTH_USER_SCOPES = [
+  "channels:history",
+  "channels:read",
+  "chat:write",
+  "groups:history",
+  "groups:read",
+  "im:history",
+  "im:read",
+  "mpim:history",
+  "mpim:read",
+  "reactions:write",
+  "users:read",
+].join(",");
 const oauthStateSchema = z.object({
   version: z.literal(1),
   nonce: z.string().regex(/^[A-Za-z0-9_-]{32}$/),
@@ -124,6 +137,7 @@ async function beginSlackOAuth(env: ManagedSlackHttpEnv): Promise<Response> {
   const authorize = new URL("https://slack.com/oauth/v2/authorize");
   authorize.searchParams.set("client_id", config.clientId);
   authorize.searchParams.set("scope", OAUTH_SCOPES);
+  authorize.searchParams.set("user_scope", OAUTH_USER_SCOPES);
   authorize.searchParams.set("redirect_uri", oauthRedirectUri(config.publicBaseUrl));
   authorize.searchParams.set("state", state);
   return new Response(null, {

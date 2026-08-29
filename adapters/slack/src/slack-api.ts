@@ -31,6 +31,48 @@ type SlackFileApiObject = {
   url_private_download?: string;
 };
 
+type ParsedSlackFile = {
+  filename: string;
+  mimeType: string;
+  size?: number;
+  downloadUrl: string;
+};
+
+type SlackConversationApiObject = {
+  id?: string;
+  name?: string;
+  user?: string;
+  topic?: { value?: string };
+  purpose?: { value?: string };
+  is_archived?: boolean;
+  is_member?: boolean;
+  is_private?: boolean;
+  is_im?: boolean;
+  is_mpim?: boolean;
+  is_group?: boolean;
+};
+
+type SlackMessageApiObject = {
+  ts?: string;
+  text?: string;
+  user?: string;
+  bot_id?: string;
+  thread_ts?: string;
+  reply_count?: number;
+};
+
+type SlackUserApiObject = {
+  id?: string;
+  name?: string;
+  real_name?: string;
+  deleted?: boolean;
+  is_bot?: boolean;
+  profile?: {
+    display_name?: string;
+    real_name?: string;
+  };
+};
+
 export type SlackBotIdentity = {
   teamId: string;
   teamName?: string;
@@ -41,6 +83,11 @@ export type SlackOAuthInstallation = SlackBotIdentity & {
   botToken: string;
   appId?: string;
   scope?: string;
+  user?: {
+    id: string;
+    token: string;
+    scope?: string;
+  };
 };
 
 export type SlackPostMessageInput = {
@@ -53,6 +100,48 @@ export type SlackPostMessageInput = {
 export type SlackPostMessageResult = {
   channel: string;
   ts: string;
+};
+
+export type SlackUserIdentity = {
+  teamId: string;
+  teamName?: string;
+  actorId: string;
+  actorName?: string;
+};
+
+export type SlackConversationSummary = {
+  id: string;
+  name?: string;
+  userId?: string;
+  topic?: string;
+  purpose?: string;
+  isArchived: boolean;
+  isMember: boolean;
+  isPrivate: boolean;
+  kind: "channel" | "group" | "im" | "mpim";
+};
+
+export type SlackMessageSummary = {
+  ts: string;
+  text: string;
+  userId?: string;
+  botId?: string;
+  threadTs?: string;
+  replyCount?: number;
+};
+
+export type SlackUserSummary = {
+  id: string;
+  name?: string;
+  displayName?: string;
+  realName?: string;
+  deleted: boolean;
+  isBot: boolean;
+};
+
+export type SlackPage<T> = {
+  items: T[];
+  nextCursor?: string;
 };
 
 export type SlackUpdateMessageInput = {
@@ -134,6 +223,130 @@ export async function authenticateSlackBot(
     teamName: optionalText(result.team, 160),
     botUserId: requireSlackId(result.user_id, "Slack bot user"),
   };
+}
+
+export async function authenticateSlackUser(
+  userToken: string,
+  slackFetch: SlackFetch = fetch,
+): Promise<SlackUserIdentity> {
+  const result = await callSlackApi<{
+    team_id?: string;
+    team?: string;
+    user_id?: string;
+    user?: string;
+  }>("auth.test", userToken, {}, slackFetch);
+  return {
+    teamId: requireSlackId(result.team_id, "Slack workspace"),
+    teamName: optionalText(result.team, 160),
+    actorId: requireSlackId(result.user_id, "Slack actor"),
+    actorName: optionalText(result.user, 160),
+  };
+}
+
+export async function listSlackConversations(
+  userToken: string,
+  input: {
+    types: string;
+    limit: number;
+    cursor?: string;
+    excludeArchived?: boolean;
+  },
+  slackFetch: SlackFetch = fetch,
+): Promise<SlackPage<SlackConversationSummary>> {
+  const payload = {
+    types: requireConversationTypes(input.types),
+    limit: requireBoundedInteger(input.limit, "Slack conversation limit", 1, 200),
+    exclude_archived: input.excludeArchived === true,
+    cursor: input.cursor
+      ? requireText(input.cursor, "Slack cursor", 2_048)
+      : undefined,
+  } satisfies SlackApiPayload;
+  const result = await callSlackApi<{
+    channels?: SlackConversationApiObject[];
+    response_metadata?: { next_cursor?: string };
+  }>("conversations.list", userToken, payload, slackFetch);
+  return page(
+    (result.channels ?? []).map(parseSlackConversation),
+    result.response_metadata?.next_cursor,
+  );
+}
+
+export async function getSlackConversationHistory(
+  userToken: string,
+  input: { channel: string; limit: number; cursor?: string },
+  slackFetch: SlackFetch = fetch,
+): Promise<SlackPage<SlackMessageSummary>> {
+  return await getSlackMessagesPage(
+    "conversations.history",
+    userToken,
+    input,
+    slackFetch,
+  );
+}
+
+export async function getSlackConversationReplies(
+  userToken: string,
+  input: { channel: string; timestamp: string; limit: number; cursor?: string },
+  slackFetch: SlackFetch = fetch,
+): Promise<SlackPage<SlackMessageSummary>> {
+  return await getSlackMessagesPage(
+    "conversations.replies",
+    userToken,
+    input,
+    slackFetch,
+  );
+}
+
+export async function addSlackReaction(
+  userToken: string,
+  input: { channel: string; timestamp: string; name: string },
+  slackFetch: SlackFetch = fetch,
+): Promise<void> {
+  await callSlackApi(
+    "reactions.add",
+    userToken,
+    {
+      channel: requireSlackId(input.channel, "Slack channel"),
+      timestamp: requireSlackTimestamp(input.timestamp),
+      name: requireSlackReaction(input.name),
+    },
+    slackFetch,
+  );
+}
+
+export async function listSlackUsers(
+  userToken: string,
+  input: { limit: number; cursor?: string },
+  slackFetch: SlackFetch = fetch,
+): Promise<SlackPage<SlackUserSummary>> {
+  const payload = {
+    limit: requireBoundedInteger(input.limit, "Slack user limit", 1, 200),
+    cursor: input.cursor
+      ? requireText(input.cursor, "Slack cursor", 2_048)
+      : undefined,
+  } satisfies SlackApiPayload;
+  const result = await callSlackApi<{
+    members?: SlackUserApiObject[];
+    response_metadata?: { next_cursor?: string };
+  }>("users.list", userToken, payload, slackFetch);
+  return page(
+    (result.members ?? []).map(parseSlackUser),
+    result.response_metadata?.next_cursor,
+  );
+}
+
+export async function getSlackUser(
+  userToken: string,
+  actorId: string,
+  slackFetch: SlackFetch = fetch,
+): Promise<SlackUserSummary> {
+  const result = await callSlackApi<{ user?: SlackUserApiObject }>(
+    "users.info",
+    userToken,
+    { user: requireSlackId(actorId, "Slack actor") },
+    slackFetch,
+  );
+  return parseSlackUser(result.user);
 }
 
 export async function openSlackSocket(
@@ -308,7 +521,15 @@ export async function uploadSlackFiles(
         slackFetch,
       );
     } catch (error) {
-      throw preparationError(error, "Slack upload ticket request failed");
+      if (error instanceof SlackApiError) {
+        throw new SlackApiError(
+          "Slack upload ticket request failed",
+          error.kind === "permanent" ? "permanent" : "retryable",
+          error.code,
+          error.status,
+        );
+      }
+      throw new SlackApiError("Slack upload ticket request failed", "permanent");
     }
     const uploadUrl = requireSlackHostedUrl(ticket.upload_url, "Slack upload URL");
     const ticketId = requireSlackId(ticket.file_id, "Slack upload file");
@@ -344,12 +565,12 @@ export async function uploadSlackFiles(
   }
 
   await guard?.();
-  const payload: SlackApiPayload = {
+  const payload = {
     channel_id: channel,
     files: tickets,
-  };
-  if (text) payload.initial_comment = text;
-  if (threadTs) payload.thread_ts = threadTs;
+    initial_comment: text || undefined,
+    thread_ts: threadTs,
+  } satisfies SlackApiPayload;
   let completed: { files?: Array<{ id?: string }> };
   try {
     completed = await callSlackApi<{ files?: Array<{ id?: string }> }>(
@@ -410,6 +631,11 @@ export async function exchangeSlackOAuthCode(
     scope?: string;
     is_enterprise_install?: boolean;
     team?: { id?: string; name?: string };
+    authed_user?: {
+      id?: string;
+      access_token?: string;
+      scope?: string;
+    };
   }>(response, "oauth.v2.access");
   if (parsed.is_enterprise_install === true) {
     throw new SlackApiError(
@@ -417,7 +643,7 @@ export async function exchangeSlackOAuthCode(
       "permanent",
     );
   }
-  return {
+  const installation: SlackOAuthInstallation = {
     teamId: requireSlackId(parsed.team?.id, "Slack workspace"),
     teamName: optionalText(parsed.team?.name, 160),
     botUserId: requireSlackId(parsed.bot_user_id, "Slack bot user"),
@@ -425,6 +651,18 @@ export async function exchangeSlackOAuthCode(
     appId: parsed.app_id ? requireSlackId(parsed.app_id, "Slack app") : undefined,
     scope: optionalText(parsed.scope, 2_048),
   };
+  if (parsed.authed_user?.access_token) {
+    installation.user = {
+      id: requireSlackId(parsed.authed_user.id, "Slack authorizing user"),
+      token: requireSlackToken(
+        parsed.authed_user.access_token,
+        "Slack user token",
+        "xoxp-",
+      ),
+      scope: optionalText(parsed.authed_user.scope, 4_096),
+    };
+  }
+  return installation;
 }
 
 export async function workspaceAccountId(teamId: string): Promise<string> {
@@ -440,7 +678,7 @@ export async function workspaceAccountId(teamId: string): Promise<string> {
 export function requireSlackToken(
   value: string | undefined,
   label: string,
-  prefix: "xoxb-" | "xapp-",
+  prefix: "xoxb-" | "xapp-" | "xoxp-",
 ): string {
   const token = value?.trim() ?? "";
   if (!token.startsWith(prefix) || token.length < prefix.length + 12 || token.length > 1_024) {
@@ -455,6 +693,128 @@ export function requireSlackId(value: string | undefined, label: string): string
     throw new Error(`${label} ID is invalid`);
   }
   return normalized;
+}
+
+async function getSlackMessagesPage(
+  method: "conversations.history" | "conversations.replies",
+  userToken: string,
+  input: {
+    channel: string;
+    timestamp?: string;
+    limit: number;
+    cursor?: string;
+  },
+  slackFetch: SlackFetch,
+): Promise<SlackPage<SlackMessageSummary>> {
+  const payload = {
+    channel: requireSlackId(input.channel, "Slack channel"),
+    limit: requireBoundedInteger(input.limit, "Slack message limit", 1, 100),
+    ts: input.timestamp ? requireSlackTimestamp(input.timestamp) : undefined,
+    cursor: input.cursor
+      ? requireText(input.cursor, "Slack cursor", 2_048)
+      : undefined,
+  } satisfies SlackApiPayload;
+  const result = await callSlackApi<{
+    messages?: SlackMessageApiObject[];
+    response_metadata?: { next_cursor?: string };
+  }>(method, userToken, payload, slackFetch);
+  return page(
+    (result.messages ?? []).map(parseSlackMessage),
+    result.response_metadata?.next_cursor,
+  );
+}
+
+function parseSlackConversation(value: SlackConversationApiObject): SlackConversationSummary {
+  return {
+    id: requireSlackId(value.id, "Slack conversation"),
+    name: optionalText(value.name, 160),
+    userId: optionalSlackId(value.user, "Slack conversation user"),
+    topic: optionalText(value.topic?.value, 2_000),
+    purpose: optionalText(value.purpose?.value, 2_000),
+    isArchived: value.is_archived === true,
+    isMember: value.is_member === true,
+    isPrivate: value.is_private === true,
+    kind: value.is_im === true
+      ? "im"
+      : value.is_mpim === true
+        ? "mpim"
+        : value.is_group === true
+          ? "group"
+          : "channel",
+  };
+}
+
+function parseSlackMessage(value: SlackMessageApiObject): SlackMessageSummary {
+  const message: SlackMessageSummary = {
+    ts: requireSlackTimestamp(value.ts),
+    text: optionalText(value.text, 40_000) ?? "",
+  };
+  const userId = optionalSlackId(value.user, "Slack message user");
+  const botId = optionalSlackId(value.bot_id, "Slack message bot");
+  if (userId) message.userId = userId;
+  if (botId) message.botId = botId;
+  if (value.thread_ts) message.threadTs = requireSlackTimestamp(value.thread_ts);
+  if (value.reply_count !== undefined) {
+    message.replyCount = requireBoundedInteger(
+      value.reply_count,
+      "Slack reply count",
+      0,
+      Number.MAX_SAFE_INTEGER,
+    );
+  }
+  return message;
+}
+
+function parseSlackUser(value: SlackUserApiObject | undefined): SlackUserSummary {
+  if (!value) throw new SlackApiError("Slack user is unavailable", "permanent");
+  return {
+    id: requireSlackId(value.id, "Slack user"),
+    name: optionalText(value.name, 160),
+    displayName: optionalText(value.profile?.display_name, 160),
+    realName: optionalText(value.profile?.real_name ?? value.real_name, 160),
+    deleted: value.deleted === true,
+    isBot: value.is_bot === true,
+  };
+}
+
+function page<T>(items: T[], cursor: string | undefined): SlackPage<T> {
+  const result: SlackPage<T> = { items };
+  const nextCursor = optionalText(cursor, 2_048);
+  if (nextCursor) result.nextCursor = nextCursor;
+  return result;
+}
+
+function optionalSlackId(value: string | undefined, label: string): string | undefined {
+  return value ? requireSlackId(value, label) : undefined;
+}
+
+function requireConversationTypes(value: string): string {
+  const allowed = new Set(["public_channel", "private_channel", "mpim", "im"]);
+  const types = [...new Set(value.split(",").map((entry) => entry.trim()).filter(Boolean))];
+  if (types.length === 0 || types.some((entry) => !allowed.has(entry))) {
+    throw new Error("Slack conversation types are invalid");
+  }
+  return types.join(",");
+}
+
+function requireSlackReaction(value: string): string {
+  const normalized = value.trim().replace(/^:|:$/g, "");
+  if (!/^[a-z0-9_+-]+(?:::[a-z0-9_-]+)?$/i.test(normalized) || normalized.length > 100) {
+    throw new Error("Slack reaction is invalid");
+  }
+  return normalized;
+}
+
+function requireBoundedInteger(
+  value: number,
+  label: string,
+  minimum: number,
+  maximum: number,
+): number {
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${label} is invalid`);
+  }
+  return value;
 }
 
 export function requireSlackTimestamp(value: string | undefined): string {
@@ -548,13 +908,8 @@ function requireHttpsUrl(value: string, label: string): string {
 function parseSlackFile(
   value: SlackFileApiObject | undefined,
   expectedFileId: string,
-): {
-  filename: string;
-  mimeType: string;
-  size?: number;
-  downloadUrl: string;
-} {
-  if (!value || typeof value !== "object") {
+): ParsedSlackFile {
+  if (!value) {
     throw new SlackApiError("Slack file metadata is unavailable", "permanent");
   }
   const fileId = requireSlackId(value.id, "Slack file");
@@ -602,8 +957,11 @@ function requireSlackHostedUrl(value: string | undefined, label: string): string
 
 function requireSlackFilename(value: string): string {
   const leaf = value.replaceAll("\\", "/").split("/").at(-1) ?? "";
-  const normalized = leaf
-    .replace(/[\u0000-\u001f\u007f]/g, " ")
+  const withoutControls = [...leaf].map((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 0x1f || codePoint === 0x7f ? " " : character;
+  }).join("");
+  const normalized = withoutControls
     .replace(/[<>:"|?*]/g, "-")
     .trim()
     .slice(0, 255);
@@ -638,18 +996,6 @@ function normalizedSlackToken(token: string): string {
     throw new SlackApiError("Slack token is invalid", "permanent");
   }
   return normalized;
-}
-
-function preparationError(error: unknown, message: string): SlackApiError {
-  if (error instanceof SlackApiError) {
-    return new SlackApiError(
-      message,
-      error.kind === "permanent" ? "permanent" : "retryable",
-      error.code,
-      error.status,
-    );
-  }
-  return new SlackApiError(message, "permanent");
 }
 
 function bytesToBase64Url(bytes: Uint8Array): string {

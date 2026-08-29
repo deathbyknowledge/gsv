@@ -105,6 +105,39 @@ type PeerStub = {
     },
     body?: ReturnType<typeof binaryBodyFromOwnedBytes>,
   ): Promise<{ ok: boolean; error?: string; messageId?: string }>;
+  listTargets(
+    installationId: string,
+    routeGeneration: string,
+  ): Promise<Array<{
+    id: string;
+    label: string;
+    platform: string;
+    implements: string[];
+  }>>;
+  executeTarget(
+    installationId: string,
+    routeGeneration: string,
+    targetId: string,
+    frame: {
+      type: "req";
+      id: string;
+      call: "shell.exec";
+      args: { input: string; timeout?: number };
+      deadlineAt: number;
+    },
+  ): Promise<{
+    type: "res";
+    id: string;
+    ok: boolean;
+    data?: { status: string; output: string; exitCode?: number };
+    error?: { code: number; message: string };
+  }>;
+  cancelTarget(
+    installationId: string,
+    routeGeneration: string,
+    targetId: string,
+    requestId: string,
+  ): Promise<{ cancelled: boolean }>;
 };
 
 const SIGNING_SECRET = "signing_secret_123456789";
@@ -131,9 +164,9 @@ function pairingBinding<T>(value: T): T & PairingStub {
   return value as T & PairingStub;
 }
 
-function peerBinding<T>(value: T): T & PeerStub {
+function peerBinding<T extends object>(value: T): T & Rpc.Provider<PeerStub> {
   // SAFETY: the selected Durable Object exposes the peer RPC used by this flow.
-  return value as T & PeerStub;
+  return value as T & Rpc.Provider<PeerStub>;
 }
 
 async function slackApiCalls(): Promise<SlackApiCall[]> {
@@ -347,6 +380,93 @@ describe("managed Slack clean-instance flow", () => {
     const peer = peerBinding(peers.get(
       peers.idFromName(managedSlackPeerObjectName(accountId, "UALICE01")),
     ));
+    using targetDescriptors = await peer.listTargets("installation-alice", alice.generation);
+    expect(targetDescriptors).toEqual([
+      expect.objectContaining({
+        id: "workspace",
+        label: "Slack — Acme",
+        platform: "slack",
+        implements: ["shell.exec"],
+      }),
+    ]);
+    using targetList = await peer.executeTarget(
+      "installation-alice",
+      alice.generation,
+      "workspace",
+      {
+        type: "req",
+        id: "target-list",
+        call: "shell.exec",
+        args: {
+          input: "slack conversations list --json | jq -r '.items[0].name'",
+          timeout: 120_000,
+        },
+        deadlineAt: Date.now() + 120_000,
+      },
+    );
+    expect(targetList).toMatchObject({
+      ok: true,
+      data: { status: "completed", output: "general\n", exitCode: 0 },
+    });
+    using targetSend = await peer.executeTarget(
+      "installation-alice",
+      alice.generation,
+      "workspace",
+      {
+        type: "req",
+        id: "target-send",
+        call: "shell.exec",
+        args: {
+          input: "printf '%s' 'hello from target' | slack messages send --channel CGENERAL1 --json | jq -r '.channel'",
+        },
+        deadlineAt: Date.now() + 120_000,
+      },
+    );
+    expect(targetSend).toMatchObject({
+      ok: true,
+      data: { status: "completed", output: "CGENERAL1\n", exitCode: 0 },
+    });
+    expect(await slackApiCalls()).toContainEqual(expect.objectContaining({
+      method: "chat.postMessage",
+      body: expect.objectContaining({
+        channel: "CGENERAL1",
+        text: "hello from target",
+        authorization: "Bearer xoxp-managed-alice-user-token",
+      }),
+    }));
+    const cancelledExecution = peer.executeTarget(
+      "installation-alice",
+      alice.generation,
+      "workspace",
+      {
+        type: "req",
+        id: "target-cancel",
+        call: "shell.exec",
+        args: { input: "slack conversations list --cursor wait-for-cancel" },
+        deadlineAt: Date.now() + 120_000,
+      },
+    );
+    await vi.waitFor(async () => {
+      expect(await slackApiCalls()).toContainEqual(expect.objectContaining({
+        method: "conversations.list",
+        body: expect.objectContaining({ cursor: "wait-for-cancel" }),
+      }));
+    });
+    using cancellation = await peer.cancelTarget(
+      "installation-alice",
+      alice.generation,
+      "workspace",
+      "target-cancel",
+    );
+    expect(cancellation).toEqual({ cancelled: true });
+    using cancelledResult = await cancelledExecution;
+    expect(cancelledResult).toMatchObject({
+      ok: true,
+      data: {
+        status: "failed",
+        error: "Slack target request cancelled",
+      },
+    });
     const approvalMessage = await peer.sendMessage("installation-alice", {
       deliveryId: "managed-slack-approval-prompt",
       surface: { kind: "dm", id: "DALICE01" },

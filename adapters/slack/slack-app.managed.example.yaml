@@ -22,6 +22,18 @@ oauth_config:
       - files:write
       - im:history
       - im:write
+    user:
+      - channels:history
+      - channels:read
+      - chat:write
+      - groups:history
+      - groups:read
+      - im:history
+      - im:read
+      - mpim:history
+      - mpim:read
+      - reactions:write
+      - users:read
 settings:
   interactivity:
     is_enabled: true

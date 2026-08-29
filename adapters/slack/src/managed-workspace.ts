@@ -1,4 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
+import type {
+  AdapterTargetRequestFrame,
+  AdapterTargetResponseFrame,
+} from "../../../packages/gsv/src/services/adapters.js";
 import type { DeliveryFailureKind } from "../../shared/src/delivery-ledger";
 import {
   downloadSlackFile,
@@ -17,6 +21,7 @@ import {
   type SlackUploadFilesInput,
   uploadSlackFiles,
 } from "./slack-api";
+import { executeSlackTargetShell } from "./slack-target-shell";
 import {
   managedSlackWorkspaceObjectName,
   requireWorkspaceAccountId,
@@ -35,6 +40,22 @@ export type ManagedSlackWorkspaceState = {
   active: boolean;
   installedAt: number;
   deactivatedAt?: number;
+};
+
+type ManagedSlackUserCredentialState = {
+  version: 1;
+  actorId: string;
+  token: string;
+  scope: string;
+  generation: string;
+  authorizedAt: number;
+};
+
+type ActiveSlackTargetCall = {
+  actorId: string;
+  workspaceGeneration: string;
+  credentialGeneration: string;
+  controller: AbortController;
 };
 
 export type ManagedSlackWorkspaceAdmission =
@@ -70,11 +91,23 @@ export type ManagedSlackWorkspaceStatus = {
   error?: string;
 };
 
+export type ManagedSlackTargetAuthorization =
+  | {
+      available: true;
+      teamId: string;
+      teamName?: string;
+      actorId: string;
+      credentialGeneration: string;
+    }
+  | { available: false };
+
 interface Env {
   SLACK_API?: Fetcher;
 }
 
 const STATE_KEY = "managed_slack_workspace:v1:state";
+const USER_CREDENTIAL_PREFIX = "managed_slack_workspace:v1:user:";
+const MAX_TARGET_RUNTIME_MS = 120_000;
 const REQUIRED_SCOPES = new Set([
   "app_mentions:read",
   "chat:write",
@@ -83,8 +116,23 @@ const REQUIRED_SCOPES = new Set([
   "im:history",
   "im:write",
 ]);
+const TARGET_USER_SCOPES = new Set([
+  "channels:history",
+  "channels:read",
+  "chat:write",
+  "groups:history",
+  "groups:read",
+  "im:history",
+  "im:read",
+  "mpim:history",
+  "mpim:read",
+  "reactions:write",
+  "users:read",
+]);
 
 export class ManagedSlackWorkspace extends DurableObject<Env> {
+  private readonly targetCalls = new Map<string, ActiveSlackTargetCall>();
+
   async install(
     accountId: string,
     installation: SlackOAuthInstallation,
@@ -99,22 +147,59 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
     const missing = missingRequiredScopes(scopes);
     if (missing.length > 0) throw new Error("Slack installation is missing required scopes");
 
+    const previous = await this.ctx.storage.get<ManagedSlackWorkspaceState>(STATE_KEY);
+    const botToken = requireSlackToken(installation.botToken, "Slack bot token", "xoxb-");
+    const botUserId = requireSlackId(installation.botUserId, "Slack bot user");
+    const appId = installation.appId
+      ? requireSlackId(installation.appId, "Slack app")
+      : undefined;
+    const scope = [...scopes].sort().join(",");
+    const generation = previous && sameActiveWorkspaceInstallation(previous, {
+      teamId,
+      botUserId,
+      botToken,
+      appId,
+      scope,
+    })
+      ? previous.generation
+      : crypto.randomUUID();
     const state: ManagedSlackWorkspaceState = {
       version: 1,
       accountId: normalizedAccountId,
       teamId,
       teamName: normalizedOptionalText(installation.teamName, 160),
-      botUserId: requireSlackId(installation.botUserId, "Slack bot user"),
-      botToken: requireSlackToken(installation.botToken, "Slack bot token", "xoxb-"),
-      appId: installation.appId
-        ? requireSlackId(installation.appId, "Slack app")
-        : undefined,
-      scope: [...scopes].sort().join(","),
-      generation: crypto.randomUUID(),
+      botUserId,
+      botToken,
+      appId,
+      scope,
+      generation,
       active: true,
-      installedAt: Date.now(),
+      installedAt: previous?.installedAt ?? Date.now(),
     };
-    await this.ctx.storage.put(STATE_KEY, state);
+    const user = installation.user;
+    let credential: ManagedSlackUserCredentialState | undefined;
+    if (user) {
+      const actorId = requireSlackId(user.id, "Slack authorizing user");
+      const userScopes = normalizedScopes(user.scope);
+      const missingUserScopes = missingScopes(userScopes, TARGET_USER_SCOPES);
+      if (missingUserScopes.length > 0) {
+        throw new Error("Slack user authorization is missing required target scopes");
+      }
+      credential = {
+        version: 1,
+        actorId,
+        token: requireSlackToken(user.token, "Slack user token", "xoxp-"),
+        scope: [...userScopes].sort().join(","),
+        generation: crypto.randomUUID(),
+        authorizedAt: Date.now(),
+      };
+    }
+    const writes = [this.ctx.storage.put(STATE_KEY, state)];
+    if (credential) {
+      writes.push(this.ctx.storage.put(userCredentialKey(credential.actorId), credential));
+    }
+    await Promise.all(writes);
+    this.abortSupersededTargetCalls(state.generation, credential);
     return admission(state);
   }
 
@@ -138,15 +223,152 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
     if (!state) return { deactivated: false };
     const teamId = requireSlackId(teamIdInput, "Slack workspace");
     if (state.teamId !== teamId) throw new Error("Slack workspace identity mismatch");
-    if (!state.active) return { deactivated: true };
-    await this.ctx.storage.put(STATE_KEY, {
-      ...state,
-      active: false,
-      botToken: "",
-      generation: crypto.randomUUID(),
-      deactivatedAt: Date.now(),
-    } satisfies ManagedSlackWorkspaceState);
+    this.assertObjectName(state.accountId);
+    if (state.active) {
+      await this.ctx.storage.put(STATE_KEY, {
+        ...state,
+        active: false,
+        botToken: "",
+        generation: crypto.randomUUID(),
+        deactivatedAt: Date.now(),
+      } satisfies ManagedSlackWorkspaceState);
+    }
+    const credentials = await this.ctx.storage.list({ prefix: USER_CREDENTIAL_PREFIX });
+    if (credentials.size > 0) {
+      await this.ctx.storage.delete([...credentials.keys()]);
+    }
+    for (const active of this.targetCalls.values()) {
+      active.controller.abort(new Error("Slack workspace authorization changed"));
+    }
     return { deactivated: true };
+  }
+
+  async getTargetAuthorization(
+    actorIdInput: string,
+    expectedGeneration: string,
+  ): Promise<ManagedSlackTargetAuthorization> {
+    const actorId = requireSlackId(actorIdInput, "Slack actor");
+    let authorization: {
+      workspace: ManagedSlackWorkspaceState;
+      credential: ManagedSlackUserCredentialState;
+    };
+    try {
+      authorization = await this.requireTargetAuthorization(actorId, expectedGeneration);
+    } catch {
+      return { available: false };
+    }
+    return {
+      available: true,
+      teamId: authorization.workspace.teamId,
+      teamName: authorization.workspace.teamName,
+      actorId,
+      credentialGeneration: authorization.credential.generation,
+    };
+  }
+
+  async executeTarget(
+    actorIdInput: string,
+    expectedGeneration: string,
+    frame: AdapterTargetRequestFrame<"shell.exec">,
+  ): Promise<AdapterTargetResponseFrame<"shell.exec">> {
+    const actorId = requireSlackId(actorIdInput, "Slack actor");
+    if (
+      frame.type !== "req"
+      || frame.call !== "shell.exec"
+      || !frame.id.trim()
+      || !Number.isFinite(frame.deadlineAt)
+      || frame.body
+    ) {
+      return targetError(frame.id, 400, "Slack target request is invalid");
+    }
+    const remaining = Math.min(
+      MAX_TARGET_RUNTIME_MS,
+      Math.trunc(frame.deadlineAt - Date.now()),
+    );
+    if (remaining <= 0) return targetError(frame.id, 408, "Slack target request expired");
+
+    let authorization: {
+      workspace: ManagedSlackWorkspaceState;
+      credential: ManagedSlackUserCredentialState;
+    };
+    try {
+      authorization = await this.requireTargetAuthorization(actorId, expectedGeneration);
+    } catch {
+      return targetError(frame.id, 403, "Slack target authorization is unavailable");
+    }
+    const { workspace, credential } = authorization;
+    const callKey = targetCallKey(actorId, frame.id);
+    if (this.targetCalls.has(callKey)) {
+      return targetError(frame.id, 409, "Slack target request is already running");
+    }
+    const controller = new AbortController();
+    const active: ActiveSlackTargetCall = {
+      actorId,
+      workspaceGeneration: expectedGeneration,
+      credentialGeneration: credential.generation,
+      controller,
+    };
+    this.targetCalls.set(callKey, active);
+    const timeout = setTimeout(() => {
+      controller.abort(new Error("Slack target request timed out"));
+    }, remaining);
+
+    try {
+      const data = await executeSlackTargetShell({
+        args: frame.args,
+        userToken: credential.token,
+        actorId,
+        teamId: workspace.teamId,
+        teamName: workspace.teamName,
+        signal: controller.signal,
+        slackFetch: this.slackFetch(),
+        guard: async () => {
+          await this.requireTargetAuthorization(
+            actorId,
+            expectedGeneration,
+            credential.generation,
+          );
+        },
+      });
+      await this.requireTargetAuthorization(
+        actorId,
+        expectedGeneration,
+        credential.generation,
+      );
+      return { type: "res", id: frame.id, ok: true, data };
+    } catch {
+      if (controller.signal.aborted) {
+        return targetError(
+          frame.id,
+          499,
+          controller.signal.reason instanceof Error
+            ? controller.signal.reason.message
+            : "Slack target request cancelled",
+        );
+      }
+      return targetError(frame.id, 409, "Slack target authorization changed during execution");
+    } finally {
+      clearTimeout(timeout);
+      if (this.targetCalls.get(callKey) === active) this.targetCalls.delete(callKey);
+    }
+  }
+
+  async cancelTarget(
+    actorIdInput: string,
+    expectedGeneration: string,
+    requestId: string,
+  ): Promise<{ cancelled: boolean }> {
+    const actorId = requireSlackId(actorIdInput, "Slack actor");
+    const active = this.targetCalls.get(targetCallKey(actorId, requestId));
+    if (
+      !active
+      || active.actorId !== actorId
+      || active.workspaceGeneration !== expectedGeneration
+    ) {
+      return { cancelled: false };
+    }
+    active.controller.abort(new Error("Slack target request cancelled"));
+    return { cancelled: true };
   }
 
   async getStatus(): Promise<ManagedSlackWorkspaceStatus> {
@@ -170,7 +392,7 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
       error: !state.active
         ? "Slack app is not installed in this workspace"
         : missing.length > 0
-          ? "Slack app must be reinstalled to grant file access"
+          ? "Slack app must be reinstalled to grant required permissions"
           : undefined,
     };
   }
@@ -315,6 +537,53 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
     return state;
   }
 
+  private async requireTargetAuthorization(
+    actorId: string,
+    expectedWorkspaceGeneration: string,
+    expectedCredentialGeneration?: string,
+  ): Promise<{
+    workspace: ManagedSlackWorkspaceState;
+    credential: ManagedSlackUserCredentialState;
+  }> {
+    const workspace = await this.requireActive(expectedWorkspaceGeneration);
+    const credential = await this.ctx.storage.get<ManagedSlackUserCredentialState>(
+      userCredentialKey(actorId),
+    );
+    if (
+      !credential
+      || credential.version !== 1
+      || credential.actorId !== actorId
+      || !credential.generation
+      || (
+        expectedCredentialGeneration !== undefined
+        && credential.generation !== expectedCredentialGeneration
+      )
+      || missingScopes(normalizedScopes(credential.scope), TARGET_USER_SCOPES).length > 0
+    ) {
+      throw new Error("Slack target authorization is unavailable");
+    }
+    requireSlackToken(credential.token, "Slack user token", "xoxp-");
+    return { workspace, credential };
+  }
+
+  private abortSupersededTargetCalls(
+    workspaceGeneration: string,
+    credential?: ManagedSlackUserCredentialState,
+  ): void {
+    for (const active of this.targetCalls.values()) {
+      if (
+        active.workspaceGeneration !== workspaceGeneration
+        || (
+          credential !== undefined
+          && active.actorId === credential.actorId
+          && active.credentialGeneration !== credential.generation
+        )
+      ) {
+        active.controller.abort(new Error("Slack target authorization changed"));
+      }
+    }
+  }
+
   private assertObjectName(accountId: string): void {
     if (this.ctx.id.name !== managedSlackWorkspaceObjectName(accountId)) {
       throw new Error("Slack workspace Durable Object identity mismatch");
@@ -358,4 +627,51 @@ function normalizedScopes(value: string | undefined): Set<string> {
 
 function missingRequiredScopes(scopes: ReadonlySet<string>): string[] {
   return [...REQUIRED_SCOPES].filter((scope) => !scopes.has(scope));
+}
+
+function missingScopes(
+  scopes: ReadonlySet<string>,
+  required: ReadonlySet<string>,
+): string[] {
+  return [...required].filter((scope) => !scopes.has(scope));
+}
+
+function userCredentialKey(actorId: string): string {
+  return `${USER_CREDENTIAL_PREFIX}${requireSlackId(actorId, "Slack actor")}`;
+}
+
+function targetCallKey(actorId: string, requestId: string): string {
+  const normalizedRequestId = requestId.trim();
+  if (!normalizedRequestId || normalizedRequestId.length > 512) {
+    throw new Error("Slack target request ID is invalid");
+  }
+  return `${requireSlackId(actorId, "Slack actor")}\0${normalizedRequestId}`;
+}
+
+function targetError(
+  id: string,
+  code: number,
+  message: string,
+): AdapterTargetResponseFrame<"shell.exec"> {
+  return { type: "res", id, ok: false, error: { code, message } };
+}
+
+function sameActiveWorkspaceInstallation(
+  current: ManagedSlackWorkspaceState | undefined,
+  next: {
+    teamId: string;
+    botUserId: string;
+    botToken: string;
+    appId?: string;
+    scope: string;
+  },
+): current is ManagedSlackWorkspaceState {
+  return Boolean(
+    current?.active
+    && current.teamId === next.teamId
+    && current.botUserId === next.botUserId
+    && current.botToken === next.botToken
+    && (current.appId ?? "") === (next.appId ?? "")
+    && (current.scope ?? "") === next.scope,
+  );
 }

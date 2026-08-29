@@ -14,6 +14,11 @@ const MAX_BLOCK_TEXT_LENGTH = 3_000;
 
 export type SlackApprovalAction = "approve" | "approve_always" | "deny";
 
+export type SlackApprovalSubmittedMessage = {
+  text: string;
+  blocks: SlackBlock[];
+};
+
 export type SlackBlock =
   | {
       type: "section";
@@ -103,7 +108,7 @@ export function buildSlackApprovalBlocks(
 export function buildSlackApprovalSubmittedMessage(
   sourceText: string,
   action: SlackApprovalAction,
-): { text: string; blocks: SlackBlock[] } {
+): SlackApprovalSubmittedMessage {
   const status = `Decision submitted: ${approvalActionLabel(action)}.`;
   const text = `${sourceText.trim()}\n\n${status}`.trim().slice(0, 40_000);
   const blocks: SlackBlock[] = [];

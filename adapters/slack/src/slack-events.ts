@@ -71,6 +71,11 @@ export type SlackEventDisposition =
   | { kind: "ignored" }
   | { kind: "invalid" };
 
+type ExtractedSlackMedia = {
+  media: SlackInboundMediaSource[];
+  skipped: number;
+};
+
 export function parseSlackUrlVerification<T>(value: T): string | null {
   const parsed = slackUrlVerificationSchema.safeParse(value);
   return parsed.success ? parsed.data.challenge : null;
@@ -203,7 +208,7 @@ function escapeRegExp(value: string): string {
 
 function extractSlackMedia(
   files: ReadonlyArray<z.infer<typeof slackFileSchema>> | undefined,
-): { media: SlackInboundMediaSource[]; skipped: number } {
+): ExtractedSlackMedia {
   const media: SlackInboundMediaSource[] = [];
   let skipped = 0;
   for (const [index, file] of (files ?? []).entries()) {

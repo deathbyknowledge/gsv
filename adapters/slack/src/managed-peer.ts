@@ -1,4 +1,9 @@
 import { DurableObject } from "cloudflare:workers";
+import type {
+  AdapterTargetDescriptor,
+  AdapterTargetRequestFrame,
+  AdapterTargetResponseFrame,
+} from "../../../packages/gsv/src/services/adapters.js";
 import {
   DeliveryLedger,
   fingerprintOutboundDelivery,
@@ -50,6 +55,7 @@ import {
   type ManagedSlackPeerState,
 } from "./managed-peer-state";
 import type {
+  ManagedSlackTargetAuthorization,
   ManagedSlackWorkspaceAdmission,
   ManagedSlackWorkspaceDownloadResult,
   ManagedSlackWorkspacePostResult,
@@ -138,6 +144,47 @@ type ManagedWorkspaceStub = {
       files: Array<{ filename: string; mimeType: string; bytes: Uint8Array }>;
     },
   ): Promise<ManagedSlackWorkspaceUploadResult>;
+  getTargetAuthorization(
+    actorId: string,
+    expectedGeneration: string,
+  ): Promise<ManagedSlackTargetAuthorization>;
+  executeTarget(
+    actorId: string,
+    expectedGeneration: string,
+    frame: AdapterTargetRequestFrame<"shell.exec">,
+  ): Promise<AdapterTargetResponseFrame<"shell.exec">>;
+  cancelTarget(
+    actorId: string,
+    expectedGeneration: string,
+    requestId: string,
+  ): Promise<{ cancelled: boolean }>;
+};
+
+type ManagedWorkspaceClient = Omit<
+  ManagedWorkspaceStub,
+  "getTargetAuthorization" | "executeTarget" | "cancelTarget"
+> & {
+  getTargetAuthorization(
+    actorId: string,
+    expectedGeneration: string,
+  ): Promise<ManagedSlackTargetAuthorization & Disposable>;
+  executeTarget(
+    actorId: string,
+    expectedGeneration: string,
+    frame: AdapterTargetRequestFrame<"shell.exec">,
+  ): Promise<AdapterTargetResponseFrame<"shell.exec"> & Disposable>;
+  cancelTarget(
+    actorId: string,
+    expectedGeneration: string,
+    requestId: string,
+  ): Promise<{ cancelled: boolean } & Disposable>;
+};
+
+type ActiveManagedSlackTargetCall = {
+  installationId: string;
+  routeGeneration: string;
+  workspaceGeneration: string;
+  requestId: string;
 };
 
 const STATE_KEY = "managed_slack_peer:v1:state";
@@ -150,10 +197,12 @@ const INBOUND_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const INBOUND_MAX_RECORDS = 4_096;
 const PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const PAIRING_CHARACTERS = 12;
+const SLACK_TARGET_ID = "workspace";
 
 export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
   private readonly deliveries: DeliveryLedger;
   private readonly inboundDeliveries: InboundDeliveryLedger<InboundPayload, ResponseContext>;
+  private readonly targetCalls = new Map<string, ActiveManagedSlackTargetCall>();
   private drainPromise?: Promise<void>;
 
   constructor(ctx: DurableObjectState, env: ManagedSlackPeerEnv) {
@@ -258,6 +307,108 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     }, body);
   }
 
+  async listTargets(
+    installationId: string,
+    routeGeneration: string,
+  ): Promise<AdapterTargetDescriptor[]> {
+    let state: ManagedSlackPeerState;
+    try {
+      state = await this.requireTargetRoute(installationId, routeGeneration);
+    } catch {
+      return [];
+    }
+    using authorization = await this.workspace(state.accountId).getTargetAuthorization(
+      state.actorId,
+      state.workspaceGeneration,
+    );
+    if (
+      !authorization.available
+      || authorization.actorId !== state.actorId
+      || authorization.teamId !== state.teamId
+    ) {
+      return [];
+    }
+    return [{
+      id: SLACK_TARGET_ID,
+      label: `Slack — ${authorization.teamName ?? authorization.teamId}`,
+      description: "Slack workspace acting with the paired user's OAuth authority. Run `slack --help` for commands.",
+      platform: "slack",
+      version: "web-api",
+      implements: ["shell.exec"],
+    }];
+  }
+
+  async executeTarget(
+    installationId: string,
+    routeGeneration: string,
+    targetId: string,
+    frame: AdapterTargetRequestFrame<"shell.exec">,
+  ): Promise<AdapterTargetResponseFrame<"shell.exec">> {
+    if (targetId !== SLACK_TARGET_ID) {
+      return targetError(frame.id, 404, "Slack target is unavailable");
+    }
+    let state: ManagedSlackPeerState;
+    try {
+      state = await this.requireTargetRoute(installationId, routeGeneration);
+    } catch {
+      return targetError(frame.id, 403, "Slack target route is unavailable");
+    }
+    const key = targetCallKey(routeGeneration, frame.id);
+    if (this.targetCalls.has(key)) {
+      return targetError(frame.id, 409, "Slack target request is already running");
+    }
+    const active: ActiveManagedSlackTargetCall = {
+      installationId,
+      routeGeneration,
+      workspaceGeneration: state.workspaceGeneration,
+      requestId: frame.id,
+    };
+    this.targetCalls.set(key, active);
+    try {
+      using response = await this.workspace(state.accountId).executeTarget(
+        state.actorId,
+        state.workspaceGeneration,
+        frame,
+      );
+      const detachedResponse = structuredClone(response);
+      try {
+        const current = await this.requireTargetRoute(installationId, routeGeneration);
+        if (current.workspaceGeneration !== state.workspaceGeneration) {
+          return targetError(frame.id, 409, "Slack target authorization changed during execution");
+        }
+      } catch {
+        return targetError(frame.id, 409, "Slack target route changed during execution");
+      }
+      return detachedResponse;
+    } finally {
+      if (this.targetCalls.get(key) === active) this.targetCalls.delete(key);
+    }
+  }
+
+  async cancelTarget(
+    installationId: string,
+    routeGeneration: string,
+    targetId: string,
+    requestId: string,
+  ): Promise<{ cancelled: boolean }> {
+    if (targetId !== SLACK_TARGET_ID) return { cancelled: false };
+    const active = this.targetCalls.get(targetCallKey(routeGeneration, requestId));
+    if (
+      !active
+      || active.installationId !== installationId
+      || active.routeGeneration !== routeGeneration
+    ) {
+      return { cancelled: false };
+    }
+    const state = await this.requireState();
+    using result = await this.workspace(state.accountId).cancelTarget(
+      state.actorId,
+      active.workspaceGeneration,
+      active.requestId,
+    );
+    return { cancelled: result.cancelled };
+  }
+
   async inspectPairing(claimId: string, expiresAt: number): Promise<AdapterPairingCandidate> {
     const state = await this.requireState();
     const pairing = state.pairing;
@@ -307,7 +458,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     input: AdapterPairingActivateInput,
   ): Promise<AdapterPairingPreparation> {
     const route = routeWithOrigin(input.route, input.canonicalOrigin);
-    return await this.ctx.storage.transaction(async (txn) => {
+    const activated = await this.ctx.storage.transaction(async (txn) => {
       const state = await txn.get<ManagedSlackPeerState>(STATE_KEY);
       if (!state) throw new Error("Managed Slack peer is not initialized");
       const activated = activateManagedSlackPairing(state, {
@@ -317,8 +468,10 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
         route,
       });
       await txn.put(STATE_KEY, activated.state);
-      return activated.preparation;
+      return activated;
     });
+    await this.cancelSupersededTargetCalls(activated.state);
+    return activated.preparation;
   }
 
   async finalizePairing(
@@ -360,9 +513,9 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
   }
 
   async disconnect(input: AdapterPairingDisconnectInput): Promise<{ disconnected: boolean }> {
-    return await this.ctx.storage.transaction(async (txn) => {
+    const disconnected = await this.ctx.storage.transaction(async (txn) => {
       const state = await txn.get<ManagedSlackPeerState>(STATE_KEY);
-      if (!state) return { disconnected: false };
+      if (!state) return { state: undefined, disconnected: false };
       if (
         state.accountId !== input.accountId
         || state.actorId !== input.actorId
@@ -375,8 +528,10 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
         route: parseRoute(input),
       });
       if (result.state !== state) await txn.put(STATE_KEY, result.state);
-      return { disconnected: result.disconnected };
+      return { state: result.state, disconnected: result.disconnected };
     });
+    if (disconnected.state) await this.cancelSupersededTargetCalls(disconnected.state);
+    return { disconnected: disconnected.disconnected };
   }
 
   async alarm(): Promise<void> {
@@ -828,17 +983,50 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     return state;
   }
 
+  private async requireTargetRoute(
+    installationId: string,
+    routeGeneration: string,
+  ): Promise<ManagedSlackPeerState> {
+    const state = await this.requireState();
+    const route = state.activeRoute;
+    if (
+      !route
+      || route.installationId !== requireOpaque(installationId, "installationId")
+      || route.generation !== requireOpaque(routeGeneration, "routeGeneration")
+    ) {
+      throw new Error("Slack target route changed");
+    }
+    return state;
+  }
+
+  private async cancelSupersededTargetCalls(state: ManagedSlackPeerState): Promise<void> {
+    const route = state.activeRoute;
+    const calls = [...this.targetCalls.values()].filter((active) => (
+      !route
+      || active.installationId !== route.installationId
+      || active.routeGeneration !== route.generation
+      || active.workspaceGeneration !== state.workspaceGeneration
+    ));
+    await Promise.all(calls.map(async (active) => {
+      using _result = await this.workspace(state.accountId).cancelTarget(
+        state.actorId,
+        active.workspaceGeneration,
+        active.requestId,
+      ).catch(() => undefined);
+    }));
+  }
+
   private assertObjectIdentity(state: ManagedSlackPeerState): void {
     if (this.ctx.id.name !== managedSlackPeerObjectName(state.accountId, state.actorId)) {
       throw new Error("Managed Slack peer Durable Object identity mismatch");
     }
   }
 
-  private workspace(accountId: string): ManagedWorkspaceStub {
+  private workspace(accountId: string): ManagedWorkspaceClient & DurableObjectStub {
     const id = this.env.MANAGED_SLACK_WORKSPACE.idFromName(
       managedSlackWorkspaceObjectName(accountId),
     );
-    return typedStub<ManagedWorkspaceStub>(this.env.MANAGED_SLACK_WORKSPACE.get(id));
+    return typedStub<ManagedWorkspaceClient>(this.env.MANAGED_SLACK_WORKSPACE.get(id));
   }
 
   private pairing(code: string): ManagedPairingStub {
@@ -850,6 +1038,22 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
 function typedStub<T>(value: DurableObjectStub): T & DurableObjectStub {
   // SAFETY: these namespaces are owned by this worker and expose the declared RPC contracts.
   return value as T & DurableObjectStub;
+}
+
+function targetCallKey(routeGeneration: string, requestId: string): string {
+  const normalizedRequestId = requestId.trim();
+  if (!normalizedRequestId || normalizedRequestId.length > 512 || normalizedRequestId.includes("\0")) {
+    throw new Error("requestId is invalid");
+  }
+  return `${requireOpaque(routeGeneration, "routeGeneration")}\0${normalizedRequestId}`;
+}
+
+function targetError(
+  id: string,
+  code: number,
+  message: string,
+): AdapterTargetResponseFrame<"shell.exec"> {
+  return { type: "res", id, ok: false, error: { code, message } };
 }
 
 function platformResponse(

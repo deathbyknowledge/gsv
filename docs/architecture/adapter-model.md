@@ -33,11 +33,12 @@ The Kernel does not need to know how WhatsApp or Discord work internally. It onl
 needs a normalized control surface.
 
 An adapter's messaging projection is not automatically an execution target.
-The bundled adapters currently do not appear in `sys.device.list`, the
-`targets`/`devices` shell inventory, the model's available-target list, or the
-Machines console because they do not implement targetable syscalls. Those
-surfaces currently contain GSV, connected computers, and browser-backed
-targets.
+Most bundled adapters do not appear in the `targets` shell inventory or the
+model's available-target list because they do not implement targetable syscalls.
+Managed Slack is the first adapter-backed exception: after personal OAuth and
+pairing it advertises a `shell.exec` target containing the provider-owned
+`slack` CLI. The compatibility `sys.device.*` API and Machines console remain
+hardware-oriented and do not administer service-backed targets.
 
 Messaging has its own two deliberate views:
 
@@ -107,8 +108,9 @@ Normalized message and body types live in
 `packages/gsv/src/protocol/adapters.ts`. The Worker RPC extension point is
 `AdapterService` in `packages/gsv/src/services/adapters.ts`. Every adapter
 returns a descriptor for lifecycle, status, activity, pairing, surface, and
-media support; adapters call the Gateway's single `serviceFrame` entrypoint for
-`adapter.inbound` and `adapter.state.update`.
+media support, plus an explicit target-support bit when applicable. Adapters
+call the Gateway's single `serviceFrame` entrypoint for `adapter.inbound` and
+`adapter.state.update`.
 
 The canonical adapter identity comes from the trusted `CHANNEL_*` service
 binding. A descriptor must agree with that identity and cannot grant its Worker

@@ -199,7 +199,7 @@ function fallbackSlackFilename(media: AdapterMedia, index: number): string {
   return `attachment-${index + 1}.${extension}`;
 }
 
-function safeMediaError(error: unknown): string {
+function safeMediaError<T>(error: T): string {
   const message = error instanceof Error ? error.message : String(error);
   return /Slack|Adapter media|attachment|body|limit|file/i.test(message)
     ? message

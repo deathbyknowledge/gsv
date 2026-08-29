@@ -22,15 +22,18 @@ manually:
 1. Under **OAuth & Permissions**, add these bot token scopes:
    `app_mentions:read`, `chat:write`, `files:read`, `files:write`,
    `im:history`, and `im:write`.
-2. Add this OAuth redirect URL, using the managed Slack Worker's public origin:
+2. Add these user token scopes: `channels:history`, `channels:read`,
+   `chat:write`, `groups:history`, `groups:read`, `im:history`, `im:read`,
+   `mpim:history`, `mpim:read`, `reactions:write`, and `users:read`.
+3. Add this OAuth redirect URL, using the managed Slack Worker's public origin:
    `https://SLACK_ORIGIN/slack/oauth/callback`.
-3. Under **Event Subscriptions**, set the Request URL to
+4. Under **Event Subscriptions**, set the Request URL to
    `https://SLACK_ORIGIN/slack/events`.
-4. Under **Interactivity & Shortcuts**, enable Interactivity and set the Request
+5. Under **Interactivity & Shortcuts**, enable Interactivity and set the Request
    URL to `https://SLACK_ORIGIN/slack/interactions`.
-5. Under **App Home**, enable the Messages tab and allow users to send messages.
-6. Subscribe to `app_mention`, `message.im`, and `app_uninstalled` events.
-7. Enable app distribution for every workspace that should be able to install
+6. Under **App Home**, enable the Messages tab and allow users to send messages.
+7. Subscribe to `app_mention`, `message.im`, and `app_uninstalled` events.
+8. Enable app distribution for every workspace that should be able to install
    the official GSV app.
 
 The managed deployment supplies these secrets:
@@ -47,8 +50,10 @@ and credentials.
 
 ### Managed user flow
 
-1. Open **GSV → Messengers → Slack** and install the official GSV app in the
-   intended Slack workspace. An existing workspace installation can be reused.
+1. Open **GSV → Messengers → Slack** and authorize the official GSV app in the
+   intended Slack workspace. Slack reuses an existing workspace installation,
+   but each person who wants the Slack target must complete this authorization
+   once so GSV receives that person's scoped user token.
 2. Mention `@GSV` in a channel, or send the app a direct message.
 3. GSV sends a short-lived pairing code to that Slack author by direct message.
 4. Enter the code in the signed-in GSV console and inspect the Slack identity.
@@ -74,6 +79,37 @@ cookie. Event requests are verified with Slack's signing secret and replay
 window before a workspace or peer Durable Object is addressed. Relinking an
 author rotates their route generation; delayed ingress and output recheck that
 generation and cannot cross to the old or new installation accidentally.
+
+### Managed Slack target
+
+After personal OAuth authorization and pairing, GSV projects that Slack
+workspace as an online target. Discover its opaque target id with `targets list`,
+then select it with the ordinary Shell `target` argument. The target is an
+ephemeral just-bash environment containing a composable `slack` command:
+
+```bash
+slack whoami
+slack conversations list --json | jq -r '.items[] | [.id, .name] | @tsv'
+slack conversations history --channel C123 --json
+slack conversations replies --channel C123 --timestamp 1700000000.000100 --json
+printf '%s' 'hello from GSV' | slack messages send --channel C123
+slack reactions add --channel C123 --timestamp 1700000000.000100 --name eyes
+slack users list --json
+slack users info --user U123 --json
+```
+
+Run `slack --help` inside the target for the exact inventory. Commands execute
+with the paired person's `xoxp-…` OAuth authority; the token stays in the
+workspace Durable Object and is never placed in the shell environment or
+output. Adapter replies continue to use the app's `xoxb-…` bot token. A route
+change, disconnect, reauthorization, timeout, or Process cancellation fences
+late output and cancels the owning provider request.
+
+The target is distinct from messaging. `message destinations` discovers
+authorized conversation delivery surfaces and `message send` commits a
+user-visible GSV Message. A `slack messages send` command is inspectable external
+tool activity performed as the Slack user. The standalone shared bot remains
+transport-only until it has an explicit policy for granting bot-wide authority.
 
 ## Standalone app setup
 
@@ -136,9 +172,10 @@ message's initial comment. The common GSV message-media limits apply: at most
 20 items and 48 MiB total.
 
 Existing managed workspace installations must use the install link again to
-approve the new file scopes. Existing standalone apps must add `files:read`
-and `files:write`, reinstall the app in the workspace, and reconnect the
-adapter so Slack issues a token with those permissions.
+approve the file and user target scopes. Every managed user who wants the target
+must authorize once. Existing standalone apps must add `files:read` and
+`files:write`, reinstall the app in the workspace, and reconnect the adapter so
+Slack issues a token with those permissions.
 
 ## Approval buttons
 

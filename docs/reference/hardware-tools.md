@@ -14,16 +14,20 @@ resource, or hardware dependency lives in that environment.
 | Target | Description |
 |---|---|
 | `gsv` | Native Gateway target running in the Cloudflare Worker sandbox. |
-| `<targetId>` | A registered target, such as a computer or browser profile; routable while online. |
+| `<targetId>` | A registered target, such as a computer, browser profile, or authorized service environment; routable while online. |
 
 The Gateway includes accessible online devices in `ai.tools` context and, by default, in `sys.device.list`. Those inventories advertise devices that can accept work immediately. The agent-facing `targets list` command includes every visible registered device by default and labels each one `online` or `offline`; use `targets list --online` to restrict it to reachable targets. Device notes are included too, so processes can identify machines using the user's own descriptions. Registered devices also appear in the native filesystem under `/sys/devices`.
 
-The bundled messaging adapters are currently transport-only and do not appear
-in these inventories. Use `message destinations` to discover authorized
-external chat surfaces; use adapter APIs or the Messengers console to inspect
-and administer the underlying accounts. A future adapter account may also
-provide a target if it implements a coherent capability environment; its
-messaging and target projections remain independent.
+Most bundled messaging adapters are transport-only. Use `message destinations`
+to discover authorized external chat surfaces; use adapter APIs or the
+Messengers console to inspect and administer the underlying accounts. Managed
+Slack additionally appears in `targets list` and model target context after the
+paired user grants the required OAuth scopes. Its messaging and target
+projections remain independent.
+
+The Slack target implements `shell.exec` with an ephemeral just-bash environment.
+Run `slack --help` on that target to discover its provider commands. It does not
+support background jobs or resumable shell sessions.
 
 ## Agent-Visible Tools
 
