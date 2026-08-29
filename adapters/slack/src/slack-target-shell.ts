@@ -13,6 +13,7 @@ import type {
 import {
   addSlackReaction,
   authenticateSlackUser,
+  getSlackConversation,
   getSlackConversationHistory,
   getSlackConversationReplies,
   getSlackUser,
@@ -155,9 +156,17 @@ function buildSlackCommand(input: SlackTargetShellInput) {
       }
       return identity;
     };
-    const authorizeMutation = async (): Promise<void> => {
-      await authenticateReader();
-      await input.guard();
+    const mutateVisibleConversation = async <T>(
+      channel: string,
+      operation: () => Promise<T>,
+    ): Promise<T> => {
+      return await guarded(async () => {
+        await authenticateReader();
+        await getSlackConversation(input.userToken, channel, slackFetch);
+        const result = await operation();
+        await getSlackConversation(input.userToken, channel, slackFetch);
+        return result;
+      });
     };
 
     try {
@@ -229,8 +238,7 @@ function buildSlackCommand(input: SlackTargetShellInput) {
       }
       if (group === "messages" && action === "send") {
         const send = parseSendOptions(rest, decodeCommandStdin(commandContext.stdin, 40_001));
-        const result = await guarded(async () => {
-          await authorizeMutation();
+        const result = await mutateVisibleConversation(send.channel, async () => {
           return await postSlackMessage(input.botToken, {
             channel: send.channel,
             text: renderSlackActorAttribution(input.actorId, send.message),
@@ -243,8 +251,7 @@ function buildSlackCommand(input: SlackTargetShellInput) {
       }
       if (group === "reactions" && action === "add") {
         const reaction = parseReactionOptions(rest);
-        await guarded(async () => {
-          await authorizeMutation();
+        await mutateVisibleConversation(reaction.channel, async () => {
           await addSlackReaction(input.botToken, reaction, slackFetch);
         });
         return reaction.json

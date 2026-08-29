@@ -612,6 +612,58 @@ describe("managed Slack clean-instance flow", () => {
         authorization: "Bearer xoxb-managed-test-token",
       }),
     }));
+    expect((await slackApiCalls()).filter((call) => (
+      call.method === "conversations.info"
+      && call.body.channel === "CGENERAL1"
+      && call.body.authorization === "Bearer xoxp-managed-alice-user-token"
+    )).length).toBeGreaterThanOrEqual(4);
+
+    using deniedTargetSend = await peer.executeTarget(
+      "installation-alice",
+      alice.generation,
+      "workspace",
+      {
+        type: "req",
+        id: "target-denied-send",
+        call: "shell.exec",
+        args: {
+          input: "slack messages send --channel CBOTONLY1 --message 'not authorized'",
+        },
+        deadlineAt: Date.now() + 120_000,
+      },
+    );
+    expect(deniedTargetSend).toMatchObject({
+      ok: true,
+      data: {
+        status: "failed",
+        error: expect.stringContaining("channel_not_found"),
+      },
+    });
+    using deniedTargetReaction = await peer.executeTarget(
+      "installation-alice",
+      alice.generation,
+      "workspace",
+      {
+        type: "req",
+        id: "target-denied-reaction",
+        call: "shell.exec",
+        args: {
+          input: "slack reactions add --channel CBOTONLY1 --timestamp 1700000001.000100 --name eyes",
+        },
+        deadlineAt: Date.now() + 120_000,
+      },
+    );
+    expect(deniedTargetReaction).toMatchObject({
+      ok: true,
+      data: {
+        status: "failed",
+        error: expect.stringContaining("channel_not_found"),
+      },
+    });
+    expect((await slackApiCalls()).some((call) => (
+      call.body.channel === "CBOTONLY1"
+      && (call.method === "chat.postMessage" || call.method === "reactions.add")
+    ))).toBe(false);
     const cancelledExecution = peer.executeTarget(
       "installation-alice",
       alice.generation,

@@ -144,6 +144,21 @@ export default defineConfig({
                       response_metadata: { next_cursor: "" },
                     });
                   }
+                  if (method === "conversations.info") {
+                    if (body.channel === "CBOTONLY1") {
+                      return Response.json({ ok: false, error: "channel_not_found" });
+                    }
+                    const direct = String(body.channel).startsWith("D");
+                    return Response.json({
+                      ok: true,
+                      channel: {
+                        id: body.channel,
+                        ...(direct ? { user: "UALICE01", is_im: true } : { name: "general" }),
+                        is_private: direct,
+                        is_member: true,
+                      },
+                    });
+                  }
                   if (method === "conversations.history" || method === "conversations.replies") {
                     return Response.json({
                       ok: true,

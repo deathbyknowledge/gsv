@@ -301,6 +301,22 @@ export async function listSlackConversations(
   );
 }
 
+export async function getSlackConversation(
+  userToken: string,
+  channel: string,
+  slackFetch: SlackFetch = fetch,
+): Promise<SlackConversationSummary> {
+  const result = await callSlackGetApi<{
+    channel?: SlackConversationApiObject;
+  }>("conversations.info", userToken, {
+    channel: requireSlackId(channel, "Slack channel"),
+  }, slackFetch);
+  if (!result.channel) {
+    throw new SlackApiError("Slack conversation is unavailable", "permanent");
+  }
+  return parseSlackConversation(result.channel);
+}
+
 export async function getSlackConversationHistory(
   userToken: string,
   input: { channel: string; limit: number; cursor?: string },

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   downloadSlackFile,
   exchangeSlackOAuthCode,
+  getSlackConversation,
   listSlackConversations,
   slackFileDeliveryErrorMessage,
   SlackApiError,
@@ -46,6 +47,36 @@ describe("Slack OAuth API", () => {
 });
 
 describe("Slack conversation API", () => {
+  it("checks a specific conversation with the user token", async () => {
+    const provider = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      expect(init?.method).toBe("GET");
+      expect(url.searchParams.get("channel")).toBe("DUSER001");
+      expect(new Headers(init?.headers).get("Authorization"))
+        .toBe("Bearer xoxp-valid-user-token-value");
+      return Response.json({
+        ok: true,
+        channel: {
+          id: "DUSER001",
+          user: "UOTHER01",
+          is_im: true,
+          is_private: true,
+        },
+      });
+    });
+
+    await expect(getSlackConversation(
+      "xoxp-valid-user-token-value",
+      "DUSER001",
+      provider,
+    )).resolves.toMatchObject({
+      id: "DUSER001",
+      userId: "UOTHER01",
+      kind: "im",
+      isPrivate: true,
+    });
+  });
+
   it("sends an IM filter as a GET query parameter", async () => {
     const provider = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input));
