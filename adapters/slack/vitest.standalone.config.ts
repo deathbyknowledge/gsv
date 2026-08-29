@@ -46,11 +46,16 @@ export default defineConfig({
               const calls = [];
               let nextTs = 1700001000;
               let nextFile = 0;
+              let failNextOpen = false;
               export default {
                 async fetch(request) {
                   const url = new URL(request.url);
                   if (request.method === "GET" && url.pathname === "/calls") {
                     return Response.json(calls);
+                  }
+                  if (request.method === "POST" && url.pathname === "/fail-next-open") {
+                    failNextOpen = true;
+                    return Response.json({ ok: true });
                   }
                   if (request.method === "GET" && url.pathname.startsWith("/files-pri/")) {
                     const bytes = new TextEncoder().encode("standalone inbound file");
@@ -82,6 +87,10 @@ export default defineConfig({
                     });
                   }
                   if (method === "apps.connections.open") {
+                    if (failNextOpen) {
+                      failNextOpen = false;
+                      return Response.json({ ok: false, error: "temporary_unavailable" });
+                    }
                     return Response.json({
                       ok: true,
                       url: "wss://wss-primary.slack.com/link/?ticket=test",
@@ -165,6 +174,15 @@ export default defineConfig({
                           event_time: 1700000001,
                           event: { type: "app_uninstalled" },
                         },
+                      }));
+                    }
+                    return Response.json({ sent: this.ctx.getWebSockets().length });
+                  }
+                  if (request.method === "POST" && url.pathname === "/disconnect") {
+                    for (const socket of this.ctx.getWebSockets()) {
+                      socket.send(JSON.stringify({
+                        type: "disconnect",
+                        reason: "warning",
                       }));
                     }
                     return Response.json({ sent: this.ctx.getWebSockets().length });

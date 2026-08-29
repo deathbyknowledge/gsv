@@ -138,7 +138,16 @@ export class SlackAccount extends DurableObject<Env> {
       lastError: null,
     };
     await this.saveState();
-    await this.openSocket();
+    try {
+      await this.openSocket();
+    } catch (error) {
+      this.state.connected = false;
+      this.state.lastError = "Slack Socket Mode connection failed";
+      await this.saveState();
+      await this.scheduleWake(Date.now() + RETRY_DELAY_MS);
+      await this.notifyStatus();
+      throw error;
+    }
     await this.notifyStatus();
   }
 
@@ -207,7 +216,11 @@ export class SlackAccount extends DurableObject<Env> {
         this.state.connected = false;
         this.state.lastError = "Slack Socket Mode reconnect failed";
         await this.saveState();
+        await this.scheduleWake(Date.now() + RETRY_DELAY_MS);
+        await this.notifyStatus();
+        return;
       }
+      await this.notifyStatus();
     }
     await this.scheduleWake(Date.now() + KEEP_ALIVE_MS);
   }
@@ -270,8 +283,10 @@ export class SlackAccount extends DurableObject<Env> {
     if (envelope.type === "disconnect") {
       this.closeSocket(1000, "Slack requested reconnect");
       this.state.connected = false;
+      this.state.lastError = "Slack requested a Socket Mode reconnect";
       await this.saveState();
       await this.scheduleWake(Date.now() + 100);
+      await this.notifyStatus();
       return;
     }
     if (envelope.type === "hello") {

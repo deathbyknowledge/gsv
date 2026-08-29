@@ -1,6 +1,7 @@
-import { env } from "cloudflare:test";
+import { env, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
+import type { SlackAccount } from "../src/slack-account";
 
 type AccountStub = {
   start(botToken: string, appToken: string, accountId: string): Promise<void>;
@@ -35,6 +36,11 @@ type GatewayCall = {
     adapter?: string;
     accountId?: string;
     deliveryId?: string;
+    status?: {
+      connected?: boolean;
+      authenticated?: boolean;
+      error?: string;
+    };
     message?: {
       actor?: { id?: string };
       surface?: { kind?: string; id?: string; threadId?: string };
@@ -109,7 +115,7 @@ async function socketState(): Promise<{
     .json<{ acknowledgements: Array<{ envelope_id?: string }>; connections: number }>();
 }
 
-function account(): AccountStub {
+function account(): AccountStub & DurableObjectStub {
   const namespace = namespaceBinding(env.SLACK_ACCOUNT);
   return accountBinding(namespace.get(namespace.idFromName("default")));
 }
@@ -313,5 +319,81 @@ describe("standalone Slack clean-instance flow", () => {
       });
       expect((await socketState()).connections).toBe(0);
     });
+  });
+
+  it("publishes disconnect transitions and recovers from initial Socket Mode failures", async () => {
+    const slack = account();
+    await slack.start(
+      "xoxb-standalone-test-token",
+      "xapp-standalone-test-token",
+      "default",
+    );
+
+    const callsBeforeDisconnect = (await gatewayCalls()).length;
+    const disconnected = await fetcherBinding(env.SLACK_SOCKET).fetch(
+      "https://socket.test/disconnect",
+      { method: "POST" },
+    );
+    await expect(disconnected.json()).resolves.toEqual({ sent: 1 });
+    await vi.waitFor(async () => {
+      expect((await gatewayCalls()).slice(callsBeforeDisconnect)).toContainEqual(
+        expect.objectContaining({
+          call: "adapter.state.update",
+          args: expect.objectContaining({
+            status: expect.objectContaining({
+              connected: false,
+              authenticated: true,
+              error: "Slack requested a Socket Mode reconnect",
+            }),
+          }),
+        }),
+      );
+    });
+    await runDurableObjectAlarm(slack);
+    await vi.waitFor(async () => {
+      expect(await slack.getStatus()).toMatchObject({
+        connected: true,
+        authenticated: true,
+      });
+      expect((await gatewayCalls()).slice(callsBeforeDisconnect)).toContainEqual(
+        expect.objectContaining({
+          call: "adapter.state.update",
+          args: expect.objectContaining({
+            status: expect.objectContaining({ connected: true, authenticated: true }),
+          }),
+        }),
+      );
+    });
+
+    await slack.stop();
+    await fetcherBinding(env.SLACK_API).fetch("https://slack-api.test/fail-next-open", {
+      method: "POST",
+    });
+    const startError = await runInDurableObject(slack, async (instance: SlackAccount) => {
+      try {
+        await instance.start(
+          "xoxb-standalone-test-token",
+          "xapp-standalone-test-token",
+          "default",
+        );
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+    expect(startError).toContain("temporary_unavailable");
+    await expect(slack.getStatus()).resolves.toMatchObject({
+      connected: false,
+      authenticated: true,
+      error: "Slack Socket Mode connection failed",
+    });
+    await expect(runDurableObjectAlarm(slack)).resolves.toBe(true);
+    await vi.waitFor(async () => {
+      expect(await slack.getStatus()).toMatchObject({
+        connected: true,
+        authenticated: true,
+      });
+    });
+    await slack.stop();
   });
 });
