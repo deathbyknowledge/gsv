@@ -171,10 +171,9 @@ describe("Slack delivery", () => {
     const provider = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input));
       if (url.pathname.endsWith("/files.getUploadURLExternal")) {
-        expect(JSON.parse(String(init?.body))).toMatchObject({
-          filename: "report.txt",
-          length: bytes.byteLength,
-        });
+        const body = new URLSearchParams(String(init?.body));
+        expect(body.get("filename")).toBe("report.txt");
+        expect(body.get("length")).toBe(String(bytes.byteLength));
         return Response.json({
           ok: true,
           upload_url: "https://files.slack.com/upload/v1/report",

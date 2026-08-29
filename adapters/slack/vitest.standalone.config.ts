@@ -68,7 +68,10 @@ export default defineConfig({
                     return new Response("OK");
                   }
                   const method = url.pathname.split("/").at(-1);
-                  const body = await request.json();
+                  const contentType = request.headers.get("Content-Type") || "";
+                  const body = contentType.startsWith("application/json")
+                    ? await request.json()
+                    : Object.fromEntries(await request.formData());
                   calls.push({ method, body });
                   if (method === "auth.test") {
                     return Response.json({

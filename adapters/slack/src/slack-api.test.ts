@@ -140,8 +140,12 @@ describe("Slack file API", () => {
       const url = new URL(String(input));
       if (url.pathname.endsWith("/files.getUploadURLExternal")) {
         ticket += 1;
-        const body = JSON.parse(String(init?.body));
-        expect(body.length).toBeGreaterThan(0);
+        expect(init?.headers).toMatchObject({
+          "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+        });
+        const body = new URLSearchParams(String(init?.body));
+        expect(body.get("filename")).toBe(ticket === 1 ? "first.txt" : "second.txt");
+        expect(Number(body.get("length"))).toBeGreaterThan(0);
         return Response.json({
           ok: true,
           upload_url: `https://files.slack.com/upload/v1/${ticket}`,

@@ -170,6 +170,10 @@ type SlackApiJson =
 
 type SlackApiPayload = { [key: string]: SlackApiJson | undefined };
 
+type SlackApiFormPayload = {
+  [key: string]: string | number | boolean | undefined;
+};
+
 export type SlackDownloadedFile = {
   fileId: string;
   filename: string;
@@ -540,7 +544,7 @@ export async function uploadSlackFiles(
     await guard?.();
     let ticket: { upload_url?: string; file_id?: string };
     try {
-      ticket = await callSlackApi<{ upload_url?: string; file_id?: string }>(
+      ticket = await callSlackFormApi<{ upload_url?: string; file_id?: string }>(
         "files.getUploadURLExternal",
         botToken,
         { filename, length },
@@ -897,6 +901,41 @@ async function callSlackApi<T extends object>(
   payload: SlackApiPayload,
   slackFetch: SlackFetch,
 ): Promise<T> {
+  return await callSlackApiRequest<T>(
+    method,
+    token,
+    JSON.stringify(payload),
+    "application/json; charset=utf-8",
+    slackFetch,
+  );
+}
+
+async function callSlackFormApi<T extends object>(
+  method: string,
+  token: string,
+  payload: SlackApiFormPayload,
+  slackFetch: SlackFetch,
+): Promise<T> {
+  const body = new URLSearchParams();
+  for (const [key, value] of Object.entries(payload)) {
+    if (value !== undefined) body.set(key, String(value));
+  }
+  return await callSlackApiRequest<T>(
+    method,
+    token,
+    body,
+    "application/x-www-form-urlencoded; charset=utf-8",
+    slackFetch,
+  );
+}
+
+async function callSlackApiRequest<T extends object>(
+  method: string,
+  token: string,
+  body: BodyInit,
+  contentType: string,
+  slackFetch: SlackFetch,
+): Promise<T> {
   const normalizedToken = normalizedSlackToken(token);
   let response: Response;
   try {
@@ -904,9 +943,9 @@ async function callSlackApi<T extends object>(
       method: "POST",
       headers: {
         Authorization: `Bearer ${normalizedToken}`,
-        "Content-Type": "application/json; charset=utf-8",
+        "Content-Type": contentType,
       },
-      body: JSON.stringify(payload),
+      body,
     });
   } catch {
     throw new SlackApiError(`Slack API ${method} transport failed`, "ambiguous");
