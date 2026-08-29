@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use audio::{
-    list_input_devices, AudioCapture, AudioError, AudioPacket, CaptureControl, CaptureGate,
-    InputDeviceInfo, InputDeviceMatchPolicy, Resampler, SegmentBoundaryRequest,
+    list_input_devices, AudioCapture, AudioError, AudioLevelMeter, AudioPacket, CaptureControl,
+    CaptureGate, InputDeviceInfo, InputDeviceMatchPolicy, Resampler, SegmentBoundaryRequest,
 };
 use crossbeam_channel::{Receiver, TryRecvError};
 use model::{Engine, LoadError};
@@ -504,6 +504,7 @@ fn run_stream(
     let mut first_segment = true;
     let session_started = Instant::now();
     let session_deadline = session_started + MAX_SESSION_DURATION;
+    let mut level_meter = AudioLevelMeter::new(session_started);
 
     'segments: loop {
         let mut stream = match engine.session.stream(&run_options, &stream_options) {
@@ -587,6 +588,7 @@ fn run_stream(
                             );
                             converted.clear();
                             resampler.reset();
+                            level_meter.reset(Instant::now());
                             let boundary_applied = capture.apply_segment_boundary(boundary).is_some();
                             // A later SetMuted must be able to close the fresh
                             // segment while synchronous model finalization is
@@ -656,6 +658,7 @@ fn run_stream(
                                     pending.clear();
                                     converted.clear();
                                     resampler.reset();
+                                    level_meter.reset(Instant::now());
                                     drain_capture_packets(&capture)
                                 } else {
                                     None
@@ -728,7 +731,23 @@ fn run_stream(
                                 converted.clear();
                                 pending.clear();
                                 resampler.reset();
+                                level_meter.reset(Instant::now());
                                 continue;
+                            }
+                            let observed_at = Instant::now();
+                            let level = level_meter.observe(samples.as_slice(), observed_at);
+                            if !capture.accepts(samples.capture_state()) {
+                                converted.clear();
+                                pending.clear();
+                                resampler.reset();
+                                level_meter.reset(observed_at);
+                                continue;
+                            }
+                            if let Some(level_permille) = level {
+                                emit(&Event::Level {
+                                    request_id,
+                                    level_permille,
+                                });
                             }
                             pending.extend(converted.iter().copied());
                             while pending.len() >= FEED_SAMPLES {

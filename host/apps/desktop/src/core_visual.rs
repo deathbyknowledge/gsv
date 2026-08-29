@@ -228,6 +228,15 @@ impl CoreVisual {
         }
     }
 
+    pub(crate) fn set_microphone_level(&self, level: f32) {
+        let Some(engine) = &self.engine else {
+            return;
+        };
+        if let Err(error) = engine.set_microphone_level(level) {
+            eprintln!("GSV Core visual could not react to microphone input: {error}");
+        }
+    }
+
     pub(crate) fn reset(&mut self, generation: u64, cx: &mut Context<Self>) {
         self.presentation.clear();
         self.presentation.generation = generation;

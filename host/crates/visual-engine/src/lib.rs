@@ -16,6 +16,8 @@ const KEYBOARD_ATTACK: f32 = 26.0;
 const KEYBOARD_RELEASE: f32 = 7.0;
 const MICROPHONE_ATTACK: f32 = 14.0;
 const MICROPHONE_RELEASE: f32 = 5.0;
+const MICROPHONE_HOLD_SECONDS: f32 = 0.16;
+const MICROPHONE_DRIVE_DECAY: f32 = 12.0;
 const ACCENT: [f32; 4] = [0.702, 0.682, 1.0, 1.0];
 const VIOLET: [f32; 4] = [0.561, 0.541, 1.0, 1.0];
 const READING_BLUE: [f32; 4] = [0.596, 0.710, 1.0, 1.0];
@@ -276,6 +278,7 @@ struct InputResponse {
     keyboard_envelope: f32,
     microphone_target: f32,
     microphone_envelope: f32,
+    microphone_hold: f32,
 }
 
 impl InputResponse {
@@ -285,6 +288,11 @@ impl InputResponse {
 
     fn set_microphone_level(&mut self, level: f32) {
         self.microphone_target = level;
+        self.microphone_hold = if level > INPUT_ACTIVITY_THRESHOLD {
+            MICROPHONE_HOLD_SECONDS
+        } else {
+            0.0
+        };
     }
 
     fn advance(&mut self, delta_seconds: f32) {
@@ -303,6 +311,14 @@ impl InputResponse {
             keyboard_rate,
             delta_seconds,
         );
+        if self.microphone_hold > 0.0 {
+            self.microphone_hold = (self.microphone_hold - delta_seconds).max(0.0);
+        } else {
+            self.microphone_target *= (-delta_seconds * MICROPHONE_DRIVE_DECAY).exp();
+            if self.microphone_target < INPUT_ACTIVITY_THRESHOLD * 0.2 {
+                self.microphone_target = 0.0;
+            }
+        }
         let microphone_rate = if self.microphone_target > self.microphone_envelope {
             MICROPHONE_ATTACK
         } else {
@@ -1012,6 +1028,14 @@ mod tests {
         response.advance(1.0 / 30.0);
         assert!(response.microphone_envelope < attacked);
         assert!(response.microphone_envelope > 0.0);
+
+        response.set_microphone_level(0.9);
+        for _ in 0..120 {
+            response.advance(1.0 / 30.0);
+        }
+        assert_eq!(response.microphone_target, 0.0);
+        assert_eq!(response.microphone_envelope, 0.0);
+        assert!(!response.is_active());
     }
 
     #[test]

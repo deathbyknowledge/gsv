@@ -97,6 +97,10 @@ pub enum VoiceEvent {
         committed: String,
         tentative: String,
     },
+    Level {
+        request_id: u64,
+        level_permille: u16,
+    },
     MuteState {
         request_id: u64,
         revision: u64,
@@ -154,11 +158,9 @@ impl VoiceCommandSender {
 pub(crate) fn coalesce_for_ui(events: impl IntoIterator<Item = VoiceEvent>) -> Vec<VoiceEvent> {
     let mut coalesced = Vec::new();
     for event in events {
-        let replace_last = matches!(event, VoiceEvent::Partial { .. })
-            && coalesced.last().is_some_and(|previous| {
-                matches!(previous, VoiceEvent::Partial { .. })
-                    && partial_scope(previous) == partial_scope(&event)
-            });
+        let replace_last = coalesced
+            .last()
+            .is_some_and(|previous| replaces_ui_event(previous, &event));
         if replace_last {
             if let Some(previous) = coalesced.last_mut() {
                 *previous = event;
@@ -168,6 +170,24 @@ pub(crate) fn coalesce_for_ui(events: impl IntoIterator<Item = VoiceEvent>) -> V
         }
     }
     coalesced
+}
+
+fn replaces_ui_event(previous: &VoiceEvent, next: &VoiceEvent) -> bool {
+    match (previous, next) {
+        (VoiceEvent::Partial { .. }, VoiceEvent::Partial { .. }) => {
+            partial_scope(previous) == partial_scope(next)
+        }
+        (
+            VoiceEvent::Level {
+                request_id: previous,
+                ..
+            },
+            VoiceEvent::Level {
+                request_id: next, ..
+            },
+        ) => previous == next,
+        _ => false,
+    }
 }
 
 fn partial_scope(event: &VoiceEvent) -> Option<(u64, u64)> {
@@ -652,6 +672,15 @@ fn publish(
     if pending.overflowed {
         return;
     }
+    if matches!(event, VoiceEvent::Level { .. }) {
+        if pending.reliable.is_empty() {
+            // Level feedback is presentation-only. Drop it under UI
+            // backpressure so it can never delay capture state, transcript
+            // snapshots, segment boundaries, or terminal events.
+            let _ = events.try_send(event);
+        }
+        return;
+    }
     if matches!(event, VoiceEvent::State { .. } | VoiceEvent::Partial { .. }) {
         if pending.snapshot.is_some() || !pending.reliable.is_empty() {
             pending.snapshot = Some(event);
@@ -1024,6 +1053,7 @@ fn event_request_id(event: &VoiceEvent) -> Option<u64> {
     match event {
         VoiceEvent::State { request_id, .. }
         | VoiceEvent::Partial { request_id, .. }
+        | VoiceEvent::Level { request_id, .. }
         | VoiceEvent::MuteState { request_id, .. }
         | VoiceEvent::SegmentFinal { request_id, .. }
         | VoiceEvent::Final { request_id, .. }
@@ -1098,6 +1128,20 @@ fn parse_event(line: &str) -> Option<VoiceEvent> {
             committed: value.get("committed")?.as_str()?.to_string(),
             tentative: value.get("tentative")?.as_str()?.to_string(),
         }),
+        "level" => {
+            if value.as_object()?.len() != 3 {
+                return None;
+            }
+            Some(VoiceEvent::Level {
+                request_id: request_id()?,
+                level_permille: value
+                    .get("level_permille")?
+                    .as_u64()
+                    .filter(|level| *level <= 1_000)?
+                    .try_into()
+                    .ok()?,
+            })
+        }
         "mute_state" => Some(VoiceEvent::MuteState {
             request_id: request_id()?,
             revision: value.get("revision")?.as_u64()?,
@@ -1230,6 +1274,25 @@ mod tests {
                 committed: "hello ".to_string(),
                 tentative: "world".to_string(),
             })
+        );
+    }
+
+    #[test]
+    fn level_parser_accepts_only_the_bounded_content_free_envelope() {
+        assert_eq!(
+            parse_event(r#"{"type":"level","request_id":9,"level_permille":640}"#),
+            Some(VoiceEvent::Level {
+                request_id: 9,
+                level_permille: 640,
+            })
+        );
+        assert_eq!(
+            parse_event(r#"{"type":"level","request_id":9,"level_permille":1001}"#),
+            None
+        );
+        assert_eq!(
+            parse_event(r#"{"type":"level","request_id":9,"level_permille":640,"samples":[0.2]}"#,),
+            None
         );
     }
 
@@ -1380,6 +1443,47 @@ mod tests {
         assert!(matches!(
             received.try_recv(),
             Ok(VoiceEvent::Partial { revision: 2, .. })
+        ));
+    }
+
+    #[test]
+    fn level_feedback_drops_instead_of_entering_a_backpressure_lane() {
+        let (events, mut received) = tokio::sync::mpsc::channel(1);
+        events
+            .try_send(VoiceEvent::State {
+                request_id: 1,
+                phase: VoicePhase::Listening,
+                progress: None,
+            })
+            .expect("fill the UI channel");
+        let mut pending = PendingVoiceEvents::default();
+        publish(
+            &events,
+            &mut pending,
+            VoiceEvent::Level {
+                request_id: 1,
+                level_permille: 800,
+            },
+        );
+        assert!(pending.snapshot.is_none());
+        assert!(pending.reliable.is_empty());
+        assert!(matches!(received.try_recv(), Ok(VoiceEvent::State { .. })));
+        assert!(received.try_recv().is_err());
+
+        publish(
+            &events,
+            &mut pending,
+            VoiceEvent::Level {
+                request_id: 1,
+                level_permille: 500,
+            },
+        );
+        assert!(matches!(
+            received.try_recv(),
+            Ok(VoiceEvent::Level {
+                request_id: 1,
+                level_permille: 500,
+            })
         ));
     }
 
@@ -1676,6 +1780,39 @@ mod tests {
         assert!(matches!(
             &events[3],
             VoiceEvent::Partial { request_id: 2, .. }
+        ));
+    }
+
+    #[test]
+    fn ui_batches_keep_only_the_latest_consecutive_level_for_each_request() {
+        let events = coalesce_for_ui([
+            VoiceEvent::Level {
+                request_id: 1,
+                level_permille: 200,
+            },
+            VoiceEvent::Level {
+                request_id: 1,
+                level_permille: 700,
+            },
+            VoiceEvent::Level {
+                request_id: 2,
+                level_permille: 400,
+            },
+        ]);
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            events[0],
+            VoiceEvent::Level {
+                request_id: 1,
+                level_permille: 700,
+            }
+        ));
+        assert!(matches!(
+            events[1],
+            VoiceEvent::Level {
+                request_id: 2,
+                level_permille: 400,
+            }
         ));
     }
 

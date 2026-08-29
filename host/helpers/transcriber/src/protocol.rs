@@ -88,6 +88,10 @@ pub enum Event<'a> {
         committed: &'a str,
         tentative: &'a str,
     },
+    Level {
+        request_id: u64,
+        level_permille: u16,
+    },
     MuteState {
         request_id: u64,
         revision: u64,
@@ -357,6 +361,23 @@ mod tests {
         assert_eq!(event.as_object().map(|value| value.len()), Some(4));
         assert!(event.get("audio").is_none());
         assert!(event.get("diagnostics").is_none());
+    }
+
+    #[test]
+    fn audio_levels_are_request_scoped_and_carry_no_samples() {
+        let event = serde_json::to_value(Event::Level {
+            request_id: 9,
+            level_permille: 640,
+        })
+        .expect("serializable event");
+
+        assert_eq!(event["type"], "level");
+        assert_eq!(event["request_id"], 9);
+        assert_eq!(event["level_permille"], 640);
+        assert_eq!(event.as_object().map(|value| value.len()), Some(3));
+        assert!(event.get("samples").is_none());
+        assert!(event.get("audio").is_none());
+        assert!(event.get("text").is_none());
     }
 
     #[test]

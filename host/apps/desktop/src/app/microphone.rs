@@ -94,6 +94,14 @@ impl VoiceDraft {
         self.segment_id == segment_id
     }
 
+    fn accepts_audio_level(&self) -> bool {
+        self.listening
+            && !self.stopping
+            && !self.muted
+            && self.pending_mute != Some(true)
+            && self.mute_revision.is_some()
+    }
+
     fn pending_action_for(&self, segment_id: u64) -> Option<VoiceSegmentAction> {
         self.pending_segment
             .filter(|pending| pending.segment_id == segment_id && self.accepts_segment(segment_id))
@@ -968,6 +976,7 @@ impl GsvApp {
         if self.voice_draft.is_some() {
             return;
         }
+        self.clear_core_microphone_level(cx);
 
         let value = self.input.read(cx).value().to_string();
         let cursor = self.input.read(cx).cursor().min(value.len());
@@ -1035,6 +1044,7 @@ impl GsvApp {
             // A closed command owner cannot acknowledge capture state. End
             // the action lease and release the voice session while leaving
             // the latest rendered words visible for ordinary typing.
+            self.clear_core_microphone_level(cx);
             self.disable_vision_for_voice(request_id);
             self.voice_draft = None;
             self.reassert_vision_context();
@@ -1049,6 +1059,7 @@ impl GsvApp {
         {
             voice.note_mute_requested(muted);
         }
+        self.clear_core_microphone_level(cx);
         self.voice_notice = Some(
             if muted {
                 "LISTENING · MUTING MICROPHONE"
@@ -1102,6 +1113,7 @@ impl GsvApp {
             })
             .is_err()
         {
+            self.clear_core_microphone_level(cx);
             self.disable_vision_for_voice(request_id);
             self.voice_draft = None;
             self.reassert_vision_context();
@@ -1152,6 +1164,17 @@ impl GsvApp {
         self.voice_draft.as_ref().map(|voice| voice.request_id)
     }
 
+    fn set_core_microphone_level(&self, level_permille: u16, cx: &mut Context<Self>) {
+        let level = f32::from(level_permille) / 1_000.0;
+        self.core_visual.update(cx, |visual, _| {
+            visual.set_microphone_level(level);
+        });
+    }
+
+    fn clear_core_microphone_level(&self, cx: &mut Context<Self>) {
+        self.set_core_microphone_level(0, cx);
+    }
+
     pub(super) fn voice_request_can_stop(&self, request_id: u64) -> bool {
         self.voice_draft
             .as_ref()
@@ -1198,6 +1221,7 @@ impl GsvApp {
             return;
         }
         let request_id = voice.request_id;
+        self.clear_core_microphone_level(cx);
         // Revoke the helper's request lease before asking the transcription
         // owner to finish. A queued active intent cannot race the terminal
         // path, and the request stays Disabled until its terminal event.
@@ -1265,6 +1289,15 @@ impl GsvApp {
             _ => {}
         }
         match event {
+            VoiceEvent::Level {
+                request_id,
+                level_permille,
+            } if self.voice_draft.as_ref().is_some_and(|voice| {
+                voice.request_id == request_id && voice.accepts_audio_level()
+            }) =>
+            {
+                self.set_core_microphone_level(level_permille, cx);
+            }
             VoiceEvent::MuteState {
                 request_id,
                 revision,
@@ -1280,6 +1313,7 @@ impl GsvApp {
                 match application {
                     MuteStateApplication::Ignored => {}
                     MuteStateApplication::Applied => {
+                        self.clear_core_microphone_level(cx);
                         self.clear_voice_gesture_status();
                         self.enable_vision_for_voice(request_id);
                         self.sync_vision_context();
@@ -1287,6 +1321,7 @@ impl GsvApp {
                         cx.notify();
                     }
                     MuteStateApplication::Contradicted => {
+                        self.clear_core_microphone_level(cx);
                         self.voice_draft = None;
                         self.disable_vision_for_voice(request_id);
                         let _ = self
@@ -1308,6 +1343,7 @@ impl GsvApp {
                     }
                     self.enable_vision_for_voice(request_id);
                 } else if phase == VoicePhase::Finishing {
+                    self.clear_core_microphone_level(cx);
                     if let Some(voice) = self.voice_draft.as_mut() {
                         voice.listening = false;
                     }
@@ -1472,6 +1508,7 @@ impl GsvApp {
                 cx.notify();
             }
             VoiceEvent::Final { request_id, text } if self.voice_request_is(request_id) => {
+                self.clear_core_microphone_level(cx);
                 let Some(voice) = self.voice_draft.take() else {
                     return;
                 };
@@ -1498,6 +1535,7 @@ impl GsvApp {
                 self.refresh_idle_vision_notice();
             }
             VoiceEvent::Cancelled { request_id } if self.voice_request_is(request_id) => {
+                self.clear_core_microphone_level(cx);
                 self.voice_draft = None;
                 self.disable_vision_for_voice(request_id);
                 self.voice_notice = None;
@@ -1506,6 +1544,7 @@ impl GsvApp {
             VoiceEvent::Error { request_id, code }
                 if request_id.is_none_or(|request_id| self.voice_request_is(request_id)) =>
             {
+                self.clear_core_microphone_level(cx);
                 let active_request_id = self.active_voice_request_id();
                 self.voice_draft = None;
                 if let Some(request_id) = active_request_id {
@@ -1546,6 +1585,7 @@ impl GsvApp {
         if !self.voice_request_is(request_id) {
             return;
         }
+        self.clear_core_microphone_level(cx);
         self.voice_draft = None;
         self.disable_vision_for_voice(request_id);
         let _ = self
@@ -1599,6 +1639,7 @@ impl GsvApp {
         let Some(voice) = self.voice_draft.take() else {
             return;
         };
+        self.clear_core_microphone_level(cx);
         self.disable_vision_for_voice(voice.request_id);
         let command_failed = self
             .voice_commands
@@ -1895,6 +1936,30 @@ mod tests {
 
         assert!(!voice.can_request_segment_action());
         assert!(!voice.can_request_mute(true));
+    }
+
+    #[test]
+    fn audio_levels_require_an_authoritative_open_capture() {
+        let mut voice = VoiceDraft::new(7, String::new(), String::new(), String::new());
+        assert!(!voice.accepts_audio_level());
+
+        voice.listening = true;
+        assert!(!voice.accepts_audio_level());
+        assert_eq!(
+            voice.apply_mute_state(0, false),
+            MuteStateApplication::Applied
+        );
+        assert!(voice.accepts_audio_level());
+
+        voice.note_mute_requested(true);
+        assert!(!voice.accepts_audio_level());
+        assert_eq!(
+            voice.apply_mute_state(1, true),
+            MuteStateApplication::Applied
+        );
+        assert!(!voice.accepts_audio_level());
+        voice.stopping = true;
+        assert!(!voice.accepts_audio_level());
     }
 
     #[test]

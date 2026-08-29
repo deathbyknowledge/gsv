@@ -17,6 +17,9 @@ const CAPTURE_BUFFER_DURATION: Duration = Duration::from_secs(5);
 #[cfg(any(target_os = "linux", test))]
 const PULSE_CAPTURE_PERIOD: Duration = Duration::from_millis(40);
 const SILENT_INPUT_DURATION: Duration = Duration::from_secs(2);
+const LEVEL_REPORT_INTERVAL: Duration = Duration::from_millis(50);
+const LEVEL_FLOOR_DBFS: f64 = -52.0;
+const LEVEL_CEILING_DBFS: f64 = -12.0;
 const MAX_INPUT_DEVICES: usize = 32;
 const MAX_DEVICE_NAME_BYTES: usize = 256;
 const MAX_DEVICE_ID_BYTES: usize = 512;
@@ -47,6 +50,61 @@ pub enum AudioError {
     Unavailable,
     Overflow,
     Silent,
+}
+
+pub struct AudioLevelMeter {
+    last_report: Instant,
+    sum_squares: f64,
+    sample_count: usize,
+}
+
+impl AudioLevelMeter {
+    pub fn new(now: Instant) -> Self {
+        Self {
+            last_report: now,
+            sum_squares: 0.0,
+            sample_count: 0,
+        }
+    }
+
+    pub fn observe(&mut self, samples: &[f32], now: Instant) -> Option<u16> {
+        for sample in samples {
+            let sample = if sample.is_finite() {
+                f64::from(sample.clamp(-1.0, 1.0))
+            } else {
+                0.0
+            };
+            self.sum_squares += sample * sample;
+        }
+        self.sample_count = self.sample_count.saturating_add(samples.len());
+        if now.saturating_duration_since(self.last_report) < LEVEL_REPORT_INTERVAL {
+            return None;
+        }
+
+        let mean_square = if self.sample_count == 0 {
+            0.0
+        } else {
+            self.sum_squares / self.sample_count as f64
+        };
+        self.reset(now);
+        Some(level_permille(mean_square))
+    }
+
+    pub fn reset(&mut self, now: Instant) {
+        self.last_report = now;
+        self.sum_squares = 0.0;
+        self.sample_count = 0;
+    }
+}
+
+fn level_permille(mean_square: f64) -> u16 {
+    if !mean_square.is_finite() || mean_square <= 0.0 {
+        return 0;
+    }
+    let dbfs = 20.0 * mean_square.sqrt().log10();
+    let normalized =
+        ((dbfs - LEVEL_FLOOR_DBFS) / (LEVEL_CEILING_DBFS - LEVEL_FLOOR_DBFS)).clamp(0.0, 1.0);
+    (normalized * 1_000.0).round() as u16
 }
 
 pub enum AudioPacket {
@@ -1075,6 +1133,66 @@ impl Resampler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn audio_levels_are_bounded_content_free_envelopes() {
+        let started = Instant::now();
+        let mut meter = AudioLevelMeter::new(started);
+        assert_eq!(
+            meter.observe(&[0.0; 64], started + Duration::from_millis(49)),
+            None
+        );
+        assert_eq!(
+            meter.observe(&[0.0; 64], started + LEVEL_REPORT_INTERVAL),
+            Some(0)
+        );
+
+        let mut meter = AudioLevelMeter::new(started);
+        let loud = meter
+            .observe(&[0.25; 64], started + LEVEL_REPORT_INTERVAL)
+            .expect("the reporting interval elapsed");
+        assert!((995..=1_000).contains(&loud));
+        let mut meter = AudioLevelMeter::new(started);
+        let conversational = meter
+            .observe(&[0.05; 64], started + LEVEL_REPORT_INTERVAL)
+            .expect("the reporting interval elapsed");
+        assert!((600..=700).contains(&conversational));
+    }
+
+    #[test]
+    fn audio_level_reset_discards_samples_from_the_closed_generation() {
+        let started = Instant::now();
+        let mut meter = AudioLevelMeter::new(started);
+        assert_eq!(
+            meter.observe(&[0.8; 64], started + Duration::from_millis(25)),
+            None
+        );
+        let reset_at = started + Duration::from_millis(25);
+        meter.reset(reset_at);
+        assert_eq!(
+            meter.observe(&[0.0; 64], reset_at + LEVEL_REPORT_INTERVAL),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn audio_levels_treat_non_finite_samples_as_silence_and_clamp_amplitude() {
+        let started = Instant::now();
+        let mut silent = AudioLevelMeter::new(started);
+        assert_eq!(
+            silent.observe(
+                &[f32::NAN, f32::INFINITY, f32::NEG_INFINITY],
+                started + LEVEL_REPORT_INTERVAL,
+            ),
+            Some(0)
+        );
+
+        let mut clipped = AudioLevelMeter::new(started);
+        assert_eq!(
+            clipped.observe(&[4.0, -4.0], started + LEVEL_REPORT_INTERVAL),
+            Some(1_000)
+        );
+    }
 
     fn test_writer(
         capacity: usize,
