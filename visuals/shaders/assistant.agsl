@@ -977,6 +977,148 @@ float2 readingDocumentSurface(float3 point, float phase) {
     return float2(content, foldSeam);
 }
 
+float2 writingTipPoint(float phase) {
+    float progress = 0.5 + 0.5 * sin(phase * 2.0 - PI * 0.5);
+    return float2(
+        mix(-0.138, 0.132, progress),
+        -0.054 + 0.052 * sin(phase)
+    );
+}
+
+float2 writingTendrilCurvePoint(float phase, float progress) {
+    float shoulderDrift = 0.010 * sin(phase * 2.0);
+    float2 root = float2(0.198, -0.176);
+    float2 firstControl = float2(0.320, -0.120 + shoulderDrift);
+    float2 secondControl = float2(0.248, -0.005 + shoulderDrift * 0.6);
+    float2 tip = writingTipPoint(phase);
+    float remaining = 1.0 - progress;
+    return remaining * remaining * remaining * root +
+        3.0 * remaining * remaining * progress * firstControl +
+        3.0 * remaining * progress * progress * secondControl +
+        progress * progress * progress * tip;
+}
+
+float writingTendrilCenterline(float2 point, float phase) {
+    float2 first = writingTendrilCurvePoint(phase, 0.0);
+    float2 second = writingTendrilCurvePoint(phase, 0.2);
+    float2 third = writingTendrilCurvePoint(phase, 0.4);
+    float2 fourth = writingTendrilCurvePoint(phase, 0.6);
+    float2 fifth = writingTendrilCurvePoint(phase, 0.8);
+    float2 sixth = writingTendrilCurvePoint(phase, 1.0);
+    float distance = lineSegmentDistance(point, first, second);
+    distance = min(distance, lineSegmentDistance(point, second, third));
+    distance = min(distance, lineSegmentDistance(point, third, fourth));
+    distance = min(distance, lineSegmentDistance(point, fourth, fifth));
+    return min(distance, lineSegmentDistance(point, fifth, sixth));
+}
+
+float writingTendrilDistance(float3 documentPoint, float phase) {
+    float3 tendrilPoint = documentPoint - float3(0.0, 0.0, 0.085);
+    float2 first = writingTendrilCurvePoint(phase, 0.0);
+    float2 second = writingTendrilCurvePoint(phase, 0.2);
+    float2 third = writingTendrilCurvePoint(phase, 0.4);
+    float2 fourth = writingTendrilCurvePoint(phase, 0.6);
+    float2 fifth = writingTendrilCurvePoint(phase, 0.8);
+    float2 sixth = writingTendrilCurvePoint(phase, 1.0);
+    float distance = taperedExtrudedSegmentDistance(
+        tendrilPoint,
+        first,
+        second,
+        0.017,
+        0.015,
+        0.019
+    );
+    float section = taperedExtrudedSegmentDistance(
+        tendrilPoint,
+        second,
+        third,
+        0.015,
+        0.013,
+        0.018
+    );
+    distance = smoothMinimum(distance, section, 0.016);
+    section = taperedExtrudedSegmentDistance(
+        tendrilPoint,
+        third,
+        fourth,
+        0.013,
+        0.010,
+        0.017
+    );
+    distance = smoothMinimum(distance, section, 0.014);
+    section = taperedExtrudedSegmentDistance(
+        tendrilPoint,
+        fourth,
+        fifth,
+        0.010,
+        0.008,
+        0.015
+    );
+    distance = smoothMinimum(distance, section, 0.012);
+    section = taperedExtrudedSegmentDistance(
+        tendrilPoint,
+        fifth,
+        sixth,
+        0.008,
+        0.005,
+        0.012
+    );
+    return smoothMinimum(distance, section, 0.010);
+}
+
+float writingDocumentDistance(float3 point, float phase) {
+    float document = readingDocumentDistance(point, phase);
+    float3 documentPoint = readingDocumentPoint(point, phase);
+    float tendril = writingTendrilDistance(documentPoint, phase);
+    return smoothMinimum(document, tendril, 0.014);
+}
+
+float4 writingDocumentSurface(float3 point, float phase) {
+    float2 readingSurface = readingDocumentSurface(point, phase);
+    float3 documentPoint = readingDocumentPoint(point, phase);
+    float2 tip = writingTipPoint(phase);
+    float front = 1.0 - smoothstep(
+        0.020,
+        0.090,
+        abs(documentPoint.z - 0.060)
+    );
+    float activeLine = lineSegmentDistance(
+        documentPoint.xy,
+        float2(-0.145, tip.y),
+        tip
+    );
+    float freshInk = (1.0 - smoothstep(0.004, 0.014, activeLine)) * front;
+    float editFront = 1.0 - smoothstep(
+        0.022,
+        0.075,
+        length(documentPoint.xy - tip)
+    );
+    float existingInk = readingSurface.x * (1.0 - editFront * 0.76);
+    float tipGlow = (1.0 - smoothstep(
+        0.010,
+        0.052,
+        length(documentPoint.xy - tip)
+    )) * front;
+
+    float tendrilLine = writingTendrilCenterline(documentPoint.xy, phase);
+    float tendrilFront = 1.0 - smoothstep(
+        0.008,
+        0.030,
+        abs(documentPoint.z - 0.085)
+    );
+    float tendrilCore = (1.0 - smoothstep(
+        0.004,
+        0.020,
+        tendrilLine
+    )) * tendrilFront;
+    return float4(
+        existingInk,
+        freshInk,
+        tipGlow,
+        max(tendrilCore, readingSurface.y)
+    );
+}
+
 float3 searchLensPoint(float3 point, float phase) {
     point.xy = rotate2(-0.11 + 0.026 * sin(phase * 2.0), point.xy);
     point.xz = rotate2(0.24 + 0.038 * sin(phase), point.xz);
@@ -1189,8 +1331,11 @@ float organicDistance(float3 point, float phase, float energy) {
         (1.0 - smoothstep(0.0, 0.72, shipPresence));
     float searching = clamp(iActivity.y, 0.0, 1.0) *
         (1.0 - smoothstep(0.0, 0.72, shipPresence));
+    float writing = clamp(iActivity.z, 0.0, 1.0) *
+        (1.0 - smoothstep(0.0, 0.72, shipPresence));
     float executing = clamp(iActivity.w, 0.0, 1.0) *
         (1.0 - smoothstep(0.0, 0.72, shipPresence));
+    float documentActivity = max(reading, writing);
     if (projection > 0.999) {
         return speakingDistance(sourcePoint, phase, energy);
     }
@@ -1306,23 +1451,23 @@ float organicDistance(float3 point, float phase, float energy) {
         -0.27 * cos(phase * 2.0),
         -0.22 * sin(phase * 2.0)
     ) * (1.0 - focus * 0.25);
-    float readingDraw = 1.0;
-    if (reading > 0.001) {
-        readingDraw = mix(
+    float documentDraw = 1.0;
+    if (documentActivity > 0.001) {
+        documentDraw = mix(
             1.0,
             0.72 + 0.12 * (0.5 + 0.5 * sin(phase * 2.0)),
-            reading
+            documentActivity
         );
     }
-    firstCavityCenter *= readingDraw;
-    secondCavityCenter *= readingDraw;
+    firstCavityCenter *= documentDraw;
+    secondCavityCenter *= documentDraw;
     float firstCavity = ellipsoidDistance(
         folded - firstCavityCenter,
-        float3(0.21, 0.17, 0.20) * mix(1.0, 0.68, reading)
+        float3(0.21, 0.17, 0.20) * mix(1.0, 0.68, documentActivity)
     );
     float secondCavity = ellipsoidDistance(
         folded - secondCavityCenter,
-        float3(0.17, 0.22, 0.18) * mix(1.0, 0.68, reading)
+        float3(0.17, 0.22, 0.18) * mix(1.0, 0.68, documentActivity)
     );
     liquidDistance = smoothMaximum(liquidDistance, -firstCavity, 0.055);
     liquidDistance = smoothMaximum(liquidDistance, -secondCavity, 0.050);
@@ -1337,7 +1482,7 @@ float organicDistance(float3 point, float phase, float energy) {
     liquidDistance += surfaceFold *
         (0.010 + energy * 0.015 + foldComplexity * 0.010) * organicAmount;
 
-    if (reading > 0.001) {
+    if (documentActivity > 0.001) {
         float3 readingAxis = float3(0.732, 0.565, -0.379);
         float readingLongitudinal = dot(folded, readingAxis);
         float3 readingRadialPoint = folded - readingAxis * readingLongitudinal;
@@ -1351,7 +1496,7 @@ float organicDistance(float3 point, float phase, float energy) {
                         phase * 2.0
                 ) + phase * 5.0
         );
-        liquidDistance += reading * readingFold * 0.0065 * organicAmount;
+        liquidDistance += documentActivity * readingFold * 0.0065 * organicAmount;
     }
 
     float3 symbolPoint = symbolFlowPoint(anchoredPoint, phase, symbolPresence);
@@ -1373,6 +1518,13 @@ float organicDistance(float3 point, float phase, float energy) {
             distance,
             readingDocumentDistance(sourcePoint, phase),
             smoothstep(0.0, 1.0, reading)
+        );
+    }
+    if (writing > 0.001) {
+        distance = mix(
+            distance,
+            writingDocumentDistance(sourcePoint, phase),
+            smoothstep(0.0, 1.0, writing)
         );
     }
     if (searching > 0.001) {
@@ -1509,8 +1661,11 @@ float3 interiorFlowPoint(float3 point, float phase) {
     return flowingPoint;
 }
 
-float4 readingFlowField(float3 point, float phase) {
-    float reading = clamp(iActivity.x, 0.0, 1.0) *
+float4 documentFlowField(float3 point, float phase) {
+    float documentActivity = max(
+        clamp(iActivity.x, 0.0, 1.0),
+        clamp(iActivity.z, 0.0, 1.0)
+    ) *
         (1.0 - smoothstep(0.0, 0.72, clamp(iShape.z, 0.0, 1.0)));
     float3 axis = float3(0.732, 0.565, -0.379);
     float longitudinal = dot(point, axis);
@@ -1532,7 +1687,7 @@ float4 readingFlowField(float3 point, float phase) {
         (0.45 + variation * 0.55);
     float intake = (1.0 - smoothstep(0.045, 0.19, convergence)) *
         (0.55 + packet * 0.45);
-    return float4(sheet, ridge, packet, intake) * reading;
+    return float4(sheet, ridge, packet, intake) * documentActivity;
 }
 
 float4 interiorMembranes(float3 point, float phase) {
@@ -1582,9 +1737,9 @@ float4 interiorMembranes(float3 point, float phase) {
     float voiceSurface = sin(
         voiceRadius * 34.0 - phase * 8.0 + voicePressure * 2.4
     );
-    float4 readingFlow = float4(0.0);
-    if (iActivity.x > 0.001) {
-        readingFlow = readingFlowField(flowingPoint, phase);
+    float4 documentFlow = float4(0.0);
+    if (max(iActivity.x, iActivity.z) > 0.001) {
+        documentFlow = documentFlowField(flowingPoint, phase);
     }
 
     float coolVariation = 0.58 + 0.42 *
@@ -1606,10 +1761,10 @@ float4 interiorMembranes(float3 point, float phase) {
     coolSheet = max(coolSheet, voiceSheet * projection * 0.82);
     coolRidge = max(coolRidge, voiceRidge * projection);
     warmSheet = max(warmSheet, voiceSheet * projection * 0.18);
-    coolSheet = max(coolSheet, readingFlow.x * 0.78);
-    coolRidge = max(coolRidge, readingFlow.y * 0.94);
-    warmSheet = max(warmSheet, readingFlow.x * 0.20);
-    warmRidge = max(warmRidge, readingFlow.z * 0.42);
+    coolSheet = max(coolSheet, documentFlow.x * 0.78);
+    coolRidge = max(coolRidge, documentFlow.y * 0.94);
+    warmSheet = max(warmSheet, documentFlow.x * 0.20);
+    warmRidge = max(warmRidge, documentFlow.z * 0.42);
     float4 organicMembranes = float4(
         coolSheet,
         coolRidge,
@@ -1801,7 +1956,9 @@ half4 main(float2 fragCoord) {
     float shipGeometry = smoothstep(0.0, 1.0, shipPresence);
     float reading = clamp(iActivity.x, 0.0, 1.0) * (1.0 - shipGeometry);
     float searching = clamp(iActivity.y, 0.0, 1.0) * (1.0 - shipGeometry);
+    float writing = clamp(iActivity.z, 0.0, 1.0) * (1.0 - shipGeometry);
     float executing = clamp(iActivity.w, 0.0, 1.0) * (1.0 - shipGeometry);
+    float documentActivity = max(reading, writing);
     float shipMaterialization = clamp(iShipMaterialization, 0.0, 1.0);
     float drivePower = clamp(iShipPropulsion, 0.0, 1.0) * shipGeometry *
         mix(0.35, 1.0, smoothstep(0.05, 0.82, shipMaterialization));
@@ -1910,6 +2067,10 @@ half4 main(float2 fragCoord) {
         if (reading > 0.001) {
             readingDocument = readingDocumentSurface(point, phase) * reading;
         }
+        float4 writingDocument = float4(0.0);
+        if (writing > 0.001) {
+            writingDocument = writingDocumentSurface(point, phase) * writing;
+        }
         float4 searchLens = float4(0.0);
         if (searching > 0.001) {
             searchLens = searchLensSurface(point, phase) * searching;
@@ -1953,11 +2114,11 @@ half4 main(float2 fragCoord) {
         float4 nearMembranes = interiorMembranes(nearPoint, phase);
         float4 middleMembranes = interiorMembranes(middlePoint, phase) * middleDensity;
         float4 deepMembranes = interiorMembranes(deepPoint, phase) * deepDensity;
-        float4 middleReadingFlow = float4(0.0);
-        float4 deepReadingFlow = float4(0.0);
-        if (reading > 0.001) {
-            middleReadingFlow = readingFlowField(middlePoint, phase);
-            deepReadingFlow = readingFlowField(deepPoint, phase) * deepDensity;
+        float4 middleDocumentFlow = float4(0.0);
+        float4 deepDocumentFlow = float4(0.0);
+        if (documentActivity > 0.001) {
+            middleDocumentFlow = documentFlowField(middlePoint, phase);
+            deepDocumentFlow = documentFlowField(deepPoint, phase) * deepDensity;
         }
         float coolSheet = clamp(
             nearMembranes.x * 0.25 +
@@ -1998,13 +2159,13 @@ half4 main(float2 fragCoord) {
         float voiceFront = projection * (0.28 + energy * 0.72) *
             pow(voiceWave, 6.0) * voiceWindow *
             (0.24 + max(coolSheet, coolRidge) * 0.76);
-        float readingPacket = max(
-            middleReadingFlow.z,
-            deepReadingFlow.z * 0.72
+        float documentPacket = max(
+            middleDocumentFlow.z,
+            deepDocumentFlow.z * 0.72
         );
-        float readingIntake = max(
-            middleReadingFlow.w,
-            deepReadingFlow.w * 0.64
+        float documentIntake = max(
+            middleDocumentFlow.w,
+            deepDocumentFlow.w * 0.64
         );
         float thinTransmission = transmittance.g *
             (0.32 + 0.68 * pow(1.0 - facing, 1.35));
@@ -2027,6 +2188,11 @@ half4 main(float2 fragCoord) {
             deepMaterial,
             float3(0.003, 0.008, 0.034),
             reading * 0.48
+        );
+        deepMaterial = mix(
+            deepMaterial,
+            float3(0.010, 0.004, 0.040),
+            writing * 0.54
         );
         deepMaterial = mix(
             deepMaterial,
@@ -2070,17 +2236,29 @@ half4 main(float2 fragCoord) {
         material += cyan * voiceFront * 0.48;
         material += float3(0.72, 0.94, 1.0) * voiceFront *
             (0.14 + coolRidge * 0.20);
-        float3 readingLight = mix(
+        float3 documentLight = mix(
             iAccent.rgb,
             float3(0.72, 0.90, 1.0),
             0.62
         );
-        material += readingLight * readingPacket *
+        material += documentLight * documentPacket *
             (0.18 + coolRidge * 0.20);
-        material += mix(readingLight, warm, 0.16) * readingIntake *
+        material += mix(documentLight, warm, 0.16) * documentIntake *
             (0.08 + membraneCrossing * 0.14);
-        material += readingLight * readingDocument.x * 0.34;
-        material += mix(readingLight, warm, 0.28) * readingDocument.y * 0.52;
+        material += documentLight * readingDocument.x * 0.34;
+        material += mix(documentLight, warm, 0.28) *
+            readingDocument.y * 0.52;
+        float3 writingLight = mix(
+            iAccent.rgb,
+            float3(0.96, 0.78, 1.0),
+            0.52
+        );
+        material += writingLight * writingDocument.x * 0.16;
+        material += writingLight * writingDocument.y * 0.72;
+        material += mix(writingLight, float3(0.70, 0.92, 1.0), 0.32) *
+            writingDocument.z * 1.22;
+        material += mix(writingLight, warm, 0.16) *
+            writingDocument.w * 0.30;
         float3 searchLight = mix(
             iAccent.rgb,
             float3(0.62, 0.88, 1.0),
