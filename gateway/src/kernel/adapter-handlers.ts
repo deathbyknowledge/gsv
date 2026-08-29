@@ -63,6 +63,11 @@ import {
   validateAdapterMediaBody,
 } from "@humansandmachines/gsv/protocol";
 import { adapterServiceDescriptorSchema } from "@humansandmachines/gsv/services/adapters";
+import type {
+  AdapterTargetCancelResult,
+  AdapterTargetDescriptor,
+  AdapterTargetResponseFrame,
+} from "@humansandmachines/gsv/services/adapters";
 import * as z from "zod/mini";
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
 import type { RequestFrame } from "../protocol/frames";
@@ -127,8 +132,20 @@ type LegacyStandaloneAdapterService = {
     accountId?: string,
   ): ReturnType<AdapterWorkerInterface["adapterStatus"]>;
 };
-type AdapterServiceBinding = Fetcher
+type AdapterTargetServiceBinding = {
+  adapterTargetList(
+    ...args: Parameters<NonNullable<AdapterService["adapterTargetList"]>>
+  ): Promise<AdapterTargetDescriptor[] & Disposable>;
+  adapterTargetExecute(
+    ...args: Parameters<NonNullable<AdapterService["adapterTargetExecute"]>>
+  ): Promise<AdapterTargetResponseFrame & Disposable>;
+  adapterTargetCancel(
+    ...args: Parameters<NonNullable<AdapterService["adapterTargetCancel"]>>
+  ): Promise<AdapterTargetCancelResult & Disposable>;
+};
+export type AdapterServiceBinding = Fetcher
   & Partial<Pick<AdapterService, "adapterDescribe">>
+  & Partial<AdapterTargetServiceBinding>
   & Partial<AdapterWorkerInterface>
   & Partial<AdapterPairingWorkerInterface>
   & Partial<LegacyStandaloneAdapterService>;

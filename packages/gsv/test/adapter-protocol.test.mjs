@@ -12,7 +12,13 @@ import {
   isAdapterWorkerStatusResult,
 } from "../dist/protocol/adapters.js";
 import { isAdapterConnectResult } from "../dist/protocol/syscalls/adapter.js";
-import { adapterServiceDescriptorSchema } from "../dist/services/adapters.js";
+import {
+  adapterServiceDescriptorSchema,
+  adapterTargetCancelResultSchema,
+  adapterTargetDescriptorListSchema,
+  adapterTargetIdentitySchema,
+  adapterTargetResponseFrameSchema,
+} from "../dist/services/adapters.js";
 
 test("validates an open-ended adapter service descriptor", () => {
   const descriptor = {
@@ -34,8 +40,49 @@ test("validates an open-ended adapter service descriptor", () => {
   assert.equal(adapterServiceDescriptorSchema.safeParse(descriptor).success, true);
   assert.equal(adapterServiceDescriptorSchema.safeParse({
     ...descriptor,
+    capabilities: { ...descriptor.capabilities, targets: true },
+  }).success, true);
+  assert.equal(adapterServiceDescriptorSchema.safeParse({
+    ...descriptor,
     id: "Matrix Plugin",
   }).success, false);
+});
+
+test("validates adapter target discovery and response frames", () => {
+  assert.equal(adapterTargetIdentitySchema.safeParse({
+    accountId: "workspace-1",
+    actorId: "user-1",
+    routeGeneration: "route-1",
+  }).success, true);
+  assert.equal(adapterTargetDescriptorListSchema.safeParse([{
+    id: "workspace",
+    label: "Slack — Acme",
+    description: "Slack workspace",
+    platform: "slack",
+    version: "web-api",
+    implements: ["shell.exec"],
+  }]).success, true);
+  assert.equal(adapterTargetDescriptorListSchema.safeParse([{
+    id: "Workspace 1",
+    label: "Slack",
+    description: "",
+    platform: "slack",
+    version: "",
+    implements: ["shell.exec"],
+  }]).success, false);
+  assert.equal(adapterTargetResponseFrameSchema.safeParse({
+    type: "res",
+    id: "request-1",
+    ok: true,
+    data: { status: "completed", output: "ok\n", exitCode: 0 },
+  }).success, true);
+  assert.equal(adapterTargetResponseFrameSchema.safeParse({
+    type: "res",
+    id: "request-1",
+    ok: false,
+    error: { code: 502, message: "" },
+  }).success, false);
+  assert.equal(adapterTargetCancelResultSchema.safeParse({ cancelled: true }).success, true);
 });
 
 test("validates adapter inbound results at the shared protocol boundary", () => {

@@ -4,8 +4,8 @@ import type { KernelContext } from "../../../kernel/context";
 import {
   GSV_TARGET_ID,
   GSV_TARGET_IMPLEMENTATIONS,
-  getVisibleTarget,
-  listVisibleTargets,
+  listAllVisibleTargets,
+  resolveVisibleTarget,
   type TargetDescriptor,
 } from "../../../kernel/targets";
 import { requireCommandCapability, requireShellOptionValue } from "./common";
@@ -86,12 +86,14 @@ async function runTargetsCommand(
   }
 }
 
-function listTargets(options: ListOptions, ctx: KernelContext): ExecResult {
+async function listTargets(options: ListOptions, ctx: KernelContext): Promise<ExecResult> {
   requireCommandCapability(ctx, "sys.device.list");
 
   const entries = [
     gsvTarget(ctx),
-    ...listVisibleTargets(ctx, { includeOffline: options.includeOffline }).map(targetToEntry),
+    ...(await listAllVisibleTargets(ctx, {
+      includeOffline: options.includeOffline,
+    })).map(targetToEntry),
   ]
     .filter((entry) => options.includeOffline || entry.online)
     .filter((entry) => !options.query || targetMatchesQuery(entry, options.query))
@@ -138,13 +140,17 @@ function listTargets(options: ListOptions, ctx: KernelContext): ExecResult {
   return { stdout: `${lines.join("\n")}\n`, stderr: "", exitCode: 0 };
 }
 
-function showTarget(args: string[], ctx: KernelContext, commandName: "targets" | "devices"): ExecResult {
+async function showTarget(
+  args: string[],
+  ctx: KernelContext,
+  commandName: "targets" | "devices",
+): Promise<ExecResult> {
   requireCommandCapability(ctx, "sys.device.get");
 
   const { targetId, json } = parseTargetShowOptions(args, commandName);
   const entry = targetId === GSV_TARGET_ID
     ? gsvTarget(ctx)
-    : targetToEntryOrNull(getVisibleTarget(ctx, targetId, { includeOffline: true }));
+    : targetToEntryOrNull(await resolveVisibleTarget(ctx, targetId, { includeOffline: true }));
 
   if (!entry) {
     return { stdout: "", stderr: `${commandName} show: target not found: ${targetId}\n`, exitCode: 1 };
@@ -279,9 +285,10 @@ function targetToEntryOrNull(target: TargetDescriptor | null): TargetListEntry |
 }
 
 function targetToEntry(target: TargetDescriptor): TargetListEntry {
+  const provider = target.route.kind === "adapter" ? target.route.adapter : "device";
   return {
     id: target.targetId,
-    provider: "device",
+    provider,
     owner: target.ownerUsername
       ? `${target.ownerUsername} (uid ${target.ownerUid})`
       : `uid ${target.ownerUid}`,
@@ -295,8 +302,8 @@ function targetToEntry(target: TargetDescriptor): TargetListEntry {
     lastSeenAt: target.lastSeenAt,
     connectedAt: target.connectedAt,
     disconnectedAt: target.disconnectedAt,
-    metadataWritable: true,
-    route: "connection",
+    metadataWritable: target.route.kind === "device",
+    route: target.route.kind === "adapter" ? "service-binding" : "connection",
   };
 }
 

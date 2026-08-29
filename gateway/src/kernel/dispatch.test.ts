@@ -669,7 +669,7 @@ describe("dispatch", () => {
         ok: false,
         error: {
           code: 403,
-          message: "Access denied to device: adapter:whatsapp:primary",
+          message: "Access denied to target: adapter:whatsapp:primary",
         },
       },
     });

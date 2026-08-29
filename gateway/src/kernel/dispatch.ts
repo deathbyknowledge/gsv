@@ -120,9 +120,11 @@ import {
 import {
   GSV_TARGET_ID,
   getVisibleTarget,
+  resolveVisibleTarget,
   targetCanHandle,
   type TargetDescriptor,
 } from "./targets";
+import { requestAdapterTarget } from "./adapter-targets";
 import { handleMailSend } from "./outbound-mail";
 import { handleMailStatus } from "./outbound-status";
 import {
@@ -265,11 +267,11 @@ export async function dispatch(
     && !contactResourceTarget
   ) {
     if (routingArgs) delete routingArgs.target;
-    const routedTarget = getVisibleTarget(ctx, target, { includeOffline: true });
+    const routedTarget = await resolveVisibleTarget(ctx, target, { includeOffline: true });
     if (!routedTarget) {
       return {
         handled: true,
-        response: errFrame(frame.id, 403, `Access denied to device: ${target}`),
+        response: errFrame(frame.id, 403, `Access denied to target: ${target}`),
       };
     }
     return routeToTarget(frame, routedTarget, origin, ctx, deps);
@@ -733,14 +735,22 @@ async function routeToTarget(
   if (!target.online) {
     return {
       handled: true,
-      response: errFrame(frame.id, 503, `Device offline: ${target.targetId}`),
+      response: errFrame(frame.id, 503, `Target offline: ${target.targetId}`),
     };
   }
 
   if (!targetCanHandle(target, frame.call)) {
     return {
       handled: true,
-      response: errFrame(frame.id, 400, `Device ${target.targetId} does not implement ${frame.call}`),
+      response: errFrame(frame.id, 400, `Target ${target.targetId} does not implement ${frame.call}`),
+    };
+  }
+
+  const ttlMs = routedFrameTtlMs(frame);
+  if (target.route.kind === "adapter") {
+    return {
+      handled: true,
+      response: await requestAdapterTarget(frame, target, Date.now() + ttlMs, ctx),
     };
   }
 
@@ -756,7 +766,6 @@ async function routeToTarget(
     cancel: () => void;
     attachBody: (body: CancellableFrameBody) => void;
   } | null = null;
-  const ttlMs = routedFrameTtlMs(frame);
   try {
     route = await deps.registerRoute({
       id: frame.id,

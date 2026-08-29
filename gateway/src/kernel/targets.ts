@@ -6,6 +6,10 @@ import type {
 import { hasCapability } from "./capabilities";
 import type { KernelContext } from "./context";
 import type { DeviceRecord } from "./devices";
+import {
+  listVisibleAdapterTargets,
+  type AdapterTargetRoute,
+} from "./adapter-targets";
 
 export const GSV_TARGET_ID = "gsv";
 export const GSV_TARGET_IMPLEMENTATIONS = ["fs.*", "shell.exec", "net.fetch"] as const;
@@ -24,6 +28,7 @@ export type TargetDescriptor = {
   lastSeenAt: number;
   connectedAt: number | null;
   disconnectedAt: number | null;
+  route: { kind: "device"; deviceId: string } | AdapterTargetRoute;
 };
 
 export type TargetListOptions = {
@@ -50,6 +55,14 @@ export function listVisibleTargets(
     .map((device) => deviceRecordToTarget(ctx, device));
 }
 
+export async function listAllVisibleTargets(
+  ctx: KernelContext,
+  options: TargetListOptions = {},
+): Promise<TargetDescriptor[]> {
+  const adapterTargets = await listVisibleAdapterTargets(ctx, options);
+  return [...listVisibleTargets(ctx, options), ...adapterTargets];
+}
+
 export function getVisibleTarget(
   ctx: KernelContext,
   targetId: string,
@@ -66,6 +79,18 @@ export function getVisibleTarget(
   }
 
   return deviceRecordToTarget(ctx, device);
+}
+
+export async function resolveVisibleTarget(
+  ctx: KernelContext,
+  targetId: string,
+  options: TargetListOptions = {},
+): Promise<TargetDescriptor | null> {
+  return getVisibleTarget(ctx, targetId, options)
+    ?? (await listVisibleAdapterTargets(ctx, options)).find(
+      (target) => target.targetId === targetId,
+    )
+    ?? null;
 }
 
 export function updateTargetMetadata(
@@ -147,5 +172,6 @@ function deviceRecordToTarget(ctx: KernelContext, record: DeviceRecord): TargetD
     lastSeenAt: record.last_seen_at,
     connectedAt: record.connected_at,
     disconnectedAt: record.disconnected_at,
+    route: { kind: "device", deviceId: record.device_id },
   };
 }
