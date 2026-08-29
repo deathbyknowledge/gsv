@@ -11,7 +11,7 @@ class AssistantProcessActivityTest {
         val ledger = AssistantProcessActivityLedger()
 
         assertEquals(
-            AssistantProcessState(active = true),
+            AssistantProcessState(active = true, generation = 1L),
             ledger.apply(VoiceProcessEvent.RunStarted("run-1")),
         )
         assertEquals(
@@ -50,9 +50,10 @@ class AssistantProcessActivityTest {
         val ledger = AssistantProcessActivityLedger()
         ledger.apply(VoiceProcessEvent.RunStarted("run-old"))
         ledger.apply(toolStarted("run-old", "exec-old", "call-old", AssistantActivity.EXECUTING))
-        ledger.apply(VoiceProcessEvent.RunStarted("run-new"))
+        val replacement = ledger.apply(VoiceProcessEvent.RunStarted("run-new"))
         ledger.apply(toolStarted("run-new", "write-new", "call-new", AssistantActivity.WRITING))
 
+        assertEquals(2L, replacement.generation)
         assertEquals(
             AssistantActivity.WRITING,
             ledger.apply(VoiceProcessEvent.RunFinished("run-old")).activity,
@@ -84,6 +85,19 @@ class AssistantProcessActivityTest {
 
         assertTrue(state.active)
         assertEquals(AssistantActivity.NONE, state.activity)
+    }
+
+    @Test
+    fun resetAdvancesTheGenerationWithoutRetainingAnActivity() {
+        val ledger = AssistantProcessActivityLedger()
+        ledger.apply(VoiceProcessEvent.RunStarted("run-1"))
+        ledger.apply(toolStarted("run-1", "read-1", "call-1", AssistantActivity.READING))
+
+        val reset = ledger.reset()
+
+        assertFalse(reset.active)
+        assertEquals(AssistantActivity.NONE, reset.activity)
+        assertEquals(2L, reset.generation)
     }
 
     private fun toolStarted(

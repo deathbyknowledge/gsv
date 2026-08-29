@@ -12,6 +12,7 @@ data class AssistantSnapshot(
     val turnId: Long = 0,
     val level: Float = 0f,
     val processActive: Boolean = false,
+    val processActivity: AssistantActivity = AssistantActivity.NONE,
     val activity: AssistantActivity = AssistantActivity.NONE,
 )
 
@@ -51,7 +52,8 @@ object AssistantRuntimeState {
         mutableSnapshot.update {
             it.copy(
                 processActive = state.active,
-                activity = state.activity,
+                processActivity = state.activity,
+                activity = state.visualActivity,
             )
         }
     }

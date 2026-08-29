@@ -159,8 +159,10 @@ Mind explicitly observes the current personal Ship Process after resolving its
 canonical conversation. Process activity is correlated by pid, run, call, and
 execution identity, then reduced to a bounded visual category; tool arguments,
 results, paths, and content are never retained by the visual state. Short
-activities remain visible long enough to read, overlapping tools resolve
-deterministically, and a late event from a superseded run cannot mutate the
+activities remain visible for at least 1.8 seconds without extending their
+actual Process lifetime. Up to two distinct pending categories morph directly into
+one another, overlapping tools resolve deterministically, and a new run clears
+queued afterimages so a late event from a superseded run cannot mutate the
 current display. If Ship receives a replacement handler, Mind subscribes to
 the new pid before removing the old subscription.
 

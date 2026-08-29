@@ -14,6 +14,8 @@ enum class AssistantActivity {
 data class AssistantProcessState(
     val active: Boolean = false,
     val activity: AssistantActivity = AssistantActivity.NONE,
+    val generation: Long = 0L,
+    val visualActivity: AssistantActivity = activity,
 )
 
 internal sealed interface VoiceProcessEvent {
@@ -53,6 +55,7 @@ internal class AssistantProcessActivityLedger {
     )
 
     private var activeRunId: String? = null
+    private var generation = 0L
     private val activeTools = LinkedHashMap<String, ActiveTool>()
 
     @Synchronized
@@ -71,13 +74,15 @@ internal class AssistantProcessActivityLedger {
     fun reset(): AssistantProcessState {
         activeRunId = null
         activeTools.clear()
-        return AssistantProcessState()
+        advanceGeneration()
+        return snapshot()
     }
 
     private fun startRun(runId: String) {
         if (activeRunId == runId) return
         activeRunId = runId
         activeTools.clear()
+        advanceGeneration()
     }
 
     private fun resumeRun(runId: String) {
@@ -113,14 +118,22 @@ internal class AssistantProcessActivityLedger {
     }
 
     private fun acceptRun(runId: String): Boolean {
-        if (activeRunId == null) activeRunId = runId
+        if (activeRunId == null) {
+            activeRunId = runId
+            advanceGeneration()
+        }
         return activeRunId == runId
+    }
+
+    private fun advanceGeneration() {
+        generation = if (generation == Long.MAX_VALUE) 1L else generation + 1L
     }
 
     private fun snapshot(): AssistantProcessState = AssistantProcessState(
         active = activeRunId != null,
         activity = activeTools.values.lastOrNull { it.activity != null }?.activity
             ?: AssistantActivity.NONE,
+        generation = generation,
     )
 
     private companion object {

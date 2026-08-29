@@ -55,6 +55,22 @@ class AssistantRuntimeStateTest {
         val snapshot = AssistantRuntimeState.snapshot.value
         assertEquals(VoiceTurnState.IDLE, snapshot.turn)
         assertEquals(true, snapshot.processActive)
+        assertEquals(AssistantActivity.SEARCHING, snapshot.processActivity)
         assertEquals(AssistantActivity.SEARCHING, snapshot.activity)
+    }
+
+    @Test
+    fun visualAfterimageDoesNotKeepTheProcessActivityActive() {
+        AssistantRuntimeState.setProcessState(
+            AssistantProcessState(
+                activity = AssistantActivity.NONE,
+                visualActivity = AssistantActivity.READING,
+            ),
+        )
+
+        val snapshot = AssistantRuntimeState.snapshot.value
+        assertEquals(false, snapshot.processActive)
+        assertEquals(AssistantActivity.NONE, snapshot.processActivity)
+        assertEquals(AssistantActivity.READING, snapshot.activity)
     }
 }
