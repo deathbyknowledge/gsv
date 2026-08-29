@@ -79,6 +79,11 @@ type AppliedManagedInferenceEvent = {
   terminal: boolean;
 };
 
+type ManagedInferenceFailureEvent =
+  | "target_acquisition_failed"
+  | "stream_start_failed"
+  | "stream_consume_failed";
+
 export function gsvInferenceProviderFactoryFromEnv(
   env: Env,
 ): InferenceProviderFactory | undefined {
@@ -201,6 +206,7 @@ async function pumpGsvInference(
   let acquisitionDisposesLateTarget = false;
   let generationStarted = false;
   let generationAbort: Promise<void> | undefined;
+  let failureEvent: ManagedInferenceFailureEvent = "target_acquisition_failed";
   const abortGeneration = () => {
     if (target && generationStarted && !generationAbort) {
       generationAbort = (async () => {
@@ -241,10 +247,12 @@ async function pumpGsvInference(
       stream.push(gsvInferenceErrorEvent(true));
       return;
     }
+    failureEvent = "stream_start_failed";
     const bodyPromise = target.generateStream(request);
     generationStarted = true;
     if (signal?.aborted) abortGeneration();
     const body = await bodyPromise;
+    failureEvent = "stream_consume_failed";
     let partial: AssistantMessage | undefined;
     let terminal = false;
     for await (const raw of decodeManagedInferenceStream(body, signal)) {
@@ -262,12 +270,17 @@ async function pumpGsvInference(
     if (!terminal) throw new Error("Managed inference stream ended early");
   } catch {
     abortGeneration();
+    if (!signal?.aborted) logManagedInferenceFailure(failureEvent);
     stream.push(gsvInferenceErrorEvent(signal?.aborted === true));
   } finally {
     signal?.removeEventListener("abort", abortGeneration);
     await generationAbort;
     disposeManagedInferenceTarget(target);
   }
+}
+
+function logManagedInferenceFailure(event: ManagedInferenceFailureEvent): void {
+  console.error(JSON.stringify({ component: "gsv_inference", event }));
 }
 
 function disposeManagedInferenceAcquisition(

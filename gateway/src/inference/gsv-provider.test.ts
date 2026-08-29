@@ -268,6 +268,41 @@ describe("GSV inference provider", () => {
     expect(abort).toHaveBeenCalledTimes(1);
     expect(dispose).toHaveBeenCalledOnce();
   });
+
+  it("logs only an allowlisted stage when stream validation fails", async () => {
+    const privatePayload = "private tool arguments";
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    const malformedEvent = new TextEncoder().encode(`${JSON.stringify({
+      type: "toolcall_start",
+      contentIndex: 0,
+      toolCall: {
+        type: "toolCall",
+        id: "call_test",
+        name: "Shell",
+        arguments: {},
+        privatePayload,
+      },
+    })}\n`);
+    const { service } = managedService(vi.fn(async () => new ReadableStream({
+      start(controller) {
+        controller.enqueue(malformedEvent);
+        controller.close();
+      },
+    })));
+
+    await expect(providerStream(service, new AbortController().signal).result())
+      .resolves.toMatchObject({
+        stopReason: "error",
+        errorMessage: "GSV inference is unavailable",
+      });
+
+    expect(errorLog).toHaveBeenCalledWith(JSON.stringify({
+      component: "gsv_inference",
+      event: "stream_consume_failed",
+    }));
+    expect(JSON.stringify(errorLog.mock.calls)).not.toContain(privatePayload);
+    errorLog.mockRestore();
+  });
 });
 
 function providerStream(
