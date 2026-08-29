@@ -14,6 +14,7 @@ const ACCENT: [f32; 4] = [0.702, 0.682, 1.0, 1.0];
 const VIOLET: [f32; 4] = [0.561, 0.541, 1.0, 1.0];
 const READING_BLUE: [f32; 4] = [0.596, 0.710, 1.0, 1.0];
 const WRITING_LILAC: [f32; 4] = [0.820, 0.610, 1.0, 1.0];
+const DELETING_VIOLET: [f32; 4] = [0.790, 0.460, 1.0, 1.0];
 const SEARCHING_BLUE: [f32; 4] = [0.530, 0.760, 1.0, 1.0];
 const EXECUTING_VIOLET: [f32; 4] = [0.710, 0.560, 1.0, 1.0];
 const DELEGATING_VIOLET: [f32; 4] = [0.680, 0.590, 1.0, 1.0];
@@ -37,6 +38,7 @@ pub enum VisualPreset {
     Thinking,
     Reading,
     Writing,
+    Deleting,
     Searching,
     Executing,
     Delegating,
@@ -47,11 +49,12 @@ pub enum VisualPreset {
 }
 
 impl VisualPreset {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Listening,
         Self::Thinking,
         Self::Reading,
         Self::Writing,
+        Self::Deleting,
         Self::Searching,
         Self::Executing,
         Self::Delegating,
@@ -67,6 +70,7 @@ impl VisualPreset {
             Self::Thinking => "THINKING",
             Self::Reading => "READING",
             Self::Writing => "WRITING",
+            Self::Deleting => "DELETING",
             Self::Searching => "SEARCHING",
             Self::Executing => "EXECUTING",
             Self::Delegating => "DELEGATING",
@@ -257,6 +261,15 @@ impl VisualRecipe {
                 behavior: [0.38, 0.46, 0.86, 0.0],
                 activity: [0.0, 0.0, 1.0, 0.0],
                 activity2: [0.0; 4],
+                materialization: 1.0,
+                propulsion: 0.0,
+            },
+            VisualPreset::Deleting => Self {
+                accent: DELETING_VIOLET,
+                shape: [0.80, 0.0, 0.0, 0.92],
+                behavior: [0.46, 0.60, 0.92, 0.0],
+                activity: [0.0; 4],
+                activity2: [0.0, 1.0, 0.0, 0.0],
                 materialization: 1.0,
                 propulsion: 0.0,
             },
@@ -624,6 +637,10 @@ fn render_loop(
             VisualPreset::Writing => {
                 0.22 + 0.12 * (loop_phase * 4.0).sin().abs()
                     + 0.07 * (loop_phase * 9.0 + 0.5).sin().abs()
+            }
+            VisualPreset::Deleting => {
+                0.28 + 0.14 * (loop_phase * 3.0).sin().abs()
+                    + 0.08 * (loop_phase * 8.0 + 0.6).sin().abs()
             }
             VisualPreset::Searching => {
                 0.24 + 0.13 * (loop_phase * 3.0).sin().abs()
