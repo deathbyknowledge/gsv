@@ -1,4 +1,5 @@
 import { DurableObject, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
+import { z } from "zod";
 import {
   encodeManagedInferenceStreamEvent,
   GSV_INFERENCE_PRODUCT_MODEL,
@@ -67,6 +68,9 @@ type RecordedWorkersAiRequest = {
 };
 
 const WORKERS_AI_RESPONSE_DELAY_MS = 2_500;
+const workersAiGatewayQuerySchema = z.object({
+  model: z.string().min(1),
+});
 
 export type RecordedOutboundMessage = {
   installationId: string;
@@ -677,7 +681,7 @@ class WorkersAiGatewayFixture extends RpcTarget {
         `Unsupported integration AI gateway endpoint: ${request.endpoint}`,
       );
     }
-    const model = workersAiRequestModel(request.query);
+    const { model } = workersAiGatewayQuerySchema.parse(request.query);
     const credentialHeaders = new Set([
       "authorization",
       "cf-aig-authorization",
@@ -697,17 +701,6 @@ class WorkersAiGatewayFixture extends RpcTarget {
     });
     return workersAiCompletion(model, options?.signal);
   }
-}
-
-function workersAiRequestModel(query: unknown): string {
-  if (typeof query !== "object" || query === null || !("model" in query)) {
-    throw new Error("Integration AI gateway request is missing its model");
-  }
-  const model = query.model;
-  if (typeof model !== "string" || model.length === 0) {
-    throw new Error("Integration AI gateway request has an invalid model");
-  }
-  return model;
 }
 
 function workersAiCompletion(
