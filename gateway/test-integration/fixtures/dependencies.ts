@@ -301,15 +301,6 @@ class ManagedInferenceTarget
   }
 }
 
-export class WorkersAiBindingFixture extends WorkerEntrypoint<Env> {
-  gateway(id: string): WorkersAiGatewayFixture {
-    if (id !== "default") {
-      throw new Error(`Unsupported integration AI gateway: ${id}`);
-    }
-    return new WorkersAiGatewayFixture(this.env);
-  }
-}
-
 export default class TestDependencies
   extends WorkerEntrypoint<Env>
   implements AdapterWorkerInterface
@@ -649,6 +640,13 @@ export default class TestDependencies
 
   async models(): Promise<never[]> {
     return [];
+  }
+
+  gateway(id: string): WorkersAiGatewayFixture {
+    if (id !== "default") {
+      throw new Error(`Unsupported integration AI gateway: ${id}`);
+    }
+    return new WorkersAiGatewayFixture(this.env);
   }
 
   private integrationState(): DurableObjectStub<IntegrationState> {

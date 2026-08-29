@@ -80,11 +80,7 @@ function integrationGatewayConfig(options: {
     worker_loaders: [{ binding: "LOADER" }],
     ai: undefined,
     services: [
-      {
-        binding: "AI",
-        service: DEPENDENCY_WORKER,
-        entrypoint: "WorkersAiBindingFixture",
-      },
+      { binding: "AI", service: DEPENDENCY_WORKER },
       { binding: "CHANNEL_DISCORD", service: DEPENDENCY_WORKER },
       { binding: "CHANNEL_TELEGRAM", service: DEPENDENCY_WORKER },
       { binding: "CHANNEL_WHATSAPP", service: DEPENDENCY_WORKER },
