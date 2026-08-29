@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   downloadSlackFile,
   exchangeSlackOAuthCode,
+  listSlackConversations,
   slackFileDeliveryErrorMessage,
   SlackApiError,
   uploadSlackFiles,
@@ -40,6 +41,45 @@ describe("Slack OAuth API", () => {
         token: "xoxp-valid-user-token-value",
         scope: "channels:read,chat:write",
       },
+    });
+  });
+});
+
+describe("Slack conversation API", () => {
+  it("sends an IM filter as a GET query parameter", async () => {
+    const provider = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      expect(init?.method).toBe("GET");
+      expect(url.searchParams.get("types")).toBe("im");
+      expect(url.searchParams.get("limit")).toBe("50");
+      expect(url.searchParams.get("exclude_archived")).toBe("true");
+      expect(new Headers(init?.headers).get("Authorization"))
+        .toBe("Bearer xoxp-valid-user-token-value");
+      return Response.json({
+        ok: true,
+        channels: [{
+          id: "DGSVBOT1",
+          user: "UGSVBOT1",
+          is_im: true,
+          is_private: true,
+        }],
+        response_metadata: { next_cursor: "" },
+      });
+    });
+
+    await expect(listSlackConversations("xoxp-valid-user-token-value", {
+      types: "im",
+      limit: 50,
+      excludeArchived: true,
+    }, provider)).resolves.toEqual({
+      items: [{
+        id: "DGSVBOT1",
+        userId: "UGSVBOT1",
+        isArchived: false,
+        isMember: false,
+        isPrivate: true,
+        kind: "im",
+      }],
     });
   });
 });
@@ -140,9 +180,8 @@ describe("Slack file API", () => {
       const url = new URL(String(input));
       if (url.pathname.endsWith("/files.getUploadURLExternal")) {
         ticket += 1;
-        expect(init?.headers).toMatchObject({
-          "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
-        });
+        expect(new Headers(init?.headers).get("Content-Type"))
+          .toBe("application/x-www-form-urlencoded; charset=utf-8");
         const body = new URLSearchParams(String(init?.body));
         expect(body.get("filename")).toBe(ticket === 1 ? "first.txt" : "second.txt");
         expect(Number(body.get("length"))).toBeGreaterThan(0);

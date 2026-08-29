@@ -170,7 +170,7 @@ type SlackApiJson =
 
 type SlackApiPayload = { [key: string]: SlackApiJson | undefined };
 
-type SlackApiFormPayload = {
+type SlackApiScalarPayload = {
   [key: string]: string | number | boolean | undefined;
 };
 
@@ -291,7 +291,7 @@ export async function listSlackConversations(
       ? requireText(input.cursor, "Slack cursor", 2_048)
       : undefined,
   } satisfies SlackApiPayload;
-  const result = await callSlackApi<{
+  const result = await callSlackGetApi<{
     channels?: SlackConversationApiObject[];
     response_metadata?: { next_cursor?: string };
   }>("conversations.list", userToken, payload, slackFetch);
@@ -904,8 +904,12 @@ async function callSlackApi<T extends object>(
   return await callSlackApiRequest<T>(
     method,
     token,
-    JSON.stringify(payload),
-    "application/json; charset=utf-8",
+    `${SLACK_API_BASE}/${method}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+      body: JSON.stringify(payload),
+    },
     slackFetch,
   );
 }
@@ -913,7 +917,7 @@ async function callSlackApi<T extends object>(
 async function callSlackFormApi<T extends object>(
   method: string,
   token: string,
-  payload: SlackApiFormPayload,
+  payload: SlackApiScalarPayload,
   slackFetch: SlackFetch,
 ): Promise<T> {
   const body = new URLSearchParams();
@@ -923,30 +927,42 @@ async function callSlackFormApi<T extends object>(
   return await callSlackApiRequest<T>(
     method,
     token,
-    body,
-    "application/x-www-form-urlencoded; charset=utf-8",
+    `${SLACK_API_BASE}/${method}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" },
+      body,
+    },
     slackFetch,
   );
+}
+
+async function callSlackGetApi<T extends object>(
+  method: string,
+  token: string,
+  payload: SlackApiScalarPayload,
+  slackFetch: SlackFetch,
+): Promise<T> {
+  const url = new URL(`${SLACK_API_BASE}/${method}`);
+  for (const [key, value] of Object.entries(payload)) {
+    if (value !== undefined) url.searchParams.set(key, String(value));
+  }
+  return await callSlackApiRequest<T>(method, token, url, { method: "GET" }, slackFetch);
 }
 
 async function callSlackApiRequest<T extends object>(
   method: string,
   token: string,
-  body: BodyInit,
-  contentType: string,
+  url: string | URL,
+  init: RequestInit,
   slackFetch: SlackFetch,
 ): Promise<T> {
   const normalizedToken = normalizedSlackToken(token);
+  const headers = new Headers(init.headers);
+  headers.set("Authorization", `Bearer ${normalizedToken}`);
   let response: Response;
   try {
-    response = await slackFetch(`${SLACK_API_BASE}/${method}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${normalizedToken}`,
-        "Content-Type": contentType,
-      },
-      body,
-    });
+    response = await slackFetch(url, { ...init, headers });
   } catch {
     throw new SlackApiError(`Slack API ${method} transport failed`, "ambiguous");
   }

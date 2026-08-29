@@ -67,7 +67,8 @@ describe("Slack delivery", () => {
 
   it("attributes shared-channel output to the linked Slack actor", async () => {
     const provider = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      expect(init?.headers).toMatchObject({ Authorization: "Bearer xoxb-valid-token-value" });
+      expect(new Headers(init?.headers).get("Authorization"))
+        .toBe("Bearer xoxb-valid-token-value");
       expect(JSON.parse(String(init?.body))).toMatchObject({
         channel: "CGENERAL1",
         thread_ts: "1700000000.000100",

@@ -23,6 +23,7 @@ type SlackApiCall = {
     }>;
     initial_comment?: string;
     ts?: string;
+    types?: string;
     bytes?: number[];
     authorization?: string;
   };
@@ -467,6 +468,31 @@ describe("managed Slack clean-instance flow", () => {
       ok: true,
       data: { status: "completed", output: "general\n", exitCode: 0 },
     });
+    using targetDmList = await peer.executeTarget(
+      "installation-alice",
+      alice.generation,
+      "workspace",
+      {
+        type: "req",
+        id: "target-dm-list",
+        call: "shell.exec",
+        args: {
+          input: "slack conversations list --types im --json | jq -r '.items[0] | [.kind, .id, .userId] | @tsv'",
+        },
+        deadlineAt: Date.now() + 120_000,
+      },
+    );
+    expect(targetDmList).toMatchObject({
+      ok: true,
+      data: { status: "completed", output: "im\tDGSVBOT1\tUGSVBOT1\n", exitCode: 0 },
+    });
+    expect(await slackApiCalls()).toContainEqual(expect.objectContaining({
+      method: "conversations.list",
+      body: expect.objectContaining({
+        types: "im",
+        authorization: "Bearer xoxp-managed-alice-user-token",
+      }),
+    }));
     using targetIdentity = await peer.executeTarget(
       "installation-alice",
       alice.generation,

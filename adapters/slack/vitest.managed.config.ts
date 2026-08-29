@@ -73,9 +73,11 @@ export default defineConfig({
                   }
                   const method = url.pathname.split("/").at(-1);
                   const contentType = request.headers.get("Content-Type") || "";
-                  const body = contentType.startsWith("application/json")
-                    ? await request.json()
-                    : Object.fromEntries(await request.formData());
+                  const body = request.method === "GET"
+                    ? Object.fromEntries(url.searchParams)
+                    : contentType.startsWith("application/json")
+                      ? await request.json()
+                      : Object.fromEntries(await request.formData());
                   calls.push({
                     method,
                     body: {
@@ -120,14 +122,22 @@ export default defineConfig({
                         if (request.signal.aborted) abort();
                       });
                     }
+                    const channels = body.types === "im"
+                      ? [{
+                          id: "DGSVBOT1",
+                          user: "UGSVBOT1",
+                          is_im: true,
+                          is_private: true,
+                        }]
+                      : [{
+                          id: "CGENERAL1",
+                          name: "general",
+                          is_member: true,
+                          is_private: false,
+                        }];
                     return Response.json({
                       ok: true,
-                      channels: [{
-                        id: "CGENERAL1",
-                        name: "general",
-                        is_member: true,
-                        is_private: false,
-                      }],
+                      channels,
                       response_metadata: { next_cursor: "" },
                     });
                   }
