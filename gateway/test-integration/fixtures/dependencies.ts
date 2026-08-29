@@ -51,6 +51,13 @@ type ApplyRequest = {
   ops?: unknown[];
 };
 
+type WorkersAiGatewayRequest = {
+  provider: string;
+  endpoint: string;
+  headers: Record<string, string>;
+  query: unknown;
+};
+
 export type RecordedOutboundMessage = {
   installationId: string;
   accountId: string;
@@ -267,6 +274,15 @@ class ManagedInferenceTarget
     await this.#env.INTEGRATION_STATE.get(id).recordManagedInferenceCancellation(
       this.#installationId,
     );
+  }
+}
+
+export class WorkersAiBindingFixture extends WorkerEntrypoint {
+  gateway(id: string): WorkersAiGatewayFixture {
+    if (id !== "default") {
+      throw new Error(`Unsupported integration AI gateway: ${id}`);
+    }
+    return new WorkersAiGatewayFixture();
   }
 }
 
@@ -605,6 +621,25 @@ export default class TestDependencies
   private integrationState(): DurableObjectStub<IntegrationState> {
     const id = this.env.INTEGRATION_STATE.idFromName(SINGLETON_INSTALLATION_ID);
     return this.env.INTEGRATION_STATE.get(id);
+  }
+}
+
+class WorkersAiGatewayFixture extends RpcTarget {
+  async run(
+    request: WorkersAiGatewayRequest,
+    options?: { signal?: AbortSignal },
+  ): Promise<Response> {
+    if (request.provider !== "compat") {
+      throw new Error(
+        `Unsupported integration AI gateway provider: ${request.provider}`,
+      );
+    }
+    return await fetch(`https://workers-ai.test/${request.endpoint}`, {
+      method: "POST",
+      headers: request.headers,
+      body: JSON.stringify(request.query),
+      signal: options?.signal,
+    });
   }
 }
 

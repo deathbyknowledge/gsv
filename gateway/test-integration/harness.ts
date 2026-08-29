@@ -80,7 +80,11 @@ function integrationGatewayConfig(options: {
     worker_loaders: [{ binding: "LOADER" }],
     ai: undefined,
     services: [
-      { binding: "AI", service: DEPENDENCY_WORKER },
+      {
+        binding: "AI",
+        service: DEPENDENCY_WORKER,
+        entrypoint: "WorkersAiBindingFixture",
+      },
       { binding: "CHANNEL_DISCORD", service: DEPENDENCY_WORKER },
       { binding: "CHANNEL_TELEGRAM", service: DEPENDENCY_WORKER },
       { binding: "CHANNEL_WHATSAPP", service: DEPENDENCY_WORKER },
@@ -157,7 +161,10 @@ function integrationDependencyConfig(
     name: config.name,
     main: config.main,
     compatibility_date: config.compatibility_date,
-    compatibility_flags: config.compatibility_flags,
+    compatibility_flags: [
+      ...(config.compatibility_flags ?? []),
+      "enable_abortsignal_rpc",
+    ],
     observability: config.observability,
     durable_objects: config.durable_objects,
     migrations: config.migrations,
@@ -180,6 +187,33 @@ function integrationDependencyConfig(
           calls: ["adapter.inbound", "adapter.state.update"],
         },
       },
+    ],
+  };
+}
+
+function integrationManagedInferenceConfig(
+  configPath: string,
+): Unstable_RawConfig {
+  const config = unstable_readConfig(
+    { config: configPath },
+    { hideWarnings: true },
+  );
+  return {
+    name: config.name,
+    main: config.main,
+    compatibility_date: config.compatibility_date,
+    compatibility_flags: [
+      ...(config.compatibility_flags ?? []),
+      "enable_abortsignal_rpc",
+    ],
+    rules: config.rules,
+    observability: config.observability,
+    vars: config.vars,
+    durable_objects: config.durable_objects,
+    migrations: config.migrations,
+    services: [
+      { binding: "ACCOUNTS", service: ACCOUNTS_WORKER },
+      { binding: "AI", service: DEPENDENCY_WORKER },
     ],
   };
 }
@@ -269,8 +303,7 @@ export function createManagedInferenceServiceStackTestHarness(
         },
       },
       {
-        configPath: serviceConfigs.inference,
-        bindingOverrides: { ACCOUNTS: ACCOUNTS_WORKER },
+        config: integrationManagedInferenceConfig(serviceConfigs.inference),
       },
     ],
   });
@@ -307,8 +340,7 @@ export function createManagedMailServiceStackTestHarness(
         },
       },
       {
-        configPath: serviceConfigs.inference,
-        bindingOverrides: { ACCOUNTS: ACCOUNTS_WORKER },
+        config: integrationManagedInferenceConfig(serviceConfigs.inference),
       },
       {
         config: integrationEmailConfig(gatewayService, queue),
