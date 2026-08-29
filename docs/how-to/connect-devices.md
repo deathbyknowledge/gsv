@@ -33,5 +33,5 @@ The connection expires after the number of days you set when adding the machine.
 ## See also
 
 - [Get Started](/get-started/)
-- [Connect a Messenger](/how-to/messengers) — reach GSV from your phone via WhatsApp, Telegram, or Discord
+- [Connect a Messenger](/how-to/messengers) — reach GSV from your phone via WhatsApp, Telegram, Discord, or Slack
 - [Architecture: The Adapter Model](/architecture/adapter-model)

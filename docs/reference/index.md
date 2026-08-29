@@ -18,7 +18,7 @@ need the system model, go to [Architecture](../architecture/).
 
 - [Configuration](./configuration.md)
 - [Context Files](./context-files.md)
-- [Hardware Tools](./hardware-tools.md)
+- [Target Tools](./hardware-tools.md)
 - [Routing](./routing.md)
 - [Storage](./r2-storage.md)
 

@@ -151,10 +151,12 @@ export async function listVisibleAdapterMessageDestinations(
       `${route.adapter.trim().toLowerCase()}\0${route.accountId.trim()}\0${route.actorId.trim()}`,
     );
     if (!link) continue;
-    addCandidate(link, {
+    const surface: AdapterSurface = {
       kind: route.surfaceKind,
       id: route.surfaceId,
-    });
+    };
+    if (route.threadId) surface.threadId = route.threadId;
+    addCandidate(link, surface);
   }
 
   return (await Promise.all([...candidateMap.values()]
@@ -352,9 +354,14 @@ export function identityLinkRouteGeneration(
   link: IdentityLinkRecord,
   surface: AdapterSurface,
 ): string | undefined {
-  if (link.metadata?.managed !== true || !identityLinkAllowsSurface(link, surface)) {
+  if (link.metadata?.managed !== true) {
     return undefined;
   }
+  const routeScope = metadataString(link.metadata, "routeScope") || "surface";
+  if (routeScope === "surface" && !identityLinkAllowsSurface(link, surface)) {
+    return undefined;
+  }
+  if (routeScope !== "surface" && routeScope !== "actor") return undefined;
   return metadataString(link.metadata, "routeGeneration") || undefined;
 }
 

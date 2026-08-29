@@ -2,7 +2,7 @@
 
 Use this page when you want to understand how GSV connects an open-ended set of
 external messaging systems to the same durable process model used by the CLI
-and Desktop. WhatsApp, Discord, and Telegram are bundled adapter
+and Desktop. WhatsApp, Discord, Telegram, and Slack are bundled adapter
 implementations, not a closed list of transports recognized by the Kernel.
 
 ## Why adapters exist
@@ -32,10 +32,13 @@ An adapter is responsible for:
 The Kernel does not need to know how WhatsApp or Discord work internally. It only
 needs a normalized control surface.
 
-Adapters are not execution targets. They do not appear in `sys.device.list`,
-the `targets`/`devices` shell inventory, the model's available-target list, or
-the Machines console. Those surfaces contain only places where targetable
-syscalls can run: GSV, connected devices, and browser-backed targets.
+An adapter's messaging projection is not automatically an execution target.
+Most bundled adapters do not appear in the `targets` shell inventory or the
+model's available-target list because they do not implement targetable syscalls.
+Managed Slack is the first adapter-backed exception: after personal OAuth and
+pairing it advertises a `shell.exec` target containing the provider-owned
+`slack` CLI. The compatibility `sys.device.*` API and Machines console remain
+hardware-oriented and do not administer service-backed targets.
 
 Messaging has its own two deliberate views:
 
@@ -44,8 +47,15 @@ Messaging has its own two deliberate views:
 - Adapter APIs and the Messengers console expose account connection, health,
   identity-link, and administration state.
 
-This keeps a Telegram account from masquerading as a machine while preserving
-the adapter as the platform-specific owner of delivery.
+This keeps a transport-only Telegram account from masquerading as a capability
+environment while preserving the adapter as the platform-specific owner of
+delivery. An adapter account may independently provide a target when it exposes
+a coherent filesystem, command environment, or other target primitives. The
+adapter still owns provider identity, credentials, formatting, retries, and
+delivery policy; target routing does not move those concerns into the Kernel.
+
+See [Targets and Capability Environments](./targets.md) for the target-provider
+contract and the distinction between peers, adapters, machines, and targets.
 
 ## Why deployment names still say `channel-*`
 
@@ -98,8 +108,9 @@ Normalized message and body types live in
 `packages/gsv/src/protocol/adapters.ts`. The Worker RPC extension point is
 `AdapterService` in `packages/gsv/src/services/adapters.ts`. Every adapter
 returns a descriptor for lifecycle, status, activity, pairing, surface, and
-media support; adapters call the Gateway's single `serviceFrame` entrypoint for
-`adapter.inbound` and `adapter.state.update`.
+media support, plus an explicit target-support bit when applicable. Adapters
+call the Gateway's single `serviceFrame` entrypoint for `adapter.inbound` and
+`adapter.state.update`.
 
 The canonical adapter identity comes from the trusted `CHANNEL_*` service
 binding. A descriptor must agree with that identity and cannot grant its Worker
@@ -116,14 +127,17 @@ The Kernel supplies that context from its durable installation identity; it is
 not read from adapter message arguments or a public request. First-party
 adapters use it to derive the account Durable Object name. The object recovers
 the same immutable installation and account identity from its name instead of
-persisting a second, mutable copy alongside provider state. The managed
-platform Telegram bot is deliberately different from an installation-owned
-account. Its public webhook derives one peer Durable Object from the
-authenticated private Telegram identity. The peer owns an exclusive route
-containing the installation, local uid, and a fresh generation. Inbound records
-and queued replies retain that generation and recheck it immediately before
-crossing the Gateway or Telegram boundary, so delayed work cannot cross a
-relink.
+persisting a second, mutable copy alongside provider state. Managed shared apps
+are deliberately different from installation-owned accounts. Telegram derives
+one peer Durable Object from the authenticated private Telegram identity. Slack
+first admits the signed event through the installed workspace record, then
+derives a peer from that workspace and human author; a public Slack request
+still cannot select a GSV installation or local uid. Each peer owns an
+exclusive route containing the installation, local uid, and a fresh generation.
+Inbound records and queued replies retain that generation and recheck it
+immediately before crossing the Gateway or provider boundary, so delayed work
+cannot cross a relink. Slack additionally requires the exact public channel or
+thread to have been observed for that author before it will deliver there.
 
 Managed account objects use a collision-free internal name derived from
 `installationId` and the installation-local `accountId`. The explicit
@@ -131,8 +145,9 @@ Managed account objects use a collision-free internal name derived from
 account name, so upgrading a standalone Telegram, Discord, WhatsApp, or test
 adapter reaches its existing Durable Object and provider session. Adapter
 alarms and retries recover the installation context from the named Durable
-Object before calling the Gateway. Managed Telegram recovers it from the peer's
-generation-fenced active route. They do not depend on a browser hostname.
+Object before calling the Gateway. Managed Telegram and Slack recover it from
+the peer's generation-fenced active route. They do not depend on a browser
+hostname.
 
 ## Inbound flow
 

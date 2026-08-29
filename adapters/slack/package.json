@@ -1,0 +1,25 @@
+{
+  "name": "@gsv/channel-slack",
+  "version": "0.4.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy --minify",
+    "deploy:managed": "wrangler deploy --config wrangler.managed.jsonc --minify",
+    "dry-run:managed": "wrangler deploy --config wrangler.managed.jsonc --dry-run --outdir /tmp/gsv-managed-slack-dry-run",
+    "test": "vitest run",
+    "test:standalone": "vitest run --config vitest.standalone.config.ts",
+    "test:managed": "vitest run --config vitest.managed.config.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "just-bash": "^3.4.2",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260814.1",
+    "typescript": "^5.7.3",
+    "wrangler": "^4.123.0"
+  }
+}

@@ -1,0 +1,49 @@
+_metadata:
+  major_version: 1
+display_information:
+  name: GSV
+  description: Reach your personal GSV from Slack.
+features:
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+  bot_user:
+    display_name: GSV
+    always_online: false
+oauth_config:
+  redirect_urls:
+    - https://SLACK_ORIGIN/slack/oauth/callback
+  scopes:
+    bot:
+      - app_mentions:read
+      - chat:write
+      - chat:write.public
+      - files:read
+      - files:write
+      - im:history
+      - im:write
+      - reactions:write
+    user:
+      - channels:history
+      - channels:read
+      - groups:history
+      - groups:read
+      - im:history
+      - im:read
+      - mpim:history
+      - mpim:read
+      - users:read
+settings:
+  interactivity:
+    is_enabled: true
+    request_url: https://SLACK_ORIGIN/slack/interactions
+  event_subscriptions:
+    request_url: https://SLACK_ORIGIN/slack/events
+    bot_events:
+      - app_mention
+      - app_uninstalled
+      - message.im
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

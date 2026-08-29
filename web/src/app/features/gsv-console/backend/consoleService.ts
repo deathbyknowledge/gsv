@@ -39,7 +39,7 @@ import { requestFsRead } from "../../../services/gateway/fsRead";
 import { z } from "zod";
 export type { AgentApprovalAction } from "../domain/consoleAgentBehavior";
 
-export const DEFAULT_CONSOLE_ADAPTERS = ["whatsapp", "discord", "telegram"] as const;
+export const DEFAULT_CONSOLE_ADAPTERS = ["whatsapp", "discord", "telegram", "slack"] as const;
 const TEXT_MODEL_VALIDATION_KEYS = [
   "config/ai/provider",
   "config/ai/model",

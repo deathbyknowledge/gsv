@@ -385,12 +385,20 @@ export type AdapterPairingInfo = {
   accountId: string;
   configured: boolean;
   botUsername?: string;
+  installUrl?: string;
 };
+
+export type AdapterPairingRouteScope = "surface" | "actor";
 
 export type AdapterPairingCandidate = {
   accountId: string;
   actorId: string;
   surfaceId: string;
+  /**
+   * Scope at which the managed peer's generation fences ingress and delivery.
+   * Omitted candidates retain the original exact-surface behavior.
+   */
+  routeScope?: AdapterPairingRouteScope;
   actorName?: string;
   actorHandle?: string;
   expiresAt: number;
@@ -429,6 +437,7 @@ export type AdapterPairingFinalizeInput = AdapterPairingActivateInput;
 export type AdapterPairingDisconnectInput = {
   operationId: string;
   installationId: string;
+  accountId: string;
   actorId: string;
   surfaceId: string;
   localUid: number;

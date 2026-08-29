@@ -1,0 +1,40 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gsv-channel-slack-test",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-29",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SLACK_ACCOUNT",
+        "class_name": "SlackAccount"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["SlackAccount"]
+    }
+  ],
+  "services": [
+    {
+      "binding": "GATEWAY",
+      "service": "slack-gateway-test",
+      "entrypoint": "AdapterGatewayEntrypoint",
+      "props": {
+        "id": "slack",
+        "calls": ["adapter.inbound", "adapter.state.update"]
+      }
+    },
+    {
+      "binding": "SLACK_API",
+      "service": "slack-api-test"
+    },
+    {
+      "binding": "SLACK_SOCKET",
+      "service": "slack-socket-test"
+    }
+  ]
+}

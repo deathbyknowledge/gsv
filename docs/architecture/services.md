@@ -61,7 +61,7 @@ operations, surface kinds, and media directions. The Gateway discovers adapter
 bindings by their `CHANNEL_*` deployment identity and verifies that the returned
 descriptor agrees with that trusted identity.
 
-Telegram, WhatsApp, and Discord are bundled implementations. Matrix, Slack,
+Telegram, WhatsApp, Discord, and Slack are bundled implementations. Matrix,
 Signal, IRC, a game chat, or a future transport can implement the same contract
 without adding a Kernel-specific RPC.
 

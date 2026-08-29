@@ -9,7 +9,13 @@ type TelegramApiMessage = {
 };
 
 type TelegramUpdateContent = { text?: string; voice?: { file_id: string; file_size: number; duration: number; mime_type: string } };
-type GatewayCall = { installation?: { installationId?: string }; call?: string; args?: { routeGeneration?: string; message?: { text?: string; media?: Array<{ type: string }> } }; bodyBytes?: number[] };
+type GatewayCall = {
+  installation?: { installationId?: string };
+  call?: string;
+  args?: { routeGeneration?: string; message?: { text?: string; media?: Array<{ type: string }> } };
+  input?: { accountId?: string; actorId?: string; expectedGeneration?: string };
+  bodyBytes?: number[];
+};
 type ManagedOperationResult = { ok?: boolean };
 
 type ManagedPairingStub = {
@@ -244,6 +250,17 @@ describe("managed Telegram clean-instance flow", () => {
       canonicalOrigin: relinkOperation.canonicalOrigin,
     });
     expect(relinked.route.generation).not.toBe(firstGeneration);
+    await vi.waitFor(async () => {
+      expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
+        installation: { installationId: "installation_test" },
+        call: "unlinkManagedAdapterIdentity",
+        input: expect.objectContaining({
+          accountId: "managed",
+          actorId: "12345",
+          expectedGeneration: firstGeneration,
+        }),
+      }));
+    });
 
     // SAFETY: The test environment exposes the declared Durable Object namespace binding.
     const peers = env.MANAGED_TELEGRAM_PEER as DurableObjectNamespace;

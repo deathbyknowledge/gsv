@@ -60,12 +60,17 @@ npm exec --workspace gateway -- tsc --noEmit
 npm run check --prefix "$ROOT_DIR/adapters/email" --workspaces=false
 npm run typecheck --prefix "$ROOT_DIR/adapters/telegram" --workspaces=false
 npm run test:managed --prefix "$ROOT_DIR/adapters/telegram" --workspaces=false
+npm run typecheck --prefix "$ROOT_DIR/adapters/slack" --workspaces=false
+npm run test --prefix "$ROOT_DIR/adapters/slack" --workspaces=false
+npm run test:standalone --prefix "$ROOT_DIR/adapters/slack" --workspaces=false
+npm run test:managed --prefix "$ROOT_DIR/adapters/slack" --workspaces=false
 
 generate_types "$ACCOUNTS_DIR" "wrangler.jsonc" "accounts" "ManagedAccountsEnv"
 generate_types "$INFERENCE_DIR" "wrangler.jsonc" "inference" "ManagedInferenceEnv"
 generate_types "$ROOT_DIR/gateway" "wrangler.managed.jsonc" "gateway" "ManagedGatewayEnv"
 generate_types "$ROOT_DIR/adapters/email" "wrangler.jsonc" "email" "ManagedEmailEnv"
 generate_types "$ROOT_DIR/adapters/telegram" "wrangler.managed.jsonc" "telegram" "ManagedTelegramEnv"
+generate_types "$ROOT_DIR/adapters/slack" "wrangler.managed.jsonc" "slack" "ManagedSlackEnv"
 
 run_wrangler "$ACCOUNTS_DIR" "wrangler.jsonc" "accounts"
 run_wrangler "$INFERENCE_DIR" "wrangler.jsonc" "inference"
@@ -73,5 +78,6 @@ run_wrangler "$ROOT_DIR/ripgit" "wrangler.managed.jsonc" "ripgit"
 run_wrangler "$ROOT_DIR/gateway" "wrangler.managed.jsonc" "gateway"
 run_wrangler "$ROOT_DIR/adapters/email" "wrangler.jsonc" "email"
 run_wrangler "$ROOT_DIR/adapters/telegram" "wrangler.managed.jsonc" "telegram"
+run_wrangler "$ROOT_DIR/adapters/slack" "wrangler.managed.jsonc" "slack"
 
 echo "Managed production configs and Worker bundles are valid."

@@ -234,6 +234,9 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> implements Ada
     if (input.installationId !== parsed.installationId) {
       throw new Error("Pairing installation does not match the caller");
     }
+    if (input.accountId !== MANAGED_TELEGRAM_ACCOUNT_ID) {
+      throw new Error("Managed Telegram account ID is invalid");
+    }
     return await this.peer(input.surfaceId).disconnect(input);
   }
 

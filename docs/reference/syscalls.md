@@ -28,7 +28,9 @@ Some requests and successful responses attach a top-level byte-stream body;
 `client.request()` for body-bearing syscalls and consume or cancel the body.
 Generated namespace methods and `client.call()` are data-only.
 
-`fs.*`, `shell.exec`, and `net.fetch` are hardware-routable. Their wire args may include `target`; dispatch strips it before the native or device handler receives the syscall.
+`fs.*`, `shell.exec`, and `net.fetch` are target-routable. Their wire args may
+include `target`; dispatch strips it before the selected native or registered
+target implementation receives the syscall.
 
 ## Shared Records
 
@@ -376,7 +378,7 @@ direct tool calls.
 Worker Loader executor, but is not exposed as a model tool.
 
 `codemode.exec` is process-local and internal-only. It is not handled by the
-Kernel dispatcher and is not itself device-routed. `codemode.run` is public and
+Kernel dispatcher and is not itself target-routed. `codemode.run` is public and
 kernel-forwarded to a process, defaulting to the calling process. External
 callers must supply a PID. In both
 cases, the sandboxed block receives wrappers for the existing filesystem and

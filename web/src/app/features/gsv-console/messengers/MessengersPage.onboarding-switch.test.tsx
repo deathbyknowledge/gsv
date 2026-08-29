@@ -7,10 +7,12 @@ import {
   type MessengerOnboardingDependencies,
 } from "./MessengerOnboardingFlow";
 import {
+  collectText,
   createTestRoot,
   deferred,
   flowStepNodes,
   nodeWithLabel,
+  unusedConnectNav,
 } from "./messengerTestHarness";
 
 type OnboardingTestState = {
@@ -99,6 +101,41 @@ afterEach(async () => {
 });
 
 describe("messenger onboarding platform switches", () => {
+  it("connects standalone Slack with its bot and Socket Mode tokens", async () => {
+    connectAdapter.mockResolvedValue({
+      ok: true,
+      adapter: "slack",
+      accountId: "default",
+      connected: true,
+      authenticated: true,
+    });
+    await renderFlow("slack");
+    expect(currentFlow().title).toBe("Connect Slack app");
+    expect(collectText(currentFlow().steps[0]!.render(unusedConnectNav))).toContain(
+      "enable Socket Mode and Interactivity",
+    );
+    expect(collectText(currentFlow().steps[1]!.render(unusedConnectNav))).toContain(
+      "files:read, files:write",
+    );
+    await reachConnectStep();
+
+    const nodes = currentStepNodes();
+    await act(() => {
+      nodeWithLabel(nodes, "BOT TOKEN").props.onChange?.("xoxb-private");
+      nodeWithLabel(nodes, "APP-LEVEL TOKEN").props.onChange?.("xapp-private");
+    });
+    await clickStepButton("CONNECT");
+
+    expect(connectAdapter).toHaveBeenCalledWith({
+      adapter: "slack",
+      accountId: "default",
+      config: {
+        botToken: "xoxb-private",
+        appToken: "xapp-private",
+      },
+    });
+  });
+
   it("isolates Telegram from a pending Discord connection and form state", async () => {
     const pendingDiscord = deferred<ConnectConsoleAdapterResult>();
     connectAdapter.mockReturnValue(pendingDiscord.promise);

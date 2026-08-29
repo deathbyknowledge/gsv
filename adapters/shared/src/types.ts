@@ -27,6 +27,7 @@ export type {
   AdapterPairingPreparation,
   AdapterPairingPrepareInput,
   AdapterPairingRoute,
+  AdapterPairingRouteScope,
   AdapterPairingWorkerInterface,
   AdapterSurface,
   AdapterSurfaceKind,

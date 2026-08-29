@@ -153,14 +153,17 @@ deny, or ask for matching syscalls. The default policy asks for `shell.exec`,
 `fs.delete`, `sys.mcp.call`, and `mail.send`. A background process can pause
 durably for the owner's decision without gaining a direct human conversation.
 
-## Devices
+## Targets and Devices
 
-Devices register with a hardware descriptor: device id, owner uid, platform,
-version, and an `implements` list such as
+A target is a Unix-shaped capability environment. The native `gsv` target is
+implemented inside the Gateway; external machine and browser targets currently
+register through the device compatibility path with a device id, owner uid,
+platform, version, and an `implements` list such as
 `["fs.*", "shell.exec", "net.fetch"]`.
 
-`fs.*`, `shell.exec`, and `net.fetch` are hardware-routable. `target: "gsv"`
-runs the native implementation. A device target is forwarded only when:
+`fs.*`, `shell.exec`, and `net.fetch` are target-routable. `target: "gsv"`
+runs the native implementation. A registered external target is forwarded only
+when:
 
 - The caller can access the device by root, owner uid, or device group ACL.
 - The device is online.
@@ -168,7 +171,8 @@ runs the native implementation. A device target is forwarded only when:
 - A live driver WebSocket exists for that device id.
 
 The forwarded request keeps the same syscall shape. Agents always see the same
-tools; `target` selects the hardware.
+tools; `target` selects the capability environment. See
+[Targets and Capability Environments](./targets.md).
 
 ## Adapters and External Actors
 

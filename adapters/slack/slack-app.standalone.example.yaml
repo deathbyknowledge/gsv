@@ -1,0 +1,33 @@
+_metadata:
+  major_version: 1
+display_information:
+  name: GSV
+  description: Reach your standalone GSV from Slack.
+features:
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+  bot_user:
+    display_name: GSV
+    always_online: false
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read
+      - chat:write
+      - files:read
+      - files:write
+      - im:history
+      - im:write
+settings:
+  interactivity:
+    is_enabled: true
+  event_subscriptions:
+    bot_events:
+      - app_mention
+      - app_uninstalled
+      - message.im
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false

@@ -1,0 +1,55 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gsv-managed-slack-test",
+  "main": "src/managed.ts",
+  "compatibility_date": "2026-07-29",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "SLACK_CLIENT_ID": "12345.67890",
+    "SLACK_CLIENT_SECRET": "client_secret_123456789",
+    "SLACK_SIGNING_SECRET": "signing_secret_123456789",
+    "SLACK_OAUTH_STATE_SECRET": "oauth_state_secret_12345678901234567890",
+    "SLACK_PUBLIC_BASE_URL": "https://slack.test"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MANAGED_SLACK_WORKSPACE",
+        "class_name": "ManagedSlackWorkspace"
+      },
+      {
+        "name": "MANAGED_SLACK_PEER",
+        "class_name": "ManagedSlackPeer"
+      },
+      {
+        "name": "MANAGED_SLACK_PAIRING",
+        "class_name": "ManagedSlackPairing"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "ManagedSlackWorkspace",
+        "ManagedSlackPeer",
+        "ManagedSlackPairing"
+      ]
+    }
+  ],
+  "services": [
+    {
+      "binding": "GATEWAY",
+      "service": "managed-slack-gateway-test",
+      "entrypoint": "AdapterGatewayEntrypoint",
+      "props": {
+        "id": "slack",
+        "calls": ["adapter.inbound", "adapter.state.update"]
+      }
+    },
+    {
+      "binding": "SLACK_API",
+      "service": "managed-slack-api-test"
+    }
+  ]
+}

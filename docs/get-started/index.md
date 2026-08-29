@@ -48,7 +48,7 @@ That's it — you have your own GSV.
 
 - Click the **GSV circle** (top) for your files, library, terminal, and settings.
 - **Machines** — the devices connected to your GSV, and where you add new ones (laptop, phone, server).
-- **Messengers** — your connections to WhatsApp, Telegram, Discord, and more to come.
+- **Messengers** — your connections to WhatsApp, Telegram, Discord, and Slack.
 - **Integrations** — your MCP servers.
 - Click your **personal agent** (bottom right) to start chatting. Ask it what it can do.
 
@@ -58,7 +58,7 @@ Now that GSV is running:
 
 - [Connect your devices](/how-to/connect-devices) — turn your laptop, phone, and server into one computer.
 - [Bring your own model](/how-to/bring-your-own-model) — use a provider key instead of the Cloudflare default.
-- [Connect a messenger](/how-to/messengers) — talk to GSV from WhatsApp, Telegram, or Discord.
+- [Connect a messenger](/how-to/messengers) — talk to GSV from WhatsApp, Telegram, Discord, or Slack.
 - [Add integrations](/how-to/integrations) — wire in MCP servers.
 - [Web access](/how-to/browse-web) — let your agent browse your web like you can.
 - [Examples](/examples/index) — see some examples on how to use GSV.

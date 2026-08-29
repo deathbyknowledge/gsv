@@ -11,6 +11,7 @@ import {
   messengerIdentityLabel,
   messengerAccountNoun,
   messengerFamilies,
+  deriveAccountId,
 } from "./messengerPresentation";
 
 const whatsappAccount: ConsoleAdapterAccount = {
@@ -34,7 +35,10 @@ describe("messenger presentation", () => {
     expect(messengerAccountNoun("whatsapp", 1)).toBe("account");
     expect(messengerAccountNoun("whatsapp", 2)).toBe("accounts");
     expect(messengerAccountNoun("telegram", 1)).toBe("bot");
+    expect(messengerAccountNoun("slack", 2)).toBe("workspaces");
     expect(iconForAdapterName("whatsapp")).toBe("doticons/whatsapp");
+    expect(SUPPORTED_MESSENGER_ADAPTERS).toContain("slack");
+    expect(deriveAccountId("slack", "xoxb-secret")).toBe("default");
   });
 
   it("prefers the paired phone number and does not expose the raw JID", () => {

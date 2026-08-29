@@ -86,7 +86,7 @@ Bring your own. You can connect your own model provider with your own API key, o
 
 See [Bring Your Own Model](/how-to/bring-your-own-model) for setup instructions.
 
-### Can I use it from WhatsApp, Telegram, or Discord?
+### Can I use it from WhatsApp, Telegram, Discord, or Slack?
 
 GSV is designed to be reachable from the messengers you already use, so you can talk to it from wherever you are.
 

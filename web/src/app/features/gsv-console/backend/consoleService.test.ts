@@ -361,6 +361,7 @@ describe("console agent service", () => {
     expect(call).toHaveBeenCalledWith("adapter.status", { adapter: "whatsapp" });
     expect(call).toHaveBeenCalledWith("adapter.status", { adapter: "discord" });
     expect(call).toHaveBeenCalledWith("adapter.status", { adapter: "telegram" });
+    expect(call).toHaveBeenCalledWith("adapter.status", { adapter: "slack" });
   });
 
   it("refreshes one adapter account directly during pairing", async () => {

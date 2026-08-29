@@ -1,6 +1,7 @@
 // External documentation per adapter (GSV docs site).
 export const ADAPTER_DOC_URLS = {
   telegram: "https://docs.gsv.space/how-to/messengers#telegram",
+  slack: "https://docs.gsv.space/how-to/messengers#slack",
   discord: "https://docs.gsv.space/how-to/messengers#discord",
   whatsapp: "https://docs.gsv.space/how-to/messengers#whatsapp",
 } satisfies Record<string, string>;
@@ -16,6 +17,8 @@ export function adapterDocUrl(adapter: string): string {
 export const BOTFATHER_URL = "https://t.me/botfather";
 // Discord developer portal (where users create a bot application + token).
 export const DISCORD_DEVELOPER_URL = "https://discord.com/developers/applications";
+// Slack API portal (where standalone users create and configure their app).
+export const SLACK_APPS_URL = "https://api.slack.com/apps";
 
 // "Things you can do with your messenger-bot" — shown on the success step.
 export interface MessengerCapability {

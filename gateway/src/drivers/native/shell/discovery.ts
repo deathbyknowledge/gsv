@@ -8,7 +8,7 @@ import {
   collectKernelSkillDocuments,
 } from "../../../kernel/skills";
 import { handleSysMcpList } from "../../../kernel/sys/mcp";
-import { listVisibleTargets } from "../../../kernel/targets";
+import { listAllVisibleTargets } from "../../../kernel/targets";
 
 export type ShellDiscoveryKind = "command" | "integration" | "target" | "workflow";
 
@@ -223,7 +223,7 @@ export class ShellDiscoveryCatalog {
     const entries = [
       ...this.commands.values(),
       ...await this.skillEntries(),
-      ...this.targetEntries(),
+      ...await this.targetEntries(),
       ...this.integrationEntries(),
     ];
     return rankShellDiscoveryEntries(entries, query).map(stripSearchText);
@@ -252,12 +252,12 @@ export class ShellDiscoveryCatalog {
     }
   }
 
-  private targetEntries(): ShellDiscoveryEntry[] {
+  private async targetEntries(): Promise<ShellDiscoveryEntry[]> {
     if (!hasCapability(this.ctx.identity?.capabilities ?? [], "sys.device.list")) {
       return [];
     }
     try {
-      return listVisibleTargets(this.ctx).map((target) => {
+      return (await listAllVisibleTargets(this.ctx)).map((target) => {
         const entry: ShellDiscoveryEntry = {
         kind: "target" as const,
         name: target.targetId,

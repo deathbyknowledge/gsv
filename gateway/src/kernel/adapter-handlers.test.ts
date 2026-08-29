@@ -5,7 +5,7 @@ import type { KernelContext } from "./context";
 import {
   handleAdapterConnect,
   handleAdapterDisconnect,
-  deliverAdapterReply,
+  deliverAdapterDestination,
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   handleAdapterInbound as handleAdapterInboundImpl,
   handleAdapterList,
@@ -4021,6 +4021,101 @@ describe("adapter lifecycle handlers", () => {
     expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
+  it("admits an addressed shared surface through an actor-scoped managed route", async () => {
+    const link = {
+      adapter: "slack",
+      accountId: "workspace-1",
+      actorId: "U12345",
+      uid: 1000,
+      createdAt: 1,
+      linkedByUid: 1000,
+      metadata: {
+        managed: true,
+        surfaceKind: "dm",
+        surfaceId: "D12345",
+        routeScope: "actor",
+        routeGeneration: "generation-current",
+      },
+    };
+    const ctx = makeContext({}, { upsert: vi.fn() }, {
+      identityLinks: { get: vi.fn(() => link) },
+      surfaceRoute: {
+        adapter: "slack",
+        accountId: "workspace-1",
+        actorId: "U12345",
+        surfaceKind: "channel",
+        surfaceId: "C12345",
+        threadId: "1724785200.000100",
+        uid: 1000,
+        pid: "pid-1",
+        mode: "surface",
+        updatedAt: 1,
+        updatedByUid: 1000,
+      },
+    });
+    sendFrameToProcessMock.mockImplementation(async (
+      _installationId: string,
+      _pid: string,
+      frame: any,
+    ) => {
+      if (frame.call === "proc.history") {
+        return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
+      }
+      if (frame.call === "proc.adapter.deliver") {
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: { ok: true, runId: frame.args.runId, queued: false },
+        };
+      }
+      throw new Error(`Unexpected call: ${frame.call}`);
+    });
+
+    const current = {
+      adapter: "slack",
+      accountId: "workspace-1",
+      routeGeneration: "generation-current",
+      message: {
+        messageId: "Ev12345",
+        surface: {
+          kind: "channel" as const,
+          id: "C12345",
+          threadId: "1724785200.000100",
+        },
+        actor: { id: "U12345" },
+        text: "please help",
+        wasMentioned: true,
+      },
+    };
+    await expect(handleAdapterInbound(current, ctx)).resolves.toMatchObject({
+      ok: true,
+      delivered: { pid: "pid-1" },
+    });
+    expect(ctx.runRoutes.setAdapterRoute).toHaveBeenCalledWith(expect.objectContaining({
+      routeGeneration: "generation-current",
+      destination: expect.objectContaining({
+        adapter: "slack",
+        actorId: "U12345",
+        surface: {
+          kind: "channel",
+          id: "C12345",
+          threadId: "1724785200.000100",
+        },
+      }),
+    }));
+
+    sendFrameToProcessMock.mockClear();
+    vi.mocked(ctx.runRoutes.setAdapterRoute).mockClear();
+    await expect(handleAdapterInbound({
+      ...current,
+      routeGeneration: "generation-stale",
+      message: { ...current.message, messageId: "Ev12346" },
+    }, ctx)).resolves.toEqual({ ok: true, droppedReason: "stale_route_generation" });
+    expect(ctx.runRoutes.setAdapterRoute).not.toHaveBeenCalled();
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
   it("forwards the original outbound body without reading it and cancels after delivery", async () => {
     const getReader = vi.fn();
     const cancel = vi.fn(async () => undefined);
@@ -4751,7 +4846,7 @@ describe("adapter lifecycle handlers", () => {
       surface: { kind: "dm" as const, id: "chat-42" },
     };
 
-    const result = await deliverAdapterReply(
+    const result = await deliverAdapterDestination(
       destination,
       1000,
       {
@@ -4804,7 +4899,7 @@ describe("adapter lifecycle handlers", () => {
       surface: { kind: "dm" as const, id: "chat-42" },
     };
 
-    await expect(deliverAdapterReply(destination, 1000, { text: "hello" }, ctx)).resolves.toEqual({
+    await expect(deliverAdapterDestination(destination, 1000, { text: "hello" }, ctx)).resolves.toEqual({
       ok: false,
       error: "Adapter destination is not authorized",
     });
@@ -4848,17 +4943,29 @@ describe("managed adapter pairing", () => {
     };
   }
 
-  function pairingService() {
+  function pairingService(
+    pairingCandidate = candidate,
+    pairingRoute = route,
+  ) {
     return {
       adapterPairingInfo: vi.fn(async () => ({
         accountId: "managed",
         configured: true,
         botUsername: "official_gsv_bot",
       })),
-      adapterPairingInspect: vi.fn(async () => candidate),
-      adapterPairingPrepare: vi.fn(async () => ({ candidate, route })),
-      adapterPairingActivate: vi.fn(async () => ({ candidate, route })),
-      adapterPairingFinalize: vi.fn(async () => ({ candidate, route })),
+      adapterPairingInspect: vi.fn(async () => pairingCandidate),
+      adapterPairingPrepare: vi.fn(async () => ({
+        candidate: pairingCandidate,
+        route: pairingRoute,
+      })),
+      adapterPairingActivate: vi.fn(async () => ({
+        candidate: pairingCandidate,
+        route: pairingRoute,
+      })),
+      adapterPairingFinalize: vi.fn(async () => ({
+        candidate: pairingCandidate,
+        route: pairingRoute,
+      })),
       adapterPairingDisconnect: vi.fn(async () => ({ disconnected: true })),
     };
   }
@@ -4973,6 +5080,7 @@ describe("managed adapter pairing", () => {
         managed: true,
         surfaceKind: "dm",
         surfaceId: "12345",
+        routeScope: "surface",
         routeGeneration: "generation-new",
       }),
     );
@@ -4994,6 +5102,7 @@ describe("managed adapter pairing", () => {
       { installationId },
       expect.objectContaining({
         installationId,
+        accountId: "managed",
         actorId: "12345",
         surfaceId: "12345",
         localUid: 1000,
@@ -5083,6 +5192,59 @@ describe("managed adapter pairing", () => {
         resolution: expect.objectContaining({ eventType: "adapter.disconnected" }),
       }),
     }));
+  });
+
+  it("confirms an actor-scoped identity whose DM and actor IDs differ", async () => {
+    const slackCandidate = {
+      accountId: "workspace-1",
+      actorId: "U12345",
+      surfaceId: "D67890",
+      routeScope: "actor" as const,
+      actorName: "Alice",
+      expiresAt: Date.now() + 60_000,
+      linked: false,
+    };
+    const service = pairingService(slackCandidate);
+    const link = vi.fn();
+    const ctx = makeContext(
+      { CHANNEL_SLACK: service },
+      {
+        upsert: vi.fn(),
+        setOwner: vi.fn(),
+        list: vi.fn(() => []),
+        listByOwner: vi.fn(() => []),
+      },
+      directUserOptions({
+        identityLinks: {
+          get: vi.fn(() => null),
+          link,
+          list: vi.fn(() => []),
+          listByAccount: vi.fn(() => []),
+        },
+      }),
+    );
+
+    await expect(handleAdapterPairConfirm({
+      adapter: "slack",
+      code: "ABCD-EFGH-JKLM",
+    }, ctx)).resolves.toMatchObject({
+      adapter: "slack",
+      accountId: "workspace-1",
+      actorId: "U12345",
+      surfaceId: "D67890",
+    });
+    expect(link).toHaveBeenCalledWith(
+      "slack",
+      "workspace-1",
+      "U12345",
+      1000,
+      1000,
+      expect.objectContaining({
+        surfaceKind: "dm",
+        surfaceId: "D67890",
+        routeScope: "actor",
+      }),
+    );
   });
 
   it("never exposes pairing to agents, background processes, root, or standalone", async () => {

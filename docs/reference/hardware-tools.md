@@ -1,22 +1,33 @@
-# Hardware Tools Reference
+# Target Tools Reference
 
-GSV exposes a single hardware tool interface to AI processes. The same tool names are used for the native cloud target and for connected CLI devices; the `target` argument chooses where the syscall runs.
+GSV exposes one target-aware tool interface to AI processes. The same tool names
+are used for the native cloud environment and for registered target providers;
+the `target` argument chooses where the syscall runs.
 
-This is the important rule for agents: choose `target: "gsv"` for Gateway-native work, and choose a device target only when the file, command, network, or hardware dependency lives on that device.
+A target is a Unix-shaped capability environment, not necessarily a physical
+machine. Choose `target: "gsv"` for Gateway-native work, and choose another
+target when the file, command, network position, browser state, service
+resource, or hardware dependency lives in that environment.
 
 ## Targets
 
 | Target | Description |
 |---|---|
 | `gsv` | Native Gateway target running in the Cloudflare Worker sandbox. |
-| `<deviceId>` | A registered CLI device, such as `macbook` or `server`; routable while online. |
+| `<targetId>` | A registered target, such as a computer, browser profile, or authorized service environment; routable while online. |
 
 The Gateway includes accessible online devices in `ai.tools` context and, by default, in `sys.device.list`. Those inventories advertise devices that can accept work immediately. The agent-facing `targets list` command includes every visible registered device by default and labels each one `online` or `offline`; use `targets list --online` to restrict it to reachable targets. Device notes are included too, so processes can identify machines using the user's own descriptions. Registered devices also appear in the native filesystem under `/sys/devices`.
 
-Messaging adapters are not hardware targets and never appear in these
-inventories. Use `message destinations` to discover authorized external chat
-surfaces; use adapter APIs or the Messengers console to inspect and administer
-the underlying accounts.
+Most bundled messaging adapters are transport-only. Use `message destinations`
+to discover authorized external chat surfaces; use adapter APIs or the
+Messengers console to inspect and administer the underlying accounts. Managed
+Slack additionally appears in `targets list` and model target context after the
+paired user grants the required OAuth scopes. Its messaging and target
+projections remain independent.
+
+The Slack target implements `shell.exec` with an ephemeral just-bash environment.
+Run `slack --help` on that target to discover its provider commands. It does not
+support background jobs or resumable shell sessions.
 
 ## Agent-Visible Tools
 
@@ -76,9 +87,11 @@ Results are ranked across caller-visible native commands, skills,
 targets, and ready MCP integrations. Each row includes an exact `NEXT` action.
 Use `man <command>` after discovery for command-specific guidance.
 
-## Hardware Descriptors
+## Registered Target Descriptors
 
-CLI devices register with the Gateway as driver connections. A device descriptor records identity, online state, and implemented syscall patterns.
+External targets currently register with the Gateway through the device driver
+compatibility path. Its descriptor records identity, online state, and
+implemented syscall patterns.
 
 ```json
 {
@@ -91,7 +104,10 @@ CLI devices register with the Gateway as driver connections. A device descriptor
 }
 ```
 
-The `implements` field is the hardware contract. The Gateway uses it to decide which devices can receive a given routed syscall. The `description` field is owner-managed context for users and processes; it is not supplied by the driver connection.
+The `implements` field is the target contract. The Gateway uses it to decide
+which registered targets can receive a routed syscall. The `description` field
+is owner-managed context for users and processes; it is not supplied by the
+driver connection.
 
 Inspect descriptors with:
 
@@ -103,7 +119,10 @@ Inspect descriptors with:
 
 ## Native `gsv` Target
 
-The `gsv` target runs inside the Gateway. Filesystem syscalls use `GsvFs`; shell syscalls use the native `just-bash` driver.
+The `gsv` target provider runs inside the Gateway. It implements `fs.*` with
+`GsvFs`, `shell.exec` with the native `just-bash` driver, and `net.fetch` from
+the Worker's network position. Kernel control-plane domains are dispatched
+separately and are not part of the target.
 
 Important native paths:
 
@@ -224,7 +243,8 @@ For `fs.*` and `shell.exec`, the Gateway reads `target` at dispatch time.
 - `shell.exec` with `sessionId` routes through the persisted shell session owner; `target` is not required for continuation.
 - `target` is removed before native execution or device forwarding, so implementations receive the same syscall-specific arguments.
 
-Other syscall domains such as `proc.*`, `repo.*`, `sys.*`, `signal.*`, and `adapter.*` are kernel/control-plane interfaces and are not hardware-routed.
+Other syscall domains such as `proc.*`, `repo.*`, `sys.*`, `signal.*`, and
+`adapter.*` are Kernel control-plane interfaces and are not target-routed.
 
 `CodeMode` is process-local. It is not device-routed itself; code running inside
 the sandbox calls `shell(...)` and `fs.*(...)`, and those nested calls use the
@@ -236,6 +256,7 @@ same `target` and `sessionId` routing rules as the direct `Shell`, `Read`,
 - Tool schemas: `gateway/src/kernel/ai.ts`
 - Target injection: `gateway/src/syscalls/index.ts`
 - Routing: `gateway/src/kernel/dispatch.ts`
+- Native `gsv` provider: `gateway/src/drivers/native/target.ts`
 - CodeMode runtime: `gateway/src/process/codemode.ts`
 - Native filesystem: `gateway/src/drivers/native/fs.ts`
 - Native shell: `gateway/src/drivers/native/shell.ts`

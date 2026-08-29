@@ -541,6 +541,49 @@ describe("dispatch", () => {
     expect(registerRoute).not.toHaveBeenCalled();
   });
 
+  it("runs gsv target syscalls through the native target provider", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const deps = {
+      connections: new Map(),
+      registerRoute: vi.fn(),
+      shellSessions: {
+        get: vi.fn(),
+      },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const frame = {
+      type: "req",
+      id: "req_gsv",
+      call: "shell.exec",
+      args: { target: "gsv", input: "" },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as RequestFrame<"shell.exec">;
+
+    const result = await dispatch(
+      frame,
+      { type: "process", id: "proc_1" },
+      makeContext(),
+      deps,
+    );
+
+    expect(result).toEqual({
+      handled: true,
+      response: {
+        type: "res",
+        id: "req_gsv",
+        ok: true,
+        data: {
+          status: "failed",
+          output: "",
+          error: "input must not be empty",
+        },
+      },
+    });
+    expect(frame.args).toEqual({ input: "" });
+    expect(deps.registerRoute).not.toHaveBeenCalled();
+  });
+
   it("preserves ai.text.generate target for native AI routing checks", async () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const deps = {
@@ -626,7 +669,7 @@ describe("dispatch", () => {
         ok: false,
         error: {
           code: 403,
-          message: "Access denied to device: adapter:whatsapp:primary",
+          message: "Access denied to target: adapter:whatsapp:primary",
         },
       },
     });

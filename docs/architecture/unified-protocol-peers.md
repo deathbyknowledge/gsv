@@ -78,6 +78,22 @@ durable ownership and machine records use stable identities.
 
 Neither identifier is a credential.
 
+### Peers and targets
+
+A peer is not inherently a target. The peer describes the live protocol
+participant; a target is the Unix-shaped capability environment that participant
+offers for routed work. A peer may offer no target, one target, or multiple
+targets, and the native `gsv` target has no external peer at all.
+
+Principal kind also does not define target-ness. A machine principal commonly
+backs a hardware target, a human browser endpoint can back a browser-profile
+target, and a service peer can back an external-service target. In every case,
+the Kernel separately authorizes the caller, resolves the target, intersects
+the effective `implements` grant, and routes the unchanged syscall.
+
+See [Targets and Capability Environments](./targets.md) for the coherence
+contract and adapter-backed target model.
+
 ### Grant axes
 
 The three grant lists are independent:
@@ -208,8 +224,8 @@ the old device-specific heartbeat names.
 
 The Kernel currently retains `device` names in its persisted target registry
 and machine-management syscalls for upgrade compatibility. That storage detail
-does not change the public peer model: any authorized peer with implementations
-can be a route target.
+does not define the public target model: any authorized peer with coherent
+implementations may back a route target.
 
 ## Adapters and delegated humans
 

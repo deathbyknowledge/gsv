@@ -954,7 +954,7 @@ describe("native shell capability discovery", () => {
     expect(result.stdout).toContain("--attach PATH");
   });
 
-  it("keeps messaging destinations separate from execution targets", async () => {
+  it("keeps transport-only messaging adapters out of the current target inventory", async () => {
     const targets = await handleShellExec(
       { input: "man targets" },
       makeContext({ capabilities: ["shell.exec"] }),
@@ -965,7 +965,7 @@ describe("native shell capability discovery", () => {
     );
 
     expect(targets.ok).toBe(true);
-    expect(targets.stdout).toContain("device   User-owned registered devices");
+    expect(targets.stdout).toContain("device   Registered targets backed by machines or browser profiles");
     expect(targets.stdout).not.toContain("adapter  External messaging surfaces");
     expect(targets.stdout).not.toContain("targets search whatsapp");
     expect(sched.stdout).toContain("creates a direct scheduled delivery");
@@ -1475,6 +1475,14 @@ describe("targets native command", () => {
     expect(result.stdout).toContain("owner: sam (uid 1000)");
     expect(result.stdout).toContain("- shell.exec");
     expect(result.stdout).toContain("- fs.read");
+
+    const native = await handleShellExec(
+      { input: "targets show gsv" },
+      makeContext({ capabilities: ["sys.device.get"] }),
+    );
+    expect(native.stdout).toContain("description: Native GSV capability environment.");
+    expect(native.stdout).toContain("- net.fetch");
+    expect(native.stdout).not.toContain("- codemode.exec");
   });
 });
 
@@ -3720,6 +3728,94 @@ describe("native administration shell commands", () => {
       TEST_INSTALLATION_CONTEXT,
       "bot",
       expect.objectContaining({ text: "opaque route" }),
+      undefined,
+    );
+  });
+
+  it("preserves an observed thread when sending to a listed destination", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.send"],
+      processRunId: "run-slack-thread",
+    });
+    const link = {
+      adapter: "slack",
+      accountId: "managed",
+      actorId: "U123",
+      uid: IDENTITY.uid,
+      createdAt: 1,
+      linkedByUid: IDENTITY.uid,
+      metadata: {
+        managed: true,
+        routeScope: "actor",
+        routeGeneration: "generation-1",
+      },
+    };
+    const route: SurfaceRouteRecord = {
+      adapter: "slack",
+      accountId: "managed",
+      actorId: "U123",
+      surfaceKind: "channel",
+      surfaceId: "C123",
+      threadId: "1700000000.000100",
+      uid: IDENTITY.uid,
+      pid: "proc:slack-thread",
+      mode: "surface",
+      updatedAt: 2,
+      updatedByUid: IDENTITY.uid,
+    };
+    const adapterSend = vi.fn(async () => ({ ok: true, messageId: "1700000001.000100" }));
+    Object.assign(ctx.env, {
+      CHANNEL_SLACK: { adapterSend },
+    });
+    ctx.adapters = focusedFixture<KernelContext["adapters"]>({
+      identityLinks: {
+        list: vi.fn(() => [link]),
+        get: vi.fn(() => link),
+      },
+      surfaceRoutes: {
+        list: vi.fn(() => [route]),
+        get: vi.fn((key) => (
+          key.adapter === route.adapter
+            && key.accountId === route.accountId
+            && key.actorId === route.actorId
+            && key.surfaceKind === route.surfaceKind
+            && key.surfaceId === route.surfaceId
+            && key.threadId === route.threadId
+            ? route
+            : null
+        )),
+      },
+      status: {
+        get: vi.fn(() => ({ connected: true, authenticated: true })),
+      },
+    });
+
+    const listed = await handleShellExec({ input: "message destinations --json" }, ctx);
+    expect(listed).toMatchObject({ status: "completed", exitCode: 0 });
+    const output = destinationListOutputSchema.safeParse(JSON.parse(listed.stdout));
+    expect(output.success).toBe(true);
+    if (!output.success || !output.data.destinations[0]) {
+      throw new Error("invalid threaded message destination output");
+    }
+
+    const sent = await handleShellExec({
+      input: `message send --to ${output.data.destinations[0].id} --message "delegated result" --also`,
+    }, ctx);
+
+    expect(sent).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(adapterSend).toHaveBeenCalledWith(
+      TEST_INSTALLATION_CONTEXT,
+      "managed",
+      expect.objectContaining({
+        actorId: "U123",
+        surface: {
+          kind: "channel",
+          id: "C123",
+          threadId: "1700000000.000100",
+        },
+        routeGeneration: "generation-1",
+        text: "delegated result",
+      }),
       undefined,
     );
   });

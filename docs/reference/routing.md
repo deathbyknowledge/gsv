@@ -34,8 +34,8 @@ reactivation.
 
 | Surface | Entry Point | Routed By | Destination |
 |---|---|---|---|
-| CLI or browser client | WebSocket request frame | syscall name, caller capabilities, optional `target` | Kernel handler, Process DO, or device driver |
-| Agent process | `Kernel.recvFrame(pid, frame)` | process identity and syscall | Kernel handler or device driver |
+| CLI or browser client | WebSocket request frame | syscall name, caller capabilities, optional `target` | Kernel handler or target provider |
+| Agent process | `Kernel.recvFrame(pid, frame)` | process identity and syscall | Kernel handler or target provider |
 | Adapter worker | `adapter.inbound` syscall | linked actor identity, Ship selection, or shared-surface route | Personal controller or routed work/surface process |
 | Device driver | WebSocket response frame | persisted route id | Original client or process |
 
@@ -52,9 +52,18 @@ All requests use the same frame shape:
 
 ## Syscall Routing
 
-The dispatcher first checks `args.target`. If `target` is omitted or set to `gsv`, the syscall is handled natively by the Kernel. If `target` names a connected device and the syscall is routable, the Kernel forwards it to that device.
+The dispatcher first checks `args.target`. If `target` is omitted or set to
+`gsv`, a target-routable syscall runs in GSV's native capability environment.
+If `target` names a registered external target and the syscall is routable, the
+Kernel forwards the unchanged syscall to that provider.
 
-The `fs.*`, `shell.*`, and `net.*` domains support device routing. Other domains such as `sys.*`, `proc.*`, `repo.*`, `adapter.*`, and `signal.*` are kernel-internal.
+The native provider is an in-process implementation, not a synthetic peer or
+device record. It owns only `fs.*`, `shell.exec`, and `net.fetch`; the Kernel
+continues to own control-plane dispatch.
+
+The `fs.*`, `shell.*`, and `net.*` domains support target routing. Other domains
+such as `sys.*`, `proc.*`, `repo.*`, `adapter.*`, and `signal.*` are Kernel
+control-plane interfaces rather than target operations.
 
 ```json
 { "path": "/etc/passwd", "target": "gsv" }
@@ -86,7 +95,7 @@ kernel-forwarded to a Process DO, which uses the same executor. CodeMode's
 in-block `shell(...)`, `fs.*(...)`, and `fetch(...)` helpers call back into the
 Process, which dispatches normal `shell.exec`, `fs.*`, and `net.fetch` request
 frames through the Kernel. Nested calls therefore use the same capabilities,
-device routing, async responses, shell sessions, and agent approval policy as
+target routing, async responses, shell sessions, and agent approval policy as
 direct tool calls.
 
 ## Process Routing
@@ -152,11 +161,13 @@ clients and process history without guessing a transport.
 
 Messaging adapters call `adapter.inbound` through a service identity. The Kernel normalizes the adapter id and account id, then resolves the external actor id through `identity_links`.
 
-An adapter is a transport service, not a device target. It is absent from
-`sys.device.*`, target-aware tool schemas, and the generic target inventory.
-Explicit outbound delivery resolves an opaque authorized surface from
-`message destinations`; adapter account status and administration remain on
-the `adapter.*` control-plane API.
+An adapter's transport projection is not automatically a target. The bundled
+adapters are currently absent from `sys.device.*` and the generic target
+inventory because they do not implement the target contract. Explicit outbound
+delivery resolves an opaque authorized surface from `message destinations`;
+adapter account status and administration remain on the `adapter.*`
+control-plane API. A future adapter account may independently expose a target
+without changing these messaging semantics.
 
 The native `message route` command exposes surface mappings without requiring
 adapter-specific fields. It resolves `here`, opaque destination ids, or
@@ -220,15 +231,20 @@ strand an approval from earlier work. Only one exact current token match resumes
 reply threading does not authorize a decision.
 
 
-## Device Routing
+## Registered Target Routing
 
-Devices are persistent records in Kernel SQLite. A driver connection registers a device id, owner uid, owner gid, platform, version, and `implements` list. The access model is Linux-like:
+Registered external targets are currently persisted as device records in Kernel
+SQLite. A driver connection registers a device id, owner uid, owner gid,
+platform, version, and `implements` list. The access model is Linux-like:
 
 - Root can use every device.
 - The owner uid can use the device.
 - Members of granted groups can use the device.
 
-Device routing does not rename syscalls. Agents and clients always see the same syscall names, such as `fs.read` and `shell.exec`; `target` selects whether the initial call runs on `gsv` or a device. For shell continuations, `sessionId` selects the previously started shell session.
+Target routing does not rename syscalls. Agents and clients always see the same
+syscall names, such as `fs.read` and `shell.exec`; `target` selects whether the
+initial call runs on `gsv` or a registered provider. For shell continuations,
+`sessionId` selects the environment that owns the previously started session.
 
 ## Failure Behavior
 

@@ -386,6 +386,9 @@ describe("handleAiConfig", () => {
       devices: {
         listForUser: vi.fn(() => []),
       },
+      adapters: {
+        identityLinks: { list: vi.fn(() => []) },
+      },
       mcpServers: {
         list: vi.fn(() => []),
       },

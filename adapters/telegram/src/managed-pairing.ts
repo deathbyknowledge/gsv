@@ -5,7 +5,7 @@ import type {
   AdapterPairingPreparation,
   AdapterPairingPrepareInput,
 } from "./types";
-import type { ManagedTelegramGatewayService } from "../../../packages/gsv/src/protocol/managed.js";
+import type { ManagedAdapterGatewayService } from "../../../packages/gsv/src/protocol/managed.js";
 
 export type ManagedTelegramPairingRecord = {
   version: 1;
@@ -28,7 +28,7 @@ export type ManagedTelegramPairingRecord = {
 
 export interface ManagedTelegramPairingEnv {
   MANAGED_TELEGRAM_PEER: DurableObjectNamespace;
-  GATEWAY: Fetcher & ManagedTelegramGatewayService;
+  GATEWAY: Fetcher & ManagedAdapterGatewayService;
 }
 
 type ManagedTelegramPeerStub = DurableObjectStub & {
@@ -160,9 +160,11 @@ export class ManagedTelegramPairing extends DurableObject<ManagedTelegramPairing
     const record = await this.ctx.storage.get<ManagedTelegramPairingRecord>(RECORD_KEY);
     if (!record?.cleanup || record.cleanupComplete) return;
     try {
-      await this.env.GATEWAY.unlinkManagedTelegramIdentity({
+      await this.env.GATEWAY.unlinkManagedAdapterIdentity({
         installationId: record.cleanup.installationId,
+      }, {
         operationId: `${record.cleanup.operationId}:previous`,
+        accountId: "managed",
         actorId: record.cleanup.actorId,
         surfaceId: record.cleanup.surfaceId,
         expectedLocalUid: record.cleanup.localUid,

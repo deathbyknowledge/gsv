@@ -173,6 +173,7 @@ export type AdapterPairInfoResult = {
   accountId: string;
   configured: boolean;
   botUsername?: string;
+  installUrl?: string;
 };
 
 export type AdapterPairInspectArgs = {
@@ -185,6 +186,7 @@ export type AdapterPairInspectResult = {
   accountId: string;
   actorId: string;
   surfaceId: string;
+  routeScope?: "surface" | "actor";
   actorName?: string;
   actorHandle?: string;
   expiresAt: number;
