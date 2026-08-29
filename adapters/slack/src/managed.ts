@@ -136,11 +136,12 @@ const shellExecArgsSchema = z.object({
   background: z.boolean().optional(),
   yieldMs: z.number().finite().int().nonnegative().max(120_000).optional(),
 }).strict();
-const slackTargetRequestSchema = z.object({
+export const managedSlackTargetRequestSchema = z.object({
   type: z.literal("req"),
   id: z.string().min(1).max(512),
   call: z.literal("shell.exec"),
   args: shellExecArgsSchema,
+  runId: z.string().min(1).max(512).optional(),
   deadlineAt: z.number().finite(),
 }).strict();
 
@@ -301,7 +302,7 @@ export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements Adapte
     targetId: string,
     frame: AdapterTargetRequestFrame,
   ): Promise<AdapterTargetResponseFrame> {
-    const parsed = slackTargetRequestSchema.safeParse(frame);
+    const parsed = managedSlackTargetRequestSchema.safeParse(frame);
     if (!parsed.success || targetId !== SLACK_TARGET_ID) {
       await cancelBinaryBody(frame.body, "Slack target request is invalid");
       return targetError(frame.id, targetId === SLACK_TARGET_ID ? 400 : 404);

@@ -5,6 +5,7 @@ import { workspaceAccountId } from "../src/slack-api";
 import {
   managedSlackPeerObjectName,
 } from "../src/managed-identity";
+import { managedSlackTargetRequestSchema } from "../src/managed";
 
 type SlackApiCall = {
   method: string;
@@ -123,6 +124,7 @@ type PeerStub = {
       id: string;
       call: "shell.exec";
       args: { input: string; timeout?: number };
+      runId?: string;
       deadlineAt: number;
     },
   ): Promise<{
@@ -389,20 +391,23 @@ describe("managed Slack clean-instance flow", () => {
         implements: ["shell.exec"],
       }),
     ]);
+    const targetListFrame = {
+      type: "req" as const,
+      id: "target-list",
+      call: "shell.exec" as const,
+      runId: "process-run-target-list",
+      args: {
+        input: "slack conversations list --json | jq -r '.items[0].name'",
+        timeout: 120_000,
+      },
+      deadlineAt: Date.now() + 120_000,
+    };
+    expect(managedSlackTargetRequestSchema.safeParse(targetListFrame).success).toBe(true);
     using targetList = await peer.executeTarget(
       "installation-alice",
       alice.generation,
       "workspace",
-      {
-        type: "req",
-        id: "target-list",
-        call: "shell.exec",
-        args: {
-          input: "slack conversations list --json | jq -r '.items[0].name'",
-          timeout: 120_000,
-        },
-        deadlineAt: Date.now() + 120_000,
-      },
+      targetListFrame,
     );
     expect(targetList).toMatchObject({
       ok: true,

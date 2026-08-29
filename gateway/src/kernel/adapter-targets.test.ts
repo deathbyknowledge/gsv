@@ -177,6 +177,7 @@ describe("adapter-backed targets", () => {
       id: "request-1",
       call: "shell.exec",
       args: { input: "slack whoami" },
+      runId: "process-run-1",
     }, target!, Date.now() + 120_000, ctx);
 
     expect(response).toEqual({
@@ -192,6 +193,7 @@ describe("adapter-backed targets", () => {
       expect.objectContaining({
         id: "request-1",
         call: "shell.exec",
+        runId: "process-run-1",
         deadlineAt: expect.any(Number),
       }),
     );

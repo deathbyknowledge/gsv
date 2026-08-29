@@ -116,6 +116,7 @@ export type AdapterTargetRequestFrame<S extends SyscallName = SyscallName> = {
     id: string;
     call: K;
     args: ArgsOf<K>;
+    runId?: string;
     deadlineAt: number;
     body?: BinaryBody;
   };
