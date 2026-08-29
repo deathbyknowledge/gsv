@@ -136,6 +136,7 @@ impl std::error::Error for VisualEngineError {}
 enum VisualCommand {
     SetPreset(VisualPreset),
     SetShipView { orbit: f32, elevation: f32 },
+    SetResolution { width: u32, height: u32 },
     SetActive(bool),
     Shutdown,
 }
@@ -194,6 +195,17 @@ impl VisualEngine {
     pub fn set_ship_view(&self, orbit: f32, elevation: f32) -> Result<(), VisualEngineError> {
         self.commands
             .send(VisualCommand::SetShipView { orbit, elevation })
+            .map_err(|_| VisualEngineError("visual renderer has stopped".into()))
+    }
+
+    pub fn set_resolution(&self, width: u32, height: u32) -> Result<(), VisualEngineError> {
+        if width == 0 || height == 0 {
+            return Err(VisualEngineError(
+                "visual renderer dimensions must be non-zero".into(),
+            ));
+        }
+        self.commands
+            .send(VisualCommand::SetResolution { width, height })
             .map_err(|_| VisualEngineError("visual renderer has stopped".into()))
     }
 
@@ -606,7 +618,9 @@ fn render_loop(
     commands: mpsc::Receiver<VisualCommand>,
     events: &async_mpsc::Sender<VisualEvent>,
 ) -> Result<(), String> {
-    let renderer = GpuRenderer::new(config.width, config.height)?;
+    let mut render_width = config.width;
+    let mut render_height = config.height;
+    let mut renderer = GpuRenderer::new(render_width, render_height)?;
     let started = Instant::now();
     let mut previous_frame = started;
     let frame_interval = Duration::from_secs_f64(1.0 / f64::from(config.frames_per_second));
@@ -628,6 +642,8 @@ fn render_loop(
                 &mut target,
                 &mut orbit,
                 &mut elevation,
+                &mut render_width,
+                &mut render_height,
                 &mut active,
             ) {
                 return Ok(());
@@ -646,6 +662,8 @@ fn render_loop(
                 &mut target,
                 &mut orbit,
                 &mut elevation,
+                &mut render_width,
+                &mut render_height,
                 &mut active,
             ) {
                 return Ok(());
@@ -653,6 +671,9 @@ fn render_loop(
         }
         if !active {
             continue;
+        }
+        if renderer.width != render_width || renderer.height != render_height {
+            renderer = GpuRenderer::new(render_width, render_height)?;
         }
 
         let now = Instant::now();
@@ -711,7 +732,7 @@ fn render_loop(
             _ => 0.06,
         };
         let uniforms = VisualUniforms {
-            resolution_time_energy: [config.width as f32, config.height as f32, phase, energy],
+            resolution_time_energy: [render_width as f32, render_height as f32, phase, energy],
             accent: recipe.accent,
             shape: recipe.shape,
             behavior: recipe.behavior,
@@ -728,8 +749,8 @@ fn render_loop(
         let bgra = renderer.render(&uniforms)?;
         sequence += 1;
         let event = VisualEvent::Frame(VisualFrame {
-            width: config.width,
-            height: config.height,
+            width: render_width,
+            height: render_height,
             sequence,
             render_time: render_started.elapsed(),
             bgra,
@@ -746,6 +767,8 @@ fn apply_command(
     target: &mut VisualPreset,
     orbit: &mut f32,
     elevation: &mut f32,
+    render_width: &mut u32,
+    render_height: &mut u32,
     active: &mut bool,
 ) -> bool {
     match command {
@@ -756,6 +779,10 @@ fn apply_command(
         } => {
             *orbit = new_orbit;
             *elevation = new_elevation;
+        }
+        VisualCommand::SetResolution { width, height } => {
+            *render_width = width;
+            *render_height = height;
         }
         VisualCommand::SetActive(new_active) => *active = new_active,
         VisualCommand::Shutdown => return false,
@@ -772,6 +799,8 @@ mod tests {
         let mut target = VisualPreset::Listening;
         let mut orbit = 0.0;
         let mut elevation = 0.0;
+        let mut render_width = 512;
+        let mut render_height = 512;
         let mut active = true;
 
         assert!(apply_command(
@@ -779,6 +808,8 @@ mod tests {
             &mut target,
             &mut orbit,
             &mut elevation,
+            &mut render_width,
+            &mut render_height,
             &mut active,
         ));
         assert!(!active);
@@ -787,6 +818,8 @@ mod tests {
             &mut target,
             &mut orbit,
             &mut elevation,
+            &mut render_width,
+            &mut render_height,
             &mut active,
         ));
         assert_eq!(target, VisualPreset::Searching);
@@ -796,15 +829,32 @@ mod tests {
             &mut target,
             &mut orbit,
             &mut elevation,
+            &mut render_width,
+            &mut render_height,
             &mut active,
         ));
         assert!(active);
         assert_eq!(target, VisualPreset::Searching);
+        assert!(apply_command(
+            VisualCommand::SetResolution {
+                width: 768,
+                height: 768,
+            },
+            &mut target,
+            &mut orbit,
+            &mut elevation,
+            &mut render_width,
+            &mut render_height,
+            &mut active,
+        ));
+        assert_eq!((render_width, render_height), (768, 768));
         assert!(!apply_command(
             VisualCommand::Shutdown,
             &mut target,
             &mut orbit,
             &mut elevation,
+            &mut render_width,
+            &mut render_height,
             &mut active,
         ));
     }

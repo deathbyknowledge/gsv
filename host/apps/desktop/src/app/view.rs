@@ -13,6 +13,7 @@ use gpui_component::input::Input;
 use crate::client::ApprovalDecision;
 use crate::content::MediaAttachment;
 use crate::interaction::CanvasLayer;
+use crate::mind_visual::MAX_MIND_DIAMETER;
 use crate::model::{
     approval_scope_description, ActivityCategory, ActivitySummaryEntry, ConnectionState,
     LiveActivityEntry, MomentRole, MomentState, PendingApproval, SurfaceMode,
@@ -1241,7 +1242,11 @@ impl GsvApp {
         let mind_enabled = mind_full || mind_residual;
         let mind_generation = self.mind_visual_generation;
         let mind_active = self.conversation.active_run_id.is_some();
+        let mind_size =
+            (viewport_width.min(viewport_height) * 0.80).clamp(340.0, MAX_MIND_DIAMETER);
+        let mind_scale_factor = window.scale_factor();
         self.mind_visual.update(cx, |visual, visual_cx| {
+            visual.set_display_size(mind_size, mind_scale_factor);
             visual.set_process_state(
                 mind_generation,
                 mind_active,
@@ -1369,7 +1374,6 @@ impl GsvApp {
             Some(layout)
         };
 
-        let mind_size = (viewport_width.min(viewport_height) * 0.80).clamp(340.0, 760.0);
         let full_mind_layer = mind_full.then(|| {
             let visual = if self.reduced_motion {
                 div()

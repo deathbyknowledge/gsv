@@ -14,6 +14,8 @@ use crate::model::ActivityCategory;
 
 const MINIMUM_ACTIVITY_VISIBILITY: Duration = Duration::from_millis(1_800);
 const MAX_PENDING_ACTIVITIES: usize = 2;
+const MIND_RENDER_EXTENTS: [u32; 3] = [512, 768, 1_024];
+pub(crate) const MAX_MIND_DIAMETER: f32 = 760.0;
 
 #[derive(Debug)]
 struct ActivityPresentation {
@@ -112,6 +114,7 @@ pub(crate) struct MindVisual {
     presentation: ActivityPresentation,
     base_preset: VisualPreset,
     applied_preset: VisualPreset,
+    render_extent: u32,
     enabled: bool,
     advance_epoch: u64,
     advance_task: Option<Task<()>>,
@@ -119,9 +122,10 @@ pub(crate) struct MindVisual {
 
 impl MindVisual {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>, reduced_motion: bool) -> Self {
+        let render_extent = mind_render_extent(MAX_MIND_DIAMETER, window.scale_factor());
         let config = VisualEngineConfig {
-            width: 512,
-            height: 512,
+            width: render_extent,
+            height: render_extent,
             frames_per_second: if reduced_motion { 12 } else { 30 },
             initial_preset: VisualPreset::Listening,
             initially_active: false,
@@ -160,6 +164,7 @@ impl MindVisual {
             presentation: ActivityPresentation::new(),
             base_preset: VisualPreset::Listening,
             applied_preset: VisualPreset::Listening,
+            render_extent,
             enabled: false,
             advance_epoch: 0,
             advance_task: None,
@@ -199,6 +204,20 @@ impl MindVisual {
         }
     }
 
+    pub(crate) fn set_display_size(&mut self, logical_extent: f32, scale_factor: f32) {
+        let render_extent = mind_render_extent(logical_extent, scale_factor);
+        if self.render_extent == render_extent {
+            return;
+        }
+        self.render_extent = render_extent;
+        let Some(engine) = &self.engine else {
+            return;
+        };
+        if let Err(error) = engine.set_resolution(render_extent, render_extent) {
+            eprintln!("GSV Mind visual could not change resolution: {error}");
+        }
+    }
+
     pub(crate) fn reset(&mut self, generation: u64, cx: &mut Context<Self>) {
         self.presentation.clear();
         self.presentation.generation = generation;
@@ -227,6 +246,7 @@ impl MindVisual {
             presentation: ActivityPresentation::new(),
             base_preset: VisualPreset::Listening,
             applied_preset: VisualPreset::Listening,
+            render_extent: 0,
             enabled: false,
             advance_epoch: 0,
             advance_task: None,
@@ -325,9 +345,27 @@ fn activity_preset(activity: ActivityCategory) -> VisualPreset {
     }
 }
 
+fn mind_render_extent(logical_extent: f32, scale_factor: f32) -> u32 {
+    debug_assert!(logical_extent.is_finite() && logical_extent > 0.0);
+    debug_assert!(scale_factor.is_finite() && scale_factor > 0.0);
+    let required_extent = (logical_extent * scale_factor).ceil() as u32;
+    MIND_RENDER_EXTENTS
+        .into_iter()
+        .find(|extent| *extent >= required_extent)
+        .unwrap_or(MIND_RENDER_EXTENTS[MIND_RENDER_EXTENTS.len() - 1])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn render_extent_tracks_physical_presentation_size_with_a_quality_cap() {
+        assert_eq!(mind_render_extent(340.0, 1.0), 512);
+        assert_eq!(mind_render_extent(MAX_MIND_DIAMETER, 1.0), 768);
+        assert_eq!(mind_render_extent(MAX_MIND_DIAMETER, 1.25), 1_024);
+        assert_eq!(mind_render_extent(MAX_MIND_DIAMETER, 2.0), 1_024);
+    }
 
     #[test]
     fn holds_a_completed_activity_for_the_minimum_visible_time() {
