@@ -56,6 +56,18 @@ describe("Slack file delivery errors", () => {
       new SlackApiError("private provider detail", "permanent", "unexpected_detail"),
     )).toBe("Slack file delivery failed");
   });
+
+  it("identifies the failed file upload stage without exposing provider details", () => {
+    expect(slackFileDeliveryErrorMessage(
+      new SlackApiError(
+        "private provider detail",
+        "permanent",
+        undefined,
+        400,
+        "bytes",
+      ),
+    )).toBe("Slack file byte upload failed");
+  });
 });
 
 describe("Slack file API", () => {
@@ -137,6 +149,10 @@ describe("Slack file API", () => {
         });
       }
       if (url.pathname.startsWith("/upload/v1/")) {
+        expect(init?.headers).toMatchObject({
+          "Content-Type": "application/octet-stream",
+        });
+        expect(init?.body).toBeInstanceOf(Uint8Array);
         uploaded.push(await new Response(init?.body).text());
         return new Response("OK");
       }
@@ -158,7 +174,7 @@ describe("Slack file API", () => {
       files: [
         {
           filename: "first.txt",
-          mimeType: "text/plain",
+          mimeType: "image/png",
           bytes: new TextEncoder().encode("first"),
         },
         {
@@ -175,6 +191,36 @@ describe("Slack file API", () => {
       files: [{ id: "FFILE001" }, { id: "FFILE002" }],
       initial_comment: "Attached",
       thread_ts: "1700000000.000100",
+    });
+  });
+
+  it("reports a raw-byte upload rejection separately from Slack API failures", async () => {
+    const provider = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/files.getUploadURLExternal")) {
+        return Response.json({
+          ok: true,
+          upload_url: "https://files.slack.com/upload/v1/rejected",
+          file_id: "FFILE001",
+        });
+      }
+      return new Response("rejected", { status: 400 });
+    });
+
+    const result = uploadSlackFiles("xoxb-valid-token-value", {
+      channel: "CGENERAL1",
+      text: "Attached",
+      files: [{
+        filename: "first.txt",
+        mimeType: "text/plain",
+        bytes: new TextEncoder().encode("first"),
+      }],
+    }, provider);
+
+    await expect(result).rejects.toMatchObject({
+      kind: "permanent",
+      status: 400,
+      fileStage: "bytes",
     });
   });
 });

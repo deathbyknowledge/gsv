@@ -182,6 +182,9 @@ describe("Slack delivery", () => {
         });
       }
       if (url.pathname === "/upload/v1/report") {
+        expect(init?.headers).toMatchObject({
+          "Content-Type": "application/octet-stream",
+        });
         await expect(new Response(init?.body).text()).resolves.toBe("resource bytes");
         return new Response("OK");
       }

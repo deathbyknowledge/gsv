@@ -197,12 +197,15 @@ export type SlackUploadFilesResult = {
 
 export type SlackProviderGuard = () => void | Promise<void>;
 
+export type SlackFileUploadStage = "ticket" | "bytes" | "completion";
+
 export class SlackApiError extends Error {
   constructor(
     message: string,
     readonly kind: DeliveryFailureKind,
     readonly code?: string,
     readonly status?: number,
+    readonly fileStage?: SlackFileUploadStage,
   ) {
     super(message);
     this.name = "SlackApiError";
@@ -219,6 +222,15 @@ export function slackFileDeliveryErrorMessage(error: SlackApiError | undefined):
   }
   if (error.code === "posting_to_channel_denied") {
     return "The GSV app is not allowed to share files in this Slack conversation";
+  }
+  if (error.fileStage === "ticket") {
+    return "Slack could not start the file upload";
+  }
+  if (error.fileStage === "bytes") {
+    return "Slack file byte upload failed";
+  }
+  if (error.fileStage === "completion") {
+    return "Slack could not finish sharing the uploaded file";
   }
   return "Slack file delivery failed";
 }
@@ -541,9 +553,16 @@ export async function uploadSlackFiles(
           error.kind === "permanent" ? "permanent" : "retryable",
           error.code,
           error.status,
+          "ticket",
         );
       }
-      throw new SlackApiError("Slack upload ticket request failed", "permanent");
+      throw new SlackApiError(
+        "Slack upload ticket request failed",
+        "permanent",
+        undefined,
+        undefined,
+        "ticket",
+      );
     }
     const uploadUrl = requireSlackHostedUrl(ticket.upload_url, "Slack upload URL");
     const ticketId = requireSlackId(ticket.file_id, "Slack upload file");
@@ -554,12 +573,18 @@ export async function uploadSlackFiles(
       response = await slackFetch(uploadUrl, {
         method: "POST",
         headers: {
-          "Content-Type": normalizedMimeType(file.mimeType),
+          "Content-Type": "application/octet-stream",
         },
-        body: new Blob([file.bytes], { type: normalizedMimeType(file.mimeType) }),
+        body: file.bytes,
       });
     } catch {
-      throw new SlackApiError("Slack file upload transport failed", "retryable");
+      throw new SlackApiError(
+        "Slack file upload transport failed",
+        "retryable",
+        undefined,
+        undefined,
+        "bytes",
+      );
     }
     await cancelResponseBody(
       response,
@@ -573,6 +598,7 @@ export async function uploadSlackFiles(
           : "permanent",
         undefined,
         response.status,
+        "bytes",
       );
     }
     tickets.push({ id: ticketId });
@@ -598,15 +624,41 @@ export async function uploadSlackFiles(
       error instanceof SlackApiError
       && (error.code === "ratelimited" || error.code === "rate_limited")
     ) {
-      throw error;
+      throw new SlackApiError(
+        "Slack file completion was rate limited",
+        error.kind,
+        error.code,
+        error.status,
+        "completion",
+      );
     }
-    if (error instanceof SlackApiError && error.kind === "permanent") throw error;
-    throw new SlackApiError("Slack file completion outcome is unknown", "ambiguous");
+    if (error instanceof SlackApiError && error.kind === "permanent") {
+      throw new SlackApiError(
+        "Slack file completion failed",
+        error.kind,
+        error.code,
+        error.status,
+        "completion",
+      );
+    }
+    throw new SlackApiError(
+      "Slack file completion outcome is unknown",
+      "ambiguous",
+      undefined,
+      undefined,
+      "completion",
+    );
   }
   const fileIds = (completed.files ?? []).map((file) =>
     requireSlackId(file.id, "Slack completed file"));
   if (fileIds.length !== tickets.length) {
-    throw new SlackApiError("Slack file completion outcome is unknown", "ambiguous");
+    throw new SlackApiError(
+      "Slack file completion outcome is unknown",
+      "ambiguous",
+      undefined,
+      undefined,
+      "completion",
+    );
   }
   return { fileIds };
 }
