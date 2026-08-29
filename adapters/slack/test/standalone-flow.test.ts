@@ -11,6 +11,7 @@ type AccountStub = {
     connected: boolean;
     authenticated: boolean;
     mode: string;
+    error?: string;
   }>;
   sendMessage(
     message: {
@@ -323,11 +324,31 @@ describe("standalone Slack clean-instance flow", () => {
 
   it("publishes disconnect transitions and recovers from initial Socket Mode failures", async () => {
     const slack = account();
+    await fetcherBinding(env.GATEWAY).fetch("https://gateway.test/fail-next-inbound", {
+      method: "POST",
+    });
     await slack.start(
       "xoxb-standalone-test-token",
       "xapp-standalone-test-token",
       "default",
     );
+    await vi.waitFor(async () => {
+      expect((await slack.getStatus()).error).toBe("Kernel receipt is still in progress");
+    });
+    const callsBeforeIngressRecovery = (await gatewayCalls()).length;
+    await runDurableObjectAlarm(slack);
+    await vi.waitFor(async () => {
+      expect((await slack.getStatus()).error).toBeUndefined();
+      const recoveredStatuses = (await gatewayCalls())
+        .slice(callsBeforeIngressRecovery)
+        .filter((call) => call.call === "adapter.state.update")
+        .map((call) => call.args?.status);
+      expect(recoveredStatuses).toContainEqual(expect.objectContaining({
+        connected: true,
+        authenticated: true,
+      }));
+      expect(recoveredStatuses.at(-1)?.error).toBeUndefined();
+    });
 
     const callsBeforeDisconnect = (await gatewayCalls()).length;
     const disconnected = await fetcherBinding(env.SLACK_SOCKET).fetch(

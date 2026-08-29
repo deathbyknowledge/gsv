@@ -353,7 +353,9 @@ export class SlackAccount extends DurableObject<Env> {
   private async drainInbound(): Promise<void> {
     if (this.drainPromise) return await this.drainPromise;
     const running = (async () => {
+      const recoveryError = this.state.lastError;
       const ids = await this.inboundDeliveries.pendingIds(INBOUND_BATCH_SIZE);
+      let batchCompleted = ids.length > 0;
       for (const id of ids) {
         const result = await this.inboundDeliveries.attempt(
           id,
@@ -361,11 +363,24 @@ export class SlackAccount extends DurableObject<Env> {
           async (message) => await this.sendMessage(message),
         );
         if (result.state === "pending") {
+          batchCompleted = false;
           this.state.lastError = result.error ?? "Slack ingress remains pending";
           await this.saveState();
+          await this.notifyStatus();
           await this.inboundDeliveries.arm(Date.now() + RETRY_DELAY_MS);
           break;
         }
+        if (result.state === "active") batchCompleted = false;
+      }
+      if (
+        batchCompleted
+        && recoveryError !== null
+        && this.state.connected
+        && this.state.lastError === recoveryError
+      ) {
+        this.state.lastError = null;
+        await this.saveState();
+        await this.notifyStatus();
       }
     })();
     this.drainPromise = running;

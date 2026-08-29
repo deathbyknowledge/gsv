@@ -13,6 +13,7 @@ export default defineConfig({
             script: `
               import { WorkerEntrypoint } from "cloudflare:workers";
               const calls = [];
+              let failNextInbound = false;
               export class AdapterGatewayEntrypoint extends WorkerEntrypoint {
                 async serviceFrame(first, second) {
                   const installation = second ? first : { installationId: "singleton" };
@@ -21,7 +22,13 @@ export default defineConfig({
                     ? Array.from(new Uint8Array(await new Response(frame.body.stream).arrayBuffer()))
                     : undefined;
                   calls.push({ installation, call: frame.call, args: frame.args, mediaBody });
-                  const data = frame.call === "adapter.inbound"
+                  const pendingInbound = frame.call === "adapter.inbound" && failNextInbound;
+                  if (pendingInbound) {
+                    failNextInbound = false;
+                  }
+                  const data = pendingInbound
+                    ? { ok: true, replayed: "in_progress" }
+                    : frame.call === "adapter.inbound"
                     ? {
                         ok: true,
                         reply: {
@@ -33,7 +40,12 @@ export default defineConfig({
                     : { ok: true };
                   return { type: "res", id: frame.id, ok: true, data };
                 }
-                async fetch() {
+                async fetch(request) {
+                  const url = new URL(request.url);
+                  if (request.method === "POST" && url.pathname === "/fail-next-inbound") {
+                    failNextInbound = true;
+                    return Response.json({ ok: true });
+                  }
                   return Response.json(calls);
                 }
               }
