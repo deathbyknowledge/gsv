@@ -8,6 +8,7 @@ mod history;
 mod interaction;
 mod machine_setup;
 mod media_files;
+mod mind_visual;
 mod model;
 mod prepared;
 mod startup;

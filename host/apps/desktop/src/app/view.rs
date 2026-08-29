@@ -975,6 +975,11 @@ impl GsvApp {
         } else {
             self.conversation.live_activity_entries()
         };
+        let primary_live_activity = if self.interaction.is_approval() {
+            None
+        } else {
+            self.conversation.primary_live_activity()
+        };
         let left_padding = (viewport_width * 0.065).clamp(108.0, 142.0);
         let right_padding = (viewport_width * 0.065).clamp(46.0, 142.0);
         let vertical_padding = (viewport_height * 0.105).clamp(50.0, 108.0);
@@ -1201,6 +1206,50 @@ impl GsvApp {
         };
         let draft = self.interaction.visible_draft().map(str::to_string);
         let draft_visible = draft.is_some();
+        if let Some(run_id) = self.conversation.active_run_id.clone() {
+            if self.mind_visual_run_id.as_deref() != Some(run_id.as_str()) {
+                self.mind_visual_run_id = Some(run_id);
+                self.mind_visual_generation = self.mind_visual_generation.wrapping_add(1).max(1);
+            }
+        }
+        let active_response_has_content =
+            self.conversation
+                .active_run_id
+                .as_deref()
+                .is_some_and(|active_run_id| {
+                    self.conversation.moments.iter().rev().any(|moment| {
+                        moment.role == MomentRole::Intelligence
+                            && moment.state == MomentState::Streaming
+                            && moment.run_id.as_deref() == Some(active_run_id)
+                            && (!moment.text.trim().is_empty() || !moment.media.is_empty())
+                    })
+                });
+        let mind_can_occupy_canvas = !draft_visible
+            && !self.interaction.is_approval()
+            && self.conversation.connection == ConnectionState::Connected
+            && self.conversation.is_following_latest();
+        let mind_full = mind_can_occupy_canvas
+            && (self.conversation.moments.is_empty()
+                || (self.conversation.active_run_id.is_some() && !active_response_has_content));
+        // A live image repaints continuously. Once response text exists, keep its faint afterimage
+        // only on the cheap text path so rich documents never inherit that foreground work.
+        let mind_residual = mind_can_occupy_canvas
+            && self.conversation.active_run_id.is_some()
+            && active_response_has_content
+            && !transition_costly_candidate
+            && rich_presentation == RichPresentationEffect::None;
+        let mind_enabled = mind_full || mind_residual;
+        let mind_generation = self.mind_visual_generation;
+        let mind_active = self.conversation.active_run_id.is_some();
+        self.mind_visual.update(cx, |visual, visual_cx| {
+            visual.set_process_state(
+                mind_generation,
+                mind_active,
+                primary_live_activity,
+                mind_enabled,
+                visual_cx,
+            );
+        });
         if draft_visible {
             self.text_selection.clear();
         } else {
@@ -1320,6 +1369,73 @@ impl GsvApp {
             Some(layout)
         };
 
+        let mind_size = (viewport_width.min(viewport_height) * 0.80).clamp(340.0, 760.0);
+        let full_mind_layer = mind_full.then(|| {
+            let visual = if self.reduced_motion {
+                div()
+                    .size(px(mind_size))
+                    .child(self.mind_visual.clone())
+                    .into_any_element()
+            } else {
+                div()
+                    .child(self.mind_visual.clone())
+                    .with_animation(
+                        ("mind-enter", mind_generation),
+                        Animation::new(Duration::from_millis(320)).with_easing(ease_out_quint()),
+                        move |this, delta| {
+                            this.size(px(mind_size * (0.92 + delta * 0.08)))
+                                .opacity(delta)
+                        },
+                    )
+                    .into_any_element()
+            };
+            div()
+                .id("mind-canvas")
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .on_scroll_wheel(cx.listener(Self::scroll_moments))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, window, cx| {
+                        this.input.focus_handle(cx).focus(window);
+                    }),
+                )
+                .child(visual)
+                .into_any_element()
+        });
+        let residual_mind_layer = mind_residual.then(|| {
+            let visual = if self.reduced_motion {
+                div()
+                    .size(px(mind_size * 0.62))
+                    .opacity(0.12)
+                    .child(self.mind_visual.clone())
+                    .into_any_element()
+            } else {
+                div()
+                    .child(self.mind_visual.clone())
+                    .with_animation(
+                        ("mind-yield-to-text", mind_generation),
+                        Animation::new(Duration::from_millis(420)).with_easing(ease_out_quint()),
+                        move |this, delta| {
+                            this.size(px(mind_size * (1.0 - delta * 0.38)))
+                                .opacity(1.0 - delta * 0.88)
+                        },
+                    )
+                    .into_any_element()
+            };
+            div()
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(visual)
+                .into_any_element()
+        });
+
         div()
             .relative()
             .size_full()
@@ -1327,7 +1443,9 @@ impl GsvApp {
             .when_some(sink_layout, |this, sink_layout| {
                 this.child(self.render_input_sink(sink_layout, geometry))
             })
-            .child(canvas)
+            .when_some(full_mind_layer, |this, mind| this.child(mind))
+            .when(!mind_full, |this| this.child(canvas))
+            .when_some(residual_mind_layer, |this, mind| this.child(mind))
             .child(self.presence_lane.clone())
             .when_some(self.history_edge_intent, |this, intent| {
                 this.child(render_history_edge_feedback(intent, geometry))
@@ -2278,6 +2396,15 @@ impl Render for GsvApp {
         let machine_visible = !login_visible && self.machine_setup.is_some();
         let microphone_visible =
             !login_visible && !machine_visible && self.microphone_chooser.is_some();
+        let conversation_visible = !login_visible
+            && !machine_visible
+            && !microphone_visible
+            && self.conversation.mode == SurfaceMode::Conversation;
+        if !conversation_visible {
+            self.mind_visual.update(cx, |visual, visual_cx| {
+                visual.set_enabled(false, visual_cx);
+            });
+        }
         div()
             .id("gsv-desktop")
             .key_context("GsvNative")
@@ -2315,16 +2442,10 @@ impl Render for GsvApp {
             .when(microphone_visible, |this| {
                 this.child(self.render_microphone_chooser(cx))
             })
-            .when(
-                !login_visible
-                    && !machine_visible
-                    && !microphone_visible
-                    && self.conversation.mode == SurfaceMode::Conversation,
-                |this| {
-                    this.child(self.render_conversation(window, cx))
-                        .child(self.render_timeline(window, cx))
-                },
-            )
+            .when(conversation_visible, |this| {
+                this.child(self.render_conversation(window, cx))
+                    .child(self.render_timeline(window, cx))
+            })
             .when(
                 !login_visible
                     && !machine_visible

@@ -92,6 +92,7 @@ pub struct VisualEngineConfig {
     pub height: u32,
     pub frames_per_second: u32,
     pub initial_preset: VisualPreset,
+    pub initially_active: bool,
 }
 
 impl Default for VisualEngineConfig {
@@ -101,6 +102,7 @@ impl Default for VisualEngineConfig {
             height: 832,
             frames_per_second: 30,
             initial_preset: VisualPreset::Listening,
+            initially_active: true,
         }
     }
 }
@@ -134,6 +136,7 @@ impl std::error::Error for VisualEngineError {}
 enum VisualCommand {
     SetPreset(VisualPreset),
     SetShipView { orbit: f32, elevation: f32 },
+    SetActive(bool),
     Shutdown,
 }
 
@@ -191,6 +194,12 @@ impl VisualEngine {
     pub fn set_ship_view(&self, orbit: f32, elevation: f32) -> Result<(), VisualEngineError> {
         self.commands
             .send(VisualCommand::SetShipView { orbit, elevation })
+            .map_err(|_| VisualEngineError("visual renderer has stopped".into()))
+    }
+
+    pub fn set_active(&self, active: bool) -> Result<(), VisualEngineError> {
+        self.commands
+            .send(VisualCommand::SetActive(active))
             .map_err(|_| VisualEngineError("visual renderer has stopped".into()))
     }
 }
@@ -607,20 +616,43 @@ fn render_loop(
     let mut recipe = VisualRecipe::for_preset(target);
     let mut orbit = 0.0;
     let mut elevation = 0.0;
+    let mut active = config.initially_active;
 
     loop {
-        for command in commands.try_iter() {
-            match command {
-                VisualCommand::SetPreset(preset) => target = preset,
-                VisualCommand::SetShipView {
-                    orbit: new_orbit,
-                    elevation: new_elevation,
-                } => {
-                    orbit = new_orbit;
-                    elevation = new_elevation;
-                }
-                VisualCommand::Shutdown => return Ok(()),
+        if !active {
+            let Ok(command) = commands.recv() else {
+                return Ok(());
+            };
+            if !apply_command(
+                command,
+                &mut target,
+                &mut orbit,
+                &mut elevation,
+                &mut active,
+            ) {
+                return Ok(());
             }
+            if active {
+                let resumed = Instant::now();
+                previous_frame = resumed;
+                next_frame = resumed;
+            }
+            continue;
+        }
+
+        for command in commands.try_iter() {
+            if !apply_command(
+                command,
+                &mut target,
+                &mut orbit,
+                &mut elevation,
+                &mut active,
+            ) {
+                return Ok(());
+            }
+        }
+        if !active {
+            continue;
         }
 
         let now = Instant::now();
@@ -706,5 +738,74 @@ fn render_loop(
             Ok(()) | Err(async_mpsc::error::TrySendError::Full(_)) => {}
             Err(async_mpsc::error::TrySendError::Closed(_)) => return Ok(()),
         }
+    }
+}
+
+fn apply_command(
+    command: VisualCommand,
+    target: &mut VisualPreset,
+    orbit: &mut f32,
+    elevation: &mut f32,
+    active: &mut bool,
+) -> bool {
+    match command {
+        VisualCommand::SetPreset(preset) => *target = preset,
+        VisualCommand::SetShipView {
+            orbit: new_orbit,
+            elevation: new_elevation,
+        } => {
+            *orbit = new_orbit;
+            *elevation = new_elevation;
+        }
+        VisualCommand::SetActive(new_active) => *active = new_active,
+        VisualCommand::Shutdown => return false,
+    }
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn activity_control_pauses_without_losing_visual_state() {
+        let mut target = VisualPreset::Listening;
+        let mut orbit = 0.0;
+        let mut elevation = 0.0;
+        let mut active = true;
+
+        assert!(apply_command(
+            VisualCommand::SetActive(false),
+            &mut target,
+            &mut orbit,
+            &mut elevation,
+            &mut active,
+        ));
+        assert!(!active);
+        assert!(apply_command(
+            VisualCommand::SetPreset(VisualPreset::Searching),
+            &mut target,
+            &mut orbit,
+            &mut elevation,
+            &mut active,
+        ));
+        assert_eq!(target, VisualPreset::Searching);
+        assert!(!active);
+        assert!(apply_command(
+            VisualCommand::SetActive(true),
+            &mut target,
+            &mut orbit,
+            &mut elevation,
+            &mut active,
+        ));
+        assert!(active);
+        assert_eq!(target, VisualPreset::Searching);
+        assert!(!apply_command(
+            VisualCommand::Shutdown,
+            &mut target,
+            &mut orbit,
+            &mut elevation,
+            &mut active,
+        ));
     }
 }

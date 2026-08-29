@@ -114,6 +114,7 @@ pub struct LiveActivity {
     call_id: String,
     execution_id: Option<String>,
     terminal_baseline: Option<String>,
+    sequence: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -423,6 +424,7 @@ pub struct Conversation {
     response_activity: HashMap<String, Vec<ActivitySummaryEntry>>,
     history_call_states: HashMap<(String, String), HistoryCallState>,
     live_activities: HashMap<String, LiveActivity>,
+    next_live_activity_sequence: u64,
     stopping_run_id: Option<String>,
     follow_latest: bool,
 }
@@ -443,6 +445,7 @@ impl Conversation {
             response_activity: HashMap::new(),
             history_call_states: HashMap::new(),
             live_activities: HashMap::new(),
+            next_live_activity_sequence: 1,
             stopping_run_id: None,
             follow_latest: true,
         }
@@ -480,6 +483,7 @@ impl Conversation {
             response_activity: HashMap::new(),
             history_call_states: HashMap::new(),
             live_activities: HashMap::new(),
+            next_live_activity_sequence: 1,
             stopping_run_id: None,
             follow_latest: true,
         }
@@ -487,6 +491,10 @@ impl Conversation {
 
     pub fn current(&self) -> Option<&Moment> {
         self.moments.get(self.selected)
+    }
+
+    pub fn is_following_latest(&self) -> bool {
+        self.follow_latest
     }
 
     /// Find authoritative history messages that are exact persisted identities of local streamed
@@ -573,6 +581,13 @@ impl Conversation {
             .collect()
     }
 
+    pub fn primary_live_activity(&self) -> Option<ActivityCategory> {
+        self.live_activities
+            .values()
+            .max_by_key(|activity| activity.sequence)
+            .map(|activity| activity.category)
+    }
+
     pub fn set_live_activity(&mut self, mut activity: LiveActivity) -> bool {
         if self.active_run_id.as_deref() != Some(activity.run_id.as_str())
             || !self.accepts_run(Some(&activity.run_id))
@@ -594,6 +609,8 @@ impl Conversation {
         if self.live_activities.contains_key(&key) {
             return false;
         }
+        activity.sequence = self.next_live_activity_sequence;
+        self.next_live_activity_sequence = self.next_live_activity_sequence.wrapping_add(1).max(1);
         self.live_activities.insert(key, activity);
         true
     }
@@ -1398,6 +1415,7 @@ pub fn parse_tool_started_activity(value: &Value) -> Option<LiveActivity> {
         call_id: call_id.to_string(),
         execution_id: execution_id.map(str::to_string),
         terminal_baseline: None,
+        sequence: 0,
     })
 }
 
@@ -2127,6 +2145,52 @@ mod tests {
         assert!(conversation.set_live_activity(activity.clone()));
         conversation.clear_live_activity(Some("run-1"));
         assert!(conversation.set_live_activity(activity));
+    }
+
+    #[test]
+    fn newest_live_activity_drives_the_primary_visual_and_falls_back_exactly() {
+        let mut conversation = Conversation::connecting();
+        conversation.start_run("run-1");
+        assert!(conversation.set_live_activity(
+            parse_tool_started_activity(&json!({
+                "runId": "run-1",
+                "callId": "read",
+                "executionId": "execution-read",
+                "syscall": "fs.read"
+            }))
+            .expect("valid read start")
+        ));
+        assert_eq!(
+            conversation.primary_live_activity(),
+            Some(ActivityCategory::ReadingFiles)
+        );
+
+        assert!(conversation.set_live_activity(
+            parse_tool_started_activity(&json!({
+                "runId": "run-1",
+                "callId": "shell",
+                "executionId": "execution-shell",
+                "syscall": "shell.exec"
+            }))
+            .expect("valid shell start")
+        ));
+        assert_eq!(
+            conversation.primary_live_activity(),
+            Some(ActivityCategory::RunningCommands)
+        );
+
+        let shell_finished = parse_tool_finished_activity(&json!({
+            "runId": "run-1",
+            "callId": "shell",
+            "executionId": "execution-shell",
+            "outcome": "completed"
+        }))
+        .expect("valid shell finish");
+        assert!(conversation.finish_live_activity(&shell_finished));
+        assert_eq!(
+            conversation.primary_live_activity(),
+            Some(ActivityCategory::ReadingFiles)
+        );
     }
 
     #[test]

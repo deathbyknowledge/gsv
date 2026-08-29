@@ -23,6 +23,7 @@ use crate::history::{HistoryPreparationCandidate, HistoryRevision};
 use crate::interaction::{CanvasInteraction, CanvasLayer, SubmissionFailure};
 use crate::machine_setup::{MachineRuntimeStatus, MachineSetupFlow, MachineSetupPhase};
 use crate::media_files::{MaterializedMedia, MediaFileStore};
+use crate::mind_visual::MindVisual;
 use crate::model::{Conversation, MomentIdentityAdoption, SurfaceMode};
 use crate::prepared::PreparedContent;
 use crate::startup::{LoginDefaults, LoginFlow, LoginProgress, LoginStep};
@@ -258,6 +259,9 @@ pub struct GsvApp {
     history_edge_intent: Option<HistoryEdgeIntent>,
     history_edge_feedback_epoch: u64,
     presence_lane: Entity<PresenceLane>,
+    mind_visual: Entity<MindVisual>,
+    mind_visual_generation: u64,
+    mind_visual_run_id: Option<String>,
     rich_presentation: Option<RichPresentation>,
     pending_rich_fallback: Option<PendingRichFallback>,
     next_rich_presentation_epoch: u64,
@@ -537,6 +541,12 @@ impl GsvApp {
         self.timeline_scroll_accumulator = 0.0;
         self.timeline_scroll_last_event = None;
         self.text_selection.clear();
+        self.mind_visual_run_id = None;
+        self.mind_visual_generation = self.mind_visual_generation.wrapping_add(1).max(1);
+        let generation = self.mind_visual_generation;
+        self.mind_visual.update(cx, |visual, visual_cx| {
+            visual.reset(generation, visual_cx);
+        });
         self.approval_resume_mode = None;
         self.programmatic_input = None;
         self.set_input_value(String::new(), window, cx);
@@ -625,6 +635,7 @@ impl GsvApp {
         let machine_focus = cx.focus_handle();
         let microphone_focus = cx.focus_handle();
         let presence_lane = cx.new(|_| PresenceLane::new(Vec::new(), false, reduced_motion));
+        let mind_visual = cx.new(|cx| MindVisual::new(window, cx, reduced_motion));
         let input_subscription = cx.subscribe_in(&input, window, |this, _, event, window, cx| {
             this.on_input(event, window, cx);
         });
@@ -838,6 +849,9 @@ impl GsvApp {
             history_edge_intent: None,
             history_edge_feedback_epoch: 0,
             presence_lane,
+            mind_visual,
+            mind_visual_generation: 0,
+            mind_visual_run_id: None,
             rich_presentation: None,
             pending_rich_fallback: None,
             next_rich_presentation_epoch: 1,
