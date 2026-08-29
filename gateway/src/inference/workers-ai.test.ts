@@ -111,7 +111,7 @@ describe("Workers AI provider", () => {
       stopReason: "stop",
       usage: { input: 11, output: 4, totalTokens: 15 },
     });
-    expect(gateway).toHaveBeenCalledWith("gsv");
+    expect(gateway).toHaveBeenCalledWith("default");
     expect(run).toHaveBeenCalledTimes(1);
     const [request, options] = run.mock.calls[0];
     expect(request).toMatchObject({

@@ -21,7 +21,7 @@ export const WORKERS_AI_PROVIDER_ALIAS = "workersai";
 export { DEFAULT_WORKERS_AI_MODEL };
 
 const PI_WORKERS_AI_PROVIDER = "cloudflare-workers-ai";
-const WORKERS_AI_GATEWAY_ID = "gsv";
+const WORKERS_AI_GATEWAY_ID = "default";
 const WORKERS_AI_GATEWAY_BASE_URL =
   `https://gateway.ai.cloudflare.com/v1/binding/${WORKERS_AI_GATEWAY_ID}`;
 const WORKERS_AI_GATEWAY_COMPAT_URL = `${WORKERS_AI_GATEWAY_BASE_URL}/compat`;
