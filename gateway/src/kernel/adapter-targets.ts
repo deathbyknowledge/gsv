@@ -1,4 +1,5 @@
 import type {
+  AdapterServiceDescriptor,
   AdapterTargetIdentity,
   AdapterTargetRequestFrame,
   AdapterTargetResponseFrame,
@@ -12,6 +13,7 @@ import {
 } from "@humansandmachines/gsv/services/adapters";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import { stableOpaqueId } from "../shared/stable-id";
+import { withByteStreamFinalizer } from "../shared/streams";
 import { resolveAdapterService } from "./adapter-handlers";
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
 import type { IdentityLinkRecord } from "./identity-links";
@@ -21,6 +23,8 @@ import { z } from "zod";
 const adapterTargetLinkMetadataSchema = z.object({
   routeGeneration: z.string().optional(),
 }).passthrough();
+
+const ADAPTER_TARGET_DISCOVERY_TIMEOUT_MS = 1_000;
 
 export type AdapterTargetRoute = {
   kind: "adapter";
@@ -63,7 +67,7 @@ export async function listVisibleAdapterTargets(
 
     let supported = targetSupport.get(adapter);
     if (!supported) {
-      supported = adapterSupportsTargets(adapter, service);
+      supported = adapterSupportsTargets(adapter, service, ctx);
       targetSupport.set(adapter, supported);
     }
     if (!await supported) return [];
@@ -74,10 +78,13 @@ export async function listVisibleAdapterTargets(
 
     const identity = adapterTargetIdentity(link);
     try {
-      using descriptors = await service.adapterTargetList(
+      const acquisition = service.adapterTargetList(
         { installationId: ctx.installationId },
         identity,
       );
+      const acquired = await waitForAdapterDiscovery(acquisition, ctx);
+      if (!acquired) return [];
+      using descriptors = acquired;
       const decoded = adapterTargetDescriptorListSchema.safeParse(
         descriptors,
       );
@@ -130,10 +137,19 @@ export async function listVisibleAdapterTargets(
 async function adapterSupportsTargets(
   adapter: string,
   service: NonNullable<ReturnType<typeof resolveAdapterService>>,
+  ctx: KernelContext,
 ): Promise<boolean> {
   try {
     if (!service.adapterDescribe) return false;
-    const descriptor = adapterServiceDescriptorSchema.safeParse(await service.adapterDescribe());
+    // SAFETY: object-valued Workers RPC results carry a disposer that owns the
+    // remote result for the lifetime of this acquisition.
+    const acquisition = service.adapterDescribe() as Promise<
+      AdapterServiceDescriptor & Disposable
+    >;
+    const acquired = await waitForAdapterDiscovery(acquisition, ctx);
+    if (!acquired) return false;
+    using descriptorResult = acquired;
+    const descriptor = adapterServiceDescriptorSchema.safeParse(descriptorResult);
     return descriptor.success
       && descriptor.data.id === adapter
       && descriptor.data.capabilities.targets === true;
@@ -206,16 +222,82 @@ export async function requestAdapterTarget(
     }
     if (!decoded.data.ok || decoded.data.body === undefined) {
       response[Symbol.dispose]();
+      // SAFETY: the public adapter-target schema validates the same response
+      // envelope consumed by Kernel syscall dispatch.
+      return decoded.data as ResponseFrame;
     }
-    // SAFETY: the public adapter-target frame has the same response envelope,
-    // and its data/body were validated before crossing into Kernel dispatch.
-    return decoded.data as ResponseFrame;
+    const body = decoded.data.body;
+    try {
+      // SAFETY: the response schema validated every envelope field and the
+      // replacement stream preserves the validated binary-body contract.
+      const transferred: ResponseFrame = {
+        ...decoded.data,
+        body: {
+          ...body,
+          stream: withByteStreamFinalizer(body.stream, () => {
+            try {
+              response[Symbol.dispose]();
+            } catch {
+              // The body reached its terminal outcome; no further RPC work remains.
+            }
+          }),
+        },
+      } as ResponseFrame;
+      return transferred;
+    } catch {
+      await cancelBinaryBody(body, "Adapter target response body could not be transferred");
+      response[Symbol.dispose]();
+      return errorFrame(frame.id, 502, `Target provider returned an invalid body: ${target.targetId}`);
+    }
   } catch {
     if (ctx.requestSignal?.aborted) {
       return errorFrame(frame.id, 499, requestCancelMessage(ctx.requestSignal));
     }
     return errorFrame(frame.id, 502, `Target provider request failed: ${target.targetId}`);
   }
+}
+
+type AdapterDiscoveryOutcome<T> =
+  | { kind: "result"; value: T }
+  | { kind: "failed" }
+  | { kind: "timed_out" };
+
+async function waitForAdapterDiscovery<T extends Disposable>(
+  acquisition: Promise<T>,
+  ctx: KernelContext,
+): Promise<T | null> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const settled: Promise<AdapterDiscoveryOutcome<T>> = acquisition.then(
+    (value): AdapterDiscoveryOutcome<T> => ({ kind: "result", value }),
+    (): AdapterDiscoveryOutcome<T> => ({ kind: "failed" }),
+  );
+  const timedOut = new Promise<AdapterDiscoveryOutcome<T>>((resolve) => {
+    timeout = setTimeout(
+      () => resolve({ kind: "timed_out" }),
+      ADAPTER_TARGET_DISCOVERY_TIMEOUT_MS,
+    );
+  });
+  const outcome = await Promise.race([settled, timedOut]);
+  if (timeout !== undefined) clearTimeout(timeout);
+  if (outcome.kind === "result") return outcome.value;
+  if (outcome.kind === "timed_out") {
+    if (!disposeAdapterDiscoveryAcquisition(acquisition)) {
+      ctx.defer(settled.then((late) => {
+        if (late.kind === "result") late.value[Symbol.dispose]();
+      }));
+    }
+  }
+  return null;
+}
+
+function disposeAdapterDiscoveryAcquisition<T>(acquisition: Promise<T>): boolean {
+  // SAFETY: Workers RPC promises implement Symbol.dispose. Disposing the
+  // acquisition also disposes an object-valued result that arrives later.
+  const disposable = acquisition as Promise<T> & Partial<Disposable>;
+  const dispose = disposable[Symbol.dispose];
+  if (!dispose) return false;
+  dispose.call(disposable);
+  return true;
 }
 
 function adapterTargetIdentity(link: IdentityLinkRecord): AdapterTargetIdentity {

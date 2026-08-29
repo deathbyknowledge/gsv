@@ -100,3 +100,45 @@ export function bindByteStreamToAbort(
   };
   return new ReadableStream(source);
 }
+
+/** Runs a synchronous finalizer after a byte stream is consumed, cancelled, or errors. */
+export function withByteStreamFinalizer(
+  stream: ReadableStream<Uint8Array>,
+  finalize: () => void,
+): ReadableStream<Uint8Array> {
+  const reader = stream.getReader();
+  let finished = false;
+  const finish = (): void => {
+    if (finished) return;
+    finished = true;
+    reader.releaseLock();
+    finalize();
+  };
+  const source: UnderlyingByteSource = {
+    type: "bytes",
+    async pull(controller) {
+      try {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          finish();
+          controller.close();
+        } else {
+          controller.enqueue(byteStreamChunk(chunk.value));
+        }
+      } catch (error) {
+        finish();
+        controller.error(error);
+      }
+    },
+    async cancel(reason: Error | string | null | undefined) {
+      try {
+        await reader.cancel(reason);
+      } catch {
+        // Releasing the RPC owner is authoritative after downstream cancellation.
+      } finally {
+        finish();
+      }
+    },
+  };
+  return new ReadableStream(source);
+}

@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+import { bodyFromBytes, bodyToBytes } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
 import type { AdapterServiceBinding } from "./adapter-handlers";
 import {
   listVisibleAdapterTargets,
   requestAdapterTarget,
 } from "./adapter-targets";
+import { listAllVisibleTargets } from "./targets";
 
 function rpcResult<T extends object>(value: T): T & Disposable {
   Object.defineProperty(value, Symbol.dispose, { value: vi.fn() });
@@ -16,7 +18,7 @@ function rpcResult<T extends object>(value: T): T & Disposable {
 function makeService(overrides: Partial<AdapterServiceBinding> = {}): AdapterServiceBinding {
   const service = {
     fetch: vi.fn(),
-    adapterDescribe: vi.fn(async () => ({
+    adapterDescribe: vi.fn(async () => rpcResult({
       version: 1,
       id: "slack",
       displayName: "Slack",
@@ -146,7 +148,7 @@ describe("adapter-backed targets", () => {
 
   it("requires the adapter descriptor to opt into targets", async () => {
     const service = makeService({
-      adapterDescribe: vi.fn(async () => ({
+      adapterDescribe: vi.fn(async () => rpcResult({
         version: 1,
         id: "slack",
         displayName: "Slack",
@@ -165,6 +167,67 @@ describe("adapter-backed targets", () => {
 
     await expect(listVisibleAdapterTargets(makeContext(service))).resolves.toEqual([]);
     expect(service.adapterTargetList).not.toHaveBeenCalled();
+  });
+
+  it("bounds stalled discovery, preserves local targets, and disposes a late result", async () => {
+    vi.useFakeTimers();
+    let resolveDescriptor!: (value: ReturnType<typeof rpcResult>) => void;
+    const descriptor = rpcResult({
+      version: 1 as const,
+      id: "slack",
+      displayName: "Slack",
+      capabilities: {
+        connect: false,
+        disconnect: false,
+        send: true,
+        status: true,
+        activity: false,
+        pairing: true,
+        targets: true,
+        surfaces: ["dm" as const],
+        media: { inbound: [], outbound: [] },
+      },
+    });
+    const descriptorPromise = new Promise<typeof descriptor>((resolve) => {
+      resolveDescriptor = resolve;
+    });
+    const service = makeService({
+      adapterDescribe: vi.fn(() => descriptorPromise),
+    });
+    const deferred: Promise<unknown>[] = [];
+    const ctx = makeContext(service, { deferred });
+    const localTarget = {
+      device_id: "laptop",
+      owner_uid: 1000,
+      label: "Laptop",
+      description: "Local machine",
+      implements: ["shell.exec"],
+      platform: "linux",
+      version: "1",
+      online: true,
+      first_seen_at: 10,
+      last_seen_at: 20,
+      connected_at: 10,
+      disconnected_at: null,
+    };
+    // SAFETY: the focused test supplies the device-store method consulted by
+    // target projection; no other device-store operation is reachable here.
+    ctx.devices = {
+      listForUser: vi.fn(() => [localTarget]),
+    } as KernelContext["devices"];
+
+    try {
+      const discovery = listAllVisibleTargets(ctx);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(discovery).resolves.toEqual([
+        expect.objectContaining({ targetId: "laptop", label: "Laptop", online: true }),
+      ]);
+      resolveDescriptor(descriptor);
+      await Promise.all(deferred);
+      expect(descriptor[Symbol.dispose]).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("routes a syscall through the adapter and preserves the response envelope", async () => {
@@ -197,6 +260,58 @@ describe("adapter-backed targets", () => {
         deadlineAt: expect.any(Number),
       }),
     );
+  });
+
+  it("retains a body-bearing RPC response until its stream reaches a terminal outcome", async () => {
+    const completed = rpcResult({
+      type: "res" as const,
+      id: "request-body-complete",
+      ok: true as const,
+      data: { status: "completed" as const, output: "", exitCode: 0 },
+      body: bodyFromBytes(new TextEncoder().encode("adapter bytes")),
+    });
+    const cancelled = rpcResult({
+      type: "res" as const,
+      id: "request-body-cancel",
+      ok: true as const,
+      data: { status: "completed" as const, output: "", exitCode: 0 },
+      body: bodyFromBytes(new TextEncoder().encode("unused bytes")),
+    });
+    const service = makeService({
+      adapterTargetExecute: vi.fn()
+        .mockResolvedValueOnce(completed)
+        .mockResolvedValueOnce(cancelled),
+    });
+    const ctx = makeContext(service);
+    const [target] = await listVisibleAdapterTargets(ctx);
+
+    const completeResponse = await requestAdapterTarget({
+      type: "req",
+      id: "request-body-complete",
+      call: "shell.exec",
+      args: { input: "slack export" },
+    }, target!, Date.now() + 120_000, ctx);
+    expect(completed[Symbol.dispose]).not.toHaveBeenCalled();
+    if (!completeResponse.ok || !completeResponse.body) {
+      throw new Error("Expected a body-bearing adapter response");
+    }
+    await expect(bodyToBytes(completeResponse.body)).resolves.toEqual(
+      new TextEncoder().encode("adapter bytes"),
+    );
+    expect(completed[Symbol.dispose]).toHaveBeenCalledOnce();
+
+    const cancelResponse = await requestAdapterTarget({
+      type: "req",
+      id: "request-body-cancel",
+      call: "shell.exec",
+      args: { input: "slack export" },
+    }, target!, Date.now() + 120_000, ctx);
+    expect(cancelled[Symbol.dispose]).not.toHaveBeenCalled();
+    if (!cancelResponse.ok || !cancelResponse.body) {
+      throw new Error("Expected a body-bearing adapter response");
+    }
+    await cancelResponse.body.stream.cancel("not needed");
+    expect(cancelled[Symbol.dispose]).toHaveBeenCalledOnce();
   });
 
   it("cancels the owning adapter call when the caller aborts", async () => {
