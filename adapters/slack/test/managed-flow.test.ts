@@ -1,7 +1,9 @@
-import { env, SELF } from "cloudflare:test";
+import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
 import { workspaceAccountId } from "../src/slack-api";
+import type { ManagedSlackPeer } from "../src/managed-peer";
+import type { ManagedSlackPeerState } from "../src/managed-peer-state";
 import {
   managedSlackPeerObjectName,
   managedSlackWorkspaceObjectName,
@@ -171,6 +173,13 @@ type WorkspaceStub = {
   ): Promise<{ available: boolean }>;
 };
 
+type ManagedPeerRaceHarness = Pick<ManagedSlackPeer, "disconnect" | "executeTarget"> & {
+  requireCurrentTargetRoute(
+    installationId: string,
+    routeGeneration: string,
+  ): Promise<ManagedSlackPeerState>;
+};
+
 const SIGNING_SECRET = "signing_secret_123456789";
 const APPROVAL_PROMPT = [
   "I need your confirmation before I can continue.",
@@ -198,6 +207,16 @@ function pairingBinding<T>(value: T): T & PairingStub {
 function peerBinding<T extends object>(value: T): T & Rpc.Provider<PeerStub> {
   // SAFETY: the selected Durable Object exposes the peer RPC used by this flow.
   return value as T & Rpc.Provider<PeerStub>;
+}
+
+function managedPeerObject(value: DurableObjectStub): DurableObjectStub<ManagedSlackPeer> {
+  // SAFETY: the stub comes from MANAGED_SLACK_PEER using its canonical object name.
+  return value as DurableObjectStub<ManagedSlackPeer>;
+}
+
+function managedPeerRaceHarness(value: ManagedSlackPeer): ManagedPeerRaceHarness {
+  // SAFETY: this test harness exposes the peer's existing private route-admission seam.
+  return value as ManagedPeerRaceHarness;
 }
 
 function workspaceBinding<T extends object>(value: T): T & Rpc.Provider<WorkspaceStub> {
@@ -430,6 +449,114 @@ async function pair(
 }
 
 describe("managed Slack clean-instance flow", () => {
+  it("fences a target call while its route admission is in flight", async () => {
+    const teamId = "TRACE123";
+    const actorId = "URACE001";
+    const accountId = await workspaceAccountId(teamId);
+    const workspaces = namespaceBinding(env.MANAGED_SLACK_WORKSPACE);
+    const workspace = workspaceBinding(workspaces.get(
+      workspaces.idFromName(managedSlackWorkspaceObjectName(accountId)),
+    ));
+    using installed = await workspace.install(accountId, {
+      teamId,
+      teamName: "Race Test",
+      botUserId: "UBOTRACE1",
+      botToken: "xoxb-managed-race-bot-token",
+      scope: "app_mentions:read,chat:write,chat:write.public,files:read,files:write,im:history,im:write,reactions:write",
+      user: {
+        id: actorId,
+        token: "xoxp-managed-race-user-token",
+        scope: "channels:history,channels:read,groups:history,groups:read,im:history,im:read,mpim:history,mpim:read,users:read",
+      },
+    });
+    const route = {
+      installationId: "installation-race",
+      localUid: 1000,
+      generation: "route-race-old",
+      canonicalOrigin: "https://installation-race.gsv.test",
+      linkedAt: Date.now(),
+    };
+    const peers = namespaceBinding(env.MANAGED_SLACK_PEER);
+    const peer = managedPeerObject(peers.get(
+      peers.idFromName(managedSlackPeerObjectName(accountId, actorId)),
+    ));
+    await runInDurableObject(peer, async (_instance, state) => {
+      await state.storage.put("managed_slack_peer:v1:state", {
+        version: 1,
+        accountId,
+        teamId,
+        teamName: "Race Test",
+        botUserId: "UBOTRACE1",
+        workspaceGeneration: installed.generation,
+        actorId,
+        dmSurfaceId: "DRACE001",
+        observedSurfaces: [],
+        activeRoute: route,
+      } satisfies ManagedSlackPeerState);
+    });
+
+    const result = await runInDurableObject(peer, async (instance) => {
+      const harness = managedPeerRaceHarness(instance);
+      const original = harness.requireCurrentTargetRoute;
+      let releaseAdmission!: () => void;
+      const admissionReleased = new Promise<void>((resolve) => {
+        releaseAdmission = resolve;
+      });
+      let routeAdmitted!: () => void;
+      const routeWasAdmitted = new Promise<void>((resolve) => {
+        routeAdmitted = resolve;
+      });
+      harness.requireCurrentTargetRoute = async (installationId, routeGeneration) => {
+        const state = await original.call(instance, installationId, routeGeneration);
+        routeAdmitted();
+        await admissionReleased;
+        return state;
+      };
+      try {
+        const execution = harness.executeTarget(
+          route.installationId,
+          route.generation,
+          "workspace",
+          {
+            type: "req",
+            id: "target-route-race",
+            call: "shell.exec",
+            args: {
+              input: "slack messages send --channel CRACE001 --message 'stale route mutation'",
+            },
+            deadlineAt: Date.now() + 120_000,
+          },
+        );
+        await routeWasAdmitted;
+        await harness.disconnect({
+          operationId: "disconnect-route-race",
+          installationId: route.installationId,
+          accountId,
+          actorId,
+          surfaceId: "DRACE001",
+          localUid: route.localUid,
+          generation: route.generation,
+        });
+        releaseAdmission();
+        return await execution;
+      } finally {
+        releaseAdmission();
+        harness.requireCurrentTargetRoute = original;
+      }
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 409,
+        message: "Slack target route changed during execution",
+      },
+    });
+    expect((await slackApiCalls()).some((call) => (
+      call.method === "chat.postMessage" && call.body.text === "stale route mutation"
+    ))).toBe(false);
+  });
+
   it("keeps transport connected while target-specific app scopes await reauthorization", async () => {
     const accountId = await workspaceAccountId("TLEGACY1");
     const workspaces = namespaceBinding(env.MANAGED_SLACK_WORKSPACE);
