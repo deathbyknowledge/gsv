@@ -175,7 +175,10 @@ import {
   type ResponsibilityWakeBatch,
 } from "./responsibility-store";
 import { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
-import { recordMachineAddedResponsibility } from "./lifecycle-responsibilities";
+import {
+  recordAdapterStatusTransition,
+  recordMachineAddedResponsibility,
+} from "./lifecycle-responsibilities";
 import { FederationStore } from "./federation-store";
 import { FederationIdentity } from "./federation-crypto";
 import {
@@ -1593,13 +1596,57 @@ export class Kernel extends DurableObject<Env> {
     ) {
       return { removed: false };
     }
-    return {
-      removed: this.adapters.identityLinks.unlink(
-        normalizedAdapter,
-        parsed.accountId,
-        parsed.actorId,
-      ),
-    };
+    const previousStatus = this.adapters.status.get(
+      normalizedAdapter,
+      parsed.accountId,
+    );
+    const removed = this.adapters.identityLinks.unlink(
+      normalizedAdapter,
+      parsed.accountId,
+      parsed.actorId,
+    );
+    if (!removed) return { removed: false };
+
+    const remainingLinks = this.adapters.identityLinks.listByAccount(
+      normalizedAdapter,
+      parsed.accountId,
+    );
+    if (!previousStatus) {
+      this.adapters.status.setOwner(normalizedAdapter, parsed.accountId, link.uid);
+    }
+    const currentStatus = this.adapters.status.upsert(
+      normalizedAdapter,
+      parsed.accountId,
+      {
+        accountId: parsed.accountId,
+        connected: previousStatus?.connected ?? false,
+        authenticated: remainingLinks.length > 0,
+        mode: previousStatus?.mode ?? "managed-shared",
+        lastActivity: Date.now(),
+        error: previousStatus?.error,
+        extra: previousStatus?.extra,
+      },
+    );
+    recordAdapterStatusTransition(
+      previousStatus,
+      currentStatus,
+      this.buildKernelContext({}),
+      {
+        suppressAuthenticationRequired: true,
+        intentionalDisconnect: remainingLinks.length === 0,
+      },
+    );
+
+    const notifiedUids = new Set([0, link.uid]);
+    if (currentStatus.ownerUid !== null) notifiedUids.add(currentStatus.ownerUid);
+    for (const remainingLink of remainingLinks) notifiedUids.add(remainingLink.uid);
+    for (const uid of notifiedUids) {
+      this.broadcastToUserUid(uid, "adapter.status", {
+        adapter: normalizedAdapter,
+        accountId: parsed.accountId,
+      });
+    }
+    return { removed: true };
   }
 
   async authorizeGitHttp(input: AuthorizeGitHttpInput): Promise<AuthorizeGitHttpResult> {

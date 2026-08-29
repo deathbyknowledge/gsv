@@ -170,6 +170,88 @@ describe("Kernel service peer identity", () => {
   });
 });
 
+describe("Kernel managed adapter unlink", () => {
+  it("deauthenticates and notifies the old owner after its last peer moves", async () => {
+    const link = {
+      adapter: "slack",
+      accountId: "workspace-hash",
+      actorId: "UOWNER",
+      uid: 1000,
+      createdAt: 1,
+      linkedByUid: 1000,
+      metadata: {
+        managed: true,
+        surfaceId: "DOWNER",
+        routeGeneration: "old-route",
+      },
+    };
+    const previousStatus = {
+      adapter: "slack",
+      accountId: "workspace-hash",
+      connected: true,
+      authenticated: true,
+      mode: "managed-shared",
+      lifecycleId: "adapter-account:slack",
+      readyOwnerUid: 1000,
+      ownerUid: 1000,
+      updatedAt: 1,
+    };
+    const currentStatus = {
+      ...previousStatus,
+      authenticated: false,
+      updatedAt: 2,
+    };
+    // SAFETY: this focused fixture supplies the Kernel stores and methods used
+    // by the managed unlink boundary.
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.adapters = {
+      identityLinks: {
+        get: vi.fn(() => link),
+        unlink: vi.fn(() => true),
+        listByAccount: vi.fn(() => []),
+      },
+      status: {
+        get: vi.fn(() => previousStatus),
+        setOwner: vi.fn(),
+        upsert: vi.fn(() => currentStatus),
+      },
+    };
+    kernel.buildKernelContext = vi.fn(() => ({
+      adapters: kernel.adapters,
+      auth: { isPersonalAgentUid: vi.fn(() => false) },
+      responsibilities: {
+        listActiveByDedupeKeyPrefix: vi.fn(() => []),
+      },
+      responsibilitySources: { isEnabled: vi.fn(() => false) },
+    }));
+    kernel.broadcastToUserUid = vi.fn();
+
+    await expect(kernel.unlinkManagedAdapterIdentity("slack", {
+      operationId: "move-peer",
+      accountId: "workspace-hash",
+      actorId: "UOWNER",
+      surfaceId: "DOWNER",
+      expectedLocalUid: 1000,
+      expectedGeneration: "old-route",
+    })).resolves.toEqual({ removed: true });
+
+    expect(kernel.adapters.status.upsert).toHaveBeenCalledWith(
+      "slack",
+      "workspace-hash",
+      expect.objectContaining({
+        connected: true,
+        authenticated: false,
+        mode: "managed-shared",
+      }),
+    );
+    expect(kernel.broadcastToUserUid).toHaveBeenCalledWith(
+      1000,
+      "adapter.status",
+      { adapter: "slack", accountId: "workspace-hash" },
+    );
+  });
+});
+
 function connectedPeer(
   kind: "human" | "machine" | "service",
   id: string,
