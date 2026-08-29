@@ -52,6 +52,11 @@ class VoiceAssistantActivity : ComponentActivity() {
                 state = assistantState,
                 detail = assistantDetail,
                 signal = runtime.level,
+                activity = if (assistantState == VoiceTurnState.THINKING) {
+                    runtime.activity
+                } else {
+                    AssistantActivity.NONE
+                },
                 onCancel = ::finishVoiceCommand,
             )
         }

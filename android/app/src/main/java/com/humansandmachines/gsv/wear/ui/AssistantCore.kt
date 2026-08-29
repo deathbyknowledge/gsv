@@ -48,6 +48,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.humansandmachines.gsv.wear.R
+import com.humansandmachines.gsv.wear.voice.AssistantActivity
 import com.humansandmachines.gsv.wear.voice.VoiceTurnState
 import kotlin.math.PI
 import kotlin.math.abs
@@ -59,6 +60,7 @@ fun AssistantCore(
     state: VoiceTurnState,
     modifier: Modifier = Modifier,
     signal: Float = 0f,
+    activity: AssistantActivity = AssistantActivity.NONE,
     shapeTarget: OrbShapeTarget = OrbShapeTarget.LISTENING,
     accentOverride: Color? = null,
     shipOrbitRadians: Float = 0f,
@@ -93,8 +95,9 @@ fun AssistantCore(
             animationSpec = tween(durationMillis, easing = LinearEasing),
         )
     }
+    val activityRecipe = activity.visualRecipe()
     val accent by animateColorAsState(
-        targetValue = accentOverride ?: state.accentColor(),
+        targetValue = accentOverride ?: activityRecipe?.accent ?: state.accentColor(),
         animationSpec = tween(480, easing = FastOutSlowInEasing),
         label = "assistant-accent",
     )
@@ -135,8 +138,9 @@ fun AssistantCore(
             ),
         )
     }
-    val shapeParameters = rememberOrbShapeParameters(shapeTarget)
-    val liquidParameters = rememberAssistantLiquidParameters(state)
+    val shapeParameters = rememberOrbShapeParameters(shapeTarget, activityRecipe?.shape)
+    val liquidParameters = rememberAssistantLiquidParameters(state, activityRecipe?.behavior)
+    val activityParameters = rememberAssistantActivityParameters(activity)
     val loopPhase = phase / 12f * PI.toFloat() * 2f
     val thinkingEnergy = 0.25f +
         0.11f * abs(sin(loopPhase * 2f)) +
@@ -150,12 +154,20 @@ fun AssistantCore(
     }
     val focusedEnergy = receptiveEnergy +
         (thinkingEnergy - receptiveEnergy) * liquidParameters.focus.coerceIn(0f, 1f)
-    val energy = focusedEnergy +
+    val baseEnergy = focusedEnergy +
         (speakingEnergy - focusedEnergy) * liquidParameters.projection.coerceIn(0f, 1f)
+    val activityEnergy = activityParameters.energy(loopPhase)
+    val energy = baseEnergy +
+        (activityEnergy - baseEnergy) * activityParameters.presence.coerceIn(0f, 1f)
 
     val semanticsModifier = if (exposeStateSemantics) {
+        val semanticState = if (activity == AssistantActivity.NONE) {
+            state.stateLabel()
+        } else {
+            activity.stateLabel()
+        }
         Modifier.semantics {
-            contentDescription = "GSV assistant ${state.stateLabel().lowercase()}"
+            contentDescription = "GSV assistant ${semanticState.lowercase()}"
         }
     } else {
         Modifier
@@ -171,6 +183,7 @@ fun AssistantCore(
             accent = accent,
             shapeParameters = shapeParameters,
             liquidParameters = liquidParameters,
+            activityParameters = activityParameters,
             shipOrbitRadians = shipOrbitRadians,
             shipElevationOffsetRadians = shipElevationOffsetRadians,
             shipMaterialization = shipMaterialization.value,
@@ -194,6 +207,7 @@ fun AssistantSurface(
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
     signal: Float = 0f,
+    activity: AssistantActivity = AssistantActivity.NONE,
     shapeTarget: OrbShapeTarget = OrbShapeTarget.LISTENING,
 ) {
     val phase = rememberVisualLoopFraction(
@@ -215,6 +229,7 @@ fun AssistantSurface(
             AssistantCore(
                 state = state,
                 signal = signal,
+                activity = activity,
                 shapeTarget = shapeTarget,
                 modifier = Modifier.size(336.dp),
             )
@@ -233,6 +248,7 @@ fun AssistantInvocationSurface(
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
     signal: Float = 0f,
+    activity: AssistantActivity = AssistantActivity.NONE,
     shapeTarget: OrbShapeTarget = OrbShapeTarget.LISTENING,
     coreActionDescription: String = "Cancel assistant",
     coreActionLabel: String = "TAP CORE TO DISMISS",
@@ -278,6 +294,7 @@ fun AssistantInvocationSurface(
                 AssistantCore(
                     state = state,
                     signal = signal,
+                    activity = activity,
                     shapeTarget = shapeTarget,
                     modifier = Modifier.fillMaxSize(),
                 )

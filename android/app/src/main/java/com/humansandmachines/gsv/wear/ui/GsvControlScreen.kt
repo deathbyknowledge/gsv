@@ -69,6 +69,7 @@ import com.humansandmachines.gsv.wear.connection.ConnectionState
 import com.humansandmachines.gsv.wear.gesture.GestureLinkState
 import com.humansandmachines.gsv.wear.gesture.GestureSnapshot
 import com.humansandmachines.gsv.wear.runtime.RuntimeSnapshot
+import com.humansandmachines.gsv.wear.voice.AssistantActivity
 import com.humansandmachines.gsv.wear.voice.AssistantSnapshot
 import com.humansandmachines.gsv.wear.voice.VoiceTurnState
 import kotlinx.coroutines.delay
@@ -91,6 +92,23 @@ private enum class GsvSurface {
 private const val DEFAULT_SHIP_ELEVATION_RADIANS = 0.6981317f
 private const val MIN_SHIP_ELEVATION_RADIANS = -1.3962634f
 private const val MAX_SHIP_ELEVATION_RADIANS = 1.4835298f
+
+private fun AssistantSnapshot.visibleActivity(): AssistantActivity =
+    if (turn == VoiceTurnState.IDLE || turn == VoiceTurnState.THINKING) {
+        activity
+    } else {
+        AssistantActivity.NONE
+    }
+
+private fun AssistantSnapshot.visualTurn(): VoiceTurnState =
+    if (
+        turn == VoiceTurnState.IDLE &&
+        (processActive || visibleActivity() != AssistantActivity.NONE)
+    ) {
+        VoiceTurnState.THINKING
+    } else {
+        turn
+    }
 
 internal fun shipRenderModeFor(authority: AuthorityState): ShipRenderMode =
     if (authority == AuthorityState.DISARMED) {
@@ -132,7 +150,13 @@ fun GsvControlScreen(
     }
 
     val accent = when (selected) {
-        GsvSurface.MIND -> assistantSnapshot.turn.accentColor()
+        GsvSurface.MIND -> assistantSnapshot.visibleActivity().let { activity ->
+            if (activity == AssistantActivity.NONE) {
+                assistantSnapshot.visualTurn().accentColor()
+            } else {
+                activity.accentColor()
+            }
+        }
         GsvSurface.SHIP -> when (wearSnapshot.authority) {
             AuthorityState.ARMED -> GsvColor.Accent
             AuthorityState.PAUSED -> GsvColor.Amber
@@ -316,9 +340,13 @@ private fun LiveCore(
     onShipViewDragged: (Float, Float) -> Unit,
     onToggle: () -> Unit,
 ) {
-    val mindActive = assistantSnapshot.turn != VoiceTurnState.IDLE
+    val mindTurnActive = assistantSnapshot.turn != VoiceTurnState.IDLE
+    val mindVisualState = assistantSnapshot.visualTurn()
+    val mindActivity = assistantSnapshot.visibleActivity()
+    val mindVisualActive = mindVisualState != VoiceTurnState.IDLE
     val mindStatus = when {
-        mindActive -> assistantSnapshot.turn.stateLabel().uppercase()
+        mindActivity != AssistantActivity.NONE -> mindActivity.stateLabel()
+        mindVisualActive -> mindVisualState.stateLabel().uppercase()
         assistantSnapshot.connection == ConnectionState.CONNECTED -> "AVAILABLE"
         assistantSnapshot.connection == ConnectionState.OFFLINE -> "OFFLINE"
         assistantSnapshot.connection == ConnectionState.DISCONNECTED -> "DORMANT"
@@ -336,7 +364,8 @@ private fun LiveCore(
     }
     val targetAccent = when (selected) {
         GsvSurface.MIND -> when {
-            mindActive -> assistantSnapshot.turn.accentColor()
+            mindActivity != AssistantActivity.NONE -> mindActivity.accentColor()
+            mindVisualActive -> mindVisualState.accentColor()
             assistantSnapshot.connection == ConnectionState.CONNECTED -> GsvColor.Accent
             assistantSnapshot.connection == ConnectionState.OFFLINE -> GsvColor.Amber
             else -> GsvColor.MutedDark
@@ -405,11 +434,16 @@ private fun LiveCore(
         ) {
             AssistantCore(
                 state = if (selected == GsvSurface.MIND) {
-                    assistantSnapshot.turn
+                    mindVisualState
                 } else {
                     VoiceTurnState.LISTENING
                 },
                 signal = if (selected == GsvSurface.MIND) assistantSnapshot.level else 0f,
+                activity = if (selected == GsvSurface.MIND) {
+                    mindActivity
+                } else {
+                    AssistantActivity.NONE
+                },
                 shapeTarget = shapeTarget,
                 accentOverride = renderAccent,
                 shipOrbitRadians = shipOrbitRadians,
@@ -448,7 +482,7 @@ private fun LiveCore(
             ) { destination ->
                 if (destination == GsvSurface.MIND) {
                     Text(
-                        text = if (mindActive) "TAP TO INTERRUPT" else "TAP TO SPEAK",
+                        text = if (mindTurnActive) "TAP TO INTERRUPT" else "TAP TO SPEAK",
                         style = GsvTextStyle.Kicker.copy(
                             color = GsvColor.Muted,
                             fontSize = 8.sp,

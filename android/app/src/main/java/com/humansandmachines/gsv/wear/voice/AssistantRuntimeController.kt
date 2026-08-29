@@ -24,6 +24,10 @@ class AssistantRuntimeController(context: Context) : Closeable {
         priority = MicrophoneCapturePriority.ASSISTANT,
     )
     private val actions = AndroidActionController(applicationContext)
+    private val activityPresenter = AssistantActivityPresenter(
+        scope = scope,
+        publish = AssistantRuntimeState::setProcessState,
+    )
     private val coordinator = VoiceTurnCoordinator(
         microphone = microphone,
         actions = actions,
@@ -52,6 +56,7 @@ class AssistantRuntimeController(context: Context) : Closeable {
         connection?.stop()
         connection = null
         connectionConfig = null
+        activityPresenter.reset()
         AssistantRuntimeState.setConnection(ConnectionState.DISCONNECTED)
         if (config == null) return
 
@@ -60,7 +65,8 @@ class AssistantRuntimeController(context: Context) : Closeable {
             context = applicationContext,
             scope = scope,
             config = config,
-            onStatus = AssistantRuntimeState::setConnection,
+            onStatus = ::setConnectionStatus,
+            onProcessState = activityPresenter::update,
         ).also(VoiceClientSupervisor::start)
     }
 
@@ -72,6 +78,7 @@ class AssistantRuntimeController(context: Context) : Closeable {
         connection?.stop()
         connection = null
         connectionConfig = null
+        activityPresenter.reset()
         coordinator.close()
         microphone.close()
         actions.close()
@@ -85,4 +92,9 @@ class AssistantRuntimeController(context: Context) : Closeable {
             first.username == second.username &&
             first.clientId == second.clientId &&
             first.token == second.token
+
+    private fun setConnectionStatus(state: ConnectionState) {
+        if (state != ConnectionState.CONNECTED) activityPresenter.reset()
+        AssistantRuntimeState.setConnection(state)
+    }
 }

@@ -173,4 +173,54 @@ class VoiceProtocolTest {
         aborted.getJSONObject("payload").put("processId", "another-pid")
         assertNull(VoiceProtocol.parseTerminalSignal(aborted, "ship-1", "pid-1"))
     }
+
+    @Test
+    fun classifiesOnlyBoundedProcessActivityWithoutRetainingArguments() {
+        val syscalls = mapOf(
+            "fs.read" to AssistantActivity.READING,
+            "fs.write" to AssistantActivity.WRITING,
+            "fs.edit" to AssistantActivity.WRITING,
+            "fs.search" to AssistantActivity.SEARCHING,
+            "shell.exec" to AssistantActivity.EXECUTING,
+            "codemode.exec" to AssistantActivity.EXECUTING,
+            "fs.delete" to AssistantActivity.DELETING,
+            "net.fetch" to null,
+        )
+
+        syscalls.forEach { (syscall, expected) ->
+            val signal = processSignal("proc.run.tool.started")
+            signal.getJSONObject("payload")
+                .put("executionId", "execution-$syscall")
+                .put("callId", "call-$syscall")
+                .put("syscall", syscall)
+                .put("args", JSONObject().put("private", "discard me"))
+
+            val event = VoiceProtocol.parseProcessEvent(signal, "pid-1")
+                as VoiceProcessEvent.ToolStarted
+            assertEquals(expected, event.activity)
+        }
+    }
+
+    @Test
+    fun rejectsUnscopedOrMalformedProcessActivity() {
+        val wrongProcess = processSignal("proc.run.started")
+        assertNull(VoiceProtocol.parseProcessEvent(wrongProcess, "another-pid"))
+
+        val malformedFinish = processSignal("proc.run.tool.finished")
+        malformedFinish.getJSONObject("payload")
+            .put("executionId", "execution-1")
+            .put("callId", "call-1")
+            .put("outcome", "maybe")
+        assertNull(VoiceProtocol.parseProcessEvent(malformedFinish, "pid-1"))
+    }
+
+    private fun processSignal(signal: String): JSONObject = JSONObject()
+        .put("type", "sig")
+        .put("signal", signal)
+        .put(
+            "payload",
+            JSONObject()
+                .put("pid", "pid-1")
+                .put("runId", "run-1"),
+        )
 }

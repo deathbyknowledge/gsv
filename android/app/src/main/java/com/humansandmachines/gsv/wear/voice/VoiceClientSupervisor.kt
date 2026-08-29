@@ -25,6 +25,7 @@ class VoiceClientSupervisor(
     private val scope: CoroutineScope,
     private val config: VoiceClientConfig,
     private val onStatus: (ConnectionState) -> Unit,
+    private val onProcessState: (AssistantProcessState) -> Unit = {},
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .pingInterval(25, TimeUnit.SECONDS)
@@ -71,6 +72,7 @@ class VoiceClientSupervisor(
         actor?.cancel()
         actor = null
         onStatus(ConnectionState.DISCONNECTED)
+        onProcessState(AssistantProcessState())
     }
 
     suspend fun awaitSession(timeoutMillis: Long = CONNECT_WAIT_MILLIS): VoiceClientSession =
@@ -102,6 +104,7 @@ class VoiceClientSupervisor(
                         session = null
                         activeSession.value = null
                         onStatus(ConnectionState.OFFLINE)
+                        onProcessState(AssistantProcessState())
                     }
                 }
                 is Event.Ready -> {
@@ -110,10 +113,15 @@ class VoiceClientSupervisor(
                     activeSession.value = session
                     onStatus(ConnectionState.CONNECTED)
                 }
+                is Event.ProcessState -> {
+                    if (!epochs.isCurrent(event.epoch)) continue
+                    onProcessState(event.state)
+                }
                 is Event.Terminated -> {
                     if (!epochs.isCurrent(event.epoch)) continue
                     session = null
                     activeSession.value = null
+                    onProcessState(AssistantProcessState())
                     if (activeNetwork == null) {
                         onStatus(ConnectionState.OFFLINE)
                     } else {
@@ -136,6 +144,7 @@ class VoiceClientSupervisor(
         epochs.invalidate()
         session?.close()
         activeSession.value = null
+        onProcessState(AssistantProcessState())
         val epoch = epochs.next()
         onStatus(state)
         session = VoiceClientSession(
@@ -150,6 +159,9 @@ class VoiceClientSupervisor(
             scope = scope,
             discoverPersonalProcess = true,
             onReady = { events.trySend(Event.Ready(it)) },
+            onProcessState = { sessionEpoch, state ->
+                events.trySend(Event.ProcessState(sessionEpoch, state))
+            },
             onTerminated = { endedEpoch, _ -> events.trySend(Event.Terminated(endedEpoch)) },
         ).also(VoiceClientSession::open)
     }
@@ -168,6 +180,7 @@ class VoiceClientSupervisor(
         data class NetworkAvailable(val network: Network) : Event
         data class NetworkLost(val network: Network) : Event
         data class Ready(val epoch: Long) : Event
+        data class ProcessState(val epoch: Long, val state: AssistantProcessState) : Event
         data class Terminated(val epoch: Long) : Event
         data class Retry(val epoch: Long) : Event
     }

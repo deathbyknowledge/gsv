@@ -41,6 +41,7 @@ import androidx.lifecycle.lifecycleScope
 import com.humansandmachines.gsv.wear.authority.AuthorityState
 import com.humansandmachines.gsv.wear.connection.ConnectionState
 import com.humansandmachines.gsv.wear.runtime.RuntimeSnapshot
+import com.humansandmachines.gsv.wear.voice.AssistantActivity
 import com.humansandmachines.gsv.wear.voice.AssistantSnapshot
 import com.humansandmachines.gsv.wear.voice.VoiceTurnState
 import kotlinx.coroutines.CancellationException
@@ -49,6 +50,7 @@ import kotlinx.coroutines.launch
 
 class AssistantShowcaseActivity : ComponentActivity() {
     private var showcaseState by mutableStateOf(VoiceTurnState.LISTENING)
+    private var showcaseActivity by mutableStateOf(AssistantActivity.NONE)
     private var showOverlay by mutableStateOf(false)
     private var morphReview by mutableStateOf(false)
     private var shipReview by mutableStateOf(false)
@@ -134,6 +136,7 @@ class AssistantShowcaseActivity : ComponentActivity() {
                         else -> showcaseState.detailText(this)
                     },
                     signal = reviewSignal(),
+                    activity = showcaseActivity,
                     shapeTarget = shapeTarget,
                     coreActionDescription = when {
                         reviewStates -> "Switch assistant state"
@@ -156,6 +159,7 @@ class AssistantShowcaseActivity : ComponentActivity() {
                     state = showcaseState,
                     detail = showcaseState.detailText(this),
                     signal = reviewSignal(),
+                    activity = showcaseActivity,
                     onCancel = ::finish,
                 )
             }
@@ -189,6 +193,14 @@ class AssistantShowcaseActivity : ComponentActivity() {
         showcaseState = runCatching {
             VoiceTurnState.valueOf(intent.getStringExtra(EXTRA_STATE) ?: VoiceTurnState.LISTENING.name)
         }.getOrDefault(VoiceTurnState.LISTENING)
+        showcaseActivity = runCatching {
+            AssistantActivity.valueOf(
+                intent.getStringExtra(EXTRA_ACTIVITY) ?: AssistantActivity.NONE.name,
+            )
+        }.getOrDefault(AssistantActivity.NONE)
+        if (showcaseActivity != AssistantActivity.NONE && !intent.hasExtra(EXTRA_STATE)) {
+            showcaseState = VoiceTurnState.THINKING
+        }
         shipReview = intent.getBooleanExtra(EXTRA_SHIP, false)
         showOverlay = intent.getBooleanExtra(EXTRA_OVERLAY, false)
         morphReview = intent.getBooleanExtra(EXTRA_MORPH, false)
@@ -337,6 +349,7 @@ class AssistantShowcaseActivity : ComponentActivity() {
 
     companion object {
         private const val EXTRA_STATE = "state"
+        private const val EXTRA_ACTIVITY = "activity"
         private const val EXTRA_OVERLAY = "overlay"
         private const val EXTRA_MORPH = "morph"
         private const val EXTRA_SHIP = "ship"

@@ -9,6 +9,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -30,6 +31,7 @@ class VoiceClientSession(
     private val scope: CoroutineScope,
     private val discoverPersonalProcess: Boolean,
     private val onReady: (Long) -> Unit,
+    private val onProcessState: (Long, AssistantProcessState) -> Unit = { _, _ -> },
     private val onTerminated: (Long, Throwable) -> Unit,
 ) : WebSocketListener() {
     private val terminal = AtomicBoolean(false)
@@ -39,6 +41,7 @@ class VoiceClientSession(
     private val pending = ConcurrentHashMap<String, PendingRequest>()
     private val incomingBodies = ConcurrentHashMap<Long, IncomingBody>()
     private val runWaiters = ConcurrentHashMap<String, CompletableDeferred<VoiceRunTerminal>>()
+    private val processActivity = AssistantProcessActivityLedger()
     private val terminalRunLock = Any()
     private val terminalRuns = object : LinkedHashMap<String, VoiceRunTerminal>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, VoiceRunTerminal>?): Boolean =
@@ -46,6 +49,7 @@ class VoiceClientSession(
     }
     private var handshakeComplete = false
     private var handshakeTimeout: Job? = null
+    private var handlerRefresh: Job? = null
     private var webSocket: WebSocket? = null
 
     @Volatile
@@ -159,7 +163,9 @@ class VoiceClientSession(
                 .put("text", message)
                 .put("idempotencyKey", UUID.randomUUID().toString()),
         )
-        response.data.optString("handlerPid").takeIf(String::isNotBlank)?.let { shipHandlerPid = it }
+        response.data.optString("handlerPid").takeIf(String::isNotBlank)?.let { handlerPid ->
+            if (handlerPid != shipHandlerPid) replaceShipHandler(handlerPid)
+        }
         return response.data.optString("runId").takeIf(String::isNotBlank)
             ?: throw VoiceClientFailure("Ship conversation did not start a run")
     }
@@ -268,15 +274,9 @@ class VoiceClientSession(
                 throw VoiceClientFailure("Voice client signal grants are unavailable")
             }
             val response = request("conversation.ship")
-            val conversation = response.data.optJSONObject("conversation")
-                ?: throw VoiceClientFailure("Ship conversation could not be resolved")
-            if (conversation.optString("kind") != "ship" || conversation.optInt("ownerUid", -1) != connect.uid) {
-                throw VoiceClientFailure("Gateway returned the wrong Ship conversation")
-            }
-            shipConversationId = conversation.optString("id").takeIf(String::isNotBlank)
-                ?: throw VoiceClientFailure("Ship conversation id was missing")
-            shipHandlerPid = conversation.optString("handlerPid").takeIf(String::isNotBlank)
-                ?: throw VoiceClientFailure("Ship handler was missing")
+            val ship = requireOwnedShip(response, connect.uid)
+            shipConversationId = ship.conversationId
+            replaceShipHandler(ship.handlerPid)
             ready.complete(connect)
             onReady(epoch)
         } catch (error: Throwable) {
@@ -285,8 +285,22 @@ class VoiceClientSession(
     }
 
     private fun handleSignal(json: JSONObject) {
-        val conversationId = shipConversationId ?: return
         val handlerPid = shipHandlerPid ?: return
+        if (json.optString("signal") == "process.exit") {
+            val exitedPid = json.optJSONObject("payload")
+                ?.opt("pid")
+                ?.let { it as? String }
+                ?.trim()
+            if (exitedPid == handlerPid) {
+                onProcessState(epoch, processActivity.reset())
+                refreshShipHandler(handlerPid)
+            }
+            return
+        }
+        val conversationId = shipConversationId ?: return
+        VoiceProtocol.parseProcessEvent(json, handlerPid)?.let { event ->
+            onProcessState(epoch, processActivity.apply(event))
+        }
         val event = VoiceProtocol.parseTerminalSignal(json, conversationId, handlerPid) ?: return
         val runId = event.runId
         val terminalEvent = event.terminal
@@ -296,6 +310,68 @@ class VoiceClientSession(
         } else {
             synchronized(terminalRunLock) { terminalRuns[runId] = terminalEvent }
         }
+    }
+
+    private fun refreshShipHandler(exitedPid: String) {
+        if (handlerRefresh?.isActive == true) return
+        handlerRefresh = scope.launch {
+            try {
+                val uid = connectInfo?.uid
+                    ?: throw VoiceClientFailure("Voice client identity is unavailable")
+                val ship = requireOwnedShip(request("conversation.ship"), uid)
+                if (ship.handlerPid == exitedPid) {
+                    throw VoiceClientFailure("Ship handler replacement was unavailable")
+                }
+                shipConversationId = ship.conversationId
+                replaceShipHandler(ship.handlerPid)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                terminate(error)
+            } finally {
+                handlerRefresh = null
+            }
+        }
+    }
+
+    private suspend fun replaceShipHandler(handlerPid: String) {
+        val previous = shipHandlerPid
+        if (previous == handlerPid) return
+        shipHandlerPid = handlerPid
+        onProcessState(epoch, processActivity.reset())
+        try {
+            request("proc.observe", JSONObject().put("pid", handlerPid))
+        } catch (error: Throwable) {
+            terminate(error)
+            throw error
+        }
+        if (previous != null) {
+            try {
+                request("proc.unobserve", JSONObject().put("pid", previous))
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                // The active subscription is authoritative; stale cleanup ends with this socket.
+            }
+        }
+    }
+
+    private fun requireOwnedShip(response: VoiceResponse, uid: Int): ResolvedShip {
+        val conversation = response.data.optJSONObject("conversation")
+            ?: throw VoiceClientFailure("Ship conversation could not be resolved")
+        val ownerUid = (conversation.opt("ownerUid") as? Number)?.toInt()
+        if (conversation.opt("kind") != "ship" || ownerUid != uid) {
+            throw VoiceClientFailure("Gateway returned the wrong Ship conversation")
+        }
+        val conversationId = (conversation.opt("id") as? String)
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?: throw VoiceClientFailure("Ship conversation id was missing")
+        val handlerPid = (conversation.opt("handlerPid") as? String)
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?: throw VoiceClientFailure("Ship handler was missing")
+        return ResolvedShip(conversationId, handlerPid)
     }
 
     private fun handleBinary(bytes: ByteArray) {
@@ -381,12 +457,15 @@ class VoiceClientSession(
     private fun terminate(error: Throwable) {
         if (!terminal.compareAndSet(false, true)) return
         handshakeTimeout?.cancel()
+        handlerRefresh?.cancel()
+        handlerRefresh = null
         if (!ready.isCompleted) ready.completeExceptionally(error)
         pending.values.forEach { it.deferred.completeExceptionally(error) }
         pending.clear()
         incomingBodies.clear()
         runWaiters.values.forEach { it.completeExceptionally(error) }
         runWaiters.clear()
+        onProcessState(epoch, processActivity.reset())
         webSocket?.cancel()
         onTerminated(epoch, error)
     }
@@ -402,6 +481,11 @@ class VoiceClientSession(
         val output: ByteArrayOutputStream = ByteArrayOutputStream(),
     )
 
+    private data class ResolvedShip(
+        val conversationId: String,
+        val handlerPid: String,
+    )
+
     companion object {
         private const val HANDSHAKE_TIMEOUT_MILLIS = 15_000L
         private const val DEFAULT_REQUEST_TIMEOUT_MILLIS = 30_000L
@@ -415,12 +499,21 @@ class VoiceClientSession(
             "conversation.ship",
             "conversation.send",
             "ai.transcription.create",
+            "proc.observe",
+            "proc.unobserve",
         )
         private val REQUIRED_RUNTIME_SIGNALS = setOf(
             "message.committed",
             "message.aborted",
+            "proc.run.started",
+            "proc.run.stream",
+            "proc.run.retrying",
+            "proc.run.output",
+            "proc.run.tool.started",
+            "proc.run.tool.finished",
             "proc.run.hil.requested",
             "proc.run.finished",
+            "process.exit",
         )
     }
 }

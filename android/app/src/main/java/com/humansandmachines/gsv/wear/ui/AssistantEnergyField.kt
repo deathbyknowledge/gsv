@@ -40,6 +40,7 @@ internal fun AssistantEnergyField(
     accent: Color,
     shapeParameters: OrbShapeParameters,
     liquidParameters: AssistantLiquidParameters,
+    activityParameters: AssistantActivityParameters,
     shipOrbitRadians: Float,
     shipElevationOffsetRadians: Float,
     shipMaterialization: Float,
@@ -64,6 +65,7 @@ internal fun AssistantEnergyField(
                 accent = accent,
                 shapeParameters = shapeParameters,
                 liquidParameters = liquidParameters,
+                activityParameters = activityParameters,
                 shipOrbitRadians = shipOrbitRadians,
                 shipElevationOffsetRadians = shipElevationOffsetRadians,
                 shipMaterialization = shipMaterialization,
@@ -264,6 +266,7 @@ private fun configureAssistantLiquidShader(
     accent: Color,
     shapeParameters: OrbShapeParameters,
     liquidParameters: AssistantLiquidParameters,
+    activityParameters: AssistantActivityParameters,
     shipOrbitRadians: Float,
     shipElevationOffsetRadians: Float,
     shipMaterialization: Float,
@@ -287,8 +290,20 @@ private fun configureAssistantLiquidShader(
         liquidParameters.internalActivity.coerceIn(0f, 1f),
         liquidParameters.projection.coerceIn(0f, 1f),
     )
-    shader.setFloatUniform("iActivity", 0f, 0f, 0f, 0f)
-    shader.setFloatUniform("iActivity2", 0f, 0f, 0f, 0f)
+    shader.setFloatUniform(
+        "iActivity",
+        activityParameters.reading.coerceIn(0f, 1f),
+        activityParameters.searching.coerceIn(0f, 1f),
+        activityParameters.writing.coerceIn(0f, 1f),
+        activityParameters.executing.coerceIn(0f, 1f),
+    )
+    shader.setFloatUniform(
+        "iActivity2",
+        activityParameters.delegating.coerceIn(0f, 1f),
+        activityParameters.deleting.coerceIn(0f, 1f),
+        activityParameters.shredding.coerceIn(0f, 1f),
+        0f,
+    )
     shader.setFloatUniform(
         "iShipView",
         shipOrbitRadians,

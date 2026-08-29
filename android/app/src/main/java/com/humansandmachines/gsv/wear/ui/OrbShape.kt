@@ -75,18 +75,22 @@ private val OrbShapeVectorConverter = TwoWayConverter<OrbShapeParameters, Animat
 )
 
 @Composable
-internal fun rememberOrbShapeParameters(target: OrbShapeTarget): OrbShapeParameters {
+internal fun rememberOrbShapeParameters(
+    target: OrbShapeTarget,
+    overrideParameters: OrbShapeParameters? = null,
+): OrbShapeParameters {
+    val targetParameters = overrideParameters ?: target.parameters
     val animated = remember {
         Animatable(
-            initialValue = target.parameters,
+            initialValue = targetParameters,
             typeConverter = OrbShapeVectorConverter,
             label = "assistant-orb-shape",
         )
     }
-    LaunchedEffect(target) {
+    LaunchedEffect(target, targetParameters) {
         if (target == OrbShapeTarget.SHIP || animated.value.shipPresence > 0.001f) {
             animated.animateTo(
-                targetValue = target.parameters,
+                targetValue = targetParameters,
                 animationSpec = tween(
                     durationMillis = 1_800,
                     easing = FastOutSlowInEasing,
@@ -94,7 +98,7 @@ internal fun rememberOrbShapeParameters(target: OrbShapeTarget): OrbShapeParamet
             )
         } else {
             animated.animateTo(
-                targetValue = target.parameters,
+                targetValue = targetParameters,
                 animationSpec = spring(
                     dampingRatio = 0.86f,
                     stiffness = 44f,

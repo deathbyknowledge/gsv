@@ -78,22 +78,26 @@ internal fun VoiceTurnState.usesAssistantLiquid(): Boolean = when (this) {
 }
 
 @Composable
-internal fun rememberAssistantLiquidParameters(state: VoiceTurnState): AssistantLiquidParameters {
+internal fun rememberAssistantLiquidParameters(
+    state: VoiceTurnState,
+    overrideParameters: AssistantLiquidParameters? = null,
+): AssistantLiquidParameters {
     val target = when (state) {
         VoiceTurnState.THINKING -> AssistantLiquidTarget.THINKING
         VoiceTurnState.SPEAKING -> AssistantLiquidTarget.SPEAKING
         else -> AssistantLiquidTarget.LISTENING
     }
+    val targetParameters = overrideParameters ?: target.parameters
     val animated = remember {
         Animatable(
-            initialValue = target.parameters,
+            initialValue = targetParameters,
             typeConverter = AssistantLiquidVectorConverter,
             label = "assistant-liquid-state",
         )
     }
-    LaunchedEffect(target) {
+    LaunchedEffect(targetParameters) {
         animated.animateTo(
-            targetValue = target.parameters,
+            targetValue = targetParameters,
             animationSpec = spring(
                 dampingRatio = 0.90f,
                 stiffness = 30f,

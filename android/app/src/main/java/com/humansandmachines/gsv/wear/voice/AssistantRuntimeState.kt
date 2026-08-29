@@ -11,6 +11,8 @@ data class AssistantSnapshot(
     val turn: VoiceTurnState = VoiceTurnState.IDLE,
     val turnId: Long = 0,
     val level: Float = 0f,
+    val processActive: Boolean = false,
+    val activity: AssistantActivity = AssistantActivity.NONE,
 )
 
 object AssistantRuntimeState {
@@ -42,6 +44,15 @@ object AssistantRuntimeState {
             } else {
                 it
             }
+        }
+    }
+
+    fun setProcessState(state: AssistantProcessState) {
+        mutableSnapshot.update {
+            it.copy(
+                processActive = state.active,
+                activity = state.activity,
+            )
         }
     }
 

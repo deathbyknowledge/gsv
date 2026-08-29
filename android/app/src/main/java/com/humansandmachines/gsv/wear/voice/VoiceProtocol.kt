@@ -192,17 +192,64 @@ object VoiceProtocol {
         }
     }
 
+    internal fun parseProcessEvent(
+        json: JSONObject,
+        shipHandlerPid: String,
+    ): VoiceProcessEvent? {
+        val payload = json.optJSONObject("payload") ?: return null
+        if (payload.nonBlankString("pid") != shipHandlerPid) return null
+        val runId = payload.nonBlankString("runId") ?: return null
+        return when (json.optString("signal")) {
+            "proc.run.started" -> VoiceProcessEvent.RunStarted(runId)
+            "proc.run.stream",
+            "proc.run.retrying",
+            "proc.run.output",
+            "proc.run.hil.requested",
+            -> VoiceProcessEvent.RunActive(runId)
+            "proc.run.tool.started" -> VoiceProcessEvent.ToolStarted(
+                runId = runId,
+                executionId = payload.nonBlankString("executionId") ?: return null,
+                callId = payload.nonBlankString("callId") ?: return null,
+                activity = activityForSyscall(payload.nonBlankString("syscall") ?: return null),
+            )
+            "proc.run.tool.finished" -> {
+                if (payload.nonBlankString("outcome") !in TOOL_OUTCOMES) return null
+                VoiceProcessEvent.ToolFinished(
+                    runId = runId,
+                    executionId = payload.nonBlankString("executionId") ?: return null,
+                    callId = payload.nonBlankString("callId") ?: return null,
+                )
+            }
+            "proc.run.finished" -> VoiceProcessEvent.RunFinished(runId)
+            else -> null
+        }
+    }
+
     fun allows(capabilities: Set<String>, call: String): Boolean = capabilities.any { capability ->
         capability == "*" ||
             capability == call ||
             capability.endsWith(".*") && call.startsWith(capability.dropLast(1))
     }
 
+    private fun activityForSyscall(syscall: String): AssistantActivity? = when (syscall) {
+        "fs.read" -> AssistantActivity.READING
+        "fs.write", "fs.edit" -> AssistantActivity.WRITING
+        "fs.search" -> AssistantActivity.SEARCHING
+        "shell.exec", "codemode.exec" -> AssistantActivity.EXECUTING
+        "fs.delete" -> AssistantActivity.DELETING
+        else -> null
+    }
+
+    private fun JSONObject.nonBlankString(key: String): String? =
+        (opt(key) as? String)?.trim()?.takeIf(String::isNotEmpty)
+
     private fun org.json.JSONArray.strings(): Set<String> = buildSet {
         for (index in 0 until length()) {
             optString(index).takeIf(String::isNotBlank)?.let(::add)
         }
     }
+
+    private val TOOL_OUTCOMES = setOf("completed", "failed", "cancelled", "denied")
 }
 
 class VoiceClientFailure(message: String) : Exception(message)

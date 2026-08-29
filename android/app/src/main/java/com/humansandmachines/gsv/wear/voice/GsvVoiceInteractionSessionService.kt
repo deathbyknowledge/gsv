@@ -65,6 +65,11 @@ private class GsvVoiceInteractionSession(
                 state = state,
                 detail = state.detailText(sessionContext),
                 signal = runtime.level,
+                activity = if (state == VoiceTurnState.THINKING) {
+                    runtime.activity
+                } else {
+                    AssistantActivity.NONE
+                },
                 onCancel = ::cancelTurn,
             )
         }

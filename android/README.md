@@ -81,6 +81,9 @@ keyguard behavior.
 
 Use `IDLE`, `PREPARING`, `LISTENING`, `THINKING`, `SPEAKING`,
 or `ERROR`; add `--ez overlay true` to review the compact invocation surface.
+Pass `--es activity READING`, `WRITING`, `SEARCHING`, `EXECUTING`, or
+`DELETING` to render one Process-activity morph directly. Unless `state` is
+also supplied, an activity review uses the thinking base state.
 For the debug-only interruptible shape proof, launch `LISTENING` with both
 `--ez overlay true` and `--ez morph true`, then tap the core repeatedly to
 redirect the in-progress morph between the production liquid and smile targets.
@@ -151,6 +154,15 @@ utterance drive the speaking animation in playback time. Gateway
 `ai.speech.create` is retained as a fallback when a compatible embedded voice
 cannot start; the generic Android speech action is the final fallback. A
 pending approval is announced but never automatically approved.
+
+Mind explicitly observes the current personal Ship Process after resolving its
+canonical conversation. Process activity is correlated by pid, run, call, and
+execution identity, then reduced to a bounded visual category; tool arguments,
+results, paths, and content are never retained by the visual state. Short
+activities remain visible long enough to read, overlapping tools resolve
+deterministically, and a late event from a superseded run cannot mutate the
+current display. If Ship receives a replacement handler, Mind subscribes to
+the new pid before removing the old subscription.
 
 ## Use the Android target
 

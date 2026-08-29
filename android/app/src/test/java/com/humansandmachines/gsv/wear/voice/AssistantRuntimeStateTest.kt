@@ -45,4 +45,16 @@ class AssistantRuntimeStateTest {
         AssistantRuntimeState.setTurn(VoiceTurnState.PREPARING)
         assertEquals(first + 1, AssistantRuntimeState.snapshot.value.turnId)
     }
+
+    @Test
+    fun processActivityDoesNotTakeOwnershipOfTheVoiceTurn() {
+        AssistantRuntimeState.setProcessState(
+            AssistantProcessState(active = true, activity = AssistantActivity.SEARCHING),
+        )
+
+        val snapshot = AssistantRuntimeState.snapshot.value
+        assertEquals(VoiceTurnState.IDLE, snapshot.turn)
+        assertEquals(true, snapshot.processActive)
+        assertEquals(AssistantActivity.SEARCHING, snapshot.activity)
+    }
 }
