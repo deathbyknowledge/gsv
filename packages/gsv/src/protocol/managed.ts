@@ -96,20 +96,6 @@ export interface ManagedInferenceUsageService {
   ): Promise<void>;
 }
 
-export const MANAGED_INFERENCE_QUANTIZATIONS = [
-  "fp32",
-  "fp16",
-  "bf16",
-  "fp8",
-  "fp6",
-  "fp4",
-  "int8",
-  "int4",
-] as const;
-
-export type ManagedInferenceQuantization =
-  typeof MANAGED_INFERENCE_QUANTIZATIONS[number];
-
 export type ManagedInferenceRouting = {
   version: 1;
   modelId: string;
@@ -121,19 +107,6 @@ export type ManagedInferenceRouting = {
   outputNanoUsdPerToken: number;
   cacheReadNanoUsdPerToken: number;
   cacheWriteNanoUsdPerToken: number;
-  provider: {
-    allowFallbacks: boolean;
-    requireParameters: boolean;
-    dataCollection: "allow" | "deny";
-    zdr: boolean;
-    order: string[];
-    only: string[];
-    ignore: string[];
-    quantizations: ManagedInferenceQuantization[];
-    sort: "default" | "price" | "throughput" | "latency";
-    preferredMinThroughput?: number;
-    preferredMaxLatency?: number;
-  };
   updatedAt: number;
 };
 
