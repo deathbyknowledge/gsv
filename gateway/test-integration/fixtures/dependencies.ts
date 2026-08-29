@@ -58,6 +58,16 @@ type WorkersAiGatewayRequest = {
   query: unknown;
 };
 
+type RecordedWorkersAiRequest = {
+  provider: string;
+  endpoint: string;
+  model: string;
+  collectLog: string | null;
+  hasProviderCredential: boolean;
+};
+
+const WORKERS_AI_RESPONSE_DELAY_MS = 2_500;
+
 export type RecordedOutboundMessage = {
   installationId: string;
   accountId: string;
@@ -127,6 +137,20 @@ export class IntegrationState extends DurableObject<Env> {
     return await this.ctx.storage.get<boolean>(
       `managed-inference-cancelled:${installationId}`,
     ) === true;
+  }
+
+  async recordWorkersAiRequest(request: RecordedWorkersAiRequest): Promise<void> {
+    const requests = await this.ctx.storage.get<RecordedWorkersAiRequest[]>(
+      "workers-ai-requests",
+    ) ?? [];
+    requests.push(request);
+    await this.ctx.storage.put("workers-ai-requests", requests);
+  }
+
+  async listWorkersAiRequests(): Promise<RecordedWorkersAiRequest[]> {
+    return await this.ctx.storage.get<RecordedWorkersAiRequest[]>(
+      "workers-ai-requests",
+    ) ?? [];
   }
 }
 
@@ -277,12 +301,12 @@ class ManagedInferenceTarget
   }
 }
 
-export class WorkersAiBindingFixture extends WorkerEntrypoint {
+export class WorkersAiBindingFixture extends WorkerEntrypoint<Env> {
   gateway(id: string): WorkersAiGatewayFixture {
     if (id !== "default") {
       throw new Error(`Unsupported integration AI gateway: ${id}`);
     }
-    return new WorkersAiGatewayFixture();
+    return new WorkersAiGatewayFixture(this.env);
   }
 }
 
@@ -386,6 +410,15 @@ export default class TestDependencies
         installationId,
         accountId,
       ));
+    }
+
+    if (
+      url.pathname === "/__test/workers-ai-requests"
+      && request.method === "GET"
+    ) {
+      return Response.json(
+        await this.integrationState().listWorkersAiRequests(),
+      );
     }
 
     if (url.pathname === "/__test/provisioning" && request.method === "POST") {
@@ -625,6 +658,13 @@ export default class TestDependencies
 }
 
 class WorkersAiGatewayFixture extends RpcTarget {
+  readonly #env: Env;
+
+  constructor(env: Env) {
+    super();
+    this.#env = env;
+  }
+
   async run(
     request: WorkersAiGatewayRequest,
     options?: { signal?: AbortSignal },
@@ -634,13 +674,76 @@ class WorkersAiGatewayFixture extends RpcTarget {
         `Unsupported integration AI gateway provider: ${request.provider}`,
       );
     }
-    return await fetch(`https://workers-ai.test/${request.endpoint}`, {
-      method: "POST",
-      headers: request.headers,
-      body: JSON.stringify(request.query),
-      signal: options?.signal,
+    if (request.endpoint !== "chat/completions") {
+      throw new Error(
+        `Unsupported integration AI gateway endpoint: ${request.endpoint}`,
+      );
+    }
+    const model = workersAiRequestModel(request.query);
+    const credentialHeaders = new Set([
+      "authorization",
+      "cf-aig-authorization",
+      "x-api-key",
+    ]);
+    const id = this.#env.INTEGRATION_STATE.idFromName(
+      SINGLETON_INSTALLATION_ID,
+    );
+    await this.#env.INTEGRATION_STATE.get(id).recordWorkersAiRequest({
+      provider: request.provider,
+      endpoint: request.endpoint,
+      model,
+      collectLog: request.headers["cf-aig-collect-log"] ?? null,
+      hasProviderCredential: Object.keys(request.headers).some((name) => (
+        credentialHeaders.has(name.toLowerCase())
+      )),
     });
+    return workersAiCompletion(model, options?.signal);
   }
+}
+
+function workersAiRequestModel(query: unknown): string {
+  if (typeof query !== "object" || query === null || !("model" in query)) {
+    throw new Error("Integration AI gateway request is missing its model");
+  }
+  const model = query.model;
+  if (typeof model !== "string" || model.length === 0) {
+    throw new Error("Integration AI gateway request has an invalid model");
+  }
+  return model;
+}
+
+function workersAiCompletion(
+  requestModel: string,
+  signal?: AbortSignal,
+): Response {
+  const model = requestModel.startsWith("workers-ai/")
+    ? requestModel.slice("workers-ai/".length)
+    : requestModel;
+  const body = new TextEncoder().encode([
+    `data: ${JSON.stringify({
+      id: "generation_managed_stack",
+      model,
+      choices: [{ index: 0, delta: { content: "managed stack pong" } }],
+    })}\n\n`,
+    `data: ${JSON.stringify({
+      choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+      usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
+    })}\n\n`,
+    "data: [DONE]\n\n",
+  ].join(""));
+  return new Response(new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        await scheduler.wait(WORKERS_AI_RESPONSE_DELAY_MS, { signal });
+        controller.enqueue(body);
+        controller.close();
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+  }), {
+    headers: { "content-type": "text/event-stream" },
+  });
 }
 
 function installationHandle(installationId: string): "first" | "second" | null {
