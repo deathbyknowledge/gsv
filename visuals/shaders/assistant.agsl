@@ -1120,6 +1120,116 @@ float4 writingDocumentSurface(float3 point, float phase) {
     );
 }
 
+float deletingLidOpen(float phase) {
+    float open = 0.5 - 0.5 * cos(phase);
+    return open * open * (3.0 - 2.0 * open);
+}
+
+float3 deletingBinPoint(float3 point, float phase) {
+    point.xy = rotate2(0.025 * sin(phase * 2.0), point.xy);
+    point.xz = rotate2(0.24 + 0.030 * sin(phase), point.xz);
+    point.yz = rotate2(-0.10 + 0.024 * cos(phase * 2.0), point.yz);
+    float3 sourcePoint = point;
+    point.x += 0.006 * sin(sourcePoint.y * 17.0 + phase * 3.0);
+    point.z += 0.006 * sin(
+        sourcePoint.x * 15.0 - sourcePoint.y * 9.0 - phase * 2.0
+    );
+    return point;
+}
+
+float3 deletingLidPoint(float3 binPoint, float phase) {
+    float angle = deletingLidOpen(phase) * 0.66;
+    float3 lidPoint = binPoint - float3(-0.215, 0.255, 0.0);
+    lidPoint.xy = rotate2(-angle, lidPoint.xy);
+    return lidPoint - float3(0.215, 0.0, 0.0);
+}
+
+float deletingBinDistance(float3 point, float phase) {
+    float3 binPoint = deletingBinPoint(point, phase);
+    float height = clamp((binPoint.y + 0.225) / 0.450, 0.0, 1.0);
+    float3 bodyPoint = binPoint;
+    bodyPoint.x /= mix(0.82, 1.05, height);
+    bodyPoint.z /= mix(0.86, 1.04, height);
+    float body = roundedBoxDistance(
+        bodyPoint,
+        float3(0.205, 0.225, 0.115),
+        0.048
+    );
+    float bodyFold = sin(bodyPoint.x * 18.0 + phase * 3.0) *
+        sin(bodyPoint.y * 14.0 - phase * 2.0) *
+        sin(bodyPoint.z * 20.0 + phase * 4.0);
+    body += bodyFold * 0.0040;
+
+    float topLip = roundedBoxDistance(
+        binPoint - float3(0.0, 0.225, 0.0),
+        float3(0.226, 0.028, 0.134),
+        0.026
+    );
+    body = smoothMinimum(body, topLip, 0.018);
+
+    float3 lidPoint = deletingLidPoint(binPoint, phase);
+    float lid = roundedBoxDistance(
+        lidPoint,
+        float3(0.230, 0.027, 0.136),
+        0.025
+    );
+    float handle = roundedBoxDistance(
+        lidPoint - float3(0.018, 0.052, 0.0),
+        float3(0.060, 0.026, 0.050),
+        0.022
+    );
+    lid = smoothMinimum(lid, handle, 0.018);
+    return smoothMinimum(body, lid, 0.012);
+}
+
+float4 deletingBinSurface(float3 point, float phase) {
+    float3 binPoint = deletingBinPoint(point, phase);
+    float3 lidPoint = deletingLidPoint(binPoint, phase);
+    float open = deletingLidOpen(phase);
+    float bodyGate = smoothstep(-0.220, -0.175, binPoint.y) *
+        (1.0 - smoothstep(0.170, 0.220, binPoint.y));
+    float front = smoothstep(0.020, 0.095, binPoint.z);
+
+    float ribCoordinate = binPoint.x * 86.0 +
+        0.55 * sin(binPoint.y * 13.0 - phase * 2.0);
+    float ribs = pow(0.5 + 0.5 * cos(ribCoordinate), 18.0) *
+        bodyGate * front;
+    float rim = (1.0 - smoothstep(
+        0.006,
+        0.034,
+        abs(binPoint.y - 0.225)
+    )) * front;
+
+    float lidFace = (1.0 - smoothstep(
+        0.010,
+        0.060,
+        abs(lidPoint.y)
+    )) * (1.0 - smoothstep(0.190, 0.240, abs(lidPoint.x)));
+    float handle = 1.0 - smoothstep(
+        0.030,
+        0.085,
+        length(lidPoint - float3(0.018, 0.052, 0.0))
+    );
+
+    float intake = (1.0 - smoothstep(
+        0.035,
+        0.155,
+        length(float2(binPoint.x, binPoint.y - 0.145))
+    )) * front * open;
+    float flowLine = 1.0 - smoothstep(
+        0.010,
+        0.050,
+        abs(binPoint.x + 0.022 * sin(binPoint.y * 19.0 - phase * 3.0))
+    );
+    flowLine *= smoothstep(-0.115, 0.005, binPoint.y) *
+        (1.0 - smoothstep(0.155, 0.210, binPoint.y)) * front * open;
+    float packet = pow(
+        0.5 + 0.5 * sin(binPoint.y * 48.0 - phase * 8.0),
+        13.0
+    ) * flowLine;
+    return float4(ribs, max(max(rim, lidFace), handle), intake, packet);
+}
+
 float3 searchLensPoint(float3 point, float phase) {
     point.xy = rotate2(-0.11 + 0.026 * sin(phase * 2.0), point.xy);
     point.xz = rotate2(0.24 + 0.038 * sin(phase), point.xz);
@@ -1578,6 +1688,8 @@ float organicDistance(float3 point, float phase, float energy) {
         (1.0 - smoothstep(0.0, 0.72, shipPresence));
     float delegating = clamp(iActivity2.x, 0.0, 1.0) *
         (1.0 - smoothstep(0.0, 0.72, shipPresence));
+    float deleting = clamp(iActivity2.y, 0.0, 1.0) *
+        (1.0 - smoothstep(0.0, 0.72, shipPresence));
     float documentActivity = max(reading, writing);
     if (projection > 0.999) {
         return speakingDistance(sourcePoint, phase, energy);
@@ -1768,6 +1880,13 @@ float organicDistance(float3 point, float phase, float energy) {
             distance,
             writingDocumentDistance(sourcePoint, phase),
             smoothstep(0.0, 1.0, writing)
+        );
+    }
+    if (deleting > 0.001) {
+        distance = mix(
+            distance,
+            deletingBinDistance(sourcePoint, phase),
+            smoothstep(0.0, 1.0, deleting)
         );
     }
     if (searching > 0.001) {
@@ -2209,6 +2328,7 @@ half4 main(float2 fragCoord) {
     float writing = clamp(iActivity.z, 0.0, 1.0) * (1.0 - shipGeometry);
     float executing = clamp(iActivity.w, 0.0, 1.0) * (1.0 - shipGeometry);
     float delegating = clamp(iActivity2.x, 0.0, 1.0) * (1.0 - shipGeometry);
+    float deleting = clamp(iActivity2.y, 0.0, 1.0) * (1.0 - shipGeometry);
     float documentActivity = max(reading, writing);
     float shipMaterialization = clamp(iShipMaterialization, 0.0, 1.0);
     float drivePower = clamp(iShipPropulsion, 0.0, 1.0) * shipGeometry *
@@ -2321,6 +2441,10 @@ half4 main(float2 fragCoord) {
         float4 writingDocument = float4(0.0);
         if (writing > 0.001) {
             writingDocument = writingDocumentSurface(point, phase) * writing;
+        }
+        float4 deletingBin = float4(0.0);
+        if (deleting > 0.001) {
+            deletingBin = deletingBinSurface(point, phase) * deleting;
         }
         float4 searchLens = float4(0.0);
         if (searching > 0.001) {
@@ -2451,6 +2575,11 @@ half4 main(float2 fragCoord) {
         );
         deepMaterial = mix(
             deepMaterial,
+            float3(0.012, 0.002, 0.035),
+            deleting * 0.62
+        );
+        deepMaterial = mix(
+            deepMaterial,
             float3(0.002, 0.012, 0.038),
             searching * 0.54
         );
@@ -2519,6 +2648,23 @@ half4 main(float2 fragCoord) {
             writingDocument.z * 1.22;
         material += mix(writingLight, warm, 0.16) *
             writingDocument.w * 0.30;
+        float3 deletingLight = mix(
+            iAccent.rgb,
+            float3(0.94, 0.62, 1.0),
+            0.42
+        );
+        material += deletingLight * deletingBin.x * 0.10;
+        material += mix(
+            deletingLight,
+            float3(0.60, 0.82, 1.0),
+            0.34
+        ) * deletingBin.y * 0.82;
+        material += deletingLight * deletingBin.z * 0.32;
+        material += mix(
+            deletingLight,
+            float3(1.0, 0.80, 0.94),
+            0.54
+        ) * deletingBin.w * 1.35;
         float3 searchLight = mix(
             iAccent.rgb,
             float3(0.62, 0.88, 1.0),
