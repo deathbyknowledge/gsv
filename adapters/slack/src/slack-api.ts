@@ -209,6 +209,20 @@ export class SlackApiError extends Error {
   }
 }
 
+export function slackFileDeliveryErrorMessage(error: SlackApiError | undefined): string {
+  if (!error) return "Slack file delivery failed";
+  if (["channel_not_found", "no_permission", "not_in_channel"].includes(error.code ?? "")) {
+    return "Invite the GSV app to this Slack conversation before sharing files";
+  }
+  if (error.code === "missing_scope") {
+    return "Reinstall the GSV Slack app to grant file sharing";
+  }
+  if (error.code === "posting_to_channel_denied") {
+    return "The GSV app is not allowed to share files in this Slack conversation";
+  }
+  return "Slack file delivery failed";
+}
+
 export async function authenticateSlackBot(
   botToken: string,
   slackFetch: SlackFetch = fetch,

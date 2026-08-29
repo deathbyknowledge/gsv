@@ -440,6 +440,7 @@ describe("managed Slack clean-instance flow", () => {
       expect.objectContaining({
         id: "workspace",
         label: "Slack — Acme",
+        description: "Slack workspace: reads with the paired user's OAuth visibility; writes as the installed GSV app and labels target messages with that user's GSV. Run `slack --help` for commands.",
         platform: "slack",
         implements: ["shell.exec"],
       }),
@@ -739,6 +740,27 @@ describe("managed Slack clean-instance flow", () => {
         thread_ts: "1700000001.000200",
       }),
     }));
+
+    await expect(mediaPeer.sendMessage("installation-alice", {
+      deliveryId: "managed-slack-file-membership-failure",
+      surface: {
+        kind: "channel",
+        id: "CGENERAL1",
+        threadId: "1700000001.000200",
+      },
+      actorId: "UALICE01",
+      routeGeneration: alice.generation,
+      text: "Membership failure",
+      media: [{
+        type: "document",
+        mimeType: "text/plain",
+        filename: "result.txt",
+        body: { offset: 0, length: outboundFileBytes.byteLength },
+      }],
+    }, binaryBodyFromOwnedBytes(outboundFileBytes.slice()))).resolves.toEqual({
+      ok: false,
+      error: "Invite the GSV app to this Slack conversation before sharing files",
+    });
 
     expect((await SELF.fetch(await signedEvent({
       eventId: "EvBOB00001",

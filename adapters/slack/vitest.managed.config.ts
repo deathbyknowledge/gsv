@@ -211,6 +211,9 @@ export default defineConfig({
                     });
                   }
                   if (method === "files.completeUploadExternal") {
+                    if (body.initial_comment?.includes("Membership failure")) {
+                      return Response.json({ ok: false, error: "not_in_channel" });
+                    }
                     return Response.json({ ok: true, files: body.files });
                   }
                   return Response.json({ ok: false, error: "unknown_method" });

@@ -331,7 +331,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     return [{
       id: SLACK_TARGET_ID,
       label: `Slack — ${authorization.teamName ?? authorization.teamId}`,
-      description: "Slack workspace acting with the paired user's OAuth authority. Run `slack --help` for commands.",
+      description: "Slack workspace: reads with the paired user's OAuth visibility; writes as the installed GSV app and labels target messages with that user's GSV. Run `slack --help` for commands.",
       platform: "slack",
       version: "web-api",
       implements: ["shell.exec"],
@@ -882,8 +882,10 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     }
     if (!claim.claimed) return claim.result;
 
-    const fail = async (kind: DeliveryFailureKind): Promise<AdapterSendResult> => {
-      const error = "Slack delivery failed";
+    const fail = async (
+      kind: DeliveryFailureKind,
+      error = "Slack delivery failed",
+    ): Promise<AdapterSendResult> => {
       if (kind === "retryable") {
         await this.deliveries.releaseRetryable(message.deliveryId, claim.attemptId);
         return { ok: false, error, retryable: true };
@@ -915,7 +917,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
             files: uploadFiles,
           },
         );
-        if (!delivered.ok) return await fail(delivered.kind);
+        if (!delivered.ok) return await fail(delivered.kind, delivered.error);
         providerMessageId = delivered.fileIds[0];
       } else {
         const approvalBlocks = message.surface.kind === "dm"
@@ -931,7 +933,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
             blocks: approvalBlocks,
           },
         );
-        if (!delivered.ok) return await fail(delivered.kind);
+        if (!delivered.ok) return await fail(delivered.kind, delivered.error);
         providerMessageId = delivered.ts;
       }
     } catch {

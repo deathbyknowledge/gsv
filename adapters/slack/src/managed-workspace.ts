@@ -10,6 +10,7 @@ import {
   postSlackMessage,
   requireSlackId,
   requireSlackToken,
+  slackFileDeliveryErrorMessage,
   SlackApiError,
   updateSlackMessage,
   workspaceAccountId,
@@ -518,10 +519,11 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
       );
       return { ok: true, fileIds: result.fileIds };
     } catch (error) {
+      const slackError = error instanceof SlackApiError ? error : undefined;
       return {
         ok: false,
-        kind: error instanceof SlackApiError ? error.kind : "permanent",
-        error: "Slack file delivery failed",
+        kind: slackError?.kind ?? "permanent",
+        error: slackFileDeliveryErrorMessage(slackError),
       };
     }
   }

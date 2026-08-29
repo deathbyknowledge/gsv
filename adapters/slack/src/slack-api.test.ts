@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   downloadSlackFile,
   exchangeSlackOAuthCode,
+  slackFileDeliveryErrorMessage,
+  SlackApiError,
   uploadSlackFiles,
 } from "./slack-api";
 
@@ -39,6 +41,20 @@ describe("Slack OAuth API", () => {
         scope: "channels:read,chat:write",
       },
     });
+  });
+});
+
+describe("Slack file delivery errors", () => {
+  it("turns a channel-membership rejection into recovery guidance", () => {
+    expect(slackFileDeliveryErrorMessage(
+      new SlackApiError("provider detail", "permanent", "not_in_channel"),
+    )).toBe("Invite the GSV app to this Slack conversation before sharing files");
+  });
+
+  it("does not expose unknown provider errors", () => {
+    expect(slackFileDeliveryErrorMessage(
+      new SlackApiError("private provider detail", "permanent", "unexpected_detail"),
+    )).toBe("Slack file delivery failed");
   });
 });
 

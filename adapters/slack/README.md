@@ -172,7 +172,8 @@ Outbound resources are hydrated only for delivery. The adapter uses
 `files.completeUploadExternal` once for the batch with the authorized channel
 and parent thread. Text and shared-channel attribution become the file
 message's initial comment. The common GSV message-media limits apply: at most
-20 items and 48 MiB total.
+20 items and 48 MiB total. Unlike plain text sent with `chat:write.public`, file
+sharing requires the GSV app to be a member of the destination conversation.
 
 Existing managed workspace installations must use the install link again to
 approve the file and app-owned target scopes. Every managed user who wants the

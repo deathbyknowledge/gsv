@@ -19,6 +19,7 @@ import type {
 import {
   postSlackMessage,
   requireSlackId,
+  slackFileDeliveryErrorMessage,
   SlackApiError,
   type SlackFetch,
   type SlackUploadFile,
@@ -142,7 +143,12 @@ export async function deliverSlackMessage(
     return { ok: true, messageId: providerMessageId };
   } catch (error) {
     const kind = error instanceof SlackApiError ? error.kind : "permanent";
-    return await fail(kind, "Slack delivery failed");
+    return await fail(
+      kind,
+      uploadFiles.length > 0
+        ? slackFileDeliveryErrorMessage(error instanceof SlackApiError ? error : undefined)
+        : "Slack delivery failed",
+    );
   }
 }
 
