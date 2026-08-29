@@ -12,8 +12,8 @@ use gpui_component::input::Input;
 
 use crate::client::ApprovalDecision;
 use crate::content::MediaAttachment;
+use crate::core_visual::MAX_CORE_DIAMETER;
 use crate::interaction::CanvasLayer;
-use crate::mind_visual::MAX_MIND_DIAMETER;
 use crate::model::{
     approval_scope_description, ActivityCategory, ActivitySummaryEntry, ConnectionState,
     LiveActivityEntry, MomentRole, MomentState, PendingApproval, SurfaceMode,
@@ -30,7 +30,7 @@ use super::presence::{
 use super::rich::{media_descriptors, render_document, RichRenderContext};
 use super::selection::{SelectableText, SelectionSurface, SelectionTopology, TextSelection};
 use super::{
-    type_content_hash, AddAttachment, CachedTypeLayout, GsvApp, RichPresentationPhase,
+    type_content_hash, AddAttachment, CachedTypeLayout, CorePose, GsvApp, RichPresentationPhase,
     ToggleDictation,
 };
 
@@ -51,6 +51,104 @@ struct CanvasGeometry {
     top: f32,
     bottom: f32,
     available_height: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CoreSceneLayout {
+    left: f32,
+    top: f32,
+    diameter: f32,
+    opacity: f32,
+    canvas_left: f32,
+    canvas_top: f32,
+}
+
+fn companion_core_pose(viewport_width: f32, viewport_height: f32) -> CorePose {
+    if viewport_width.min(viewport_height) < 720.0 {
+        CorePose::Corner
+    } else if viewport_width >= 900.0 && viewport_width >= viewport_height * 1.20 {
+        CorePose::Side
+    } else {
+        CorePose::Header
+    }
+}
+
+fn core_scene_layout(
+    pose: CorePose,
+    viewport_width: f32,
+    viewport_height: f32,
+    base_canvas_left: f32,
+    base_canvas_top: f32,
+) -> CoreSceneLayout {
+    match pose {
+        CorePose::Hero => {
+            let diameter =
+                (viewport_width.min(viewport_height) * 0.80).clamp(340.0, MAX_CORE_DIAMETER);
+            CoreSceneLayout {
+                left: (viewport_width - diameter) * 0.5,
+                top: (viewport_height - diameter) * 0.5,
+                diameter,
+                opacity: 1.0,
+                canvas_left: base_canvas_left,
+                canvas_top: base_canvas_top,
+            }
+        }
+        CorePose::Side => {
+            let diameter = (viewport_height * 0.42)
+                .clamp(280.0, 520.0)
+                .min(viewport_width * 0.34);
+            let canvas_left = (82.0 + diameter + 80.0)
+                .max(base_canvas_left)
+                .min(viewport_width * 0.48);
+            CoreSceneLayout {
+                left: 82.0 + ((canvas_left - 82.0 - diameter) * 0.5).max(0.0),
+                top: (viewport_height - diameter) * 0.5,
+                diameter,
+                opacity: 0.86,
+                canvas_left,
+                canvas_top: base_canvas_top,
+            }
+        }
+        CorePose::Header => {
+            let diameter = (viewport_width.min(viewport_height) * 0.28).clamp(220.0, 360.0);
+            let top = PRESENCE_LANE_TOP + PRESENCE_LANE_HEIGHT + 4.0;
+            CoreSceneLayout {
+                left: (viewport_width - diameter) * 0.5,
+                top,
+                diameter,
+                opacity: 0.88,
+                canvas_left: base_canvas_left,
+                canvas_top: top + diameter + 26.0,
+            }
+        }
+        CorePose::Corner => {
+            let diameter = (viewport_width.min(viewport_height) * 0.24).clamp(140.0, 190.0);
+            CoreSceneLayout {
+                left: viewport_width - diameter - 30.0,
+                top: PRESENCE_LANE_TOP + PRESENCE_LANE_HEIGHT + 12.0,
+                diameter,
+                opacity: 0.72,
+                canvas_left: base_canvas_left,
+                canvas_top: base_canvas_top,
+            }
+        }
+    }
+}
+
+fn interpolate_core_layout(
+    from: CoreSceneLayout,
+    to: CoreSceneLayout,
+    progress: f32,
+) -> CoreSceneLayout {
+    let interpolate = |start: f32, end: f32| start + (end - start) * progress;
+    CoreSceneLayout {
+        left: interpolate(from.left, to.left),
+        top: interpolate(from.top, to.top),
+        diameter: interpolate(from.diameter, to.diameter),
+        opacity: interpolate(from.opacity, to.opacity),
+        canvas_left: to.canvas_left,
+        canvas_top: to.canvas_top,
+    }
 }
 
 fn render_activity_summary(
@@ -981,16 +1079,64 @@ impl GsvApp {
         } else {
             self.conversation.primary_live_activity()
         };
-        let left_padding = (viewport_width * 0.065).clamp(108.0, 142.0);
+        let draft = self.interaction.visible_draft().map(str::to_string);
+        let draft_visible = draft.is_some();
+        let active_response_has_content =
+            self.conversation
+                .active_run_id
+                .as_deref()
+                .is_some_and(|active_run_id| {
+                    self.conversation.moments.iter().rev().any(|moment| {
+                        moment.role == MomentRole::Intelligence
+                            && moment.state == MomentState::Streaming
+                            && moment.run_id.as_deref() == Some(active_run_id)
+                            && (!moment.text.trim().is_empty() || !moment.media.is_empty())
+                    })
+                });
+        let core_hero = !draft_visible
+            && !self.interaction.is_approval()
+            && self.conversation.connection == ConnectionState::Connected
+            && self.conversation.is_following_latest()
+            && (self.conversation.moments.is_empty()
+                || (self.conversation.active_run_id.is_some() && !active_response_has_content));
+        let target_core_pose = if core_hero {
+            CorePose::Hero
+        } else {
+            companion_core_pose(viewport_width, viewport_height)
+        };
+        let previous_core_pose = self.core_pose;
+        let core_pose_changed = previous_core_pose != target_core_pose;
+        if core_pose_changed {
+            self.core_pose = target_core_pose;
+            self.core_pose_epoch = self.core_pose_epoch.wrapping_add(1).max(1);
+        }
+
+        let base_left_padding = (viewport_width * 0.065).clamp(108.0, 142.0);
         let right_padding = (viewport_width * 0.065).clamp(46.0, 142.0);
         let vertical_padding = (viewport_height * 0.105).clamp(50.0, 108.0);
-        let top_padding = vertical_padding.max(PRESENCE_LANE_TOP + PRESENCE_LANE_HEIGHT + 24.0);
-        let available_width = (viewport_width - left_padding - right_padding).max(1.0);
-        let available_height = (viewport_height - top_padding - vertical_padding - 72.0).max(1.0);
+        let base_top_padding =
+            vertical_padding.max(PRESENCE_LANE_TOP + PRESENCE_LANE_HEIGHT + 24.0);
+        let core_layout = core_scene_layout(
+            target_core_pose,
+            viewport_width,
+            viewport_height,
+            base_left_padding,
+            base_top_padding,
+        );
+        let previous_core_layout = core_scene_layout(
+            previous_core_pose,
+            viewport_width,
+            viewport_height,
+            base_left_padding,
+            base_top_padding,
+        );
+        let available_width = (viewport_width - core_layout.canvas_left - right_padding).max(1.0);
+        let available_height =
+            (viewport_height - core_layout.canvas_top - vertical_padding - 72.0).max(1.0);
         let geometry = CanvasGeometry {
-            left: left_padding,
+            left: core_layout.canvas_left,
             right: right_padding,
-            top: top_padding,
+            top: core_layout.canvas_top,
             bottom: vertical_padding,
             available_height,
         };
@@ -1205,53 +1351,22 @@ impl GsvApp {
         } else {
             "CONVERSATION"
         };
-        let draft = self.interaction.visible_draft().map(str::to_string);
-        let draft_visible = draft.is_some();
         if let Some(run_id) = self.conversation.active_run_id.clone() {
-            if self.mind_visual_run_id.as_deref() != Some(run_id.as_str()) {
-                self.mind_visual_run_id = Some(run_id);
-                self.mind_visual_generation = self.mind_visual_generation.wrapping_add(1).max(1);
+            if self.core_visual_run_id.as_deref() != Some(run_id.as_str()) {
+                self.core_visual_run_id = Some(run_id);
+                self.core_visual_generation = self.core_visual_generation.wrapping_add(1).max(1);
             }
         }
-        let active_response_has_content =
-            self.conversation
-                .active_run_id
-                .as_deref()
-                .is_some_and(|active_run_id| {
-                    self.conversation.moments.iter().rev().any(|moment| {
-                        moment.role == MomentRole::Intelligence
-                            && moment.state == MomentState::Streaming
-                            && moment.run_id.as_deref() == Some(active_run_id)
-                            && (!moment.text.trim().is_empty() || !moment.media.is_empty())
-                    })
-                });
-        let mind_can_occupy_canvas = !draft_visible
-            && !self.interaction.is_approval()
-            && self.conversation.connection == ConnectionState::Connected
-            && self.conversation.is_following_latest();
-        let mind_full = mind_can_occupy_canvas
-            && (self.conversation.moments.is_empty()
-                || (self.conversation.active_run_id.is_some() && !active_response_has_content));
-        // A live image repaints continuously. Once response text exists, keep its faint afterimage
-        // only on the cheap text path so rich documents never inherit that foreground work.
-        let mind_residual = mind_can_occupy_canvas
-            && self.conversation.active_run_id.is_some()
-            && active_response_has_content
-            && !transition_costly_candidate
-            && rich_presentation == RichPresentationEffect::None;
-        let mind_enabled = mind_full || mind_residual;
-        let mind_generation = self.mind_visual_generation;
-        let mind_active = self.conversation.active_run_id.is_some();
-        let mind_size =
-            (viewport_width.min(viewport_height) * 0.80).clamp(340.0, MAX_MIND_DIAMETER);
-        let mind_scale_factor = window.scale_factor();
-        self.mind_visual.update(cx, |visual, visual_cx| {
-            visual.set_display_size(mind_size, mind_scale_factor);
+        let core_generation = self.core_visual_generation;
+        let core_active = self.conversation.active_run_id.is_some();
+        let core_scale_factor = window.scale_factor();
+        self.core_visual.update(cx, |visual, visual_cx| {
+            visual.set_display_size(core_layout.diameter, core_scale_factor);
             visual.set_process_state(
-                mind_generation,
-                mind_active,
+                core_generation,
+                core_active,
                 primary_live_activity,
-                mind_enabled,
+                true,
                 visual_cx,
             );
         });
@@ -1374,71 +1489,46 @@ impl GsvApp {
             Some(layout)
         };
 
-        let full_mind_layer = mind_full.then(|| {
-            let visual = if self.reduced_motion {
-                div()
-                    .size(px(mind_size))
-                    .child(self.mind_visual.clone())
-                    .into_any_element()
-            } else {
-                div()
-                    .child(self.mind_visual.clone())
-                    .with_animation(
-                        ("mind-enter", mind_generation),
-                        Animation::new(Duration::from_millis(320)).with_easing(ease_out_quint()),
-                        move |this, delta| {
-                            this.size(px(mind_size * (0.92 + delta * 0.08)))
-                                .opacity(delta)
-                        },
-                    )
-                    .into_any_element()
-            };
+        let core_visual = if self.reduced_motion || !core_pose_changed {
             div()
-                .id("mind-canvas")
                 .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .on_scroll_wheel(cx.listener(Self::scroll_moments))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, window, cx| {
-                        this.input.focus_handle(cx).focus(window);
-                    }),
+                .left(px(core_layout.left))
+                .top(px(core_layout.top))
+                .size(px(core_layout.diameter))
+                .opacity(core_layout.opacity)
+                .child(self.core_visual.clone())
+                .into_any_element()
+        } else {
+            let from = previous_core_layout;
+            let to = core_layout;
+            div()
+                .absolute()
+                .child(self.core_visual.clone())
+                .with_animation(
+                    ("core-pose", self.core_pose_epoch),
+                    Animation::new(Duration::from_millis(460)).with_easing(ease_out_quint()),
+                    move |this, delta| {
+                        let layout = interpolate_core_layout(from, to, delta);
+                        this.left(px(layout.left))
+                            .top(px(layout.top))
+                            .size(px(layout.diameter))
+                            .opacity(layout.opacity)
+                    },
                 )
-                .child(visual)
                 .into_any_element()
-        });
-        let residual_mind_layer = mind_residual.then(|| {
-            let visual = if self.reduced_motion {
-                div()
-                    .size(px(mind_size * 0.62))
-                    .opacity(0.12)
-                    .child(self.mind_visual.clone())
-                    .into_any_element()
-            } else {
-                div()
-                    .child(self.mind_visual.clone())
-                    .with_animation(
-                        ("mind-yield-to-text", mind_generation),
-                        Animation::new(Duration::from_millis(420)).with_easing(ease_out_quint()),
-                        move |this, delta| {
-                            this.size(px(mind_size * (1.0 - delta * 0.38)))
-                                .opacity(1.0 - delta * 0.88)
-                        },
-                    )
-                    .into_any_element()
-            };
-            div()
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(visual)
-                .into_any_element()
-        });
+        };
+        let core_layer = div()
+            .id("core-canvas")
+            .absolute()
+            .inset_0()
+            .on_scroll_wheel(cx.listener(Self::scroll_moments))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    this.input.focus_handle(cx).focus(window);
+                }),
+            )
+            .child(core_visual);
 
         div()
             .relative()
@@ -1447,9 +1537,8 @@ impl GsvApp {
             .when_some(sink_layout, |this, sink_layout| {
                 this.child(self.render_input_sink(sink_layout, geometry))
             })
-            .when_some(full_mind_layer, |this, mind| this.child(mind))
-            .when(!mind_full, |this| this.child(canvas))
-            .when_some(residual_mind_layer, |this, mind| this.child(mind))
+            .child(core_layer)
+            .when(!core_hero, |this| this.child(canvas))
             .child(self.presence_lane.clone())
             .when_some(self.history_edge_intent, |this, intent| {
                 this.child(render_history_edge_feedback(intent, geometry))
@@ -2405,7 +2494,7 @@ impl Render for GsvApp {
             && !microphone_visible
             && self.conversation.mode == SurfaceMode::Conversation;
         if !conversation_visible {
-            self.mind_visual.update(cx, |visual, visual_cx| {
+            self.core_visual.update(cx, |visual, visual_cx| {
                 visual.set_enabled(false, visual_cx);
             });
         }
@@ -2492,6 +2581,36 @@ mod tests {
     use super::*;
     use crate::app::gesture::GESTURE_SCROLL_FRAME_INTERVAL;
     use crate::vision_debug::VisionEvent;
+
+    #[test]
+    fn core_uses_a_reserved_companion_field_across_desktop_shapes() {
+        assert_eq!(companion_core_pose(1_600.0, 900.0), CorePose::Side);
+        assert_eq!(companion_core_pose(1_261.0, 1_390.0), CorePose::Header);
+        assert_eq!(companion_core_pose(640.0, 640.0), CorePose::Corner);
+
+        let side = core_scene_layout(CorePose::Side, 1_600.0, 900.0, 108.0, 140.0);
+        assert!(side.canvas_left > side.left + side.diameter);
+        assert_eq!(side.canvas_top, 140.0);
+
+        let header = core_scene_layout(CorePose::Header, 1_261.0, 1_390.0, 108.0, 140.0);
+        assert!(header.canvas_top > header.top + header.diameter);
+        assert_eq!(header.canvas_left, 108.0);
+    }
+
+    #[test]
+    fn core_pose_interpolation_preserves_exact_endpoints() {
+        let hero = core_scene_layout(CorePose::Hero, 1_261.0, 1_390.0, 108.0, 140.0);
+        let header = core_scene_layout(CorePose::Header, 1_261.0, 1_390.0, 108.0, 140.0);
+        assert_eq!(interpolate_core_layout(hero, header, 0.0).left, hero.left);
+        assert_eq!(
+            interpolate_core_layout(hero, header, 1.0),
+            CoreSceneLayout {
+                canvas_left: header.canvas_left,
+                canvas_top: header.canvas_top,
+                ..header
+            }
+        );
+    }
 
     #[test]
     fn expensive_message_layouts_do_not_repeat_during_a_transition() {

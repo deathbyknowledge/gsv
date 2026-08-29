@@ -15,7 +15,7 @@ use crate::model::ActivityCategory;
 const MINIMUM_ACTIVITY_VISIBILITY: Duration = Duration::from_millis(1_800);
 const MAX_PENDING_ACTIVITIES: usize = 2;
 const MIND_RENDER_EXTENTS: [u32; 3] = [512, 768, 1_024];
-pub(crate) const MAX_MIND_DIAMETER: f32 = 760.0;
+pub(crate) const MAX_CORE_DIAMETER: f32 = 760.0;
 
 #[derive(Debug)]
 struct ActivityPresentation {
@@ -107,7 +107,7 @@ impl ActivityPresentation {
     }
 }
 
-pub(crate) struct MindVisual {
+pub(crate) struct CoreVisual {
     event_task: Option<Task<()>>,
     engine: Option<VisualEngine>,
     image: Option<Arc<RenderImage>>,
@@ -120,27 +120,28 @@ pub(crate) struct MindVisual {
     advance_task: Option<Task<()>>,
 }
 
-impl MindVisual {
+impl CoreVisual {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>, reduced_motion: bool) -> Self {
-        let render_extent = mind_render_extent(MAX_MIND_DIAMETER, window.scale_factor());
+        let render_extent = core_render_extent(MAX_CORE_DIAMETER, window.scale_factor());
         let config = VisualEngineConfig {
             width: render_extent,
             height: render_extent,
             frames_per_second: if reduced_motion { 12 } else { 30 },
+            idle_frames_per_second: if reduced_motion { 8 } else { 18 },
             initial_preset: VisualPreset::Listening,
             initially_active: false,
         };
         let mut engine = match VisualEngine::start(config) {
             Ok(engine) => engine,
             Err(error) => {
-                eprintln!("GSV Mind visual is unavailable: {error}");
+                eprintln!("GSV Core visual is unavailable: {error}");
                 return Self::unavailable();
             }
         };
         let mut events = match engine.take_events() {
             Ok(events) => events,
             Err(error) => {
-                eprintln!("GSV Mind visual is unavailable: {error}");
+                eprintln!("GSV Core visual is unavailable: {error}");
                 return Self::unavailable();
             }
         };
@@ -205,7 +206,7 @@ impl MindVisual {
     }
 
     pub(crate) fn set_display_size(&mut self, logical_extent: f32, scale_factor: f32) {
-        let render_extent = mind_render_extent(logical_extent, scale_factor);
+        let render_extent = core_render_extent(logical_extent, scale_factor);
         if self.render_extent == render_extent {
             return;
         }
@@ -214,7 +215,7 @@ impl MindVisual {
             return;
         };
         if let Err(error) = engine.set_resolution(render_extent, render_extent) {
-            eprintln!("GSV Mind visual could not change resolution: {error}");
+            eprintln!("GSV Core visual could not change resolution: {error}");
         }
     }
 
@@ -257,7 +258,7 @@ impl MindVisual {
         match event {
             VisualEvent::Frame(frame) => self.install_frame(frame, window, cx),
             VisualEvent::Failed(message) => {
-                eprintln!("GSV Mind visual stopped: {message}");
+                eprintln!("GSV Core visual stopped: {message}");
                 self.engine.take();
             }
         }
@@ -281,13 +282,13 @@ impl MindVisual {
         };
         if target != self.applied_preset {
             if let Err(error) = engine.set_preset(target) {
-                eprintln!("GSV Mind visual could not change state: {error}");
+                eprintln!("GSV Core visual could not change state: {error}");
             } else {
                 self.applied_preset = target;
             }
         }
         if let Err(error) = engine.set_active(self.enabled) {
-            eprintln!("GSV Mind visual could not change cadence: {error}");
+            eprintln!("GSV Core visual could not change cadence: {error}");
         }
     }
 
@@ -316,7 +317,7 @@ impl MindVisual {
     }
 }
 
-impl Render for MindVisual {
+impl Render for CoreVisual {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let mut stage = div().size_full().flex().items_center().justify_center();
         if let Some(image) = self.image.clone() {
@@ -326,7 +327,7 @@ impl Render for MindVisual {
     }
 }
 
-impl Drop for MindVisual {
+impl Drop for CoreVisual {
     fn drop(&mut self) {
         self.event_task.take();
         self.engine.take();
@@ -345,7 +346,7 @@ fn activity_preset(activity: ActivityCategory) -> VisualPreset {
     }
 }
 
-fn mind_render_extent(logical_extent: f32, scale_factor: f32) -> u32 {
+fn core_render_extent(logical_extent: f32, scale_factor: f32) -> u32 {
     debug_assert!(logical_extent.is_finite() && logical_extent > 0.0);
     debug_assert!(scale_factor.is_finite() && scale_factor > 0.0);
     let required_extent = (logical_extent * scale_factor).ceil() as u32;
@@ -361,10 +362,10 @@ mod tests {
 
     #[test]
     fn render_extent_tracks_physical_presentation_size_with_a_quality_cap() {
-        assert_eq!(mind_render_extent(340.0, 1.0), 512);
-        assert_eq!(mind_render_extent(MAX_MIND_DIAMETER, 1.0), 768);
-        assert_eq!(mind_render_extent(MAX_MIND_DIAMETER, 1.25), 1_024);
-        assert_eq!(mind_render_extent(MAX_MIND_DIAMETER, 2.0), 1_024);
+        assert_eq!(core_render_extent(340.0, 1.0), 512);
+        assert_eq!(core_render_extent(MAX_CORE_DIAMETER, 1.0), 768);
+        assert_eq!(core_render_extent(MAX_CORE_DIAMETER, 1.25), 1_024);
+        assert_eq!(core_render_extent(MAX_CORE_DIAMETER, 2.0), 1_024);
     }
 
     #[test]

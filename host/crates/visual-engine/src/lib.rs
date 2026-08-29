@@ -91,6 +91,7 @@ pub struct VisualEngineConfig {
     pub width: u32,
     pub height: u32,
     pub frames_per_second: u32,
+    pub idle_frames_per_second: u32,
     pub initial_preset: VisualPreset,
     pub initially_active: bool,
 }
@@ -101,6 +102,7 @@ impl Default for VisualEngineConfig {
             width: 1280,
             height: 832,
             frames_per_second: 30,
+            idle_frames_per_second: 30,
             initial_preset: VisualPreset::Listening,
             initially_active: true,
         }
@@ -157,6 +159,13 @@ impl VisualEngine {
         if config.frames_per_second == 0 {
             return Err(VisualEngineError(
                 "visual renderer frame rate must be non-zero".into(),
+            ));
+        }
+        if config.idle_frames_per_second == 0
+            || config.idle_frames_per_second > config.frames_per_second
+        {
+            return Err(VisualEngineError(
+                "visual renderer idle frame rate must be within its active frame rate".into(),
             ));
         }
 
@@ -623,7 +632,6 @@ fn render_loop(
     let mut renderer = GpuRenderer::new(render_width, render_height)?;
     let started = Instant::now();
     let mut previous_frame = started;
-    let frame_interval = Duration::from_secs_f64(1.0 / f64::from(config.frames_per_second));
     let mut next_frame = started;
     let mut sequence = 0;
     let mut target = config.initial_preset;
@@ -677,6 +685,12 @@ fn render_loop(
         }
 
         let now = Instant::now();
+        let frames_per_second = if target == VisualPreset::Listening {
+            config.idle_frames_per_second
+        } else {
+            config.frames_per_second
+        };
+        let frame_interval = Duration::from_secs_f64(1.0 / f64::from(frames_per_second));
         if now < next_frame {
             thread::sleep((next_frame - now).min(Duration::from_millis(4)));
             continue;
