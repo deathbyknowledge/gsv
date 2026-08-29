@@ -1,5 +1,6 @@
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
+import { slackApiWorkerScript } from "./test/fixture-workers.ts";
 
 export default defineConfig({
   plugins: [
@@ -54,104 +55,7 @@ export default defineConfig({
           {
             name: "slack-api-test",
             modules: true,
-            script: `
-              const calls = [];
-              let nextTs = 1700001000;
-              let nextFile = 0;
-              let failNextOpen = false;
-              export default {
-                async fetch(request) {
-                  const url = new URL(request.url);
-                  if (request.method === "GET" && url.pathname === "/calls") {
-                    return Response.json(calls);
-                  }
-                  if (request.method === "POST" && url.pathname === "/fail-next-open") {
-                    failNextOpen = true;
-                    return Response.json({ ok: true });
-                  }
-                  if (request.method === "GET" && url.pathname.startsWith("/files-pri/")) {
-                    const bytes = new TextEncoder().encode("standalone inbound file");
-                    calls.push({
-                      method: "file.download",
-                      body: { authorization: request.headers.get("Authorization") },
-                    });
-                    return new Response(bytes, {
-                      headers: { "Content-Length": String(bytes.byteLength) },
-                    });
-                  }
-                  if (request.method === "POST" && url.pathname.startsWith("/upload/v1/")) {
-                    const bytes = new Uint8Array(await request.arrayBuffer());
-                    calls.push({ method: "file.upload", body: { bytes: Array.from(bytes) } });
-                    return new Response("OK");
-                  }
-                  const method = url.pathname.split("/").at(-1);
-                  const contentType = request.headers.get("Content-Type") || "";
-                  const body = contentType.startsWith("application/json")
-                    ? await request.json()
-                    : Object.fromEntries(await request.formData());
-                  calls.push({ method, body });
-                  if (method === "auth.test") {
-                    return Response.json({
-                      ok: true,
-                      team_id: "TWORK123",
-                      team: "Acme",
-                      user_id: "UGSVBOT1",
-                    });
-                  }
-                  if (method === "apps.connections.open") {
-                    if (failNextOpen) {
-                      failNextOpen = false;
-                      return Response.json({ ok: false, error: "temporary_unavailable" });
-                    }
-                    return Response.json({
-                      ok: true,
-                      url: "wss://wss-primary.slack.com/link/?ticket=test",
-                    });
-                  }
-                  if (method === "chat.postMessage") {
-                    nextTs += 1;
-                    return Response.json({
-                      ok: true,
-                      channel: body.channel,
-                      ts: String(nextTs) + ".000100",
-                    });
-                  }
-                  if (method === "chat.update") {
-                    return Response.json({
-                      ok: true,
-                      channel: body.channel,
-                      ts: body.ts,
-                    });
-                  }
-                  if (method === "files.info") {
-                    const bytes = new TextEncoder().encode("standalone inbound file");
-                    return Response.json({
-                      ok: true,
-                      file: {
-                        id: body.file,
-                        name: "standalone.txt",
-                        mimetype: "text/plain",
-                        size: bytes.byteLength,
-                        url_private_download: "https://files.slack.com/files-pri/TWORK123-FFILE002/standalone.txt",
-                      },
-                    });
-                  }
-                  if (method === "files.getUploadURLExternal") {
-                    nextFile += 1;
-                    const fileId = "FUPLOAD" + nextFile;
-                    return Response.json({
-                      ok: true,
-                      upload_url: "https://files.slack.com/upload/v1/" + fileId,
-                      file_id: fileId,
-                    });
-                  }
-                  if (method === "files.completeUploadExternal") {
-                    return Response.json({ ok: true, files: body.files });
-                  }
-                  return Response.json({ ok: false, error: "unknown_method" });
-                },
-              };
-            `,
+            script: slackApiWorkerScript("standalone"),
           },
           {
             name: "slack-socket-test",

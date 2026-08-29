@@ -9,6 +9,7 @@ import {
   managedSlackWorkspaceObjectName,
 } from "../src/managed-identity";
 import { managedSlackTargetRequestSchema } from "../src/managed";
+import { signedSlackRequest } from "./slack-request";
 
 type SlackApiCall = {
   method: string;
@@ -180,6 +181,8 @@ type ManagedPeerRaceHarness = Pick<ManagedSlackPeer, "disconnect" | "executeTarg
   ): Promise<ManagedSlackPeerState>;
 };
 
+type TargetFrame = Parameters<PeerStub["executeTarget"]>[3];
+
 const SIGNING_SECRET = "signing_secret_123456789";
 const APPROVAL_PROMPT = [
   "I need your confirmation before I can continue.",
@@ -188,6 +191,21 @@ const APPROVAL_PROMPT = [
   "",
   "Reply \"approve hil[managed-request-1]\" to continue, \"approve always hil[managed-request-1]\" to remember it for this conversation, or \"deny hil[managed-request-1]\" to stop this action.",
 ].join("\n");
+
+function targetFrame(
+  id: string,
+  input: string,
+  options: { runId?: string; timeout?: number } = {},
+): TargetFrame {
+  return {
+    type: "req",
+    id,
+    call: "shell.exec",
+    runId: options.runId,
+    args: { input, timeout: options.timeout },
+    deadlineAt: Date.now() + (options.timeout ?? 120_000),
+  };
+}
 
 function fetcherBinding<T>(value: T): T & Fetcher {
   // SAFETY: these test bindings implement the fetch operation exercised by this flow.
@@ -280,27 +298,10 @@ async function signedEvent(input: {
     event_time: Math.floor(Date.now() / 1_000),
     event,
   });
-  const timestamp = String(Math.floor(Date.now() / 1_000));
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(SIGNING_SECRET),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const digest = new Uint8Array(await crypto.subtle.sign(
-    "HMAC",
-    key,
-    new TextEncoder().encode(`v0:${timestamp}:${body}`),
-  ));
-  const signature = `v0=${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-  return new Request("https://slack.test/slack/events", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Slack-Request-Timestamp": timestamp,
-      "X-Slack-Signature": signature,
-    },
+  return await signedSlackRequest({
+    url: "https://slack.test/slack/events",
+    signingSecret: SIGNING_SECRET,
+    contentType: "application/json",
     body,
   });
 }
@@ -333,27 +334,10 @@ async function signedInteraction(input: {
     }],
   };
   const body = new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
-  const timestamp = String(Math.floor(Date.now() / 1_000));
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(SIGNING_SECRET),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const digest = new Uint8Array(await crypto.subtle.sign(
-    "HMAC",
-    key,
-    new TextEncoder().encode(`v0:${timestamp}:${body}`),
-  ));
-  const signature = `v0=${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-  return new Request("https://slack.test/slack/interactions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "X-Slack-Request-Timestamp": timestamp,
-      "X-Slack-Signature": signature,
-    },
+  return await signedSlackRequest({
+    url: "https://slack.test/slack/interactions",
+    signingSecret: SIGNING_SECRET,
+    contentType: "application/x-www-form-urlencoded",
     body,
   });
 }
@@ -367,27 +351,10 @@ async function signedUninstall(): Promise<Request> {
     event_time: Math.floor(Date.now() / 1_000),
     event: { type: "app_uninstalled" },
   });
-  const timestamp = String(Math.floor(Date.now() / 1_000));
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(SIGNING_SECRET),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const digest = new Uint8Array(await crypto.subtle.sign(
-    "HMAC",
-    key,
-    new TextEncoder().encode(`v0:${timestamp}:${body}`),
-  ));
-  const signature = `v0=${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-  return new Request("https://slack.test/slack/events", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Slack-Request-Timestamp": timestamp,
-      "X-Slack-Signature": signature,
-    },
+  return await signedSlackRequest({
+    url: "https://slack.test/slack/events",
+    signingSecret: SIGNING_SECRET,
+    contentType: "application/json",
     body,
   });
 }
@@ -446,6 +413,61 @@ async function pair(
   await stub.activate(activation);
   await stub.finalize(activation);
   return { generation: prepared.route.generation };
+}
+
+function peerFor(accountId: string, actorId: string): Rpc.Provider<PeerStub> {
+  const peers = namespaceBinding(env.MANAGED_SLACK_PEER);
+  return peerBinding(peers.get(
+    peers.idFromName(managedSlackPeerObjectName(accountId, actorId)),
+  ));
+}
+
+async function pairActor(input: {
+  actorId: string;
+  eventId: string;
+  ts: string;
+  installationId: string;
+  operationId: string;
+  previousCode?: string;
+}): Promise<{ code: string; generation: string }> {
+  expect((await SELF.fetch(await signedEvent({
+    eventId: input.eventId,
+    actorId: input.actorId,
+    ts: input.ts,
+  }))).status).toBe(200);
+  const code = await pairingCodeFor(input.actorId, input.previousCode);
+  return {
+    code,
+    ...await pair(input.actorId, code, input.installationId, input.operationId),
+  };
+}
+
+async function sendApproval(
+  peer: Rpc.Provider<PeerStub>,
+  routeGeneration: string,
+  deliveryId: string,
+): Promise<{ messageId: string; approveValue: string }> {
+  const approvalMessage = await peer.sendMessage("installation-alice", {
+    deliveryId,
+    surface: { kind: "dm", id: "DALICE01" },
+    actorId: "UALICE01",
+    routeGeneration,
+    text: APPROVAL_PROMPT,
+  });
+  expect(approvalMessage).toMatchObject({ ok: true, messageId: expect.any(String) });
+  const approvalPost = (await slackApiCalls()).findLast((call) => (
+    call.method === "chat.postMessage" && call.body.text === APPROVAL_PROMPT
+  ));
+  const actionBlock = approvalPost?.body.blocks?.find((block) => block.type === "actions");
+  const approveValue = actionBlock?.elements?.find(
+    (element) => element.action_id === "gsv_hil_approve",
+  )?.value;
+  expect(approveValue).toBeTruthy();
+  expect(JSON.parse(approveValue!)).toMatchObject({
+    token: "hil[managed-request-1]",
+    routeGeneration,
+  });
+  return { messageId: approvalMessage.messageId!, approveValue: approveValue! };
 }
 
 describe("managed Slack clean-instance flow", () => {
@@ -517,15 +539,10 @@ describe("managed Slack clean-instance flow", () => {
           route.installationId,
           route.generation,
           "workspace",
-          {
-            type: "req",
-            id: "target-route-race",
-            call: "shell.exec",
-            args: {
-              input: "slack messages send --channel CRACE001 --message 'stale route mutation'",
-            },
-            deadlineAt: Date.now() + 120_000,
-          },
+          targetFrame(
+            "target-route-race",
+            "slack messages send --channel CRACE001 --message 'stale route mutation'",
+          ),
         );
         await routeWasAdmitted;
         await harness.disconnect({
@@ -585,26 +602,16 @@ describe("managed Slack clean-instance flow", () => {
     expect(target).toEqual({ available: false });
   });
 
-  it("keeps Alice and Bob on their own GSV routes and attributes shared output", async () => {
+  it("exposes an authorized and cancellable Slack target", async () => {
     const accountId = await installWorkspace();
-
-    expect((await SELF.fetch(await signedEvent({
-      eventId: "EvALICE001",
+    const alice = await pairActor({
       actorId: "UALICE01",
+      eventId: "EvALICE001",
       ts: "1700000000.000100",
-    }))).status).toBe(200);
-    const aliceCode = await pairingCodeFor("UALICE01");
-    const alice = await pair(
-      "UALICE01",
-      aliceCode,
-      "installation-alice",
-      "pair-alice",
-    );
-
-    const peers = namespaceBinding(env.MANAGED_SLACK_PEER);
-    const peer = peerBinding(peers.get(
-      peers.idFromName(managedSlackPeerObjectName(accountId, "UALICE01")),
-    ));
+      installationId: "installation-alice",
+      operationId: "pair-alice",
+    });
+    const peer = peerFor(accountId, "UALICE01");
     using targetDescriptors = await peer.listTargets("installation-alice", alice.generation);
     expect(targetDescriptors).toEqual([
       expect.objectContaining({
@@ -615,17 +622,11 @@ describe("managed Slack clean-instance flow", () => {
         implements: ["shell.exec"],
       }),
     ]);
-    const targetListFrame = {
-      type: "req" as const,
-      id: "target-list",
-      call: "shell.exec" as const,
-      runId: "process-run-target-list",
-      args: {
-        input: "slack conversations list --json | jq -r '.items[0].name'",
-        timeout: 120_000,
-      },
-      deadlineAt: Date.now() + 120_000,
-    };
+    const targetListFrame = targetFrame(
+      "target-list",
+      "slack conversations list --json | jq -r '.items[0].name'",
+      { runId: "process-run-target-list", timeout: 120_000 },
+    );
     expect(managedSlackTargetRequestSchema.safeParse(targetListFrame).success).toBe(true);
     using targetList = await peer.executeTarget(
       "installation-alice",
@@ -641,15 +642,10 @@ describe("managed Slack clean-instance flow", () => {
       "installation-alice",
       alice.generation,
       "workspace",
-      {
-        type: "req",
-        id: "target-dm-list",
-        call: "shell.exec",
-        args: {
-          input: "slack conversations list --types im --json | jq -r '.items[0] | [.kind, .id, .userId] | @tsv'",
-        },
-        deadlineAt: Date.now() + 120_000,
-      },
+      targetFrame(
+        "target-dm-list",
+        "slack conversations list --types im --json | jq -r '.items[0] | [.kind, .id, .userId] | @tsv'",
+      ),
     );
     expect(targetDmList).toMatchObject({
       ok: true,
@@ -666,15 +662,10 @@ describe("managed Slack clean-instance flow", () => {
       "installation-alice",
       alice.generation,
       "workspace",
-      {
-        type: "req",
-        id: "target-identity",
-        call: "shell.exec",
-        args: {
-          input: "slack whoami --json | jq -r '[.reader.id, .writer.kind, .writer.id] | @tsv'",
-        },
-        deadlineAt: Date.now() + 120_000,
-      },
+      targetFrame(
+        "target-identity",
+        "slack whoami --json | jq -r '[.reader.id, .writer.kind, .writer.id] | @tsv'",
+      ),
     );
     expect(targetIdentity).toMatchObject({
       ok: true,
@@ -688,15 +679,10 @@ describe("managed Slack clean-instance flow", () => {
       "installation-alice",
       alice.generation,
       "workspace",
-      {
-        type: "req",
-        id: "target-send",
-        call: "shell.exec",
-        args: {
-          input: "printf '%s' 'hello from target' | slack messages send --channel CGENERAL1 --json | jq -r '.channel'",
-        },
-        deadlineAt: Date.now() + 120_000,
-      },
+      targetFrame(
+        "target-send",
+        "printf '%s' 'hello from target' | slack messages send --channel CGENERAL1 --json | jq -r '.channel'",
+      ),
     );
     expect(targetSend).toMatchObject({
       ok: true,
@@ -714,15 +700,10 @@ describe("managed Slack clean-instance flow", () => {
       "installation-alice",
       alice.generation,
       "workspace",
-      {
-        type: "req",
-        id: "target-reaction",
-        call: "shell.exec",
-        args: {
-          input: "slack reactions add --channel CGENERAL1 --timestamp 1700000001.000100 --name eyes",
-        },
-        deadlineAt: Date.now() + 120_000,
-      },
+      targetFrame(
+        "target-reaction",
+        "slack reactions add --channel CGENERAL1 --timestamp 1700000001.000100 --name eyes",
+      ),
     );
     expect(targetReaction).toMatchObject({
       ok: true,
@@ -749,15 +730,10 @@ describe("managed Slack clean-instance flow", () => {
       "installation-alice",
       alice.generation,
       "workspace",
-      {
-        type: "req",
-        id: "target-denied-send",
-        call: "shell.exec",
-        args: {
-          input: "slack messages send --channel CBOTONLY1 --message 'not authorized'",
-        },
-        deadlineAt: Date.now() + 120_000,
-      },
+      targetFrame(
+        "target-denied-send",
+        "slack messages send --channel CBOTONLY1 --message 'not authorized'",
+      ),
     );
     expect(deniedTargetSend).toMatchObject({
       ok: true,
@@ -770,15 +746,10 @@ describe("managed Slack clean-instance flow", () => {
       "installation-alice",
       alice.generation,
       "workspace",
-      {
-        type: "req",
-        id: "target-denied-reaction",
-        call: "shell.exec",
-        args: {
-          input: "slack reactions add --channel CBOTONLY1 --timestamp 1700000001.000100 --name eyes",
-        },
-        deadlineAt: Date.now() + 120_000,
-      },
+      targetFrame(
+        "target-denied-reaction",
+        "slack reactions add --channel CBOTONLY1 --timestamp 1700000001.000100 --name eyes",
+      ),
     );
     expect(deniedTargetReaction).toMatchObject({
       ok: true,
@@ -795,13 +766,10 @@ describe("managed Slack clean-instance flow", () => {
       "installation-alice",
       alice.generation,
       "workspace",
-      {
-        type: "req",
-        id: "target-cancel",
-        call: "shell.exec",
-        args: { input: "slack conversations list --cursor wait-for-cancel" },
-        deadlineAt: Date.now() + 120_000,
-      },
+      targetFrame(
+        "target-cancel",
+        "slack conversations list --cursor wait-for-cancel",
+      ),
     );
     await vi.waitFor(async () => {
       expect(await slackApiCalls()).toContainEqual(expect.objectContaining({
@@ -824,47 +792,33 @@ describe("managed Slack clean-instance flow", () => {
         error: "Slack target request cancelled",
       },
     });
-    const approvalMessage = await peer.sendMessage("installation-alice", {
-      deliveryId: "managed-slack-approval-prompt",
-      surface: { kind: "dm", id: "DALICE01" },
+  });
+
+  it("routes paired ingress, approvals, and media without duplicate delivery", async () => {
+    const accountId = await installWorkspace();
+    const alice = await pairActor({
       actorId: "UALICE01",
-      routeGeneration: alice.generation,
-      text: APPROVAL_PROMPT,
+      eventId: "EvALICE001",
+      ts: "1700000000.000100",
+      installationId: "installation-alice",
+      operationId: "pair-alice",
     });
-    expect(approvalMessage).toMatchObject({ ok: true, messageId: expect.any(String) });
-    const approvalPost = (await slackApiCalls()).findLast((call) => (
-      call.method === "chat.postMessage" && call.body.text === APPROVAL_PROMPT
-    ));
-    expect(approvalPost?.body.blocks).toMatchObject([
-      { type: "section" },
-      {
-        type: "actions",
-        elements: [
-          { action_id: "gsv_hil_approve" },
-          { action_id: "gsv_hil_approve_always" },
-          { action_id: "gsv_hil_deny" },
-        ],
-      },
-    ]);
-    const actionBlock = approvalPost?.body.blocks?.find((block) => block.type === "actions");
-    const approveValue = actionBlock?.elements?.find(
-      (element) => element.action_id === "gsv_hil_approve",
-    )?.value;
-    expect(approveValue).toBeTruthy();
-    expect(JSON.parse(approveValue!)).toMatchObject({
-      token: "hil[managed-request-1]",
-      routeGeneration: alice.generation,
-    });
+    const peer = peerFor(accountId, "UALICE01");
+    const approval = await sendApproval(
+      peer,
+      alice.generation,
+      "managed-slack-approval-prompt",
+    );
     expect((await SELF.fetch(await signedInteraction({
-      sourceMessageId: approvalMessage.messageId!,
+      sourceMessageId: approval.messageId,
       actionTs: "1700000100.000100",
-      value: approveValue!,
+      value: approval.approveValue,
     }))).status).toBe(200);
     await vi.waitFor(async () => {
       expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
         installation: { installationId: "installation-alice" },
         args: expect.objectContaining({
-          deliveryId: `interaction:${approvalMessage.messageId}:1700000100.000100`,
+          deliveryId: `interaction:${approval.messageId}:1700000100.000100`,
           routeGeneration: alice.generation,
           message: expect.objectContaining({
             text: "approve hil[managed-request-1]",
@@ -875,7 +829,7 @@ describe("managed Slack clean-instance flow", () => {
         method: "chat.update",
         body: expect.objectContaining({
           channel: "DALICE01",
-          ts: approvalMessage.messageId,
+          ts: approval.messageId,
           text: expect.stringContaining("Decision submitted: Approve once."),
         }),
       }));
@@ -951,11 +905,7 @@ describe("managed Slack clean-instance flow", () => {
     });
 
     const outboundFileBytes = new TextEncoder().encode("managed outbound file");
-    const mediaPeers = namespaceBinding(env.MANAGED_SLACK_PEER);
-    const mediaPeer = peerBinding(mediaPeers.get(
-      mediaPeers.idFromName(managedSlackPeerObjectName(accountId, "UALICE01")),
-    ));
-    await expect(mediaPeer.sendMessage("installation-alice", {
+    await expect(peer.sendMessage("installation-alice", {
       deliveryId: "managed-slack-file-output",
       surface: {
         kind: "channel",
@@ -988,7 +938,7 @@ describe("managed Slack clean-instance flow", () => {
       }),
     }));
 
-    await expect(mediaPeer.sendMessage("installation-alice", {
+    await expect(peer.sendMessage("installation-alice", {
       deliveryId: "managed-slack-file-membership-failure",
       surface: {
         kind: "channel",
@@ -1008,15 +958,49 @@ describe("managed Slack clean-instance flow", () => {
       ok: false,
       error: "Invite the GSV app to this Slack conversation before sharing files",
     });
+  });
+
+  it("isolates actor routes and fences relink, reinstall, and uninstall transitions", async () => {
+    const accountId = await installWorkspace();
+    const alice = await pairActor({
+      actorId: "UALICE01",
+      eventId: "EvALICE001",
+      ts: "1700000000.000100",
+      installationId: "installation-alice",
+      operationId: "pair-alice",
+    });
+    const peer = peerFor(accountId, "UALICE01");
 
     expect((await SELF.fetch(await signedEvent({
-      eventId: "EvBOB00001",
-      actorId: "UBOB0001",
-      text: "<@UGSVBOT1> Bob setup",
-      ts: "1700000002.000100",
+      eventId: "EvALICE002",
+      actorId: "UALICE01",
+      text: "<@UGSVBOT1> Alice question",
+      ts: "1700000001.000100",
     }))).status).toBe(200);
-    const bobCode = await pairingCodeFor("UBOB0001");
-    const bob = await pair("UBOB0001", bobCode, "installation-bob", "pair-bob");
+    await vi.waitFor(async () => {
+      expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
+        installation: { installationId: "installation-alice" },
+        args: expect.objectContaining({
+          routeGeneration: alice.generation,
+          message: expect.objectContaining({
+            actor: expect.objectContaining({ id: "UALICE01" }),
+          }),
+        }),
+      }));
+    });
+    const approval = await sendApproval(
+      peer,
+      alice.generation,
+      "managed-slack-stale-approval-prompt",
+    );
+
+    const bob = await pairActor({
+      actorId: "UBOB0001",
+      eventId: "EvBOB00001",
+      ts: "1700000002.000100",
+      installationId: "installation-bob",
+      operationId: "pair-bob",
+    });
 
     expect((await SELF.fetch(await signedEvent({
       eventId: "EvBOB00002",
@@ -1065,7 +1049,7 @@ describe("managed Slack clean-instance flow", () => {
       text: "link",
       ts: "1700000005.000100",
     }))).status).toBe(200);
-    const relinkCode = await pairingCodeFor("UALICE01", aliceCode);
+    const relinkCode = await pairingCodeFor("UALICE01", alice.code);
     const relinked = await pair(
       "UALICE01",
       relinkCode,
@@ -1105,9 +1089,9 @@ describe("managed Slack clean-instance flow", () => {
       call.args?.message?.text === "approve hil[managed-request-1]"
     )).length;
     expect((await SELF.fetch(await signedInteraction({
-      sourceMessageId: approvalMessage.messageId!,
+      sourceMessageId: approval.messageId,
       actionTs: "1700000101.000100",
-      value: approveValue!,
+      value: approval.approveValue,
     }))).status).toBe(200);
     expect((await gatewayCalls()).filter((call) => (
       call.args?.message?.text === "approve hil[managed-request-1]"
@@ -1142,13 +1126,10 @@ describe("managed Slack clean-instance flow", () => {
       "installation-alice",
       relinked.generation,
       "workspace",
-      {
-        type: "req",
-        id: "target-after-reinstall",
-        call: "shell.exec",
-        args: { input: "slack whoami --json | jq -r '.reader.id'" },
-        deadlineAt: Date.now() + 120_000,
-      },
+      targetFrame(
+        "target-after-reinstall",
+        "slack whoami --json | jq -r '.reader.id'",
+      ),
     );
     expect(identityAfterReinstall).toMatchObject({
       ok: true,

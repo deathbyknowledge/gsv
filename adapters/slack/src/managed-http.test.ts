@@ -4,6 +4,7 @@ import {
   type ManagedSlackHttpEnv,
 } from "./managed-http";
 import { workspaceAccountId } from "./slack-api";
+import { signedSlackRequest } from "../test/slack-request";
 
 const SIGNING_SECRET = "signing_secret_123456789";
 const OAUTH_STATE_SECRET = "oauth_state_secret_12345678901234567890";
@@ -132,54 +133,20 @@ function eventPayload(event: { type?: string } = {}) {
 
 async function signedEventRequest<T>(payload: T, secret = SIGNING_SECRET): Promise<Request> {
   const body = JSON.stringify(payload);
-  const timestamp = String(Math.floor(Date.now() / 1_000));
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const digest = new Uint8Array(await crypto.subtle.sign(
-    "HMAC",
-    key,
-    new TextEncoder().encode(`v0:${timestamp}:${body}`),
-  ));
-  const signature = `v0=${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-  return new Request("https://slack.gsv.test/slack/events", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Slack-Request-Timestamp": timestamp,
-      "X-Slack-Signature": signature,
-    },
+  return await signedSlackRequest({
+    url: "https://slack.gsv.test/slack/events",
+    signingSecret: secret,
+    contentType: "application/json",
     body,
   });
 }
 
 async function signedInteractionRequest<T>(payload: T): Promise<Request> {
   const body = new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
-  const timestamp = String(Math.floor(Date.now() / 1_000));
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(SIGNING_SECRET),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const digest = new Uint8Array(await crypto.subtle.sign(
-    "HMAC",
-    key,
-    new TextEncoder().encode(`v0:${timestamp}:${body}`),
-  ));
-  const signature = `v0=${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-  return new Request("https://slack.gsv.test/slack/interactions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "X-Slack-Request-Timestamp": timestamp,
-      "X-Slack-Signature": signature,
-    },
+  return await signedSlackRequest({
+    url: "https://slack.gsv.test/slack/interactions",
+    signingSecret: SIGNING_SECRET,
+    contentType: "application/x-www-form-urlencoded",
     body,
   });
 }
