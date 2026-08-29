@@ -510,7 +510,7 @@ describe("managed Slack clean-instance flow", () => {
       method: "chat.postMessage",
       body: expect.objectContaining({
         channel: "CGENERAL1",
-        text: "hello from target",
+        text: "*From <@UALICE01>'s GSV:*\nhello from target",
         authorization: "Bearer xoxb-managed-test-token",
       }),
     }));

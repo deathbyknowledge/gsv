@@ -101,7 +101,9 @@ slack users info --user U123 --json
 Run `slack --help` inside the target for the exact inventory. Reads use the
 paired person's `xoxp-…` OAuth visibility, while messages and reactions use the
 installed GSV app's `xoxb-…` identity. Neither token is placed in the shell
-environment or output. The app can post in public channels without joining;
+environment or output. Every target-originated message is prefixed with
+`From <@U123>'s GSV:` so its human owner remains visible on channels, threads,
+and direct messages. The app can post in public channels without joining;
 reactions and private-channel mutations require it to be explicitly invited.
 A route change, disconnect, reauthorization, timeout, or Process cancellation
 fences late output and cancels the owning provider request.

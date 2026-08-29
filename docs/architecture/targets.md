@@ -123,6 +123,8 @@ Authority and authorship must remain independent inside a service target. A
 personally authorized Slack target may borrow that person's visibility without
 silently writing as them. Its write commands use the installed app identity;
 private resources remain read-only until the user explicitly admits that app.
+Target-originated messages must visibly attribute the paired person's GSV even
+though the provider records the installed app as their technical author.
 
 ## Target discovery and lifecycle
 

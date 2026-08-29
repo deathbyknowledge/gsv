@@ -155,9 +155,16 @@ export function renderSlackMessageText(
   if (!attributedActorId || message.actorId !== attributedActorId) {
     throw new Error("Slack shared-surface attribution is invalid");
   }
-  const actorId = requireSlackId(attributedActorId, "Slack actor");
+  return text || message.media?.length
+    ? renderSlackActorAttribution(attributedActorId, text)
+    : "";
+}
+
+export function renderSlackActorAttribution(actorIdInput: string, textInput: string): string {
+  const actorId = requireSlackId(actorIdInput, "Slack actor");
+  const text = textInput.trim();
   const attribution = `*From <@${actorId}>'s GSV:*`;
-  return text ? `${attribution}\n${text}` : message.media?.length ? attribution : "";
+  return text ? `${attribution}\n${text}` : attribution;
 }
 
 export function prepareSlackUploadFiles(

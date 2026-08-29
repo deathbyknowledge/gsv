@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DeliveryLedger } from "../../shared/src/delivery-ledger";
 import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
 import type { AdapterOutboundMessage } from "./types";
-import { deliverSlackMessage } from "./slack-delivery";
+import { deliverSlackMessage, renderSlackActorAttribution } from "./slack-delivery";
 
 type StoredValue = object | string | number | null | undefined;
 
@@ -59,6 +59,12 @@ const publicMessage: AdapterOutboundMessage = {
 };
 
 describe("Slack delivery", () => {
+  it("renders the paired GSV identity for target-originated messages", () => {
+    expect(renderSlackActorAttribution("UALICE01", "  Proactive update.  ")).toBe(
+      "*From <@UALICE01>'s GSV:*\nProactive update.",
+    );
+  });
+
   it("attributes shared-channel output to the linked Slack actor", async () => {
     const provider = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect(init?.headers).toMatchObject({ Authorization: "Bearer xoxb-valid-token-value" });

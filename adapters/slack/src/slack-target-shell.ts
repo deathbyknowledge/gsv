@@ -27,6 +27,7 @@ import {
   type SlackUserIdentity,
   type SlackUserSummary,
 } from "./slack-api";
+import { renderSlackActorAttribution } from "./slack-delivery";
 
 type SlackTargetShellInput = {
   args: ShellExecArgs;
@@ -232,7 +233,7 @@ function buildSlackCommand(input: SlackTargetShellInput) {
           await authorizeMutation();
           return await postSlackMessage(input.botToken, {
             channel: send.channel,
-            text: send.message,
+            text: renderSlackActorAttribution(input.actorId, send.message),
             threadTs: send.threadTs,
           }, slackFetch);
         });
@@ -517,6 +518,7 @@ function slackUsage(): string {
     "",
     "Reads use the paired user's Slack visibility.",
     "Messages and reactions are performed by the GSV app.",
+    "Messages identify the paired user's GSV.",
     "The app can post to public channels without joining.",
     "Invite GSV before reacting or mutating private channels.",
     "Use --json for scripts and pipelines.",
