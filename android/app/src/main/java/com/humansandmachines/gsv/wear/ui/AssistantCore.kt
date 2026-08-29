@@ -224,7 +224,7 @@ fun AssistantSurface(
                 .padding(horizontal = 26.dp, vertical = 22.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            AssistantHeader(state)
+            AssistantHeader(state, activity)
             Spacer(Modifier.weight(1f))
             AssistantCore(
                 state = state,
@@ -234,7 +234,7 @@ fun AssistantSurface(
                 modifier = Modifier.size(336.dp),
             )
             Spacer(Modifier.height(18.dp))
-            AssistantStateCopy(state, detail)
+            AssistantStateCopy(state, detail, activity = activity)
             Spacer(Modifier.weight(1f))
             AssistantCancelControl(onCancel = onCancel)
         }
@@ -299,7 +299,7 @@ fun AssistantInvocationSurface(
                     modifier = Modifier.fillMaxSize(),
                 )
             }
-            AssistantStateCopy(state, detail, compact = true)
+            AssistantStateCopy(state, detail, compact = true, activity = activity)
             Spacer(Modifier.height(12.dp))
             Text(
                 text = coreActionLabel,
@@ -314,7 +314,12 @@ fun AssistantInvocationSurface(
 }
 
 @Composable
-private fun AssistantHeader(state: VoiceTurnState) {
+private fun AssistantHeader(state: VoiceTurnState, activity: AssistantActivity) {
+    val accent = if (activity == AssistantActivity.NONE) {
+        state.accentColor()
+    } else {
+        activity.accentColor()
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -324,13 +329,13 @@ private fun AssistantHeader(state: VoiceTurnState) {
         Row(
             modifier = Modifier
                 .clip(CircleShape)
-                .border(1.dp, state.accentColor().copy(alpha = 0.28f), CircleShape)
+                .border(1.dp, accent.copy(alpha = 0.28f), CircleShape)
                 .padding(horizontal = 10.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(7.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             androidx.compose.foundation.Canvas(Modifier.size(5.dp)) {
-                drawCircle(state.accentColor(), center = Offset(size.width / 2f, size.height / 2f))
+                drawCircle(accent, center = Offset(size.width / 2f, size.height / 2f))
             }
             Text(
                 text = "PRIVATE CHANNEL",
@@ -349,7 +354,18 @@ private fun AssistantStateCopy(
     state: VoiceTurnState,
     detail: String,
     compact: Boolean = false,
+    activity: AssistantActivity = AssistantActivity.NONE,
 ) {
+    val label = if (activity == AssistantActivity.NONE) {
+        state.stateLabel()
+    } else {
+        activity.stateLabel()
+    }
+    val accent = if (activity == AssistantActivity.NONE) {
+        state.accentColor()
+    } else {
+        activity.accentColor()
+    }
     Column(
         modifier = Modifier
             .widthIn(max = if (compact) 310.dp else 350.dp)
@@ -358,9 +374,9 @@ private fun AssistantStateCopy(
         verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 9.dp),
     ) {
         Text(
-            text = state.stateLabel(),
+            text = label,
             style = GsvTextStyle.Title.copy(
-                color = state.accentColor(),
+                color = accent,
                 fontSize = if (compact) 18.sp else 21.sp,
                 letterSpacing = 0.2.sp,
                 textAlign = TextAlign.Center,
