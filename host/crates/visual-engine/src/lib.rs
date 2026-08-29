@@ -13,6 +13,7 @@ const LOOP_SECONDS: f32 = 12.0;
 const ACCENT: [f32; 4] = [0.702, 0.682, 1.0, 1.0];
 const VIOLET: [f32; 4] = [0.561, 0.541, 1.0, 1.0];
 const READING_BLUE: [f32; 4] = [0.596, 0.710, 1.0, 1.0];
+const EXECUTING_VIOLET: [f32; 4] = [0.710, 0.560, 1.0, 1.0];
 const BLUE: [f32; 4] = [0.561, 0.714, 1.0, 1.0];
 
 const FULLSCREEN_VERTEX_SHADER: &str = r#"
@@ -32,6 +33,7 @@ pub enum VisualPreset {
     Listening,
     Thinking,
     Reading,
+    Executing,
     Speaking,
     ShipHologram,
     ShipPhysical,
@@ -39,10 +41,11 @@ pub enum VisualPreset {
 }
 
 impl VisualPreset {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Listening,
         Self::Thinking,
         Self::Reading,
+        Self::Executing,
         Self::Speaking,
         Self::ShipHologram,
         Self::ShipPhysical,
@@ -54,6 +57,7 @@ impl VisualPreset {
             Self::Listening => "LISTENING",
             Self::Thinking => "THINKING",
             Self::Reading => "READING",
+            Self::Executing => "EXECUTING",
             Self::Speaking => "SPEAKING",
             Self::ShipHologram => "SHIP // DISARMED",
             Self::ShipPhysical => "SHIP // PHYSICAL",
@@ -227,6 +231,14 @@ impl VisualRecipe {
                 shape: [0.78, 0.0, 0.0, 0.92],
                 behavior: [0.34, 0.38, 0.72, 0.0],
                 activity: [1.0, 0.0, 0.0, 0.0],
+                materialization: 1.0,
+                propulsion: 0.0,
+            },
+            VisualPreset::Executing => Self {
+                accent: EXECUTING_VIOLET,
+                shape: [0.86, 0.0, 0.0, 0.92],
+                behavior: [0.36, 0.62, 0.92, 0.0],
+                activity: [0.0, 0.0, 0.0, 1.0],
                 materialization: 1.0,
                 propulsion: 0.0,
             },
@@ -558,6 +570,10 @@ fn render_loop(
             VisualPreset::Reading => {
                 0.18 + 0.10 * (loop_phase * 3.0).sin().abs()
                     + 0.04 * (loop_phase * 5.0 + 0.7).sin().abs()
+            }
+            VisualPreset::Executing => {
+                0.34 + 0.18 * (loop_phase * 4.0).sin().abs()
+                    + 0.08 * (loop_phase * 7.0 + 0.4).sin().abs()
             }
             VisualPreset::Speaking => {
                 let carrier = (phase * 5.7).sin() * 0.5 + (phase * 11.3 + 0.8).sin() * 0.3;
