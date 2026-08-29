@@ -1230,6 +1230,288 @@ float4 deletingBinSurface(float3 point, float phase) {
     return float4(ribs, max(max(rim, lidFace), handle), intake, packet);
 }
 
+float3 shredderPoint(float3 point, float phase) {
+    point.xy = rotate2(-0.025 + 0.018 * sin(phase * 2.0), point.xy);
+    point.xz = rotate2(0.22 + 0.028 * sin(phase), point.xz);
+    point.yz = rotate2(-0.12 + 0.020 * cos(phase * 2.0), point.yz);
+    float3 sourcePoint = point;
+    point.x += 0.004 * sin(sourcePoint.y * 18.0 + phase * 3.0);
+    point.z += 0.004 * sin(
+        sourcePoint.x * 17.0 - sourcePoint.y * 11.0 - phase * 2.0
+    );
+    return point;
+}
+
+float shredderPageCycle(float phase, float offset) {
+    return fract(phase / TAU + offset);
+}
+
+float shredderPagePresence(float cycle) {
+    return smoothstep(0.010, 0.080, cycle) *
+        (1.0 - smoothstep(0.540, 0.620, cycle));
+}
+
+float shredderPageRemaining(float cycle) {
+    float birth = smoothstep(0.0, 0.100, cycle);
+    float consumption = 1.0 - smoothstep(0.160, 0.560, cycle);
+    return birth * consumption;
+}
+
+float shredderPageHalfHeight(float cycle) {
+    return max(0.006, 0.164 * shredderPageRemaining(cycle));
+}
+
+float3 shredderPaperPoint(
+    float3 shredderPoint,
+    float phase,
+    float offset
+) {
+    float cycle = shredderPageCycle(phase, offset);
+    float halfHeight = shredderPageHalfHeight(cycle);
+    float forming = 1.0 - smoothstep(0.100, 0.160, cycle);
+    float bottom = mix(0.170, 0.525 - halfHeight * 2.0, forming);
+    float pagePhase = phase + offset * TAU;
+    float lateral = 0.010 * cos(offset * TAU);
+    float3 paperPoint = shredderPoint - float3(
+        lateral,
+        bottom + halfHeight,
+        0.010 + 0.004 * cos(offset * TAU)
+    );
+    paperPoint.xy = rotate2(
+        0.022 * sin(phase * 2.0 + offset * TAU),
+        paperPoint.xy
+    );
+    float3 sourcePoint = paperPoint;
+    paperPoint.x += 0.006 * sin(
+        sourcePoint.y * 18.0 - pagePhase * 3.0
+    );
+    paperPoint.z += 0.010 * sin(
+        sourcePoint.y * 14.0 + sourcePoint.x * 8.0 + pagePhase * 2.0
+    );
+    return paperPoint;
+}
+
+float shredderPaperDistance(
+    float3 shredder,
+    float phase,
+    float offset
+) {
+    float cycle = shredderPageCycle(phase, offset);
+    float presence = shredderPagePresence(cycle);
+    float halfHeight = shredderPageHalfHeight(cycle);
+    float3 paperPoint = shredderPaperPoint(shredder, phase, offset);
+    float paper = roundedBoxDistance(
+        paperPoint,
+        float3(0.142, halfHeight, 0.026),
+        min(0.020, halfHeight * 0.58)
+    );
+    float cornerThreshold = 0.142 + halfHeight - 0.074;
+    float cornerCut = (
+        paperPoint.x + paperPoint.y - cornerThreshold
+    ) * 0.70710678;
+    paper = smoothMaximum(paper, cornerCut, 0.008);
+
+    float cutting = smoothstep(0.160, 0.460, cycle) *
+        (1.0 - smoothstep(0.510, 0.580, cycle));
+    float lowerEdge = 1.0 - smoothstep(
+        0.002,
+        0.040,
+        abs(paperPoint.y + halfHeight)
+    );
+    float teeth = 0.5 + 0.5 * sin(
+        paperPoint.x * 126.0 + phase * 4.0 + offset * TAU
+    );
+    paper += lowerEdge * cutting * teeth * 0.011;
+
+    float paperFold = sin(paperPoint.y * 18.0 + phase * 3.0) *
+        sin(paperPoint.x * 15.0 - phase * 2.0) *
+        sin(paperPoint.z * 21.0 + phase * 4.0);
+    paper += paperFold * 0.0025 * presence;
+    return paper + (1.0 - presence) * 0.075;
+}
+
+float2 shredderPaperSurface(
+    float3 shredder,
+    float phase,
+    float offset
+) {
+    float cycle = shredderPageCycle(phase, offset);
+    float presence = shredderPagePresence(cycle);
+    float halfHeight = shredderPageHalfHeight(cycle);
+    float3 paperPoint = shredderPaperPoint(shredder, phase, offset);
+    float paperFront = 1.0 - smoothstep(
+        0.014,
+        0.065,
+        abs(paperPoint.z - 0.026)
+    );
+    float verticalBounds = 1.0 - smoothstep(
+        max(0.0, halfHeight - 0.014),
+        halfHeight + 0.006,
+        abs(paperPoint.y)
+    );
+    float paperBounds = (1.0 - smoothstep(0.128, 0.150, abs(paperPoint.x))) *
+        verticalBounds;
+
+    float firstLine = halfHeight - 0.054;
+    float secondLine = halfHeight - 0.105;
+    float thirdLine = halfHeight - 0.154;
+    float ink = lineSegmentDistance(
+        paperPoint.xy,
+        float2(-0.096, firstLine),
+        float2(0.072, firstLine)
+    );
+    ink = min(
+        ink,
+        lineSegmentDistance(
+            paperPoint.xy,
+            float2(-0.096, secondLine),
+            float2(0.096, secondLine)
+        )
+    );
+    ink = min(
+        ink,
+        lineSegmentDistance(
+            paperPoint.xy,
+            float2(-0.096, thirdLine),
+            float2(0.050, thirdLine)
+        )
+    );
+    float paperInk = (1.0 - smoothstep(0.004, 0.013, ink)) *
+        paperFront * paperBounds * presence;
+    float paperFace = paperFront * paperBounds * presence;
+
+    float cutting = smoothstep(0.160, 0.460, cycle) *
+        (1.0 - smoothstep(0.510, 0.580, cycle));
+    float lowerEdge = 1.0 - smoothstep(
+        0.003,
+        0.024,
+        abs(paperPoint.y + halfHeight)
+    );
+    float teeth = 0.5 + 0.5 * sin(
+        paperPoint.x * 126.0 + phase * 4.0 + offset * TAU
+    );
+    float cutEdge = lowerEdge * cutting *
+        (0.32 + teeth * 0.68) * paperFront * paperBounds * presence;
+    return float2(max(max(paperFace * 0.24, paperInk), cutEdge), cutEdge);
+}
+
+float shredderDistance(float3 point, float phase) {
+    float3 shredder = shredderPoint(point, phase);
+
+    float chamberHeight = clamp((shredder.y + 0.335) / 0.390, 0.0, 1.0);
+    float3 chamberPoint = shredder - float3(0.0, -0.140, 0.0);
+    chamberPoint.x /= mix(0.88, 1.04, chamberHeight);
+    chamberPoint.z /= mix(0.92, 1.02, chamberHeight);
+    float chamber = roundedBoxDistance(
+        chamberPoint,
+        float3(0.218, 0.195, 0.118),
+        0.044
+    );
+
+    float3 windowPoint = chamberPoint - float3(0.0, -0.010, 0.142);
+    float windowCut = roundedBoxDistance(
+        windowPoint,
+        float3(0.170, 0.130, 0.070),
+        0.024
+    );
+    chamber = smoothMaximum(chamber, -windowCut, 0.010);
+    float windowMembrane = roundedBoxDistance(
+        chamberPoint - float3(0.0, -0.010, 0.080),
+        float3(0.166, 0.126, 0.009),
+        0.018
+    );
+    chamber = smoothMinimum(chamber, windowMembrane, 0.012);
+
+    float3 headPoint = shredder - float3(0.0, 0.098, 0.0);
+    float head = roundedBoxDistance(
+        headPoint,
+        float3(0.274, 0.082, 0.142),
+        0.042
+    );
+    float motorSwell = ellipsoidDistance(
+        headPoint - float3(0.0, -0.010, -0.020),
+        float3(0.224, 0.096, 0.132)
+    );
+    head = smoothMinimum(head, motorSwell, 0.025);
+
+    float feedSlot = roundedBoxDistance(
+        shredder - float3(0.0, 0.174, 0.018),
+        float3(0.174, 0.026, 0.078),
+        0.018
+    );
+    head = smoothMaximum(head, -feedSlot, 0.010);
+    float hardware = smoothMinimum(chamber, head, 0.026);
+
+    float firstPaper = shredderPaperDistance(shredder, phase, 0.0);
+    float secondPaper = shredderPaperDistance(shredder, phase, 0.5);
+    float paper = smoothMinimum(firstPaper, secondPaper, 0.008);
+    return smoothMinimum(hardware, paper, 0.012);
+}
+
+float4 shredderSurface(float3 point, float phase) {
+    float3 shredder = shredderPoint(point, phase);
+    float2 firstPaper = shredderPaperSurface(shredder, phase, 0.0);
+    float2 secondPaper = shredderPaperSurface(shredder, phase, 0.5);
+    float paperLight = max(firstPaper.x, secondPaper.x);
+    float cutEdge = max(firstPaper.y, secondPaper.y);
+    float firstCycle = shredderPageCycle(phase, 0.0);
+    float secondCycle = shredderPageCycle(phase, 0.5);
+    float firstFeed = shredderPagePresence(firstCycle) *
+        smoothstep(0.150, 0.260, firstCycle) *
+        (1.0 - smoothstep(0.530, 0.610, firstCycle));
+    float secondFeed = shredderPagePresence(secondCycle) *
+        smoothstep(0.150, 0.260, secondCycle) *
+        (1.0 - smoothstep(0.530, 0.610, secondCycle));
+    float activeFeed = max(firstFeed, secondFeed);
+
+    float chamberGate = smoothstep(-0.300, -0.272, shredder.y) *
+        (1.0 - smoothstep(-0.015, 0.030, shredder.y)) *
+        (1.0 - smoothstep(0.145, 0.174, abs(shredder.x)));
+    float windowFront = 1.0 - smoothstep(
+        0.010,
+        0.055,
+        abs(shredder.z - 0.080)
+    );
+    float stripCoordinate = (
+        shredder.x +
+            0.010 * sin(shredder.y * 22.0 + phase * 3.0) +
+            0.004 * sin(shredder.y * 47.0 + phase * 4.0)
+    ) * 152.0;
+    float strands = pow(0.5 + 0.5 * cos(stripCoordinate), 20.0) *
+        chamberGate * windowFront * (0.46 + activeFeed * 0.54);
+    float packets = pow(
+        0.5 + 0.5 * sin(
+            shredder.y * 58.0 + phase * 10.0 +
+                0.65 * sin(stripCoordinate * 0.36)
+        ),
+        14.0
+    ) * strands * (0.34 + activeFeed * 0.66);
+
+    float feedSlot = lineSegmentDistance(
+        shredder.xz,
+        float2(-0.174, 0.095),
+        float2(0.174, 0.095)
+    );
+    float slot = (1.0 - smoothstep(0.008, 0.027, feedSlot)) *
+        (1.0 - smoothstep(0.130, 0.205, abs(shredder.y - 0.174)));
+    float chamberRim = roundedBoxDistance(
+        float3(shredder.x, shredder.y + 0.150, shredder.z - 0.080),
+        float3(0.174, 0.134, 0.010),
+        0.020
+    );
+    chamberRim = 1.0 - smoothstep(0.006, 0.030, abs(chamberRim));
+    float motorPulse = pow(
+        0.5 + 0.5 * sin(shredder.x * 29.0 + phase * 4.0),
+        12.0
+    ) * (1.0 - smoothstep(0.180, 0.250, abs(shredder.x))) *
+        (1.0 - smoothstep(0.055, 0.135, abs(shredder.y - 0.098)));
+    float hardware = max(
+        max(slot, chamberRim),
+        max(motorPulse * (0.18 + activeFeed * 0.34), cutEdge * 0.82)
+    );
+    return float4(paperLight, hardware, strands, packets);
+}
+
 float3 searchLensPoint(float3 point, float phase) {
     point.xy = rotate2(-0.11 + 0.026 * sin(phase * 2.0), point.xy);
     point.xz = rotate2(0.24 + 0.038 * sin(phase), point.xz);
@@ -1690,6 +1972,8 @@ float organicDistance(float3 point, float phase, float energy) {
         (1.0 - smoothstep(0.0, 0.72, shipPresence));
     float deleting = clamp(iActivity2.y, 0.0, 1.0) *
         (1.0 - smoothstep(0.0, 0.72, shipPresence));
+    float shredding = clamp(iActivity2.z, 0.0, 1.0) *
+        (1.0 - smoothstep(0.0, 0.72, shipPresence));
     float documentActivity = max(reading, writing);
     if (projection > 0.999) {
         return speakingDistance(sourcePoint, phase, energy);
@@ -1887,6 +2171,13 @@ float organicDistance(float3 point, float phase, float energy) {
             distance,
             deletingBinDistance(sourcePoint, phase),
             smoothstep(0.0, 1.0, deleting)
+        );
+    }
+    if (shredding > 0.001) {
+        distance = mix(
+            distance,
+            shredderDistance(sourcePoint, phase),
+            smoothstep(0.0, 1.0, shredding)
         );
     }
     if (searching > 0.001) {
@@ -2329,6 +2620,7 @@ half4 main(float2 fragCoord) {
     float executing = clamp(iActivity.w, 0.0, 1.0) * (1.0 - shipGeometry);
     float delegating = clamp(iActivity2.x, 0.0, 1.0) * (1.0 - shipGeometry);
     float deleting = clamp(iActivity2.y, 0.0, 1.0) * (1.0 - shipGeometry);
+    float shredding = clamp(iActivity2.z, 0.0, 1.0) * (1.0 - shipGeometry);
     float documentActivity = max(reading, writing);
     float shipMaterialization = clamp(iShipMaterialization, 0.0, 1.0);
     float drivePower = clamp(iShipPropulsion, 0.0, 1.0) * shipGeometry *
@@ -2445,6 +2737,10 @@ half4 main(float2 fragCoord) {
         float4 deletingBin = float4(0.0);
         if (deleting > 0.001) {
             deletingBin = deletingBinSurface(point, phase) * deleting;
+        }
+        float4 shredder = float4(0.0);
+        if (shredding > 0.001) {
+            shredder = shredderSurface(point, phase) * shredding;
         }
         float4 searchLens = float4(0.0);
         if (searching > 0.001) {
@@ -2580,6 +2876,11 @@ half4 main(float2 fragCoord) {
         );
         deepMaterial = mix(
             deepMaterial,
+            float3(0.008, 0.003, 0.040),
+            shredding * 0.60
+        );
+        deepMaterial = mix(
+            deepMaterial,
             float3(0.002, 0.012, 0.038),
             searching * 0.54
         );
@@ -2665,6 +2966,27 @@ half4 main(float2 fragCoord) {
             float3(1.0, 0.80, 0.94),
             0.54
         ) * deletingBin.w * 1.35;
+        float3 shredderLight = mix(
+            iAccent.rgb,
+            float3(0.74, 0.86, 1.0),
+            0.42
+        );
+        material += mix(
+            shredderLight,
+            float3(0.92, 0.88, 1.0),
+            0.60
+        ) * shredder.x * 0.88;
+        material += mix(
+            shredderLight,
+            float3(0.48, 0.72, 1.0),
+            0.46
+        ) * shredder.y * 0.84;
+        material += shredderLight * shredder.z * 0.62;
+        material += mix(
+            shredderLight,
+            float3(1.0, 0.66, 0.94),
+            0.48
+        ) * shredder.w * 1.42;
         float3 searchLight = mix(
             iAccent.rgb,
             float3(0.62, 0.88, 1.0),
