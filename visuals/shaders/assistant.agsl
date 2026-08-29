@@ -977,6 +977,132 @@ float2 readingDocumentSurface(float3 point, float phase) {
     return float2(content, foldSeam);
 }
 
+float3 searchLensPoint(float3 point, float phase) {
+    point.xy = rotate2(-0.11 + 0.026 * sin(phase * 2.0), point.xy);
+    point.xz = rotate2(0.24 + 0.038 * sin(phase), point.xz);
+    point.yz = rotate2(-0.12 + 0.030 * cos(phase * 2.0), point.yz);
+    float3 sourcePoint = point;
+    point.x += 0.010 * sin(sourcePoint.y * 14.0 + phase * 3.0);
+    point.y += 0.009 * sin(sourcePoint.x * 16.0 - phase * 2.0);
+    point.z += 0.014 * sin(
+        sourcePoint.x * 11.0 - sourcePoint.y * 9.0 + phase * 3.0
+    );
+    return point;
+}
+
+float3 searchHandlePoint(float3 lensPoint, float phase) {
+    float2 origin = float2(0.092, -0.102);
+    float2 tangent = normalize(float2(0.70, -0.72));
+    float2 normal = float2(-tangent.y, tangent.x);
+    float2 offset = lensPoint.xy - origin;
+    float along = dot(offset, tangent);
+    float progress = clamp(along / 0.335, 0.0, 1.0);
+    float bend = sin(progress * PI) *
+        (0.028 + 0.010 * sin(phase * 2.0));
+    float across = dot(offset, normal) - bend;
+    return float3(along, across, lensPoint.z);
+}
+
+float searchLensDistance(float3 point, float phase, float energy) {
+    float3 lensPoint = searchLensPoint(point, phase);
+    float3 glassPoint = lensPoint - float3(-0.055, 0.045, 0.0);
+    float breath = 1.0 + 0.018 * sin(phase * 2.0) + energy * 0.012;
+    float lensRadius = 0.222 * breath;
+    float2 lensPlane = glassPoint.xy / float2(1.035, 0.965);
+    float radial = length(lensPlane);
+    float rimWarp = 0.009 * sin(
+        glassPoint.x * 19.0 + glassPoint.y * 13.0 - phase * 3.0
+    ) + 0.004 * sin(
+        glassPoint.x * 11.0 - glassPoint.y * 17.0 + phase * 2.0
+    );
+    float rim = length(float2(
+        radial - lensRadius + rimWarp,
+        glassPoint.z * 0.92
+    )) - (0.050 + energy * 0.005);
+
+    float membraneRadius = lensRadius * 0.935;
+    float normalizedRadius = clamp(radial / membraneRadius, 0.0, 1.0);
+    float membraneDepth = 0.012 + 0.022 *
+        (1.0 - normalizedRadius * normalizedRadius);
+    float membrane = smoothMaximum(
+        radial - membraneRadius,
+        abs(glassPoint.z) - membraneDepth,
+        0.012
+    );
+    float lens = smoothMinimum(rim, membrane, 0.014);
+
+    float3 handlePoint = searchHandlePoint(lensPoint, phase);
+    float handle = taperedExtrudedSegmentDistance(
+        handlePoint,
+        float2(0.0, 0.0),
+        float2(0.335, 0.0),
+        0.061,
+        0.030,
+        0.056
+    );
+    return smoothMinimum(lens, handle, 0.046);
+}
+
+float4 searchLensSurface(float3 point, float phase) {
+    float3 lensPoint = searchLensPoint(point, phase);
+    float3 glassPoint = lensPoint - float3(-0.055, 0.045, 0.0);
+    float lensRadius = 0.222 * (1.0 + 0.018 * sin(phase * 2.0));
+    float2 lensPlane = glassPoint.xy / float2(1.035, 0.965);
+    float radial = length(lensPlane);
+    float front = 1.0 - smoothstep(0.018, 0.090, abs(glassPoint.z));
+    float rim = (1.0 - smoothstep(
+        0.010,
+        0.052,
+        abs(radial - lensRadius)
+    )) * front;
+
+    float3 handlePoint = searchHandlePoint(lensPoint, phase);
+    float handleLine = lineSegmentDistance(
+        handlePoint.xy,
+        float2(0.0, 0.0),
+        float2(0.335, 0.0)
+    );
+    float handle = (1.0 - smoothstep(
+        0.012,
+        0.055,
+        handleLine
+    )) * front;
+    float structure = max(rim, handle);
+    float membrane = (1.0 - smoothstep(
+        lensRadius * 0.76,
+        lensRadius * 0.94,
+        radial
+    )) * front;
+
+    float scanAngle = 0.22 * sin(phase * 3.0);
+    float2 scanAxis = float2(cos(scanAngle), sin(scanAngle));
+    float sweep = lensRadius * 0.54 * sin(phase * 2.0);
+    float scanCoordinate = dot(glassPoint.xy, scanAxis) - sweep;
+    scanCoordinate += 0.010 * sin(
+        dot(glassPoint.xy, float2(-scanAxis.y, scanAxis.x)) * 24.0 -
+            phase * 3.0
+    );
+    float scan = (1.0 - smoothstep(0.004, 0.028, abs(scanCoordinate))) *
+        membrane;
+    float2 focalPoint = scanAxis * sweep -
+        float2(-scanAxis.y, scanAxis.x) * 0.045 * sin(phase * 4.0);
+    float focal = (1.0 - smoothstep(
+        0.012,
+        0.058,
+        length(glassPoint.xy - focalPoint)
+    )) * membrane;
+    float livingCaustic = pow(
+        0.5 + 0.5 * sin(
+            radial * 34.0 + glassPoint.x * 13.0 -
+                glassPoint.y * 9.0 - phase * 4.0
+        ),
+        10.0
+    ) * membrane;
+    scan = max(scan, livingCaustic * 0.22);
+    focal = max(focal, livingCaustic * 0.16);
+    return float4(structure, membrane, scan, focal);
+}
+
 float3 executingPromptPoint(float3 point, float phase) {
     point.xy = rotate2(0.045 * sin(phase * 2.0), point.xy);
     point.xz = rotate2(-0.16 + 0.050 * sin(phase), point.xz);
@@ -1060,6 +1186,8 @@ float organicDistance(float3 point, float phase, float energy) {
     float foldComplexity = clamp(iBehavior.y, 0.0, 1.0);
     float projection = clamp(iBehavior.w, 0.0, 1.0);
     float reading = clamp(iActivity.x, 0.0, 1.0) *
+        (1.0 - smoothstep(0.0, 0.72, shipPresence));
+    float searching = clamp(iActivity.y, 0.0, 1.0) *
         (1.0 - smoothstep(0.0, 0.72, shipPresence));
     float executing = clamp(iActivity.w, 0.0, 1.0) *
         (1.0 - smoothstep(0.0, 0.72, shipPresence));
@@ -1245,6 +1373,13 @@ float organicDistance(float3 point, float phase, float energy) {
             distance,
             readingDocumentDistance(sourcePoint, phase),
             smoothstep(0.0, 1.0, reading)
+        );
+    }
+    if (searching > 0.001) {
+        distance = mix(
+            distance,
+            searchLensDistance(sourcePoint, phase, energy),
+            smoothstep(0.0, 1.0, searching)
         );
     }
     if (executing > 0.001) {
@@ -1665,6 +1800,7 @@ half4 main(float2 fragCoord) {
     float shipPresence = clamp(iShape.z, 0.0, 1.0);
     float shipGeometry = smoothstep(0.0, 1.0, shipPresence);
     float reading = clamp(iActivity.x, 0.0, 1.0) * (1.0 - shipGeometry);
+    float searching = clamp(iActivity.y, 0.0, 1.0) * (1.0 - shipGeometry);
     float executing = clamp(iActivity.w, 0.0, 1.0) * (1.0 - shipGeometry);
     float shipMaterialization = clamp(iShipMaterialization, 0.0, 1.0);
     float drivePower = clamp(iShipPropulsion, 0.0, 1.0) * shipGeometry *
@@ -1773,6 +1909,10 @@ half4 main(float2 fragCoord) {
         float2 readingDocument = float2(0.0);
         if (reading > 0.001) {
             readingDocument = readingDocumentSurface(point, phase) * reading;
+        }
+        float4 searchLens = float4(0.0);
+        if (searching > 0.001) {
+            searchLens = searchLensSurface(point, phase) * searching;
         }
         float2 executingPrompt = float2(0.0);
         if (executing > 0.001) {
@@ -1890,6 +2030,11 @@ half4 main(float2 fragCoord) {
         );
         deepMaterial = mix(
             deepMaterial,
+            float3(0.002, 0.012, 0.038),
+            searching * 0.54
+        );
+        deepMaterial = mix(
+            deepMaterial,
             float3(0.008, 0.003, 0.038),
             executing * 0.58
         );
@@ -1936,6 +2081,17 @@ half4 main(float2 fragCoord) {
             (0.08 + membraneCrossing * 0.14);
         material += readingLight * readingDocument.x * 0.34;
         material += mix(readingLight, warm, 0.28) * readingDocument.y * 0.52;
+        float3 searchLight = mix(
+            iAccent.rgb,
+            float3(0.62, 0.88, 1.0),
+            0.55
+        );
+        material += searchLight * searchLens.x * 0.15;
+        material += mix(searchLight, iAccent.rgb, 0.46) *
+            searchLens.y * 0.22;
+        material += searchLight * searchLens.z * 1.55;
+        material += mix(searchLight, float3(0.92, 0.86, 1.0), 0.42) *
+            searchLens.w * 1.72;
         float3 executingLight = mix(
             iAccent.rgb,
             float3(0.84, 0.76, 1.0),
@@ -2180,6 +2336,8 @@ half4 main(float2 fragCoord) {
             0.94
         );
         bodyAlpha *= mix(0.74, 1.0, surfaceConfidence);
+        float searchMembrane = searchLens.y * (1.0 - searchLens.x);
+        bodyAlpha *= mix(1.0, 0.36, searchMembrane * searching);
         bodyAlpha *= mix(1.0, 0.84, executing);
         float shipAlpha = clamp(
             0.67 + shipContour * 0.20 + shipSurfaceField.x * 0.035 +
