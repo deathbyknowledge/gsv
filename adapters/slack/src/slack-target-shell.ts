@@ -160,13 +160,18 @@ function buildSlackCommand(input: SlackTargetShellInput) {
       channel: string,
       operation: () => Promise<T>,
     ): Promise<T> => {
-      return await guarded(async () => {
-        await authenticateReader();
+      await input.guard();
+      await authenticateReader();
+      await getSlackConversation(input.userToken, channel, slackFetch);
+      await input.guard();
+      const result = await operation();
+      try {
         await getSlackConversation(input.userToken, channel, slackFetch);
-        const result = await operation();
-        await getSlackConversation(input.userToken, channel, slackFetch);
-        return result;
-      });
+        await input.guard();
+      } catch {
+        // Slack has already accepted the mutation; reporting failure would invite a duplicate retry.
+      }
+      return result;
     };
 
     try {
