@@ -12,6 +12,7 @@ layout(set = 0, binding = 0, std140) uniform VisualUniforms {
     vec4 shape;
     vec4 behavior;
     vec4 activity;
+    vec4 activity2;
     vec4 shipViewMaterializationPropulsion;
 } visual;
 
@@ -22,6 +23,7 @@ layout(set = 0, binding = 0, std140) uniform VisualUniforms {
 #define iShape visual.shape
 #define iBehavior visual.behavior
 #define iActivity visual.activity
+#define iActivity2 visual.activity2
 #define iShipView visual.shipViewMaterializationPropulsion.xy
 #define iShipMaterialization visual.shipViewMaterializationPropulsion.z
 #define iShipPropulsion visual.shipViewMaterializationPropulsion.w
