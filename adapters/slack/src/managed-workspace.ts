@@ -506,6 +506,7 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
     try {
       state = await this.requireActive(expectedGeneration);
     } catch {
+      logSlackFileUploadFailure(undefined, "authorization");
       return { ok: false, kind: "permanent", error: "Slack workspace route changed" };
     }
     try {
@@ -520,6 +521,7 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
       return { ok: true, fileIds: result.fileIds };
     } catch (error) {
       const slackError = error instanceof SlackApiError ? error : undefined;
+      logSlackFileUploadFailure(slackError);
       return {
         ok: false,
         kind: slackError?.kind ?? "permanent",
@@ -662,6 +664,60 @@ function targetError(
   message: string,
 ): AdapterTargetResponseFrame<"shell.exec"> {
   return { type: "res", id, ok: false, error: { code, message } };
+}
+
+type SlackFileUploadLogStage =
+  | "authorization"
+  | "ticket"
+  | "bytes"
+  | "completion"
+  | "unknown";
+
+function logSlackFileUploadFailure(
+  slackError: SlackApiError | undefined,
+  stageOverride?: SlackFileUploadLogStage,
+): void {
+  const status = slackError?.status;
+  const observableStatus = status !== undefined
+    && Number.isInteger(status)
+    && status >= 100
+    && status <= 599
+    ? status
+    : undefined;
+  console.warn(JSON.stringify({
+    component: "slack",
+    event: "file_upload_failed",
+    stage: stageOverride ?? slackError?.fileStage ?? "unknown",
+    outcome: slackError?.kind ?? "permanent",
+    providerCode: observableSlackFileErrorCode(slackError?.code),
+    status: observableStatus,
+  }));
+}
+
+function observableSlackFileErrorCode(code: string | undefined): string | undefined {
+  if (!code) return undefined;
+  if ([
+    "account_inactive",
+    "channel_not_found",
+    "file_uploads_disabled",
+    "invalid_arguments",
+    "invalid_auth",
+    "method_deprecated",
+    "missing_scope",
+    "no_permission",
+    "not_allowed_token_type",
+    "not_in_channel",
+    "posting_to_channel_denied",
+    "rate_limited",
+    "ratelimited",
+    "restricted_action",
+    "team_access_not_granted",
+    "token_revoked",
+    "unknown_error",
+  ].includes(code)) {
+    return code;
+  }
+  return "other";
 }
 
 function sameActiveWorkspaceInstallation(

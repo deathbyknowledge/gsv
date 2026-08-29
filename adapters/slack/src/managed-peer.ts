@@ -810,6 +810,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     context: ResponseContext,
     body?: BinaryBody,
   ): Promise<AdapterSendResult> {
+    const hasFiles = (message.media?.length ?? 0) > 0;
     let state: ManagedSlackPeerState;
     let renderedText: string;
     try {
@@ -822,6 +823,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       );
     } catch (error) {
       await cancelBinaryBody(body, error);
+      if (hasFiles) logSlackFileDeliveryFailure("authorization", "permanent");
       return { ok: false, error: "Slack destination is not authorized" };
     }
     const media = message.media ?? [];
@@ -831,6 +833,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     }
     if (media.length > MAX_SLACK_MEDIA_ITEMS) {
       await cancelBinaryBody(body, "Slack supports at most 20 attachments per message");
+      logSlackFileDeliveryFailure("media_validation", "permanent");
       return { ok: false, error: "Slack supports at most 20 attachments per message" };
     }
     try {
@@ -840,6 +843,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       });
     } catch (error) {
       await cancelBinaryBody(body, error);
+      logSlackFileDeliveryFailure("media_validation", "permanent");
       return {
         ok: false,
         error: error instanceof Error ? error.message : "Slack media body is invalid",
@@ -853,12 +857,14 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
         maxPartBytes: SAFE_MATERIALIZED_MEDIA_PART_BYTES,
       });
     } catch {
+      logSlackFileDeliveryFailure("media_read", "retryable");
       return { ok: false, error: "Could not read Slack media body", retryable: true };
     }
     let uploadFiles: ReturnType<typeof prepareSlackUploadFiles>;
     try {
       uploadFiles = prepareSlackUploadFiles(media, mediaBytes);
     } catch (error) {
+      logSlackFileDeliveryFailure("media_prepare", "permanent");
       return {
         ok: false,
         error: error instanceof Error ? error.message : "Slack media delivery is invalid",
@@ -872,15 +878,29 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
         mediaBytes,
       );
     } catch {
+      logSlackFileDeliveryFailure("fingerprint", "retryable");
       return { ok: false, error: "Could not fingerprint Slack delivery", retryable: true };
     }
     let claim;
     try {
       claim = await this.deliveries.claim(message.deliveryId, fingerprint);
     } catch {
+      logSlackFileDeliveryFailure("ledger_claim", "retryable");
       return { ok: false, error: "Slack delivery ledger unavailable", retryable: true };
     }
-    if (!claim.claimed) return claim.result;
+    if (!claim.claimed) {
+      if (hasFiles && !claim.result.ok) {
+        logSlackFileDeliveryFailure(
+          "ledger_replay",
+          claim.result.ambiguous
+            ? "ambiguous"
+            : claim.result.retryable
+              ? "retryable"
+              : "permanent",
+        );
+      }
+      return claim.result;
+    }
 
     const fail = async (
       kind: DeliveryFailureKind,
@@ -903,6 +923,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       this.assertDestination(current, message.surface, message.actorId);
       this.assertDeliveryContext(current, context);
     } catch {
+      logSlackFileDeliveryFailure("route_revalidation", "permanent");
       return await fail("permanent");
     }
     let providerMessageId: string | undefined;
@@ -917,7 +938,10 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
             files: uploadFiles,
           },
         );
-        if (!delivered.ok) return await fail(delivered.kind, delivered.error);
+        if (!delivered.ok) {
+          logSlackFileDeliveryFailure("provider", delivered.kind);
+          return await fail(delivered.kind, delivered.error);
+        }
         providerMessageId = delivered.fileIds[0];
       } else {
         const approvalBlocks = message.surface.kind === "dm"
@@ -937,6 +961,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
         providerMessageId = delivered.ts;
       }
     } catch {
+      if (hasFiles) logSlackFileDeliveryFailure("provider_rpc", "ambiguous");
       return await fail("ambiguous");
     }
     await this.deliveries.succeed(message.deliveryId, claim.attemptId, providerMessageId);
@@ -1035,6 +1060,30 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     const id = this.env.MANAGED_SLACK_PAIRING.idFromName(`pair:${code}`);
     return typedStub<ManagedPairingStub>(this.env.MANAGED_SLACK_PAIRING.get(id));
   }
+}
+
+type SlackFileDeliveryStage =
+  | "authorization"
+  | "media_validation"
+  | "media_read"
+  | "media_prepare"
+  | "fingerprint"
+  | "ledger_claim"
+  | "ledger_replay"
+  | "route_revalidation"
+  | "provider"
+  | "provider_rpc";
+
+function logSlackFileDeliveryFailure(
+  stage: SlackFileDeliveryStage,
+  outcome: DeliveryFailureKind,
+): void {
+  console.warn(JSON.stringify({
+    component: "slack",
+    event: "file_delivery_failed",
+    stage,
+    outcome,
+  }));
 }
 
 function typedStub<T>(value: DurableObjectStub): T & DurableObjectStub {
