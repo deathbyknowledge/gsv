@@ -4,6 +4,7 @@ import type {
   AdapterTargetResponseFrame,
 } from "../../../packages/gsv/src/services/adapters.js";
 import type { DeliveryFailureKind } from "../../shared/src/delivery-ledger";
+import { callAdapterGateway, type AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
   downloadSlackFile,
   openSlackDm,
@@ -59,6 +60,19 @@ type ActiveSlackTargetCall = {
   controller: AbortController;
 };
 
+type ManagedSlackPeerRouteRecord = {
+  version: 1;
+  actorId: string;
+  installationId: string;
+  routeGeneration: string;
+};
+
+type ManagedSlackWorkspaceStatusExtra = {
+  teamId: string;
+  botUserId: string;
+  teamName?: string;
+};
+
 export type ManagedSlackWorkspaceAdmission =
   | {
       accepted: true;
@@ -103,11 +117,13 @@ export type ManagedSlackTargetAuthorization =
   | { available: false };
 
 interface Env {
+  GATEWAY: Fetcher & AdapterGatewayBinding;
   SLACK_API?: Fetcher;
 }
 
 const STATE_KEY = "managed_slack_workspace:v1:state";
 const USER_CREDENTIAL_PREFIX = "managed_slack_workspace:v1:user:";
+const PEER_ROUTE_PREFIX = "managed_slack_workspace:v1:route:";
 const MAX_TARGET_RUNTIME_MS = 120_000;
 const REQUIRED_SCOPES = new Set([
   "app_mentions:read",
@@ -204,6 +220,7 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
     }
     await Promise.all(writes);
     this.abortSupersededTargetCalls(state.generation, credential);
+    await this.publishStatus(state);
     return admission(state);
   }
 
@@ -223,20 +240,21 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
   }
 
   async deactivate(teamIdInput: string): Promise<{ deactivated: boolean }> {
-    const state = await this.ctx.storage.get<ManagedSlackWorkspaceState>(STATE_KEY);
-    if (!state) return { deactivated: false };
+    const current = await this.ctx.storage.get<ManagedSlackWorkspaceState>(STATE_KEY);
+    if (!current) return { deactivated: false };
     const teamId = requireSlackId(teamIdInput, "Slack workspace");
-    if (state.teamId !== teamId) throw new Error("Slack workspace identity mismatch");
-    this.assertObjectName(state.accountId);
-    if (state.active) {
-      await this.ctx.storage.put(STATE_KEY, {
-        ...state,
+    if (current.teamId !== teamId) throw new Error("Slack workspace identity mismatch");
+    this.assertObjectName(current.accountId);
+    const state = current.active
+      ? {
+        ...current,
         active: false,
         botToken: "",
         generation: crypto.randomUUID(),
         deactivatedAt: Date.now(),
-      } satisfies ManagedSlackWorkspaceState);
-    }
+      } satisfies ManagedSlackWorkspaceState
+      : current;
+    if (state !== current) await this.ctx.storage.put(STATE_KEY, state);
     const credentials = await this.ctx.storage.list({ prefix: USER_CREDENTIAL_PREFIX });
     if (credentials.size > 0) {
       await this.ctx.storage.delete([...credentials.keys()]);
@@ -244,7 +262,45 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
     for (const active of this.targetCalls.values()) {
       active.controller.abort(new Error("Slack workspace authorization changed"));
     }
+    await this.publishStatus(state);
     return { deactivated: true };
+  }
+
+  async registerPeerRoute(
+    actorIdInput: string,
+    installationIdInput: string,
+    routeGenerationInput: string,
+  ): Promise<void> {
+    const actorId = requireSlackId(actorIdInput, "Slack actor");
+    const route: ManagedSlackPeerRouteRecord = {
+      version: 1,
+      actorId,
+      installationId: requireRoutePart(installationIdInput, "installationId"),
+      routeGeneration: requireRoutePart(routeGenerationInput, "routeGeneration"),
+    };
+    await this.ctx.storage.put(peerRouteKey(actorId), route);
+    const state = await this.ctx.storage.get<ManagedSlackWorkspaceState>(STATE_KEY);
+    if (state) await this.publishStatusToRoute(state, route);
+  }
+
+  async unregisterPeerRoute(
+    actorIdInput: string,
+    installationIdInput: string,
+    routeGenerationInput: string,
+  ): Promise<void> {
+    const actorId = requireSlackId(actorIdInput, "Slack actor");
+    const installationId = requireRoutePart(installationIdInput, "installationId");
+    const routeGeneration = requireRoutePart(routeGenerationInput, "routeGeneration");
+    const key = peerRouteKey(actorId);
+    const route = await this.ctx.storage.get<ManagedSlackPeerRouteRecord>(key);
+    if (
+      route?.version === 1
+      && route.actorId === actorId
+      && route.installationId === installationId
+      && route.routeGeneration === routeGeneration
+    ) {
+      await this.ctx.storage.delete(key);
+    }
   }
 
   async getTargetAuthorization(
@@ -386,21 +442,7 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
         error: "Slack workspace is not installed",
       };
     }
-    const missing = missingRequiredScopes(normalizedScopes(state.scope));
-    const connected = state.active && missing.length === 0;
-    return {
-      accountId: state.accountId,
-      teamId: state.teamId,
-      teamName: state.teamName,
-      botUserId: state.botUserId,
-      connected,
-      generation: state.generation,
-      error: !state.active
-        ? "Slack app is not installed in this workspace"
-        : missing.length > 0
-          ? "Slack app must be reinstalled to grant required permissions"
-          : undefined,
-    };
+    return workspaceStatus(state);
   }
 
   async openDm(
@@ -594,6 +636,49 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
     }
   }
 
+  private async publishStatus(state: ManagedSlackWorkspaceState): Promise<void> {
+    const routes = await this.ctx.storage.list<ManagedSlackPeerRouteRecord>({
+      prefix: PEER_ROUTE_PREFIX,
+    });
+    await Promise.all([...routes.values()].map(async (route) => {
+      if (route.version !== 1) return;
+      await this.publishStatusToRoute(state, route);
+    }));
+  }
+
+  private async publishStatusToRoute(
+    state: ManagedSlackWorkspaceState,
+    route: ManagedSlackPeerRouteRecord,
+  ): Promise<void> {
+    try {
+      const status = workspaceStatus(state);
+      const extra: ManagedSlackWorkspaceStatusExtra = {
+        teamId: state.teamId,
+        botUserId: state.botUserId,
+      };
+      if (state.teamName) extra.teamName = state.teamName;
+      await callAdapterGateway(
+        this.env.GATEWAY,
+        { installationId: route.installationId },
+        "adapter.state.update",
+        {
+          adapter: "slack",
+          accountId: state.accountId,
+          status: {
+            accountId: state.accountId,
+            connected: status.connected,
+            authenticated: false,
+            mode: "managed-shared",
+            error: status.error,
+            extra,
+          },
+        },
+      );
+    } catch {
+      // Explicit status polling remains available if a route is temporarily unavailable.
+    }
+  }
+
   private assertObjectName(accountId: string): void {
     if (this.ctx.id.name !== managedSlackWorkspaceObjectName(accountId)) {
       throw new Error("Slack workspace Durable Object identity mismatch");
@@ -621,6 +706,36 @@ function admission(state: ManagedSlackWorkspaceState): ManagedSlackWorkspaceAdmi
     botUserId: state.botUserId,
     generation: state.generation,
   };
+}
+
+function workspaceStatus(state: ManagedSlackWorkspaceState): ManagedSlackWorkspaceStatus {
+  const missing = missingRequiredScopes(normalizedScopes(state.scope));
+  const connected = state.active && missing.length === 0;
+  return {
+    accountId: state.accountId,
+    teamId: state.teamId,
+    teamName: state.teamName,
+    botUserId: state.botUserId,
+    connected,
+    generation: state.generation,
+    error: !state.active
+      ? "Slack app is not installed in this workspace"
+      : missing.length > 0
+        ? "Slack app must be reinstalled to grant required permissions"
+        : undefined,
+  };
+}
+
+function peerRouteKey(actorId: string): string {
+  return `${PEER_ROUTE_PREFIX}${requireSlackId(actorId, "Slack actor")}`;
+}
+
+function requireRoutePart(value: string, label: string): string {
+  const normalized = value.trim();
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,190}[A-Za-z0-9])?$/.test(normalized)) {
+    throw new Error(`${label} is invalid`);
+  }
+  return normalized;
 }
 
 function normalizedOptionalText(value: string | undefined, maxLength: number): string | undefined {

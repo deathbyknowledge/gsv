@@ -33,8 +33,16 @@ type GatewayCall = {
   installation?: { installationId?: string };
   call?: string;
   args?: {
+    adapter?: string;
+    accountId?: string;
     deliveryId?: string;
     routeGeneration?: string;
+    status?: {
+      connected?: boolean;
+      authenticated?: boolean;
+      mode?: string;
+      error?: string;
+    };
     message?: {
       actor?: { id?: string };
       surface?: { kind?: string; id?: string; threadId?: string };
@@ -324,6 +332,40 @@ async function signedInteraction(input: {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
+      "X-Slack-Request-Timestamp": timestamp,
+      "X-Slack-Signature": signature,
+    },
+    body,
+  });
+}
+
+async function signedUninstall(): Promise<Request> {
+  const body = JSON.stringify({
+    type: "event_callback",
+    team_id: "TWORK123",
+    api_app_id: "AGSV1234",
+    event_id: "EvUNINST01",
+    event_time: Math.floor(Date.now() / 1_000),
+    event: { type: "app_uninstalled" },
+  });
+  const timestamp = String(Math.floor(Date.now() / 1_000));
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(SIGNING_SECRET),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const digest = new Uint8Array(await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(`v0:${timestamp}:${body}`),
+  ));
+  const signature = `v0=${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+  return new Request("https://slack.test/slack/events", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
       "X-Slack-Request-Timestamp": timestamp,
       "X-Slack-Signature": signature,
     },
@@ -891,5 +933,93 @@ describe("managed Slack clean-instance flow", () => {
     expect((await gatewayCalls()).filter((call) => (
       call.args?.message?.text === "approve hil[managed-request-1]"
     ))).toHaveLength(approvalCallsBeforeStaleClick);
+
+    const workspaces = namespaceBinding(env.MANAGED_SLACK_WORKSPACE);
+    const workspace = workspaceBinding(workspaces.get(
+      workspaces.idFromName(managedSlackWorkspaceObjectName(accountId)),
+    ));
+    const callsBeforeReinstall = (await gatewayCalls()).length;
+    using reinstalled = await workspace.install(accountId, {
+      teamId: "TWORK123",
+      teamName: "Acme",
+      botUserId: "UGSVBOT1",
+      botToken: "xoxb-managed-rotated-token",
+      scope: "app_mentions:read,chat:write,chat:write.public,files:read,files:write,im:history,im:write,reactions:write",
+      user: {
+        id: "UALICE01",
+        token: "xoxp-managed-alice-rotated-token",
+        scope: "channels:history,channels:read,groups:history,groups:read,im:history,im:read,mpim:history,mpim:read,users:read",
+      },
+    });
+    expect(reinstalled.generation).toBeTruthy();
+    using targetsAfterReinstall = await peer.listTargets(
+      "installation-alice",
+      relinked.generation,
+    );
+    expect(targetsAfterReinstall).toEqual([
+      expect.objectContaining({ id: "workspace", implements: ["shell.exec"] }),
+    ]);
+    using identityAfterReinstall = await peer.executeTarget(
+      "installation-alice",
+      relinked.generation,
+      "workspace",
+      {
+        type: "req",
+        id: "target-after-reinstall",
+        call: "shell.exec",
+        args: { input: "slack whoami --json | jq -r '.reader.id'" },
+        deadlineAt: Date.now() + 120_000,
+      },
+    );
+    expect(identityAfterReinstall).toMatchObject({
+      ok: true,
+      data: { status: "completed", output: "UALICE01\n", exitCode: 0 },
+    });
+    expect(await slackApiCalls()).toContainEqual(expect.objectContaining({
+      method: "auth.test",
+      body: expect.objectContaining({
+        authorization: "Bearer xoxp-managed-alice-rotated-token",
+      }),
+    }));
+    const reinstallCalls = (await gatewayCalls()).slice(callsBeforeReinstall);
+    expect(reinstallCalls).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        installation: { installationId: "installation-alice" },
+        call: "adapter.state.update",
+        args: expect.objectContaining({ status: expect.objectContaining({ connected: true }) }),
+      }),
+      expect.objectContaining({
+        installation: { installationId: "installation-bob" },
+        call: "adapter.state.update",
+        args: expect.objectContaining({ status: expect.objectContaining({ connected: true }) }),
+      }),
+    ]));
+
+    const callsBeforeUninstall = (await gatewayCalls()).length;
+    expect((await SELF.fetch(await signedUninstall())).status).toBe(200);
+    await vi.waitFor(async () => {
+      const uninstallCalls = (await gatewayCalls()).slice(callsBeforeUninstall);
+      expect(uninstallCalls).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          installation: { installationId: "installation-alice" },
+          call: "adapter.state.update",
+          args: expect.objectContaining({
+            status: expect.objectContaining({ connected: false }),
+          }),
+        }),
+        expect.objectContaining({
+          installation: { installationId: "installation-bob" },
+          call: "adapter.state.update",
+          args: expect.objectContaining({
+            status: expect.objectContaining({ connected: false }),
+          }),
+        }),
+      ]));
+    });
+    using unavailableTargets = await peer.listTargets(
+      "installation-alice",
+      relinked.generation,
+    );
+    expect(unavailableTargets).toEqual([]);
   });
 });

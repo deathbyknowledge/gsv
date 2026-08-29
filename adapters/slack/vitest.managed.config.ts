@@ -19,6 +19,9 @@ export default defineConfig({
                     ? Array.from(new Uint8Array(await new Response(frame.body.stream).arrayBuffer()))
                     : undefined;
                   calls.push({ installation, call: frame.call, args: frame.args, mediaBody });
+                  if (frame.call === "adapter.state.update") {
+                    return { type: "res", id: frame.id, ok: true, data: { ok: true } };
+                  }
                   return {
                     type: "res",
                     id: frame.id,

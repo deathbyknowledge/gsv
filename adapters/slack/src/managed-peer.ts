@@ -158,6 +158,16 @@ type ManagedWorkspaceStub = {
     expectedGeneration: string,
     requestId: string,
   ): Promise<{ cancelled: boolean }>;
+  registerPeerRoute(
+    actorId: string,
+    installationId: string,
+    routeGeneration: string,
+  ): Promise<void>;
+  unregisterPeerRoute(
+    actorId: string,
+    installationId: string,
+    routeGeneration: string,
+  ): Promise<void>;
 };
 
 type ManagedWorkspaceClient = Omit<
@@ -283,7 +293,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
   ): Promise<AdapterSendResult> {
     let state: ManagedSlackPeerState;
     try {
-      state = await this.requireState();
+      state = await this.requireCurrentWorkspace();
       this.assertDestination(state, message.surface, message.actorId);
     } catch (error) {
       await cancelBinaryBody(body, error);
@@ -313,7 +323,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
   ): Promise<AdapterTargetDescriptor[]> {
     let state: ManagedSlackPeerState;
     try {
-      state = await this.requireTargetRoute(installationId, routeGeneration);
+      state = await this.requireCurrentTargetRoute(installationId, routeGeneration);
     } catch {
       return [];
     }
@@ -349,7 +359,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     }
     let state: ManagedSlackPeerState;
     try {
-      state = await this.requireTargetRoute(installationId, routeGeneration);
+      state = await this.requireCurrentTargetRoute(installationId, routeGeneration);
     } catch {
       return targetError(frame.id, 403, "Slack target route is unavailable");
     }
@@ -471,6 +481,13 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       return activated;
     });
     await this.cancelSupersededTargetCalls(activated.state);
+    const activeRoute = activated.state.activeRoute;
+    if (!activeRoute) throw new Error("Managed Slack route activation failed");
+    await this.workspace(activated.state.accountId).registerPeerRoute(
+      activated.state.actorId,
+      activeRoute.installationId,
+      activeRoute.generation,
+    );
     return activated.preparation;
   }
 
@@ -530,7 +547,16 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       if (result.state !== state) await txn.put(STATE_KEY, result.state);
       return { state: result.state, disconnected: result.disconnected };
     });
-    if (disconnected.state) await this.cancelSupersededTargetCalls(disconnected.state);
+    if (disconnected.state) {
+      await this.cancelSupersededTargetCalls(disconnected.state);
+      if (disconnected.disconnected && !disconnected.state.activeRoute) {
+        await this.workspace(disconnected.state.accountId).unregisterPeerRoute(
+          disconnected.state.actorId,
+          input.installationId,
+          input.generation,
+        );
+      }
+    }
     return { disconnected: disconnected.disconnected };
   }
 
@@ -1010,11 +1036,55 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     return state;
   }
 
+  private async requireCurrentWorkspace(): Promise<ManagedSlackPeerState> {
+    const state = await this.requireState();
+    const admission = await this.workspace(state.accountId).admitEvent(state.teamId);
+    if (
+      !admission.accepted
+      || admission.accountId !== state.accountId
+      || admission.teamId !== state.teamId
+    ) {
+      throw new Error("Slack workspace authorization is unavailable");
+    }
+    if (
+      admission.generation === state.workspaceGeneration
+      && admission.botUserId === state.botUserId
+      && (admission.teamName ?? state.teamName) === state.teamName
+    ) {
+      return state;
+    }
+    const current: ManagedSlackPeerState = {
+      ...state,
+      teamName: admission.teamName ?? state.teamName,
+      botUserId: admission.botUserId,
+      workspaceGeneration: admission.generation,
+    };
+    await this.ctx.storage.put(STATE_KEY, current);
+    await this.cancelSupersededTargetCalls(current);
+    return current;
+  }
+
   private async requireTargetRoute(
     installationId: string,
     routeGeneration: string,
   ): Promise<ManagedSlackPeerState> {
     const state = await this.requireState();
+    const route = state.activeRoute;
+    if (
+      !route
+      || route.installationId !== requireOpaque(installationId, "installationId")
+      || route.generation !== requireOpaque(routeGeneration, "routeGeneration")
+    ) {
+      throw new Error("Slack target route changed");
+    }
+    return state;
+  }
+
+  private async requireCurrentTargetRoute(
+    installationId: string,
+    routeGeneration: string,
+  ): Promise<ManagedSlackPeerState> {
+    const state = await this.requireCurrentWorkspace();
     const route = state.activeRoute;
     if (
       !route
