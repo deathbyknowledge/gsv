@@ -10,6 +10,12 @@ use tokio::sync::mpsc as async_mpsc;
 use wgpu::util::DeviceExt;
 
 const LOOP_SECONDS: f32 = 12.0;
+const INPUT_ACTIVITY_THRESHOLD: f32 = 0.005;
+const KEYBOARD_DRIVE_DECAY: f32 = 10.0;
+const KEYBOARD_ATTACK: f32 = 26.0;
+const KEYBOARD_RELEASE: f32 = 7.0;
+const MICROPHONE_ATTACK: f32 = 14.0;
+const MICROPHONE_RELEASE: f32 = 5.0;
 const ACCENT: [f32; 4] = [0.702, 0.682, 1.0, 1.0];
 const VIOLET: [f32; 4] = [0.561, 0.541, 1.0, 1.0];
 const READING_BLUE: [f32; 4] = [0.596, 0.710, 1.0, 1.0];
@@ -139,6 +145,8 @@ enum VisualCommand {
     SetPreset(VisualPreset),
     SetShipView { orbit: f32, elevation: f32 },
     SetResolution { width: u32, height: u32 },
+    PulseKeyboard(f32),
+    SetMicrophoneLevel(f32),
     SetActive(bool),
     Shutdown,
 }
@@ -218,6 +226,20 @@ impl VisualEngine {
             .map_err(|_| VisualEngineError("visual renderer has stopped".into()))
     }
 
+    pub fn pulse_keyboard(&self, strength: f32) -> Result<(), VisualEngineError> {
+        let strength = validate_input_level("keyboard impulse", strength)?;
+        self.commands
+            .send(VisualCommand::PulseKeyboard(strength))
+            .map_err(|_| VisualEngineError("visual renderer has stopped".into()))
+    }
+
+    pub fn set_microphone_level(&self, level: f32) -> Result<(), VisualEngineError> {
+        let level = validate_input_level("microphone level", level)?;
+        self.commands
+            .send(VisualCommand::SetMicrophoneLevel(level))
+            .map_err(|_| VisualEngineError("visual renderer has stopped".into()))
+    }
+
     pub fn set_active(&self, active: bool) -> Result<(), VisualEngineError> {
         self.commands
             .send(VisualCommand::SetActive(active))
@@ -239,12 +261,96 @@ impl Drop for VisualEngine {
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct VisualUniforms {
     resolution_time_energy: [f32; 4],
+    input: [f32; 4],
     accent: [f32; 4],
     shape: [f32; 4],
     behavior: [f32; 4],
     activity: [f32; 4],
     activity2: [f32; 4],
     ship_view_materialization_propulsion: [f32; 4],
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct InputResponse {
+    keyboard_drive: f32,
+    keyboard_envelope: f32,
+    microphone_target: f32,
+    microphone_envelope: f32,
+}
+
+impl InputResponse {
+    fn pulse_keyboard(&mut self, strength: f32) {
+        self.keyboard_drive = (self.keyboard_drive + strength * 0.55).min(1.0);
+    }
+
+    fn set_microphone_level(&mut self, level: f32) {
+        self.microphone_target = level;
+    }
+
+    fn advance(&mut self, delta_seconds: f32) {
+        self.keyboard_drive *= (-delta_seconds * KEYBOARD_DRIVE_DECAY).exp();
+        if self.keyboard_drive < INPUT_ACTIVITY_THRESHOLD * 0.2 {
+            self.keyboard_drive = 0.0;
+        }
+        let keyboard_rate = if self.keyboard_drive > self.keyboard_envelope {
+            KEYBOARD_ATTACK
+        } else {
+            KEYBOARD_RELEASE
+        };
+        self.keyboard_envelope = approach_value(
+            self.keyboard_envelope,
+            self.keyboard_drive,
+            keyboard_rate,
+            delta_seconds,
+        );
+        let microphone_rate = if self.microphone_target > self.microphone_envelope {
+            MICROPHONE_ATTACK
+        } else {
+            MICROPHONE_RELEASE
+        };
+        self.microphone_envelope = approach_value(
+            self.microphone_envelope,
+            self.microphone_target,
+            microphone_rate,
+            delta_seconds,
+        );
+        if self.keyboard_envelope < INPUT_ACTIVITY_THRESHOLD * 0.2 {
+            self.keyboard_envelope = 0.0;
+        }
+        if self.microphone_target == 0.0
+            && self.microphone_envelope < INPUT_ACTIVITY_THRESHOLD * 0.2
+        {
+            self.microphone_envelope = 0.0;
+        }
+    }
+
+    fn is_active(self) -> bool {
+        self.keyboard_drive > INPUT_ACTIVITY_THRESHOLD
+            || self.keyboard_envelope > INPUT_ACTIVITY_THRESHOLD
+            || self.microphone_target > INPUT_ACTIVITY_THRESHOLD
+            || self.microphone_envelope > INPUT_ACTIVITY_THRESHOLD
+    }
+
+    fn uniforms(self) -> [f32; 4] {
+        [self.keyboard_envelope, self.microphone_envelope, 0.0, 0.0]
+    }
+
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
+
+fn approach_value(current: f32, target: f32, rate: f32, delta_seconds: f32) -> f32 {
+    current + (target - current) * (1.0 - (-delta_seconds * rate).exp())
+}
+
+fn validate_input_level(label: &str, value: f32) -> Result<f32, VisualEngineError> {
+    if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+        return Err(VisualEngineError(format!(
+            "visual renderer {label} must be between zero and one"
+        )));
+    }
+    Ok(value)
 }
 
 #[derive(Clone, Copy)]
@@ -622,41 +728,47 @@ impl GpuRenderer {
     }
 }
 
+struct RendererState {
+    target: VisualPreset,
+    orbit: f32,
+    elevation: f32,
+    width: u32,
+    height: u32,
+    input_response: InputResponse,
+    active: bool,
+}
+
 fn render_loop(
     config: VisualEngineConfig,
     commands: mpsc::Receiver<VisualCommand>,
     events: &async_mpsc::Sender<VisualEvent>,
 ) -> Result<(), String> {
-    let mut render_width = config.width;
-    let mut render_height = config.height;
-    let mut renderer = GpuRenderer::new(render_width, render_height)?;
+    let mut state = RendererState {
+        target: config.initial_preset,
+        orbit: 0.0,
+        elevation: 0.0,
+        width: config.width,
+        height: config.height,
+        input_response: InputResponse::default(),
+        active: config.initially_active,
+    };
+    let mut renderer = GpuRenderer::new(state.width, state.height)?;
     let started = Instant::now();
     let mut previous_frame = started;
     let mut next_frame = started;
     let mut sequence = 0;
-    let mut target = config.initial_preset;
-    let mut recipe = VisualRecipe::for_preset(target);
-    let mut orbit = 0.0;
-    let mut elevation = 0.0;
-    let mut active = config.initially_active;
+    let mut recipe = VisualRecipe::for_preset(state.target);
 
     loop {
-        if !active {
+        if !state.active {
             let Ok(command) = commands.recv() else {
                 return Ok(());
             };
-            if !apply_command(
-                command,
-                &mut target,
-                &mut orbit,
-                &mut elevation,
-                &mut render_width,
-                &mut render_height,
-                &mut active,
-            ) {
+            let mut render_requested = false;
+            if !apply_command(command, &mut state, &mut render_requested) {
                 return Ok(());
             }
-            if active {
+            if state.active {
                 let resumed = Instant::now();
                 previous_frame = resumed;
                 next_frame = resumed;
@@ -664,32 +776,29 @@ fn render_loop(
             continue;
         }
 
+        let mut render_requested = false;
         for command in commands.try_iter() {
-            if !apply_command(
-                command,
-                &mut target,
-                &mut orbit,
-                &mut elevation,
-                &mut render_width,
-                &mut render_height,
-                &mut active,
-            ) {
+            if !apply_command(command, &mut state, &mut render_requested) {
                 return Ok(());
             }
         }
-        if !active {
+        if !state.active {
             continue;
         }
-        if renderer.width != render_width || renderer.height != render_height {
-            renderer = GpuRenderer::new(render_width, render_height)?;
+        if render_requested {
+            next_frame = Instant::now();
+        }
+        if renderer.width != state.width || renderer.height != state.height {
+            renderer = GpuRenderer::new(state.width, state.height)?;
         }
 
         let now = Instant::now();
-        let frames_per_second = if target == VisualPreset::Listening {
-            config.idle_frames_per_second
-        } else {
-            config.frames_per_second
-        };
+        let frames_per_second =
+            if state.target == VisualPreset::Listening && !state.input_response.is_active() {
+                config.idle_frames_per_second
+            } else {
+                config.frames_per_second
+            };
         let frame_interval = Duration::from_secs_f64(1.0 / f64::from(frames_per_second));
         if now < next_frame {
             thread::sleep((next_frame - now).min(Duration::from_millis(4)));
@@ -702,10 +811,11 @@ fn render_loop(
             next_frame = now + frame_interval;
         }
 
-        recipe.approach(VisualRecipe::for_preset(target), delta_seconds);
+        recipe.approach(VisualRecipe::for_preset(state.target), delta_seconds);
+        state.input_response.advance(delta_seconds);
         let phase = started.elapsed().as_secs_f32() % LOOP_SECONDS;
         let loop_phase = phase / LOOP_SECONDS * std::f32::consts::TAU;
-        let energy = match target {
+        let energy = match state.target {
             VisualPreset::Thinking => {
                 0.25 + 0.11 * (loop_phase * 2.0).sin().abs()
                     + 0.05 * (loop_phase * 3.0 + 0.9).sin().abs()
@@ -746,15 +856,16 @@ fn render_loop(
             _ => 0.06,
         };
         let uniforms = VisualUniforms {
-            resolution_time_energy: [render_width as f32, render_height as f32, phase, energy],
+            resolution_time_energy: [state.width as f32, state.height as f32, phase, energy],
+            input: state.input_response.uniforms(),
             accent: recipe.accent,
             shape: recipe.shape,
             behavior: recipe.behavior,
             activity: recipe.activity,
             activity2: recipe.activity2,
             ship_view_materialization_propulsion: [
-                orbit,
-                elevation,
+                state.orbit,
+                state.elevation,
                 recipe.materialization,
                 recipe.propulsion,
             ],
@@ -763,8 +874,8 @@ fn render_loop(
         let bgra = renderer.render(&uniforms)?;
         sequence += 1;
         let event = VisualEvent::Frame(VisualFrame {
-            width: render_width,
-            height: render_height,
+            width: state.width,
+            height: state.height,
             sequence,
             render_time: render_started.elapsed(),
             bgra,
@@ -778,27 +889,37 @@ fn render_loop(
 
 fn apply_command(
     command: VisualCommand,
-    target: &mut VisualPreset,
-    orbit: &mut f32,
-    elevation: &mut f32,
-    render_width: &mut u32,
-    render_height: &mut u32,
-    active: &mut bool,
+    state: &mut RendererState,
+    render_requested: &mut bool,
 ) -> bool {
     match command {
-        VisualCommand::SetPreset(preset) => *target = preset,
+        VisualCommand::SetPreset(preset) => state.target = preset,
         VisualCommand::SetShipView {
             orbit: new_orbit,
             elevation: new_elevation,
         } => {
-            *orbit = new_orbit;
-            *elevation = new_elevation;
+            state.orbit = new_orbit;
+            state.elevation = new_elevation;
         }
         VisualCommand::SetResolution { width, height } => {
-            *render_width = width;
-            *render_height = height;
+            state.width = width;
+            state.height = height;
         }
-        VisualCommand::SetActive(new_active) => *active = new_active,
+        VisualCommand::PulseKeyboard(strength) => {
+            state.input_response.pulse_keyboard(strength);
+            *render_requested = true;
+        }
+        VisualCommand::SetMicrophoneLevel(level) => {
+            let was_active = state.input_response.is_active();
+            state.input_response.set_microphone_level(level);
+            *render_requested |= !was_active && state.input_response.is_active();
+        }
+        VisualCommand::SetActive(new_active) => {
+            state.active = new_active;
+            if !new_active {
+                state.input_response.clear();
+            }
+        }
         VisualCommand::Shutdown => return false,
     }
     true
@@ -810,66 +931,97 @@ mod tests {
 
     #[test]
     fn activity_control_pauses_without_losing_visual_state() {
-        let mut target = VisualPreset::Listening;
-        let mut orbit = 0.0;
-        let mut elevation = 0.0;
-        let mut render_width = 512;
-        let mut render_height = 512;
-        let mut active = true;
+        let mut state = RendererState {
+            target: VisualPreset::Listening,
+            orbit: 0.0,
+            elevation: 0.0,
+            width: 512,
+            height: 512,
+            input_response: InputResponse::default(),
+            active: true,
+        };
+        let mut render_requested = false;
 
         assert!(apply_command(
             VisualCommand::SetActive(false),
-            &mut target,
-            &mut orbit,
-            &mut elevation,
-            &mut render_width,
-            &mut render_height,
-            &mut active,
+            &mut state,
+            &mut render_requested,
         ));
-        assert!(!active);
+        assert!(!state.active);
         assert!(apply_command(
             VisualCommand::SetPreset(VisualPreset::Searching),
-            &mut target,
-            &mut orbit,
-            &mut elevation,
-            &mut render_width,
-            &mut render_height,
-            &mut active,
+            &mut state,
+            &mut render_requested,
         ));
-        assert_eq!(target, VisualPreset::Searching);
-        assert!(!active);
+        assert_eq!(state.target, VisualPreset::Searching);
+        assert!(!state.active);
         assert!(apply_command(
             VisualCommand::SetActive(true),
-            &mut target,
-            &mut orbit,
-            &mut elevation,
-            &mut render_width,
-            &mut render_height,
-            &mut active,
+            &mut state,
+            &mut render_requested,
         ));
-        assert!(active);
-        assert_eq!(target, VisualPreset::Searching);
+        assert!(state.active);
+        assert_eq!(state.target, VisualPreset::Searching);
         assert!(apply_command(
             VisualCommand::SetResolution {
                 width: 768,
                 height: 768,
             },
-            &mut target,
-            &mut orbit,
-            &mut elevation,
-            &mut render_width,
-            &mut render_height,
-            &mut active,
+            &mut state,
+            &mut render_requested,
         ));
-        assert_eq!((render_width, render_height), (768, 768));
+        assert_eq!((state.width, state.height), (768, 768));
         assert!(!apply_command(
             VisualCommand::Shutdown,
-            &mut target,
-            &mut orbit,
-            &mut elevation,
-            &mut render_width,
-            &mut render_height,
-            &mut active,
+            &mut state,
+            &mut render_requested,
         ));
+    }
+
+    #[test]
+    fn keyboard_impulses_attack_quickly_and_release_smoothly() {
+        let mut response = InputResponse::default();
+        response.pulse_keyboard(0.8);
+        assert!(response.is_active());
+        assert_eq!(response.keyboard_envelope, 0.0);
+
+        response.advance(1.0 / 30.0);
+        let attacked = response.keyboard_envelope;
+        assert!(attacked > 0.1);
+        assert!(attacked < 0.8);
+
+        response.advance(1.0 / 30.0);
+        assert!(response.keyboard_envelope > 0.0);
+        for _ in 0..90 {
+            response.advance(1.0 / 30.0);
+        }
+        assert_eq!(response.keyboard_envelope, 0.0);
+        assert!(!response.is_active());
+    }
+
+    #[test]
+    fn microphone_levels_have_distinct_attack_and_release() {
+        let mut response = InputResponse::default();
+        response.set_microphone_level(0.9);
+        response.advance(1.0 / 30.0);
+        let attacked = response.microphone_envelope;
+        assert!(attacked > 0.3);
+        assert!(attacked < 0.9);
+
+        response.set_microphone_level(0.0);
+        response.advance(1.0 / 30.0);
+        assert!(response.microphone_envelope < attacked);
+        assert!(response.microphone_envelope > 0.0);
+    }
+
+    #[test]
+    fn input_levels_reject_non_finite_and_out_of_range_values() {
+        assert!(validate_input_level("test", f32::NAN).is_err());
+        assert!(validate_input_level("test", -0.01).is_err());
+        assert!(validate_input_level("test", 1.01).is_err());
+        assert_eq!(
+            validate_input_level("test", 0.5).expect("a unit input level should be valid"),
+            0.5
+        );
     }
 }

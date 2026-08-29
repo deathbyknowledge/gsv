@@ -275,6 +275,7 @@ private fun configureAssistantLiquidShader(
     shader.setFloatUniform("iResolution", size.width, size.height)
     shader.setFloatUniform("iTime", phaseSeconds)
     shader.setFloatUniform("iEnergy", energy.coerceIn(0f, 1f))
+    shader.setFloatUniform("iInput", 0f, 0f, 0f, 0f)
     shader.setFloatUniform("iAccent", accent.red, accent.green, accent.blue, 1f)
     shader.setFloatUniform(
         "iShape",

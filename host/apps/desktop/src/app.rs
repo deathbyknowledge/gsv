@@ -1267,6 +1267,11 @@ impl GsvApp {
                     if value.len() < self.previous_input.len() {
                         self.draft_type_size = None;
                     }
+                    if self.conversation.mode == SurfaceMode::Conversation {
+                        self.core_visual.update(cx, |visual, _| {
+                            visual.pulse_keyboard(0.72);
+                        });
+                    }
                     self.audio
                         .play(classify_change(&self.previous_input, &value));
                 }

@@ -14,7 +14,7 @@ use crate::model::ActivityCategory;
 
 const MINIMUM_ACTIVITY_VISIBILITY: Duration = Duration::from_millis(1_800);
 const MAX_PENDING_ACTIVITIES: usize = 2;
-const MIND_RENDER_EXTENTS: [u32; 3] = [512, 768, 1_024];
+const CORE_RENDER_EXTENTS: [u32; 3] = [512, 768, 1_024];
 pub(crate) const MAX_CORE_DIAMETER: f32 = 760.0;
 
 #[derive(Debug)]
@@ -219,6 +219,15 @@ impl CoreVisual {
         }
     }
 
+    pub(crate) fn pulse_keyboard(&self, strength: f32) {
+        let Some(engine) = &self.engine else {
+            return;
+        };
+        if let Err(error) = engine.pulse_keyboard(strength) {
+            eprintln!("GSV Core visual could not react to keyboard input: {error}");
+        }
+    }
+
     pub(crate) fn reset(&mut self, generation: u64, cx: &mut Context<Self>) {
         self.presentation.clear();
         self.presentation.generation = generation;
@@ -350,10 +359,10 @@ fn core_render_extent(logical_extent: f32, scale_factor: f32) -> u32 {
     debug_assert!(logical_extent.is_finite() && logical_extent > 0.0);
     debug_assert!(scale_factor.is_finite() && scale_factor > 0.0);
     let required_extent = (logical_extent * scale_factor).ceil() as u32;
-    MIND_RENDER_EXTENTS
+    CORE_RENDER_EXTENTS
         .into_iter()
         .find(|extent| *extent >= required_extent)
-        .unwrap_or(MIND_RENDER_EXTENTS[MIND_RENDER_EXTENTS.len() - 1])
+        .unwrap_or(CORE_RENDER_EXTENTS[CORE_RENDER_EXTENTS.len() - 1])
 }
 
 #[cfg(test)]

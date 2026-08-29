@@ -8,6 +8,7 @@ layout(location = 0) out vec4 fragmentColor;
 
 layout(set = 0, binding = 0, std140) uniform VisualUniforms {
     vec4 resolutionTimeEnergy;
+    vec4 input;
     vec4 accent;
     vec4 shape;
     vec4 behavior;
@@ -19,6 +20,7 @@ layout(set = 0, binding = 0, std140) uniform VisualUniforms {
 #define iResolution visual.resolutionTimeEnergy.xy
 #define iTime visual.resolutionTimeEnergy.z
 #define iEnergy visual.resolutionTimeEnergy.w
+#define iInput visual.input
 #define iAccent visual.accent
 #define iShape visual.shape
 #define iBehavior visual.behavior
