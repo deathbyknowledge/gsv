@@ -5,6 +5,7 @@ uniform float4 iAccent;
 uniform float4 iShape;
 uniform float4 iBehavior;
 uniform float4 iActivity;
+uniform float4 iActivity2;
 uniform float2 iShipView;
 uniform float iShipMaterialization;
 uniform float iShipPropulsion;
@@ -1319,6 +1320,246 @@ float2 executingPromptSurface(float3 point, float phase) {
     return float2(core, pulse);
 }
 
+float segmentProgress3d(float3 point, float3 start, float3 end) {
+    float3 span = end - start;
+    return clamp(
+        dot(point - start, span) / max(dot(span, span), 0.0001),
+        0.0,
+        1.0
+    );
+}
+
+float taperedCapsuleDistance(
+    float3 point,
+    float3 start,
+    float3 end,
+    float startRadius,
+    float endRadius
+) {
+    float progress = segmentProgress3d(point, start, end);
+    float centerRadius = mix(startRadius, endRadius, progress);
+    return length(point - mix(start, end, progress)) - centerRadius;
+}
+
+float delegationSplit(float phase, float branch) {
+    float wave = 0.5 - 0.5 * cos(phase + branch * 2.35);
+    return wave * wave * (3.0 - 2.0 * wave);
+}
+
+float3 delegationDirection(float phase, float branch) {
+    float3 firstDirection = float3(
+        0.88 + 0.07 * sin(phase * 2.0),
+        0.42 + 0.06 * cos(phase),
+        0.16 + 0.04 * sin(phase)
+    );
+    float3 secondDirection = float3(
+        -0.58 + 0.06 * cos(phase),
+        -0.78 + 0.07 * sin(phase * 2.0),
+        0.16 + 0.04 * cos(phase * 2.0)
+    );
+    return normalize(mix(firstDirection, secondDirection, branch));
+}
+
+float3 delegationCenter(float phase, float branch) {
+    float split = delegationSplit(phase, branch);
+    float3 direction = delegationDirection(phase, branch);
+    float3 drift = mix(
+        float3(
+            -0.010 * sin(phase * 3.0),
+            0.034 * sin(phase * 2.0),
+            0.026 * cos(phase * 3.0)
+        ),
+        float3(
+            0.030 * cos(phase * 2.0),
+            -0.012 * sin(phase * 3.0),
+            0.022 * sin(phase * 2.0)
+        ),
+        branch
+    ) * split;
+    float distance = mix(0.145, mix(0.475, 0.425, branch), split);
+    return direction * distance + drift;
+}
+
+float delegationFragmentDistance(
+    float3 point,
+    float phase,
+    float energy,
+    float branch
+) {
+    float3 fragmentPoint = point - delegationCenter(phase, branch);
+    fragmentPoint.xy = rotate2(
+        mix(0.38, -0.52, branch) + 0.18 * sin(phase * 2.0 + branch),
+        fragmentPoint.xy
+    );
+    fragmentPoint.yz = rotate2(
+        mix(-0.26, 0.41, branch) + 0.14 * cos(phase * 3.0 + branch),
+        fragmentPoint.yz
+    );
+    float3 firstRadii = float3(0.116, 0.092, 0.102);
+    float3 secondRadii = float3(0.086, 0.073, 0.082);
+    float breath = 1.0 + 0.030 * sin(phase * 3.0 + branch * 1.7) +
+        energy * 0.018;
+    float distance = ellipsoidDistance(
+        fragmentPoint,
+        mix(firstRadii, secondRadii, branch) * breath
+    );
+    float3 lobeOffset = mix(
+        float3(0.052, -0.028, 0.022),
+        float3(-0.034, 0.040, 0.020),
+        branch
+    ) * (0.88 + 0.12 * sin(phase * 2.0 + branch));
+    float3 lobeRadii = mix(
+        float3(0.074, 0.054, 0.064),
+        float3(0.054, 0.043, 0.050),
+        branch
+    ) * breath;
+    float lobe = ellipsoidDistance(fragmentPoint - lobeOffset, lobeRadii);
+    distance = smoothMinimum(distance, lobe, mix(0.020, 0.016, branch));
+    float membraneFold = sin(fragmentPoint.x * 24.0 + phase * 3.0) *
+        sin(fragmentPoint.y * 21.0 - phase * 2.0) *
+        sin(fragmentPoint.z * 23.0 + phase * 4.0);
+    return distance + membraneFold * mix(0.0070, 0.0054, branch);
+}
+
+float delegationParentDistance(float3 point, float phase, float energy) {
+    float3 parentPoint = point;
+    parentPoint.xy = rotate2(
+        0.10 * sin(phase * 2.0),
+        parentPoint.xy
+    );
+    parentPoint.xz = rotate2(
+        0.08 * cos(phase),
+        parentPoint.xz
+    );
+    parentPoint.yz = rotate2(
+        0.07 * sin(phase * 3.0),
+        parentPoint.yz
+    );
+    float breath = 1.0 + 0.018 * sin(phase * 2.0) + energy * 0.012;
+    float distance = ellipsoidDistance(
+        parentPoint,
+        float3(0.292, 0.306, 0.278) * breath
+    );
+    float firstFold = sin(parentPoint.x * 14.0 + phase * 2.0) *
+        sin(parentPoint.y * 12.0 - phase * 3.0) *
+        sin(parentPoint.z * 15.0 + phase);
+    float secondFold = sin(
+        dot(parentPoint, float3(9.0, -11.0, 8.0)) - phase * 4.0
+    );
+    return distance + firstFold * (0.0070 + energy * 0.0030) +
+        secondFold * 0.0030;
+}
+
+float delegationDistance(
+    float3 point,
+    float phase,
+    float energy,
+    float mainDistance
+) {
+    float firstSplit = delegationSplit(phase, 0.0);
+    float secondSplit = delegationSplit(phase, 1.0);
+    float stableParent = delegationParentDistance(point, phase, energy);
+    float distance = mix(mainDistance, stableParent, 0.82) +
+        0.006 * (firstSplit * 0.58 + secondSplit * 0.42);
+
+    float3 firstDirection = delegationDirection(phase, 0.0);
+    float3 firstCenter = delegationCenter(phase, 0.0);
+    float firstFragment = delegationFragmentDistance(
+        point,
+        phase,
+        energy,
+        0.0
+    );
+    float firstNeck = taperedCapsuleDistance(
+        point,
+        firstDirection * 0.155,
+        firstCenter - firstDirection * 0.050,
+        mix(0.074, 0.025, firstSplit),
+        mix(0.058, 0.014, firstSplit)
+    ) + smoothstep(0.54, 0.82, firstSplit) * 0.145;
+    distance = smoothMinimum(
+        distance,
+        firstFragment,
+        mix(0.058, 0.018, firstSplit)
+    );
+    distance = smoothMinimum(distance, firstNeck, 0.024);
+
+    float3 secondDirection = delegationDirection(phase, 1.0);
+    float3 secondCenter = delegationCenter(phase, 1.0);
+    float secondFragment = delegationFragmentDistance(
+        point,
+        phase,
+        energy,
+        1.0
+    );
+    float secondNeck = taperedCapsuleDistance(
+        point,
+        secondDirection * 0.150,
+        secondCenter - secondDirection * 0.040,
+        mix(0.060, 0.021, secondSplit),
+        mix(0.046, 0.012, secondSplit)
+    ) + smoothstep(0.52, 0.80, secondSplit) * 0.130;
+    distance = smoothMinimum(
+        distance,
+        secondFragment,
+        mix(0.052, 0.016, secondSplit)
+    );
+    distance = smoothMinimum(distance, secondNeck, 0.021);
+    return distance;
+}
+
+float4 delegationSurface(float3 point, float phase) {
+    float firstSplit = delegationSplit(phase, 0.0);
+    float secondSplit = delegationSplit(phase, 1.0);
+    float3 firstDirection = delegationDirection(phase, 0.0);
+    float3 secondDirection = delegationDirection(phase, 1.0);
+    float3 firstCenter = delegationCenter(phase, 0.0);
+    float3 secondCenter = delegationCenter(phase, 1.0);
+
+    float firstFragment = (1.0 - smoothstep(
+        0.105,
+        0.175,
+        length(point - firstCenter)
+    )) * smoothstep(0.12, 0.48, firstSplit);
+    float secondFragment = (1.0 - smoothstep(
+        0.078,
+        0.138,
+        length(point - secondCenter)
+    )) * smoothstep(0.12, 0.46, secondSplit);
+
+    float3 firstStart = firstDirection * 0.155;
+    float3 firstEnd = firstCenter - firstDirection * 0.050;
+    float firstProgress = segmentProgress3d(point, firstStart, firstEnd);
+    float firstLine = length(point - mix(firstStart, firstEnd, firstProgress));
+    float firstLink = (1.0 - smoothstep(0.018, 0.072, firstLine)) *
+        (1.0 - smoothstep(0.52, 0.80, firstSplit));
+    float firstTransfer = pow(
+        0.5 + 0.5 * sin(firstProgress * 16.0 - phase * 6.0),
+        12.0
+    ) * firstLink;
+
+    float3 secondStart = secondDirection * 0.150;
+    float3 secondEnd = secondCenter - secondDirection * 0.040;
+    float secondProgress = segmentProgress3d(point, secondStart, secondEnd);
+    float secondLine = length(point - mix(
+        secondStart,
+        secondEnd,
+        secondProgress
+    ));
+    float secondLink = (1.0 - smoothstep(0.014, 0.060, secondLine)) *
+        (1.0 - smoothstep(0.50, 0.78, secondSplit));
+    float secondTransfer = pow(
+        0.5 + 0.5 * sin(secondProgress * 14.0 - phase * 7.0 + 1.8),
+        12.0
+    ) * secondLink;
+    return float4(
+        firstFragment,
+        secondFragment,
+        max(firstLink, secondLink),
+        max(firstTransfer, secondTransfer)
+    );
+}
+
 float organicDistance(float3 point, float phase, float energy) {
     float3 sourcePoint = point;
     float organicAmount = clamp(iShape.x, 0.0, 1.0);
@@ -1334,6 +1575,8 @@ float organicDistance(float3 point, float phase, float energy) {
     float writing = clamp(iActivity.z, 0.0, 1.0) *
         (1.0 - smoothstep(0.0, 0.72, shipPresence));
     float executing = clamp(iActivity.w, 0.0, 1.0) *
+        (1.0 - smoothstep(0.0, 0.72, shipPresence));
+    float delegating = clamp(iActivity2.x, 0.0, 1.0) *
         (1.0 - smoothstep(0.0, 0.72, shipPresence));
     float documentActivity = max(reading, writing);
     if (projection > 0.999) {
@@ -1539,6 +1782,13 @@ float organicDistance(float3 point, float phase, float energy) {
             distance,
             executingPromptDistance(sourcePoint, phase, energy),
             smoothstep(0.0, 1.0, executing)
+        );
+    }
+    if (delegating > 0.001) {
+        distance = mix(
+            distance,
+            delegationDistance(sourcePoint, phase, energy, distance),
+            smoothstep(0.0, 1.0, delegating)
         );
     }
     if (symbolPresence > 0.001) {
@@ -1958,6 +2208,7 @@ half4 main(float2 fragCoord) {
     float searching = clamp(iActivity.y, 0.0, 1.0) * (1.0 - shipGeometry);
     float writing = clamp(iActivity.z, 0.0, 1.0) * (1.0 - shipGeometry);
     float executing = clamp(iActivity.w, 0.0, 1.0) * (1.0 - shipGeometry);
+    float delegating = clamp(iActivity2.x, 0.0, 1.0) * (1.0 - shipGeometry);
     float documentActivity = max(reading, writing);
     float shipMaterialization = clamp(iShipMaterialization, 0.0, 1.0);
     float drivePower = clamp(iShipPropulsion, 0.0, 1.0) * shipGeometry *
@@ -2078,6 +2329,10 @@ half4 main(float2 fragCoord) {
         float2 executingPrompt = float2(0.0);
         if (executing > 0.001) {
             executingPrompt = executingPromptSurface(point, phase) * executing;
+        }
+        float4 delegationField = float4(0.0);
+        if (delegating > 0.001) {
+            delegationField = delegationSurface(point, phase) * delegating;
         }
 
         float3 cyanLight = normalize(float3(-0.55, 0.72, 0.84));
@@ -2204,6 +2459,11 @@ half4 main(float2 fragCoord) {
             float3(0.008, 0.003, 0.038),
             executing * 0.58
         );
+        deepMaterial = mix(
+            deepMaterial,
+            float3(0.007, 0.004, 0.040),
+            delegating * 0.54
+        );
         float3 cyan = mix(
             float3(0.05, 0.70, 0.90),
             iAccent.rgb,
@@ -2278,6 +2538,23 @@ half4 main(float2 fragCoord) {
         material += executingLight * executingPrompt.x * 0.08;
         material += mix(executingLight, float3(0.62, 0.86, 1.0), 0.42) *
             executingPrompt.y * 1.10;
+        float3 delegationLight = mix(
+            iAccent.rgb,
+            float3(0.62, 0.84, 1.0),
+            0.28
+        );
+        material += delegationLight * delegationField.x * 0.20;
+        material += mix(
+            delegationLight,
+            float3(0.48, 0.80, 1.0),
+            0.48
+        ) * delegationField.y * 0.18;
+        material += delegationLight * delegationField.z * 0.22;
+        material += mix(
+            delegationLight,
+            float3(0.90, 0.84, 1.0),
+            0.52
+        ) * delegationField.w * 0.92;
         material += cyan * projection * energy *
             (coolRidge * 0.055 + fresnel * 0.070);
         material += cyan * liquidDetail * thinTransmission * 0.12;

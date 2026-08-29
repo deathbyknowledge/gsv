@@ -16,6 +16,7 @@ const READING_BLUE: [f32; 4] = [0.596, 0.710, 1.0, 1.0];
 const WRITING_LILAC: [f32; 4] = [0.820, 0.610, 1.0, 1.0];
 const SEARCHING_BLUE: [f32; 4] = [0.530, 0.760, 1.0, 1.0];
 const EXECUTING_VIOLET: [f32; 4] = [0.710, 0.560, 1.0, 1.0];
+const DELEGATING_VIOLET: [f32; 4] = [0.680, 0.590, 1.0, 1.0];
 const BLUE: [f32; 4] = [0.561, 0.714, 1.0, 1.0];
 
 const FULLSCREEN_VERTEX_SHADER: &str = r#"
@@ -38,6 +39,7 @@ pub enum VisualPreset {
     Writing,
     Searching,
     Executing,
+    Delegating,
     Speaking,
     ShipHologram,
     ShipPhysical,
@@ -45,13 +47,14 @@ pub enum VisualPreset {
 }
 
 impl VisualPreset {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Listening,
         Self::Thinking,
         Self::Reading,
         Self::Writing,
         Self::Searching,
         Self::Executing,
+        Self::Delegating,
         Self::Speaking,
         Self::ShipHologram,
         Self::ShipPhysical,
@@ -66,6 +69,7 @@ impl VisualPreset {
             Self::Writing => "WRITING",
             Self::Searching => "SEARCHING",
             Self::Executing => "EXECUTING",
+            Self::Delegating => "DELEGATING",
             Self::Speaking => "SPEAKING",
             Self::ShipHologram => "SHIP // DISARMED",
             Self::ShipPhysical => "SHIP // PHYSICAL",
@@ -201,6 +205,7 @@ struct VisualUniforms {
     shape: [f32; 4],
     behavior: [f32; 4],
     activity: [f32; 4],
+    activity2: [f32; 4],
     ship_view_materialization_propulsion: [f32; 4],
 }
 
@@ -210,6 +215,7 @@ struct VisualRecipe {
     shape: [f32; 4],
     behavior: [f32; 4],
     activity: [f32; 4],
+    activity2: [f32; 4],
     materialization: f32,
     propulsion: f32,
 }
@@ -223,6 +229,7 @@ impl VisualRecipe {
                 shape: listening_shape,
                 behavior: [0.0, 0.0, 0.0, 0.0],
                 activity: [0.0; 4],
+                activity2: [0.0; 4],
                 materialization: 1.0,
                 propulsion: 0.0,
             },
@@ -231,6 +238,7 @@ impl VisualRecipe {
                 shape: listening_shape,
                 behavior: [1.0, 1.0, 1.0, 0.0],
                 activity: [0.0; 4],
+                activity2: [0.0; 4],
                 materialization: 1.0,
                 propulsion: 0.0,
             },
@@ -239,6 +247,7 @@ impl VisualRecipe {
                 shape: [0.78, 0.0, 0.0, 0.92],
                 behavior: [0.34, 0.38, 0.72, 0.0],
                 activity: [1.0, 0.0, 0.0, 0.0],
+                activity2: [0.0; 4],
                 materialization: 1.0,
                 propulsion: 0.0,
             },
@@ -247,6 +256,7 @@ impl VisualRecipe {
                 shape: [0.80, 0.0, 0.0, 0.92],
                 behavior: [0.38, 0.46, 0.86, 0.0],
                 activity: [0.0, 0.0, 1.0, 0.0],
+                activity2: [0.0; 4],
                 materialization: 1.0,
                 propulsion: 0.0,
             },
@@ -255,6 +265,7 @@ impl VisualRecipe {
                 shape: [0.84, 0.0, 0.0, 0.92],
                 behavior: [0.40, 0.54, 0.84, 0.0],
                 activity: [0.0, 1.0, 0.0, 0.0],
+                activity2: [0.0; 4],
                 materialization: 1.0,
                 propulsion: 0.0,
             },
@@ -263,6 +274,16 @@ impl VisualRecipe {
                 shape: [0.86, 0.0, 0.0, 0.92],
                 behavior: [0.36, 0.62, 0.92, 0.0],
                 activity: [0.0, 0.0, 0.0, 1.0],
+                activity2: [0.0; 4],
+                materialization: 1.0,
+                propulsion: 0.0,
+            },
+            VisualPreset::Delegating => Self {
+                accent: DELEGATING_VIOLET,
+                shape: [0.92, 0.0, 0.0, 0.92],
+                behavior: [0.82, 0.74, 0.90, 0.0],
+                activity: [0.0; 4],
+                activity2: [1.0, 0.0, 0.0, 0.0],
                 materialization: 1.0,
                 propulsion: 0.0,
             },
@@ -271,6 +292,7 @@ impl VisualRecipe {
                 shape: listening_shape,
                 behavior: [0.0, 0.32, 0.82, 1.0],
                 activity: [0.0; 4],
+                activity2: [0.0; 4],
                 materialization: 1.0,
                 propulsion: 0.0,
             },
@@ -279,6 +301,7 @@ impl VisualRecipe {
                 shape: [1.0, 0.0, 1.0, 0.92],
                 behavior: [0.0, 0.0, 0.0, 0.0],
                 activity: [0.0; 4],
+                activity2: [0.0; 4],
                 materialization: 0.0,
                 propulsion: 0.0,
             },
@@ -287,6 +310,7 @@ impl VisualRecipe {
                 shape: [1.0, 0.0, 1.0, 0.92],
                 behavior: [0.0, 0.0, 0.0, 0.0],
                 activity: [0.0; 4],
+                activity2: [0.0; 4],
                 materialization: 1.0,
                 propulsion: 0.0,
             },
@@ -295,6 +319,7 @@ impl VisualRecipe {
                 shape: [1.0, 0.0, 1.0, 0.92],
                 behavior: [0.0, 0.0, 0.0, 0.0],
                 activity: [0.0; 4],
+                activity2: [0.0; 4],
                 materialization: 1.0,
                 propulsion: 1.0,
             },
@@ -307,6 +332,7 @@ impl VisualRecipe {
         lerp_slice(&mut self.shape, target.shape, blend);
         lerp_slice(&mut self.behavior, target.behavior, blend);
         lerp_slice(&mut self.activity, target.activity, blend);
+        lerp_slice(&mut self.activity2, target.activity2, blend);
         self.materialization +=
             (target.materialization - self.materialization) * (1.0 - (-delta_seconds * 2.6).exp());
         self.propulsion +=
@@ -607,6 +633,10 @@ fn render_loop(
                 0.34 + 0.18 * (loop_phase * 4.0).sin().abs()
                     + 0.08 * (loop_phase * 7.0 + 0.4).sin().abs()
             }
+            VisualPreset::Delegating => {
+                0.28 + 0.14 * (loop_phase * 3.0).sin().abs()
+                    + 0.06 * (loop_phase * 7.0 + 0.6).sin().abs()
+            }
             VisualPreset::Speaking => {
                 let carrier = (phase * 5.7).sin() * 0.5 + (phase * 11.3 + 0.8).sin() * 0.3;
                 (0.42 + carrier.abs() * 0.58).clamp(0.0, 1.0)
@@ -620,6 +650,7 @@ fn render_loop(
             shape: recipe.shape,
             behavior: recipe.behavior,
             activity: recipe.activity,
+            activity2: recipe.activity2,
             ship_view_materialization_propulsion: [
                 orbit,
                 elevation,
