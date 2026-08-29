@@ -57,6 +57,11 @@
       {
         "class_name": "Conversation",
         "name": "CONVERSATION"
+      },
+      {
+        "class_name": "InferenceInstallation",
+        "name": "MANAGED_INFERENCE_INSTALLATIONS",
+        "script_name": "gsv-inference"
       }
     ]
   },

@@ -49,7 +49,21 @@ function integrationGatewayConfig(options: {
     define: config.define,
     rules: config.rules,
     migrations: lifecycleConfig.migrations,
-    durable_objects: lifecycleConfig.durable_objects,
+    durable_objects: {
+      bindings: [
+        ...(lifecycleConfig.durable_objects?.bindings ?? []).filter(
+          (binding: { name: string }) =>
+            binding.name !== "MANAGED_INFERENCE_INSTALLATIONS",
+        ),
+        ...(options.managedServices
+          ? [{
+              name: "MANAGED_INFERENCE_INSTALLATIONS",
+              class_name: "InferenceInstallation",
+              script_name: options.managedServices.inference,
+            }]
+          : []),
+      ],
+    },
     observability: config.observability,
     r2_buckets: config.r2_buckets,
     queues: options.managedMailQueue
@@ -77,13 +91,13 @@ function integrationGatewayConfig(options: {
               binding: "INSTALLATION_DIRECTORY",
               service: options.managedServices?.accounts ?? DEPENDENCY_WORKER,
             },
-            {
-              binding: "MANAGED_INFERENCE",
-              service: options.managedServices?.inference ?? DEPENDENCY_WORKER,
-              entrypoint: options.managedServices
-                ? "InferenceService"
-                : "ManagedInferenceFixture",
-            },
+            ...(options.managedServices
+              ? []
+              : [{
+                  binding: "MANAGED_INFERENCE",
+                  service: DEPENDENCY_WORKER,
+                  entrypoint: "ManagedInferenceFixture",
+                }]),
           ]
         : []),
     ],

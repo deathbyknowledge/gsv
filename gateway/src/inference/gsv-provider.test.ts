@@ -48,7 +48,7 @@ const RESULT: ManagedInferenceResult = {
 };
 
 describe("GSV inference provider", () => {
-  it("registers only when its service binding is present", () => {
+  it("registers when either managed inference binding is present", () => {
     const service: ManagedInferenceService = {
       getInstallation: vi.fn<ManagedInferenceService["getInstallation"]>(),
     };
@@ -61,10 +61,45 @@ describe("GSV inference provider", () => {
     expect(gsvInferenceFeaturesFromEnv({
       MANAGED_INFERENCE: service,
     } as Env)).toEqual([GSV_INFERENCE_FEATURE]);
+    // SAFETY: The fixture implements the direct namespace binding consumed by registration.
+    expect(gsvInferenceProviderFactoryFromEnv({
+      MANAGED_INFERENCE_INSTALLATIONS: { getByName: vi.fn() },
+    } as Env)).toMatchObject({ id: "gsv" });
+    // SAFETY: The fixture implements the direct namespace binding consumed by registration.
+    expect(gsvInferenceFeaturesFromEnv({
+      MANAGED_INFERENCE_INSTALLATIONS: { getByName: vi.fn() },
+    } as Env)).toEqual([GSV_INFERENCE_FEATURE]);
     // SAFETY: An empty Env fixture represents an absent optional binding.
     expect(gsvInferenceProviderFactoryFromEnv({} as Env)).toBeUndefined();
     // SAFETY: An empty Env fixture represents an absent optional binding.
     expect(gsvInferenceFeaturesFromEnv({} as Env)).toEqual([]);
+  });
+
+  it("prefers the direct installation namespace over the service fallback", async () => {
+    const { service, target, dispose } = managedService(
+      vi.fn(async () => eventStream({
+        type: "done",
+        reason: "stop",
+        message: RESULT,
+      })),
+    );
+    const getByName = vi.fn(() => target);
+    // SAFETY: The fixture implements both optional managed inference bindings.
+    const factory = gsvInferenceProviderFactoryFromEnv({
+      MANAGED_INFERENCE_INSTALLATIONS: { getByName },
+      MANAGED_INFERENCE: service,
+    } as Env);
+    if (!factory) throw new Error("managed inference provider was not registered");
+
+    await expect(providerStreamFromFactory(
+      factory,
+      new AbortController().signal,
+    ).result()).resolves.toMatchObject({ stopReason: "stop" });
+
+    expect(getByName).toHaveBeenCalledWith(ATTRIBUTION.installationId);
+    expect(service.getInstallation).not.toHaveBeenCalled();
+    expect(target.generateStream).toHaveBeenCalledOnce();
+    expect(dispose).toHaveBeenCalledOnce();
   });
 
   it("forwards deltas before the managed result completes", async () => {
@@ -239,7 +274,17 @@ function providerStream(
   service: ManagedInferenceService,
   signal: AbortSignal,
 ) {
-  const provider = createGsvInferenceProviderFactory(service).create(ATTRIBUTION);
+  return providerStreamFromFactory(
+    createGsvInferenceProviderFactory(service),
+    signal,
+  );
+}
+
+function providerStreamFromFactory(
+  factory: ReturnType<typeof createGsvInferenceProviderFactory>,
+  signal: AbortSignal,
+) {
+  const provider = factory.create(ATTRIBUTION);
   const models = createModels();
   models.setProvider(provider);
   const model = models.getModel("gsv", GSV_INFERENCE_MODEL)!;

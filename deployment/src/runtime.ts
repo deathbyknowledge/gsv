@@ -33,6 +33,7 @@ export type GsvAdapterBinding = {
 export type GsvRuntimeServices = {
   installationDirectory?: Cloudflare.Workers.Worker;
   inference?: Cloudflare.Workers.WorkerEntrypointBinding;
+  inferenceInstallations?: Cloudflare.Workers.WorkerBindingProps[string];
   entitlements?: Cloudflare.Workers.WorkerEntrypointBinding;
   mailOutbound?: Cloudflare.Queues.Queue;
   adapters?: readonly GsvAdapterBinding[];
@@ -98,6 +99,10 @@ export const GsvRuntime = (props: GsvRuntimeProps) =>
     }
     if (props.services?.inference) {
       managedBindings.MANAGED_INFERENCE = props.services.inference;
+    }
+    if (props.services?.inferenceInstallations) {
+      managedBindings.MANAGED_INFERENCE_INSTALLATIONS =
+        props.services.inferenceInstallations;
     }
     if (props.services?.entitlements) {
       managedBindings.ENTITLEMENTS = props.services.entitlements;

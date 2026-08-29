@@ -52,7 +52,18 @@ const GSV_INFERENCE_MODEL_METADATA: Model<typeof GSV_INFERENCE_API> = {
 
 type GsvInferenceBindings = {
   MANAGED_INFERENCE?: ManagedInferenceService;
+  MANAGED_INFERENCE_INSTALLATIONS?: DurableObjectNamespace;
 };
+
+type ManagedInferenceAccess =
+  | {
+    kind: "installations";
+    installations: DurableObjectNamespace;
+  }
+  | {
+    kind: "service";
+    service: ManagedInferenceService;
+  };
 
 type DisposableManagedInferenceTarget = ManagedInferenceTarget & {
   [Symbol.dispose]?(): void;
@@ -71,18 +82,24 @@ type AppliedManagedInferenceEvent = {
 export function gsvInferenceProviderFactoryFromEnv(
   env: Env,
 ): InferenceProviderFactory | undefined {
-  const service = managedInferenceServiceFromEnv(env);
-  return service ? createGsvInferenceProviderFactory(service) : undefined;
+  const access = managedInferenceAccessFromEnv(env);
+  return access ? createGsvInferenceProviderFactoryForAccess(access) : undefined;
 }
 
 export function gsvInferenceFeaturesFromEnv(env: Env): string[] {
-  return managedInferenceServiceFromEnv(env)
+  return managedInferenceAccessFromEnv(env)
     ? [GSV_INFERENCE_FEATURE]
     : [];
 }
 
 export function createGsvInferenceProviderFactory(
   service: ManagedInferenceService,
+): InferenceProviderFactory {
+  return createGsvInferenceProviderFactoryForAccess({ kind: "service", service });
+}
+
+function createGsvInferenceProviderFactoryForAccess(
+  access: ManagedInferenceAccess,
 ): InferenceProviderFactory {
   return {
     id: GSV_INFERENCE_PROVIDER,
@@ -92,28 +109,33 @@ export function createGsvInferenceProviderFactory(
       auth: {
         apiKey: {
           name: "GSV included inference",
-          resolve: async () => ({ auth: {}, source: "gateway service binding" }),
+          resolve: async () => ({
+            auth: {},
+            source: access.kind === "installations"
+              ? "gateway durable object binding"
+              : "gateway service binding",
+          }),
         },
       },
       models: [GSV_INFERENCE_MODEL_METADATA],
-      api: gsvInferenceStreams(service, attribution),
+      api: gsvInferenceStreams(access, attribution),
     }),
   };
 }
 
 function gsvInferenceStreams(
-  service: ManagedInferenceService,
+  access: ManagedInferenceAccess,
   attribution: InferenceAttribution,
 ): ProviderStreams {
   return {
     stream: (_model, context, options) => streamGsvInference(
-      service,
+      access,
       attribution,
       context,
       options,
     ),
     streamSimple: (_model, context, options) => streamGsvInference(
-      service,
+      access,
       attribution,
       context,
       options,
@@ -122,7 +144,7 @@ function gsvInferenceStreams(
 }
 
 function streamGsvInference(
-  service: ManagedInferenceService,
+  access: ManagedInferenceAccess,
   attribution: InferenceAttribution,
   context: Context,
   options?: StreamOptions | SimpleStreamOptions,
@@ -132,7 +154,7 @@ function streamGsvInference(
   }
   const stream = createAssistantMessageEventStream();
   void pumpGsvInference(
-    service,
+    access,
     buildManagedInferenceRequest(attribution, context, options),
     stream,
     options?.signal,
@@ -170,7 +192,7 @@ function buildManagedInferenceRequest(
 }
 
 async function pumpGsvInference(
-  service: ManagedInferenceService,
+  access: ManagedInferenceAccess,
   request: ManagedInferenceRequest,
   stream: AssistantMessageEventStream,
   signal?: AbortSignal,
@@ -195,19 +217,26 @@ async function pumpGsvInference(
       stream.push(gsvInferenceErrorEvent(true));
       return;
     }
-    const acquisition = service.getInstallation(request.installationId);
-    target = await raceWithAbort(acquisition, signal, {
-      onAbort: () => {
-        acquisitionDisposesLateTarget = disposeManagedInferenceAcquisition(
-          acquisition,
-        );
-      },
-      onLateResolve: (lateTarget) => {
-        if (!acquisitionDisposesLateTarget) {
-          disposeManagedInferenceTarget(lateTarget);
-        }
-      },
-    });
+    if (access.kind === "installations") {
+      target = managedInferenceTarget(
+        access.installations,
+        request.installationId,
+      );
+    } else {
+      const acquisition = access.service.getInstallation(request.installationId);
+      target = await raceWithAbort(acquisition, signal, {
+        onAbort: () => {
+          acquisitionDisposesLateTarget = disposeManagedInferenceAcquisition(
+            acquisition,
+          );
+        },
+        onLateResolve: (lateTarget) => {
+          if (!acquisitionDisposesLateTarget) {
+            disposeManagedInferenceTarget(lateTarget);
+          }
+        },
+      });
+    }
     if (signal?.aborted) {
       stream.push(gsvInferenceErrorEvent(true));
       return;
@@ -451,9 +480,29 @@ function requirePartial(
 }
 
 
-function managedInferenceServiceFromEnv(value: Env): ManagedInferenceService | undefined {
+function managedInferenceAccessFromEnv(value: Env): ManagedInferenceAccess | undefined {
+  // SAFETY: Managed-only bindings are optional extensions to the generated standalone Env.
+  const bindings = value as Env & GsvInferenceBindings;
+  if (bindings.MANAGED_INFERENCE_INSTALLATIONS) {
+    return {
+      kind: "installations",
+      installations: bindings.MANAGED_INFERENCE_INSTALLATIONS,
+    };
+  }
   // SAFETY: Managed deployments bind MANAGED_INFERENCE; standalone deployments omit it.
-  return (value as Env & GsvInferenceBindings).MANAGED_INFERENCE;
+  return bindings.MANAGED_INFERENCE
+    ? { kind: "service", service: bindings.MANAGED_INFERENCE }
+    : undefined;
+}
+
+function managedInferenceTarget(
+  installations: DurableObjectNamespace,
+  installationId: string,
+): ManagedInferenceTarget {
+  const target: unknown = installations.getByName(installationId);
+  // SAFETY: The external namespace is bound to the inference service's exported
+  // InferenceInstallation class, whose public RPC surface implements this contract.
+  return target as ManagedInferenceTarget;
 }
 
 function gsvInferenceErrorEvent(
