@@ -333,6 +333,7 @@ pub struct GsvApp {
     vision_scroll_sequence: u64,
     vision_scroll: gesture::GestureScroller,
     gesture_guide_open: bool,
+    _window_activation_subscription: Subscription,
     _input_subscription: Subscription,
     _login_subscription: Option<Subscription>,
     _machine_subscription: Option<Subscription>,
@@ -646,6 +647,13 @@ impl GsvApp {
         let microphone_focus = cx.focus_handle();
         let presence_lane = cx.new(|_| PresenceLane::new(Vec::new(), false, reduced_motion));
         let core_visual = cx.new(|cx| CoreVisual::new(window, cx, reduced_motion));
+        let window_activation_subscription =
+            cx.observe_window_activation(window, |this, window, cx| {
+                let focused = window.is_window_active();
+                this.core_visual.update(cx, |visual, _| {
+                    visual.set_window_focused(focused);
+                });
+            });
         let input_subscription = cx.subscribe_in(&input, window, |this, _, event, window, cx| {
             this.on_input(event, window, cx);
         });
@@ -925,6 +933,7 @@ impl GsvApp {
             vision_scroll_sequence: 0,
             vision_scroll: gesture::GestureScroller::default(),
             gesture_guide_open: false,
+            _window_activation_subscription: window_activation_subscription,
             _input_subscription: input_subscription,
             _login_subscription: login_subscription,
             _machine_subscription: None,

@@ -99,7 +99,7 @@ pub struct VisualEngineConfig {
     pub width: u32,
     pub height: u32,
     pub frames_per_second: u32,
-    pub idle_frames_per_second: u32,
+    pub unfocused_frames_per_second: u32,
     pub initial_preset: VisualPreset,
     pub initially_active: bool,
 }
@@ -110,7 +110,7 @@ impl Default for VisualEngineConfig {
             width: 1280,
             height: 832,
             frames_per_second: 30,
-            idle_frames_per_second: 30,
+            unfocused_frames_per_second: 30,
             initial_preset: VisualPreset::Listening,
             initially_active: true,
         }
@@ -149,6 +149,7 @@ enum VisualCommand {
     SetResolution { width: u32, height: u32 },
     PulseKeyboard(f32),
     SetMicrophoneLevel(f32),
+    SetWindowFocused(bool),
     SetActive(bool),
     Shutdown,
 }
@@ -171,11 +172,11 @@ impl VisualEngine {
                 "visual renderer frame rate must be non-zero".into(),
             ));
         }
-        if config.idle_frames_per_second == 0
-            || config.idle_frames_per_second > config.frames_per_second
+        if config.unfocused_frames_per_second == 0
+            || config.unfocused_frames_per_second > config.frames_per_second
         {
             return Err(VisualEngineError(
-                "visual renderer idle frame rate must be within its active frame rate".into(),
+                "visual renderer unfocused frame rate must be within its focused frame rate".into(),
             ));
         }
 
@@ -239,6 +240,12 @@ impl VisualEngine {
         let level = validate_input_level("microphone level", level)?;
         self.commands
             .send(VisualCommand::SetMicrophoneLevel(level))
+            .map_err(|_| VisualEngineError("visual renderer has stopped".into()))
+    }
+
+    pub fn set_window_focused(&self, focused: bool) -> Result<(), VisualEngineError> {
+        self.commands
+            .send(VisualCommand::SetWindowFocused(focused))
             .map_err(|_| VisualEngineError("visual renderer has stopped".into()))
     }
 
@@ -752,6 +759,15 @@ struct RendererState {
     height: u32,
     input_response: InputResponse,
     active: bool,
+    focused: bool,
+}
+
+fn frames_per_second(config: &VisualEngineConfig, state: &RendererState) -> u32 {
+    if state.focused {
+        config.frames_per_second
+    } else {
+        config.unfocused_frames_per_second
+    }
 }
 
 fn render_loop(
@@ -767,6 +783,7 @@ fn render_loop(
         height: config.height,
         input_response: InputResponse::default(),
         active: config.initially_active,
+        focused: true,
     };
     let mut renderer = GpuRenderer::new(state.width, state.height)?;
     let started = Instant::now();
@@ -809,12 +826,7 @@ fn render_loop(
         }
 
         let now = Instant::now();
-        let frames_per_second =
-            if state.target == VisualPreset::Listening && !state.input_response.is_active() {
-                config.idle_frames_per_second
-            } else {
-                config.frames_per_second
-            };
+        let frames_per_second = frames_per_second(&config, &state);
         let frame_interval = Duration::from_secs_f64(1.0 / f64::from(frames_per_second));
         if now < next_frame {
             thread::sleep((next_frame - now).min(Duration::from_millis(4)));
@@ -930,6 +942,10 @@ fn apply_command(
             state.input_response.set_microphone_level(level);
             *render_requested |= !was_active && state.input_response.is_active();
         }
+        VisualCommand::SetWindowFocused(focused) => {
+            state.focused = focused;
+            *render_requested |= focused;
+        }
         VisualCommand::SetActive(new_active) => {
             state.active = new_active;
             if !new_active {
@@ -955,6 +971,7 @@ mod tests {
             height: 512,
             input_response: InputResponse::default(),
             active: true,
+            focused: true,
         };
         let mut render_requested = false;
 
@@ -987,11 +1004,51 @@ mod tests {
             &mut render_requested,
         ));
         assert_eq!((state.width, state.height), (768, 768));
+        render_requested = false;
+        assert!(apply_command(
+            VisualCommand::SetWindowFocused(false),
+            &mut state,
+            &mut render_requested,
+        ));
+        assert!(!state.focused);
+        assert!(!render_requested);
+        assert!(apply_command(
+            VisualCommand::SetWindowFocused(true),
+            &mut state,
+            &mut render_requested,
+        ));
+        assert!(state.focused);
+        assert!(render_requested);
         assert!(!apply_command(
             VisualCommand::Shutdown,
             &mut state,
             &mut render_requested,
         ));
+    }
+
+    #[test]
+    fn focused_windows_always_use_the_full_frame_rate() {
+        let config = VisualEngineConfig {
+            frames_per_second: 30,
+            unfocused_frames_per_second: 18,
+            ..VisualEngineConfig::default()
+        };
+        let mut state = RendererState {
+            target: VisualPreset::Listening,
+            orbit: 0.0,
+            elevation: 0.0,
+            width: 512,
+            height: 512,
+            input_response: InputResponse::default(),
+            active: true,
+            focused: true,
+        };
+
+        assert_eq!(frames_per_second(&config, &state), 30);
+        state.target = VisualPreset::Thinking;
+        assert_eq!(frames_per_second(&config, &state), 30);
+        state.focused = false;
+        assert_eq!(frames_per_second(&config, &state), 18);
     }
 
     #[test]

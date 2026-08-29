@@ -126,8 +126,8 @@ impl CoreVisual {
         let config = VisualEngineConfig {
             width: render_extent,
             height: render_extent,
-            frames_per_second: if reduced_motion { 12 } else { 30 },
-            idle_frames_per_second: if reduced_motion { 8 } else { 18 },
+            frames_per_second: 30,
+            unfocused_frames_per_second: if reduced_motion { 8 } else { 18 },
             initial_preset: VisualPreset::Listening,
             initially_active: false,
         };
@@ -138,6 +138,10 @@ impl CoreVisual {
                 return Self::unavailable();
             }
         };
+        if let Err(error) = engine.set_window_focused(window.is_window_active()) {
+            eprintln!("GSV Core visual could not initialize focus cadence: {error}");
+            return Self::unavailable();
+        }
         let mut events = match engine.take_events() {
             Ok(events) => events,
             Err(error) => {
@@ -234,6 +238,15 @@ impl CoreVisual {
         };
         if let Err(error) = engine.set_microphone_level(level) {
             eprintln!("GSV Core visual could not react to microphone input: {error}");
+        }
+    }
+
+    pub(crate) fn set_window_focused(&self, focused: bool) {
+        let Some(engine) = &self.engine else {
+            return;
+        };
+        if let Err(error) = engine.set_window_focused(focused) {
+            eprintln!("GSV Core visual could not change focus cadence: {error}");
         }
     }
 
