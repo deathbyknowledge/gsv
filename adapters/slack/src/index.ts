@@ -110,17 +110,7 @@ export class SlackChannel extends WorkerEntrypoint<Env> implements AdapterServic
   async adapterStatus(...args: AdapterStatusRpcArgs): Promise<AdapterAccountStatus[]> {
     const resolved = resolveAdapterStatusRpcArgs(args);
     if (!resolved.accountId) return [];
-    try {
-      return [await this.account(resolved.installation, resolved.accountId).getStatus()];
-    } catch (error) {
-      return [{
-        accountId: resolved.accountId,
-        connected: false,
-        authenticated: false,
-        mode: "socket-mode",
-        error: safeError(error),
-      }];
-    }
+    return [await this.account(resolved.installation, resolved.accountId).getStatus()];
   }
 
   async adapterSend(

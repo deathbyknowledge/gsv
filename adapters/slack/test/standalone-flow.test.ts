@@ -1,7 +1,8 @@
 import { env, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
-import type { SlackAccount } from "../src/slack-account";
+import { SlackChannel } from "../src/index";
+import { SlackAccount } from "../src/slack-account";
 
 type AccountStub = {
   start(botToken: string, appToken: string, accountId: string): Promise<void>;
@@ -98,6 +99,18 @@ function accountBinding<T>(value: T): T & AccountStub {
   return value as T & AccountStub;
 }
 
+function slackAccountNamespaceBinding<T>(
+  value: T,
+): T & DurableObjectNamespace<SlackAccount> {
+  // SAFETY: this fixture implements the account lookup exercised by SlackChannel.adapterStatus.
+  return value as T & DurableObjectNamespace<SlackAccount>;
+}
+
+function executionContextBinding<T>(value: T): T & ExecutionContext {
+  // SAFETY: adapterStatus does not use its WorkerEntrypoint execution context.
+  return value as T & ExecutionContext;
+}
+
 async function gatewayCalls(): Promise<GatewayCall[]> {
   return await (await fetcherBinding(env.GATEWAY).fetch("https://gateway.test/calls"))
     .json<GatewayCall[]>();
@@ -122,6 +135,23 @@ function account(): AccountStub & DurableObjectStub {
 }
 
 describe("standalone Slack clean-instance flow", () => {
+  it("propagates transient account status failures", async () => {
+    const getStatus = vi.fn(async () => {
+      throw new Error("Slack account RPC unavailable");
+    });
+    const accounts = slackAccountNamespaceBinding({
+      idFromName: vi.fn(() => "default"),
+      get: vi.fn(() => ({ getStatus })),
+    });
+    const channel = new SlackChannel(executionContextBinding({}), {
+      SLACK_ACCOUNT: accounts,
+    });
+
+    await expect(channel.adapterStatus("default"))
+      .rejects.toThrow("Slack account RPC unavailable");
+    expect(getStatus).toHaveBeenCalledOnce();
+  });
+
   it("connects Socket Mode, durably acknowledges ingress, replies, and disconnects", async () => {
     const slack = account();
     await slack.start(
