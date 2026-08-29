@@ -136,7 +136,7 @@ describe("resolveGenerationOptions", () => {
       config: {
         ...CONFIG,
         provider: "google",
-        model: "gemini-3-pro-preview",
+        model: "gemini-3.1-pro-preview",
         reasoning: "medium",
       },
       context: CONTEXT,
@@ -342,6 +342,38 @@ describe("createGenerationService", () => {
       context: CONTEXT,
     })).rejects.toThrow(
       "Workers AI uses a gateway binding and cannot originate model requests from a machine.",
+    );
+  });
+
+  it("uses pi-ai over the Workers AI gateway binding", async () => {
+    const message = assistantMessage([{ type: "text", text: "pong" }]);
+    completePiAiSimpleMock.mockResolvedValueOnce(message);
+
+    await createGenerationService().generate({
+      config: {
+        ...CONFIG,
+        provider: "workers-ai",
+        model: "@cf/zai-org/glm-5.3-flash",
+        apiKey: "",
+      },
+      context: CONTEXT,
+      sessionAffinityKey: "process-1",
+    });
+
+    expect(completePiAiSimpleMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        api: "openai-completions",
+        provider: "workers-ai",
+        id: "@cf/zai-org/glm-5.3-flash",
+      }),
+      CONTEXT,
+      expect.objectContaining({
+        apiKey: "",
+        fetch: expect.any(Function),
+        onPayload: expect.any(Function),
+        sessionId: "process-1",
+      }),
+      expect.anything(),
     );
   });
 

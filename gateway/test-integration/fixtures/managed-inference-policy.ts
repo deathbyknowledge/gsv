@@ -24,17 +24,6 @@ export default class ManagedInferencePolicyFixture extends WorkerEntrypoint {
         outputNanoUsdPerToken: 180,
         cacheReadNanoUsdPerToken: 16,
         cacheWriteNanoUsdPerToken: 0,
-        provider: {
-          allowFallbacks: true,
-          requireParameters: false,
-          dataCollection: "allow",
-          zdr: false,
-          order: [],
-          only: [],
-          ignore: [],
-          quantizations: [],
-          sort: "default",
-        },
         updatedAt: 0,
       },
     };
