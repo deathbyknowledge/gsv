@@ -13,7 +13,12 @@ import {
   type AiConfigResult,
   type AiTextGenerateOptions,
 } from "@humansandmachines/gsv/protocol";
-import { completeWithWorkersAi, isWorkersAiProvider, streamWithWorkersAi } from "./workers-ai";
+import {
+  isWorkersAiProvider,
+  prepareWorkersAiGatewayPayload,
+  workersAiBindingFetch,
+  workersAiProvider,
+} from "./workers-ai";
 import { withTimeout } from "./timeout";
 import { resolveModelThinkingLevel, resolvePiAiModel } from "./model-registry";
 import {
@@ -105,23 +110,13 @@ export function createGenerationService(
     const options = resolveGenerationOptions(request);
     const generationFetch = request.fetch ?? serviceOptions.fetch;
     const generationTimeoutMs = resolveGenerationTimeoutMs(request.config, request.options);
+    const workersAi = isWorkersAiProvider(options.modelProvider);
     const providerFactory = findInferenceProviderFactory(
       serviceOptions,
       options.modelProvider,
     );
-    if (isWorkersAiProvider(options.modelProvider)) {
-      if (generationFetch) {
-        throw new Error("Workers AI uses a gateway binding and cannot originate model requests from a machine.");
-      }
-      return streamWithWorkersAi({
-        modelName: options.modelName,
-        context: request.context,
-        reasoning: options.reasoning,
-        maxTokens: options.maxTokens,
-        sessionAffinityKey: request.sessionAffinityKey,
-        timeoutMs: generationTimeoutMs,
-        signal: request.signal,
-      });
+    if (workersAi && generationFetch) {
+      throw new Error("Workers AI uses a gateway binding and cannot originate model requests from a machine.");
     }
     if (
       options.modelProvider !== OPENAI_CODEX_PROVIDER &&
@@ -186,11 +181,12 @@ export function createGenerationService(
     }
     const result = transports.streamPiAiSimple(piAi.model, request.context, {
       apiKey: options.apiKey,
-      fetch: generationFetch,
+      fetch: workersAi ? workersAiBindingFetch : generationFetch,
       reasoning: options.reasoning,
       maxTokens: options.maxTokens,
       signal: abort.signal,
       timeoutMs: generationTimeoutMs,
+      onPayload: workersAi ? prepareWorkersAiGatewayPayload : undefined,
       ...resolvePiAiTransportOptions(options.modelProvider, request.sessionAffinityKey),
       headers: options.modelProvider === "openrouter" ? OPENROUTER_ATTR_HEADERS : {},
     }, piAi.models);
@@ -205,23 +201,13 @@ export function createGenerationService(
     const options = resolveGenerationOptions(request);
     const generationFetch = request.fetch ?? serviceOptions.fetch;
     const generationTimeoutMs = resolveGenerationTimeoutMs(request.config, request.options);
+    const workersAi = isWorkersAiProvider(options.modelProvider);
     const providerFactory = findInferenceProviderFactory(
       serviceOptions,
       options.modelProvider,
     );
-    if (isWorkersAiProvider(options.modelProvider)) {
-      if (generationFetch) {
-        throw new Error("Workers AI uses a gateway binding and cannot originate model requests from a machine.");
-      }
-      return completeWithWorkersAi({
-        modelName: options.modelName,
-        context: request.context,
-        reasoning: options.reasoning,
-        maxTokens: options.maxTokens,
-        sessionAffinityKey: request.sessionAffinityKey,
-        timeoutMs: generationTimeoutMs,
-        signal: request.signal,
-      });
+    if (workersAi && generationFetch) {
+      throw new Error("Workers AI uses a gateway binding and cannot originate model requests from a machine.");
     }
     if (
       options.modelProvider !== OPENAI_CODEX_PROVIDER &&
@@ -290,11 +276,12 @@ export function createGenerationService(
       return await withTimeout(
         transports.completePiAiSimple(piAi.model, request.context, {
           apiKey: options.apiKey,
-          fetch: generationFetch,
+          fetch: workersAi ? workersAiBindingFetch : generationFetch,
           reasoning: options.reasoning,
           maxTokens: options.maxTokens,
           signal: abort.signal,
           timeoutMs: generationTimeoutMs,
+          onPayload: workersAi ? prepareWorkersAiGatewayPayload : undefined,
           ...resolvePiAiTransportOptions(options.modelProvider, request.sessionAffinityKey),
           headers: options.modelProvider === "openrouter" ? OPENROUTER_ATTR_HEADERS : {},
         }, piAi.models),
@@ -349,6 +336,14 @@ function resolvePiAiProviderModel(
   request: GenerateRequest,
   options: ResolvedGenerationOptions,
 ): PiAiProviderModel {
+  if (isWorkersAiProvider(options.modelProvider)) {
+    const models = modelsWithProviders([workersAiProvider]);
+    const model = models.getModel(workersAiProvider.id, options.modelName);
+    if (!model) {
+      throw new Error(`Model not found: ${options.modelProvider}/${options.modelName}`);
+    }
+    return { models, model };
+  }
   if (!factory) {
     return {
       models: modelsWithProviders([]),
@@ -373,6 +368,9 @@ function resolvePiAiTransportOptions(
   provider: string,
   sessionAffinityKey?: string,
 ): PiAiTransportOptions {
+  if (isWorkersAiProvider(provider)) {
+    return sessionAffinityKey ? { sessionId: sessionAffinityKey } : {};
+  }
   if (provider !== OPENAI_CODEX_PROVIDER) {
     return {};
   }

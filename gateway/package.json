@@ -26,11 +26,12 @@
   "dependencies": {
     "@cfworker/json-schema": "4.1.1",
     "@cloudflare/codemode": "^0.3.4",
-    "@earendil-works/pi-ai": "^0.83.0",
+    "@earendil-works/pi-ai": "0.84.2",
     "@humansandmachines/gsv": "file:../packages/gsv",
     "agents": "^0.16.0",
     "just-bash": "^3.4.2",
     "marked": "^16.4.2",
+    "openai": "6.40.0",
     "zod": "4.3.6"
   }
 }

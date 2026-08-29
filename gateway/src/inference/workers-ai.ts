@@ -1,117 +1,57 @@
 import { env } from "cloudflare:workers";
-import type {
-  AssistantMessage,
-  AssistantMessageEvent,
-  AssistantMessageEventStream,
-  Context,
-  ImageContent,
-  Message,
-  TextContent,
-  ThinkingContent,
-  ThinkingLevel,
-  Tool,
-  ToolCall,
-  ToolResultMessage,
-  UserMessage,
-} from "@earendil-works/pi-ai";
-import { calculateCost, createAssistantMessageEventStream } from "@earendil-works/pi-ai";
-import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import {
-  jsonObjectSchema,
-  jsonValueSchema,
-  type JsonObject,
-  type JsonValue,
-} from "@humansandmachines/gsv/protocol";
-import { z } from "zod";
+  createProvider,
+  type Api,
+  type Model,
+  type Provider,
+  type SimpleStreamOptions,
+} from "@earendil-works/pi-ai";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+import {
+  CLOUDFLARE_GATEWAY_BINDING_AUTH_SENTINEL,
+  createGatewayBindingFetch,
+  type AiGatewayBinding,
+} from "@earendil-works/pi-ai/api/cloudflare-gateway-binding";
+import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { DEFAULT_WORKERS_AI_MODEL } from "./default-models";
-import { TimeoutError, isTimeoutError, withTimeout } from "./timeout";
+import * as z from "zod/mini";
 
 export const WORKERS_AI_PROVIDER = "workers-ai";
 export const WORKERS_AI_PROVIDER_ALIAS = "workersai";
 export { DEFAULT_WORKERS_AI_MODEL };
 
-const WORKERS_AI_API = "workers-ai-binding";
 const PI_WORKERS_AI_PROVIDER = "cloudflare-workers-ai";
+const WORKERS_AI_GATEWAY_ID = "gsv";
+const WORKERS_AI_GATEWAY_BASE_URL =
+  `https://gateway.ai.cloudflare.com/v1/binding/${WORKERS_AI_GATEWAY_ID}`;
+const WORKERS_AI_GATEWAY_COMPAT_URL = `${WORKERS_AI_GATEWAY_BASE_URL}/compat`;
+const WORKERS_AI_GATEWAY_MODEL_PREFIX = "workers-ai/";
 
-type WorkersAiMessage = {
-  role: "user" | "assistant" | "system" | "tool";
-  content: string | null;
-  name?: string;
-  tool_call_id?: string;
-  tool_calls?: WorkersAiToolCall[];
-};
-
-type WorkersAiTool = {
-  type: "function";
-  function: {
-    name: string;
-    description: string;
-    parameters?: {
-      type: "object";
-      properties: Record<string, {
-        type: string;
-        description?: string;
-      }>;
-      required: string[];
-    };
-    strict: boolean | null;
-  };
-};
-
-type WorkersAiRunInput = Omit<AiTextGenerationInput, "messages" | "tools"> & {
-  messages: WorkersAiMessage[];
-  max_completion_tokens?: number;
-  tools?: WorkersAiTool[];
-  parallel_tool_calls?: boolean;
-  reasoning_effort?: Exclude<ThinkingLevel, "off">;
-  chat_template_kwargs?: {
-    enable_thinking?: boolean;
-    clear_thinking?: boolean;
-    thinking?: boolean;
-  };
-};
-
-type WorkersAiUsage = {
-  prompt_tokens?: number;
-  completion_tokens?: number;
-  cached_tokens?: number;
-  total_tokens?: number;
-};
-
-type WorkersAiRunOutput = {
-  response?: string;
-  output_text?: JsonValue;
-  choices?: JsonValue;
-  output?: JsonValue;
-  tool_calls?: JsonValue;
-  usage?: WorkersAiUsage;
-  [key: string]: JsonValue | WorkersAiUsage | undefined;
-};
-
-type WorkersAiStreamInput = WorkersAiRunInput & {
-  stream: true;
-};
-
-type WorkersAiToolCall = {
-  id: string;
-  type: "function";
-  function: {
-    name: string;
-    arguments: string;
-  };
-};
-
-type DynamicWorkersAiBinding = {
-  run(
-    modelName: string,
-    input: WorkersAiStreamInput,
-    options?: WorkersAiRunOptions,
-  ): Promise<ReadableStream>;
-  run(
-    modelName: string,
-    input: WorkersAiRunInput,
-    options?: WorkersAiRunOptions,
-  ): Promise<WorkersAiRunOutput>;
+// pi-ai 0.84.3+ imports a Node user-agent helper that crashes the current
+// Workerd runtime during module evaluation. Keep 0.84.2's binding transport
+// and carry the newer catalog entry locally until that incompatibility clears.
+const GLM_5_3_FLASH: Model<"openai-completions"> = {
+  id: "@cf/zai-org/glm-5.3-flash",
+  name: "GLM-5.3-Flash",
+  api: "openai-completions",
+  provider: PI_WORKERS_AI_PROVIDER,
+  baseUrl: "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+  reasoning: true,
+  input: ["text", "image"],
+  cost: {
+    input: 0.15,
+    output: 0.5,
+    cacheRead: 0.03,
+    cacheWrite: 0,
+  },
+  contextWindow: 1_310_720,
+  maxTokens: 1_310_720,
+  compat: {
+    supportsStore: false,
+    supportsDeveloperRole: false,
+    supportsLongCacheRetention: false,
+    sendSessionAffinityHeaders: true,
+  },
 };
 
 type WorkersAiCatalogProperty = {
@@ -126,852 +66,142 @@ type WorkersAiCatalogModel = {
   properties?: WorkersAiCatalogProperty[];
 };
 
-type WorkersAiCatalogBinding = {
-  models(params?: {
-    author?: string;
-    hide_experimental?: boolean;
-    page?: number;
-    per_page?: number;
-    search?: string;
-    source?: number;
-    task?: string;
-  }): Promise<WorkersAiCatalogModel[]>;
-};
-
-type WorkersAiBinding = DynamicWorkersAiBinding & WorkersAiCatalogBinding;
-type WorkersAiProviderValue = JsonValue | undefined;
-type WorkersAiCaughtError = Parameters<typeof isTimeoutError>[0];
-type DrainedSseEvents = { items: WorkersAiSseEvent[]; remainder: string };
-type WorkersAiAbort = { signal: AbortSignal; clear: () => void };
-
-const nonEmptyStringSchema = z.string().min(1);
-const finiteNumberSchema = z.number().finite();
-
 const workersAiContextWindowCache = new Map<string, Promise<number | null>>();
+const workersAiGatewayPayloadSchema = z.looseObject({});
+type WorkersAiGatewayPayload = z.infer<typeof workersAiGatewayPayloadSchema>;
+type PiAiPayload = Parameters<NonNullable<SimpleStreamOptions["onPayload"]>>[0];
 
-type WorkersAiRequest = {
-  modelName: string;
-  context: Context;
-  reasoning?: ThinkingLevel;
-  maxTokens: number;
-  sessionAffinityKey?: string;
-  timeoutMs?: number;
-  signal?: AbortSignal;
+const workersAiCatalog = getBuiltinModels(PI_WORKERS_AI_PROVIDER);
+if (!workersAiCatalog.some((model) => model.id === GLM_5_3_FLASH.id)) {
+  workersAiCatalog.push(GLM_5_3_FLASH);
+}
+
+export const workersAiProvider: Provider<"openai-completions"> =
+  createProvider<"openai-completions">({
+    id: WORKERS_AI_PROVIDER,
+    name: "Cloudflare Workers AI",
+    auth: {
+      apiKey: {
+        name: "Workers AI binding",
+        resolve: async ({ signal }) => {
+          signal.throwIfAborted();
+          if (!getWorkersAiBinding()) return undefined;
+          return {
+            auth: {
+              headers: {
+                "cf-aig-authorization":
+                  `Bearer ${CLOUDFLARE_GATEWAY_BINDING_AUTH_SENTINEL}`,
+                "cf-aig-collect-log": "false",
+                Authorization: null,
+                "x-api-key": null,
+              },
+            },
+            source: "Workers AI binding",
+          };
+        },
+      },
+    },
+    models: workersAiCatalog.flatMap((model) => {
+      if (model.api !== "openai-completions") return [];
+      const workersAiModel: Model<"openai-completions"> = {
+        ...model,
+        provider: WORKERS_AI_PROVIDER,
+        baseUrl: WORKERS_AI_GATEWAY_COMPAT_URL,
+      };
+      return [workersAiModel];
+    }),
+    api: openAICompletionsApi(),
+  });
+
+const workersAiGatewayBinding: AiGatewayBinding = {
+  gateway(id) {
+    const binding = getWorkersAiBinding();
+    if (!binding) {
+      throw new Error("Workers AI binding is not configured for this worker");
+    }
+    return binding.gateway(id);
+  },
 };
 
-type WorkersAiRunOptions = AiOptions & {
-  headers?: HeadersInit;
-};
+export const workersAiBindingFetch = createGatewayBindingFetch({
+  binding: workersAiGatewayBinding,
+  baseUrl: WORKERS_AI_GATEWAY_BASE_URL,
+  gateway: WORKERS_AI_GATEWAY_ID,
+});
 
 export function isWorkersAiProvider(provider: string): boolean {
   const normalized = provider.trim().toLowerCase();
   return normalized === WORKERS_AI_PROVIDER || normalized === WORKERS_AI_PROVIDER_ALIAS;
 }
 
-export function extractWorkersAiContextWindow(model: WorkersAiCatalogModel): number | null {
+export function resolveWorkersAiModelMetadata(
+  modelName: string,
+): Model<"openai-completions"> | null {
+  return workersAiProvider.getModels().find((model) => model.id === modelName) ?? null;
+}
+
+export function prepareWorkersAiGatewayPayload(
+  payload: PiAiPayload,
+  model: Model<Api>,
+): WorkersAiGatewayPayload {
+  const parsed = workersAiGatewayPayloadSchema.safeParse(payload);
+  if (!parsed.success) {
+    throw new Error("Workers AI generated an invalid request payload");
+  }
+  return {
+    ...parsed.data,
+    model: `${WORKERS_AI_GATEWAY_MODEL_PREFIX}${model.id}`,
+  };
+}
+
+export function extractWorkersAiContextWindow(
+  model: WorkersAiCatalogModel,
+): number | null {
   for (const property of model.properties ?? []) {
     if (!isContextWindowPropertyId(property.property_id)) continue;
     const tokens = parseTokenQuantity(property.value);
-    if (tokens !== null) {
-      return tokens;
-    }
+    if (tokens !== null) return tokens;
   }
-
   return parseContextWindowDescription(model.description ?? "");
 }
 
-export async function resolveWorkersAiModelContextWindow(modelName: string): Promise<number | null> {
+export async function resolveWorkersAiModelContextWindow(
+  modelName: string,
+): Promise<number | null> {
+  const catalogModel = resolveWorkersAiModelMetadata(modelName);
+  if (catalogModel) return catalogModel.contextWindow;
+
   const cacheKey = normalizeWorkersAiModelName(modelName);
   const cached = workersAiContextWindowCache.get(cacheKey);
-  if (cached) {
-    return cached;
-  }
+  if (cached) return cached;
 
   const lookup = lookupWorkersAiModelContextWindow(modelName);
   workersAiContextWindowCache.set(cacheKey, lookup);
   return lookup;
 }
 
-export async function completeWithWorkersAi(
-  request: WorkersAiRequest,
-): Promise<AssistantMessage> {
-  const ai = getWorkersAiBinding();
-  if (!ai) {
-    throw new Error("Workers AI binding is not configured for this worker");
-  }
-
-  const primaryInput = buildWorkersAiInput(request);
-  const runOptions = buildWorkersAiRunOptions(request);
-
-  try {
-    const response = await runWorkersAiWithTimeout(
-      ai,
-      request.modelName,
-      primaryInput,
-      runOptions,
-      request.timeoutMs,
-      request.signal,
-    );
-    return normalizeWorkersAiResponse(response, request.modelName);
-  } catch (error) {
-    if (primaryInput.tools && primaryInput.tools.length > 0 && !shouldSkipNoToolsFallback(error, request.signal)) {
-      const fallbackInput = buildWorkersAiInput(request, { disableTools: true });
-      try {
-        const fallbackResponse = await runWorkersAiWithTimeout(
-          ai,
-          request.modelName,
-          fallbackInput,
-          runOptions,
-          request.timeoutMs,
-          request.signal,
-        );
-        return normalizeWorkersAiResponse(fallbackResponse, request.modelName);
-      } catch (fallbackError) {
-        if (request.signal?.aborted) {
-          throw fallbackError;
-        }
-      }
-    }
-
-    throw error;
-  }
+export function hasWorkersAiModelPricing(modelName: string): boolean {
+  return resolveWorkersAiModelMetadata(modelName) !== null;
 }
 
-export function streamWithWorkersAi(
-  request: WorkersAiRequest,
-): AssistantMessageEventStream {
-  const stream = createAssistantMessageEventStream();
-  void pumpWorkersAiStream(request, stream);
-  return stream;
-}
-
-async function pumpWorkersAiStream(
-  request: WorkersAiRequest,
-  stream: AssistantMessageEventStream,
-): Promise<void> {
-  const ai = getWorkersAiBinding();
-  if (!ai) {
-    pushWorkersAiError(stream, request.modelName, "Workers AI binding is not configured for this worker");
-    return;
-  }
-
-  const primaryInput = buildWorkersAiInput(request);
-  const runOptions = buildWorkersAiRunOptions(request);
-  const emitter = new WorkersAiPiEventEmitter(stream, request.modelName);
-
-  try {
-    await streamWorkersAiResponse(ai, request, primaryInput, runOptions, emitter);
-    emitter.finish();
-  } catch (error) {
-    if (primaryInput.tools && primaryInput.tools.length > 0 && emitter.eventCount <= 1 && !shouldSkipNoToolsFallback(error, request.signal)) {
-      try {
-        const fallbackInput = buildWorkersAiInput(request, { disableTools: true });
-        await streamWorkersAiResponse(ai, request, fallbackInput, runOptions, emitter);
-        emitter.finish();
-        return;
-      } catch (fallbackError) {
-        pushWorkersAiError(stream, request.modelName, fallbackError, request.signal?.aborted);
-        return;
-      }
-    }
-
-    pushWorkersAiError(stream, request.modelName, error, request.signal?.aborted);
-  }
-}
-
-async function streamWorkersAiResponse(
-  ai: DynamicWorkersAiBinding,
-  request: WorkersAiRequest,
-  input: WorkersAiRunInput,
-  options: WorkersAiRunOptions | undefined,
-  emitter: WorkersAiPiEventEmitter,
-): Promise<void> {
-  const timeoutMs = request.timeoutMs ?? 0;
-  const abort = createWorkersAiAbort(request.signal, timeoutMs);
-
-  try {
-    const stream = await runWorkersAiStreamWithTimeout(
-      ai,
-      request.modelName,
-      input,
-      withWorkersAiAbortSignal(options, abort.signal),
-      timeoutMs,
-    );
-    await readWorkersAiSse(stream, emitter, abort.signal);
-  } finally {
-    abort.clear();
-  }
-}
-
-function shouldSkipNoToolsFallback(error: WorkersAiCaughtError, signal?: AbortSignal): boolean {
-  return isTimeoutError(error)
-    || signal?.aborted === true
-    || (error instanceof Error && error.name === "AbortError");
-}
-
-async function runWorkersAiWithTimeout(
-  ai: DynamicWorkersAiBinding,
+async function lookupWorkersAiModelContextWindow(
   modelName: string,
-  input: WorkersAiRunInput,
-  options: WorkersAiRunOptions | undefined,
-  timeoutMs: number | undefined,
-  callerSignal?: AbortSignal,
-): Promise<WorkersAiRunOutput> {
-  const abort = createWorkersAiAbort(callerSignal, timeoutMs ?? 0);
-  try {
-    return await withTimeout(
-      ai.run(modelName, input, withWorkersAiAbortSignal(options, abort.signal)),
-      timeoutMs ?? 0,
-      `Workers AI generation timed out after ${timeoutMs}ms`,
-    );
-  } finally {
-    abort.clear();
-  }
-}
-
-function runWorkersAiStreamWithTimeout(
-  ai: DynamicWorkersAiBinding,
-  modelName: string,
-  input: WorkersAiRunInput,
-  options: WorkersAiRunOptions | undefined,
-  timeoutMs: number | undefined,
-): Promise<ReadableStream> {
-  const run = ai.run(modelName, { ...input, stream: true }, options);
-  return withTimeout(
-    run,
-    timeoutMs ?? 0,
-    `Workers AI generation timed out after ${timeoutMs}ms`,
-  );
-}
-
-type WorkersAiSseEvent = {
-  event?: string;
-  data: string;
-};
-
-type WorkersAiToolAccumulator = {
-  contentIndex: number;
-  id: string;
-  name: string;
-  argumentsText: string;
-};
-
-type WorkersAiStreamDelta = {
-  text?: string;
-  thinking?: string;
-  toolCalls?: Array<{
-    index: number;
-    id?: string;
-    name?: string;
-    argumentsDelta?: string;
-  }>;
-  usage?: AssistantMessage["usage"];
-  finishReason?: string;
-};
-
-class WorkersAiPiEventEmitter {
-  readonly stream: AssistantMessageEventStream;
-  readonly partial: AssistantMessage;
-  eventCount = 0;
-  private readonly modelName: string;
-  private textIndex: number | null = null;
-  private thinkingIndex: number | null = null;
-  private readonly toolCalls = new Map<number, WorkersAiToolAccumulator>();
-  private finishReason: string | null = null;
-
-  constructor(stream: AssistantMessageEventStream, modelName: string) {
-    this.stream = stream;
-    this.modelName = modelName;
-    this.partial = {
-      role: "assistant",
-      content: [],
-      api: WORKERS_AI_API,
-      provider: WORKERS_AI_PROVIDER,
-      model: modelName,
-      usage: emptyUsage(),
-      stopReason: "stop",
-      timestamp: Date.now(),
-    };
-    this.push({
-      type: "start",
-      partial: snapshotAssistantMessage(this.partial),
-    });
-  }
-
-  apply(delta: WorkersAiStreamDelta): void {
-    if (delta.usage) {
-      applyWorkersAiUsageCost(this.modelName, delta.usage);
-      this.partial.usage = delta.usage;
-    }
-    if (delta.finishReason) {
-      this.finishReason = delta.finishReason;
-    }
-    if (delta.thinking) {
-      this.appendThinking(delta.thinking);
-    }
-    if (delta.text) {
-      this.appendText(delta.text);
-    }
-    for (const toolCall of delta.toolCalls ?? []) {
-      this.appendToolCall(toolCall);
-    }
-  }
-
-  finish(): void {
-    this.finishThinking();
-    this.finishText();
-    for (const index of Array.from(this.toolCalls.keys()).sort((a, b) => a - b)) {
-      this.finishToolCall(index);
-    }
-
-    const message = snapshotAssistantMessage(this.partial);
-    if (message.usage.totalTokens === 0) {
-      message.usage.totalTokens = message.usage.input
-        + message.usage.output
-        + message.usage.cacheRead
-        + message.usage.cacheWrite;
-    }
-    applyWorkersAiUsageCost(this.modelName, message.usage);
-    message.stopReason = this.resolveStopReason(message);
-
-    if (!this.hasVisibleOutput(message)) {
-      message.stopReason = "error";
-      message.errorMessage = message.content.length === 0
-        ? "Workers AI returned an empty response"
-        : "Workers AI returned reasoning but no final response";
-    }
-
-    if (message.stopReason === "error" || message.stopReason === "aborted") {
-      if (message.content.length === 0) {
-        message.stopReason = "error";
-        message.errorMessage = "Workers AI returned an empty response";
-      }
-      this.push({
-        type: "error",
-        reason: message.stopReason === "aborted" ? "aborted" : "error",
-        error: message,
-      });
-      return;
-    }
-
-    this.push({
-      type: "done",
-      reason: message.stopReason === "length" ? "length" : message.stopReason === "toolUse" ? "toolUse" : "stop",
-      message,
-    });
-  }
-
-  private hasVisibleOutput(message: AssistantMessage): boolean {
-    return message.content.some((block) => (
-      block.type === "toolCall" ||
-      (block.type === "text" && block.text.trim().length > 0)
-    ));
-  }
-
-  private appendText(delta: string): void {
-    if (this.textIndex === null) {
-      this.textIndex = this.partial.content.length;
-      this.partial.content.push({ type: "text", text: "" });
-      this.push({
-        type: "text_start",
-        contentIndex: this.textIndex,
-        partial: snapshotAssistantMessage(this.partial),
-      });
-    }
-
-    const block = this.partial.content[this.textIndex];
-    if (block?.type !== "text") return;
-    block.text += delta;
-    this.push({
-      type: "text_delta",
-      contentIndex: this.textIndex,
-      delta,
-      partial: snapshotAssistantMessage(this.partial),
-    });
-  }
-
-  private finishText(): void {
-    if (this.textIndex === null) return;
-    const block = this.partial.content[this.textIndex];
-    if (block?.type !== "text") return;
-    this.push({
-      type: "text_end",
-      contentIndex: this.textIndex,
-      content: block.text,
-      partial: snapshotAssistantMessage(this.partial),
-    });
-    this.textIndex = null;
-  }
-
-  private appendThinking(delta: string): void {
-    if (this.thinkingIndex === null) {
-      this.thinkingIndex = this.partial.content.length;
-      this.partial.content.push({ type: "thinking", thinking: "" });
-      this.push({
-        type: "thinking_start",
-        contentIndex: this.thinkingIndex,
-        partial: snapshotAssistantMessage(this.partial),
-      });
-    }
-
-    const block = this.partial.content[this.thinkingIndex];
-    if (block?.type !== "thinking") return;
-    block.thinking += delta;
-    this.push({
-      type: "thinking_delta",
-      contentIndex: this.thinkingIndex,
-      delta,
-      partial: snapshotAssistantMessage(this.partial),
-    });
-  }
-
-  private finishThinking(): void {
-    if (this.thinkingIndex === null) return;
-    const block = this.partial.content[this.thinkingIndex];
-    if (block?.type !== "thinking") return;
-    this.push({
-      type: "thinking_end",
-      contentIndex: this.thinkingIndex,
-      content: block.thinking,
-      partial: snapshotAssistantMessage(this.partial),
-    });
-    this.thinkingIndex = null;
-  }
-
-  private appendToolCall(delta: NonNullable<WorkersAiStreamDelta["toolCalls"]>[number]): void {
-    const existing = this.toolCalls.get(delta.index);
-    if (!existing) {
-      const accumulator: WorkersAiToolAccumulator = {
-        contentIndex: this.partial.content.length,
-        id: delta.id ?? `workers-ai-tool-${delta.index + 1}`,
-        name: delta.name ?? "tool",
-        argumentsText: "",
-      };
-      this.toolCalls.set(delta.index, accumulator);
-      this.partial.content.push({
-        type: "toolCall",
-        id: accumulator.id,
-        name: accumulator.name,
-        arguments: {},
-      });
-      this.push({
-        type: "toolcall_start",
-        contentIndex: accumulator.contentIndex,
-        partial: snapshotAssistantMessage(this.partial),
-      });
-    }
-
-    const accumulator = this.toolCalls.get(delta.index);
-    if (!accumulator) return;
-    if (delta.id) accumulator.id = delta.id;
-    if (delta.name) accumulator.name = delta.name;
-    if (delta.argumentsDelta) accumulator.argumentsText += delta.argumentsDelta;
-
-    const block = this.partial.content[accumulator.contentIndex];
-    if (block?.type !== "toolCall") return;
-    block.id = accumulator.id;
-    block.name = accumulator.name;
-    block.arguments = parseToolArguments(accumulator.argumentsText);
-
-    if (delta.argumentsDelta) {
-      this.push({
-        type: "toolcall_delta",
-        contentIndex: accumulator.contentIndex,
-        delta: delta.argumentsDelta,
-        partial: snapshotAssistantMessage(this.partial),
-      });
-    }
-  }
-
-  private finishToolCall(index: number): void {
-    const accumulator = this.toolCalls.get(index);
-    if (!accumulator) return;
-    const block = this.partial.content[accumulator.contentIndex];
-    if (block?.type !== "toolCall") return;
-    block.id = accumulator.id;
-    block.name = accumulator.name;
-    block.arguments = parseToolArguments(accumulator.argumentsText);
-    this.push({
-      type: "toolcall_end",
-      contentIndex: accumulator.contentIndex,
-      toolCall: snapshotToolCall(block),
-      partial: snapshotAssistantMessage(this.partial),
-    });
-  }
-
-  private resolveStopReason(message: AssistantMessage): AssistantMessage["stopReason"] {
-    if (message.content.some((block) => block.type === "toolCall")) {
-      return "toolUse";
-    }
-    const reason = normalizeWorkersAiFinishReason(this.finishReason);
-    if (reason) {
-      return reason;
-    }
-    return "stop";
-  }
-
-  private push(event: AssistantMessageEvent): void {
-    this.eventCount += 1;
-    this.stream.push(snapshotAssistantMessageEvent(event));
-  }
-}
-
-async function readWorkersAiSse(
-  body: ReadableStream,
-  emitter: WorkersAiPiEventEmitter,
-  signal: AbortSignal,
-): Promise<void> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  const abortRead = () => {
-    void reader.cancel(signal.reason).catch(() => {});
-  };
-  signal.addEventListener("abort", abortRead, { once: true });
-
-  try {
-    if (signal.aborted) {
-      abortRead();
-    }
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const events = drainSseEvents(buffer);
-      buffer = events.remainder;
-      for (const event of events.items) {
-        applyWorkersAiSseEvent(event, emitter);
-      }
-    }
-
-    if (signal.aborted) {
-      throw signal.reason instanceof Error ? signal.reason : new Error("Workers AI stream aborted");
-    }
-
-    buffer += decoder.decode();
-    const events = drainSseEvents(`${buffer}\n\n`);
-    for (const event of events.items) {
-      applyWorkersAiSseEvent(event, emitter);
-    }
-  } finally {
-    signal.removeEventListener("abort", abortRead);
-    reader.releaseLock();
-  }
-}
-
-function drainSseEvents(input: string): DrainedSseEvents {
-  const normalized = input.replace(/\r\n/g, "\n");
-  const items: WorkersAiSseEvent[] = [];
-  let cursor = 0;
-
-  while (true) {
-    const boundary = normalized.indexOf("\n\n", cursor);
-    if (boundary === -1) {
-      return {
-        items,
-        remainder: normalized.slice(cursor),
-      };
-    }
-
-    const raw = normalized.slice(cursor, boundary);
-    cursor = boundary + 2;
-    const event = parseSseEvent(raw);
-    if (event) {
-      items.push(event);
-    }
-  }
-}
-
-function parseSseEvent(raw: string): WorkersAiSseEvent | null {
-  let event: string | undefined;
-  const data: string[] = [];
-
-  for (const line of raw.split("\n")) {
-    if (!line || line.startsWith(":")) continue;
-    const separator = line.indexOf(":");
-    const field = separator === -1 ? line : line.slice(0, separator);
-    const value = separator === -1 ? "" : line.slice(separator + 1).replace(/^ /, "");
-    if (field === "event") {
-      event = value;
-    } else if (field === "data") {
-      data.push(value);
-    }
-  }
-
-  if (data.length === 0) return null;
-  return {
-    event,
-    data: data.join("\n"),
-  };
-}
-
-function applyWorkersAiSseEvent(
-  event: WorkersAiSseEvent,
-  emitter: WorkersAiPiEventEmitter,
-): void {
-  const data = event.data.trim();
-  if (!data || data === "[DONE]") {
-    return;
-  }
-
-  const parsed = parseJsonObject(data);
-  if (!parsed) {
-    return;
-  }
-
-  const delta = extractWorkersAiStreamDelta(parsed);
-  if (delta) {
-    emitter.apply(delta);
-  }
-}
-
-function extractWorkersAiStreamDelta(record: JsonObject): WorkersAiStreamDelta | null {
-  const result: WorkersAiStreamDelta = {};
-
-  const responseText = asString(record.response);
-  if (responseText) {
-    result.text = responseText;
-  }
-
-  const outputText = asString(record.output_text);
-  if (outputText) {
-    result.text = (result.text ?? "") + outputText;
-  }
-
-  const choices = Array.isArray(record.choices) ? record.choices : [];
-  for (const choice of choices) {
-    const choiceRecord = asRecord(choice);
-    if (!choiceRecord) continue;
-    const finishReason = asString(choiceRecord.finish_reason) ?? asString(choiceRecord.finishReason);
-    if (finishReason) {
-      result.finishReason = finishReason;
-    }
-
-    const delta = asRecord(choiceRecord.delta) ?? asRecord(choiceRecord.message);
-    if (!delta) continue;
-    const content = extractChoiceMessageText(delta);
-    if (content) {
-      result.text = (result.text ?? "") + content;
-    }
-    const thinking = extractChoiceMessageThinking(delta);
-    if (thinking) {
-      result.thinking = (result.thinking ?? "") + thinking;
-    }
-    const toolCalls = extractDeltaToolCalls(delta.tool_calls);
-    if (toolCalls.length > 0) {
-      result.toolCalls = [...(result.toolCalls ?? []), ...toolCalls];
-    }
-  }
-
-  const usage = normalizeWorkersAiUsage(record.usage);
-  if (usage) {
-    result.usage = usage;
-  }
-
-  const finishReason = asString(record.finish_reason) ?? asString(record.finishReason);
-  if (finishReason) {
-    result.finishReason = finishReason;
-  }
-
-  const topLevelToolCalls = extractDeltaToolCalls(record.tool_calls);
-  if (topLevelToolCalls.length > 0) {
-    result.toolCalls = [...(result.toolCalls ?? []), ...topLevelToolCalls];
-  }
-
-  return result.text || result.thinking || result.toolCalls?.length || result.usage || result.finishReason
-    ? result
-    : null;
-}
-
-function extractDeltaToolCalls(
-  input: WorkersAiProviderValue,
-): NonNullable<WorkersAiStreamDelta["toolCalls"]> {
-  if (!Array.isArray(input)) return [];
-
-  return input.flatMap((entry, fallbackIndex) => {
-    const record = asRecord(entry);
-    if (!record) return [];
-    const fn = asRecord(record.function);
-    const indexValue = asOptionalNumber(record.index);
-    const index = indexValue !== undefined
-      ? indexValue
-      : fallbackIndex;
-    const id = asString(record.id);
-    const name = asString(fn?.name) ?? asString(record.name);
-    const argumentsDelta = asString(fn?.arguments) ?? asString(record.arguments);
-    if (!id && !name && !argumentsDelta) return [];
-    return [{
-      index,
-      id,
-      name,
-      argumentsDelta,
-    }];
-  });
-}
-
-function withWorkersAiAbortSignal(
-  options: WorkersAiRunOptions | undefined,
-  signal: AbortSignal,
-): WorkersAiRunOptions {
-  return {
-    ...options,
-    signal,
-  };
-}
-
-function createWorkersAiAbort(
-  callerSignal: AbortSignal | undefined,
-  timeoutMs: number,
-): WorkersAiAbort {
-  const timeoutController = new AbortController();
-  const timeout = Number.isFinite(timeoutMs) && timeoutMs > 0
-    ? setTimeout(() => {
-        timeoutController.abort(new TimeoutError(`Workers AI generation timed out after ${timeoutMs}ms`));
-      }, timeoutMs)
-    : null;
-  return {
-    signal: callerSignal
-      ? AbortSignal.any([callerSignal, timeoutController.signal])
-      : timeoutController.signal,
-    clear: () => {
-      if (timeout !== null) clearTimeout(timeout);
-    },
-  };
-}
-
-function pushWorkersAiError(
-  stream: AssistantMessageEventStream,
-  modelName: string,
-  error: WorkersAiCaughtError,
-  callerAborted = false,
-): void {
-  const message = error instanceof Error ? error.message : String(error);
-  const aborted = callerAborted || (error instanceof Error && error.name === "AbortError");
-  const assistant: AssistantMessage = {
-    role: "assistant",
-    content: [],
-    api: WORKERS_AI_API,
-    provider: WORKERS_AI_PROVIDER,
-    model: modelName,
-    usage: emptyUsage(),
-    stopReason: aborted ? "aborted" : "error",
-    errorMessage: message,
-    timestamp: Date.now(),
-  };
-  stream.push({
-    type: "error",
-    reason: aborted ? "aborted" : "error",
-    error: assistant,
-  });
-}
-
-function normalizeWorkersAiUsage(
-  usage: WorkersAiProviderValue,
-): AssistantMessage["usage"] | null {
-  const record = asRecord(usage);
-  if (!record) return null;
-  const promptTokens = asNumber(record.prompt_tokens) || asNumber(record.input_tokens);
-  const output = asNumber(record.completion_tokens) || asNumber(record.output_tokens);
-  const cacheRead = Math.min(promptTokens, asNumber(record.cached_tokens));
-  const input = Math.max(0, promptTokens - cacheRead);
-  const totalTokens = asNumber(record.total_tokens)
-    || asNumber(record.totalTokens)
-    || input + output + cacheRead;
-  const normalized = {
-    input,
-    output,
-    cacheRead,
-    cacheWrite: 0,
-    totalTokens,
-    cost: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      total: 0,
-    },
-  };
-  return normalized;
-}
-
-function normalizeWorkersAiFinishReason(reason: string | null): AssistantMessage["stopReason"] | null {
-  if (!reason) return null;
-  const normalized = reason.toLowerCase();
-  if (normalized === "tool_calls" || normalized === "tool_use" || normalized === "function_call") {
-    return "toolUse";
-  }
-  if (normalized === "length" || normalized === "max_tokens") {
-    return "length";
-  }
-  if (normalized === "error") {
-    return "error";
-  }
-  if (normalized === "aborted") {
-    return "aborted";
-  }
-  return "stop";
-}
-
-function emptyUsage(): AssistantMessage["usage"] {
-  return {
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens: 0,
-    cost: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      total: 0,
-    },
-  };
-}
-
-function snapshotAssistantMessageEvent<T extends AssistantMessageEvent>(event: T): T {
-  return structuredClone(event);
-}
-
-function snapshotAssistantMessage(message: AssistantMessage): AssistantMessage {
-  return structuredClone(message);
-}
-
-function snapshotToolCall(toolCall: ToolCall): ToolCall {
-  return structuredClone(toolCall);
-}
-
-function parseJsonObject(input: string): JsonObject | null {
-  try {
-    const parsed = jsonObjectSchema.safeParse(JSON.parse(input));
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
-  }
-}
-
-async function lookupWorkersAiModelContextWindow(modelName: string): Promise<number | null> {
+): Promise<number | null> {
   const ai = getWorkersAiBinding();
-  if (!ai) {
-    return null;
-  }
+  if (!ai) return null;
 
   try {
     for (const search of workersAiModelSearchTerms(modelName)) {
-      const models = await ai.models({
-        search,
-        per_page: 50,
-      });
-      const exact = models.find((candidate) => isWorkersAiModelMatch(candidate, modelName));
+      const models = await ai.models({ search, per_page: 50 });
+      const exact = models.find((candidate) =>
+        isWorkersAiModelMatch(candidate, modelName)
+      );
       const contextWindow = exact ? extractWorkersAiContextWindow(exact) : null;
-      if (contextWindow !== null) {
-        return contextWindow;
-      }
+      if (contextWindow !== null) return contextWindow;
     }
   } catch {
     return null;
   }
-
   return null;
 }
 
@@ -983,68 +213,61 @@ function workersAiModelSearchTerms(modelName: string): string[] {
   ].map((term) => term.trim()).filter((term) => term.length > 0)));
 }
 
-function isWorkersAiModelMatch(model: WorkersAiCatalogModel, modelName: string): boolean {
+function isWorkersAiModelMatch(
+  model: WorkersAiCatalogModel,
+  modelName: string,
+): boolean {
   const requested = normalizeWorkersAiModelName(modelName);
-  return [
-    model.id,
-    model.name,
-  ].some((candidate) => candidate !== undefined && normalizeWorkersAiModelName(candidate) === requested);
+  return [model.id, model.name].some((candidate) =>
+    candidate !== undefined
+    && normalizeWorkersAiModelName(candidate) === requested
+  );
 }
 
 function normalizeWorkersAiModelName(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/^@cf\//, "");
+  return value.trim().toLowerCase().replace(/^@cf\//, "");
 }
 
 function isContextWindowPropertyId(propertyId: string): boolean {
   const normalized = propertyId.toLowerCase().replace(/[^a-z0-9]/g, "");
   return (
-    normalized.includes("context") &&
-    (normalized.includes("window") ||
-      normalized.includes("token") ||
-      normalized.includes("length"))
+    normalized.includes("context")
+    && (
+      normalized.includes("window")
+      || normalized.includes("token")
+      || normalized.includes("length")
+    )
   ) || (
-    normalized.includes("max") &&
-    normalized.includes("input") &&
-    normalized.includes("token")
+    normalized.includes("max")
+    && normalized.includes("input")
+    && normalized.includes("token")
   );
 }
 
 function parseContextWindowDescription(description: string): number | null {
   const normalized = description.replace(/,/g, "");
   const patterns = [
-    /(\d+(?:\.\d+)?)\s*k\s*(?:token\s*)?context window/i,
+    /(\d+(?:\.\d+)?)\s*[km]\s*(?:token\s*)?context window/i,
     /(\d+(?:\.\d+)?)\s*(?:token|tokens)\s*context window/i,
-    /context window[^.]{0,80}?(\d+(?:\.\d+)?)\s*k/i,
-    /up to\s+(\d+(?:\.\d+)?)\s*k\s*tokens/i,
+    /context window[^.]{0,80}?(\d+(?:\.\d+)?)\s*[km]/i,
+    /up to\s+(\d+(?:\.\d+)?)\s*[km]\s*tokens/i,
     /up to\s+(\d+(?:\.\d+)?)\s*(?:token|tokens)/i,
   ];
-
   for (const pattern of patterns) {
     const match = normalized.match(pattern);
     const tokens = match ? parseTokenQuantity(match[0]) : null;
-    if (tokens !== null) {
-      return tokens;
-    }
+    if (tokens !== null) return tokens;
   }
-
   return null;
 }
 
 function parseTokenQuantity(value: string): number | null {
   const normalized = value.toLowerCase().replace(/,/g, "");
   const match = normalized.match(/(\d+(?:\.\d+)?)\s*([km])?\b/);
-  if (!match) {
-    return null;
-  }
+  if (!match) return null;
 
   const amount = Number.parseFloat(match[1]);
-  if (!Number.isFinite(amount) || amount <= 0) {
-    return null;
-  }
-
+  if (!Number.isFinite(amount) || amount <= 0) return null;
   const multiplier = match[2] === "m"
     ? 1_000_000
     : match[2] === "k"
@@ -1054,561 +277,7 @@ function parseTokenQuantity(value: string): number | null {
   return Number.isSafeInteger(tokens) && tokens > 0 ? tokens : null;
 }
 
-export function buildWorkersAiInput(
-  request: WorkersAiRequest,
-  options?: { disableTools?: boolean },
-): WorkersAiRunInput {
-  const input: WorkersAiRunInput = {
-    messages: contextToWorkersAiMessages(request.context),
-    max_completion_tokens: request.maxTokens,
-  };
-
-  const tools = options?.disableTools ? [] : contextToWorkersAiTools(request.context);
-  if (tools.length > 0) {
-    input.tools = tools;
-    input.parallel_tool_calls = true;
-  }
-
-  if (usesWorkersAiThinkingFlag(request.modelName)) {
-    if (request.reasoning) {
-      input.reasoning_effort = request.reasoning;
-    }
-    input.chat_template_kwargs = {
-      thinking: Boolean(request.reasoning),
-    };
-  } else if (request.reasoning) {
-    input.reasoning_effort = request.reasoning;
-    input.chat_template_kwargs = {
-      enable_thinking: true,
-    };
-  } else {
-    input.chat_template_kwargs = {
-      enable_thinking: false,
-      clear_thinking: true,
-    };
-  }
-
-  return input;
-}
-
-function usesWorkersAiThinkingFlag(modelName: string): boolean {
-  return modelName.trim().toLowerCase() === "@cf/moonshotai/kimi-k2.6";
-}
-
-export function buildWorkersAiRunOptions(
-  request: WorkersAiRequest,
-): WorkersAiRunOptions | undefined {
-  const sessionAffinityKey = request.sessionAffinityKey?.trim();
-  if (!sessionAffinityKey) {
-    return undefined;
-  }
-
-  return {
-    headers: {
-      "x-session-affinity": sessionAffinityKey,
-    },
-  };
-}
-
-export function contextToWorkersAiMessages(context: Context): WorkersAiMessage[] {
-  const messages: WorkersAiMessage[] = [];
-
-  const systemPrompt = context.systemPrompt?.trim();
-  if (systemPrompt) {
-    messages.push({
-      role: "system",
-      content: systemPrompt,
-    });
-  }
-
-  for (const message of context.messages) {
-    messages.push(...convertMessage(message));
-  }
-
-  return messages;
-}
-
-export function contextToWorkersAiTools(context: Context): WorkersAiTool[] {
-  return (context.tools ?? []).map(convertTool);
-}
-
-export function normalizeWorkersAiResponse(
-  response: WorkersAiRunOutput,
-  modelName: string,
-): AssistantMessage {
-  const thinking = extractWorkersAiThinking(response);
-  const text = extractWorkersAiText(response);
-  const toolCalls = extractWorkersAiToolCalls(response);
-  const content: Array<TextContent | ThinkingContent | ToolCall> = [];
-
-  if (thinking) {
-    content.push({
-      type: "thinking",
-      thinking,
-    });
-  }
-
-  if (text) {
-    content.push({
-      type: "text",
-      text,
-    });
-  }
-
-  content.push(...toolCalls);
-
-  const usage = normalizeWorkersAiUsage(response.usage) ?? emptyUsage();
-
-  applyWorkersAiUsageCost(modelName, usage);
-
-  let stopReason: AssistantMessage["stopReason"] = "stop";
-  let errorMessage: string | undefined;
-
-  if (toolCalls.length > 0) {
-    stopReason = "toolUse";
-  } else if (!text) {
-    stopReason = "error";
-    errorMessage = thinking
-      ? "Workers AI returned reasoning but no final response"
-      : "Workers AI returned an empty response";
-  }
-
-  return {
-    role: "assistant",
-    content,
-    api: WORKERS_AI_API,
-    provider: WORKERS_AI_PROVIDER,
-    model: modelName,
-    usage,
-    stopReason,
-    errorMessage,
-    timestamp: Date.now(),
-  };
-}
-
-export function hasWorkersAiModelPricing(modelName: string): boolean {
-  return resolveWorkersAiPricingModel(modelName) !== null;
-}
-
-function applyWorkersAiUsageCost(modelName: string, usage: AssistantMessage["usage"]): void {
-  const model = resolveWorkersAiPricingModel(modelName);
-  if (!model) {
-    return;
-  }
-  calculateCost(model, usage);
-}
-
-function resolveWorkersAiPricingModel(modelName: string) {
-  return getBuiltinModels(PI_WORKERS_AI_PROVIDER).find((model) => model.id === modelName) ?? null;
-}
-
-function convertMessage(message: Message): WorkersAiMessage[] {
-  switch (message.role) {
-    case "user":
-      return [convertUserMessage(message)];
-    case "assistant":
-      return convertAssistantMessage(message);
-    case "toolResult":
-      return [convertToolResultMessage(message)];
-  }
-}
-
-function convertUserMessage(message: UserMessage): WorkersAiMessage {
-  return {
-    role: "user",
-    content: serializeUserContent(message.content),
-  };
-}
-
-function convertAssistantMessage(message: Extract<Message, { role: "assistant" }>): WorkersAiMessage[] {
-  const text = message.content
-    .filter((block): block is TextContent => block.type === "text")
-    .map((block) => block.text)
-    .join("");
-
-  const toolCalls: WorkersAiToolCall[] = [];
-
-  for (const block of message.content) {
-    if (block.type !== "toolCall") continue;
-    toolCalls.push({
-      id: block.id,
-      type: "function",
-      function: {
-        name: block.name,
-        arguments: JSON.stringify(block.arguments ?? {}),
-      },
-    });
-  }
-
-  return [{
-    role: "assistant",
-    content: text || null,
-    tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
-  }];
-}
-
-function convertToolResultMessage(message: ToolResultMessage): WorkersAiMessage {
-  return {
-    role: "tool",
-    content: serializeTextBlocks(message.content),
-    tool_call_id: message.toolCallId,
-  };
-}
-
-function convertTool(tool: Tool): WorkersAiTool {
-  const parsedSchema = jsonObjectSchema.safeParse(tool.parameters);
-  const schema = sanitizeToolParameters(parsedSchema.success ? parsedSchema.data : undefined);
-  return {
-    type: "function",
-    function: {
-      name: tool.name,
-      description: tool.description,
-      parameters: schema,
-      strict: false,
-    },
-  };
-}
-
-function serializeUserContent(
-  content: UserMessage["content"],
-): string {
-  const text = z.string().safeParse(content);
-  if (text.success) return text.data;
-  return Array.isArray(content) ? serializeTextBlocks(content) : "";
-}
-
-function serializeTextBlocks(
-  blocks: Array<TextContent | ImageContent>,
-): string {
-  const parts: string[] = [];
-  let nextImageHasTextFallback = false;
-
-  for (const block of blocks) {
-    if (block.type === "text") {
-      parts.push(block.text);
-      nextImageHasTextFallback = hasStoredImageTextFallback(block.text);
-      continue;
-    }
-
-    if (nextImageHasTextFallback) {
-      nextImageHasTextFallback = false;
-      continue;
-    }
-
-    parts.push("\n[Attached image omitted: no image description was available for this Workers AI text model.]");
-  }
-
-  return parts.join("");
-}
-
-function hasStoredImageTextFallback(text: string): boolean {
-  return text.includes("\nImage description:");
-}
-
-function normalizeWorkersAiToolCalls(toolCalls: WorkersAiProviderValue): ToolCall[] {
-  if (!Array.isArray(toolCalls)) return [];
-
-  return toolCalls.flatMap((providerToolCall, index) => {
-    const openAiStyle = asRecord(providerToolCall);
-    if (!openAiStyle) return [];
-    const fn = asRecord(openAiStyle.function);
-
-    const name = asString(fn?.name) ?? asString(openAiStyle.name);
-    if (!name) return [];
-
-    const id = asString(openAiStyle.id) ?? `workers-ai-tool-${index + 1}`;
-    const argumentsInput = fn?.arguments ?? openAiStyle.arguments;
-
-    const normalizedToolCall: ToolCall = {
-      type: "toolCall",
-      id,
-      name,
-      arguments: parseToolArguments(argumentsInput),
-    };
-    return [normalizedToolCall];
-  });
-}
-
-function extractWorkersAiText(response: WorkersAiRunOutput): string {
-  const responseText = asString(response.response);
-  if (responseText) {
-    return responseText;
-  }
-
-  const directOutputText = asString(response.output_text);
-  if (directOutputText) {
-    return directOutputText;
-  }
-
-  const choices = Array.isArray(response.choices) ? response.choices : [];
-  const choiceText = choices
-    .map((choice) => {
-      const choiceRecord = asRecord(choice);
-      return choiceRecord ? extractChoiceMessageText(choiceRecord.message) : "";
-    })
-    .join("");
-  if (choiceText) {
-    return choiceText;
-  }
-
-  const output = Array.isArray(response.output) ? response.output : [];
-  const outputText = output
-    .flatMap((item) => {
-      const itemRecord = asRecord(item);
-      if (!itemRecord) return [];
-      const content = itemRecord.content;
-      if (!Array.isArray(content)) return [];
-      return content.flatMap((entry) => {
-        const entryRecord = asRecord(entry);
-        if (!entryRecord || entryRecord.type !== "output_text") return [];
-        const text = asString(entryRecord.text);
-        if (text) {
-          return [text];
-        }
-        return [];
-      });
-    })
-    .join("");
-
-  return outputText;
-}
-
-function extractWorkersAiThinking(response: WorkersAiRunOutput): string {
-  const choices = Array.isArray(response.choices) ? response.choices : [];
-  const choiceReasoning = choices
-    .map((choice) => {
-      const choiceRecord = asRecord(choice);
-      return choiceRecord ? extractChoiceMessageThinking(choiceRecord.message) : "";
-    })
-    .join("");
-  if (choiceReasoning) {
-    return choiceReasoning;
-  }
-
-  const output = Array.isArray(response.output) ? response.output : [];
-  const outputReasoning = output
-    .flatMap((item) => {
-      const itemRecord = asRecord(item);
-      if (!itemRecord || itemRecord.type !== "reasoning") return [];
-
-      const content = itemRecord.content;
-      if (Array.isArray(content)) {
-        const contentReasoning = content.flatMap((entry) => {
-          const entryRecord = asRecord(entry);
-          if (!entryRecord || entryRecord.type !== "reasoning_text") return [];
-          const text = asString(entryRecord.text);
-          if (text) {
-            return [text];
-          }
-          return [];
-        }).join("");
-        if (contentReasoning) {
-          return [contentReasoning];
-        }
-      }
-
-      const summary = itemRecord.summary;
-      if (Array.isArray(summary)) {
-        const summaryReasoning = summary.flatMap((entry) => {
-          const entryRecord = asRecord(entry);
-          if (!entryRecord || entryRecord.type !== "summary_text") return [];
-          const text = asString(entryRecord.text);
-          if (text) {
-            return [text];
-          }
-          return [];
-        }).join("");
-        if (summaryReasoning) {
-          return [summaryReasoning];
-        }
-      }
-
-      return [];
-    })
-    .join("\n");
-
-  return outputReasoning;
-}
-
-function extractWorkersAiToolCalls(response: WorkersAiRunOutput): ToolCall[] {
-  const fromTopLevel = normalizeWorkersAiToolCalls(response.tool_calls);
-  if (fromTopLevel.length > 0) {
-    return fromTopLevel;
-  }
-
-  const choices = Array.isArray(response.choices) ? response.choices : [];
-  const fromChoices = choices.flatMap((choice) => {
-    const choiceRecord = asRecord(choice);
-    const message = choiceRecord ? asRecord(choiceRecord.message) : null;
-    return message ? normalizeWorkersAiToolCalls(message.tool_calls) : [];
-  });
-  if (fromChoices.length > 0) {
-    return fromChoices;
-  }
-
-  const output = Array.isArray(response.output) ? response.output : [];
-  const fromOutput = output.flatMap((item) => {
-    const itemRecord = asRecord(item);
-    if (!itemRecord || itemRecord.type !== "function_call") return [];
-    const id = asString(itemRecord.call_id)
-      ?? asString(itemRecord.id)
-      ?? "workers-ai-tool-1";
-    const name = asString(itemRecord.name);
-    const argumentsInput = itemRecord.arguments;
-    if (!name) return [];
-    const toolCall: ToolCall = {
-      type: "toolCall",
-      id,
-      name,
-      arguments: parseToolArguments(argumentsInput),
-    };
-    return [toolCall];
-  });
-
-  return fromOutput;
-}
-
-function extractChoiceMessageText(message: WorkersAiProviderValue): string {
-  const messageRecord = asRecord(message);
-  if (!messageRecord) return "";
-  const content = messageRecord.content;
-  const textContent = asString(content);
-  if (textContent) {
-    return textContent;
-  }
-  if (Array.isArray(content)) {
-    return content.flatMap((entry) => {
-      const entryRecord = asRecord(entry);
-      if (!entryRecord || entryRecord.type !== "text") return [];
-      const text = asString(entryRecord.text);
-      if (text) {
-        return [text];
-      }
-      return [];
-    }).join("");
-  }
-
-  return "";
-}
-
-function extractChoiceMessageThinking(message: WorkersAiProviderValue): string {
-  const messageRecord = asRecord(message);
-  if (!messageRecord) return "";
-  const reasoningContent = asString(messageRecord.reasoning_content);
-  if (reasoningContent) {
-    return reasoningContent;
-  }
-
-  const reasoning = messageRecord.reasoning;
-  const reasoningText = asString(reasoning);
-  if (reasoningText) {
-    return reasoningText;
-  }
-  if (Array.isArray(reasoning)) {
-    return reasoning.flatMap((entry) => {
-      const directText = asString(entry);
-      if (directText) return [directText];
-      const entryRecord = asRecord(entry);
-      const text = entryRecord ? asString(entryRecord.text) : undefined;
-      return text ? [text] : [];
-    }).join("");
-  }
-  const reasoningRecord = asRecord(reasoning);
-  if (reasoningRecord) {
-    const summary = reasoningRecord.summary;
-    const summaryText = asString(summary);
-    if (summaryText) {
-      return summaryText;
-    }
-    if (Array.isArray(summary)) {
-      return summary.flatMap((entry) => {
-        const directText = asString(entry);
-        if (directText) return [directText];
-        const entryRecord = asRecord(entry);
-        const text = entryRecord ? asString(entryRecord.text) : undefined;
-        return text ? [text] : [];
-      }).join("");
-    }
-  }
-
-  return "";
-}
-
-function sanitizeToolParameters(
-  schema: JsonObject | undefined,
-): WorkersAiTool["function"]["parameters"] | undefined {
-  if (!schema || schema.type !== "object") return undefined;
-
-  const propertiesInput = schema.properties;
-  const requiredInput = schema.required;
-  const properties: NonNullable<WorkersAiTool["function"]["parameters"]>["properties"] = {};
-
-  const propertyRecords = asRecord(propertiesInput);
-  if (propertyRecords) {
-    for (const [key, value] of Object.entries(propertyRecords)) {
-      const property = asRecord(value);
-      const propertyType = property ? asString(property.type) : undefined;
-      if (!property || !propertyType) continue;
-      const description = asString(property.description);
-      const parameter: NonNullable<WorkersAiTool["function"]["parameters"]>["properties"][string] = {
-        type: propertyType,
-      };
-      if (description) parameter.description = description;
-      properties[key] = parameter;
-    }
-  }
-
-  return {
-    type: "object",
-    properties,
-    required: Array.isArray(requiredInput)
-      ? requiredInput.flatMap((value) => {
-          const parsed = z.string().safeParse(value);
-          return parsed.success ? [parsed.data] : [];
-        })
-      : [],
-  };
-}
-
-function parseToolArguments(input: WorkersAiProviderValue): JsonObject {
-  if (input === undefined || input === null) return {};
-  const inputRecord = asRecord(input);
-  if (inputRecord) return inputRecord;
-  const serialized = z.string().safeParse(input);
-  if (!serialized.success) {
-    return { value: input };
-  }
-
-  try {
-    const parsed = jsonValueSchema.parse(JSON.parse(serialized.data));
-    const parsedRecord = asRecord(parsed);
-    if (parsedRecord) return parsedRecord;
-    return { value: parsed };
-  } catch {
-    return { value: serialized.data };
-  }
-}
-
-function asString(value: WorkersAiProviderValue): string | undefined {
-  const parsed = nonEmptyStringSchema.safeParse(value);
-  return parsed.success ? parsed.data : undefined;
-}
-
-function asNumber(value: WorkersAiProviderValue): number {
-  return asOptionalNumber(value) ?? 0;
-}
-
-function asOptionalNumber(value: WorkersAiProviderValue): number | undefined {
-  const parsed = finiteNumberSchema.safeParse(value);
-  return parsed.success ? parsed.data : undefined;
-}
-
-function asRecord(value: WorkersAiProviderValue): JsonObject | null {
-  const parsed = jsonObjectSchema.safeParse(value);
-  return parsed.success ? parsed.data : null;
-}
-
-function getWorkersAiBinding(): WorkersAiBinding | undefined {
-  // SAFETY: The configured AI binding owns the documented run/models RPC surface.
-  return env.AI as WorkersAiBinding | undefined;
+function getWorkersAiBinding(): Ai | undefined {
+  const bindings: { AI?: Ai } = env;
+  return bindings.AI;
 }
