@@ -4,6 +4,8 @@ import com.humansandmachines.gsv.wear.authority.AuthorityState
 import com.humansandmachines.gsv.wear.authority.WearAuthority
 import com.humansandmachines.gsv.wear.camera.CameraCaptureFailure
 import com.humansandmachines.gsv.wear.camera.SnapshotCamera
+import com.humansandmachines.gsv.wear.platform.GsvPlatformFailure
+import com.humansandmachines.gsv.wear.platform.GsvPlatformOperations
 import com.humansandmachines.gsv.wear.protocol.GsvProtocol
 import com.humansandmachines.gsv.wear.runtime.WearRuntimeState
 import kotlinx.coroutines.currentCoroutineContext
@@ -15,11 +17,13 @@ class WearTargetRuntimeFiles(
     private val authority: WearAuthority,
     private val camera: SnapshotCamera,
     private val deviceInfo: () -> JSONObject,
+    private val platform: GsvPlatformOperations? = null,
 ) : TargetRuntimeFiles {
     override val directories: Set<String> = setOf(
         "/dev",
         "/dev/camera",
         "/dev/camera/back",
+        "/dev/screen",
         "/dev/wear",
         "/proc",
         "/proc/wear",
@@ -33,17 +37,18 @@ class WearTargetRuntimeFiles(
         PROC_WEAR_STATUS,
         STATUS,
         CAMERA_SNAPSHOT,
+        SCREEN_SCREENSHOT,
     )
 
     override suspend fun stat(path: String): TargetStat? {
         if (path !in files) return null
-        if (path == CAMERA_SNAPSHOT) {
+        if (path == CAMERA_SNAPSHOT || path == SCREEN_SCREENSHOT) {
             return TargetStat(
                 path = path,
                 isFile = true,
                 isDirectory = false,
                 size = 0,
-                contentType = "image/jpeg",
+                contentType = if (path == CAMERA_SNAPSHOT) "image/jpeg" else "image/png",
                 eventProducing = true,
             )
         }
@@ -60,6 +65,7 @@ class WearTargetRuntimeFiles(
     override suspend fun open(path: String): TargetReadHandle? {
         if (path !in files) return null
         if (path == CAMERA_SNAPSHOT) return openCamera(path)
+        if (path == SCREEN_SCREENSHOT) return openScreen(path)
         val bytes = textContent(path)?.toByteArray(Charsets.UTF_8) ?: return null
         return TargetReadHandle.fromBytes(path, bytes, contentType(path))
     }
@@ -81,6 +87,13 @@ class WearTargetRuntimeFiles(
                         .put("timeoutMs", 5_000),
                 )
                     .put("camera.observe", JSONObject().put("authorized", snapshot.authority == AuthorityState.ARMED))
+                    .put(
+                        "screen.screenshot",
+                        JSONObject()
+                            .put("authorized", snapshot.authority == AuthorityState.ARMED)
+                            .put("available", platform?.supportsAutomation() == true)
+                            .put("path", SCREEN_SCREENSHOT),
+                    )
                     .put("microphone.sample", JSONObject().put("authorized", snapshot.authority == AuthorityState.ARMED))
                     .put("microphone.observe", JSONObject().put("authorized", snapshot.authority == AuthorityState.ARMED))
                     .put(
@@ -118,6 +131,40 @@ class WearTargetRuntimeFiles(
         )
     }
 
+    private suspend fun openScreen(path: String): TargetReadHandle {
+        val lease = authority.acquire() ?: throw TargetFsException(
+            if (authority.state() == AuthorityState.PAUSED) {
+                "Wear Mode is paused"
+            } else {
+                "Wear Mode is not armed"
+            },
+        )
+        val source = platform?.takeIf(GsvPlatformOperations::supportsAutomation)
+            ?: throw TargetFsException("GSV OS platform automation is unavailable")
+        val capture = try {
+            source.captureScreenshot(DEFAULT_SCREENSHOT_MAX_DIMENSION)
+        } catch (error: GsvPlatformFailure) {
+            throw TargetFsException(error.message ?: "Display capture failed")
+        }
+        if (!authority.isCurrent(lease)) {
+            capture.close()
+            throw TargetFsException("Wear Mode authority changed during display capture")
+        }
+        return try {
+            currentCoroutineContext().ensureActive()
+            TargetReadHandle.fromFile(
+                path = path,
+                file = capture.file,
+                contentType = capture.contentType,
+                eventProducing = true,
+                cleanup = capture::close,
+            )
+        } catch (error: Throwable) {
+            capture.close()
+            throw error
+        }
+    }
+
     private fun textContent(path: String): String? = when (path) {
         README -> README_CONTENT
         PROC_DEVICE -> deviceInfo().toString(2) + "\n"
@@ -150,6 +197,7 @@ class WearTargetRuntimeFiles(
                         .put("materializeCommand", "camera snapshot [DESTINATION]"),
                 )
                 .put("camera.observe", "camera observe DURATION [DESTINATION]")
+                .put("screen.screenshot", "screen screenshot [DESTINATION]")
                 .put("microphone.sample", "microphone sample DURATION [DESTINATION]")
                 .put("microphone.observe", "microphone observe DURATION [DESTINATION]")
                 .put("microphone.listenUntilSpeech", "microphone listen-until-speech [DESTINATION]")
@@ -166,7 +214,9 @@ class WearTargetRuntimeFiles(
                         "[--force] [--allow-cached] [--timeout DURATION]",
                 )
                 .put("notifications", "notifications status|list|read|dismiss|action|reply")
-                .put("apps", "apps list|open")
+                .put("apps", "apps list|foreground|open")
+                .put("screen", "screen status|screenshot")
+                .put("input", "input tap|swipe|long-press|key|text")
                 .put("intent", "intent open")
                 .put("share", "share text|file")
                 .put("clipboard", "clipboard read|write|clear")
@@ -196,6 +246,9 @@ class WearTargetRuntimeFiles(
         const val PROC_WEAR_STATUS = "/proc/wear/status.json"
         const val STATUS = "/dev/wear/status"
         const val CAMERA_SNAPSHOT = "/dev/camera/back/snapshot"
+        const val SCREEN_SCREENSHOT = "/dev/screen/screenshot"
+
+        private const val DEFAULT_SCREENSHOT_MAX_DIMENSION = 2_048
 
         private val README_CONTENT = """
             GSV Android target
@@ -210,6 +263,7 @@ class WearTargetRuntimeFiles(
               /proc/wear/status.json
               /dev/wear/status
               /dev/camera/back/snapshot
+              /dev/screen/screenshot
               /home/android
               /tmp
 
@@ -227,6 +281,7 @@ class WearTargetRuntimeFiles(
               sensors status; imu sample; gesture session; orientation current
               device status|battery|network|thermal; location current
               notifications; apps; intent; share; clipboard
+              screen screenshot; input tap|swipe|long-press|key|text
               notify; speak; vibrate; checks
 
             Wear Mode:

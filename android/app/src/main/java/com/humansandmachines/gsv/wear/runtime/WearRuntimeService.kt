@@ -17,6 +17,7 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import com.humansandmachines.gsv.wear.BuildConfig
+import com.humansandmachines.gsv.wear.GsvWearApplication
 import com.humansandmachines.gsv.wear.MainActivity
 import com.humansandmachines.gsv.wear.R
 import com.humansandmachines.gsv.wear.authority.AuthorityState
@@ -38,6 +39,7 @@ import com.humansandmachines.gsv.wear.sensors.SensorController
 import com.humansandmachines.gsv.wear.target.AndroidPlatformCommands
 import com.humansandmachines.gsv.wear.target.AndroidTargetCommands
 import com.humansandmachines.gsv.wear.target.AndroidTargetFileSystem
+import com.humansandmachines.gsv.wear.target.PlatformAutomationCommands
 import com.humansandmachines.gsv.wear.target.TargetShell
 import com.humansandmachines.gsv.wear.target.WearMediaCommands
 import com.humansandmachines.gsv.wear.target.WearTargetRuntimeFiles
@@ -90,7 +92,8 @@ class WearRuntimeService : LifecycleService() {
         actions = AndroidActionController(applicationContext)
         val deviceContext = DeviceContextController(applicationContext)
         val notificationAccess = AndroidNotificationAccess(applicationContext)
-        val runtimeFiles = WearTargetRuntimeFiles(authority, camera, ::deviceInfo)
+        val platform = (application as GsvWearApplication).platformClient
+        val runtimeFiles = WearTargetRuntimeFiles(authority, camera, ::deviceInfo, platform)
         targetFileSystem = AndroidTargetFileSystem(
             persistentRoot = File(filesDir, "gsv-target/home"),
             temporaryRoot = File(cacheDir, "gsv-target/tmp"),
@@ -105,7 +108,8 @@ class WearRuntimeService : LifecycleService() {
         val commands = AndroidTargetCommands.create(
             targetFileSystem,
             WearMediaCommands(authority, camera, microphone, sensors).commands() +
-                AndroidPlatformCommands(deviceContext, actions, notificationAccess, authority).commands() +
+                AndroidPlatformCommands(deviceContext, actions, notificationAccess, authority, platform).commands() +
+                PlatformAutomationCommands(platform, authority).commands() +
                 checks.commands(),
         )
         val shell = TargetShell(targetFileSystem, commands)

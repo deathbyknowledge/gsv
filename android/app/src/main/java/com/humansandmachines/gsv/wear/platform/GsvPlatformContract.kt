@@ -7,7 +7,8 @@ object GsvPlatformContract {
     const val BIND_PERMISSION = "com.humansandmachines.gsv.permission.BIND_PLATFORM_SERVICE"
 
     const val MIN_API_VERSION = 1
-    const val MAX_API_VERSION = 1
+    const val AUTOMATION_API_VERSION = 2
+    const val MAX_API_VERSION = 2
 
     fun supportsApiVersion(version: Int): Boolean = version in MIN_API_VERSION..MAX_API_VERSION
 }

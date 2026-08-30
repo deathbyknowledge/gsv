@@ -7,12 +7,15 @@ import com.humansandmachines.gsv.wear.device.CurrentLocationRequest
 import com.humansandmachines.gsv.wear.device.DeviceContextSource
 import com.humansandmachines.gsv.wear.device.LocationProviderPreference
 import com.humansandmachines.gsv.wear.notifications.NotificationAccess
+import com.humansandmachines.gsv.wear.platform.GsvPlatformOperations
+import org.json.JSONObject
 
 class AndroidPlatformCommands(
     private val device: DeviceContextSource,
     private val actions: AndroidActions,
     private val notifications: NotificationAccess,
     private val authority: WearAuthority,
+    private val platform: GsvPlatformOperations? = null,
 ) {
     fun commands(): List<TargetCommand> = listOf(
         TargetCommand(
@@ -31,8 +34,8 @@ class AndroidPlatformCommands(
         ),
         TargetCommand(
             name = "apps",
-            description = "List or open launcher applications",
-            usage = "apps list | open PACKAGE",
+            description = "List, inspect, or open launcher applications",
+            usage = "apps list | foreground | open PACKAGE",
             category = "android",
             run = ::apps,
         ),
@@ -153,8 +156,51 @@ class AndroidPlatformCommands(
 
     private suspend fun apps(args: List<String>, context: TargetCommandContext): TargetCommandResult = when {
         args == listOf("list") -> shellJson(actions.apps())
-        args.size == 2 && args[0] == "open" -> shellJson(actions.openApp(args[1]))
-        else -> usage("apps list | open PACKAGE")
+        args == listOf("foreground") -> {
+            val service = requirePlatform()
+            val lease = acquirePlatformLease()
+            val activity = service.foregroundActivity()
+            ensurePlatformLease(lease)
+            shellJson(
+                JSONObject()
+                    .put("available", activity != null)
+                    .apply {
+                        activity?.let {
+                            put("package", it.packageName)
+                            put("activity", it.className)
+                        }
+                    },
+            )
+        }
+        args.size == 2 && args[0] == "open" -> {
+            val service = platform?.takeIf(GsvPlatformOperations::supportsAutomation)
+            if (service == null) {
+                shellJson(actions.openApp(args[1]))
+            } else {
+                val lease = acquirePlatformLease()
+                service.launchApp(args[1])
+                ensurePlatformLease(lease)
+                shellJson(
+                    JSONObject()
+                        .put("package", args[1])
+                        .put("launched", true)
+                        .put("requiresUserTap", false),
+                )
+            }
+        }
+        else -> usage("apps list | foreground | open PACKAGE")
+    }
+
+    private fun requirePlatform(): GsvPlatformOperations =
+        platform?.takeIf(GsvPlatformOperations::supportsAutomation)
+            ?: throw TargetFsException("GSV OS platform automation is unavailable")
+
+    private fun acquirePlatformLease() = authority.acquire() ?: throw TargetFsException(
+        if (authority.state() == AuthorityState.PAUSED) "Wear Mode is paused" else "Wear Mode is not armed",
+    )
+
+    private fun ensurePlatformLease(lease: com.humansandmachines.gsv.wear.authority.AuthorityLease) {
+        if (!authority.isCurrent(lease)) throw TargetFsException("Wear Mode authority changed during app control")
     }
 
     private suspend fun intent(args: List<String>, context: TargetCommandContext): TargetCommandResult {

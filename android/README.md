@@ -182,7 +182,8 @@ virtual namespace is deliberately smaller than Android itself:
 │   └── wear/status.json
 └── dev
     ├── wear/status
-    └── camera/back/snapshot
+    ├── camera/back/snapshot
+    └── screen/screenshot       GSV OS only
 ```
 
 Only `/home/android` and `/tmp` are writable. The app does not expose shared
@@ -214,7 +215,7 @@ Run `help` or `commands --json` for discovery. The current registry includes
 `pwd`, `ls`, `cat`, `echo`, `printf`, `mkdir`, `touch`, `rm`, `cp`, `mv`,
 `stat`, `head`, `tail`, `wc`, `grep`, `find`, `date`, `whoami`, `uname`,
 `device`, `wear`, `camera`, `microphone`, `sensors`, `imu`, `gesture`,
-`orientation`, `location`, `apps`, `intent`, `share`, `clipboard`,
+`orientation`, `location`, `apps`, `screen`, `input`, `intent`, `share`, `clipboard`,
 `notifications`, `notify`, `speak`, `vibrate`, and `checks`. Quoting, pipes,
 sequential statements, and `<`, `>`, and `>>` redirection are supported. This
 shell never invokes the real Android shell; sessions and background jobs are
@@ -255,6 +256,12 @@ The camera node returns an `fs.read` image body. CameraX is closed before the
 body is streamed, and the cached JPEG is deleted after the transfer reaches a
 terminal outcome.
 
+On GSV OS, `/dev/screen/screenshot` behaves the same way for the current
+display. The platform service redacts secure and DRM-protected layers, scales
+the longest edge to at most 2,048 pixels, sends PNG bytes through a Binder file
+descriptor, and deletes the app-side temporary file when the GSV response
+reaches a terminal outcome.
+
 To take one snapshot and retain it as an ordinary temporary file for later
 reads or cross-target copy, use:
 
@@ -284,6 +291,13 @@ imu sample DURATION [DESTINATION]
 gesture session DURATION [DESTINATION]
 orientation current [DURATION]
 location current [--provider best|gps|network] [--max-age DURATION] [--force] [--allow-cached] [--timeout DURATION]
+screen status
+screen screenshot [DESTINATION]
+input tap X Y
+input swipe X1 Y1 X2 Y2 DURATION
+input long-press X Y DURATION
+input key NAME
+input text TEXT
 ```
 
 Camera and microphone leases last at most two minutes. Captures default to
@@ -311,11 +325,21 @@ opening, Android sharing, clipboard operations, notification actions and
 replies, user-visible notifications, text-to-speech, and bounded vibration.
 Use `help COMMAND` for exact syntax.
 
+The GSV OS image additionally routes `apps foreground`, direct background
+`apps open`, display capture, and bounded input injection through its
+signature-protected platform service. Touch coordinates are checked against
+the live display, swipes are limited to two seconds, key input uses an explicit
+allowlist that excludes power and lock controls, and text input is limited to
+1,024 virtual-keyboard characters. All of these operations require the local
+Wear authority to remain armed for their complete execution.
+
 Android itself imposes two visible-interaction boundaries. When GSV Wear is not
 visible, an app-open, deep-link, or share request becomes a notification that
 the user taps instead of silently launching an Activity. Clipboard reads are
 unavailable while GSV Wear is not visible; clipboard writes and clears remain
-available. These results are reported explicitly in command JSON.
+available. A GSV OS platform-service app launch is the deliberate exception;
+stock and ordinary APK installs retain the notification fallback. These
+results are reported explicitly in command JSON.
 
 ## Local checks
 

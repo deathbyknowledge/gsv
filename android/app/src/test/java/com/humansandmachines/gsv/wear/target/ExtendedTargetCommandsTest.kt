@@ -12,6 +12,11 @@ import com.humansandmachines.gsv.wear.device.CurrentLocationRequest
 import com.humansandmachines.gsv.wear.device.DeviceContextSource
 import com.humansandmachines.gsv.wear.device.LocationProviderPreference
 import com.humansandmachines.gsv.wear.notifications.NotificationAccess
+import com.humansandmachines.gsv.wear.platform.GsvDisplaySize
+import com.humansandmachines.gsv.wear.platform.GsvForegroundActivity
+import com.humansandmachines.gsv.wear.platform.GsvPlatformCapture
+import com.humansandmachines.gsv.wear.platform.GsvPlatformOperations
+import com.humansandmachines.gsv.wear.platform.GsvPlatformStatus
 import com.humansandmachines.gsv.wear.sensors.WearSensors
 import java.io.File
 import java.io.InputStream
@@ -32,6 +37,7 @@ class ExtendedTargetCommandsTest {
     private lateinit var shell: TargetShell
     private lateinit var authority: WearAuthority
     private lateinit var fakeDevice: FakeDevice
+    private lateinit var fakePlatform: FakePlatform
 
     @Before
     fun setUp() {
@@ -45,15 +51,26 @@ class ExtendedTargetCommandsTest {
                         """{"camera":"closed","microphone":"closed"}""".toByteArray() to
                             "application/json; charset=utf-8"
                         ),
+                    WearTargetRuntimeFiles.SCREEN_SCREENSHOT to (
+                        byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47) to "image/png"
+                        ),
                 ),
             ),
         )
         authority = WearAuthority { "lease" }.also { it.arm() }
         fakeDevice = FakeDevice()
+        fakePlatform = FakePlatform(root)
         val commands = AndroidTargetCommands.create(
             fileSystem,
             WearMediaCommands(authority, FakeCamera(root), FakeMicrophone(root), FakeSensors()).commands() +
-                AndroidPlatformCommands(fakeDevice, FakeActions(), FakeNotifications(), authority).commands() +
+                AndroidPlatformCommands(
+                    fakeDevice,
+                    FakeActions(),
+                    FakeNotifications(),
+                    authority,
+                    fakePlatform,
+                ).commands() +
+                PlatformAutomationCommands(fakePlatform, authority).commands() +
                 TargetCommand(
                     name = "checks",
                     description = "test checks",
@@ -85,6 +102,8 @@ class ExtendedTargetCommandsTest {
                 "device",
                 "location",
                 "apps",
+                "screen",
+                "input",
                 "intent",
                 "share",
                 "clipboard",
@@ -134,6 +153,47 @@ class ExtendedTargetCommandsTest {
         assertEquals("com.example.app", JSONObject(app.getString("output")).getString("package"))
         assertEquals("okay", JSONObject(notification.getString("output")).getString("text"))
         assertEquals("title", JSONObject(output.getString("output")).getString("title"))
+        assertEquals("com.example.app", fakePlatform.launchedPackage)
+    }
+
+    @Test
+    fun osAutomationCommandsAreBoundedAndMaterializeScreenshots() = runBlocking {
+        val status = shell.execute(JSONObject().put("input", "screen status"))
+        val screenshot = shell.execute(JSONObject().put("input", "screen screenshot /tmp/display.png"))
+        val tap = shell.execute(JSONObject().put("input", "input tap 12 34"))
+        val swipe = shell.execute(JSONObject().put("input", "input swipe 10 20 30 40 250ms"))
+        val key = shell.execute(JSONObject().put("input", "input key HOME"))
+        val text = shell.execute(JSONObject().put("input", "input text 'hello world'"))
+        val foreground = shell.execute(JSONObject().put("input", "apps foreground"))
+
+        assertEquals(1080, JSONObject(status.getString("output")).getInt("width"))
+        assertEquals("image/png", fileSystem.stat("/tmp/display.png").contentType)
+        assertEquals("completed", screenshot.getString("status"))
+        assertEquals(12 to 34, fakePlatform.lastTap)
+        assertEquals(listOf(10, 20, 30, 40, 250), fakePlatform.lastSwipe)
+        assertEquals("HOME", fakePlatform.lastKey)
+        assertEquals("hello world", fakePlatform.lastText)
+        assertEquals("completed", tap.getString("status"))
+        assertEquals("completed", swipe.getString("status"))
+        assertEquals("completed", key.getString("status"))
+        assertEquals("completed", text.getString("status"))
+        assertEquals(
+            "com.example.foreground",
+            JSONObject(foreground.getString("output")).getString("package"),
+        )
+    }
+
+    @Test
+    fun osAutomationFailsClosedWhenWearModeIsDisarmed() = runBlocking {
+        authority.disarm()
+
+        val input = shell.execute(JSONObject().put("input", "input tap 12 34"))
+        val foreground = shell.execute(JSONObject().put("input", "apps foreground"))
+
+        assertEquals("failed", input.getString("status"))
+        assertTrue(input.getString("error").contains("Wear Mode is not armed"))
+        assertEquals("failed", foreground.getString("status"))
+        assertTrue(foreground.getString("error").contains("Wear Mode is not armed"))
     }
 
     @Test
@@ -242,6 +302,56 @@ class ExtendedTargetCommandsTest {
         override suspend fun currentLocation(request: CurrentLocationRequest): JSONObject {
             lastLocationRequest = request
             return JSONObject().put("kind", "location")
+        }
+    }
+
+    private class FakePlatform(private val root: File) : GsvPlatformOperations {
+        override val status = GsvPlatformStatus(
+            apiVersion = 2,
+            serviceVersion = "test",
+            startedElapsedRealtimeMillis = 1,
+        )
+        var launchedPackage: String? = null
+        var lastTap: Pair<Int, Int>? = null
+        var lastSwipe: List<Int>? = null
+        var lastKey: String? = null
+        var lastText: String? = null
+
+        override suspend fun displaySize(): GsvDisplaySize = GsvDisplaySize(1080, 2400)
+
+        override suspend fun captureScreenshot(maxDimension: Int): GsvPlatformCapture {
+            val file = File.createTempFile("screen-", ".png", root)
+            file.writeBytes(byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47))
+            return GsvPlatformCapture(file, "image/png")
+        }
+
+        override suspend fun foregroundActivity(): GsvForegroundActivity =
+            GsvForegroundActivity("com.example.foreground", "com.example.foreground.MainActivity")
+
+        override suspend fun launchApp(packageName: String) {
+            launchedPackage = packageName
+        }
+
+        override suspend fun tap(x: Int, y: Int) {
+            lastTap = x to y
+        }
+
+        override suspend fun swipe(
+            startX: Int,
+            startY: Int,
+            endX: Int,
+            endY: Int,
+            durationMillis: Int,
+        ) {
+            lastSwipe = listOf(startX, startY, endX, endY, durationMillis)
+        }
+
+        override suspend fun pressKey(keyName: String) {
+            lastKey = keyName
+        }
+
+        override suspend fun typeText(text: String) {
+            lastText = text
         }
     }
 
