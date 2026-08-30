@@ -1,0 +1,26 @@
+{
+  "status": "pass",
+  "runtime": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+  "frames": 12,
+  "unpackedBytes": 8636,
+  "packedBytes": 4133,
+  "messageChannelArrayBuffer": true,
+  "blobArrayBuffer": true,
+  "benchmark": {
+    "iterationsPerRound": 100,
+    "rounds": 7,
+    "jsonV3": {
+      "encodeMedianNsPerFrame": 583.3333233992258,
+      "decodeMedianNsPerFrame": 1166.6666716337204
+    },
+    "capnpUnpacked": {
+      "encodeMedianNsPerFrame": 63250.000004967056,
+      "decodeMedianNsPerFrame": 61833.3333482345
+    },
+    "capnpPacked": {
+      "encodeMedianNsPerFrame": 61250,
+      "decodeMedianNsPerFrame": 58583.333318432175
+    }
+  },
+  "elapsedMs": 2289.800000011921
+}

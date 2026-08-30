@@ -19,6 +19,7 @@
     "**/worker-configuration.d.ts",
     "release/**",
     "gateway/src/protocol/generated/**",
+    "tools/protocol/capnp-v4/generated/**",
     "tools/oxlint/anti-slop/**"
   ],
   "jsPlugins": [

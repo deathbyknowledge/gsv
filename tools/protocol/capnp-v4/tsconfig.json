@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "allowSyntheticDefaultImports": true,
+    "baseUrl": "../../..",
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "paths": {
+      "@humansandmachines/gsv/protocol": ["packages/gsv/src/protocol.ts"],
+      "@humansandmachines/gsv/protocol/*": ["packages/gsv/src/protocol/*"]
+    },
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2022",
+    "types": ["@cloudflare/workers-types", "node", "vitest/globals"]
+  },
+  "include": [
+    "./benchmark/**/*.ts",
+    "./browser/**/*.ts",
+    "./generated/**/*.ts",
+    "./src/**/*.ts",
+    "./test/**/*.ts",
+    "./vitest.worker.config.ts",
+    "./worker/**/*.ts"
+  ]
+}

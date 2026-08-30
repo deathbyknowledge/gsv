@@ -1,0 +1,295 @@
+[
+  {
+    "name": "fs.read request",
+    "source": "gateway/src/protocol/decode-wire-frame.test.ts",
+    "frame": {
+      "type": "req",
+      "id": "request-1",
+      "call": "fs.read",
+      "args": {
+        "path": "/notes.txt",
+        "limit": 50
+      }
+    }
+  },
+  {
+    "name": "body-bearing transfer request",
+    "source": "host/crates/gateway-client/src/protocol.rs",
+    "frame": {
+      "type": "req",
+      "id": "transfer-1",
+      "call": "fs.transfer.receive",
+      "args": {
+        "path": "destination.bin"
+      },
+      "runId": "run-transfer",
+      "body": {
+        "streamId": 41,
+        "length": 1048576
+      }
+    }
+  },
+  {
+    "name": "sys.connect request",
+    "source": "docs/reference/websocket-protocol.md",
+    "frame": {
+      "type": "req",
+      "id": "connect-1",
+      "call": "sys.connect",
+      "args": {
+        "protocol": 3,
+        "peer": {
+          "id": "desktop-alice",
+          "version": "0.4.1",
+          "platform": "linux",
+          "implements": [
+            "fs.*",
+            "shell.exec"
+          ]
+        },
+        "auth": {
+          "username": "alice",
+          "token": "<redacted>"
+        }
+      }
+    }
+  },
+  {
+    "name": "shell response",
+    "source": "gateway/src/protocol/decode-wire-frame.test.ts",
+    "routedCall": "shell.exec",
+    "frame": {
+      "type": "res",
+      "id": "shell-1",
+      "ok": true,
+      "data": {
+        "status": "completed",
+        "output": "done\n",
+        "exitCode": 0,
+        "sessionId": "session-1",
+        "truncated": false,
+        "stdout": "done\n",
+        "stderr": ""
+      }
+    }
+  },
+  {
+    "name": "body-bearing read response",
+    "source": "docs/reference/websocket-protocol.md",
+    "routedCall": "fs.read",
+    "frame": {
+      "type": "res",
+      "id": "read-1",
+      "ok": true,
+      "data": {
+        "ok": true,
+        "path": "/notes.txt",
+        "kind": "text",
+        "contentType": "text/plain; charset=utf-8",
+        "lines": 12,
+        "size": 8192,
+        "truncated": true,
+        "nextOffset": 12
+      },
+      "body": {
+        "streamId": 42,
+        "length": 4096
+      }
+    }
+  },
+  {
+    "name": "structured error response",
+    "source": "gateway/src/protocol/decode-wire-frame.test.ts",
+    "routedCall": "fs.read",
+    "frame": {
+      "type": "res",
+      "id": "request-error",
+      "ok": false,
+      "error": {
+        "code": 409,
+        "message": "Conflict",
+        "details": {
+          "owner": "kernel",
+          "retryAfterMs": 100,
+          "causes": [
+            "route_generation",
+            null,
+            false
+          ]
+        },
+        "retryable": true
+      }
+    }
+  },
+  {
+    "name": "payload-free signal",
+    "source": "packages/gsv/src/protocol/wire-frame.ts",
+    "frame": {
+      "type": "sig",
+      "signal": "proc.changed"
+    }
+  },
+  {
+    "name": "request cancellation signal",
+    "source": "docs/reference/websocket-protocol.md",
+    "frame": {
+      "type": "sig",
+      "signal": "request.cancel",
+      "payload": {
+        "id": "request-uuid",
+        "reason": "User interrupted tool execution"
+      }
+    }
+  },
+  {
+    "name": "process completion signal",
+    "source": "docs/reference/websocket-protocol.md",
+    "frame": {
+      "type": "sig",
+      "signal": "proc.run.finished",
+      "payload": {
+        "pid": "proc-id",
+        "runId": "run-id",
+        "status": "ok",
+        "result": {
+          "text": "completed work",
+          "media": []
+        },
+        "delivery": {
+          "kind": "none"
+        },
+        "queuedCount": 0,
+        "timestamp": 1710000000000
+      },
+      "seq": 1
+    }
+  },
+  {
+    "name": "conversation history response",
+    "source": "docs/reference/syscalls.md",
+    "routedCall": "conversation.history",
+    "frame": {
+      "type": "res",
+      "id": "history-1",
+      "ok": true,
+      "data": {
+        "conversation": {
+          "id": "ship-alice",
+          "kind": "ship",
+          "ownerUid": 1000,
+          "title": null,
+          "handlerPid": "proc-personal",
+          "latestSequence": 7,
+          "createdAt": 1700000000000,
+          "updatedAt": 1710000000000
+        },
+        "messages": [
+          {
+            "id": "message-7",
+            "conversationId": "ship-alice",
+            "sequence": 7,
+            "author": {
+              "kind": "process",
+              "pid": "proc-personal",
+              "uid": 1000
+            },
+            "text": "Here is the image you asked for.",
+            "media": [
+              {
+                "type": "resource",
+                "ref": {
+                  "type": "file",
+                  "target": "gsv",
+                  "path": "/home/alice/archive/image.png",
+                  "revision": "sha256:0123456789abcdef",
+                  "contentType": "image/png",
+                  "size": 24576
+                },
+                "mediaType": "image",
+                "filename": "image.png"
+              }
+            ],
+            "origin": {
+              "kind": "client",
+              "platform": "web"
+            },
+            "processId": "proc-personal",
+            "runId": "run-7",
+            "createdAt": 1710000000000
+          }
+        ],
+        "hasMore": false
+      }
+    }
+  },
+  {
+    "name": "adapter inbound request",
+    "source": "docs/reference/syscalls.md",
+    "frame": {
+      "type": "req",
+      "id": "adapter-1",
+      "call": "adapter.inbound",
+      "args": {
+        "adapter": "telegram",
+        "accountId": "default",
+        "deliveryId": "update:12345",
+        "message": {
+          "messageId": "provider-message-1",
+          "surface": {
+            "kind": "dm",
+            "id": "chat-7"
+          },
+          "actor": {
+            "id": "actor-9",
+            "name": "Zoë 🚀",
+            "handle": "zoe"
+          },
+          "text": "Please inspect café/東京.txt",
+          "media": [
+            {
+              "type": "document",
+              "mimeType": "text/plain",
+              "body": {
+                "offset": 0,
+                "length": 128
+              },
+              "filename": "東京.txt",
+              "size": 128
+            }
+          ],
+          "timestamp": 1710000000123,
+          "wasMentioned": false
+        }
+      },
+      "body": {
+        "streamId": 77,
+        "length": 128
+      }
+    }
+  },
+  {
+    "name": "mixed JSON edge values",
+    "source": "packages/gsv/src/protocol/json.ts",
+    "frame": {
+      "type": "sig",
+      "signal": "prototype.values",
+      "payload": {
+        "emptyObject": {},
+        "emptyArray": [],
+        "emptyString": "",
+        "negative": -123.5,
+        "fraction": 0.125,
+        "safeInteger": 9007199254740991,
+        "unicode": "nul-adjacent \u0001 · naïve · مرحبا · 🛰️",
+        "values": [
+          null,
+          true,
+          false,
+          0,
+          "0"
+        ]
+      },
+      "seq": 9007199254740991
+    }
+  }
+]

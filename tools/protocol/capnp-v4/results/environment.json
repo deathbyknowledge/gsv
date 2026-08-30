@@ -1,0 +1,17 @@
+{
+  "measuredAt": "2026-08-30T13:04:11+02:00",
+  "kernel": "Linux 7.1.9-arch1-2 x86_64",
+  "cpu": "AMD Ryzen 9 5900X 12-Core Processor (12 cores / 24 threads)",
+  "node": "24.20.0",
+  "npm": "11.19.0",
+  "chromium": "151.0.7922.173",
+  "rustc": "1.100.0-nightly (bff8e12ff 2026-08-26)",
+  "cargo": "1.100.0-nightly (e8cb624d5 2026-08-22)",
+  "capnpCompiler": "1.5.0",
+  "capnpRustRuntime": "0.27.0",
+  "capnpcRust": "0.27.0",
+  "capnpEs": "0.0.14",
+  "cloudflareVitestPoolWorkers": "0.18.8",
+  "workerd": "2026-07-22",
+  "workerdCompatibilityDate": "2026-07-29"
+}

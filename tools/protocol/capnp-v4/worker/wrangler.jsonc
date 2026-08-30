@@ -1,0 +1,6 @@
+{
+  "$schema": "../../../../../node_modules/wrangler/config-schema.json",
+  "name": "gsv-capnp-v4-probe",
+  "main": "worker.ts",
+  "compatibility_date": "2026-07-29"
+}

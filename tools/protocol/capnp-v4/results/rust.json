@@ -1,0 +1,50 @@
+{
+  "runtime": "rust 1.100.0-nightly; capnp 0.27.0",
+  "corpusFrames": 12,
+  "iterationsPerRound": 1000,
+  "rounds": 9,
+  "formats": {
+    "jsonV3": {
+      "wireBytes": 3025,
+      "meanWireBytes": 252.08333333333334,
+      "encode": {
+        "medianNsPerFrame": 295.57641666666666,
+        "allocationCallsPerFrame": 2.1666666666666665,
+        "allocatedBytesPerFrame": 618.6666666666666
+      },
+      "decode": {
+        "medianNsPerFrame": 1687.4835,
+        "allocationCallsPerFrame": 23.666666666666668,
+        "allocatedBytesPerFrame": 3085.75
+      }
+    },
+    "capnpUnpacked": {
+      "wireBytes": 8716,
+      "meanWireBytes": 726.3333333333334,
+      "encode": {
+        "medianNsPerFrame": 552.75825,
+        "allocationCallsPerFrame": 7.5,
+        "allocatedBytesPerFrame": 3692.0
+      },
+      "decode": {
+        "medianNsPerFrame": 1771.723,
+        "allocationCallsPerFrame": 30.5,
+        "allocatedBytesPerFrame": 2028.25
+      }
+    },
+    "capnpPacked": {
+      "wireBytes": 4154,
+      "meanWireBytes": 346.1666666666667,
+      "encode": {
+        "medianNsPerFrame": 963.7821666666666,
+        "allocationCallsPerFrame": 10.416666666666666,
+        "allocatedBytesPerFrame": 3603.1666666666665
+      },
+      "decode": {
+        "medianNsPerFrame": 2469.1115,
+        "allocationCallsPerFrame": 31.5,
+        "allocatedBytesPerFrame": 2749.5833333333335
+      }
+    }
+  }
+}

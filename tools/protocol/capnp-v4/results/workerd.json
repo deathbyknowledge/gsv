@@ -1,0 +1,17 @@
+{
+  "status": "pass",
+  "runtime": "workerd 2026-07-22 via @cloudflare/vitest-pool-workers 0.18.8",
+  "compatibilityDate": "2026-07-29",
+  "tests": 4,
+  "surfaces": {
+    "requestResponseArrayBuffer": {
+      "unpacked": true,
+      "packed": true
+    },
+    "webSocketPairArrayBuffer": {
+      "unpacked": true,
+      "packed": true,
+      "explicitBinaryType": "arraybuffer"
+    }
+  }
+}

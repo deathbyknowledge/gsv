@@ -47,8 +47,10 @@
     "@oxlint/plugins": "1.79.0",
     "alchemy": "2.0.0-beta.72",
     "ajv": "8.20.0",
+    "capnp-es": "0.0.14",
     "oxlint": "1.79.0",
     "effect": "4.0.0-beta.107",
+    "esbuild": "0.28.1",
     "ts-json-schema-generator": "2.9.0"
   }
 }

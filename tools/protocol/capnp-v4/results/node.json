@@ -1,0 +1,69 @@
+{
+  "runtime": "node 24.20.0; capnp-es 0.0.14",
+  "corpusFrames": 12,
+  "iterationsPerRound": 1000,
+  "rounds": 9,
+  "memoryMethod": "retained batch delta after pre-GC; includes unreachable intermediates not yet collected",
+  "formats": {
+    "jsonV3": {
+      "wireBytes": 3019,
+      "meanWireBytes": 251.58333333333334,
+      "minWireBytes": 38,
+      "maxWireBytes": 761,
+      "encode": {
+        "medianNsPerFrame": 802.7733333333333,
+        "retainedBatchBytesPerFrame": {
+          "heap": 379.92,
+          "arrayBuffers": 0
+        }
+      },
+      "decode": {
+        "medianNsPerFrame": 1026.898,
+        "retainedBatchBytesPerFrame": {
+          "heap": 445.18,
+          "arrayBuffers": 0
+        }
+      }
+    },
+    "capnpUnpacked": {
+      "wireBytes": 8636,
+      "meanWireBytes": 719.6666666666666,
+      "minWireBytes": 85,
+      "maxWireBytes": 2397,
+      "encode": {
+        "medianNsPerFrame": 45649.81241666667,
+        "retainedBatchBytesPerFrame": {
+          "heap": 1668.04,
+          "arrayBuffers": 521.2141666666666
+        }
+      },
+      "decode": {
+        "medianNsPerFrame": 63857.4025,
+        "retainedBatchBytesPerFrame": {
+          "heap": 1530.8066666666666,
+          "arrayBuffers": 0
+        }
+      }
+    },
+    "capnpPacked": {
+      "wireBytes": 4133,
+      "meanWireBytes": 344.4166666666667,
+      "minWireBytes": 37,
+      "maxWireBytes": 1193,
+      "encode": {
+        "medianNsPerFrame": 48023.37033333333,
+        "retainedBatchBytesPerFrame": {
+          "heap": 2296.18,
+          "arrayBuffers": 118.7475
+        }
+      },
+      "decode": {
+        "medianNsPerFrame": 66288.94783333334,
+        "retainedBatchBytesPerFrame": {
+          "heap": 2356.4133333333334,
+          "arrayBuffers": 0
+        }
+      }
+    }
+  }
+}
