@@ -28,6 +28,7 @@ import type {
   InferenceAttribution,
   InferenceProviderFactory,
 } from "./provider";
+import { DEFAULT_TEXT_GENERATION_MAX_TOKENS } from "./default-models";
 import { raceWithAbort } from "../shared/abort";
 
 const GSV_INFERENCE_API = "gsv-inference";
@@ -47,7 +48,7 @@ const GSV_INFERENCE_MODEL_METADATA: Model<typeof GSV_INFERENCE_API> = {
     cacheWrite: 0,
   },
   contextWindow: 1_048_576,
-  maxTokens: 8_192,
+  maxTokens: DEFAULT_TEXT_GENERATION_MAX_TOKENS,
 };
 
 type GsvInferenceBindings = {

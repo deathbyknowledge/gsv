@@ -33,6 +33,7 @@ import {
   convertResponsesTools,
   processResponsesStream,
 } from "@earendil-works/pi-ai/api/openai-responses-shared";
+import { DEFAULT_TEXT_GENERATION_MAX_TOKENS } from "./default-models";
 
 export type CustomProviderStyle =
   | "openai-chat-completions"
@@ -431,7 +432,7 @@ function customModelForRequest(
       cacheWrite: 0,
     },
     contextWindow: positiveInteger(request.contextWindowTokens) ?? DEFAULT_CONTEXT_WINDOW_TOKENS,
-    maxTokens: positiveInteger(request.maxTokens) ?? 8192,
+    maxTokens: positiveInteger(request.maxTokens) ?? DEFAULT_TEXT_GENERATION_MAX_TOKENS,
   } satisfies Omit<Model<Api>, "api" | "compat">;
   if (style === "openai-chat-completions") {
     return {

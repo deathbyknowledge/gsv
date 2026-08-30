@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ConfigStore, SYSTEM_CONFIG_DEFAULTS } from "./config";
 import {
+  DEFAULT_TEXT_GENERATION_MAX_TOKENS,
   DEFAULT_WORKERS_AI_FALLBACK_MODEL,
   DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID,
   DEFAULT_WORKERS_AI_MODEL,
@@ -9,6 +10,13 @@ import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { MAIL_STATUS } from "../syscalls/constants";
 
 describe("ConfigStore", () => {
+  it("defaults text and image generation to their supported output budgets", () => {
+    expect(SYSTEM_CONFIG_DEFAULTS["config/ai/max_tokens"])
+      .toBe(String(DEFAULT_TEXT_GENERATION_MAX_TOKENS));
+    expect(SYSTEM_CONFIG_DEFAULTS["config/ai/image/read/max_tokens"])
+      .toBe("28672");
+  });
+
   it("defaults native shell execution to two minutes", () => {
     expect(SYSTEM_CONFIG_DEFAULTS["config/shell/timeout_ms"]).toBe("120000");
   });
