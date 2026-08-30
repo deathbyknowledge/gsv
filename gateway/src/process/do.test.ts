@@ -9194,6 +9194,55 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("keeps an overdue delegation open for its eventual reply", async () => {
+      const pid = "mech-ipc-overdue-source";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const callId = "call-overdue";
+
+      await stub.recvFrame({
+        type: "sig",
+        signal: "ipc.overdue",
+        payload: {
+          callId,
+          sourcePid: pid,
+          targetPid: "target-process",
+          runId: "target-run",
+          createdAt: Date.now() - 1_000,
+          deadlineAt: Date.now(),
+          nextCheckAt: Date.now() + 60_000,
+          checkInCount: 1,
+          status: "pending",
+        },
+      });
+      await stub.recvFrame({
+        type: "sig",
+        signal: "ipc.reply",
+        payload: {
+          callId,
+          sourcePid: pid,
+          targetPid: "target-process",
+          runId: "target-run",
+          createdAt: Date.now() - 1_000,
+          deadlineAt: Date.now(),
+          status: "completed",
+          response: { text: "eventual result", usage: null },
+        },
+      });
+
+      await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
+        const process = instance as any;
+        const messages = process.store.getMessages();
+        expect(messages.some((message: any) => (
+          message.content.includes("is still running")
+        ))).toBe(true);
+        expect(messages.some((message: any) => (
+          message.content.includes("eventual result")
+        ))).toBe(true);
+        process.currentRun = null;
+      });
+    });
+
     it("deduplicates retried IPC terminal delivery by call id", async () => {
       const pid = "mech-ipc-deduplicated-reply";
       const stub = await initProcess(pid, ROOT_IDENTITY);

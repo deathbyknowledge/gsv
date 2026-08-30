@@ -1786,7 +1786,7 @@ describe("proc native command", () => {
     expect(kill).toHaveBeenCalledWith("proc:child");
   });
 
-  it("delegates bounded work through a new child process", async () => {
+  it("delegates supervised work through a new child process", async () => {
     const spawnedPids: string[] = [];
     const parent = {
       processId: "task:shell",
@@ -1825,6 +1825,7 @@ describe("proc native command", () => {
         expect(req.args.call).toEqual(expect.objectContaining({
           callId: expect.any(String),
           deadlineAt: expect.any(Number),
+          supervised: true,
         }));
         return {
           type: "res",
@@ -1874,6 +1875,7 @@ describe("proc native command", () => {
     const createdCall = ipcCalls.create.mock.calls[0]?.[0];
     expect(result.stdout).toContain(`run_id=${createdCall.targetRunId}`);
     expect(result.stdout).toContain("queued=false");
+    expect(result.stdout).toContain("check_in=");
     expect(result.stdout).toContain('label="planning"');
     expect(spawn).toHaveBeenCalledWith(
       spawnedPids[0],
@@ -1895,7 +1897,11 @@ describe("proc native command", () => {
     expect(scheduleIpcCallTimeout).toHaveBeenCalledWith(
       callId,
       createdCall.deadlineAt,
-      { terminateTargetOnTimeout: true },
+      {
+        mode: "supervise",
+        intervalMs: 600_000,
+        checkInCount: 0,
+      },
     );
   });
 

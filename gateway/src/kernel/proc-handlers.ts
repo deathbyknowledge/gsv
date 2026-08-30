@@ -23,6 +23,7 @@ import type {
   ProcHistoryExportResult,
   ProcIpcCallArgs,
   ProcIpcCallResult,
+  ProcIpcDeliverArgs,
   ProcIpcDeliverResult,
   ProcIpcSendArgs,
   ProcIpcSendResult,
@@ -599,7 +600,7 @@ export async function handleProcIpcCall(
   args: ProcIpcCallArgs,
   ctx: KernelContext,
   options: {
-    terminateTargetOnTimeout?: boolean;
+    superviseAfterTimeout?: boolean;
     responsibilityId?: string;
   } = {},
 ): Promise<ProcIpcCallResult> {
@@ -618,13 +619,16 @@ export async function handleProcIpcCall(
     targetPid: resolved.args.pid,
     targetRunId: runId,
     deadlineAt,
+    supervised: options.superviseAfterTimeout === true,
     responsibilityId: options.responsibilityId,
   });
 
   try {
-    if (options.terminateTargetOnTimeout) {
+    if (options.superviseAfterTimeout) {
       await ctx.scheduleIpcCallTimeout(callId, deadlineAt, {
-        terminateTargetOnTimeout: true,
+        mode: "supervise",
+        intervalMs: timeoutMs,
+        checkInCount: 0,
       });
     } else {
       await ctx.scheduleIpcCallTimeout(callId, deadlineAt);
@@ -636,6 +640,12 @@ export async function handleProcIpcCall(
       error: error instanceof Error ? error.message : String(error),
     };
   }
+
+  const deliverCall: NonNullable<ProcIpcDeliverArgs["call"]> = {
+    callId,
+    deadlineAt,
+  };
+  if (options.superviseAfterTimeout) deliverCall.supervised = true;
 
   let response: Awaited<ReturnType<typeof sendFrameToProcess>>;
   try {
@@ -651,10 +661,7 @@ export async function handleProcIpcCall(
         metadata: resolved.args.metadata,
         origin: processInteractionOrigin(resolved.sourcePid, resolved.source.uid),
         sentAt: Date.now(),
-        call: {
-          callId,
-          deadlineAt,
-        },
+        call: deliverCall,
       },
     });
   } catch (error) {
@@ -690,7 +697,10 @@ export async function handleProcIpcCall(
   }
 
   const call = ctx.ipcCalls.get(callId);
-  if (Date.now() >= deadlineAt || call?.status === "timed_out") {
+  if (
+    call?.status === "timed_out"
+    || (!options.superviseAfterTimeout && Date.now() >= deadlineAt)
+  ) {
     return {
       ok: false,
       error: call?.error ?? "IPC call timed out",

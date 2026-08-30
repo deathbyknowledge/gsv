@@ -31,7 +31,7 @@ const POLICY_DEFINITIONS = [
   {
     id: "process.delegation",
     name: "Delegated work",
-    description: "Triggers when assigned work completes, fails, times out, or is terminated, then returns it to Ship.",
+    description: "Keeps assigned work visible through supervision check-ins and returns terminal outcomes to Ship.",
     control: "required",
     defaultEnabled: true,
   },

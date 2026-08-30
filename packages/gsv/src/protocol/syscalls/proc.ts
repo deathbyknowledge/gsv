@@ -164,6 +164,7 @@ export type ProcIpcDeliverArgs = {
   call?: {
     callId: string;
     deadlineAt: number;
+    supervised?: boolean;
   };
 };
 

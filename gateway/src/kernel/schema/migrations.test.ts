@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(35);
+    expect(KERNEL_MIGRATIONS).toHaveLength(36);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -171,6 +171,10 @@ describe("kernel schema migrations", () => {
     expect(KERNEL_MIGRATIONS[34]).toMatchObject({
       id: 35,
       name: "add_adapter_lifecycle_ids",
+    });
+    expect(KERNEL_MIGRATIONS[35]).toMatchObject({
+      id: 36,
+      name: "supervise_delegated_ipc_calls",
     });
   });
 
@@ -330,6 +334,12 @@ describe("kernel schema migrations", () => {
     const statements = normalizedStatements();
     expect(statements).toContain(
       "ALTER TABLE ipc_calls ADD COLUMN responsibility_id TEXT",
+    );
+  });
+
+  it("distinguishes supervised delegation from bounded IPC", () => {
+    expect(normalizedStatements()).toContain(
+      "ALTER TABLE ipc_calls ADD COLUMN supervised INTEGER NOT NULL DEFAULT 0 CHECK (supervised IN (0, 1))",
     );
   });
 

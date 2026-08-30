@@ -78,7 +78,11 @@ export type KernelContext = {
   scheduleIpcCallTimeout: (
     callId: string,
     deadlineAt: number,
-    options?: { terminateTargetOnTimeout?: boolean },
+    options?: {
+      mode: "supervise";
+      intervalMs: number;
+      checkInCount: number;
+    },
   ) => Promise<string>;
   failIpcCallsByTarget: (uid: number, targetPid: string, error: string) => void;
   scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;

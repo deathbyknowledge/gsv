@@ -219,9 +219,12 @@ System-owned producers use the same ledger contract:
   Schedules explicitly bound to an adapter reply route retain that transport event so
   the eventual Message can use the exact authorized destination.
 - `proc delegate --responsibility ID ...` stores the responsibility id on the durable
-  IPC call. Completion, failure, timeout, or kill returns a still-active assignment to
-  Ship exactly once, records the call and child run ids as evidence, and wakes Ship.
-  The child result itself remains an IPC event in Process Activity.
+  IPC call. Completion, failure, or explicit termination returns a still-active
+  assignment to Ship exactly once, records the call and child run ids as evidence,
+  and wakes Ship. A supervision checkpoint instead leaves the assignment with the
+  child, renews the IPC result route, records the next check time, and wakes Ship
+  without terminating the work. The child result itself remains an IPC event in
+  Process Activity.
 
 ## Epoch archives
 

@@ -22,6 +22,7 @@ describe("IpcCallStore", () => {
         sourceRunId: "run-source",
         targetRunId: "run-target",
         status: "pending",
+        supervised: false,
       });
       expect(calls.findPendingByTargetRun({
         uid: 1000,
@@ -81,6 +82,91 @@ describe("IpcCallStore", () => {
       expect(calls.get(callId)?.sourceRunId).toBeNull();
       calls.cancelBySourcePid({ uid: 1000, sourcePid: "proc-source" });
       expect(calls.get(callId)).toBeNull();
+    });
+  });
+
+  it("renews a pending supervision deadline without losing its eventual result", async () => {
+    await runWithRealKernelSql((sql) => {
+      const calls = new IpcCallStore(sql);
+      const callId = crypto.randomUUID();
+      calls.create({
+        callId,
+        uid: 1000,
+        sourcePid: "proc-source",
+        sourceRunId: "run-source",
+        targetPid: "proc-target",
+        targetRunId: "run-target",
+        deadlineAt: Date.now() - 1,
+      });
+
+      const nextDeadlineAt = Date.now() + 60_000;
+      expect(calls.renewDeadline(callId, nextDeadlineAt)).toMatchObject({
+        callId,
+        status: "pending",
+        supervised: true,
+        deadlineAt: nextDeadlineAt,
+      });
+      expect(calls.completeByRun({
+        uid: 1000,
+        targetPid: "proc-target",
+        runId: "run-target",
+        response: { text: "finished after the first check-in" },
+      })).toEqual([callId]);
+    });
+  });
+
+  it("preserves the exact deadline for an ordinary IPC call", async () => {
+    await runWithRealKernelSql((sql) => {
+      const calls = new IpcCallStore(sql);
+      const callId = crypto.randomUUID();
+      calls.create({
+        callId,
+        uid: 1000,
+        sourcePid: "proc-source",
+        sourceRunId: "run-source",
+        targetPid: "proc-target",
+        targetRunId: "run-target",
+        deadlineAt: Date.now() - 1,
+      });
+
+      expect(calls.completeByRun({
+        uid: 1000,
+        targetPid: "proc-target",
+        runId: "run-target",
+        response: { text: "late result" },
+      })).toEqual([]);
+      expect(calls.get(callId)).toMatchObject({
+        status: "pending",
+        supervised: false,
+      });
+    });
+  });
+
+  it("accepts a supervised result while its checkpoint is being renewed", async () => {
+    await runWithRealKernelSql((sql) => {
+      const calls = new IpcCallStore(sql);
+      const callId = crypto.randomUUID();
+      calls.create({
+        callId,
+        uid: 1000,
+        sourcePid: "proc-source",
+        sourceRunId: "run-source",
+        targetPid: "proc-target",
+        targetRunId: "run-target",
+        deadlineAt: Date.now() - 1,
+        supervised: true,
+      });
+
+      expect(calls.completeByRun({
+        uid: 1000,
+        targetPid: "proc-target",
+        runId: "run-target",
+        response: { text: "eventual result" },
+      })).toEqual([callId]);
+      expect(calls.get(callId)).toMatchObject({
+        status: "completed",
+        supervised: true,
+      });
     });
   });
 
