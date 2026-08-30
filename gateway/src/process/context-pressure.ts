@@ -36,6 +36,10 @@ export function estimateContextInputTokens(context: Context): number {
   return measureContextInputTokens(context).estimatedInputTokens;
 }
 
+export function estimateContextMessagesTokens(messages: readonly Message[]): number {
+  return applyEstimateSafety(estimateMessagesTokens(messages));
+}
+
 export function measureContextInputTokens(
   context: Context,
   target?: {

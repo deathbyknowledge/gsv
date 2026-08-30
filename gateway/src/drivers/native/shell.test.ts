@@ -2310,6 +2310,52 @@ describe("proc native command", () => {
     expect(result.stderr).toContain("Permission denied: cannot access process foreign-pid");
   });
 
+  it("sets pressure-based automatic compaction policy", async () => {
+    sendFrameToProcessMock.mockResolvedValueOnce({
+      type: "res",
+      id: "policy-1",
+      ok: true,
+      data: {
+        ok: true,
+        pid: "task:shell",
+        policy: {
+          overflow: "auto-compact",
+          compactAtPressure: 0.9,
+          compactToPressure: 0.4,
+          updatedAt: 1,
+        },
+      },
+    });
+
+    const result = await handleShellExec(
+      { input: "proc policy --compact-at 0.9 --compact-to 0.4" },
+      makeContext({
+        capabilities: ["proc.history.policy.set"],
+        procs: {
+          get: vi.fn((pid: string) => makeProcess({ processId: pid })),
+          getOwnerUid: vi.fn(() => IDENTITY.uid),
+        },
+      }),
+    );
+
+    expect(result.status).toBe("completed");
+    expect(result.stdout).toBe(
+      "overflow=auto-compact compact_at=0.9 compact_to=0.4\n",
+    );
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
+      "task:shell",
+      expect.objectContaining({
+        call: "proc.history.policy.set",
+        args: {
+          pid: "task:shell",
+          compactAtPressure: 0.9,
+          compactToPressure: 0.4,
+        },
+      }),
+    );
+  });
+
   it("reads live process history from the native proc command surface", async () => {
     sendFrameToProcessMock.mockResolvedValueOnce({
       type: "res",

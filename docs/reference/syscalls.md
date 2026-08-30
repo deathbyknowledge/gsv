@@ -774,7 +774,7 @@ Runtime behavior:
 | `proc.kill` | Process DO | Optionally archives the process history under the run-as agent's home, promotes referenced media into immutable archive objects, clears live process media, and wipes Process DO state. After success the Kernel removes the process registry entry. |
 | `proc.history` | Process DO | Returns paged stored messages, message count and cursor flags, pending HIL, and the latest context-pressure state. Offset paging reads from the beginning. `tail: true` reads the latest page, `beforeMessageId` reads older messages, and `afterMessageId` reads newer messages. `includeMessages: false` returns status metadata without transferring raw Process activity. Tool results and assistant metadata are expanded into structured content when messages are included. |
 | `proc.trace` | Process DO | Returns the bounded wall-clock span tree for recent runs. Run, context assembly, inference, reasoning, model output, tool execution, approval, and Message delivery spans carry timing plus references into `proc.history`; the trace does not duplicate private payloads. Trace state is cleared with Process history and removed by `proc.kill`. |
-| `proc.history.policy.get` | Process DO | Returns the process context-overflow policy. The default is `auto-compact` at 90% pressure while retaining the newest 80 stored messages. |
+| `proc.history.policy.get` | Process DO | Returns the process context-overflow policy. The default is `auto-compact` at 90% pressure with a 40% post-compaction target. |
 | `proc.history.policy.set` | Process DO | Sets the process context-overflow policy. Supported `overflow` values are `auto-compact` and `fail`; the policy is applied during run preflight and after a provider-confirmed overflow. Provider overflow does not advance the main generation fallback chain. |
 | `proc.history.compact` | Process DO | Archives an old history prefix, inserts a visible system summary marker, and records a `compaction` segment. Requires a supplied or generated summary and exactly one of `keepLast` or `throughMessageId`. |
 | `proc.history.segment.read` | Process DO | Reads paged messages from a compacted segment without restoring them into active history. |
@@ -854,7 +854,7 @@ type ProcContextEpoch = {
 type ProcHistoryContextPolicy = {
   overflow: "auto-compact" | "fail";
   compactAtPressure: number;
-  keepLast: number;
+  compactToPressure: number;
   updatedAt: number;
 };
 
@@ -961,7 +961,7 @@ type ProcessSyscalls = {
   };
 
   "proc.history.policy.set": {
-    args: { pid?: string; overflow?: "auto-compact" | "fail"; compactAtPressure?: number; keepLast?: number };
+    args: { pid?: string; overflow?: "auto-compact" | "fail"; compactAtPressure?: number; compactToPressure?: number };
     result: { ok: true; pid: string; policy: ProcHistoryContextPolicy } | OperationError;
   };
 

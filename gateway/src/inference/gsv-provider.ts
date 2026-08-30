@@ -215,7 +215,7 @@ async function pumpGsvInference(
 
   try {
     if (signal?.aborted) {
-      stream.push(gsvInferenceErrorEvent(true));
+      stream.push(gsvInferenceErrorEvent(true, signal));
       return;
     }
     if (access.kind === "installations") {
@@ -239,7 +239,7 @@ async function pumpGsvInference(
       });
     }
     if (signal?.aborted) {
-      stream.push(gsvInferenceErrorEvent(true));
+      stream.push(gsvInferenceErrorEvent(true, signal));
       return;
     }
     const bodyPromise = target.generateStream(request);
@@ -257,13 +257,13 @@ async function pumpGsvInference(
       if (terminal) break;
     }
     if (signal?.aborted) {
-      stream.push(gsvInferenceErrorEvent(true));
+      stream.push(gsvInferenceErrorEvent(true, signal));
       return;
     }
     if (!terminal) throw new Error("Managed inference stream ended early");
   } catch {
     abortGeneration();
-    stream.push(gsvInferenceErrorEvent(signal?.aborted === true));
+    stream.push(gsvInferenceErrorEvent(signal?.aborted === true, signal));
   } finally {
     signal?.removeEventListener("abort", abortGeneration);
     await generationAbort;
@@ -508,7 +508,11 @@ function managedInferenceTarget(
 
 function gsvInferenceErrorEvent(
   aborted: boolean,
+  abortSignal?: AbortSignal,
 ): Extract<AssistantMessageEvent, { type: "error" }> {
+  const abortMessage = abortSignal?.reason instanceof Error
+    ? abortSignal.reason.message.trim()
+    : "";
   return {
     type: "error",
     reason: aborted ? "aborted" : "error",
@@ -528,7 +532,7 @@ function gsvInferenceErrorEvent(
       },
       stopReason: aborted ? "aborted" : "error",
       errorMessage: aborted
-        ? "GSV inference cancelled"
+        ? abortMessage || "GSV inference cancelled"
         : "GSV inference is unavailable",
       timestamp: Date.now(),
     },
