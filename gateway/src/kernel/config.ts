@@ -21,6 +21,7 @@ import {
   GSV_TARGET_CONTEXT,
 } from "../prompts/system";
 import {
+  DEFAULT_TEXT_GENERATION_MAX_TOKENS,
   DEFAULT_WORKERS_AI_FALLBACK_MODEL,
   DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID,
   DEFAULT_WORKERS_AI_FALLBACK_PROFILE_NAME,
@@ -66,7 +67,7 @@ const DEFAULT_ROOT_MODEL_PROFILES = JSON.stringify({
       "config/ai/provider_style": "auto",
       "config/ai/transport_target": "gsv",
       "config/ai/reasoning": "medium",
-      "config/ai/max_tokens": "8192",
+      "config/ai/max_tokens": String(DEFAULT_TEXT_GENERATION_MAX_TOKENS),
       "config/ai/max_context_bytes": "32768",
     },
     createdAt: 1,
@@ -92,7 +93,7 @@ export const SYSTEM_CONFIG_DEFAULTS = defineSystemConfigDefaults({
   // Only applies to models that support extended thinking.
   "config/ai/reasoning": "medium",
   // Max tokens for LLM responses (model-dependent upper bound).
-  "config/ai/max_tokens": "8192",
+  "config/ai/max_tokens": String(DEFAULT_TEXT_GENERATION_MAX_TOKENS),
   // Fallback context window for providers that are not in the local model registry.
   "config/ai/context_window_tokens": "256000",
   // System prompt context, assembled in lexical order, applied to every
@@ -119,7 +120,7 @@ export const SYSTEM_CONFIG_DEFAULTS = defineSystemConfigDefaults({
   "users/0/ai/model_profiles": DEFAULT_ROOT_MODEL_PROFILES,
   // Moondream image-reading resource limits used by process attachments and AI syscalls.
   "config/ai/image/read/max_bytes": "10485760",
-  "config/ai/image/read/max_tokens": "8192",
+  "config/ai/image/read/max_tokens": "28672",
   "config/ai/image/read/max_objects": "150",
   "config/ai/image/read/timeout_ms": "30000",
   "config/ai/image/generation/provider": "workers-ai",

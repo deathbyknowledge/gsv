@@ -62,6 +62,7 @@ import { FS_SEARCH_DEFINITION } from "../syscalls/search";
 import { SHELL_EXEC_DEFINITION } from "../syscalls/shell";
 import { CODEMODE_EXEC_DEFINITION } from "../syscalls/codemode";
 import { isCodeModeAvailable } from "../codemode/availability";
+import { DEFAULT_TEXT_GENERATION_MAX_TOKENS } from "../inference/default-models";
 import {
   DEFAULT_WORKERS_AI_MODEL,
   isWorkersAiProvider,
@@ -309,7 +310,7 @@ export async function handleAiConfig(
   const reasoning = resolveConfig("reasoning") ?? undefined;
 
   const maxTokens = parseInt(
-    resolveConfig("max_tokens") ?? "8192",
+    resolveConfig("max_tokens") ?? String(DEFAULT_TEXT_GENERATION_MAX_TOKENS),
     10,
   );
   const contextWindowOverride = parsePositiveInt(
@@ -1120,7 +1121,7 @@ async function resolveAiFallbackModelStack(
   const resolvedApiKey = resolvedOAuth.apiKey;
   const reasoning = resolveConfig("reasoning") ?? undefined;
   const maxTokens = parseInt(
-    resolveConfig("max_tokens") ?? "8192",
+    resolveConfig("max_tokens") ?? String(DEFAULT_TEXT_GENERATION_MAX_TOKENS),
     10,
   );
   const contextWindowOverride = parsePositiveInt(

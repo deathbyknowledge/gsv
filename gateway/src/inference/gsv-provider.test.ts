@@ -48,6 +48,18 @@ const RESULT: ManagedInferenceResult = {
 };
 
 describe("GSV inference provider", () => {
+  it("advertises the default 32k output budget", () => {
+    const service: ManagedInferenceService = {
+      getInstallation: vi.fn<ManagedInferenceService["getInstallation"]>(),
+    };
+    const provider = createGsvInferenceProviderFactory(service).create(ATTRIBUTION);
+    const models = createModels();
+    models.setProvider(provider);
+
+    expect(models.getModel(GSV_INFERENCE_PROVIDER, GSV_INFERENCE_MODEL)?.maxTokens)
+      .toBe(32_768);
+  });
+
   it("registers when either managed inference binding is present", () => {
     const service: ManagedInferenceService = {
       getInstallation: vi.fn<ManagedInferenceService["getInstallation"]>(),

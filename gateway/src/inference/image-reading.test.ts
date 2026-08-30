@@ -30,7 +30,7 @@ describe("readImage", () => {
       task: "caption",
       image: "data:image/png;base64,AQID",
       stream: false,
-      max_tokens: 8192,
+      max_tokens: 28_672,
       caption_length: "normal",
     });
     expect(response?.result).toEqual({
