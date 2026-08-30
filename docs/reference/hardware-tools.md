@@ -331,8 +331,14 @@ offline agent runtime or replay remote requests.
 
 Disarming removes sensor authority but deliberately leaves the driver
 connection, filesystem, and bounded shell running. Disconnecting the Android
-runtime is a separate local action. Reboot, force-stop, process death, or
-permission loss cannot recreate Wear authority remotely.
+runtime is a separate local action. A remote caller cannot arm Wear Mode or
+change its desired state. When the user has armed or paused Wear Mode locally,
+the app persists that choice and may create a fresh authority generation after
+process death, package replacement, or the first credential unlock after
+reboot. Required credential or permission loss clears the desired state;
+Android force-stop suppresses restoration until the user launches the package
+again. GSV OS additionally supervises the platform-signed app as a persistent
+process and exempts its explicitly armed runtime from Doze and Data Saver.
 
 ## Routing
 

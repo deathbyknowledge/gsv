@@ -14,8 +14,12 @@ The ownership boundary is deliberate:
   spooling, physical sensors, Android actions, assistant speech playback and
   metering, local checks, temporary media, and terminal cleanup.
 - A remote caller may consume an existing Wear authority lease. It cannot arm
-  the phone or recreate authority after process death, reboot, force-stop, or
-  permission loss.
+  the phone or change the locally persisted desired Wear state. GSV OS may
+  recreate a fresh in-process authority generation after process death,
+  package replacement, or the first credential unlock after reboot, but only
+  from a state the user previously confirmed on the phone. Force-stop keeps
+  the package stopped until the user launches it, and credential or required
+  permission loss fails closed.
 
 ## Runtime state
 
@@ -42,16 +46,34 @@ owns arming, and the runtime service still owns every authority transition.
 
 `Arm Wear Mode` is accepted only from the visible activity after camera,
 microphone, nearby-device, notification, and at least approximate-location
-permissions have been granted. It starts a camera, microphone, and location foreground service
-and creates a random authority generation held only in process memory. Precise
-location and notification-listener access are optional. Pause retains the
-generation but denies new leases. Disarm invalidates it, cancels active sensor
-and local-check work, and keeps the driver connection alive. Disconnect is the
-separate action that stops the runtime.
+permissions have been granted. It records `ARMED` in app-private storage,
+starts a camera, microphone, and location foreground service, and creates a
+random authority generation held only in process memory. Precise location and
+notification-listener access are optional. Pause records `PAUSED`, retains the
+generation, and denies new leases. Disarm records `DISARMED`, invalidates the
+generation, cancels active sensor and local-check work, and keeps the current
+driver connection alive. Disconnect is the separate action that clears the
+desired state and stops the runtime.
 
-The service is `START_NOT_STICKY`; no boot receiver or background path creates
-authority. The persistent notification exposes Pause, Resume, Disarm, Open,
-and Disconnect actions according to the current state.
+The service returns `START_STICKY` only while the desired state is `ARMED` or
+`PAUSED`. Application startup plus boot-completed, user-unlocked, and
+package-replaced receivers restore that state after rechecking credentials,
+required permissions, and foreground-service startup. A restored authority
+always receives a new in-memory generation; no lease survives the old
+process. Restoring `PAUSED` enters the paused state before connection work can
+accept a sensor request. Any failed prerequisite clears the desired state
+instead of retrying with partial authority.
+
+On GSV OS, the platform-signed system package is also marked persistent and is
+allowlisted for Doze and Data Saver. Android therefore supervises the app
+process while the app continues to own credentials, WebSockets, foreground
+authority, and sensor lifecycles. Ordinary APK installs do not receive
+persistent-process treatment, but retain the same foreground-service and
+sticky-restart behavior. Credential-encrypted state is restored only after the
+first user unlock. Android force-stop remains an explicit suppression boundary
+until the user launches the package again. The persistent notification exposes
+Pause, Resume, Disarm, Open, and Disconnect actions according to the current
+state.
 
 ## Driver transport
 
