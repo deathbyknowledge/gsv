@@ -194,6 +194,8 @@ import {
 } from "./media";
 import {
   buildProcContextState,
+  estimateContextInputTokens,
+  estimateContextMessagesTokens,
   measureContextInputTokens,
 } from "./context-pressure";
 import { deriveGenerationContextId } from "./context-message-metadata";
@@ -601,7 +603,7 @@ const CODE_MODE_APPROVAL_TIMEOUT_MS = 55_000;
 const TOOL_DISPATCH_TIMEOUT_MS = 10 * 60_000;
 const MEDIA_PREPARATION_TIMEOUT_MS = 10 * 60_000;
 const COMPACTION_SUMMARY_WINDOW_CHARS = 24_000;
-const COMPACTION_GENERATION_TIMEOUT_MS = 30_000;
+const COMPACTION_SUMMARY_MAX_TOKENS = 768;
 const CONTEXT_PROVIDER_OVERFLOW_REASON = "context.provider_overflow";
 const CONTEXT_RUNWAY_ALERT_EPOCH_KEY = "contextRunwayAlertEpoch";
 const CONTEXT_RUNWAY_ALERT_MAX_TOKENS_BEFORE_BOUNDARY = 64_000;
@@ -916,7 +918,7 @@ const exactBodyLengthSchema = z.number().int().nonnegative().safe();
 const storedHistoryPolicySchema = z.object({
   overflow: z.enum(["auto-compact", "fail"]).optional().catch(undefined),
   compactAtPressure: z.number().finite().optional().catch(undefined),
-  keepLast: z.number().int().nonnegative().optional().catch(undefined),
+  compactToPressure: z.number().finite().optional().catch(undefined),
   updatedAt: z.number().finite().optional().catch(undefined),
 });
 const workReturnedRuntimeEventSchema = z.strictObject({
@@ -1763,6 +1765,11 @@ function formatCompactionSummaryMessage(input: {
   ].join("\n");
 }
 
+function isCompactionSummaryMessage(message: MessageRecord): boolean {
+  return message.role === "system"
+    && message.content.startsWith("Process history compacted.\n");
+}
+
 function contextBoundaryRemainingTokens(
   inputBudgetTokens: number,
   compactAtPressure: number,
@@ -1792,7 +1799,7 @@ function defaultHistoryPolicy(): ProcHistoryContextPolicy {
   return {
     overflow: "auto-compact",
     compactAtPressure: 0.9,
-    keepLast: 80,
+    compactToPressure: 0.4,
     updatedAt: 0,
   };
 }
@@ -4034,15 +4041,22 @@ export class Process extends DurableObject<ProcessEnv> {
     ) {
       return { ok: false, error: "proc.history.policy.set compactAtPressure must be > 0 and <= 1" };
     }
-    const keepLast = args.keepLast ?? existing.keepLast;
-    if (!isNonNegativeInteger(keepLast)) {
-      return { ok: false, error: "proc.history.policy.set keepLast must be a non-negative integer" };
+    const compactToPressure = args.compactToPressure ?? existing.compactToPressure;
+    if (
+      !Number.isFinite(compactToPressure)
+      || compactToPressure <= 0
+      || compactToPressure >= compactAtPressure
+    ) {
+      return {
+        ok: false,
+        error: "proc.history.policy.set compactToPressure must be > 0 and less than compactAtPressure",
+      };
     }
 
     const policy: ProcHistoryContextPolicy = {
       overflow,
       compactAtPressure,
-      keepLast,
+      compactToPressure,
       updatedAt: Date.now(),
     };
     this.store.setValue("historyPolicy", JSON.stringify(policy));
@@ -4072,17 +4086,28 @@ export class Process extends DurableObject<ProcessEnv> {
       const parsed = result.data;
       const overflow = parsed.overflow;
       const compactAtPressure = parsed.compactAtPressure;
-      const keepLast = parsed.keepLast;
+      const compactToPressure = parsed.compactToPressure;
+      const effectiveCompactAtPressure =
+        compactAtPressure !== undefined
+        && Number.isFinite(compactAtPressure)
+        && compactAtPressure > 0
+        && compactAtPressure <= 1
+          ? compactAtPressure
+          : fallback.compactAtPressure;
+      const effectiveCompactToPressure =
+        compactToPressure !== undefined
+        && Number.isFinite(compactToPressure)
+        && compactToPressure > 0
+        && compactToPressure < effectiveCompactAtPressure
+          ? compactToPressure
+          : Math.min(
+              fallback.compactToPressure,
+              effectiveCompactAtPressure / 2,
+            );
       return {
         overflow: isHistoryOverflowPolicy(overflow) ? overflow : fallback.overflow,
-        compactAtPressure:
-          compactAtPressure !== undefined &&
-          Number.isFinite(compactAtPressure) &&
-          compactAtPressure > 0 &&
-          compactAtPressure <= 1
-            ? compactAtPressure
-            : fallback.compactAtPressure,
-        keepLast: isNonNegativeInteger(keepLast) ? keepLast : fallback.keepLast,
+        compactAtPressure: effectiveCompactAtPressure,
+        compactToPressure: effectiveCompactToPressure,
         updatedAt: parsed.updatedAt !== undefined && Number.isFinite(parsed.updatedAt)
           ? parsed.updatedAt
           : fallback.updatedAt,
@@ -4358,10 +4383,9 @@ export class Process extends DurableObject<ProcessEnv> {
     }
 
     const context = buildCompactionSummaryContext(messages);
-    const generationOptions: AiTextGenerateOptions = {
-      maxTokens: 768,
+    const generationOptions: Omit<AiTextGenerateOptions, "timeoutMs"> = {
+      maxTokens: COMPACTION_SUMMARY_MAX_TOKENS,
       reasoning: "off",
-      timeoutMs: COMPACTION_GENERATION_TIMEOUT_MS,
     };
     let config = primary;
     let fallbackIndex = 0;
@@ -4371,7 +4395,10 @@ export class Process extends DurableObject<ProcessEnv> {
         const generated = await this.generateCompactionText({
           config,
           context,
-          options: generationOptions,
+          options: {
+            ...generationOptions,
+            timeoutMs: config.generationTimeoutMs,
+          },
           sessionAffinityKey: `${pid}:compaction`,
           signal,
         });
@@ -6325,7 +6352,10 @@ export class Process extends DurableObject<ProcessEnv> {
         if (trigger === "provider-overflow") {
           return "ready";
         }
-        if (contextState.pressure !== null && contextState.pressure >= 1) {
+        if (
+          contextState.pressure !== null
+          && contextState.pressure > policy.compactToPressure
+        ) {
           await this.finishInsufficientCompactionRun(
             runId,
             policy,
@@ -6341,6 +6371,7 @@ export class Process extends DurableObject<ProcessEnv> {
         runId,
         config,
         contextState,
+        context,
         trigger,
       );
       if (policyResult !== "compacted") {
@@ -6360,7 +6391,10 @@ export class Process extends DurableObject<ProcessEnv> {
       if (this.handleRunStopped(runId)) {
         return "stopped";
       }
-      if (contextState.pressure !== null && contextState.pressure >= 1) {
+      if (
+        contextState.pressure !== null
+        && contextState.pressure > policy.compactToPressure
+      ) {
         await this.finishInsufficientCompactionRun(
           runId,
           policy,
@@ -7540,10 +7574,10 @@ export class Process extends DurableObject<ProcessEnv> {
     afterPressure: number,
   ): Promise<void> {
     const message = [
-      "Auto-compaction could not reduce this process history below its context limit.",
+      "Auto-compaction could not reduce this process history to its configured context target.",
       `Pressure: ${Math.round(beforePressure * 100)}% before, ${Math.round(afterPressure * 100)}% after.`,
-      `Policy: compact at ${Math.round(policy.compactAtPressure * 100)}% and keep ${policy.keepLast} recent messages.`,
-      "Lower keepLast, compact more history manually, or reset the process.",
+      `Policy: compact at ${Math.round(policy.compactAtPressure * 100)}% and target ${Math.round(policy.compactToPressure * 100)}%.`,
+      "Compact more history manually or reset the process.",
     ].join("\n");
     this.store.appendMessage("system", message, { runId });
     await this.emitProcChanged(["messages"], {
@@ -7660,6 +7694,7 @@ export class Process extends DurableObject<ProcessEnv> {
     runId: string,
     config: AiConfigResult,
     state: ProcContextState,
+    context: Context,
     trigger: "preflight" | "provider-overflow" = "preflight",
   ): Promise<"ready" | "compacted" | "stopped"> {
     const pressure = state.pressure;
@@ -7700,17 +7735,18 @@ export class Process extends DurableObject<ProcessEnv> {
       return "stopped";
     }
 
-    const selected = this.store.getHistoryPrefixMessages({
-      keepLast: policy.keepLast,
-    });
+    const selected = this.selectAutoCompactionPrefix(
+      runId,
+      state,
+      context,
+      policy,
+      trigger,
+    );
     if (selected.length === 0) {
-      if (trigger === "preflight" && pressure !== null && pressure < 1) {
-        return "ready";
-      }
       const message = [
-        "Context limit reached, but auto-compaction could not archive any older messages.",
-        `Policy keeps the newest ${policy.keepLast} messages live.`,
-        "Lower the keep-last value, compact manually, or reset this process.",
+        "Context pressure reached the compaction boundary, but no completed history prefix can be archived.",
+        `Policy targets ${Math.round(policy.compactToPressure * 100)}% context pressure.`,
+        "Compact manually or reset this process.",
       ].join("\n");
       this.store.appendMessage("system", message, { runId });
       await this.emitProcChanged(["messages"], {
@@ -7729,7 +7765,7 @@ export class Process extends DurableObject<ProcessEnv> {
 
     const result = await this.handleHistoryCompact(
       {
-        keepLast: policy.keepLast,
+        throughMessageId: selected.at(-1)!.id,
         generateSummary: true,
       },
       {
@@ -7778,6 +7814,107 @@ export class Process extends DurableObject<ProcessEnv> {
     }
     await this.emitProcessLifecycle(lifecycleEvent);
     return "compacted";
+  }
+
+  private selectAutoCompactionPrefix(
+    runId: string,
+    state: ProcContextState,
+    context: Context,
+    policy: ProcHistoryContextPolicy,
+    trigger: "preflight" | "provider-overflow",
+  ): MessageRecord[] {
+    const records = this.store.getMessagesForGeneration();
+    if (records.length <= 1) {
+      return [];
+    }
+
+    const firstActiveRunIndex = records.findIndex((message) => message.runId === runId);
+    const runInputMessageId = this.store.getRunInputMessageId(runId);
+    const runInputIndex = runInputMessageId === null
+      ? -1
+      : records.findIndex((message) => message.id === runInputMessageId);
+    const protectedIndex = firstActiveRunIndex >= 0
+      ? firstActiveRunIndex
+      : runInputIndex >= 0
+        ? runInputIndex
+        : records.length - 1;
+    if (protectedIndex <= 0) {
+      return [];
+    }
+
+    const allMessages = this.store.toMessages({
+      limit: null,
+      contextEpochId: this.currentRun?.contextEpochId,
+      generationContextId: this.currentRun?.generationContextId,
+    });
+    if (allMessages.length !== records.length) {
+      throw new Error("Process history and rendered message counts diverged during compaction");
+    }
+
+    const estimatedContextTokens = Math.max(1, estimateContextInputTokens(context));
+    const inputBudgetTokens = state.inputBudgetTokens;
+    const measuredInputTokens = Math.max(1, state.inputTokens);
+    const effectiveInputTokens = trigger === "provider-overflow" && inputBudgetTokens !== null
+      ? Math.max(measuredInputTokens, inputBudgetTokens)
+      : measuredInputTokens;
+    const targetInputTokens = inputBudgetTokens !== null
+      ? inputBudgetTokens * policy.compactToPressure
+      : effectiveInputTokens * policy.compactToPressure;
+    const estimateScale = effectiveInputTokens / estimatedContextTokens;
+    const summaryTokens = estimateContextMessagesTokens([{
+      role: "user",
+      content: `[GSV EVENT]\n${formatCompactionSummaryMessage({
+        archivedMessages: protectedIndex,
+        archivePath: "/home/process/history/compactions/segment.jsonl.gz",
+        summary: "x".repeat(COMPACTION_SUMMARY_MAX_TOKENS * 4),
+      })}`,
+      timestamp: Date.now(),
+    }]);
+    const estimateTargetTokens = inputBudgetTokens !== null
+      ? inputBudgetTokens * policy.compactToPressure
+      : estimatedContextTokens * policy.compactToPressure;
+    const requiredEstimatedRemoval = Math.max(
+      estimatedContextTokens - estimateTargetTokens + summaryTokens,
+      (effectiveInputTokens - targetInputTokens) / estimateScale + summaryTokens,
+    );
+
+    let low = 1;
+    let high = protectedIndex;
+    while (low < high) {
+      const candidate = Math.floor((low + high) / 2);
+      const candidateTokens = estimateContextMessagesTokens(allMessages.slice(0, candidate));
+      if (candidateTokens >= requiredEstimatedRemoval) {
+        high = candidate;
+      } else {
+        low = candidate + 1;
+      }
+    }
+
+    let requestedCut = low;
+    const firstNonSummaryIndex = records
+      .slice(0, protectedIndex)
+      .findIndex((message) => !isCompactionSummaryMessage(message));
+    if (firstNonSummaryIndex < 0) {
+      return [];
+    }
+    requestedCut = Math.max(requestedCut, firstNonSummaryIndex + 1);
+
+    let selected = this.store.getHistoryPrefixMessages({
+      throughMessageId: records[requestedCut - 1]!.id,
+    });
+    if (selected.length > protectedIndex) {
+      selected = this.store.getHistoryPrefixMessages({
+        keepLast: records.length - requestedCut,
+      });
+    }
+    if (
+      selected.length === 0
+      || selected.length > protectedIndex
+      || selected.every(isCompactionSummaryMessage)
+    ) {
+      return [];
+    }
+    return selected;
   }
 
   private async updateContextState(

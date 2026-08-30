@@ -9,7 +9,7 @@ describe("context runway prompt", () => {
       policy: {
         overflow: "auto-compact",
         compactAtPressure: 0.9,
-        keepLast: 80,
+        compactToPressure: 0.4,
         updatedAt: 0,
       },
     })).toBe([

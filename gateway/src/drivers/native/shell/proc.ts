@@ -57,7 +57,7 @@ type ParsedProcPolicy = {
   pid: string;
   overflow?: ProcHistoryOverflowPolicy;
   compactAtPressure?: number;
-  keepLast?: number;
+  compactToPressure?: number;
   set: boolean;
 };
 type ParsedProcSegmentRead = {
@@ -366,7 +366,9 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
         if (parsed.compactAtPressure !== undefined) {
           policyArgs.compactAtPressure = parsed.compactAtPressure;
         }
-        if (parsed.keepLast !== undefined) policyArgs.keepLast = parsed.keepLast;
+        if (parsed.compactToPressure !== undefined) {
+          policyArgs.compactToPressure = parsed.compactToPressure;
+        }
         result = await runProcessSyscall(ctx, "proc.history.policy.set", policyArgs);
       } else {
         result = await runProcessSyscall(ctx, "proc.history.policy.get", { pid: parsed.pid });
@@ -379,7 +381,7 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
         stdout: [
           `overflow=${policy.overflow}`,
           `compact_at=${policy.compactAtPressure}`,
-          `keep_last=${policy.keepLast}`,
+          `compact_to=${policy.compactToPressure}`,
         ].join(" ") + "\n",
         stderr: "",
         exitCode: 0,
@@ -743,7 +745,7 @@ function parseProcPolicyCommand(args: string[], ctx: KernelContext): ParsedProcP
   let pid: string | undefined;
   let overflow: ProcHistoryOverflowPolicy | undefined;
   let compactAtPressure: number | undefined;
-  let keepLast: number | undefined;
+  let compactToPressure: number | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
     const current = args[index];
@@ -766,9 +768,12 @@ function parseProcPolicyCommand(args: string[], ctx: KernelContext): ParsedProcP
       compactAtPressure = parsePressureShellNumber(requireShellOptionValue(args[index], current), current);
       continue;
     }
-    if (current === "--keep-last") {
+    if (current === "--compact-to") {
       index += 1;
-      keepLast = parseNonNegativeShellInteger(requireShellOptionValue(args[index], current), current);
+      compactToPressure = parsePressureShellNumber(
+        requireShellOptionValue(args[index], current),
+        current,
+      );
       continue;
     }
     throw new Error(`unexpected argument: ${current}`);
@@ -776,11 +781,11 @@ function parseProcPolicyCommand(args: string[], ctx: KernelContext): ParsedProcP
 
   const parsed: ParsedProcPolicy = {
     pid: pid ?? requireCurrentProcessId(ctx),
-    set: overflow !== undefined || compactAtPressure !== undefined || keepLast !== undefined,
+    set: overflow !== undefined || compactAtPressure !== undefined || compactToPressure !== undefined,
   };
   if (overflow) parsed.overflow = overflow;
   if (compactAtPressure !== undefined) parsed.compactAtPressure = compactAtPressure;
-  if (keepLast !== undefined) parsed.keepLast = keepLast;
+  if (compactToPressure !== undefined) parsed.compactToPressure = compactToPressure;
   return parsed;
 }
 
@@ -1291,7 +1296,7 @@ function procUsage(): string {
     "  proc kill PID [--no-archive]",
     "  proc delegate [--as ACCOUNT] [--label LABEL] [--parent PID] [--cwd PATH] [--timeout 10m] [--responsibility ID] <task>",
     "  proc segments [--pid PID]",
-    "  proc policy [--pid PID] [--overflow auto-compact|fail] [--compact-at N] [--keep-last N]",
+    "  proc policy [--pid PID] [--overflow auto-compact|fail] [--compact-at N] [--compact-to N]",
     "  proc history [--pid PID] [--tail] [--limit N] [--offset N] [--json] [--full]",
     "  proc segment <segment-id> [--pid PID] [--limit N] [--offset N] [--json]",
     "  proc compact [--pid PID] (--keep-last N | --through-message-id ID) [--summary TEXT | --generate-summary]",

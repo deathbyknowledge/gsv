@@ -486,7 +486,7 @@ export type ProcHistoryOverflowPolicy = "auto-compact" | "fail";
 export type ProcHistoryContextPolicy = {
   overflow: ProcHistoryOverflowPolicy;
   compactAtPressure: number;
-  keepLast: number;
+  compactToPressure: number;
   updatedAt: number;
 };
 
@@ -506,7 +506,7 @@ export type ProcHistoryPolicySetArgs = {
   pid?: string;
   overflow?: ProcHistoryOverflowPolicy;
   compactAtPressure?: number;
-  keepLast?: number;
+  compactToPressure?: number;
 };
 
 export type ProcHistoryPolicySetResult =

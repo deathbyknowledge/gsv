@@ -192,7 +192,7 @@ describe("GSV inference provider", () => {
 
     await expect(completion).resolves.toMatchObject({
       stopReason: "aborted",
-      errorMessage: "GSV inference cancelled",
+      errorMessage: "test cancellation",
     });
     expect(abort).toHaveBeenCalledTimes(1);
     expect(abort).toHaveBeenCalledWith(ATTRIBUTION.logicalRequestId);
@@ -218,7 +218,7 @@ describe("GSV inference provider", () => {
 
     await expect(stream.result()).resolves.toMatchObject({
       stopReason: "aborted",
-      errorMessage: "GSV inference cancelled",
+      errorMessage: "test cancellation",
     });
     expect(disposeAcquisition).toHaveBeenCalledOnce();
   });
@@ -275,7 +275,7 @@ describe("GSV inference provider", () => {
 
     await expect(stream.result()).resolves.toMatchObject({
       stopReason: "aborted",
-      errorMessage: "GSV inference cancelled",
+      errorMessage: "test cancellation",
     });
     expect(abort).toHaveBeenCalledTimes(1);
     expect(dispose).toHaveBeenCalledOnce();

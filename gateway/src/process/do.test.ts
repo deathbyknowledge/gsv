@@ -38,6 +38,7 @@ import { getProcessByPid, getKernelPtr } from "../shared/utils";
 import { stableOpaqueId } from "../shared/stable-id";
 import { TOOL_TO_SYSCALL } from "../syscalls/constants";
 import { DEFAULT_TOOL_APPROVAL_POLICY } from "./approval";
+import { estimateContextInputTokens } from "./context-pressure";
 import { PROCESS_V001_INITIAL_SCHEMA } from "./schema/v001_initial";
 import { PROCESS_V004_PENDING_TOOL_DISPATCH_ID } from "./schema/v004_pending_tool_dispatch_id";
 import { PROCESS_V005_TOOL_RESULT_OUTCOME } from "./schema/v005_tool_result_outcome";
@@ -3706,7 +3707,7 @@ describe("Process DO — mechanical", () => {
         process.store.setValue("historyPolicy", JSON.stringify({
           overflow: "fail",
           compactAtPressure: 0.9,
-          keepLast: 80,
+          compactToPressure: 0.4,
           updatedAt: Date.now(),
         }));
         process.updateContextState = vi.fn(async (
@@ -5012,11 +5013,13 @@ describe("Process DO — mechanical", () => {
 
         process.store.appendMessage("user", `old context A ${"x".repeat(4000)}`);
         process.store.appendMessage("assistant", `old context B ${"y".repeat(4000)}`);
-        process.store.appendMessage("user", "Context that must stay live.");
+        process.store.appendMessage("user", "Context that must stay live.", {
+          runId: "run-chat-fallback-auto-compact",
+        });
         process.store.setValue("historyPolicy", JSON.stringify({
           overflow: "auto-compact",
           compactAtPressure: 0.5,
-          keepLast: 1,
+          compactToPressure: 0.4,
           updatedAt: Date.now(),
         }));
         process.currentRun = {
@@ -5274,11 +5277,11 @@ describe("Process DO — mechanical", () => {
 
         process.store.appendMessage("user", "old Kimi context A");
         process.store.appendMessage("assistant", "old Kimi context B");
-        process.store.appendMessage("user", "Kimi context that must stay live.");
+        process.store.appendMessage("user", "Kimi context that must stay live.", { runId });
         process.store.setValue("historyPolicy", JSON.stringify({
           overflow: "auto-compact",
           compactAtPressure: 0.9,
-          keepLast: 1,
+          compactToPressure: 0.4,
           updatedAt: Date.now(),
         }));
         process.currentRun = {
@@ -5405,11 +5408,11 @@ describe("Process DO — mechanical", () => {
 
         process.store.appendMessage("user", "old returned overflow context A");
         process.store.appendMessage("assistant", "old returned overflow context B");
-        process.store.appendMessage("user", "Returned overflow context that must stay live.");
+        process.store.appendMessage("user", "Returned overflow context that must stay live.", { runId });
         process.store.setValue("historyPolicy", JSON.stringify({
           overflow: "auto-compact",
           compactAtPressure: 0.9,
-          keepLast: 1,
+          compactToPressure: 0.4,
           updatedAt: Date.now(),
         }));
         process.currentRun = {
@@ -5511,11 +5514,11 @@ describe("Process DO — mechanical", () => {
 
         process.store.appendMessage("user", "old fail-policy context A");
         process.store.appendMessage("assistant", "old fail-policy context B");
-        process.store.appendMessage("user", "Fail-policy context that must stay live.");
+        process.store.appendMessage("user", "Fail-policy context that must stay live.", { runId });
         process.store.setValue("historyPolicy", JSON.stringify({
           overflow: "fail",
           compactAtPressure: 0.9,
-          keepLast: 1,
+          compactToPressure: 0.4,
           updatedAt: Date.now(),
         }));
         process.currentRun = {
@@ -5595,11 +5598,11 @@ describe("Process DO — mechanical", () => {
 
         process.store.appendMessage("user", "old repeated-overflow context A");
         process.store.appendMessage("assistant", "old repeated-overflow context B");
-        process.store.appendMessage("user", "Repeated-overflow context that must stay live.");
+        process.store.appendMessage("user", "Repeated-overflow context that must stay live.", { runId });
         process.store.setValue("historyPolicy", JSON.stringify({
           overflow: "auto-compact",
           compactAtPressure: 0.9,
-          keepLast: 1,
+          compactToPressure: 0.4,
           updatedAt: Date.now(),
         }));
         process.currentRun = {
@@ -5696,11 +5699,11 @@ describe("Process DO — mechanical", () => {
           },
         };
 
-        process.store.appendMessage("user", "Only live message.");
+        process.store.appendMessage("user", "Only live message.", { runId });
         process.store.setValue("historyPolicy", JSON.stringify({
           overflow: "auto-compact",
           compactAtPressure: 0.9,
-          keepLast: 1,
+          compactToPressure: 0.4,
           updatedAt: Date.now(),
         }));
         process.currentRun = {
@@ -5730,7 +5733,7 @@ describe("Process DO — mechanical", () => {
       expect(result.segments).toHaveLength(0);
       expect(result.currentRun).toBeNull();
       expect(result.messages.at(-1)?.content).toContain(
-        "Context limit reached, but auto-compaction could not archive any older messages.",
+        "Context pressure reached the compaction boundary, but no completed history prefix can be archived.",
       );
       expect(result.emitted.some((entry) => entry.signal === "proc.run.retrying")).toBe(false);
       expect(result.emitted).toEqual(expect.arrayContaining([
@@ -5798,7 +5801,7 @@ describe("Process DO — mechanical", () => {
       expect(result.currentRun).toBeNull();
       const systemMessage = result.messages.find((message: any) => message.role === "system");
       expect(systemMessage?.content).toContain(
-        "Context limit reached, but auto-compaction could not archive any older messages.",
+        "Context pressure reached the compaction boundary, but no completed history prefix can be archived.",
       );
       expect(systemMessage?.content).not.toContain("Generation failed:");
       expect(result.emitted).toEqual(expect.arrayContaining([
@@ -5872,7 +5875,7 @@ describe("Process DO — mechanical", () => {
       expect(result.currentRun).toBeNull();
       const systemMessage = result.messages.find((message: any) => message.role === "system");
       expect(systemMessage?.content).toContain(
-        "Context limit reached, but auto-compaction could not archive any older messages.",
+        "Context pressure reached the compaction boundary, but no completed history prefix can be archived.",
       );
       expect(systemMessage?.content).not.toContain("Generation failed:");
       expect(result.emitted).toEqual(expect.arrayContaining([
@@ -5959,7 +5962,7 @@ describe("Process DO — mechanical", () => {
 
       const systemMessage = result.messages.find((message: any) => message.role === "system");
       expect(systemMessage?.content).toContain(
-        "Context limit reached, but auto-compaction could not archive any older messages.",
+        "Context pressure reached the compaction boundary, but no completed history prefix can be archived.",
       );
       expect(systemMessage?.content).not.toContain("Generation failed:");
       expect(result.contextState).toMatchObject({
@@ -10577,7 +10580,7 @@ describe("Process DO — mechanical", () => {
         policy: {
           overflow: "auto-compact",
           compactAtPressure: 0.9,
-          keepLast: 80,
+          compactToPressure: 0.4,
           updatedAt: 0,
         },
       });
@@ -10588,7 +10591,7 @@ describe("Process DO — mechanical", () => {
         makeReq("proc.history.policy.set", {
           overflow: "auto-compact",
           compactAtPressure: 0.82,
-          keepLast: 42,
+          compactToPressure: 0.35,
         }),
       // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
@@ -10598,7 +10601,7 @@ describe("Process DO — mechanical", () => {
         policy: {
           overflow: "auto-compact",
           compactAtPressure: 0.82,
-          keepLast: 42,
+          compactToPressure: 0.35,
         },
       });
 
@@ -10614,7 +10617,38 @@ describe("Process DO — mechanical", () => {
         policy: {
           overflow: "auto-compact",
           compactAtPressure: 0.82,
-          keepLast: 42,
+          compactToPressure: 0.35,
+        },
+      });
+    });
+
+    it("defaults old stored keep-last policies to the pressure target", async () => {
+      const pid = "mech-conversation-policy-legacy-keep-last";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: the Durable Object test fixture exposes Process internals for state setup.
+        const process = instance as any;
+        process.store.setValue("historyPolicy", JSON.stringify({
+          overflow: "auto-compact",
+          compactAtPressure: 0.9,
+          keepLast: 80,
+          updatedAt: 123,
+        }));
+      });
+
+      // SAFETY: this request is a proc.history.policy.get frame with a successful fixture response.
+      const response = await stub.recvFrame(
+        makeReq("proc.history.policy.get", {}),
+      ) as ResponseOkFrame;
+      expect(response.data).toMatchObject({
+        ok: true,
+        pid,
+        policy: {
+          overflow: "auto-compact",
+          compactAtPressure: 0.9,
+          compactToPressure: 0.4,
+          updatedAt: 123,
         },
       });
     });
@@ -10632,7 +10666,6 @@ describe("Process DO — mechanical", () => {
         process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
-        process.updateContextState = async () => ({ pressure: 0.95 });
         let generationCalls = 0;
         let summaryCalls = 0;
         process.generation = {
@@ -10684,19 +10717,25 @@ describe("Process DO — mechanical", () => {
           },
           async generateText(request: any) {
             summaryCalls += 1;
-            expect(request.options).toMatchObject({ maxTokens: 768, reasoning: "off" });
+            expect(request.options).toMatchObject({
+              maxTokens: 768,
+              reasoning: "off",
+              timeoutMs: 180000,
+            });
             expect(JSON.stringify(request.context)).toContain("old context A");
             return "Auto compact summary.";
           },
         };
 
-        process.store.appendMessage("user", "old context A");
-        process.store.appendMessage("assistant", "old context B");
-        process.store.appendMessage("user", "Context that must stay live.");
+        process.store.appendMessage("user", `old context A ${"x".repeat(4000)}`);
+        process.store.appendMessage("assistant", `old context B ${"y".repeat(4000)}`);
+        process.store.appendMessage("user", "Context that must stay live.", {
+          runId: "run-auto-compact",
+        });
         process.store.setValue("historyPolicy", JSON.stringify({
           overflow: "auto-compact",
           compactAtPressure: 0.9,
-          keepLast: 1,
+          compactToPressure: 0.4,
           updatedAt: Date.now(),
         }));
         process.currentRun = {
@@ -10712,6 +10751,7 @@ describe("Process DO — mechanical", () => {
             contextWindowTokens: 1000,
             contextWindowSource: "config",
             maxContextBytes: 32768,
+            generationTimeoutMs: 180000,
             fallbacks: [{
               provider: "openrouter",
               model: "fallback-model",
@@ -10761,6 +10801,90 @@ describe("Process DO — mechanical", () => {
       ]);
     });
 
+    it("compacts a large recent history to the pressure target instead of recompacting only its summary", async () => {
+      const pid = "mech-conversation-auto-compact-pressure-target";
+      const runId = "run-auto-compact-pressure-target";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: the Durable Object test fixture exposes Process internals for run setup.
+        const process = instance as any;
+        const generationContexts: Context[] = [];
+        process.sendSignal = async () => {};
+        process.generation = {
+          async generate(request: any) {
+            generationContexts.push(request.context);
+            return terminalTestResponse([
+              { type: "text", text: "done" },
+              messageAction("done", "pressure-target-message"),
+            ]);
+          },
+          async generateText() {
+            return "Pressure-target summary.";
+          },
+        };
+
+        process.store.appendMessage("system", [
+          "Process history compacted.",
+          "",
+          "Archived messages: 200",
+          "Archive: /home/root/processes/prior.jsonl.gz",
+          "",
+          "Summary:",
+          "Prior compacted history.",
+        ].join("\n"));
+        for (let index = 0; index < 79; index += 1) {
+          process.store.appendMessage(
+            index % 2 === 0 ? "user" : "assistant",
+            `large recent message ${index} ${"x".repeat(6000)}`,
+          );
+        }
+        process.store.appendMessage("user", "Current input must stay live.", { runId });
+        process.store.setValue("historyPolicy", JSON.stringify({
+          overflow: "auto-compact",
+          compactAtPressure: 0.9,
+          compactToPressure: 0.4,
+          updatedAt: Date.now(),
+        }));
+        process.currentRun = {
+          runId,
+          config: {
+            ...terminalTestConfig(pid),
+            generationTimeoutMs: 180000,
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+
+        await process.runTick(runId);
+        return {
+          generationContext: generationContexts[0],
+          messages: process.store.getMessages(),
+          segments: process.store.listHistorySegments(),
+        };
+      });
+
+      expect(result.generationContext).toBeDefined();
+      if (!result.generationContext) {
+        throw new Error("Expected automatic compaction to reach model generation");
+      }
+      expect(
+        estimateContextInputTokens(result.generationContext)
+          / (128000 - 8192),
+      ).toBeLessThanOrEqual(0.4);
+      expect(result.segments).toHaveLength(1);
+      expect(result.segments[0]).toMatchObject({
+        kind: "compaction",
+        fromMessageId: 1,
+      });
+      expect(result.segments[0]!.toMessageId).toBeGreaterThan(1);
+      expect(result.messages.some((message: any) => (
+        message.role === "user" && message.content === "Current input must stay live."
+      ))).toBe(true);
+    });
+
     it("stops when the retained tail is still too large after auto-compaction", async () => {
       const pid = "mech-conversation-auto-compact-insufficient";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -10785,11 +10909,13 @@ describe("Process DO — mechanical", () => {
           },
         };
         process.store.appendMessage("user", "old context");
-        process.store.appendMessage("user", `retained ${"x".repeat(4000)}`);
+        process.store.appendMessage("user", `retained ${"x".repeat(4000)}`, {
+          runId: "run-auto-compact-insufficient",
+        });
         process.store.setValue("historyPolicy", JSON.stringify({
           overflow: "auto-compact",
           compactAtPressure: 0.5,
-          keepLast: 1,
+          compactToPressure: 0.4,
           updatedAt: Date.now(),
         }));
         process.currentRun = {
@@ -10823,7 +10949,7 @@ describe("Process DO — mechanical", () => {
       expect(result.currentRun).toBeNull();
       expect(result.segments).toHaveLength(1);
       expect(result.messages.at(-1)?.content).toContain(
-        "Auto-compaction could not reduce this process history below its context limit.",
+        "Auto-compaction could not reduce this process history to its configured context target.",
       );
       expect(result.emitted).toEqual(expect.arrayContaining([
         {
@@ -10861,11 +10987,13 @@ describe("Process DO — mechanical", () => {
 
         process.store.appendMessage("user", "old context A");
         process.store.appendMessage("assistant", "old context B");
-        process.store.appendMessage("user", "Context that must stay live.");
+        process.store.appendMessage("user", "Context that must stay live.", {
+          runId: "run-auto-compact-provider-billing",
+        });
         process.store.setValue("historyPolicy", JSON.stringify({
           overflow: "auto-compact",
           compactAtPressure: 0.01,
-          keepLast: 1,
+          compactToPressure: 0.005,
           updatedAt: Date.now(),
         }));
         process.currentRun = {
@@ -10945,11 +11073,13 @@ describe("Process DO — mechanical", () => {
 
         process.store.appendMessage("user", "old context A");
         process.store.appendMessage("assistant", "old context B");
-        process.store.appendMessage("user", "Context that must stay live.");
+        process.store.appendMessage("user", "Context that must stay live.", {
+          runId: "run-auto-compact-abort",
+        });
         process.store.setValue("historyPolicy", JSON.stringify({
           overflow: "auto-compact",
           compactAtPressure: 0.01,
-          keepLast: 1,
+          compactToPressure: 0.005,
           updatedAt: Date.now(),
         }));
         process.currentRun = {
