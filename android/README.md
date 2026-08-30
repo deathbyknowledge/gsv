@@ -117,8 +117,15 @@ two fingers to send the current utterance early, or use one finger during an
 active turn to interrupt it. Leaving Mind closes the front camera; arming or
 disarming Ship does not change the Mind connection or gesture authority.
 
-For dependable screen-off reconnect behavior, open the upper-right system
-portal, use **Battery settings**, and set GSV Wear to unrestricted battery use.
+GSV OS installs the client as a persistent platform process and exempts it from
+Doze and Data Saver. Once armed, its foreground runtime restores after process
+death, package replacement, and the first unlock after reboot; removing the UI
+task does not stop it. Arm and pause state are persisted, while disarm and
+disconnect synchronously remove the restoration request. A force-stop remains
+an Android-level explicit stop until the user launches GSV again. On ordinary
+Android builds, open the upper-right system portal, use **Battery settings**,
+and set GSV Wear to unrestricted battery use for dependable screen-off
+reconnect behavior.
 
 Android notification-listener access is a separate, optional one-time Settings
 grant. Use **Notification access** in the system portal only if agents should
@@ -385,7 +392,11 @@ Run this on an actual phone before treating a release as sensor-validated:
    confirm no late result and no `gsv-wear-snapshot-*` cache file remains.
 11. Pause and then disarm during capture; confirm both paths cancel active work
    and subsequent camera reads fail closed.
-12. Reboot and force-stop the app; confirm Wear authority is not recreated.
+12. Kill the app process while armed and confirm the foreground runtime and
+    socket restore without opening the UI. Reboot, complete the first unlock,
+    and confirm the armed or paused authority is restored exactly. Disarm and
+    repeat both cases; confirm the runtime remains disarmed. Force-stop the app
+    and confirm Android keeps it stopped until the user explicitly launches it.
 13. Revoke camera permission and contend with another camera app; confirm the
    request fails without crashing or retaining media.
 14. Exercise camera observation, audio sample/observation/speech wait, IMU,

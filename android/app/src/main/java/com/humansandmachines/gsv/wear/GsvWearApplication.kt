@@ -2,6 +2,7 @@ package com.humansandmachines.gsv.wear
 
 import android.app.Application
 import com.humansandmachines.gsv.wear.platform.GsvPlatformClient
+import com.humansandmachines.gsv.wear.runtime.WearRuntimeService
 import com.humansandmachines.gsv.wear.voice.AssistantRuntimeController
 
 class GsvWearApplication : Application() {
@@ -15,6 +16,7 @@ class GsvWearApplication : Application() {
         platformClient = GsvPlatformClient(applicationContext)
         platformClient.connect()
         assistantRuntime = AssistantRuntimeController(applicationContext)
+        WearRuntimeService.restoreIfDesired(applicationContext)
     }
 
     override fun onTerminate() {

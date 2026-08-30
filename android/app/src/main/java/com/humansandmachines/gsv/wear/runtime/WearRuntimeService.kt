@@ -63,6 +63,7 @@ class WearRuntimeService : LifecycleService() {
     private lateinit var checks: LocalCheckScheduler
     private lateinit var targetFileSystem: AndroidTargetFileSystem
     private lateinit var dispatcherFactory: WearRequestDispatcherFactory
+    private lateinit var desiredStateStore: WearDesiredStateStore
     private var connection: ConnectionSupervisor? = null
     private var connectionConfig: DriverConfig? = null
     private var foregroundStarted = false
@@ -71,6 +72,7 @@ class WearRuntimeService : LifecycleService() {
         super.onCreate()
         createNotificationChannel()
         WearRuntimeState.reset()
+        desiredStateStore = WearDesiredStateStore(applicationContext)
         camera = CameraController(
             context = applicationContext,
             lifecycleOwner = this,
@@ -126,30 +128,44 @@ class WearRuntimeService : LifecycleService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
         when (intent?.action) {
-            ACTION_ARM -> handleArm()
+            ACTION_ARM -> startRuntime(DesiredWearState.ARMED)
             ACTION_PAUSE -> {
-                if (authority.pause()) {
+                if (
+                    authority.state() == AuthorityState.ARMED &&
+                    desiredStateStore.save(DesiredWearState.PAUSED) &&
+                    authority.pause()
+                ) {
                     dispatcherFactory.cancelAll()
                     checks.stop()
                     publishAuthority()
                 }
             }
             ACTION_RESUME -> {
-                if (authority.resume()) {
+                if (
+                    authority.state() == AuthorityState.PAUSED &&
+                    desiredStateStore.save(DesiredWearState.ARMED) &&
+                    authority.resume()
+                ) {
                     checks.start()
                     publishAuthority()
                 }
             }
             ACTION_DISARM -> {
+                desiredStateStore.save(DesiredWearState.DISARMED)
                 authority.disarm()
                 dispatcherFactory.cancelAll()
                 checks.stop()
                 publishAuthority()
             }
-            ACTION_DISCONNECT -> disconnectRuntime()
-            else -> stopSelf()
+            ACTION_DISCONNECT -> disconnectRuntime(clearDesiredState = true)
+            ACTION_RESTORE, null -> restoreRuntime()
+            else -> disconnectRuntime(clearDesiredState = true)
         }
-        return Service.START_NOT_STICKY
+        return if (desiredStateStore.load().restoresRuntime) {
+            Service.START_STICKY
+        } else {
+            Service.START_NOT_STICKY
+        }
     }
 
     override fun onDestroy() {
@@ -169,9 +185,19 @@ class WearRuntimeService : LifecycleService() {
         super.onDestroy()
     }
 
-    private fun handleArm() {
-        if (!hasWearPermissions()) {
+    private fun restoreRuntime() {
+        val desiredState = desiredStateStore.load()
+        if (desiredState.restoresRuntime) {
+            startRuntime(desiredState)
+        } else {
             stopSelf()
+        }
+    }
+
+    private fun startRuntime(desiredState: DesiredWearState) {
+        check(desiredState.restoresRuntime) { "A disarmed Wear runtime cannot be started" }
+        if (!hasWearPermissions()) {
+            disconnectRuntime(clearDesiredState = true)
             return
         }
         if (!foregroundStarted) {
@@ -184,7 +210,7 @@ class WearRuntimeService : LifecycleService() {
                 )
                 foregroundStarted = true
             } catch (_: SecurityException) {
-                stopSelf()
+                disconnectRuntime(clearDesiredState = true)
                 return
             }
         }
@@ -193,14 +219,22 @@ class WearRuntimeService : LifecycleService() {
             DriverConfigStore(applicationContext).load(BuildConfig.DEBUG)
         }.getOrNull()
         if (config == null) {
-            disconnectRuntime()
+            disconnectRuntime(clearDesiredState = true)
+            return
+        }
+        if (!desiredStateStore.save(desiredState)) {
+            disconnectRuntime(clearDesiredState = true)
             return
         }
 
         dispatcherFactory.cancelAll()
         checks.stop()
         authority.arm()
-        checks.start()
+        if (desiredState == DesiredWearState.PAUSED) {
+            check(authority.pause()) { "A restored Wear runtime could not be paused" }
+        } else {
+            checks.start()
+        }
         publishAuthority()
         if (!sameConnection(config, connectionConfig)) {
             connection?.stop()
@@ -224,7 +258,8 @@ class WearRuntimeService : LifecycleService() {
         ).also(ConnectionSupervisor::start)
     }
 
-    private fun disconnectRuntime() {
+    private fun disconnectRuntime(clearDesiredState: Boolean) {
+        if (clearDesiredState) desiredStateStore.save(DesiredWearState.DISARMED)
         authority.disarm()
         dispatcherFactory.cancelAll()
         checks.stop()
@@ -394,6 +429,7 @@ class WearRuntimeService : LifecycleService() {
         const val ACTION_RESUME = "com.humansandmachines.gsv.wear.action.RESUME"
         const val ACTION_DISARM = "com.humansandmachines.gsv.wear.action.DISARM"
         const val ACTION_DISCONNECT = "com.humansandmachines.gsv.wear.action.DISCONNECT"
+        private const val ACTION_RESTORE = "com.humansandmachines.gsv.wear.action.RESTORE"
 
         fun arm(context: Context) {
             ContextCompat.startForegroundService(
@@ -404,6 +440,16 @@ class WearRuntimeService : LifecycleService() {
 
         fun command(context: Context, action: String) {
             context.startService(Intent(context, WearRuntimeService::class.java).setAction(action))
+        }
+
+        fun restoreIfDesired(context: Context): Boolean {
+            if (!WearDesiredStateStore(context).load().restoresRuntime) return false
+            return runCatching {
+                ContextCompat.startForegroundService(
+                    context,
+                    Intent(context, WearRuntimeService::class.java).setAction(ACTION_RESTORE),
+                )
+            }.isSuccess
         }
     }
 }
