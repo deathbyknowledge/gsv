@@ -236,6 +236,7 @@ public syscall shapes as other targets:
 - `/proc/wear/status.json` and `/dev/wear/status` report Wear authority and
   sensor state.
 - `/dev/camera/back/snapshot` is an event-producing image file.
+- On GSV OS, `/dev/screen/screenshot` is an event-producing PNG image file.
 
 Only `/home/android` and `/tmp` are writable. A file is limited to 64 MiB,
 persistent target storage to 256 MiB, temporary storage to 128 MiB, and each
@@ -248,9 +249,10 @@ to discover its bounded commands. It supports quoting, pipelines, sequential
 statements, input/output redirection, common file and text commands, and the
 Android-specific `wear`, camera, microphone, IMU, gesture, orientation,
 location, device-context, notification, app/deep-link, share, clipboard,
-text-to-speech, vibration, and local-check commands. It does not invoke
-`/system/bin/sh` or Android system binaries. Shell sessions and background
-commands are not supported.
+text-to-speech, vibration, and local-check commands. GSV OS targets additionally
+expose bounded `screen` and `input` commands through their platform service. It
+does not invoke `/system/bin/sh` or Android system binaries. Shell sessions and
+background commands are not supported.
 
 `net.fetch` executes an HTTP(S) request on the phone and streams the response
 through the ordinary target body protocol. Request and response bodies are
@@ -310,6 +312,16 @@ vibrate. App opening, deep links, and sharing obey Android's background-activity
 rules: a screen-off/background request returns `requiresUserTap: true` and
 posts an actionable notification. Clipboard reads report unavailable unless
 GSV Wear is visible.
+
+The GSV OS platform service closes the visual-control loop without changing the
+public target protocol. `screen screenshot` materializes a bounded PNG with
+secure and protected layers redacted; `apps foreground` reports the current
+activity; `apps open` launches a launcher application directly; and `input`
+supports tap, swipe, long-press, an explicit safe key allowlist, and bounded
+virtual-keyboard text. These operations require a locally armed Wear authority
+for their complete execution. The service is signature-protected, runs in a
+dedicated SELinux domain without network access, and is unavailable to ordinary
+APK installations, which retain Android's notification-mediated app opening.
 
 `checks` persists up to 32 bounded sensor/context commands and schedules them
 inside the armed foreground runtime. Checks continue across temporary Gateway

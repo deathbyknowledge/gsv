@@ -421,6 +421,19 @@ Run this on an actual phone before treating a release as sensor-validated:
     after embedded speech starts and confirm playback completes locally. On a
     device without a compatible installed voice, confirm gateway speech is used
     as the fallback without replaying an utterance that already began locally.
+23. On GSV OS, verify `screen status`, read `/dev/screen/screenshot`, and run
+    `screen screenshot /tmp/display.png`; confirm each image is valid PNG, is
+    bounded to the requested display scale, and leaves no capture temp file
+    after its read reaches a terminal outcome. Repeat across cancellation,
+    pause, disarm, the lock screen, and a secure-content surface; secure and
+    protected layers must be redacted.
+24. While armed on GSV OS, verify `apps foreground`, direct `apps open`, tap,
+    swipe, long-press, every allowed navigation key needed by the smoke test,
+    and text entry into a disposable field. Confirm invalid packages,
+    coordinates, durations, keys, and text fail closed; repeat after disarming
+    and confirm every privileged operation is rejected. Verify the service runs
+    in `gsv_platform_service`, has no network permission, and rejects a Binder
+    caller other than the platform-signed GSV client.
 
 There is intentionally no FCM path. Each active runtime supervisor notices and
 reconnects its own socket. An in-flight request at the moment of disconnect
