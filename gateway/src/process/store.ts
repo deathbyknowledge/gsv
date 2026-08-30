@@ -1798,7 +1798,11 @@ function normalizeCompactionCut(
     let end = start + 1;
     for (let index = start + 1; index < records.length; index += 1) {
       const candidate = records[index];
-      if (candidate?.role === "toolResult" && candidate.toolCallId && callIds.has(candidate.toolCallId)) {
+      if (
+        candidate?.role === "toolResult"
+        && candidate.toolCallId !== null
+        && callIds.has(candidate.toolCallId)
+      ) {
         matched.add(candidate.toolCallId);
         end = index + 1;
         if (matched.size === callIds.size) break;

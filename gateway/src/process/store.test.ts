@@ -220,6 +220,40 @@ describe("ProcessStore", () => {
         ]);
       });
     });
+
+    it("closes legacy tool exchanges with empty call ids at compaction boundaries", async () => {
+      const stub = await getProcessByPid("history-compact-empty-tool-call-id");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
+      await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
+        const store = (instance as any).store;
+        const summaryId = store.appendMessage("system", "Process history compacted.");
+        const assistantId = store.appendMessage("assistant", "", {
+          toolCalls: JSON.stringify([
+            { type: "toolCall", id: "", name: "", arguments: {} },
+          ]),
+        });
+        const resultId = store.appendToolResult(
+          "",
+          "",
+          'Tool "" was not offered for this generation',
+          true,
+        );
+        const completedUserId = store.appendMessage("user", "completed input");
+        const completedAssistantId = store.appendMessage("assistant", "completed response");
+        store.appendMessage("user", "active input", { runId: "active-run" });
+
+        expect(store.getHistoryPrefixMessages({
+          throughMessageId: completedAssistantId,
+        }).map((message: any) => message.id)).toEqual([
+          summaryId,
+          assistantId,
+          resultId,
+          completedUserId,
+          completedAssistantId,
+        ]);
+      });
+    });
   });
 
   // ---------- Message CRUD ----------
