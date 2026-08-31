@@ -176,6 +176,31 @@ describe("AdapterPeerDeliveryQueue", () => {
     });
   });
 
+  it("coalesces concurrent queue drains", async () => {
+    const { queue } = queueFixture();
+    await queue.enqueueAndArm(delivery(), body([1, 2, 3, 4]), 10);
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const deliver = vi.fn(async () => {
+      await blocked;
+      return { ok: true as const, messageId: "provider-1" };
+    });
+    const handlers: AdapterPeerDeliveryAttemptHandlers = {
+      claim: vi.fn(async () => true),
+      deliver,
+      report: vi.fn(async () => undefined),
+    };
+
+    const first = queue.drain(handlers);
+    const second = queue.drain(handlers);
+    await vi.waitFor(() => expect(deliver).toHaveBeenCalledOnce());
+    release();
+    await Promise.all([first, second]);
+    expect(deliver).toHaveBeenCalledOnce();
+  });
+
   it("does not call the provider after the Kernel rejects a stale route", async () => {
     const { queue } = queueFixture();
     await queue.enqueueAndArm(delivery(), body([1, 2, 3, 4]), 10);

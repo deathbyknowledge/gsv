@@ -112,7 +112,6 @@ export class SlackAccount extends DurableObject<Env> {
   private loaded = false;
   private socket: WebSocket | null = null;
   private drainPromise?: Promise<void>;
-  private peerDrain?: Promise<void>;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -244,26 +243,11 @@ export class SlackAccount extends DurableObject<Env> {
   }
 
   private async drainPeerDeliveries(): Promise<void> {
-    if (this.peerDrain) return await this.peerDrain;
-    const running = (async () => {
-      for (const deliveryId of await this.peerDeliveries.pendingIds()) {
-        const result = await this.peerDeliveries.attempt(
-          deliveryId,
-          gatewayPeerDeliveryHandlers({
-            adapter: "slack",
-            gateway: this.env.GATEWAY,
-            deliver: async (delivery, body) => await this.deliverPeerSignal(delivery, body),
-          }),
-        );
-        if (result === "pending") break;
-      }
-    })();
-    this.peerDrain = running;
-    try {
-      await running;
-    } finally {
-      if (this.peerDrain === running) this.peerDrain = undefined;
-    }
+    await this.peerDeliveries.drain(gatewayPeerDeliveryHandlers({
+      adapter: "slack",
+      gateway: this.env.GATEWAY,
+      deliver: async (delivery, body) => await this.deliverPeerSignal(delivery, body),
+    }));
   }
 
   private async deliverPeerSignal(

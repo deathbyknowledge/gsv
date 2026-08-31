@@ -92,6 +92,7 @@ const MAX_DELIVERY_ATTEMPTS = 10;
  */
 export class AdapterPeerDeliveryQueue {
   private readonly active = new Set<string>();
+  private drainPromise?: Promise<void>;
 
   constructor(
     private readonly storage: DurableObjectStorage,
@@ -174,6 +175,22 @@ export class AdapterPeerDeliveryQueue {
       )
       .slice(0, Math.max(1, Math.min(100, Math.floor(limit))))
       .map(([key]) => key.slice(RECORD_PREFIX.length));
+  }
+
+  async drain(handlers: AdapterPeerDeliveryAttemptHandlers): Promise<void> {
+    if (this.drainPromise) return await this.drainPromise;
+    const running = (async () => {
+      for (const deliveryId of await this.pendingIds()) {
+        const result = await this.attempt(deliveryId, handlers);
+        if (result === "pending") break;
+      }
+    })();
+    this.drainPromise = running;
+    try {
+      await running;
+    } finally {
+      if (this.drainPromise === running) this.drainPromise = undefined;
+    }
   }
 
   async attempt(

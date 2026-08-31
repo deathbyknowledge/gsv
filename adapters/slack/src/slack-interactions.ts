@@ -90,7 +90,7 @@ export function buildSlackApprovalBlocks(
   text: string,
   token: string,
 ): SlackBlock[] | undefined {
-  if (!APPROVAL_TOKEN_PATTERN.test(token) || text.length > MAX_BLOCK_TEXT_LENGTH) {
+  if (!APPROVAL_TOKEN_PATTERN.test(token) || !canRenderSlackApproval(text)) {
     return undefined;
   }
   const value = JSON.stringify({
@@ -112,6 +112,10 @@ export function buildSlackApprovalBlocks(
       ],
     },
   ];
+}
+
+export function canRenderSlackApproval(text: string): boolean {
+  return text.length <= MAX_BLOCK_TEXT_LENGTH;
 }
 
 export function buildSlackApprovalSubmittedMessage(

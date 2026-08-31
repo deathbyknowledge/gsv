@@ -173,7 +173,6 @@ export class WhatsAppAccount extends DurableObject<Env> {
   private state: WhatsAppAccountState = defaultWhatsAppAccountState();
   private qrCode: string | null = null;
   private readonly pairingWaiters = new Set<PairingWaiter>();
-  private peerDrain?: Promise<void>;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -504,26 +503,11 @@ export class WhatsAppAccount extends DurableObject<Env> {
   }
 
   private async drainPeerDeliveries(): Promise<void> {
-    if (this.peerDrain) return await this.peerDrain;
-    const running = (async () => {
-      for (const deliveryId of await this.peerDeliveries.pendingIds()) {
-        const result = await this.peerDeliveries.attempt(
-          deliveryId,
-          gatewayPeerDeliveryHandlers({
-            adapter: "whatsapp",
-            gateway: this.gatewayBinding(),
-            deliver: async (delivery, body) => await this.deliverPeerSignal(delivery, body),
-          }),
-        );
-        if (result === "pending") break;
-      }
-    })();
-    this.peerDrain = running;
-    try {
-      await running;
-    } finally {
-      if (this.peerDrain === running) this.peerDrain = undefined;
-    }
+    await this.peerDeliveries.drain(gatewayPeerDeliveryHandlers({
+      adapter: "whatsapp",
+      gateway: this.gatewayBinding(),
+      deliver: async (delivery, body) => await this.deliverPeerSignal(delivery, body),
+    }));
   }
 
   private async deliverPeerSignal(

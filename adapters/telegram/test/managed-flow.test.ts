@@ -342,6 +342,22 @@ describe("managed Telegram clean-instance flow", () => {
       }));
     });
 
+    const approvalCalls = (await gatewayCalls()).filter((call) => call.call === "proc.hil");
+    expect((await SELF.fetch(approvalUpdate(
+      100,
+      "callback-approval-replay",
+      approvalMessageId!,
+      approveAlwaysData!,
+    ))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect((await gatewayCalls()).filter((call) => call.call === "proc.hil"))
+        .toHaveLength(approvalCalls.length);
+      expect(await telegramMessages()).toContainEqual(expect.objectContaining({
+        method: "answerCallbackQuery",
+        body: expect.objectContaining({ callback_query_id: "callback-approval-replay" }),
+      }));
+    });
+
     expect((await SELF.fetch(messageUpdate(4, 3, {
       voice: {
         file_id: "voice_file_123",

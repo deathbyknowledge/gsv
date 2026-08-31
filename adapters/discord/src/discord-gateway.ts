@@ -152,7 +152,6 @@ export class DiscordGateway extends DurableObject<Env> {
   private readonly deliveries: DeliveryLedger;
   private readonly inboundDeliveries: InboundDeliveryLedger<string>;
   private readonly peerDeliveries: AdapterPeerDeliveryQueue;
-  private peerDrain?: Promise<void>;
   private heartbeatInterval: number = 0;
   private loaded = false;
   private state: GatewayState = {
@@ -294,26 +293,11 @@ export class DiscordGateway extends DurableObject<Env> {
   }
 
   private async drainPeerDeliveries(): Promise<void> {
-    if (this.peerDrain) return await this.peerDrain;
-    const running = (async () => {
-      for (const deliveryId of await this.peerDeliveries.pendingIds()) {
-        const result = await this.peerDeliveries.attempt(
-          deliveryId,
-          gatewayPeerDeliveryHandlers({
-            adapter: "discord",
-            gateway: this.env.GATEWAY,
-            deliver: async (delivery, body) => await this.deliverPeerSignal(delivery, body),
-          }),
-        );
-        if (result === "pending") break;
-      }
-    })();
-    this.peerDrain = running;
-    try {
-      await running;
-    } finally {
-      if (this.peerDrain === running) this.peerDrain = undefined;
-    }
+    await this.peerDeliveries.drain(gatewayPeerDeliveryHandlers({
+      adapter: "discord",
+      gateway: this.env.GATEWAY,
+      deliver: async (delivery, body) => await this.deliverPeerSignal(delivery, body),
+    }));
   }
 
   private async deliverPeerSignal(
