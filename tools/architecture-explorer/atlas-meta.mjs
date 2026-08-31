@@ -1,4 +1,192 @@
-export const ATLAS_SCHEMA_VERSION = 1;
+export const ATLAS_SCHEMA_VERSION = 2;
+
+export const ATLAS_DISTRICTS = [
+  {
+    id: "gateway-gate",
+    label: "GATEWAY GATE",
+    shortLabel: "GATE",
+    summary: "The installation admission landmark: routing reaches this gate before it can address the Kernel.",
+    zone: "boundary",
+    systems: ["gateway"],
+    layout: { kind: "singleton", center: { x: 0, z: -164 }, spacing: 0 },
+  },
+  {
+    id: "control-core",
+    label: "INSTALLATION CORE",
+    shortLabel: "CORE",
+    summary: "Adjacent but independent durable owners for policy, agent execution, and canonical human-visible records.",
+    zone: "installation",
+    systems: ["kernel", "process", "conversation"],
+    layout: { kind: "triangle", center: { x: 0, z: 0 }, spacing: 111 },
+  },
+  {
+    id: "installation-works",
+    label: "INSTALLATION WORKS",
+    shortLabel: "WORKS",
+    summary: "Installation-scoped capability execution and versioned repository storage.",
+    zone: "installation",
+    systems: ["native-target", "ripgit"],
+    layout: { kind: "row-x", center: { x: 0, z: 80 }, spacing: 110 },
+  },
+  {
+    id: "contract-causeway",
+    label: "CONTRACT CAUSEWAY",
+    shortLabel: "CONTRACTS",
+    summary: "A shared wire language spanning runtimes without carrying identity or authority across the gate.",
+    zone: "bridge",
+    systems: ["protocol", "sdk"],
+    layout: { kind: "row-x", center: { x: -171, z: -68 }, spacing: 78, reverse: true },
+  },
+  {
+    id: "human-ports",
+    label: "HUMAN PORTS",
+    shortLabel: "CLIENTS",
+    summary: "The browser human-facing peer presents GSV without owning its authorization policy.",
+    zone: "outer",
+    systems: ["web"],
+    layout: { kind: "singleton", center: { x: -190, z: 5 }, spacing: 0 },
+  },
+  {
+    id: "native-campus",
+    label: "NATIVE HOST CAMPUS",
+    shortLabel: "NATIVE",
+    summary: "A source-sharing campus whose Desktop, CLI, machine target, contracts, and supervised helpers remain separate native processes.",
+    zone: "outer",
+    systems: ["host"],
+    layout: { kind: "singleton", center: { x: -190, z: 79 }, spacing: 0 },
+  },
+  {
+    id: "exchange-docks",
+    label: "EXCHANGE DOCKS",
+    shortLabel: "EXCHANGES",
+    summary: "Public service contracts plus model and messaging exchanges with separately bounded grants and cleanup.",
+    zone: "outer",
+    systems: ["services", "inference", "adapters"],
+    layout: {
+      kind: "row-z",
+      center: { x: 190, z: -5 },
+      spacing: 72,
+      offsets: { inference: { x: -26, z: 0 } },
+    },
+  },
+  {
+    id: "target-frontier",
+    label: "TARGET FRONTIER",
+    shortLabel: "TARGET PEER",
+    summary: "An external browser-profile peer that provides a coherent target without becoming an installation authority.",
+    zone: "outer",
+    systems: ["extension"],
+    layout: { kind: "singleton", center: { x: 170, z: 132 }, spacing: 0 },
+  },
+  {
+    id: "provisioning-yard",
+    label: "PROVISIONING YARD",
+    shortLabel: "PROVISIONING",
+    summary: "Build-time deployment assembly that provisions topology without becoming runtime authority.",
+    zone: "outer",
+    systems: ["deployment"],
+    layout: { kind: "singleton", center: { x: 82, z: -224 }, spacing: 0 },
+  },
+];
+
+export const ATLAS_ARCHETYPES = {
+  portal: {
+    label: "INSTALLATION PORTAL",
+    summary: "Paired pylons and an admission bridge mark trusted installation ingress.",
+    width: 54,
+    depth: 24,
+    height: 36,
+    crownHeight: 14,
+  },
+  citadel: {
+    label: "CONTROL CITADEL",
+    summary: "One installation-scoped policy and routing authority with guarded wings and a durable foundation.",
+    width: 44,
+    depth: 42,
+    height: 72,
+    crownHeight: 18,
+  },
+  "process-pods": {
+    label: "PROCESS PODS",
+    summary: "A repeatable per-PID work form whose modules belong to one serialized durable agent process.",
+    width: 48,
+    depth: 40,
+    height: 54,
+    crownHeight: 12,
+  },
+  archive: {
+    label: "ARCHIVE STACK",
+    summary: "A stepped data archive for canonical, retained, human-visible history.",
+    width: 48,
+    depth: 40,
+    height: 48,
+    crownHeight: 14,
+  },
+  "contract-lattice": {
+    label: "CONTRACT LATTICE",
+    summary: "A low shared gauge for frames and syscall contracts; it is not a runtime caller or authority.",
+    width: 54,
+    depth: 22,
+    height: 18,
+    crownHeight: 20,
+  },
+  "contract-hall": {
+    label: "CONTRACT MONOLITH",
+    summary: "A low public-interface slab whose contracts describe behavior without conferring authority.",
+    width: 48,
+    depth: 30,
+    height: 34,
+    crownHeight: 12,
+  },
+  workshop: {
+    label: "CAPABILITY FORGE",
+    summary: "A target provider that implements concrete Unix-shaped capability work.",
+    width: 48,
+    depth: 38,
+    height: 38,
+    crownHeight: 14,
+  },
+  exchange: {
+    label: "SIGNAL EXCHANGE",
+    summary: "A two-sided boundary mediator for transient provider streams, transport, or delivery.",
+    width: 42,
+    depth: 36,
+    height: 50,
+    crownHeight: 24,
+  },
+  terminal: {
+    label: "CLIENT TERMINAL",
+    summary: "A human-facing peer that presents controls while durable authority remains elsewhere.",
+    width: 44,
+    depth: 30,
+    height: 38,
+    crownHeight: 12,
+  },
+  campus: {
+    label: "MIXED HOST CAMPUS",
+    summary: "A source-sharing campus whose client, machine-target, contract, and helper processes remain separate owners.",
+    width: 54,
+    depth: 42,
+    height: 38,
+    crownHeight: 14,
+  },
+  vault: {
+    label: "STORAGE VAULT",
+    summary: "A front Worker gate and repeated vault cells represent installation-qualified Repository Durable Objects.",
+    width: 48,
+    depth: 44,
+    height: 46,
+    crownHeight: 18,
+  },
+  yard: {
+    label: "ASSEMBLY GANTRY",
+    summary: "A low provisioning landmark with a crane-like assembly frame rather than a runtime tower.",
+    width: 56,
+    depth: 38,
+    height: 28,
+    crownHeight: 22,
+  },
+};
 
 export const ATLAS_LENSES = [
   {
@@ -40,7 +228,7 @@ export const ATLAS_ZONES = [
     id: "outer",
     label: "OUTER EXPANSE",
     summary: "Clients, providers, services, and targets that do not gain authority merely by connecting.",
-    radius: 233,
+    radius: 270,
   },
 ];
 
@@ -56,7 +244,8 @@ export const ATLAS_CONCEPTS = [
 
 export const ATLAS_SYSTEM_DETAIL = {
   gateway: {
-    scene: { x: 0, z: -154, width: 42, depth: 20, height: 62 },
+    archetype: "portal",
+    gate: "INSTALL ROUTE",
     scope: "installation gate",
     runtime: "Cloudflare Gateway Worker",
     owner: "Gateway edge routing",
@@ -76,7 +265,9 @@ export const ATLAS_SYSTEM_DETAIL = {
     ],
   },
   kernel: {
-    scene: { x: 0, z: -22, width: 50, depth: 44, height: 104 },
+    archetype: "citadel",
+    foundation: "K-SQL",
+    gate: "AUTH",
     scope: "installation interior",
     runtime: "Kernel Durable Object",
     owner: "Installation control plane and policy authority",
@@ -101,7 +292,9 @@ export const ATLAS_SYSTEM_DETAIL = {
     ],
   },
   process: {
-    scene: { x: -72, z: 55, width: 34, depth: 34, height: 86 },
+    archetype: "process-pods",
+    foundation: "P-SQL / R2 MEDIA",
+    gate: "FENCE",
     scope: "process enclave",
     runtime: "Process Durable Object",
     owner: "One durable agent process and its serialized model loop",
@@ -125,7 +318,9 @@ export const ATLAS_SYSTEM_DETAIL = {
     ],
   },
   conversation: {
-    scene: { x: 72, z: 52, width: 36, depth: 32, height: 68 },
+    archetype: "archive",
+    foundation: "C-SQL / R2",
+    gate: "APPEND",
     scope: "conversation enclave",
     runtime: "Conversation Durable Object",
     owner: "Canonical user-visible Message ledger",
@@ -145,7 +340,7 @@ export const ATLAS_SYSTEM_DETAIL = {
     ],
   },
   protocol: {
-    scene: { x: -84, z: -55, width: 27, depth: 25, height: 50 },
+    archetype: "contract-lattice",
     scope: "contract plane",
     runtime: "Shared TypeScript contracts and frame codecs",
     owner: "Syscall names, wire frames, Process frames, signals, and body lifecycle semantics",
@@ -165,7 +360,7 @@ export const ATLAS_SYSTEM_DETAIL = {
     ],
   },
   "native-target": {
-    scene: { x: 0, z: 102, width: 40, depth: 36, height: 62 },
+    archetype: "workshop",
     scope: "installation target",
     runtime: "In-process Worker target provider",
     owner: "The target named gsv and its Unix-shaped filesystem, one-shot shell, and network implementation",
@@ -181,8 +376,8 @@ export const ATLAS_SYSTEM_DETAIL = {
     tests: ["gateway/src/drivers/native/shell.test.ts", "gateway/src/fs/fs.test.ts"],
   },
   inference: {
-    scene: { x: 169, z: -10, width: 31, depth: 29, height: 58 },
-    scope: "provider orbit",
+    archetype: "exchange",
+    scope: "inference boundary exchange",
     runtime: "Gateway inference coordinator plus configured external provider",
     owner: "Model selection, provider transport, streaming generation, abort, and media inference",
     persistence: "Kernel state holds global/account defaults; Process SQLite may hold provider, model, base-URL, key, and media overrides. Active streams remain transient.",
@@ -197,7 +392,7 @@ export const ATLAS_SYSTEM_DETAIL = {
     tests: ["gateway/src/inference/service.test.ts", "gateway/src/inference/model-registry.test.ts"],
   },
   sdk: {
-    scene: { x: -171, z: -72, width: 30, depth: 27, height: 50 },
+    archetype: "contract-hall",
     scope: "contract orbit",
     runtime: "Public JavaScript/TypeScript client package",
     owner: "Typed client requests, reverse-call endpoints, signals, cancellation, timeouts, and binary body channels",
@@ -213,7 +408,7 @@ export const ATLAS_SYSTEM_DETAIL = {
     tests: ["packages/gsv/test/client-body.test.mjs", "packages/gsv/test/adapter-protocol.test.mjs"],
   },
   services: {
-    scene: { x: 114, z: -139, width: 34, depth: 26, height: 54 },
+    archetype: "contract-hall",
     scope: "service contract orbit",
     runtime: "Public Worker RPC contracts with operator-owned or bundled implementations",
     owner: "Public RPC contracts for directory, onboarding, entitlements, funded inference, mail, and adapters",
@@ -229,7 +424,7 @@ export const ATLAS_SYSTEM_DETAIL = {
     tests: ["gateway/test-integration/managed-routing.test.ts", "packages/gsv/test/managed-inference-stream.test.mjs"],
   },
   web: {
-    scene: { x: -169, z: -146, width: 28, depth: 25, height: 46 },
+    archetype: "terminal",
     scope: "human client orbit",
     runtime: "Browser application",
     owner: "Presentation, setup/login, direct manipulation, drafts, and browser-side Gateway synchronization",
@@ -245,7 +440,8 @@ export const ATLAS_SYSTEM_DETAIL = {
     tests: ["web/src/app/services/gateway/frameBody.test.ts", "web/src/app/services/session/sessionService.test.ts"],
   },
   host: {
-    scene: { x: -184, z: 72, width: 38, depth: 30, height: 62 },
+    archetype: "campus",
+    foundation: "HOST CONFIG",
     scope: "native peer orbit",
     runtime: "Separate Rust CLI, Desktop, gsvd, and helper processes",
     owner: "Native presentation, operator commands, physical-machine target execution, and isolated local media compute",
@@ -261,7 +457,9 @@ export const ATLAS_SYSTEM_DETAIL = {
     tests: ["host/apps/machine/tests/tools_test.rs", "host/crates/desktop-protocol/tests/unix_end_to_end.rs"],
   },
   adapters: {
-    scene: { x: 181, z: -117, width: 40, depth: 32, height: 72 },
+    archetype: "exchange",
+    foundation: "DO LEDGER",
+    gate: "BIND · LINK/GEN",
     scope: "provider transport orbit",
     runtime: "Platform-specific Workers and Durable Objects",
     owner: "Credentials, provider sessions, identity normalization, retries, formatting, delivery ledgers, and transport policy",
@@ -272,12 +470,15 @@ export const ATLAS_SYSTEM_DETAIL = {
       "A public webhook or pairing code never selects an installation or local uid.",
       "Provider identity does not itself grant ordinary GSV syscalls.",
       "Messaging transport and an optional adapter-backed target are separate projections.",
+      "Human link and generation fencing applies to shared managed routes, not every catalog or fixture adapter.",
     ],
     docs: ["docs/architecture/adapter-model.md", "docs/architecture/interaction-surface-bindings.md"],
     tests: ["adapters/shared/test/inbound-delivery.test.ts", "adapters/shared/test/delivery-ledger.test.ts"],
   },
   extension: {
-    scene: { x: 184, z: 82, width: 32, depth: 27, height: 54 },
+    archetype: "workshop",
+    foundation: "IDB",
+    gate: "DUAL",
     scope: "browser target orbit",
     runtime: "Manifest V3 extension service worker and offscreen helpers",
     owner: "One browser profile projected as a Unix-shaped target with tabs, pages, network artifacts, and commands",
@@ -293,7 +494,9 @@ export const ATLAS_SYSTEM_DETAIL = {
     tests: ["extension/src/background/connection-supervisor.test.ts", "extension/src/target/shell.test.ts"],
   },
   ripgit: {
-    scene: { x: 89, z: 122, width: 38, depth: 32, height: 76 },
+    archetype: "vault",
+    foundation: "REPO SQL / OBJECTS",
+    gate: "SCOPE",
     scope: "installation storage enclave",
     runtime: "Rust Worker and Repository Durable Objects",
     owner: "Git smart HTTP, objects, refs, pack handling, diffs, search, and atomic repository operations",
@@ -309,7 +512,8 @@ export const ATLAS_SYSTEM_DETAIL = {
     tests: ["ripgit/tests/installation-isolation.spec.mjs", "gateway/src/installation/ripgit.test.ts"],
   },
   deployment: {
-    scene: { x: 67, z: -221, width: 37, depth: 27, height: 54 },
+    archetype: "yard",
+    foundation: "MANIFESTS",
     scope: "build and provisioning plane",
     runtime: "Node.js release scripts and the checked-in standalone Alchemy deployment program",
     owner: "Artifact catalogs, compatibility manifests, standalone Worker resources, routes, and service-binding assembly",
@@ -356,6 +560,84 @@ export const ATLAS_TOUR_NOTES = {
     warning: "Provisioning topology is not runtime authority, and a Gateway deploy does not silently update host or extension software.",
   },
 };
+
+const DISTRICT_BY_SYSTEM = new Map();
+for (const district of ATLAS_DISTRICTS) {
+  for (const systemId of district.systems) {
+    if (DISTRICT_BY_SYSTEM.has(systemId)) {
+      throw new Error(`Subsystem belongs to more than one atlas district: ${systemId}`);
+    }
+    DISTRICT_BY_SYSTEM.set(systemId, district);
+  }
+}
+
+export function atlasDistrict(id) {
+  const district = ATLAS_DISTRICTS.find((candidate) => candidate.id === id);
+  if (!district) {
+    throw new Error(`Missing atlas district: ${id}`);
+  }
+  return district;
+}
+
+export function atlasDistrictForSystem(systemId) {
+  const district = DISTRICT_BY_SYSTEM.get(systemId);
+  if (!district) {
+    throw new Error(`Subsystem is not assigned to an atlas district: ${systemId}`);
+  }
+  return district;
+}
+
+export function atlasArchetype(id) {
+  const archetype = ATLAS_ARCHETYPES[id];
+  if (!archetype) {
+    throw new Error(`Missing atlas archetype: ${id}`);
+  }
+  return archetype;
+}
+
+export function atlasScene(subsystem) {
+  const detail = atlasDetail(subsystem.id);
+  const district = atlasDistrictForSystem(subsystem.id);
+  const archetype = atlasArchetype(detail.archetype);
+  const index = district.systems.indexOf(subsystem.id);
+  const { center, kind, offsets = {}, reverse = false, spacing } = district.layout;
+  const direction = reverse ? -1 : 1;
+  let x = center.x;
+  let z = center.z;
+
+  if (kind === "row-x") {
+    x += (index - (district.systems.length - 1) / 2) * spacing * direction;
+  } else if (kind === "row-z") {
+    z += (index - (district.systems.length - 1) / 2) * spacing * direction;
+  } else if (kind === "triangle") {
+    const offsets = [
+      { x: 0, z: -spacing * 0.5 },
+      { x: -spacing * 0.65, z: 0 },
+      { x: spacing * 0.65, z: 0 },
+    ];
+    const offset = offsets[index];
+    if (!offset) throw new Error(`Triangle district has too many systems: ${district.id}`);
+    x += offset.x;
+    z += offset.z;
+  } else if (kind !== "singleton") {
+    throw new Error(`Unknown atlas district layout: ${kind}`);
+  }
+
+  x += offsets[subsystem.id]?.x ?? 0;
+  z += offsets[subsystem.id]?.z ?? 0;
+
+  return {
+    x,
+    z,
+    width: archetype.width,
+    depth: archetype.depth,
+    facadeHeight: archetype.height,
+    crownHeight: archetype.crownHeight,
+    height: archetype.height + archetype.crownHeight,
+    districtId: district.id,
+    archetypeId: detail.archetype,
+  };
+}
 
 export function atlasDetail(id) {
   const detail = ATLAS_SYSTEM_DETAIL[id];

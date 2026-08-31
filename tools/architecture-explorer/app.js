@@ -8,10 +8,14 @@ import {
 } from "./architecture.mjs";
 import {
   ATLAS_CONCEPTS,
+  ATLAS_DISTRICTS,
   ATLAS_LENSES,
   ATLAS_TOUR_NOTES,
   ATLAS_ZONES,
+  atlasArchetype,
   atlasDetail,
+  atlasDistrictForSystem,
+  atlasScene,
 } from "./atlas-meta.mjs";
 
 const VIEWBOX = { width: 1200, height: 820, centerX: 600, centerY: 492 };
@@ -23,22 +27,9 @@ const EDGE_COLORS = {
   control: "#d8ff52",
   data: "#ee8bff",
   contract: "#7faaff",
+  provision: "#ffb052",
 };
-
-const SYSTEM_GROUPS = [
-  {
-    label: "INSTALLATION OWNERS",
-    ids: ["gateway", "kernel", "process", "conversation", "native-target", "ripgit"],
-  },
-  {
-    label: "CONTRACT + PROVIDER PLANE",
-    ids: ["protocol", "sdk", "inference", "services", "deployment"],
-  },
-  {
-    label: "PEERS + CAPABILITY EDGES",
-    ids: ["web", "host", "adapters", "extension"],
-  },
-];
+const COMPONENT_FACADE_INDEX = 2;
 
 const elements = {
   atlas: document.querySelector("#atlas"),
@@ -85,6 +76,7 @@ const elements = {
 
 const defaultFlow = ARCHITECTURE_FLOWS.find((flow) => flow.id === "human-turn") ?? ARCHITECTURE_FLOWS[0];
 const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
+const stackedWorkspace = window.matchMedia("(max-width: 1120px)");
 const state = {
   selectedSubsystemId: "kernel",
   selectedComponentId: null,
@@ -111,7 +103,8 @@ const state = {
 void initialize();
 
 async function initialize() {
-  if (restoreSelectionFromHash()) state.activePanel = "inspector";
+  const restoredSelection = restoreSelectionFromHash();
+  if (restoredSelection) state.activePanel = "inspector";
   elements.subsystemCount.textContent = String(ARCHITECTURE_SUBSYSTEMS.length).padStart(2, "0");
   elements.componentCount.textContent = String(
     ARCHITECTURE_SUBSYSTEMS.reduce((total, subsystem) => total + subsystem.components.length, 0),
@@ -123,6 +116,7 @@ async function initialize() {
   renderWorkspace();
   renderAll();
   bindEvents();
+  if (restoredSelection) revealWorkspace("inspector");
   updateConcept();
   syncConceptRotation();
   motionPreference.addEventListener("change", syncConceptRotation);
@@ -145,7 +139,9 @@ function bindEvents() {
     const button = event.target.closest("[data-workspace-panel]");
     if (!button) return;
     const panel = button.dataset.workspacePanel;
-    showWorkspace(state.activePanel === panel ? null : panel);
+    const nextPanel = state.activePanel === panel ? null : panel;
+    showWorkspace(nextPanel);
+    if (nextPanel) revealWorkspace(nextPanel);
   });
 
   elements.systemIndex.addEventListener("click", (event) => {
@@ -161,7 +157,7 @@ function bindEvents() {
 
   elements.systems.addEventListener("click", (event) => {
     const button = event.target.closest("[data-system]");
-    if (button) selectSubsystem(button.dataset.system, null, { focusInspector: true });
+    if (button) selectSubsystem(button.dataset.system, null, { focusInspector: true, reveal: true });
   });
 
   elements.search.addEventListener("input", () => {
@@ -178,7 +174,7 @@ function bindEvents() {
     const result = state.searchResults[Number.parseInt(button.dataset.resultIndex, 10)];
     if (!result) return;
     clearSearch();
-    selectSubsystem(result.subsystemId, result.componentId ?? null, { fly: true, focusInspector: true });
+    selectSubsystem(result.subsystemId, result.componentId ?? null, { fly: true, focusInspector: true, reveal: true });
   });
 
   elements.inspector.addEventListener("click", (event) => {
@@ -252,6 +248,7 @@ function bindEvents() {
     if (restoreSelectionFromHash()) {
       showWorkspace("inspector");
       renderAll();
+      revealWorkspace("inspector");
     }
   });
   document.addEventListener("keydown", documentKeyDown);
@@ -332,16 +329,36 @@ function closeWorkspace(panel) {
   elements.workspaceSwitcher.querySelector(`[data-workspace-panel="${panel}"]`)?.focus();
 }
 
+function revealWorkspace(panel) {
+  if (!stackedWorkspace.matches || panel === "key") return;
+  const targets = {
+    systems: elements.systemIndex,
+    inspector: elements.inspector,
+    trace: elements.traceDeck,
+  };
+  const target = targets[panel];
+  if (!target) return;
+  requestAnimationFrame(() => {
+    target.scrollIntoView({
+      behavior: motionPreference.matches ? "auto" : "smooth",
+      block: "start",
+    });
+    if (panel === "inspector") elements.inspector.querySelector("#inspector-title")?.focus({ preventScroll: true });
+    if (panel === "trace") elements.flowSelect.focus({ preventScroll: true });
+  });
+}
+
 function renderSystemList() {
   const focus = captureDataFocus(elements.systems, ["data-system"]);
   const matches = matchedSubsystems();
-  const sections = SYSTEM_GROUPS.map((group) => {
-    const rows = group.ids.map((id) => {
+  const sections = ATLAS_DISTRICTS.map((district) => {
+    const rows = district.systems.map((id) => {
       const subsystem = architectureSubsystem(id);
       const detail = atlasDetail(id);
+      const archetype = atlasArchetype(detail.archetype);
       const classes = [
         "system-row",
-        `tone-${subsystem.category}`,
+        `tone-${district.id}`,
         id === state.selectedSubsystemId ? "is-selected" : "",
         matches && !matches.has(id) ? "is-muted" : "",
       ].filter(Boolean).join(" ");
@@ -350,12 +367,12 @@ function renderSystemList() {
           <i></i>
           <span>
             <strong>${escapeHtml(subsystem.shortLabel)}</strong>
-            <small>${escapeHtml(detail.scope)}</small>
+            <small>${escapeHtml(archetype.label)}</small>
           </span>
           <em>${String(subsystem.components.length).padStart(2, "0")}</em>
         </button>`;
     }).join("");
-    return `<section><h2>${escapeHtml(group.label)}</h2>${rows}</section>`;
+    return `<section><h2>${escapeHtml(district.label)}</h2>${rows}</section>`;
   }).join("");
   elements.systems.innerHTML = sections;
   restoreDataFocus(elements.systems, focus);
@@ -369,8 +386,14 @@ function searchAtlas(query) {
   const augmented = [...base];
   for (const subsystem of ARCHITECTURE_SUBSYSTEMS) {
     const detail = atlasDetail(subsystem.id);
+    const district = atlasDistrictForSystem(subsystem.id);
+    const archetype = atlasArchetype(detail.archetype);
     const text = [
       detail.scope,
+      district.label,
+      district.summary,
+      archetype.label,
+      archetype.summary,
       detail.runtime,
       detail.owner,
       detail.persistence,
@@ -442,6 +465,7 @@ function selectSubsystem(subsystemId, componentId = null, options = {}) {
   renderWorld();
   if (options.fly) flyTo(subsystemId);
   if (options.focusInspector) focusInspectorHeading();
+  if (options.reveal) revealWorkspace("inspector");
 }
 
 function updateHash() {
@@ -477,6 +501,9 @@ function renderInspector() {
   const subsystem = architectureSubsystem(state.selectedSubsystemId);
   const component = architectureComponent(subsystem.id, state.selectedComponentId);
   const detail = atlasDetail(subsystem.id);
+  const district = atlasDistrictForSystem(subsystem.id);
+  const archetype = atlasArchetype(detail.archetype);
+  const scene = atlasScene(subsystem);
   const systemNumber = ARCHITECTURE_SUBSYSTEMS.findIndex((candidate) => candidate.id === subsystem.id) + 1;
   const sourcePaths = component
     ? component.paths
@@ -492,6 +519,18 @@ function renderInspector() {
       <ol>${component.mechanics.map((mechanic) => `<li>${escapeHtml(mechanic)}</li>`).join("")}</ol>
     </section>` : "";
   const overviewContent = `
+    <section class="city-form-panel">
+      <div>
+        <strong>DISTRICT · ${escapeHtml(district.label)}</strong>
+        <p>${escapeHtml(district.summary)}</p>
+      </div>
+      <div>
+        <strong>FORM · ${escapeHtml(archetype.label)}</strong>
+        <p>${escapeHtml(archetype.summary)}</p>
+        <em>FIXED LOT ${scene.width}×${scene.depth} · ELEVATION ${scene.height}</em>
+      </div>
+      <small>FORM SIZE IS CATEGORICAL — NEVER CODE VOLUME, HEALTH, OR IMPORTANCE.</small>
+    </section>
     <p class="system-summary">${escapeHtml(subsystem.summary)}</p>
 
     <section class="evidence-grid">
@@ -518,7 +557,7 @@ function renderInspector() {
   const componentsContent = `
     ${componentProfile}
     <section class="component-index">
-      <div class="section-label"><span>COMPONENT DECKS / ${subsystem.components.length}</span><i></i></div>
+      <div class="section-label"><span>COMPONENT APERTURES / ${subsystem.components.length}</span><i></i></div>
       ${subsystem.components.map((candidate, index) => `
         <button type="button" data-component="${candidate.id}" class="${candidate.id === component?.id ? "is-selected" : ""}">
           <span>${String(index + 1).padStart(2, "0")}</span>
@@ -547,7 +586,7 @@ function renderInspector() {
       <div class="section-label"><span>CONNECTED ROUTES / ${relatedEdges.length}</span><i></i></div>
       ${relatedEdges.map((edge) => {
         const otherId = edge.from === subsystem.id ? edge.to : edge.from;
-        const direction = edge.from === subsystem.id ? "OUT" : "IN";
+        const direction = edge.kind === "contract" ? "WITH" : edge.from === subsystem.id ? "OUT" : "IN";
         return `
           <button type="button" data-related-system="${otherId}">
             <span class="route-kind is-${edge.kind}">${escapeHtml(edge.kind)}</span>
@@ -564,12 +603,12 @@ function renderInspector() {
   };
   if (!inspectorSections[state.inspectorSection]) state.inspectorSection = "overview";
 
-  elements.inspector.dataset.category = subsystem.category;
+  elements.inspector.dataset.district = district.id;
   elements.inspector.innerHTML = `
     <header class="inspector-header">
       <div class="system-serial">SYS-${String(systemNumber).padStart(2, "0")}</div>
       <button class="panel-close" type="button" data-close-panel="inspector" aria-label="Close details">×</button>
-      <p>${escapeHtml(subsystem.category.toUpperCase())} / ${escapeHtml(detail.scope.toUpperCase())}</p>
+      <p>${escapeHtml(district.shortLabel)} / ${escapeHtml(archetype.label)}</p>
       <h2 id="inspector-title" tabindex="-1">${escapeHtml(subsystem.label)}</h2>
       <span>${escapeHtml(subsystem.sourceRoot)}</span>
       <button class="inspector-fly" type="button" data-fly-to>FLY TO LANDMARK ↗</button>
@@ -715,26 +754,27 @@ function renderWorld() {
     if (edge.to === state.selectedSubsystemId) connected.add(edge.from);
   }
 
-  const towers = ARCHITECTURE_SUBSYSTEMS.map((subsystem) => ({
-    subsystem,
-    detail: atlasDetail(subsystem.id),
-    depth: project({
-      x: atlasDetail(subsystem.id).scene.x,
-      y: atlasDetail(subsystem.id).scene.height / 2,
-      z: atlasDetail(subsystem.id).scene.z,
-    }).depth,
-  })).sort((left, right) => left.depth - right.depth);
+  const towers = ARCHITECTURE_SUBSYSTEMS.map((subsystem) => {
+    const scene = atlasScene(subsystem);
+    return {
+      subsystem,
+      detail: atlasDetail(subsystem.id),
+      scene,
+      depth: project({ x: scene.x, y: scene.height / 2, z: scene.z }).depth,
+    };
+  }).sort((left, right) => left.depth - right.depth);
 
-  const ground = renderGround();
-  const parcels = state.lens === "ownership" ? renderOwnershipParcels() : "";
+  const ground = renderGround(towers);
+  const parcels = state.lens === "ownership" ? renderOwnershipParcels(towers) : "";
   const foundations = state.lens === "durability"
-    ? towers.map(({ subsystem, detail }) => renderFoundation(subsystem, detail)).join("")
+    ? towers.filter(({ detail }) => detail.foundation)
+      .map(({ subsystem, detail, scene }) => renderFoundation(subsystem, detail, scene)).join("")
     : "";
   const routes = renderRoutes();
   const traceRoutes = renderTraceRoutes(flow);
-  const nodes = towers.map(({ subsystem, detail }) => {
+  const nodes = towers.map(({ subsystem, detail, scene }) => {
     const flowIndex = flowStates.get(subsystem.id);
-    return renderTower(subsystem, detail, {
+    return renderTower(subsystem, detail, scene, {
       selected: subsystem.id === state.selectedSubsystemId,
       connected: connected.has(subsystem.id),
       matched: !matches || matches.has(subsystem.id),
@@ -753,11 +793,11 @@ function renderWorld() {
   updateCameraReadout();
 }
 
-function renderGround() {
+function renderGround(towers) {
   const grid = [];
-  const gridExtent = 260;
-  const outerRadius = ATLAS_ZONES.find((zone) => zone.id === "outer")?.radius ?? 233;
+  const outerRadius = ATLAS_ZONES.find((zone) => zone.id === "outer")?.radius ?? 270;
   const boundaryRadius = ATLAS_ZONES.find((zone) => zone.id === "boundary")?.radius ?? 164;
+  const gridExtent = outerRadius + 30;
   for (let coordinate = -gridExtent; coordinate <= gridExtent; coordinate += 20) {
     grid.push(`<path d="${linePath(
       { x: coordinate, y: 0, z: -gridExtent },
@@ -786,9 +826,11 @@ function renderGround() {
   const gateLeftTop = project({ x: -28, y: 34, z: -boundaryRadius });
   const gateRight = project({ x: 28, y: 0, z: -boundaryRadius });
   const gateRightTop = project({ x: 28, y: 34, z: -boundaryRadius });
+  const districts = renderDistricts(towers);
   return `
     <path d="${pointPath(circlePoints(outerRadius), true)}" class="terrain-field"></path>
     <g class="terrain-grid">${grid.join("")}</g>
+    <g class="terrain-districts">${districts}</g>
     <g class="terrain-zones">${zones}</g>
     <g class="installation-gate">
       <path d="M ${format(gateLeft.x)} ${format(gateLeft.y)} L ${format(gateLeftTop.x)} ${format(gateLeftTop.y)}"></path>
@@ -798,9 +840,45 @@ function renderGround() {
     </g>`;
 }
 
-function renderOwnershipParcels() {
-  return ARCHITECTURE_SUBSYSTEMS.map((subsystem) => {
-    const scene = atlasDetail(subsystem.id).scene;
+function renderDistricts(towers) {
+  return ATLAS_DISTRICTS.map((district) => {
+    const offsetIds = Object.keys(district.layout.offsets ?? {});
+    const mainIds = district.systems.filter((id) => !offsetIds.includes(id));
+    const groups = [mainIds, ...offsetIds.map((id) => [id])].filter((ids) => ids.length > 0);
+    return groups.map((ids, groupIndex) => {
+      const districtTowers = towers.filter(({ subsystem }) => ids.includes(subsystem.id));
+      const padding = district.zone === "outer" ? 2 : district.id === "contract-causeway" ? 9 : 12;
+      const minX = Math.min(...districtTowers.map(({ scene }) => scene.x - scene.width / 2)) - padding;
+      const maxX = Math.max(...districtTowers.map(({ scene }) => scene.x + scene.width / 2)) + padding;
+      const minZ = Math.min(...districtTowers.map(({ scene }) => scene.z - scene.depth / 2)) - padding;
+      const maxZ = Math.max(...districtTowers.map(({ scene }) => scene.z + scene.depth / 2)) + padding;
+      const cut = Math.min(12, (maxX - minX) * 0.12, (maxZ - minZ) * 0.22);
+      const points = [
+        { x: minX + cut, y: 0.15, z: minZ },
+        { x: maxX - cut, y: 0.15, z: minZ },
+        { x: maxX, y: 0.15, z: minZ + cut },
+        { x: maxX, y: 0.15, z: maxZ - cut },
+        { x: maxX - cut, y: 0.15, z: maxZ },
+        { x: minX + cut, y: 0.15, z: maxZ },
+        { x: minX, y: 0.15, z: maxZ - cut },
+        { x: minX, y: 0.15, z: minZ + cut },
+      ];
+      const label = project({ x: minX + cut + 4, y: 0.4, z: minZ + 7 });
+      const labelMarkup = groupIndex === 0
+        ? `<text x="${format(label.x)}" y="${format(label.y)}" class="district-label district-${district.id}">${escapeHtml(district.shortLabel)}</text>`
+        : "";
+      return `
+        <path d="${pointPath(points, true)}" class="district-parcel district-${district.id}">
+          <title>${escapeHtml(`${district.label}: ${district.summary}`)}</title>
+        </path>
+        ${labelMarkup}`;
+    }).join("");
+  }).join("");
+}
+
+function renderOwnershipParcels(towers) {
+  return towers.map(({ subsystem, scene }) => {
+    const district = atlasDistrictForSystem(subsystem.id);
     const padding = 8;
     const points = [
       { x: scene.x - scene.width / 2 - padding, y: 0.3, z: scene.z - scene.depth / 2 - padding },
@@ -808,12 +886,12 @@ function renderOwnershipParcels() {
       { x: scene.x + scene.width / 2 + padding, y: 0.3, z: scene.z + scene.depth / 2 + padding },
       { x: scene.x - scene.width / 2 - padding, y: 0.3, z: scene.z + scene.depth / 2 + padding },
     ];
-    return `<path d="${pointPath(points, true)}" class="ownership-parcel parcel-${subsystem.category} ${subsystem.id === state.selectedSubsystemId ? "is-selected" : ""}"></path>`;
+    return `<path d="${pointPath(points, true)}" class="ownership-parcel parcel-${district.id} ${subsystem.id === state.selectedSubsystemId ? "is-selected" : ""}"></path>`;
   }).join("");
 }
 
-function renderFoundation(subsystem, detail) {
-  const { x, z, width, depth } = detail.scene;
+function renderFoundation(subsystem, detail, scene) {
+  const { x, z, width, depth } = scene;
   const bottom = -24;
   const base = boxCorners(x, z, width * 0.88, depth * 0.88, 0);
   const lower = boxCorners(x, z, width * 0.88, depth * 0.88, bottom);
@@ -828,47 +906,28 @@ function renderFoundation(subsystem, detail) {
   return `
     <g class="foundation ${subsystem.id === state.selectedSubsystemId ? "is-selected" : ""}">
       ${faces.map((face) => `<path d="${pointPath(face, true)}"></path>`).join("")}
-      <text x="${format(label.x)}" y="${format(label.y + 14)}">${escapeHtml(persistenceCode(subsystem.id))}</text>
+      <text x="${format(label.x)}" y="${format(label.y + 14)}">${escapeHtml(detail.foundation)}</text>
     </g>`;
 }
 
-function persistenceCode(id) {
-  const codes = {
-    gateway: "ROUTE",
-    kernel: "K-SQL",
-    process: "P-SQL",
-    conversation: "C-SQL / R2",
-    protocol: "STATELESS",
-    "native-target": "R2 / GIT",
-    inference: "STREAM",
-    sdk: "EPHEMERAL",
-    services: "OPERATOR",
-    web: "CLIENT CACHE",
-    host: "LOCAL",
-    adapters: "DO LEDGER",
-    extension: "IDB",
-    ripgit: "GIT OBJECTS",
-    deployment: "MANIFESTS",
-  };
-  return codes[id] ?? "STATE";
-}
-
 function renderRoutes() {
-  return ARCHITECTURE_EDGES.map((edge) => {
-    const from = atlasDetail(edge.from).scene;
-    const to = atlasDetail(edge.to).scene;
+  return ARCHITECTURE_EDGES.map((edge, index) => {
+    const from = atlasScene(architectureSubsystem(edge.from));
+    const to = atlasScene(architectureSubsystem(edge.to));
     const selected = edge.from === state.selectedSubsystemId || edge.to === state.selectedSubsystemId;
     const emphasized = state.lens === "security"
-      ? edge.kind === "control" || edge.kind === "contract"
+      ? edge.security === true
       : state.lens === "durability"
         ? edge.kind === "data"
         : state.lens === "ownership"
           ? selected
           : true;
-    const path = routePath(from, to, 26);
+    const path = routePath(from, to, 26 + (index % 4) * 7);
+    const marker = edge.kind === "contract" ? "" : ' marker-end="url(#route-arrow)"';
+    const connector = edge.kind === "contract" ? "↔" : "→";
     return `
-      <path d="${path}" class="world-route route-${edge.kind}${selected ? " is-selected" : ""}${emphasized ? " is-emphasized" : ""}" stroke="${EDGE_COLORS[edge.kind]}" marker-end="url(#route-arrow)">
-        <title>${escapeHtml(`${architectureSubsystem(edge.from).shortLabel} → ${architectureSubsystem(edge.to).shortLabel}: ${edge.label}`)}</title>
+      <path d="${path}" class="world-route route-${edge.kind}${selected ? " is-selected" : ""}${emphasized ? " is-emphasized" : ""}" stroke="${EDGE_COLORS[edge.kind]}"${marker}>
+        <title>${escapeHtml(`${architectureSubsystem(edge.from).shortLabel} ${connector} ${architectureSubsystem(edge.to).shortLabel}: ${edge.label}`)}</title>
       </path>`;
   }).join("");
 }
@@ -879,8 +938,8 @@ function renderTraceRoutes(flow) {
     const previous = flow.steps[index - 1];
     const current = flow.steps[index];
     if (previous.subsystemId === current.subsystemId) continue;
-    const from = atlasDetail(previous.subsystemId).scene;
-    const to = atlasDetail(current.subsystemId).scene;
+    const from = atlasScene(architectureSubsystem(previous.subsystemId));
+    const to = atlasScene(architectureSubsystem(current.subsystemId));
     const phase = index < state.activeFlowStep
       ? "is-complete"
       : index === state.activeFlowStep
@@ -905,55 +964,48 @@ function routePath(from, to, lift) {
   return `M ${format(start.x)} ${format(start.y)} Q ${format(middle.x)} ${format(middle.y)} ${format(end.x)} ${format(end.y)}`;
 }
 
-function renderTower(subsystem, detail, flags) {
-  const { x, z, width, depth, height } = detail.scene;
-  const baseWorld = boxCorners(x, z, width, depth, 0);
-  const topWorld = boxCorners(x, z, width, depth, height);
-  const base = baseWorld.map(project);
-  const top = topWorld.map(project);
-  const faces = [0, 1, 2, 3].map((index) => {
-    const next = (index + 1) % 4;
-    const points = [base[index], base[next], top[next], top[index]];
-    return {
-      index,
-      next,
-      points,
-      depth: points.reduce((total, point) => total + point.depth, 0) / points.length,
-    };
-  }).sort((left, right) => left.depth - right.depth);
-  const nearFace = faces[faces.length - 1];
-  const topCenter = project({ x, y: height, z });
-  const groundCenter = project({ x, y: 0, z });
+function renderTower(subsystem, detail, scene, flags) {
+  const district = atlasDistrictForSystem(subsystem.id);
+  const archetype = atlasArchetype(detail.archetype);
+  const body = formBody(scene, detail.archetype);
+  const prism = projectPrism(body.x, body.z, body.width, body.depth, 0, body.height);
+  const topCenter = project({ x: scene.x, y: scene.height, z: scene.z });
+  const groundCenter = project({ x: scene.x, y: 0, z: scene.z });
   const labelWidth = Math.max(86, subsystem.shortLabel.length * 7.2 + 34);
-  const labelY = Math.min(...top.map((point) => point.y)) - 40;
+  const labelY = topCenter.y - 46;
   const classes = [
     "world-node",
-    `node-${subsystem.category}`,
+    `node-${district.id}`,
+    `form-${detail.archetype}`,
     flags.selected ? "is-selected" : "",
     flags.connected ? "is-connected" : "",
     !flags.matched ? "is-search-muted" : "",
     `trace-${flags.traceState}`,
   ].filter(Boolean).join(" ");
-  const faceMarkup = faces.map((face, index) => `
-    <path d="${screenPointPath(face.points, true)}" class="tower-face face-${index}"></path>`).join("");
-  const componentDecks = renderComponentDecks(subsystem, nearFace, base, top);
+  const faceMarkup = renderPrism(prism, "tower");
+  const apertureFace = prism.faces.find((face) => face.index === COMPONENT_FACADE_INDEX);
+  const apertureVisible = prism.faces.slice(-2).includes(apertureFace);
+  const components = apertureVisible ? renderComponentApertures(subsystem, apertureFace) : "";
+  const formFeatures = renderFormFeatures(detail.archetype, scene, body);
   const selectedBeam = flags.selected ? `
     <ellipse cx="${format(groundCenter.x)}" cy="${format(groundCenter.y)}" rx="46" ry="22" class="selection-flare"></ellipse>
     <path d="M ${format(groundCenter.x)} ${format(groundCenter.y)} L ${format(topCenter.x)} ${format(topCenter.y - 92)}" class="selection-beam"></path>
     <circle cx="${format(topCenter.x)}" cy="${format(topCenter.y - 92)}" r="5" class="selection-orb"></circle>` : "";
-  const securityBadge = state.lens === "security" ? `
-    <g class="security-badge" transform="translate(${format(topCenter.x + 24)} ${format(labelY + 28)})">
-      <circle r="10"></circle><text y="4">${securityCode(subsystem.id)}</text>
+  const badgeWidth = detail.gate ? Math.max(34, detail.gate.length * 6 + 12) : 0;
+  const securityBadge = state.lens === "security" && detail.gate ? `
+    <g class="security-badge" transform="translate(${format(topCenter.x + labelWidth / 2 + badgeWidth / 2 + 7)} ${format(labelY + 15)})">
+      <rect x="${format(-badgeWidth / 2)}" y="-9" width="${format(badgeWidth)}" height="18" rx="2"></rect>
+      <text y="3">${escapeHtml(detail.gate)}</text>
     </g>` : "";
 
   return `
-    <g class="${classes}" data-system="${subsystem.id}" role="button" tabindex="0" aria-label="${escapeAttribute(subsystem.label)}; ${subsystem.components.length} components">
+    <g class="${classes}" data-system="${subsystem.id}" role="button" tabindex="0" aria-label="${escapeAttribute(subsystem.label)}; ${escapeAttribute(district.label)}; ${escapeAttribute(archetype.label)}; ${subsystem.components.length} components">
       ${selectedBeam}
       <g class="tower-geometry">
         ${faceMarkup}
-        <path d="${screenPointPath(top, true)}" class="tower-top"></path>
-        ${componentDecks}
-        <path d="${screenPointPath(base, true)}" class="tower-footprint"></path>
+        ${formFeatures}
+        ${components}
+        <path d="${screenPointPath(prism.base, true)}" class="tower-footprint"></path>
       </g>
       <g class="node-label" transform="translate(${format(topCenter.x - labelWidth / 2)} ${format(labelY)})">
         <path d="M ${format(labelWidth / 2)} 30 L ${format(labelWidth / 2)} ${format(topCenter.y - labelY - 4)}"></path>
@@ -965,45 +1017,298 @@ function renderTower(subsystem, detail, flags) {
     </g>`;
 }
 
-function renderComponentDecks(subsystem, face, base, top) {
+function formBody(scene, archetypeId) {
+  const forms = {
+    portal: { width: 0.42, depth: 0.72, height: 0.56 },
+    "process-pods": { width: 0.48, depth: 0.72, height: 1 },
+    "contract-lattice": { width: 1, depth: 1, height: 1 },
+    terminal: { width: 0.76, depth: 0.78, height: 0.74 },
+    campus: { width: 0.46, depth: 0.72, height: 1 },
+    vault: { width: 0.38, depth: 0.42, height: 0.62, zOffset: -0.28 },
+    yard: { width: 0.72, depth: 0.72, height: 0.48 },
+  };
+  const ratios = forms[archetypeId] ?? { width: 1, depth: 1, height: 1 };
+  return {
+    x: scene.x,
+    z: scene.z + scene.depth * (ratios.zOffset ?? 0),
+    width: scene.width * ratios.width,
+    depth: scene.depth * ratios.depth,
+    height: scene.facadeHeight * ratios.height,
+  };
+}
+
+function projectPrism(x, z, width, depth, bottom, top) {
+  const base = boxCorners(x, z, width, depth, bottom).map(project);
+  const topFace = boxCorners(x, z, width, depth, top).map(project);
+  const faces = [0, 1, 2, 3].map((index) => {
+    const next = (index + 1) % 4;
+    const points = [base[index], base[next], topFace[next], topFace[index]];
+    return {
+      index,
+      points,
+      depth: points.reduce((total, point) => total + point.depth, 0) / points.length,
+    };
+  }).sort((left, right) => left.depth - right.depth);
+  return { base, topFace, faces };
+}
+
+function renderPrism(prism, className) {
+  const faces = prism.faces.map((face) => `
+    <path d="${screenPointPath(face.points, true)}" class="${className}-face face-${face.index}"></path>`).join("");
+  return `${faces}<path d="${screenPointPath(prism.topFace, true)}" class="${className}-top"></path>`;
+}
+
+function renderComponentApertures(subsystem, face) {
   const count = subsystem.components.length;
-  const decks = [];
+  const columns = Math.ceil(Math.sqrt(count * 1.2));
+  const rows = Math.ceil(count / columns);
+  const cellWidth = 0.76 / columns;
+  const cellHeight = 0.66 / rows;
+  const apertures = [];
   for (let index = 0; index < count; index += 1) {
-    const low = index / count;
-    const high = (index + 1) / count;
-    const leftLow = interpolate(base[face.index], top[face.index], low);
-    const rightLow = interpolate(base[face.next], top[face.next], low);
-    const leftHigh = interpolate(base[face.index], top[face.index], high);
-    const rightHigh = interpolate(base[face.next], top[face.next], high);
+    const column = index % columns;
+    const row = Math.floor(index / columns);
+    const left = 0.12 + column * cellWidth + cellWidth * 0.2;
+    const right = left + cellWidth * 0.6;
+    const cellBottom = 0.14 + (rows - row - 1) * cellHeight;
+    const bottom = cellBottom + cellHeight * 0.23;
+    const top = bottom + cellHeight * 0.54;
     const component = subsystem.components[index];
     const selected = component.id === state.selectedComponentId && subsystem.id === state.selectedSubsystemId;
-    decks.push(`
-      <path d="${screenPointPath([leftLow, rightLow, rightHigh, leftHigh], true)}" class="component-deck${selected ? " is-selected" : ""}" data-system="${subsystem.id}" data-component="${component.id}">
+    const points = [
+      quadPoint(face.points, left, bottom),
+      quadPoint(face.points, right, bottom),
+      quadPoint(face.points, right, top),
+      quadPoint(face.points, left, top),
+    ];
+    const hitPoints = [
+      quadPoint(face.points, 0.12 + column * cellWidth + cellWidth * 0.05, cellBottom + cellHeight * 0.05),
+      quadPoint(face.points, 0.12 + (column + 1) * cellWidth - cellWidth * 0.05, cellBottom + cellHeight * 0.05),
+      quadPoint(face.points, 0.12 + (column + 1) * cellWidth - cellWidth * 0.05, cellBottom + cellHeight * 0.95),
+      quadPoint(face.points, 0.12 + column * cellWidth + cellWidth * 0.05, cellBottom + cellHeight * 0.95),
+    ];
+    const path = screenPointPath(points, true);
+    const hitPath = screenPointPath(hitPoints, true);
+    apertures.push(`
+      <path d="${hitPath}" class="component-hit" data-system="${subsystem.id}" data-component="${component.id}" data-face="${face.index}">
+        <title>${escapeHtml(component.label)}</title>
+      </path>
+      <path d="${path}" class="component-aperture${selected ? " is-selected" : ""}" data-system="${subsystem.id}" data-component="${component.id}" data-face="${face.index}">
         <title>${escapeHtml(component.label)}</title>
       </path>`);
   }
-  return decks.join("");
+  return apertures.join("");
 }
 
-function securityCode(id) {
-  const codes = {
-    gateway: "G",
-    kernel: "K",
-    process: "P",
-    conversation: "C",
-    protocol: "Φ",
-    "native-target": "T",
-    inference: "AI",
-    sdk: "S",
-    services: "M",
-    web: "U",
-    host: "H",
-    adapters: "A",
-    extension: "B",
-    ripgit: "R",
-    deployment: "D",
-  };
-  return codes[id] ?? "•";
+function quadPoint(points, horizontal, vertical) {
+  const lower = interpolate(points[0], points[1], horizontal);
+  const upper = interpolate(points[3], points[2], horizontal);
+  return interpolate(lower, upper, vertical);
+}
+
+function renderFormFeatures(archetypeId, scene, body) {
+  const { x, z, width, depth, facadeHeight, height } = scene;
+  const featurePrism = (centerX, centerZ, featureWidth, featureDepth, bottom, top) => (
+    renderPrism(projectPrism(centerX, centerZ, featureWidth, featureDepth, bottom, top), "form-feature")
+  );
+
+  if (archetypeId === "portal") {
+    const pylonWidth = width * 0.22;
+    const pylonOffset = width * 0.34;
+    return `
+      ${featurePrism(x - pylonOffset, z, pylonWidth, depth * 0.88, 0, height)}
+      ${featurePrism(x + pylonOffset, z, pylonWidth, depth * 0.88, 0, height)}
+      ${featurePrism(x, z, width * 0.7, depth * 0.42, facadeHeight * 0.38, facadeHeight * 0.54)}
+      ${renderPortalFrame(scene)}`;
+  }
+  if (archetypeId === "citadel") {
+    return `
+      ${featurePrism(x - width * 0.39, z, width * 0.22, depth * 0.72, 0, facadeHeight * 0.42)}
+      ${featurePrism(x + width * 0.39, z, width * 0.22, depth * 0.72, 0, facadeHeight * 0.42)}
+      ${featurePrism(x, z, width * 0.34, depth * 0.62, facadeHeight, height)}
+      ${featurePrism(x - width * 0.28, z, width * 0.1, depth * 0.36, facadeHeight * 0.7, height * 0.88)}
+      ${featurePrism(x + width * 0.28, z, width * 0.1, depth * 0.36, facadeHeight * 0.7, height * 0.88)}
+      ${renderCircuitSpine(scene, 0.64)}`;
+  }
+  if (archetypeId === "process-pods") {
+    return `
+      ${featurePrism(x - width * 0.34, z, width * 0.28, depth, 0, facadeHeight * 0.62)}
+      ${featurePrism(x + width * 0.34, z, width * 0.28, depth, 0, facadeHeight * 0.62)}
+      ${featurePrism(x, z, body.width * 0.42, body.depth * 0.62, facadeHeight, height)}
+      ${renderPodLinks(scene)}`;
+  }
+  if (archetypeId === "archive") {
+    return `
+      ${featurePrism(x, z, width * 0.88, depth * 0.88, facadeHeight, facadeHeight + scene.crownHeight * 0.28)}
+      ${featurePrism(x, z, width * 0.7, depth * 0.7, facadeHeight + scene.crownHeight * 0.28, facadeHeight + scene.crownHeight * 0.62)}
+      ${featurePrism(x, z, width * 0.48, depth * 0.5, facadeHeight + scene.crownHeight * 0.62, height)}
+      ${renderCircuitSpine(scene, 0.5)}`;
+  }
+  if (archetypeId === "contract-lattice") {
+    return renderLattice(scene, body.height);
+  }
+  if (archetypeId === "contract-hall") {
+    return `
+      ${featurePrism(x, z, width * 0.92, depth * 0.74, facadeHeight, facadeHeight + scene.crownHeight * 0.3)}
+      ${featurePrism(x - width * 0.31, z, width * 0.08, depth * 0.46, facadeHeight * 0.48, height)}
+      ${featurePrism(x + width * 0.31, z, width * 0.08, depth * 0.46, facadeHeight * 0.48, height)}
+      ${renderLightRail(scene, facadeHeight + scene.crownHeight * 0.62)}`;
+  }
+  if (archetypeId === "workshop") {
+    return `
+      ${featurePrism(x - width * 0.3, z, width * 0.09, depth * 0.72, facadeHeight * 0.42, height * 0.86)}
+      ${featurePrism(x, z, width * 0.09, depth * 0.72, facadeHeight * 0.32, height)}
+      ${featurePrism(x + width * 0.3, z, width * 0.09, depth * 0.72, facadeHeight * 0.42, height * 0.86)}
+      ${renderWorkBays(scene)}`;
+  }
+  if (archetypeId === "exchange") {
+    return `
+      ${featurePrism(x, z, width * 0.52, depth * 0.52, facadeHeight, facadeHeight + scene.crownHeight * 0.32)}
+      ${featurePrism(x, z, width * 0.1, depth * 0.28, facadeHeight + scene.crownHeight * 0.32, height * 0.92)}
+      ${renderExchangeMast(scene)}`;
+  }
+  if (archetypeId === "terminal") {
+    return `
+      ${featurePrism(x, z - depth * 0.36, width, depth * 0.14, body.height * 0.42, body.height * 0.54)}
+      ${featurePrism(x, z + depth * 0.22, body.width * 0.72, depth * 0.1, body.height * 0.6, height)}
+      ${featurePrism(x, z, width * 0.92, depth * 0.66, body.height, body.height + scene.crownHeight * 0.22)}
+      ${renderLightRail(scene, body.height * 0.58)}`;
+  }
+  if (archetypeId === "campus") {
+    return `
+      ${featurePrism(x - width * 0.35, z, width * 0.3, depth, 0, facadeHeight * 0.58)}
+      ${featurePrism(x + width * 0.35, z, width * 0.3, depth, 0, facadeHeight * 0.58)}
+      ${featurePrism(x, z, body.width * 0.44, body.depth * 0.5, facadeHeight, height)}
+      ${renderCampusLinks(scene)}`;
+  }
+  if (archetypeId === "vault") {
+    const cellDepth = depth * 0.52;
+    const cellWidth = width * 0.27;
+    const cellZ = z + depth * 0.18;
+    return `
+      ${featurePrism(x - width * 0.3, cellZ, cellWidth, cellDepth, 0, facadeHeight * 0.78)}
+      ${featurePrism(x, cellZ + depth * 0.08, cellWidth, cellDepth, 0, facadeHeight)}
+      ${featurePrism(x + width * 0.3, cellZ, cellWidth, cellDepth, 0, facadeHeight * 0.78)}
+      ${featurePrism(x - width * 0.3, cellZ, cellWidth * 0.34, cellDepth * 0.62, facadeHeight * 0.78, height * 0.84)}
+      ${featurePrism(x, cellZ + depth * 0.08, cellWidth * 0.34, cellDepth * 0.62, facadeHeight, height)}
+      ${featurePrism(x + width * 0.3, cellZ, cellWidth * 0.34, cellDepth * 0.62, facadeHeight * 0.78, height * 0.84)}
+      ${renderVaultBus(scene)}`;
+  }
+  if (archetypeId === "yard") {
+    return `${featurePrism(x, z, width * 0.92, depth * 0.82, body.height, body.height + 3)}${renderGantry(scene, body.height)}`;
+  }
+  return `${featurePrism(x, z, width * 0.28, depth * 0.5, facadeHeight, height)}${renderCircuitSpine(scene, 0.5)}`;
+}
+
+function renderPortalFrame(scene) {
+  const front = scene.z - scene.depth / 2 - 0.3;
+  const leftBottom = { x: scene.x - scene.width * 0.24, y: 2, z: front };
+  const leftTop = { ...leftBottom, y: scene.height * 0.72 };
+  const rightBottom = { x: scene.x + scene.width * 0.24, y: 2, z: front };
+  const rightTop = { ...rightBottom, y: scene.height * 0.72 };
+  return `<g class="portal-frame">
+    <path d="${linePath(leftBottom, leftTop)}"></path>
+    <path d="${linePath(leftTop, rightTop)}"></path>
+    <path d="${linePath(rightTop, rightBottom)}"></path>
+  </g>`;
+}
+
+function renderCircuitSpine(scene, widthRatio) {
+  const front = scene.z - scene.depth / 2 - 0.2;
+  const left = scene.x - scene.width * widthRatio / 2;
+  const right = scene.x + scene.width * widthRatio / 2;
+  const middleY = scene.facadeHeight * 0.58;
+  const paths = [
+    linePath({ x: left, y: 3, z: front }, { x: left, y: middleY, z: front }),
+    linePath({ x: left, y: middleY, z: front }, { x: scene.x, y: middleY, z: front }),
+    linePath({ x: scene.x, y: middleY, z: front }, { x: scene.x, y: scene.height, z: front }),
+    linePath({ x: scene.x, y: scene.height * 0.78, z: front }, { x: right, y: scene.height * 0.78, z: front }),
+  ];
+  return `<g class="form-circuit">${paths.map((path) => `<path d="${path}"></path>`).join("")}</g>`;
+}
+
+function renderPodLinks(scene) {
+  const y = scene.facadeHeight * 0.42;
+  const left = { x: scene.x - scene.width * 0.47, y, z: scene.z - scene.depth * 0.34 };
+  const right = { x: scene.x + scene.width * 0.47, y, z: scene.z - scene.depth * 0.34 };
+  const center = { x: scene.x, y: y + scene.crownHeight * 0.16, z: scene.z - scene.depth * 0.34 };
+  return `<g class="form-link"><path d="${linePath(left, center)}"></path><path d="${linePath(center, right)}"></path></g>`;
+}
+
+function renderLightRail(scene, y) {
+  const front = scene.z - scene.depth / 2 - 0.25;
+  return `<g class="form-link"><path d="${linePath(
+    { x: scene.x - scene.width * 0.46, y, z: front },
+    { x: scene.x + scene.width * 0.46, y, z: front },
+  )}"></path></g>`;
+}
+
+function renderWorkBays(scene) {
+  const front = scene.z - scene.depth / 2 - 0.25;
+  const paths = [-0.28, 0, 0.28].map((offset) => linePath(
+    { x: scene.x + scene.width * offset - scene.width * 0.09, y: 3, z: front },
+    { x: scene.x + scene.width * offset + scene.width * 0.09, y: 3, z: front },
+  ));
+  return `<g class="form-bays">${paths.map((path) => `<path d="${path}"></path>`).join("")}</g>`;
+}
+
+function renderCampusLinks(scene) {
+  const y = scene.facadeHeight * 0.32;
+  const front = scene.z - scene.depth * 0.32;
+  return `<g class="form-link">
+    <path d="${linePath({ x: scene.x - scene.width * 0.48, y, z: front }, { x: scene.x, y: y + 3, z: front })}"></path>
+    <path d="${linePath({ x: scene.x, y: y + 3, z: front }, { x: scene.x + scene.width * 0.48, y, z: front })}"></path>
+  </g>`;
+}
+
+function renderVaultBus(scene) {
+  const front = scene.z - scene.depth * 0.08;
+  const y = scene.facadeHeight * 0.48;
+  return `<g class="form-link"><path d="${linePath(
+    { x: scene.x - scene.width * 0.48, y, z: front },
+    { x: scene.x + scene.width * 0.48, y, z: front },
+  )}"></path></g>`;
+}
+
+function renderLattice(scene, platformHeight) {
+  const lower = boxCorners(scene.x, scene.z, scene.width * 0.82, scene.depth * 0.68, platformHeight);
+  const upper = boxCorners(scene.x, scene.z, scene.width * 0.82, scene.depth * 0.68, scene.height);
+  const lines = [];
+  for (let index = 0; index < lower.length; index += 1) {
+    const next = (index + 1) % lower.length;
+    lines.push(linePath(lower[index], upper[index]));
+    lines.push(linePath(upper[index], upper[next]));
+    lines.push(linePath(lower[index], upper[next]));
+  }
+  return `<g class="form-lattice">${lines.map((path) => `<path d="${path}"></path>`).join("")}</g>`;
+}
+
+function renderExchangeMast(scene) {
+  const base = project({ x: scene.x, y: scene.facadeHeight + scene.crownHeight * 0.42, z: scene.z });
+  const top = project({ x: scene.x, y: scene.height, z: scene.z });
+  const ring = project({ x: scene.x, y: scene.facadeHeight + scene.crownHeight * 0.72, z: scene.z });
+  return `
+    <g class="form-mast">
+      <path d="M ${format(base.x)} ${format(base.y)} L ${format(top.x)} ${format(top.y)}"></path>
+      <ellipse cx="${format(ring.x)}" cy="${format(ring.y)}" rx="20" ry="7"></ellipse>
+      <circle cx="${format(top.x)}" cy="${format(top.y)}" r="3"></circle>
+    </g>`;
+}
+
+function renderGantry(scene, platformHeight) {
+  const leftBottom = { x: scene.x - scene.width * 0.4, y: platformHeight, z: scene.z };
+  const rightBottom = { x: scene.x + scene.width * 0.4, y: platformHeight, z: scene.z };
+  const leftTop = { ...leftBottom, y: scene.height };
+  const rightTop = { ...rightBottom, y: scene.height };
+  const boom = { x: scene.x + scene.width * 0.58, y: scene.height, z: scene.z };
+  return `
+    <g class="form-gantry">
+      <path d="${linePath(leftBottom, leftTop)}"></path>
+      <path d="${linePath(rightBottom, rightTop)}"></path>
+      <path d="${linePath(leftTop, boom)}"></path>
+      <path d="${linePath(leftBottom, rightTop)}"></path>
+      <path d="${linePath({ ...boom, y: scene.height }, { ...boom, y: platformHeight * 0.6 })}"></path>
+    </g>`;
 }
 
 function project(point) {
@@ -1081,7 +1386,7 @@ function resetCamera() {
 }
 
 function flyTo(subsystemId) {
-  const scene = atlasDetail(subsystemId).scene;
+  const scene = atlasScene(architectureSubsystem(subsystemId));
   animateCamera({
     yaw: state.camera.yaw,
     pitch: clamp(state.camera.pitch + 0.03, 0.34, 0.82),
@@ -1093,6 +1398,11 @@ function flyTo(subsystemId) {
 
 function animateCamera(target) {
   cancelCameraAnimation();
+  if (motionPreference.matches) {
+    Object.assign(state.camera, target);
+    renderWorld();
+    return;
+  }
   const start = { ...state.camera };
   const startedAt = performance.now();
   const duration = 720;
@@ -1166,7 +1476,7 @@ function worldPointerMove(event) {
     ? architectureComponent(subsystem.id, node.dataset.component)
     : null;
   elements.hover.hidden = false;
-  elements.hover.innerHTML = `<span>${escapeHtml(subsystem.shortLabel)}</span><strong>${escapeHtml(component?.label ?? subsystem.label)}</strong><small>${component ? "COMPONENT DECK" : atlasDetail(subsystem.id).runtime}</small>`;
+  elements.hover.innerHTML = `<span>${escapeHtml(subsystem.shortLabel)}</span><strong>${escapeHtml(component?.label ?? subsystem.label)}</strong><small>${component ? "COMPONENT APERTURE" : atlasDetail(subsystem.id).runtime}</small>`;
 }
 
 function worldPointerUp(event) {
@@ -1178,7 +1488,7 @@ function worldPointerUp(event) {
   elements.world.classList.remove("is-dragging");
   if (elements.world.hasPointerCapture(event.pointerId)) elements.world.releasePointerCapture(event.pointerId);
   if (!cancelled && !moved && hit) {
-    selectSubsystem(hit.subsystemId, hit.componentId);
+    selectSubsystem(hit.subsystemId, hit.componentId, { reveal: true });
   }
   if (state.ignoreNextClick) {
     window.setTimeout(() => {
@@ -1194,7 +1504,7 @@ function worldClicked(event) {
   }
   const node = event.target.closest("[data-system]");
   if (!node) return;
-  selectSubsystem(node.dataset.system, node.dataset.component ?? null);
+  selectSubsystem(node.dataset.system, node.dataset.component ?? null, { reveal: true });
 }
 
 function worldDoubleClicked(event) {
@@ -1231,7 +1541,7 @@ function worldKeyDown(event) {
   } else if ((event.key === "Enter" || event.key === " ") && event.target.closest("[data-system]")) {
     event.preventDefault();
     const node = event.target.closest("[data-system]");
-    selectSubsystem(node.dataset.system, node.dataset.component ?? null);
+    selectSubsystem(node.dataset.system, node.dataset.component ?? null, { reveal: true });
   }
 }
 

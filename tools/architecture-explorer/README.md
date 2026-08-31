@@ -21,11 +21,15 @@ The explorer should let a reader answer three questions quickly:
 2. Which trust or protocol boundary does a request cross next?
 3. Which source files, architecture notes, and tests are evidence for the map?
 
-The world is organized by runtime ownership rather than directory nesting.
-Folders are evidence attached to landmarks; they are not treated as runtime
-actors. The scene therefore keeps the Kernel, Process, Conversation, target,
-adapter, client, and storage owners visually distinct even when their source
-paths are close together.
+The world is organized by semantic districts and runtime ownership rather than
+directory nesting. Folders are evidence attached to landmarks; they are not
+treated as runtime actors. District hue groups architectural neighbors, while
+each silhouette identifies a categorical runtime form such as an installation portal,
+durable owner, contract lattice, target workshop, exchange, or assembly yard.
+The landmarks are abstract neon-grid monoliths, portals, fins, and data cages,
+not literal houses or a claim that the source tree resembles physical buildings.
+The fixed form dimensions never represent line count, component count, health,
+importance, or execution volume.
 
 ## Controls
 
@@ -43,16 +47,19 @@ paths are close together.
   architectural facts emphasized by the terrain.
 - Open **Trace** and choose a guided trace to follow one request across its
   owners.
-- Open **Key** for the building-role palette and connection semantics. Building
-  color is categorical; it never reports health, status, or importance.
+- Open **Key** for district colors, neon-grid grammar, and connection semantics.
+  Clickable facade apertures index components, but their position carries no
+  hierarchy or ordering. Foundations and gate badges appear only where the
+  source architecture supports those concepts.
 - Press `/` or <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>K</kbd> to search the atlas.
 - The selected subsystem and component are kept in the URL hash for sharing.
 
 ## Source of truth and drift
 
 `architecture.mjs` is the curated subsystem, component, edge, and guided-flow
-graph. `atlas-meta.mjs` adds spatial placement and explicit owner, persistence,
-admission, completion, security, documentation, and test evidence.
+graph. `atlas-meta.mjs` adds semantic districts, categorical forms,
+deterministic placement, and explicit owner, persistence, admission,
+completion, security, documentation, and test evidence.
 
 The map is intentionally authored rather than inferred. Source code and tests
 remain authoritative; the explorer explains their boundaries. Run the focused

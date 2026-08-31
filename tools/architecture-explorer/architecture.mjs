@@ -281,7 +281,7 @@ const ARCHITECTURE_SUBSYSTEMS = [
         label: "CONVERSATION DO",
         summary: "Serializes canonical Message appends, replay protection, reads, resource validation, and archival decisions.",
         mechanics: [
-          "Process-handled Messages may record a handling PID and run ID; authorized contact and system input can omit both.",
+          "Process-handled Messages may record a handling PID and run ID; authorized user and contact input can omit both.",
           "The stable Ship conversation survives replacement of its ordinary personal Process PID."
         ],
         paths: [
@@ -293,30 +293,26 @@ const ARCHITECTURE_SUBSYSTEMS = [
       },
       {
         id: "message-store",
-        label: "HOT + ARCHIVE STORE",
-        summary: "Keeps recent canonical messages in SQLite and rolls immutable older segments into installation-scoped R2.",
+        label: "HOT MESSAGE STORE",
+        summary: "Keeps recent canonical messages, receipts, archive indexes, and sequence state in Conversation SQLite.",
         mechanics: [
-          "The archive index remains in the owning Conversation so reads preserve ordering.",
+          "Idempotency receipts and monotonic sequence state make changed replays fail without duplicating visible history.",
           "Reset and kill cleanup do not confuse Process media with Conversation-owned references."
         ],
         paths: ["gateway/src/conversation/store.ts", "docs/architecture/conversations.md"]
       },
       {
-        id: "kernel-bridge",
-        label: "KERNEL BRIDGE",
-        summary: "Appends authorized input, commits Process output, and distributes transient connection activity and committed synchronization signals.",
+        id: "archive-retention",
+        label: "IMMUTABLE ARCHIVE",
+        summary: "Moves bounded, checksum-verified Message segments from the hot store into installation-scoped R2 without changing their order.",
         mechanics: [
-          "A connection run route may receive transient started, delta, and aborted signals; an adapter route receives activity state and committed replies only.",
-          "Committed Messages synchronize independently of the originating run route and remain in the Conversation ledger."
+          "The archive transition verifies the stored object before committing its index and deleting corresponding hot rows.",
+          "Reads merge immutable archive segments with hot SQLite messages while preserving the canonical sequence."
         ],
         paths: [
-          "gateway/src/kernel/do.ts",
-          "gateway/src/kernel/conversations.ts",
-          "gateway/src/kernel/conversation-handlers.ts",
-          "gateway/src/kernel/federation.ts",
-          "gateway/src/kernel/run-routes.ts",
-          "gateway/src/kernel/conversation-handlers.test.ts",
-          "gateway/src/kernel/run-routes.test.ts"
+          "gateway/src/conversation/do.ts",
+          "gateway/src/conversation/store.ts",
+          "gateway/src/conversation/do.test.ts"
         ]
       },
       {
@@ -1031,7 +1027,7 @@ const ARCHITECTURE_SUBSYSTEMS = [
     shortLabel: "RIPGIT",
     category: "storage",
     sourceRoot: "ripgit/src/",
-    summary: "GSV's built-in, installation-scoped Git service. It stores homes, context, skills, wikis, workspaces, and repositories as inspectable version history.",
+    summary: "GSV's built-in, installation-scoped Git service. It stores account homes, context, skills, wikis, and repositories as inspectable version history; `/workspaces` remains ordinary R2.",
     owns: [
       "Git smart HTTP, refs, commits, trees, blobs, packs, deltas, and diffs",
       "Installation-scoped Repository Durable Objects and SQLite schema",
@@ -1161,28 +1157,34 @@ const ARCHITECTURE_SUBSYSTEMS = [
 ];
 const ARCHITECTURE_EDGES = [
   { id: "deployment-services", from: "deployment", to: "services", label: "managed binding primitives", kind: "contract" },
-  { id: "deployment-gateway", from: "deployment", to: "gateway", label: "routes + service bindings", kind: "control" },
-  { id: "deployment-adapters", from: "deployment", to: "adapters", label: "cataloged standalone channels", kind: "control" },
-  { id: "deployment-ripgit", from: "deployment", to: "ripgit", label: "storage Worker assembly", kind: "control" },
-  { id: "services-gateway", from: "services", to: "gateway", label: "trusted directory + managed bindings", kind: "control" },
+  { id: "deployment-gateway", from: "deployment", to: "gateway", label: "build-time routes + service bindings", kind: "provision", security: true },
+  { id: "deployment-adapters", from: "deployment", to: "adapters", label: "cataloged channel assembly", kind: "provision", security: true },
+  { id: "deployment-ripgit", from: "deployment", to: "ripgit", label: "storage Worker assembly", kind: "provision", security: true },
+  { id: "services-gateway", from: "services", to: "gateway", label: "trusted installation directory + lifecycle admission", kind: "control", security: true },
+  { id: "services-inference", from: "services", to: "inference", label: "funded inference RPC contract", kind: "contract" },
+  { id: "services-adapters", from: "services", to: "adapters", label: "adapter + managed mail RPC contracts", kind: "contract" },
   { id: "sdk-protocol", from: "sdk", to: "protocol", label: "public syscall + frame types", kind: "contract" },
-  { id: "sdk-gateway", from: "sdk", to: "gateway", label: "typed client WebSocket", kind: "request" },
-  { id: "protocol-gateway", from: "protocol", to: "gateway", label: "validated frames", kind: "request" },
-  { id: "gateway-kernel", from: "gateway", to: "kernel", label: "installation-scoped admission", kind: "control" },
-  { id: "web-gateway", from: "web", to: "gateway", label: "user HTTPS + WebSocket", kind: "request" },
-  { id: "host-gateway", from: "host", to: "gateway", label: "user + driver WebSockets", kind: "request" },
-  { id: "adapters-gateway", from: "adapters", to: "gateway", label: "attenuated service frames", kind: "request" },
-  { id: "extension-gateway", from: "extension", to: "gateway", label: "browser target peer", kind: "request" },
-  { id: "kernel-process", from: "kernel", to: "process", label: "process control + signals", kind: "control" },
-  { id: "process-inference", from: "process", to: "inference", label: "normalized generation", kind: "request" },
-  { id: "process-kernel", from: "process", to: "kernel", label: "syscalls + message commits", kind: "request" },
-  { id: "kernel-conversation", from: "kernel", to: "conversation", label: "canonical message operations", kind: "data" },
-  { id: "kernel-native", from: "kernel", to: "native-target", label: "target:gsv dispatch", kind: "request" },
-  { id: "kernel-host", from: "kernel", to: "host", label: "machine target calls", kind: "request" },
-  { id: "kernel-extension", from: "kernel", to: "extension", label: "browser target calls", kind: "request" },
-  { id: "kernel-adapters", from: "kernel", to: "adapters", label: "message delivery + adapter targets", kind: "request" },
-  { id: "kernel-ripgit", from: "kernel", to: "ripgit", label: "installation-scoped repo operations", kind: "data" },
-  { id: "native-ripgit", from: "native-target", to: "ripgit", label: "account-home + /src/repos mounts", kind: "data" }
+  { id: "sdk-gateway", from: "sdk", to: "gateway", label: "typed client contract", kind: "contract" },
+  { id: "web-sdk", from: "web", to: "sdk", label: "JavaScript client package", kind: "contract" },
+  { id: "extension-sdk", from: "extension", to: "sdk", label: "JavaScript client + protocol package", kind: "contract" },
+  { id: "host-protocol", from: "host", to: "protocol", label: "Rust gateway wire contract", kind: "contract" },
+  { id: "protocol-gateway", from: "protocol", to: "gateway", label: "validated frame contract", kind: "contract" },
+  { id: "gateway-kernel", from: "gateway", to: "kernel", label: "installation-scoped admission", kind: "control", security: true },
+  { id: "web-gateway", from: "web", to: "gateway", label: "user HTTPS + WebSocket", kind: "request", security: true },
+  { id: "host-gateway-human", from: "host", to: "gateway", label: "Desktop + CLI user connections", kind: "request", security: true },
+  { id: "host-gateway-machine", from: "host", to: "gateway", label: "gsvd machine-target peer", kind: "request", security: true },
+  { id: "adapters-gateway", from: "adapters", to: "gateway", label: "attenuated service frames", kind: "request", security: true },
+  { id: "extension-gateway", from: "extension", to: "gateway", label: "browser target peer", kind: "request", security: true },
+  { id: "kernel-process", from: "kernel", to: "process", label: "process control + signals", kind: "control", security: true },
+  { id: "process-inference", from: "process", to: "inference", label: "normalized generation boundary", kind: "request", security: true },
+  { id: "process-kernel", from: "process", to: "kernel", label: "syscalls + message commits", kind: "request", security: true },
+  { id: "kernel-conversation", from: "kernel", to: "conversation", label: "authorized canonical message operations", kind: "data", security: true },
+  { id: "kernel-native", from: "kernel", to: "native-target", label: "target:gsv dispatch", kind: "request", security: true },
+  { id: "kernel-host", from: "kernel", to: "host", label: "machine target calls", kind: "request", security: true },
+  { id: "kernel-extension", from: "kernel", to: "extension", label: "browser target calls", kind: "request", security: true },
+  { id: "kernel-adapters", from: "kernel", to: "adapters", label: "message delivery + adapter targets", kind: "request", security: true },
+  { id: "kernel-ripgit", from: "kernel", to: "ripgit", label: "installation-scoped repo operations", kind: "data", security: true },
+  { id: "native-ripgit", from: "native-target", to: "ripgit", label: "account-home + /src/repos mounts", kind: "data", security: true }
 ];
 const ARCHITECTURE_FLOWS = [
   {
@@ -1205,9 +1207,9 @@ const ARCHITECTURE_FLOWS = [
   {
     id: "target-syscall",
     label: "TARGET-ROUTED SYSCALL",
-    summary: "The same fs.*, shell.*, or net.* contract runs on the native cloud target, a physical machine, or a browser profile.",
+    summary: "A targetable fs.*, shell.exec, or net.fetch syscall keeps one contract when implemented by the native cloud target, a physical machine, or a browser profile.",
     steps: [
-      { subsystemId: "process", componentId: "tools-approvals", label: "Issue tool call", detail: "A model tool or CodeMode operation resolves to an ordinary typed syscall and target argument." },
+      { subsystemId: "process", componentId: "tools-approvals", label: "Issue tool call", detail: "A model tool, or a nested operation issued by Process-local CodeMode, resolves to an ordinary typed syscall and target argument." },
       { subsystemId: "kernel", componentId: "dispatch-routing", label: "Resolve target", detail: "The Kernel strips target metadata, checks authority, visibility, online state, and advertised implementation, then chooses the owner." },
       { subsystemId: "native-target", componentId: "target-provider", label: "Native option", detail: "target:gsv executes inside the Worker over GsvFs, the bounded shell, or native network implementation." },
       { subsystemId: "host", componentId: "machine", label: "Machine option", detail: "A gsvd peer owns local filesystem, subprocess, transfer, body, cancellation, and cleanup behavior." },
@@ -1321,7 +1323,6 @@ function searchArchitecture(query) {
     const subsystemText = [
       subsystem.label,
       subsystem.shortLabel,
-      subsystem.category,
       subsystem.sourceRoot,
       subsystem.summary,
       subsystem.boundary,

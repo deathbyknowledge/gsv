@@ -9,10 +9,15 @@ import {
   ARCHITECTURE_SUBSYSTEMS,
 } from "./architecture.mjs";
 import {
+  ATLAS_ARCHETYPES,
+  ATLAS_DISTRICTS,
   ATLAS_LENSES,
   ATLAS_SYSTEM_DETAIL,
   ATLAS_TOUR_NOTES,
   ATLAS_ZONES,
+  atlasArchetype,
+  atlasDistrictForSystem,
+  atlasScene,
 } from "./atlas-meta.mjs";
 import {
   createArchitectureExplorerServer,
@@ -43,9 +48,16 @@ const REQUIRED_EDGE_IDS = [
   "deployment-adapters",
   "deployment-ripgit",
   "services-gateway",
+  "services-inference",
+  "services-adapters",
+  "web-sdk",
+  "extension-sdk",
+  "host-protocol",
   "sdk-protocol",
   "sdk-gateway",
   "protocol-gateway",
+  "host-gateway-human",
+  "host-gateway-machine",
   "adapters-gateway",
   "kernel-adapters",
   "kernel-ripgit",
@@ -132,7 +144,52 @@ test("edges and guided traces address real systems and components", () => {
     assert.ok(systems.has(edge.from), `${edge.id} has an unknown source`);
     assert.ok(systems.has(edge.to), `${edge.id} has an unknown destination`);
     assert.notEqual(edge.from, edge.to, `${edge.id} must cross a subsystem boundary`);
+    assert.ok(
+      ["request", "control", "data", "contract", "provision"].includes(edge.kind),
+      `${edge.id} has an unknown connection kind`,
+    );
   }
+
+  const edgeById = new Map(ARCHITECTURE_EDGES.map((edge) => [edge.id, edge]));
+  for (const id of ["deployment-gateway", "deployment-adapters", "deployment-ripgit"]) {
+    assert.equal(edgeById.get(id).kind, "provision", `${id} is build-time assembly, not runtime control`);
+  }
+  for (const id of ["sdk-gateway", "protocol-gateway"]) {
+    assert.equal(edgeById.get(id).kind, "contract", `${id} describes a contract rather than an actor call`);
+  }
+  assert.equal(edgeById.get("services-gateway").kind, "control");
+  assert.equal(edgeById.get("services-inference").kind, "contract");
+  assert.equal(edgeById.get("services-adapters").kind, "contract");
+  assert.match(edgeById.get("services-adapters").label, /managed mail/);
+  for (const edge of ARCHITECTURE_EDGES.filter(({ kind }) => kind === "contract")) {
+    assert.notEqual(edge.security, true, `${edge.id} contract metadata must not masquerade as a trust crossing`);
+  }
+  assert.deepEqual(
+    ARCHITECTURE_EDGES.filter(({ security }) => security === true).map(({ id }) => id).toSorted(),
+    [
+      "adapters-gateway",
+      "deployment-adapters",
+      "deployment-gateway",
+      "deployment-ripgit",
+      "extension-gateway",
+      "gateway-kernel",
+      "host-gateway-human",
+      "host-gateway-machine",
+      "kernel-adapters",
+      "kernel-conversation",
+      "kernel-extension",
+      "kernel-host",
+      "kernel-native",
+      "kernel-process",
+      "kernel-ripgit",
+      "native-ripgit",
+      "process-inference",
+      "process-kernel",
+      "services-gateway",
+      "web-gateway",
+    ],
+    "the Security lens must keep the reviewed trust-crossing set exact",
+  );
 
   const flowIds = ARCHITECTURE_FLOWS.map((flow) => flow.id);
   assert.equal(new Set(flowIds).size, flowIds.length);
@@ -168,26 +225,114 @@ test("every landmark declares ownership, lifecycle, and evidence", () => {
     assert.ok(detail.security.length >= 3, `${subsystem.id} needs separate security facts`);
     assert.ok(detail.docs.length >= 2, `${subsystem.id} needs architecture evidence`);
     assert.ok(detail.tests.length >= 2, `${subsystem.id} needs executable evidence`);
-    for (const coordinate of ["x", "z", "width", "depth", "height"]) {
-      assert.ok(Number.isFinite(detail.scene[coordinate]), `${subsystem.id}.scene.${coordinate} is invalid`);
-    }
+    assert.ok(detail.archetype in ATLAS_ARCHETYPES, `${subsystem.id} has an unknown landmark form`);
+    assert.equal("scene" in detail, false, `${subsystem.id} must derive geometry from its district and form`);
   }
   assert.deepEqual(Object.keys(ATLAS_SYSTEM_DETAIL).sort(), ARCHITECTURE_SUBSYSTEMS.map(({ id }) => id).sort());
+});
 
-  const landmarks = Object.entries(ATLAS_SYSTEM_DETAIL);
+test("districts and landmark forms derive deterministic, non-quantitative geometry", () => {
+  const systemIds = ARCHITECTURE_SUBSYSTEMS.map(({ id }) => id);
+  const assignedIds = ATLAS_DISTRICTS.flatMap(({ systems }) => systems);
+  assert.equal(new Set(ATLAS_DISTRICTS.map(({ id }) => id)).size, ATLAS_DISTRICTS.length);
+  assert.equal(new Set(assignedIds).size, assignedIds.length, "a subsystem may inhabit only one district");
+  assert.deepEqual(assignedIds.toSorted(), systemIds.toSorted(), "districts must cover every subsystem exactly once");
+
+  for (const district of ATLAS_DISTRICTS) {
+    assert.ok(district.label.length > 4, `${district.id} needs a readable label`);
+    assert.ok(district.summary.length > 40, `${district.id} needs a semantic explanation`);
+    assert.ok(district.systems.length >= 1, `${district.id} is empty`);
+    for (const id of district.systems) {
+      assert.equal(atlasDistrictForSystem(id), district);
+    }
+  }
+
+  const landmarks = ARCHITECTURE_SUBSYSTEMS.map((subsystem) => {
+    const detail = ATLAS_SYSTEM_DETAIL[subsystem.id];
+    const form = atlasArchetype(detail.archetype);
+    const scene = atlasScene(subsystem);
+    for (const coordinate of ["x", "z", "width", "depth", "facadeHeight", "crownHeight", "height"]) {
+      assert.ok(Number.isFinite(scene[coordinate]), `${subsystem.id}.scene.${coordinate} is invalid`);
+    }
+    assert.equal(scene.width, form.width, `${subsystem.id} width must come from its categorical form`);
+    assert.equal(scene.depth, form.depth, `${subsystem.id} depth must come from its categorical form`);
+    assert.equal(scene.facadeHeight, form.height, `${subsystem.id} facade must come from its categorical form`);
+    assert.equal(scene.height, form.height + form.crownHeight);
+    assert.equal(scene.districtId, atlasDistrictForSystem(subsystem.id).id);
+    assert.equal(scene.archetypeId, detail.archetype);
+    assert.deepEqual(scene, atlasScene(subsystem), `${subsystem.id} geometry must be deterministic`);
+    return [subsystem.id, scene];
+  });
+
   for (let leftIndex = 0; leftIndex < landmarks.length; leftIndex += 1) {
-    const [leftId, { scene: left }] = landmarks[leftIndex];
+    const [leftId, left] = landmarks[leftIndex];
     for (let rightIndex = leftIndex + 1; rightIndex < landmarks.length; rightIndex += 1) {
-      const [rightId, { scene: right }] = landmarks[rightIndex];
-      const centerDistance = Math.hypot(left.x - right.x, left.z - right.z);
-      const leftRadius = Math.hypot(left.width, left.depth) / 2;
-      const rightRadius = Math.hypot(right.width, right.depth) / 2;
+      const [rightId, right] = landmarks[rightIndex];
+      const horizontalGap = Math.abs(left.x - right.x) - (left.width + right.width) / 2;
+      const verticalGap = Math.abs(left.z - right.z) - (left.depth + right.depth) / 2;
       assert.ok(
-        centerDistance - leftRadius - rightRadius >= 20,
+        Math.max(horizontalGap, verticalGap) >= 26,
         `${leftId} and ${rightId} need more visual breathing room`,
       );
     }
   }
+
+  for (const sameForm of [["sdk", "services"], ["native-target", "extension"], ["inference", "adapters"]]) {
+    const dimensions = sameForm.map((id) => {
+      const scene = atlasScene(requireSubsystem(id));
+      return [scene.width, scene.depth, scene.facadeHeight, scene.crownHeight];
+    });
+    assert.deepEqual(dimensions[0], dimensions[1], `${sameForm.join(" and ")} must share categorical dimensions`);
+  }
+});
+
+test("trust geography, foundations, and gates remain selective", () => {
+  const installationRadius = ATLAS_ZONES.find(({ id }) => id === "installation").radius;
+  const boundaryRadius = ATLAS_ZONES.find(({ id }) => id === "boundary").radius;
+  const footprintRadii = (id) => {
+    const scene = atlasScene(requireSubsystem(id));
+    const corners = [
+      [scene.x - scene.width / 2, scene.z - scene.depth / 2],
+      [scene.x + scene.width / 2, scene.z - scene.depth / 2],
+      [scene.x + scene.width / 2, scene.z + scene.depth / 2],
+      [scene.x - scene.width / 2, scene.z + scene.depth / 2],
+    ];
+    const radii = corners.map(([x, z]) => Math.hypot(x, z));
+    const nearestX = Math.max(Math.abs(scene.x) - scene.width / 2, 0);
+    const nearestZ = Math.max(Math.abs(scene.z) - scene.depth / 2, 0);
+    return { min: Math.hypot(nearestX, nearestZ), max: Math.max(...radii) };
+  };
+
+  for (const id of ["kernel", "process", "conversation", "native-target", "ripgit"]) {
+    assert.ok(footprintRadii(id).max < installationRadius, `${id} footprint must remain inside the installation interior`);
+  }
+  for (const id of ["gateway", "inference"]) {
+    const footprint = footprintRadii(id);
+    assert.ok(footprint.min < boundaryRadius && footprint.max > boundaryRadius, `${id} must straddle the installation gate`);
+  }
+  const protocol = footprintRadii("protocol");
+  assert.ok(
+    protocol.min < installationRadius && protocol.max > boundaryRadius,
+    "the stateless Protocol lattice must visibly span the shared contract boundary",
+  );
+  for (const id of ["sdk", "services", "web", "host", "adapters", "extension", "deployment"]) {
+    assert.ok(footprintRadii(id).min > boundaryRadius, `${id} footprint must remain outside the installation gate`);
+  }
+
+  const withFoundations = Object.entries(ATLAS_SYSTEM_DETAIL)
+    .filter(([, detail]) => detail.foundation)
+    .map(([id]) => id)
+    .toSorted();
+  assert.deepEqual(withFoundations, [
+    "adapters", "conversation", "deployment", "extension", "host", "kernel", "process", "ripgit",
+  ]);
+  const withGates = Object.entries(ATLAS_SYSTEM_DETAIL)
+    .filter(([, detail]) => detail.gate)
+    .map(([id]) => id)
+    .toSorted();
+  assert.deepEqual(withGates, [
+    "adapters", "conversation", "extension", "gateway", "kernel", "process", "ripgit",
+  ]);
 });
 
 test("all evidence paths exist inside the repository", async () => {
@@ -354,6 +499,19 @@ test("source contracts underlying the atlas have not drifted", async () => {
   }
   assert.match(nativeAtlas, /account homes/);
   assert.match(nativeAtlas, /\/workspaces.*ordinary R2/);
+
+  const conversationAtlas = JSON.stringify(requireSubsystem("conversation"));
+  assert.match(conversationAtlas, /authorized user and contact input/);
+  assert.doesNotMatch(conversationAtlas, /contact and system input/);
+
+  const ripgitAtlas = JSON.stringify(requireSubsystem("ripgit"));
+  assert.match(ripgitAtlas, /`\/workspaces` remains ordinary R2/);
+  assert.doesNotMatch(ripgitAtlas, /wikis, workspaces, and repositories/);
+
+  const targetFlow = ARCHITECTURE_FLOWS.find(({ id }) => id === "target-syscall");
+  assert.match(targetFlow.summary, /fs\.\*, shell\.exec, or net\.fetch/);
+  assert.match(targetFlow.steps[0].detail, /nested operation issued by Process-local CodeMode/);
+  assert.doesNotMatch(targetFlow.steps[0].detail, /CodeMode operation resolves/);
 });
 
 test("the explorer remains outside the product Web bundle", async () => {
@@ -371,15 +529,21 @@ test("the workspace progressively discloses supporting information", async () =>
     [...index.matchAll(/data-workspace-panel="([^"]+)"/g)].map((match) => match[1]),
     ["systems", "inspector", "trace", "key"],
   );
-  assert.match(index, /Building color identifies subsystem role/);
-  for (const category of new Set(ARCHITECTURE_SUBSYSTEMS.map(({ category }) => category))) {
-    assert.match(index, new RegExp(`class="key-${category}"`), `${category} needs a color-key entry`);
+  assert.match(index, /District color groups architectural neighbors/);
+  for (const district of ATLAS_DISTRICTS) {
+    assert.match(index, new RegExp(`class="key-${district.id}"`), `${district.id} needs a color-key entry`);
+  }
+  for (const grammar of ["form", "aperture", "foundation", "gate", "ring"]) {
+    assert.match(index, new RegExp(`class="grammar-${grammar}"`), `${grammar} needs a grid-grammar entry`);
   }
   assert.match(index, /class="line-request"/);
   assert.match(index, /class="line-control"/);
   assert.match(index, /class="line-data"/);
   assert.match(index, /class="line-contract"/);
+  assert.match(index, /class="line-provision"/);
   assert.match(index, /class="line-trace"/);
+  assert.match(app, /class="component-aperture/);
+  assert.doesNotMatch(app, /component-deck/);
   assert.match(app, /\["overview", "OVERVIEW"\]/);
   assert.match(app, /\["components", `COMPONENTS/);
   assert.match(app, /\["source", "SOURCE"\]/);
