@@ -1,11 +1,11 @@
 import {
-  ARCHITECTURE_EDGES,
-  ARCHITECTURE_FLOWS,
-  ARCHITECTURE_SUBSYSTEMS,
-  architectureComponent,
-  architectureSubsystem,
-  searchArchitecture,
-} from "./architecture.mjs";
+  PLAIN_EDGES as ARCHITECTURE_EDGES,
+  PLAIN_FLOWS as ARCHITECTURE_FLOWS,
+  PLAIN_SUBSYSTEMS as ARCHITECTURE_SUBSYSTEMS,
+  plainComponent as architectureComponent,
+  plainSubsystem as architectureSubsystem,
+  searchPlainLanguage as searchArchitecture,
+} from "./plain-language.mjs";
 import {
   ATLAS_CONCEPTS,
   ATLAS_DISTRICTS,
@@ -29,15 +29,18 @@ const EDGE_COLORS = {
   contract: "#7faaff",
   provision: "#ffb052",
 };
+const EDGE_WORDS = {
+  request: "ASKS",
+  control: "DIRECTS",
+  data: "SAVES WITH",
+  contract: "SHARES RULES",
+  provision: "SETS UP",
+};
 const COMPONENT_FACADE_INDEX = 2;
 
 const elements = {
   atlas: document.querySelector("#atlas"),
-  subsystemCount: document.querySelector("#subsystem-count"),
-  componentCount: document.querySelector("#component-count"),
-  routeCount: document.querySelector("#route-count"),
   lenses: document.querySelector("#lens-switcher"),
-  revision: document.querySelector("#revision"),
   helpButton: document.querySelector("#help-button"),
   helpDialog: document.querySelector("#help-dialog"),
   search: document.querySelector("#atlas-search-input"),
@@ -80,7 +83,7 @@ const stackedWorkspace = window.matchMedia("(max-width: 1120px)");
 const state = {
   selectedSubsystemId: "kernel",
   selectedComponentId: null,
-  activePanel: window.matchMedia("(max-width: 760px)").matches ? null : "systems",
+  activePanel: window.matchMedia("(max-width: 1120px)").matches ? null : "systems",
   inspectorSection: "overview",
   lens: "runtime",
   activeFlowId: defaultFlow.id,
@@ -105,11 +108,6 @@ void initialize();
 async function initialize() {
   const restoredSelection = restoreSelectionFromHash();
   if (restoredSelection) state.activePanel = "inspector";
-  elements.subsystemCount.textContent = String(ARCHITECTURE_SUBSYSTEMS.length).padStart(2, "0");
-  elements.componentCount.textContent = String(
-    ARCHITECTURE_SUBSYSTEMS.reduce((total, subsystem) => total + subsystem.components.length, 0),
-  ).padStart(2, "0");
-  elements.routeCount.textContent = String(ARCHITECTURE_EDGES.length).padStart(2, "0");
 
   renderLensSwitcher();
   renderFlowOptions();
@@ -127,11 +125,8 @@ async function initialize() {
     const meta = await response.json();
     state.sha = meta.sha;
     state.sourceBase = meta.sourceBase;
-    elements.revision.textContent = meta.sha.toUpperCase();
     renderInspector();
-  } catch {
-    elements.revision.textContent = "LOCAL SOURCE";
-  }
+  } catch {}
 }
 
 function bindEvents() {
@@ -265,11 +260,11 @@ function renderAll() {
 
 function renderLensSwitcher() {
   const focus = captureDataFocus(elements.lenses, ["data-lens"]);
-  elements.lenses.replaceChildren(...ATLAS_LENSES.map((lens, index) => {
+  elements.lenses.replaceChildren(...ATLAS_LENSES.map((lens) => {
     const button = document.createElement("button");
     button.type = "button";
     button.dataset.lens = lens.id;
-    button.innerHTML = `<span>0${index + 1}</span>${escapeHtml(lens.label)}`;
+    button.innerHTML = `<span class="lens-label-full">${escapeHtml(lens.label)}</span><span class="lens-label-short">${escapeHtml(lens.shortLabel)}</span>`;
     button.classList.toggle("is-active", lens.id === state.lens);
     button.setAttribute("aria-pressed", String(lens.id === state.lens));
     return button;
@@ -281,7 +276,7 @@ function renderLensCopy() {
   const lens = ATLAS_LENSES.find((candidate) => candidate.id === state.lens) ?? ATLAS_LENSES[0];
   elements.atlas.classList.remove(...ATLAS_LENSES.map((candidate) => `lens-${candidate.id}`));
   elements.atlas.classList.add(`lens-${lens.id}`);
-  elements.lensCode.textContent = `${lens.label} TOPOLOGY`;
+  elements.lensCode.textContent = lens.label;
   elements.lensSummary.textContent = lens.summary;
 }
 
@@ -413,7 +408,7 @@ function searchAtlas(query) {
       });
     }
   }
-  return augmented.slice(0, 24);
+  return augmented.slice(0, 18);
 }
 
 function renderSearchResults() {
@@ -424,7 +419,7 @@ function renderSearchResults() {
   }
   elements.searchResults.hidden = false;
   if (state.searchResults.length === 0) {
-    elements.searchResults.innerHTML = "<p>NO COORDINATES FOUND</p>";
+    elements.searchResults.innerHTML = "<p>NO MATCHES FOUND</p>";
     return;
   }
   elements.searchResults.innerHTML = state.searchResults.map((result, index) => {
@@ -433,7 +428,7 @@ function renderSearchResults() {
       <button type="button" data-result-index="${index}">
         <span>${escapeHtml(subsystem.shortLabel)}</span>
         <strong>${escapeHtml(result.label)}</strong>
-        <code>${escapeHtml(result.path ?? subsystem.sourceRoot)}</code>
+        <small>${escapeHtml(result.summary)}</small>
       </button>`;
   }).join("");
 }
@@ -503,7 +498,6 @@ function renderInspector() {
   const detail = atlasDetail(subsystem.id);
   const district = atlasDistrictForSystem(subsystem.id);
   const archetype = atlasArchetype(detail.archetype);
-  const scene = atlasScene(subsystem);
   const systemNumber = ARCHITECTURE_SUBSYSTEMS.findIndex((candidate) => candidate.id === subsystem.id) + 1;
   const sourcePaths = component
     ? component.paths
@@ -513,83 +507,88 @@ function renderInspector() {
   );
   const componentProfile = component ? `
     <section class="component-profile">
-      <div class="section-label"><span>SELECTED COMPONENT</span><i></i></div>
+      <div class="section-label"><span>YOU PICKED THIS SMALLER PART</span><i></i></div>
       <h3>${escapeHtml(component.label)}</h3>
+      <strong class="component-plain-label">WHAT IT DOES · ${escapeHtml(component.plainLabel)}</strong>
       <p>${escapeHtml(component.summary)}</p>
       <ol>${component.mechanics.map((mechanic) => `<li>${escapeHtml(mechanic)}</li>`).join("")}</ol>
     </section>` : "";
   const overviewContent = `
     <section class="city-form-panel">
       <div>
-        <strong>DISTRICT · ${escapeHtml(district.label)}</strong>
+        <strong>GROUP · ${escapeHtml(district.label)}</strong>
         <p>${escapeHtml(district.summary)}</p>
       </div>
       <div>
-        <strong>FORM · ${escapeHtml(archetype.label)}</strong>
+        <strong>SHAPE · ${escapeHtml(archetype.label)}</strong>
         <p>${escapeHtml(archetype.summary)}</p>
-        <em>FIXED LOT ${scene.width}×${scene.depth} · ELEVATION ${scene.height}</em>
+        <em>THIS SHAPE IS A VISUAL CLUE, NOT A MEASUREMENT.</em>
       </div>
-      <small>FORM SIZE IS CATEGORICAL — NEVER CODE VOLUME, HEALTH, OR IMPORTANCE.</small>
+      <small>COLOR SHOWS THE GROUP. SHAPE AND SIZE SHOW THE KIND OF JOB. BIGGER NEVER MEANS BETTER, BUSIER, OR MORE IMPORTANT.</small>
     </section>
     <p class="system-summary">${escapeHtml(subsystem.summary)}</p>
 
     <section class="evidence-grid">
-      ${factCard("RUNTIME", detail.runtime, "runtime")}
-      ${factCard("OWNER", detail.owner, "ownership")}
-      ${factCard("PERSISTENCE", detail.persistence, "durability")}
-      ${factCard("ADMISSION GATE", detail.admission, "security")}
-      ${factCard("COMPLETION + CLEANUP", detail.completion, "ownership")}
+      ${factCard("WHAT IT IS", detail.runtime, "runtime")}
+      ${factCard("WHAT IT HANDLES", detail.owner, "ownership")}
+      ${factCard("WHAT IT REMEMBERS", detail.persistence, "durability")}
+      ${factCard("BEFORE IT ACTS", detail.admission, "security")}
+      ${factCard("WHEN IT IS DONE", detail.completion, "ownership")}
     </section>
 
     <section class="invariant-panel">
-      <div class="section-label"><span>BOUNDARY</span><i></i></div>
+      <div class="section-label"><span>WHERE ITS JOB STOPS</span><i></i></div>
       <p>${escapeHtml(subsystem.boundary)}</p>
       <div class="invariant-callout">
-        <strong>INVARIANT</strong>
+        <strong>ONE RULE THAT MUST NEVER BREAK</strong>
         <p>${escapeHtml(subsystem.invariant)}</p>
       </div>
     </section>
 
     <section class="security-facts">
-      <div class="section-label"><span>SECURITY FACTS</span><i></i></div>
+      <div class="section-label"><span>HOW IT KEEPS YOU SAFE</span><i></i></div>
       <ul>${detail.security.map((fact) => `<li>${escapeHtml(fact)}</li>`).join("")}</ul>
     </section>`;
   const componentsContent = `
     ${componentProfile}
     <section class="component-index">
-      <div class="section-label"><span>COMPONENT APERTURES / ${subsystem.components.length}</span><i></i></div>
+      <div class="section-label"><span>SMALLER PARTS / ${subsystem.components.length}</span><i></i></div>
       ${subsystem.components.map((candidate, index) => `
         <button type="button" data-component="${candidate.id}" class="${candidate.id === component?.id ? "is-selected" : ""}">
           <span>${String(index + 1).padStart(2, "0")}</span>
           <div>
             <strong>${escapeHtml(candidate.label)}</strong>
+            <small>${escapeHtml(candidate.plainLabel)}</small>
             <p>${escapeHtml(candidate.summary)}</p>
-            <code>${escapeHtml(candidate.paths[0])}</code>
           </div>
         </button>`).join("")}
     </section>`;
   const sourceContent = `
     <section class="source-evidence">
-      <div class="section-label"><span>PRIMARY SOURCE</span><i></i></div>
+      <div class="section-label"><span>FOR PEOPLE READING THE CODE</span><i></i></div>
       ${unique(sourcePaths).map((path) => sourceRow(path, "source")).join("")}
       <details>
-        <summary>ARCHITECTURE NOTES / ${detail.docs.length}</summary>
+        <summary>HELPFUL EXPLANATIONS / ${detail.docs.length}</summary>
         ${detail.docs.map((path) => sourceRow(path, "document")).join("")}
       </details>
       <details>
-        <summary>EXECUTABLE EVIDENCE / ${detail.tests.length}</summary>
+        <summary>AUTOMATED CHECKS / ${detail.tests.length}</summary>
         ${detail.tests.map((path) => sourceRow(path, "test")).join("")}
       </details>
     </section>`;
   const routesContent = `
     <section class="route-index">
-      <div class="section-label"><span>CONNECTED ROUTES / ${relatedEdges.length}</span><i></i></div>
+      <div class="section-label"><span>WHAT IT TALKS TO / ${relatedEdges.length}</span><i></i></div>
       ${relatedEdges.map((edge) => {
         const otherId = edge.from === subsystem.id ? edge.to : edge.from;
-        const direction = edge.kind === "contract" ? "WITH" : edge.from === subsystem.id ? "OUT" : "IN";
+        const direction = edge.kind === "contract"
+          ? "CONNECTED TO"
+          : edge.from === subsystem.id
+            ? "SENDS TO"
+            : "RECEIVES FROM";
         return `
           <button type="button" data-related-system="${otherId}">
-            <span class="route-kind is-${edge.kind}">${escapeHtml(edge.kind)}</span>
+            <span class="route-kind is-${edge.kind}">${EDGE_WORDS[edge.kind]}</span>
             <div><strong>${direction} · ${escapeHtml(architectureSubsystem(otherId).shortLabel)}</strong><small>${escapeHtml(edge.label)}</small></div>
             <i>↗</i>
           </button>`;
@@ -606,21 +605,20 @@ function renderInspector() {
   elements.inspector.dataset.district = district.id;
   elements.inspector.innerHTML = `
     <header class="inspector-header">
-      <div class="system-serial">SYS-${String(systemNumber).padStart(2, "0")}</div>
+      <div class="system-serial">PLACE ${String(systemNumber).padStart(2, "0")}</div>
       <button class="panel-close" type="button" data-close-panel="inspector" aria-label="Close details">×</button>
       <p>${escapeHtml(district.shortLabel)} / ${escapeHtml(archetype.label)}</p>
       <h2 id="inspector-title" tabindex="-1">${escapeHtml(subsystem.label)}</h2>
-      <span>${escapeHtml(subsystem.sourceRoot)}</span>
-      <button class="inspector-fly" type="button" data-fly-to>FLY TO LANDMARK ↗</button>
+      <button class="inspector-fly" type="button" data-fly-to>CENTER ON MAP ↗</button>
     </header>
 
     <div class="inspector-scroll">
-      <nav class="inspector-tabs" aria-label="Choose subsystem detail view">
+      <nav class="inspector-tabs" aria-label="Choose what you want to learn">
         ${[
-          ["overview", "OVERVIEW"],
-          ["components", `COMPONENTS ${subsystem.components.length}`],
-          ["source", "SOURCE"],
-          ["routes", `ROUTES ${relatedEdges.length}`],
+          ["overview", "BIG PICTURE"],
+          ["components", `SMALLER PARTS ${subsystem.components.length}`],
+          ["source", "CODE"],
+          ["routes", `CONNECTIONS ${relatedEdges.length}`],
         ].map(([section, label]) => `
           <button type="button" data-inspector-section="${section}" class="${section === state.inspectorSection ? "is-active" : ""}" aria-pressed="${section === state.inspectorSection}">${label}</button>`).join("")}
       </nav>
@@ -648,7 +646,7 @@ function sourceRow(path, kind) {
     <div class="source-row">
       <span>${kind === "test" ? "✓" : kind === "document" ? "§" : "⌁"}</span>
       <a href="${href}" target="_blank" rel="noopener noreferrer">${escapeHtml(path)}</a>
-      <button type="button" data-copy-path="${escapeAttribute(path)}" aria-label="Copy ${escapeAttribute(path)}">COPY</button>
+      <button type="button" data-copy-path="${escapeAttribute(path)}" aria-label="Copy ${escapeAttribute(path)}">COPY FILE PATH</button>
     </div>`;
 }
 
@@ -679,7 +677,7 @@ function renderFlow() {
   elements.flowPrev.disabled = state.activeFlowStep === 0;
   elements.flowNext.disabled = state.activeFlowStep === flow.steps.length - 1;
   elements.flowPlay.textContent = state.playing ? "Ⅱ" : "▶";
-  elements.flowPlay.setAttribute("aria-label", state.playing ? "Pause guided trace" : "Play guided trace");
+  elements.flowPlay.setAttribute("aria-label", state.playing ? "Pause the story" : "Play the story");
   elements.flowRail.innerHTML = flow.steps.map((candidate, index) => {
     const classes = [
       index === state.activeFlowStep ? "is-active" : "",
@@ -693,7 +691,7 @@ function renderFlow() {
       </button>`;
   }).join("");
   elements.flowThesis.innerHTML = notes
-    ? `<strong>THESIS</strong> ${escapeHtml(notes.thesis)} <em>${escapeHtml(notes.warning)}</em>`
+    ? `<strong>MAIN IDEA</strong> ${escapeHtml(notes.thesis)} <em>${escapeHtml(notes.warning)}</em>`
     : escapeHtml(flow.summary);
   restoreDataFocus(elements.flowRail, focus);
 }
@@ -836,7 +834,7 @@ function renderGround(towers) {
       <path d="M ${format(gateLeft.x)} ${format(gateLeft.y)} L ${format(gateLeftTop.x)} ${format(gateLeftTop.y)}"></path>
       <path d="M ${format(gateRight.x)} ${format(gateRight.y)} L ${format(gateRightTop.x)} ${format(gateRightTop.y)}"></path>
       <path d="M ${format(gateLeftTop.x)} ${format(gateLeftTop.y)} Q ${format((gateLeftTop.x + gateRightTop.x) / 2)} ${format(Math.min(gateLeftTop.y, gateRightTop.y) - 26)} ${format(gateRightTop.x)} ${format(gateRightTop.y)}"></path>
-      <text x="${format((gateLeftTop.x + gateRightTop.x) / 2)}" y="${format(Math.min(gateLeftTop.y, gateRightTop.y) - 32)}">TRUSTED ROUTE GATE</text>
+      <text x="${format((gateLeftTop.x + gateRightTop.x) / 2)}" y="${format(Math.min(gateLeftTop.y, gateRightTop.y) - 32)}">PRIVATE ENTRY CHECK</text>
     </g>`;
 }
 
@@ -999,7 +997,7 @@ function renderTower(subsystem, detail, scene, flags) {
     </g>` : "";
 
   return `
-    <g class="${classes}" data-system="${subsystem.id}" role="button" tabindex="0" aria-label="${escapeAttribute(subsystem.label)}; ${escapeAttribute(district.label)}; ${escapeAttribute(archetype.label)}; ${subsystem.components.length} components">
+    <g class="${classes}" data-system="${subsystem.id}" role="button" tabindex="0" aria-label="${escapeAttribute(subsystem.label)}; ${escapeAttribute(district.label)}; ${escapeAttribute(archetype.label)}; ${subsystem.components.length} smaller parts">
       ${selectedBeam}
       <g class="tower-geometry">
         ${faceMarkup}
@@ -1430,7 +1428,7 @@ function cancelCameraAnimation() {
 function updateCameraReadout() {
   const azimuth = ((state.camera.yaw * 180 / Math.PI) % 360 + 360) % 360;
   const elevation = state.camera.pitch * 180 / Math.PI;
-  elements.cameraReadout.textContent = `AZ ${Math.round(azimuth).toString().padStart(3, "0")}° · EL ${Math.round(elevation)}° · ${Math.round(state.camera.zoom * 100)}%`;
+  elements.cameraReadout.textContent = `TURN ${Math.round(azimuth).toString().padStart(3, "0")}° · TILT ${Math.round(elevation)}° · ZOOM ${Math.round(state.camera.zoom * 100)}%`;
 }
 
 function worldPointerDown(event) {
@@ -1476,7 +1474,7 @@ function worldPointerMove(event) {
     ? architectureComponent(subsystem.id, node.dataset.component)
     : null;
   elements.hover.hidden = false;
-  elements.hover.innerHTML = `<span>${escapeHtml(subsystem.shortLabel)}</span><strong>${escapeHtml(component?.label ?? subsystem.label)}</strong><small>${component ? "COMPONENT APERTURE" : atlasDetail(subsystem.id).runtime}</small>`;
+  elements.hover.innerHTML = `<span>${escapeHtml(subsystem.shortLabel)}</span><strong>${escapeHtml(component?.label ?? subsystem.label)}</strong><small>${component ? `${escapeHtml(component.plainLabel)} · CLICK THIS LIGHT TO LEARN MORE` : atlasDetail(subsystem.id).runtime}</small>`;
 }
 
 function worldPointerUp(event) {
@@ -1600,8 +1598,7 @@ function showToast(message) {
 
 function updateConcept() {
   const concept = ATLAS_CONCEPTS[state.conceptIndex];
-  const [left, right] = concept.split("≠").map((part) => part.trim());
-  elements.concept.innerHTML = `<strong>${escapeHtml(left)}</strong><span>≠</span><strong>${escapeHtml(right)}</strong>`;
+  elements.concept.textContent = concept;
 }
 
 function syncConceptRotation() {

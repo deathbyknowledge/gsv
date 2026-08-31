@@ -10,6 +10,7 @@ import {
 } from "./architecture.mjs";
 import {
   ATLAS_ARCHETYPES,
+  ATLAS_CONCEPTS,
   ATLAS_DISTRICTS,
   ATLAS_LENSES,
   ATLAS_SYSTEM_DETAIL,
@@ -19,6 +20,12 @@ import {
   atlasDistrictForSystem,
   atlasScene,
 } from "./atlas-meta.mjs";
+import {
+  PLAIN_EDGES,
+  PLAIN_FLOWS,
+  PLAIN_SUBSYSTEMS,
+  searchPlainLanguage,
+} from "./plain-language.mjs";
 import {
   createArchitectureExplorerServer,
   REPO_ROOT,
@@ -515,7 +522,7 @@ test("source contracts underlying the atlas have not drifted", async () => {
 });
 
 test("the explorer remains outside the product Web bundle", async () => {
-  const files = ["index.html", "app.js", "styles.css", "architecture.mjs", "atlas-meta.mjs", "server.mjs"];
+  const files = ["index.html", "app.js", "styles.css", "architecture.mjs", "atlas-meta.mjs", "plain-language.mjs", "server.mjs"];
   const combined = (await Promise.all(files.map((file) => readFile(join(REPO_ROOT, "tools/architecture-explorer", file), "utf8")))).join("\n");
   assert.doesNotMatch(combined, /web\/src\/app\/features\/architecture/);
   assert.doesNotMatch(combined, /\/architecture(?:["'`?])/);
@@ -529,7 +536,9 @@ test("the workspace progressively discloses supporting information", async () =>
     [...index.matchAll(/data-workspace-panel="([^"]+)"/g)].map((match) => match[1]),
     ["systems", "inspector", "trace", "key"],
   );
-  assert.match(index, /District color groups architectural neighbors/);
+  assert.doesNotMatch(index, /class="command-deck"/);
+  assert.doesNotMatch(index, /subsystem-count|component-count|route-count|id="revision"/);
+  assert.match(index, /Colors put places that work closely together into groups/);
   for (const district of ATLAS_DISTRICTS) {
     assert.match(index, new RegExp(`class="key-${district.id}"`), `${district.id} needs a color-key entry`);
   }
@@ -544,10 +553,116 @@ test("the workspace progressively discloses supporting information", async () =>
   assert.match(index, /class="line-trace"/);
   assert.match(app, /class="component-aperture/);
   assert.doesNotMatch(app, /component-deck/);
-  assert.match(app, /\["overview", "OVERVIEW"\]/);
-  assert.match(app, /\["components", `COMPONENTS/);
-  assert.match(app, /\["source", "SOURCE"\]/);
-  assert.match(app, /\["routes", `ROUTES/);
+  assert.match(app, /from "\.\/plain-language\.mjs"/);
+  assert.match(app, /\["overview", "BIG PICTURE"\]/);
+  assert.match(app, /\["components", `SMALLER PARTS/);
+  assert.match(app, /\["source", "CODE"\]/);
+  assert.match(app, /\["routes", `CONNECTIONS/);
+});
+
+test("plain-language copy covers the complete technical map", () => {
+  assert.deepEqual(
+    PLAIN_SUBSYSTEMS.map(({ id }) => id),
+    ARCHITECTURE_SUBSYSTEMS.map(({ id }) => id),
+  );
+  assert.deepEqual(
+    PLAIN_EDGES.map(({ id }) => id),
+    ARCHITECTURE_EDGES.map(({ id }) => id),
+  );
+  assert.deepEqual(
+    PLAIN_FLOWS.map(({ id }) => id),
+    ARCHITECTURE_FLOWS.map(({ id }) => id),
+  );
+
+  for (const [systemIndex, system] of PLAIN_SUBSYSTEMS.entries()) {
+    const technical = ARCHITECTURE_SUBSYSTEMS[systemIndex];
+    assert.equal(system.sourceRoot, technical.sourceRoot, `${system.id} must retain source evidence`);
+    assert.equal(system.category, technical.category, `${system.id} must retain its category`);
+    assert.deepEqual(system.position, technical.position, `${system.id} must retain its map position`);
+    assert.deepEqual(
+      system.components.map(({ id }) => id),
+      technical.components.map(({ id }) => id),
+      `${system.id} must explain every component`,
+    );
+    for (const [componentIndex, component] of system.components.entries()) {
+      assert.equal(
+        component.label,
+        technical.components[componentIndex].label,
+        `${system.id}/${component.id} must retain its real component name`,
+      );
+      assert.ok(component.plainLabel.length > 3, `${system.id}/${component.id} needs a plain role name`);
+      assert.deepEqual(
+        component.paths,
+        technical.components[componentIndex].paths,
+        `${system.id}/${component.id} must retain source evidence`,
+      );
+    }
+    assert.notEqual(system.summary, technical.summary, `${system.id} needs reader-friendly copy`);
+  }
+
+  for (const [edgeIndex, edge] of PLAIN_EDGES.entries()) {
+    const technical = ARCHITECTURE_EDGES[edgeIndex];
+    assert.deepEqual(
+      { from: edge.from, to: edge.to, kind: edge.kind, security: edge.security },
+      { from: technical.from, to: technical.to, kind: technical.kind, security: technical.security },
+      `${edge.id} must retain its factual connection`,
+    );
+  }
+
+  for (const [flowIndex, flow] of PLAIN_FLOWS.entries()) {
+    const technical = ARCHITECTURE_FLOWS[flowIndex];
+    assert.deepEqual(
+      flow.steps.map(({ subsystemId, componentId }) => ({ subsystemId, componentId })),
+      technical.steps.map(({ subsystemId, componentId }) => ({ subsystemId, componentId })),
+      `${flow.id} must retain its factual route`,
+    );
+  }
+
+
+  assert.ok(searchPlainLanguage("gateway").length <= 18, "search results must remain bounded");
+  assert.ok(
+    searchPlainLanguage("durable object").some(({ componentId }) => componentId === "kernel-do"),
+    "search must find real component names",
+  );
+});
+
+test("the main explanations avoid specialist vocabulary", () => {
+  const copy = [];
+  for (const system of PLAIN_SUBSYSTEMS) {
+    copy.push(system.label, system.shortLabel, system.summary, ...system.owns, system.boundary, system.invariant);
+    for (const component of system.components) {
+      copy.push(component.plainLabel, component.summary, ...component.mechanics);
+    }
+  }
+  for (const edge of PLAIN_EDGES) copy.push(edge.label);
+  for (const flow of PLAIN_FLOWS) {
+    copy.push(flow.label, flow.summary);
+    for (const step of flow.steps) copy.push(step.label, step.detail);
+  }
+  for (const district of ATLAS_DISTRICTS) copy.push(district.label, district.shortLabel, district.summary);
+  for (const archetype of Object.values(ATLAS_ARCHETYPES)) copy.push(archetype.label, archetype.summary);
+  for (const lens of ATLAS_LENSES) copy.push(lens.label, lens.summary);
+  for (const zone of ATLAS_ZONES) copy.push(zone.label, zone.summary);
+  copy.push(...ATLAS_CONCEPTS);
+  for (const detail of Object.values(ATLAS_SYSTEM_DETAIL)) {
+    copy.push(
+      detail.foundation,
+      detail.gate,
+      detail.scope,
+      detail.runtime,
+      detail.owner,
+      detail.persistence,
+      detail.admission,
+      detail.completion,
+      ...detail.security,
+    );
+  }
+  for (const note of Object.values(ATLAS_TOUR_NOTES)) copy.push(note.thesis, note.warning);
+
+  const specialistWords = /\b(?:admission|aperture|architecture|archetype|artifact|binary|binding|canonical|capability|catalog|command|component|control plane|credentials|dispatch|durable|durability|egress|fencing|fingerprint|frame|identity|ingress|interface|lifecycle|local|manifest|metadata|model|native|operator|persistence|principal|production|protocol|provisioning|release|repository|runtime|schema|self-hosted|storage|stream|subsystem|syscall|terminal|topology|transfer|versioned)\b|\b(?:Linux|MCP|PID|R2|RPC|SDK|SQLite|UID)\b/i;
+  for (const value of copy.filter(Boolean)) {
+    assert.doesNotMatch(value, specialistWords, `specialist wording leaked into: ${value}`);
+  }
 });
 
 test("tracked GitHub metadata prefers a remote ref and strips remote credentials", async () => {
@@ -602,7 +717,11 @@ test("the local server exposes only allowlisted explorer assets", async (context
   const index = await fetch(origin);
   assert.equal(index.status, 200);
   assert.match(index.headers.get("content-security-policy"), /default-src 'self'/);
-  assert.match(await index.text(), /GSV Architecture Explorer/);
+  assert.match(await index.text(), /How GSV Works/);
+
+  const plainLanguage = await fetch(`${origin}/plain-language.mjs`);
+  assert.equal(plainLanguage.status, 200);
+  assert.match(plainLanguage.headers.get("content-type"), /text\/javascript/);
 
   const meta = await fetch(`${origin}/api/meta`).then((response) => response.json());
   assert.deepEqual(meta, {

@@ -5,57 +5,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="color-scheme" content="dark">
     <meta name="theme-color" content="#03090a">
-    <title>GSV Architecture Explorer</title>
+    <title>How GSV Works</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
     <div class="phosphor-field" aria-hidden="true"></div>
     <div id="atlas" class="atlas lens-runtime is-systems-closed is-inspector-closed is-trace-closed">
-      <header class="command-deck">
-        <div class="identity-block">
-          <span class="identity-mark" aria-hidden="true">
-            <i></i><i></i><i></i>
-          </span>
-          <div>
-            <p>GENERAL SYSTEMS VEHICLE // CARTOGRAPHY UNIT</p>
-            <h1>ARCHITECTURE EXPLORER</h1>
-          </div>
-        </div>
+      <h1 class="visually-hidden">How GSV works</h1>
 
-        <div class="atlas-counts" aria-label="Atlas coverage">
-          <span><strong id="subsystem-count">00</strong> SYSTEMS</span>
-          <span><strong id="component-count">00</strong> COMPONENTS</span>
-          <span><strong id="route-count">00</strong> ROUTES</span>
-        </div>
-
-        <nav id="lens-switcher" class="lens-switcher" aria-label="Architecture lens"></nav>
-
-        <div class="revision-block">
-          <span class="live-indicator" aria-hidden="true"></span>
-          <div>
-            <small>CHECKOUT REVISION</small>
-            <strong id="revision">READING…</strong>
-          </div>
-          <button id="help-button" class="icon-button" type="button" aria-label="Open controls help">?</button>
-        </div>
-      </header>
-
-      <aside id="system-index" class="system-index" aria-label="Architecture directory" aria-hidden="true" inert>
+      <aside id="system-index" class="system-index" aria-label="Parts of GSV" aria-hidden="true" inert>
         <div class="panel-kicker">
           <span>01</span>
           <div>
-            <small>SYSTEM DIRECTORY</small>
-            <strong>OWNERS, NOT FOLDERS</strong>
+            <small>PARTS OF GSV</small>
+            <strong>WHAT EACH PART DOES</strong>
           </div>
-          <button class="panel-close" type="button" data-close-panel="systems" aria-label="Close system directory">×</button>
+          <button class="panel-close" type="button" data-close-panel="systems" aria-label="Close the list of parts">×</button>
         </div>
 
         <div class="atlas-search">
-          <label for="atlas-search-input">SEARCH SYSTEM / COMPONENT / PATH</label>
+          <label for="atlas-search-input">SEARCH BY NAME OR JOB</label>
           <div class="search-control">
             <span aria-hidden="true">⌕</span>
-            <input id="atlas-search-input" type="search" placeholder="dispatch, body, ripgit…" autocomplete="off">
+            <input id="atlas-search-input" type="search" placeholder="messages, files, browser…" autocomplete="off">
             <kbd>⌘K</kbd>
           </div>
           <div id="search-results" class="search-results" hidden></div>
@@ -66,30 +39,34 @@
         <section class="concept-monitor" aria-labelledby="concept-monitor-title">
           <header>
             <span class="monitor-pulse" aria-hidden="true"></span>
-            <h2 id="concept-monitor-title">DO NOT COLLAPSE</h2>
+            <h2 id="concept-monitor-title">EASY TO MIX UP</h2>
           </header>
           <div id="concept-cycle" class="concept-cycle"></div>
         </section>
       </aside>
 
-      <main class="world-stage" aria-label="Spatial architecture world">
+      <main class="world-stage" aria-label="Map showing how GSV works">
         <div class="world-heading">
           <div class="world-heading-copy">
-            <span id="lens-code">RUNTIME TOPOLOGY</span>
-            <strong id="lens-summary">Live actors and their contract routes.</strong>
+            <span id="lens-code">HOW WORK MOVES</span>
+            <strong id="lens-summary">See what is happening right now.</strong>
           </div>
           <div class="world-heading-actions">
-            <p><span class="key-hint">DRAG</span> ORBIT <span class="key-hint">SCROLL</span> SCALE <span class="key-hint">DOUBLE</span> FLY</p>
-            <nav id="workspace-switcher" class="workspace-switcher" aria-label="Open architecture workspace">
-              <button type="button" data-workspace-panel="systems" aria-pressed="false">SYSTEMS</button>
-              <button type="button" data-workspace-panel="inspector" aria-pressed="false">DETAILS</button>
-              <button type="button" data-workspace-panel="trace" aria-pressed="false">TRACE</button>
-              <button id="map-key-button" type="button" data-workspace-panel="key" aria-pressed="false" aria-expanded="false" aria-controls="map-key">KEY</button>
-            </nav>
+            <nav id="lens-switcher" class="lens-switcher" aria-label="Choose what the map explains"></nav>
+            <div class="map-actions-secondary">
+              <nav id="workspace-switcher" class="workspace-switcher" aria-label="Open more information">
+                <button type="button" data-workspace-panel="systems" aria-pressed="false">PLACES</button>
+                <button type="button" data-workspace-panel="inspector" aria-pressed="false">ABOUT</button>
+                <button type="button" data-workspace-panel="trace" aria-pressed="false">STORY</button>
+                <button id="map-key-button" type="button" data-workspace-panel="key" aria-pressed="false" aria-expanded="false" aria-controls="map-key">GUIDE</button>
+              </nav>
+              <button id="help-button" class="icon-button" type="button" aria-label="Learn how to use the map">?</button>
+            </div>
+            <p><span class="key-hint">DRAG</span> TO TURN · <span class="key-hint">SCROLL</span> TO ZOOM · <span class="key-hint">DOUBLE-CLICK</span> TO CENTER</p>
           </div>
         </div>
 
-        <svg id="world-svg" viewBox="0 0 1200 820" role="application" aria-label="Orbitable GSV subsystem map" tabindex="0">
+        <svg id="world-svg" viewBox="0 0 1200 820" role="application" aria-label="Turnable map of GSV" tabindex="0">
           <defs>
             <linearGradient id="ground-fade" x1="0" x2="0" y1="0" y2="1">
               <stop offset="0" stop-color="#0d2524" stop-opacity="0.75"></stop>
@@ -122,90 +99,90 @@
         <aside id="map-key" class="map-key" aria-labelledby="map-key-title" hidden>
           <header>
             <div>
-              <small>VISUAL ENCODING</small>
-              <h2 id="map-key-title">MAP KEY</h2>
+              <small>HOW TO READ THE MAP</small>
+              <h2 id="map-key-title">MAP GUIDE</h2>
             </div>
-            <button id="map-key-close" type="button" aria-label="Close map key">×</button>
+            <button id="map-key-close" type="button" aria-label="Close the map guide">×</button>
           </header>
-          <p>District color groups architectural neighbors. Silhouette names a runtime form; neither encoding indicates health, status, or importance.</p>
+          <p>Colors put places that work closely together into groups. Shapes show the kind of job each place does. Neither tells you that one place is healthier or more important than another.</p>
           <section aria-labelledby="district-color-title">
-            <h3 id="district-color-title">DISTRICT COLOR</h3>
+            <h3 id="district-color-title">GROUP COLORS</h3>
             <div class="color-key-grid">
-              <div><i class="key-gateway-gate"></i><span><strong>GATE</strong><small>trusted installation ingress</small></span></div>
-              <div><i class="key-control-core"></i><span><strong>CORE</strong><small>durable control owners</small></span></div>
-              <div><i class="key-installation-works"></i><span><strong>WORKS</strong><small>targets and repositories</small></span></div>
-              <div><i class="key-contract-causeway"></i><span><strong>CONTRACTS</strong><small>shared public language</small></span></div>
-              <div><i class="key-human-ports"></i><span><strong>CLIENTS</strong><small>browser human interface</small></span></div>
-              <div><i class="key-native-campus"></i><span><strong>NATIVE</strong><small>mixed host campus</small></span></div>
-              <div><i class="key-exchange-docks"></i><span><strong>EXCHANGES</strong><small>service + provider boundaries</small></span></div>
-              <div><i class="key-target-frontier"></i><span><strong>TARGET PEER</strong><small>external browser capability</small></span></div>
-              <div><i class="key-provisioning-yard"></i><span><strong>PROVISIONING</strong><small>build-time assembly</small></span></div>
+              <div><i class="key-gateway-gate"></i><span><strong>ENTRY</strong><small>finds the right GSV home</small></span></div>
+              <div><i class="key-control-core"></i><span><strong>MAIN GSV</strong><small>checks and coordinates work</small></span></div>
+              <div><i class="key-installation-works"></i><span><strong>BUILT-IN WORK</strong><small>handles GSV files and projects</small></span></div>
+              <div><i class="key-contract-causeway"></i><span><strong>SHARED RULES</strong><small>keeps actions consistent</small></span></div>
+              <div><i class="key-human-ports"></i><span><strong>WEBSITE</strong><small>the screen people use</small></span></div>
+              <div><i class="key-native-campus"></i><span><strong>YOUR COMPUTER</strong><small>apps and approved computer work</small></span></div>
+              <div><i class="key-exchange-docks"></i><span><strong>OUTSIDE SERVICES</strong><small>AI, accounts, and message apps</small></span></div>
+              <div><i class="key-target-frontier"></i><span><strong>BROWSER WORK</strong><small>approved work inside web pages</small></span></div>
+              <div><i class="key-provisioning-yard"></i><span><strong>SETUP</strong><small>builds and connects the pieces</small></span></div>
             </div>
           </section>
           <section class="grammar-key" aria-labelledby="grid-grammar-title">
-            <h3 id="grid-grammar-title">NEON GRID GRAMMAR</h3>
-            <div><i class="grammar-form"></i><span><strong>SILHOUETTE</strong><small>categorical runtime archetype; dimensions are fixed by form, never code volume</small></span></div>
-            <div><i class="grammar-aperture"></i><span><strong>APERTURES</strong><small>clickable component index; placement carries no order or hierarchy</small></span></div>
-            <div><i class="grammar-foundation"></i><span><strong>FOUNDATION</strong><small>shown only where the subsystem owns durable state or artifacts</small></span></div>
-            <div><i class="grammar-gate"></i><span><strong>GATE BADGE</strong><small>shown only for a real admission or fencing boundary</small></span></div>
-            <div><i class="grammar-ring"></i><span><strong>TRUST RINGS</strong><small>installation boundary remains the security geography</small></span></div>
+            <h3 id="grid-grammar-title">MAP SHAPES</h3>
+            <div><i class="grammar-form"></i><span><strong>SHAPE</strong><small>shows the kind of job, never how much code it has</small></span></div>
+            <div><i class="grammar-aperture"></i><span><strong>LIGHTS</strong><small>pick one to learn about a smaller part</small></span></div>
+            <div><i class="grammar-foundation"></i><span><strong>BASE</strong><small>means this place keeps information or setup files</small></span></div>
+            <div><i class="grammar-gate"></i><span><strong>CHECK LABEL</strong><small>marks a real check of who is asking, what they may do, or whether work is too old</small></span></div>
+            <div><i class="grammar-ring"></i><span><strong>CIRCLES</strong><small>mark areas with extra checks of who is asking and what they may do</small></span></div>
           </section>
           <section class="connection-key" aria-labelledby="connection-key-title">
-            <h3 id="connection-key-title">CONNECTIONS</h3>
-            <p>Arrowhead = directed runtime or build activity. A dashed contract has no actor direction.</p>
-            <div><i class="line-request"></i><span><strong>REQUEST</strong><small>runtime call direction</small></span></div>
-            <div><i class="line-control"></i><span><strong>CONTROL</strong><small>policy, admission, or lifecycle action</small></span></div>
-            <div><i class="line-data"></i><span><strong>DATA</strong><small>durable storage path</small></span></div>
-            <div><i class="line-contract"></i><span><strong>CONTRACT</strong><small>shared interface</small></span></div>
-            <div><i class="line-provision"></i><span><strong>PROVISION</strong><small>build-time assembly</small></span></div>
-            <div><i class="line-trace"></i><span><strong>GUIDED TRACE</strong><small>current walkthrough overlay</small></span></div>
+            <h3 id="connection-key-title">LINES</h3>
+            <p>An arrow shows something moving one way. A dashed line means two places follow the same rules, so it has no arrow.</p>
+            <div><i class="line-request"></i><span><strong>ASKS</strong><small>one place asks another for work</small></span></div>
+            <div><i class="line-control"></i><span><strong>DIRECTS</strong><small>one place starts, stops, or guides work</small></span></div>
+            <div><i class="line-data"></i><span><strong>SAVES WITH</strong><small>information is kept in the other place</small></span></div>
+            <div><i class="line-contract"></i><span><strong>SHARES RULES</strong><small>both places promise the same behavior</small></span></div>
+            <div><i class="line-provision"></i><span><strong>SETS UP</strong><small>one place builds or connects the other</small></span></div>
+            <div><i class="line-trace"></i><span><strong>STORY</strong><small>the path for the story you chose</small></span></div>
           </section>
         </aside>
 
-        <div class="camera-console" aria-label="Map view controls">
-          <button id="rotate-left" type="button" aria-label="Rotate left">↶</button>
+        <div class="camera-console" aria-label="Move the map">
+          <button id="rotate-left" type="button" aria-label="Turn left">↶</button>
           <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
-          <button id="reset-view" type="button">RESET VIEW</button>
+          <button id="reset-view" type="button">RESET MAP</button>
           <button id="zoom-in" type="button" aria-label="Zoom in">+</button>
-          <button id="rotate-right" type="button" aria-label="Rotate right">↷</button>
+          <button id="rotate-right" type="button" aria-label="Turn right">↷</button>
         </div>
 
         <div class="world-scale" aria-hidden="true">
-          <span>INSTALLATION WORLD</span>
+          <span>GSV MAP</span>
           <i></i>
-          <small id="camera-readout">AZ 326° · EL 32° · 100%</small>
+          <small id="camera-readout">TURN −33° · TILT 32° · ZOOM 100%</small>
         </div>
       </main>
 
-      <aside id="inspector" class="inspector" aria-label="Selected architecture evidence" aria-hidden="true" inert></aside>
+      <aside id="inspector" class="inspector" aria-label="About the selected place" aria-hidden="true" inert></aside>
 
-      <section id="trace-deck" class="trace-deck" aria-label="Guided architecture trace" aria-hidden="true" inert>
+      <section id="trace-deck" class="trace-deck" aria-label="Step-by-step story" aria-hidden="true" inert>
         <div class="trace-heading">
           <span>02</span>
           <div>
-            <small>GUIDED TRACE</small>
-            <select id="flow-select" aria-label="Choose a guided architecture trace"></select>
+            <small>STEP-BY-STEP STORY</small>
+            <select id="flow-select" aria-label="Choose a story"></select>
           </div>
-          <button class="panel-close" type="button" data-close-panel="trace" aria-label="Close guided trace">×</button>
+          <button class="panel-close" type="button" data-close-panel="trace" aria-label="Close the story">×</button>
         </div>
 
         <article class="trace-current" aria-live="polite">
           <strong id="flow-step-number">01</strong>
           <div>
-            <span id="flow-step-system">GATEWAY</span>
-            <h2 id="flow-step-title">Resolve installation</h2>
+            <span id="flow-step-system">FRONT DOOR</span>
+            <h2 id="flow-step-title">Find the right GSV home</h2>
             <p id="flow-step-detail"></p>
           </div>
         </article>
 
         <div class="trace-controls">
-          <button id="flow-prev" type="button">← PREV</button>
-          <button id="flow-play" class="play-button" type="button" aria-label="Play guided trace">▶</button>
+          <button id="flow-prev" type="button">← BACK</button>
+          <button id="flow-play" class="play-button" type="button" aria-label="Play the story">▶</button>
           <button id="flow-next" type="button">NEXT →</button>
         </div>
 
         <div class="trace-rail-wrap">
-          <nav id="flow-rail" class="trace-rail" aria-label="Trace steps"></nav>
+          <nav id="flow-rail" class="trace-rail" aria-label="Story steps"></nav>
           <p id="flow-thesis" class="trace-thesis"></p>
         </div>
       </section>
@@ -216,21 +193,20 @@
     <dialog id="help-dialog" class="help-dialog" aria-labelledby="help-dialog-title">
       <form method="dialog">
         <button class="dialog-close" aria-label="Close help">×</button>
-        <p class="dialog-kicker">NAVIGATION MANUAL // REV 1</p>
-        <h2 id="help-dialog-title">Read the installation as a world.</h2>
-        <p>The geometry encodes runtime ownership—not directory depth. Source trees are evidence attached to the actors that own policy, state, and cleanup.</p>
+        <p class="dialog-kicker">HOW TO USE THIS MAP</p>
+        <h2 id="help-dialog-title">Explore GSV as a small city.</h2>
+        <p>Each place has one main job. Pick a place to learn what it does, what it remembers, and what it must never do.</p>
         <dl>
-          <div><dt>DRAG / ARROWS</dt><dd>Orbit the installation world</dd></div>
-          <div><dt>SCROLL / + / −</dt><dd>Change map scale</dd></div>
-          <div><dt>CLICK</dt><dd>Inspect a system or component</dd></div>
-          <div><dt>DOUBLE CLICK</dt><dd>Fly to a landmark</dd></div>
-          <div><dt>SYSTEMS / DETAILS / TRACE</dt><dd>Show one supporting workspace at a time</dd></div>
-          <div><dt>DETAIL VIEWS</dt><dd>Focus Overview, Components, Source, or Routes</dd></div>
-          <div><dt>KEY</dt><dd>Explain district hues, landmark forms, and connection lines</dd></div>
-          <div><dt>/ OR ⌘K</dt><dd>Search names, mechanics, and paths</dd></div>
-          <div><dt>ESC</dt><dd>Clear search or restore the full world</dd></div>
+          <div><dt>DRAG / ARROWS</dt><dd>Turn the map</dd></div>
+          <div><dt>SCROLL / + / −</dt><dd>Zoom in or out</dd></div>
+          <div><dt>CLICK</dt><dd>Learn about a place or one of its lights</dd></div>
+          <div><dt>DOUBLE-CLICK</dt><dd>Move one place to the center</dd></div>
+          <div><dt>PLACES / ABOUT / STORY</dt><dd>Open one explanation at a time</dd></div>
+          <div><dt>GUIDE</dt><dd>Learn what the colors, shapes, and lines mean</dd></div>
+          <div><dt>/ OR ⌘K</dt><dd>Search by a name or job</dd></div>
+          <div><dt>ESC</dt><dd>Close the current extra view</dd></div>
         </dl>
-        <p class="dialog-note">Runtime, Ownership, Security, and Durability are lenses over one graph. Switch lenses instead of reading every relationship as one undifferentiated dependency diagram.</p>
+        <p class="dialog-note">Use the four map views to answer four simple questions: What is happening? Who handles it? What keeps it safe? What is remembered?</p>
       </form>
     </dialog>
 

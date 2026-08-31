@@ -1,87 +1,84 @@
-# GSV architecture explorer
+# How GSV works
 
-The architecture explorer is a localhost-only, read-only map of the GSV source
-tree for contributors. It is not part of the Web product, does not connect to a
-Gateway, and does not read installation or user state.
+This folder contains a city-like map of GSV. It is made for people who want to
+understand the project before they know its code or its special words.
 
-From the repository root:
+The map runs only on your computer. It does not connect to a GSV home, open
+private user information, or change any files.
+
+## Open the map
+
+From the main GSV folder, run:
 
 ```bash
 npm run architecture:explore
 ```
 
-Then open `http://127.0.0.1:4179`. Set `GSV_ARCHITECTURE_PORT` to use another
-port.
+Then open `http://127.0.0.1:4179` in a browser.
 
-## The job
+To use a different port, set `GSV_ARCHITECTURE_PORT` before starting it.
 
-The explorer should let a reader answer three questions quickly:
+## What the city means
 
-1. Which subsystem owns this behavior, state, and cleanup?
-2. Which trust or protocol boundary does a request cross next?
-3. Which source files, architecture notes, and tests are evidence for the map?
+Each building is one large part of GSV with one clear job. Its lights are the
+smaller parts inside it. Those smaller parts keep their real project names; a
+short plain-English line beside each name says what it does.
 
-The world is organized by semantic districts and runtime ownership rather than
-directory nesting. Folders are evidence attached to landmarks; they are not
-treated as runtime actors. District hue groups architectural neighbors, while
-each silhouette identifies a categorical runtime form such as an installation portal,
-durable owner, contract lattice, target workshop, exchange, or assembly yard.
-The landmarks are abstract neon-grid monoliths, portals, fins, and data cages,
-not literal houses or a claim that the source tree resembles physical buildings.
-The fixed form dimensions never represent line count, component count, health,
-importance, or execution volume.
+- Color puts buildings that work closely together into groups.
+- Shape gives a visual clue about the kind of job.
+- Size is chosen for the drawing. It does not mean more code, more work, better
+  health, or greater importance.
+- An arrow shows something moving in one direction.
+- A dashed line shows that two places follow the same rules. It has no arrow
+  because neither place is telling the other what to do.
 
-## Controls
+Open **Guide** in the map for the full color, shape, and line key.
 
-- Use **Systems**, **Details**, and **Trace** to keep one supporting workspace
-  beside the map at a time. Select the active workspace again, use its close
-  control, or press `Escape` to return to the unobstructed world.
-- Drag the world or use the arrow keys to orbit.
-- Scroll, `+`, or `-` to change scale.
-- Select a landmark to inspect its owner, persistence, admission, completion,
-  components, source paths, documentation, and tests.
-- Within **Details**, switch between Overview, Components, Source, and Routes;
-  only the selected dossier view is rendered at once.
-- Double-click a landmark or choose **Fly to** to center it.
-- Switch Runtime, Ownership, Security, and Durability lenses to change the
-  architectural facts emphasized by the terrain.
-- Open **Trace** and choose a guided trace to follow one request across its
-  owners.
-- Open **Key** for district colors, neon-grid grammar, and connection semantics.
-  Clickable facade apertures index components, but their position carries no
-  hierarchy or ordering. Foundations and gate badges appear only where the
-  source architecture supports those concepts.
-- Press `/` or <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>K</kbd> to search the atlas.
-- The selected subsystem and component are kept in the URL hash for sharing.
+## Use the map
 
-## Source of truth and drift
+- Drag to turn it.
+- Scroll, or use `+` and `-`, to zoom.
+- Pick a building to learn its job and the one rule it must never break.
+- Pick a light on a building to learn about that smaller part.
+- Use **Places**, **About**, **Story**, or **Guide** to open one extra view at a
+  time.
+- Change the four buttons above the map to see how work moves, who handles it,
+  what keeps it safe, or what it remembers.
+- Open **Story** to follow one familiar event from beginning to end.
+- Press `/` or <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>K</kbd> to search by name or job.
+- Open **Code** inside a building's explanation only when you want exact file,
+  note, and check locations.
 
-`architecture.mjs` is the curated subsystem, component, edge, and guided-flow
-graph. `atlas-meta.mjs` adds semantic districts, categorical forms,
-deterministic placement, and explicit owner, persistence, admission,
-completion, security, documentation, and test evidence.
+## How the explanations stay honest
 
-The map is intentionally authored rather than inferred. Source code and tests
-remain authoritative; the explorer explains their boundaries. Run the focused
-checks after changing either file:
+The friendly words and the code facts are kept in separate files:
+
+- `architecture.mjs` records the exact parts, connections, stories, and code
+  locations.
+- `plain-language.mjs` gives every one of those facts a simple explanation.
+- `atlas-meta.mjs` chooses the groups, colors, shapes, positions, and extra
+  safety notes.
+
+The simple wording never replaces the code facts. It sits on top of them. The
+**Code** view keeps the exact paths available for anyone who wants to check an
+explanation against the project.
+
+After changing the map, run:
 
 ```bash
 npm run architecture:test
 ```
 
-The tests reject missing or duplicate nodes, broken flow/edge references,
-missing repository paths, incomplete ownership metadata, uncovered adapter
-manifests, and accidental product-Web coupling.
+These checks catch missing parts, broken story steps, wrong file paths, missing
+plain-language explanations, specialist words in the main copy, and accidental
+links to the normal GSV website.
 
-The local server exposes only an allowlist of explorer assets plus source-link
-metadata. Links use the checkout's tracked GitHub remote and branch when one is
-available, with a canonical upstream fallback; the tool never offers an
-arbitrary repository file API.
+The small browser server exposes only the files needed by this map. It does not
+offer a way to browse arbitrary project files.
 
-## Out of scope
+## What this map does not show
 
-- Live installation health, process state, or configuration
-- Editing source, prompts, policies, or runtime data
-- Product navigation or deployment through `web/dist`
-- A literal 3D rendering of directory size
-- Generated claims that silently override owning code or tests
+- Whether a running GSV is healthy right now
+- A real user's agents, settings, messages, or files
+- A measurement of folder size or line count
+- Controls for changing code or putting GSV online

@@ -24,6 +24,7 @@ const STATIC_ASSETS = new Map([
   ["/app.js", ["app.js", "text/javascript; charset=utf-8"]],
   ["/architecture.mjs", ["architecture.mjs", "text/javascript; charset=utf-8"]],
   ["/atlas-meta.mjs", ["atlas-meta.mjs", "text/javascript; charset=utf-8"]],
+  ["/plain-language.mjs", ["plain-language.mjs", "text/javascript; charset=utf-8"]],
   ["/favicon.svg", ["favicon.svg", "image/svg+xml"]],
 ]);
 
