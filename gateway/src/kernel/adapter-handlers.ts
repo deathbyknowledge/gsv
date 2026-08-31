@@ -58,6 +58,7 @@ import type {
   JsonValue,
 } from "@humansandmachines/gsv/protocol";
 import {
+  binaryBodySchema,
   cancelBinaryBody,
   consumeAdapterMediaBodyParts,
   adapterAccountStatusSchema,
@@ -163,6 +164,7 @@ type AdapterBindingEnv = GatewayEnv & Record<
   AdapterServiceBinding | undefined
 >;
 const adapterStatusListSchema = z.array(adapterAccountStatusSchema);
+const adapterFrameBodySchema = z.object({ body: binaryBodySchema });
 type AdapterCommandResult = {
   handled: boolean;
   reply?: {
@@ -1050,12 +1052,15 @@ async function deliverAdapterMessageOwned(
       },
       ...(body === undefined ? undefined : { body }),
     };
+    let responseBody: BinaryBody | undefined;
     try {
       const response = await service.adapterFrame(
         { installationId: ctx.installationId },
         context,
         request,
       );
+      const parsedBody = adapterFrameBodySchema.safeParse(response);
+      if (parsedBody.success) responseBody = parsedBody.data.body;
       if (!response || response.type !== "res" || response.id !== request.id || !response.ok) {
         return {
           ok: false,
@@ -1083,7 +1088,12 @@ async function deliverAdapterMessageOwned(
         retryable: true,
       };
     } finally {
-      await cancelBinaryBody(body, "adapter.send frame completed");
+      await Promise.all([
+        cancelBinaryBody(responseBody, "adapter.send response body is unsupported"),
+        responseBody === body
+          ? Promise.resolve()
+          : cancelBinaryBody(body, "adapter.send frame completed"),
+      ]);
     }
   }
 

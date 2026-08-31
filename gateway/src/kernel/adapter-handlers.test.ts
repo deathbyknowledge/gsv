@@ -31,7 +31,11 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { PrivateAdapterDestinationStore } from "./private-adapter-destinations";
-import type { AdapterOutboundMessage } from "../adapter-interface";
+import type {
+  AdapterOutboundMessage,
+  AdapterService,
+  AdapterServiceDescriptor,
+} from "../adapter-interface";
 import type { SurfaceRouteRecord } from "./surface-routes";
 import type { IdentityLinkRecord } from "./identity-links";
 import type { AdapterStatusRecord } from "./adapter-status";
@@ -4192,6 +4196,61 @@ describe("adapter lifecycle handlers", () => {
       body,
     );
     expect(getReader).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("cancels an unconsumed body on a mismatched adapter frame response", async () => {
+    const cancel = vi.fn();
+    const responseBody: BinaryBody = {
+      length: 3,
+      stream: new ReadableStream<Uint8Array>({ cancel }),
+    };
+    const descriptor: AdapterServiceDescriptor = {
+      version: 1,
+      id: "telegram",
+      displayName: "Telegram",
+      capabilities: {
+        connect: true,
+        disconnect: true,
+        send: true,
+        status: true,
+        activity: true,
+        pairing: false,
+        deliveryFrames: true,
+        surfaces: ["dm"],
+        media: { inbound: [], outbound: [] },
+      },
+    };
+    const adapterFrame: NonNullable<AdapterService["adapterFrame"]> = vi.fn(async (
+      _installation,
+      _context,
+      frame,
+    ) => ({
+      type: "res",
+      id: `${frame.id}:mismatched`,
+      ok: true,
+      data: { ok: true },
+      body: responseBody,
+    }));
+    const ctx = makeContext({
+      CHANNEL_TELEGRAM: {
+        adapterDescribe: vi.fn(async () => descriptor),
+        adapterFrame,
+      },
+    }, { upsert: vi.fn() });
+
+    await expect(handleAdapterSend({
+      adapter: "telegram",
+      accountId: "bot",
+      deliveryId: "frame-response-body-1",
+      surface: { kind: "dm", id: "chat-42" },
+      text: "hello",
+    }, ctx)).resolves.toEqual({
+      ok: false,
+      error: "Telegram delivery is temporarily unavailable",
+      deliveryId: "frame-response-body-1",
+      retryable: true,
+    });
     expect(cancel).toHaveBeenCalledOnce();
   });
 
