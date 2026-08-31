@@ -62,8 +62,7 @@ import type {
   ConversationMessageOrigin,
   FederationDeliveryReceipt,
 } from "@humansandmachines/gsv/protocol";
-import type { InstallationDirectoryService } from "@humansandmachines/gsv/services/directory";
-import type { InstallationOnboardingService } from "@humansandmachines/gsv/services/onboarding";
+import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
 import type { ConnectionIdentity } from "./identity";
 import {
   BinaryBodyChannel,
@@ -210,13 +209,13 @@ import { createInstallationRipgit } from "../installation/ripgit";
 import {
   MANAGED_LIFECYCLE_RECHECK_MS,
   managedInstallationWorkGate,
-  type ManagedInstallationLifecycleBindings,
 } from "../installation/lifecycle";
 import {
   DurableTaskScheduler,
   type DurableTask,
   type DurableTaskOptions,
 } from "../shared/durable-tasks";
+import type { GatewayEnv } from "../runtime-env";
 import {
   acceptKernelWebSocket,
   KernelConnection,
@@ -618,11 +617,11 @@ type UserProcessSignalFrame = z.infer<typeof userProcessSignalFrameSchema>;
 
 const MANAGED_ONBOARDING_COMPLETION_KEY = "managed_onboarding_completion";
 
-export class Kernel extends DurableObject<Env> {
+export class Kernel extends DurableObject<GatewayEnv> {
   private readonly installationId: string;
   private installationIdentity?: InstallationIdentity;
   private readonly installationStorage: R2Bucket;
-  private readonly installationEnv: Env;
+  private readonly installationEnv: GatewayEnv;
   private readonly auth: AuthStore;
   private readonly caps: CapabilityStore;
   private readonly config: ConfigStore;
@@ -669,7 +668,7 @@ export class Kernel extends DurableObject<Env> {
     { expiresAt: number; reason: string }
   >();
 
-  constructor(ctx: DurableObjectState, env: Env) {
+  constructor(ctx: DurableObjectState, env: GatewayEnv) {
     super(ctx, env);
     this.installationId = parseInstallationId(ctx.id.name);
     const sql = ctx.storage.sql;
@@ -1309,6 +1308,24 @@ export class Kernel extends DurableObject<Env> {
     if (route?.uid !== process.ownerUid || route?.processId !== processId) {
       if (route) this.runRoutes.delete(args.runId);
       route = null;
+    }
+    if (appended.created && conversation.kind === "ship") {
+      emitTelemetry(this.bindings, {
+        installationId: this.installationId,
+        component: "gateway",
+        event: {
+          stream: "product",
+          name: "ship.message.committed",
+          properties: {
+            delivery: route?.kind === "connection"
+              ? "client"
+              : route?.kind === "adapter"
+                ? "adapter"
+                : "background",
+            hasMedia: Boolean(message.media?.length),
+          },
+        },
+      });
     }
     if (route?.kind === "connection") {
       this.sendSignalToConnection(route.connectionId, "message.committed", {
@@ -2711,7 +2728,7 @@ export class Kernel extends DurableObject<Env> {
     };
   }
 
-  private get bindings(): Env {
+  private get bindings(): GatewayEnv {
     return this.installationEnv ?? this.env;
   }
 
@@ -3275,13 +3292,14 @@ export class Kernel extends DurableObject<Env> {
       return;
     }
 
-    const eventType = call.status === "timed_out"
-      ? "process.delegation.timed_out"
+    const outcome = call.status === "timed_out"
+      ? "timed_out"
       : call.error?.toLowerCase().includes("killed")
-        ? "process.delegation.killed"
+        ? "killed"
         : call.error
-          ? "process.delegation.failed"
-          : "process.delegation.completed";
+          ? "failed"
+          : "completed";
+    const eventType = `process.delegation.${outcome}`;
     const completedAtMs = Date.now();
     const delegation: JsonObject = {
       eventType,
@@ -3293,7 +3311,7 @@ export class Kernel extends DurableObject<Env> {
     };
     if (call.sourceRunId) delegation.sourceRunId = call.sourceRunId;
     if (call.error) delegation.error = call.error.slice(0, 2_000);
-    this.responsibilities.update({
+    const updated = this.responsibilities.update({
       ownerUid: call.ownerUid,
       id: current.id,
       expectedRevision: current.revision,
@@ -3316,6 +3334,29 @@ export class Kernel extends DurableObject<Env> {
       observedByShip: false,
       now: completedAtMs,
     });
+    if (updated.changed) {
+      const durationMs = Math.max(0, completedAtMs - call.createdAt);
+      emitTelemetry(this.bindings, {
+        installationId: this.installationId,
+        component: "gateway",
+        event: {
+          stream: "operational",
+          name: "delegation.finished",
+          properties: { outcome, durationMs },
+        },
+      });
+      if (outcome === "completed") {
+        emitTelemetry(this.bindings, {
+          installationId: this.installationId,
+          component: "gateway",
+          event: {
+            stream: "product",
+            name: "delegation.completed",
+            properties: { durationMs },
+          },
+        });
+      }
+    }
     this.ctx.waitUntil(this.reconcileResponsibilityWake(call.ownerUid).catch((error) => {
       console.warn("[Kernel] Failed to schedule delegated responsibility return:", error);
     }));
@@ -3695,6 +3736,19 @@ export class Kernel extends DurableObject<Env> {
 
     if (outcome.newMachine) {
       await recordMachineAddedResponsibility(outcome.newMachine, ctx);
+      emitTelemetry(this.bindings, {
+        installationId: this.installationId,
+        component: "gateway",
+        event: {
+          stream: "product",
+          name: "target.connected",
+          properties: {
+            targetKind: outcome.newMachine.platform.toLowerCase().includes("browser")
+              ? "browser"
+              : "machine",
+          },
+        },
+      });
     }
 
     const clientId = frame.args.peer.id.trim();
@@ -4013,19 +4067,13 @@ export class Kernel extends DurableObject<Env> {
     return data;
   }
 
-  private managedOnboardingService(): (
-    InstallationDirectoryService & InstallationOnboardingService
-  ) | null {
-    // SAFETY: managed deployments add this service binding to Wrangler's Env contract.
-    return (this.env as Env & {
-      INSTALLATION_DIRECTORY?: InstallationDirectoryService & InstallationOnboardingService;
-    }).INSTALLATION_DIRECTORY ?? null;
+  private managedOnboardingService(): GatewayEnv["INSTALLATION_DIRECTORY"] | null {
+    return this.env.INSTALLATION_DIRECTORY ?? null;
   }
 
   private async managedWorkGate() {
-    // SAFETY: managed deployments add lifecycle bindings to Wrangler's Env contract.
     return await managedInstallationWorkGate(
-      this.env as Env & ManagedInstallationLifecycleBindings,
+      this.env,
       this.installationId,
     );
   }
@@ -5260,16 +5308,16 @@ function shellStatusFromEvent(event: string): ShellSessionStatus {
 }
 
 function envWithInstallationResources(
-  env: Env,
+  env: GatewayEnv,
   storage: R2Bucket,
   ripgit: Fetcher | undefined,
-): Env {
+): GatewayEnv {
   return new Proxy(env, {
     get(target, property) {
       if (property === "STORAGE") return storage;
       if (property === "RIPGIT") return ripgit;
       // SAFETY: Proxy keys outside these overrides are ordinary Env properties.
-      return target[property as keyof Env];
+      return target[property as keyof GatewayEnv];
     },
   });
 }

@@ -1,8 +1,9 @@
 import gateway from "./index";
+import type { GatewayEnv } from "./runtime-env";
 
 export * from "./index";
 
-type ManagedDevelopmentEnv = Env & {
+type ManagedDevelopmentEnv = GatewayEnv & {
   ACCOUNT_HTTP: Fetcher;
   GSV_ACCOUNT_ORIGIN: string;
 };

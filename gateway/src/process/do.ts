@@ -98,6 +98,10 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import { responsibilityRequiresAction } from "@humansandmachines/gsv/protocol";
 import {
+  emitTelemetry,
+  type TelemetryEvent,
+} from "@humansandmachines/gsv/telemetry";
+import {
   jsonObjectSchema,
   jsonValueSchema,
   resourceBlockSchema,
@@ -291,15 +295,32 @@ import { createInstallationRipgit } from "../installation/ripgit";
 import {
   MANAGED_LIFECYCLE_RECHECK_MS,
   managedInstallationWorkGate,
-  type ManagedInstallationLifecycleBindings,
 } from "../installation/lifecycle";
-
-type ProcessEnv = Env & ManagedInstallationLifecycleBindings;
+import type { GatewayEnv } from "../runtime-env";
 
 type ResponsibilityBatchState = {
   batchId: string;
   responsibilityIds: string[];
 };
+
+type HistoryCompactionOptions = {
+  allowActive?: boolean;
+  reason?: string;
+  activeRunId?: string;
+  signal?: AbortSignal;
+  telemetryTrigger?: "manual" | "auto-preflight" | "auto-provider-overflow";
+  contextPressure?: number;
+};
+
+type CompactionTelemetryProperties = Extract<
+  TelemetryEvent,
+  { name: "process.compaction.completed" }
+>["properties"];
+
+type RunFinishedTelemetryProperties = Extract<
+  TelemetryEvent,
+  { name: "process.run.finished" }
+>["properties"];
 
 type RunState = {
   runId: string;
@@ -1924,7 +1945,7 @@ const PROCESS_TASK_SCHEMA = z.discriminatedUnion("callback", [
   }),
 ]);
 
-export class Process extends DurableObject<ProcessEnv> {
+export class Process extends DurableObject<GatewayEnv> {
   readonly installationId: string;
   readonly pid: string;
   private readonly store: ProcessStore;
@@ -1951,7 +1972,7 @@ export class Process extends DurableObject<ProcessEnv> {
   private killedTombstone: ProcessKilledTombstone | null = null;
   private killedCleanupTransition: Promise<Extract<ProcKillResult, { ok: true }>> | null = null;
 
-  constructor(ctx: DurableObjectState, env: ProcessEnv) {
+  constructor(ctx: DurableObjectState, env: GatewayEnv) {
     super(ctx, env);
     const gsvInference = gsvInferenceProviderFactoryFromEnv(env);
     this.generation = createGenerationService(
@@ -4119,13 +4140,9 @@ export class Process extends DurableObject<ProcessEnv> {
 
   private async handleHistoryCompact(
     args: ProcHistoryCompactArgs,
-    options: {
-      allowActive?: boolean;
-      reason?: string;
-      activeRunId?: string;
-      signal?: AbortSignal;
-    } = {},
+    options: HistoryCompactionOptions = {},
   ): Promise<ProcHistoryCompactResult> {
+    const telemetryStartedAt = Date.now();
     const pid = this.pid;
     const explicitSummary = normalizeOptionalString(args.summary);
     const generateSummary = args.generateSummary === true;
@@ -4358,6 +4375,24 @@ export class Process extends DurableObject<ProcessEnv> {
       lifecycleEvent.reason = options.reason;
     }
     await this.emitProcessLifecycle(lifecycleEvent);
+
+    const telemetryProperties: CompactionTelemetryProperties = {
+      trigger: options.telemetryTrigger ?? "manual",
+      durationMs: Math.max(0, Date.now() - telemetryStartedAt),
+      archivedMessages: selected.length,
+    };
+    if (options.contextPressure !== undefined) {
+      telemetryProperties.contextPressure = options.contextPressure;
+    }
+    emitTelemetry(this.env, {
+      installationId: this.installationId,
+      component: "gateway",
+      event: {
+        stream: "operational",
+        name: "process.compaction.completed",
+        properties: telemetryProperties,
+      },
+    });
 
     return {
       ok: true,
@@ -7763,16 +7798,21 @@ export class Process extends DurableObject<ProcessEnv> {
       return "stopped";
     }
 
+    const compactionOptions: HistoryCompactionOptions = {
+      allowActive: true,
+      reason: "auto-compact",
+      activeRunId: runId,
+      telemetryTrigger: trigger === "preflight"
+        ? "auto-preflight"
+        : "auto-provider-overflow",
+    };
+    if (pressure !== null) compactionOptions.contextPressure = pressure;
     const result = await this.handleHistoryCompact(
       {
         throughMessageId: selected.at(-1)!.id,
         generateSummary: true,
       },
-      {
-        allowActive: true,
-        reason: "auto-compact",
-        activeRunId: runId,
-      },
+      compactionOptions,
     );
     if (this.handleRunStopped(runId)) {
       return "stopped";
@@ -8983,6 +9023,7 @@ export class Process extends DurableObject<ProcessEnv> {
       }));
     }
     const payload = this.runFinishedPayload(run, options);
+    const startedAt = this.store.getRunTraceStartedAt(run.runId);
     this.store.finishRunTrace(
       run.runId,
       payload.status === "ok" ? "ok" : payload.status === "error" ? "error" : "aborted",
@@ -8997,9 +9038,39 @@ export class Process extends DurableObject<ProcessEnv> {
       payload.timestamp,
     );
     const pending = this.pendingRunFinishes();
-    if (!pending.some((finish) => finish.runId === run.runId)) {
+    const newlyFinished = !pending.some((finish) => finish.runId === run.runId);
+    if (newlyFinished) {
       pending.push(payload);
       this.store.setValue(PENDING_RUN_FINISHES_KEY, JSON.stringify(pending));
+      const telemetryProperties: RunFinishedTelemetryProperties = {
+        outcome: payload.status,
+        durationMs: Math.max(
+          0,
+          payload.timestamp - (startedAt ?? payload.timestamp),
+        ),
+        runKind: run.returnToCaller
+          ? "ipc"
+          : run.conversationId
+            ? "interactive"
+            : "background",
+        delivery: payload.delivery.kind,
+        queued: payload.queuedCount > 0,
+      };
+      if (payload.usage) {
+        telemetryProperties.inputTokens = payload.usage.input;
+        telemetryProperties.outputTokens = payload.usage.output;
+        telemetryProperties.cacheReadTokens = payload.usage.cacheRead;
+        telemetryProperties.cacheWriteTokens = payload.usage.cacheWrite;
+      }
+      emitTelemetry(this.env, {
+        installationId: this.installationId,
+        component: "gateway",
+        event: {
+          stream: "operational",
+          name: "process.run.finished",
+          properties: telemetryProperties,
+        },
+      });
     }
     this.ctx.waitUntil(this.onRunFinishDelivery(run.runId));
   }

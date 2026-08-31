@@ -63,6 +63,7 @@ import {
   validateAdapterMediaBody,
 } from "@humansandmachines/gsv/protocol";
 import { adapterServiceDescriptorSchema } from "@humansandmachines/gsv/services/adapters";
+import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
 import type {
   AdapterTargetCancelResult,
   AdapterTargetDescriptor,
@@ -70,6 +71,7 @@ import type {
 } from "@humansandmachines/gsv/services/adapters";
 import * as z from "zod/mini";
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
+import type { GatewayEnv } from "../runtime-env";
 import type { RequestFrame } from "../protocol/frames";
 import type {
   ProcessAdapterDeliverRequestFrame,
@@ -149,7 +151,10 @@ export type AdapterServiceBinding = Fetcher
   & Partial<AdapterWorkerInterface>
   & Partial<AdapterPairingWorkerInterface>
   & Partial<LegacyStandaloneAdapterService>;
-type AdapterBindingEnv = Env & Record<`CHANNEL_${string}`, AdapterServiceBinding | undefined>;
+type AdapterBindingEnv = GatewayEnv & Record<
+  `CHANNEL_${string}`,
+  AdapterServiceBinding | undefined
+>;
 const adapterStatusListSchema = z.array(adapterAccountStatusSchema);
 type AdapterCommandResult = {
   handled: boolean;
@@ -353,7 +358,10 @@ function adapterSendBoundaryError(args: AdapterSendArgs): string | null {
   return null;
 }
 
-export function resolveAdapterService(env: Env, adapter: string): AdapterServiceBinding | null {
+export function resolveAdapterService(
+  env: GatewayEnv,
+  adapter: string,
+): AdapterServiceBinding | null {
   const key: `CHANNEL_${string}` = `CHANNEL_${adapter.trim().toUpperCase()}`;
   // SAFETY: CHANNEL_* is the Wrangler service-binding namespace for adapters.
   return (env as AdapterBindingEnv)[key] ?? null;
@@ -895,6 +903,55 @@ async function deliverAdapterMessage(
   ctx: KernelContext,
   body?: BinaryBody,
 ): Promise<AdapterSendResult> {
+  const startedAt = Date.now();
+  try {
+    const result = await deliverAdapterMessageOwned(args, ctx, body);
+    emitTelemetry(ctx.env, {
+      installationId: ctx.installationId,
+      component: "gateway",
+      event: {
+        stream: "operational",
+        name: "adapter.delivery.finished",
+        properties: {
+          adapter: args.adapter.trim().toLowerCase(),
+          outcome: result.ok
+            ? result.deliveryState ?? "sent"
+            : result.retryable
+              ? "retryable_error"
+              : "rejected",
+          hasMedia: Boolean(args.media?.length),
+          durationMs: Math.max(0, Date.now() - startedAt),
+        },
+      },
+    });
+    return result;
+  } catch (error) {
+    emitTelemetry(ctx.env, {
+      installationId: ctx.installationId,
+      component: "gateway",
+      event: {
+        stream: "operational",
+        name: "adapter.delivery.finished",
+        properties: {
+          adapter: args.adapter.trim().toLowerCase(),
+          outcome: "error",
+          hasMedia: Boolean(args.media?.length),
+          durationMs: Math.max(0, Date.now() - startedAt),
+        },
+      },
+    });
+    throw error;
+  }
+}
+
+async function deliverAdapterMessageOwned(
+  args: Pick<AdapterSendArgs, "adapter" | "accountId" | "deliveryId" | "surface" | "text" | "media" | "replyToId"> & {
+    actorId?: string;
+    routeGeneration?: string;
+  },
+  ctx: KernelContext,
+  body?: BinaryBody,
+): Promise<AdapterSendResult> {
   const adapter = args.adapter.trim().toLowerCase();
   const accountId = args.accountId.trim();
 
@@ -1288,8 +1345,52 @@ export async function handleAdapterInbound(
   ctx: KernelContext,
   body?: BinaryBody,
 ): Promise<AdapterInboundSyscallResult> {
+  const startedAt = Date.now();
   try {
-    return await handleAdapterInboundOwned(args, ctx, body);
+    const result = await handleAdapterInboundOwned(args, ctx, body);
+    emitTelemetry(ctx.env, {
+      installationId: ctx.installationId,
+      component: "gateway",
+      event: {
+        stream: "operational",
+        name: "adapter.ingress.finished",
+        properties: {
+          adapter: args.adapter.trim().toLowerCase(),
+          outcome: !result.ok
+            ? "error"
+            : result.replayed
+              ? "replayed"
+              : result.delivered
+                ? "delivered"
+                : result.challenge
+                  ? "challenge"
+                  : result.reply
+                    ? "handled"
+                    : "dropped",
+          surface: args.message.surface.kind,
+          hasMedia: Boolean(args.message.media?.length),
+          durationMs: Math.max(0, Date.now() - startedAt),
+        },
+      },
+    });
+    return result;
+  } catch (error) {
+    emitTelemetry(ctx.env, {
+      installationId: ctx.installationId,
+      component: "gateway",
+      event: {
+        stream: "operational",
+        name: "adapter.ingress.finished",
+        properties: {
+          adapter: args.adapter.trim().toLowerCase(),
+          outcome: "error",
+          surface: args.message.surface.kind,
+          hasMedia: Boolean(args.message.media?.length),
+          durationMs: Math.max(0, Date.now() - startedAt),
+        },
+      },
+    });
+    throw error;
   } finally {
     await cancelBinaryBody(body, "adapter.inbound completed");
   }
@@ -2305,7 +2406,7 @@ function adapterAccountStatusFromRecord(status: AdapterStatusRecord): AdapterAcc
 }
 
 export async function setAdapterActivityForKernel(
-  env: Env,
+  env: GatewayEnv,
   installationId: KernelContext["installationId"],
   adapter: string,
   accountId: string,

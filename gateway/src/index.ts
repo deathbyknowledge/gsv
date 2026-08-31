@@ -37,7 +37,6 @@ import {
   getKernelByInstallationId,
   resolveInstallationRoute,
 } from "./installation/routing";
-import type { GatewayInstallationBindings } from "./installation/routing";
 import {
   parseInstallationId,
   parseManagedInstallationId,
@@ -50,6 +49,7 @@ import { buildGitProxyRequest, getBasicAuth, matchGitPath } from "./git";
 import * as z from "zod/mini";
 import type { ServicePeerProfile } from "./kernel/peer";
 import { isFederationPublicPath } from "./kernel/federation";
+import type { GatewayEnv } from "./runtime-env";
 
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
@@ -157,7 +157,7 @@ export default {
     }
     return new Response("Not Found", { status: 404 });
   },
-} satisfies ExportedHandler<Env>;
+} satisfies ExportedHandler<GatewayEnv>;
 
 const ADAPTER_SERVICE_CALLS = ["adapter.inbound", "adapter.state.update"] as const;
 const LEGACY_ADAPTER_IDS = new Set(["telegram", "whatsapp", "discord", "test"]);
@@ -177,7 +177,7 @@ const adapterServicePeerProfileSchema = z.object({
 });
 
 abstract class AdapterServiceEntrypoint<Props>
-  extends WorkerEntrypoint<Env & GatewayInstallationBindings, Props>
+  extends WorkerEntrypoint<GatewayEnv, Props>
   implements GatewayAdapterInterface
 {
   protected abstract resolveServicePeerProfile(frame: Frame): ServicePeerProfile;
@@ -343,7 +343,7 @@ export class AdapterGatewayEntrypoint
 }
 
 async function routeAdapterServiceFrame(
-  bindings: Env & GatewayInstallationBindings,
+  bindings: GatewayEnv,
   installation: AdapterInstallationContext,
   profile: ServicePeerProfile,
   frame: Frame,
@@ -423,7 +423,7 @@ function adapterServiceFrameBody(
 }
 
 function resolveAdapterInstallationId(
-  bindings: Env & GatewayInstallationBindings,
+  bindings: GatewayEnv,
   installation: AdapterInstallationContext,
 ): string {
   if (bindings.INSTALLATION_DIRECTORY) {

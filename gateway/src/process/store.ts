@@ -487,6 +487,16 @@ export class ProcessStore {
     this.pruneTraceRuns();
   }
 
+  getRunTraceStartedAt(runId: string): number | null {
+    return this.sql.exec<{ started_at: number }>(
+      `SELECT started_at FROM process_trace_spans
+       WHERE span_id = ? AND run_id = ? AND kind = 'run'
+       LIMIT 1`,
+      `run:${runId}`,
+      runId,
+    ).toArray()[0]?.started_at ?? null;
+  }
+
   listTraceSpans(options: { runId?: string; limit: number }): ProcessTraceSpanList {
     const filter = options.runId ? "WHERE run_id = ?" : "";
     const args = options.runId ? [options.runId] : [];

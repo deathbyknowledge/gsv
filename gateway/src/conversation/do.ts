@@ -7,6 +7,7 @@ import type {
 import { resourceBlockSchema } from "@humansandmachines/gsv/protocol";
 import { createInstallationStorage } from "../installation/storage";
 import { parseConversationDurableObjectName } from "../installation/routing";
+import type { GatewayEnv } from "../runtime-env";
 import {
   agentArchiveMediaPath,
   isValidAgentArchiveMediaObject,
@@ -54,7 +55,7 @@ export type ConversationMediaRead = {
   stream: ReadableStream<Uint8Array>;
 };
 
-export class Conversation extends DurableObject<Env> {
+export class Conversation extends DurableObject<GatewayEnv> {
   readonly installationId: string;
   readonly conversationId: string;
   private readonly store: ConversationStore;
@@ -62,7 +63,7 @@ export class Conversation extends DurableObject<Env> {
   private archiveTransition: Promise<void> = Promise.resolve();
   private appendTransition: Promise<void> = Promise.resolve();
 
-  constructor(ctx: DurableObjectState, env: Env) {
+  constructor(ctx: DurableObjectState, env: GatewayEnv) {
     super(ctx, env);
     const identity = parseConversationDurableObjectName(ctx.id.name);
     this.installationId = identity.installationId;

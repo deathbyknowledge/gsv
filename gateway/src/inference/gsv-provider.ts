@@ -30,6 +30,7 @@ import type {
 } from "./provider";
 import { DEFAULT_TEXT_GENERATION_MAX_TOKENS } from "./default-models";
 import { raceWithAbort } from "../shared/abort";
+import type { GatewayEnv } from "../runtime-env";
 
 const GSV_INFERENCE_API = "gsv-inference";
 
@@ -49,11 +50,6 @@ const GSV_INFERENCE_MODEL_METADATA: Model<typeof GSV_INFERENCE_API> = {
   },
   contextWindow: 1_048_576,
   maxTokens: DEFAULT_TEXT_GENERATION_MAX_TOKENS,
-};
-
-type GsvInferenceBindings = {
-  MANAGED_INFERENCE?: ManagedInferenceService;
-  MANAGED_INFERENCE_INSTALLATIONS?: DurableObjectNamespace;
 };
 
 type ManagedInferenceAccess =
@@ -81,13 +77,13 @@ type AppliedManagedInferenceEvent = {
 };
 
 export function gsvInferenceProviderFactoryFromEnv(
-  env: Env,
+  env: GatewayEnv,
 ): InferenceProviderFactory | undefined {
   const access = managedInferenceAccessFromEnv(env);
   return access ? createGsvInferenceProviderFactoryForAccess(access) : undefined;
 }
 
-export function gsvInferenceFeaturesFromEnv(env: Env): string[] {
+export function gsvInferenceFeaturesFromEnv(env: GatewayEnv): string[] {
   return managedInferenceAccessFromEnv(env)
     ? [GSV_INFERENCE_FEATURE]
     : [];
@@ -481,18 +477,15 @@ function requirePartial(
 }
 
 
-function managedInferenceAccessFromEnv(value: Env): ManagedInferenceAccess | undefined {
-  // SAFETY: Managed-only bindings are optional extensions to the generated standalone Env.
-  const bindings = value as Env & GsvInferenceBindings;
-  if (bindings.MANAGED_INFERENCE_INSTALLATIONS) {
+function managedInferenceAccessFromEnv(value: GatewayEnv): ManagedInferenceAccess | undefined {
+  if (value.MANAGED_INFERENCE_INSTALLATIONS) {
     return {
       kind: "installations",
-      installations: bindings.MANAGED_INFERENCE_INSTALLATIONS,
+      installations: value.MANAGED_INFERENCE_INSTALLATIONS,
     };
   }
-  // SAFETY: Managed deployments bind MANAGED_INFERENCE; standalone deployments omit it.
-  return bindings.MANAGED_INFERENCE
-    ? { kind: "service", service: bindings.MANAGED_INFERENCE }
+  return value.MANAGED_INFERENCE
+    ? { kind: "service", service: value.MANAGED_INFERENCE }
     : undefined;
 }
 

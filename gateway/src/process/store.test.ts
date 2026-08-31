@@ -594,6 +594,8 @@ describe("ProcessStore", () => {
         store.finishTraceSpan("context:trace-run", "ok", 140, {
           attributes: { messages: 3 },
         });
+        expect(store.getRunTraceStartedAt("trace-run")).toBe(100);
+        expect(store.getRunTraceStartedAt("missing-run")).toBeNull();
         store.register("dispatch-1", "call-1", "trace-run", "fs.read", {
           path: "/work/readme.md",
         });
