@@ -602,6 +602,7 @@ export async function handleProcIpcCall(
   options: {
     superviseAfterTimeout?: boolean;
     responsibilityId?: string;
+    onSupervisionScheduled?: (deadlineAt: number) => Promise<void>;
   } = {},
 ): Promise<ProcIpcCallResult> {
   const resolved = resolveSameOwnerIpc(args, ctx, "proc.ipc.call");
@@ -630,6 +631,7 @@ export async function handleProcIpcCall(
         intervalMs: timeoutMs,
         checkInCount: 0,
       });
+      await options.onSupervisionScheduled?.(deadlineAt);
     } else {
       await ctx.scheduleIpcCallTimeout(callId, deadlineAt);
     }

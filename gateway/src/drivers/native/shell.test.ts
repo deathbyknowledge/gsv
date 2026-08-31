@@ -1905,7 +1905,7 @@ describe("proc native command", () => {
     );
   });
 
-  it("assigns a responsibility before admitting delegated work", async () => {
+  it("schedules supervision before assigning and admitting delegated work", async () => {
     const responsibilityId = "r12y:11111111-1111-4111-8111-111111111111";
     const parent = makeProcess({
       processId: "task:shell",
@@ -1962,9 +1962,14 @@ describe("proc native command", () => {
         update,
         reclaimProcessAssignments: vi.fn(() => []),
       },
-      reconcileResponsibilityWake: vi.fn(async () => undefined),
+      reconcileResponsibilityWake: vi.fn(async () => {
+        order.push("responsibility wake scheduled");
+      }),
       ipcCalls,
-      scheduleIpcCallTimeout: vi.fn(async () => "timeout-schedule"),
+      scheduleIpcCallTimeout: vi.fn(async () => {
+        order.push("supervision scheduled");
+        return "timeout-schedule";
+      }),
       processRunId: "parent-run",
     });
     sendFrameToProcessMock.mockImplementation(async (_installationId, pid, frame) => {
@@ -1997,13 +2002,21 @@ describe("proc native command", () => {
     }, ctx);
 
     expect(result.ok).toBe(true);
-    expect(order).toEqual(["assigned", "delivered"]);
+    expect(order).toEqual([
+      "supervision scheduled",
+      "assigned",
+      "responsibility wake scheduled",
+      "delivered",
+    ]);
     expect(responsibility.assignee).toEqual({ kind: "process", processId: children[0] });
     expect(responsibility.state).toBe("active");
     expect(responsibility.leaseExpiresAtMs).toEqual(expect.any(Number));
     expect(ipcCalls.create).toHaveBeenCalledWith(expect.objectContaining({
       responsibilityId,
     }));
+    expect(responsibility.leaseExpiresAtMs).toBe(
+      ipcCalls.create.mock.calls[0]?.[0].deadlineAt,
+    );
     expect(result.stdout).toContain(`responsibility=${responsibilityId}`);
   });
 

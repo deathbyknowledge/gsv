@@ -268,25 +268,6 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
       const checkInMs = resolveIpcCallTimeoutMs(
         parsed.checkInMs ?? DEFAULT_DELEGATION_CHECK_IN_MS,
       );
-      if (responsibilityRollback) {
-        try {
-          const delegated = await handleResponsibilityUpdate({
-            id: responsibilityRollback.original.id,
-            expectedRevision: responsibilityRollback.original.revision,
-            patch: {
-              assignee: { kind: "process", processId: spawned.pid },
-              state: "active",
-              blocker: null,
-              nextCheckAtMs: null,
-              leaseExpiresAtMs: Date.now() + checkInMs,
-            },
-          }, ctx);
-          responsibilityRollback.delegatedRevision = delegated.responsibility.revision;
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          return delegateFailureResult(ctx, spawned.pid, message, responsibilityRollback);
-        }
-      }
       let result: Awaited<ReturnType<typeof handleProcIpcCall>>;
       try {
         const callArgs: ArgsOf<"proc.ipc.call"> = {
@@ -297,10 +278,27 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
         if (parsed.responsibilityId) {
           callArgs.metadata = { responsibilityId: parsed.responsibilityId };
         }
-        result = await handleProcIpcCall(callArgs, ctx, {
+        const callOptions: NonNullable<Parameters<typeof handleProcIpcCall>[2]> = {
           superviseAfterTimeout: true,
           responsibilityId: parsed.responsibilityId,
-        });
+        };
+        if (responsibilityRollback) {
+          callOptions.onSupervisionScheduled = async (deadlineAt) => {
+            const delegated = await handleResponsibilityUpdate({
+              id: responsibilityRollback.original.id,
+              expectedRevision: responsibilityRollback.original.revision,
+              patch: {
+                assignee: { kind: "process", processId: spawned.pid },
+                state: "active",
+                blocker: null,
+                nextCheckAtMs: null,
+                leaseExpiresAtMs: deadlineAt,
+              },
+            }, ctx);
+            responsibilityRollback.delegatedRevision = delegated.responsibility.revision;
+          };
+        }
+        result = await handleProcIpcCall(callArgs, ctx, callOptions);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return delegateFailureResult(ctx, spawned.pid, message, responsibilityRollback);
