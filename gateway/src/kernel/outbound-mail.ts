@@ -25,10 +25,6 @@ const OUTBOUND_ENQUEUE_RETRY_BASE_MS = 5_000;
 const OUTBOUND_ENQUEUE_RETRY_MAX_MS = 60 * 60 * 1_000;
 const TEXT_ENCODER = new TextEncoder();
 
-type ManagedOutboundBindings = {
-  MANAGED_MAIL_OUTBOUND?: Queue<ManagedOutboundMailCommand>;
-};
-
 type NormalizedMailSend = {
   deliveryId: string;
   text: string;
@@ -630,9 +626,7 @@ function containsAsciiControl(value: string): boolean {
 }
 
 function managedOutboundQueue(ctx: KernelContext): Queue<ManagedOutboundMailCommand> | undefined {
-  // SAFETY: managed mail deployment adds this optional binding to the shared
-  // Gateway Env; its absence is the supported standalone configuration.
-  return (ctx.env as Env & ManagedOutboundBindings).MANAGED_MAIL_OUTBOUND;
+  return ctx.env.MANAGED_MAIL_OUTBOUND;
 }
 
 class MailSendError extends Error {

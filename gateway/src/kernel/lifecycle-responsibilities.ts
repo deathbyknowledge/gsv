@@ -3,6 +3,7 @@ import type { DeviceRecord } from "./devices";
 import type { AdapterStatusRecord } from "./adapter-status";
 import type { FederationContactRecord } from "./federation-store";
 import { stableOpaqueId } from "../shared/stable-id";
+import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
 
 type AdapterTransitionOptions = {
   suppressAuthenticationRequired?: boolean;
@@ -181,6 +182,15 @@ export function recordAdapterStatusTransition(
       changed ||= outcome.created;
     }
     ctx.adapters.status.markReadyForOwner(current.adapter, current.accountId, ownerUid);
+    emitTelemetry(ctx.env, {
+      installationId: ctx.installationId,
+      component: "gateway",
+      event: {
+        stream: "product",
+        name: "adapter.connected",
+        properties: { adapter: current.adapter.trim().toLowerCase() },
+      },
+    });
   }
 
   const authenticationLost = previous?.ownerUid === ownerUid

@@ -112,8 +112,7 @@ export async function handleConnect(
   await ensureKernelBootstrapped(ctx);
 
   if (auth.isSetupMode()) {
-    // SAFETY: the Workers environment may expose the managed installation binding at runtime.
-    if ((ctx.env as Env & { INSTALLATION_DIRECTORY?: unknown }).INSTALLATION_DIRECTORY) {
+    if (ctx.env.INSTALLATION_DIRECTORY) {
       return {
         ok: false,
         code: 503,

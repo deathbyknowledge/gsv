@@ -38,9 +38,10 @@ import type { KernelConnection, KernelConnectionState } from "./connection";
 import type { PeerContext } from "./peer";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import type { ConnectionIdentity } from "./identity";
+import type { GatewayEnv } from "../runtime-env";
 
 export type KernelContext = {
-  env: Env;
+  env: GatewayEnv;
   installationId: string;
   installationIdentity: InstallationIdentity | null;
   auth: AuthStore;

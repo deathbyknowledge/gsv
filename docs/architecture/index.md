@@ -32,6 +32,7 @@ A good order is:
 8. [Targets and Capability Environments](./targets.md)
 9. [Unified Protocol Peers](./unified-protocol-peers.md)
 10. [Security Model](./security-model.md)
+11. [Telemetry](./telemetry.md)
 
 ## The Current Pillars
 
@@ -260,6 +261,8 @@ of chat integrations.
 - [Resource References and Lazy Binary Resolution](./resource-references.md)
   documents the implemented common file-reference and lazy byte-streaming
   contract used by Messages, Processes, adapters, Web, and Desktop.
+- [Telemetry](./telemetry.md) defines the optional provider-neutral event seam
+  and its privacy boundary.
 
 ## Deferred design proposals
 

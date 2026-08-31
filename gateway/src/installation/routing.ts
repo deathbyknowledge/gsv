@@ -4,13 +4,13 @@ import type {
   ManagedInstallationState,
 } from "@humansandmachines/gsv/protocol";
 import type { InstallationDirectoryService } from "@humansandmachines/gsv/services/directory";
-import type { InstallationOnboardingService } from "@humansandmachines/gsv/services/onboarding";
 import type { Kernel } from "../kernel/do";
 import {
   SINGLETON_INSTALLATION_ID,
   parseInstallationId,
   parseManagedInstallationId,
 } from "./identity";
+import type { GatewayEnv } from "../runtime-env";
 
 const PROCESS_DURABLE_OBJECT_PREFIX = "process:";
 const CONVERSATION_DURABLE_OBJECT_PREFIX = "conversation:";
@@ -158,9 +158,7 @@ function assertDurableObjectNameLength(name: string): void {
 function getGatewayInstallationRoutingSource(
   request: Request,
 ) {
-  // SAFETY: deployment variants expose these optional bindings through the
-  // generated Env shape only when present; access remains feature-gated below.
-  const bindings = env as Env & GatewayInstallationBindings;
+  const bindings: GatewayEnv = env;
   if (bindings.INSTALLATION_DIRECTORY) {
     return {
       kind: "multi" as const,
@@ -229,9 +227,3 @@ export async function getKernelByInstallationId(
 
 // TODO: this should move to wherever we put an actual implementation for it
 export type { InstallationDirectoryResult, InstallationDirectoryService };
-
-export type GatewayInstallationBindings = {
-  INSTALLATION_DIRECTORY?: InstallationDirectoryService & InstallationOnboardingService;
-  MANAGED_MAIL_OUTBOUND?: Queue<import("@humansandmachines/gsv/protocol").ManagedOutboundMailCommand>;
-  GSV_CANONICAL_ORIGIN?: string;
-};

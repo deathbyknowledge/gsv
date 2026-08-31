@@ -49,6 +49,9 @@ export type GsvRuntimeProps = {
   compatibility?: typeof GSV_WORKER_COMPATIBILITY;
   gatewayWorkersDev?: boolean | Cloudflare.Workers.WorkersDevConfig;
   observability?: Cloudflare.Workers.WorkerObservability;
+  telemetry?: {
+    tailConsumers: readonly (string | Cloudflare.Workers.Worker)[];
+  };
 };
 
 const adapterGatewayBindings = (
@@ -63,6 +66,16 @@ const adapterGatewayBindings = (
       ),
     ]),
   );
+
+const telemetryProducerObservability = {
+  enabled: true,
+  logs: {
+    enabled: true,
+    invocationLogs: false,
+    persist: false,
+  },
+  traces: { enabled: false },
+} satisfies Cloudflare.Workers.WorkerObservability;
 
 export const GsvRuntime = (props: GsvRuntimeProps) =>
   Effect.gen(function* () {
@@ -110,6 +123,25 @@ export const GsvRuntime = (props: GsvRuntimeProps) =>
     if (props.services?.mailOutbound) {
       managedBindings.MANAGED_MAIL_OUTBOUND = props.services.mailOutbound;
     }
+    const gatewayEnv: Cloudflare.Workers.WorkerBindingProps = {
+      KERNEL: Cloudflare.DurableObject("KERNEL", {
+        className: "Kernel",
+      }),
+      PROCESS: Cloudflare.DurableObject("PROCESS", {
+        className: "Process",
+      }),
+      CONVERSATION: Cloudflare.DurableObject("CONVERSATION", {
+        className: "Conversation",
+      }),
+      STORAGE: storageResource,
+      AI: Cloudflare.Workers.AI(),
+      RIPGIT: ripgitWorker,
+      LOADER: Cloudflare.WorkerLoader(),
+      ...managedBindings,
+      ...adapterGatewayBindings(adapters),
+      ...props.services?.extraBindings,
+    };
+    if (props.telemetry) gatewayEnv.GSV_TELEMETRY_ENABLED = "1";
     const gatewayWorker = Cloudflare.Worker(
       `${props.logicalPrefix}Gateway`,
       {
@@ -118,30 +150,19 @@ export const GsvRuntime = (props: GsvRuntimeProps) =>
         bundle: false,
         compatibility,
         workersDev: props.gatewayWorkersDev ?? false,
-        observability: props.observability ?? { enabled: true },
+        observability: props.observability
+          ?? (props.telemetry
+            ? telemetryProducerObservability
+            : { enabled: true }),
+        tailConsumers: props.telemetry
+          ? [...props.telemetry.tailConsumers]
+          : undefined,
         assets: {
           directory: props.paths.webAssets,
           notFoundHandling: "single-page-application",
           runWorkerFirst: ["/*"],
         },
-        env: {
-          KERNEL: Cloudflare.DurableObject("KERNEL", {
-            className: "Kernel",
-          }),
-          PROCESS: Cloudflare.DurableObject("PROCESS", {
-            className: "Process",
-          }),
-          CONVERSATION: Cloudflare.DurableObject("CONVERSATION", {
-            className: "Conversation",
-          }),
-          STORAGE: storageResource,
-          AI: Cloudflare.Workers.AI(),
-          RIPGIT: ripgitWorker,
-          LOADER: Cloudflare.WorkerLoader(),
-          ...managedBindings,
-          ...adapterGatewayBindings(adapters),
-          ...props.services?.extraBindings,
-        },
+        env: gatewayEnv,
       },
     ).pipe(retain());
 
