@@ -439,7 +439,7 @@ async function routeAdapterServiceFrame(
 }
 
 async function routeAdapterLinkedPeerFrame(
-  bindings: Env & GatewayInstallationBindings,
+  bindings: GatewayEnv,
   installation: AdapterInstallationContext,
   profile: ServicePeerProfile,
   context: AdapterLinkedPeerContext,
