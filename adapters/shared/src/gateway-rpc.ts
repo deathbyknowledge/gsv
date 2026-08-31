@@ -19,7 +19,6 @@ import {
   adapterStateUpdateResultSchema,
 } from "../../../packages/gsv/src/protocol/syscalls/adapter.js";
 import { cancelBinaryBody } from "./media-body";
-import { LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID } from "./installation";
 import type {
   AdapterInstallationContext,
   AdapterInboundResult,
@@ -51,9 +50,7 @@ export async function callLinkedAdapterGateway(
     call,
     args: projectJsonMetadata(args),
   };
-  const response = installation.installationId === LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID
-    ? await gateway.linkedPeerFrame(context, frame)
-    : await gateway.linkedPeerFrame(installation, context, frame);
+  const response = await gateway.linkedPeerFrame(installation, context, frame);
   const responseBody = response && "body" in response ? response.body : undefined;
   await cancelBinaryBody(responseBody, "Linked adapter response body is unsupported");
   if (!response || response.type !== "res" || response.id !== frame.id) {
@@ -137,9 +134,7 @@ export async function callAdapterGateway(
 
   let response: GatewayFrame | null;
   try {
-    response = installation.installationId === LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID
-      ? await gateway.serviceFrame(frame)
-      : await gateway.serviceFrame(installation, frame);
+    response = await gateway.serviceFrame(installation, frame);
   } catch (error) {
     await cancelBinaryBody(body, error);
     throw error;

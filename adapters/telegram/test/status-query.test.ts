@@ -17,7 +17,7 @@ describe("Telegram status queries", () => {
       { TELEGRAM_ACCOUNT: { idFromName, get } },
     ]) as TelegramChannel;
 
-    await expect(entrypoint.adapterStatus("primary"))
+    await expect(entrypoint.adapterStatus({ installationId: "singleton" }, "primary"))
       .rejects.toThrow("temporary account RPC failure");
     expect(idFromName).toHaveBeenCalledTimes(1);
     expect(get).toHaveBeenCalledWith(durableObjectId);

@@ -6,18 +6,6 @@ import {
   LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
   parseAdapterInstallationContext,
 } from "../../shared/src/installation";
-import {
-  resolveAdapterActivityRpcArgs,
-  resolveAdapterConnectRpcArgs,
-  resolveAdapterDisconnectRpcArgs,
-  resolveAdapterSendRpcArgs,
-  resolveAdapterStatusRpcArgs,
-  type AdapterActivityRpcArgs,
-  type AdapterConnectRpcArgs,
-  type AdapterDisconnectRpcArgs,
-  type AdapterSendRpcArgs,
-  type AdapterStatusRpcArgs,
-} from "../../shared/src/rpc-compat";
 import type {
   AdapterAccountStatus,
   AdapterActivity,
@@ -86,7 +74,6 @@ export class TelegramChannel
         status: true,
         activity: true,
         pairing: false,
-        deliveryFrames: true,
         surfaces: ["dm", "group", "channel", "thread"],
         media: {
           inbound: ["image", "audio", "video", "document"],
@@ -105,7 +92,7 @@ export class TelegramChannel
     const parsed = parseAdapterInstallationContext(installation);
     const { account } = this.getAccountDO(parsed, context.accountId);
     return await handleAdapterFrame(this.adapterId, parsed, context, frame, body, {
-      send: async (message, requestBody) => await this.#adapterSendForInstallation(
+      send: async (message, requestBody) => await this.#sendForInstallation(
         parsed,
         context.accountId,
         message,
@@ -118,23 +105,17 @@ export class TelegramChannel
   }
 
   async adapterConnect(
-    accountId: string,
-    config?: AdapterConnectConfig,
-  ): Promise<AdapterConnectResult>;
-  async adapterConnect(
     installation: AdapterInstallationContext,
     accountId: string,
-    config?: AdapterConnectConfig,
-  ): Promise<AdapterConnectResult>;
-  async adapterConnect(...args: AdapterConnectRpcArgs): Promise<AdapterConnectResult> {
-    const resolved = resolveAdapterConnectRpcArgs(args);
-    const config = telegramConnectConfigSchema.safeParse(resolved.config);
+    inputConfig: AdapterConnectConfig = {},
+  ): Promise<AdapterConnectResult> {
+    const config = telegramConnectConfigSchema.safeParse(inputConfig);
     if (!config.success) {
       return { ok: false, error: "Telegram adapter config is invalid" };
     }
     return await this.#adapterConnectForInstallation(
-      resolved.installation,
-      resolved.accountId,
+      installation,
+      accountId,
       config.data,
     );
   }
@@ -200,17 +181,12 @@ export class TelegramChannel
   }
 
   async adapterDisconnect(
-    accountId: string,
-  ): Promise<AdapterDisconnectResult>;
-  async adapterDisconnect(
     installation: AdapterInstallationContext,
     accountId: string,
-  ): Promise<AdapterDisconnectResult>;
-  async adapterDisconnect(...args: AdapterDisconnectRpcArgs): Promise<AdapterDisconnectResult> {
-    const resolved = resolveAdapterDisconnectRpcArgs(args);
+  ): Promise<AdapterDisconnectResult> {
     return await this.#adapterDisconnectForInstallation(
-      resolved.installation,
-      resolved.accountId,
+      installation,
+      accountId,
     );
   }
 
@@ -232,17 +208,12 @@ export class TelegramChannel
   }
 
   async adapterStatus(
-    accountId?: string,
-  ): Promise<AdapterAccountStatus[]>;
-  async adapterStatus(
     installation: AdapterInstallationContext,
     accountId?: string,
-  ): Promise<AdapterAccountStatus[]>;
-  async adapterStatus(...args: AdapterStatusRpcArgs): Promise<AdapterAccountStatus[]> {
-    const resolved = resolveAdapterStatusRpcArgs(args);
+  ): Promise<AdapterAccountStatus[]> {
     return await this.#adapterStatusForInstallation(
-      resolved.installation,
-      resolved.accountId,
+      installation,
+      accountId,
     );
   }
 
@@ -260,28 +231,7 @@ export class TelegramChannel
     return [await account.getStatus()];
   }
 
-  async adapterSend(
-    accountId: string,
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ): Promise<AdapterSendResult>;
-  async adapterSend(
-    installation: AdapterInstallationContext,
-    accountId: string,
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ): Promise<AdapterSendResult>;
-  async adapterSend(...args: AdapterSendRpcArgs): Promise<AdapterSendResult> {
-    const resolved = await resolveAdapterSendRpcArgs(args);
-    return await this.#adapterSendForInstallation(
-      resolved.installation,
-      resolved.accountId,
-      resolved.message,
-      resolved.body,
-    );
-  }
-
-  async #adapterSendForInstallation(
+  async #sendForInstallation(
     installation: AdapterInstallationContext,
     accountId: string,
     message: AdapterOutboundMessage,
@@ -303,25 +253,16 @@ export class TelegramChannel
   }
 
   async adapterSetActivity(
-    accountId: string,
-    surface: AdapterSurface,
-    activity: AdapterActivity,
-  ): Promise<{ ok: true } | { ok: false; error: string }>;
-  async adapterSetActivity(
     installation: AdapterInstallationContext,
     accountId: string,
     surface: AdapterSurface,
     activity: AdapterActivity,
-  ): Promise<{ ok: true } | { ok: false; error: string }>;
-  async adapterSetActivity(
-    ...args: AdapterActivityRpcArgs
   ): Promise<{ ok: true } | { ok: false; error: string }> {
-    const resolved = resolveAdapterActivityRpcArgs(args);
     return await this.#adapterSetActivityForInstallation(
-      resolved.installation,
-      resolved.accountId,
-      resolved.surface,
-      resolved.activity,
+      installation,
+      accountId,
+      surface,
+      activity,
     );
   }
 

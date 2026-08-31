@@ -1688,7 +1688,6 @@ describe("Kernel process signal routing", () => {
             status: true,
             activity: true,
             pairing: false,
-            deliveryFrames: true,
             surfaces: ["dm"],
             media: { inbound: [], outbound: [] },
           },
@@ -2476,50 +2475,6 @@ describe("Kernel adapter route replies", () => {
     expiresAt: 2,
   };
 
-  function replyContext(options: {
-    authorized: boolean;
-    adapterSend: ReturnType<typeof vi.fn>;
-    linkGeneration?: string;
-    personal?: boolean;
-    currentMode?: "work" | null;
-  }) {
-    const link = options.authorized
-      ? {
-          adapter: "telegram",
-          accountId: "bot",
-          actorId: "telegram:user:42",
-          uid: 1000,
-          metadata: {
-            managed: true,
-            surfaceKind: "dm",
-            surfaceId: "chat-42",
-            routeGeneration: options.linkGeneration ?? "generation-42",
-          },
-        }
-      : null;
-    return {
-      env: { CHANNEL_TELEGRAM: { adapterSend: options.adapterSend } },
-      installationId: TEST_INSTALLATION_ID,
-      procs: {
-        get: vi.fn(() => ({
-          processId: "proc-1",
-          ownerUid: 1000,
-          isPersonalController: options.personal ?? true,
-        })),
-      },
-      adapters: {
-        identityLinks: { get: vi.fn(() => link) },
-        surfaceRoutes: {
-          get: vi.fn(() => null),
-          resolveRoute: vi.fn(() => options.currentMode
-            ? { pid: "proc:selected-work", mode: options.currentMode }
-            : null),
-        },
-        privateDestinations: { clearIfMatches: vi.fn(() => false) },
-      },
-    };
-  }
-
   it("starts adapter typing from the process lifecycle signal", async () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSetActivity = vi.fn(async () => ({ ok: true as const }));
@@ -2536,6 +2491,7 @@ describe("Kernel adapter route replies", () => {
 
     expect(adapterSetActivity).toHaveBeenCalledTimes(1);
     expect(adapterSetActivity).toHaveBeenCalledWith(
+      { installationId: TEST_INSTALLATION_ID },
       route.destination.accountId,
       route.destination.surface,
       {
@@ -2543,203 +2499,6 @@ describe("Kernel adapter route replies", () => {
         active: true,
         routeGeneration: "generation-42",
       },
-    );
-  });
-
-  it("permanently drops a directed message after destination authorization is revoked", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const }));
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
-    kernel.buildProcessContext = vi.fn(() => replyContext({
-      authorized: false,
-      adapterSend,
-    }));
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-    await expect(kernel.deliverAdapterRouteReply(route, {
-      deliveryId: "run-adapter-reply:finished",
-      text: "must not retry",
-    })).resolves.toEqual({
-      state: "permanent",
-      error: "Adapter destination is not authorized",
-    });
-
-    expect(adapterSend).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("Dropping revoked adapter reply route run-adapter-reply"),
-    );
-    warn.mockRestore();
-  });
-
-  it("does not deliver an old run route after the same Telegram identity is relinked", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const }));
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
-    kernel.buildProcessContext = vi.fn(() => replyContext({
-      authorized: true,
-      adapterSend,
-      linkGeneration: "generation-new",
-    }));
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-    await expect(kernel.deliverAdapterRouteReply(route, {
-      deliveryId: "run-adapter-reply:stale",
-      text: "old output",
-    })).resolves.toEqual({
-      state: "permanent",
-      error: "Adapter reply failed (telegram): Adapter route changed before delivery",
-    });
-
-    expect(adapterSend).not.toHaveBeenCalled();
-    warn.mockRestore();
-  });
-
-  it("propagates transient directed message delivery failures for retry handling", async () => {
-    const adapterSend = vi.fn(async () => ({
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      ok: false as const,
-      error: "Telegram temporarily unavailable",
-      retryable: true,
-    }));
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
-    kernel.buildProcessContext = vi.fn(() => replyContext({
-      authorized: true,
-      adapterSend,
-    }));
-
-    const outcome = await kernel.deliverAdapterRouteReply(route, {
-      deliveryId: "run-adapter-reply:finished",
-      text: "retry this",
-    });
-    expect(outcome).toEqual({
-      state: "retryable",
-      error: "Adapter reply failed (telegram): Telegram delivery is temporarily unavailable",
-    });
-    expect(JSON.stringify(outcome)).not.toContain("bot");
-    expect(JSON.stringify(outcome)).not.toContain("chat-42");
-    expect(adapterSend).toHaveBeenCalledWith(
-      "bot",
-      {
-        deliveryId: "run-adapter-reply:finished",
-        surface: { kind: "dm", id: "chat-42", threadId: undefined },
-        actorId: "telegram:user:42",
-        text: "retry this",
-        media: undefined,
-        replyToId: "incoming-42",
-        routeGeneration: "generation-42",
-      },
-      undefined,
-    );
-  });
-
-  it.each([
-    {
-      label: "work output",
-      personal: false,
-      currentMode: null,
-      expected: "[WORK SESSION] late work result",
-    },
-    {
-      label: "late personal output after selecting work",
-      personal: true,
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      currentMode: "work" as const,
-      expected: "[PERSONAL INTELLIGENCE] late work result",
-    },
-  ])("labels $label on a private surface", async ({
-    personal,
-    currentMode,
-    expected,
-  }) => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const }));
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
-    kernel.buildProcessContext = vi.fn(() => replyContext({
-      authorized: true,
-      adapterSend,
-      personal,
-      currentMode,
-    }));
-
-    await kernel.deliverAdapterRouteReply(route, {
-      deliveryId: `run-adapter-reply:label:${personal}`,
-      text: "late work result",
-    });
-
-    expect(adapterSend).toHaveBeenCalledWith(
-      "bot",
-      expect.objectContaining({ text: expected }),
-      undefined,
-    );
-  });
-
-  it("streams legacy conversation-owned media through the adapter body", async () => {
-    let deliveredBytes: Uint8Array | undefined;
-    const adapterSend = vi.fn(async (
-      _accountId: string,
-      _message: KernelTestValue,
-      body?: { stream: ReadableStream<Uint8Array> },
-    ) => {
-      deliveredBytes = body
-        ? new Uint8Array(await new Response(body.stream).arrayBuffer())
-        : undefined;
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      return { ok: true as const };
-    });
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
-    const key = `conversations/conv%3Ahome/media/msg%3Aone/0`;
-    kernel.installationId = TEST_INSTALLATION_ID;
-    getConversationByIdMock.mockReturnValueOnce({
-      readMedia: vi.fn(async () => ({
-        key,
-        mimeType: "application/pdf",
-        size: 3,
-        stream: new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.enqueue(new Uint8Array([7, 8, 9]));
-            controller.close();
-          },
-        }),
-      })),
-    });
-    kernel.buildProcessContext = vi.fn(() => replyContext({
-      authorized: true,
-      adapterSend,
-    }));
-    const bundle = await kernel.bundleConversationReplyMedia("conv:home", [{
-      type: "document",
-      mimeType: "application/pdf",
-      filename: "report.pdf",
-      key,
-      conversationId: "conv:home",
-      size: 3,
-    }], 1001);
-
-    await kernel.deliverAdapterRouteReply(route, {
-      deliveryId: "run-adapter-reply:finished",
-      text: "Here it is.",
-      media: bundle.media,
-    }, bundle.body);
-
-    expect(deliveredBytes && [...deliveredBytes]).toEqual([7, 8, 9]);
-    expect(adapterSend).toHaveBeenCalledWith(
-      "bot",
-      expect.objectContaining({
-        text: "Here it is.",
-        media: [{
-          type: "document",
-          mimeType: "application/pdf",
-          filename: "report.pdf",
-          size: 3,
-          body: { offset: 0, length: 3 },
-        }],
-      }),
-      expect.objectContaining({ length: 3 }),
     );
   });
 

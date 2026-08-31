@@ -1,22 +1,9 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { handleAdapterFrame } from "../../shared/src/adapter-frame";
-import { cancelBinaryBody } from "../../shared/src/media-body";
 import {
   adapterAccountDurableObjectName,
   parseAdapterInstallationContext,
 } from "../../shared/src/installation";
-import {
-  resolveAdapterActivityRpcArgs,
-  resolveAdapterConnectRpcArgs,
-  resolveAdapterDisconnectRpcArgs,
-  resolveAdapterSendRpcArgs,
-  resolveAdapterStatusRpcArgs,
-  type AdapterActivityRpcArgs,
-  type AdapterConnectRpcArgs,
-  type AdapterDisconnectRpcArgs,
-  type AdapterSendRpcArgs,
-  type AdapterStatusRpcArgs,
-} from "../../shared/src/rpc-compat";
 import type {
   AdapterAccountStatus,
   AdapterActivity,
@@ -24,9 +11,7 @@ import type {
   AdapterConnectResult,
   AdapterDisconnectResult,
   AdapterInstallationContext,
-  AdapterOutboundMessage,
   AdapterPeerDeliveryContext,
-  AdapterSendResult,
   AdapterService,
   AdapterServiceDescriptor,
   AdapterSurface,
@@ -63,7 +48,6 @@ export class WhatsAppChannelEntrypoint
         status: true,
         activity: true,
         pairing: false,
-        deliveryFrames: true,
         surfaces: ["dm", "group"],
         media: {
           inbound: ["image", "audio", "video", "document"],
@@ -94,23 +78,17 @@ export class WhatsAppChannelEntrypoint
   }
 
   async adapterConnect(
-    accountId: string,
-    config?: AdapterConnectConfig,
-  ): Promise<AdapterConnectResult>;
-  async adapterConnect(
     installation: AdapterInstallationContext,
     accountId: string,
-    config?: AdapterConnectConfig,
-  ): Promise<AdapterConnectResult>;
-  async adapterConnect(...args: AdapterConnectRpcArgs): Promise<AdapterConnectResult> {
-    const resolved = resolveAdapterConnectRpcArgs(args);
-    const config = whatsappConnectConfigSchema.safeParse(resolved.config);
+    inputConfig: AdapterConnectConfig = {},
+  ): Promise<AdapterConnectResult> {
+    const config = whatsappConnectConfigSchema.safeParse(inputConfig);
     if (!config.success) {
       return { ok: false, error: "WhatsApp adapter config is invalid" };
     }
     return await this.#adapterConnectForInstallation(
-      resolved.installation,
-      resolved.accountId,
+      installation,
+      accountId,
       config.data,
     );
   }
@@ -157,17 +135,12 @@ export class WhatsAppChannelEntrypoint
   }
 
   async adapterDisconnect(
-    accountId: string,
-  ): Promise<AdapterDisconnectResult>;
-  async adapterDisconnect(
     installation: AdapterInstallationContext,
     accountId: string,
-  ): Promise<AdapterDisconnectResult>;
-  async adapterDisconnect(...args: AdapterDisconnectRpcArgs): Promise<AdapterDisconnectResult> {
-    const resolved = resolveAdapterDisconnectRpcArgs(args);
+  ): Promise<AdapterDisconnectResult> {
     return await this.#adapterDisconnectForInstallation(
-      resolved.installation,
-      resolved.accountId,
+      installation,
+      accountId,
     );
   }
 
@@ -189,17 +162,12 @@ export class WhatsAppChannelEntrypoint
   }
 
   async adapterStatus(
-    accountId?: string,
-  ): Promise<AdapterAccountStatus[]>;
-  async adapterStatus(
     installation: AdapterInstallationContext,
     accountId?: string,
-  ): Promise<AdapterAccountStatus[]>;
-  async adapterStatus(...args: AdapterStatusRpcArgs): Promise<AdapterAccountStatus[]> {
-    const resolved = resolveAdapterStatusRpcArgs(args);
+  ): Promise<AdapterAccountStatus[]> {
     return await this.#adapterStatusForInstallation(
-      resolved.installation,
-      resolved.accountId,
+      installation,
+      accountId,
     );
   }
 
@@ -215,70 +183,17 @@ export class WhatsAppChannelEntrypoint
     ).getAccountStatus(accountId)];
   }
 
-  async adapterSend(
-    accountId: string,
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ): Promise<AdapterSendResult>;
-  async adapterSend(
-    installation: AdapterInstallationContext,
-    accountId: string,
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ): Promise<AdapterSendResult>;
-  async adapterSend(...args: AdapterSendRpcArgs): Promise<AdapterSendResult> {
-    const resolved = await resolveAdapterSendRpcArgs(args);
-    return await this.#adapterSendForInstallation(
-      resolved.installation,
-      resolved.accountId,
-      resolved.message,
-      resolved.body,
-    );
-  }
-
-  async #adapterSendForInstallation(
-    installation: AdapterInstallationContext,
-    accountId: string,
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ): Promise<AdapterSendResult> {
-    try {
-      const parsedInstallation = parseAdapterInstallationContext(installation);
-      return await this.getAccount(
-        parsedInstallation,
-        accountId,
-      ).sendAccountMessage(
-        accountId,
-        message,
-        body,
-      );
-    } catch (error) {
-      await cancelBinaryBody(body, error);
-      logWhatsApp("error", "send_failed", errorFields(error));
-      return { ok: false, error: errorMessage(error), retryable: true };
-    }
-  }
-
-  async adapterSetActivity(
-    accountId: string,
-    surface: AdapterSurface,
-    activity: AdapterActivity,
-  ): Promise<{ ok: true } | { ok: false; error: string }>;
   async adapterSetActivity(
     installation: AdapterInstallationContext,
     accountId: string,
     surface: AdapterSurface,
     activity: AdapterActivity,
-  ): Promise<{ ok: true } | { ok: false; error: string }>;
-  async adapterSetActivity(
-    ...args: AdapterActivityRpcArgs
   ): Promise<{ ok: true } | { ok: false; error: string }> {
-    const resolved = resolveAdapterActivityRpcArgs(args);
     return await this.#adapterSetActivityForInstallation(
-      resolved.installation,
-      resolved.accountId,
-      resolved.surface,
-      resolved.activity,
+      installation,
+      accountId,
+      surface,
+      activity,
     );
   }
 

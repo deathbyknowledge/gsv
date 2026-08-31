@@ -37,8 +37,7 @@ export type {
   AdapterSurfaceKind,
   AdapterWorkerConnectResult as AdapterConnectResult,
   AdapterWorkerDisconnectResult as AdapterDisconnectResult,
-  AdapterWorkerInterface,
-  AdapterWorkerSendResult as AdapterSendResult,
+  AdapterProviderSendResult as AdapterSendResult,
 } from "../../../packages/gsv/src/protocol/adapters.js";
 export type { BinaryBody } from "../../../packages/gsv/src/protocol/body.js";
 export type { ProcHilRequest } from "../../../packages/gsv/src/protocol/syscalls/proc.js";

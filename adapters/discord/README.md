@@ -99,7 +99,7 @@ Discord Gateway API (wss://gateway.discord.gg)
         ↓ Service Binding RPC
 ┌─────────────────────────────────────────┐
 │  DiscordChannel (WorkerEntrypoint)      │
-│  - adapterSend() → Discord REST API     │
+│  - adapterFrame() → Discord REST API    │
 │  - adapterSetActivity() → Discord API   │
 └─────────────────────────────────────────┘
 ```

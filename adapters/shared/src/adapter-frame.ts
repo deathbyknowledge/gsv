@@ -6,7 +6,7 @@ import {
   type AdapterOutboundMessage,
   type AdapterPeerDeliveryContext,
   type AdapterPeerSignalFrame,
-  type AdapterWorkerSendResult,
+  type AdapterProviderSendResult,
 } from "../../../packages/gsv/src/protocol/adapters.js";
 import { cancelBinaryBody } from "../../../packages/gsv/src/protocol/adapter-media-body.js";
 import type { BinaryBody } from "../../../packages/gsv/src/protocol/body.js";
@@ -17,7 +17,7 @@ import type {
 import { adapterSendArgsSchema } from "../../../packages/gsv/src/protocol/syscalls/adapter.js";
 
 export type AdapterFrameHandlers = {
-  send(message: AdapterOutboundMessage, body?: BinaryBody): Promise<AdapterWorkerSendResult>;
+  send(message: AdapterOutboundMessage, body?: BinaryBody): Promise<AdapterProviderSendResult>;
   acceptSignal(
     context: AdapterPeerDeliveryContext,
     frame: AdapterPeerSignalFrame,
@@ -89,7 +89,7 @@ export async function handleAdapterFrame(
   if (args.replyToId !== undefined) message.replyToId = args.replyToId;
   if (args.media !== undefined) message.media = args.media;
 
-  let result: AdapterWorkerSendResult;
+  let result: AdapterProviderSendResult;
   try {
     result = await handlers.send(message, inputFrame.body);
   } catch {
@@ -154,7 +154,7 @@ function validateSendContext(
 function publicSendResult(
   adapter: string,
   context: AdapterPeerDeliveryContext,
-  result: AdapterWorkerSendResult,
+  result: AdapterProviderSendResult,
 ): AdapterSendResult {
   if (!result.ok) {
     if (result.ambiguous) {

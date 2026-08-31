@@ -113,9 +113,8 @@ call the Gateway's single `serviceFrame` entrypoint for `adapter.inbound` and
 `adapter.state.update`. In the other direction, the Gateway calls one
 `adapterFrame` carrier with ordinary `req`, `res`, and `sig` frames. Explicit
 `adapter.send` is a correlated request; directed Process delivery is
-`message.committed` or `proc.run.hil.requested`. The older typed `adapterSend`
-method remains only as a rolling-upgrade bridge; the authoritative
-`deliveryFrames` descriptor capability selects the canonical carrier.
+`message.committed` or `proc.run.hil.requested`. The descriptor's `send`
+capability advertises support; `adapterFrame` is the only outbound carrier.
 
 The canonical adapter identity comes from the trusted `CHANNEL_*` service
 binding. A descriptor must agree with that identity and cannot grant its Worker
@@ -146,9 +145,10 @@ thread to have been observed for that author before it will deliver there.
 
 Managed account objects use a collision-free internal name derived from
 `installationId` and the installation-local `accountId`. The explicit
-`singleton` compatibility installation retains the historical unscoped
-account name, so upgrading a standalone Telegram, Discord, WhatsApp, or test
-adapter reaches its existing Durable Object and provider session. Adapter
+`singleton` installation context retains the historical account object name,
+so upgrading a standalone Telegram, Discord, WhatsApp, or test adapter reaches
+its existing Durable Object and provider session. RPCs still carry
+`{ installationId: "singleton" }` explicitly. Adapter
 alarms and retries recover the installation context from the named Durable
 Object before calling the Gateway. Managed Telegram and Slack recover it from
 the peer's generation-fenced active route. They do not depend on a browser

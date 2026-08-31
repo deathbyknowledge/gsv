@@ -32,7 +32,6 @@ import {
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { PrivateAdapterDestinationStore } from "./private-adapter-destinations";
 import type {
-  AdapterOutboundMessage,
   AdapterService,
   AdapterServiceDescriptor,
 } from "../adapter-interface";
@@ -67,6 +66,32 @@ type MakeContextOptions = {
 };
 // SAFETY: test fixture is constructed with the asserted kernel domain shape.
 const TEST_INSTALLATION_ID = "singleton" as KernelContext["installationId"];
+
+function successfulAdapterFrame(adapter: string, messageId: string) {
+  return vi.fn(async (
+    _installation: Parameters<NonNullable<AdapterService["adapterFrame"]>>[0],
+    context: Parameters<NonNullable<AdapterService["adapterFrame"]>>[1],
+    frame: Parameters<NonNullable<AdapterService["adapterFrame"]>>[2],
+  ) => {
+    if (frame.type !== "req" || frame.call !== "adapter.send") {
+      throw new Error("Expected an adapter.send request frame");
+    }
+    return {
+      type: "res" as const,
+      id: frame.id,
+      ok: true as const,
+      data: {
+        ok: true as const,
+        adapter,
+        accountId: context.accountId,
+        surfaceId: context.surface.id,
+        deliveryId: context.deliveryId,
+        messageId,
+        deliveryState: "sent" as const,
+      },
+    };
+  });
+}
 
 function makeStorageBucket() {
   return {
@@ -719,11 +744,21 @@ describe("adapter lifecycle handlers", () => {
 
   it("adapter.list discovers deployed adapter bindings and cached accounts", async () => {
     const whatsappService = {
-      adapterConnect: vi.fn(),
-      adapterDisconnect: vi.fn(),
-      adapterSend: vi.fn(),
-      adapterStatus: vi.fn(),
-      adapterSetActivity: vi.fn(),
+      adapterDescribe: vi.fn(async () => ({
+        version: 1 as const,
+        id: "whatsapp",
+        displayName: "WhatsApp",
+        capabilities: {
+          connect: true,
+          disconnect: true,
+          send: true,
+          status: true,
+          activity: true,
+          pairing: false,
+          surfaces: ["dm"] as const,
+          media: { inbound: [] as const, outbound: [] as const },
+        },
+      })),
     };
     const status = {
       upsert: vi.fn(),
@@ -755,7 +790,23 @@ describe("adapter lifecycle handlers", () => {
     const ctx = makeContext(
       {
         CHANNEL_WHATSAPP: whatsappService,
-        CHANNEL_DISCORD: { adapterStatus: vi.fn() },
+        CHANNEL_DISCORD: {
+          adapterDescribe: vi.fn(async () => ({
+            version: 1 as const,
+            id: "discord",
+            displayName: "Discord",
+            capabilities: {
+              connect: false,
+              disconnect: false,
+              send: false,
+              status: true,
+              activity: false,
+              pairing: false,
+              surfaces: ["dm"] as const,
+              media: { inbound: [] as const, outbound: [] as const },
+            },
+          })),
+        },
       },
       status,
     );
@@ -847,23 +898,6 @@ describe("adapter lifecycle handlers", () => {
       supportsPairing: false,
       accounts: [],
     }]);
-  });
-
-  it("discovers send support from a frame-only adapter binding", async () => {
-    const ctx = makeContext({
-      CHANNEL_MATRIX: { adapterFrame: vi.fn() },
-    }, {
-      upsert: vi.fn(),
-      listAll: vi.fn(() => []),
-    });
-
-    expect((await handleAdapterList({}, ctx)).adapters).toEqual([
-      expect.objectContaining({
-        adapter: "matrix",
-        available: true,
-        supportsSend: true,
-      }),
-    ]);
   });
 
   it("adapter.list filters cached accounts to non-root identity links", async () => {
@@ -1132,8 +1166,10 @@ describe("adapter lifecycle handlers", () => {
 
     const result = await handleAdapterStatus({ adapter: "whatsapp" }, ctx);
 
-    expect(adapterStatus).toHaveBeenCalledWith("primary");
-    expect(adapterStatus).not.toHaveBeenCalledWith(undefined);
+    expect(adapterStatus).toHaveBeenCalledWith(
+      { installationId: TEST_INSTALLATION_ID },
+      "primary",
+    );
     expect(status.upsert).toHaveBeenCalledTimes(1);
     expect(status.upsert).toHaveBeenCalledWith(
       "whatsapp",
@@ -1308,7 +1344,10 @@ describe("adapter lifecycle handlers", () => {
     const result = await handleAdapterStatus({ adapter: "telegram" }, ctx);
 
     expect(listLinks).toHaveBeenCalledWith(1000);
-    expect(adapterStatus).toHaveBeenCalledWith("bot");
+    expect(adapterStatus).toHaveBeenCalledWith(
+      { installationId: TEST_INSTALLATION_ID },
+      "bot",
+    );
     expect(result.accounts).toEqual([
       expect.objectContaining({
         accountId: "bot",
@@ -1368,6 +1407,7 @@ describe("adapter lifecycle handlers", () => {
     );
 
     expect(service.adapterConnect).toHaveBeenCalledWith(
+      { installationId: TEST_INSTALLATION_ID },
       "default",
       undefined,
     );
@@ -1382,8 +1422,8 @@ describe("adapter lifecycle handlers", () => {
     expect(status.upsert).toHaveBeenCalled();
   });
 
-  it("uses already-deployed managed adapter method names and scoped arities", async () => {
-    const installationId = "inst_adapter_rpc_compat";
+  it("uses one installation-scoped adapter service contract", async () => {
+    const installationId = "inst_adapter_rpc";
     const installation = { installationId };
     const adapterConnect = vi.fn(async () => ({
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -1393,11 +1433,7 @@ describe("adapter lifecycle handlers", () => {
     }));
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterDisconnect = vi.fn(async () => ({ ok: true as const }));
-    const adapterSend = vi.fn(async () => ({
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      ok: true as const,
-      messageId: "managed-message-1",
-    }));
+    const adapterFrame = successfulAdapterFrame("whatsapp", "managed-message-1");
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSetActivity = vi.fn(async () => ({ ok: true as const }));
     const adapterStatus = vi.fn(async () => [{
@@ -1408,7 +1444,7 @@ describe("adapter lifecycle handlers", () => {
     const service = {
       adapterConnect,
       adapterDisconnect,
-      adapterSend,
+      adapterFrame,
       adapterSetActivity,
       adapterStatus,
     };
@@ -1451,11 +1487,17 @@ describe("adapter lifecycle handlers", () => {
     expect(adapterConnect).toHaveBeenCalledWith(installation, "primary", undefined);
     expect(adapterStatus).toHaveBeenCalledWith(installation, "primary");
     expect(adapterDisconnect).toHaveBeenCalledWith(installation, "primary");
-    expect(adapterSend).toHaveBeenCalledWith(
+    expect(adapterFrame).toHaveBeenCalledWith(
       installation,
-      "primary",
-      expect.objectContaining({ deliveryId: "managed-delivery-1" }),
-      undefined,
+      expect.objectContaining({
+        accountId: "primary",
+        deliveryId: "managed-delivery-1",
+      }),
+      expect.objectContaining({
+        type: "req",
+        call: "adapter.send",
+        args: expect.objectContaining({ deliveryId: "managed-delivery-1" }),
+      }),
     );
     expect(adapterSetActivity).toHaveBeenCalledWith(
       installation,
@@ -4150,18 +4192,33 @@ describe("adapter lifecycle handlers", () => {
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       } as ReadableStream<Uint8Array>,
     };
-    const adapterSend = vi.fn(async (
-      _accountId: string,
-      _message: AdapterOutboundMessage,
-      forwardedBody: BinaryBody,
+    const adapterFrame: NonNullable<AdapterService["adapterFrame"]> = vi.fn(async (
+      _installation,
+      context,
+      frame,
     ) => {
-      expect(forwardedBody).toBe(body);
+      if (frame.type !== "req" || frame.call !== "adapter.send") {
+        throw new Error("Expected an adapter.send request frame");
+      }
+      expect(frame.body).toBe(body);
       expect(getReader).not.toHaveBeenCalled();
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      return { ok: true as const, messageId: "outbound-1" };
+      return {
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: {
+          ok: true,
+          adapter: "whatsapp",
+          accountId: context.accountId,
+          surfaceId: context.surface.id,
+          deliveryId: context.deliveryId,
+          messageId: "outbound-1",
+          deliveryState: "sent",
+        },
+      };
     });
     const ctx = makeContext({
-      CHANNEL_WHATSAPP: { adapterSend },
+      CHANNEL_WHATSAPP: { adapterFrame },
     }, { upsert: vi.fn() });
 
     const result = await handleAdapterSend({
@@ -4187,13 +4244,21 @@ describe("adapter lifecycle handlers", () => {
       messageId: "outbound-1",
       deliveryState: "sent",
     });
-    expect(adapterSend).toHaveBeenCalledWith(
-      "primary",
+    expect(adapterFrame).toHaveBeenCalledWith(
+      { installationId: TEST_INSTALLATION_ID },
       expect.objectContaining({
+        accountId: "primary",
+        deliveryId: "outbound-body-1",
         surface: { kind: "dm", id: "dm-1" },
-        media: [expect.objectContaining({ body: { offset: 0, length: 3 } })],
       }),
-      body,
+      expect.objectContaining({
+        type: "req",
+        call: "adapter.send",
+        body,
+        args: expect.objectContaining({
+          media: [expect.objectContaining({ body: { offset: 0, length: 3 } })],
+        }),
+      }),
     );
     expect(getReader).not.toHaveBeenCalled();
     expect(cancel).toHaveBeenCalledOnce();
@@ -4216,7 +4281,6 @@ describe("adapter lifecycle handlers", () => {
         status: true,
         activity: true,
         pairing: false,
-        deliveryFrames: true,
         surfaces: ["dm"],
         media: { inbound: [], outbound: [] },
       },
@@ -4258,16 +4322,26 @@ describe("adapter lifecycle handlers", () => {
   it("rejects malformed send results without treating string flags as outcomes", async () => {
     const privatePayload = "private-send-payload";
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const ctx = makeContext({
-      CHANNEL_WHATSAPP: {
-        adapterSend: vi.fn(async () => ({
-          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-          ok: false as const,
+    const adapterFrame: NonNullable<AdapterService["adapterFrame"]> = vi.fn(async (
+      _installation,
+      _context,
+      frame,
+    ) => {
+      if (frame.type !== "req") throw new Error("Expected a request frame");
+      return {
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: {
+          ok: false,
           error: "provider failure",
           ambiguous: "yes",
           privatePayload,
-        })),
-      },
+        },
+      };
+    });
+    const ctx = makeContext({
+      CHANNEL_WHATSAPP: { adapterFrame },
     }, { upsert: vi.fn() });
 
     const result = await handleAdapterSend({
@@ -4280,13 +4354,13 @@ describe("adapter lifecycle handlers", () => {
 
     expect(result).toEqual({
       ok: false,
-      error: "Adapter returned an invalid send response: whatsapp",
+      error: "Adapter returned an invalid adapter.send response: whatsapp",
       deliveryId: "invalid-worker-result",
       retryable: false,
     });
     expect(JSON.stringify(result)).not.toContain(privatePayload);
     expect(errorLog).toHaveBeenCalledWith(
-      JSON.stringify({ component: "adapter", event: "send_invalid_response" }),
+      JSON.stringify({ component: "adapter", event: "send_frame_invalid_response" }),
     );
     errorLog.mockRestore();
   });
@@ -4322,10 +4396,9 @@ describe("adapter lifecycle handlers", () => {
   });
 
   it("accepts twenty outbound attachments and rejects a twenty-first", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "outbound-20" }));
+    const adapterFrame = successfulAdapterFrame("telegram", "outbound-20");
     const ctx = makeContext({
-      CHANNEL_TELEGRAM: { adapterSend },
+      CHANNEL_TELEGRAM: { adapterFrame },
     }, { upsert: vi.fn() });
     const media = Array.from({ length: 20 }, (_, index) => ({
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -4359,13 +4432,12 @@ describe("adapter lifecycle handlers", () => {
       error: "Adapter media exceeds item limit (20)",
       retryable: false,
     });
-    expect(adapterSend).toHaveBeenCalledTimes(1);
+    expect(adapterFrame).toHaveBeenCalledTimes(1);
   });
 
   it("allows one body-backed attachment to use the complete media byte budget", async () => {
     const maxBytes = 48 * 1024 * 1024;
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "outbound-48mib" }));
+    const adapterFrame = successfulAdapterFrame("telegram", "outbound-48mib");
     const cancel = vi.fn(async () => undefined);
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const body = {
@@ -4377,7 +4449,7 @@ describe("adapter lifecycle handlers", () => {
       } as ReadableStream<Uint8Array>,
     };
     const ctx = makeContext({
-      CHANNEL_TELEGRAM: { adapterSend },
+      CHANNEL_TELEGRAM: { adapterFrame },
     }, { upsert: vi.fn() });
 
     await expect(handleAdapterSend({
@@ -4392,14 +4464,13 @@ describe("adapter lifecycle handlers", () => {
         body: { offset: 0, length: maxBytes },
       }],
     }, ctx, body)).resolves.toMatchObject({ ok: true, messageId: "outbound-48mib" });
-    expect(adapterSend).toHaveBeenCalledOnce();
+    expect(adapterFrame).toHaveBeenCalledOnce();
     expect(cancel).toHaveBeenCalledOnce();
   });
 
   it("rejects an attachment larger than the complete media byte budget", async () => {
     const oversizedBytes = 48 * 1024 * 1024 + 1;
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "unexpected" }));
+    const adapterFrame = successfulAdapterFrame("telegram", "unexpected");
     const cancel = vi.fn(async () => undefined);
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const body = {
@@ -4411,7 +4482,7 @@ describe("adapter lifecycle handlers", () => {
       } as ReadableStream<Uint8Array>,
     };
     const ctx = makeContext({
-      CHANNEL_TELEGRAM: { adapterSend },
+      CHANNEL_TELEGRAM: { adapterFrame },
     }, { upsert: vi.fn() });
 
     await expect(handleAdapterSend({
@@ -4430,17 +4501,17 @@ describe("adapter lifecycle handlers", () => {
       error: `Adapter media body exceeds per-item limit (${oversizedBytes} bytes)`,
       retryable: false,
     });
-    expect(adapterSend).not.toHaveBeenCalled();
+    expect(adapterFrame).not.toHaveBeenCalled();
     expect(cancel).toHaveBeenCalledOnce();
   });
 
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it("classifies adapter service RPC throws as retryable transport failures", async () => {
-    const adapterSend = vi.fn(async () => {
+    const adapterFrame = vi.fn(async () => {
       throw new Error("service binding disconnected");
     });
     const ctx = makeContext({
-      CHANNEL_TELEGRAM: { adapterSend },
+      CHANNEL_TELEGRAM: { adapterFrame },
     }, { upsert: vi.fn() });
 
     const result = await handleAdapterSend({
@@ -4451,10 +4522,13 @@ describe("adapter lifecycle handlers", () => {
       text: "retry safely",
     }, ctx);
 
-    expect(adapterSend).toHaveBeenCalledWith(
-      "bot",
-      expect.objectContaining({ deliveryId: "retryable-delivery-1" }),
-      undefined,
+    expect(adapterFrame).toHaveBeenCalledWith(
+      { installationId: TEST_INSTALLATION_ID },
+      expect.objectContaining({
+        accountId: "bot",
+        deliveryId: "retryable-delivery-1",
+      }),
+      expect.objectContaining({ type: "req", call: "adapter.send" }),
     );
     expect(result).toEqual({
       ok: false,
@@ -4488,8 +4562,7 @@ describe("adapter lifecycle handlers", () => {
     patch,
     expectedError,
   ) => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
+    const adapterFrame = successfulAdapterFrame("telegram", "msg-1");
     const cancel = vi.fn(async () => undefined);
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const body = {
@@ -4500,7 +4573,7 @@ describe("adapter lifecycle handlers", () => {
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       } as ReadableStream<Uint8Array>,
     };
-    const ctx = makeContext({ CHANNEL_TELEGRAM: { adapterSend } }, { upsert: vi.fn() });
+    const ctx = makeContext({ CHANNEL_TELEGRAM: { adapterFrame } }, { upsert: vi.fn() });
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const args = {
       adapter: "telegram",
@@ -4516,18 +4589,17 @@ describe("adapter lifecycle handlers", () => {
       error: expectedError,
       retryable: false,
     });
-    expect(adapterSend).not.toHaveBeenCalled();
+    expect(adapterFrame).not.toHaveBeenCalled();
     expect(cancel).toHaveBeenCalledOnce();
   });
 
   it("denies adapter.send for non-root users without a linked account", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
+    const adapterFrame = successfulAdapterFrame("whatsapp", "msg-1");
     const status = {
       upsert: vi.fn(),
       list: vi.fn(() => []),
     };
-    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterSend } }, status, {
+    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterFrame } }, status, {
       identity: {
         role: "user",
         process: {
@@ -4553,17 +4625,16 @@ describe("adapter lifecycle handlers", () => {
     }, ctx);
 
     expect(result).toEqual({ ok: false, error: "Permission denied", retryable: false });
-    expect(adapterSend).not.toHaveBeenCalled();
+    expect(adapterFrame).not.toHaveBeenCalled();
   });
 
   it("allows adapter.send for non-root users with a linked account", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
+    const adapterFrame = successfulAdapterFrame("whatsapp", "msg-1");
     const status = {
       upsert: vi.fn(),
       list: vi.fn(() => []),
     };
-    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterSend } }, status, {
+    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterFrame } }, status, {
       identity: {
         role: "user",
         process: {
@@ -4606,27 +4677,28 @@ describe("adapter lifecycle handlers", () => {
       messageId: "msg-1",
       deliveryState: "sent",
     });
-    expect(adapterSend).toHaveBeenCalledWith(
-      "primary",
-      {
+    expect(adapterFrame).toHaveBeenCalledWith(
+      { installationId: TEST_INSTALLATION_ID },
+      expect.objectContaining({
+        accountId: "primary",
         deliveryId: "explicit-linked-1",
         surface: { kind: "dm", id: "wa:+123" },
-        text: "hello",
-        media: undefined,
-        replyToId: undefined,
-      },
-      undefined,
+      }),
+      expect.objectContaining({
+        type: "req",
+        call: "adapter.send",
+        args: expect.objectContaining({ text: "hello" }),
+      }),
     );
   });
 
   it("denies adapter.send to an unlinked surface on the same account", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
+    const adapterFrame = successfulAdapterFrame("whatsapp", "msg-1");
     const status = {
       upsert: vi.fn(),
       list: vi.fn(() => []),
     };
-    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterSend } }, status, {
+    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterFrame } }, status, {
       identity: {
         role: "user",
         process: {
@@ -4660,17 +4732,16 @@ describe("adapter lifecycle handlers", () => {
     }, ctx);
 
     expect(result).toEqual({ ok: false, error: "Permission denied", retryable: false });
-    expect(adapterSend).not.toHaveBeenCalled();
+    expect(adapterFrame).not.toHaveBeenCalled();
   });
 
   it("allows adapter.send to the linked challenge surface", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
+    const adapterFrame = successfulAdapterFrame("discord", "msg-1");
     const status = {
       upsert: vi.fn(),
       list: vi.fn(() => []),
     };
-    const ctx = makeContext({ CHANNEL_DISCORD: { adapterSend } }, status, {
+    const ctx = makeContext({ CHANNEL_DISCORD: { adapterFrame } }, status, {
       identity: {
         role: "user",
         process: {
@@ -4712,17 +4783,16 @@ describe("adapter lifecycle handlers", () => {
       accountId: "bot",
       messageId: "msg-1",
     }));
-    expect(adapterSend).toHaveBeenCalled();
+    expect(adapterFrame).toHaveBeenCalled();
   });
 
   it("allows adapter.send to a routed surface owned by the caller", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
+    const adapterFrame = successfulAdapterFrame("discord", "msg-1");
     const status = {
       upsert: vi.fn(),
       list: vi.fn(() => []),
     };
-    const ctx = makeContext({ CHANNEL_DISCORD: { adapterSend } }, status, {
+    const ctx = makeContext({ CHANNEL_DISCORD: { adapterFrame } }, status, {
       surfaceRoute: {
         adapter: "discord",
         accountId: "bot",
@@ -4774,12 +4844,11 @@ describe("adapter lifecycle handlers", () => {
       accountId: "bot",
       messageId: "msg-1",
     }));
-    expect(adapterSend).toHaveBeenCalled();
+    expect(adapterFrame).toHaveBeenCalled();
   });
 
   it("uses the caller owner uid when adapter.send runs from an agent process", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
+    const adapterFrame = successfulAdapterFrame("whatsapp", "msg-1");
     const listLinks = vi.fn(() => [{
       adapter: "whatsapp",
       accountId: "primary",
@@ -4793,7 +4862,7 @@ describe("adapter lifecycle handlers", () => {
       upsert: vi.fn(),
       list: vi.fn(() => []),
     };
-    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterSend } }, status, {
+    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterFrame } }, status, {
       callerOwnerUid: 1000,
       identity: {
         role: "user",
@@ -4826,12 +4895,11 @@ describe("adapter lifecycle handlers", () => {
       messageId: "msg-1",
     }));
     expect(listLinks).toHaveBeenCalledWith(1000);
-    expect(adapterSend).toHaveBeenCalled();
+    expect(adapterFrame).toHaveBeenCalled();
   });
 
   it("requires an explicit --also acknowledgement for the active reply destination", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-2" }));
+    const adapterFrame = successfulAdapterFrame("telegram", "msg-2");
     const link = {
       adapter: "telegram",
       accountId: "bot",
@@ -4841,7 +4909,7 @@ describe("adapter lifecycle handlers", () => {
       createdAt: 1,
       metadata: { surfaceKind: "dm", surfaceId: "chat-42" },
     };
-    const ctx = makeContext({ CHANNEL_TELEGRAM: { adapterSend } }, {
+    const ctx = makeContext({ CHANNEL_TELEGRAM: { adapterFrame } }, {
       upsert: vi.fn(),
       list: vi.fn(() => []),
     }, {
@@ -4879,7 +4947,7 @@ describe("adapter lifecycle handlers", () => {
       error: expect.stringContaining("directed endpoint"),
       retryable: false,
     });
-    expect(adapterSend).not.toHaveBeenCalled();
+    expect(adapterFrame).not.toHaveBeenCalled();
 
     await expect(handleAdapterSend({
       adapter: "telegram",
@@ -4888,16 +4956,28 @@ describe("adapter lifecycle handlers", () => {
       text: "intentional extra",
       also: true,
     }, ctx)).resolves.toEqual(expect.objectContaining({ ok: true, messageId: "msg-2" }));
-    expect(adapterSend).toHaveBeenCalledTimes(1);
+    expect(adapterFrame).toHaveBeenCalledTimes(1);
   });
 
   it("forwards reply threading and sanitizes directed message delivery failures", async () => {
-    const adapterSend = vi.fn(async () => ({
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      ok: false as const,
-      error: "Telegram API 400 chat_id=chat-42: raw provider response",
-      retryable: true,
-    }));
+    const adapterFrame: NonNullable<AdapterService["adapterFrame"]> = vi.fn(async (
+      _installation,
+      context,
+      frame,
+    ) => {
+      if (frame.type !== "req") throw new Error("Expected a request frame");
+      return {
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: {
+          ok: false,
+          error: "Telegram API 400 chat_id=chat-42: raw provider response",
+          deliveryId: context.deliveryId,
+          retryable: true,
+        },
+      };
+    });
     const link = {
       adapter: "telegram",
       accountId: "bot",
@@ -4908,7 +4988,7 @@ describe("adapter lifecycle handlers", () => {
       metadata: { surfaceKind: "dm", surfaceId: "chat-42" },
     };
     const ctx = makeContext({
-      CHANNEL_TELEGRAM: { adapterSend },
+      CHANNEL_TELEGRAM: { adapterFrame },
     }, { upsert: vi.fn() }, {
       identityLinks: { get: vi.fn(() => link) },
     });
@@ -4933,17 +5013,22 @@ describe("adapter lifecycle handlers", () => {
       ctx,
     );
 
-    expect(adapterSend).toHaveBeenCalledWith(
-      "bot",
-      {
+    expect(adapterFrame).toHaveBeenCalledWith(
+      { installationId: TEST_INSTALLATION_ID },
+      expect.objectContaining({
+        accountId: "bot",
+        actorId: "user-42",
         deliveryId: "run-1:finished",
         surface: { kind: "dm", id: "chat-42" },
-        actorId: "user-42",
-        text: "automatic reply",
-        media: undefined,
-        replyToId: "incoming-7",
-      },
-      undefined,
+      }),
+      expect.objectContaining({
+        type: "req",
+        call: "adapter.send",
+        args: expect.objectContaining({
+          text: "automatic reply",
+          replyToId: "incoming-7",
+        }),
+      }),
     );
     expect(result).toEqual({
       ok: false,
@@ -4954,10 +5039,9 @@ describe("adapter lifecycle handlers", () => {
   });
 
   it("rechecks the linked actor before delivering a directed message", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-3" }));
+    const adapterFrame = successfulAdapterFrame("telegram", "msg-3");
     const getLink = vi.fn(() => null);
-    const ctx = makeContext({ CHANNEL_TELEGRAM: { adapterSend } }, {
+    const ctx = makeContext({ CHANNEL_TELEGRAM: { adapterFrame } }, {
       upsert: vi.fn(),
       list: vi.fn(() => []),
     }, {
@@ -4979,7 +5063,7 @@ describe("adapter lifecycle handlers", () => {
       ok: false,
       error: "Adapter destination is not authorized",
     });
-    expect(adapterSend).not.toHaveBeenCalled();
+    expect(adapterFrame).not.toHaveBeenCalled();
   });
 });
 
@@ -5365,12 +5449,27 @@ describe("managed adapter pairing", () => {
     );
   });
 
-  it("advertises pairing only when the full managed lifecycle is available", async () => {
-    const full = pairingService();
-    const partial = { ...pairingService(), adapterPairingDisconnect: undefined };
+  it("advertises pairing from the adapter descriptor", async () => {
+    const describedService = (id: string, pairing: boolean) => ({
+      adapterDescribe: vi.fn(async (): Promise<AdapterServiceDescriptor> => ({
+        version: 1,
+        id,
+        displayName: id,
+        capabilities: {
+          connect: false,
+          disconnect: false,
+          send: true,
+          status: false,
+          activity: false,
+          pairing,
+          surfaces: ["dm"],
+          media: { inbound: [], outbound: [] },
+        },
+      })),
+    });
     const ctx = makeContext({
-      CHANNEL_TELEGRAM: full,
-      CHANNEL_DISCORD: partial,
+      CHANNEL_TELEGRAM: describedService("telegram", true),
+      CHANNEL_DISCORD: describedService("discord", false),
     }, {
       upsert: vi.fn(),
       listAll: vi.fn(() => []),

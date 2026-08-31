@@ -68,19 +68,9 @@ function binding(
     frame: GatewayFrame,
   ) => Promise<GatewayFrame | null>,
 ): AdapterGatewayBinding {
-  const serviceFrame = vi.fn(async (
-    installationOrFrame: AdapterInstallationContext | GatewayFrame,
-    scopedFrame?: GatewayFrame,
-  ) => scopedFrame
-    ? await scopedServiceFrame(
-// SAFETY: This test fixture deliberately supplies the contract shape under test.
-        installationOrFrame as AdapterInstallationContext,
-        scopedFrame,
-      )
-    : null);
   return {
-// SAFETY: This test fixture deliberately supplies the contract shape under test.
-    serviceFrame: serviceFrame as AdapterGatewayBinding["serviceFrame"],
+    serviceFrame: vi.fn(scopedServiceFrame),
+    linkedPeerFrame: vi.fn(),
   };
 }
 
@@ -184,16 +174,17 @@ describe("callAdapterGateway", () => {
     expect(request.cancelled()).toBeUndefined();
   });
 
-  it("uses the legacy one-argument Gateway RPC for standalone", async () => {
-    const serviceFrame = vi.fn(async (frame: GatewayFrame) => ({
+  it("passes explicit singleton context for standalone", async () => {
+    const serviceFrame = vi.fn(async (
+      _installation: AdapterInstallationContext,
+      frame: GatewayFrame,
+    ) => ({
       type: "res" as const,
       id: frame.type === "req" ? frame.id : "unexpected",
       ok: true,
       data: { ok: true },
     }));
-    const gateway: AdapterGatewayBinding = {
-      serviceFrame,
-    };
+    const gateway = binding(serviceFrame);
 
     await expect(callAdapterGateway(
       gateway,
@@ -202,13 +193,13 @@ describe("callAdapterGateway", () => {
       INBOUND_ARGS,
     )).resolves.toEqual({ ok: true });
     expect(serviceFrame).toHaveBeenCalledOnce();
-    expect(serviceFrame).toHaveBeenCalledWith(expect.objectContaining({
-      type: "req",
-      call: "adapter.inbound",
-    }));
+    expect(serviceFrame).toHaveBeenCalledWith(
+      { installationId: "singleton" },
+      expect.objectContaining({ type: "req", call: "adapter.inbound" }),
+    );
   });
 
-  it("uses the already-deployed two-argument Gateway RPC for managed installations", async () => {
+  it("passes explicit installation context for managed installations", async () => {
     const serviceFrame = vi.fn(async (
       installation: AdapterInstallationContext,
       frame: GatewayFrame,

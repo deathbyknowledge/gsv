@@ -1493,10 +1493,8 @@ and `adapterStatus`. Adapters call the Gateway's single
 explicit `adapter.send` is a correlated request and routed Process delivery is
 an exact `message.committed` or `proc.run.hil.requested` signal. A signal returns
 only after the adapter's owning Durable Object has persisted its frame and body.
-The typed `adapterSend` method is retained only for rolling upgrades; old
-adapters that do not advertise the descriptor's `deliveryFrames` capability
-stay on that bridge. Old channel-specific interfaces and direct channel RPC
-names are not part of this contract.
+`adapterFrame` is the only Gateway-to-adapter carrier. Old channel-specific
+interfaces and direct channel RPC names are not part of this contract.
 
 Adapter media metadata stays in JSON. Inline bytes are concatenated into the
 request's single top-level binary body, and each media item identifies its

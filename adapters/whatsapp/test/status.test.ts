@@ -15,7 +15,7 @@ describe("WhatsApp status queries", () => {
       { WHATSAPP_ACCOUNT: { getByName } },
     ]) as WhatsAppChannelEntrypoint;
 
-    await expect(entrypoint.adapterStatus("primary"))
+    await expect(entrypoint.adapterStatus({ installationId: "singleton" }, "primary"))
       .rejects.toThrow("temporary account RPC failure");
     expect(getByName).toHaveBeenCalledTimes(1);
   });

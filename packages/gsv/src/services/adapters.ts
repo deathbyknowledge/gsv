@@ -4,7 +4,6 @@ import type {
   AdapterConnectConfig,
   AdapterInstallationContext,
   AdapterMediaType,
-  AdapterOutboundMessage,
   AdapterPeerDeliveryContext,
   AdapterGatewayFrame,
   AdapterPairingWorkerInterface,
@@ -13,8 +12,6 @@ import type {
   AdapterWorkerActivityResult,
   AdapterWorkerConnectResult,
   AdapterWorkerDisconnectResult,
-  AdapterWorkerInterface,
-  AdapterWorkerSendResult,
 } from "../protocol/adapters";
 import type { ArgsOf, ResultOf, SyscallName } from "../protocol/syscalls/map";
 import { binaryBodySchema, type BinaryBody } from "../protocol/body";
@@ -30,7 +27,6 @@ export const adapterServiceCapabilitiesSchema = z.strictObject({
   status: z.boolean(),
   activity: z.boolean(),
   pairing: z.boolean(),
-  deliveryFrames: z.optional(z.boolean()),
   targets: z.optional(z.boolean()),
   surfaces: z.array(z.enum(["dm", "group", "channel", "thread"])),
   media: z.strictObject({
@@ -46,7 +42,6 @@ export type AdapterServiceCapabilities = {
   status: boolean;
   activity: boolean;
   pairing: boolean;
-  deliveryFrames?: boolean;
   targets?: boolean;
   surfaces: AdapterSurfaceKind[];
   media: {
@@ -197,31 +192,25 @@ export interface AdapterService {
     frame: AdapterGatewayFrame,
     body?: BinaryBody,
   ) => Promise<AdapterGatewayFrame | null>;
-  adapterConnect?: AdapterWorkerInterface["adapterConnect"] | ((
+  adapterConnect?: (
     installation: AdapterInstallationContext,
     accountId: string,
     config?: AdapterConnectConfig,
-  ) => Promise<AdapterWorkerConnectResult>);
-  adapterDisconnect?: AdapterWorkerInterface["adapterDisconnect"] | ((
+  ) => Promise<AdapterWorkerConnectResult>;
+  adapterDisconnect?: (
     installation: AdapterInstallationContext,
     accountId: string,
-  ) => Promise<AdapterWorkerDisconnectResult>);
-  adapterSend?: AdapterWorkerInterface["adapterSend"] | ((
-    installation: AdapterInstallationContext,
-    accountId: string,
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ) => Promise<AdapterWorkerSendResult>);
-  adapterSetActivity?: AdapterWorkerInterface["adapterSetActivity"] | ((
+  ) => Promise<AdapterWorkerDisconnectResult>;
+  adapterSetActivity?: (
     installation: AdapterInstallationContext,
     accountId: string,
     surface: AdapterSurface,
     activity: AdapterActivity,
-  ) => Promise<AdapterWorkerActivityResult>);
-  adapterStatus?: AdapterWorkerInterface["adapterStatus"] | ((
+  ) => Promise<AdapterWorkerActivityResult>;
+  adapterStatus?: (
     installation: AdapterInstallationContext,
     accountId?: string,
-  ) => Promise<AdapterAccountStatus[]>);
+  ) => Promise<AdapterAccountStatus[]>;
   adapterPairingInfo?: AdapterPairingWorkerInterface["adapterPairingInfo"];
   adapterPairingInspect?: AdapterPairingWorkerInterface["adapterPairingInspect"];
   adapterPairingPrepare?: AdapterPairingWorkerInterface["adapterPairingPrepare"];

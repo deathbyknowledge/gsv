@@ -11,12 +11,12 @@ The standalone `singleton` route retains the historical `{owner}/{repo}` name.
 Managed adapter service-binding RPC carries the same trusted installation
 identity in both directions. Gateway-to-adapter calls derive it from the Kernel
 context; adapter-to-Gateway calls normally recover it from the owning account
-Durable Object's immutable name. Standalone calls retain their historical
-unscoped argument lists and are interpreted as `singleton`. Managed adapter
-account objects use a collision-free internal name derived from
-`{installationId, accountId}`. `singleton` retains the historical unscoped
-account object name for standalone upgrades. Public webhook payloads and adapter
-frame arguments cannot choose this identity. Standalone Telegram retains its
+Durable Object's immutable name. Every call carries the context explicitly;
+standalone uses `{installationId: "singleton"}`. Managed adapter account objects
+use a collision-free internal name derived from `{installationId, accountId}`.
+`singleton` retains the historical account object name for standalone upgrades.
+Public webhook payloads and adapter frame arguments cannot choose this identity.
+Standalone Telegram retains its
 historical per-installation account objects and webhook paths. The managed
 platform bot instead reaches a peer object chosen only from the authenticated
 Telegram private actor. That object owns the active installation, local uid,

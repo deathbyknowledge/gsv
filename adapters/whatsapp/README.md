@@ -12,7 +12,7 @@ WhatsApp adapter integration for GSV using the [Baileys](https://github.com/Whis
         ▲                                                │
         │                                                │
         └────────[Service Binding RPC]───────────────────┘
-              WhatsAppChannelEntrypoint.adapterSend()
+              WhatsAppChannelEntrypoint.adapterFrame()
 ```
 
 **Inbound messages** (user → bot): WhatsApp DO persists the protobuf message,
@@ -21,9 +21,10 @@ The record remains pending across transport failures and
 `replayed: "in_progress"`; the existing account alarm retries it and reconstructs
 media for each attempt. A terminal Kernel disposition removes the record.
 
-**Outbound messages** (bot → user): Gateway calls `adapterSend` on the
-WhatsApp service-binding entrypoint. Provider sends use a durable delivery
-ledger so a retry cannot silently duplicate an ambiguous WhatsApp send.
+**Outbound messages** (bot → user): Gateway sends a canonical `adapter.send`
+request frame through the WhatsApp service-binding entrypoint. Provider sends
+use a durable delivery ledger so a retry cannot silently duplicate an ambiguous
+WhatsApp send.
 
 ## Account ID
 

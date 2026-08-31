@@ -8,26 +8,11 @@
 
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { handleAdapterFrame } from "../../shared/src/adapter-frame";
-import {
-  cancelResponseBody,
-  cancelBinaryBody,
-} from "../../shared/src/media-body";
+import { cancelResponseBody } from "../../shared/src/media-body";
 import {
   adapterAccountDurableObjectName,
   parseAdapterInstallationContext,
 } from "../../shared/src/installation";
-import {
-  resolveAdapterActivityRpcArgs,
-  resolveAdapterConnectRpcArgs,
-  resolveAdapterDisconnectRpcArgs,
-  resolveAdapterSendRpcArgs,
-  resolveAdapterStatusRpcArgs,
-  type AdapterActivityRpcArgs,
-  type AdapterConnectRpcArgs,
-  type AdapterDisconnectRpcArgs,
-  type AdapterSendRpcArgs,
-  type AdapterStatusRpcArgs,
-} from "../../shared/src/rpc-compat";
 import type {
   AdapterAccountStatus,
   AdapterActivity,
@@ -35,9 +20,7 @@ import type {
   AdapterConnectResult,
   AdapterDisconnectResult,
   AdapterInstallationContext,
-  AdapterOutboundMessage,
   AdapterPeerDeliveryContext,
-  AdapterSendResult,
   AdapterService,
   AdapterServiceDescriptor,
   AdapterSurface,
@@ -86,7 +69,6 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterServ
         status: true,
         activity: true,
         pairing: false,
-        deliveryFrames: true,
         surfaces: ["dm", "group", "channel", "thread"],
         media: {
           inbound: ["image", "audio", "video", "document"],
@@ -113,23 +95,17 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterServ
   }
 
   async adapterConnect(
-    accountId: string,
-    config?: AdapterConnectConfig,
-  ): Promise<AdapterConnectResult>;
-  async adapterConnect(
     installation: AdapterInstallationContext,
     accountId: string,
-    config?: AdapterConnectConfig,
-  ): Promise<AdapterConnectResult>;
-  async adapterConnect(...args: AdapterConnectRpcArgs): Promise<AdapterConnectResult> {
-    const resolved = resolveAdapterConnectRpcArgs(args);
-    const config = discordConnectConfigSchema.safeParse(resolved.config);
+    inputConfig: AdapterConnectConfig = {},
+  ): Promise<AdapterConnectResult> {
+    const config = discordConnectConfigSchema.safeParse(inputConfig);
     if (!config.success) {
       return { ok: false, error: "Discord adapter config is invalid" };
     }
     return await this.#adapterConnectForInstallation(
-      resolved.installation,
-      resolved.accountId,
+      installation,
+      accountId,
       config.data,
     );
   }
@@ -170,17 +146,12 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterServ
   }
 
   async adapterDisconnect(
-    accountId: string,
-  ): Promise<AdapterDisconnectResult>;
-  async adapterDisconnect(
     installation: AdapterInstallationContext,
     accountId: string,
-  ): Promise<AdapterDisconnectResult>;
-  async adapterDisconnect(...args: AdapterDisconnectRpcArgs): Promise<AdapterDisconnectResult> {
-    const resolved = resolveAdapterDisconnectRpcArgs(args);
+  ): Promise<AdapterDisconnectResult> {
     return await this.#adapterDisconnectForInstallation(
-      resolved.installation,
-      resolved.accountId,
+      installation,
+      accountId,
     );
   }
 
@@ -205,17 +176,12 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterServ
   }
 
   async adapterStatus(
-    accountId?: string,
-  ): Promise<AdapterAccountStatus[]>;
-  async adapterStatus(
     installation: AdapterInstallationContext,
     accountId?: string,
-  ): Promise<AdapterAccountStatus[]>;
-  async adapterStatus(...args: AdapterStatusRpcArgs): Promise<AdapterAccountStatus[]> {
-    const resolved = resolveAdapterStatusRpcArgs(args);
+  ): Promise<AdapterAccountStatus[]> {
     return await this.#adapterStatusForInstallation(
-      resolved.installation,
-      resolved.accountId,
+      installation,
+      accountId,
     );
   }
 
@@ -236,70 +202,17 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterServ
     return [];
   }
 
-  async adapterSend(
-    accountId: string,
-    message: AdapterOutboundMessage,
-    binaryBody?: BinaryBody,
-  ): Promise<AdapterSendResult>;
-  async adapterSend(
-    installation: AdapterInstallationContext,
-    accountId: string,
-    message: AdapterOutboundMessage,
-    binaryBody?: BinaryBody,
-  ): Promise<AdapterSendResult>;
-  async adapterSend(...args: AdapterSendRpcArgs): Promise<AdapterSendResult> {
-    const resolved = await resolveAdapterSendRpcArgs(args);
-    return await this.#adapterSendForInstallation(
-      resolved.installation,
-      resolved.accountId,
-      resolved.message,
-      resolved.body,
-    );
-  }
-
-  /**
-   * Send a message to a Discord channel.
-   */
-  async #adapterSendForInstallation(
-    installation: AdapterInstallationContext,
-    accountId: string,
-    message: AdapterOutboundMessage,
-    binaryBody?: BinaryBody,
-  ): Promise<AdapterSendResult> {
-    try {
-      const parsedInstallation = parseAdapterInstallationContext(installation);
-      const gateway = this.getGatewayDO(parsedInstallation, accountId);
-      return await gateway.sendMessage(message, binaryBody);
-    } catch (error) {
-      await cancelBinaryBody(binaryBody, error);
-      return {
-        ok: false,
-        error: `Discord delivery unavailable: ${toErrorMessage(error)}`,
-        retryable: true,
-      };
-    }
-  }
-
-  async adapterSetActivity(
-    accountId: string,
-    surface: AdapterSurface,
-    activity: AdapterActivity,
-  ): Promise<{ ok: true } | { ok: false; error: string }>;
   async adapterSetActivity(
     installation: AdapterInstallationContext,
     accountId: string,
     surface: AdapterSurface,
     activity: AdapterActivity,
-  ): Promise<{ ok: true } | { ok: false; error: string }>;
-  async adapterSetActivity(
-    ...args: AdapterActivityRpcArgs
   ): Promise<{ ok: true } | { ok: false; error: string }> {
-    const resolved = resolveAdapterActivityRpcArgs(args);
     return await this.#adapterSetActivityForInstallation(
-      resolved.installation,
-      resolved.accountId,
-      resolved.surface,
-      resolved.activity,
+      installation,
+      accountId,
+      surface,
+      activity,
     );
   }
 
@@ -371,10 +284,6 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterServ
 
 // Type for DO stub methods
 type DiscordGatewayStub = DurableObjectStub<DiscordGateway>;
-
-function toErrorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
-}
 
 // Default export: HTTP handler for direct requests
 export default {

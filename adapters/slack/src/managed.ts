@@ -169,7 +169,6 @@ export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements Adapte
         status: true,
         activity: false,
         pairing: true,
-        deliveryFrames: true,
         targets: true,
         surfaces: ["dm", "channel", "thread"],
         media: {
@@ -227,27 +226,6 @@ export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements Adapte
       error: status.error,
       extra,
     }];
-  }
-
-  async adapterSend(
-    installation: AdapterInstallationContext,
-    accountId: string,
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ): Promise<AdapterSendResult> {
-    try {
-      const parsed = parseManagedInstallation(installation);
-      const normalizedAccountId = requireWorkspaceAccountId(accountId);
-      const actorId = requireSlackId(message.actorId, "Slack actor");
-      return await this.peer(normalizedAccountId, actorId).sendMessage(
-        parsed.installationId,
-        message,
-        body,
-      );
-    } catch (error) {
-      await cancelBinaryBody(body, error);
-      return { ok: false, error: safeError(error) };
-    }
   }
 
   async adapterPairingInfo(
@@ -463,11 +441,4 @@ function targetError(id: string, code: number): AdapterTargetResponseFrame<"shel
 function typedStub<T>(value: DurableObjectStub): T & DurableObjectStub {
   // SAFETY: these namespaces are owned by this worker and expose the declared RPC contracts.
   return value as T & DurableObjectStub;
-}
-
-function safeError<T>(error: T): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return /Slack|route|destination|media/.test(message)
-    ? message
-    : "Managed Slack request failed";
 }

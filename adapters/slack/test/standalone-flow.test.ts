@@ -149,7 +149,7 @@ describe("standalone Slack clean-instance flow", () => {
       SLACK_ACCOUNT: accounts,
     });
 
-    await expect(channel.adapterStatus("default"))
+    await expect(channel.adapterStatus({ installationId: "singleton" }, "default"))
       .rejects.toThrow("Slack account RPC unavailable");
     expect(getStatus).toHaveBeenCalledOnce();
   });

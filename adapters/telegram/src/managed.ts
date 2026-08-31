@@ -95,7 +95,6 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> implements Ada
         status: true,
         activity: true,
         pairing: true,
-        deliveryFrames: true,
         surfaces: ["dm"],
         media: {
           inbound: ["image", "audio", "video", "document"],
@@ -150,31 +149,6 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> implements Ada
         ? { botUsername: normalizedManagedTelegramBotUsername(this.env.TELEGRAM_BOT_USERNAME) }
         : undefined,
     }];
-  }
-
-  async adapterSend(
-    installation: AdapterInstallationContext,
-    accountId: string,
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ): Promise<AdapterSendResult> {
-    try {
-      const parsed = parseManagedInstallation(installation);
-      if (accountId !== MANAGED_TELEGRAM_ACCOUNT_ID) {
-        throw new Error("Managed Telegram account ID is invalid");
-      }
-      if (message.surface.kind !== "dm" || !message.actorId) {
-        throw new Error("Managed Telegram supports direct messages only");
-      }
-      return await this.peer(message.surface.id).sendMessage(
-        parsed.installationId,
-        message,
-        body,
-      );
-    } catch (error) {
-      await cancelBinaryBody(body, error);
-      return { ok: false, error: safeError(error instanceof Error ? error : String(error)) };
-    }
   }
 
   async adapterSetActivity(

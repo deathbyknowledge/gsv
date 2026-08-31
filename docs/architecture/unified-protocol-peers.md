@@ -184,12 +184,9 @@ Workers RPC carries `BinaryBody.stream` as a `ReadableStream`; it is not
 base64-encoded or buffered into the frame. The service binding is part of the
 trust boundary: its `props` carry the adapter id and attenuated call grant, and
 Cloudflare supplies those props from deployment configuration rather than the
-adapter's request. Every first-party adapter uses the same entrypoint; adding
-one does not add another Gateway class. The generic Gateway entrypoint retains
-a narrow rolling-upgrade bridge for already-deployed adapters: it accepts only
-known adapter ids and the same two attenuated calls, deriving identity from the
-validated request. New bindings use only `AdapterGatewayEntrypoint`. During a
-rolling release, deploy the Gateway before adapters switch their bindings.
+adapter's request. Every first-party adapter uses `AdapterGatewayEntrypoint`;
+adding one does not add another Gateway class. The generic Gateway entrypoint
+does not accept adapter RPCs.
 
 Outbound adapter selection is the inverse mapping. The Kernel normalizes the
 adapter id to a deployment binding key such as `CHANNEL_TELEGRAM` and reads that
@@ -203,8 +200,7 @@ exact `message.committed` or `proc.run.hil.requested` signal. The surrounding
 delivery context carries the Kernel-owned route projection, not a second
 semantic operation. Provider credentials, formatting, durable acceptance,
 retry ledgers, ambiguous-outcome policy, and rendering remain adapter-owned.
-The older typed `adapterSend` method is a rolling-upgrade bridge, not the
-canonical path.
+`adapterFrame` is the only Gateway-to-adapter delivery carrier.
 
 ## Reverse calls and endpoints
 

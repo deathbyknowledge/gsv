@@ -5,7 +5,7 @@
  * communication. It does not connect to an external service.
  * 
  * Uses a Durable Object to maintain state across requests (important because Gateway
- * calls adapterSend() via Service Binding which may be a different worker invocation).
+ * calls adapterFrame() via Service Binding which may be a different worker invocation).
  */
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import {
@@ -34,18 +34,6 @@ import {
   type AdapterPeerSignalDelivery,
 } from "../../shared/src/peer-delivery";
 import { renderAdapterPeerSignal } from "../../shared/src/peer-render";
-import {
-  resolveAdapterActivityRpcArgs,
-  resolveAdapterConnectRpcArgs,
-  resolveAdapterDisconnectRpcArgs,
-  resolveAdapterSendRpcArgs,
-  resolveAdapterStatusRpcArgs,
-  type AdapterActivityRpcArgs,
-  type AdapterConnectRpcArgs,
-  type AdapterDisconnectRpcArgs,
-  type AdapterSendRpcArgs,
-  type AdapterStatusRpcArgs,
-} from "../../shared/src/rpc-compat";
 import type {
   AdapterAccountStatus,
   AdapterActivity,
@@ -258,7 +246,6 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterService
         status: true,
         activity: true,
         pairing: false,
-        deliveryFrames: true,
         surfaces: ["dm", "group", "channel", "thread"],
         media: {
           inbound: ["image", "audio", "video", "document"],
@@ -277,7 +264,7 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterService
     const parsed = parseAdapterInstallationContext(installation);
     const state = this.getStateDO(parsed, context.accountId);
     return await handleAdapterFrame(this.adapterId, parsed, context, frame, body, {
-      send: async (message, requestBody) => await this.#adapterSendForInstallation(
+      send: async (message, requestBody) => await this.#sendForInstallation(
         parsed,
         context.accountId,
         message,
@@ -300,22 +287,14 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterService
   }
 
   async adapterConnect(
-    accountId: string,
-    config?: AdapterConnectConfig,
-  ): Promise<{ ok: true; connected: true; authenticated: true; message: string }>;
-  async adapterConnect(
     installation: AdapterInstallationContext,
     accountId: string,
-    config?: AdapterConnectConfig,
-  ): Promise<{ ok: true; connected: true; authenticated: true; message: string }>;
-  async adapterConnect(
-    ...args: AdapterConnectRpcArgs
+    config: AdapterConnectConfig = {},
   ): Promise<{ ok: true; connected: true; authenticated: true; message: string }> {
-    const resolved = resolveAdapterConnectRpcArgs(args);
     return await this.#adapterConnectForInstallation(
-      resolved.installation,
-      resolved.accountId,
-      resolved.config,
+      installation,
+      accountId,
+      config,
     );
   }
 
@@ -336,19 +315,12 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterService
   }
 
   async adapterDisconnect(
-    accountId: string,
-  ): Promise<{ ok: true; message: string }>;
-  async adapterDisconnect(
     installation: AdapterInstallationContext,
     accountId: string,
-  ): Promise<{ ok: true; message: string }>;
-  async adapterDisconnect(
-    ...args: AdapterDisconnectRpcArgs
   ): Promise<{ ok: true; message: string }> {
-    const resolved = resolveAdapterDisconnectRpcArgs(args);
     return await this.#adapterDisconnectForInstallation(
-      resolved.installation,
-      resolved.accountId,
+      installation,
+      accountId,
     );
   }
 
@@ -363,17 +335,12 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterService
   }
 
   async adapterStatus(
-    accountId?: string,
-  ): Promise<AdapterAccountStatus[]>;
-  async adapterStatus(
     installation: AdapterInstallationContext,
     accountId?: string,
-  ): Promise<AdapterAccountStatus[]>;
-  async adapterStatus(...args: AdapterStatusRpcArgs): Promise<AdapterAccountStatus[]> {
-    const resolved = resolveAdapterStatusRpcArgs(args);
+  ): Promise<AdapterAccountStatus[]> {
     return await this.#adapterStatusForInstallation(
-      resolved.installation,
-      resolved.accountId,
+      installation,
+      accountId,
     );
   }
 
@@ -396,32 +363,7 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterService
     return [];
   }
 
-  /**
-   * Send a message (Gateway → Channel).
-   * Records it in the account's Durable Object.
-   */
-  async adapterSend(
-    accountId: string,
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ): Promise<AdapterSendResult>;
-  async adapterSend(
-    installation: AdapterInstallationContext,
-    accountId: string,
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ): Promise<AdapterSendResult>;
-  async adapterSend(...args: AdapterSendRpcArgs): Promise<AdapterSendResult> {
-    const resolved = await resolveAdapterSendRpcArgs(args);
-    return await this.#adapterSendForInstallation(
-      resolved.installation,
-      resolved.accountId,
-      resolved.message,
-      resolved.body,
-    );
-  }
-
-  async #adapterSendForInstallation(
+  async #sendForInstallation(
     installation: AdapterInstallationContext,
     accountId: string,
     message: AdapterOutboundMessage,
@@ -510,25 +452,16 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterService
   }
 
   async adapterSetActivity(
-    accountId: string,
-    surface: AdapterSurface,
-    activity: AdapterActivity,
-  ): Promise<{ ok: true } | { ok: false; error: string }>;
-  async adapterSetActivity(
     installation: AdapterInstallationContext,
     accountId: string,
     surface: AdapterSurface,
     activity: AdapterActivity,
-  ): Promise<{ ok: true } | { ok: false; error: string }>;
-  async adapterSetActivity(
-    ...args: AdapterActivityRpcArgs
   ): Promise<{ ok: true } | { ok: false; error: string }> {
-    const resolved = resolveAdapterActivityRpcArgs(args);
     return await this.#adapterSetActivityForInstallation(
-      resolved.installation,
-      resolved.accountId,
-      resolved.surface,
-      resolved.activity,
+      installation,
+      accountId,
+      surface,
+      activity,
     );
   }
 

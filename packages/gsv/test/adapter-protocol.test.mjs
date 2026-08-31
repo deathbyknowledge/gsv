@@ -9,7 +9,7 @@ import {
   isAdapterWorkerActivityResult,
   isAdapterWorkerConnectResult,
   isAdapterWorkerDisconnectResult,
-  isAdapterWorkerSendResult,
+  isAdapterProviderSendResult,
   isAdapterWorkerStatusResult,
 } from "../dist/protocol/adapters.js";
 import { isAdapterConnectResult } from "../dist/protocol/syscalls/adapter.js";
@@ -41,7 +41,7 @@ test("validates an open-ended adapter service descriptor", () => {
   assert.equal(adapterServiceDescriptorSchema.safeParse(descriptor).success, true);
   assert.equal(adapterServiceDescriptorSchema.safeParse({
     ...descriptor,
-    capabilities: { ...descriptor.capabilities, deliveryFrames: true, targets: true },
+    capabilities: { ...descriptor.capabilities, targets: true },
   }).success, true);
   assert.equal(adapterServiceDescriptorSchema.safeParse({
     ...descriptor,
@@ -236,26 +236,26 @@ test("validates private adapter worker connect results at the gateway boundary",
   assert.equal(isAdapterWorkerConnectResult({ ok: true, connected: "yes" }), false);
 });
 
-test("validates every private adapter worker RPC result", () => {
+test("validates adapter worker and provider results", () => {
   assert.equal(isAdapterWorkerDisconnectResult({ ok: true, message: "Disconnected" }), true);
   assert.equal(isAdapterWorkerDisconnectResult({ ok: false, error: "" }), false);
 
-  assert.equal(isAdapterWorkerSendResult({
+  assert.equal(isAdapterProviderSendResult({
     ok: true,
     messageId: "provider-1",
     deduplicated: false,
   }), true);
-  assert.equal(isAdapterWorkerSendResult({
+  assert.equal(isAdapterProviderSendResult({
     ok: false,
     error: "unknown outcome",
     ambiguous: true,
   }), true);
-  assert.equal(isAdapterWorkerSendResult({
+  assert.equal(isAdapterProviderSendResult({
     ok: false,
     error: "unknown outcome",
     ambiguous: "yes",
   }), false);
-  assert.equal(isAdapterWorkerSendResult({
+  assert.equal(isAdapterProviderSendResult({
     ok: false,
     error: "contradictory outcome",
     retryable: true,

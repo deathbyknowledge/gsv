@@ -13,7 +13,6 @@ export type {
   AdapterSendResult,
   AdapterSurface,
   AdapterSurfaceKind,
-  AdapterWorkerInterface,
   BinaryBody,
   GatewayFrame,
   GatewayRequestFrame,

@@ -1,29 +1,16 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { handleAdapterFrame } from "../../shared/src/adapter-frame";
-import { cancelBinaryBody } from "../../shared/src/media-body";
 import {
   adapterAccountDurableObjectName,
   parseAdapterInstallationContext,
 } from "../../shared/src/installation";
-import {
-  resolveAdapterConnectRpcArgs,
-  resolveAdapterDisconnectRpcArgs,
-  resolveAdapterSendRpcArgs,
-  resolveAdapterStatusRpcArgs,
-  type AdapterConnectRpcArgs,
-  type AdapterDisconnectRpcArgs,
-  type AdapterSendRpcArgs,
-  type AdapterStatusRpcArgs,
-} from "../../shared/src/rpc-compat";
 import type {
   AdapterAccountStatus,
   AdapterConnectConfig,
   AdapterConnectResult,
   AdapterDisconnectResult,
   AdapterInstallationContext,
-  AdapterOutboundMessage,
   AdapterPeerDeliveryContext,
-  AdapterSendResult,
   AdapterService,
   AdapterServiceDescriptor,
   BinaryBody,
@@ -61,7 +48,6 @@ export class SlackChannel extends WorkerEntrypoint<Env> implements AdapterServic
         status: true,
         activity: false,
         pairing: false,
-        deliveryFrames: true,
         surfaces: ["dm", "channel", "thread"],
         media: {
           inbound: ["image", "audio", "video", "document"],
@@ -88,77 +74,37 @@ export class SlackChannel extends WorkerEntrypoint<Env> implements AdapterServic
   }
 
   async adapterConnect(
-    accountId: string,
-    config?: AdapterConnectConfig,
-  ): Promise<AdapterConnectResult>;
-  async adapterConnect(
     installation: AdapterInstallationContext,
     accountId: string,
-    config?: AdapterConnectConfig,
-  ): Promise<AdapterConnectResult>;
-  async adapterConnect(...args: AdapterConnectRpcArgs): Promise<AdapterConnectResult> {
-    const resolved = resolveAdapterConnectRpcArgs(args);
-    const parsed = slackConnectConfigSchema.safeParse(resolved.config);
+    inputConfig: AdapterConnectConfig = {},
+  ): Promise<AdapterConnectResult> {
+    const parsed = slackConnectConfigSchema.safeParse(inputConfig);
     if (!parsed.success) return { ok: false, error: "Slack adapter config is invalid" };
     return await this.connectAccount(
-      resolved.installation,
-      resolved.accountId,
+      installation,
+      accountId,
       parsed.data,
     );
   }
 
-  async adapterDisconnect(accountId: string): Promise<AdapterDisconnectResult>;
   async adapterDisconnect(
     installation: AdapterInstallationContext,
     accountId: string,
-  ): Promise<AdapterDisconnectResult>;
-  async adapterDisconnect(...args: AdapterDisconnectRpcArgs): Promise<AdapterDisconnectResult> {
-    const resolved = resolveAdapterDisconnectRpcArgs(args);
+  ): Promise<AdapterDisconnectResult> {
     try {
-      await this.account(resolved.installation, resolved.accountId).stop();
+      await this.account(installation, accountId).stop();
       return { ok: true, message: "Disconnected" };
     } catch (error) {
       return { ok: false, error: safeError(error) };
     }
   }
 
-  async adapterStatus(accountId?: string): Promise<AdapterAccountStatus[]>;
   async adapterStatus(
     installation: AdapterInstallationContext,
     accountId?: string,
-  ): Promise<AdapterAccountStatus[]>;
-  async adapterStatus(...args: AdapterStatusRpcArgs): Promise<AdapterAccountStatus[]> {
-    const resolved = resolveAdapterStatusRpcArgs(args);
-    if (!resolved.accountId) return [];
-    return [await this.account(resolved.installation, resolved.accountId).getStatus()];
-  }
-
-  async adapterSend(
-    accountId: string,
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ): Promise<AdapterSendResult>;
-  async adapterSend(
-    installation: AdapterInstallationContext,
-    accountId: string,
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ): Promise<AdapterSendResult>;
-  async adapterSend(...args: AdapterSendRpcArgs): Promise<AdapterSendResult> {
-    const resolved = await resolveAdapterSendRpcArgs(args);
-    try {
-      return await this.account(
-        resolved.installation,
-        resolved.accountId,
-      ).sendMessage(resolved.message, resolved.body);
-    } catch (error) {
-      await cancelBinaryBody(resolved.body, error);
-      return {
-        ok: false,
-        error: "Slack delivery unavailable",
-        retryable: true,
-      };
-    }
+  ): Promise<AdapterAccountStatus[]> {
+    if (!accountId) return [];
+    return [await this.account(installation, accountId).getStatus()];
   }
 
   private async connectAccount(

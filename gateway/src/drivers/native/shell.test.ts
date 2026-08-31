@@ -21,6 +21,7 @@ import type { DeviceRecord } from "../../kernel/devices";
 import type { ProcessRecord } from "../../kernel/processes";
 import type { FederationContactRecord } from "../../kernel/federation-store";
 import type { SurfaceRouteRecord } from "../../kernel/surface-routes";
+import type { AdapterService } from "../../adapter-interface";
 import {
   bodyFromText,
   bodyToBytes,
@@ -407,17 +408,32 @@ function enableTelegramMessaging(ctx: KernelContext) {
     extra: null,
     updatedAt: 3,
   };
-  const adapterSend = vi.fn(async (
-    _installation: string,
-    _accountId: string,
-    _message: JsonObject,
-    body?: { stream: ReadableStream<Uint8Array>; length?: number },
+  const adapterFrame: NonNullable<AdapterService["adapterFrame"]> = vi.fn(async (
+    _installation,
+    context,
+    frame,
   ) => {
-    const bytes = body ? await bodyToBytes(body) : undefined;
-    return { ok: true, messageId: bytes ? `bytes-${bytes.byteLength}` : "msg-1" };
+    if (frame.type !== "req" || frame.call !== "adapter.send") {
+      throw new Error("Expected an adapter.send request frame");
+    }
+    const bytes = frame.body ? await bodyToBytes(frame.body) : undefined;
+    return {
+      type: "res",
+      id: frame.id,
+      ok: true,
+      data: {
+        ok: true,
+        adapter: "telegram",
+        accountId: context.accountId,
+        surfaceId: context.surface.id,
+        deliveryId: context.deliveryId,
+        messageId: bytes ? `bytes-${bytes.byteLength}` : "msg-1",
+        deliveryState: "sent",
+      },
+    };
   });
   Object.assign(ctx.env, {
-    CHANNEL_TELEGRAM: { adapterSend },
+    CHANNEL_TELEGRAM: { adapterFrame },
   });
   ctx.adapters = focusedFixture<KernelContext["adapters"]>({
     identityLinks: {
@@ -465,7 +481,7 @@ function enableTelegramMessaging(ctx: KernelContext) {
         }
       : null),
   });
-  return { adapterSend, link, status };
+  return { adapterFrame, link, status };
 }
 
 function enableMessageRouteStore(
@@ -3704,7 +3720,7 @@ describe("native administration shell commands", () => {
       capabilities: ["shell.exec", "adapter.send"],
       processRunId: "run-telegram",
     });
-    const { adapterSend } = enableTelegramMessaging(ctx);
+    const { adapterFrame } = enableTelegramMessaging(ctx);
 
     const current = await handleShellExec({ input: "message current" }, ctx);
     const currentJson = await handleShellExec({ input: "message current --json" }, ctx);
@@ -3747,15 +3763,18 @@ describe("native administration shell commands", () => {
     expect(intentional.stdout).not.toContain("chat-42");
     expect(intentional.stdout).not.toContain("account=bot");
     expect(intentional.stdout).not.toContain("message_id=msg-1");
-    expect(adapterSend).toHaveBeenCalledTimes(1);
-    expect(adapterSend).toHaveBeenCalledWith(
+    expect(adapterFrame).toHaveBeenCalledTimes(1);
+    expect(adapterFrame).toHaveBeenCalledWith(
       TEST_INSTALLATION_CONTEXT,
-      "bot",
       expect.objectContaining({
+        accountId: "bot",
         surface: { kind: "dm", id: "chat-42" },
-        text: "extra update",
       }),
-      undefined,
+      expect.objectContaining({
+        type: "req",
+        call: "adapter.send",
+        args: expect.objectContaining({ text: "extra update" }),
+      }),
     );
   });
 
@@ -3764,7 +3783,7 @@ describe("native administration shell commands", () => {
       capabilities: ["shell.exec", "adapter.send"],
       processRunId: "run-telegram-destinations",
     });
-    const { adapterSend } = enableTelegramMessaging(ctx);
+    const { adapterFrame } = enableTelegramMessaging(ctx);
 
     const listed = await handleShellExec({ input: "message destinations --json" }, ctx);
     expect(listed).toMatchObject({ status: "completed", exitCode: 0 });
@@ -3789,11 +3808,14 @@ describe("native administration shell commands", () => {
     expect(sent.stdout).toContain(`destination=${destinationId}`);
     expect(sent.stdout).not.toContain("chat-42");
     expect(sent.stdout).not.toContain("msg-1");
-    expect(adapterSend).toHaveBeenCalledWith(
+    expect(adapterFrame).toHaveBeenCalledWith(
       TEST_INSTALLATION_CONTEXT,
-      "bot",
-      expect.objectContaining({ text: "opaque route" }),
-      undefined,
+      expect.objectContaining({ accountId: "bot" }),
+      expect.objectContaining({
+        type: "req",
+        call: "adapter.send",
+        args: expect.objectContaining({ text: "opaque route" }),
+      }),
     );
   });
 
@@ -3828,9 +3850,29 @@ describe("native administration shell commands", () => {
       updatedAt: 2,
       updatedByUid: IDENTITY.uid,
     };
-    const adapterSend = vi.fn(async () => ({ ok: true, messageId: "1700000001.000100" }));
+    const adapterFrame: NonNullable<AdapterService["adapterFrame"]> = vi.fn(async (
+      _installation,
+      context,
+      frame,
+    ) => {
+      if (frame.type !== "req") throw new Error("Expected a request frame");
+      return {
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: {
+          ok: true,
+          adapter: "slack",
+          accountId: context.accountId,
+          surfaceId: context.surface.id,
+          deliveryId: context.deliveryId,
+          messageId: "1700000001.000100",
+          deliveryState: "sent",
+        },
+      };
+    });
     Object.assign(ctx.env, {
-      CHANNEL_SLACK: { adapterSend },
+      CHANNEL_SLACK: { adapterFrame },
     });
     ctx.adapters = focusedFixture<KernelContext["adapters"]>({
       identityLinks: {
@@ -3868,10 +3910,10 @@ describe("native administration shell commands", () => {
     }, ctx);
 
     expect(sent).toMatchObject({ status: "completed", exitCode: 0 });
-    expect(adapterSend).toHaveBeenCalledWith(
+    expect(adapterFrame).toHaveBeenCalledWith(
       TEST_INSTALLATION_CONTEXT,
-      "managed",
       expect.objectContaining({
+        accountId: "managed",
         actorId: "U123",
         surface: {
           kind: "channel",
@@ -3879,9 +3921,12 @@ describe("native administration shell commands", () => {
           threadId: "1700000000.000100",
         },
         routeGeneration: "generation-1",
-        text: "delegated result",
       }),
-      undefined,
+      expect.objectContaining({
+        type: "req",
+        call: "adapter.send",
+        args: expect.objectContaining({ text: "delegated result" }),
+      }),
     );
   });
 
@@ -4368,7 +4413,7 @@ describe("native administration shell commands", () => {
       capabilities: ["shell.exec", "adapter.send", "fs.write"],
       processRunId: "run-telegram-file",
     });
-    const { adapterSend } = enableTelegramMessaging(ctx);
+    const { adapterFrame } = enableTelegramMessaging(ctx);
     await handleFsWrite({ path: "/tmp/share.png", content: "PNG" }, ctx);
 
     const result = await handleShellExec({
@@ -4378,20 +4423,26 @@ describe("native administration shell commands", () => {
     expect(result).toMatchObject({ status: "completed", exitCode: 0 });
     expect(result.stdout).toContain("sent=true");
     expect(result.stdout).not.toContain("bytes-3");
-    expect(adapterSend).toHaveBeenCalledWith(
+    expect(adapterFrame).toHaveBeenCalledWith(
       TEST_INSTALLATION_CONTEXT,
-      "bot",
       expect.objectContaining({
-        text: "",
-        media: [{
-          type: "image",
-          mimeType: "image/png",
-          filename: "share.png",
-          size: 3,
-          body: { offset: 0, length: 3 },
-        }],
+        accountId: "bot",
       }),
-      expect.objectContaining({ length: 3 }),
+      expect.objectContaining({
+        type: "req",
+        call: "adapter.send",
+        args: expect.objectContaining({
+          text: "",
+          media: [{
+            type: "image",
+            mimeType: "image/png",
+            filename: "share.png",
+            size: 3,
+            body: { offset: 0, length: 3 },
+          }],
+        }),
+        body: expect.objectContaining({ length: 3 }),
+      }),
     );
   });
 
@@ -4401,11 +4452,24 @@ describe("native administration shell commands", () => {
       processRunId: "run-telegram-retry",
     });
     enableTelegramMessaging(ctx);
-    const adapterSend = vi.fn()
+    const adapterFrame = vi.fn()
       .mockRejectedValueOnce(new Error("service binding disconnected"))
-      .mockResolvedValueOnce({ ok: true, messageId: "msg-retried" });
+      .mockImplementationOnce(async (_installation, context, frame) => ({
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: {
+          ok: true,
+          adapter: "telegram",
+          accountId: context.accountId,
+          surfaceId: context.surface.id,
+          deliveryId: context.deliveryId,
+          messageId: "msg-retried",
+          deliveryState: "sent",
+        },
+      }));
     Object.assign(ctx.env, {
-      CHANNEL_TELEGRAM: { adapterSend },
+      CHANNEL_TELEGRAM: { adapterFrame },
     });
 
     const result = await handleShellExec({
@@ -4414,8 +4478,8 @@ describe("native administration shell commands", () => {
 
     expect(result).toMatchObject({ status: "completed", exitCode: 0 });
     expect(result.stdout).toContain("delivery_id=logical-send-1");
-    expect(adapterSend).toHaveBeenCalledTimes(2);
-    expect(adapterSend.mock.calls.map((call) => call[2].deliveryId)).toEqual([
+    expect(adapterFrame).toHaveBeenCalledTimes(2);
+    expect(adapterFrame.mock.calls.map((call) => call[1].deliveryId)).toEqual([
       "logical-send-1",
       "logical-send-1",
     ]);
@@ -4427,14 +4491,28 @@ describe("native administration shell commands", () => {
       processRunId: "run-telegram-ambiguous",
     });
     enableTelegramMessaging(ctx);
+    const adapterFrame: NonNullable<AdapterService["adapterFrame"]> = vi.fn(async (
+      _installation,
+      context,
+      frame,
+    ) => {
+      if (frame.type !== "req") throw new Error("Expected a request frame");
+      return {
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: {
+          ok: true,
+          adapter: "telegram",
+          accountId: context.accountId,
+          surfaceId: context.surface.id,
+          deliveryId: context.deliveryId,
+          deliveryState: "ambiguous",
+        },
+      };
+    });
     Object.assign(ctx.env, {
-      CHANNEL_TELEGRAM: {
-        adapterSend: vi.fn(async () => ({
-          ok: false,
-          error: "provider outcome unknown",
-          ambiguous: true,
-        })),
-      },
+      CHANNEL_TELEGRAM: { adapterFrame },
     });
 
     const result = await handleShellExec({
@@ -4455,18 +4533,28 @@ describe("native administration shell commands", () => {
     });
     enableTelegramMessaging(ctx);
     await handleFsWrite({ path: "/tmp/retry-share.png", content: "PNG" }, ctx);
-    const adapterSend = vi.fn(async (
-      _installation: string,
-      _accountId: string,
-      _message: JsonObject,
-      body?: { stream: ReadableStream<Uint8Array>; length?: number },
+    const adapterFrame: NonNullable<AdapterService["adapterFrame"]> = vi.fn(async (
+      _installation,
+      context,
+      frame,
     ) => {
-      if (body) await bodyToBytes(body);
+      if (frame.type !== "req") throw new Error("Expected a request frame");
+      if (frame.body) await bodyToBytes(frame.body);
       await env.STORAGE.delete("tmp/retry-share.png");
-      return { ok: false, error: "retry safely", retryable: true };
+      return {
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: {
+          ok: false,
+          error: "retry safely",
+          deliveryId: context.deliveryId,
+          retryable: true,
+        },
+      };
     });
     Object.assign(ctx.env, {
-      CHANNEL_TELEGRAM: { adapterSend },
+      CHANNEL_TELEGRAM: { adapterFrame },
     });
 
     const result = await handleShellExec({
@@ -4474,7 +4562,7 @@ describe("native administration shell commands", () => {
     }, ctx);
 
     expect(result).toMatchObject({ status: "failed", exitCode: 1 });
-    expect(adapterSend).toHaveBeenCalledTimes(1);
+    expect(adapterFrame).toHaveBeenCalledTimes(1);
     expect(result.stderr).toContain("delivery_id=logical-send-file");
     expect(result.stderr).toContain("retry with --delivery-id using this value");
   });

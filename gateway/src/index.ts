@@ -167,10 +167,6 @@ const ADAPTER_SERVICE_CALLS = [
   "adapter.delivery.claim",
   "adapter.delivery.report",
 ] as const;
-const LEGACY_ADAPTER_IDS = new Set(["telegram", "whatsapp", "discord", "test"]);
-const legacyAdapterServiceArgsSchema = z.object({
-  adapter: z.string(),
-});
 const adapterServicePeerProfileSchema = z.object({
   id: z.string().check(
     z.minLength(1),
@@ -183,90 +179,56 @@ const adapterServicePeerProfileSchema = z.object({
   ),
 });
 
-abstract class AdapterServiceEntrypoint<Props>
-  extends WorkerEntrypoint<GatewayEnv, Props>
-  implements GatewayAdapterInterface
+export class AdapterGatewayEntrypoint
+  extends WorkerEntrypoint<GatewayEnv, ServicePeerProfile>
+  implements GatewayAdapterInterface, ManagedAdapterGatewayService
 {
-  protected abstract resolveServicePeerProfile(frame: Frame): ServicePeerProfile;
-
-  serviceFrame(frame: Frame): Promise<Frame | null>;
-  serviceFrame(
-    installation: AdapterInstallationContext,
-    frame: Frame,
-  ): Promise<Frame | null>;
   async serviceFrame(
-    ...args:
-      | [frame: Frame]
-      | [installation: AdapterInstallationContext, frame: Frame]
+    inputInstallation: AdapterInstallationContext,
+    inputFrame: Frame,
   ): Promise<Frame | null> {
     try {
-      if (args.length === 1) {
-        const frame = requireAdapterServiceFrame(args[0]);
-        return await routeAdapterServiceFrame(
-          this.env,
-          { installationId: SINGLETON_INSTALLATION_ID },
-          this.resolveServicePeerProfile(frame),
-          frame,
-        );
-      }
-      const installation = adapterInstallationContextSchema.safeParse(args[0]);
-      if (args.length === 2 && installation.success) {
-        const frame = requireAdapterServiceFrame(args[1]);
-        return await routeAdapterServiceFrame(
-          this.env,
-          installation.data,
-          this.resolveServicePeerProfile(frame),
-          frame,
-        );
-      }
-      throw new Error("Gateway serviceFrame RPC arguments are invalid");
-    } catch (error) {
-      await Promise.all(
-        adapterServiceFrameBodyCandidates(args)
-          .map((body) => cancelBinaryBody(body, "Gateway service request failed")),
+      const installation = adapterInstallationContextSchema.parse(inputInstallation);
+      const frame = requireAdapterServiceFrame(inputFrame);
+      return await routeAdapterServiceFrame(
+        this.env,
+        installation,
+        this.resolveServicePeerProfile(),
+        frame,
       );
-      console.error("[GatewayEntrypoint] serviceFrame failed:", error);
+    } catch (error) {
+      await cancelBinaryBody(
+        adapterServiceFrameBody(inputFrame),
+        "Gateway service request failed",
+      );
+      console.error("[AdapterGatewayEntrypoint] serviceFrame failed:", error);
       return null;
     }
   }
 
-  linkedPeerFrame(
-    context: AdapterLinkedPeerContext,
-    frame: Frame,
-  ): Promise<Frame | null>;
-  linkedPeerFrame(
-    installation: AdapterInstallationContext,
-    context: AdapterLinkedPeerContext,
-    frame: Frame,
-  ): Promise<Frame | null>;
   async linkedPeerFrame(
-    ...args:
-      | [context: AdapterLinkedPeerContext, frame: Frame]
-      | [
-          installation: AdapterInstallationContext,
-          context: AdapterLinkedPeerContext,
-          frame: Frame,
-        ]
+    inputInstallation: AdapterInstallationContext,
+    inputContext: AdapterLinkedPeerContext,
+    inputFrame: Frame,
   ): Promise<Frame | null> {
     try {
-      const installation = args.length === 2
-        ? { installationId: SINGLETON_INSTALLATION_ID }
-        : adapterInstallationContextSchema.parse(args[0]);
-      const context = adapterLinkedPeerContextSchema.parse(
-        args.length === 2 ? args[0] : args[1],
-      );
-      const frame = requireAdapterServiceFrame(args.length === 2 ? args[1] : args[2]);
+      const installation = adapterInstallationContextSchema.parse(inputInstallation);
+      const context = adapterLinkedPeerContextSchema.parse(inputContext);
+      const frame = requireAdapterServiceFrame(inputFrame);
       return await routeAdapterLinkedPeerFrame(
         this.env,
         installation,
-        this.resolveServicePeerProfile(frame),
+        this.resolveServicePeerProfile(),
         context,
         frame,
       );
     } catch (error) {
-      console.error("[GatewayEntrypoint] linkedPeerFrame failed:", error);
-      const candidate = args[args.length - 1];
-      const parsedCandidate = adapterGatewayFrameSchema.safeParse(candidate);
+      await cancelBinaryBody(
+        adapterServiceFrameBody(inputFrame),
+        "Linked adapter request was rejected",
+      );
+      console.error("[AdapterGatewayEntrypoint] linkedPeerFrame failed:", error);
+      const parsedCandidate = adapterGatewayFrameSchema.safeParse(inputFrame);
       return parsedCandidate.success && parsedCandidate.data.type === "req"
         ? {
             type: "res",
@@ -277,16 +239,38 @@ abstract class AdapterServiceEntrypoint<Props>
         : null;
     }
   }
+
+  async unlinkManagedAdapterIdentity(
+    installation: AdapterInstallationContext,
+    input: UnlinkManagedAdapterIdentityInput,
+  ): Promise<UnlinkManagedAdapterIdentityResult> {
+    const directory = this.env.INSTALLATION_DIRECTORY;
+    if (!directory) throw new Error("Managed adapter pairing is not enabled");
+    const installationId = resolveAdapterInstallationId(this.env, installation);
+    const resolved = await directory.resolveInstallation(installationId);
+    if (!resolved.found || resolved.installationId !== installationId) {
+      return { removed: false };
+    }
+    const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
+    return await kernel.unlinkManagedAdapterIdentity(
+      this.resolveServicePeerProfile().id,
+      input,
+    );
+  }
+
+  private resolveServicePeerProfile(): ServicePeerProfile {
+    const parsed = adapterServicePeerProfileSchema.safeParse(this.ctx.props);
+    if (!parsed.success || new Set(parsed.data.calls).size !== parsed.data.calls.length) {
+      throw new Error("Adapter service binding props are invalid");
+    }
+    return parsed.data;
+  }
 }
 
 export class GatewayEntrypoint
-  extends AdapterServiceEntrypoint<Record<never, never>>
+  extends WorkerEntrypoint<GatewayEnv>
   implements MailGatewayService, ManagedTelegramGatewayService
 {
-  protected override resolveServicePeerProfile(frame: Frame): ServicePeerProfile {
-    return resolveLegacyAdapterServicePeerProfile(frame);
-  }
-
   async acceptManagedInboundMail(
     installation: AdapterInstallationContext,
     metadata: ManagedInboundMailMetadata,
@@ -363,37 +347,6 @@ export class GatewayEntrypoint
     }
     const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
     return await kernel.unlinkManagedTelegramIdentity({ ...input, installationId });
-  }
-}
-
-export class AdapterGatewayEntrypoint
-  extends AdapterServiceEntrypoint<ServicePeerProfile>
-  implements ManagedAdapterGatewayService
-{
-  protected override resolveServicePeerProfile(): ServicePeerProfile {
-    const parsed = adapterServicePeerProfileSchema.safeParse(this.ctx.props);
-    if (!parsed.success || new Set(parsed.data.calls).size !== parsed.data.calls.length) {
-      throw new Error("Adapter service binding props are invalid");
-    }
-    return parsed.data;
-  }
-
-  async unlinkManagedAdapterIdentity(
-    installation: AdapterInstallationContext,
-    input: UnlinkManagedAdapterIdentityInput,
-  ): Promise<UnlinkManagedAdapterIdentityResult> {
-    const directory = this.env.INSTALLATION_DIRECTORY;
-    if (!directory) throw new Error("Managed adapter pairing is not enabled");
-    const installationId = resolveAdapterInstallationId(this.env, installation);
-    const resolved = await directory.resolveInstallation(installationId);
-    if (!resolved.found || resolved.installationId !== installationId) {
-      return { removed: false };
-    }
-    const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
-    return await kernel.unlinkManagedAdapterIdentity(
-      this.resolveServicePeerProfile().id,
-      input,
-    );
   }
 }
 
@@ -478,34 +431,10 @@ function requireAdapterServiceFrame(value: Frame): Frame {
   return value;
 }
 
-function resolveLegacyAdapterServicePeerProfile(frame: Frame): ServicePeerProfile {
-  if (frame.type !== "req") {
-    throw new Error("Legacy adapter service bindings accept only requests");
-  }
-  const args = legacyAdapterServiceArgsSchema.safeParse(frame.args);
-  const adapter = args.success ? args.data.adapter.trim().toLowerCase() : "";
-  if (!LEGACY_ADAPTER_IDS.has(adapter)) {
-    throw new Error("Legacy adapter service identity is invalid");
-  }
-  return { id: adapter, calls: ADAPTER_SERVICE_CALLS };
-}
-
-type AdapterServiceRpcArgument = AdapterInstallationContext | Frame;
 const adapterServiceFrameBodySchema = z.object({ body: binaryBodySchema });
 
-function adapterServiceFrameBodyCandidates(
-  values: readonly AdapterServiceRpcArgument[],
-): BinaryBody[] {
-  const bodies = new Set<BinaryBody>();
-  for (const value of values) {
-    const body = adapterServiceFrameBody(value);
-    if (body) bodies.add(body);
-  }
-  return [...bodies];
-}
-
 function adapterServiceFrameBody(
-  value: AdapterServiceRpcArgument,
+  value: Frame,
 ): BinaryBody | undefined {
   const parsed = adapterServiceFrameBodySchema.safeParse(value);
   return parsed.success ? parsed.data.body : undefined;

@@ -28,7 +28,6 @@ export type {
   AdapterServiceDescriptor,
   AdapterSurface,
   AdapterSurfaceKind,
-  AdapterWorkerInterface,
   BinaryBody,
   GatewayFrame,
   GatewayRequestFrame,

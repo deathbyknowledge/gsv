@@ -501,8 +501,8 @@ export function isAdapterWorkerDisconnectResult(
   return adapterWorkerDisconnectResultSchema.safeParse(value).success;
 }
 
-/** Result returned by an adapter worker's `adapterSend` RPC method. */
-export const adapterWorkerSendResultSchema = z.discriminatedUnion("ok", [
+/** Provider delivery result normalized by an adapter's canonical frame handler. */
+export const adapterProviderSendResultSchema = z.discriminatedUnion("ok", [
   z.strictObject({
     ok: z.literal(true),
     messageId: z.optional(z.string()),
@@ -516,7 +516,7 @@ export const adapterWorkerSendResultSchema = z.discriminatedUnion("ok", [
   }).check(z.refine((result) => !(result.retryable === true && result.ambiguous === true))),
 ]);
 
-export type AdapterWorkerSendResult =
+export type AdapterProviderSendResult =
   | { ok: true; messageId?: string; deduplicated?: boolean }
   | {
       ok: false;
@@ -528,8 +528,8 @@ export type AdapterWorkerSendResult =
     };
 
 /** Validate an adapter Worker's private send RPC result. */
-export function isAdapterWorkerSendResult(value: JsonValue): value is AdapterWorkerSendResult {
-  return adapterWorkerSendResultSchema.safeParse(value).success;
+export function isAdapterProviderSendResult(value: JsonValue): value is AdapterProviderSendResult {
+  return adapterProviderSendResultSchema.safeParse(value).success;
 }
 
 export const adapterWorkerActivityResultSchema = z.discriminatedUnion("ok", [
@@ -729,78 +729,13 @@ export const adapterGatewayFrameSchema = z.union([
 
 /** Gateway RPC surface consumed by adapter workers through a service binding. */
 export interface AdapterGatewayInterface<Frame = AdapterGatewayFrame> {
-  serviceFrame(frame: Frame): Promise<Frame | null>;
   serviceFrame(
     installation: AdapterInstallationContext,
     frame: Frame,
   ): Promise<Frame | null>;
   linkedPeerFrame(
-    context: AdapterLinkedPeerContext,
-    frame: Frame,
-  ): Promise<Frame | null>;
-  linkedPeerFrame(
     installation: AdapterInstallationContext,
     context: AdapterLinkedPeerContext,
     frame: Frame,
   ): Promise<Frame | null>;
-}
-
-/**
- * Legacy full-operation shape retained for mixed standalone deployments.
- *
- * @deprecated Implement `AdapterService` from
- * `@humansandmachines/gsv/services/adapters`; it permits intentionally omitted
- * operations and adds explicit discovery metadata.
- */
-export interface AdapterWorkerInterface {
-  readonly adapterId: string;
-  /**
-   * Kept distinct from `connect`: Cloudflare service bindings reserve that
-   * method name for socket connections and would bypass the adapter RPC.
-   */
-  adapterConnect(
-    accountId: string,
-    config?: AdapterConnectConfig,
-  ): Promise<AdapterWorkerConnectResult>;
-  adapterConnect(
-    installation: AdapterInstallationContext,
-    accountId: string,
-    config?: AdapterConnectConfig,
-  ): Promise<AdapterWorkerConnectResult>;
-  adapterDisconnect(
-    accountId: string,
-  ): Promise<AdapterWorkerDisconnectResult>;
-  adapterDisconnect(
-    installation: AdapterInstallationContext,
-    accountId: string,
-  ): Promise<AdapterWorkerDisconnectResult>;
-  adapterSend(
-    accountId: string,
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ): Promise<AdapterWorkerSendResult>;
-  adapterSend(
-    installation: AdapterInstallationContext,
-    accountId: string,
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ): Promise<AdapterWorkerSendResult>;
-  adapterSetActivity(
-    accountId: string,
-    surface: AdapterSurface,
-    activity: AdapterActivity,
-  ): Promise<AdapterWorkerActivityResult>;
-  adapterSetActivity(
-    installation: AdapterInstallationContext,
-    accountId: string,
-    surface: AdapterSurface,
-    activity: AdapterActivity,
-  ): Promise<AdapterWorkerActivityResult>;
-  adapterStatus(
-    accountId?: string,
-  ): Promise<AdapterAccountStatus[]>;
-  adapterStatus(
-    installation: AdapterInstallationContext,
-    accountId?: string,
-  ): Promise<AdapterAccountStatus[]>;
 }

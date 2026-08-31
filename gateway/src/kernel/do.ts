@@ -28,7 +28,6 @@ import type {
   WireResponseEnvelope,
   WireResponseFrame,
 } from "@humansandmachines/gsv/protocol";
-import { adapterServiceSupportsDeliveryFrames } from "../adapter-interface";
 import { consumeProcessRunStream } from "../protocol/process-run-stream";
 import type {
   AdapterMedia,
@@ -158,9 +157,7 @@ import { isInternalOnlySyscall } from "./syscall-exposure";
 import {
   deliverAdapterDestination,
   normalizeAdapterHilRequest,
-  prefixAdapterDmProcessReply,
   resolveAdapterService,
-  renderAdapterHilPrompt,
   setAdapterActivityForKernel,
 } from "./adapter-handlers";
 import {
@@ -395,12 +392,6 @@ type IpcDeliverySignalPayload = {
   checkInCount?: number;
   response?: IpcCallRecord["response"];
   error?: string;
-};
-
-type AdapterCommittedReply = {
-  deliveryId: string;
-  text: string;
-  media?: AdapterMedia[];
 };
 
 type SignalWatchDelivery = {
@@ -2519,15 +2510,10 @@ export class Kernel extends DurableObject<GatewayEnv> {
       const request = parsedRequest.data;
 
       try {
-        const framed = await this.deliverAdapterPeerSignal(route, {
+        return await this.deliverAdapterPeerSignal(route, {
           type: "sig",
           signal: "proc.run.hil.requested",
           payload: request,
-        });
-        if (framed) return framed;
-        return await this.deliverAdapterRouteReply(route, {
-          deliveryId: `${route.runId}:hil:${request.requestId}`,
-          text: renderAdapterHilPrompt(request, surface.kind, "initial"),
         });
       } finally {
         await setAdapterActivityForKernel(
@@ -2559,12 +2545,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         if (!message.text.trim() && attachmentBundle.media.length === 0) {
           return { state: "delivered" };
         }
-        const reply: AdapterCommittedReply = {
-          deliveryId: message.id,
-          text: message.text,
-        };
-        if (attachmentBundle.media.length > 0) reply.media = attachmentBundle.media;
-        const framed = await this.deliverAdapterPeerSignal(
+        return await this.deliverAdapterPeerSignal(
           route,
           {
             type: "sig",
@@ -2574,8 +2555,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
           attachmentBundle.media,
           attachmentBundle.body,
         );
-        if (framed) return framed;
-        return await this.deliverAdapterRouteReply(route, reply, attachmentBundle.body);
       } finally {
         await setAdapterActivityForKernel(
           this.bindings,
@@ -2596,13 +2575,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
     frame: AdapterPeerSignalFrame,
     media: AdapterMedia[] = [],
     body?: BinaryBody,
-  ): Promise<AdapterSignalDeliveryOutcome | null> {
+  ): Promise<AdapterSignalDeliveryOutcome> {
     const service = resolveAdapterService(this.bindings, route.destination.adapter);
-    if (
-      !service?.adapterFrame
-      || !service.adapterDescribe
-      || !await adapterServiceSupportsDeliveryFrames(route.destination.adapter, service)
-    ) return null;
+    if (!service?.adapterFrame) {
+      await cancelBinaryBody(body, "Adapter service is unavailable");
+      return { state: "retryable", error: "Adapter service is unavailable" };
+    }
 
     const ctx = this.buildProcessContext(route.processId, route.runId);
     if (!ctx) {
@@ -2672,72 +2650,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
     } finally {
       await cancelBinaryBody(body, "Adapter signal handoff completed");
     }
-  }
-
-  private async deliverAdapterRouteReply(
-    route: AdapterRunRoute,
-    message: {
-      deliveryId: string;
-      text: string;
-      media?: AdapterMedia[];
-      replyToId?: string;
-    },
-    body?: BinaryBody,
-  ): Promise<AdapterSignalDeliveryOutcome> {
-    const ctx = this.buildProcessContext(route.processId, route.runId);
-    if (!ctx) {
-      await cancelBinaryBody(body, "Reply route references a missing process");
-      console.warn(`[Kernel] Reply route references missing process ${route.processId}`);
-      return { state: "permanent", error: "Reply route references a missing process" };
-    }
-
-    try {
-      assertAdapterMessageDestinationAccess(route.destination, route.uid, ctx);
-    } catch (error) {
-      await cancelBinaryBody(body, error);
-      ctx.adapters.privateDestinations.clearIfMatches(route.uid, route.destination);
-      // Revocation is a permanent delivery outcome, not a transport outage.
-      // A HIL signal was already broadcast to any connected GSV client, and a
-      // terminal result must not retry forever after the user removes access.
-      console.warn(
-        `[Kernel] Dropping revoked adapter reply route ${route.runId}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return {
-        state: "permanent",
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-
-    const result = await deliverAdapterDestination(route.destination, route.uid, {
-      ...message,
-      text: prefixAdapterDmProcessReply(
-        message.text,
-        route.processId,
-        route.destination,
-        ctx,
-      ),
-      replyToId: message.replyToId ?? route.replyToId,
-      ...(route.routeGeneration === undefined
-        ? undefined
-        : { routeGeneration: route.routeGeneration }),
-    }, ctx, body);
-    if (!result.ok) {
-      const detail = `Adapter reply failed (${route.destination.adapter}): ${result.error}`;
-      if (result.retryable) {
-        return { state: "retryable", error: detail };
-      }
-      console.warn(`[Kernel] Dropping permanent adapter delivery ${message.deliveryId}: ${detail}`);
-      return { state: "permanent", error: detail };
-    }
-    if (result.deliveryState === "ambiguous") {
-      return {
-        state: "ambiguous",
-        error: `Adapter delivery ${message.deliveryId} is ambiguous`,
-      };
-    }
-    return { state: "delivered" };
   }
 
   private async bundleConversationReplyMedia(
