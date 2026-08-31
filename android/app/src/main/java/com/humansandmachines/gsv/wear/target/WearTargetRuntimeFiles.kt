@@ -6,6 +6,7 @@ import com.humansandmachines.gsv.wear.camera.CameraCaptureFailure
 import com.humansandmachines.gsv.wear.camera.SnapshotCamera
 import com.humansandmachines.gsv.wear.platform.GsvPlatformFailure
 import com.humansandmachines.gsv.wear.platform.GsvPlatformOperations
+import com.humansandmachines.gsv.wear.platform.GsvScreenshotSpec
 import com.humansandmachines.gsv.wear.protocol.GsvProtocol
 import com.humansandmachines.gsv.wear.runtime.WearRuntimeState
 import kotlinx.coroutines.currentCoroutineContext
@@ -142,7 +143,7 @@ class WearTargetRuntimeFiles(
         val source = platform?.takeIf(GsvPlatformOperations::supportsAutomation)
             ?: throw TargetFsException("GSV OS platform automation is unavailable")
         val capture = try {
-            source.captureScreenshot(DEFAULT_SCREENSHOT_MAX_DIMENSION)
+            source.captureScreenshot(GsvScreenshotSpec.DEFAULT_MAX_DIMENSION)
         } catch (error: GsvPlatformFailure) {
             throw TargetFsException(error.message ?: "Display capture failed")
         }
@@ -197,7 +198,10 @@ class WearTargetRuntimeFiles(
                         .put("materializeCommand", "camera snapshot [DESTINATION]"),
                 )
                 .put("camera.observe", "camera observe DURATION [DESTINATION]")
-                .put("screen.screenshot", "screen screenshot [DESTINATION]")
+                .put(
+                    "screen.screenshot",
+                    "screen screenshot [DESTINATION] [--max-dimension PIXELS]",
+                )
                 .put("microphone.sample", "microphone sample DURATION [DESTINATION]")
                 .put("microphone.observe", "microphone observe DURATION [DESTINATION]")
                 .put("microphone.listenUntilSpeech", "microphone listen-until-speech [DESTINATION]")
@@ -215,7 +219,7 @@ class WearTargetRuntimeFiles(
                 )
                 .put("notifications", "notifications status|list|read|dismiss|action|reply")
                 .put("apps", "apps list|foreground|open")
-                .put("screen", "screen status|screenshot")
+                .put("screen", "screen status|screenshot [--max-dimension PIXELS]")
                 .put("input", "input tap|swipe|long-press|key|text")
                 .put("intent", "intent open")
                 .put("share", "share text|file")
@@ -248,8 +252,6 @@ class WearTargetRuntimeFiles(
         const val CAMERA_SNAPSHOT = "/dev/camera/back/snapshot"
         const val SCREEN_SCREENSHOT = "/dev/screen/screenshot"
 
-        private const val DEFAULT_SCREENSHOT_MAX_DIMENSION = 2_048
-
         private val README_CONTENT = """
             GSV Android target
 
@@ -281,7 +283,8 @@ class WearTargetRuntimeFiles(
               sensors status; imu sample; gesture session; orientation current
               device status|battery|network|thermal; location current
               notifications; apps; intent; share; clipboard
-              screen screenshot; input tap|swipe|long-press|key|text
+              screen screenshot [DESTINATION] [--max-dimension PIXELS]
+              input tap|swipe|long-press|key|text
               notify; speak; vibrate; checks
 
             Wear Mode:

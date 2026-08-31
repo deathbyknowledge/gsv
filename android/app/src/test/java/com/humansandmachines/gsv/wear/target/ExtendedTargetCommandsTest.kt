@@ -27,6 +27,7 @@ import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -159,7 +160,9 @@ class ExtendedTargetCommandsTest {
     @Test
     fun osAutomationCommandsAreBoundedAndMaterializeScreenshots() = runBlocking {
         val status = shell.execute(JSONObject().put("input", "screen status"))
-        val screenshot = shell.execute(JSONObject().put("input", "screen screenshot /tmp/display.png"))
+        val screenshot = shell.execute(
+            JSONObject().put("input", "screen screenshot /tmp/display.png --max-dimension 512"),
+        )
         val tap = shell.execute(JSONObject().put("input", "input tap 12 34"))
         val swipe = shell.execute(JSONObject().put("input", "input swipe 10 20 30 40 250ms"))
         val key = shell.execute(JSONObject().put("input", "input key HOME"))
@@ -168,6 +171,8 @@ class ExtendedTargetCommandsTest {
 
         assertEquals(1080, JSONObject(status.getString("output")).getInt("width"))
         assertEquals("image/png", fileSystem.stat("/tmp/display.png").contentType)
+        assertEquals(512, fakePlatform.lastScreenshotMaxDimension)
+        assertFalse(checkNotNull(fakePlatform.captureFile).exists())
         assertEquals("completed", screenshot.getString("status"))
         assertEquals(12 to 34, fakePlatform.lastTap)
         assertEquals(listOf(10, 20, 30, 40, 250), fakePlatform.lastSwipe)
@@ -181,6 +186,17 @@ class ExtendedTargetCommandsTest {
             "com.example.foreground",
             JSONObject(foreground.getString("output")).getString("package"),
         )
+    }
+
+    @Test
+    fun screenshotScaleFailsClosedAtTheCommandBoundary() = runBlocking {
+        val result = shell.execute(
+            JSONObject().put("input", "screen screenshot --max-dimension 128"),
+        )
+
+        assertEquals("failed", result.getString("status"))
+        assertTrue(result.getString("error").contains("between 256 and 4096"))
+        assertNull(fakePlatform.lastScreenshotMaxDimension)
     }
 
     @Test
@@ -316,12 +332,16 @@ class ExtendedTargetCommandsTest {
         var lastSwipe: List<Int>? = null
         var lastKey: String? = null
         var lastText: String? = null
+        var lastScreenshotMaxDimension: Int? = null
+        var captureFile: File? = null
 
         override suspend fun displaySize(): GsvDisplaySize = GsvDisplaySize(1080, 2400)
 
         override suspend fun captureScreenshot(maxDimension: Int): GsvPlatformCapture {
+            lastScreenshotMaxDimension = maxDimension
             val file = File.createTempFile("screen-", ".png", root)
             file.writeBytes(byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47))
+            captureFile = file
             return GsvPlatformCapture(file, "image/png")
         }
 

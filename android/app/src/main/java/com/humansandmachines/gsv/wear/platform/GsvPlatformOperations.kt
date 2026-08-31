@@ -15,6 +15,12 @@ data class GsvForegroundActivity(
     val className: String,
 )
 
+object GsvScreenshotSpec {
+    const val MIN_MAX_DIMENSION = 256
+    const val DEFAULT_MAX_DIMENSION = 1_024
+    const val MAX_MAX_DIMENSION = 4_096
+}
+
 class GsvPlatformCapture internal constructor(
     val file: File,
     val contentType: String,

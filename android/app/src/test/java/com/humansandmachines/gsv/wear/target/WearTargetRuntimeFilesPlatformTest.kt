@@ -7,11 +7,13 @@ import com.humansandmachines.gsv.wear.platform.GsvForegroundActivity
 import com.humansandmachines.gsv.wear.platform.GsvPlatformCapture
 import com.humansandmachines.gsv.wear.platform.GsvPlatformOperations
 import com.humansandmachines.gsv.wear.platform.GsvPlatformStatus
+import com.humansandmachines.gsv.wear.platform.GsvScreenshotSpec
 import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -34,6 +36,7 @@ class WearTargetRuntimeFilesPlatformTest {
             val captureFile = checkNotNull(platform.captureFile)
             assertTrue(captureFile.exists())
             assertArrayEquals(PNG_BYTES, handle.open().use { it.readBytes() })
+            assertEquals(GsvScreenshotSpec.DEFAULT_MAX_DIMENSION, platform.lastMaxDimension)
 
             handle.close()
 
@@ -69,11 +72,13 @@ class WearTargetRuntimeFilesPlatformTest {
         override val status = GsvPlatformStatus(2, "test", 1)
         var captureCalled = false
         var captureFile: File? = null
+        var lastMaxDimension: Int? = null
 
         override suspend fun displaySize(): GsvDisplaySize = GsvDisplaySize(1080, 2400)
 
         override suspend fun captureScreenshot(maxDimension: Int): GsvPlatformCapture {
             captureCalled = true
+            lastMaxDimension = maxDimension
             val file = File.createTempFile("screen-", ".png", root).also { it.writeBytes(PNG_BYTES) }
             captureFile = file
             return GsvPlatformCapture(file, "image/png")

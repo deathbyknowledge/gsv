@@ -299,7 +299,7 @@ gesture session DURATION [DESTINATION]
 orientation current [DURATION]
 location current [--provider best|gps|network] [--max-age DURATION] [--force] [--allow-cached] [--timeout DURATION]
 screen status
-screen screenshot [DESTINATION]
+screen screenshot [DESTINATION] [--max-dimension PIXELS]
 input tap X Y
 input swipe X1 Y1 X2 Y2 DURATION
 input long-press X Y DURATION
@@ -313,6 +313,10 @@ restarts. Audio observation performs primitive local detection for speech or
 voice, loud sound, and sustained tone. Other requested event names are marked
 as requiring semantic inference rather than being guessed. Gesture sessions
 report motion class and shake events from the phone's motion sensors.
+
+Display captures default to a 1024-pixel longest edge for responsive visual
+inference. Pass `--max-dimension` from 256 through 4096 when a different
+capture scale is needed; scaling happens on the phone before transfer.
 
 Location defaults to `best`, a 30-second maximum fix age, and a 15-second
 request timeout. `best` lets both enabled network and GPS requests finish (or

@@ -4,6 +4,8 @@ import com.humansandmachines.gsv.wear.authority.AuthorityLease
 import com.humansandmachines.gsv.wear.authority.AuthorityState
 import com.humansandmachines.gsv.wear.authority.WearAuthority
 import com.humansandmachines.gsv.wear.platform.GsvPlatformOperations
+import com.humansandmachines.gsv.wear.platform.GsvScreenshotSpec
+import java.io.FileInputStream
 import org.json.JSONObject
 
 class PlatformAutomationCommands(
@@ -14,7 +16,7 @@ class PlatformAutomationCommands(
         TargetCommand(
             name = "screen",
             description = "Inspect or capture the current Android display",
-            usage = "screen status | screenshot [DESTINATION]",
+            usage = SCREEN_USAGE,
             category = "android",
             run = ::screen,
         ),
@@ -41,25 +43,59 @@ class PlatformAutomationCommands(
             }
             shellJson(output)
         }
-        args.firstOrNull() == "screenshot" && args.size <= 2 -> {
-            val destination = context.fileSystem.resolve(
-                args.getOrNull(1) ?: "/tmp/screen/screenshot-${context.nowMillis()}.png",
-                context.cwd,
-            )
-            context.fileSystem.open(WearTargetRuntimeFiles.SCREEN_SCREENSHOT).use { capture ->
-                capture.open().use { input ->
-                    context.fileSystem.write(destination, input, capture.length, capture.contentType)
+        args.firstOrNull() == "screenshot" -> captureScreenshot(args.drop(1), context)
+        else -> usage(SCREEN_USAGE)
+    }
+
+    private suspend fun captureScreenshot(
+        args: List<String>,
+        context: TargetCommandContext,
+    ): TargetCommandResult {
+        var destinationArgument: String? = null
+        var maxDimension = GsvScreenshotSpec.DEFAULT_MAX_DIMENSION
+        var index = 0
+        while (index < args.size) {
+            when (args[index]) {
+                "--max-dimension" -> {
+                    maxDimension = args.getOrNull(index + 1)?.toIntOrNull()
+                        ?: return usage(SCREEN_USAGE)
+                    index += 2
+                }
+                else -> {
+                    if (destinationArgument != null || args[index].startsWith("--")) {
+                        return usage(SCREEN_USAGE)
+                    }
+                    destinationArgument = args[index]
+                    index += 1
                 }
             }
-            val stat = context.fileSystem.stat(destination)
-            shellJson(
-                JSONObject()
-                    .put("path", destination)
-                    .put("size", stat.size)
-                    .put("contentType", stat.contentType),
+        }
+        if (maxDimension !in GsvScreenshotSpec.MIN_MAX_DIMENSION..GsvScreenshotSpec.MAX_MAX_DIMENSION) {
+            throw TargetFsException(
+                "Screenshot maximum dimension must be between " +
+                    "${GsvScreenshotSpec.MIN_MAX_DIMENSION} and ${GsvScreenshotSpec.MAX_MAX_DIMENSION}",
             )
         }
-        else -> usage("screen status | screenshot [DESTINATION]")
+        requirePlatform()
+        val lease = acquireLease()
+        val destination = context.fileSystem.resolve(
+            destinationArgument ?: "/tmp/screen/screenshot-${context.nowMillis()}.png",
+            context.cwd,
+        )
+        platform.captureScreenshot(maxDimension).use { capture ->
+            ensureCurrent(lease)
+            FileInputStream(capture.file).use { input ->
+                context.fileSystem.write(destination, input, capture.length, capture.contentType)
+            }
+        }
+        val stat = context.fileSystem.stat(destination)
+        return shellJson(
+            JSONObject()
+                .put("path", destination)
+                .put("size", stat.size)
+                .put("contentType", stat.contentType)
+                .put("maxDimension", maxDimension),
+        )
     }
 
     private suspend fun input(args: List<String>, context: TargetCommandContext): TargetCommandResult {
@@ -142,6 +178,7 @@ class PlatformAutomationCommands(
     )
 
     private companion object {
+        const val SCREEN_USAGE = "screen status | screenshot [DESTINATION] [--max-dimension PIXELS]"
         const val INPUT_USAGE =
             "input tap X Y | swipe X1 Y1 X2 Y2 DURATION | long-press X Y DURATION | key NAME | text TEXT"
     }

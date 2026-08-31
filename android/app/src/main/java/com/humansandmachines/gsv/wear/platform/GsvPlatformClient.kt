@@ -126,9 +126,10 @@ class GsvPlatformClient(context: Context) : GsvPlatformOperations, Closeable {
     }
 
     override suspend fun captureScreenshot(maxDimension: Int): GsvPlatformCapture {
-        if (maxDimension !in MIN_SCREENSHOT_DIMENSION..MAX_SCREENSHOT_DIMENSION) {
+        if (maxDimension !in GsvScreenshotSpec.MIN_MAX_DIMENSION..GsvScreenshotSpec.MAX_MAX_DIMENSION) {
             throw GsvPlatformFailure(
-                "Screenshot maximum dimension must be between $MIN_SCREENSHOT_DIMENSION and $MAX_SCREENSHOT_DIMENSION",
+                "Screenshot maximum dimension must be between " +
+                    "${GsvScreenshotSpec.MIN_MAX_DIMENSION} and ${GsvScreenshotSpec.MAX_MAX_DIMENSION}",
             )
         }
         val descriptor = remoteCall { service ->
@@ -244,8 +245,6 @@ class GsvPlatformClient(context: Context) : GsvPlatformOperations, Closeable {
 
     private companion object {
         const val TAG = "GsvPlatformClient"
-        const val MIN_SCREENSHOT_DIMENSION = 256
-        const val MAX_SCREENSHOT_DIMENSION = 4_096
         const val MAX_SCREENSHOT_BYTES = 32L * 1024 * 1024
         const val COPY_BUFFER_BYTES = 64 * 1024
     }
