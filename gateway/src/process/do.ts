@@ -5471,7 +5471,7 @@ export class Process extends DurableObject<GatewayEnv> {
     const sourceRunId = normalizeOptionalString(payload.sourceRunId);
     const createdAt = payload.createdAt ?? null;
     const handledId = signal === "ipc.overdue" && callId
-      ? `overdue:${callId}:${payload.deadlineAt ?? payload.checkInCount ?? "unknown"}`
+      ? `overdue:${callId}:${payload.checkInCount ?? payload.deadlineAt ?? "unknown"}`
       : callId;
     let messageId = -1;
     let nextRunId: string | null = null;

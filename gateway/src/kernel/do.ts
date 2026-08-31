@@ -235,8 +235,14 @@ type IpcCallTimeout = {
   mode?: "supervise";
   intervalMs?: number;
   checkInCount?: number;
+  lifecycleRecheckFor?: string;
   /** Legacy payload emitted by older gateways for delegated work. */
   terminateTargetOnTimeout?: boolean;
+};
+
+type IpcCallTimeoutTask = {
+  id: string;
+  time: number;
 };
 
 type AdapterSignalDeliveryOutcome =
@@ -455,6 +461,7 @@ const ipcCallTimeoutPayloadSchema = z.union([
     mode: z.literal("supervise").optional(),
     intervalMs: z.number().positive().optional(),
     checkInCount: z.number().int().nonnegative().optional(),
+    lifecycleRecheckFor: z.string().min(1).optional(),
     terminateTargetOnTimeout: z.boolean().optional(),
   }),
 ]);
@@ -958,7 +965,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         await this.onIpcCallDelivery(task.payload);
         return;
       case "onIpcCallTimeout":
-        await this.onIpcCallTimeout(task.payload);
+        await this.onIpcCallTimeout(task.payload, task);
         return;
       case "onManagedOutboundEnqueue":
         await this.onManagedOutboundEnqueue(task.payload);
@@ -3272,6 +3279,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       mode: "supervise";
       intervalMs: number;
       checkInCount: number;
+      lifecycleRecheckFor?: string;
     },
   ): Promise<string> {
     const when = new Date(
@@ -4256,7 +4264,10 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.deliverToOrigin(expired.origin, timeoutFrame);
   }
 
-  async onIpcCallTimeout(input: string | IpcCallTimeout): Promise<void> {
+  async onIpcCallTimeout(
+    input: string | IpcCallTimeout,
+    task?: IpcCallTimeoutTask,
+  ): Promise<void> {
     const timeout = ipcCallTimeoutPayloadSchema.parse(input);
     const callId = timeout.callId;
     const call = this.ipcCalls.get(callId);
@@ -4265,7 +4276,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       && call.status === "pending"
       && (timeout.mode === "supervise" || timeout.terminateTargetOnTimeout === true)
     ) {
-      await this.continueSupervisedIpcCall(timeout, call);
+      await this.continueSupervisedIpcCall(timeout, call, task);
       return;
     }
     const timedOut = this.ipcCalls.timeout(callId);
@@ -4278,13 +4289,32 @@ export class Kernel extends DurableObject<GatewayEnv> {
   private async continueSupervisedIpcCall(
     timeout: IpcCallTimeout,
     call: IpcCallRecord,
+    task?: IpcCallTimeoutTask,
   ): Promise<void> {
     const derivedIntervalMs = call.deadlineAt - call.createdAt;
     const intervalMs = Math.max(
       1_000,
       Math.trunc(timeout.intervalMs ?? derivedIntervalMs),
     );
-    const checkedAt = Date.now();
+    const gate = await this.managedWorkGate();
+    if (!gate.allowed) {
+      if (!task) {
+        throw new Error("Supervision lifecycle recheck requires its scheduled task identity");
+      }
+      await this.scheduleIpcCallTimeout(
+        call.callId,
+        Date.now() + MANAGED_LIFECYCLE_RECHECK_MS,
+        {
+          mode: "supervise",
+          intervalMs,
+          checkInCount: timeout.checkInCount ?? 0,
+          lifecycleRecheckFor: task.id,
+        },
+      );
+      return;
+    }
+
+    const checkedAt = task ? task.time * 1_000 : Date.now();
     const nextCheckAt = checkedAt + intervalMs;
     const checkInCount = (timeout.checkInCount ?? 0) + 1;
 
@@ -4296,38 +4326,24 @@ export class Kernel extends DurableObject<GatewayEnv> {
     const renewed = this.ipcCalls.renewDeadline(call.callId, nextCheckAt);
     if (!renewed) return;
 
-    try {
-      this.recordDelegationCheckIn(renewed, checkedAt, nextCheckAt, checkInCount);
-    } catch (error) {
-      console.warn(
-        `[Kernel] Failed to record delegated process check-in ${call.targetPid}:`,
-        error,
-      );
-    }
-    try {
-      const payload: IpcDeliverySignalPayload = {
-        callId: renewed.callId,
-        sourcePid: renewed.sourcePid,
-        targetPid: renewed.targetPid,
-        runId: renewed.targetRunId,
-        deadlineAt: call.deadlineAt,
-        nextCheckAt,
-        checkInCount,
-        createdAt: renewed.createdAt,
-        status: "pending",
-      };
-      if (renewed.sourceRunId) payload.sourceRunId = renewed.sourceRunId;
-      await sendFrameToProcess(this.installationId, renewed.sourcePid, {
-        type: "sig",
-        signal: "ipc.overdue",
-        payload,
-      });
-    } catch (error) {
-      console.warn(
-        `[Kernel] Failed to deliver delegated process check-in ${call.targetPid}:`,
-        error,
-      );
-    }
+    this.recordDelegationCheckIn(renewed, checkedAt, nextCheckAt, checkInCount);
+    const payload: IpcDeliverySignalPayload = {
+      callId: renewed.callId,
+      sourcePid: renewed.sourcePid,
+      targetPid: renewed.targetPid,
+      runId: renewed.targetRunId,
+      deadlineAt: checkedAt,
+      nextCheckAt,
+      checkInCount,
+      createdAt: renewed.createdAt,
+      status: "pending",
+    };
+    if (renewed.sourceRunId) payload.sourceRunId = renewed.sourceRunId;
+    await sendFrameToProcess(this.installationId, renewed.sourcePid, {
+      type: "sig",
+      signal: "ipc.overdue",
+      payload,
+    });
   }
 
   private recordDelegationCheckIn(
@@ -4349,7 +4365,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     }
 
     const eventType = "process.delegation.check_in";
-    this.responsibilities.update({
+    const outcome = this.responsibilities.update({
       ownerUid: call.ownerUid,
       id: current.id,
       expectedRevision: current.revision,
@@ -4378,6 +4394,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       observedByShip: false,
       now: checkedAt,
     });
+    if (!outcome.changed) return;
     this.ctx.waitUntil(this.reconcileResponsibilityWake(call.ownerUid).catch((error) => {
       console.warn("[Kernel] Failed to schedule delegated process check-in:", error);
     }));

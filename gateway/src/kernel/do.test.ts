@@ -3417,6 +3417,7 @@ describe("Kernel IPC completion", () => {
     expect(kernel.continueSupervisedIpcCall).toHaveBeenCalledWith(
       expect.objectContaining({ callId: call.callId }),
       call,
+      undefined,
     );
     expect(kernel.ipcCalls.timeout).not.toHaveBeenCalled();
   });
@@ -3441,6 +3442,7 @@ describe("Kernel IPC completion", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = Object.create(Kernel.prototype) as any;
     kernel.installationId = TEST_INSTALLATION_ID;
+    kernel.managedWorkGate = vi.fn(async () => ({ allowed: true }));
     kernel.scheduleIpcCallTimeout = vi.fn(async () => "next-check");
     kernel.recordDelegationCheckIn = vi.fn();
     kernel.ipcCalls = {
@@ -3489,6 +3491,124 @@ describe("Kernel IPC completion", () => {
           nextCheckAt: checkedAt + 60_000,
         }),
       }),
+    );
+  });
+
+  it("defers supervision without admitting Process work while restricted", async () => {
+    const checkedAt = 10_000;
+    const call = {
+      callId: "delegated-call",
+      ownerUid: 1000,
+      sourcePid: "ship",
+      sourceRunId: "ship-run",
+      targetPid: "worker",
+      targetRunId: "worker-run",
+      status: "pending",
+      deadlineAt: checkedAt,
+      createdAt: 1_000,
+      response: null,
+      error: null,
+      responsibilityId: null,
+    };
+    const now = vi.spyOn(Date, "now").mockReturnValue(checkedAt);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.managedWorkGate = vi.fn(async () => ({
+      allowed: false,
+      code: 423,
+      message: "Managed installation is suspended",
+    }));
+    kernel.scheduleIpcCallTimeout = vi.fn(async () => "lifecycle-recheck");
+    kernel.recordDelegationCheckIn = vi.fn();
+    kernel.ipcCalls = {
+      get: vi.fn(() => call),
+      timeout: vi.fn(),
+      renewDeadline: vi.fn(),
+    };
+
+    try {
+      await kernel.onIpcCallTimeout(
+        {
+          callId: call.callId,
+          mode: "supervise",
+          intervalMs: 60_000,
+          checkInCount: 2,
+        },
+        { id: "current-supervision-task", time: checkedAt / 1_000 },
+      );
+    } finally {
+      now.mockRestore();
+    }
+
+    expect(kernel.scheduleIpcCallTimeout).toHaveBeenCalledWith(
+      call.callId,
+      checkedAt + 60_000,
+      {
+        mode: "supervise",
+        intervalMs: 60_000,
+        checkInCount: 2,
+        lifecycleRecheckFor: "current-supervision-task",
+      },
+    );
+    expect(kernel.ipcCalls.renewDeadline).not.toHaveBeenCalled();
+    expect(kernel.recordDelegationCheckIn).not.toHaveBeenCalled();
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
+  it("retries a failed overdue-checkpoint delivery", async () => {
+    const checkedAt = 10_000;
+    const call = {
+      callId: "delegated-call",
+      ownerUid: 1000,
+      sourcePid: "ship",
+      sourceRunId: "ship-run",
+      targetPid: "worker",
+      targetRunId: "worker-run",
+      status: "pending",
+      deadlineAt: checkedAt,
+      createdAt: 1_000,
+      response: null,
+      error: null,
+      responsibilityId: null,
+    };
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.installationId = TEST_INSTALLATION_ID;
+    kernel.managedWorkGate = vi.fn(async () => ({ allowed: true }));
+    kernel.scheduleIpcCallTimeout = vi.fn(async () => "next-check");
+    kernel.recordDelegationCheckIn = vi.fn();
+    kernel.ipcCalls = {
+      get: vi.fn(() => call),
+      timeout: vi.fn(),
+      renewDeadline: vi.fn((_callId: string, deadlineAt: number) => ({
+        ...call,
+        deadlineAt,
+      })),
+    };
+    sendFrameToProcessMock.mockRejectedValueOnce(new Error("process unavailable"));
+
+    await expect(kernel.onIpcCallTimeout(
+      {
+        callId: call.callId,
+        mode: "supervise",
+        intervalMs: 60_000,
+        checkInCount: 0,
+      },
+      { id: "current-supervision-task", time: checkedAt / 1_000 },
+    )).rejects.toThrow("process unavailable");
+
+    expect(kernel.scheduleIpcCallTimeout).toHaveBeenCalledWith(
+      call.callId,
+      checkedAt + 60_000,
+      {
+        mode: "supervise",
+        intervalMs: 60_000,
+        checkInCount: 1,
+      },
+    );
+    expect(kernel.ipcCalls.renewDeadline).toHaveBeenCalledWith(
+      call.callId,
+      checkedAt + 60_000,
     );
   });
 

@@ -9198,6 +9198,7 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-ipc-overdue-source";
       const stub = await initProcess(pid, ROOT_IDENTITY);
       const callId = "call-overdue";
+      const createdAt = Date.now() - 1_000;
 
       await stub.recvFrame({
         type: "sig",
@@ -9207,9 +9208,24 @@ describe("Process DO — mechanical", () => {
           sourcePid: pid,
           targetPid: "target-process",
           runId: "target-run",
-          createdAt: Date.now() - 1_000,
+          createdAt,
           deadlineAt: Date.now(),
           nextCheckAt: Date.now() + 60_000,
+          checkInCount: 1,
+          status: "pending",
+        },
+      });
+      await stub.recvFrame({
+        type: "sig",
+        signal: "ipc.overdue",
+        payload: {
+          callId,
+          sourcePid: pid,
+          targetPid: "target-process",
+          runId: "target-run",
+          createdAt,
+          deadlineAt: Date.now() + 1_000,
+          nextCheckAt: Date.now() + 61_000,
           checkInCount: 1,
           status: "pending",
         },
@@ -9233,9 +9249,9 @@ describe("Process DO — mechanical", () => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const messages = process.store.getMessages();
-        expect(messages.some((message: any) => (
+        expect(messages.filter((message: any) => (
           message.content.includes("is still running")
-        ))).toBe(true);
+        ))).toHaveLength(1);
         expect(messages.some((message: any) => (
           message.content.includes("eventual result")
         ))).toBe(true);

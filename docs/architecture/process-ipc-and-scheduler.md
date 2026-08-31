@@ -116,6 +116,9 @@ caller as a Process event while that caller still exists; it is not copied into
 the responsibility record. If the personal Process is replaced before delivery,
 the Kernel returns the assignment to Ship and discards the obsolete Process
 signal. The durable responsibility remains the recovery path.
+Managed deployments defer supervision checkpoints while the installation is inactive;
+reactivation resumes the same pending result route without admitting Process work during
+the restriction.
 
 During an adapter turn, `message current --json` exposes the current surface as
 an opaque GSV destination id. The personal intelligence can store that id with
