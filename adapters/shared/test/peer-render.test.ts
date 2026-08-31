@@ -33,5 +33,8 @@ describe("renderAdapterPeerSignal", () => {
     expect(rendered.message.text.length).toBeLessThan(2_000);
     expect(rendered.message.text).not.toContain("\u202e");
     expect(rendered.message.text).toContain("…");
+    expect(rendered.message.text).toContain("approve hil[request-1]");
+    expect(rendered.message.text).toContain("approve always hil[request-1]");
+    expect(rendered.message.text).toContain("deny hil[request-1]");
   });
 });

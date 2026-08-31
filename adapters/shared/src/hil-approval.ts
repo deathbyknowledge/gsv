@@ -40,12 +40,20 @@ type AdapterHilRecord = {
   context: AdapterPeerDeliveryContext;
   request: StoredAdapterHilRequest;
   state: "pending" | "processing" | "resolved";
+  selection?: AdapterHilDecision;
   processingInteractionId?: string;
   processingAt?: number;
   providerMessageId?: string;
   resolution?: AdapterHilResolution;
   createdAt: number;
   expiresAt: number;
+};
+
+type ProcessingAdapterHilRecord = AdapterHilRecord & {
+  state: "processing";
+  selection: AdapterHilDecision;
+  processingInteractionId: string;
+  processingAt: number;
 };
 
 const APPROVAL_PREFIX = "adapter_hil:v1:";
@@ -137,15 +145,24 @@ export async function submitAdapterHilApproval(
     if (record.state === "resolved") {
       return { kind: "resolved" as const, record };
     }
+    // The Process may have accepted the first decision even when its response
+    // is delayed or lost, so later callbacks may retry but never replace it.
+    if (record.selection && !sameHilSelection(record.selection, callback)) {
+      return { kind: "processing" as const };
+    }
     if (
       record.state === "processing"
       && (record.processingAt ?? record.createdAt) + APPROVAL_PROCESSING_LEASE_MS > now
     ) {
       return { kind: "processing" as const };
     }
-    const processing: AdapterHilRecord = {
+    const processing: ProcessingAdapterHilRecord = {
       ...record,
       state: "processing",
+      selection: record.selection ?? {
+        decision: callback.decision,
+        remember: callback.remember,
+      },
       processingInteractionId: callback.interactionId,
       processingAt: now,
     };
@@ -159,6 +176,7 @@ export async function submitAdapterHilApproval(
   }
 
   const record = claimed.record;
+  const selection = record.selection;
   let result;
   try {
     const linkedContext: AdapterLinkedPeerContext = {
@@ -178,8 +196,8 @@ export async function submitAdapterHilApproval(
       {
         pid: record.request.pid,
         requestId: record.request.requestId,
-        decision: callback.decision,
-        remember: callback.remember,
+        decision: selection.decision,
+        remember: selection.remember,
       },
     );
   } catch (error) {
@@ -188,15 +206,31 @@ export async function submitAdapterHilApproval(
   }
 
   const resolution: AdapterHilResolution = result.ok
-    ? callback.decision === "deny"
+    ? selection.decision === "deny"
       ? "deny"
-      : callback.remember
+      : selection.remember
         ? "approve_always"
         : "approve"
     : "stale";
-  await storage.transaction(async (txn) => {
+  return await storage.transaction(async (txn): Promise<AdapterHilSubmission> => {
     const current = await txn.get<AdapterHilRecord>(key);
-    if (!current) return;
+    if (!current) return { kind: "invalid" };
+    if (current.state === "resolved") {
+      return {
+        kind: "submitted",
+        resolution: current.resolution ?? resolution,
+      };
+    }
+    if (!current.selection || !sameHilSelection(current.selection, selection)) {
+      return { kind: "processing" };
+    }
+    const ownsAttempt = current.state === "processing"
+      && current.processingInteractionId === callback.interactionId;
+    // Any success completes the immutable selection. A failed stale attempt
+    // cannot overwrite a newer attempt that may still complete successfully.
+    if (!ownsAttempt && !result.ok) {
+      return { kind: "processing" };
+    }
     const {
       processingAt: _,
       processingInteractionId: __,
@@ -208,8 +242,15 @@ export async function submitAdapterHilApproval(
       providerMessageId: current.providerMessageId ?? callback.providerMessageId,
       resolution,
     } satisfies AdapterHilRecord);
+    return { kind: "submitted", resolution };
   });
-  return { kind: "submitted", resolution };
+}
+
+function sameHilSelection(
+  left: AdapterHilDecision,
+  right: AdapterHilDecision,
+): boolean {
+  return left.decision === right.decision && left.remember === right.remember;
 }
 
 function matchesCallback(

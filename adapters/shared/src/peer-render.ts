@@ -37,8 +37,9 @@ export function renderAdapterHilText(
   request: ProcHilRequest,
   surfaceKind: AdapterPeerDeliveryContext["surface"]["kind"],
 ): string {
+  const requestToken = `hil[${request.requestId}]`;
   const responseLine = surfaceKind === "dm"
-    ? "Use Approve, Always approve, or Deny below. If buttons are unavailable, open Chat to decide."
+    ? `Use Approve, Always approve, or Deny controls when available. Otherwise, reply "approve ${requestToken}", "approve always ${requestToken}", or "deny ${requestToken}".`
     : "Open Chat to approve or deny this action.";
   return [
     "I need your confirmation before I can continue.",
