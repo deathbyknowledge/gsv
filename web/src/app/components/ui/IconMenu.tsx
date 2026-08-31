@@ -15,6 +15,7 @@ export interface IconMenuProps {
   onLibrary?: () => void;
   onTerminal?: () => void;
   onSettings?: () => void;
+  onArchitecture?: () => void;
 }
 
 /** IconMenu — ported from IconMenu.dc.html. GSV control popover: a header bar
@@ -29,6 +30,7 @@ export function IconMenu({
   onLibrary,
   onTerminal,
   onSettings,
+  onArchitecture,
 }: IconMenuProps) {
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -132,6 +134,17 @@ export function IconMenu({
           <span class="gsv-sublabel" style={{ letterSpacing: ".16em", color: "#b6b1ff" }}>SETTINGS</span>
         </button>
       </div>
+      <button
+        type="button"
+        disabled={!onArchitecture}
+        onClick={onArchitecture}
+        class="gsv-im-cell gsv-im-map"
+        style={{ color: "var(--architecture-cyan, #63ddff)" }}
+      >
+        <Icon name="stars" size={20} />
+        <span class="gsv-sublabel">SYSTEM MAP</span>
+        <small>SUBSYSTEMS · COMPONENTS · FLOWS</small>
+      </button>
     </div>
   );
 }

@@ -11,6 +11,8 @@ const TOP_LEVEL_SURFACES = new Map<string, Exclude<ShellSurfaceId, "desktop" | "
   ["agent", "agent"],
   ["crew", "crew"],
   ["contacts", "contacts"],
+  ["architecture", "architecture"],
+  ["map", "architecture"],
   ["files", "files"],
   ["integrations", "integrations"],
   ["card-template", "card-template"],
