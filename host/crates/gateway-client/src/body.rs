@@ -332,7 +332,7 @@ impl BinaryBodyChannel {
         })
     }
 
-    pub fn handle_frame(&self, data: &[u8]) -> bool {
+    pub async fn handle_frame(&self, data: &[u8]) -> bool {
         let Some((stream_id, flags, payload)) = parse_binary_frame(data) else {
             return false;
         };
@@ -369,6 +369,12 @@ impl BinaryBodyChannel {
             .unwrap_or(false);
         if registered {
             self.dispatch_frame(stream_id, flags, payload);
+            // A WebSocket can surface an already-buffered burst without yielding
+            // between frames. Give the body owner a chance to drain its bounded
+            // queue before the connection reads the next ready data frame.
+            if flags & BINARY_FRAME_DATA != 0 {
+                tokio::task::yield_now().await;
+            }
         } else {
             self.buffer_orphan(stream_id, flags, payload);
         }
@@ -888,8 +894,12 @@ mod tests {
     async fn incoming_body_accepts_frames_before_descriptor_registration() {
         let sent = Arc::new(StdMutex::new(Vec::new()));
         let channel = channel(sent);
-        channel.handle_frame(&build_binary_frame(9, BINARY_FRAME_DATA, b"hello"));
-        channel.handle_frame(&build_binary_frame(9, BINARY_FRAME_END, &[]));
+        channel
+            .handle_frame(&build_binary_frame(9, BINARY_FRAME_DATA, b"hello"))
+            .await;
+        channel
+            .handle_frame(&build_binary_frame(9, BINARY_FRAME_END, &[]))
+            .await;
         let body = channel
             .receive(FrameBodyDescriptor {
                 stream_id: 9,
@@ -927,8 +937,12 @@ mod tests {
             })
             .expect("incoming body");
         body.cancel("caller stopped reading");
-        channel.handle_frame(&build_binary_frame(17, BINARY_FRAME_DATA, b"late"));
-        channel.handle_frame(&build_binary_frame(17, BINARY_FRAME_END, &[]));
+        channel
+            .handle_frame(&build_binary_frame(17, BINARY_FRAME_DATA, b"late"))
+            .await;
+        channel
+            .handle_frame(&build_binary_frame(17, BINARY_FRAME_END, &[]))
+            .await;
         {
             let state = channel.state.lock().expect("body state");
             assert!(!state.orphans.contains_key(&17));
@@ -977,7 +991,9 @@ mod tests {
                 length: Some(6),
             })
             .expect("incoming body");
-        channel.handle_frame(&build_binary_frame(19, BINARY_FRAME_DATA, b"one"));
+        channel
+            .handle_frame(&build_binary_frame(19, BINARY_FRAME_DATA, b"one"))
+            .await;
 
         channel.close("transport disconnected");
 
@@ -1038,13 +1054,60 @@ mod tests {
                 length: None,
             })
             .expect("incoming body");
-        channel.handle_frame(&build_binary_frame(11, BINARY_FRAME_DATA, b"one"));
-        channel.handle_frame(&build_binary_frame(11, BINARY_FRAME_DATA, b"two"));
+        channel
+            .handle_frame(&build_binary_frame(11, BINARY_FRAME_DATA, b"one"))
+            .await;
+        channel
+            .handle_frame(&build_binary_frame(11, BINARY_FRAME_DATA, b"two"))
+            .await;
         assert_eq!(
             body.recv().await.expect("first chunk"),
             Some(b"one".to_vec())
         );
         assert!(body.recv().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn registered_body_drains_between_ready_frames() {
+        let sent = Arc::new(StdMutex::new(Vec::new()));
+        let limits = BinaryBodyLimits {
+            max_buffered_frames_per_stream: 1,
+            ..BinaryBodyLimits::default()
+        };
+        let channel = BinaryBodyChannel::new(limits, {
+            let sent = sent.clone();
+            move |frame| {
+                let sent = sent.clone();
+                async move {
+                    sent.lock().expect("sent frames").push(frame);
+                    Ok(())
+                }
+            }
+        })
+        .expect("body channel");
+        let body = channel
+            .receive(FrameBodyDescriptor {
+                stream_id: 12,
+                length: Some(6),
+            })
+            .expect("incoming body");
+        let reading = tokio::spawn(async move { body.read_all(6).await });
+
+        channel
+            .handle_frame(&build_binary_frame(12, BINARY_FRAME_DATA, b"one"))
+            .await;
+        channel
+            .handle_frame(&build_binary_frame(12, BINARY_FRAME_DATA, b"two"))
+            .await;
+        channel
+            .handle_frame(&build_binary_frame(12, BINARY_FRAME_END, &[]))
+            .await;
+
+        assert_eq!(
+            reading.await.expect("reader task").expect("body bytes"),
+            b"onetwo"
+        );
+        assert!(sent.lock().expect("sent frames").is_empty());
     }
 
     #[test]

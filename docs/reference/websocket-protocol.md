@@ -468,6 +468,13 @@ the `request.cancel` control signal above. The two mechanisms are independent:
 a request may have no body, and a completed request may leave a response body
 that its consumer can still cancel.
 
+A WebSocket may expose several already-buffered data frames without an I/O
+wait between them. Receiver pumps must give the registered body owner a chance
+to drain its bounded queue between those frames; transport scheduling alone
+must not turn a valid body into a buffer-overflow failure. That cooperation
+must not suspend the connection-wide reader on one body consumer: cancellation,
+unrelated frames, and peer closure must remain readable.
+
 The current body-bearing syscalls are:
 
 | Syscall | Request body | Response body |
