@@ -3374,6 +3374,7 @@ describe("Kernel IPC completion", () => {
         intervalMs: 600_000,
         checkInCount: 0,
       },
+      { idempotent: true },
     );
   });
 

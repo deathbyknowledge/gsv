@@ -3274,13 +3274,17 @@ export class Kernel extends DurableObject<GatewayEnv> {
       checkInCount: number;
     },
   ): Promise<string> {
-    const sched = await this.schedule(
-      new Date(Math.ceil(Math.max(Date.now() + 1_000, deadlineAt) / 1_000) * 1_000),
-      "onIpcCallTimeout",
-      options
-        ? { callId, ...options } satisfies IpcCallTimeout
-        : callId,
+    const when = new Date(
+      Math.ceil(Math.max(Date.now() + 1_000, deadlineAt) / 1_000) * 1_000,
     );
+    const sched = options
+      ? await this.schedule(
+        when,
+        "onIpcCallTimeout",
+        { callId, ...options } satisfies IpcCallTimeout,
+        { idempotent: true },
+      )
+      : await this.schedule(when, "onIpcCallTimeout", callId);
     return sched.id;
   }
 
