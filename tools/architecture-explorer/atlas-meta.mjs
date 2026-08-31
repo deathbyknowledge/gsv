@@ -28,19 +28,19 @@ export const ATLAS_ZONES = [
     id: "installation",
     label: "INSTALLATION INTERIOR",
     summary: "One immutable installation identity and its durable owners.",
-    radius: 116,
+    radius: 144,
   },
   {
     id: "boundary",
     label: "INSTALLATION GATE",
     summary: "Trusted routing and lifecycle admission before the Kernel is addressed.",
-    radius: 132,
+    radius: 164,
   },
   {
     id: "outer",
     label: "OUTER EXPANSE",
     summary: "Clients, providers, services, and targets that do not gain authority merely by connecting.",
-    radius: 188,
+    radius: 233,
   },
 ];
 
@@ -56,7 +56,7 @@ export const ATLAS_CONCEPTS = [
 
 export const ATLAS_SYSTEM_DETAIL = {
   gateway: {
-    scene: { x: 0, z: -124, width: 42, depth: 20, height: 62 },
+    scene: { x: 0, z: -154, width: 42, depth: 20, height: 62 },
     scope: "installation gate",
     runtime: "Cloudflare Gateway Worker",
     owner: "Gateway edge routing",
@@ -76,7 +76,7 @@ export const ATLAS_SYSTEM_DETAIL = {
     ],
   },
   kernel: {
-    scene: { x: 0, z: -18, width: 50, depth: 44, height: 104 },
+    scene: { x: 0, z: -22, width: 50, depth: 44, height: 104 },
     scope: "installation interior",
     runtime: "Kernel Durable Object",
     owner: "Installation control plane and policy authority",
@@ -101,7 +101,7 @@ export const ATLAS_SYSTEM_DETAIL = {
     ],
   },
   process: {
-    scene: { x: -58, z: 44, width: 34, depth: 34, height: 86 },
+    scene: { x: -72, z: 55, width: 34, depth: 34, height: 86 },
     scope: "process enclave",
     runtime: "Process Durable Object",
     owner: "One durable agent process and its serialized model loop",
@@ -125,7 +125,7 @@ export const ATLAS_SYSTEM_DETAIL = {
     ],
   },
   conversation: {
-    scene: { x: 58, z: 42, width: 36, depth: 32, height: 68 },
+    scene: { x: 72, z: 52, width: 36, depth: 32, height: 68 },
     scope: "conversation enclave",
     runtime: "Conversation Durable Object",
     owner: "Canonical user-visible Message ledger",
@@ -145,7 +145,7 @@ export const ATLAS_SYSTEM_DETAIL = {
     ],
   },
   protocol: {
-    scene: { x: -68, z: -44, width: 27, depth: 25, height: 50 },
+    scene: { x: -84, z: -55, width: 27, depth: 25, height: 50 },
     scope: "contract plane",
     runtime: "Shared TypeScript contracts and frame codecs",
     owner: "Syscall names, wire frames, Process frames, signals, and body lifecycle semantics",
@@ -165,7 +165,7 @@ export const ATLAS_SYSTEM_DETAIL = {
     ],
   },
   "native-target": {
-    scene: { x: 0, z: 82, width: 40, depth: 36, height: 62 },
+    scene: { x: 0, z: 102, width: 40, depth: 36, height: 62 },
     scope: "installation target",
     runtime: "In-process Worker target provider",
     owner: "The target named gsv and its Unix-shaped filesystem, one-shot shell, and network implementation",
@@ -181,7 +181,7 @@ export const ATLAS_SYSTEM_DETAIL = {
     tests: ["gateway/src/drivers/native/shell.test.ts", "gateway/src/fs/fs.test.ts"],
   },
   inference: {
-    scene: { x: 136, z: -8, width: 31, depth: 29, height: 58 },
+    scene: { x: 169, z: -10, width: 31, depth: 29, height: 58 },
     scope: "provider orbit",
     runtime: "Gateway inference coordinator plus configured external provider",
     owner: "Model selection, provider transport, streaming generation, abort, and media inference",
@@ -197,7 +197,7 @@ export const ATLAS_SYSTEM_DETAIL = {
     tests: ["gateway/src/inference/service.test.ts", "gateway/src/inference/model-registry.test.ts"],
   },
   sdk: {
-    scene: { x: -138, z: -58, width: 30, depth: 27, height: 50 },
+    scene: { x: -171, z: -72, width: 30, depth: 27, height: 50 },
     scope: "contract orbit",
     runtime: "Public JavaScript/TypeScript client package",
     owner: "Typed client requests, reverse-call endpoints, signals, cancellation, timeouts, and binary body channels",
@@ -213,7 +213,7 @@ export const ATLAS_SYSTEM_DETAIL = {
     tests: ["packages/gsv/test/client-body.test.mjs", "packages/gsv/test/adapter-protocol.test.mjs"],
   },
   services: {
-    scene: { x: 92, z: -112, width: 34, depth: 26, height: 54 },
+    scene: { x: 114, z: -139, width: 34, depth: 26, height: 54 },
     scope: "service contract orbit",
     runtime: "Public Worker RPC contracts with operator-owned or bundled implementations",
     owner: "Public RPC contracts for directory, onboarding, entitlements, funded inference, mail, and adapters",
@@ -229,7 +229,7 @@ export const ATLAS_SYSTEM_DETAIL = {
     tests: ["gateway/test-integration/managed-routing.test.ts", "packages/gsv/test/managed-inference-stream.test.mjs"],
   },
   web: {
-    scene: { x: -136, z: -118, width: 28, depth: 25, height: 46 },
+    scene: { x: -169, z: -146, width: 28, depth: 25, height: 46 },
     scope: "human client orbit",
     runtime: "Browser application",
     owner: "Presentation, setup/login, direct manipulation, drafts, and browser-side Gateway synchronization",
@@ -245,7 +245,7 @@ export const ATLAS_SYSTEM_DETAIL = {
     tests: ["web/src/app/services/gateway/frameBody.test.ts", "web/src/app/services/session/sessionService.test.ts"],
   },
   host: {
-    scene: { x: -148, z: 58, width: 38, depth: 30, height: 62 },
+    scene: { x: -184, z: 72, width: 38, depth: 30, height: 62 },
     scope: "native peer orbit",
     runtime: "Separate Rust CLI, Desktop, gsvd, and helper processes",
     owner: "Native presentation, operator commands, physical-machine target execution, and isolated local media compute",
@@ -261,7 +261,7 @@ export const ATLAS_SYSTEM_DETAIL = {
     tests: ["host/apps/machine/tests/tools_test.rs", "host/crates/desktop-protocol/tests/unix_end_to_end.rs"],
   },
   adapters: {
-    scene: { x: 146, z: -94, width: 40, depth: 32, height: 72 },
+    scene: { x: 181, z: -117, width: 40, depth: 32, height: 72 },
     scope: "provider transport orbit",
     runtime: "Platform-specific Workers and Durable Objects",
     owner: "Credentials, provider sessions, identity normalization, retries, formatting, delivery ledgers, and transport policy",
@@ -277,7 +277,7 @@ export const ATLAS_SYSTEM_DETAIL = {
     tests: ["adapters/shared/test/inbound-delivery.test.ts", "adapters/shared/test/delivery-ledger.test.ts"],
   },
   extension: {
-    scene: { x: 148, z: 66, width: 32, depth: 27, height: 54 },
+    scene: { x: 184, z: 82, width: 32, depth: 27, height: 54 },
     scope: "browser target orbit",
     runtime: "Manifest V3 extension service worker and offscreen helpers",
     owner: "One browser profile projected as a Unix-shaped target with tabs, pages, network artifacts, and commands",
@@ -293,7 +293,7 @@ export const ATLAS_SYSTEM_DETAIL = {
     tests: ["extension/src/background/connection-supervisor.test.ts", "extension/src/target/shell.test.ts"],
   },
   ripgit: {
-    scene: { x: 72, z: 98, width: 38, depth: 32, height: 76 },
+    scene: { x: 89, z: 122, width: 38, depth: 32, height: 76 },
     scope: "installation storage enclave",
     runtime: "Rust Worker and Repository Durable Objects",
     owner: "Git smart HTTP, objects, refs, pack handling, diffs, search, and atomic repository operations",
@@ -309,7 +309,7 @@ export const ATLAS_SYSTEM_DETAIL = {
     tests: ["ripgit/tests/installation-isolation.spec.mjs", "gateway/src/installation/ripgit.test.ts"],
   },
   deployment: {
-    scene: { x: 54, z: -178, width: 37, depth: 27, height: 54 },
+    scene: { x: 67, z: -221, width: 37, depth: 27, height: 54 },
     scope: "build and provisioning plane",
     runtime: "Node.js release scripts and the checked-in standalone Alchemy deployment program",
     owner: "Artifact catalogs, compatibility manifests, standalone Worker resources, routes, and service-binding assembly",

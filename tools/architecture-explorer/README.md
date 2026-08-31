@@ -29,14 +29,22 @@ paths are close together.
 
 ## Controls
 
+- Use **Systems**, **Details**, and **Trace** to keep one supporting workspace
+  beside the map at a time. Select the active workspace again, use its close
+  control, or press `Escape` to return to the unobstructed world.
 - Drag the world or use the arrow keys to orbit.
 - Scroll, `+`, or `-` to change scale.
 - Select a landmark to inspect its owner, persistence, admission, completion,
   components, source paths, documentation, and tests.
+- Within **Details**, switch between Overview, Components, Source, and Routes;
+  only the selected dossier view is rendered at once.
 - Double-click a landmark or choose **Fly to** to center it.
 - Switch Runtime, Ownership, Security, and Durability lenses to change the
   architectural facts emphasized by the terrain.
-- Choose a guided trace to follow one request across its owners.
+- Open **Trace** and choose a guided trace to follow one request across its
+  owners.
+- Open **Key** for the building-role palette and connection semantics. Building
+  color is categorical; it never reports health, status, or importance.
 - Press `/` or <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>K</kbd> to search the atlas.
 - The selected subsystem and component are kept in the URL hash for sharing.
 

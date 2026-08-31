@@ -11,7 +11,7 @@
   </head>
   <body>
     <div class="phosphor-field" aria-hidden="true"></div>
-    <div id="atlas" class="atlas lens-runtime">
+    <div id="atlas" class="atlas lens-runtime is-systems-closed is-inspector-closed is-trace-closed">
       <header class="command-deck">
         <div class="identity-block">
           <span class="identity-mark" aria-hidden="true">
@@ -41,13 +41,14 @@
         </div>
       </header>
 
-      <aside class="system-index" aria-label="Architecture directory">
+      <aside id="system-index" class="system-index" aria-label="Architecture directory" aria-hidden="true" inert>
         <div class="panel-kicker">
           <span>01</span>
           <div>
             <small>SYSTEM DIRECTORY</small>
             <strong>OWNERS, NOT FOLDERS</strong>
           </div>
+          <button class="panel-close" type="button" data-close-panel="systems" aria-label="Close system directory">×</button>
         </div>
 
         <div class="atlas-search">
@@ -73,11 +74,19 @@
 
       <main class="world-stage" aria-label="Spatial architecture world">
         <div class="world-heading">
-          <div>
+          <div class="world-heading-copy">
             <span id="lens-code">RUNTIME TOPOLOGY</span>
             <strong id="lens-summary">Live actors and their contract routes.</strong>
           </div>
-          <p><span class="key-hint">DRAG</span> ORBIT <span class="key-hint">SCROLL</span> SCALE <span class="key-hint">DOUBLE</span> FLY</p>
+          <div class="world-heading-actions">
+            <p><span class="key-hint">DRAG</span> ORBIT <span class="key-hint">SCROLL</span> SCALE <span class="key-hint">DOUBLE</span> FLY</p>
+            <nav id="workspace-switcher" class="workspace-switcher" aria-label="Open architecture workspace">
+              <button type="button" data-workspace-panel="systems" aria-pressed="false">SYSTEMS</button>
+              <button type="button" data-workspace-panel="inspector" aria-pressed="false">DETAILS</button>
+              <button type="button" data-workspace-panel="trace" aria-pressed="false">TRACE</button>
+              <button id="map-key-button" type="button" data-workspace-panel="key" aria-pressed="false" aria-expanded="false" aria-controls="map-key">KEY</button>
+            </nav>
+          </div>
         </div>
 
         <svg id="world-svg" viewBox="0 0 1200 820" role="application" aria-label="Orbitable GSV subsystem map" tabindex="0">
@@ -110,6 +119,41 @@
 
         <div id="hover-readout" class="hover-readout" hidden></div>
 
+        <aside id="map-key" class="map-key" aria-labelledby="map-key-title" hidden>
+          <header>
+            <div>
+              <small>VISUAL ENCODING</small>
+              <h2 id="map-key-title">MAP KEY</h2>
+            </div>
+            <button id="map-key-close" type="button" aria-label="Close map key">×</button>
+          </header>
+          <p>Building color identifies subsystem role. It never indicates health, status, or importance.</p>
+          <section aria-labelledby="building-color-title">
+            <h3 id="building-color-title">BUILDING COLOR</h3>
+            <div class="color-key-grid">
+              <div><i class="key-edge"></i><span><strong>EDGE</strong><small>installation ingress</small></span></div>
+              <div><i class="key-control"></i><span><strong>CONTROL</strong><small>policy and routing</small></span></div>
+              <div><i class="key-execution"></i><span><strong>EXECUTION</strong><small>durable agent work</small></span></div>
+              <div><i class="key-record"></i><span><strong>RECORD</strong><small>canonical messages</small></span></div>
+              <div><i class="key-contract"></i><span><strong>CONTRACT</strong><small>protocol and SDK</small></span></div>
+              <div><i class="key-target"></i><span><strong>TARGET</strong><small>capability environment</small></span></div>
+              <div><i class="key-provider"></i><span><strong>PROVIDER</strong><small>external inference</small></span></div>
+              <div><i class="key-client"></i><span><strong>CLIENT</strong><small>human and native UI</small></span></div>
+              <div><i class="key-service"></i><span><strong>SERVICE</strong><small>deployment contracts</small></span></div>
+              <div><i class="key-transport"></i><span><strong>TRANSPORT</strong><small>message adapters</small></span></div>
+              <div><i class="key-storage"></i><span><strong>STORAGE</strong><small>versioned data</small></span></div>
+            </div>
+          </section>
+          <section class="connection-key" aria-labelledby="connection-key-title">
+            <h3 id="connection-key-title">CONNECTIONS</h3>
+            <div><i class="line-request"></i><span><strong>REQUEST</strong><small>runtime call direction</small></span></div>
+            <div><i class="line-control"></i><span><strong>CONTROL</strong><small>authority or lifecycle</small></span></div>
+            <div><i class="line-data"></i><span><strong>DATA</strong><small>durable storage path</small></span></div>
+            <div><i class="line-contract"></i><span><strong>CONTRACT</strong><small>shared interface</small></span></div>
+            <div><i class="line-trace"></i><span><strong>GUIDED TRACE</strong><small>current walkthrough overlay</small></span></div>
+          </section>
+        </aside>
+
         <div class="camera-console" aria-label="Map view controls">
           <button id="rotate-left" type="button" aria-label="Rotate left">↶</button>
           <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
@@ -125,15 +169,16 @@
         </div>
       </main>
 
-      <aside id="inspector" class="inspector" aria-label="Selected architecture evidence"></aside>
+      <aside id="inspector" class="inspector" aria-label="Selected architecture evidence" aria-hidden="true" inert></aside>
 
-      <section class="trace-deck" aria-label="Guided architecture trace">
+      <section id="trace-deck" class="trace-deck" aria-label="Guided architecture trace" aria-hidden="true" inert>
         <div class="trace-heading">
           <span>02</span>
           <div>
             <small>GUIDED TRACE</small>
             <select id="flow-select" aria-label="Choose a guided architecture trace"></select>
           </div>
+          <button class="panel-close" type="button" data-close-panel="trace" aria-label="Close guided trace">×</button>
         </div>
 
         <article class="trace-current" aria-live="polite">
@@ -171,6 +216,9 @@
           <div><dt>SCROLL / + / −</dt><dd>Change map scale</dd></div>
           <div><dt>CLICK</dt><dd>Inspect a system or component</dd></div>
           <div><dt>DOUBLE CLICK</dt><dd>Fly to a landmark</dd></div>
+          <div><dt>SYSTEMS / DETAILS / TRACE</dt><dd>Show one supporting workspace at a time</dd></div>
+          <div><dt>DETAIL VIEWS</dt><dd>Focus Overview, Components, Source, or Routes</dd></div>
+          <div><dt>KEY</dt><dd>Explain building colors and connection lines</dd></div>
           <div><dt>/ OR ⌘K</dt><dd>Search names, mechanics, and paths</dd></div>
           <div><dt>ESC</dt><dd>Clear search or restore the full world</dd></div>
         </dl>

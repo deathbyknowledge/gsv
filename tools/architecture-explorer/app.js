@@ -51,6 +51,7 @@ const elements = {
   helpDialog: document.querySelector("#help-dialog"),
   search: document.querySelector("#atlas-search-input"),
   searchResults: document.querySelector("#search-results"),
+  systemIndex: document.querySelector("#system-index"),
   systems: document.querySelector("#system-list"),
   concept: document.querySelector("#concept-cycle"),
   lensCode: document.querySelector("#lens-code"),
@@ -58,6 +59,9 @@ const elements = {
   world: document.querySelector("#world-svg"),
   scene: document.querySelector("#world-scene"),
   hover: document.querySelector("#hover-readout"),
+  workspaceSwitcher: document.querySelector("#workspace-switcher"),
+  mapKey: document.querySelector("#map-key"),
+  mapKeyClose: document.querySelector("#map-key-close"),
   rotateLeft: document.querySelector("#rotate-left"),
   rotateRight: document.querySelector("#rotate-right"),
   zoomIn: document.querySelector("#zoom-in"),
@@ -75,6 +79,7 @@ const elements = {
   flowPlay: document.querySelector("#flow-play"),
   flowRail: document.querySelector("#flow-rail"),
   flowThesis: document.querySelector("#flow-thesis"),
+  traceDeck: document.querySelector("#trace-deck"),
   toast: document.querySelector("#toast"),
 };
 
@@ -83,6 +88,8 @@ const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
 const state = {
   selectedSubsystemId: "kernel",
   selectedComponentId: null,
+  activePanel: window.matchMedia("(max-width: 760px)").matches ? null : "systems",
+  inspectorSection: "overview",
   lens: "runtime",
   activeFlowId: defaultFlow.id,
   activeFlowStep: 0,
@@ -104,7 +111,7 @@ const state = {
 void initialize();
 
 async function initialize() {
-  restoreSelectionFromHash();
+  if (restoreSelectionFromHash()) state.activePanel = "inspector";
   elements.subsystemCount.textContent = String(ARCHITECTURE_SUBSYSTEMS.length).padStart(2, "0");
   elements.componentCount.textContent = String(
     ARCHITECTURE_SUBSYSTEMS.reduce((total, subsystem) => total + subsystem.components.length, 0),
@@ -113,6 +120,7 @@ async function initialize() {
 
   renderLensSwitcher();
   renderFlowOptions();
+  renderWorkspace();
   renderAll();
   bindEvents();
   updateConcept();
@@ -133,6 +141,19 @@ async function initialize() {
 }
 
 function bindEvents() {
+  elements.workspaceSwitcher.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-workspace-panel]");
+    if (!button) return;
+    const panel = button.dataset.workspacePanel;
+    showWorkspace(state.activePanel === panel ? null : panel);
+  });
+
+  elements.systemIndex.addEventListener("click", (event) => {
+    if (event.target.closest('[data-close-panel="systems"]')) closeWorkspace("systems");
+  });
+
+  elements.mapKeyClose.addEventListener("click", () => closeWorkspace("key"));
+
   elements.lenses.addEventListener("click", (event) => {
     const button = event.target.closest("[data-lens]");
     if (button) selectLens(button.dataset.lens);
@@ -140,7 +161,7 @@ function bindEvents() {
 
   elements.systems.addEventListener("click", (event) => {
     const button = event.target.closest("[data-system]");
-    if (button) selectSubsystem(button.dataset.system, null);
+    if (button) selectSubsystem(button.dataset.system, null, { focusInspector: true });
   });
 
   elements.search.addEventListener("input", () => {
@@ -161,6 +182,16 @@ function bindEvents() {
   });
 
   elements.inspector.addEventListener("click", (event) => {
+    if (event.target.closest('[data-close-panel="inspector"]')) {
+      closeWorkspace("inspector");
+      return;
+    }
+    const sectionButton = event.target.closest("[data-inspector-section]");
+    if (sectionButton) {
+      state.inspectorSection = sectionButton.dataset.inspectorSection;
+      renderInspector();
+      return;
+    }
     const componentButton = event.target.closest("[data-component]");
     if (componentButton) {
       selectSubsystem(state.selectedSubsystemId, componentButton.dataset.component);
@@ -168,7 +199,7 @@ function bindEvents() {
     }
     const systemButton = event.target.closest("[data-related-system]");
     if (systemButton) {
-      selectSubsystem(systemButton.dataset.relatedSystem, null);
+      selectSubsystem(systemButton.dataset.relatedSystem, null, { focusInspector: true });
       return;
     }
     if (event.target.closest("[data-fly-to]")) {
@@ -194,6 +225,9 @@ function bindEvents() {
     const button = event.target.closest("[data-flow-step]");
     if (button) setFlowStep(Number.parseInt(button.dataset.flowStep, 10));
   });
+  elements.traceDeck.addEventListener("click", (event) => {
+    if (event.target.closest('[data-close-panel="trace"]')) closeWorkspace("trace");
+  });
 
   elements.rotateLeft.addEventListener("click", () => rotateCamera(-0.16));
   elements.rotateRight.addEventListener("click", () => rotateCamera(0.16));
@@ -215,7 +249,10 @@ function bindEvents() {
 
   elements.helpButton.addEventListener("click", () => elements.helpDialog.showModal());
   window.addEventListener("hashchange", () => {
-    if (restoreSelectionFromHash()) renderAll();
+    if (restoreSelectionFromHash()) {
+      showWorkspace("inspector");
+      renderAll();
+    }
   });
   document.addEventListener("keydown", documentKeyDown);
 }
@@ -245,7 +282,8 @@ function renderLensSwitcher() {
 
 function renderLensCopy() {
   const lens = ATLAS_LENSES.find((candidate) => candidate.id === state.lens) ?? ATLAS_LENSES[0];
-  elements.atlas.className = `atlas lens-${lens.id}`;
+  elements.atlas.classList.remove(...ATLAS_LENSES.map((candidate) => `lens-${candidate.id}`));
+  elements.atlas.classList.add(`lens-${lens.id}`);
   elements.lensCode.textContent = `${lens.label} TOPOLOGY`;
   elements.lensSummary.textContent = lens.summary;
 }
@@ -257,6 +295,41 @@ function selectLens(lensId) {
   renderLensCopy();
   renderInspector();
   renderWorld();
+}
+
+function renderWorkspace() {
+  const panels = {
+    systems: elements.systemIndex,
+    inspector: elements.inspector,
+    trace: elements.traceDeck,
+  };
+  for (const [panel, element] of Object.entries(panels)) {
+    const active = state.activePanel === panel;
+    elements.atlas.classList.toggle(`is-${panel}-closed`, !active);
+    element.inert = !active;
+    element.setAttribute("aria-hidden", String(!active));
+  }
+  const keyActive = state.activePanel === "key";
+  elements.mapKey.hidden = !keyActive;
+  for (const button of elements.workspaceSwitcher.querySelectorAll("[data-workspace-panel]")) {
+    const active = button.dataset.workspacePanel === state.activePanel;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+    if (button.dataset.workspacePanel === "key") {
+      button.setAttribute("aria-expanded", String(active));
+    }
+  }
+}
+
+function showWorkspace(panel) {
+  if (panel !== null && !["systems", "inspector", "trace", "key"].includes(panel)) return;
+  state.activePanel = panel;
+  renderWorkspace();
+}
+
+function closeWorkspace(panel) {
+  showWorkspace(null);
+  elements.workspaceSwitcher.querySelector(`[data-workspace-panel="${panel}"]`)?.focus();
 }
 
 function renderSystemList() {
@@ -361,6 +434,8 @@ function selectSubsystem(subsystemId, componentId = null, options = {}) {
   const component = componentId ? architectureComponent(subsystemId, componentId) : null;
   state.selectedSubsystemId = subsystemId;
   state.selectedComponentId = component?.id ?? null;
+  state.inspectorSection = component ? "components" : "overview";
+  showWorkspace("inspector");
   updateHash();
   renderSystemList();
   renderInspector();
@@ -386,6 +461,7 @@ function restoreSelectionFromHash() {
   const componentId = componentPart ? decodeURIComponent(componentPart) : null;
   state.selectedSubsystemId = subsystem.id;
   state.selectedComponentId = componentId && architectureComponent(subsystem.id, componentId) ? componentId : null;
+  state.inspectorSection = state.selectedComponentId ? "components" : "overview";
   return true;
 }
 
@@ -395,6 +471,8 @@ function renderInspector() {
     "data-related-system",
     "data-fly-to",
     "data-copy-path",
+    "data-close-panel",
+    "data-inspector-section",
   ]);
   const subsystem = architectureSubsystem(state.selectedSubsystemId);
   const component = architectureComponent(subsystem.id, state.selectedComponentId);
@@ -413,83 +491,103 @@ function renderInspector() {
       <p>${escapeHtml(component.summary)}</p>
       <ol>${component.mechanics.map((mechanic) => `<li>${escapeHtml(mechanic)}</li>`).join("")}</ol>
     </section>` : "";
+  const overviewContent = `
+    <p class="system-summary">${escapeHtml(subsystem.summary)}</p>
+
+    <section class="evidence-grid">
+      ${factCard("RUNTIME", detail.runtime, "runtime")}
+      ${factCard("OWNER", detail.owner, "ownership")}
+      ${factCard("PERSISTENCE", detail.persistence, "durability")}
+      ${factCard("ADMISSION GATE", detail.admission, "security")}
+      ${factCard("COMPLETION + CLEANUP", detail.completion, "ownership")}
+    </section>
+
+    <section class="invariant-panel">
+      <div class="section-label"><span>BOUNDARY</span><i></i></div>
+      <p>${escapeHtml(subsystem.boundary)}</p>
+      <div class="invariant-callout">
+        <strong>INVARIANT</strong>
+        <p>${escapeHtml(subsystem.invariant)}</p>
+      </div>
+    </section>
+
+    <section class="security-facts">
+      <div class="section-label"><span>SECURITY FACTS</span><i></i></div>
+      <ul>${detail.security.map((fact) => `<li>${escapeHtml(fact)}</li>`).join("")}</ul>
+    </section>`;
+  const componentsContent = `
+    ${componentProfile}
+    <section class="component-index">
+      <div class="section-label"><span>COMPONENT DECKS / ${subsystem.components.length}</span><i></i></div>
+      ${subsystem.components.map((candidate, index) => `
+        <button type="button" data-component="${candidate.id}" class="${candidate.id === component?.id ? "is-selected" : ""}">
+          <span>${String(index + 1).padStart(2, "0")}</span>
+          <div>
+            <strong>${escapeHtml(candidate.label)}</strong>
+            <p>${escapeHtml(candidate.summary)}</p>
+            <code>${escapeHtml(candidate.paths[0])}</code>
+          </div>
+        </button>`).join("")}
+    </section>`;
+  const sourceContent = `
+    <section class="source-evidence">
+      <div class="section-label"><span>PRIMARY SOURCE</span><i></i></div>
+      ${unique(sourcePaths).map((path) => sourceRow(path, "source")).join("")}
+      <details>
+        <summary>ARCHITECTURE NOTES / ${detail.docs.length}</summary>
+        ${detail.docs.map((path) => sourceRow(path, "document")).join("")}
+      </details>
+      <details>
+        <summary>EXECUTABLE EVIDENCE / ${detail.tests.length}</summary>
+        ${detail.tests.map((path) => sourceRow(path, "test")).join("")}
+      </details>
+    </section>`;
+  const routesContent = `
+    <section class="route-index">
+      <div class="section-label"><span>CONNECTED ROUTES / ${relatedEdges.length}</span><i></i></div>
+      ${relatedEdges.map((edge) => {
+        const otherId = edge.from === subsystem.id ? edge.to : edge.from;
+        const direction = edge.from === subsystem.id ? "OUT" : "IN";
+        return `
+          <button type="button" data-related-system="${otherId}">
+            <span class="route-kind is-${edge.kind}">${escapeHtml(edge.kind)}</span>
+            <div><strong>${direction} · ${escapeHtml(architectureSubsystem(otherId).shortLabel)}</strong><small>${escapeHtml(edge.label)}</small></div>
+            <i>↗</i>
+          </button>`;
+      }).join("")}
+    </section>`;
+  const inspectorSections = {
+    overview: overviewContent,
+    components: componentsContent,
+    source: sourceContent,
+    routes: routesContent,
+  };
+  if (!inspectorSections[state.inspectorSection]) state.inspectorSection = "overview";
 
   elements.inspector.dataset.category = subsystem.category;
   elements.inspector.innerHTML = `
     <header class="inspector-header">
       <div class="system-serial">SYS-${String(systemNumber).padStart(2, "0")}</div>
+      <button class="panel-close" type="button" data-close-panel="inspector" aria-label="Close details">×</button>
       <p>${escapeHtml(subsystem.category.toUpperCase())} / ${escapeHtml(detail.scope.toUpperCase())}</p>
       <h2 id="inspector-title" tabindex="-1">${escapeHtml(subsystem.label)}</h2>
       <span>${escapeHtml(subsystem.sourceRoot)}</span>
-      <button type="button" data-fly-to>FLY TO LANDMARK ↗</button>
+      <button class="inspector-fly" type="button" data-fly-to>FLY TO LANDMARK ↗</button>
     </header>
 
     <div class="inspector-scroll">
-      <p class="system-summary">${escapeHtml(subsystem.summary)}</p>
-
-      ${componentProfile}
-
-      <section class="evidence-grid">
-        ${factCard("RUNTIME", detail.runtime, "runtime")}
-        ${factCard("OWNER", detail.owner, "ownership")}
-        ${factCard("PERSISTENCE", detail.persistence, "durability")}
-        ${factCard("ADMISSION GATE", detail.admission, "security")}
-        ${factCard("COMPLETION + CLEANUP", detail.completion, "ownership")}
-      </section>
-
-      <section class="invariant-panel">
-        <div class="section-label"><span>BOUNDARY</span><i></i></div>
-        <p>${escapeHtml(subsystem.boundary)}</p>
-        <div class="invariant-callout">
-          <strong>INVARIANT</strong>
-          <p>${escapeHtml(subsystem.invariant)}</p>
-        </div>
-      </section>
-
-      <section class="security-facts">
-        <div class="section-label"><span>SECURITY FACTS</span><i></i></div>
-        <ul>${detail.security.map((fact) => `<li>${escapeHtml(fact)}</li>`).join("")}</ul>
-      </section>
-
-      <section class="component-index">
-        <div class="section-label"><span>COMPONENT DECKS / ${subsystem.components.length}</span><i></i></div>
-        ${subsystem.components.map((candidate, index) => `
-          <button type="button" data-component="${candidate.id}" class="${candidate.id === component?.id ? "is-selected" : ""}">
-            <span>${String(index + 1).padStart(2, "0")}</span>
-            <div>
-              <strong>${escapeHtml(candidate.label)}</strong>
-              <p>${escapeHtml(candidate.summary)}</p>
-              <code>${escapeHtml(candidate.paths[0])}</code>
-            </div>
-          </button>`).join("")}
-      </section>
-
-      <section class="source-evidence">
-        <div class="section-label"><span>PRIMARY SOURCE</span><i></i></div>
-        ${unique(sourcePaths).map((path) => sourceRow(path, "source")).join("")}
-        <details>
-          <summary>ARCHITECTURE NOTES / ${detail.docs.length}</summary>
-          ${detail.docs.map((path) => sourceRow(path, "document")).join("")}
-        </details>
-        <details>
-          <summary>EXECUTABLE EVIDENCE / ${detail.tests.length}</summary>
-          ${detail.tests.map((path) => sourceRow(path, "test")).join("")}
-        </details>
-      </section>
-
-      <section class="route-index">
-        <div class="section-label"><span>CONNECTED ROUTES / ${relatedEdges.length}</span><i></i></div>
-        ${relatedEdges.map((edge) => {
-          const otherId = edge.from === subsystem.id ? edge.to : edge.from;
-          const direction = edge.from === subsystem.id ? "OUT" : "IN";
-          return `
-            <button type="button" data-related-system="${otherId}">
-              <span class="route-kind is-${edge.kind}">${escapeHtml(edge.kind)}</span>
-              <div><strong>${direction} · ${escapeHtml(architectureSubsystem(otherId).shortLabel)}</strong><small>${escapeHtml(edge.label)}</small></div>
-              <i>↗</i>
-            </button>`;
-        }).join("")}
-      </section>
+      <nav class="inspector-tabs" aria-label="Choose subsystem detail view">
+        ${[
+          ["overview", "OVERVIEW"],
+          ["components", `COMPONENTS ${subsystem.components.length}`],
+          ["source", "SOURCE"],
+          ["routes", `ROUTES ${relatedEdges.length}`],
+        ].map(([section, label]) => `
+          <button type="button" data-inspector-section="${section}" class="${section === state.inspectorSection ? "is-active" : ""}" aria-pressed="${section === state.inspectorSection}">${label}</button>`).join("")}
+      </nav>
+      <div class="inspector-view" data-inspector-view="${state.inspectorSection}">
+        ${inspectorSections[state.inspectorSection]}
+      </div>
     </div>`;
   restoreDataFocus(elements.inspector, focus);
 }
@@ -568,6 +666,7 @@ function setFlowStep(index) {
   const step = flow.steps[next];
   state.selectedSubsystemId = step.subsystemId;
   state.selectedComponentId = step.componentId ?? null;
+  state.inspectorSection = step.componentId ? "components" : "overview";
   updateHash();
   renderFlow();
   renderSystemList();
@@ -656,14 +755,17 @@ function renderWorld() {
 
 function renderGround() {
   const grid = [];
-  for (let coordinate = -200; coordinate <= 200; coordinate += 20) {
+  const gridExtent = 260;
+  const outerRadius = ATLAS_ZONES.find((zone) => zone.id === "outer")?.radius ?? 233;
+  const boundaryRadius = ATLAS_ZONES.find((zone) => zone.id === "boundary")?.radius ?? 164;
+  for (let coordinate = -gridExtent; coordinate <= gridExtent; coordinate += 20) {
     grid.push(`<path d="${linePath(
-      { x: coordinate, y: 0, z: -200 },
-      { x: coordinate, y: 0, z: 200 },
+      { x: coordinate, y: 0, z: -gridExtent },
+      { x: coordinate, y: 0, z: gridExtent },
     )}" class="terrain-grid-line"></path>`);
     grid.push(`<path d="${linePath(
-      { x: -200, y: 0, z: coordinate },
-      { x: 200, y: 0, z: coordinate },
+      { x: -gridExtent, y: 0, z: coordinate },
+      { x: gridExtent, y: 0, z: coordinate },
     )}" class="terrain-grid-line"></path>`);
   }
   const zones = [...ATLAS_ZONES].reverse().map((zone, index) => {
@@ -680,12 +782,12 @@ function renderGround() {
       <path d="${pointPath(points)}" class="terrain-zone zone-${zone.id} zone-${index}"></path>
       <text x="${format(labelPoint.x)}" y="${format(labelPoint.y - 8)}" class="zone-label zone-label-${zone.id}">${escapeHtml(zone.label)}</text>`;
   }).join("");
-  const gateLeft = project({ x: -28, y: 0, z: -132 });
-  const gateLeftTop = project({ x: -28, y: 34, z: -132 });
-  const gateRight = project({ x: 28, y: 0, z: -132 });
-  const gateRightTop = project({ x: 28, y: 34, z: -132 });
+  const gateLeft = project({ x: -28, y: 0, z: -boundaryRadius });
+  const gateLeftTop = project({ x: -28, y: 34, z: -boundaryRadius });
+  const gateRight = project({ x: 28, y: 0, z: -boundaryRadius });
+  const gateRightTop = project({ x: 28, y: 34, z: -boundaryRadius });
   return `
-    <path d="${pointPath(circlePoints(188), true)}" class="terrain-field"></path>
+    <path d="${pointPath(circlePoints(outerRadius), true)}" class="terrain-field"></path>
     <g class="terrain-grid">${grid.join("")}</g>
     <g class="terrain-zones">${zones}</g>
     <g class="installation-gate">
@@ -1135,14 +1237,22 @@ function worldKeyDown(event) {
 
 function documentKeyDown(event) {
   const typing = event.target.matches("input, textarea, select, [contenteditable='true']");
+  if (event.key === "Escape" && elements.helpDialog.open) return;
+  if (event.key === "Escape" && state.activePanel === "key") {
+    event.preventDefault();
+    closeWorkspace("key");
+    return;
+  }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
     event.preventDefault();
+    showWorkspace("systems");
     elements.search.focus();
     elements.search.select();
     return;
   }
   if (!typing && event.key === "/") {
     event.preventDefault();
+    showWorkspace("systems");
     elements.search.focus();
     return;
   }
@@ -1150,6 +1260,11 @@ function documentKeyDown(event) {
     event.preventDefault();
     clearSearch();
     renderWorld();
+    return;
+  }
+  if (event.key === "Escape" && !typing && state.activePanel) {
+    event.preventDefault();
+    closeWorkspace(state.activePanel);
   }
 }
 

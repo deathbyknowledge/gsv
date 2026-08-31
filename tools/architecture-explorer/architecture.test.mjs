@@ -173,6 +173,21 @@ test("every landmark declares ownership, lifecycle, and evidence", () => {
     }
   }
   assert.deepEqual(Object.keys(ATLAS_SYSTEM_DETAIL).sort(), ARCHITECTURE_SUBSYSTEMS.map(({ id }) => id).sort());
+
+  const landmarks = Object.entries(ATLAS_SYSTEM_DETAIL);
+  for (let leftIndex = 0; leftIndex < landmarks.length; leftIndex += 1) {
+    const [leftId, { scene: left }] = landmarks[leftIndex];
+    for (let rightIndex = leftIndex + 1; rightIndex < landmarks.length; rightIndex += 1) {
+      const [rightId, { scene: right }] = landmarks[rightIndex];
+      const centerDistance = Math.hypot(left.x - right.x, left.z - right.z);
+      const leftRadius = Math.hypot(left.width, left.depth) / 2;
+      const rightRadius = Math.hypot(right.width, right.depth) / 2;
+      assert.ok(
+        centerDistance - leftRadius - rightRadius >= 20,
+        `${leftId} and ${rightId} need more visual breathing room`,
+      );
+    }
+  }
 });
 
 test("all evidence paths exist inside the repository", async () => {
@@ -347,6 +362,28 @@ test("the explorer remains outside the product Web bundle", async () => {
   assert.doesNotMatch(combined, /web\/src\/app\/features\/architecture/);
   assert.doesNotMatch(combined, /\/architecture(?:["'`?])/);
   assert.doesNotMatch(combined, /style=|\.style\b/, "strict CSP requires external presentation rules");
+});
+
+test("the workspace progressively discloses supporting information", async () => {
+  const index = await readFile(join(REPO_ROOT, "tools/architecture-explorer/index.html"), "utf8");
+  const app = await readFile(join(REPO_ROOT, "tools/architecture-explorer/app.js"), "utf8");
+  assert.deepEqual(
+    [...index.matchAll(/data-workspace-panel="([^"]+)"/g)].map((match) => match[1]),
+    ["systems", "inspector", "trace", "key"],
+  );
+  assert.match(index, /Building color identifies subsystem role/);
+  for (const category of new Set(ARCHITECTURE_SUBSYSTEMS.map(({ category }) => category))) {
+    assert.match(index, new RegExp(`class="key-${category}"`), `${category} needs a color-key entry`);
+  }
+  assert.match(index, /class="line-request"/);
+  assert.match(index, /class="line-control"/);
+  assert.match(index, /class="line-data"/);
+  assert.match(index, /class="line-contract"/);
+  assert.match(index, /class="line-trace"/);
+  assert.match(app, /\["overview", "OVERVIEW"\]/);
+  assert.match(app, /\["components", `COMPONENTS/);
+  assert.match(app, /\["source", "SOURCE"\]/);
+  assert.match(app, /\["routes", `ROUTES/);
 });
 
 test("tracked GitHub metadata prefers a remote ref and strips remote credentials", async () => {
