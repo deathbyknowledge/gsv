@@ -21,7 +21,6 @@ import {
 } from "../../shared/src/media-body";
 import {
   adapterAccountDurableObjectName,
-  parseAdapterAccountDurableObjectName,
   parseAdapterInstallationContext,
 } from "../../shared/src/installation";
 import {

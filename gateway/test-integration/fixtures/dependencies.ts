@@ -1,6 +1,7 @@
 import { DurableObject, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 import { z } from "zod";
 import {
+  adapterSendArgsSchema,
   encodeManagedInferenceStreamEvent,
   GSV_INFERENCE_PRODUCT_MODEL,
   GSV_INFERENCE_PROVIDER,
@@ -345,15 +346,9 @@ export default class TestDependencies
     body?: BinaryBody,
   ): Promise<AdapterGatewayFrame | null> {
     let requestedAdapter = this.adapterId;
-    if (
-      frame.type === "req"
-      && frame.call === "adapter.send"
-      && frame.args !== null
-      && typeof frame.args === "object"
-      && !Array.isArray(frame.args)
-      && typeof frame.args.adapter === "string"
-    ) {
-      requestedAdapter = frame.args.adapter.trim().toLowerCase();
+    if (frame.type === "req" && frame.call === "adapter.send") {
+      const args = adapterSendArgsSchema.safeParse(frame.args);
+      if (args.success) requestedAdapter = args.data.adapter.trim().toLowerCase();
     }
     return await handleAdapterFrame(
       requestedAdapter,

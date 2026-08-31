@@ -1,5 +1,6 @@
 import type { ProcHilRequest } from "../../../packages/gsv/src/protocol/syscalls/proc.js";
 import { callLinkedAdapterGateway, type AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
+import type { AdapterLinkedPeerContext } from "../../shared/src/types";
 import type {
   AdapterInstallationContext,
   AdapterPeerDeliveryContext,
@@ -196,18 +197,19 @@ export async function handleTelegramApprovalCallback(
   const record = claimed.record;
   let result;
   try {
+    const linkedContext: AdapterLinkedPeerContext = {
+      accountId: record.context.accountId,
+      actorId: callback.actorId,
+      surface: record.context.surface,
+      interactionId: callback.callbackQueryId,
+    };
+    if (record.context.routeGeneration) {
+      linkedContext.routeGeneration = record.context.routeGeneration;
+    }
     result = await callLinkedAdapterGateway(
       gateway,
       installation,
-      {
-        accountId: record.context.accountId,
-        actorId: callback.actorId,
-        surface: record.context.surface,
-        ...(record.context.routeGeneration
-          ? { routeGeneration: record.context.routeGeneration }
-          : {}),
-        interactionId: callback.callbackQueryId,
-      },
+      linkedContext,
       "proc.hil",
       {
         pid: record.request.pid,

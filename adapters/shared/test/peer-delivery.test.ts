@@ -13,10 +13,12 @@ class MemoryStorage {
   clearAlarmOnBodyPut = false;
 
   async get<T>(key: string): Promise<T | undefined> {
+    // SAFETY: The fixture returns the generic value previously written for this key.
     return this.values.get(key) as T | undefined;
   }
 
   async list<T>(options?: { prefix?: string }): Promise<Map<string, T>> {
+    // SAFETY: The fixture map is exposed through the generic storage list contract.
     return new Map(
       [...this.values.entries()].filter(([key]) => !options?.prefix || key.startsWith(options.prefix)),
     ) as Map<string, T>;
@@ -102,9 +104,11 @@ function delivery(id = "message-1"): AdapterPeerSignalDelivery {
 
 function queueFixture() {
   const storage = new MemoryStorage();
+  // SAFETY: The fixture implements every Durable Object storage operation used by the queue.
+  const durableStorage = storage as DurableObjectStorage;
   return {
     storage,
-    queue: new AdapterPeerDeliveryQueue(storage as unknown as DurableObjectStorage, 100),
+    queue: new AdapterPeerDeliveryQueue(durableStorage, 100),
   };
 }
 

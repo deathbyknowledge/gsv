@@ -59,7 +59,6 @@ import type {
   NetFetchArgs,
   MessageAttachment,
   ProcessIdentity,
-  ProcHilRequest,
   ScheduleRecord,
   ScheduleRunResult,
   SchedulerRunArgs,
@@ -2517,7 +2516,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         ).catch(() => undefined);
         return { state: "skipped" };
       }
-      const request = parsedRequest.data as ProcHilRequest;
+      const request = parsedRequest.data;
 
       try {
         const framed = await this.deliverAdapterPeerSignal(route, {

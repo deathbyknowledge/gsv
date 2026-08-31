@@ -5,6 +5,7 @@ import type {
   ProcHilRequest,
 } from "./types";
 import type { JsonValue } from "../../../packages/gsv/src/protocol/json.js";
+import * as z from "zod/mini";
 
 export type RenderedAdapterPeerSignal = {
   message: AdapterOutboundMessage;
@@ -99,8 +100,9 @@ function safeQuotedDetail(
   value: JsonValue | string | undefined,
   maximum = 160,
 ): string | null {
-  if (typeof value !== "string") return null;
-  const singleLine = value
+  const parsed = z.string().safeParse(value);
+  if (!parsed.success) return null;
+  const singleLine = parsed.data
     .replace(/[\p{Cc}\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();

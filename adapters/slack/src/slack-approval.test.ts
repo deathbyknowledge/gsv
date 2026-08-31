@@ -11,10 +11,12 @@ class MemoryStorage {
   readonly values = new Map<string, unknown>();
 
   async get<T>(key: string): Promise<T | undefined> {
+    // SAFETY: The fixture returns the generic value previously written for this key.
     return this.values.get(key) as T | undefined;
   }
 
   async list<T>(options?: { prefix?: string }): Promise<Map<string, T>> {
+    // SAFETY: The fixture map is exposed through the generic storage list contract.
     return new Map(
       [...this.values.entries()].filter(([key]) => !options?.prefix || key.startsWith(options.prefix)),
     ) as Map<string, T>;
@@ -60,8 +62,10 @@ const REQUEST = {
 describe("Slack structured approvals", () => {
   it("turns a button into an ordinary linked-human proc.hil request exactly once", async () => {
     const storage = new MemoryStorage();
+    // SAFETY: The fixture implements every Durable Object storage operation used by approvals.
+    const durableStorage = storage as DurableObjectStorage;
     const controls = await prepareSlackApproval(
-      storage as unknown as DurableObjectStorage,
+      durableStorage,
       "TWORK123",
       CONTEXT,
       REQUEST,
@@ -82,10 +86,12 @@ describe("Slack structured approvals", () => {
         remembered: true,
       },
     }));
-    const gateway = {
+    const gatewayFixture = {
       serviceFrame: vi.fn(),
       linkedPeerFrame,
-    } as unknown as AdapterGatewayBinding;
+    };
+    // SAFETY: The fixture supplies both adapter Gateway methods exercised by this test.
+    const gateway = gatewayFixture as AdapterGatewayBinding;
     const updateMessage = vi.fn(async () => undefined);
     const callback = {
       deliveryId: "interaction:1:2",
@@ -100,7 +106,7 @@ describe("Slack structured approvals", () => {
     };
 
     await handleSlackApprovalCallback(
-      storage as unknown as DurableObjectStorage,
+      durableStorage,
       gateway,
       { installationId: "inst_test" },
       callback,
@@ -132,7 +138,7 @@ describe("Slack structured approvals", () => {
     );
 
     await handleSlackApprovalCallback(
-      storage as unknown as DurableObjectStorage,
+      durableStorage,
       gateway,
       { installationId: "inst_test" },
       callback,

@@ -298,9 +298,12 @@ describe("managed Telegram clean-instance flow", () => {
       ));
       expect(approvalMessage).toBeDefined();
     });
-    const approvalMessageId = typeof approvalMessage?.result === "object"
-      ? approvalMessage.result.message_id
-      : undefined;
+    const approvalResult = approvalMessage?.result;
+    const approvalMessageId = approvalResult === undefined
+        || approvalResult === true
+        || approvalResult === false
+      ? undefined
+      : approvalResult.message_id;
     const approveAlwaysData = approvalMessage?.body.reply_markup
       ?.inline_keyboard?.[0]?.[1]?.callback_data;
     expect(approvalMessage?.body.text).toContain("Requested action: run \"date\".");

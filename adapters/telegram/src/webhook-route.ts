@@ -1,5 +1,38 @@
 import { LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID } from "../../shared/src/installation";
 
+export const TELEGRAM_APPROVAL_WEBHOOK_VERSION = 1;
+
+export type TelegramWebhookRegistration = {
+  url: string;
+  secret_token: string;
+  allowed_updates: string[];
+};
+
+export function telegramWebhookRegistration(
+  webhookUrl: string,
+  webhookSecret: string,
+): TelegramWebhookRegistration {
+  return {
+    url: webhookUrl,
+    secret_token: webhookSecret,
+    allowed_updates: ["message", "channel_post", "callback_query"],
+  };
+}
+
+export async function reconcileTelegramApprovalWebhook(
+  currentVersion: number,
+  webhookUrl: string | null,
+  webhookSecret: string | null,
+  register: (registration: TelegramWebhookRegistration) => Promise<void>,
+): Promise<number> {
+  if (currentVersion >= TELEGRAM_APPROVAL_WEBHOOK_VERSION) return currentVersion;
+  if (!webhookUrl || !webhookSecret) {
+    throw new Error("Telegram approval webhook is not initialized");
+  }
+  await register(telegramWebhookRegistration(webhookUrl, webhookSecret));
+  return TELEGRAM_APPROVAL_WEBHOOK_VERSION;
+}
+
 export type TelegramWebhookRoute =
   | { kind: "opaque"; durableObjectId: string }
   | { kind: "legacy"; accountId: string };

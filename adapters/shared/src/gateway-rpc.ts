@@ -33,6 +33,7 @@ import {
   type ProcHilArgs,
   type ProcHilResult,
 } from "../../../packages/gsv/src/protocol/syscalls/proc.js";
+import * as z from "zod/mini";
 
 export type AdapterGatewayBinding = AdapterGatewayInterface<GatewayFrame>;
 
@@ -59,9 +60,10 @@ export async function callLinkedAdapterGateway(
   await cancelBinaryBody(response.body, "Linked adapter response body is unsupported");
   if (!response.ok) {
     const message = response.error?.message || `Gateway error on ${call}`;
-    const code = response.error?.code;
+    const parsedCode = z.number().safeParse(response.error?.code);
+    const code = parsedCode.success ? parsedCode.data : undefined;
     const retryable = response.error?.retryable ?? (
-      typeof code !== "number" || code === 408 || code === 429 || code >= 500
+      code === undefined || code === 408 || code === 429 || code >= 500
     );
     if (retryable) throw new Error(message);
     return { ok: false, error: message };
@@ -70,7 +72,7 @@ export async function callLinkedAdapterGateway(
   if (!decoded.success) {
     throw new Error(`Gateway returned an invalid ${call} response`);
   }
-  return decoded.data as ProcHilResult;
+  return decoded.data;
 }
 
 /**

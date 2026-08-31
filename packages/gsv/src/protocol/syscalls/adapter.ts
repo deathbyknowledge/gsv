@@ -9,6 +9,8 @@ import type {
 import type { AdapterServiceDescriptor } from "../../services/adapters";
 import {
   adapterConnectChallengeSchema,
+  adapterMediaSchema,
+  adapterSurfaceSchema,
   type AdapterConnectChallenge,
 } from "../adapters";
 import type { JsonValue } from "../json";
@@ -89,6 +91,17 @@ export type AdapterSendArgs = {
   /** Acknowledge that this separate send intentionally duplicates the active run's directed endpoint. */
   also?: boolean;
 };
+
+export const adapterSendArgsSchema = z.strictObject({
+  adapter: nonEmptyStringSchema,
+  accountId: nonEmptyStringSchema,
+  deliveryId: z.optional(nonEmptyStringSchema),
+  surface: adapterSurfaceSchema,
+  text: z.string(),
+  replyToId: z.optional(z.string()),
+  media: z.optional(z.array(adapterMediaSchema)),
+  also: z.optional(z.boolean()),
+});
 
 export type AdapterSendResult =
   | {

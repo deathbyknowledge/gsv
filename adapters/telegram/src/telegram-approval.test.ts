@@ -11,10 +11,12 @@ class MemoryStorage {
   readonly values = new Map<string, unknown>();
 
   async get<T>(key: string): Promise<T | undefined> {
+    // SAFETY: The fixture returns the generic value previously written for this key.
     return this.values.get(key) as T | undefined;
   }
 
   async list<T>(options?: { prefix?: string }): Promise<Map<string, T>> {
+    // SAFETY: The fixture map is exposed through the generic storage list contract.
     return new Map(
       [...this.values.entries()].filter(
         ([key]) => !options?.prefix || key.startsWith(options.prefix),
@@ -65,8 +67,10 @@ const REQUEST = {
 describe("Telegram structured approvals", () => {
   it("turns a button into an ordinary linked-human proc.hil request exactly once", async () => {
     const storage = new MemoryStorage();
+    // SAFETY: The fixture implements every Durable Object storage operation used by approvals.
+    const durableStorage = storage as DurableObjectStorage;
     const controls = await prepareTelegramApproval(
-      storage as unknown as DurableObjectStorage,
+      durableStorage,
       CONTEXT,
       REQUEST,
     );
@@ -85,10 +89,12 @@ describe("Telegram structured approvals", () => {
         remembered: true,
       },
     }));
-    const gateway = {
+    const gatewayFixture = {
       serviceFrame: vi.fn(),
       linkedPeerFrame,
-    } as unknown as AdapterGatewayBinding;
+    };
+    // SAFETY: The fixture supplies both adapter Gateway methods exercised by this test.
+    const gateway = gatewayFixture as AdapterGatewayBinding;
     const api = {
       answerCallbackQuery: vi.fn(async () => undefined),
       clearInlineKeyboard: vi.fn(async () => undefined),
@@ -102,7 +108,7 @@ describe("Telegram structured approvals", () => {
     };
 
     await handleTelegramApprovalCallback(
-      storage as unknown as DurableObjectStorage,
+      durableStorage,
       gateway,
       { installationId: "inst_test" },
       callback,
@@ -131,7 +137,7 @@ describe("Telegram structured approvals", () => {
     expect(api.clearInlineKeyboard).toHaveBeenCalledWith("12345", "42");
 
     await handleTelegramApprovalCallback(
-      storage as unknown as DurableObjectStorage,
+      durableStorage,
       gateway,
       { installationId: "inst_test" },
       callback,

@@ -460,6 +460,8 @@ async function routeAdapterLinkedPeerFrame(
     }
   }
   const kernelStub: unknown = await getKernelByInstallationId(bindings.KERNEL, installationId);
+  // SAFETY: this namespace is generated from Kernel; the narrow view avoids
+  // recursively expanding every unrelated RPC method in Cloudflare's stub type.
   const kernel = kernelStub as {
     linkedAdapterPeerFrame(
       profile: ServicePeerProfile,

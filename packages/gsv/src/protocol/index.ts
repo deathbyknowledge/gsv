@@ -14,6 +14,7 @@ export type * from "./syscalls/adapter";
 export {
   adapterDeliveryClaimResultSchema,
   adapterDeliveryReportResultSchema,
+  adapterSendArgsSchema,
   adapterSendResultSchema,
   adapterStateUpdateResultSchema,
   isAdapterConnectResult,

@@ -14,33 +14,7 @@ import type {
   AdapterSendArgs,
   AdapterSendResult,
 } from "../../../packages/gsv/src/protocol/syscalls/adapter.js";
-import { z } from "zod";
-
-const adapterSendArgsSchema = z.object({
-  adapter: z.string().min(1),
-  accountId: z.string().min(1),
-  deliveryId: z.string().min(1),
-  surface: z.object({
-    kind: z.enum(["dm", "group", "channel", "thread"]),
-    id: z.string(),
-    name: z.string().optional(),
-    handle: z.string().optional(),
-    threadId: z.string().optional(),
-  }).strict(),
-  text: z.string(),
-  replyToId: z.string().optional(),
-  media: z.array(z.object({
-    type: z.enum(["image", "audio", "video", "document"]),
-    mimeType: z.string(),
-    body: z.object({ offset: z.number(), length: z.number() }).strict().optional(),
-    url: z.string().optional(),
-    filename: z.string().optional(),
-    size: z.number().optional(),
-    duration: z.number().optional(),
-    transcription: z.string().optional(),
-  }).strict()).optional(),
-  also: z.boolean().optional(),
-}).strict();
+import { adapterSendArgsSchema } from "../../../packages/gsv/src/protocol/syscalls/adapter.js";
 
 export type AdapterFrameHandlers = {
   send(message: AdapterOutboundMessage, body?: BinaryBody): Promise<AdapterWorkerSendResult>;
@@ -72,7 +46,7 @@ export async function handleAdapterFrame(
   }
   if (inputFrame.type === "sig") {
     try {
-      const frame = adapterPeerSignalFrameSchema.parse(inputFrame) as AdapterPeerSignalFrame;
+      const frame = adapterPeerSignalFrameSchema.parse(inputFrame);
       validateSignalContext(context, frame);
       await handlers.acceptSignal(context, frame, signalBody);
       return null;
@@ -94,7 +68,7 @@ export async function handleAdapterFrame(
 
   let args: AdapterSendArgs;
   try {
-    args = adapterSendArgsSchema.parse(inputFrame.args) as AdapterSendArgs;
+    args = adapterSendArgsSchema.parse(inputFrame.args);
     validateSendContext(adapterId, context, args);
   } catch (error) {
     await cancelBinaryBody(inputFrame.body, error);
@@ -118,7 +92,7 @@ export async function handleAdapterFrame(
   let result: AdapterWorkerSendResult;
   try {
     result = await handlers.send(message, inputFrame.body);
-  } catch (error) {
+  } catch {
     return errorFrame(inputFrame.id, 503, "Adapter delivery is unavailable", true);
   } finally {
     await cancelBinaryBody(inputFrame.body, "Adapter request completed");

@@ -17,6 +17,11 @@ const CONTEXT: AdapterPeerDeliveryContext = {
   runId: "run-1",
 };
 
+type TrackedBody = {
+  body: BinaryBody;
+  cancelled: () => Error | string | undefined;
+};
+
 function committedFrame(): GatewayFrame {
   return {
     type: "sig",
@@ -38,8 +43,8 @@ function committedFrame(): GatewayFrame {
   };
 }
 
-function trackedBody(): { body: BinaryBody; cancelled: () => unknown } {
-  let cancelled: unknown;
+function trackedBody(): TrackedBody {
+  let cancelled: Error | string | undefined;
   return {
     body: {
       length: 3,
@@ -49,7 +54,7 @@ function trackedBody(): { body: BinaryBody; cancelled: () => unknown } {
           controller.close();
         },
         cancel(reason) {
-          cancelled = reason;
+          cancelled = reason instanceof Error ? reason : String(reason);
         },
       }),
     },

@@ -63,7 +63,12 @@ import {
   loadTelegramInboundMedia,
   type TelegramInboundMediaSource,
 } from "./telegram-inbound-media";
-import { buildTelegramWebhookPath } from "./webhook-route";
+import {
+  buildTelegramWebhookPath,
+  reconcileTelegramApprovalWebhook,
+  telegramWebhookRegistration,
+  TELEGRAM_APPROVAL_WEBHOOK_VERSION,
+} from "./webhook-route";
 import type { callManagedTelegramApi } from "./managed-telegram-api";
 import * as z from "zod/mini";
 
@@ -307,6 +312,7 @@ type TelegramAccountState = {
   authenticated: boolean;
   webhookUrl: string | null;
   webhookSecret: string | null;
+  webhookUpdatesVersion: number;
   lastActivity: number | null;
   lastError: string | null;
 };
@@ -370,6 +376,7 @@ export class TelegramAccount extends DurableObject<Env> {
     authenticated: false,
     webhookUrl: null,
     webhookSecret: null,
+    webhookUpdatesVersion: 0,
     lastActivity: null,
     lastError: null,
   };
@@ -599,11 +606,7 @@ export class TelegramAccount extends DurableObject<Env> {
 
     await this.callTelegramApi<boolean>(
       "setWebhook",
-      {
-        url: webhookUrl,
-        secret_token: webhookSecret,
-        allowed_updates: ["message", "channel_post", "callback_query"],
-      },
+      telegramWebhookRegistration(webhookUrl, webhookSecret),
       normalizedToken,
     );
 
@@ -615,6 +618,7 @@ export class TelegramAccount extends DurableObject<Env> {
     this.state.authenticated = true;
     this.state.webhookUrl = webhookUrl;
     this.state.webhookSecret = webhookSecret;
+    this.state.webhookUpdatesVersion = TELEGRAM_APPROVAL_WEBHOOK_VERSION;
     this.state.lastError = null;
 
     await this.commitLifecycleState(Date.now() + INBOUND_WAKE_DELAY_MS);
@@ -956,6 +960,7 @@ export class TelegramAccount extends DurableObject<Env> {
       delivery.context,
       delivery.frame.payload,
     );
+    if (controls) await this.ensureApprovalWebhook();
     const result = await this.sendMessage(
       rendered,
       body,
@@ -969,6 +974,22 @@ export class TelegramAccount extends DurableObject<Env> {
       );
     }
     return result;
+  }
+
+  private async ensureApprovalWebhook(): Promise<void> {
+    await this.ensureLoaded();
+    if (!this.state.botToken) throw new Error("Telegram approval webhook is not initialized");
+    const nextVersion = await reconcileTelegramApprovalWebhook(
+      this.state.webhookUpdatesVersion,
+      this.state.webhookUrl,
+      this.state.webhookSecret,
+      async (registration) => {
+        await this.callTelegramApi<boolean>("setWebhook", registration);
+      },
+    );
+    if (nextVersion === this.state.webhookUpdatesVersion) return;
+    this.state.webhookUpdatesVersion = nextVersion;
+    await this.saveState();
   }
 
   async handleWebhook(

@@ -85,12 +85,14 @@ function binding(
 }
 
 function gatewayWithResponse(
-  response: (frame: { id: string }) => unknown,
+  response: (frame: { id: string }) => GatewayFrame,
 ): AdapterGatewayBinding {
-  return {
+  const gateway = {
     serviceFrame: vi.fn(),
     linkedPeerFrame: vi.fn(async (_installation, _context, frame) => response(frame)),
-  } as unknown as AdapterGatewayBinding;
+  };
+  // SAFETY: The fixture supplies both adapter Gateway methods exercised by these tests.
+  return gateway as AdapterGatewayBinding;
 }
 
 describe("callAdapterGateway", () => {
