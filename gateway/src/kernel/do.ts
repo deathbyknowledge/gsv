@@ -242,7 +242,13 @@ type IpcCallTimeout = {
 
 type IpcCallTimeoutTask = {
   id: string;
-  time: number;
+};
+
+type IpcCallSupervisionOptions = {
+  mode: "supervise";
+  intervalMs: number;
+  checkInCount: number;
+  lifecycleRecheckFor?: string;
 };
 
 type AdapterSignalDeliveryOutcome =
@@ -3275,17 +3281,21 @@ export class Kernel extends DurableObject<GatewayEnv> {
   private async scheduleIpcCallTimeout(
     callId: string,
     deadlineAt: number,
-    options?: {
-      mode: "supervise";
-      intervalMs: number;
-      checkInCount: number;
-      lifecycleRecheckFor?: string;
-    },
+    options?: IpcCallSupervisionOptions,
   ): Promise<string> {
+    const sched = await this.scheduleIpcCallTimeoutTask(callId, deadlineAt, options);
+    return sched.id;
+  }
+
+  private async scheduleIpcCallTimeoutTask(
+    callId: string,
+    deadlineAt: number,
+    options?: IpcCallSupervisionOptions,
+  ): Promise<{ id: string; time: number }> {
     const when = new Date(
       Math.ceil(Math.max(Date.now() + 1_000, deadlineAt) / 1_000) * 1_000,
     );
-    const sched = options
+    return options
       ? await this.schedule(
         when,
         "onIpcCallTimeout",
@@ -3293,7 +3303,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
         { idempotent: true },
       )
       : await this.schedule(when, "onIpcCallTimeout", callId);
-    return sched.id;
   }
 
   private failIpcCallsByTarget(uid: number, targetPid: string, error: string): void {
@@ -4301,7 +4310,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       if (!task) {
         throw new Error("Supervision lifecycle recheck requires its scheduled task identity");
       }
-      await this.scheduleIpcCallTimeout(
+      await this.scheduleIpcCallTimeoutTask(
         call.callId,
         Date.now() + MANAGED_LIFECYCLE_RECHECK_MS,
         {
@@ -4314,15 +4323,18 @@ export class Kernel extends DurableObject<GatewayEnv> {
       return;
     }
 
-    const checkedAt = task ? task.time * 1_000 : Date.now();
-    const nextCheckAt = checkedAt + intervalMs;
     const checkInCount = (timeout.checkInCount ?? 0) + 1;
-
-    await this.scheduleIpcCallTimeout(call.callId, nextCheckAt, {
-      mode: "supervise",
-      intervalMs,
-      checkInCount,
-    });
+    const successor = await this.scheduleIpcCallTimeoutTask(
+      call.callId,
+      Date.now() + intervalMs,
+      {
+        mode: "supervise",
+        intervalMs,
+        checkInCount,
+      },
+    );
+    const nextCheckAt = successor.time * 1_000;
+    const checkedAt = nextCheckAt - intervalMs;
     const renewed = this.ipcCalls.renewDeadline(call.callId, nextCheckAt);
     if (!renewed) return;
 
