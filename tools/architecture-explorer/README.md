@@ -21,8 +21,8 @@ To use a different port, set `GSV_ARCHITECTURE_PORT` before starting it.
 ## What the city means
 
 Each building is one large part of GSV with one clear job. Its lights are the
-smaller parts inside it. Those smaller parts keep their real project names; a
-short plain-English line beside each name says what it does.
+smaller parts inside it. Buildings and smaller parts keep their real project
+names; a short plain-English line beside each name says what it does.
 
 - Color puts buildings that work closely together into groups.
 - Shape gives a visual clue about the kind of job.

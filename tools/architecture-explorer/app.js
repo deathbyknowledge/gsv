@@ -349,8 +349,6 @@ function renderSystemList() {
   const sections = ATLAS_DISTRICTS.map((district) => {
     const rows = district.systems.map((id) => {
       const subsystem = architectureSubsystem(id);
-      const detail = atlasDetail(id);
-      const archetype = atlasArchetype(detail.archetype);
       const classes = [
         "system-row",
         `tone-${district.id}`,
@@ -362,7 +360,7 @@ function renderSystemList() {
           <i></i>
           <span>
             <strong>${escapeHtml(subsystem.shortLabel)}</strong>
-            <small>${escapeHtml(archetype.label)}</small>
+            <small>${escapeHtml(subsystem.plainLabel)}</small>
           </span>
           <em>${String(subsystem.components.length).padStart(2, "0")}</em>
         </button>`;
@@ -609,6 +607,7 @@ function renderInspector() {
       <button class="panel-close" type="button" data-close-panel="inspector" aria-label="Close details">×</button>
       <p>${escapeHtml(district.shortLabel)} / ${escapeHtml(archetype.label)}</p>
       <h2 id="inspector-title" tabindex="-1">${escapeHtml(subsystem.label)}</h2>
+      <strong class="system-plain-label">WHAT IT DOES · ${escapeHtml(subsystem.plainLabel)}</strong>
       <button class="inspector-fly" type="button" data-fly-to>CENTER ON MAP ↗</button>
     </header>
 
@@ -1474,7 +1473,7 @@ function worldPointerMove(event) {
     ? architectureComponent(subsystem.id, node.dataset.component)
     : null;
   elements.hover.hidden = false;
-  elements.hover.innerHTML = `<span>${escapeHtml(subsystem.shortLabel)}</span><strong>${escapeHtml(component?.label ?? subsystem.label)}</strong><small>${component ? `${escapeHtml(component.plainLabel)} · CLICK THIS LIGHT TO LEARN MORE` : atlasDetail(subsystem.id).runtime}</small>`;
+  elements.hover.innerHTML = `<span>${escapeHtml(subsystem.shortLabel)}</span><strong>${escapeHtml(component?.label ?? subsystem.label)}</strong><small>${component ? `${escapeHtml(component.plainLabel)} · CLICK THIS LIGHT TO LEARN MORE` : `${escapeHtml(subsystem.plainLabel)} · ${escapeHtml(atlasDetail(subsystem.id).runtime)}`}</small>`;
 }
 
 function worldPointerUp(event) {

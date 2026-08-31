@@ -1718,6 +1718,17 @@ button:disabled {
   letter-spacing: 0.055em;
 }
 
+.system-plain-label {
+  position: relative;
+  z-index: 1;
+  display: block;
+  max-width: 240px;
+  margin-top: 8px;
+  color: var(--accent);
+  font: 8px/1.25 var(--mono);
+  letter-spacing: 0.08em;
+}
+
 .inspector-header .inspector-fly {
   position: absolute;
   z-index: 2;

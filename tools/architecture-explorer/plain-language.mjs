@@ -6,8 +6,7 @@ import {
 
 const SYSTEM_COPY = {
   gateway: {
-    label: "FRONT DOOR",
-    shortLabel: "FRONT DOOR",
+    plainLabel: "FRONT DOOR",
     summary: "Every visit starts here. It finds the right GSV home and stops unknown or inactive visits before they reach anything private.",
     owns: ["Find the right GSV home", "Open only approved doors", "Keep different GSV homes apart"],
     boundary: "It chooses the right home and the right door. It does not decide what a person is allowed to do inside.",
@@ -20,8 +19,7 @@ const SYSTEM_COPY = {
     },
   },
   kernel: {
-    label: "TRAFFIC CONTROLLER",
-    shortLabel: "CONTROLLER",
+    plainLabel: "TRAFFIC CONTROLLER",
     summary: "This is GSV's rule keeper and switchboard. It checks who is asking, what they may do, and where the work belongs.",
     owns: ["Check who is asking and what they may do", "Send work to the right place", "Start, stop, and schedule agents"],
     boundary: "It coordinates work. It does not think for the agent, draw the screens, or do heavy work on your computer.",
@@ -36,8 +34,7 @@ const SYSTEM_COPY = {
     },
   },
   process: {
-    label: "WORKING AGENT",
-    shortLabel: "AGENT",
+    plainLabel: "WORKING AGENT",
     summary: "One agent works here. It keeps its private work, waiting messages, tool results, and stop controls safe across restarts.",
     owns: ["One agent's private work", "Waiting messages and tool results", "Stopping and ignoring late work"],
     boundary: "It owns private work, not the shared message history and not anyone's permission.",
@@ -52,8 +49,7 @@ const SYSTEM_COPY = {
     },
   },
   conversation: {
-    label: "MESSAGE HISTORY",
-    shortLabel: "MESSAGES",
+    plainLabel: "MESSAGE HISTORY",
     summary: "This is the official conversation people can see. It contains sent messages and lasting file links, never private reasoning or unfinished drafts.",
     owns: ["Messages people can see", "The order of those messages", "Lasting links to shared files"],
     boundary: "It records visible messages. It does not run the agent or store the agent's private work.",
@@ -66,8 +62,7 @@ const SYSTEM_COPY = {
     },
   },
   protocol: {
-    label: "SHARED RULES",
-    shortLabel: "RULES",
+    plainLabel: "SHARED RULES",
     summary: "These are the shared rules GSV parts use when they ask each other for work. Following the format never gives permission by itself.",
     owns: ["The shape of a request and reply", "The agent's small tool list", "The same behavior in every work place"],
     boundary: "It describes how parts communicate. It is not a running part and cannot approve anything.",
@@ -80,8 +75,7 @@ const SYSTEM_COPY = {
     },
   },
   "native-target": {
-    label: "BUILT-IN WORKSHOP",
-    shortLabel: "WORKSHOP",
+    plainLabel: "BUILT-IN WORKSHOP",
     summary: "This is GSV's built-in place for approved file work, one typed instruction at a time, and website requests.",
     owns: ["GSV files and folders", "Short typed-instruction jobs", "Approved website requests"],
     boundary: "It does the work it is given. The traffic controller still decides who may ask for that work.",
@@ -94,8 +88,7 @@ const SYSTEM_COPY = {
     },
   },
   inference: {
-    label: "AI CONNECTION",
-    shortLabel: "AI",
+    plainLabel: "AI CONNECTION",
     summary: "Connects a working agent to the chosen AI service, carries one answer back, and stops that request cleanly when needed.",
     owns: ["One live AI request", "AI choices and settings", "Speech and picture requests"],
     boundary: "It carries one AI request. The working agent keeps the lasting work record.",
@@ -108,8 +101,7 @@ const SYSTEM_COPY = {
     },
   },
   sdk: {
-    label: "APP BUILDING KIT",
-    shortLabel: "APP KIT",
+    plainLabel: "APP BUILDING KIT",
     summary: "Gives app makers a ready-made way to connect to GSV and use its shared actions without rebuilding the plumbing.",
     owns: ["A ready-made GSV connection", "A list of available actions", "Helpers for files and media"],
     boundary: "It makes communication easier. It does not sign people in or grant permission.",
@@ -122,8 +114,7 @@ const SYSTEM_COPY = {
     },
   },
   services: {
-    label: "SERVICE INSTRUCTIONS",
-    shortLabel: "SERVICES",
+    plainLabel: "SERVICE INSTRUCTIONS",
     summary: "This shared instruction book explains how GSV talks to optional account, AI, email, and messaging helpers. The real helpers run separately.",
     owns: ["Rules for finding managed GSV homes", "Rules for first setup and optional hosted AI", "Rules for email and message bridges"],
     boundary: "These are instructions, not one giant service. Each real helper keeps its own records, while the private GSV home controls people and permission.",
@@ -137,8 +128,7 @@ const SYSTEM_COPY = {
     },
   },
   web: {
-    label: "WEBSITE",
-    shortLabel: "WEBSITE",
+    plainLabel: "WEBSITE",
     summary: "This is the browser screen people use to chat, manage agents, inspect settings, and work with files.",
     owns: ["What appears in the browser", "Temporary screen state", "The signed-in browser connection"],
     boundary: "It shows controls and asks GSV to act. Hiding or showing a button is never the final permission check.",
@@ -153,8 +143,7 @@ const SYSTEM_COPY = {
     },
   },
   host: {
-    label: "COMPUTER APPS",
-    shortLabel: "COMPUTER",
+    plainLabel: "COMPUTER APPS",
     summary: "These are the GSV programs on your computer: the desktop app, text controls, the tool runner, and small voice or gesture helpers.",
     owns: ["The desktop app", "Approved work on your computer", "Voice and gesture help on your computer"],
     boundary: "Each program has one small job. The chat app does not secretly become the computer tool runner.",
@@ -168,8 +157,7 @@ const SYSTEM_COPY = {
     },
   },
   adapters: {
-    label: "MESSAGE BRIDGES",
-    shortLabel: "BRIDGES",
+    plainLabel: "MESSAGE BRIDGES",
     summary: "Four bridges carry messages between GSV and Discord, Telegram, Slack, or WhatsApp. Managed email is a separate service shown here beside them.",
     owns: ["The outside account connection", "Records that make delivery safe", "The different message style used by each app"],
     boundary: "A bridge carries messages. It cannot choose a GSV home or give itself more permission.",
@@ -185,8 +173,7 @@ const SYSTEM_COPY = {
     },
   },
   extension: {
-    label: "BROWSER HELPER",
-    shortLabel: "BROWSER",
+    plainLabel: "BROWSER HELPER",
     summary: "This browser add-on gives an approved agent a separate place to work with browser files, tabs, and pages.",
     owns: ["The browser work place", "Page actions", "Control pages inside the browser"],
     boundary: "It performs approved browser work. It does not sign itself in or decide its own permission.",
@@ -199,8 +186,7 @@ const SYSTEM_COPY = {
     },
   },
   ripgit: {
-    label: "FILE HISTORY",
-    shortLabel: "HISTORY",
+    plainLabel: "FILE HISTORY",
     summary: "Keeps version-by-version history for source folders and projects, so changes can be inspected and recovered.",
     owns: ["Project versions", "The files inside each saved version", "Safe all-at-once project changes"],
     boundary: "It keeps version history. Ordinary work folders use simpler saving unless they are deliberately placed here.",
@@ -213,8 +199,7 @@ const SYSTEM_COPY = {
     },
   },
   deployment: {
-    label: "SETUP BUILDER",
-    shortLabel: "SETUP",
+    plainLabel: "SETUP BUILDER",
     summary: "Turns a chosen GSV version and message-app list into the separate online pieces needed to run it.",
     owns: ["The setup plan", "Ready-to-run copies of each program", "Connections between the online pieces"],
     boundary: "It builds and connects the pieces. Once GSV is running, it does not decide user permission or daily work.",
@@ -377,8 +362,7 @@ export const PLAIN_SUBSYSTEMS = ARCHITECTURE_SUBSYSTEMS.map((system) => {
   const copy = systemCopy(system.id);
   return {
     ...system,
-    label: copy.label,
-    shortLabel: copy.shortLabel,
+    plainLabel: copy.plainLabel,
     summary: copy.summary,
     owns: copy.owns,
     boundary: copy.boundary,
@@ -435,7 +419,7 @@ export function searchPlainLanguage(query) {
   if (terms.length === 0) return [];
   const results = [];
   for (const system of PLAIN_SUBSYSTEMS) {
-    const systemText = [system.label, system.shortLabel, system.summary, system.boundary, system.invariant, system.sourceRoot, ...system.owns].join(" ").toLowerCase();
+    const systemText = [system.label, system.shortLabel, system.plainLabel, system.summary, system.boundary, system.invariant, system.sourceRoot, ...system.owns].join(" ").toLowerCase();
     if (terms.every((term) => systemText.includes(term))) {
       results.push({
         subsystemId: system.id,

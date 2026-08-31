@@ -576,6 +576,9 @@ test("plain-language copy covers the complete technical map", () => {
 
   for (const [systemIndex, system] of PLAIN_SUBSYSTEMS.entries()) {
     const technical = ARCHITECTURE_SUBSYSTEMS[systemIndex];
+    assert.equal(system.label, technical.label, `${system.id} must retain its real system name`);
+    assert.equal(system.shortLabel, technical.shortLabel, `${system.id} must retain its real map name`);
+    assert.ok(system.plainLabel.length > 3, `${system.id} needs a plain role name`);
     assert.equal(system.sourceRoot, technical.sourceRoot, `${system.id} must retain source evidence`);
     assert.equal(system.category, technical.category, `${system.id} must retain its category`);
     assert.deepEqual(system.position, technical.position, `${system.id} must retain its map position`);
@@ -629,7 +632,7 @@ test("plain-language copy covers the complete technical map", () => {
 test("the main explanations avoid specialist vocabulary", () => {
   const copy = [];
   for (const system of PLAIN_SUBSYSTEMS) {
-    copy.push(system.label, system.shortLabel, system.summary, ...system.owns, system.boundary, system.invariant);
+    copy.push(system.plainLabel, system.summary, ...system.owns, system.boundary, system.invariant);
     for (const component of system.components) {
       copy.push(component.plainLabel, component.summary, ...component.mechanics);
     }
