@@ -9,7 +9,6 @@ export type ShellSurfaceId =
   | "runtime"
   | "responsibilities"
   | "contacts"
-  | "architecture"
   | "files"
   | "repositories"
   | "library"
@@ -122,12 +121,6 @@ export const SYSTEM_DOCK_ITEMS: SystemDockItem[] = [
     description: "Browse ripgit repositories, source history, search, and diffs.",
   },
   {
-    id: "architecture",
-    label: "SYSTEM MAP",
-    icon: "stars",
-    description: "Explore GSV subsystem ownership, source components, and end-to-end flows.",
-  },
-  {
     id: "settings",
     label: "OVERVIEW",
     icon: "cog",
@@ -174,8 +167,6 @@ export function shellSurfaceLabel(surface: ShellSurfaceId): string {
       return "RESPONSIBILITIES";
     case "contacts":
       return "CONTACTS";
-    case "architecture":
-      return "SYSTEM MAP";
     case "files":
       return "FILES";
     case "repositories":
@@ -248,16 +239,6 @@ export function shellTabForSurface(surface: ShellPageSurfaceId): ShellPageTab {
       kind: "system",
       icon: "terminal",
       type: "GSV · CONSOLE",
-    };
-  }
-  if (surface === "architecture") {
-    return {
-      key: "sys:architecture",
-      surface,
-      title,
-      kind: "system",
-      icon: "stars",
-      type: "GSV · SOURCE MAP",
     };
   }
   return {

@@ -34,14 +34,6 @@ describe("shellRoutes", () => {
     expect(shellRouteFromLocation(location("/contacts"))).toEqual(route);
   });
 
-  it("round-trips the architecture system map and accepts its short alias", () => {
-    const route: ShellRoute = { surface: "architecture" };
-
-    expect(shellRouteToPath(route)).toBe("/architecture");
-    expect(shellRouteFromLocation(location("/architecture"))).toEqual(route);
-    expect(shellRouteFromLocation(location("/map"))).toEqual(route);
-  });
-
   it("keeps settings task paths compatible with the Work presentation", () => {
     const listRoute: ShellRoute = {
       surface: "settings",

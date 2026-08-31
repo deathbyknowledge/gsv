@@ -337,7 +337,6 @@ export function GsvDesktop({
                   onLibrary={() => onOpenSurface("library")}
                   onTerminal={() => onOpenSurface("terminal")}
                   onSettings={() => onOpenSurface("settings")}
-                  onArchitecture={() => onOpenSurface("architecture")}
                 />
               </div>
             </>

@@ -21,7 +21,6 @@ import { Surface } from "../app/components/ui/Surface";
 import { agentImageSrcForIndex } from "../app/features/gsv-console/domain/agentPresentation";
 import { AgentEditor } from "../app/components/ui/AgentEditor";
 import { AuthLayout } from "../app/features/session/AuthLayout";
-import { ArchitecturePage } from "../app/features/architecture/ArchitecturePage";
 
 /* ---------------------------------------------------------------------------
  * Live archetype previews. Each entry renders the REAL app component with pure
@@ -321,14 +320,6 @@ function AuthPreview() {
   );
 }
 
-function ArchitecturePreview() {
-  return (
-    <div style={{ width: "100vw", height: "100vh", display: "flex", overflow: "hidden" }}>
-      <ArchitecturePage />
-    </div>
-  );
-}
-
 // ── Registry ─────────────────────────────────────────────────────────────────
 export const PREVIEWS = {
   list: { title: "List", render: () => <ListPreview /> },
@@ -337,7 +328,6 @@ export const PREVIEWS = {
   editor: { title: "Editor", render: () => <EditorPreview /> },
   dashboard: { title: "Dashboard", render: () => <DashboardPreview /> },
   auth: { title: "Auth", render: () => <AuthPreview /> },
-  architecture: { title: "Architecture", render: () => <ArchitecturePreview /> },
 } satisfies Record<string, { title: string; render: () => ComponentChildren }>;
 
 /** Full-viewport route target for /design/preview/<id>. Renders the live

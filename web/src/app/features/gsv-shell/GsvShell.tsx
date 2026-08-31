@@ -580,7 +580,6 @@ export function GsvShell({
                         onLibrary={() => openShellSurface("library")}
                         onTerminal={() => openShellSurface("terminal")}
                         onSettings={() => openShellSurface("settings")}
-                        onArchitecture={() => openShellSurface("architecture")}
                       />
                     </div>
                   ) : null}

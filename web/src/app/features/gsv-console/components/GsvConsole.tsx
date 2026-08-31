@@ -28,7 +28,6 @@ import { ContactsPage } from "../contacts/ContactsPage";
 import { ListTemplateMockPage } from "../list-template/ListTemplateMockPage";
 import { CardListTemplateMockPage } from "../card-template/CardListTemplateMockPage";
 import { ConnectFlowsMockPage } from "../connect-flows/ConnectFlowsMockPage";
-import { ArchitecturePage } from "../../architecture/ArchitecturePage";
 
 type GsvConsoleProps = {
   activeSurface: Exclude<ShellSurfaceId, "desktop">;
@@ -72,9 +71,6 @@ function surfaceTail(surface: ShellSurfaceId): string {
   }
   if (surface === "contacts") {
     return "GSV · CONTACTS";
-  }
-  if (surface === "architecture") {
-    return "GSV · SOURCE MAP";
   }
   if (surface === "messengers") {
     return "GSV · MESSENGERS";
@@ -505,8 +501,6 @@ export function GsvConsole({
           <ResponsibilitiesPage />
         ) : activeSurface === "contacts" ? (
           <ContactsPage />
-        ) : activeSurface === "architecture" ? (
-          <ArchitecturePage />
         ) : activeSurface === "crew" ? (
           <ConsoleCrewPage onManageAgent={openAgent} onCreateAgent={openNewAgent} />
         ) : activeSurface === "agent" ? (
