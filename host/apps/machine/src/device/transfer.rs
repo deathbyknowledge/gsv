@@ -309,12 +309,16 @@ mod tests {
             length: Some(4),
         };
         let body = channel.receive(descriptor).unwrap();
-        channel.handle_frame(&build_binary_frame(23, BINARY_FRAME_DATA, &[0, 0xff]));
-        channel.handle_frame(&build_binary_frame(
-            23,
-            BINARY_FRAME_DATA | BINARY_FRAME_END,
-            &[1, 2],
-        ));
+        channel
+            .handle_frame(&build_binary_frame(23, BINARY_FRAME_DATA, &[0, 0xff]))
+            .await;
+        channel
+            .handle_frame(&build_binary_frame(
+                23,
+                BINARY_FRAME_DATA | BINARY_FRAME_END,
+                &[1, 2],
+            ))
+            .await;
 
         let output = handle_receive(
             json!({

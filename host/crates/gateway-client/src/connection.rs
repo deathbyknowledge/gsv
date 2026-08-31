@@ -345,7 +345,7 @@ impl Connection {
                         }
                     }
                     Message::Binary(data) => {
-                        let _ = body_channel_clone.handle_frame(&data);
+                        let _ = body_channel_clone.handle_frame(&data).await;
                     }
                     Message::Ping(payload) => {
                         tokio::select! {
