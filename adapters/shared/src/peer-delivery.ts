@@ -266,15 +266,20 @@ export class AdapterPeerDeliveryQueue {
   }
 
   async armIfPending(alarmAt: number): Promise<boolean> {
-    await this.prune();
+    const stageCleanupAt = await this.prune();
     const records = await this.storage.list<DeliveryRecord>({ prefix: RECORD_PREFIX });
     const pending = [...records.values()].some((record) => record.state !== "completed");
     if (pending) {
       await this.storage.put(ADAPTER_PEER_DELIVERY_PENDING_KEY, true);
-      await this.arm(alarmAt);
     } else {
       await this.storage.delete(ADAPTER_PEER_DELIVERY_PENDING_KEY);
     }
+    // Interrupted streamed acceptance may leave only a stage. Schedule its
+    // expiry without treating it as provider-delivery work or polling it.
+    const nextAlarm = pending
+      ? Math.min(alarmAt, stageCleanupAt ?? alarmAt)
+      : stageCleanupAt;
+    if (nextAlarm !== null) await this.arm(nextAlarm);
     return pending;
   }
 
@@ -399,7 +404,7 @@ export class AdapterPeerDeliveryQueue {
     }
   }
 
-  private async prune(): Promise<void> {
+  private async prune(): Promise<number | null> {
     const now = Date.now();
     const [records, stages] = await Promise.all([
       this.storage.list<DeliveryRecord>({ prefix: RECORD_PREFIX }),
@@ -411,10 +416,18 @@ export class AdapterPeerDeliveryQueue {
     for (let offset = 0; offset < expired.length; offset += 128) {
       await this.storage.delete(expired.slice(offset, offset + 128));
     }
+    let stageCleanupAt: number | null = null;
     for (const [key, stage] of stages) {
-      if (stage.createdAt + STAGING_RETENTION_MS > now) continue;
+      const expiresAt = stage.createdAt + STAGING_RETENTION_MS;
+      if (expiresAt > now) {
+        stageCleanupAt = stageCleanupAt === null
+          ? expiresAt
+          : Math.min(stageCleanupAt, expiresAt);
+        continue;
+      }
       await this.deleteStage(key.slice(STAGING_PREFIX.length));
     }
+    return stageCleanupAt;
   }
 
   private async refreshPendingMarker(): Promise<void> {

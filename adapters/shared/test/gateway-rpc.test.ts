@@ -332,6 +332,28 @@ describe("callAdapterGateway", () => {
 });
 
 describe("callLinkedAdapterGateway", () => {
+  it("cancels a mismatched linked-peer response body before rejecting it", async () => {
+    const responseBody = trackedBody();
+    const gateway = gatewayWithResponse((frame) => ({
+      type: "res",
+      id: `${frame.id}:mismatched`,
+      ok: true,
+      data: { ok: true },
+      body: responseBody.body,
+    }));
+
+    await expect(callLinkedAdapterGateway(
+      gateway,
+      INSTALLATION,
+      CONTEXT,
+      "proc.hil",
+      ARGS,
+    )).rejects.toThrow("No response from linked adapter peer request");
+    expect(responseBody.cancelled()).toBe(
+      "Linked adapter response body is unsupported",
+    );
+  });
+
   it("returns a terminal domain rejection for a stale linked route", async () => {
     const gateway = gatewayWithResponse((frame) => ({
       type: "res",

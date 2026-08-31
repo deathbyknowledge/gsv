@@ -54,10 +54,11 @@ export async function callLinkedAdapterGateway(
   const response = installation.installationId === LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID
     ? await gateway.linkedPeerFrame(context, frame)
     : await gateway.linkedPeerFrame(installation, context, frame);
+  const responseBody = response && "body" in response ? response.body : undefined;
+  await cancelBinaryBody(responseBody, "Linked adapter response body is unsupported");
   if (!response || response.type !== "res" || response.id !== frame.id) {
     throw new Error("No response from linked adapter peer request");
   }
-  await cancelBinaryBody(response.body, "Linked adapter response body is unsupported");
   if (!response.ok) {
     const message = response.error?.message || `Gateway error on ${call}`;
     const parsedCode = z.number().safeParse(response.error?.code);

@@ -152,6 +152,34 @@ describe("AdapterPeerDeliveryQueue", () => {
     await expect(queue.pendingIds()).resolves.toEqual(["message-1"]);
   });
 
+  it("schedules retained stage cleanup when no delivery record exists", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000);
+      const { queue, storage } = queueFixture();
+      storage.values.set("peer_delivery:v1:stage:orphan", {
+        deliveryId: "orphan",
+        createdAt: Date.now(),
+      });
+      storage.values.set(
+        "peer_delivery:v1:body:orphan:000000",
+        new Uint8Array([1, 2, 3, 4]),
+      );
+
+      await expect(queue.armIfPending(1_100)).resolves.toBe(false);
+      expect(storage.alarm).toBe(3_601_000);
+
+      storage.alarm = null;
+      vi.setSystemTime(3_601_000);
+      await expect(queue.armIfPending(3_601_100)).resolves.toBe(false);
+      expect(storage.values.has("peer_delivery:v1:stage:orphan")).toBe(false);
+      expect(storage.values.has("peer_delivery:v1:body:orphan:000000")).toBe(false);
+      expect(storage.alarm).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("retries only a retry-safe provider rejection with the same delivery", async () => {
     const { queue } = queueFixture();
     await queue.enqueueAndArm(delivery(), body([1, 2, 3, 4]), 10);
