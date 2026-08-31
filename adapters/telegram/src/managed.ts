@@ -15,6 +15,7 @@ import type {
   AdapterService,
   AdapterServiceDescriptor,
 } from "../../../packages/gsv/src/services/adapters.js";
+import { handleAdapterFrame } from "../../shared/src/adapter-frame";
 import { cancelBinaryBody } from "../../shared/src/media-body";
 import {
   LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
@@ -24,9 +25,11 @@ import type {
   AdapterAccountStatus,
   AdapterActivity,
   AdapterOutboundMessage,
+  AdapterPeerDeliveryContext,
   AdapterSendResult,
   AdapterSurface,
   BinaryBody,
+  GatewayFrame,
 } from "./types";
 import type { ManagedTelegramPeerEnv } from "./managed-peer";
 import {
@@ -54,6 +57,12 @@ type ManagedTelegramPeerStub = {
     message: AdapterOutboundMessage,
     body?: BinaryBody,
   ): Promise<AdapterSendResult>;
+  acceptPeerSignal(
+    installation: AdapterInstallationContext,
+    context: AdapterPeerDeliveryContext,
+    frame: Extract<GatewayFrame, { type: "sig" }>,
+    body?: BinaryBody,
+  ): Promise<void>;
   setTyping(
     installationId: string,
     surface: AdapterSurface,
@@ -86,6 +95,7 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> implements Ada
         status: true,
         activity: true,
         pairing: true,
+        deliveryFrames: true,
         surfaces: ["dm"],
         media: {
           inbound: ["image", "audio", "video", "document"],
@@ -93,6 +103,34 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> implements Ada
         },
       },
     };
+  }
+
+  async adapterFrame(
+    installation: AdapterInstallationContext,
+    context: AdapterPeerDeliveryContext,
+    frame: GatewayFrame,
+    body?: BinaryBody,
+  ): Promise<GatewayFrame | null> {
+    const parsed = parseManagedInstallation(installation);
+    if (
+      context.accountId !== MANAGED_TELEGRAM_ACCOUNT_ID
+      || context.surface.kind !== "dm"
+      || !context.actorId
+    ) {
+      await cancelBinaryBody(body, "Managed Telegram frame destination is invalid");
+      throw new Error("Managed Telegram frame destination is invalid");
+    }
+    const peer = this.peer(context.surface.id);
+    return await handleAdapterFrame(this.adapterId, parsed, context, frame, body, {
+      send: async (message, requestBody) => await peer.sendMessage(
+        parsed.installationId,
+        message,
+        requestBody,
+      ),
+      acceptSignal: async (signalContext, signalFrame, signalBody) => {
+        await peer.acceptPeerSignal(parsed, signalContext, signalFrame, signalBody);
+      },
+    });
   }
 
   async adapterStatus(

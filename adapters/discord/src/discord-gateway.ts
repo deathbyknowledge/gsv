@@ -14,6 +14,12 @@ import {
   adapterInboundResultDisposition,
   InboundDeliveryLedger,
 } from "../../shared/src/inbound-delivery";
+import {
+  AdapterPeerDeliveryQueue,
+  gatewayPeerDeliveryHandlers,
+  type AdapterPeerSignalDelivery,
+} from "../../shared/src/peer-delivery";
+import { renderAdapterPeerSignal } from "../../shared/src/peer-render";
 import { callAdapterGateway } from "../../shared/src/gateway-rpc";
 import type { AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
@@ -23,6 +29,7 @@ import {
 } from "../../shared/src/installation";
 import {
   bundleAdapterMedia,
+  cancelBinaryBody,
   cancelResponseBody,
   responseBodyToBinaryBody,
   SAFE_MATERIALIZED_MEDIA_PART_BYTES,
@@ -38,6 +45,8 @@ import type {
   AdapterInstallationContext,
   AdapterMedia,
   AdapterOutboundMessage,
+  AdapterPeerDeliveryContext,
+  AdapterPeerSignalFrame,
   AdapterSendResult,
   BinaryBody,
 } from "../../shared/src/types";
@@ -142,6 +151,8 @@ export class DiscordGateway extends DurableObject<Env> {
   private ws: WebSocket | null = null;
   private readonly deliveries: DeliveryLedger;
   private readonly inboundDeliveries: InboundDeliveryLedger<string>;
+  private readonly peerDeliveries: AdapterPeerDeliveryQueue;
+  private peerDrain?: Promise<void>;
   private heartbeatInterval: number = 0;
   private loaded = false;
   private state: GatewayState = {
@@ -161,6 +172,10 @@ export class DiscordGateway extends DurableObject<Env> {
     this.inboundDeliveries = new InboundDeliveryLedger(
       this.ctx.storage,
       INBOUND_DELIVERY_PREFIX,
+    );
+    this.peerDeliveries = new AdapterPeerDeliveryQueue(
+      this.ctx.storage,
+      INBOUND_RETRY_DELAY_MS,
     );
     this.ctx.blockConcurrencyWhile(async () => this.loadState());
   }
@@ -222,6 +237,7 @@ export class DiscordGateway extends DurableObject<Env> {
     this.state.connected = false;
     await this.saveState();
     await this.ctx.storage.deleteAlarm();
+    await this.peerDeliveries.armIfPending(Date.now() + INBOUND_RETRY_DELAY_MS);
   }
 
   async getStatus(): Promise<AdapterAccountStatus> {
@@ -257,6 +273,58 @@ export class DiscordGateway extends DurableObject<Env> {
       body,
     );
   }
+
+  async acceptPeerSignal(
+    installation: AdapterInstallationContext,
+    context: AdapterPeerDeliveryContext,
+    frame: AdapterPeerSignalFrame,
+    body?: BinaryBody,
+  ): Promise<void> {
+    await this.loadState();
+    if (context.accountId !== this.getAccountId()) {
+      await cancelBinaryBody(body, "Discord account changed before signal acceptance");
+      throw new Error("Discord account changed before signal acceptance");
+    }
+    await this.peerDeliveries.enqueueAndArm(
+      { installation, context, frame },
+      body,
+      Date.now() + 25,
+    );
+    this.ctx.waitUntil(this.drainPeerDeliveries());
+  }
+
+  private async drainPeerDeliveries(): Promise<void> {
+    if (this.peerDrain) return await this.peerDrain;
+    const running = (async () => {
+      for (const deliveryId of await this.peerDeliveries.pendingIds()) {
+        const result = await this.peerDeliveries.attempt(
+          deliveryId,
+          gatewayPeerDeliveryHandlers({
+            adapter: "discord",
+            gateway: this.env.GATEWAY,
+            deliver: async (delivery, body) => await this.deliverPeerSignal(delivery, body),
+          }),
+        );
+        if (result === "pending") break;
+      }
+    })();
+    this.peerDrain = running;
+    try {
+      await running;
+    } finally {
+      if (this.peerDrain === running) this.peerDrain = undefined;
+    }
+  }
+
+  private async deliverPeerSignal(
+    delivery: AdapterPeerSignalDelivery,
+    body?: BinaryBody,
+  ): Promise<AdapterSendResult> {
+    return await this.sendMessage(
+      renderAdapterPeerSignal(delivery.context, delivery.frame).message,
+      body,
+    );
+  }
   
   /** Get the account ID name (e.g., "default"), falling back to hex DO id */
   private getAccountId(): string {
@@ -283,6 +351,8 @@ export class DiscordGateway extends DurableObject<Env> {
   async alarm() {
     // Reload state in case we hibernated
     await this.loadState();
+    await this.peerDeliveries.armIfPending(Date.now() + INBOUND_RETRY_DELAY_MS);
+    await this.drainPeerDeliveries();
 
     // An alarm is cleared when it starts. Persist the next wake-up before any
     // retry performs external I/O so a crash cannot strand durable ingress.

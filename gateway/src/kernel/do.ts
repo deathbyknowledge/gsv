@@ -28,11 +28,19 @@ import type {
   WireResponseEnvelope,
   WireResponseFrame,
 } from "@humansandmachines/gsv/protocol";
+import { adapterServiceSupportsDeliveryFrames } from "../adapter-interface";
 import { consumeProcessRunStream } from "../protocol/process-run-stream";
 import type {
   AdapterMedia,
   AdapterMediaPart,
   AdapterActivity,
+  AdapterPeerDeliveryContext,
+  AdapterPeerSignalFrame,
+  AdapterLinkedPeerContext,
+  AdapterDeliveryClaimArgs,
+  AdapterDeliveryClaimResult,
+  AdapterDeliveryReportArgs,
+  AdapterDeliveryReportResult,
   BinaryBody,
   ConnectedPeer,
   InstallationOnboardingAuthorization,
@@ -51,6 +59,7 @@ import type {
   NetFetchArgs,
   MessageAttachment,
   ProcessIdentity,
+  ProcHilRequest,
   ScheduleRecord,
   ScheduleRunResult,
   SchedulerRunArgs,
@@ -69,6 +78,7 @@ import {
   REQUEST_CANCEL_SIGNAL,
   bundleAdapterMedia,
   cancelBinaryBody,
+  procHilRequestSchema,
   resourceBlockSchema,
   type BinaryFrameDescriptor,
   type OutgoingBinaryBody,
@@ -116,6 +126,7 @@ import { raceWithAbort } from "../shared/abort";
 import type { KernelContext } from "./context";
 import {
   connectedPeerContext,
+  delegatedAdapterPeerContext,
   peerAllowsCall,
   peerConnectionIdentity,
   peerProvidesOperations,
@@ -149,6 +160,7 @@ import {
   deliverAdapterDestination,
   normalizeAdapterHilRequest,
   prefixAdapterDmProcessReply,
+  resolveAdapterService,
   renderAdapterHilPrompt,
   setAdapterActivityForKernel,
 } from "./adapter-handlers";
@@ -252,6 +264,7 @@ type IpcCallSupervisionOptions = {
 };
 
 type AdapterSignalDeliveryOutcome =
+  | { state: "accepted" }
   | { state: "delivered" }
   | { state: "skipped" }
   | { state: "retryable" | "permanent" | "ambiguous"; error: string };
@@ -264,6 +277,22 @@ function adapterTypingActivity(route: AdapterRunRoute, active: boolean): Adapter
       ? undefined
       : { routeGeneration: route.routeGeneration }),
   };
+}
+
+function adapterDeliveryMatchesRoute(
+  delivery: AdapterDeliveryClaimArgs | AdapterDeliveryReportArgs,
+  route: AdapterRunRoute,
+): boolean {
+  const destination = route.destination;
+  return delivery.processId === route.processId
+    && delivery.runId === route.runId
+    && delivery.adapter.trim().toLowerCase() === destination.adapter
+    && delivery.accountId === destination.accountId
+    && delivery.actorId === destination.actorId
+    && delivery.surface.kind === destination.surface.kind
+    && delivery.surface.id === destination.surface.id
+    && (delivery.surface.threadId ?? "") === (destination.surface.threadId ?? "")
+    && (delivery.routeGeneration ?? "") === (route.routeGeneration ?? "");
 }
 
 type AdapterSignalDeliveryRetry = {
@@ -560,6 +589,7 @@ const procMediaInputSchema = z.object({
 const adapterConversationMessageSchema = z.object({
   id: z.string(),
   conversationId: z.string(),
+  sequence: z.number().int().nonnegative(),
   author: z.object({
     kind: z.literal("process"),
     pid: z.string(),
@@ -567,8 +597,14 @@ const adapterConversationMessageSchema = z.object({
   }),
   text: z.string(),
   media: z.array(z.union([resourceBlockSchema, procMediaInputSchema])).optional(),
+  origin: z.object({
+    kind: z.literal("process"),
+    pid: z.string(),
+    runId: z.string(),
+  }),
   processId: z.string().optional(),
   runId: z.string().optional(),
+  createdAt: z.number(),
 });
 const userProcessSignalPayloadSchema = z.object({
   pid: z.string().optional(),
@@ -1371,7 +1407,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         await this.queueAdapterSignalDelivery(route, {
           type: "sig",
           signal: "message.committed",
-          payload: { message },
+          payload: { message, directed: true },
         }, 1);
       }
     }
@@ -1541,6 +1577,91 @@ export class Kernel extends DurableObject<GatewayEnv> {
       return await this.handleServiceReq(parsedProfile.data, frame);
     } finally {
       await cancelUnlockedBody(body, "Service request completed");
+    }
+  }
+
+  /**
+   * Interaction-scoped request carrier for a human linked through an adapter.
+   * The adapter binding fixes the service identity; Kernel state derives the
+   * local uid and intersects the one allowed call with that human's grant.
+   */
+  async linkedAdapterPeerFrame(
+    profile: ServicePeerProfile,
+    interaction: AdapterLinkedPeerContext,
+    frame: Frame,
+  ): Promise<Frame | null> {
+    const body = "body" in frame ? frame.body : undefined;
+    try {
+      if (frame.type !== "req") return null;
+      const parsedProfile = servicePeerProfileSchema.safeParse(profile);
+      if (!parsedProfile.success) {
+        return errFrame(frame.id, 403, "Service peer profile is invalid");
+      }
+      if (frame.call !== "proc.hil") {
+        return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
+      }
+      const gate = await this.managedWorkGate();
+      if (!gate.allowed) return errFrame(frame.id, gate.code, gate.message);
+
+      const adapter = parsedProfile.data.id;
+      const link = this.adapters.identityLinks.get(
+        adapter,
+        interaction.accountId,
+        interaction.actorId,
+      );
+      if (!link) return errFrame(frame.id, 403, "Adapter identity is not linked");
+      const currentGeneration = identityLinkRouteGeneration(link, interaction.surface);
+      if ((interaction.routeGeneration ?? "") !== (currentGeneration ?? "")) {
+        return errFrame(frame.id, 409, "Adapter route changed before request");
+      }
+
+      const account = this.auth.getPasswdByUid(link.uid);
+      if (!account) return errFrame(frame.id, 403, "Linked user no longer exists");
+      const identity: ProcessIdentity = {
+        uid: account.uid,
+        gid: account.gid,
+        gids: this.auth.resolveGids(account.username, account.gid),
+        username: account.username,
+        home: account.home,
+        cwd: account.home,
+      };
+      const calls = ["proc.hil"].filter((call) =>
+        hasCapability(this.caps.resolve(identity.gids), call)
+      );
+      const peer = delegatedAdapterPeerContext({
+        installationId: this.installationId,
+        serviceId: adapter,
+        accountId: interaction.accountId,
+        actorId: interaction.actorId,
+        surface: interaction.surface,
+        sessionId: `adapter:${adapter}:${interaction.interactionId}`,
+        identity,
+        calls,
+      });
+      const ctx = this.buildKernelContext({
+        identity: peer.identity,
+        peer,
+        callerOwnerUid: link.uid,
+      });
+      try {
+        assertAdapterMessageDestinationAccess({
+          kind: "adapter",
+          adapter,
+          accountId: interaction.accountId,
+          actorId: interaction.actorId,
+          surface: interaction.surface,
+        }, link.uid, ctx);
+      } catch {
+        return errFrame(frame.id, 403, "Adapter destination is no longer authorized");
+      }
+      return await this.dispatchPeerRequest(
+        frame,
+        { type: "kernel", id: interaction.interactionId },
+        ctx,
+        { awaitRouted: true },
+      ) ?? errFrame(frame.id, 500, "Linked adapter request produced no response");
+    } finally {
+      await cancelUnlockedBody(body, "Linked adapter request completed");
     }
   }
 
@@ -1910,8 +2031,15 @@ export class Kernel extends DurableObject<GatewayEnv> {
       return;
     }
 
-    if (outcome.state === "delivered" || outcome.state === "skipped") {
-      if (frame.signal === "message.committed") {
+    if (
+      outcome.state === "accepted"
+      || outcome.state === "delivered"
+      || outcome.state === "skipped"
+    ) {
+      if (
+        frame.signal === "message.committed"
+        && outcome.state !== "accepted"
+      ) {
         this.runRoutes.delete(route.runId);
       }
       return;
@@ -2002,19 +2130,36 @@ export class Kernel extends DurableObject<GatewayEnv> {
     if (deliveryKind === "hil" && !requestId) {
       return;
     }
+    await this.queueProcessDeliveryNoticeRecord(route, {
+      deliveryKind,
+      requestId,
+      ...outcome,
+    });
+  }
+
+  private async queueProcessDeliveryNoticeRecord(
+    route: AdapterRunRoute,
+    input: {
+      deliveryKind: "hil" | "final";
+      requestId?: string;
+      state: "permanent" | "ambiguous" | "exhausted";
+      message: string;
+    },
+  ): Promise<void> {
+    const { deliveryKind, requestId } = input;
     const noticeId = await stableOpaqueId("process-delivery-notice", [
       route.runId,
       deliveryKind,
       requestId ?? "",
-      outcome.state,
+      input.state,
     ]);
     const notice: ProcessDeliveryNoticeRetry = {
       noticeId,
       runId: route.runId,
       processId: route.processId,
       deliveryKind,
-      state: outcome.state,
-      message: outcome.message,
+      state: input.state,
+      message: input.message,
       cleanupRunRoute: deliveryKind === "final",
     };
     if (requestId) notice.requestId = requestId;
@@ -2027,6 +2172,62 @@ export class Kernel extends DurableObject<GatewayEnv> {
         retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
       },
     );
+  }
+
+  private async claimAdapterDelivery(
+    args: AdapterDeliveryClaimArgs,
+  ): Promise<AdapterDeliveryClaimResult> {
+    const route = this.runRoutes.get(args.runId);
+    if (!route || route.kind !== "adapter") {
+      return { ok: true, deliver: false, reason: "missing_route" };
+    }
+    if (!adapterDeliveryMatchesRoute(args, route)) {
+      return { ok: true, deliver: false, reason: "route_changed" };
+    }
+    if (args.kind === "hil") {
+      const requestId = args.requestId?.trim();
+      if (
+        !requestId
+        || args.deliveryId !== `${args.runId}:hil:${requestId}`
+        || !await this.isAdapterHilRequestPending(args.processId, args.runId, requestId)
+      ) {
+        return { ok: true, deliver: false, reason: "approval_resolved" };
+      }
+    }
+    return { ok: true, deliver: true };
+  }
+
+  private async reportAdapterDelivery(
+    args: AdapterDeliveryReportArgs,
+  ): Promise<AdapterDeliveryReportResult> {
+    const route = this.runRoutes.get(args.runId);
+    if (!route || route.kind !== "adapter" || !adapterDeliveryMatchesRoute(args, route)) {
+      return { ok: true };
+    }
+
+    if (args.state === "sent" || args.state === "deduplicated") {
+      if (args.kind === "message") this.runRoutes.delete(args.runId);
+      return { ok: true };
+    }
+
+    const label = args.kind === "hil" ? "approval notification" : "message";
+    const state = args.state === "ambiguous"
+      ? "ambiguous"
+      : args.state === "exhausted"
+        ? "exhausted"
+        : "permanent";
+    const message = state === "ambiguous"
+      ? `The ${label} reached the adapter, but provider delivery is ambiguous. It was not retried to avoid a duplicate.`
+      : state === "exhausted"
+        ? `The ${label} stopped after ${Math.max(1, args.attempts)} retry-safe delivery attempts.`
+        : `The ${label} was rejected by ${args.adapter}.`;
+    await this.queueProcessDeliveryNoticeRecord(route, {
+      deliveryKind: args.kind === "hil" ? "hil" : "final",
+      requestId: args.requestId,
+      state,
+      message,
+    });
+    return { ok: true };
   }
 
   async onProcessDeliveryNotice(input: ProcessDeliveryNoticeRetry): Promise<void> {
@@ -2304,8 +2505,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
     }
 
     if (frame.signal === "proc.run.hil.requested") {
-      const request = normalizeAdapterHilRequest(frame.payload, "signal");
-      if (!request) {
+      const parsedRequest = procHilRequestSchema.safeParse(frame.payload);
+      if (!parsedRequest.success) {
         await setAdapterActivityForKernel(
           this.bindings,
           this.installationId,
@@ -2316,8 +2517,15 @@ export class Kernel extends DurableObject<GatewayEnv> {
         ).catch(() => undefined);
         return { state: "skipped" };
       }
+      const request = parsedRequest.data as ProcHilRequest;
 
       try {
+        const framed = await this.deliverAdapterPeerSignal(route, {
+          type: "sig",
+          signal: "proc.run.hil.requested",
+          payload: request,
+        });
+        if (framed) return framed;
         return await this.deliverAdapterRouteReply(route, {
           deliveryId: `${route.runId}:hil:${request.requestId}`,
           text: renderAdapterHilPrompt(request, surface.kind, "initial"),
@@ -2357,6 +2565,17 @@ export class Kernel extends DurableObject<GatewayEnv> {
           text: message.text,
         };
         if (attachmentBundle.media.length > 0) reply.media = attachmentBundle.media;
+        const framed = await this.deliverAdapterPeerSignal(
+          route,
+          {
+            type: "sig",
+            signal: "message.committed",
+            payload: { message, directed: true },
+          },
+          attachmentBundle.media,
+          attachmentBundle.body,
+        );
+        if (framed) return framed;
         return await this.deliverAdapterRouteReply(route, reply, attachmentBundle.body);
       } finally {
         await setAdapterActivityForKernel(
@@ -2371,6 +2590,89 @@ export class Kernel extends DurableObject<GatewayEnv> {
     }
 
     return { state: "skipped" };
+  }
+
+  private async deliverAdapterPeerSignal(
+    route: AdapterRunRoute,
+    frame: AdapterPeerSignalFrame,
+    media: AdapterMedia[] = [],
+    body?: BinaryBody,
+  ): Promise<AdapterSignalDeliveryOutcome | null> {
+    const service = resolveAdapterService(this.bindings, route.destination.adapter);
+    if (
+      !service?.adapterFrame
+      || !service.adapterDescribe
+      || !await adapterServiceSupportsDeliveryFrames(route.destination.adapter, service)
+    ) return null;
+
+    const ctx = this.buildProcessContext(route.processId, route.runId);
+    if (!ctx) {
+      await cancelBinaryBody(body, "Adapter route references a missing process");
+      return { state: "permanent", error: "Adapter route references a missing process" };
+    }
+    try {
+      assertAdapterMessageDestinationAccess(route.destination, route.uid, ctx);
+    } catch (error) {
+      await cancelBinaryBody(body, error);
+      ctx.adapters.privateDestinations.clearIfMatches(route.uid, route.destination);
+      return {
+        state: "permanent",
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    const process = this.procs.get(route.processId);
+    const deliveryId = frame.signal === "message.committed"
+      ? frame.payload.message.id
+      : `${route.runId}:hil:${frame.payload.requestId}`;
+    const context: AdapterPeerDeliveryContext = {
+      deliveryId,
+      accountId: route.destination.accountId,
+      actorId: route.destination.actorId,
+      surface: route.destination.surface,
+      processId: route.processId,
+      runId: route.runId,
+    };
+    if (route.replyToId !== undefined) context.replyToId = route.replyToId;
+    if (route.routeGeneration !== undefined) context.routeGeneration = route.routeGeneration;
+    if (media.length > 0) context.media = media;
+    if (process?.isPersonalController === false) {
+      context.processMode = "work";
+    } else if (process?.isPersonalController === true) {
+      context.processMode = "ship";
+      if (route.destination.surface.kind === "dm") {
+        const selected = this.adapters.surfaceRoutes.resolveRoute({
+          adapter: route.destination.adapter,
+          accountId: route.destination.accountId,
+          actorId: route.destination.actorId,
+          surfaceKind: route.destination.surface.kind,
+          surfaceId: route.destination.surface.id,
+          threadId: route.destination.surface.threadId,
+          uid: route.uid,
+        });
+        if (selected?.mode === "work") context.shipDisplaced = true;
+      }
+    }
+
+    try {
+      const response = await service.adapterFrame(
+        { installationId: this.installationId },
+        context,
+        frame,
+        body,
+      );
+      if (response !== null) {
+        return { state: "permanent", error: "Adapter returned a response to a signal" };
+      }
+      return { state: "accepted" };
+    } catch (error) {
+      return {
+        state: "retryable",
+        error: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      await cancelBinaryBody(body, "Adapter signal handoff completed");
+    }
   }
 
   private async deliverAdapterRouteReply(
@@ -2730,6 +3032,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
       coordinateFederationInbound: this.coordinateFederationInbound.bind(this),
       coordinateFederationContact: this.coordinateFederationContact.bind(this),
       runSchedules: this.runSchedules.bind(this),
+      claimAdapterDelivery: this.claimAdapterDelivery.bind(this),
+      reportAdapterDelivery: this.reportAdapterDelivery.bind(this),
       addMcpServerConnection: (input) => this.addMcpServerConnection({
         ...input,
         callbackHost: input.callbackHost

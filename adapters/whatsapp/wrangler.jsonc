@@ -29,7 +29,7 @@
       "entrypoint": "AdapterGatewayEntrypoint",
       "props": {
         "id": "whatsapp",
-        "calls": ["adapter.inbound", "adapter.state.update"]
+        "calls": ["adapter.inbound", "adapter.state.update", "adapter.delivery.claim", "adapter.delivery.report"]
       }
     }
   ],

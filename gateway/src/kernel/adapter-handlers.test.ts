@@ -845,6 +845,23 @@ describe("adapter lifecycle handlers", () => {
     }]);
   });
 
+  it("discovers send support from a frame-only adapter binding", async () => {
+    const ctx = makeContext({
+      CHANNEL_MATRIX: { adapterFrame: vi.fn() },
+    }, {
+      upsert: vi.fn(),
+      listAll: vi.fn(() => []),
+    });
+
+    expect((await handleAdapterList({}, ctx)).adapters).toEqual([
+      expect.objectContaining({
+        adapter: "matrix",
+        available: true,
+        supportsSend: true,
+      }),
+    ]);
+  });
+
   it("adapter.list filters cached accounts to non-root identity links", async () => {
     const rows = [
       {

@@ -5,6 +5,7 @@ import type {
   AdapterInstallationContext,
   AdapterMedia,
   AdapterOutboundMessage,
+  AdapterPeerDeliveryContext,
   AdapterPairingCandidate,
   AdapterPairingPreparation,
   AdapterPairingWorkerInterface,
@@ -13,12 +14,17 @@ import type {
   AdapterSurface,
   AdapterWorkerInterface,
 } from "../adapter-interface";
+import { adapterServiceSupportsDeliveryFrames } from "../adapter-interface";
 import type {
   AdapterConnectArgs,
   AdapterConnectConfig,
   AdapterConnectResult as AdapterConnectSyscallResult,
   AdapterDisconnectArgs,
   AdapterDisconnectResult as AdapterDisconnectSyscallResult,
+  AdapterDeliveryClaimArgs,
+  AdapterDeliveryClaimResult,
+  AdapterDeliveryReportArgs,
+  AdapterDeliveryReportResult,
   AdapterInboundArgs,
   AdapterInboundSyscallResult,
   AdapterMessageDestination,
@@ -59,6 +65,7 @@ import {
   adapterWorkerConnectResultSchema,
   adapterWorkerDisconnectResultSchema,
   adapterWorkerSendResultSchema,
+  adapterSendResultSchema,
   adapterSurfaceSchema,
   validateAdapterMediaBody,
 } from "@humansandmachines/gsv/protocol";
@@ -146,7 +153,7 @@ type AdapterTargetServiceBinding = {
   ): Promise<AdapterTargetCancelResult & Disposable>;
 };
 export type AdapterServiceBinding = Fetcher
-  & Partial<Pick<AdapterService, "adapterDescribe">>
+  & Partial<Pick<AdapterService, "adapterDescribe" | "adapterFrame">>
   & Partial<AdapterTargetServiceBinding>
   & Partial<AdapterWorkerInterface>
   & Partial<AdapterPairingWorkerInterface>
@@ -979,7 +986,7 @@ async function deliverAdapterMessageOwned(
   }
 
   const service = resolveAdapterService(ctx.env, adapter);
-  if (!service?.adapterSend) {
+  if (!service?.adapterFrame && !service?.adapterSend) {
     await cancelBinaryBody(body, `Adapter service unavailable: ${adapter}`);
     return {
       ok: false,
@@ -1015,6 +1022,70 @@ async function deliverAdapterMessageOwned(
   };
   if (args.actorId) outbound.actorId = args.actorId;
   if (routeGeneration !== undefined) outbound.routeGeneration = routeGeneration;
+
+  if (
+    service.adapterFrame
+    && service.adapterDescribe
+    && await adapterServiceSupportsDeliveryFrames(adapter, service)
+  ) {
+    const context: AdapterPeerDeliveryContext = {
+      deliveryId,
+      accountId,
+      surface: args.surface,
+    };
+    if (args.actorId) context.actorId = args.actorId;
+    if (routeGeneration !== undefined) context.routeGeneration = routeGeneration;
+    const request: RequestFrame<"adapter.send"> = {
+      type: "req",
+      id: crypto.randomUUID(),
+      call: "adapter.send",
+      args: {
+        adapter,
+        accountId,
+        deliveryId,
+        surface: args.surface,
+        text: args.text,
+        ...(args.replyToId === undefined ? undefined : { replyToId: args.replyToId }),
+        ...(args.media === undefined ? undefined : { media: args.media }),
+      },
+      ...(body === undefined ? undefined : { body }),
+    };
+    try {
+      const response = await service.adapterFrame(
+        { installationId: ctx.installationId },
+        context,
+        request,
+      );
+      if (!response || response.type !== "res" || response.id !== request.id || !response.ok) {
+        return {
+          ok: false,
+          error: publicAdapterDeliveryError(adapter, true),
+          deliveryId,
+          retryable: true,
+        };
+      }
+      const decoded = adapterSendResultSchema.safeParse(response.data);
+      if (!decoded.success) {
+        logAdapterBoundaryFailure("error", "send_frame_invalid_response");
+        return {
+          ok: false,
+          error: `Adapter returned an invalid adapter.send response: ${adapter}`,
+          deliveryId,
+          retryable: false,
+        };
+      }
+      return decoded.data;
+    } catch {
+      return {
+        ok: false,
+        error: publicAdapterDeliveryError(adapter, true),
+        deliveryId,
+        retryable: true,
+      };
+    } finally {
+      await cancelBinaryBody(body, "adapter.send frame completed");
+    }
+  }
 
   let result: AdapterWorkerSendResult;
   try {
@@ -2337,6 +2408,37 @@ export function handleAdapterStateUpdate(
   return { ok: true };
 }
 
+export async function handleAdapterDeliveryClaim(
+  args: AdapterDeliveryClaimArgs,
+  ctx: KernelContext,
+): Promise<AdapterDeliveryClaimResult> {
+  requireAdapterDeliveryService(args.adapter, ctx, "adapter.delivery.claim");
+  return await ctx.claimAdapterDelivery(args);
+}
+
+export async function handleAdapterDeliveryReport(
+  args: AdapterDeliveryReportArgs,
+  ctx: KernelContext,
+): Promise<AdapterDeliveryReportResult> {
+  requireAdapterDeliveryService(args.adapter, ctx, "adapter.delivery.report");
+  return await ctx.reportAdapterDelivery(args);
+}
+
+function requireAdapterDeliveryService(
+  adapter: string,
+  ctx: KernelContext,
+  call: "adapter.delivery.claim" | "adapter.delivery.report",
+): void {
+  const identity = ctx.identity;
+  if (!identity || identity.role !== "service") {
+    throw new Error(`${call} requires a service identity`);
+  }
+  const normalized = adapter.trim().toLowerCase();
+  if (!normalized || identity.channel !== normalized) {
+    throw new Error("Adapter service cannot report delivery for another adapter");
+  }
+}
+
 function adapterNameFromBindingKey(key: string): string | null {
   if (!key.startsWith("CHANNEL_")) {
     return null;
@@ -2360,7 +2462,9 @@ function adapterListEntry(
     descriptor: descriptor ?? undefined,
     supportsConnect: capabilities?.connect ?? service?.adapterConnect !== undefined,
     supportsDisconnect: capabilities?.disconnect ?? service?.adapterDisconnect !== undefined,
-    supportsSend: capabilities?.send ?? service?.adapterSend !== undefined,
+    supportsSend: capabilities?.send ?? (
+      service?.adapterFrame !== undefined || service?.adapterSend !== undefined
+    ),
     supportsStatus: capabilities?.status ?? service?.adapterStatus !== undefined,
     supportsActivity: capabilities?.activity ?? service?.adapterSetActivity !== undefined,
     supportsPairing: capabilities?.pairing ?? (

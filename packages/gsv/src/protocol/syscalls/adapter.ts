@@ -109,6 +109,24 @@ export type AdapterSendResult =
       retryable?: boolean;
     };
 
+export const adapterSendResultSchema = z.discriminatedUnion("ok", [
+  z.strictObject({
+    ok: z.literal(true),
+    adapter: nonEmptyStringSchema,
+    accountId: nonEmptyStringSchema,
+    surfaceId: z.string(),
+    deliveryId: nonEmptyStringSchema,
+    messageId: z.optional(z.string()),
+    deliveryState: z.optional(z.enum(["sent", "deduplicated", "ambiguous"])),
+  }),
+  z.strictObject({
+    ok: z.literal(false),
+    error: nonEmptyStringSchema,
+    deliveryId: z.optional(z.string()),
+    retryable: z.optional(z.boolean()),
+  }),
+]);
+
 export type AdapterStatusArgs = {
   adapter: string;
   accountId?: string;
@@ -163,6 +181,46 @@ export type AdapterStateUpdateResult = {
 export const adapterStateUpdateResultSchema = z.strictObject({
   ok: z.literal(true),
 });
+
+export type AdapterDeliveryKind = "message" | "hil";
+
+export type AdapterDeliveryReference = {
+  adapter: string;
+  accountId: string;
+  deliveryId: string;
+  actorId: string;
+  surface: AdapterSurface;
+  routeGeneration?: string;
+  processId: string;
+  runId: string;
+  kind: AdapterDeliveryKind;
+  requestId?: string;
+};
+
+export type AdapterDeliveryClaimArgs = AdapterDeliveryReference;
+
+export type AdapterDeliveryClaimResult = {
+  ok: true;
+  deliver: boolean;
+  reason?: "missing_route" | "route_changed" | "approval_resolved";
+};
+
+export const adapterDeliveryClaimResultSchema = z.strictObject({
+  ok: z.literal(true),
+  deliver: z.boolean(),
+  reason: z.optional(z.enum(["missing_route", "route_changed", "approval_resolved"])),
+});
+
+export type AdapterDeliveryReportArgs = AdapterDeliveryReference & {
+  state: "sent" | "deduplicated" | "ambiguous" | "failed" | "exhausted";
+  messageId?: string;
+  error?: string;
+  attempts: number;
+};
+
+export type AdapterDeliveryReportResult = { ok: true };
+
+export const adapterDeliveryReportResultSchema = z.strictObject({ ok: z.literal(true) });
 
 export type AdapterPairInfoArgs = {
   adapter: string;

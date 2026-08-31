@@ -38,8 +38,29 @@ export default defineConfig({
                           replyToId: frame.args.message.messageId,
                         },
                       }
+                    : frame.call === "adapter.delivery.claim"
+                    ? { ok: true, deliver: true }
                     : { ok: true };
                   return { type: "res", id: frame.id, ok: true, data };
+                }
+                async linkedPeerFrame(first, second, third) {
+                  const installation = third ? first : { installationId: "singleton" };
+                  const context = third ? second : first;
+                  const frame = third || second;
+                  calls.push({ installation, linkedContext: context, call: frame.call, args: frame.args });
+                  return {
+                    type: "res",
+                    id: frame.id,
+                    ok: true,
+                    data: {
+                      ok: true,
+                      pid: frame.args.pid,
+                      requestId: frame.args.requestId,
+                      decision: frame.args.decision,
+                      resumed: true,
+                      remembered: frame.args.remember === true,
+                    },
+                  };
                 }
                 async fetch(request) {
                   const url = new URL(request.url);

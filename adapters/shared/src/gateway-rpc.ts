@@ -5,22 +5,73 @@ import {
   type JsonValue,
 } from "../../../packages/gsv/src/protocol/json.js";
 import type {
+  AdapterDeliveryClaimArgs,
+  AdapterDeliveryClaimResult,
+  AdapterDeliveryReportArgs,
+  AdapterDeliveryReportResult,
   AdapterInboundArgs,
   AdapterStateUpdateArgs,
   AdapterStateUpdateResult,
 } from "../../../packages/gsv/src/protocol/syscalls/adapter.js";
-import { adapterStateUpdateResultSchema } from "../../../packages/gsv/src/protocol/syscalls/adapter.js";
+import {
+  adapterDeliveryClaimResultSchema,
+  adapterDeliveryReportResultSchema,
+  adapterStateUpdateResultSchema,
+} from "../../../packages/gsv/src/protocol/syscalls/adapter.js";
 import { cancelBinaryBody } from "./media-body";
 import { LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID } from "./installation";
 import type {
   AdapterInstallationContext,
   AdapterInboundResult,
+  AdapterLinkedPeerContext,
   BinaryBody,
   GatewayFrame,
   GatewayRequestFrame,
 } from "./types";
+import {
+  procHilResultSchema,
+  type ProcHilArgs,
+  type ProcHilResult,
+} from "../../../packages/gsv/src/protocol/syscalls/proc.js";
 
 export type AdapterGatewayBinding = AdapterGatewayInterface<GatewayFrame>;
+
+/** Dispatch an ordinary request under a Kernel-derived linked-human peer. */
+export async function callLinkedAdapterGateway(
+  gateway: AdapterGatewayBinding,
+  installation: AdapterInstallationContext,
+  context: AdapterLinkedPeerContext,
+  call: "proc.hil",
+  args: ProcHilArgs,
+): Promise<ProcHilResult> {
+  const frame: GatewayRequestFrame = {
+    type: "req",
+    id: crypto.randomUUID(),
+    call,
+    args: projectJsonMetadata(args),
+  };
+  const response = installation.installationId === LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID
+    ? await gateway.linkedPeerFrame(context, frame)
+    : await gateway.linkedPeerFrame(installation, context, frame);
+  if (!response || response.type !== "res" || response.id !== frame.id) {
+    throw new Error("No response from linked adapter peer request");
+  }
+  await cancelBinaryBody(response.body, "Linked adapter response body is unsupported");
+  if (!response.ok) {
+    const message = response.error?.message || `Gateway error on ${call}`;
+    const code = response.error?.code;
+    const retryable = response.error?.retryable ?? (
+      typeof code !== "number" || code === 408 || code === 429 || code >= 500
+    );
+    if (retryable) throw new Error(message);
+    return { ok: false, error: message };
+  }
+  const decoded = procHilResultSchema.safeParse(response.data);
+  if (!decoded.success) {
+    throw new Error(`Gateway returned an invalid ${call} response`);
+  }
+  return decoded.data as ProcHilResult;
+}
 
 /**
  * Calls the Gateway service binding and owns every body the adapter does not
@@ -42,13 +93,30 @@ export function callAdapterGateway(
   args: AdapterStateUpdateArgs,
   body?: BinaryBody,
 ): Promise<AdapterStateUpdateResult>;
+export function callAdapterGateway(
+  gateway: AdapterGatewayBinding,
+  installation: AdapterInstallationContext,
+  call: "adapter.delivery.claim",
+  args: AdapterDeliveryClaimArgs,
+): Promise<AdapterDeliveryClaimResult>;
+export function callAdapterGateway(
+  gateway: AdapterGatewayBinding,
+  installation: AdapterInstallationContext,
+  call: "adapter.delivery.report",
+  args: AdapterDeliveryReportArgs,
+): Promise<AdapterDeliveryReportResult>;
 export async function callAdapterGateway(
   gateway: AdapterGatewayBinding,
   installation: AdapterInstallationContext,
-  call: "adapter.inbound" | "adapter.state.update",
-  args: AdapterInboundArgs | AdapterStateUpdateArgs,
+  call: "adapter.inbound" | "adapter.state.update" | "adapter.delivery.claim" | "adapter.delivery.report",
+  args: AdapterInboundArgs | AdapterStateUpdateArgs | AdapterDeliveryClaimArgs | AdapterDeliveryReportArgs,
   body?: BinaryBody,
-): Promise<AdapterInboundResult | AdapterStateUpdateResult> {
+): Promise<
+  AdapterInboundResult
+  | AdapterStateUpdateResult
+  | AdapterDeliveryClaimResult
+  | AdapterDeliveryReportResult
+> {
   let wireArgs: JsonValue;
   try {
     wireArgs = projectJsonMetadata(args);
@@ -76,8 +144,9 @@ export async function callAdapterGateway(
 
   if (!response || response.type !== "res") {
     const message = "No response from gateway serviceFrame";
-    if (response?.body !== body) {
-      await cancelBinaryBody(response?.body, message);
+    const responseBody = response && "body" in response ? response.body : undefined;
+    if (responseBody !== body) {
+      await cancelBinaryBody(responseBody, message);
     }
     await cancelBinaryBody(body, message);
     throw new Error(message);
@@ -96,14 +165,25 @@ export async function callAdapterGateway(
 
   const decoded = call === "adapter.inbound"
     ? adapterInboundResultSchema.safeParse(response.data)
-    : adapterStateUpdateResultSchema.safeParse(response.data);
+    : call === "adapter.state.update"
+      ? adapterStateUpdateResultSchema.safeParse(response.data)
+      : call === "adapter.delivery.claim"
+        ? adapterDeliveryClaimResultSchema.safeParse(response.data)
+        : adapterDeliveryReportResultSchema.safeParse(response.data);
   if (!decoded.success) {
     throw new Error(`Gateway returned an invalid ${call} response`);
   }
   return decoded.data;
 }
 
-function projectJsonMetadata(value: AdapterInboundArgs | AdapterStateUpdateArgs): JsonValue {
+function projectJsonMetadata(
+  value:
+    | AdapterInboundArgs
+    | AdapterStateUpdateArgs
+    | AdapterDeliveryClaimArgs
+    | AdapterDeliveryReportArgs
+    | ProcHilArgs,
+): JsonValue {
   const serialized = JSON.stringify(value);
   if (serialized === undefined) {
     throw new Error("Adapter gateway request metadata is not JSON-serializable");

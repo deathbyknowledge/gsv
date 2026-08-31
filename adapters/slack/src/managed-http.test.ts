@@ -97,16 +97,15 @@ function interactionPayload() {
     },
     message: {
       user: "UGSVBOT1",
-      text: "Reply \"approve hil[request-1]\" or \"deny hil[request-1]\".",
+      text: "Run the requested shell command.",
       ts: "1700000000.000100",
     },
     actions: [{
       type: "button",
       action_id: "gsv_hil_approve",
       value: JSON.stringify({
-        v: 1,
-        token: "hil[request-1]",
-        routeGeneration: "route-generation-1",
+        v: 2,
+        token: "AbCdEfGhIjKlMnOp",
       }),
       action_ts: "1700000001.000200",
     }],
@@ -226,12 +225,10 @@ describe("managed Slack HTTP boundary", () => {
     expect(acceptInteraction).toHaveBeenCalledWith(expect.objectContaining({
       accountId,
       workspaceGeneration: "workspace-generation",
-      inbound: expect.objectContaining({
+      callback: expect.objectContaining({
         actorId: "UALICE01",
-        text: "approve hil[request-1]",
-        interaction: expect.objectContaining({
-          expectedRouteGeneration: "route-generation-1",
-        }),
+        action: "approve",
+        token: "AbCdEfGhIjKlMnOp",
       }),
     }));
   });

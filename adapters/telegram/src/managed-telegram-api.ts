@@ -9,6 +9,7 @@ import {
 import type { BinaryBody } from "./types";
 import type { TelegramInboundFile } from "./telegram-inbound-media";
 import { sendTelegramMarkdownMessage } from "./telegram-formatting";
+import type { TelegramTextMessageOptions } from "./telegram-formatting";
 type TelegramJsonValue =
   | string
   | number
@@ -50,6 +51,7 @@ export async function sendManagedTelegramText(
   markdown: string,
   replyToMessageId?: number,
   fetcher: ManagedTelegramFetch = fetch,
+  options: TelegramTextMessageOptions = {},
 ): Promise<TelegramSentMessage> {
   return await sendTelegramMarkdownMessage(
     (method, payload) => callManagedTelegramApi<TelegramSentMessage>(
@@ -61,6 +63,7 @@ export async function sendManagedTelegramText(
     chatId,
     markdown,
     replyToMessageId,
+    options,
   );
 }
 

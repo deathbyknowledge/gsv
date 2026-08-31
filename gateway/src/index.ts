@@ -4,6 +4,7 @@ import type {
   GatewayAdapterInterface,
 } from "./adapter-interface";
 import type {
+  AdapterLinkedPeerContext,
   BinaryBody,
   ManagedInboundMailAccepted,
   ManagedInboundMailCompletion,
@@ -22,6 +23,7 @@ import type { MailGatewayService } from "@humansandmachines/gsv/services/mail";
 import {
   adapterGatewayFrameSchema,
   adapterInstallationContextSchema,
+  adapterLinkedPeerContextSchema,
   binaryBodySchema,
   cancelBinaryBody,
 } from "@humansandmachines/gsv/protocol";
@@ -159,7 +161,12 @@ export default {
   },
 } satisfies ExportedHandler<GatewayEnv>;
 
-const ADAPTER_SERVICE_CALLS = ["adapter.inbound", "adapter.state.update"] as const;
+const ADAPTER_SERVICE_CALLS = [
+  "adapter.inbound",
+  "adapter.state.update",
+  "adapter.delivery.claim",
+  "adapter.delivery.report",
+] as const;
 const LEGACY_ADAPTER_IDS = new Set(["telegram", "whatsapp", "discord", "test"]);
 const legacyAdapterServiceArgsSchema = z.object({
   adapter: z.string(),
@@ -220,6 +227,54 @@ abstract class AdapterServiceEntrypoint<Props>
       );
       console.error("[GatewayEntrypoint] serviceFrame failed:", error);
       return null;
+    }
+  }
+
+  linkedPeerFrame(
+    context: AdapterLinkedPeerContext,
+    frame: Frame,
+  ): Promise<Frame | null>;
+  linkedPeerFrame(
+    installation: AdapterInstallationContext,
+    context: AdapterLinkedPeerContext,
+    frame: Frame,
+  ): Promise<Frame | null>;
+  async linkedPeerFrame(
+    ...args:
+      | [context: AdapterLinkedPeerContext, frame: Frame]
+      | [
+          installation: AdapterInstallationContext,
+          context: AdapterLinkedPeerContext,
+          frame: Frame,
+        ]
+  ): Promise<Frame | null> {
+    try {
+      const installation = args.length === 2
+        ? { installationId: SINGLETON_INSTALLATION_ID }
+        : adapterInstallationContextSchema.parse(args[0]);
+      const context = adapterLinkedPeerContextSchema.parse(
+        args.length === 2 ? args[0] : args[1],
+      );
+      const frame = requireAdapterServiceFrame(args.length === 2 ? args[1] : args[2]);
+      return await routeAdapterLinkedPeerFrame(
+        this.env,
+        installation,
+        this.resolveServicePeerProfile(frame),
+        context,
+        frame,
+      );
+    } catch (error) {
+      console.error("[GatewayEntrypoint] linkedPeerFrame failed:", error);
+      const candidate = args[args.length - 1];
+      const parsedCandidate = adapterGatewayFrameSchema.safeParse(candidate);
+      return parsedCandidate.success && parsedCandidate.data.type === "req"
+        ? {
+            type: "res",
+            id: parsedCandidate.data.id,
+            ok: false,
+            error: { code: 403, message: "Linked adapter request was rejected" },
+          }
+        : null;
     }
   }
 }
@@ -381,6 +436,38 @@ async function routeAdapterServiceFrame(
     console.error("[GatewayEntrypoint] serviceFrame failed:", error);
     return null;
   }
+}
+
+async function routeAdapterLinkedPeerFrame(
+  bindings: Env & GatewayInstallationBindings,
+  installation: AdapterInstallationContext,
+  profile: ServicePeerProfile,
+  context: AdapterLinkedPeerContext,
+  frame: Frame,
+): Promise<Frame | null> {
+  const installationId = resolveAdapterInstallationId(bindings, installation);
+  if (bindings.INSTALLATION_DIRECTORY) {
+    const gate = await managedInstallationWorkGate(bindings, installationId);
+    if (!gate.allowed) {
+      return frame.type === "req"
+        ? {
+            type: "res",
+            id: frame.id,
+            ok: false,
+            error: { code: gate.code, message: gate.message },
+          }
+        : null;
+    }
+  }
+  const kernelStub: unknown = await getKernelByInstallationId(bindings.KERNEL, installationId);
+  const kernel = kernelStub as {
+    linkedAdapterPeerFrame(
+      profile: ServicePeerProfile,
+      context: AdapterLinkedPeerContext,
+      frame: Frame,
+    ): Promise<Frame | null>;
+  };
+  return await kernel.linkedAdapterPeerFrame(profile, context, frame);
 }
 
 function requireAdapterServiceFrame(value: Frame): Frame {

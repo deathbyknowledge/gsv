@@ -215,6 +215,10 @@ import type {
   AdapterConnectResult,
   AdapterDisconnectArgs,
   AdapterDisconnectResult,
+  AdapterDeliveryClaimArgs,
+  AdapterDeliveryClaimResult,
+  AdapterDeliveryReportArgs,
+  AdapterDeliveryReportResult,
   AdapterInboundArgs,
   AdapterInboundSyscallResult,
   AdapterListArgs,
@@ -428,6 +432,8 @@ export type SyscallDomains = {
   "adapter.disconnect": { args: AdapterDisconnectArgs; result: AdapterDisconnectResult };
   "adapter.inbound": { args: AdapterInboundArgs; result: AdapterInboundSyscallResult };
   "adapter.state.update": { args: AdapterStateUpdateArgs; result: AdapterStateUpdateResult };
+  "adapter.delivery.claim": { args: AdapterDeliveryClaimArgs; result: AdapterDeliveryClaimResult };
+  "adapter.delivery.report": { args: AdapterDeliveryReportArgs; result: AdapterDeliveryReportResult };
   "adapter.send": { args: AdapterSendArgs; result: AdapterSendResult };
   "adapter.status": { args: AdapterStatusArgs; result: AdapterStatusResult };
   "adapter.list": { args: AdapterListArgs; result: AdapterListResult };

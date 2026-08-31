@@ -5,6 +5,8 @@ import type {
   AdapterInstallationContext,
   AdapterMediaType,
   AdapterOutboundMessage,
+  AdapterPeerDeliveryContext,
+  AdapterGatewayFrame,
   AdapterPairingWorkerInterface,
   AdapterSurfaceKind,
   AdapterSurface,
@@ -28,6 +30,7 @@ export const adapterServiceCapabilitiesSchema = z.strictObject({
   status: z.boolean(),
   activity: z.boolean(),
   pairing: z.boolean(),
+  deliveryFrames: z.optional(z.boolean()),
   targets: z.optional(z.boolean()),
   surfaces: z.array(z.enum(["dm", "group", "channel", "thread"])),
   media: z.strictObject({
@@ -43,6 +46,7 @@ export type AdapterServiceCapabilities = {
   status: boolean;
   activity: boolean;
   pairing: boolean;
+  deliveryFrames?: boolean;
   targets?: boolean;
   surfaces: AdapterSurfaceKind[];
   media: {
@@ -182,6 +186,17 @@ export type AdapterTargetCancelResult = {
 export interface AdapterService {
   readonly adapterId: string;
   adapterDescribe(): Promise<AdapterServiceDescriptor>;
+  /**
+   * Canonical frame carrier for Gateway-to-adapter delivery. A signal call
+   * resolves only after the owning adapter Durable Object has durably accepted
+   * the frame and any body sidecar. Requests return their correlated response.
+   */
+  adapterFrame?: (
+    installation: AdapterInstallationContext,
+    context: AdapterPeerDeliveryContext,
+    frame: AdapterGatewayFrame,
+    body?: BinaryBody,
+  ) => Promise<AdapterGatewayFrame | null>;
   adapterConnect?: AdapterWorkerInterface["adapterConnect"] | ((
     installation: AdapterInstallationContext,
     accountId: string,

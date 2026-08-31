@@ -14,6 +14,12 @@ import {
   InboundDeliveryLedger,
   type InboundDeliveryDisposition,
 } from "../../shared/src/inbound-delivery";
+import {
+  AdapterPeerDeliveryQueue,
+  gatewayPeerDeliveryHandlers,
+  type AdapterPeerSignalDelivery,
+} from "../../shared/src/peer-delivery";
+import { renderAdapterPeerSignal } from "../../shared/src/peer-render";
 import { callAdapterGateway, type AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
   cancelBinaryBody,
@@ -24,6 +30,9 @@ import {
 } from "../../shared/src/media-body";
 import type {
   AdapterOutboundMessage,
+  AdapterInstallationContext,
+  AdapterPeerDeliveryContext,
+  AdapterPeerSignalFrame,
   AdapterPairingActivateInput,
   AdapterPairingCandidate,
   AdapterPairingDisconnectInput,
@@ -34,6 +43,11 @@ import type {
   AdapterSurface,
   BinaryBody,
 } from "./types";
+import {
+  attachSlackApprovalMessage,
+  handleSlackApprovalCallback,
+  prepareSlackApproval,
+} from "./slack-approval";
 import type {
   ManagedSlackPairingEnv,
   ManagedSlackPairingRecord,
@@ -71,8 +85,8 @@ import {
   MAX_SLACK_MEDIA_ITEMS,
 } from "./slack-media";
 import {
-  buildSlackApprovalBlocks,
-  buildSlackApprovalSubmittedMessage,
+  type SlackApprovalCallback,
+  type SlackBlock,
 } from "./slack-interactions";
 import {
   isSlackPairCommand,
@@ -100,11 +114,23 @@ export type ManagedSlackAcceptedEvent = {
   inbound: SlackInbound;
 };
 
-type InboundPayload = {
-  inbound: SlackInbound;
-  workspaceGeneration: string;
-  routeGeneration?: string;
+export type ManagedSlackAcceptedInteraction = Omit<ManagedSlackAcceptedEvent, "inbound"> & {
+  callback: SlackApprovalCallback;
 };
+
+type InboundPayload =
+  | {
+      kind: "message";
+      inbound: SlackInbound;
+      workspaceGeneration: string;
+      routeGeneration?: string;
+    }
+  | {
+      kind: "approval";
+      callback: SlackApprovalCallback;
+      workspaceGeneration: string;
+      routeGeneration: string;
+    };
 
 type ResponseContext =
   | { kind: "platform"; workspaceGeneration: string; claimId?: string }
@@ -220,8 +246,10 @@ const SLACK_TARGET_ID = "workspace";
 export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
   private readonly deliveries: DeliveryLedger;
   private readonly inboundDeliveries: InboundDeliveryLedger<InboundPayload, ResponseContext>;
+  private readonly peerDeliveries: AdapterPeerDeliveryQueue;
   private readonly targetCalls = new Map<string, ActiveManagedSlackTargetCall>();
   private drainPromise?: Promise<void>;
+  private peerDrain?: Promise<void>;
 
   constructor(ctx: DurableObjectState, env: ManagedSlackPeerEnv) {
     super(ctx, env);
@@ -234,6 +262,10 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
         maxRecords: INBOUND_MAX_RECORDS,
         pendingOrder: "created",
       },
+    );
+    this.peerDeliveries = new AdapterPeerDeliveryQueue(
+      this.ctx.storage,
+      INBOUND_RETRY_DELAY_MS,
     );
   }
 
@@ -248,6 +280,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     await this.inboundDeliveries.enqueueAndArm(
       input.inbound.deliveryId,
       {
+        kind: "message",
         inbound: input.inbound,
         workspaceGeneration: input.workspaceGeneration,
         routeGeneration,
@@ -259,32 +292,30 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
   }
 
   async acceptInteraction(
-    input: ManagedSlackAcceptedEvent,
+    input: ManagedSlackAcceptedInteraction,
   ): Promise<{ accepted: boolean }> {
     const state = await this.ctx.storage.get<ManagedSlackPeerState>(STATE_KEY);
     if (!state) return { accepted: false };
     this.assertObjectIdentity(state);
-    const interaction = input.inbound.interaction;
     const route = state.activeRoute;
     if (
-      !interaction
-      || !route
+      !route
       || input.accountId !== state.accountId
       || input.teamId !== state.teamId
       || input.botUserId !== state.botUserId
       || input.workspaceGeneration !== state.workspaceGeneration
-      || input.inbound.actorId !== state.actorId
-      || input.inbound.surface.kind !== "dm"
-      || input.inbound.surface.id !== state.dmSurfaceId
-      || !interaction.expectedRouteGeneration
-      || interaction.expectedRouteGeneration !== route.generation
+      || input.callback.teamId !== state.teamId
+      || input.callback.actorId !== state.actorId
+      || input.callback.surface.kind !== "dm"
+      || input.callback.surface.id !== state.dmSurfaceId
     ) {
       return { accepted: false };
     }
     await this.inboundDeliveries.enqueueAndArm(
-      input.inbound.deliveryId,
+      input.callback.deliveryId,
       {
-        inbound: input.inbound,
+        kind: "approval",
+        callback: input.callback,
         workspaceGeneration: input.workspaceGeneration,
         routeGeneration: route.generation,
       },
@@ -323,6 +354,92 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       generation: route.generation,
       workspaceGeneration: state.workspaceGeneration,
     }, body);
+  }
+
+  async acceptPeerSignal(
+    installation: AdapterInstallationContext,
+    context: AdapterPeerDeliveryContext,
+    frame: AdapterPeerSignalFrame,
+    body?: BinaryBody,
+  ): Promise<void> {
+    try {
+      const state = await this.requireCurrentWorkspace();
+      this.assertDestination(state, context.surface, context.actorId);
+      if (
+        context.accountId !== state.accountId
+        || state.activeRoute?.installationId !== installation.installationId
+        || !context.routeGeneration
+        || state.activeRoute.generation !== context.routeGeneration
+      ) {
+        throw new Error("Slack route changed before signal acceptance");
+      }
+      await this.peerDeliveries.enqueueAndArm(
+        { installation, context, frame },
+        body,
+        Date.now() + INBOUND_WAKE_DELAY_MS,
+      );
+    } catch (error) {
+      await cancelBinaryBody(body, error);
+      throw error;
+    }
+    this.ctx.waitUntil(this.drainPeerDeliveries());
+  }
+
+  private async drainPeerDeliveries(): Promise<void> {
+    if (this.peerDrain) return await this.peerDrain;
+    const running = (async () => {
+      for (const deliveryId of await this.peerDeliveries.pendingIds()) {
+        const result = await this.peerDeliveries.attempt(
+          deliveryId,
+          gatewayPeerDeliveryHandlers({
+            adapter: "slack",
+            gateway: this.env.GATEWAY,
+            deliver: async (delivery, body) => await this.deliverPeerSignal(delivery, body),
+          }),
+        );
+        if (result === "pending") break;
+      }
+    })();
+    this.peerDrain = running;
+    try {
+      await running;
+    } finally {
+      if (this.peerDrain === running) this.peerDrain = undefined;
+    }
+  }
+
+  private async deliverPeerSignal(
+    delivery: AdapterPeerSignalDelivery,
+    body?: BinaryBody,
+  ): Promise<AdapterSendResult> {
+    const state = await this.requireCurrentWorkspace();
+    const generation = delivery.context.routeGeneration;
+    if (!generation) return { ok: false, error: "Slack route generation is missing" };
+    const rendered = renderAdapterPeerSignal(delivery.context, delivery.frame).message;
+    const controls = delivery.frame.signal === "proc.run.hil.requested"
+      ? await prepareSlackApproval(
+          this.ctx.storage,
+          state.teamId,
+          delivery.context,
+          delivery.frame.payload,
+          rendered.text,
+        )
+      : null;
+    const result = await this.deliverMessage(
+      rendered,
+      {
+        kind: "installation",
+        installationId: delivery.installation.installationId,
+        generation,
+        workspaceGeneration: state.workspaceGeneration,
+      },
+      body,
+      controls?.blocks,
+    );
+    if (result.ok && controls) {
+      await attachSlackApprovalMessage(this.ctx.storage, controls.token, result.messageId);
+    }
+    return result;
   }
 
   async listTargets(
@@ -595,6 +712,8 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
   }
 
   async alarm(): Promise<void> {
+    await this.peerDeliveries.armIfPending(Date.now() + INBOUND_RETRY_DELAY_MS);
+    await this.drainPeerDeliveries();
     await this.drainInbound();
     await this.inboundDeliveries.armIfPending(Date.now() + INBOUND_RETRY_DELAY_MS);
   }
@@ -631,6 +750,37 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
   ): Promise<InboundDeliveryDisposition<ResponseContext>> {
     const state = await this.requireState();
     if (state.workspaceGeneration !== payload.workspaceGeneration) return { terminal: true };
+    if (payload.kind === "approval") {
+      const route = state.activeRoute;
+      if (!route || route.generation !== payload.routeGeneration) return { terminal: true };
+      const admission = await this.workspace(state.accountId).admitEvent(state.teamId);
+      if (!admission.accepted || admission.generation !== payload.workspaceGeneration) {
+        return { terminal: true };
+      }
+      // The durable approval delivery is authoritative; clearing buttons is best effort.
+      await handleSlackApprovalCallback(
+        this.ctx.storage,
+        this.env.GATEWAY,
+        { installationId: route.installationId },
+        payload.callback,
+        {
+          updateMessage: async (callback, message) => {
+            const updated = await this.workspace(state.accountId).updateMessage(
+              state.workspaceGeneration,
+              {
+                channel: callback.surface.id,
+                messageTs: callback.sourceMessageId,
+                ...message,
+              },
+            );
+            if (!updated.ok && updated.kind !== "permanent") {
+              throw new Error("Slack approval presentation update failed");
+            }
+          },
+        },
+      );
+      return { terminal: true };
+    }
     if (!payload.routeGeneration || isSlackPairCommand(payload.inbound)) {
       return await this.pairingResponse(payload.inbound);
     }
@@ -707,13 +857,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       providerMessageId: inbound.messageId,
       actorId: inbound.actorId,
     });
-    if (inbound.interaction && disposition.terminal) {
-      await this.markInteractionSubmitted(payload);
-    }
     if (result.challenge) {
-      if (inbound.interaction) {
-        return { terminal: disposition.terminal, error: disposition.error };
-      }
       return await this.pairingResponse(inbound);
     }
     return {
@@ -729,40 +873,6 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
         },
       })),
     };
-  }
-
-  private async markInteractionSubmitted(payload: InboundPayload): Promise<void> {
-    const interaction = payload.inbound.interaction;
-    if (!interaction || !payload.routeGeneration) return;
-    try {
-      const state = await this.requireState();
-      const route = state.activeRoute;
-      if (
-        !route
-        || route.generation !== payload.routeGeneration
-        || interaction.expectedRouteGeneration !== route.generation
-        || state.workspaceGeneration !== payload.workspaceGeneration
-        || payload.inbound.actorId !== state.actorId
-        || payload.inbound.surface.kind !== "dm"
-        || payload.inbound.surface.id !== state.dmSurfaceId
-      ) {
-        return;
-      }
-      const rendered = buildSlackApprovalSubmittedMessage(
-        interaction.sourceText,
-        interaction.action,
-      );
-      await this.workspace(state.accountId).updateMessage(
-        state.workspaceGeneration,
-        {
-          channel: payload.inbound.surface.id,
-          messageTs: interaction.sourceMessageId,
-          ...rendered,
-        },
-      );
-    } catch {
-      // The durable approval delivery is authoritative; clearing buttons is best effort.
-    }
   }
 
   private async pairingResponse(
@@ -869,6 +979,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     message: AdapterOutboundMessage,
     context: ResponseContext,
     body?: BinaryBody,
+    blocks?: SlackBlock[],
   ): Promise<AdapterSendResult> {
     const hasFiles = (message.media?.length ?? 0) > 0;
     let state: ManagedSlackPeerState;
@@ -934,7 +1045,12 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     let fingerprint: string;
     try {
       fingerprint = await fingerprintOutboundDelivery(
-        { ...message, text: renderedText },
+        {
+          ...message,
+          text: blocks
+            ? `${renderedText}\n\n[gsv-slack-blocks:${JSON.stringify(blocks)}]`
+            : renderedText,
+        },
         mediaBytes,
       );
     } catch {
@@ -1004,17 +1120,13 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
         }
         providerMessageId = delivered.fileIds[0];
       } else {
-        const approvalBlocks = message.surface.kind === "dm"
-          && context.kind === "installation"
-          ? buildSlackApprovalBlocks(renderedText, context.generation)
-          : undefined;
         const delivered = await this.workspace(current.accountId).postMessage(
           current.workspaceGeneration,
           {
             channel: message.surface.id,
             text: renderedText,
             threadTs: message.surface.threadId,
-            blocks: approvalBlocks,
+            blocks,
           },
         );
         if (!delivered.ok) return await fail(delivered.kind, delivered.error);

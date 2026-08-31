@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { AdapterGatewayEntrypoint, GatewayEntrypoint } from "./index";
+import { adapterServiceSupportsDeliveryFrames } from "./adapter-interface";
 import type { ServicePeerProfile } from "./kernel/peer";
 import type { Frame } from "./protocol/frames";
 
@@ -69,9 +70,46 @@ describe("Gateway adapter RPC compatibility", () => {
     const gateway = adapterGatewayWithEnv({});
 
     expect("serviceFrame" in gateway).toBe(true);
+    expect("linkedPeerFrame" in gateway).toBe(true);
     expect("acceptManagedInboundMail" in gateway).toBe(false);
     expect("unlinkManagedAdapterIdentity" in gateway).toBe(true);
     expect("unlinkManagedTelegramIdentity" in gateway).toBe(false);
+  });
+
+  it("routes an adapter interaction through the linked-peer carrier", async () => {
+    const response = {
+      type: "res" as const,
+      id: "linked-approval",
+      ok: true,
+      data: { ok: true, resumed: true },
+    };
+    const linkedAdapterPeerFrame = vi.fn(async () => response);
+    const getByName = vi.fn(() => ({ linkedAdapterPeerFrame }));
+    const gateway = adapterGatewayWithEnv({ KERNEL: { getByName } });
+    const context = {
+      accountId: "managed",
+      actorId: "telegram:user:42",
+      surface: { kind: "dm" as const, id: "chat-42" },
+      routeGeneration: "generation-1",
+      interactionId: "callback-1",
+    };
+    const frame: Frame = {
+      type: "req",
+      id: "linked-approval",
+      call: "proc.hil",
+      args: { pid: "proc-1", requestId: "request-1", decision: "approve" },
+    };
+
+    await expect(gateway.linkedPeerFrame(context, frame)).resolves.toEqual(response);
+    expect(getByName).toHaveBeenCalledWith("singleton");
+    expect(linkedAdapterPeerFrame).toHaveBeenCalledWith(
+      {
+        id: "telegram",
+        calls: ["adapter.inbound", "adapter.state.update"],
+      },
+      context,
+      frame,
+    );
   });
 
   it("accepts the pre-managed one-argument serviceFrame call", async () => {
@@ -89,7 +127,10 @@ describe("Gateway adapter RPC compatibility", () => {
     await expect(gateway.serviceFrame(frame)).resolves.toEqual(response);
     expect(getByName).toHaveBeenCalledWith("singleton");
     expect(peerFrame).toHaveBeenCalledWith(
-      { id: "telegram", calls: ["adapter.inbound", "adapter.state.update"] },
+      {
+        id: "telegram",
+        calls: ["adapter.inbound", "adapter.state.update"],
+      },
       frame,
     );
   });
@@ -121,7 +162,10 @@ describe("Gateway adapter RPC compatibility", () => {
     expect(resolveInstallation).toHaveBeenCalledWith(installation.installationId);
     expect(getByName).toHaveBeenCalledWith(installation.installationId);
     expect(peerFrame).toHaveBeenCalledWith(
-      { id: "telegram", calls: ["adapter.inbound", "adapter.state.update"] },
+      {
+        id: "telegram",
+        calls: ["adapter.inbound", "adapter.state.update"],
+      },
       frame,
     );
   });
@@ -197,7 +241,15 @@ describe("Gateway adapter RPC compatibility", () => {
 
     await expect(gateway.serviceFrame(frame)).resolves.toEqual(response);
     expect(peerFrame).toHaveBeenCalledWith(
-      { id: "telegram", calls: ["adapter.inbound", "adapter.state.update"] },
+      {
+        id: "telegram",
+        calls: [
+          "adapter.inbound",
+          "adapter.state.update",
+          "adapter.delivery.claim",
+          "adapter.delivery.report",
+        ],
+      },
       frame,
     );
   });
@@ -252,5 +304,44 @@ describe("Gateway adapter RPC compatibility", () => {
     expect(request.cancelled()).toBe("Gateway service request failed");
     expect(getByName).not.toHaveBeenCalled();
     error.mockRestore();
+  });
+});
+
+describe("adapter delivery-frame discovery", () => {
+  const descriptor = (id: string, deliveryFrames?: boolean) => ({
+    version: 1 as const,
+    id,
+    displayName: id,
+    capabilities: {
+      connect: true,
+      disconnect: true,
+      send: true,
+      status: true,
+      activity: true,
+      pairing: false,
+      ...(deliveryFrames === undefined ? undefined : { deliveryFrames }),
+      surfaces: ["dm" as const],
+      media: { inbound: [], outbound: [] },
+    },
+  });
+
+  it("selects the frame carrier only from a matching affirmative descriptor", async () => {
+    await expect(adapterServiceSupportsDeliveryFrames("telegram", {
+      adapterDescribe: vi.fn(async () => descriptor("telegram", true)),
+    })).resolves.toBe(true);
+    await expect(adapterServiceSupportsDeliveryFrames("telegram", {
+      adapterDescribe: vi.fn(async () => descriptor("telegram")),
+    })).resolves.toBe(false);
+    await expect(adapterServiceSupportsDeliveryFrames("telegram", {
+      adapterDescribe: vi.fn(async () => descriptor("discord", true)),
+    })).resolves.toBe(false);
+  });
+
+  it("falls back to the typed adapter RPC when discovery is unavailable", async () => {
+    await expect(adapterServiceSupportsDeliveryFrames("telegram", {
+      adapterDescribe: vi.fn(async () => {
+        throw new Error("older adapter has no descriptor method");
+      }),
+    })).resolves.toBe(false);
   });
 });

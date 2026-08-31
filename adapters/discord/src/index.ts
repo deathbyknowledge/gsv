@@ -7,6 +7,7 @@
  */
 
 import { WorkerEntrypoint } from "cloudflare:workers";
+import { handleAdapterFrame } from "../../shared/src/adapter-frame";
 import {
   cancelResponseBody,
   cancelBinaryBody,
@@ -35,11 +36,13 @@ import type {
   AdapterDisconnectResult,
   AdapterInstallationContext,
   AdapterOutboundMessage,
+  AdapterPeerDeliveryContext,
   AdapterSendResult,
   AdapterService,
   AdapterServiceDescriptor,
   AdapterSurface,
   BinaryBody,
+  GatewayFrame,
 } from "../../shared/src/types";
 import { DiscordGateway } from "./discord-gateway";
 import * as z from "zod/mini";
@@ -83,6 +86,7 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterServ
         status: true,
         activity: true,
         pairing: false,
+        deliveryFrames: true,
         surfaces: ["dm", "group", "channel", "thread"],
         media: {
           inbound: ["image", "audio", "video", "document"],
@@ -90,6 +94,22 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterServ
         },
       },
     };
+  }
+
+  async adapterFrame(
+    installation: AdapterInstallationContext,
+    context: AdapterPeerDeliveryContext,
+    frame: GatewayFrame,
+    body?: BinaryBody,
+  ): Promise<GatewayFrame | null> {
+    const parsed = parseAdapterInstallationContext(installation);
+    const gateway = this.getGatewayDO(parsed, context.accountId);
+    return await handleAdapterFrame(this.adapterId, parsed, context, frame, body, {
+      send: async (message, requestBody) => await gateway.sendMessage(message, requestBody),
+      acceptSignal: async (signalContext, signalFrame, signalBody) => {
+        await gateway.acceptPeerSignal(parsed, signalContext, signalFrame, signalBody);
+      },
+    });
   }
 
   async adapterConnect(

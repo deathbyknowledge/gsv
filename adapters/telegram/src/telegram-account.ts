@@ -9,6 +9,12 @@ import {
   adapterInboundResultDisposition,
   InboundDeliveryLedger,
 } from "../../shared/src/inbound-delivery";
+import {
+  AdapterPeerDeliveryQueue,
+  gatewayPeerDeliveryHandlers,
+  type AdapterPeerSignalDelivery,
+} from "../../shared/src/peer-delivery";
+import { renderAdapterPeerSignal } from "../../shared/src/peer-render";
 import { callAdapterGateway } from "../../shared/src/gateway-rpc";
 import type { AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
@@ -31,13 +37,22 @@ import type {
   AdapterInboundMessage,
   AdapterInstallationContext,
   AdapterOutboundMessage,
+  AdapterPeerDeliveryContext,
+  AdapterPeerSignalFrame,
   AdapterSendResult,
   AdapterSurface,
   BinaryBody,
 } from "./types";
 import {
   sendTelegramMarkdownMessage,
+  type TelegramTextMessageOptions,
 } from "./telegram-formatting";
+import {
+  attachTelegramApprovalMessage,
+  handleTelegramApprovalCallback,
+  prepareTelegramApproval,
+  type TelegramApprovalCallback,
+} from "./telegram-approval";
 import { planTelegramMediaDeliveries } from "./telegram-media";
 import {
   sendTelegramMediaGroupMessage,
@@ -137,6 +152,17 @@ export type TelegramUpdate = {
   edited_message?: TelegramMessage;
   channel_post?: TelegramMessage;
   edited_channel_post?: TelegramMessage;
+  callback_query?: TelegramCallbackQuery;
+};
+
+type TelegramCallbackQuery = {
+  id: string;
+  from: TelegramUser;
+  message?: {
+    message_id: number;
+    chat: TelegramChat;
+  };
+  data?: string;
 };
 
 type TelegramWebhookInfo = {
@@ -241,12 +267,22 @@ const telegramMessageSchema = z.object({
   animation: z.optional(telegramFileAttachmentSchema),
   sticker: z.optional(telegramStickerAttachmentSchema),
 });
+const telegramCallbackQuerySchema = z.object({
+  id: z.string(),
+  from: telegramUserSchema,
+  message: z.optional(z.object({
+    message_id: z.number(),
+    chat: telegramChatSchema,
+  })),
+  data: z.optional(z.string()),
+});
 export const telegramUpdateSchema = z.object({
   update_id: z.number(),
   message: z.optional(telegramMessageSchema),
   edited_message: z.optional(telegramMessageSchema),
   channel_post: z.optional(telegramMessageSchema),
   edited_channel_post: z.optional(telegramMessageSchema),
+  callback_query: z.optional(telegramCallbackQuerySchema),
 });
 
 type TelegramFile = {
@@ -288,6 +324,7 @@ const INBOUND_DELIVERY_PREFIX = "pending_inbound:";
 const INBOUND_WAKE_DELAY_MS = 1_000;
 const INBOUND_RETRY_DELAY_MS = 10_000;
 const INBOUND_RETRY_BATCH_SIZE = 100;
+const PEER_DELIVERY_RETRY_DELAY_MS = 10_000;
 const LEGACY_PENDING_UPDATE_PREFIX = "pending_update:";
 const LEGACY_PROCESSED_UPDATE_PREFIX = "processed_update:";
 
@@ -306,7 +343,9 @@ function toErrorMessage(error: Error | string): string {
 export class TelegramAccount extends DurableObject<Env> {
   private loaded = false;
   private readonly deliveries: DeliveryLedger;
-  private readonly inboundDeliveries: InboundDeliveryLedger<TelegramMessage>;
+  private readonly inboundDeliveries: InboundDeliveryLedger<TelegramMessage | TelegramApprovalCallback>;
+  private readonly peerDeliveries: AdapterPeerDeliveryQueue;
+  private peerDrain?: Promise<void>;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -314,6 +353,10 @@ export class TelegramAccount extends DurableObject<Env> {
     this.inboundDeliveries = new InboundDeliveryLedger(
       this.ctx.storage,
       INBOUND_DELIVERY_PREFIX,
+    );
+    this.peerDeliveries = new AdapterPeerDeliveryQueue(
+      this.ctx.storage,
+      PEER_DELIVERY_RETRY_DELAY_MS,
     );
   }
 
@@ -559,7 +602,7 @@ export class TelegramAccount extends DurableObject<Env> {
       {
         url: webhookUrl,
         secret_token: webhookSecret,
-        allowed_updates: ["message", "channel_post"],
+        allowed_updates: ["message", "channel_post", "callback_query"],
       },
       normalizedToken,
     );
@@ -598,6 +641,9 @@ export class TelegramAccount extends DurableObject<Env> {
     this.state.authenticated = false;
     this.state.lastError = null;
     await this.commitLifecycleState(null);
+    await this.peerDeliveries.armIfPending(
+      Date.now() + PEER_DELIVERY_RETRY_DELAY_MS,
+    );
     await this.notifyGatewayStatus();
   }
 
@@ -637,6 +683,7 @@ export class TelegramAccount extends DurableObject<Env> {
   async sendMessage(
     message: AdapterOutboundMessage,
     body?: BinaryBody,
+    options: TelegramTextMessageOptions = {},
   ): Promise<AdapterSendResult> {
     await this.ensureLoaded();
 
@@ -679,7 +726,10 @@ export class TelegramAccount extends DurableObject<Env> {
 
     let requestFingerprint: string;
     try {
-      requestFingerprint = await fingerprintOutboundDelivery(message, mediaBytes);
+      requestFingerprint = await fingerprintOutboundDelivery(
+        telegramFingerprintMessage(message, options),
+        mediaBytes,
+      );
     } catch (error) {
       return {
         ok: false,
@@ -749,6 +799,7 @@ export class TelegramAccount extends DurableObject<Env> {
           message.surface.id,
           trimmedText,
           replyToMessageId,
+          options,
         );
         sentMessageId = String(sent.message_id);
       } else {
@@ -823,6 +874,7 @@ export class TelegramAccount extends DurableObject<Env> {
     chatId: string,
     text: string,
     replyToMessageId?: number,
+    options: TelegramTextMessageOptions = {},
   ): Promise<TelegramMessage> {
     return sendTelegramMarkdownMessage(
       (method, payload) =>
@@ -830,6 +882,7 @@ export class TelegramAccount extends DurableObject<Env> {
       chatId,
       text,
       replyToMessageId,
+      options,
     );
   }
 
@@ -851,6 +904,71 @@ export class TelegramAccount extends DurableObject<Env> {
         error,
       );
     }
+  }
+
+  async acceptPeerSignal(
+    installation: AdapterInstallationContext,
+    context: AdapterPeerDeliveryContext,
+    frame: AdapterPeerSignalFrame,
+    body?: BinaryBody,
+  ): Promise<void> {
+    await this.peerDeliveries.enqueueAndArm(
+      { installation, context, frame },
+      body,
+      Date.now() + 10,
+    );
+    this.ctx.waitUntil(this.drainPeerDeliveries());
+  }
+
+  private async drainPeerDeliveries(): Promise<void> {
+    if (this.peerDrain) return await this.peerDrain;
+    const running = (async () => {
+      for (const deliveryId of await this.peerDeliveries.pendingIds()) {
+        const result = await this.peerDeliveries.attempt(
+          deliveryId,
+          gatewayPeerDeliveryHandlers({
+            adapter: "telegram",
+            gateway: this.env.GATEWAY,
+            deliver: async (delivery, body) => await this.deliverPeerSignal(delivery, body),
+          }),
+        );
+        if (result === "pending") break;
+      }
+    })();
+    this.peerDrain = running;
+    try {
+      await running;
+    } finally {
+      if (this.peerDrain === running) this.peerDrain = undefined;
+    }
+  }
+
+  private async deliverPeerSignal(
+    delivery: AdapterPeerSignalDelivery,
+    body?: BinaryBody,
+  ): Promise<AdapterSendResult> {
+    const rendered = renderAdapterPeerSignal(delivery.context, delivery.frame).message;
+    if (delivery.frame.signal !== "proc.run.hil.requested") {
+      return await this.sendMessage(rendered, body);
+    }
+    const controls = await prepareTelegramApproval(
+      this.ctx.storage,
+      delivery.context,
+      delivery.frame.payload,
+    );
+    const result = await this.sendMessage(
+      rendered,
+      body,
+      controls ? { replyMarkup: controls.replyMarkup } : {},
+    );
+    if (result.ok && controls) {
+      await attachTelegramApprovalMessage(
+        this.ctx.storage,
+        controls.token,
+        result.messageId,
+      );
+    }
+    return result;
   }
 
   async handleWebhook(
@@ -875,8 +993,22 @@ export class TelegramAccount extends DurableObject<Env> {
       };
     }
 
-    const message = this.extractMessage(update);
     const updateId = this.normalizeUpdateId(update.update_id);
+    const callback = this.extractApprovalCallback(update);
+    if (callback) {
+      const deliveryId = `callback:${callback.callbackQueryId}`;
+      await this.inboundDeliveries.enqueueAndArm(
+        deliveryId,
+        callback,
+        Date.now() + INBOUND_WAKE_DELAY_MS,
+      );
+      if (this.canProcessInbound()) {
+        this.ctx.waitUntil(this.deliverPendingInbound(deliveryId));
+      }
+      return { ok: true };
+    }
+
+    const message = this.extractMessage(update);
     if (!message) {
       return { ok: true };
     }
@@ -954,6 +1086,37 @@ export class TelegramAccount extends DurableObject<Env> {
     return responseDisposition;
   }
 
+  private async forwardWebhookEvent(
+    event: TelegramMessage | TelegramApprovalCallback,
+    deliveryId: string,
+  ): Promise<{ terminal: boolean; error?: string }> {
+    if (!("callbackQueryId" in event)) {
+      return await this.forwardWebhookMessage(event, deliveryId);
+    }
+    await handleTelegramApprovalCallback(
+      this.ctx.storage,
+      this.env.GATEWAY,
+      this.getInstallationContext(),
+      event,
+      {
+        answerCallbackQuery: async (callbackQueryId, text) => {
+          await this.callTelegramApi<boolean>("answerCallbackQuery", {
+            callback_query_id: callbackQueryId,
+            text,
+          });
+        },
+        clearInlineKeyboard: async (surfaceId, providerMessageId) => {
+          await this.callTelegramApi<TelegramMessage>("editMessageReplyMarkup", {
+            chat_id: surfaceId,
+            message_id: Number.parseInt(providerMessageId, 10),
+            reply_markup: { inline_keyboard: [] },
+          });
+        },
+      },
+    );
+    return { terminal: true };
+  }
+
   private normalizeUpdateId(value: number | null | undefined): number | null {
     if (value === undefined || value === null || !Number.isSafeInteger(value) || value < 0) {
       return null;
@@ -972,7 +1135,7 @@ export class TelegramAccount extends DurableObject<Env> {
   ): Promise<"completed" | "pending"> {
     const attempt = await this.inboundDeliveries.attempt(
       deliveryId,
-      async (message) => this.forwardWebhookMessage(message, deliveryId),
+      async (event) => this.forwardWebhookEvent(event, deliveryId),
       async (response) => this.sendMessage(response),
     );
     if (attempt.state !== "pending") {
@@ -986,6 +1149,10 @@ export class TelegramAccount extends DurableObject<Env> {
 
   async alarm(): Promise<void> {
     await this.ensureLoaded();
+    await this.peerDeliveries.armIfPending(
+      Date.now() + PEER_DELIVERY_RETRY_DELAY_MS,
+    );
+    await this.drainPeerDeliveries();
     if (!this.canProcessInbound()) {
       return;
     }
@@ -1003,6 +1170,31 @@ export class TelegramAccount extends DurableObject<Env> {
 
   private extractMessage(update: TelegramUpdate): TelegramMessage | null {
     return update.message || update.channel_post || null;
+  }
+
+  private extractApprovalCallback(update: TelegramUpdate): TelegramApprovalCallback | null {
+    const query = update.callback_query;
+    const message = query?.message;
+    const data = query?.data;
+    if (
+      !query
+      || !message
+      || !data?.startsWith("gsvh:")
+      || message.chat.type !== "private"
+      || query.from.is_bot
+      || query.from.id !== message.chat.id
+      || !Number.isSafeInteger(message.message_id)
+      || message.message_id <= 0
+    ) {
+      return null;
+    }
+    return {
+      callbackQueryId: query.id,
+      actorId: `telegram:user:${query.from.id}`,
+      surfaceId: String(message.chat.id),
+      providerMessageId: String(message.message_id),
+      data,
+    };
   }
 
   private async toInboundMessage(message: TelegramMessage): Promise<TelegramInboundTransfer | null> {
@@ -1189,4 +1381,15 @@ export class TelegramAccount extends DurableObject<Env> {
       );
     }
   }
+}
+
+function telegramFingerprintMessage(
+  message: AdapterOutboundMessage,
+  options: TelegramTextMessageOptions,
+): AdapterOutboundMessage {
+  if (!options.replyMarkup) return message;
+  return {
+    ...message,
+    text: `${message.text}\n\n[gsv-telegram-controls:${JSON.stringify(options.replyMarkup)}]`,
+  };
 }

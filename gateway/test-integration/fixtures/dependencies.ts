@@ -9,10 +9,12 @@ import type {
   AdapterAccountStatus,
   AdapterActivity,
   AdapterConnectConfig,
+  AdapterGatewayFrame,
   AdapterGatewayInterface,
   AdapterGatewayRequestFrame,
   AdapterInstallationContext,
   AdapterOutboundMessage,
+  AdapterPeerDeliveryContext,
   AdapterSurface,
   AdapterWorkerInterface,
   AuthorizeInstallationOnboardingInput,
@@ -25,6 +27,7 @@ import type {
   ManagedInferenceRequest,
   ManagedInferenceResult,
 } from "@humansandmachines/gsv/protocol";
+import type { AdapterServiceDescriptor } from "@humansandmachines/gsv/services/adapters";
 import type {
   InferenceService as ManagedInferenceService,
   InferenceTarget as ManagedInferenceTargetContract,
@@ -42,6 +45,8 @@ import {
   type AdapterSendRpcArgs,
   type AdapterStatusRpcArgs,
 } from "../../../adapters/shared/src/rpc-compat";
+import { handleAdapterFrame } from "../../../adapters/shared/src/adapter-frame";
+import { renderAdapterPeerSignal } from "../../../adapters/shared/src/peer-render";
 
 type ImportRequest = {
   remoteUrl?: string;
@@ -309,7 +314,72 @@ export default class TestDependencies
   extends WorkerEntrypoint<Env>
   implements AdapterWorkerInterface
 {
-  readonly adapterId = "test";
+  readonly adapterId: string = "test";
+
+  async adapterDescribe(): Promise<AdapterServiceDescriptor> {
+    return {
+      version: 1,
+      id: this.adapterId,
+      displayName: `Integration ${this.adapterId}`,
+      capabilities: {
+        connect: true,
+        disconnect: true,
+        send: true,
+        status: true,
+        activity: true,
+        pairing: false,
+        deliveryFrames: true,
+        surfaces: ["dm", "group", "channel", "thread"],
+        media: {
+          inbound: ["image", "audio", "video", "document"],
+          outbound: ["image", "audio", "video", "document"],
+        },
+      },
+    };
+  }
+
+  async adapterFrame(
+    installation: AdapterInstallationContext,
+    context: AdapterPeerDeliveryContext,
+    frame: AdapterGatewayFrame,
+    body?: BinaryBody,
+  ): Promise<AdapterGatewayFrame | null> {
+    let requestedAdapter = this.adapterId;
+    if (
+      frame.type === "req"
+      && frame.call === "adapter.send"
+      && frame.args !== null
+      && typeof frame.args === "object"
+      && !Array.isArray(frame.args)
+      && typeof frame.args.adapter === "string"
+    ) {
+      requestedAdapter = frame.args.adapter.trim().toLowerCase();
+    }
+    return await handleAdapterFrame(
+      requestedAdapter,
+      installation,
+      context,
+      frame,
+      body,
+      {
+        send: async (message, requestBody) => await this.#adapterSendForInstallation(
+          installation,
+          context.accountId,
+          message,
+          requestBody,
+        ),
+        acceptSignal: async (signalContext, signalFrame, signalBody) => {
+          const rendered = renderAdapterPeerSignal(signalContext, signalFrame).message;
+          await this.#adapterSendForInstallation(
+            installation,
+            signalContext.accountId,
+            rendered,
+            signalBody,
+          );
+        },
+      },
+    );
+  }
 
   async resolveHostname(hostname: string): Promise<InstallationDirectoryResult> {
     const handle = hostname.endsWith(".gsv.space")
@@ -657,6 +727,14 @@ export default class TestDependencies
     const id = this.env.INTEGRATION_STATE.idFromName(SINGLETON_INSTALLATION_ID);
     return this.env.INTEGRATION_STATE.get(id);
   }
+}
+
+export class IntegrationTelegramAdapter extends TestDependencies {
+  override readonly adapterId = "telegram";
+}
+
+export class IntegrationDiscordAdapter extends TestDependencies {
+  override readonly adapterId = "discord";
 }
 
 class WorkersAiGatewayFixture extends RpcTarget {

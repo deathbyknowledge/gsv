@@ -6,11 +6,18 @@ export type * from "./syscalls/net";
 export type * from "./syscalls/codemode";
 export type * from "./syscalls/repositories";
 export type * from "./syscalls/proc";
+export { procHilRequestSchema, procHilResultSchema } from "./syscalls/proc";
 export type * from "./syscalls/scheduler";
 export type * from "./syscalls/responsibility";
 export { responsibilityRequiresAction } from "./syscalls/responsibility";
 export type * from "./syscalls/adapter";
-export { isAdapterConnectResult } from "./syscalls/adapter";
+export {
+  adapterDeliveryClaimResultSchema,
+  adapterDeliveryReportResultSchema,
+  adapterSendResultSchema,
+  adapterStateUpdateResultSchema,
+  isAdapterConnectResult,
+} from "./syscalls/adapter";
 export type * from "./syscalls/signal";
 export type * from "./syscalls/interaction-origin";
 export type * from "./syscalls/ai";

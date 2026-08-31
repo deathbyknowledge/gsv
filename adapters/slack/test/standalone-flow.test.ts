@@ -33,6 +33,11 @@ type AccountStub = {
 
 type GatewayCall = {
   installation?: { installationId?: string };
+  linkedContext?: {
+    accountId?: string;
+    actorId?: string;
+    interactionId?: string;
+  };
   call?: string;
   args?: {
     adapter?: string;
@@ -54,12 +59,17 @@ type GatewayCall = {
         body?: { offset?: number; length?: number };
       }>;
     };
+    pid?: string;
+    requestId?: string;
+    decision?: string;
+    remember?: boolean;
   };
   mediaBody?: number[];
 };
 
 type SlackApiCall = {
   method?: string;
+  result?: { ts?: string };
   body?: {
     channel?: string;
     text?: string;
@@ -75,14 +85,6 @@ type SlackApiCall = {
     authorization?: string;
   };
 };
-
-const APPROVAL_PROMPT = [
-  "I need your confirmation before I can continue.",
-  "",
-  "Run the requested shell command.",
-  "",
-  "Reply \"approve hil[standalone-request-1]\" to continue, \"approve always hil[standalone-request-1]\" to remember it for this conversation, or \"deny hil[standalone-request-1]\" to stop this action.",
-].join("\n");
 
 function fetcherBinding<T>(value: T): T & Fetcher {
   // SAFETY: these test bindings implement the fetch operation exercised by this flow.
@@ -220,16 +222,42 @@ describe("standalone Slack clean-instance flow", () => {
       }));
     });
 
-    const approvalMessage = await slack.sendMessage({
-      deliveryId: "standalone-slack-approval-prompt",
-      surface: { kind: "dm", id: "DALICE01" },
-      actorId: "UALICE01",
-      text: APPROVAL_PROMPT,
+    const channel = new SlackChannel(executionContextBinding({}), env);
+    await expect(channel.adapterFrame(
+      { installationId: "singleton" },
+      {
+        deliveryId: "run-approval:hil:standalone-request-1",
+        accountId: "default",
+        actorId: "UALICE01",
+        surface: { kind: "dm", id: "DALICE01" },
+        processId: "proc-approval",
+        runId: "run-approval",
+        processMode: "ship",
+      },
+      {
+        type: "sig",
+        signal: "proc.run.hil.requested",
+        payload: {
+          pid: "proc-approval",
+          requestId: "standalone-request-1",
+          runId: "run-approval",
+          callId: "call-approval",
+          toolName: "Shell",
+          syscall: "shell.exec",
+          target: "gsv",
+          args: { input: "date" },
+          createdAt: 1_700_000_200_000,
+        },
+      },
+    )).resolves.toBeNull();
+    let approvalPost: SlackApiCall | undefined;
+    await vi.waitFor(async () => {
+      approvalPost = (await slackApiCalls()).findLast((call) => (
+        call.method === "chat.postMessage"
+        && call.body?.blocks?.some((block) => block.type === "actions")
+      ));
+      expect(approvalPost).toBeDefined();
     });
-    expect(approvalMessage).toMatchObject({ ok: true, messageId: expect.any(String) });
-    const approvalPost = (await slackApiCalls()).findLast((call) => (
-      call.method === "chat.postMessage" && call.body?.text === APPROVAL_PROMPT
-    ));
     expect(approvalPost?.body?.blocks).toMatchObject([
       { type: "section" },
       {
@@ -247,17 +275,21 @@ describe("standalone Slack clean-instance flow", () => {
     )?.value;
     expect(approveAlwaysValue).toBeTruthy();
     expect(JSON.parse(approveAlwaysValue!)).toEqual({
-      v: 1,
-      token: "hil[standalone-request-1]",
+      v: 2,
+      token: expect.stringMatching(/^[A-Za-z0-9_-]{16}$/),
     });
+    const approvalMessageId = approvalPost?.result?.ts;
+    expect(approvalMessageId).toBeTruthy();
+    const approvalText = approvalPost?.body?.text;
+    expect(approvalText).toContain("Requested action: run \"date\".");
     const interaction = await fetcherBinding(env.SLACK_SOCKET).fetch(
       "https://socket.test/interaction",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sourceMessageId: approvalMessage.messageId,
-          sourceText: APPROVAL_PROMPT,
+          sourceMessageId: approvalMessageId,
+          sourceText: approvalText,
           value: approveAlwaysValue,
           actionTs: "1700000200.000100",
         }),
@@ -270,18 +302,23 @@ describe("standalone Slack clean-instance flow", () => {
       });
       expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
         installation: { installationId: "singleton" },
-        args: expect.objectContaining({
-          deliveryId: `interaction:${approvalMessage.messageId}:1700000200.000100`,
-          message: expect.objectContaining({
-            text: "approve always hil[standalone-request-1]",
-          }),
+        linkedContext: expect.objectContaining({
+          accountId: "default",
+          actorId: "UALICE01",
         }),
+        call: "proc.hil",
+        args: {
+          pid: "proc-approval",
+          requestId: "standalone-request-1",
+          decision: "approve",
+          remember: true,
+        },
       }));
       expect(await slackApiCalls()).toContainEqual(expect.objectContaining({
         method: "chat.update",
         body: expect.objectContaining({
           channel: "DALICE01",
-          ts: approvalMessage.messageId,
+          ts: approvalMessageId,
           text: expect.stringContaining("Decision submitted: Always approve."),
         }),
       }));

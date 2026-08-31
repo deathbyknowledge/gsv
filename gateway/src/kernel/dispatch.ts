@@ -90,6 +90,8 @@ import {
 import {
   handleAdapterConnect,
   handleAdapterDisconnect,
+  handleAdapterDeliveryClaim,
+  handleAdapterDeliveryReport,
   handleAdapterInbound,
   handleAdapterList,
   handleAdapterPairConfirm,
@@ -679,6 +681,12 @@ async function dispatchKernel(
         break;
       case "adapter.state.update":
         data = handleAdapterStateUpdate(frame.args, ctx);
+        break;
+      case "adapter.delivery.claim":
+        data = await handleAdapterDeliveryClaim(frame.args, ctx);
+        break;
+      case "adapter.delivery.report":
+        data = await handleAdapterDeliveryReport(frame.args, ctx);
         break;
       case "adapter.send":
         data = await handleAdapterSend(frame.args, ctx, frame.body);

@@ -11,6 +11,8 @@ export type {
   AdapterInstallationContext,
   AdapterMedia,
   AdapterOutboundMessage,
+  AdapterPeerDeliveryContext,
+  AdapterPeerSignalFrame,
   AdapterPairingActivateInput,
   AdapterPairingCandidate,
   AdapterPairingDisconnectInput,

@@ -1,6 +1,7 @@
 import { lexer, type MarkedToken, type Token, type Tokens } from "marked";
 import { z } from "zod";
 import type { callManagedTelegramApi } from "./managed-telegram-api";
+import type { TelegramInlineKeyboardMarkup } from "./telegram-approval";
 
 type TelegramApiPayload = Parameters<typeof callManagedTelegramApi>[2];
 
@@ -16,6 +17,10 @@ const telegramFormattingErrorSchema = z.object({
 
 export type TelegramReplyParameters = {
   message_id: number;
+};
+
+export type TelegramTextMessageOptions = {
+  replyMarkup?: TelegramInlineKeyboardMarkup;
 };
 
 type CaptionPayloadBuilder = (
@@ -41,10 +46,14 @@ export async function sendTelegramMarkdownMessage<T>(
   chatId: string,
   markdown: string,
   replyToMessageId?: number,
+  options: TelegramTextMessageOptions = {},
 ): Promise<T> {
   const replyParameters = buildTelegramReplyParameters(replyToMessageId);
   const replyPayload = replyParameters
     ? { reply_parameters: replyParameters }
+    : {};
+  const controlPayload = options.replyMarkup
+    ? { reply_markup: options.replyMarkup }
     : {};
 
   try {
@@ -52,6 +61,7 @@ export async function sendTelegramMarkdownMessage<T>(
       chat_id: chatId,
       rich_message: { markdown },
       ...replyPayload,
+      ...controlPayload,
     });
   } catch (error) {
     if (!(error instanceof Error) || !isTelegramFormattingError(error)) {
@@ -65,6 +75,7 @@ export async function sendTelegramMarkdownMessage<T>(
       text: markdownToTelegramHtml(markdown),
       parse_mode: "HTML",
       ...replyPayload,
+      ...controlPayload,
     });
   } catch (error) {
     if (!(error instanceof Error) || !isTelegramFormattingError(error)) {
@@ -76,6 +87,7 @@ export async function sendTelegramMarkdownMessage<T>(
     chat_id: chatId,
     text: markdown,
     ...replyPayload,
+    ...controlPayload,
   });
 }
 

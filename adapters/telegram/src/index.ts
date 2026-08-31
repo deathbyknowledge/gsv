@@ -1,4 +1,5 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
+import { handleAdapterFrame } from "../../shared/src/adapter-frame";
 import { cancelBinaryBody } from "../../shared/src/media-body";
 import {
   adapterAccountDurableObjectName,
@@ -25,11 +26,13 @@ import type {
   AdapterDisconnectResult,
   AdapterInstallationContext,
   AdapterOutboundMessage,
+  AdapterPeerDeliveryContext,
   AdapterSendResult,
   AdapterService,
   AdapterServiceDescriptor,
   AdapterSurface,
   BinaryBody,
+  GatewayFrame,
 } from "./types";
 import { parseTelegramWebhookPath } from "./webhook-route";
 import {
@@ -83,6 +86,7 @@ export class TelegramChannel
         status: true,
         activity: true,
         pairing: false,
+        deliveryFrames: true,
         surfaces: ["dm", "group", "channel", "thread"],
         media: {
           inbound: ["image", "audio", "video", "document"],
@@ -90,6 +94,27 @@ export class TelegramChannel
         },
       },
     };
+  }
+
+  async adapterFrame(
+    installation: AdapterInstallationContext,
+    context: AdapterPeerDeliveryContext,
+    frame: GatewayFrame,
+    body?: BinaryBody,
+  ): Promise<GatewayFrame | null> {
+    const parsed = parseAdapterInstallationContext(installation);
+    const { account } = this.getAccountDO(parsed, context.accountId);
+    return await handleAdapterFrame(this.adapterId, parsed, context, frame, body, {
+      send: async (message, requestBody) => await this.#adapterSendForInstallation(
+        parsed,
+        context.accountId,
+        message,
+        requestBody,
+      ),
+      acceptSignal: async (signalContext, signalFrame, signalBody) => {
+        await account.acceptPeerSignal(parsed, signalContext, signalFrame, signalBody);
+      },
+    });
   }
 
   async adapterConnect(

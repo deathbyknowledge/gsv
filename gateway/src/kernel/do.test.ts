@@ -166,6 +166,141 @@ describe("Kernel service peer identity", () => {
     });
     expect(kernel.dispatchPeerRequest).not.toHaveBeenCalled();
   });
+
+  it("derives a one-call human peer for an adapter interaction", async () => {
+    const link = {
+      adapter: "telegram",
+      accountId: "managed",
+      actorId: "telegram:user:42",
+      uid: 1000,
+      metadata: {
+        managed: true,
+        surfaceKind: "dm",
+        surfaceId: "chat-42",
+        routeScope: "surface",
+        routeGeneration: "generation-1",
+      },
+    };
+    // SAFETY: this fixture isolates the linked adapter admission boundary.
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.installationId = TEST_INSTALLATION_ID;
+    kernel.managedWorkGate = vi.fn(async () => ({ allowed: true }));
+    kernel.adapters = {
+      identityLinks: { get: vi.fn(() => link) },
+      surfaceRoutes: { get: vi.fn(() => null) },
+    };
+    kernel.auth = {
+      getPasswdByUid: vi.fn(() => ({
+        uid: 1000,
+        gid: 1000,
+        username: "alice",
+        home: "/home/alice",
+      })),
+      resolveGids: vi.fn(() => [1000]),
+    };
+    kernel.caps = { resolve: vi.fn(() => ["proc.hil", "proc.send"]) };
+    let dispatchContext: any;
+    kernel.buildKernelContext = vi.fn((options) => {
+      dispatchContext = { ...options, adapters: kernel.adapters };
+      return dispatchContext;
+    });
+    kernel.dispatchPeerRequest = vi.fn(async (frame) => ({
+      type: "res",
+      id: frame.id,
+      ok: true,
+      data: { ok: true, resumed: true },
+    }));
+    const frame = {
+      type: "req" as const,
+      id: "approval-interaction",
+      call: "proc.hil" as const,
+      args: {
+        pid: "proc-1",
+        requestId: "request-1",
+        decision: "approve" as const,
+        remember: false,
+      },
+    };
+
+    await expect(kernel.linkedAdapterPeerFrame(
+      {
+        id: "telegram",
+        calls: [
+          "adapter.inbound",
+          "adapter.state.update",
+          "adapter.delivery.claim",
+          "adapter.delivery.report",
+        ],
+      },
+      {
+        accountId: "managed",
+        actorId: "telegram:user:42",
+        surface: { kind: "dm", id: "chat-42" },
+        routeGeneration: "generation-1",
+        interactionId: "callback-1",
+      },
+      frame,
+    )).resolves.toMatchObject({ type: "res", id: frame.id, ok: true });
+
+    expect(dispatchContext.callerOwnerUid).toBe(1000);
+    expect(dispatchContext.peer.peer.principal.kind).toBe("human");
+    expect(dispatchContext.peer.peer.grant.calls).toEqual(["proc.hil"]);
+    expect(dispatchContext.peer.provenance).toMatchObject({
+      kind: "adapter-link",
+      serviceId: "telegram",
+      accountId: "managed",
+      actorId: "telegram:user:42",
+    });
+    expect(kernel.dispatchPeerRequest).toHaveBeenCalledWith(
+      frame,
+      { type: "kernel", id: "callback-1" },
+      dispatchContext,
+      { awaitRouted: true },
+    );
+  });
+
+  it("rejects a linked adapter interaction after its route generation changes", async () => {
+    // SAFETY: this fixture isolates the generation fence before user dispatch.
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.managedWorkGate = vi.fn(async () => ({ allowed: true }));
+    kernel.adapters = {
+      identityLinks: {
+        get: vi.fn(() => ({
+          uid: 1000,
+          metadata: {
+            managed: true,
+            surfaceKind: "dm",
+            surfaceId: "chat-42",
+            routeGeneration: "generation-2",
+          },
+        })),
+      },
+    };
+    kernel.dispatchPeerRequest = vi.fn();
+
+    await expect(kernel.linkedAdapterPeerFrame(
+      { id: "telegram", calls: ["adapter.inbound"] },
+      {
+        accountId: "managed",
+        actorId: "telegram:user:42",
+        surface: { kind: "dm", id: "chat-42" },
+        routeGeneration: "generation-1",
+        interactionId: "callback-stale",
+      },
+      {
+        type: "req",
+        id: "approval-stale",
+        call: "proc.hil",
+        args: { requestId: "request-1", decision: "approve" },
+      },
+    )).resolves.toMatchObject({
+      type: "res",
+      id: "approval-stale",
+      ok: false,
+      error: { code: 409 },
+    });
+    expect(kernel.dispatchPeerRequest).not.toHaveBeenCalled();
+  });
 });
 
 describe("Kernel managed adapter unlink", () => {
@@ -1337,7 +1472,7 @@ describe("Kernel canonical message commits", () => {
       {
         type: "sig",
         signal: "message.committed",
-        payload: { message },
+        payload: { message, directed: true },
       },
       1,
     );
@@ -1516,10 +1651,147 @@ describe("Kernel process signal routing", () => {
       callId: `call-${requestId}`,
       toolName: "Shell",
       syscall: "shell.exec",
+      target: "gsv",
       args: { input: "date" },
       createdAt: 1,
     };
   }
+
+  it("hands an exact HIL signal to the adapter and stops Kernel retries after acceptance", async () => {
+    const adapterFrame = vi.fn(async () => null);
+    const route = {
+      kind: "adapter",
+      runId: "run-frame",
+      processId: "proc-1",
+      uid: 1000,
+      destination: {
+        kind: "adapter",
+        adapter: "telegram",
+        accountId: "managed",
+        actorId: "telegram:user:42",
+        surface: { kind: "dm", id: "chat-42" },
+      },
+      replyToId: "provider-message-1",
+      routeGeneration: "generation-1",
+    };
+    const kernel = buildKernel(route);
+    kernel.installationEnv = {
+      CHANNEL_TELEGRAM: {
+        adapterDescribe: vi.fn(async () => ({
+          version: 1,
+          id: "telegram",
+          displayName: "Telegram",
+          capabilities: {
+            connect: true,
+            disconnect: true,
+            send: true,
+            status: true,
+            activity: true,
+            pairing: false,
+            deliveryFrames: true,
+            surfaces: ["dm"],
+            media: { inbound: [], outbound: [] },
+          },
+        })),
+        adapterFrame,
+      },
+    };
+    kernel.procs.get.mockReturnValue({
+      processId: "proc-1",
+      ownerUid: 1000,
+      isPersonalController: false,
+    });
+    kernel.buildProcessContext = vi.fn(() => ({
+      adapters: {
+        identityLinks: {
+          get: vi.fn(() => ({
+            uid: 1000,
+            metadata: { surfaceKind: "dm", surfaceId: "chat-42" },
+          })),
+        },
+        surfaceRoutes: { get: vi.fn(() => null) },
+        privateDestinations: { clearIfMatches: vi.fn() },
+      },
+    }));
+    const payload = hilPayload(route.runId, "request-frame");
+
+    await expect(kernel.deliverAdapterPeerSignal(route, {
+      type: "sig",
+      signal: "proc.run.hil.requested",
+      payload,
+    })).resolves.toEqual({ state: "accepted" });
+
+    expect(adapterFrame).toHaveBeenCalledWith(
+      { installationId: TEST_INSTALLATION_ID },
+      {
+        deliveryId: "run-frame:hil:request-frame",
+        accountId: "managed",
+        actorId: "telegram:user:42",
+        surface: { kind: "dm", id: "chat-42" },
+        replyToId: "provider-message-1",
+        routeGeneration: "generation-1",
+        processId: "proc-1",
+        runId: "run-frame",
+        processMode: "work",
+      },
+      {
+        type: "sig",
+        signal: "proc.run.hil.requested",
+        payload,
+      },
+      undefined,
+    );
+  });
+
+  it("claims only the current route and lets a successful final report retire it", async () => {
+    const route = {
+      kind: "adapter",
+      runId: "run-claim",
+      processId: "proc-1",
+      uid: 1000,
+      destination: {
+        kind: "adapter",
+        adapter: "slack",
+        accountId: "workspace-1",
+        actorId: "UALICE01",
+        surface: { kind: "dm", id: "DALICE01" },
+      },
+      routeGeneration: "generation-1",
+    };
+    const kernel = buildKernel(route);
+    kernel.isAdapterHilRequestPending = vi.fn(async () => true);
+    const reference = {
+      adapter: "slack",
+      accountId: "workspace-1",
+      deliveryId: "message-1",
+      actorId: "UALICE01",
+      surface: { kind: "dm", id: "DALICE01" },
+      routeGeneration: "generation-1",
+      processId: "proc-1",
+      runId: "run-claim",
+      kind: "message" as const,
+    };
+
+    await expect(kernel.claimAdapterDelivery(reference)).resolves.toEqual({
+      ok: true,
+      deliver: true,
+    });
+    await expect(kernel.claimAdapterDelivery({
+      ...reference,
+      routeGeneration: "generation-stale",
+    })).resolves.toEqual({
+      ok: true,
+      deliver: false,
+      reason: "route_changed",
+    });
+    await expect(kernel.reportAdapterDelivery({
+      ...reference,
+      state: "sent",
+      attempts: 1,
+      messageId: "provider-1",
+    })).resolves.toEqual({ ok: true });
+    expect(kernel.runRoutes.delete).toHaveBeenCalledWith("run-claim");
+  });
 
   function historyResponse(pendingHil: ReturnType<typeof hilPayload> | null) {
     return {

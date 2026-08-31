@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  adapterPeerSignalFrameSchema,
   isAdapterAccountStatus,
   isAdapterConnectChallenge,
   isAdapterInboundResult,
@@ -40,11 +41,58 @@ test("validates an open-ended adapter service descriptor", () => {
   assert.equal(adapterServiceDescriptorSchema.safeParse(descriptor).success, true);
   assert.equal(adapterServiceDescriptorSchema.safeParse({
     ...descriptor,
-    capabilities: { ...descriptor.capabilities, targets: true },
+    capabilities: { ...descriptor.capabilities, deliveryFrames: true, targets: true },
   }).success, true);
   assert.equal(adapterServiceDescriptorSchema.safeParse({
     ...descriptor,
     id: "Matrix Plugin",
+  }).success, false);
+});
+
+test("validates exact adapter delivery signals", () => {
+  const hil = {
+    type: "sig",
+    signal: "proc.run.hil.requested",
+    payload: {
+      pid: "proc-1",
+      requestId: "hil-1",
+      runId: "run-1",
+      callId: "call-1",
+      toolName: "Shell",
+      syscall: "shell.exec",
+      target: "gsv",
+      args: { input: "date" },
+      createdAt: 1,
+    },
+  };
+  assert.equal(adapterPeerSignalFrameSchema.safeParse(hil).success, true);
+  assert.equal(adapterPeerSignalFrameSchema.safeParse({
+    ...hil,
+    payload: { ...hil.payload, requestId: undefined },
+  }).success, false);
+
+  const committed = {
+    type: "sig",
+    signal: "message.committed",
+    payload: {
+      directed: true,
+      message: {
+        id: "message-1",
+        conversationId: "conversation-1",
+        sequence: 1,
+        author: { kind: "process", pid: "proc-1", uid: 1000 },
+        text: "Done",
+        origin: { kind: "process", pid: "proc-1", runId: "run-1" },
+        processId: "proc-1",
+        runId: "run-1",
+        createdAt: 1,
+      },
+    },
+  };
+  assert.equal(adapterPeerSignalFrameSchema.safeParse(committed).success, true);
+  assert.equal(adapterPeerSignalFrameSchema.safeParse({
+    ...committed,
+    payload: { ...committed.payload, directed: false },
   }).success, false);
 });
 

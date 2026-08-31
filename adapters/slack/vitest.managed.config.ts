@@ -23,6 +23,17 @@ export default defineConfig({
                   if (frame.call === "adapter.state.update") {
                     return { type: "res", id: frame.id, ok: true, data: { ok: true } };
                   }
+                  if (frame.call === "adapter.delivery.claim") {
+                    return {
+                      type: "res",
+                      id: frame.id,
+                      ok: true,
+                      data: { ok: true, deliver: true },
+                    };
+                  }
+                  if (frame.call === "adapter.delivery.report") {
+                    return { type: "res", id: frame.id, ok: true, data: { ok: true } };
+                  }
                   return {
                     type: "res",
                     id: frame.id,
@@ -34,6 +45,22 @@ export default defineConfig({
                         text: "Reply for " + frame.args.message.actor.id,
                         replyToId: frame.args.message.messageId,
                       },
+                    },
+                  };
+                }
+                async linkedPeerFrame(installation, context, frame) {
+                  calls.push({ installation, linkedContext: context, call: frame.call, args: frame.args });
+                  return {
+                    type: "res",
+                    id: frame.id,
+                    ok: true,
+                    data: {
+                      ok: true,
+                      pid: frame.args.pid,
+                      requestId: frame.args.requestId,
+                      decision: frame.args.decision,
+                      resumed: true,
+                      remembered: frame.args.remember === true,
                     },
                   };
                 }

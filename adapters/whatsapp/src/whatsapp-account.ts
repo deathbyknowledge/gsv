@@ -10,6 +10,13 @@ import {
   adapterInboundResultDisposition,
   InboundDeliveryLedger,
 } from "../../shared/src/inbound-delivery";
+import {
+  ADAPTER_PEER_DELIVERY_PENDING_KEY,
+  AdapterPeerDeliveryQueue,
+  gatewayPeerDeliveryHandlers,
+  type AdapterPeerSignalDelivery,
+} from "../../shared/src/peer-delivery";
+import { renderAdapterPeerSignal } from "../../shared/src/peer-render";
 import { callAdapterGateway } from "../../shared/src/gateway-rpc";
 import type { AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
@@ -34,6 +41,8 @@ import type {
   AdapterInstallationContext,
   AdapterMedia,
   AdapterOutboundMessage,
+  AdapterPeerDeliveryContext,
+  AdapterPeerSignalFrame,
   AdapterSendResult,
   AdapterSurface,
   BinaryBody,
@@ -157,12 +166,14 @@ export class WhatsAppAccount extends DurableObject<Env> {
   private readonly sessionMutations = new SocketOperationQueue();
   private readonly deliveries: DeliveryLedger;
   private readonly inboundDeliveries: InboundDeliveryLedger<Uint8Array>;
+  private readonly peerDeliveries: AdapterPeerDeliveryQueue;
   private readonly identities: WhatsAppIdentityStore;
   private readonly recentMessages: RecentWhatsAppMessageStore;
   private readonly groupMetadata = new GroupMetadataCache();
   private state: WhatsAppAccountState = defaultWhatsAppAccountState();
   private qrCode: string | null = null;
   private readonly pairingWaiters = new Set<PairingWaiter>();
+  private peerDrain?: Promise<void>;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -170,6 +181,10 @@ export class WhatsAppAccount extends DurableObject<Env> {
     this.inboundDeliveries = new InboundDeliveryLedger(
       this.ctx.storage,
       INBOUND_DELIVERY_PREFIX,
+    );
+    this.peerDeliveries = new AdapterPeerDeliveryQueue(
+      this.ctx.storage,
+      INBOUND_RETRY_DELAY_MS,
     );
     this.identities = new WhatsAppIdentityStore(this.ctx.storage);
     this.recentMessages = new RecentWhatsAppMessageStore(this.ctx.storage);
@@ -468,8 +483,64 @@ export class WhatsAppAccount extends DurableObject<Env> {
     }
   }
 
+  async acceptPeerSignal(
+    installation: AdapterInstallationContext,
+    context: AdapterPeerDeliveryContext,
+    frame: AdapterPeerSignalFrame,
+    body?: BinaryBody,
+  ): Promise<void> {
+    try {
+      await this.ensureAccount(context.accountId);
+      await this.peerDeliveries.enqueueAndArm(
+        { installation, context, frame },
+        body,
+        Date.now() + 25,
+      );
+    } catch (error) {
+      await cancelBinaryBody(body, error);
+      throw error;
+    }
+    this.ctx.waitUntil(this.drainPeerDeliveries());
+  }
+
+  private async drainPeerDeliveries(): Promise<void> {
+    if (this.peerDrain) return await this.peerDrain;
+    const running = (async () => {
+      for (const deliveryId of await this.peerDeliveries.pendingIds()) {
+        const result = await this.peerDeliveries.attempt(
+          deliveryId,
+          gatewayPeerDeliveryHandlers({
+            adapter: "whatsapp",
+            gateway: this.gatewayBinding(),
+            deliver: async (delivery, body) => await this.deliverPeerSignal(delivery, body),
+          }),
+        );
+        if (result === "pending") break;
+      }
+    })();
+    this.peerDrain = running;
+    try {
+      await running;
+    } finally {
+      if (this.peerDrain === running) this.peerDrain = undefined;
+    }
+  }
+
+  private async deliverPeerSignal(
+    delivery: AdapterPeerSignalDelivery,
+    body?: BinaryBody,
+  ): Promise<AdapterSendResult> {
+    return await this.sendAccountMessage(
+      delivery.context.accountId,
+      renderAdapterPeerSignal(delivery.context, delivery.frame).message,
+      body,
+    );
+  }
+
   async alarm(): Promise<void> {
     const now = Date.now();
+    await this.peerDeliveries.armIfPending(now + INBOUND_RETRY_DELAY_MS);
+    await this.drainPeerDeliveries();
     await this.inboundDeliveries.armIfPending(now + INBOUND_RETRY_DELAY_MS);
     try {
       if (pairingSessionExpired(
@@ -639,11 +710,13 @@ export class WhatsAppAccount extends DurableObject<Env> {
         prefix: INBOUND_DELIVERY_PREFIX,
         limit: 1,
       });
+      const pendingPeerDelivery = await txn.get<boolean>(ADAPTER_PEER_DELIVERY_PENDING_KEY);
+      const hasPendingDelivery = pendingInbound.size > 0 || pendingPeerDelivery === true;
       if (currentAlarm === supersededDeadline) {
         if (canReplaceSupersededLifecycleAlarm(
           currentAlarm,
           supersededDeadline,
-          pendingInbound.size > 0,
+          hasPendingDelivery,
         )) {
           if (deadline === undefined) {
             await txn.deleteAlarm();
@@ -655,7 +728,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       }
       const nextDeadline = nextAccountAlarmDeadline(
         deadline,
-        pendingInbound.size > 0,
+        hasPendingDelivery,
         now,
       );
       if (nextDeadline === undefined) return;
@@ -674,9 +747,10 @@ export class WhatsAppAccount extends DurableObject<Env> {
         prefix: INBOUND_DELIVERY_PREFIX,
         limit: 1,
       });
+      const pendingPeerDelivery = await txn.get<boolean>(ADAPTER_PEER_DELIVERY_PENDING_KEY);
       const nextDeadline = nextAccountAlarmDeadline(
         lifecycleDeadline,
-        pendingInbound.size > 0,
+        pendingInbound.size > 0 || pendingPeerDelivery === true,
         now,
       );
       if (
@@ -699,7 +773,9 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
   private async replaceLifecycleAlarmWithInboundRetry(): Promise<void> {
     await this.ctx.storage.deleteAlarm();
-    await this.inboundDeliveries.armIfPending(Date.now() + INBOUND_RETRY_DELAY_MS);
+    const deadline = Date.now() + INBOUND_RETRY_DELAY_MS;
+    await this.inboundDeliveries.armIfPending(deadline);
+    await this.peerDeliveries.armIfPending(deadline);
   }
 
   private async startSocket(source: string): Promise<void> {

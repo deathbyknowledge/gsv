@@ -3,6 +3,7 @@ import { DeliveryLedger } from "../../shared/src/delivery-ledger";
 import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
 import type { AdapterOutboundMessage } from "./types";
 import { deliverSlackMessage, renderSlackActorAttribution } from "./slack-delivery";
+import { buildSlackApprovalBlocks } from "./slack-interactions";
 
 type StoredValue = object | string | number | null | undefined;
 
@@ -117,14 +118,10 @@ describe("Slack delivery", () => {
     )).resolves.toMatchObject({ ok: true });
   });
 
-  it("adds approval buttons to exact private HIL prompts", async () => {
-    const prompt = [
-      "I need your confirmation before I can continue.",
-      "",
-      "Run the requested shell command.",
-      "",
-      "Reply \"approve hil[request-1]\" to continue, \"approve always hil[request-1]\" to remember it for this conversation, or \"deny hil[request-1]\" to stop this action.",
-    ].join("\n");
+  it("sends only explicitly rendered approval blocks", async () => {
+    const prompt = "Run the requested shell command.";
+    const blocks = buildSlackApprovalBlocks(prompt, "AbCdEfGhIjKlMnOp");
+    if (!blocks) throw new Error("expected approval blocks");
     const provider = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const payload = JSON.parse(String(init?.body));
       expect(payload.text).toBe(prompt);
@@ -151,7 +148,7 @@ describe("Slack delivery", () => {
         text: prompt,
       },
       undefined,
-      { slackFetch: provider },
+      { slackFetch: provider, blocks },
     )).resolves.toEqual({ ok: true, messageId: "1700000001.000202" });
   });
 

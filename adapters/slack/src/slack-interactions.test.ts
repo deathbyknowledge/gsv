@@ -6,13 +6,8 @@ import {
 } from "./slack-interactions";
 
 const BOT = "UGSVBOT1";
-const PROMPT = [
-  "I need your confirmation before I can continue.",
-  "",
-  "Run the requested shell command.",
-  "",
-  "Reply \"approve hil[request-1]\" to continue, \"approve always hil[request-1]\" to remember it for this conversation, or \"deny hil[request-1]\" to stop this action.",
-].join("\n");
+const PROMPT = "Run the requested shell command.";
+const TOKEN = "AbCdEfGhIjKlMnOp";
 
 function interaction(value: string, overrides: {
   channelId?: string;
@@ -44,8 +39,8 @@ function interaction(value: string, overrides: {
 }
 
 describe("Slack approval interactions", () => {
-  it("renders exact HIL prompts as buttons bound to the managed route", () => {
-    const blocks = buildSlackApprovalBlocks(PROMPT, "route-generation-1");
+  it("renders a structured HIL request as buttons bound to an opaque adapter token", () => {
+    const blocks = buildSlackApprovalBlocks(PROMPT, TOKEN);
     expect(blocks).toHaveLength(2);
     expect(blocks?.[0]).toMatchObject({
       type: "section",
@@ -63,45 +58,36 @@ describe("Slack approval interactions", () => {
     if (actionBlock?.type !== "actions") throw new Error("Expected action buttons");
     for (const button of actionBlock.elements) {
       expect(JSON.parse(button.value)).toEqual({
-        v: 1,
-        token: "hil[request-1]",
-        routeGeneration: "route-generation-1",
+        v: 2,
+        token: TOKEN,
       });
     }
-    expect(buildSlackApprovalBlocks("ordinary response")).toBeUndefined();
+    expect(buildSlackApprovalBlocks("ordinary response", "bad-token")).toBeUndefined();
   });
 
-  it("normalizes a bot-authored DM button into the existing HIL command", () => {
+  it("normalizes a bot-authored DM button as a structured callback", () => {
     const value = JSON.stringify({
-      v: 1,
-      token: "hil[request-1]",
-      routeGeneration: "route-generation-1",
+      v: 2,
+      token: TOKEN,
     });
     expect(normalizeSlackInteraction(interaction(value), BOT)).toEqual({
       kind: "accepted",
-      inbound: {
+      callback: {
         deliveryId: "interaction:1700000000.000100:1700000001.000200",
-        eventId: "interaction:1700000001.000200",
+        interactionId: "interaction:1700000001.000200",
         teamId: "TWORK123",
-        messageId: "1700000001.000200",
         actorId: "UALICE01",
         surface: { kind: "dm", id: "DALICE01" },
-        text: "approve always hil[request-1]",
-        replyToId: "1700000000.000100",
-        timestamp: 1_700_000_001_000,
-        wasMentioned: true,
-        interaction: {
-          sourceMessageId: "1700000000.000100",
-          sourceText: PROMPT,
-          action: "approve_always",
-          expectedRouteGeneration: "route-generation-1",
-        },
+        sourceMessageId: "1700000000.000100",
+        sourceText: PROMPT,
+        action: "approve_always",
+        token: TOKEN,
       },
     });
   });
 
   it("rejects buttons outside a bot-authored direct message", () => {
-    const value = JSON.stringify({ v: 1, token: "hil[request-1]" });
+    const value = JSON.stringify({ v: 2, token: TOKEN });
     expect(normalizeSlackInteraction(interaction(value, {
       channelId: "CGENERAL1",
     }), BOT)).toEqual({ kind: "invalid" });
@@ -109,8 +95,8 @@ describe("Slack approval interactions", () => {
       messageUser: "UOTHER01",
     }), BOT)).toEqual({ kind: "invalid" });
     expect(normalizeSlackInteraction(interaction(JSON.stringify({
-      v: 1,
-      token: "hil[another-request]",
+      v: 2,
+      token: "not-an-opaque-token",
     })), BOT)).toEqual({ kind: "invalid" });
   });
 

@@ -3,6 +3,7 @@ import { adapterGatewayFrameSchema } from "../../../packages/gsv/src/protocol/ad
 
 import {
   callAdapterGateway,
+  callLinkedAdapterGateway,
   type AdapterGatewayBinding,
 } from "../src/gateway-rpc";
 import type {
@@ -31,6 +32,18 @@ const STATE_UPDATE_ARGS = {
     authenticated: true,
   },
 } as const;
+const CONTEXT = {
+  accountId: "account-1",
+  actorId: "actor-1",
+  surface: { kind: "dm" as const, id: "surface-1" },
+  routeGeneration: "route-1",
+  interactionId: "interaction-1",
+};
+const ARGS = {
+  pid: "proc-1",
+  requestId: "request-1",
+  decision: "approve" as const,
+};
 
 type TrackedBody = { body: BinaryBody; cancelled: () => Error | string | undefined };
 
@@ -69,6 +82,15 @@ function binding(
 // SAFETY: This test fixture deliberately supplies the contract shape under test.
     serviceFrame: serviceFrame as AdapterGatewayBinding["serviceFrame"],
   };
+}
+
+function gatewayWithResponse(
+  response: (frame: { id: string }) => unknown,
+): AdapterGatewayBinding {
+  return {
+    serviceFrame: vi.fn(),
+    linkedPeerFrame: vi.fn(async (_installation, _context, frame) => response(frame)),
+  } as unknown as AdapterGatewayBinding;
 }
 
 describe("callAdapterGateway", () => {
@@ -304,5 +326,41 @@ describe("callAdapterGateway", () => {
       "adapter.state.update",
       STATE_UPDATE_ARGS,
     )).rejects.toThrow("Gateway error on adapter.state.update");
+  });
+});
+
+describe("callLinkedAdapterGateway", () => {
+  it("returns a terminal domain rejection for a stale linked route", async () => {
+    const gateway = gatewayWithResponse((frame) => ({
+      type: "res",
+      id: frame.id,
+      ok: false,
+      error: { code: 409, message: "route changed" },
+    }));
+
+    await expect(callLinkedAdapterGateway(
+      gateway,
+      INSTALLATION,
+      CONTEXT,
+      "proc.hil",
+      ARGS,
+    )).resolves.toEqual({ ok: false, error: "route changed" });
+  });
+
+  it("retries a transient linked-peer failure", async () => {
+    const gateway = gatewayWithResponse((frame) => ({
+      type: "res",
+      id: frame.id,
+      ok: false,
+      error: { code: 503, message: "unavailable" },
+    }));
+
+    await expect(callLinkedAdapterGateway(
+      gateway,
+      INSTALLATION,
+      CONTEXT,
+      "proc.hil",
+      ARGS,
+    )).rejects.toThrow("unavailable");
   });
 });

@@ -11,6 +11,7 @@ export type {
   AdapterConnectConfig,
   AdapterInstallationContext,
   AdapterGatewayFrame as GatewayFrame,
+  AdapterGatewaySignalFrame as GatewaySignalFrame,
   AdapterGatewayRequestFrame as GatewayRequestFrame,
   AdapterGatewayResponseFrame as GatewayResponseFrame,
   AdapterInboundMessage,
@@ -18,6 +19,9 @@ export type {
   AdapterMedia,
   AdapterMediaBody,
   AdapterOutboundMessage,
+  AdapterPeerDeliveryContext,
+  AdapterPeerSignalFrame,
+  AdapterLinkedPeerContext,
   AdapterPairingActivateInput,
   AdapterPairingCandidate,
   AdapterPairingDisconnectInput,
@@ -37,3 +41,4 @@ export type {
   AdapterWorkerSendResult as AdapterSendResult,
 } from "../../../packages/gsv/src/protocol/adapters.js";
 export type { BinaryBody } from "../../../packages/gsv/src/protocol/body.js";
+export type { ProcHilRequest } from "../../../packages/gsv/src/protocol/syscalls/proc.js";

@@ -20,6 +20,7 @@ import type {
   AdapterTargetResponseFrame,
 } from "../../../packages/gsv/src/services/adapters.js";
 import { adapterTargetIdentitySchema } from "../../../packages/gsv/src/services/adapters.js";
+import { handleAdapterFrame } from "../../shared/src/adapter-frame";
 import { cancelBinaryBody } from "../../shared/src/media-body";
 import {
   LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
@@ -28,8 +29,10 @@ import {
 import type {
   AdapterAccountStatus,
   AdapterOutboundMessage,
+  AdapterPeerDeliveryContext,
   AdapterSendResult,
   BinaryBody,
+  GatewayFrame,
 } from "./types";
 import type { ManagedSlackPeerEnv } from "./managed-peer";
 import {
@@ -62,6 +65,12 @@ type ManagedSlackPeerStub = {
     message: AdapterOutboundMessage,
     body?: BinaryBody,
   ): Promise<AdapterSendResult>;
+  acceptPeerSignal(
+    installation: AdapterInstallationContext,
+    context: AdapterPeerDeliveryContext,
+    frame: Extract<GatewayFrame, { type: "sig" }>,
+    body?: BinaryBody,
+  ): Promise<void>;
   disconnect(input: AdapterPairingDisconnectInput): Promise<AdapterPairingDisconnectResult>;
   listTargets(
     installationId: string,
@@ -160,6 +169,7 @@ export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements Adapte
         status: true,
         activity: false,
         pairing: true,
+        deliveryFrames: true,
         targets: true,
         surfaces: ["dm", "channel", "thread"],
         media: {
@@ -168,6 +178,28 @@ export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements Adapte
         },
       },
     };
+  }
+
+  async adapterFrame(
+    installation: AdapterInstallationContext,
+    context: AdapterPeerDeliveryContext,
+    frame: GatewayFrame,
+    body?: BinaryBody,
+  ): Promise<GatewayFrame | null> {
+    const parsed = parseManagedInstallation(installation);
+    const accountId = requireWorkspaceAccountId(context.accountId);
+    const actorId = requireSlackId(context.actorId, "Slack actor");
+    const peer = this.peer(accountId, actorId);
+    return await handleAdapterFrame(this.adapterId, parsed, context, frame, body, {
+      send: async (message, requestBody) => await peer.sendMessage(
+        parsed.installationId,
+        message,
+        requestBody,
+      ),
+      acceptSignal: async (signalContext, signalFrame, signalBody) => {
+        await peer.acceptPeerSignal(parsed, signalContext, signalFrame, signalBody);
+      },
+    });
   }
 
   async adapterStatus(
