@@ -102,17 +102,23 @@ process retains its own history and lifecycle. The personal process is the norma
 user-facing place where delegated results and actionable system events return;
 real child processes still use ordinary parent pids for lifecycle and IPC.
 
-For bounded work, `proc delegate` creates a non-interactive child and a bounded
-`proc.ipc.call`. The child inherits the personal account unless `--as ACCOUNT`
+For durable delegated work, `proc delegate` creates a non-interactive child and a
+supervised `proc.ipc.call`. The child inherits the personal account unless `--as ACCOUNT`
 selects a specialized owned agent. The delegated-task envelope places an
 inherited child in worker mode. With `--responsibility ID`, the Kernel assigns
 that record to the child and persists the id on the IPC call. Completion, failure,
-timeout, or kill returns a still-active assignment to Ship once, with the IPC call
-and child run ids recorded as evidence. The result itself still re-enters the
+or explicit termination returns a still-active assignment to Ship once, with the
+IPC call and child run ids recorded as evidence. The default 10-minute interval is
+a supervision checkpoint, not a work deadline. At each checkpoint the Kernel renews
+the pending result route, records a responsibility check-in, and tells the caller
+that the child is still running without cancelling it. The result itself still re-enters the
 caller as a Process event while that caller still exists; it is not copied into
 the responsibility record. If the personal Process is replaced before delivery,
 the Kernel returns the assignment to Ship and discards the obsolete Process
 signal. The durable responsibility remains the recovery path.
+Managed deployments defer supervision checkpoints while the installation is inactive;
+reactivation resumes the same pending result route without admitting Process work during
+the restriction.
 
 During an adapter turn, `message current --json` exposes the current surface as
 an opaque GSV destination id. The personal intelligence can store that id with

@@ -1001,6 +1001,9 @@ const ipcReplyPayloadSchema = z.object({
   targetPid: z.string().optional(),
   sourceRunId: z.string().optional(),
   createdAt: z.number().optional(),
+  deadlineAt: z.number().optional(),
+  nextCheckAt: z.number().optional(),
+  checkInCount: z.number().int().nonnegative().optional(),
   error: nonEmptyStringSchema.optional(),
   response: z.json().optional(),
 }).passthrough();
@@ -1681,11 +1684,20 @@ function formatIpcMessage(args: ProcIpcDeliverArgs): string {
     lines.push("", "Additional context:", "```json", renderedMetadata, "```");
   }
   if (args.call) {
-    lines.push(
-      "",
-      `Please complete this task before ${new Date(args.call.deadlineAt).toISOString()}.`,
-      "Your final answer will be returned to the caller automatically.",
-    );
+    if (args.call.supervised) {
+      lines.push(
+        "",
+        `GSV will check on this task after ${new Date(args.call.deadlineAt).toISOString()}.`,
+        "This is not a termination deadline; continue until the task reaches a real terminal outcome.",
+        "Your final answer will be returned to the caller automatically.",
+      );
+    } else {
+      lines.push(
+        "",
+        `Please complete this task before ${new Date(args.call.deadlineAt).toISOString()}.`,
+        "Your final answer will be returned to the caller automatically.",
+      );
+    }
   }
   return lines.join("\n");
 }
@@ -1705,9 +1717,12 @@ function formatIpcReplyMessage(
     JSON.stringify(responseRecord?.media ?? null) ?? null,
   );
   const renderedResponse = renderJsonBlock(response);
+  const overdue = signal === "ipc.overdue";
 
   const lines = [
-    signal === "ipc.timeout"
+    overdue
+      ? `Delegated task to process \`${targetPid}\` is still running.`
+      : signal === "ipc.timeout"
       ? `Delegated task to process \`${targetPid}\` timed out.`
       : `Delegated task from process \`${targetPid}\` finished.`,
   ];
@@ -1716,6 +1731,12 @@ function formatIpcReplyMessage(
   }
   if (error) {
     lines.push("", "Error:", error);
+  }
+  if (overdue) {
+    lines.push("", "The delegated process was not cancelled and remains responsible for the work.");
+    if (record.nextCheckAt !== undefined) {
+      lines.push(`Next check-in: ${new Date(record.nextCheckAt).toISOString()}.`);
+    }
   }
   if (responseText.success) {
     lines.push("", "Result:", responseText.data);
@@ -5279,6 +5300,7 @@ export class Process extends DurableObject<GatewayEnv> {
         break;
       }
       case "ipc.reply":
+      case "ipc.overdue":
       case "ipc.timeout": {
         const parsed = ipcReplyPayloadSchema.safeParse(frame.payload);
         await this.handleIpcSignal(frame.signal, parsed.success ? parsed.data : {});
@@ -5448,6 +5470,9 @@ export class Process extends DurableObject<GatewayEnv> {
     const callId = normalizeOptionalString(payload.callId);
     const sourceRunId = normalizeOptionalString(payload.sourceRunId);
     const createdAt = payload.createdAt ?? null;
+    const handledId = signal === "ipc.overdue" && callId
+      ? `overdue:${callId}:${payload.checkInCount ?? payload.deadlineAt ?? "unknown"}`
+      : callId;
     let messageId = -1;
     let nextRunId: string | null = null;
     let wakeRunId: string | null = null;
@@ -5467,7 +5492,7 @@ export class Process extends DurableObject<GatewayEnv> {
         this.store.getValue(HANDLED_IPC_CALLS_KEY) ?? "[]",
       ));
       if (
-        (callId && handled.includes(callId))
+        (handledId && handled.includes(handledId))
         || (sourceRunId && this.isAbortedRun(sourceRunId))
         || (createdAt !== null && createdAt <= resetAt)
       ) {
@@ -5477,8 +5502,8 @@ export class Process extends DurableObject<GatewayEnv> {
       const currentRun = this.currentRun;
       nextRunId = currentRun ? null : crypto.randomUUID();
       this.ctx.storage.transactionSync(() => {
-        if (callId) {
-          handled.push(callId);
+        if (handledId) {
+          handled.push(handledId);
           this.store.setValue(
             HANDLED_IPC_CALLS_KEY,
             JSON.stringify(handled.slice(-IPC_TOMBSTONE_LIMIT)),

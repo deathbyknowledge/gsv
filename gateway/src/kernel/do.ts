@@ -167,7 +167,7 @@ import type {
 } from "../protocol/process-frames";
 import { isRepoPublic } from "./repo-visibility";
 import { canReadRepo, canWriteRepo } from "./repo";
-import { forwardToProcess, handleProcSpawn } from "./proc-handlers";
+import { handleProcSpawn } from "./proc-handlers";
 import { ensurePersonalController } from "./personal-controller";
 import {
   ResponsibilityStore,
@@ -232,7 +232,23 @@ const MAX_ADAPTER_SIGNAL_DELIVERY_ATTEMPTS = 10;
 
 type IpcCallTimeout = {
   callId: string;
+  mode?: "supervise";
+  intervalMs?: number;
+  checkInCount?: number;
+  lifecycleRecheckFor?: string;
+  /** Legacy payload emitted by older gateways for delegated work. */
   terminateTargetOnTimeout?: boolean;
+};
+
+type IpcCallTimeoutTask = {
+  id: string;
+};
+
+type IpcCallSupervisionOptions = {
+  mode: "supervise";
+  intervalMs: number;
+  checkInCount: number;
+  lifecycleRecheckFor?: string;
 };
 
 type AdapterSignalDeliveryOutcome =
@@ -347,6 +363,8 @@ type IpcDeliverySignalPayload = {
   deadlineAt: number;
   createdAt: number;
   status: IpcCallRecord["status"];
+  nextCheckAt?: number;
+  checkInCount?: number;
   response?: IpcCallRecord["response"];
   error?: string;
 };
@@ -446,6 +464,10 @@ const ipcCallTimeoutPayloadSchema = z.union([
   z.string().transform((callId): IpcCallTimeout => ({ callId })),
   z.object({
     callId: z.string(),
+    mode: z.literal("supervise").optional(),
+    intervalMs: z.number().positive().optional(),
+    checkInCount: z.number().int().nonnegative().optional(),
+    lifecycleRecheckFor: z.string().min(1).optional(),
     terminateTargetOnTimeout: z.boolean().optional(),
   }),
 ]);
@@ -949,7 +971,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         await this.onIpcCallDelivery(task.payload);
         return;
       case "onIpcCallTimeout":
-        await this.onIpcCallTimeout(task.payload);
+        await this.onIpcCallTimeout(task.payload, task);
         return;
       case "onManagedOutboundEnqueue":
         await this.onManagedOutboundEnqueue(task.payload);
@@ -3259,16 +3281,28 @@ export class Kernel extends DurableObject<GatewayEnv> {
   private async scheduleIpcCallTimeout(
     callId: string,
     deadlineAt: number,
-    options?: { terminateTargetOnTimeout?: boolean },
+    options?: IpcCallSupervisionOptions,
   ): Promise<string> {
-    const sched = await this.schedule(
-      new Date(Math.ceil(Math.max(Date.now() + 1_000, deadlineAt) / 1_000) * 1_000),
-      "onIpcCallTimeout",
-      options?.terminateTargetOnTimeout
-        ? { callId, terminateTargetOnTimeout: true } satisfies IpcCallTimeout
-        : callId,
-    );
+    const sched = await this.scheduleIpcCallTimeoutTask(callId, deadlineAt, options);
     return sched.id;
+  }
+
+  private async scheduleIpcCallTimeoutTask(
+    callId: string,
+    deadlineAt: number,
+    options?: IpcCallSupervisionOptions,
+  ): Promise<{ id: string; time: number }> {
+    const when = new Date(
+      Math.ceil(Math.max(Date.now() + 1_000, deadlineAt) / 1_000) * 1_000,
+    );
+    return options
+      ? await this.schedule(
+        when,
+        "onIpcCallTimeout",
+        { callId, ...options } satisfies IpcCallTimeout,
+        { idempotent: true },
+      )
+      : await this.schedule(when, "onIpcCallTimeout", callId);
   }
 
   private failIpcCallsByTarget(uid: number, targetPid: string, error: string): void {
@@ -4239,31 +4273,143 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.deliverToOrigin(expired.origin, timeoutFrame);
   }
 
-  async onIpcCallTimeout(input: string | IpcCallTimeout): Promise<void> {
+  async onIpcCallTimeout(
+    input: string | IpcCallTimeout,
+    task?: IpcCallTimeoutTask,
+  ): Promise<void> {
     const timeout = ipcCallTimeoutPayloadSchema.parse(input);
     const callId = timeout.callId;
     const call = this.ipcCalls.get(callId);
+    if (
+      call
+      && call.status === "pending"
+      && (timeout.mode === "supervise" || timeout.terminateTargetOnTimeout === true)
+    ) {
+      await this.continueSupervisedIpcCall(timeout, call, task);
+      return;
+    }
     const timedOut = this.ipcCalls.timeout(callId);
     if (!timedOut) return;
     const timedOutCall = this.ipcCalls.get(callId);
     if (timedOutCall) this.returnDelegatedResponsibility(timedOutCall);
     this.queueIpcCallDelivery(callId);
-    if (timeout.terminateTargetOnTimeout && call) {
-      await this.terminateTimedOutIpcTarget(call).catch((error) => {
-        console.warn(`[Kernel] Failed to terminate timed-out delegated process ${call.targetPid}:`, error);
-      });
-    }
   }
 
-  private async terminateTimedOutIpcTarget(call: IpcCallRecord): Promise<void> {
-    const ctx = this.buildProcessContext(call.sourcePid);
-    if (!ctx) return;
-    await forwardToProcess({
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.kill",
-      args: { pid: call.targetPid, archive: false },
-    }, ctx);
+  private async continueSupervisedIpcCall(
+    timeout: IpcCallTimeout,
+    call: IpcCallRecord,
+    task?: IpcCallTimeoutTask,
+  ): Promise<void> {
+    const derivedIntervalMs = call.deadlineAt - call.createdAt;
+    const intervalMs = Math.max(
+      1_000,
+      Math.trunc(timeout.intervalMs ?? derivedIntervalMs),
+    );
+    const gate = await this.managedWorkGate();
+    if (!gate.allowed) {
+      if (!task) {
+        throw new Error("Supervision lifecycle recheck requires its scheduled task identity");
+      }
+      await this.scheduleIpcCallTimeoutTask(
+        call.callId,
+        Date.now() + MANAGED_LIFECYCLE_RECHECK_MS,
+        {
+          mode: "supervise",
+          intervalMs,
+          checkInCount: timeout.checkInCount ?? 0,
+          lifecycleRecheckFor: task.id,
+        },
+      );
+      return;
+    }
+
+    const checkInCount = (timeout.checkInCount ?? 0) + 1;
+    const successor = await this.scheduleIpcCallTimeoutTask(
+      call.callId,
+      Date.now() + intervalMs,
+      {
+        mode: "supervise",
+        intervalMs,
+        checkInCount,
+      },
+    );
+    const nextCheckAt = successor.time * 1_000;
+    const checkedAt = nextCheckAt - intervalMs;
+    const renewed = this.ipcCalls.renewDeadline(call.callId, nextCheckAt);
+    if (!renewed) return;
+
+    this.recordDelegationCheckIn(renewed, checkedAt, nextCheckAt, checkInCount);
+    const payload: IpcDeliverySignalPayload = {
+      callId: renewed.callId,
+      sourcePid: renewed.sourcePid,
+      targetPid: renewed.targetPid,
+      runId: renewed.targetRunId,
+      deadlineAt: checkedAt,
+      nextCheckAt,
+      checkInCount,
+      createdAt: renewed.createdAt,
+      status: "pending",
+    };
+    if (renewed.sourceRunId) payload.sourceRunId = renewed.sourceRunId;
+    await sendFrameToProcess(this.installationId, renewed.sourcePid, {
+      type: "sig",
+      signal: "ipc.overdue",
+      payload,
+    });
+  }
+
+  private recordDelegationCheckIn(
+    call: IpcCallRecord,
+    checkedAt: number,
+    nextCheckAt: number,
+    checkInCount: number,
+  ): void {
+    if (!call.responsibilityId) return;
+    const current = this.responsibilities.get(call.ownerUid, call.responsibilityId);
+    if (
+      !current
+      || current.state === "resolved"
+      || current.state === "cancelled"
+      || current.assignee.kind !== "process"
+      || current.assignee.processId !== call.targetPid
+    ) {
+      return;
+    }
+
+    const eventType = "process.delegation.check_in";
+    const outcome = this.responsibilities.update({
+      ownerUid: call.ownerUid,
+      id: current.id,
+      expectedRevision: current.revision,
+      patch: {
+        details: {
+          ...current.details,
+          delegation: {
+            eventType,
+            callId: call.callId,
+            processId: call.targetPid,
+            runId: call.targetRunId,
+            status: "pending",
+            checkedAtMs: checkedAt,
+            nextCheckAtMs: nextCheckAt,
+            checkInCount,
+          },
+        },
+        nextCheckAtMs: nextCheckAt,
+        leaseExpiresAtMs: nextCheckAt,
+      },
+      actor: {
+        kind: "event",
+        eventType,
+        eventId: `${call.callId}:${checkInCount}`,
+      },
+      observedByShip: false,
+      now: checkedAt,
+    });
+    if (!outcome.changed) return;
+    this.ctx.waitUntil(this.reconcileResponsibilityWake(call.ownerUid).catch((error) => {
+      console.warn("[Kernel] Failed to schedule delegated process check-in:", error);
+    }));
   }
 
   async onIpcCallDelivery(callId: string): Promise<void> {

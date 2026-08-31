@@ -55,7 +55,7 @@ commands inspect and control the Kernel schedule records:
 proc self
 proc list
 proc spawn [--as ACCOUNT] [--non-interactive] [--label LABEL] [--prompt TEXT] [--] [prompt]
-proc delegate [--as ACCOUNT] [--label LABEL] [--timeout 10m] [--responsibility ID] <task>
+proc delegate [--as ACCOUNT] [--label LABEL] [--check-after 10m] [--responsibility ID] <task>
 proc reset [--pid PID]
 proc kill PID [--no-archive]
 proc send <pid> [--metadata-json json] <message>
@@ -119,13 +119,16 @@ another owned agent account. Its prompt is fire-and-forget, and any answer
 remains in that child process's history. Unknown options are
 rejected; use `--` before a positional prompt that begins with `-`. Use
 `--non-interactive` for scheduled background work. `proc delegate` creates a
-bounded child whose ordinary final assistant output returns to its caller as a process event; it
+durable child whose ordinary final assistant output returns to its caller as a process event; it
 requires a process-backed caller and must not be placed in a crontab. Passing
 `--responsibility ID` assigns that existing Kernel record to the child before
 IPC admission and restores its prior Ship state if admission fails. Completion,
-failure, timeout, or kill returns a still-active assignment to Ship exactly once;
-the IPC event carries the child result and the responsibility retains stable call
-and run references.
+failure, or explicit termination returns a still-active assignment to Ship exactly
+once; the IPC event carries the child result and the responsibility retains stable
+call and run references. `--check-after` sets a 10-minute supervision cadence by
+default. Each check-in reports that work is still running and renews the result
+route without cancelling the child. The legacy `--timeout` spelling is accepted as
+an alias for `--check-after`; it is not a delegation deadline.
 `proc send` is asynchronous same-owner process mail. `proc call` is bounded:
 the source process receives either
 `ipc.reply` or `ipc.timeout` as a delegated task event. In a process-backed
@@ -138,7 +141,7 @@ same personal-agent account.
 `r12y` manages the Kernel's durable unresolved-work ledger. `list` omits
 terminal records unless `--all` is supplied. Waiting work must name a future
 check time or a blocker. Prefer `proc delegate --responsibility ID ...` for a
-new bounded worker; the lower-level `r12y delegate ID PID --until ISO` command
+new durable worker; the lower-level `r12y delegate ID PID --until ISO` command
 assigns an already-existing owned process with an explicit recovery deadline.
 `r12y sources` lists required runtime contracts as `always-on` and configurable
 producers as `configurable`. Only configurable producers can be changed. Use

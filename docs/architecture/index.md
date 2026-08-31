@@ -71,7 +71,7 @@ user-level events converge. The Kernel records that role explicitly; it is not
 inferred from recency, labels, or account name. Its pid remains replaceable and
 ordinary. Custom agent accounts provide specialized identities when explicitly
 selected. A delegated child inherits its parent's account by default and acts
-in a bounded worker role; other processes remain visible work rather than
+in a worker role; other processes remain visible work rather than
 alternative personal intelligences.
 
 Process state lives in a Process Durable Object with its own SQLite database.
@@ -83,7 +83,7 @@ The agent loop belongs to the Process DO. It assembles context, calls the model,
 receives tool calls, issues syscalls, waits for results, and emits raw
 `proc.run.*` and `proc.changed` activity through the Kernel. A Process explicitly
 may send user-visible updates through Shell with `message send` and finishes each human-facing run with `yield`;
-a bounded IPC worker returns its ordinary final output directly to its caller.
+an IPC worker returns its ordinary final output directly to its caller.
 
 ### Conversations
 
