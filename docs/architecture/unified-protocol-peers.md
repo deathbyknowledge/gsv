@@ -115,7 +115,7 @@ Common combinations are:
 | CLI | human | human capabilities | user signals | none |
 | Desktop app | human | human capabilities | user signals | optional host operations |
 | Machine daemon | machine | minimal control calls | machine signals | filesystem, shell, network, and host operations |
-| Adapter Worker | service | `adapter.inbound`, `adapter.state.update` | none | none |
+| Adapter Worker | service | adapter ingress and delivery coordination | routed `message.committed`, `proc.run.hil.requested` | none |
 | Linked adapter command | delegated human | command-specific intersection | none | none |
 
 A human endpoint with implementations remains a human peer. It is not promoted
@@ -173,6 +173,11 @@ adapter normalized req + optional BinaryBody
   -> AdapterGatewayEntrypoint validates deployment-owned binding props
   -> Kernel validates and dispatches the same logical req
   -> correlated res returns through the binding
+
+Kernel routed sig + optional BinaryBody
+  -> adapterFrame selects the deployment-owned adapter binding
+  -> adapter account or peer DO durably accepts the frame and body
+  -> null acknowledges signal ownership; provider delivery continues durably
 ```
 
 Workers RPC carries `BinaryBody.stream` as a `ReadableStream`; it is not
@@ -192,10 +197,14 @@ binding dynamically from its environment. The peer never supplies a binding
 key, and no central source registry has to change when deployment adds another
 adapter.
 
-Provider delivery APIs remain typed adapter RPC beneath this protocol. They own
-provider credentials, formatting, retry ledgers, and supported standalone
-rolling-upgrade compatibility; they do not create a second Kernel syscall
-model.
+Gateway-to-adapter delivery uses the same logical frame shapes. Explicit
+`adapter.send` is a correlated `req`/`res`; Process-directed delivery is an
+exact `message.committed` or `proc.run.hil.requested` signal. The surrounding
+delivery context carries the Kernel-owned route projection, not a second
+semantic operation. Provider credentials, formatting, durable acceptance,
+retry ledgers, ambiguous-outcome policy, and rendering remain adapter-owned.
+The older typed `adapterSend` method is a rolling-upgrade bridge, not the
+canonical path.
 
 ## Reverse calls and endpoints
 
@@ -252,6 +261,13 @@ grant containing only `proc.list`, then applies bounded text formatting.
 `/ship` intentionally remains a Kernel routing operation because it must clear
 the exact adapter route and preserve durable ingress/recovery fences.
 
+Native approval buttons use the same delegation rule. The adapter durably binds
+an opaque callback to the exact HIL request and provider message. On a click it
+submits an ordinary `proc.hil` request through `linkedPeerFrame`; the Kernel
+derives the linked human, intersects that user's capabilities with `proc.hil`,
+rechecks the route generation and destination, and enters the ordinary
+dispatcher. The adapter service principal itself is never granted `proc.hil`.
+
 Managed adapter pairing remains an explicit human action through
 `adapter.pair.*`. Pairing binds an external actor to an installation and local
 uid; it is not transport authentication and cannot be inferred from a Telegram
@@ -271,8 +287,9 @@ A client may inspect reasoning, tool calls, and output from several Processes
 without treating all of it as a message addressed to the user. A committed
 Message synchronizes through canonical Conversation history. Only the endpoint
 whose input admitted the run receives its transient directed Message stream.
-Adapters own provider delivery of committed Messages and do not render raw
-Process output as replies.
+Adapters own provider delivery of directed committed Messages and approval
+requests, choose native or fallback presentation, and do not render raw Process
+output as replies.
 
 ## Security and lifecycle invariants
 

@@ -1486,10 +1486,16 @@ type AiSyscalls = {
 Gateway-to-adapter service bindings implement `AdapterService` from
 `@humansandmachines/gsv/services/adapters`. Its descriptor makes discovery
 independent of any fixed messenger list; optional operations include
-`adapterConnect`, `adapterDisconnect`, `adapterSend`,
-`adapterSetActivity`, and `adapterStatus`. Adapters call the Gateway's single
+`adapterFrame`, `adapterConnect`, `adapterDisconnect`, `adapterSetActivity`,
+and `adapterStatus`. Adapters call the Gateway's single
 `serviceFrame` entrypoint for `adapter.inbound` and
-`adapter.state.update`; old channel-specific interfaces and direct channel RPC
+`adapter.state.update`. The Gateway calls `adapterFrame` with canonical frames:
+explicit `adapter.send` is a correlated request and routed Process delivery is
+an exact `message.committed` or `proc.run.hil.requested` signal. A signal returns
+only after the adapter's owning Durable Object has persisted its frame and body.
+The typed `adapterSend` method is retained only for rolling upgrades; old
+adapters that do not advertise the descriptor's `deliveryFrames` capability
+stay on that bridge. Old channel-specific interfaces and direct channel RPC
 names are not part of this contract.
 
 Adapter media metadata stays in JSON. Inline bytes are concatenated into the
@@ -1544,6 +1550,8 @@ Runtime behavior:
 | `adapter.pair.disconnect` | `handleAdapterPairDisconnect` | Direct signed-in human only. Generation-fences and disables the managed peer route before removing the matching Kernel identity link. Generic `sys.unlink` refuses managed links so the two sides cannot be orphaned. |
 | `adapter.inbound` | `handleAdapterInbound` | Service-role only. Requires a stable account-scoped ingress `deliveryId`, derived from the provider's complete event identity, and claims its durable receipt before link, command, HIL, route, media, or Process side effects. Actor and surface remain authorization metadata rather than receipt-key components, so alias normalization cannot bypass replay protection and equal provider stanza ids from different participants remain distinct. A platform-owned adapter also supplies its peer-route generation; the Kernel requires the exact currently linked generation and retains it on the run route. Completed replays return the persisted disposition; a concurrent live claim reports `replayed: "in_progress"`, while an abandoned or post-restart claim is fenced and reclaimed. Optional media bytes are cancelled before staging on any replay. New ingress resolves the exact identity link, issues link challenges for unlinked DMs, and drops unlinked non-DM messages. A linked non-DM message is admitted only when the adapter sets `wasMentioned: true`. Normal messages resolve the canonical Ship, Work, or Group conversation, append the user Message idempotently, derive an opaque run id, install its exact directed endpoint, and reconcile through kernel-only `proc.adapter.deliver`. Immediate replies and link challenges carry deterministic outbound `deliveryId` values and use the adapter's ordinary outbound ledger. Persistent first-party adapters retain the provider payload before this call, then replace it with any terminal response state before provider delivery; transport failures and `in_progress` retry through their existing account alarm. |
 | `adapter.state.update` | `handleAdapterStateUpdate` | Service-role only. Updates status without changing ownership and broadcasts a minimal `adapter.status` invalidation to root, the account owner, and linked users. |
+| `adapter.delivery.claim` | `handleAdapterDeliveryClaim` | Adapter-service only. Rechecks that an accepted routed signal still matches the exact adapter run route. HIL additionally requires the exact request to remain pending. Returns `deliver: false` before provider I/O when the route changed, disappeared, or the approval resolved. |
+| `adapter.delivery.report` | `handleAdapterDeliveryReport` | Adapter-service only. Accepts the terminal provider outcome for an exact claimed route. Successful final Message delivery retires the route; permanent, ambiguous, and exhausted outcomes create a durable Process delivery notice. |
 | `adapter.send` | `handleAdapterSend` | Accepts optional concatenated media bytes, validates the caller's identity link or exact observed surface route, allocates or validates a stable `deliveryId`, and forwards outbound text, media, reply id, and body to the adapter service. During a process run, a separate send to the current directed endpoint is rejected unless `also: true` acknowledges the additional message. Returns the delivery id, provider message id when available, and `sent`, `deduplicated`, or `ambiguous` delivery state. A failed result is retryable only when replaying the same delivery id is safe. |
 | `adapter.status` | `handleAdapterStatus` | Attempts live status refresh, swallowing live errors, then returns last known local statuses sorted newest first and optionally filtered by account id. |
 
@@ -1603,6 +1611,16 @@ type AdapterSyscalls = {
     result: { ok: true };
   };
 
+  "adapter.delivery.claim": {
+    args: { adapter: string; accountId: string; deliveryId: string; actorId: string; surface: AdapterSurface; routeGeneration?: string; processId: string; runId: string; kind: "message" | "hil"; requestId?: string };
+    result: { ok: true; deliver: boolean; reason?: "missing_route" | "route_changed" | "approval_resolved" };
+  };
+
+  "adapter.delivery.report": {
+    args: { adapter: string; accountId: string; deliveryId: string; actorId: string; surface: AdapterSurface; routeGeneration?: string; processId: string; runId: string; kind: "message" | "hil"; requestId?: string; state: "sent" | "deduplicated" | "ambiguous" | "failed" | "exhausted"; messageId?: string; error?: string; attempts: number };
+    result: { ok: true };
+  };
+
   "adapter.send": {
     args: { adapter: string; accountId: string; deliveryId?: string; surface: AdapterSurface; text: string; replyToId?: string; media?: AdapterMedia[]; also?: boolean };
     result:
@@ -1633,17 +1651,20 @@ last-active linked private DM. An exact connection or adapter route always wins,
 the live identity link is rechecked before delivery, and no other process uses
 this fallback.
 
-An adapter HIL prompt includes the exact pending request identity as
-`hil[requestId]`. An adapter approval or denial is accepted only when it carries
-that current token; a bare or stale decision fails closed. `replyToId` is useful
-for provider threading but is not an authorization mechanism. Native clients
-continue to call `proc.hil` with the exact `requestId`.
+Web, Desktop, CLI, and routed adapters consume the same
+`proc.run.hil.requested` payload. Adapters choose native controls or a
+structured fallback. A native callback invokes ordinary `proc.hil` with the
+exact `requestId` through a Kernel-derived linked-human peer; actor, surface,
+route generation, provider-message correlation, human capability, and pending
+state are all rechecked. `replyToId` remains provider threading metadata and is
+not authorization.
 
-Retry-safe adapter notifications and final replies are retained as Kernel
-scheduled work under the same stable delivery id. Typing is stopped after each
-attempt. Final routes are removed on success, permanent failure, ambiguous
-provider outcome, or bounded retry exhaustion, and non-success terminal
-outcomes are appended to process history. HIL state does not depend on adapter
+Routed adapter notifications and final replies are retained in the adapter's
+owning Durable Object under the stable delivery id before Kernel acknowledgement.
+Before provider I/O the adapter claims the exact route; after a terminal outcome
+it reports success, permanent failure, ambiguity, or bounded retry exhaustion.
+Final routes are removed on successful report or after a non-success terminal
+notice is accepted by the Process. HIL state does not depend on adapter
 notification delivery.
 
 Observed adapter surface routes are keyed by adapter, account, actor, surface

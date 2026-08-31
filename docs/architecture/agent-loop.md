@@ -239,21 +239,26 @@ Approval outcomes are:
 - `deny`: append a synthetic tool error.
 - `ask`: store `pending_hil` and emit `proc.run.hil.requested`.
 
-The run pauses while a HIL request is pending. A native client resumes it through
-`proc.hil` with the exact pending `requestId`. An adapter DM prompt renders that
-identity as `hil[requestId]`; its approval or denial must include the exact
-current token, for example `approve hil[...]` or `deny hil[...]`. A bare decision
-or stale token does not call `proc.hil` and receives a reminder for the current
-request. The provider `replyToId` remains threading metadata, not authorization.
+The run pauses while a HIL request is pending. Web, Desktop, CLI, and a routed
+adapter consume the same `proc.run.hil.requested` payload and resume through
+`proc.hil` with the exact pending `requestId`. Each peer owns presentation.
+Telegram and Slack render native controls; adapters without controls use a
+structured text fallback that directs the user to a capable client. A native
+callback is bound durably to the exact request, linked actor, route generation,
+surface, and provider message before its controls are exposed. The provider
+`replyToId` remains threading metadata, not authorization.
 Interactive and background processes both pause durably when a policy asks.
 Background children inherit the spawning run's human approval route, while the
 pending request remains inspectable and actionable from Process activity even
 when that endpoint disconnects.
 
-The Kernel broadcasts an admitted HIL request to native clients before handling
-its adapter notification. Adapter notification retries are Kernel-owned durable
-scheduled work with a stable delivery id; notification failure never rolls back
-or clears `pending_hil`.
+The Kernel broadcasts an admitted HIL request to connected user clients and
+hands the exact signal to an adapter route when one exists. The adapter persists
+the signal and any body before acknowledgement, claims the live route before
+provider delivery, and reports the terminal outcome afterward. A callback uses
+a Kernel-derived, interaction-scoped linked-human peer for ordinary `proc.hil`;
+the adapter service account has no direct approval capability. Notification
+failure never rolls back or clears `pending_hil`.
 
 ## Queueing and Abort
 
