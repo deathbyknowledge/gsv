@@ -18,6 +18,12 @@ instructions. If you are new to GSV and just want a running deployment, start
 with [Get Started](../get-started/). If you are trying to solve one specific
 operational task, [How-to Guides](../how-to/) will usually get you there faster.
 
+Contributors can also launch the standalone
+[interactive architecture explorer](https://github.com/deathbyknowledge/gsv/tree/main/tools/architecture-explorer)
+with `npm run architecture:explore`. It maps runtime ownership and trust
+boundaries back to exact source files and executable tests; it is not part of
+the GSV Web product.
+
 ## Suggested reading path
 
 A good order is:

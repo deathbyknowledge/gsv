@@ -186,6 +186,9 @@ jobs:
       - name: Run Oxlint and anti-slop
         run: npm run lint
 
+      - name: Test architecture explorer
+        run: npm run architecture:test
+
   release-scripts-check:
     name: Release Scripts (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

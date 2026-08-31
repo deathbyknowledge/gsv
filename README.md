@@ -104,7 +104,13 @@ GSV uses Linux as a design model (not POSIX, though). Familiar, composable primi
 npm run build --workspace web  # build assets served by the gateway
 npm run dev                    # start the local multi-worker stack
 GSV_MANAGED_SERVICES_ROOT=/path/to/services npm run dev:managed
+npm run architecture:explore   # open the contributor architecture atlas
 ```
+
+The standalone [architecture explorer](tools/architecture-explorer/README.md)
+maps runtime ownership, trust boundaries, durable state, components, and
+end-to-end flows back to exact source and tests. It is a read-only contributor
+tool and does not require a running Gateway.
 
 The public repository does not ship a platform operator's Accounts or funded
 Inference implementation. Supplying compatible `accounts/` and `inference/`

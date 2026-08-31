@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#03090a">
+    <title>GSV Architecture Explorer</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="phosphor-field" aria-hidden="true"></div>
+    <div id="atlas" class="atlas lens-runtime">
+      <header class="command-deck">
+        <div class="identity-block">
+          <span class="identity-mark" aria-hidden="true">
+            <i></i><i></i><i></i>
+          </span>
+          <div>
+            <p>GENERAL SYSTEMS VEHICLE // CARTOGRAPHY UNIT</p>
+            <h1>ARCHITECTURE EXPLORER</h1>
+          </div>
+        </div>
+
+        <div class="atlas-counts" aria-label="Atlas coverage">
+          <span><strong id="subsystem-count">00</strong> SYSTEMS</span>
+          <span><strong id="component-count">00</strong> COMPONENTS</span>
+          <span><strong id="route-count">00</strong> ROUTES</span>
+        </div>
+
+        <nav id="lens-switcher" class="lens-switcher" aria-label="Architecture lens"></nav>
+
+        <div class="revision-block">
+          <span class="live-indicator" aria-hidden="true"></span>
+          <div>
+            <small>CHECKOUT REVISION</small>
+            <strong id="revision">READING…</strong>
+          </div>
+          <button id="help-button" class="icon-button" type="button" aria-label="Open controls help">?</button>
+        </div>
+      </header>
+
+      <aside class="system-index" aria-label="Architecture directory">
+        <div class="panel-kicker">
+          <span>01</span>
+          <div>
+            <small>SYSTEM DIRECTORY</small>
+            <strong>OWNERS, NOT FOLDERS</strong>
+          </div>
+        </div>
+
+        <div class="atlas-search">
+          <label for="atlas-search-input">SEARCH SYSTEM / COMPONENT / PATH</label>
+          <div class="search-control">
+            <span aria-hidden="true">⌕</span>
+            <input id="atlas-search-input" type="search" placeholder="dispatch, body, ripgit…" autocomplete="off">
+            <kbd>⌘K</kbd>
+          </div>
+          <div id="search-results" class="search-results" hidden></div>
+        </div>
+
+        <div id="system-list" class="system-list"></div>
+
+        <section class="concept-monitor" aria-labelledby="concept-monitor-title">
+          <header>
+            <span class="monitor-pulse" aria-hidden="true"></span>
+            <h2 id="concept-monitor-title">DO NOT COLLAPSE</h2>
+          </header>
+          <div id="concept-cycle" class="concept-cycle"></div>
+        </section>
+      </aside>
+
+      <main class="world-stage" aria-label="Spatial architecture world">
+        <div class="world-heading">
+          <div>
+            <span id="lens-code">RUNTIME TOPOLOGY</span>
+            <strong id="lens-summary">Live actors and their contract routes.</strong>
+          </div>
+          <p><span class="key-hint">DRAG</span> ORBIT <span class="key-hint">SCROLL</span> SCALE <span class="key-hint">DOUBLE</span> FLY</p>
+        </div>
+
+        <svg id="world-svg" viewBox="0 0 1200 820" role="application" aria-label="Orbitable GSV subsystem map" tabindex="0">
+          <defs>
+            <linearGradient id="ground-fade" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0" stop-color="#0d2524" stop-opacity="0.75"></stop>
+              <stop offset="1" stop-color="#03100f" stop-opacity="0.08"></stop>
+            </linearGradient>
+            <radialGradient id="selection-flare">
+              <stop offset="0" stop-color="#d8ff52" stop-opacity="0.45"></stop>
+              <stop offset="1" stop-color="#d8ff52" stop-opacity="0"></stop>
+            </radialGradient>
+            <filter id="soft-glow" x="-100%" y="-100%" width="300%" height="300%">
+              <feGaussianBlur stdDeviation="4" result="blur"></feGaussianBlur>
+              <feMerge><feMergeNode in="blur"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge>
+            </filter>
+            <filter id="route-glow" x="-40%" y="-40%" width="180%" height="180%">
+              <feGaussianBlur stdDeviation="2.2" result="blur"></feGaussianBlur>
+              <feMerge><feMergeNode in="blur"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge>
+            </filter>
+            <pattern id="foundation-hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+              <line x1="0" y1="0" x2="0" y2="8" stroke="#e889ff" stroke-opacity="0.32" stroke-width="2"></line>
+            </pattern>
+            <marker id="route-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L7,3 z" fill="context-stroke"></path>
+            </marker>
+          </defs>
+          <g id="world-scene"></g>
+        </svg>
+
+        <div id="hover-readout" class="hover-readout" hidden></div>
+
+        <div class="camera-console" aria-label="Map view controls">
+          <button id="rotate-left" type="button" aria-label="Rotate left">↶</button>
+          <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
+          <button id="reset-view" type="button">RESET VIEW</button>
+          <button id="zoom-in" type="button" aria-label="Zoom in">+</button>
+          <button id="rotate-right" type="button" aria-label="Rotate right">↷</button>
+        </div>
+
+        <div class="world-scale" aria-hidden="true">
+          <span>INSTALLATION WORLD</span>
+          <i></i>
+          <small id="camera-readout">AZ 326° · EL 32° · 100%</small>
+        </div>
+      </main>
+
+      <aside id="inspector" class="inspector" aria-label="Selected architecture evidence"></aside>
+
+      <section class="trace-deck" aria-label="Guided architecture trace">
+        <div class="trace-heading">
+          <span>02</span>
+          <div>
+            <small>GUIDED TRACE</small>
+            <select id="flow-select" aria-label="Choose a guided architecture trace"></select>
+          </div>
+        </div>
+
+        <article class="trace-current" aria-live="polite">
+          <strong id="flow-step-number">01</strong>
+          <div>
+            <span id="flow-step-system">GATEWAY</span>
+            <h2 id="flow-step-title">Resolve installation</h2>
+            <p id="flow-step-detail"></p>
+          </div>
+        </article>
+
+        <div class="trace-controls">
+          <button id="flow-prev" type="button">← PREV</button>
+          <button id="flow-play" class="play-button" type="button" aria-label="Play guided trace">▶</button>
+          <button id="flow-next" type="button">NEXT →</button>
+        </div>
+
+        <div class="trace-rail-wrap">
+          <nav id="flow-rail" class="trace-rail" aria-label="Trace steps"></nav>
+          <p id="flow-thesis" class="trace-thesis"></p>
+        </div>
+      </section>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <dialog id="help-dialog" class="help-dialog" aria-labelledby="help-dialog-title">
+      <form method="dialog">
+        <button class="dialog-close" aria-label="Close help">×</button>
+        <p class="dialog-kicker">NAVIGATION MANUAL // REV 1</p>
+        <h2 id="help-dialog-title">Read the installation as a world.</h2>
+        <p>The geometry encodes runtime ownership—not directory depth. Source trees are evidence attached to the actors that own policy, state, and cleanup.</p>
+        <dl>
+          <div><dt>DRAG / ARROWS</dt><dd>Orbit the installation world</dd></div>
+          <div><dt>SCROLL / + / −</dt><dd>Change map scale</dd></div>
+          <div><dt>CLICK</dt><dd>Inspect a system or component</dd></div>
+          <div><dt>DOUBLE CLICK</dt><dd>Fly to a landmark</dd></div>
+          <div><dt>/ OR ⌘K</dt><dd>Search names, mechanics, and paths</dd></div>
+          <div><dt>ESC</dt><dd>Clear search or restore the full world</dd></div>
+        </dl>
+        <p class="dialog-note">Runtime, Ownership, Security, and Durability are lenses over one graph. Switch lenses instead of reading every relationship as one undifferentiated dependency diagram.</p>
+      </form>
+    </dialog>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
