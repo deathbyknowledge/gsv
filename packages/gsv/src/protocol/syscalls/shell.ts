@@ -1,6 +1,7 @@
 export const DEFAULT_SHELL_EXEC_TIMEOUT_MS = 120_000;
 
 export type ShellExecArgs = {
+  target?: string;
   input: string;
   cwd?: string;
   sessionId?: string;
