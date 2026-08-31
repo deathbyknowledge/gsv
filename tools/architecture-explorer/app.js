@@ -182,8 +182,9 @@ function bindEvents() {
   });
 
   elements.flowSelect.addEventListener("change", () => {
+    const flowId = elements.flowSelect.value;
     stopFlow();
-    state.activeFlowId = elements.flowSelect.value;
+    state.activeFlowId = flowId;
     setFlowStep(0);
   });
   elements.flowPrev.addEventListener("click", () => setFlowStep(state.activeFlowStep - 1));
@@ -1023,6 +1024,7 @@ function updateCameraReadout() {
 function worldPointerDown(event) {
   if (event.button !== 0) return;
   cancelCameraAnimation();
+  const node = event.target.closest("[data-system]");
   state.drag = {
     pointerId: event.pointerId,
     x: event.clientX,
@@ -1030,6 +1032,12 @@ function worldPointerDown(event) {
     yaw: state.camera.yaw,
     pitch: state.camera.pitch,
     moved: false,
+    hit: node
+      ? {
+          subsystemId: node.dataset.system,
+          componentId: node.dataset.component ?? null,
+        }
+      : null,
   };
   elements.world.setPointerCapture(event.pointerId);
   elements.world.classList.add("is-dragging");
@@ -1061,10 +1069,20 @@ function worldPointerMove(event) {
 
 function worldPointerUp(event) {
   if (state.drag?.pointerId !== event.pointerId) return;
-  state.ignoreNextClick = state.drag.moved;
+  const { moved, hit } = state.drag;
+  const cancelled = event.type === "pointercancel";
+  state.ignoreNextClick = !cancelled && (moved || Boolean(hit));
   state.drag = null;
   elements.world.classList.remove("is-dragging");
   if (elements.world.hasPointerCapture(event.pointerId)) elements.world.releasePointerCapture(event.pointerId);
+  if (!cancelled && !moved && hit) {
+    selectSubsystem(hit.subsystemId, hit.componentId);
+  }
+  if (state.ignoreNextClick) {
+    window.setTimeout(() => {
+      state.ignoreNextClick = false;
+    }, 0);
+  }
 }
 
 function worldClicked(event) {

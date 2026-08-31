@@ -742,6 +742,15 @@ button:disabled {
   cursor: grabbing;
 }
 
+#world-svg:focus,
+.world-node:focus {
+  outline: none;
+}
+
+.world-stage:has(#world-svg:focus-visible) {
+  box-shadow: inset 0 0 0 1px rgba(216, 255, 82, 0.28);
+}
+
 .terrain-field {
   fill: url("#ground-fade");
   stroke: none;
