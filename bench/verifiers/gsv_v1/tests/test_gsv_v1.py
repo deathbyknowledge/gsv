@@ -18,7 +18,7 @@ def make_trace(task) -> vf.Trace:
     )
 
 
-def test_plugin_exports_and_loads_one_deterministic_task() -> None:
+def test_plugin_exports_and_loads_deterministic_tasks() -> None:
     taskset_config = vf.taskset_config_type("gsv-v1").model_validate(
         {"id": "gsv-v1"}
     )
@@ -27,24 +27,31 @@ def test_plugin_exports_and_loads_one_deterministic_task() -> None:
     )
     taskset = vf.load_taskset(taskset_config)
     harness = vf.load_harness(harness_config)
-    (task,) = list(taskset)
+    tasks = list(taskset)
 
-    assert task.key == "target-appears-after-inspection"
-    assert task.data.scenario["transition"]["trigger"] == {
+    assert [task.key for task in tasks] == [
+        "deploy-release-across-targets",
+        "target-appears-after-inspection",
+    ]
+    assert tasks[1].data.scenario["transitions"][0]["after"] == {
+        "processId": "ship",
         "tool": "Shell",
-        "input": "targets list",
+        "arguments": {
+            "input": "targets list --json",
+            "target": "gsv",
+        },
+        "outcome": "success",
     }
     assert isinstance(taskset, GsvTaskset)
     assert isinstance(harness, GsvHarness)
 
 
-async def test_exact_semantic_reward_is_offline_and_strict() -> None:
-    (task,) = list(GsvTaskset(GsvConfig(id="gsv-v1")))
+async def test_state_reward_is_offline_and_checks_nested_outcomes() -> None:
+    task = next(iter(GsvTaskset(GsvConfig(id="gsv-v1"))))
     artifact = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "scenarioId": task.data.scenario_id,
-        "status": "yielded",
-        "log": copy.deepcopy(task.data.expected_log),
+        **copy.deepcopy(task.data.expected),
     }
     trace = make_trace(task)
     trace.info["gsv"] = artifact
@@ -54,7 +61,9 @@ async def test_exact_semantic_reward_is_offline_and_strict() -> None:
 
     wrong_trace = make_trace(task)
     wrong_artifact = copy.deepcopy(artifact)
-    wrong_artifact["log"][0]["input"] = "targets status"
+    wrong_artifact["world"]["targets"]["deploy-server"]["state"][
+        "deployedRelease"
+    ] = "wrong-release"
     wrong_trace.info["gsv"] = wrong_artifact
     await task.score(wrong_trace)
 

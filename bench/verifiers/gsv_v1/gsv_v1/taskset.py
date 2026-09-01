@@ -12,7 +12,7 @@ MAX_ARTIFACT_BYTES = 2 * 1024 * 1024
 class GsvData(vf.TaskData):
     scenario_id: str
     scenario: dict[str, Any]
-    expected_log: list[dict[str, Any]]
+    expected: dict[str, Any]
 
 
 class GsvTask(vf.Task[GsvData]):
@@ -37,7 +37,7 @@ class GsvTask(vf.Task[GsvData]):
     async def finalize(self, trace: vf.Trace, runtime: vf.Runtime) -> None:
         raw = await runtime.read(ARTIFACT_PATH, max_bytes=MAX_ARTIFACT_BYTES)
         artifact = json.loads(raw)
-        if not isinstance(artifact, dict) or artifact.get("schemaVersion") != 1:
+        if not isinstance(artifact, dict) or artifact.get("schemaVersion") != 2:
             raise ValueError("GSV runner returned an invalid artifact")
         if artifact.get("scenarioId") != self.data.scenario_id:
             raise ValueError("GSV runner artifact belongs to a different scenario")
@@ -47,13 +47,14 @@ class GsvTask(vf.Task[GsvData]):
             trace.root_reply = messages[-1]
 
     @vf.reward(weight=1.0)
-    async def exact_semantic_log(self, trace: vf.Trace) -> float:
+    async def scenario_outcome(self, trace: vf.Trace) -> float:
         artifact = trace.info.get("gsv")
         if not isinstance(artifact, dict):
             return 0.0
         return float(
-            artifact.get("status") == "yielded"
-            and artifact.get("log") == self.data.expected_log
+            artifact.get("schemaVersion") == 2
+            and artifact.get("scenarioId") == self.data.scenario_id
+            and matches_expected(artifact, self.data.expected)
         )
 
 
@@ -63,30 +64,54 @@ class GsvConfig(vf.TasksetConfig):
 
 class GsvTaskset(vf.Taskset[GsvTask, GsvConfig]):
     def load(self) -> list[GsvTask]:
-        path = self.config.scenario_path or (
+        configured = self.config.scenario_path or (
             Path(__file__).resolve().parent
             / "fixtures"
-            / "target-appears-after-inspection.json"
         )
-        scenario = json.loads(path.read_text())
-        expected_log = scenario.get("expectedLog")
-        if not isinstance(expected_log, list):
-            raise TypeError(f"Scenario {path} has no expectedLog array")
-        return [
-            GsvTask(
+        paths = (
+            sorted(configured.glob("*.json"))
+            if configured.is_dir()
+            else [configured]
+        )
+        if not paths:
+            raise ValueError(f"No GSV scenarios found at {configured}")
+        tasks: list[GsvTask] = []
+        for idx, path in enumerate(paths):
+            scenario = json.loads(path.read_text())
+            if scenario.get("schemaVersion") != 2:
+                raise ValueError(f"Scenario {path} does not use schemaVersion 2")
+            expected = scenario.get("expected")
+            if not isinstance(expected, dict):
+                raise TypeError(f"Scenario {path} has no expected object")
+            tasks.append(GsvTask(
                 GsvData(
-                    idx=0,
+                    idx=idx,
                     name=scenario["id"],
-                    description=(
-                        "Observe an ordered context-availability delta after a Shell inspection, "
-                        "commit the requested message, and yield."
-                    ),
+                    description=scenario["description"],
                     prompt=scenario["prompt"],
                     system_prompt=scenario["systemPrompt"],
                     scenario_id=scenario["id"],
                     scenario=scenario,
-                    expected_log=expected_log,
+                    expected=expected,
                 ),
                 self.config.task,
+            ))
+        return tasks
+
+
+def matches_expected(actual: object, expected: object) -> bool:
+    if isinstance(expected, dict):
+        return isinstance(actual, dict) and all(
+            key in actual and matches_expected(actual[key], value)
+            for key, value in expected.items()
+        )
+    if isinstance(expected, list):
+        return (
+            isinstance(actual, list)
+            and len(actual) == len(expected)
+            and all(
+                matches_expected(actual_item, expected_item)
+                for actual_item, expected_item in zip(actual, expected, strict=True)
             )
-        ]
+        )
+    return actual == expected

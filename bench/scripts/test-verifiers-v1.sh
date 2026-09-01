@@ -36,19 +36,32 @@ GSV_BENCH_FAKE_KEY=local-test uv run eval gsv-v1 \
   --client.api-key-var GSV_BENCH_FAKE_KEY \
   --env.agent.runtime.type subprocess \
   --no-serve --no-push --no-rich \
-  --num-tasks 1 --num-rollouts 1 --max-concurrent 1 \
+  --num-tasks 2 --num-rollouts 1 --max-concurrent 2 \
   --output-dir "$smoke_dir/output" \
   --run.name gsv-local-smoke --run.dir gsv-local-smoke --clean \
   >"$smoke_dir/eval.stdout"
 
 trace="$smoke_dir/output/gsv-local-smoke/traces.jsonl"
-jq -e '.traces[0] |
-  .rewards.exact_semantic_log.score == 1 and
-  (.calls | length) == 2 and
-  .root_reply == "gpu-lab ready" and
-  .info.gsv.status == "yielded" and
-  (.info.gsv.log | length) == 7 and
-  (.info.gsv.observations | map(.systemPromptSha256) | unique | length) == 1
+jq -s -e '
+  length == 2 and
+  all(.[];
+    (.traces | length) == 1 and
+    .traces[0].rewards.scenario_outcome.score == 1 and
+    .traces[0].info.gsv.status == "yielded" and
+    (.traces[0].info.gsv.observations
+      | map(.systemPromptSha256)
+      | unique
+      | length) == 1
+  ) and
+  ([.[].traces[0].info.gsv.scenarioId] | sort) == [
+    "deploy-release-across-targets",
+    "target-appears-after-inspection"
+  ] and
+  ([.[].traces[0].root_reply] | sort) == [
+    "gpu-lab ready",
+    "release deployed"
+  ] and
+  ([.[].traces[0].calls | length] | add) == 5
 ' "$trace" >/dev/null
 
-echo "gsv Verifiers smoke passed: reward=1 calls=2 semantic_events=7"
+echo "gsv Verifiers smoke passed: tasks=2 rewards=1 calls=5"

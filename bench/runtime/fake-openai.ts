@@ -1,11 +1,21 @@
 import { createServer, type ServerResponse } from "node:http";
-import { jsonValueSchema } from "@humansandmachines/gsv/protocol";
+import type { JsonValue } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 
+type FakeToolCall = {
+  id: string;
+  name: string;
+  arguments: Record<string, JsonValue>;
+};
+
+const fakeMessageSchema = z.object({
+  role: z.string(),
+}).passthrough();
 const fakeRequestSchema = z.object({
   model: z.string(),
-  messages: jsonValueSchema,
+  messages: z.array(fakeMessageSchema),
 }).passthrough();
+type FakeMessage = z.infer<typeof fakeMessageSchema>;
 
 const port = parsePort(process.argv.slice(2));
 
@@ -23,11 +33,11 @@ const server = createServer(async (request, response) => {
 
   try {
     const payload = fakeRequestSchema.parse(JSON.parse(await readBody(request)));
-    const transcript = JSON.stringify(payload.messages ?? []);
-    const input = transcript.includes("[GSV EVENT]")
-      ? "message send --message 'gpu-lab ready' && yield"
-      : "targets list";
-    writeToolCall(response, payload.model, input);
+    writeToolCall(
+      response,
+      payload.model,
+      selectToolCall(payload.messages),
+    );
   } catch {
     response.writeHead(400, { "content-type": "application/json" });
     response.end('{"error":"invalid request"}\n');
@@ -35,8 +45,63 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(port, "127.0.0.1", () => {
-  process.stdout.write(`fake OpenAI server listening on 127.0.0.1:${port}\n`);
+  process.stdout.write("fake OpenAI server listening on 127.0.0.1:" + port + "\n");
 });
+
+function selectToolCall(messages: FakeMessage[]): FakeToolCall {
+  const transcript = JSON.stringify(messages);
+  const resultCount = toolResultCount(messages);
+  if (transcript.includes("/workspace/release.txt")) {
+    if (resultCount === 0) {
+      return {
+        id: "read-release",
+        name: "Read",
+        arguments: {
+          path: "/workspace/release.txt",
+          target: "build-laptop",
+        },
+      };
+    }
+    if (resultCount === 1) {
+      return {
+        id: "deploy-release",
+        name: "Shell",
+        arguments: {
+          input: "deploy release-2026.09.01",
+          target: "deploy-server",
+        },
+      };
+    }
+    return {
+      id: "finish-deploy",
+      name: "Shell",
+      arguments: {
+        input: "message send --message 'release deployed' && yield",
+      },
+    };
+  }
+
+  return resultCount === 0
+    ? {
+      id: "inspect-targets",
+      name: "Shell",
+      arguments: {
+        input: "targets list --json",
+        target: "gsv",
+      },
+    }
+    : {
+      id: "finish-target",
+      name: "Shell",
+      arguments: {
+        input: "message send --message 'gpu-lab ready' && yield",
+      },
+    };
+}
+
+function toolResultCount(messages: FakeMessage[]): number {
+  return messages.filter(({ role }) => role === "tool").length;
+}
 
 function parsePort(argv: string[]): number {
   const index = argv.indexOf("--port");
@@ -56,11 +121,10 @@ async function readBody(request: AsyncIterable<Uint8Array>): Promise<string> {
 function writeToolCall(
   response: ServerResponse,
   model: string,
-  input: string,
+  call: FakeToolCall,
 ): void {
-  const id = input === "targets list" ? "inspect-targets" : "finish";
   const first = {
-    id: `chatcmpl-${id}`,
+    id: "chatcmpl-" + call.id,
     object: "chat.completion.chunk",
     created: 0,
     model,
@@ -70,11 +134,11 @@ function writeToolCall(
         role: "assistant",
         tool_calls: [{
           index: 0,
-          id,
+          id: call.id,
           type: "function",
           function: {
-            name: "Shell",
-            arguments: JSON.stringify({ input }),
+            name: call.name,
+            arguments: JSON.stringify(call.arguments),
           },
         }],
       },
@@ -82,7 +146,7 @@ function writeToolCall(
     }],
   };
   const terminal = {
-    id: `chatcmpl-${id}`,
+    id: "chatcmpl-" + call.id,
     object: "chat.completion.chunk",
     created: 0,
     model,
@@ -94,6 +158,8 @@ function writeToolCall(
     connection: "keep-alive",
   });
   response.end(
-    `data: ${JSON.stringify(first)}\n\ndata: ${JSON.stringify(terminal)}\n\ndata: [DONE]\n\n`,
+    "data: " + JSON.stringify(first)
+      + "\n\ndata: " + JSON.stringify(terminal)
+      + "\n\ndata: [DONE]\n\n",
   );
 }
