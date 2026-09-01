@@ -244,12 +244,12 @@ jobs:
           cache: 'npm'
           cache-dependency-path: |
             package-lock.json
-            gateway/package-lock.json
+            workers/gateway/package-lock.json
             web/package-lock.json
-            ripgit/package-lock.json
-            adapters/whatsapp/package-lock.json
-            adapters/discord/package-lock.json
-            adapters/telegram/package-lock.json
+            workers/ripgit/package-lock.json
+            workers/adapters/whatsapp/package-lock.json
+            workers/adapters/discord/package-lock.json
+            workers/adapters/telegram/package-lock.json
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

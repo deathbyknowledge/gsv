@@ -54,11 +54,11 @@ function listPackageJsonFiles() {
   const files = [
     "package.json",
     "extension/package.json",
-    "gateway/package.json",
+    "workers/gateway/package.json",
     "web/package.json",
-    "ripgit/package.json",
+    "workers/ripgit/package.json",
   ];
-  for (const group of ["shared", "adapters"]) {
+  for (const group of ["workers/adapters"]) {
     const groupDir = join(ROOT, group);
     if (!existsSync(groupDir)) {
       continue;
@@ -80,8 +80,8 @@ function listPackageJsonFiles() {
 }
 
 function listStandaloneNpmDirs() {
-  const dirs = ["gateway", "web", "ripgit"];
-  for (const group of ["adapters"]) {
+  const dirs = ["workers/gateway", "web", "workers/ripgit"];
+  for (const group of ["workers/adapters"]) {
     const groupDir = join(ROOT, group);
     for (const entry of readdirSync(groupDir, { withFileTypes: true })) {
       if (entry.isDirectory()) {
@@ -158,27 +158,27 @@ function syncSourceVersions(version) {
     `$1${version}$2`,
   );
   replaceInFile(
-    "ripgit/Cargo.toml",
+    "workers/ripgit/Cargo.toml",
     /^version = "[^"]+"$/m,
     `version = "${version}"`,
   );
   replaceInFile(
-    "gateway/src/version.ts",
+    "workers/gateway/src/version.ts",
     /export const SERVER_VERSION = "[^"]+";/,
     `export const SERVER_VERSION = "${version}";`,
   );
   replaceInFile(
-    "gateway/src/kernel/config.ts",
+    "workers/gateway/src/kernel/config.ts",
     /"config\/server\/version": "[^"]+",/,
     `"config/server/version": "${version}",`,
   );
   replaceInFile(
-    "gateway/src/drivers/native/shell.test.ts",
+    "workers/gateway/src/drivers/native/shell.test.ts",
     /if \(key === "config\/server\/version"\) return "[^"]+";/,
     `if (key === "config/server/version") return "${version}";`,
   );
   replaceInFile(
-    "gateway/src/drivers/native/shell.test.ts",
+    "workers/gateway/src/drivers/native/shell.test.ts",
     /serverVersion: "[^"]+",/,
     `serverVersion: "${version}",`,
   );
@@ -208,7 +208,7 @@ function syncSourceVersions(version) {
     `$1${version}$2`,
   );
   replaceInFile(
-    "ripgit/src/lib.rs",
+    "workers/ripgit/src/lib.rs",
     /"name": "ripgit",\n\s+"version": "[^"]+"/,
     `"name": "ripgit",\n        "version": "${version}"`,
   );
@@ -223,7 +223,7 @@ function syncCargoLocks(version) {
     );
   }
   replaceInFile(
-    "ripgit/Cargo.lock",
+    "workers/ripgit/Cargo.lock",
     /(name = "ripgit"\nversion = ")[^"]+(")/,
     `$1${version}$2`,
   );
@@ -249,17 +249,17 @@ function managedFiles() {
     "host/Cargo.lock",
     "package.json",
     "package-lock.json",
-    "ripgit/Cargo.toml",
-    "ripgit/Cargo.lock",
-    "gateway/src/version.ts",
-    "gateway/src/kernel/config.ts",
-    "gateway/src/drivers/native/shell.test.ts",
+    "workers/ripgit/Cargo.toml",
+    "workers/ripgit/Cargo.lock",
+    "workers/gateway/src/version.ts",
+    "workers/gateway/src/kernel/config.ts",
+    "workers/gateway/src/drivers/native/shell.test.ts",
     "web/src/app/services/gateway/GatewayProvider.tsx",
     "web/src/app/services/session/sessionService.ts",
     "extension/public/manifest.json",
     "extension/src/background/service-worker.ts",
     "extension/src/target/network-recorder.ts",
-    "ripgit/src/lib.rs",
+    "workers/ripgit/src/lib.rs",
   ]);
   for (const manifest of WORKSPACE_MANIFESTS) {
     files.add(manifest);

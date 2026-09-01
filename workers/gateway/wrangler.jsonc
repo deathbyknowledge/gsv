@@ -1,0 +1,114 @@
+/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "gsv",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-07-30",
+	"compatibility_flags": ["nodejs_compat"],
+	"define": {
+		"__GSV_RELEASE__": "\"dev\""
+	},
+	"rules": [
+		{
+			"type": "Text",
+			"globs": ["**/*.md"],
+			"fallthrough": true
+		}
+	],
+	"migrations": [
+		{
+			"new_sqlite_classes": ["Kernel"],
+			"tag": "v1"
+		},
+		{
+			"new_sqlite_classes": ["Process"],
+			"tag": "v2"
+		},
+		{
+			"new_sqlite_classes": ["AppRunner"],
+			"tag": "v3"
+		},
+		{
+			"deleted_classes": ["AppRunner"],
+			"tag": "v4"
+		},
+		{
+			"new_sqlite_classes": ["Conversation"],
+			"tag": "v5"
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"class_name": "Kernel",
+				"name": "KERNEL"
+			},
+			{
+				"class_name": "Process",
+				"name": "PROCESS"
+			},
+			{
+				"class_name": "Conversation",
+				"name": "CONVERSATION"
+			}
+		]
+	},
+	"observability": {
+		"enabled": true
+	},
+	"r2_buckets": [
+		{
+			"binding": "STORAGE",
+			"bucket_name": "gsv-storage"
+		}
+	],
+	// Workers AI for audio transcription (free)
+	"ai": {
+		"binding": "AI",
+		"remote": true
+	},
+	// Static Assets - serve UI from Gateway
+	"assets": {
+		"directory": "../../web/dist/",
+		"binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+		"run_worker_first": ["/health", "/ws", "/git/*", "/public/*", "/downloads/*", "/oauth/*", "/.well-known/*", "/_gsv/*"]
+	},
+	// Channel service bindings (Gateway → Channel RPC)
+	"services": [
+		{
+			"binding": "CHANNEL_TELEGRAM",
+			"service": "gsv-channel-telegram",
+			"entrypoint": "TelegramChannel"
+		},
+		{
+			"binding": "CHANNEL_SLACK",
+			"service": "gsv-channel-slack",
+			"entrypoint": "SlackChannel"
+		},
+		{
+			"binding": "CHANNEL_DISCORD",
+			"service": "gsv-channel-discord",
+			"entrypoint": "DiscordChannel"
+		},
+		{
+			"binding": "CHANNEL_WHATSAPP",
+			"service": "gsv-channel-whatsapp",
+			"entrypoint": "WhatsAppChannelEntrypoint"
+		},
+		{
+			"binding": "RIPGIT",
+			"service": "ripgit"
+		}
+	],
+	// CodeMode requires Workers Paid. The CLI omits this binding for Free or
+	// unverified plans; direct Wrangler deployments retain full capabilities.
+	"worker_loaders": [
+		{
+			"binding": "LOADER"
+		}
+	]
+}

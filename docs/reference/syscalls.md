@@ -4,8 +4,8 @@ Syscalls are GSV's stable operation surface. They are invoked over WebSocket req
 
 Source of truth:
 
-- `gateway/src/syscalls/index.ts`
-- `gateway/src/kernel/dispatch.ts`
+- `workers/gateway/src/syscalls/index.ts`
+- `workers/gateway/src/kernel/dispatch.ts`
 - `packages/gsv/src/protocol/syscalls/*.ts`
 
 ## Calling Convention
@@ -247,7 +247,7 @@ Write stdin to a running command:
 CodeMode wrappers expose the same result shape:
 
 ```ts
-let res = await shell("npm run test", { cwd: "/workspace/gsv/gateway" });
+let res = await shell("npm run test", { cwd: "/workspace/gsv/workers/gateway" });
 let output = res.output;
 
 while (res.status === "running") {

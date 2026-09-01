@@ -11,7 +11,7 @@ npm run review:manual
 
 Both commands listen on `http://127.0.0.1:4178`. Set `GSV_REVIEW_PORT` to use another port.
 
-The prompt view evaluates the exported strings in `gateway/src/prompts/`, groups them by role, and shows their source path and approximate size. It is a source catalog, not an exact live Process prompt: runtime identity, installed skills, targets, and user-edited `context.d` files are not included.
+The prompt view evaluates the exported strings in `workers/gateway/src/prompts/`, groups them by role, and shows their source path and approximate size. It is a source catalog, not an exact live Process prompt: runtime identity, installed skills, targets, and user-edited `context.d` files are not included.
 
 The manual view reads the sibling `../gsv-manual` worktree by default. Set `GSV_MANUAL_ROOT` when the manual lives elsewhere:
 

@@ -19,9 +19,9 @@ install_dir() {
 echo "==> Installing dependencies"
 (cd "${ROOT_DIR}" && npm ci --ignore-scripts)
 npm run build --workspace packages/gsv
-install_dir "${ROOT_DIR}/gateway"
+install_dir "${ROOT_DIR}/workers/gateway"
 install_dir "${ROOT_DIR}/web"
-install_dir "${ROOT_DIR}/ripgit"
+install_dir "${ROOT_DIR}/workers/ripgit"
 
 ADAPTER_ROWS=()
 ADAPTER_CATALOG_ROWS="$(node "${ROOT_DIR}/scripts/adapter-catalog.mjs")"
@@ -47,11 +47,11 @@ for row in "${ADAPTER_ROWS[@]}"; do
 done
 
 (
-  cd "${ROOT_DIR}/gateway"
+  cd "${ROOT_DIR}/workers/gateway"
   npm exec --workspaces=false -- wrangler deploy --minify --dry-run --define "__GSV_RELEASE__:${GSV_RELEASE_DEFINE}" --outdir "${DIST_DIR}/gateway/worker"
 )
 (
-  cd "${ROOT_DIR}/ripgit"
+  cd "${ROOT_DIR}/workers/ripgit"
   npm exec --workspaces=false -- wrangler deploy --minify --dry-run --outdir "${DIST_DIR}/ripgit/worker"
 )
 for row in "${ADAPTER_ROWS[@]}"; do
@@ -63,7 +63,7 @@ for row in "${ADAPTER_ROWS[@]}"; do
 done
 
 echo "==> Assembling component metadata"
-cp "${ROOT_DIR}/gateway/wrangler.jsonc" "${DIST_DIR}/gateway/wrangler.jsonc"
+cp "${ROOT_DIR}/workers/gateway/wrangler.jsonc" "${DIST_DIR}/gateway/wrangler.jsonc"
 cp -R "${ROOT_DIR}/web/dist" "${DIST_DIR}/gateway/assets"
 cat > "${DIST_DIR}/gateway/manifest.json" <<'EOF'
 {
@@ -77,7 +77,7 @@ cat > "${DIST_DIR}/gateway/manifest.json" <<'EOF'
 }
 EOF
 
-cp "${ROOT_DIR}/ripgit/wrangler.toml" "${DIST_DIR}/ripgit/wrangler.toml"
+cp "${ROOT_DIR}/workers/ripgit/wrangler.toml" "${DIST_DIR}/ripgit/wrangler.toml"
 cat > "${DIST_DIR}/ripgit/manifest.json" <<'EOF'
 {
   "component": "ripgit",

@@ -35,15 +35,15 @@ printf 'Open http://localhost:8976/admin to create an installation.\n'
 printf 'Then open the one-time onboarding link issued by the registry.\n'
 printf 'State: %s\n\n' "$STATE_DIR"
 
-cd "$ROOT_DIR/ripgit"
+cd "$ROOT_DIR/workers/ripgit"
 exec env \
   CLOUDFLARE_INCLUDE_PROCESS_ENV=false \
   npm exec --workspaces=false -- wrangler dev \
-  --config "$ROOT_DIR/gateway/wrangler.managed.dev.jsonc" \
+  --config "$ROOT_DIR/workers/gateway/wrangler.managed.dev.jsonc" \
   --config "$ACCOUNTS_DIR/wrangler.dev.jsonc" \
   --config "$INFERENCE_DIR/wrangler.dev.jsonc" \
-  --config "$ROOT_DIR/ripgit/wrangler.managed.dev.jsonc" \
-  --config "$ROOT_DIR/adapters/email/wrangler.dev.jsonc" \
+  --config "$ROOT_DIR/workers/ripgit/wrangler.managed.dev.jsonc" \
+  --config "$ROOT_DIR/workers/adapters/email/wrangler.dev.jsonc" \
   --ip 0.0.0.0 \
   --port 8976 \
   --env-file "$MANAGED_ENV_FILE" \

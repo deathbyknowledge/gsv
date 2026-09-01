@@ -57,22 +57,22 @@ jobs:
               - 'extension/public/manifest.json'
               - 'extension/src/background/service-worker.ts'
               - 'extension/src/target/network-recorder.ts'
-              - 'gateway/package.json'
-              - 'gateway/package-lock.json'
-              - 'gateway/src/version.ts'
-              - 'gateway/src/kernel/config.ts'
-              - 'gateway/src/drivers/native/shell.test.ts'
+              - 'workers/gateway/package.json'
+              - 'workers/gateway/package-lock.json'
+              - 'workers/gateway/src/version.ts'
+              - 'workers/gateway/src/kernel/config.ts'
+              - 'workers/gateway/src/drivers/native/shell.test.ts'
               - 'web/package.json'
               - 'web/package-lock.json'
               - 'web/src/app/services/gateway/GatewayProvider.tsx'
               - 'web/src/app/services/session/sessionService.ts'
-              - 'ripgit/package.json'
-              - 'ripgit/package-lock.json'
-              - 'ripgit/Cargo.toml'
-              - 'ripgit/Cargo.lock'
-              - 'ripgit/src/lib.rs'
-              - 'adapters/*/package.json'
-              - 'adapters/*/package-lock.json'
+              - 'workers/ripgit/package.json'
+              - 'workers/ripgit/package-lock.json'
+              - 'workers/ripgit/Cargo.toml'
+              - 'workers/ripgit/Cargo.lock'
+              - 'workers/ripgit/src/lib.rs'
+              - 'workers/adapters/*/package.json'
+              - 'workers/adapters/*/package-lock.json'
             sdk:
               - '.github/workflows/ci.yml'
               - 'package.json'
@@ -95,26 +95,26 @@ jobs:
               - 'package.json'
               - 'package-lock.json'
               - 'packages/gsv/**'
-              - 'gateway/**'
+              - 'workers/gateway/**'
             adapters:
               - '.github/workflows/ci.yml'
               - 'package.json'
               - 'package-lock.json'
               - 'packages/gsv/**'
-              - 'adapters/**'
+              - 'workers/adapters/**'
             whatsapp:
               - '.github/workflows/ci.yml'
               - 'package.json'
               - 'package-lock.json'
               - 'packages/gsv/**'
-              - 'adapters/shared/**'
-              - 'adapters/whatsapp/**'
+              - 'workers/adapters/shared/**'
+              - 'workers/adapters/whatsapp/**'
               - 'scripts/build-cloudflare-bundles.sh'
               - 'scripts/check-worker-bundle-size.mjs'
             ripgit:
               - '.github/workflows/ci.yml'
               - 'scripts/worker-build.sh'
-              - 'ripgit/**'
+              - 'workers/ripgit/**'
             cli:
               - '.github/workflows/ci.yml'
               - 'host/Cargo.toml'
@@ -310,7 +310,7 @@ jobs:
         with:
           node-version: '24'
           cache: 'npm'
-          cache-dependency-path: ripgit/package-lock.json
+          cache-dependency-path: workers/ripgit/package-lock.json
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -318,15 +318,15 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install dependencies
-        working-directory: ripgit
+        working-directory: workers/ripgit
         run: npm ci
 
       - name: Run Rust unit tests
-        working-directory: ripgit
+        working-directory: workers/ripgit
         run: cargo test
 
       - name: Bundle worker
-        working-directory: ripgit
+        working-directory: workers/ripgit
         run: npm exec -- wrangler deploy --minify --dry-run --outdir dist/worker
 
   adapter-packages:
@@ -344,7 +344,7 @@ jobs:
           cache: 'npm'
           cache-dependency-path: |
             package-lock.json
-            adapters/*/package-lock.json
+            workers/adapters/*/package-lock.json
 
       - name: Install workspace dependencies
         run: npm ci
@@ -352,7 +352,7 @@ jobs:
       - name: Install adapter dependencies
         run: |
           set -euo pipefail
-          for manifest in adapters/*/package.json; do
+          for manifest in workers/adapters/*/package.json; do
             directory="${manifest%/package.json}"
             npm ci --prefix "$directory" --workspaces=false
           done
@@ -360,18 +360,18 @@ jobs:
       - name: Type check adapter packages
         run: |
           set -euo pipefail
-          for manifest in adapters/*/package.json; do
+          for manifest in workers/adapters/*/package.json; do
             directory="${manifest%/package.json}"
             npm --prefix "$directory" run typecheck
           done
 
       - name: Run shared adapter tests
-        run: npm exec -- vitest run adapters/shared/test
+        run: npm exec -- vitest run workers/adapters/shared/test
 
       - name: Run adapter package tests
         run: |
           set -euo pipefail
-          for manifest in adapters/*/package.json; do
+          for manifest in workers/adapters/*/package.json; do
             directory="${manifest%/package.json}"
             test_script="$(node -e '
               const scripts = require("./" + process.argv[1]).scripts ?? {};
@@ -401,32 +401,32 @@ jobs:
           cache: 'npm'
           cache-dependency-path: |
             package-lock.json
-            adapters/whatsapp/package-lock.json
+            workers/adapters/whatsapp/package-lock.json
 
       - name: Install workspace dependencies
         run: npm ci
 
       - name: Install WhatsApp adapter dependencies
-        working-directory: adapters/whatsapp
+        working-directory: workers/adapters/whatsapp
         run: npm ci
 
       - name: Type check WhatsApp adapter
-        working-directory: adapters/whatsapp
+        working-directory: workers/adapters/whatsapp
         run: npm exec -- tsc --noEmit
 
       - name: Run shared adapter tests
-        run: npm exec -- vitest run adapters/shared/test
+        run: npm exec -- vitest run workers/adapters/shared/test
 
       - name: Run WhatsApp adapter tests
-        working-directory: adapters/whatsapp
+        working-directory: workers/adapters/whatsapp
         run: npm run test:run
 
       - name: Bundle WhatsApp worker
-        working-directory: adapters/whatsapp
+        working-directory: workers/adapters/whatsapp
         run: npm exec -- wrangler deploy --minify --dry-run --outdir dist/worker
 
       - name: Enforce Workers Free bundle budget
-        run: node scripts/check-worker-bundle-size.mjs adapters/whatsapp/dist/worker/index.js 2800000
+        run: node scripts/check-worker-bundle-size.mjs workers/adapters/whatsapp/dist/worker/index.js 2800000
 
   cli-build:
     name: CLI Build (${{ matrix.os }})

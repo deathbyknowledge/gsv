@@ -80,12 +80,12 @@ Canonical user-facing conversations are not Process histories. Conversations ret
 ## System ownership
 
 - `packages/gsv/src/services/`: public Worker RPC contracts for installation directories, onboarding, entitlements, funded inference, mail, and adapters. Managed implementations belong to the deployment operator.
-- `gateway/src/kernel/`: authentication, capabilities, syscall dispatch, configuration, process registry, routing, schedules, adapters, and user connections.
-- `gateway/src/process/`: agent loop, history, queued input, pending tools, approvals, cancellation, context assembly, and process-scoped media.
-- `gateway/src/drivers/native/`: the in-process `gsv` target provider, including its filesystem, shell, and network-backed command environment.
-- `gateway/src/conversation/`: canonical user-visible message history, immutable resource references, hot SQLite retention, and immutable R2 archive segments.
-- `gateway/src/syscalls/` and `gateway/src/protocol/`: public runtime contracts and frame transport.
-- `gateway/src/inference/`: provider integration and model transport.
+- `workers/gateway/src/kernel/`: authentication, capabilities, syscall dispatch, configuration, process registry, routing, schedules, adapters, and user connections.
+- `workers/gateway/src/process/`: agent loop, history, queued input, pending tools, approvals, cancellation, context assembly, and process-scoped media.
+- `workers/gateway/src/drivers/native/`: the in-process `gsv` target provider, including its filesystem, shell, and network-backed command environment.
+- `workers/gateway/src/conversation/`: canonical user-visible message history, immutable resource references, hot SQLite retention, and immutable R2 archive segments.
+- `workers/gateway/src/syscalls/` and `workers/gateway/src/protocol/`: public runtime contracts and frame transport.
+- `workers/gateway/src/inference/`: provider integration and model transport.
 - `packages/gsv/`: public client and protocol types.
 - `web/`: desktop shell, setup/login, system UI, and browser-side gateway integration.
 - `host/apps/desktop/`: GPUI desktop client, text-first interaction model, and native presentation.
@@ -93,9 +93,9 @@ Canonical user-facing conversations are not Process histories. Conversations ret
 - `host/apps/machine/`: the `gsvd` machine driver, concrete tools, transfer ownership, reconnect, logging, and shutdown.
 - `host/helpers/`: separately supervised local transcription and gesture processes.
 - `host/crates/`: shared gateway transport, host configuration, Desktop IPC, and gesture protocol contracts. `host/` owns their Cargo workspace and build artifacts.
-- `adapters/`: platform-specific messaging workers and identity normalization.
+- `workers/adapters/`: platform-specific messaging workers and identity normalization.
 - `extension/`: browser-backed target and browser integration.
-- `ripgit/`: git-backed repositories and filesystem storage operations.
+- `workers/ripgit/`: git-backed repositories and filesystem storage operations.
 
 Keep platform-specific identity and delivery behavior in its adapter. Keep visual presentation in the web and Desktop clients. Keep target selection below stable syscall contracts.
 
@@ -136,10 +136,10 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 
 Durable Object SQLite and managed D1 schemas use versioned migrations in:
 
-- `gateway/src/kernel/schema/`
-- `gateway/src/process/schema/`
-- `gateway/src/schema/runner.ts`
-- `ripgit/src/schema.rs`
+- `workers/gateway/src/kernel/schema/`
+- `workers/gateway/src/process/schema/`
+- `workers/gateway/src/schema/runner.ts`
+- `workers/ripgit/src/schema.rs`
 
 Do not create tables, indexes, or ad hoc `ensureColumn` migrations from store constructors. Do not edit a migration that has shipped; add the next numbered migration. Collapse to a new baseline only for an explicit release/reset policy, and preserve supported upgrade paths with migration tests.
 
@@ -151,8 +151,8 @@ Use Durable Object storage KV for a single opaque record that is read and writte
 
 ### Protected prompt and context content
 
-- Keep production prompt text and repository-defined defaults or seeds for system `config/ai/context.d/*` and user or agent account `~/context.d/*` in `gateway/src/prompts/**`.
-- Treat `gateway/src/prompts/**` as read-only unless the user explicitly requests a prompt or standing-context content change.
+- Keep production prompt text and repository-defined defaults or seeds for system `config/ai/context.d/*` and user or agent account `~/context.d/*` in `workers/gateway/src/prompts/**`.
+- Treat `workers/gateway/src/prompts/**` as read-only unless the user explicitly requests a prompt or standing-context content change.
 - Do not edit prompt or seeded `context.d` content to work around runtime, protocol, tool-discovery, or UI behavior. Fix the owning implementation boundary.
 - If a task appears to require changing protected prompt or context content without explicit authorization, stop and ask first.
 
@@ -170,16 +170,17 @@ Preserve unrelated user changes in a dirty worktree. Do not broaden a cleanup ba
 
 ```text
 gsv/
-├── gateway/       # Kernel, Process, syscalls, inference, filesystem
+├── workers/
+│   ├── gateway/   # Kernel, Process, syscalls, inference, filesystem
+│   ├── adapters/  # External-platform Worker implementations and test channel
+│   └── ripgit/    # Git-backed repository Worker
 ├── packages/gsv/  # Public TypeScript client and protocol
 ├── web/           # Desktop shell and embedded app host
 ├── host/
 │   ├── apps/      # Rust CLI, Desktop, and machine applications
 │   ├── helpers/   # Isolated transcription and gesture processes
 │   └── crates/    # Shared host transport, configuration, and IPC contracts
-├── adapters/      # External-platform Worker implementations and test channel
 ├── extension/     # Browser target
-├── ripgit/        # Git-backed repository worker
 ├── engineering/   # Detailed implementation and product guidance
 ├── docs/          # Architecture and user/reference documentation
 └── scripts/       # Development and release automation
@@ -203,23 +204,23 @@ npm run dev
 Validate only the surfaces affected by the change:
 
 - Managed service implementations: validate them in their owning deployment repository against `packages/gsv/src/services/`
-- Gateway: `cd gateway && npx tsc --noEmit && npm run test:run`
+- Gateway: `cd workers/gateway && npx tsc --noEmit && npm run test:run`
 - Web: `cd web && npm run check && npm run test:run && npm run build`
 - Desktop and transcription helper: `cd host && cargo fmt --package desktop --package transcriber --check && cargo test --package desktop --package transcriber && cargo clippy --package desktop --package transcriber --all-targets -- -D warnings`
 - Gesture helper and protocol: `cd host && cargo fmt --package gestures --package gesture-protocol --check && cargo test --package gestures --package gesture-protocol && cargo clippy --package gestures --package gesture-protocol --all-targets -- -D warnings`
 - Public SDK: `npm run gsv:check && npm test --workspace packages/gsv`
 - CLI: `cd host && cargo fmt --package gsv --check && cargo test --package gsv`
 - Machine: `cd host && cargo fmt --package machine --check && cargo test --package machine`
-- ripgit: `cd ripgit && npm test`
+- ripgit: `cd workers/ripgit && npm test`
 - Browser extension: `cd extension && npm run check && npm run test:run && npm run build`
-- WhatsApp: `cd adapters/whatsapp && npx tsc --noEmit`
-- Discord, Telegram, Slack, or test adapter: `cd adapters/<name> && npm run typecheck`
+- WhatsApp: `cd workers/adapters/whatsapp && npx tsc --noEmit`
+- Discord, Telegram, Slack, or test adapter: `cd workers/adapters/<name> && npm run typecheck`
 
 Protocol or client changes may affect gateway, web, CLI, devices, and adapters even when only one type definition changed. Validate each actual consumer.
 
 ## Deployment model
 
-- Gateway code: `cd gateway && npm run deploy`
+- Gateway code: `cd workers/gateway && npm run deploy`
 - Web code: build `web`, then deploy the gateway that serves the resulting assets.
 - Adapter code: deploy the affected adapter worker.
 - ripgit code: deploy that worker separately.

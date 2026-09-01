@@ -436,7 +436,7 @@ export function applyChatSignal(
 }
 
 /** First-line markers of every system message the gateway emits for a FAILURE
- *  (traced through gateway/src/process/do.ts + inference/errors.ts). System
+ *  (traced through workers/gateway/src/process/do.ts + inference/errors.ts). System
  *  rows carry no structural severity, so errors are recognized by text.
  *  Fail-safe: anything unmatched renders as a neutral informational row —
  *  a new gateway error format degrades to neutral, never to a false red. */

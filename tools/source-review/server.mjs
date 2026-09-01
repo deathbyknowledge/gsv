@@ -77,7 +77,7 @@ export function createWorkspaceRegistry(manualRoot = process.env.GSV_MANUAL_ROOT
     ["prompts", {
       id: "prompts",
       label: "Prompt Sources",
-      root: resolve(REPO_ROOT, "gateway/src/prompts"),
+      root: resolve(REPO_ROOT, "workers/gateway/src/prompts"),
       extensions: new Set([".ts"]),
     }],
     ["manual", {
@@ -358,7 +358,7 @@ if (isMainModule()) {
   const server = createSourceReviewServer({ initialWorkspace });
   server.listen(port, "127.0.0.1", () => {
     console.log(`GSV source review: http://127.0.0.1:${port}`);
-    console.log(`Prompt sources: ${resolve(REPO_ROOT, "gateway/src/prompts")}`);
+    console.log(`Prompt sources: ${resolve(REPO_ROOT, "workers/gateway/src/prompts")}`);
     console.log(`Manual sources: ${resolve(process.env.GSV_MANUAL_ROOT || resolve(REPO_ROOT, "../gsv-manual"))}`);
   });
 }

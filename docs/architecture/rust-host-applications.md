@@ -32,7 +32,7 @@ machine lifecycle, a CLI interaction, or Desktop UI state.
 
 The host applications, helpers, and shared crates form one Cargo workspace
 rooted at `host/`. Its lockfile and build output belong to that boundary;
-`ripgit/` remains an independent Rust project.
+`workers/ripgit/` remains an independent Rust project.
 
 ## `gsvd`
 

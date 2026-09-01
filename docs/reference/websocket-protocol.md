@@ -13,16 +13,16 @@ Protocol version 3 is peer- and syscall-based:
 The source of truth is:
 
 - `packages/gsv/src/protocol/wire-frame.ts`
-- `gateway/src/protocol/frames.ts`
-- `gateway/src/protocol/decode-wire-frame.ts`
+- `workers/gateway/src/protocol/frames.ts`
+- `workers/gateway/src/protocol/decode-wire-frame.ts`
 - `tools/protocol/generate-gateway-wire-validator.mjs`
 - `packages/gsv/src/protocol/request-cancel.ts`
 - `packages/gsv/src/protocol/adapters.ts`
 - `packages/gsv/src/protocol/adapter-media-body.ts`
 - `packages/gsv/src/protocol/syscalls/proc.ts`
 - `packages/gsv/src/protocol/syscalls/system.ts`
-- `gateway/src/kernel/connect.ts`
-- `gateway/src/kernel/dispatch.ts`
+- `workers/gateway/src/kernel/connect.ts`
+- `workers/gateway/src/kernel/dispatch.ts`
 
 For syscall arguments, result shapes, and domain behavior, see [Syscalls Reference](/reference/syscalls).
 

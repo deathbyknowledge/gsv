@@ -11,7 +11,7 @@ knowledge files.
 The Process Durable Object owns compaction because it owns process history,
 the active run, and cancellation. `ProcessStore` owns its SQLite messages,
 policies, and segment records. The implementation lives in
-`gateway/src/process/do.ts`, `store.ts`, and `context-pressure.ts`; the public
+`workers/gateway/src/process/do.ts`, `store.ts`, and `context-pressure.ts`; the public
 boundary is the `proc.history.*` syscall family.
 
 ## Context pressure
