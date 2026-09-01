@@ -179,6 +179,7 @@ function buildManagedInferenceRequest(
     maxOutputTokens: options?.maxTokens ?? GSV_INFERENCE_MODEL_METADATA.maxTokens,
     timeoutMs: options?.timeoutMs ?? 180_000,
   };
+  if (attribution.workload) request.workload = attribution.workload;
   if (context.systemPrompt) request.systemPrompt = context.systemPrompt;
   if (context.tools && context.tools.length > 0) {
     // SAFETY: pi-ai tools and the managed protocol share the same JSON Schema contract.

@@ -17,6 +17,8 @@ allowlist. Each event has a closed property schema; there is no arbitrary
 metadata field. Records may contain:
 
 - event names, bounded categories, timings, outcomes, and aggregate counts;
+- content-free inference failure categories, lifecycle stages, retryability,
+  HTTP status codes, and workload classes;
 - the installation identity needed by a deployment-owned consumer to derive a
   pseudonym; and
 - a random event id and occurrence time for idempotent export.
@@ -25,6 +27,14 @@ Records must never contain prompts, messages, file paths, URLs, tool arguments,
 media, credentials, contact or channel identifiers, raw exception text, or
 other user content. Invalid records are rejected without affecting user work.
 Managed telemetry does not export Process traces or conversation activity.
+
+Managed inference reports every admitted logical request at its terminal owner
+boundary. Failed and abandoned requests include a provider-neutral failure kind
+and stage rather than exception text. The provider HTTP status is included when
+one was observed; network, timeout, policy, admission, protocol, and settlement
+failures remain distinguishable when no response existed. Workload classes let
+operators separate interactive, background, delegated IPC, compaction, Kernel,
+and mail-intake reliability without exposing a process or request identifier.
 
 Operational telemetry and product analytics are separate purposes. A managed
 consumer derives unrelated pseudonyms for the two streams with different HMAC

@@ -64,6 +64,7 @@ type RecordedWorkersAiRequest = {
   endpoint: string;
   model: string;
   collectLog: string | null;
+  collectLogPayload: string | null;
   hasProviderCredential: boolean;
 };
 
@@ -695,6 +696,8 @@ class WorkersAiGatewayFixture extends RpcTarget {
       endpoint: request.endpoint,
       model,
       collectLog: request.headers["cf-aig-collect-log"] ?? null,
+      collectLogPayload:
+        request.headers["cf-aig-collect-log-payload"] ?? null,
       hasProviderCredential: Object.keys(request.headers).some((name) => (
         credentialHeaders.has(name.toLowerCase())
       )),

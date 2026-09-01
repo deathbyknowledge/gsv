@@ -962,6 +962,7 @@ describe("handleAiConfig", () => {
     generateMock.mockImplementationOnce(async (request: any) => {
       expect(request.attribution).toMatchObject({
         installationId: "inst_managed",
+        workload: "kernel",
         actor: {
           localUid: 1000,
           processId: "task-1",

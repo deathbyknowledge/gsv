@@ -21,11 +21,21 @@ export type ManagedInferenceActor = {
 
 export type ManagedInferencePurpose = "agent" | "mail-intake";
 
+export type ManagedInferenceWorkload =
+  | "interactive"
+  | "background"
+  | "ipc"
+  | "compaction"
+  | "kernel"
+  | "mail-intake";
+
 export type ManagedInferenceRequest = {
   version: 1;
   installationId: string;
   logicalRequestId: string;
   actor: ManagedInferenceActor;
+  /** Additive for rolling deployments; omitted callers are reported as unknown. */
+  workload?: ManagedInferenceWorkload;
   model: typeof GSV_INFERENCE_PRODUCT_MODEL;
   systemPrompt?: string;
   messages: AiTextMessage[];

@@ -506,6 +506,7 @@ describe("Process DO — mechanical", () => {
     expect(result.first).toMatchObject({
       installationId,
       actor: { localUid: 0, processId: pid, runId: "run-managed" },
+      workload: "background",
     });
     expect(result.first.logicalRequestId).toMatch(/^inference:[a-f0-9]{64}$/);
     expect(result.repeated.logicalRequestId).toBe(result.first.logicalRequestId);

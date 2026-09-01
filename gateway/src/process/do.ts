@@ -7482,6 +7482,13 @@ export class Process extends DurableObject<GatewayEnv> {
         purposeKey,
       ]),
       actor,
+      workload: purpose === "compaction"
+        ? "compaction"
+        : this.currentRun?.returnToCaller
+          ? "ipc"
+          : this.currentRun?.conversationId
+            ? "interactive"
+            : "background",
     };
   }
 

@@ -18,6 +18,47 @@ const modelNameSchema = z.string().check(
   z.maxLength(200),
   z.regex(/^@?[A-Za-z0-9][A-Za-z0-9._:/-]*$/),
 );
+const httpStatusCodeSchema = z.number().check(
+  z.int(),
+  z.gte(100),
+  z.lte(599),
+);
+
+export const inferenceWorkloadSchema = z.enum([
+  "interactive",
+  "background",
+  "ipc",
+  "compaction",
+  "kernel",
+  "mail-intake",
+  "unknown",
+]);
+
+export const inferenceFailureKindSchema = z.enum([
+  "rate_limited",
+  "capacity",
+  "timeout",
+  "authentication",
+  "billing",
+  "invalid_request",
+  "context_overflow",
+  "network",
+  "provider_unavailable",
+  "policy",
+  "quota",
+  "protocol",
+  "internal",
+  "unknown",
+]);
+
+export const inferenceFailureStageSchema = z.enum([
+  "policy",
+  "admission",
+  "provider",
+  "stream",
+  "settlement",
+  "lifecycle",
+]);
 
 export const telemetryComponentSchema = z.enum([
   "gateway",
@@ -108,6 +149,8 @@ const inferenceRequestFinishedSchema = z.strictObject({
   properties: z.strictObject({
     outcome: z.enum(["completed", "failed", "aborted", "abandoned"]),
     purpose: z.enum(["agent", "mail-intake"]),
+    // Optional only for compatibility with producers during rolling upgrades.
+    workload: z.optional(inferenceWorkloadSchema),
     provider: z.literal("workers-ai"),
     model: z.optional(modelNameSchema),
     stopReason: z.optional(z.enum([
@@ -124,6 +167,12 @@ const inferenceRequestFinishedSchema = z.strictObject({
     cacheWriteTokens: nonNegativeIntegerSchema,
     totalTokens: nonNegativeIntegerSchema,
     costNanoUsd: nonNegativeIntegerSchema,
+    // Failure diagnostics are a closed, content-free taxonomy. Managed
+    // producers attach all three fields to failed and abandoned outcomes.
+    failureKind: z.optional(inferenceFailureKindSchema),
+    failureStage: z.optional(inferenceFailureStageSchema),
+    retryable: z.optional(z.boolean()),
+    providerStatusCode: z.optional(httpStatusCodeSchema),
   }),
 });
 
@@ -193,6 +242,11 @@ export const telemetryRecordSchema = z.strictObject({
 export type TelemetryComponent = z.infer<typeof telemetryComponentSchema>;
 export type TelemetryEvent = z.infer<typeof telemetryEventSchema>;
 export type TelemetryRecord = z.infer<typeof telemetryRecordSchema>;
+export type InferenceWorkload = z.infer<typeof inferenceWorkloadSchema>;
+export type InferenceFailureKind = z.infer<typeof inferenceFailureKindSchema>;
+export type InferenceFailureStage = z.infer<
+  typeof inferenceFailureStageSchema
+>;
 
 export type TelemetryEnvironment = {
   GSV_TELEMETRY_ENABLED?: boolean | number | string;
