@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as utils from "../shared/utils";
 import * as personalController from "./personal-controller";
+import type { AdapterService } from "../adapter-interface";
 const getConversationByIdMock = vi.spyOn(utils, "getConversationById");
 
 import { Kernel } from "./do";
@@ -1657,8 +1658,8 @@ describe("Kernel process signal routing", () => {
     };
   }
 
-  it("hands an exact HIL signal to the adapter and stops Kernel retries after acceptance", async () => {
-    const adapterFrame = vi.fn(async () => null);
+  it("hands off an exact HIL signal without accepting a response frame", async () => {
+    const adapterFrame = vi.fn<NonNullable<AdapterService["adapterFrame"]>>(async () => null);
     const route = {
       kind: "adapter",
       runId: "run-frame",
@@ -1740,6 +1741,27 @@ describe("Kernel process signal routing", () => {
       },
       undefined,
     );
+
+    const cancel = vi.fn();
+    adapterFrame.mockResolvedValueOnce({
+      type: "res" as const,
+      id: "unexpected-response",
+      ok: true as const,
+      data: { ok: true },
+      body: {
+        stream: new ReadableStream<Uint8Array>({ cancel }),
+      },
+    });
+
+    await expect(kernel.deliverAdapterPeerSignal(route, {
+      type: "sig",
+      signal: "proc.run.hil.requested",
+      payload,
+    })).resolves.toEqual({
+      state: "permanent",
+      error: "Adapter returned a response to a signal",
+    });
+    expect(cancel).toHaveBeenCalledOnce();
   });
 
   it("claims only the current route and lets a successful final report retire it", async () => {

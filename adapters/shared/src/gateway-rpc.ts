@@ -140,7 +140,7 @@ export async function callAdapterGateway(
     throw error;
   }
 
-  if (!response || response.type !== "res") {
+  if (!response || response.type !== "res" || response.id !== frame.id) {
     const message = "No response from gateway serviceFrame";
     const responseBody = response && "body" in response ? response.body : undefined;
     if (responseBody !== body) {

@@ -2638,6 +2638,10 @@ export class Kernel extends DurableObject<GatewayEnv> {
         frame,
         body,
       );
+      const responseBody = response && "body" in response ? response.body : undefined;
+      if (responseBody !== body) {
+        await cancelBinaryBody(responseBody, "Adapter returned a body for a signal");
+      }
       if (response !== null) {
         return { state: "permanent", error: "Adapter returned a response to a signal" };
       }

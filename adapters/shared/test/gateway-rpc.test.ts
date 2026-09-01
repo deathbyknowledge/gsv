@@ -274,9 +274,9 @@ describe("callAdapterGateway", () => {
   it("cancels response bodies on success and Gateway errors", async () => {
     const successBody = trackedBody();
     await expect(callAdapterGateway(
-      binding(async () => ({
+      binding(async (_installation, frame) => ({
         type: "res",
-        id: "success",
+        id: frame.type === "req" ? frame.id : "unexpected",
         ok: true,
         data: { ok: true },
         body: successBody.body,
@@ -292,9 +292,9 @@ describe("callAdapterGateway", () => {
     const acceptedRequestBody = trackedBody();
     const errorBody = trackedBody();
     await expect(callAdapterGateway(
-      binding(async () => ({
+      binding(async (_installation, frame) => ({
         type: "res",
-        id: "error",
+        id: frame.type === "req" ? frame.id : "unexpected",
         ok: false,
         error: { message: "Gateway rejected message" },
         body: errorBody.body,
@@ -310,15 +310,35 @@ describe("callAdapterGateway", () => {
 
   it("uses the existing call-specific fallback for malformed error responses", async () => {
     await expect(callAdapterGateway(
-      binding(async () => ({
+      binding(async (_installation, frame) => ({
         type: "res",
-        id: "error",
+        id: frame.type === "req" ? frame.id : "unexpected",
         ok: false,
       })),
       INSTALLATION,
       "adapter.state.update",
       STATE_UPDATE_ARGS,
     )).rejects.toThrow("Gateway error on adapter.state.update");
+  });
+
+  it("rejects a response correlated to another request", async () => {
+    const requestBody = trackedBody();
+    const responseBody = trackedBody();
+    await expect(callAdapterGateway(
+      binding(async (_installation, frame) => ({
+        type: "res",
+        id: frame.type === "req" ? `${frame.id}:mismatched` : "unexpected",
+        ok: true,
+        data: { ok: true },
+        body: responseBody.body,
+      })),
+      INSTALLATION,
+      "adapter.inbound",
+      INBOUND_ARGS,
+      requestBody.body,
+    )).rejects.toThrow("No response from gateway serviceFrame");
+    expect(requestBody.cancelled()).toBe("No response from gateway serviceFrame");
+    expect(responseBody.cancelled()).toBe("No response from gateway serviceFrame");
   });
 });
 
