@@ -56,22 +56,22 @@ export type CustomProviderGenerationRequest = {
 type RoutedRequestInit = RequestInit & { timeoutMs?: number };
 
 type OpenAIChatFunction = {
-  name?: string;
+  name?: string | null;
   arguments?: string;
 };
 
 type OpenAIChatToolCallDelta = {
   index?: number;
-  id?: string;
+  id?: string | null;
   function?: OpenAIChatFunction;
 };
 
 type OpenAIChatDelta = {
   content?: string | null;
-  reasoning_content?: string;
+  reasoning_content?: string | null;
   reasoning?: string;
   reasoning_text?: string;
-  tool_calls?: OpenAIChatToolCallDelta[];
+  tool_calls?: OpenAIChatToolCallDelta[] | null;
 };
 
 type OpenAIChatChoice = {
@@ -136,20 +136,20 @@ type CustomProviderModel =
   | Model<"anthropic-messages">;
 
 const openAIChatFunctionSchema = z.object({
-  name: z.string().optional(),
+  name: z.string().nullable().optional(),
   arguments: z.string().optional(),
 });
 const openAIChatToolCallDeltaSchema = z.object({
   index: z.number().int().nonnegative().optional(),
-  id: z.string().optional(),
+  id: z.string().nullable().optional(),
   function: openAIChatFunctionSchema.optional(),
 });
 const openAIChatDeltaSchema = z.object({
   content: z.string().nullable().optional(),
-  reasoning_content: z.string().optional(),
+  reasoning_content: z.string().nullable().optional(),
   reasoning: z.string().optional(),
   reasoning_text: z.string().optional(),
-  tool_calls: z.array(openAIChatToolCallDeltaSchema).optional(),
+  tool_calls: z.array(openAIChatToolCallDeltaSchema).nullable().optional(),
 });
 const openAIChatChoiceSchema = z.object({
   finish_reason: z.string().nullable().optional(),

@@ -127,6 +127,114 @@ describe("streamWithCustomProvider", () => {
     const message = await stream.result();
     expect(message.content).toEqual([{ type: "text", text: "hel" }]);
   });
+
+  it("retains streamed tool calls with nullable SGLang delta placeholders", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response([
+      openAiChatSseChunk({
+        id: "chatcmpl-sglang",
+        model: "Qwen3.8-27B",
+        choices: [{
+          delta: {
+            role: "assistant",
+            content: "",
+            reasoning_content: null,
+          },
+        }],
+      }),
+      openAiChatSseChunk({
+        choices: [{ delta: { reasoning_content: "I should send the message." } }],
+      }),
+      openAiChatSseChunk({
+        choices: [{
+          delta: {
+            role: null,
+            content: "\n\n",
+            reasoning_content: null,
+            tool_calls: null,
+          },
+        }],
+      }),
+      openAiChatSseChunk({
+        choices: [{
+          delta: {
+            role: null,
+            content: null,
+            reasoning_content: null,
+            tool_calls: [{
+              index: 0,
+              id: "call-sglang",
+              type: "function",
+              function: { name: "Shell", arguments: "" },
+            }],
+          },
+        }],
+      }),
+      openAiChatSseChunk({
+        choices: [{
+          delta: {
+            role: null,
+            content: null,
+            reasoning_content: null,
+            tool_calls: [{
+              index: 0,
+              id: null,
+              type: "function",
+              function: { name: null, arguments: "{\"input\":\"message send " },
+            }],
+          },
+        }],
+      }),
+      openAiChatSseChunk({
+        choices: [{
+          delta: {
+            role: null,
+            content: null,
+            reasoning_content: null,
+            tool_calls: [{
+              index: 0,
+              id: null,
+              type: "function",
+              function: { name: null, arguments: "--message READY && yield\"}" },
+            }],
+          },
+        }],
+      }),
+      openAiChatSseChunk({
+        choices: [{ delta: { reasoning_content: null }, finish_reason: "tool_calls" }],
+      }),
+      "data: [DONE]\n\n",
+    ].join(""), {
+      headers: { "content-type": "text/event-stream" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const stream = streamWithCustomProvider({
+      provider: "custom",
+      model: "Qwen3.8-27B",
+      baseUrl: "http://localhost:30000/v1",
+      providerStyle: "openai-chat-completions",
+      maxTokens: 2_048,
+      context: CONTEXT,
+    });
+
+    const message = await stream.result();
+
+    expect(message.stopReason).toBe("toolUse");
+    expect(message.content).toEqual([
+      {
+        type: "thinking",
+        thinking: "I should send the message.",
+        thinkingSignature: "reasoning_content",
+      },
+      { type: "text", text: "\n\n" },
+      {
+        type: "toolCall",
+        id: "call-sglang",
+        name: "Shell",
+        arguments: { input: "message send --message READY && yield" },
+      },
+    ]);
+  });
 });
 
 function openAiChatSseChunk(payload: OpenAiPayload): string {
