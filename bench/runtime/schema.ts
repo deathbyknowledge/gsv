@@ -4,7 +4,6 @@ import type {
   ResponsibilityRecord,
   ResponsibilityTransition,
 } from "@humansandmachines/gsv/protocol";
-import type { Message, Tool } from "@earendil-works/pi-ai";
 import type { ContextProjection } from "../../workers/gateway/src/process/context/projection";
 
 export type SyntheticTargetKind =
@@ -225,8 +224,8 @@ export type GsvSurfaceObservation = {
   processId: string;
   systemPromptSha256: string;
   projection: ContextProjection;
-  messages: Message[];
-  tools: Tool[];
+  messageCount: number;
+  toolNames: string[];
 };
 
 export type SyntheticTargetSnapshot = {

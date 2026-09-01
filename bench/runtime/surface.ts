@@ -653,8 +653,8 @@ function observation(
       .update(context.systemPrompt ?? "")
       .digest("hex"),
     projection: structuredClone(projection),
-    messages: structuredClone(context.messages),
-    tools: structuredClone(context.tools ?? []),
+    messageCount: context.messages.length,
+    toolNames: (context.tools ?? []).map(({ name }) => name),
   };
 }
 

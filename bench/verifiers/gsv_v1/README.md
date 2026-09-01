@@ -14,6 +14,9 @@ result in `trace.info["gsv_rubric"]`, so scoring can be recomputed offline.
 Scenarios may span several durable Process runs separated by logical-time
 external events. Rubrics can combine final-state subsets with semantic-event
 counts and ordering constraints; they do not prescribe an exact tool trace.
+The normalized GSV artifact stores compact per-turn context metadata; complete
+model messages remain in the Verifiers trace instead of being duplicated at
+every observation.
 
 ## Local evaluation
 

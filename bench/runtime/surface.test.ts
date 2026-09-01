@@ -138,8 +138,10 @@ describe("GSV Process surface", () => {
         input: "message send --message 'ready' && yield",
       })),
     ];
+    const seen: Context[] = [];
 
-    const artifact = await runGsvSurfaceScenario(scenario, async () => {
+    const artifact = await runGsvSurfaceScenario(scenario, async (context) => {
+      seen.push(context);
       const next = scripted.shift();
       if (!next) throw new Error("Unexpected model turn");
       return next;
@@ -167,10 +169,10 @@ describe("GSV Process surface", () => {
     expect(new Set(shipObservations.map(({ systemPromptSha256 }) => (
       systemPromptSha256
     ))).size).toBe(1);
-    expect(JSON.stringify(shipObservations[1]?.messages)).toContain(
+    expect(JSON.stringify(seen[1]?.messages)).toContain(
       "The monitor completed its next observation window.",
     );
-    expect(JSON.stringify(shipObservations[1]?.messages)).toContain("Run yielded");
+    expect(JSON.stringify(seen[1]?.messages)).toContain("Run yielded");
   });
 
   it("routes one Process across laptop and server environments", async () => {
@@ -206,8 +208,7 @@ describe("GSV Process surface", () => {
     expect(artifact.world.processes["deploy-worker"]?.visibleTargets).toEqual([
       "deploy-server",
     ]);
-    expect(artifact.observations[0]?.tools.map(({ name }) => name))
-      .toEqual(["Read", "Shell"]);
+    expect(artifact.observations[0]?.toolNames).toEqual(["Read", "Shell"]);
   });
 
   it("lets a bounded worker return ordinary assistant output", async () => {
@@ -260,8 +261,10 @@ describe("GSV Process surface", () => {
       })),
       textAssistant("database migration checksum mismatch"),
     ];
+    const seen: Context[] = [];
 
     const artifact = await runGsvSurfaceScenario(scenario, async (context) => {
+      seen.push(context);
       const delegated = String(context.messages[0]?.content)
         .includes("Delegated task from ship (ship).");
       const next = delegated ? workerResponses.shift() : shipResponses.shift();
@@ -311,15 +314,13 @@ describe("GSV Process surface", () => {
     }]);
     expect(artifact.observations
       .filter(({ processId }) => processId === "proc:incident-worker")[0]
-      ?.tools.map(({ name }) => name)).toEqual(["Read"]);
-    expect(artifact.observations
-      .filter(({ processId }) => processId === "proc:incident-worker")[0]
-      ?.messages[0]?.content).toContain("Delegated task from ship (ship).");
-    expect(artifact.observations
-      .filter(({ processId }) => processId === "ship")
-      .some(({ messages }) => JSON.stringify(messages).includes(
-        "Delegated task from process `proc:incident-worker` finished.",
-      ))).toBe(true);
+      ?.toolNames).toEqual(["Read"]);
+    expect(seen.some(({ messages }) => String(messages[0]?.content).includes(
+      "Delegated task from ship (ship).",
+    ))).toBe(true);
+    expect(seen.some(({ messages }) => JSON.stringify(messages).includes(
+      "Delegated task from process `proc:incident-worker` finished.",
+    ))).toBe(true);
     for (const processId of ["ship", "proc:incident-worker"]) {
       expect(new Set(artifact.observations
         .filter((observation) => observation.processId === processId)
@@ -451,8 +452,9 @@ describe("GSV Process surface", () => {
     expect(new Set(shipObservations.map(({ systemPromptSha256 }) => (
       systemPromptSha256
     ))).size).toBe(1);
-    expect(JSON.stringify(shipObservations.find(({ run }) => run === 3)?.messages))
-      .toContain("Checkout monitor observation window 1 of 2");
+    expect(seen.some(({ messages }) => JSON.stringify(messages).includes(
+      "Checkout monitor observation window 1 of 2",
+    ))).toBe(true);
     const workerObservation = artifact.observations.find(
       ({ processId }) => processId === "proc:checkout-ops",
     );
@@ -461,6 +463,64 @@ describe("GSV Process surface", () => {
     expect(seen.find((context) => String(context.messages[0]?.content)
       .includes("Delegated task from ship (ship)."))?.systemPrompt)
       .toContain("releasectl rollback RELEASE");
+  });
+
+  it("keeps long-run observations compact in the normalized artifact", async () => {
+    const scenario = parseGsvSurfaceScenario({
+      schemaVersion: 2,
+      id: "compact-observations",
+      description: "Exercise a growing Process context without duplicating it.",
+      systemPrompt: "Inspect the offered target repeatedly, then yield.",
+      prompt: "Begin the inspection.",
+      entryProcessId: "ship",
+      world: {
+        runtime: {
+          now: "2026-09-01T12:00:00.000Z",
+          timezone: "UTC",
+        },
+        processes: [{
+          id: "ship",
+          role: "ship",
+          uid: 1000,
+          gids: [1000],
+          capabilities: ["fs.read", "shell.exec"],
+        }],
+        targets: [{
+          id: "large-file",
+          kind: "server",
+          ownerUid: 1000,
+          accessGids: [1000],
+          online: true,
+          implements: ["fs.read"],
+          files: { "/sample": "x".repeat(4096) },
+        }],
+      },
+      transitions: [],
+      expected: {},
+      rubric: [{
+        id: "complete",
+        description: "The Process yields.",
+        weight: 1,
+        expected: {},
+      }],
+      maxTurns: 41,
+    });
+    let turn = 0;
+
+    const artifact = await runGsvSurfaceScenario(scenario, async () => {
+      turn += 1;
+      return turn <= 40
+        ? assistant(toolCall(`read-${turn}`, "Read", {
+            path: "/sample",
+            target: "large-file",
+          }))
+        : assistant(toolCall("finish", "Shell", { input: "yield" }));
+    });
+
+    expect(artifact.status).toBe("yielded");
+    expect(artifact.observations).toHaveLength(41);
+    expect(artifact.observations.at(-1)?.messageCount).toBeGreaterThan(80);
+    expect(JSON.stringify(artifact).length).toBeLessThan(512 * 1024);
   });
 });
 
