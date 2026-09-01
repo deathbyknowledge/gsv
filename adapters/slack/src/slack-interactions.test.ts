@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSlackApprovalBlocks,
-  buildSlackApprovalSubmittedMessage,
+  buildSlackApprovalStatusMessage,
   normalizeSlackInteraction,
 } from "./slack-interactions";
 
@@ -79,7 +79,6 @@ describe("Slack approval interactions", () => {
         actorId: "UALICE01",
         surface: { kind: "dm", id: "DALICE01" },
         sourceMessageId: "1700000000.000100",
-        sourceText: PROMPT,
         action: "approve_always",
         token: TOKEN,
       },
@@ -100,9 +99,15 @@ describe("Slack approval interactions", () => {
     })), BOT)).toEqual({ kind: "invalid" });
   });
 
-  it("removes the buttons after a decision is submitted", () => {
-    const submitted = buildSlackApprovalSubmittedMessage(PROMPT, "deny");
-    expect(submitted.text).toContain("Decision submitted: Deny.");
+  it("replaces the prompt and buttons with the resolved action", () => {
+    const submitted = buildSlackApprovalStatusMessage({
+      action: "Requested action: run \"date\".",
+      scope: "work",
+    }, "Denied.");
+    expect(submitted.text).toBe(
+      "[WORK SESSION] Denied.\n\nRequested action: run \"date\".",
+    );
+    expect(submitted.text).not.toContain(PROMPT);
     expect(submitted.blocks.some((block) => block.type === "actions")).toBe(false);
   });
 });

@@ -910,8 +910,11 @@ export class TelegramAccount extends DurableObject<Env> {
       delivery.hil,
     );
     if (controls) await this.ensureApprovalWebhook();
+    const message = controls
+      ? { ...delivery.message, text: controls.text }
+      : delivery.message;
     const result = await this.sendMessage(
-      delivery.message,
+      message,
       body,
       controls ? { replyMarkup: controls.replyMarkup } : {},
     );
@@ -1075,10 +1078,11 @@ export class TelegramAccount extends DurableObject<Env> {
             text,
           });
         },
-        clearInlineKeyboard: async (surfaceId, providerMessageId) => {
-          await this.callTelegramApi<TelegramMessage>("editMessageReplyMarkup", {
+        replaceMessage: async (surfaceId, providerMessageId, text) => {
+          await this.callTelegramApi<TelegramMessage>("editMessageText", {
             chat_id: surfaceId,
             message_id: Number.parseInt(providerMessageId, 10),
+            text,
             reply_markup: { inline_keyboard: [] },
           });
         },

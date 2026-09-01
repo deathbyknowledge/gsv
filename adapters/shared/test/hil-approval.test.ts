@@ -32,6 +32,10 @@ const REQUEST = {
   requestId: "request-1",
   runId: "run-1",
 } as ProcHilRequest;
+const PRESENTATION = {
+  action: "Requested action: run a shell command.",
+  scope: "work",
+} as const;
 
 type Deferred<T> = { promise: Promise<T>; resolve(value: T): void };
 
@@ -96,6 +100,7 @@ describe("adapter HIL approvals", () => {
       undefined,
       CONTEXT,
       REQUEST,
+      PRESENTATION,
     );
     if (!token) throw new Error("expected an approval token");
 
@@ -125,16 +130,28 @@ describe("adapter HIL approvals", () => {
 
     now += 60_001;
     await expect(submit("interaction-2", "deny"))
-      .resolves.toEqual({ kind: "processing" });
+      .resolves.toEqual({ kind: "processing", presentation: PRESENTATION });
     expect(linkedPeerFrame).toHaveBeenCalledOnce();
 
     await expect(submit("interaction-3", "approve"))
-      .resolves.toEqual({ kind: "submitted", resolution: "approve" });
+      .resolves.toEqual({
+        kind: "submitted",
+        resolution: "approve",
+        presentation: PRESENTATION,
+      });
 
     firstResponse.resolve(response(linkedPeerFrame.mock.calls[0]![2], false));
-    await expect(first).resolves.toEqual({ kind: "submitted", resolution: "approve" });
+    await expect(first).resolves.toEqual({
+      kind: "submitted",
+      resolution: "approve",
+      presentation: PRESENTATION,
+    });
     await expect(submit("interaction-4", "deny"))
-      .resolves.toEqual({ kind: "resolved", resolution: "approve" });
+      .resolves.toEqual({
+        kind: "resolved",
+        resolution: "approve",
+        presentation: PRESENTATION,
+      });
     expect(linkedPeerFrame).toHaveBeenCalledTimes(2);
   });
 });

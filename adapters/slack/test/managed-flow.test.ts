@@ -1,7 +1,6 @@
 import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
-import { renderAdapterHilText } from "../../shared/src/peer-render";
 import { workspaceAccountId } from "../src/slack-api";
 import type { ManagedSlackPeer } from "../src/managed-peer";
 import type { ManagedSlackPeerState } from "../src/managed-peer-state";
@@ -504,7 +503,7 @@ async function sendApproval(
       surface: context.surface,
       actorId: context.actorId,
       routeGeneration,
-      text: renderAdapterHilText(hil, "dm"),
+      text: "",
     },
     undefined,
     context,
@@ -530,6 +529,8 @@ async function sendApproval(
   const sourceText = approvalPost?.body.text;
   expect(messageId).toBeTruthy();
   expect(sourceText).toContain("Requested action: run \"date\".");
+  expect(sourceText).not.toContain("managed-request-1");
+  expect(sourceText).not.toContain("hil[");
   return { messageId: messageId!, sourceText: sourceText!, approveValue: approveValue! };
 }
 
@@ -900,9 +901,16 @@ describe("managed Slack clean-instance flow", () => {
         body: expect.objectContaining({
           channel: "DALICE01",
           ts: approval.messageId,
-          text: expect.stringContaining("Decision submitted: Approve once."),
+          text: expect.stringContaining("Approved once."),
         }),
       }));
+      const update = (await slackApiCalls()).find((call) => (
+        call.method === "chat.update"
+        && call.body.ts === approval.messageId
+      ));
+      expect(update?.body.text).toContain("Requested action: run \"date\".");
+      expect(update?.body.text).not.toContain("I need your confirmation");
+      expect(update?.body.text).not.toContain("hil[");
     });
 
     const aliceEvent = await signedEvent({

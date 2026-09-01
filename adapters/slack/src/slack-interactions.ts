@@ -2,6 +2,10 @@ import {
   requireSlackId,
   requireSlackTimestamp,
 } from "./slack-api";
+import {
+  renderAdapterHilResolution,
+  type AdapterHilPresentation,
+} from "../../shared/src/peer-render";
 import type { AdapterSurface } from "./types";
 import { z } from "zod";
 
@@ -33,10 +37,6 @@ export type SlackBlock =
         value: string;
         style?: "primary" | "danger";
       }>;
-    }
-  | {
-      type: "context";
-      elements: Array<{ type: "mrkdwn"; text: string }>;
     };
 
 const approvalValueSchema = z.object({
@@ -81,7 +81,6 @@ export type SlackApprovalCallback = {
   actorId: string;
   surface: AdapterSurface;
   sourceMessageId: string;
-  sourceText: string;
   action: SlackApprovalAction;
   token: string;
 };
@@ -118,32 +117,18 @@ export function canRenderSlackApproval(text: string): boolean {
   return text.length <= MAX_BLOCK_TEXT_LENGTH;
 }
 
-export function buildSlackApprovalSubmittedMessage(
-  sourceText: string,
-  action: SlackApprovalAction,
-): SlackApprovalSubmittedMessage {
-  return buildSlackApprovalStatusMessage(
-    sourceText,
-    `Decision submitted: ${approvalActionLabel(action)}.`,
-  );
-}
-
 export function buildSlackApprovalStatusMessage(
-  sourceText: string,
+  presentation: AdapterHilPresentation | undefined,
   status: string,
 ): SlackApprovalSubmittedMessage {
-  const text = `${sourceText.trim()}\n\n${status}`.trim().slice(0, 40_000);
+  const text = renderAdapterHilResolution(presentation, status).slice(0, 40_000);
   const blocks: SlackBlock[] = [];
-  if (sourceText.trim().length <= MAX_BLOCK_TEXT_LENGTH) {
+  if (text.length <= MAX_BLOCK_TEXT_LENGTH) {
     blocks.push({
       type: "section",
-      text: { type: "mrkdwn", text: sourceText.trim() },
+      text: { type: "mrkdwn", text },
     });
   }
-  blocks.push({
-    type: "context",
-    elements: [{ type: "mrkdwn", text: `_${status}_` }],
-  });
   return { text, blocks };
 }
 
@@ -201,7 +186,6 @@ export function normalizeSlackInteraction<T>(
       actorId,
       surface,
       sourceMessageId,
-      sourceText: payload.message.text,
       action,
       token: decoded.token,
     },
@@ -237,10 +221,4 @@ function approvalAction(actionId: string): SlackApprovalAction | undefined {
   if (actionId === APPROVE_ALWAYS_ACTION_ID) return "approve_always";
   if (actionId === DENY_ACTION_ID) return "deny";
   return undefined;
-}
-
-function approvalActionLabel(action: SlackApprovalAction): string {
-  if (action === "approve") return "Approve once";
-  if (action === "approve_always") return "Always approve";
-  return "Deny";
 }

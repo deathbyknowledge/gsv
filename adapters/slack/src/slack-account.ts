@@ -232,10 +232,12 @@ export class SlackAccount extends DurableObject<Env> {
           this.state.teamId,
           context,
           delivery.hil,
-          delivery.message.text,
         )
       : null;
-    const result = await this.sendMessage(delivery.message, body, controls?.blocks);
+    const message = controls
+      ? { ...delivery.message, text: controls.text }
+      : delivery.message;
+    const result = await this.sendMessage(message, body, controls?.blocks);
     if (result.ok && controls) {
       await attachSlackApprovalMessage(this.ctx.storage, controls.token, result.messageId);
     }

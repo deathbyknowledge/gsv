@@ -6,6 +6,10 @@ import {
   submitAdapterHilApproval,
   type AdapterHilResolution,
 } from "../../shared/src/hil-approval";
+import {
+  createAdapterHilPresentation,
+  renderAdapterHilPrompt,
+} from "../../shared/src/peer-render";
 import type {
   AdapterInstallationContext,
   AdapterDeliveryContext,
@@ -21,6 +25,7 @@ import {
 
 export type SlackApprovalControls = {
   token: string;
+  text: string;
   blocks: SlackBlock[];
 };
 
@@ -38,8 +43,9 @@ export async function prepareSlackApproval(
   teamId: string,
   context: AdapterDeliveryContext,
   request: ProcHilRequest,
-  text: string,
 ): Promise<SlackApprovalControls | null> {
+  const presentation = createAdapterHilPresentation(context, request);
+  const text = renderAdapterHilPrompt(presentation, "native");
   if (!canRenderSlackApproval(text)) return null;
   const token = await prepareAdapterHilApproval(
     storage,
@@ -47,11 +53,12 @@ export async function prepareSlackApproval(
     teamId,
     context,
     request,
+    presentation,
   );
   if (!token) return null;
   const blocks = buildSlackApprovalBlocks(text, token);
   if (!blocks) throw new Error("Slack approval controls are invalid");
-  return { token, blocks };
+  return { token, text, blocks };
 }
 
 export async function attachSlackApprovalMessage(
@@ -91,17 +98,20 @@ export async function handleSlackApprovalCallback(
     : submission.kind === "processing"
       ? "This approval is already being handled."
       : resolutionStatus(submission.resolution);
+  const presentation = submission.kind === "invalid"
+    ? undefined
+    : submission.presentation;
   await api.updateMessage(
     callback,
-    buildSlackApprovalStatusMessage(callback.sourceText, status),
+    buildSlackApprovalStatusMessage(presentation, status),
   ).catch(() => undefined);
 }
 
 function resolutionStatus(resolution: AdapterHilResolution | undefined): string {
   switch (resolution) {
-    case "approve": return "Decision submitted: Approve once.";
-    case "approve_always": return "Decision submitted: Always approve.";
-    case "deny": return "Decision submitted: Deny.";
+    case "approve": return "Approved once.";
+    case "approve_always": return "Approved for this conversation.";
+    case "deny": return "Denied.";
     default: return "This approval is no longer pending.";
   }
 }

@@ -343,10 +343,10 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
           state.teamId,
           context,
           context.hil,
-          message.text,
         )
       : null;
-    const result = await this.deliverMessage(message, {
+    const renderedMessage = controls ? { ...message, text: controls.text } : message;
+    const result = await this.deliverMessage(renderedMessage, {
       kind: "installation",
       installationId,
       generation: route.generation,

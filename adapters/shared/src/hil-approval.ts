@@ -1,5 +1,6 @@
 import type { ProcHilRequest } from "../../../packages/gsv/src/protocol/syscalls/proc.js";
 import { callLinkedAdapterGateway, type AdapterGatewayBinding } from "./gateway-rpc";
+import type { AdapterHilPresentation } from "./peer-render";
 import type {
   AdapterInstallationContext,
   AdapterLinkedPeerContext,
@@ -26,9 +27,17 @@ export type AdapterHilCallback = AdapterHilDecision & {
 
 export type AdapterHilSubmission =
   | { kind: "invalid" }
-  | { kind: "processing" }
-  | { kind: "resolved"; resolution?: AdapterHilResolution }
-  | { kind: "submitted"; resolution: AdapterHilResolution };
+  | { kind: "processing"; presentation: AdapterHilPresentation }
+  | {
+      kind: "resolved";
+      resolution?: AdapterHilResolution;
+      presentation: AdapterHilPresentation;
+    }
+  | {
+      kind: "submitted";
+      resolution: AdapterHilResolution;
+      presentation: AdapterHilPresentation;
+    };
 
 type StoredAdapterHilRequest = Pick<ProcHilRequest, "pid" | "requestId" | "runId">;
 type StoredAdapterHilContext = Pick<
@@ -43,6 +52,7 @@ type AdapterHilRecord = {
   binding?: string;
   context: StoredAdapterHilContext;
   request: StoredAdapterHilRequest;
+  presentation: AdapterHilPresentation;
   state: "pending" | "processing" | "resolved";
   selection?: AdapterHilDecision;
   processingInteractionId?: string;
@@ -74,6 +84,7 @@ export async function prepareAdapterHilApproval(
   binding: string | undefined,
   context: AdapterDeliveryContext,
   request: ProcHilRequest,
+  presentationInput: AdapterHilPresentation,
 ): Promise<string | null> {
   if (
     context.surface.kind !== "dm"
@@ -87,12 +98,13 @@ export async function prepareAdapterHilApproval(
   }
 
   const normalizedProvider = requireProvider(provider);
+  const presentation = requireHilPresentation(presentationInput);
   const token = await approvalToken(normalizedProvider, context.deliveryId);
   const now = Date.now();
   storage.transactionSync(() => {
     const existing = readAdapterHilRecord(storage.sql, normalizedProvider, token);
     if (existing && existing.expiresAt > now) {
-      if (!sameApproval(existing, binding, context, request)) {
+      if (!sameApproval(existing, binding, context, request, presentation)) {
         throw new Error("Adapter approval token is already bound to another request");
       }
       return;
@@ -113,6 +125,7 @@ export async function prepareAdapterHilApproval(
         requestId: request.requestId,
         runId: request.runId,
       },
+      presentation,
       state: "pending",
       createdAt: now,
       expiresAt: now + APPROVAL_RETENTION_MS,
@@ -164,13 +177,13 @@ export async function submitAdapterHilApproval(
     // The Process may have accepted the first decision even when its response
     // is delayed or lost, so later callbacks may retry but never replace it.
     if (record.selection && !sameHilSelection(record.selection, callback)) {
-      return { kind: "processing" as const };
+      return { kind: "processing" as const, record };
     }
     if (
       record.state === "processing"
       && (record.processingAt ?? record.createdAt) + APPROVAL_PROCESSING_LEASE_MS > now
     ) {
-      return { kind: "processing" as const };
+      return { kind: "processing" as const, record };
     }
     const processing: ProcessingAdapterHilRecord = {
       ...record,
@@ -186,9 +199,16 @@ export async function submitAdapterHilApproval(
     return { kind: "claimed" as const, record: processing };
   });
 
-  if (claimed.kind === "invalid" || claimed.kind === "processing") return claimed;
+  if (claimed.kind === "invalid") return claimed;
+  if (claimed.kind === "processing") {
+    return { kind: "processing", presentation: claimed.record.presentation };
+  }
   if (claimed.kind === "resolved") {
-    return { kind: "resolved", resolution: claimed.record.resolution };
+    return {
+      kind: "resolved",
+      resolution: claimed.record.resolution,
+      presentation: claimed.record.presentation,
+    };
   }
 
   const record = claimed.record;
@@ -235,17 +255,18 @@ export async function submitAdapterHilApproval(
       return {
         kind: "submitted",
         resolution: current.resolution ?? resolution,
+        presentation: current.presentation,
       };
     }
     if (!current.selection || !sameHilSelection(current.selection, selection)) {
-      return { kind: "processing" };
+      return { kind: "processing", presentation: current.presentation };
     }
     const ownsAttempt = current.state === "processing"
       && current.processingInteractionId === callback.interactionId;
     // Any success completes the immutable selection. A failed stale attempt
     // cannot overwrite a newer attempt that may still complete successfully.
     if (!ownsAttempt && !result.ok) {
-      return { kind: "processing" };
+      return { kind: "processing", presentation: current.presentation };
     }
     const {
       processingAt: _,
@@ -258,7 +279,7 @@ export async function submitAdapterHilApproval(
       providerMessageId: current.providerMessageId ?? callback.providerMessageId,
       resolution,
     } satisfies AdapterHilRecord);
-    return { kind: "submitted", resolution };
+    return { kind: "submitted", resolution, presentation: current.presentation };
   });
 }
 
@@ -321,6 +342,7 @@ function sameApproval(
   binding: string | undefined,
   context: AdapterDeliveryContext,
   request: ProcHilRequest,
+  presentation: AdapterHilPresentation,
 ): boolean {
   return record.binding === binding
     && record.context.deliveryId === context.deliveryId
@@ -332,7 +354,25 @@ function sameApproval(
     && record.context.routeGeneration === context.routeGeneration
     && record.request.pid === request.pid
     && record.request.runId === request.runId
-    && record.request.requestId === request.requestId;
+    && record.request.requestId === request.requestId
+    && record.presentation.action === presentation.action
+    && record.presentation.scope === presentation.scope;
+}
+
+function requireHilPresentation(
+  input: AdapterHilPresentation,
+): AdapterHilPresentation {
+  const action = input.action.trim();
+  if (!action || action.length > 2_000) {
+    throw new Error("Adapter approval presentation is invalid");
+  }
+  if (input.scope !== undefined && input.scope !== "work" && input.scope !== "personal") {
+    throw new Error("Adapter approval presentation is invalid");
+  }
+  return {
+    action,
+    ...(input.scope === undefined ? undefined : { scope: input.scope }),
+  };
 }
 
 async function approvalToken(provider: string, deliveryId: string): Promise<string> {

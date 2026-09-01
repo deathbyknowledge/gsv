@@ -46,7 +46,6 @@ import type {
   ResourceBlock,
   ProcessIdentity,
   ConversationMessageOrigin,
-  JsonObject,
   JsonValue,
 } from "@humansandmachines/gsv/protocol";
 import {
@@ -163,14 +162,6 @@ type AdapterInboundDisposition = Omit<
     expiresAt: number;
   };
 };
-type HilDecision = {
-  decision: "approve" | "deny";
-  remember: boolean;
-};
-type ParsedHilDecision = HilDecision & {
-  requestToken?: string;
-};
-const ADAPTER_HIL_MAIL_DETAIL_MAX_CHARS = 160;
 type AdapterIngressProcessRecovery = {
   kind: "process_delivery";
   uid: number;
@@ -182,13 +173,6 @@ type AdapterIngressProcessRecovery = {
   conversationId?: string;
   inputMessageId?: string;
   messageCreatedAt?: number;
-};
-type AdapterIngressHilRecovery = {
-  kind: "hil_decision";
-  pid: string;
-  requestId: string;
-  decision: "approve" | "deny";
-  remember: boolean;
 };
 type AdapterIngressWorkReturnRecovery = {
   kind: "work_return";
@@ -206,14 +190,7 @@ type AdapterIngressWorkReturnRecovery = {
 };
 type AdapterIngressRecovery =
   | AdapterIngressProcessRecovery
-  | AdapterIngressHilRecovery
   | AdapterIngressWorkReturnRecovery;
-export type AdapterHilRequest = {
-  requestId: string;
-  toolName: string;
-  syscall: string;
-  args: JsonObject;
-};
 
 const pairingInfoSchema = z.object({
   accountId: z.string().check(z.minLength(1)),
@@ -276,13 +253,6 @@ const adapterInteractionOriginSchema = z.object({
 });
 const adapterIngressRecoverySchema = z.discriminatedUnion("kind", [
   z.object({
-    kind: z.literal("hil_decision"),
-    pid: z.string(),
-    requestId: z.string(),
-    decision: z.enum(["approve", "deny"]),
-    remember: z.boolean(),
-  }),
-  z.object({
     kind: z.literal("process_delivery"),
     uid: z.number().check(z.int(), z.nonnegative()),
     pid: z.string(),
@@ -309,15 +279,6 @@ const adapterIngressRecoverySchema = z.discriminatedUnion("kind", [
     }),
   }),
 ]);
-const adapterHilRequestSchema = z.object({
-  requestId: z.string(),
-  toolName: z.string(),
-  syscall: z.string(),
-  args: z.record(z.string(), z.json()),
-  runId: z.optional(z.string()),
-  callId: z.optional(z.string()),
-});
-type AdapterHilRequestInput = Parameters<typeof adapterHilRequestSchema.safeParse>[0];
 const adapterSurfaceKindSchema = z.enum(["dm", "group", "channel", "thread"]);
 const optionalStringSchema = z.optional(z.string());
 const optionalBooleanSchema = z.optional(z.boolean());
@@ -1647,16 +1608,6 @@ async function resolveClaimedAdapterInbound(input: {
       checkpoint: { receiptId, claimToken },
     });
   }
-  if (recovery?.kind === "hil_decision") {
-    return deliverAdapterHilDecision({
-      adapter,
-      accountId,
-      message,
-      ctx,
-      recovery,
-      reconciling: true,
-    });
-  }
   if (recovery?.kind === "work_return") {
     if (recovery.uid !== uid) {
       return { ok: false, error: "Adapter ingress owner changed during recovery" };
@@ -1695,88 +1646,16 @@ async function resolveClaimedAdapterInbound(input: {
     return disposition;
   }
 
-  const parsedDecision = message.surface.kind === "dm"
-    ? parseHilDecision(message.text)
-    : null;
-  let pid: string;
-  let pendingHil: AdapterHilRequest | null;
-  if (parsedDecision?.requestToken) {
-    const correlated = await findPendingHilDecisionTarget(
-      uid,
-      parsedDecision.requestToken,
-      ctx,
-    );
-    if (correlated.kind !== "found") {
-      return {
-        ok: true,
-        reply: {
-          text: correlated.kind === "ambiguous"
-            ? "I found more than one pending approval with that token. Open Chat to resolve it safely."
-            : "I could not find a pending approval with that token. Use the token from the latest approval prompt.",
-          replyToId: message.messageId,
-        },
-      };
-    }
-    pid = correlated.pid;
-    pendingHil = correlated.pending;
-  } else {
-    pid = await resolveAdapterRoute(
-      adapter,
-      accountId,
-      actorId,
-      message.surface,
-      uid,
-      receiptId,
-      userIdentity,
-      ctx,
-    );
-    pendingHil = await getPendingHil(ctx.installationId, pid);
-  }
-  if (pendingHil) {
-    const decision = parsedDecision?.requestToken === adapterHilRequestToken(pendingHil.requestId)
-      ? parsedDecision
-      : null;
-
-    if (!decision) {
-      return {
-        ok: true,
-        reply: {
-          text: prefixAdapterDmProcessReply(
-            parsedDecision
-              ? renderAdapterHilCorrelationFailure(pendingHil, message.surface.kind)
-              : renderAdapterHilPrompt(pendingHil, message.surface.kind, "reminder"),
-            pid,
-            {
-              kind: "adapter",
-              adapter,
-              accountId,
-              actorId,
-              surface: message.surface,
-            },
-            ctx,
-          ),
-          replyToId: message.messageId,
-        },
-      };
-    }
-
-    const hilRecovery: AdapterIngressHilRecovery = {
-      kind: "hil_decision",
-      pid,
-      requestId: pendingHil.requestId,
-      decision: decision.decision,
-      remember: decision.remember,
-    };
-    ctx.adapters.ingressReceipts.checkpoint(receiptId, claimToken, hilRecovery);
-    return deliverAdapterHilDecision({
-      adapter,
-      accountId,
-      message,
-      ctx,
-      recovery: hilRecovery,
-      reconciling: false,
-    });
-  }
+  const pid = await resolveAdapterRoute(
+    adapter,
+    accountId,
+    actorId,
+    message.surface,
+    uid,
+    receiptId,
+    userIdentity,
+    ctx,
+  );
   return deliverAdapterInboundToProcess({
     adapter,
     accountId,
@@ -1789,110 +1668,6 @@ async function resolveClaimedAdapterInbound(input: {
     ctx,
     checkpoint: { receiptId, claimToken },
   });
-}
-
-async function deliverAdapterHilDecision(input: {
-  adapter: string;
-  accountId: string;
-  message: AdapterInboundMessage;
-  ctx: KernelContext;
-  recovery: AdapterIngressHilRecovery;
-  reconciling: boolean;
-}): Promise<AdapterInboundDisposition> {
-  const { adapter, accountId, message, ctx, recovery, reconciling } = input;
-  const request: RequestFrame<"proc.hil"> = {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.hil",
-    args: {
-      pid: recovery.pid,
-      requestId: recovery.requestId,
-      decision: recovery.decision,
-      remember: recovery.remember,
-    },
-  };
-  const response = await sendFrameToProcess(ctx.installationId, recovery.pid, request);
-
-  if (!response || response.type !== "res") {
-    throw new Error("No response from process");
-  }
-  if (!response.ok) {
-    // A Process error envelope does not prove whether the durable decision was
-    // committed. Leave the checkpoint reclaimable and retry the same request.
-    throw new Error(response.error.message);
-  }
-
-  const data = response.data;
-  if (data?.ok === false) {
-    if (!reconciling) {
-      return { ok: false, error: data.error || "Process rejected approval" };
-    }
-
-    // The earlier attempt may have committed and cleared this request before
-    // its response was lost. Query current state, but never apply the old
-    // YES/DENY to a newer approval or turn it into ordinary conversation text.
-    const current = await getPendingHil(ctx.installationId, recovery.pid);
-    if (current?.requestId === recovery.requestId) {
-      throw new Error(data.error || "Process has not reconciled approval yet");
-    }
-    if (current) {
-      return {
-        ok: true,
-        reply: {
-          text: prefixAdapterDmProcessReply(
-            renderAdapterHilPrompt(current, message.surface.kind, "reminder"),
-            recovery.pid,
-            adapterDestinationForInbound(adapter, accountId, message),
-            ctx,
-          ),
-          replyToId: message.messageId,
-        },
-      };
-    }
-    return adapterHilDecisionAcknowledgement(message, recovery, ctx, adapter, accountId);
-  }
-
-  const nextPendingHil = normalizeAdapterHilRequest(data?.pendingHil);
-  if (nextPendingHil) {
-    return {
-      ok: true,
-      reply: {
-        text: prefixAdapterDmProcessReply(
-          renderAdapterHilPrompt(nextPendingHil, message.surface.kind, "reminder"),
-          recovery.pid,
-          adapterDestinationForInbound(adapter, accountId, message),
-          ctx,
-        ),
-        replyToId: message.messageId,
-      },
-    };
-  }
-  return adapterHilDecisionAcknowledgement(message, recovery, ctx, adapter, accountId);
-}
-
-function adapterHilDecisionAcknowledgement(
-  message: AdapterInboundMessage,
-  recovery: AdapterIngressHilRecovery,
-  ctx: KernelContext,
-  adapter: string,
-  accountId: string,
-): AdapterInboundDisposition {
-  return {
-    ok: true,
-    reply: {
-      text: prefixAdapterDmProcessReply(
-        recovery.decision === "approve"
-          ? recovery.remember
-            ? "Approved. I will remember this for this conversation."
-            : "Approved. Continuing."
-          : "Denied. Continuing.",
-        recovery.pid,
-        adapterDestinationForInbound(adapter, accountId, message),
-        ctx,
-      ),
-      replyToId: message.messageId,
-    },
-  };
 }
 
 async function deliverAdapterInboundToProcess(input: {
@@ -3005,13 +2780,29 @@ async function shouldDrainLegacyDmRoute(
   if (processHasUnfinishedWork(process)) {
     return true;
   }
-  const inspection = await inspectPendingHil(ctx.installationId, process.processId);
-  if (!inspection.ok) {
+  const pendingHil = await processHasPendingHil(ctx.installationId, process.processId);
+  if (pendingHil === null) {
     return true;
   }
   const current = ctx.procs.get(process.processId);
   return current !== null
-    && (processHasUnfinishedWork(current) || inspection.pending !== null);
+    && (processHasUnfinishedWork(current) || pendingHil);
+}
+
+async function processHasPendingHil(
+  installationId: KernelContext["installationId"],
+  pid: string,
+): Promise<boolean | null> {
+  const response = await sendFrameToProcess(installationId, pid, {
+    type: "req",
+    id: crypto.randomUUID(),
+    call: "proc.history",
+    args: { pid, limit: 1, offset: 0 },
+  });
+  if (!response || response.type !== "res" || !response.ok || !response.data?.ok) {
+    return null;
+  }
+  return response.data.pendingHil !== null && response.data.pendingHil !== undefined;
 }
 
 type RunnableAgent = {
@@ -3084,20 +2875,6 @@ export function prefixAdapterDmProcessReply(
   return text;
 }
 
-function adapterDestinationForInbound(
-  adapter: string,
-  accountId: string,
-  message: AdapterInboundMessage,
-): AdapterMessageDestination {
-  return {
-    kind: "adapter",
-    adapter,
-    accountId,
-    actorId: resolveActorId(message) ?? message.surface.id,
-    surface: message.surface,
-  };
-}
-
 function adapterPrivateActivityAt(timestamp: number | undefined): number {
   const now = Date.now();
   return timestamp !== undefined && Number.isSafeInteger(timestamp) && timestamp > 0
@@ -3142,219 +2919,4 @@ function adapterInteractionOrigin(
   const messageId = message.messageId.trim();
   if (messageId) origin.messageId = messageId;
   return origin;
-}
-
-async function getPendingHil(
-  installationId: KernelContext["installationId"],
-  pid: string,
-): Promise<AdapterHilRequest | null> {
-  const inspection = await inspectPendingHil(installationId, pid);
-  return inspection.ok ? inspection.pending : null;
-}
-
-async function inspectPendingHil(
-  installationId: KernelContext["installationId"],
-  pid: string,
-): Promise<{ ok: true; pending: AdapterHilRequest | null } | { ok: false }> {
-  const response = await sendFrameToProcess(installationId, pid, {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.history",
-    args: { pid, limit: 1, offset: 0 },
-  });
-
-  if (!response || response.type !== "res" || !response.ok) {
-    return { ok: false };
-  }
-
-  const data = response.data;
-  if (data?.ok === false) {
-    return { ok: false };
-  }
-  return { ok: true, pending: normalizeAdapterHilRequest(data?.pendingHil) };
-}
-
-async function findPendingHilDecisionTarget(
-  ownerUid: number,
-  requestToken: string,
-  ctx: KernelContext,
-): Promise<
-  | { kind: "found"; pid: string; pending: AdapterHilRequest }
-  | { kind: "missing" }
-  | { kind: "ambiguous" }
-> {
-  const candidates = ctx.procs.list(ownerUid).filter((process) => (
-    process.state === "waiting_hil"
-  ));
-  const inspected = await Promise.all(candidates.map(async (process) => ({
-    process,
-    inspection: await inspectPendingHil(ctx.installationId, process.processId),
-  })));
-  const matches = inspected.filter(({ inspection }) => (
-    inspection.ok
-    && inspection.pending !== null
-    && adapterHilRequestToken(inspection.pending.requestId) === requestToken
-  ));
-  if (matches.length === 0) {
-    return { kind: "missing" };
-  }
-  if (matches.length > 1) {
-    return { kind: "ambiguous" };
-  }
-  const match = matches[0];
-  if (!match.inspection.ok || !match.inspection.pending) {
-    return { kind: "missing" };
-  }
-  return {
-    kind: "found",
-    pid: match.process.processId,
-    pending: match.inspection.pending,
-  };
-}
-
-export function normalizeAdapterHilRequest(
-  value: AdapterHilRequestInput,
-  source: "pending" | "signal" = "pending",
-): AdapterHilRequest | null {
-  const parsed = adapterHilRequestSchema.safeParse(value);
-  if (!parsed.success) {
-    return null;
-  }
-  const record = parsed.data;
-  if (source === "signal" && (!record.runId || !record.callId)) return null;
-  return {
-    requestId: record.requestId,
-    toolName: record.toolName,
-    syscall: record.syscall,
-    args: record.args,
-  };
-}
-
-function parseHilDecision(text: string): ParsedHilDecision | null {
-  const normalized = text.trim().replace(/[.!?]+$/g, "");
-  const match = /^(approve\s+always|allow\s+always|yes\s+always|always\s+approve|always\s+allow|approve|allow|yes|deny|reject|no)(?:\s+(\S+))?$/i.exec(normalized);
-  if (!match) return null;
-
-  const phrase = match[1].toLowerCase().replace(/\s+/g, " ");
-  const decision = phrase === "deny" || phrase === "reject" || phrase === "no"
-    ? "deny"
-    : "approve";
-  const decisionResult: ParsedHilDecision = {
-    decision,
-    remember: decision === "approve" && phrase.includes("always"),
-  };
-  if (match[2]) decisionResult.requestToken = match[2];
-  return decisionResult;
-}
-
-function adapterHilRequestToken(requestId: string): string {
-  return `hil[${requestId}]`;
-}
-
-function renderAdapterHilCorrelationFailure(
-  pendingHil: AdapterHilRequest,
-  surfaceKind: AdapterSurface["kind"],
-): string {
-  return [
-    "I couldn\u2019t verify that approval response was for the current request.",
-    "",
-    renderAdapterHilPrompt(pendingHil, surfaceKind, "reminder"),
-  ].join("\n");
-}
-
-export function renderAdapterHilPrompt(
-  pendingHil: AdapterHilRequest,
-  surfaceKind: AdapterSurface["kind"],
-  phase: "initial" | "reminder",
-): string {
-  const action = summarizeAdapterHilRequest(pendingHil);
-  const requestToken = adapterHilRequestToken(pendingHil.requestId);
-  const responseLine = surfaceKind === "dm"
-    ? phase === "initial"
-      ? `Reply "approve ${requestToken}" to continue, "approve always ${requestToken}" to remember it for this conversation, or "deny ${requestToken}" to stop this action.`
-      : `Reply "approve ${requestToken}", "deny ${requestToken}", or "approve always ${requestToken}" to continue.`
-    : "Open Chat to approve or deny this action.";
-  return [
-    phase === "initial"
-      ? "I need your confirmation before I can continue."
-      : "I’m waiting for confirmation before I can continue.",
-    "",
-    action,
-    "",
-    responseLine,
-  ].join("\n");
-}
-
-function summarizeAdapterHilRequest(pendingHil: AdapterHilRequest): string {
-  const parsedPath = z.string().safeParse(pendingHil.args.path);
-  const parsedCommand = z.string().safeParse(pendingHil.args.input);
-  const path = parsedPath.success ? parsedPath.data : "";
-  const command = parsedCommand.success ? parsedCommand.data : "";
-
-  if (pendingHil.syscall === "shell.exec") {
-    return command
-      ? `Requested action: run \`${command}\`.`
-      : "Requested action: run a shell command.";
-  }
-  if (pendingHil.syscall === "fs.read") {
-    return path
-      ? `Requested action: read \`${path}\`.`
-      : "Requested action: read a file.";
-  }
-  if (pendingHil.syscall === "fs.write") {
-    return path
-      ? `Requested action: write \`${path}\`.`
-      : "Requested action: write a file.";
-  }
-  if (pendingHil.syscall === "fs.edit") {
-    return path
-      ? `Requested action: edit \`${path}\`.`
-      : "Requested action: edit a file.";
-  }
-  if (pendingHil.syscall === "fs.delete") {
-    return path
-      ? `Requested action: delete \`${path}\`.`
-      : "Requested action: delete a file.";
-  }
-  if (pendingHil.syscall === "mail.send") {
-    const recipient = summarizeAdapterHilMailDetail(pendingHil.args.to);
-    const subject = summarizeAdapterHilMailDetail(pendingHil.args.subject);
-    const replyToMessageId = summarizeAdapterHilMailDetail(
-      pendingHil.args.replyToMessageId,
-    );
-    if (recipient && subject) {
-      return `Requested action: send an email to ${recipient} with subject ${subject}.`;
-    }
-    if (recipient) {
-      return `Requested action: send an email to ${recipient}.`;
-    }
-    if (subject) {
-      return `Requested action: send an email with subject ${subject}.`;
-    }
-    if (replyToMessageId) {
-      return `Requested action: reply to stored email ${replyToMessageId}.`;
-    }
-    return "Requested action: send an email.";
-  }
-  return `Requested action: ${pendingHil.toolName}.`;
-}
-
-function summarizeAdapterHilMailDetail(value: JsonValue | undefined): string | null {
-  const parsed = z.string().safeParse(value);
-  if (!parsed.success) return null;
-  const raw = parsed.data;
-  const singleLine = raw
-    .replace(/[\p{Cc}\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!singleLine) return null;
-  const quoted = JSON.stringify(singleLine);
-  if (quoted.length <= ADAPTER_HIL_MAIL_DETAIL_MAX_CHARS) return quoted;
-  let encoded = "";
-  for (const character of singleLine) {
-    const part = JSON.stringify(character).slice(1, -1);
-    if (encoded.length + part.length > ADAPTER_HIL_MAIL_DETAIL_MAX_CHARS - 3) break;
-    encoded += part;
-  }
-  return `"${encoded}…"`;
 }

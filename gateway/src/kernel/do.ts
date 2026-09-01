@@ -151,7 +151,6 @@ import { oauthCallbackHtmlResponse } from "../oauth-http";
 import { isInternalOnlySyscall } from "./syscall-exposure";
 import {
   deliverAdapterDestination,
-  normalizeAdapterHilRequest,
   setAdapterActivityForKernel,
   type AdapterDeliveryPresentation,
 } from "./adapter-handlers";
@@ -1971,15 +1970,18 @@ export class Kernel extends DurableObject<GatewayEnv> {
   ): Promise<void> {
     let outcome: AdapterRouteDeliveryOutcome;
     try {
-      const hilRequest = frame.signal === "proc.run.hil.requested"
-        ? normalizeAdapterHilRequest(frame.payload, "signal")
+      const parsedHilRequest = frame.signal === "proc.run.hil.requested"
+        ? procHilRequestSchema.safeParse(frame.payload)
         : null;
+      const hilRequestId = parsedHilRequest?.success
+        ? parsedHilRequest.data.requestId
+        : undefined;
       if (
-        hilRequest
+        hilRequestId
         && !await this.isAdapterHilRequestPending(
           route.processId,
           route.runId,
-          hilRequest.requestId,
+          hilRequestId,
         )
       ) {
         outcome = { state: "skipped" };
@@ -2084,8 +2086,11 @@ export class Kernel extends DurableObject<GatewayEnv> {
     outcome: { state: "permanent" | "ambiguous" | "exhausted"; message: string },
   ): Promise<void> {
     const deliveryKind = frame.signal === "proc.run.hil.requested" ? "hil" : "final";
-    const requestId = deliveryKind === "hil"
-      ? normalizeAdapterHilRequest(frame.payload, "signal")?.requestId
+    const parsedHilRequest = deliveryKind === "hil"
+      ? procHilRequestSchema.safeParse(frame.payload)
+      : null;
+    const requestId = parsedHilRequest?.success
+      ? parsedHilRequest.data.requestId
       : undefined;
     if (deliveryKind === "hil" && !requestId) {
       return;

@@ -11,50 +11,94 @@ export type RenderedAdapterSend = {
   hil?: ProcHilRequest;
 };
 
+export type AdapterHilPresentation = {
+  action: string;
+  scope?: "work" | "personal";
+};
+
 /** Default text/media projection. Platform adapters may replace presentation. */
 export function renderAdapterSend(
   context: AdapterDeliveryContext,
   input: AdapterOutboundMessage,
 ): RenderedAdapterSend {
+  const hilPresentation = context.hil
+    ? createAdapterHilPresentation(context, context.hil)
+    : undefined;
   const message = {
     ...input,
-    text: prefixProcessMode(
-      context.hil
-        ? renderAdapterHilText(context.hil, context.surface.kind)
-        : input.text,
-      context,
-    ),
+    text: hilPresentation
+      ? renderAdapterHilPrompt(hilPresentation, "chat")
+      : prefixProcessMode(input.text, context),
   };
   return context.hil ? { message, hil: context.hil } : { message };
 }
 
-export function renderAdapterHilText(
+export function createAdapterHilPresentation(
+  context: AdapterDeliveryContext,
   request: ProcHilRequest,
-  surfaceKind: AdapterDeliveryContext["surface"]["kind"],
+): AdapterHilPresentation {
+  const presentation: AdapterHilPresentation = {
+    action: summarizeAdapterHilRequest(request),
+  };
+  if (context.processMode === "work") presentation.scope = "work";
+  if (context.processMode === "ship" && context.shipDisplaced) {
+    presentation.scope = "personal";
+  }
+  return presentation;
+}
+
+export function renderAdapterHilPrompt(
+  presentation: AdapterHilPresentation,
+  controls: "native" | "chat",
 ): string {
-  const requestToken = `hil[${request.requestId}]`;
-  const responseLine = surfaceKind === "dm"
-    ? `Use Approve, Always approve, or Deny controls when available. Otherwise, reply "approve ${requestToken}", "approve always ${requestToken}", or "deny ${requestToken}".`
-    : "Open Chat to approve or deny this action.";
-  return [
+  const lines = [
     "I need your confirmation before I can continue.",
     "",
-    summarizeAdapterHilRequest(request),
-    "",
-    responseLine,
-  ].join("\n");
+    presentation.action,
+  ];
+  if (controls === "chat") {
+    lines.push("", "Open Chat to approve or deny this action.");
+  }
+  return prefixHilScope(lines.join("\n"), presentation.scope);
+}
+
+export function renderAdapterHilResolution(
+  presentation: AdapterHilPresentation | undefined,
+  status: string,
+): string {
+  if (!presentation) return status;
+  return prefixHilScope(
+    `${status}\n\n${presentation.action}`,
+    presentation.scope,
+  );
 }
 
 function prefixProcessMode(
   text: string,
   context: AdapterDeliveryContext,
 ): string {
-  const prefix = context.processMode === "work"
+  const prefix = processModePrefix(context);
+  return prefix ? (text ? `${prefix} ${text}` : prefix) : text;
+}
+
+function prefixHilScope(
+  text: string,
+  scope: AdapterHilPresentation["scope"],
+): string {
+  const prefix = scope === "work"
+    ? "[WORK SESSION]"
+    : scope === "personal"
+      ? "[PERSONAL INTELLIGENCE]"
+      : "";
+  return prefix ? `${prefix} ${text}` : text;
+}
+
+function processModePrefix(context: AdapterDeliveryContext): string {
+  return context.processMode === "work"
     ? "[WORK SESSION]"
     : context.processMode === "ship" && context.shipDisplaced
       ? "[PERSONAL INTELLIGENCE]"
       : "";
-  return prefix ? (text ? `${prefix} ${text}` : prefix) : text;
 }
 
 function summarizeAdapterHilRequest(request: ProcHilRequest): string {

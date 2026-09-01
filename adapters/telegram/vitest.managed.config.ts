@@ -132,7 +132,7 @@ export default defineConfig({
                   if (method === "sendChatAction") {
                     return Response.json({ ok: true, result: true });
                   }
-                  if (method === "answerCallbackQuery" || method === "editMessageReplyMarkup") {
+                  if (method === "answerCallbackQuery" || method === "editMessageText") {
                     messages.push({ method, body, result: true });
                     return Response.json({ ok: true, result: true });
                   }

@@ -7,6 +7,11 @@ import {
   type AdapterHilDecision,
   type AdapterHilResolution,
 } from "../../shared/src/hil-approval";
+import {
+  createAdapterHilPresentation,
+  renderAdapterHilPrompt,
+  renderAdapterHilResolution,
+} from "../../shared/src/peer-render";
 import type {
   AdapterInstallationContext,
   AdapterDeliveryContext,
@@ -29,12 +34,13 @@ export type TelegramInlineKeyboardMarkup = {
 
 export type TelegramApprovalControls = {
   token: string;
+  text: string;
   replyMarkup: TelegramInlineKeyboardMarkup;
 };
 
 export type TelegramApprovalApi = {
   answerCallbackQuery(callbackQueryId: string, text: string): Promise<void>;
-  clearInlineKeyboard(surfaceId: string, providerMessageId: string): Promise<void>;
+  replaceMessage(surfaceId: string, providerMessageId: string, text: string): Promise<void>;
 };
 
 const PROVIDER = "telegram";
@@ -46,16 +52,19 @@ export async function prepareTelegramApproval(
   context: AdapterDeliveryContext,
   request: ProcHilRequest,
 ): Promise<TelegramApprovalControls | null> {
+  const presentation = createAdapterHilPresentation(context, request);
   const token = await prepareAdapterHilApproval(
     storage,
     PROVIDER,
     undefined,
     context,
     request,
+    presentation,
   );
   if (!token) return null;
   return {
     token,
+    text: renderAdapterHilPrompt(presentation, "native"),
     replyMarkup: {
       inline_keyboard: [
         [
@@ -103,37 +112,50 @@ export async function handleTelegramApprovalCallback(
   );
 
   if (submission.kind === "invalid") {
-    await api.answerCallbackQuery(callback.callbackQueryId, "This approval is no longer available.")
-      .catch(() => undefined);
+    await finishTelegramCallback(
+      api,
+      callback,
+      "This approval is no longer available.",
+      "This approval is no longer available.",
+    );
     return;
   }
   if (submission.kind === "processing") {
-    await api.answerCallbackQuery(callback.callbackQueryId, "This approval is already being handled.")
-      .catch(() => undefined);
+    const status = "This approval is already being handled.";
+    await finishTelegramCallback(
+      api,
+      callback,
+      status,
+      renderAdapterHilResolution(submission.presentation, status),
+    );
     return;
   }
+  const status = resolutionText(submission.resolution);
   await finishTelegramCallback(
     api,
     callback,
-    resolutionText(submission.resolution),
+    status,
+    renderAdapterHilResolution(submission.presentation, status),
   );
 }
 
 async function finishTelegramCallback(
   api: TelegramApprovalApi,
   callback: TelegramApprovalCallback,
-  text: string,
+  callbackText: string,
+  messageText: string,
 ): Promise<void> {
   await Promise.all([
-    api.answerCallbackQuery(callback.callbackQueryId, text).catch(() => undefined),
-    api.clearInlineKeyboard(callback.surfaceId, callback.providerMessageId).catch(() => undefined),
+    api.answerCallbackQuery(callback.callbackQueryId, callbackText).catch(() => undefined),
+    api.replaceMessage(callback.surfaceId, callback.providerMessageId, messageText)
+      .catch(() => undefined),
   ]);
 }
 
 function resolutionText(resolution: AdapterHilResolution | undefined): string {
   switch (resolution) {
     case "approve": return "Approved once.";
-    case "approve_always": return "Approved and remembered.";
+    case "approve_always": return "Approved for this conversation.";
     case "deny": return "Denied.";
     default: return "This approval is no longer pending.";
   }

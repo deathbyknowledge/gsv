@@ -1,7 +1,6 @@
 import { env, SELF } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
-import { renderAdapterHilText } from "../../shared/src/peer-render";
 
 type TelegramApiMessage = {
   method: string;
@@ -285,7 +284,7 @@ describe("managed Telegram clean-instance flow", () => {
         surface: approvalContext.surface,
         actorId: approvalContext.actorId,
         routeGeneration: approvalContext.routeGeneration,
-        text: renderAdapterHilText(hil, "dm"),
+        text: "",
       },
       undefined,
       approvalContext,
@@ -334,13 +333,21 @@ describe("managed Telegram clean-instance flow", () => {
         },
       }));
       expect(await telegramMessages()).toContainEqual(expect.objectContaining({
-        method: "editMessageReplyMarkup",
+        method: "editMessageText",
         body: expect.objectContaining({
           chat_id: "12345",
           message_id: approvalMessageId,
+          text: expect.stringContaining("Approved for this conversation."),
         }),
       }));
     });
+    const resolvedApproval = (await telegramMessages()).findLast((message) => (
+      message.method === "editMessageText"
+      && message.body.message_id === approvalMessageId
+    ));
+    expect(resolvedApproval?.body.text).toContain("Requested action: run \"date\".");
+    expect(resolvedApproval?.body.text).not.toContain("I need your confirmation");
+    expect(resolvedApproval?.body.text).not.toContain("hil[");
 
     const approvalCalls = (await gatewayCalls()).filter((call) => call.call === "proc.hil");
     expect((await SELF.fetch(approvalUpdate(

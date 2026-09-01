@@ -189,7 +189,8 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     const controls = context?.hil
       ? await prepareTelegramApproval(this.ctx.storage, context, context.hil)
       : null;
-    const result = await this.deliverMessage(message, {
+    const renderedMessage = controls ? { ...message, text: controls.text } : message;
+    const result = await this.deliverMessage(renderedMessage, {
       kind: "installation",
       installationId,
       generation: message.routeGeneration,
@@ -401,10 +402,11 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
               text,
             }, fetcher);
           },
-          clearInlineKeyboard: async (surfaceId, providerMessageId) => {
-            await callManagedTelegramApi<unknown>(token, "editMessageReplyMarkup", {
+          replaceMessage: async (surfaceId, providerMessageId, text) => {
+            await callManagedTelegramApi<unknown>(token, "editMessageText", {
               chat_id: surfaceId,
               message_id: Number.parseInt(providerMessageId, 10),
+              text,
               reply_markup: { inline_keyboard: [] },
             }, fetcher);
           },

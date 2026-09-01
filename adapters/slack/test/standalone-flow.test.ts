@@ -1,7 +1,6 @@
 import { env, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
-import { renderAdapterHilText } from "../../shared/src/peer-render";
 import { SlackChannel } from "../src/index";
 import { SlackAccount } from "../src/slack-account";
 
@@ -257,7 +256,7 @@ describe("standalone Slack clean-instance flow", () => {
           accountId: "default",
           deliveryId,
           surface: { kind: "dm", id: "DALICE01" },
-          text: renderAdapterHilText(hil, "dm"),
+          text: "",
         },
       },
     )).resolves.toMatchObject({ type: "res", id: "send-approval", ok: true });
@@ -293,6 +292,8 @@ describe("standalone Slack clean-instance flow", () => {
     expect(approvalMessageId).toBeTruthy();
     const approvalText = approvalPost?.body?.text;
     expect(approvalText).toContain("Requested action: run \"date\".");
+    expect(approvalText).not.toContain("standalone-request-1");
+    expect(approvalText).not.toContain("hil[");
     const interaction = await fetcherBinding(env.SLACK_SOCKET).fetch(
       "https://socket.test/interaction",
       {
@@ -330,9 +331,16 @@ describe("standalone Slack clean-instance flow", () => {
         body: expect.objectContaining({
           channel: "DALICE01",
           ts: approvalMessageId,
-          text: expect.stringContaining("Decision submitted: Always approve."),
+          text: expect.stringContaining("Approved for this conversation."),
         }),
       }));
+      const update = (await slackApiCalls()).find((call) => (
+        call.method === "chat.update"
+        && call.body.ts === approvalMessageId
+      ));
+      expect(update?.body.text).toContain("Requested action: run \"date\".");
+      expect(update?.body.text).not.toContain("I need your confirmation");
+      expect(update?.body.text).not.toContain("hil[");
     });
 
     const outboundFileBytes = new TextEncoder().encode("standalone outbound file");
