@@ -168,11 +168,12 @@ def summarize_matrix(
 
         count = len(entries)
         total_agent_seconds = sum(agent_seconds)
+        input_tokens = prompt_tokens + cached_input_tokens
         price = prices.get(model_id)
         estimated_cost = None
         if price is not None:
             estimated_cost = (
-                prompt_tokens * price["input_usd_per_mtok"]
+                input_tokens * price["input_usd_per_mtok"]
                 + completion_tokens * price["output_usd_per_mtok"]
             ) / 1_000_000
         for criterion in criteria.values():
@@ -194,11 +195,12 @@ def summarize_matrix(
                 "agent_seconds_p95": _percentile(agent_seconds, 0.95),
                 "request_seconds": request_seconds,
                 "prompt_tokens": prompt_tokens,
+                "input_tokens": input_tokens,
                 "completion_tokens": completion_tokens,
                 "cached_input_tokens": cached_input_tokens,
                 "reasoning_tokens": reasoning_tokens,
                 "cached_input_rate": (
-                    cached_input_tokens / prompt_tokens if prompt_tokens else 0.0
+                    cached_input_tokens / input_tokens if input_tokens else 0.0
                 ),
                 "observed_output_tokens_per_second": (
                     completion_tokens / total_agent_seconds
@@ -225,7 +227,7 @@ def render_markdown(summary: dict[str, Any]) -> str:
     if not models:
         return "No traces found."
     lines = [
-        "| Model | n | Mean | Median | Full | Errors | Calls/n | P50 s | Prompt tok | Output tok | Output tok/s | Cached | Listed cost |",
+        "| Model | n | Mean | Median | Full | Errors | Calls/n | P50 s | Input tok | Output tok | Output tok/s | Cached | Listed cost |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for model in models:
@@ -243,7 +245,7 @@ def render_markdown(summary: dict[str, Any]) -> str:
                 errors=model["errors"],
                 calls=model["calls_per_rollout"],
                 seconds=model["agent_seconds_p50"],
-                prompt=model["prompt_tokens"],
+                prompt=model["input_tokens"],
                 output=model["completion_tokens"],
                 rate=model["observed_output_tokens_per_second"],
                 cached=model["cached_input_rate"],

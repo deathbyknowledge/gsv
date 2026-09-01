@@ -48,8 +48,8 @@ per model, and the Prime Inference credentials already configured by `prime
 login`. It copies the exact scenario and its digest into an ignored output
 directory, snapshots current model pricing, keeps a log and trace per model,
 and emits `summary.md` plus a machine-readable `summary.json`. Listed cost is
-an estimate from total prompt and completion tokens at the snapshotted rates;
-it does not assume an unadvertised cache discount.
+an estimate from total input (cached plus uncached) and completion tokens at the
+snapshotted rates; it does not assume an unadvertised cache discount.
 
 `GSV_BENCH_SCENARIO`, `GSV_BENCH_OUTPUT_DIR`,
 `GSV_BENCH_MODEL_CONCURRENCY`, and `GSV_BENCH_TIMEOUT_SECONDS` override the

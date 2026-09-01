@@ -218,9 +218,10 @@ def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
     assert model["full_passes"] == 1
     assert model["calls_per_rollout"] == 1.0
     assert model["agent_seconds"] == 30.0
+    assert model["input_tokens"] == 3_000
     assert model["completion_tokens"] == 200
-    assert model["cached_input_rate"] == 0.5
-    assert model["listed_cost_usd"] == 0.0024
+    assert model["cached_input_rate"] == 1 / 3
+    assert model["listed_cost_usd"] == 0.0034
     assert model["criteria"]["durable-outcome"] == {
         "description": "The state is correct.",
         "passed": 1,
