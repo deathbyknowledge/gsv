@@ -22,7 +22,7 @@ echo "==> Installing workspace dependencies"
 
 echo ""
 echo "==> Installing adapter dependencies"
-for dir in "$ROOT_DIR"/adapters/*; do
+for dir in "$ROOT_DIR"/workers/adapters/*; do
   if [[ -f "$dir/package.json" ]]; then
     npm ci --prefix "$dir" --workspaces=false
   fi
@@ -31,7 +31,7 @@ done
 echo ""
 echo "==> Installing ripgit test dependencies"
 (
-  cd "$ROOT_DIR/ripgit"
+  cd "$ROOT_DIR/workers/ripgit"
   npm ci --workspaces=false
 )
 

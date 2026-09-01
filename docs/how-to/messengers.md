@@ -185,7 +185,7 @@ Standalone keeps the same Slack behavior but uses an app you own:
 
 Slack file and GSV attachment transfer are not supported in this first version.
 Operators can find deployment configuration and security details in
-`adapters/slack/README.md` in the source tree.
+`workers/adapters/slack/README.md` in the source tree.
 
 ## Discord
 

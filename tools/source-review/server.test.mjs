@@ -48,7 +48,7 @@ test("workspace listing includes allowed files and skips repository metadata", a
 });
 
 test("prompt review evaluates current source exports", async () => {
-  const result = await loadPromptGroups(join(REPO_ROOT, "gateway/src/prompts"));
+  const result = await loadPromptGroups(join(REPO_ROOT, "workers/gateway/src/prompts"));
   assert.ok(result.blocks.some((block) => block.exportName === "GSV_RUNTIME_CONTEXT"));
   assert.ok(result.blocks.some((block) => block.exportName === "PERSONAL_INTELLIGENCE_CONTEXT"));
   assert.ok(result.blocks.every((block) => !block.exportName.startsWith("LEGACY_")));

@@ -253,14 +253,14 @@ same `target` and `sessionId` routing rules as the direct `Shell`, `Read`,
 
 ## Implementation References
 
-- Tool schemas: `gateway/src/kernel/ai.ts`
-- Target injection: `gateway/src/syscalls/index.ts`
-- Routing: `gateway/src/kernel/dispatch.ts`
-- Native `gsv` provider: `gateway/src/drivers/native/target.ts`
-- CodeMode runtime: `gateway/src/process/codemode.ts`
-- Native filesystem: `gateway/src/drivers/native/fs.ts`
-- Native shell: `gateway/src/drivers/native/shell.ts`
-- Device registry: `gateway/src/kernel/devices.ts`
+- Tool schemas: `workers/gateway/src/kernel/ai.ts`
+- Target injection: `workers/gateway/src/syscalls/index.ts`
+- Routing: `workers/gateway/src/kernel/dispatch.ts`
+- Native `gsv` provider: `workers/gateway/src/drivers/native/target.ts`
+- CodeMode runtime: `workers/gateway/src/process/codemode.ts`
+- Native filesystem: `workers/gateway/src/drivers/native/fs.ts`
+- Native shell: `workers/gateway/src/drivers/native/shell.ts`
+- Device registry: `workers/gateway/src/kernel/devices.ts`
 - CLI driver bridge: `host/apps/cli/src/main.rs`
 - Machine tools: `host/apps/machine/src/tools/`
 

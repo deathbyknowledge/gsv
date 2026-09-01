@@ -10,7 +10,7 @@ pub const BINARY_FRAME_ERROR: u8 = 1 << 2;
 pub const BINARY_FRAME_CANCEL: u8 = 1 << 3;
 
 // ---------------------------------------------------------------------------
-//  Core frame types — mirrors gateway/src/protocol/frames.ts
+//  Core frame types — mirrors workers/gateway/src/protocol/frames.ts
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,7 +71,7 @@ pub struct ErrorShape {
 }
 
 // ---------------------------------------------------------------------------
-//  sys.connect payload — mirrors gateway/src/syscalls/system.ts
+//  sys.connect payload — mirrors workers/gateway/src/syscalls/system.ts
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

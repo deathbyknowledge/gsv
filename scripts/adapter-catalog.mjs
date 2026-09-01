@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import Ajv from "ajv";
 
 const scriptRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const defaultAdaptersRoot = path.join(scriptRoot, "adapters");
+const defaultAdaptersRoot = path.join(scriptRoot, "workers", "adapters");
 const SAFE_ID = /^[a-z][a-z0-9-]{0,63}$/;
 const SAFE_PATH = /^[A-Za-z0-9._/-]+$/;
 const SAFE_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,127}$/;
@@ -75,7 +75,7 @@ export async function loadAdapterCatalog(adaptersRoot = defaultAdaptersRoot) {
   const adapters = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
-    const sourceDir = path.join("adapters", entry.name);
+    const sourceDir = path.join("workers", "adapters", entry.name);
     const manifestPath = path.join(adaptersRoot, entry.name, "adapter.json");
     let source;
     try {

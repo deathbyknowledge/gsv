@@ -321,11 +321,11 @@ model described here.
 
 - Public types and JavaScript endpoint: `packages/gsv/src/protocol/` and
   `packages/gsv/src/client.ts`
-- Peer authentication and grants: `gateway/src/kernel/connect.ts`
-- Peer context and delegation: `gateway/src/kernel/peer.ts`
-- Shared dispatcher and routing: `gateway/src/kernel/do.ts` and
-  `gateway/src/kernel/dispatch.ts`
-- Adapter command frontend: `gateway/src/kernel/adapter-commands.ts`
-- Service peer entrypoints: `gateway/src/index.ts`
+- Peer authentication and grants: `workers/gateway/src/kernel/connect.ts`
+- Peer context and delegation: `workers/gateway/src/kernel/peer.ts`
+- Shared dispatcher and routing: `workers/gateway/src/kernel/do.ts` and
+  `workers/gateway/src/kernel/dispatch.ts`
+- Adapter command frontend: `workers/gateway/src/kernel/adapter-commands.ts`
+- Service peer entrypoints: `workers/gateway/src/index.ts`
 - Rust carrier and endpoint support: `host/crates/gateway-client/`
 - Frame and body reference: `docs/reference/websocket-protocol.md`

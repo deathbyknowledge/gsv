@@ -13,7 +13,7 @@ ADAPTER_CONFIG_ARGS=()
 ADAPTER_CATALOG_ROWS="$(node "$ROOT_DIR/scripts/adapter-catalog.mjs")"
 while IFS= read -r row; do
   IFS=$'\t' read -r _adapter_id _display_name _component source_dir wrangler_config dev_state <<< "$row"
-  ADAPTER_CONFIG_ARGS+=(-c "../${source_dir}/${wrangler_config}")
+  ADAPTER_CONFIG_ARGS+=(-c "../../${source_dir}/${wrangler_config}")
   if [[ -n "$dev_state" ]]; then
     IFS=',' read -ra state_directories <<< "$dev_state"
     for state_directory in "${state_directories[@]}"; do
@@ -22,7 +22,7 @@ while IFS= read -r row; do
   fi
 done <<< "$ADAPTER_CATALOG_ROWS"
 
-cd "$ROOT_DIR/ripgit"
+cd "$ROOT_DIR/workers/ripgit"
 exec npm exec -- wrangler dev \
   -c ../gateway/wrangler.jsonc \
   "${ADAPTER_CONFIG_ARGS[@]}" \

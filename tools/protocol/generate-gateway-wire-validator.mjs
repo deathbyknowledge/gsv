@@ -10,6 +10,7 @@ const sourcePath = join(repositoryRoot, "packages", "gsv", "src", "protocol", "w
 const tsconfigPath = join(repositoryRoot, "packages", "gsv", "tsconfig.json");
 const outputPath = join(
   repositoryRoot,
+  "workers",
   "gateway",
   "src",
   "protocol",

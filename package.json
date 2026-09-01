@@ -6,7 +6,7 @@
   "workspaces": [
     "deployment",
     "extension",
-    "gateway",
+    "workers/gateway",
     "web",
     "packages/*"
   ],
