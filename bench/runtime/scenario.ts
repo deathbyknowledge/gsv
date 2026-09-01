@@ -2,6 +2,7 @@ import {
   jsonObjectSchema,
   jsonValueSchema,
   type JsonValue,
+  type ResponsibilityTransition,
 } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import { isValidCapability } from "../../workers/gateway/src/kernel/capabilities";
@@ -15,8 +16,38 @@ const processSchema = z.object({
   id: z.string().min(1),
   role: z.enum(["ship", "worker"]),
   uid: z.number().int().nonnegative(),
+  ownerUid: z.number().int().nonnegative().optional(),
+  username: z.string().min(1).optional(),
   gids: z.array(z.number().int().nonnegative()),
   capabilities: z.array(z.string()),
+}).strict();
+
+const delegateSchema = z.object({
+  account: z.string().min(1),
+  process: processSchema.extend({ role: z.literal("worker") }),
+  systemPrompt: z.string().min(1),
+  maxTurns: z.number().int().positive().max(50),
+}).strict();
+
+const adapterSchema = z.object({
+  id: z.string().min(1),
+  kind: z.literal("slack"),
+  accountId: z.string().min(1),
+  ownerUid: z.number().int().nonnegative(),
+  connected: z.boolean(),
+}).strict();
+
+const adapterRouteSchema = z.object({
+  adapterId: z.string().min(1),
+  accountId: z.string().min(1),
+  actorId: z.string().min(1),
+  surface: z.object({
+    kind: z.enum(["dm", "channel"]),
+    id: z.string().min(1),
+    threadId: z.string().min(1).optional(),
+  }).strict(),
+  inboundDeliveryId: z.string().min(1),
+  messageId: z.string().min(1),
 }).strict();
 
 const targetEffectSchema = z.discriminatedUnion("type", [
@@ -123,6 +154,31 @@ const semanticLogEntrySchema = z.discriminatedUnion("type", [
     content: z.string(),
   }).strict(),
   z.object({
+    type: z.literal("responsibility.transition"),
+    transition: z.custom<ResponsibilityTransition>(),
+  }).strict(),
+  z.object({
+    type: z.literal("process.spawned"),
+    processId: z.string(),
+    parentProcessId: z.string(),
+    account: z.string(),
+  }).strict(),
+  z.object({
+    type: z.literal("ipc.completed"),
+    callId: z.string(),
+    sourceProcessId: z.string(),
+    targetProcessId: z.string(),
+    resultText: z.string().optional(),
+    error: z.string().optional(),
+  }).strict(),
+  z.object({
+    type: z.literal("adapter.sent"),
+    adapterId: z.string(),
+    deliveryId: z.string(),
+    processId: z.string(),
+    text: z.string(),
+  }).strict(),
+  z.object({
     type: z.literal("message.committed"),
     processId: z.string(),
     text: z.string(),
@@ -145,36 +201,71 @@ const scenarioSchema = z.object({
   systemPrompt: z.string().min(1),
   prompt: z.string().min(1),
   entryProcessId: z.string().min(1),
+  entryRoute: adapterRouteSchema.optional(),
   world: z.object({
     runtime: z.object({
       now: z.string().min(1),
       timezone: z.string().min(1),
     }).strict(),
     processes: z.array(processSchema).min(1),
+    delegates: z.array(delegateSchema).default([]),
     targets: z.array(targetSchema),
+    adapters: z.array(adapterSchema).default([]),
   }).strict(),
   transitions: z.array(transitionSchema).default([]),
   expected: jsonObjectSchema,
+  rubric: z.array(z.object({
+    id: z.string().min(1),
+    description: z.string().min(1),
+    weight: z.number().positive(),
+    expected: jsonObjectSchema,
+  }).strict()).min(1),
   expectedLog: z.array(semanticLogEntrySchema).optional(),
   maxTurns: z.number().int().positive().max(50),
 }).strict();
 
 export function parseGsvSurfaceScenario(value: JsonValue): GsvSurfaceScenario {
   const scenario = scenarioSchema.parse(value);
-  requireUnique(scenario.world.processes.map(({ id }) => id), "process");
+  requireUnique([
+    ...scenario.world.processes.map(({ id }) => id),
+    ...scenario.world.delegates.map(({ process }) => process.id),
+  ], "process");
+  requireUnique(scenario.world.delegates.map(({ account }) => account), "delegate account");
   requireUnique(scenario.world.targets.map(({ id }) => id), "target");
+  requireUnique(scenario.world.adapters.map(({ id }) => id), "adapter");
   requireUnique(scenario.transitions.map(({ id }) => id), "transition");
+  requireUnique(scenario.rubric.map(({ id }) => id), "rubric criterion");
   if (!scenario.world.processes.some(({ id }) => id === scenario.entryProcessId)) {
     throw new Error("entryProcessId does not name a synthetic process");
   }
   for (const process of scenario.world.processes) {
     requireCapabilities(process.capabilities, "process " + process.id);
   }
+  for (const delegate of scenario.world.delegates) {
+    requireCapabilities(
+      delegate.process.capabilities,
+      "delegate process " + delegate.process.id,
+    );
+  }
   for (const target of scenario.world.targets) {
     if (target.id === "gsv") {
       throw new Error("The native gsv target is implicit");
     }
     requireCapabilities(target.implements ?? [], "target " + target.id);
+  }
+  if (scenario.entryRoute) {
+    const adapter = scenario.world.adapters.find(
+      ({ id }) => id === scenario.entryRoute?.adapterId,
+    );
+    if (!adapter || adapter.accountId !== scenario.entryRoute.accountId) {
+      throw new Error("entryRoute does not name a synthetic adapter account");
+    }
+    const entry = scenario.world.processes.find(
+      ({ id }) => id === scenario.entryProcessId,
+    );
+    if (!entry || (entry.ownerUid ?? entry.uid) !== adapter.ownerUid) {
+      throw new Error("entryRoute adapter owner does not own the entry process");
+    }
   }
   return scenario;
 }

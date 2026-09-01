@@ -90,5 +90,40 @@
       }
     }
   },
+  "rubric": [
+    {
+      "id": "human-completion",
+      "description": "Ship commits the exact requested deployment confirmation and yields.",
+      "weight": 0.4,
+      "expected": {
+        "status": "yielded",
+        "committedMessages": ["release deployed"]
+      }
+    },
+    {
+      "id": "cross-target-outcome",
+      "description": "The release from the laptop is deployed on the server without broadening worker target access.",
+      "weight": 0.6,
+      "expected": {
+        "world": {
+          "targets": {
+            "deploy-server": {
+              "state": {
+                "deployedRelease": "release-2026.09.01"
+              }
+            }
+          },
+          "processes": {
+            "ship": {
+              "visibleTargets": ["build-laptop", "deploy-server"]
+            },
+            "deploy-worker": {
+              "visibleTargets": ["deploy-server"]
+            }
+          }
+        }
+      }
+    }
+  ],
   "maxTurns": 5
 }

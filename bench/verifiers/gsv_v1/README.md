@@ -2,14 +2,15 @@
 
 This package is the thin Python adapter around GSV's TypeScript synthetic
 installation runtime. Verifiers owns interception, traces, rollout orchestration,
-and reward collection. GSV owns Process, target, context-event, and run-control
-semantics.
+and reward collection. GSV owns Process, target, responsibility, delegation,
+adapter-route, context-event, and run-control semantics.
 
 The default taskset loads every JSON scenario in gsv_v1/fixtures. Each task writes
 one scenario into the isolated subprocess runtime, launches the GSV runner against
 the Verifiers interception endpoint, and stores the normalized artifact in
-trace.info["gsv"]. The scenario_outcome reward recursively matches the fixture's
-expected object against that artifact, so it can be recomputed offline.
+trace.info["gsv"]. The `scenario_outcome` reward evaluates every fixture's
+explicit weighted rubric against that artifact and stores the per-criterion
+result in `trace.info["gsv_rubric"]`, so scoring can be recomputed offline.
 
 ## Local evaluation
 
@@ -21,7 +22,7 @@ Verifiers client flags:
       --model MODEL \
       --env.agent.runtime.type subprocess \
       --no-serve --no-push \
-      --num-tasks 2 --num-rollouts 1 --max-concurrent 2
+      --num-tasks 3 --num-rollouts 1 --max-concurrent 3
 
 Pass taskset.scenario-path to select one fixture or another fixture directory.
 

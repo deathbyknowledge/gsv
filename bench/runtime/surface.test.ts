@@ -135,6 +135,98 @@ describe("GSV Process surface", () => {
       text: "No deployment is active.",
     });
   });
+
+  it("supervises delegated r12y work and replies through the exact Slack route", async () => {
+    const scenario = await fixture("delegate-incident-from-slack.json");
+    const shipResponses = [
+      assistant(toolCall("create-responsibility", "Shell", {
+        input: "r12y create --title 'Investigate checkout deployment' --dedupe 'slack:incident-42'",
+        target: "gsv",
+      })),
+      assistant(toolCall("delegate", "Shell", {
+        input: "proc delegate --as ops --responsibility r12y:00000000-0000-4000-8000-000000000001 'Read /var/log/deploy.log on target incident-server and return exactly the value after ROOT_CAUSE=.'",
+        target: "gsv",
+      })),
+      assistant(toolCall("resolve", "Shell", {
+        input: "r12y resolve r12y:00000000-0000-4000-8000-000000000001 --json '{\"cause\":\"database migration checksum mismatch\"}'",
+        target: "gsv",
+      })),
+      assistant(toolCall("reply", "Shell", {
+        input: "message send --message 'checkout blocked: database migration checksum mismatch' && yield",
+      })),
+    ];
+    const workerResponses = [
+      assistant(toolCall("read-log", "Read", {
+        path: "/var/log/deploy.log",
+        target: "incident-server",
+      })),
+      textAssistant("database migration checksum mismatch"),
+    ];
+
+    const artifact = await runGsvSurfaceScenario(scenario, async (context) => {
+      const delegated = String(context.messages[0]?.content)
+        .includes("Delegated task from ship (ship).");
+      const next = delegated ? workerResponses.shift() : shipResponses.shift();
+      if (!next) throw new Error("Unexpected model turn");
+      return next;
+    });
+
+    expect(artifact.status).toBe("yielded");
+    expect(artifact.committedMessages).toEqual([
+      "checkout blocked: database migration checksum mismatch",
+    ]);
+    expect(artifact.world.processes.ship).toMatchObject({
+      visibleTargets: [],
+      state: "idle",
+    });
+    expect(artifact.world.processes["proc:incident-worker"]).toMatchObject({
+      parentProcessId: "ship",
+      visibleTargets: ["incident-server"],
+      state: "returned",
+    });
+    expect(artifact.world.delegations).toEqual([
+      expect.objectContaining({
+        sourceProcessId: "ship",
+        targetProcessId: "proc:incident-worker",
+        state: "completed",
+        resultText: "database migration checksum mismatch",
+      }),
+    ]);
+    expect(artifact.world.responsibilities).toMatchObject({
+      revision: 4,
+      records: {
+        "r12y:00000000-0000-4000-8000-000000000001": {
+          state: "resolved",
+          assignee: { kind: "ship" },
+          resolution: { cause: "database migration checksum mismatch" },
+        },
+      },
+    });
+    expect(artifact.world.adapters.slack?.deliveries).toEqual([{
+      deliveryId: "slack:event:incident-42:reply:1",
+      processId: "ship",
+      surface: { kind: "dm", id: "D-incident-42" },
+      text: "checkout blocked: database migration checksum mismatch",
+      replyToId: "slack-message-42",
+      state: "sent",
+    }]);
+    expect(artifact.observations
+      .filter(({ processId }) => processId === "proc:incident-worker")[0]
+      ?.tools.map(({ name }) => name)).toEqual(["Read"]);
+    expect(artifact.observations
+      .filter(({ processId }) => processId === "proc:incident-worker")[0]
+      ?.messages[0]?.content).toContain("Delegated task from ship (ship).");
+    expect(artifact.observations
+      .filter(({ processId }) => processId === "ship")
+      .some(({ messages }) => JSON.stringify(messages).includes(
+        "Delegated task from process `proc:incident-worker` finished.",
+      ))).toBe(true);
+    for (const processId of ["ship", "proc:incident-worker"]) {
+      expect(new Set(artifact.observations
+        .filter((observation) => observation.processId === processId)
+        .map(({ systemPromptSha256 }) => systemPromptSha256)).size).toBe(1);
+    }
+  });
 });
 
 async function fixture(name: string) {

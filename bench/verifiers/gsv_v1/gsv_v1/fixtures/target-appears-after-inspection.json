@@ -71,5 +71,36 @@
       "transitionsApplied": ["connect-gpu-lab"]
     }
   },
+  "rubric": [
+    {
+      "id": "human-completion",
+      "description": "Ship commits the exact requested user-visible message and yields.",
+      "weight": 0.4,
+      "expected": {
+        "status": "yielded",
+        "committedMessages": ["gpu-lab ready"]
+      }
+    },
+    {
+      "id": "availability-transition",
+      "description": "The inspection causes and observes the ordered target-availability transition.",
+      "weight": 0.6,
+      "expected": {
+        "world": {
+          "targets": {
+            "gpu-lab": {
+              "online": true
+            }
+          },
+          "processes": {
+            "ship": {
+              "visibleTargets": ["gpu-lab"]
+            }
+          },
+          "transitionsApplied": ["connect-gpu-lab"]
+        }
+      }
+    }
+  ],
   "maxTurns": 4
 }

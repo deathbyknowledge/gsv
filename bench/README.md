@@ -12,7 +12,8 @@ through the real Verifiers interception endpoint.
 
 SyntheticKernel is one isolated GSV installation per episode. It holds Process
 principals, target registrations, target ACLs, liveness, deterministic
-transitions, and environment state. These axes remain independent:
+transitions, the responsibility ledger, supervised IPC calls, exact adapter
+routes, and environment state. These axes remain independent:
 
 - Process capabilities determine which syscall-backed tools are offered.
 - Target ownership and group ACLs determine which targets a Process can see.
@@ -21,10 +22,11 @@ transitions, and environment state. These axes remain independent:
   projection and can receive work.
 
 One Kernel can hold Ship and multiple worker Processes. They share target state
-but retain distinct principals, grants, roles, and context projections.
-runSyntheticProcess can drive any registered Process against that shared world.
-The JSON task format selects one entry Process for a Verifiers rollout; a
-code-defined environment may drive additional Processes through the same API.
+but retain distinct principals, grants, roles, context epochs, and responsibility
+visibility. A JSON scenario selects one entry Process and may register delegated
+agent templates. `proc delegate` creates the child, assigns its responsibility,
+runs it through the same intercepted model endpoint, and returns ordinary worker
+output to its caller as an ordered GSV event.
 
 ## Capability environments
 
@@ -37,9 +39,10 @@ laptop, server, browser, and Slack factories. A scenario can configure:
 - code-defined command maps and Kernel transitions around those environments.
 
 Browser and Slack remain truthful capability environments: browser defaults to a
-filesystem and shell-shaped profile, while Slack defaults to shell.exec for a
-composable Slack CLI. Neither creates bespoke model tools. The adapter transport
-projection is intentionally outside this first target-runtime batch.
+filesystem and shell-shaped profile, while a Slack target defaults to shell.exec
+for a composable Slack CLI. A Slack messaging adapter is modeled separately from
+that optional target. It owns ingress receipts and an idempotent outbound ledger,
+while the Kernel owns the exact Process run route.
 
 The model sees only production Read, Write, Edit, Delete, Search, and Shell
 schemas, Process run-control behavior, append-only messages, and ordered
@@ -56,19 +59,25 @@ mutate synthetic state are never exposed to the model.
    shell-capable deployment server. Ship reads a release identifier from the
    laptop, routes deployment to the server, and is rewarded from the resulting
    server state. A second worker identity can see only the server.
+3. delegate-incident-from-slack admits an exact Slack DM route, has Ship retain
+   promised work in `r12y`, delegates diagnostics to a worker that alone can read
+   the incident server, returns the result over supervised IPC, resolves the
+   responsibility, and sends one correlated Slack reply.
 
 The normalized artifact records observations, semantic events, committed
-messages, target state, Process projections, and applied transitions. A task's
-expected object is recursively matched as a subset of that artifact, so reward
-depends on outcomes and lifecycle invariants rather than one exact action
-sequence. Exact semantic logs remain available for focused conformance tests.
+messages, target state, Process projections, responsibilities, IPC calls,
+adapter delivery, and applied transitions. Every fixture has an explicit
+weighted rubric. Each criterion recursively matches an outcome subset of the
+artifact, providing partial credit without rewarding one exact action sequence.
+Exact semantic logs remain available for focused conformance tests.
 
 ## Production seams and fidelity
 
 The hot path imports production capability matching, target constants, context
-projection and event formatting, syscall tool definitions, filesystem result
-formatting, and Process run-control parsing/instructions. It mocks the stateful
-owners behind those boundaries rather than reproducing a full Wrangler topology.
+projection and event formatting, responsibility baseline and transition
+formatting, syscall tool definitions, filesystem result formatting, and Process
+run-control parsing/instructions. It mocks the stateful owners behind those
+boundaries rather than reproducing a full Wrangler topology.
 
 A complete Kernel and Process topology per RL episode would be too expensive and
 stateful. The next fidelity layer should replay admitted fixtures through a
@@ -77,7 +86,7 @@ Before remote Prime workers, the TypeScript runner must also be bundled and
 versioned so the Python harness does not depend on a checkout and host
 node_modules.
 
-Responsibilities, delegation IPC, cancellation, stale responses, adapters,
-credentials, durable storage, scheduling, media, and complete Process history
-remain outside this batch. They should be added as explicit scenario-owned state
-machines, not hidden inside Python reward code.
+Cancellation and stale-response fencing, credentials, durable restart recovery,
+scheduling, media, complete Process history, and provider-specific adapter retry
+policy remain outside this batch. They should be added as explicit
+scenario-owned state machines, not hidden inside Python reward code.

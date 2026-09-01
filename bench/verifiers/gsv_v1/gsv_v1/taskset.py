@@ -13,6 +13,7 @@ class GsvData(vf.TaskData):
     scenario_id: str
     scenario: dict[str, Any]
     expected: dict[str, Any]
+    rubric: list[dict[str, Any]]
 
 
 class GsvTask(vf.Task[GsvData]):
@@ -51,11 +52,28 @@ class GsvTask(vf.Task[GsvData]):
         artifact = trace.info.get("gsv")
         if not isinstance(artifact, dict):
             return 0.0
-        return float(
-            artifact.get("schemaVersion") == 2
-            and artifact.get("scenarioId") == self.data.scenario_id
-            and matches_expected(artifact, self.data.expected)
-        )
+        if (
+            artifact.get("schemaVersion") != 2
+            or artifact.get("scenarioId") != self.data.scenario_id
+        ):
+            return 0.0
+        results = []
+        earned = 0.0
+        total = 0.0
+        for criterion in self.data.rubric:
+            weight = float(criterion["weight"])
+            passed = matches_expected(artifact, criterion["expected"])
+            total += weight
+            if passed:
+                earned += weight
+            results.append({
+                "id": criterion["id"],
+                "description": criterion["description"],
+                "weight": weight,
+                "passed": passed,
+            })
+        trace.info["gsv_rubric"] = results
+        return earned / total if total > 0 else 0.0
 
 
 class GsvConfig(vf.TasksetConfig):
@@ -83,6 +101,19 @@ class GsvTaskset(vf.Taskset[GsvTask, GsvConfig]):
             expected = scenario.get("expected")
             if not isinstance(expected, dict):
                 raise TypeError(f"Scenario {path} has no expected object")
+            rubric = scenario.get("rubric")
+            if not isinstance(rubric, list) or not rubric:
+                raise TypeError(f"Scenario {path} has no rubric")
+            for criterion in rubric:
+                if (
+                    not isinstance(criterion, dict)
+                    or not isinstance(criterion.get("id"), str)
+                    or not isinstance(criterion.get("description"), str)
+                    or not isinstance(criterion.get("weight"), (int, float))
+                    or criterion["weight"] <= 0
+                    or not isinstance(criterion.get("expected"), dict)
+                ):
+                    raise TypeError(f"Scenario {path} has an invalid rubric criterion")
             tasks.append(GsvTask(
                 GsvData(
                     idx=idx,
@@ -93,6 +124,7 @@ class GsvTaskset(vf.Taskset[GsvTask, GsvConfig]):
                     scenario_id=scenario["id"],
                     scenario=scenario,
                     expected=expected,
+                    rubric=rubric,
                 ),
                 self.config.task,
             ))

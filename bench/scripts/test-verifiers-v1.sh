@@ -36,32 +36,34 @@ GSV_BENCH_FAKE_KEY=local-test uv run eval gsv-v1 \
   --client.api-key-var GSV_BENCH_FAKE_KEY \
   --env.agent.runtime.type subprocess \
   --no-serve --no-push --no-rich \
-  --num-tasks 2 --num-rollouts 1 --max-concurrent 2 \
+  --num-tasks 3 --num-rollouts 1 --max-concurrent 3 \
   --output-dir "$smoke_dir/output" \
   --run.name gsv-local-smoke --run.dir gsv-local-smoke --clean \
   >"$smoke_dir/eval.stdout"
 
 trace="$smoke_dir/output/gsv-local-smoke/traces.jsonl"
 jq -s -e '
-  length == 2 and
+  length == 3 and
   all(.[];
     (.traces | length) == 1 and
     .traces[0].rewards.scenario_outcome.score == 1 and
     .traces[0].info.gsv.status == "yielded" and
     (.traces[0].info.gsv.observations
-      | map(.systemPromptSha256)
-      | unique
-      | length) == 1
+      | group_by(.processId)
+      | all(.[]; (map(.systemPromptSha256) | unique | length) == 1)) and
+    all(.traces[0].info.gsv_rubric[]; .passed == true)
   ) and
   ([.[].traces[0].info.gsv.scenarioId] | sort) == [
+    "delegate-incident-from-slack",
     "deploy-release-across-targets",
     "target-appears-after-inspection"
   ] and
   ([.[].traces[0].root_reply] | sort) == [
+    "checkout blocked: database migration checksum mismatch",
     "gpu-lab ready",
     "release deployed"
   ] and
-  ([.[].traces[0].calls | length] | add) == 5
+  ([.[].traces[0].calls | length] | add) == 11
 ' "$trace" >/dev/null
 
-echo "gsv Verifiers smoke passed: tasks=2 rewards=1 calls=5"
+echo "gsv Verifiers smoke passed: tasks=3 rewards=1 calls=11"

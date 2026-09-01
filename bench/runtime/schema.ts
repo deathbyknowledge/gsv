@@ -1,6 +1,8 @@
 import type {
   JsonObject,
   JsonValue,
+  ResponsibilityRecord,
+  ResponsibilityTransition,
 } from "@humansandmachines/gsv/protocol";
 import type { Message, Tool } from "@earendil-works/pi-ai";
 import type { ContextProjection } from "../../workers/gateway/src/process/context/projection";
@@ -15,8 +17,38 @@ export type SyntheticProcessSpec = {
   id: string;
   role: "ship" | "worker";
   uid: number;
+  ownerUid?: number;
+  username?: string;
   gids: number[];
   capabilities: string[];
+};
+
+export type SyntheticDelegateSpec = {
+  account: string;
+  process: SyntheticProcessSpec & { role: "worker" };
+  systemPrompt: string;
+  maxTurns: number;
+};
+
+export type SyntheticAdapterSpec = {
+  id: string;
+  kind: "slack";
+  accountId: string;
+  ownerUid: number;
+  connected: boolean;
+};
+
+export type SyntheticAdapterRouteSpec = {
+  adapterId: string;
+  accountId: string;
+  actorId: string;
+  surface: {
+    kind: "dm" | "channel";
+    id: string;
+    threadId?: string;
+  };
+  inboundDeliveryId: string;
+  messageId: string;
 };
 
 export type SyntheticTargetEffect =
@@ -80,7 +112,16 @@ export type SyntheticWorldSpec = {
     timezone: string;
   };
   processes: SyntheticProcessSpec[];
+  delegates?: SyntheticDelegateSpec[];
   targets: SyntheticTargetSpec[];
+  adapters?: SyntheticAdapterSpec[];
+};
+
+export type GsvRubricCriterion = {
+  id: string;
+  description: string;
+  weight: number;
+  expected: JsonObject;
 };
 
 export type GsvSemanticLogEntry =
@@ -99,6 +140,31 @@ export type GsvSemanticLogEntry =
   }
   | { type: "world.transition"; id: string }
   | { type: "context.delta"; processId: string; content: string }
+  | {
+    type: "responsibility.transition";
+    transition: ResponsibilityTransition;
+  }
+  | {
+    type: "process.spawned";
+    processId: string;
+    parentProcessId: string;
+    account: string;
+  }
+  | {
+    type: "ipc.completed";
+    callId: string;
+    sourceProcessId: string;
+    targetProcessId: string;
+    resultText?: string;
+    error?: string;
+  }
+  | {
+    type: "adapter.sent";
+    adapterId: string;
+    deliveryId: string;
+    processId: string;
+    text: string;
+  }
   | { type: "message.committed"; processId: string; text: string }
   | { type: "run.yielded"; processId: string }
   | { type: "run.returned"; processId: string; text: string };
@@ -110,9 +176,11 @@ export type GsvSurfaceScenario = {
   systemPrompt: string;
   prompt: string;
   entryProcessId: string;
+  entryRoute?: SyntheticAdapterRouteSpec;
   world: SyntheticWorldSpec;
   transitions: SyntheticTransitionSpec[];
   expected: JsonObject;
+  rubric: GsvRubricCriterion[];
   expectedLog?: GsvSemanticLogEntry[];
   maxTurns: number;
 };
@@ -145,14 +213,55 @@ export type SyntheticProcessSnapshot = {
   id: string;
   role: "ship" | "worker";
   uid: number;
+  ownerUid: number;
+  username: string;
   gids: number[];
   capabilities: string[];
   visibleTargets: string[];
+  state: "idle" | "running" | "returned" | "failed";
+  parentProcessId?: string;
+};
+
+export type SyntheticAdapterDeliverySnapshot = {
+  deliveryId: string;
+  processId: string;
+  surface: SyntheticAdapterRouteSpec["surface"];
+  text: string;
+  replyToId?: string;
+  state: "sent";
+};
+
+export type SyntheticAdapterSnapshot = SyntheticAdapterSpec & {
+  inboundReceipts: Array<{
+    deliveryId: string;
+    processId: string;
+    messageId: string;
+  }>;
+  deliveries: SyntheticAdapterDeliverySnapshot[];
+};
+
+export type SyntheticDelegationSnapshot = {
+  callId: string;
+  runId: string;
+  sourceProcessId: string;
+  targetProcessId: string;
+  responsibilityId?: string;
+  state: "in_progress" | "completed" | "failed";
+  resultText?: string;
+  error?: string;
+};
+
+export type SyntheticResponsibilityLedgerSnapshot = {
+  revision: number;
+  records: Record<string, ResponsibilityRecord>;
 };
 
 export type SyntheticWorldSnapshot = {
   targets: Record<string, SyntheticTargetSnapshot>;
   processes: Record<string, SyntheticProcessSnapshot>;
+  adapters: Record<string, SyntheticAdapterSnapshot>;
+  responsibilities: SyntheticResponsibilityLedgerSnapshot;
+  delegations: SyntheticDelegationSnapshot[];
   transitionsApplied: string[];
 };
 
