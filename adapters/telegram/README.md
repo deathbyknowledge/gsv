@@ -109,9 +109,10 @@ The account Durable Object queues each message-bearing Telegram update before
 returning success to the webhook and retries pending updates with its existing
 alarm. Stable Telegram message identifiers make Kernel replays idempotent.
 
-Human-approval prompts in direct messages include a `hil[requestId]` token.
-Replies must include the exact current token; bare decisions and stale tokens
-are rejected.
+Human-approval prompts in direct messages use native buttons. Callback
+correlation remains opaque and adapter-owned; a selection invokes exact
+`proc.hil` through the linked human's interaction-scoped peer. The original
+message is replaced with the resolved decision and action.
 
 ## Group Activation
 

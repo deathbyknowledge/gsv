@@ -244,7 +244,7 @@ The run pauses while a HIL request is pending. Web, Desktop, and CLI receive
 request in `adapter.send`. Decisions resume through `proc.hil` with the exact
 pending `requestId`. Each peer owns presentation.
 Telegram and Slack render native controls; adapters without controls use a
-structured text fallback that directs the user to a capable client. A native
+safe handoff that shows the action and directs the user to Chat. A native
 callback is bound durably to the exact request, linked actor, route generation,
 surface, and provider message before its controls are exposed. The provider
 `replyToId` remains threading metadata, not authorization.

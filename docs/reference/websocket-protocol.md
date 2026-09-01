@@ -323,7 +323,8 @@ Current principal defaults from `buildSignalList()`:
   - Web, Desktop, and CLI receive this structured signal. An exact routed
     adapter receives the same request inside targeted `adapter.send`. Clients
     answer with `proc.hil` and the exact `requestId`; adapters may render native
-    controls or a structured fallback. A native adapter callback submits
+    controls or direct the user to Chat without exposing the opaque request
+    identity. A native adapter callback submits
     ordinary `proc.hil` through a Kernel-derived linked-human peer. Stale links,
     route generations, destinations, provider-message correlations, and pending
     requests fail closed; provider reply threading is not authorization.

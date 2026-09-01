@@ -213,12 +213,13 @@ HIL uses the same structured request rather than a prompt-text side channel.
 Web, Desktop, and CLI receive `proc.run.hil.requested` as a broadcast signal; an
 exact routed adapter receives the same `ProcHilRequest` in its targeted
 `adapter.send`. Each surface chooses its presentation: Telegram and Slack use
-native buttons, while adapters without controls render a structured text
-fallback. A button callback is authenticated and durably correlated inside its
-adapter, then sent as an ordinary `proc.hil` request through a Kernel-derived,
-interaction-scoped linked-human peer. The adapter service account never
-receives ambient `proc.hil` authority, and provider reply threading is not
-authorization.
+native buttons, while adapters without secure controls show the requested
+action and direct the user to Chat. Opaque request identities are never rendered
+to the human or accepted from free-form message text. A button callback is
+authenticated and durably correlated inside its adapter, then sent as an
+ordinary `proc.hil` request through a Kernel-derived, interaction-scoped
+linked-human peer. The adapter service account never receives ambient
+`proc.hil` authority, and provider reply threading is not authorization.
 
 The `message` shell command exposes delivery context and the explicit path for a
 separate or cross-channel message. `message current` describes the directed endpoint
@@ -276,16 +277,15 @@ does not deploy the email Worker, Queue, provider binding, or managed
 
 Each adapter derives a stable account-scoped ingress `deliveryId` from the
 provider's complete event identity. For example, WhatsApp includes the group
-participant as well as the stanza id. Before link, command, approval, routing,
-media, or Process side effects, the Kernel claims a durable receipt for that
+participant as well as the stanza id. Before link, command, routing, media, or
+Process side effects, the Kernel claims a durable receipt for that
 id. The actor and surface are recorded for audit and authorization but are not
 part of receipt identity, because provider aliases may normalize after the
 first delivery. A completed replay returns the stored disposition; a
 concurrent replay on the live Kernel observes the active claim, while an
-abandoned or post-restart claim is fenced and reclaimed. Checkpoints bind HIL
-decisions to their exact request and preserve staged media plus the stable
-Process run id, so reconciliation cannot turn an old approval into a new turn
-or upload the same media again. Both paths cancel any repeated media body before
+abandoned or post-restart claim is fenced and reclaimed. Checkpoints preserve
+staged media plus the stable Process run id, so reconciliation cannot create a
+new turn or upload the same media again. Both paths cancel any repeated media body before
 staging bytes. A Process admission predating the receipt migration reports
 whether that run is active, queued, or already recorded so the Kernel cannot
 resurrect a completed run's reply route or typing state.
@@ -302,8 +302,8 @@ worker failure cannot leave a durable record without a wake-up. This uses the
 account's existing storage and wake-up mechanism rather than introducing a
 second ingress scheduler or blob store.
 
-Command replies, link challenges, and HIL acknowledgements use the receipt's
-stable delivery ids. The Kernel prepares and completes the receipt with the
+Command replies and link challenges use the receipt's stable delivery ids. The
+Kernel prepares and completes the receipt with the
 exact result. Before provider delivery, the adapter replaces its durable raw
 payload with normalized response records. It then passes each response through
 the same account-local outbound ledger used by normal sends. A response retry
@@ -333,8 +333,8 @@ Message remains in conversation history and its delivery outcome remains
 inspectable in Process activity. Approval attempt one is durably scheduled
 before Process acknowledges the HIL signal; provider notification failure
 therefore cannot clear or fail a pending approval.
-Link challenges, adapter command responses, and human-approval acknowledgements
-use this same outbound ledger. The Kernel derives their delivery ids before the
+Link challenges and adapter command responses use this same outbound ledger.
+The Kernel derives their delivery ids before the
 durable ingress claim and returns normalized response metadata. Provider
 delivery begins only after the inbound Gateway RPC returns, so it does not make
 a re-entrant call into the account Durable Object that is still reporting the
@@ -477,8 +477,9 @@ runtime.
 6. Implement `adapterFrame` by handling targeted `adapter.send` requests and
    returning their correlated responses.
 7. Render structured HIL from the request context. Native callbacks, when the
-   platform supports them, must use the linked-peer `proc.hil` path rather than
-   synthesizing inbound message text.
+   platform supports them, must use the linked-peer `proc.hil` path. Otherwise,
+   present the action and direct the user to Chat; never synthesize approval
+   tokens in inbound message text.
 8. Use the shared binary-body helpers and common media limits.
 9. Exercise DM linking, shared surfaces, media cancellation, reconnects,
    request-bound approvals, duplicate ingress, canonical Messages, and directed

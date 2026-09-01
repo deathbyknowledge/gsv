@@ -285,8 +285,8 @@ without treating all of it as a message addressed to the user. A committed
 Message synchronizes through canonical Conversation history. Only the endpoint
 whose input admitted the run receives its transient directed Message stream.
 Adapters receive targeted `adapter.send` requests for directed committed
-Messages and approvals, choose native or fallback presentation, and do not
-render raw Process output as replies.
+Messages and approvals, choose native controls or a safe Chat handoff, and do
+not render raw Process output as replies.
 
 ## Security and lifecycle invariants
 

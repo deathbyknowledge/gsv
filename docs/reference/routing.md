@@ -226,7 +226,8 @@ routes so committed output cannot cross a later relink.
 Human-in-the-loop delivery uses the same exact structured request as native
 clients. Clients receive `proc.run.hil.requested`; the exact adapter route
 receives a targeted `adapter.send` carrying its `ProcHilRequest` and renders
-native controls or a structured fallback. A native callback retains
+native controls or, when secure controls are unavailable, a safe handoff to
+Chat. Opaque request identities never appear in user-facing text. A native callback retains
 the Process, run, request, linked actor, surface, route generation, and provider
 message correlation. It reaches the Kernel through `linkedPeerFrame`; the
 Kernel derives an interaction-scoped human peer, intersects the linked user's
