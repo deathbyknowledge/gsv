@@ -2,13 +2,11 @@ import type { Frame } from "./protocol/frames";
 import type {
   AdapterGatewayInterface,
   AdapterPairingWorkerInterface,
-  AdapterWorkerInterface,
 } from "@humansandmachines/gsv/protocol";
 import type {
   AdapterService,
   AdapterServiceDescriptor,
 } from "@humansandmachines/gsv/services/adapters";
-
 export type {
   AdapterAccountStatus,
   AdapterActivity,
@@ -19,6 +17,7 @@ export type {
   AdapterInboundResult,
   AdapterMedia,
   AdapterOutboundMessage,
+  AdapterDeliveryContext,
   AdapterPairingCandidate,
   AdapterPairingPreparation,
   AdapterSurface,
@@ -26,5 +25,5 @@ export type {
 } from "@humansandmachines/gsv/protocol";
 
 export type GatewayAdapterInterface = AdapterGatewayInterface<Frame>;
-export type { AdapterService, AdapterServiceDescriptor, AdapterWorkerInterface };
+export type { AdapterService, AdapterServiceDescriptor };
 export type { AdapterPairingWorkerInterface };

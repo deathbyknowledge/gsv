@@ -639,11 +639,12 @@ export class WhatsAppAccount extends DurableObject<Env> {
         prefix: INBOUND_DELIVERY_PREFIX,
         limit: 1,
       });
+      const hasPendingDelivery = pendingInbound.size > 0;
       if (currentAlarm === supersededDeadline) {
         if (canReplaceSupersededLifecycleAlarm(
           currentAlarm,
           supersededDeadline,
-          pendingInbound.size > 0,
+          hasPendingDelivery,
         )) {
           if (deadline === undefined) {
             await txn.deleteAlarm();
@@ -655,7 +656,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       }
       const nextDeadline = nextAccountAlarmDeadline(
         deadline,
-        pendingInbound.size > 0,
+        hasPendingDelivery,
         now,
       );
       if (nextDeadline === undefined) return;
@@ -699,7 +700,8 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
   private async replaceLifecycleAlarmWithInboundRetry(): Promise<void> {
     await this.ctx.storage.deleteAlarm();
-    await this.inboundDeliveries.armIfPending(Date.now() + INBOUND_RETRY_DELAY_MS);
+    const deadline = Date.now() + INBOUND_RETRY_DELAY_MS;
+    await this.inboundDeliveries.armIfPending(deadline);
   }
 
   private async startSocket(source: string): Promise<void> {

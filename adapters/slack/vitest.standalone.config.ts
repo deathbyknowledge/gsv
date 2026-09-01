@@ -16,9 +16,7 @@ export default defineConfig({
               const calls = [];
               let failNextInbound = false;
               export class AdapterGatewayEntrypoint extends WorkerEntrypoint {
-                async serviceFrame(first, second) {
-                  const installation = second ? first : { installationId: "singleton" };
-                  const frame = second || first;
+                async serviceFrame(installation, frame) {
                   const mediaBody = frame.body
                     ? Array.from(new Uint8Array(await new Response(frame.body.stream).arrayBuffer()))
                     : undefined;
@@ -40,6 +38,22 @@ export default defineConfig({
                       }
                     : { ok: true };
                   return { type: "res", id: frame.id, ok: true, data };
+                }
+                async linkedPeerFrame(installation, context, frame) {
+                  calls.push({ installation, linkedContext: context, call: frame.call, args: frame.args });
+                  return {
+                    type: "res",
+                    id: frame.id,
+                    ok: true,
+                    data: {
+                      ok: true,
+                      pid: frame.args.pid,
+                      requestId: frame.args.requestId,
+                      decision: frame.args.decision,
+                      resumed: true,
+                      remembered: frame.args.remember === true,
+                    },
+                  };
                 }
                 async fetch(request) {
                   const url = new URL(request.url);

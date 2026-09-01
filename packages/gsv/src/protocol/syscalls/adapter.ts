@@ -9,6 +9,8 @@ import type {
 import type { AdapterServiceDescriptor } from "../../services/adapters";
 import {
   adapterConnectChallengeSchema,
+  adapterMediaSchema,
+  adapterSurfaceSchema,
   type AdapterConnectChallenge,
 } from "../adapters";
 import type { JsonValue } from "../json";
@@ -90,6 +92,17 @@ export type AdapterSendArgs = {
   also?: boolean;
 };
 
+export const adapterSendArgsSchema = z.strictObject({
+  adapter: nonEmptyStringSchema,
+  accountId: nonEmptyStringSchema,
+  deliveryId: z.optional(nonEmptyStringSchema),
+  surface: adapterSurfaceSchema,
+  text: z.string(),
+  replyToId: z.optional(z.string()),
+  media: z.optional(z.array(adapterMediaSchema)),
+  also: z.optional(z.boolean()),
+});
+
 export type AdapterSendResult =
   | {
       ok: true;
@@ -108,6 +121,24 @@ export type AdapterSendResult =
       /** True only when retrying the same deliveryId is safe. */
       retryable?: boolean;
     };
+
+export const adapterSendResultSchema = z.discriminatedUnion("ok", [
+  z.strictObject({
+    ok: z.literal(true),
+    adapter: nonEmptyStringSchema,
+    accountId: nonEmptyStringSchema,
+    surfaceId: z.string(),
+    deliveryId: nonEmptyStringSchema,
+    messageId: z.optional(z.string()),
+    deliveryState: z.optional(z.enum(["sent", "deduplicated", "ambiguous"])),
+  }),
+  z.strictObject({
+    ok: z.literal(false),
+    error: nonEmptyStringSchema,
+    deliveryId: z.optional(z.string()),
+    retryable: z.optional(z.boolean()),
+  }),
+]);
 
 export type AdapterStatusArgs = {
   adapter: string;

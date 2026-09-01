@@ -37,6 +37,22 @@ export default defineConfig({
                     },
                   };
                 }
+                async linkedPeerFrame(installation, context, frame) {
+                  calls.push({ installation, linkedContext: context, call: frame.call, args: frame.args });
+                  return {
+                    type: "res",
+                    id: frame.id,
+                    ok: true,
+                    data: {
+                      ok: true,
+                      pid: frame.args.pid,
+                      requestId: frame.args.requestId,
+                      decision: frame.args.decision,
+                      resumed: true,
+                      remembered: frame.args.remember === true,
+                    },
+                  };
+                }
                 async unlinkManagedAdapterIdentity(installation, input) {
                   calls.push({ call: "unlinkManagedAdapterIdentity", installation, input });
                   return { removed: true };

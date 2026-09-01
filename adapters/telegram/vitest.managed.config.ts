@@ -34,6 +34,22 @@ export default defineConfig({
                     },
                   };
                 }
+                async linkedPeerFrame(installation, context, frame) {
+                  calls.push({ installation, linkedContext: context, call: frame.call, args: frame.args });
+                  return {
+                    type: "res",
+                    id: frame.id,
+                    ok: true,
+                    data: {
+                      ok: true,
+                      pid: frame.args.pid,
+                      requestId: frame.args.requestId,
+                      decision: frame.args.decision,
+                      resumed: true,
+                      remembered: frame.args.remember === true,
+                    },
+                  };
+                }
                 async unlinkManagedAdapterIdentity(installation, input) {
                   calls.push({ call: "unlinkManagedAdapterIdentity", installation, input });
                   return { removed: true };
@@ -114,6 +130,10 @@ export default defineConfig({
                     return Response.json({ ok: true, result });
                   }
                   if (method === "sendChatAction") {
+                    return Response.json({ ok: true, result: true });
+                  }
+                  if (method === "answerCallbackQuery" || method === "editMessageText") {
+                    messages.push({ method, body, result: true });
                     return Response.json({ ok: true, result: true });
                   }
                   return Response.json({ ok: false, error_code: 400 }, { status: 400 });

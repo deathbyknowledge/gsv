@@ -257,7 +257,7 @@ export class DiscordGateway extends DurableObject<Env> {
       body,
     );
   }
-  
+
   /** Get the account ID name (e.g., "default"), falling back to hex DO id */
   private getAccountId(): string {
     return this.state.accountId ?? this.ctx.id.toString();

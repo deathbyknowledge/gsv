@@ -1,9 +1,10 @@
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use gsv::kernel_client::{cli_peer_identity, BinaryBodyLimits, GatewayAuth, KernelClient};
 use serde_json::{json, Value};
+use tokio::sync::mpsc;
 
 const CHAT_WAIT_TIMEOUT_SECS: u64 = 120;
 
@@ -12,6 +13,8 @@ struct PendingChatSignal {
     signal: String,
     payload: Value,
 }
+
+type StdinLine = Result<String, String>;
 
 fn client_debug_enabled() -> bool {
     std::env::var("GSV_CLIENT_DEBUG")
@@ -70,6 +73,7 @@ fn process_chat_signal(
     awaiting_response: &AtomicBool,
     emitted_text: &AtomicBool,
     completed: &AtomicBool,
+    hil_requests: &mpsc::UnboundedSender<Value>,
 ) {
     let run_id = signal_run_id(payload).unwrap_or_else(|| "<none>".to_string());
     debug_log(
@@ -116,6 +120,13 @@ fn process_chat_signal(
                 println!("\n[tool] {}", name);
             }
         }
+        "proc.run.hil.requested" => {
+            if payload.get("requestId").and_then(Value::as_str).is_some()
+                && payload.get("pid").and_then(Value::as_str).is_some()
+            {
+                let _ = hil_requests.send(payload.clone());
+            }
+        }
         "proc.run.finished" => {
             if let Some(error) = payload.get("error").and_then(|value| value.as_str()) {
                 eprintln!("\nError: {}", error);
@@ -146,6 +157,7 @@ fn drain_pending_chat_signals(
     awaiting_response: &AtomicBool,
     emitted_text: &AtomicBool,
     completed: &AtomicBool,
+    hil_requests: &mpsc::UnboundedSender<Value>,
 ) -> (usize, usize) {
     let queued = match pending_signals.lock() {
         Ok(mut pending) => std::mem::take(&mut *pending),
@@ -169,6 +181,7 @@ fn drain_pending_chat_signals(
             awaiting_response,
             emitted_text,
             completed,
+            hil_requests,
         );
         if !awaiting_response.load(Ordering::SeqCst) {
             break;
@@ -202,10 +215,120 @@ fn begin_wait_for_chat_response(
     }
 }
 
+fn spawn_stdin_reader() -> mpsc::UnboundedReceiver<StdinLine> {
+    let (sender, receiver) = mpsc::unbounded_channel();
+    std::thread::spawn(move || {
+        let stdin = io::stdin();
+        for line in stdin.lock().lines() {
+            let result = line.map_err(|error| error.to_string());
+            if sender.send(result).is_err() {
+                return;
+            }
+        }
+    });
+    receiver
+}
+
+async fn handle_hil_request(
+    client: &KernelClient,
+    payload: Value,
+    stdin_lines: &mut mpsc::UnboundedReceiver<StdinLine>,
+    interactive_stdin: bool,
+) {
+    let Some(pid) = payload.get("pid").and_then(Value::as_str) else {
+        eprintln!("\nInvalid approval request: missing pid");
+        return;
+    };
+    let Some(request_id) = payload.get("requestId").and_then(Value::as_str) else {
+        eprintln!("\nInvalid approval request: missing requestId");
+        return;
+    };
+    let syscall = payload
+        .get("syscall")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown syscall");
+    let target = payload
+        .get("target")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown target");
+    let args = payload.get("args").cloned().unwrap_or_else(|| json!({}));
+
+    println!("\n[approval required] {syscall} on {target}");
+    match serde_json::to_string_pretty(&args) {
+        Ok(rendered) => println!("{rendered}"),
+        Err(_) => println!("{args}"),
+    }
+    if !interactive_stdin {
+        eprintln!(
+            "Approval {request_id} is still pending; rerun `gsv chat` in an interactive terminal to decide it."
+        );
+        return;
+    }
+
+    let (decision, remember) = loop {
+        print!("Approve [o]nce, [a]lways, or [d]eny? ");
+        let _ = io::stdout().flush();
+        let Some(line) = stdin_lines.recv().await else {
+            eprintln!("\nInput closed; approval remains pending.");
+            return;
+        };
+        let line = match line {
+            Ok(line) => line.trim().to_ascii_lowercase(),
+            Err(error) => {
+                eprintln!("\nCould not read approval decision: {error}");
+                return;
+            }
+        };
+        match line.as_str() {
+            "o" | "once" | "approve" | "y" | "yes" => break ("approve", false),
+            "a" | "always" | "approve always" => break ("approve", true),
+            "d" | "deny" | "n" | "no" => break ("deny", false),
+            _ => println!("Enter o, a, or d."),
+        }
+    };
+
+    match client
+        .request_ok(
+            "proc.hil",
+            Some(json!({
+                "pid": pid,
+                "requestId": request_id,
+                "decision": decision,
+                "remember": remember,
+            })),
+        )
+        .await
+    {
+        Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(true) => {
+            println!(
+                "[approval] {}{}",
+                if decision == "approve" {
+                    "approved"
+                } else {
+                    "denied"
+                },
+                if remember { " and remembered" } else { "" },
+            );
+        }
+        Ok(result) => {
+            let error = result
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("approval was not accepted");
+            eprintln!("[approval] {error}");
+        }
+        Err(error) => eprintln!("[approval] request failed: {error}"),
+    }
+}
+
 async fn wait_for_chat_complete(
     completed: &AtomicBool,
     debug_enabled: bool,
     is_disconnected: impl Fn() -> bool,
+    client: &KernelClient,
+    hil_requests: &mut mpsc::UnboundedReceiver<Value>,
+    stdin_lines: &mut mpsc::UnboundedReceiver<StdinLine>,
+    interactive_stdin: bool,
 ) {
     let timeout = tokio::time::Duration::from_secs(CHAT_WAIT_TIMEOUT_SECS);
     let start = tokio::time::Instant::now();
@@ -223,7 +346,14 @@ async fn wait_for_chat_complete(
             );
             break;
         }
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        tokio::select! {
+            request = hil_requests.recv() => {
+                if let Some(request) = request {
+                    handle_hil_request(client, request, stdin_lines, interactive_stdin).await;
+                }
+            }
+            _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {}
+        }
     }
 }
 
@@ -248,6 +378,8 @@ pub(crate) async fn run_client(
     let awaiting_response_for_handler = awaiting_response.clone();
     let pending_signals = Arc::new(Mutex::new(Vec::<PendingChatSignal>::new()));
     let pending_signals_for_handler = pending_signals.clone();
+    let (hil_sender, mut hil_requests) = mpsc::unbounded_channel::<Value>();
+    let hil_sender_for_handler = hil_sender.clone();
     let debug_enabled_for_handler = debug_enabled;
 
     let client = match KernelClient::connect_with_peer(
@@ -332,6 +464,7 @@ pub(crate) async fn run_client(
                     awaiting_response_for_handler.as_ref(),
                     emitted_text_for_handler.as_ref(),
                     completed_for_handler.as_ref(),
+                    &hil_sender_for_handler,
                 );
             }
         },
@@ -341,6 +474,8 @@ pub(crate) async fn run_client(
         Ok(client) => client,
         Err(error) => return Err(error),
     };
+    let interactive_stdin = io::stdin().is_terminal();
+    let mut stdin_lines = spawn_stdin_reader();
 
     let pid = match pid {
         Some(pid) => pid,
@@ -414,87 +549,115 @@ pub(crate) async fn run_client(
                 awaiting_response.as_ref(),
                 emitted_text.as_ref(),
                 completed.as_ref(),
+                &hil_sender,
             );
         }
 
-        wait_for_chat_complete(completed.as_ref(), debug_enabled, || {
-            client.connection().is_disconnected()
-        })
+        wait_for_chat_complete(
+            completed.as_ref(),
+            debug_enabled,
+            || client.connection().is_disconnected(),
+            &client,
+            &mut hil_requests,
+            &mut stdin_lines,
+            interactive_stdin,
+        )
         .await;
         return Ok(());
     }
 
     println!("Connected! Type your message and press Enter. Type 'quit' to exit.\n");
 
-    let stdin = io::stdin();
     print!("> ");
     let _ = io::stdout().flush();
 
-    for line in stdin.lock().lines() {
-        let line = line?;
-        let line = line.trim();
+    loop {
+        tokio::select! {
+            request = hil_requests.recv() => {
+                if let Some(request) = request {
+                    handle_hil_request(
+                        &client,
+                        request,
+                        &mut stdin_lines,
+                        interactive_stdin,
+                    ).await;
+                    print!("\n> ");
+                    let _ = io::stdout().flush();
+                }
+            }
+            line = stdin_lines.recv() => {
+                let Some(line) = line else { break };
+                let line = line.map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
+                let line = line.trim();
 
-        if line == "quit" || line == "exit" {
-            break;
+                if line == "quit" || line == "exit" {
+                    break;
+                }
+
+                if line.is_empty() {
+                    print!("> ");
+                    let _ = io::stdout().flush();
+                    continue;
+                }
+
+                begin_wait_for_chat_response(
+                    completed.as_ref(),
+                    emitted_text.as_ref(),
+                    awaiting_response.as_ref(),
+                    &expected_run_id,
+                    &pending_signals,
+                );
+                debug_log(
+                    debug_enabled,
+                    format!(
+                        "conversation.send start pid={} chars={}",
+                        pid,
+                        line.chars().count()
+                    ),
+                );
+
+                let result = client
+                    .conversation_send(
+                        &conversation_id,
+                        line,
+                        &uuid::Uuid::new_v4().to_string(),
+                    )
+                    .await?;
+                debug_log(
+                    debug_enabled,
+                    format!(
+                        "conversation.send response runId={} queued={}",
+                        result.run_id, result.queued
+                    ),
+                );
+                if result.queued {
+                    println!("[queued] process is busy; your message was queued");
+                }
+
+                if let Ok(mut expected) = expected_run_id.lock() {
+                    *expected = Some(result.run_id);
+                }
+                if let Some(expected_run_id_value) = expected_run_id
+                    .lock()
+                    .ok()
+                    .and_then(|run_id| run_id.clone())
+                {
+                    drain_pending_chat_signals(
+                        debug_enabled,
+                        &expected_run_id_value,
+                        &pending_signals,
+                        &expected_run_id,
+                        awaiting_response.as_ref(),
+                        emitted_text.as_ref(),
+                        completed.as_ref(),
+                        &hil_sender,
+                    );
+                }
+
+                print!("\n> ");
+                let _ = io::stdout().flush();
+            }
         }
-
-        if line.is_empty() {
-            print!("> ");
-            let _ = io::stdout().flush();
-            continue;
-        }
-
-        begin_wait_for_chat_response(
-            completed.as_ref(),
-            emitted_text.as_ref(),
-            awaiting_response.as_ref(),
-            &expected_run_id,
-            &pending_signals,
-        );
-        debug_log(
-            debug_enabled,
-            format!(
-                "conversation.send start pid={} chars={}",
-                pid,
-                line.chars().count()
-            ),
-        );
-
-        let result = client
-            .conversation_send(&conversation_id, line, &uuid::Uuid::new_v4().to_string())
-            .await?;
-        debug_log(
-            debug_enabled,
-            format!(
-                "conversation.send response runId={} queued={}",
-                result.run_id, result.queued
-            ),
-        );
-        if result.queued {
-            println!("[queued] process is busy; your message was queued");
-        }
-
-        if let Ok(mut expected) = expected_run_id.lock() {
-            *expected = Some(result.run_id);
-        }
-        if let Some(expected_run_id_value) = expected_run_id
-            .lock()
-            .ok()
-            .and_then(|run_id| run_id.clone())
-        {
-            drain_pending_chat_signals(
-                debug_enabled,
-                &expected_run_id_value,
-                &pending_signals,
-                &expected_run_id,
-                awaiting_response.as_ref(),
-                emitted_text.as_ref(),
-                completed.as_ref(),
-            );
-        }
-
-        print!("\n> ");
-        let _ = io::stdout().flush();
     }
 
     Ok(())
@@ -566,6 +729,7 @@ mod tests {
         let awaiting_response = AtomicBool::new(true);
         let emitted_text = AtomicBool::new(true);
         let completed = AtomicBool::new(false);
+        let (hil_sender, _hil_requests) = tokio::sync::mpsc::unbounded_channel();
 
         process_chat_signal(
             false,
@@ -575,6 +739,7 @@ mod tests {
             &awaiting_response,
             &emitted_text,
             &completed,
+            &hil_sender,
         );
 
         assert!(!emitted_text.load(Ordering::SeqCst));
@@ -588,6 +753,7 @@ mod tests {
         let awaiting_response = AtomicBool::new(true);
         let emitted_text = AtomicBool::new(false);
         let completed = AtomicBool::new(false);
+        let (hil_sender, _hil_requests) = tokio::sync::mpsc::unbounded_channel();
 
         process_chat_signal(
             false,
@@ -604,9 +770,41 @@ mod tests {
             &awaiting_response,
             &emitted_text,
             &completed,
+            &hil_sender,
         );
 
         assert!(!emitted_text.load(Ordering::SeqCst));
         assert!(!completed.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn queues_structured_hil_requests_without_parsing_prompt_text() {
+        let expected_run_id = Arc::new(Mutex::new(Some("run-one".to_string())));
+        let awaiting_response = AtomicBool::new(true);
+        let emitted_text = AtomicBool::new(false);
+        let completed = AtomicBool::new(false);
+        let (hil_sender, mut hil_requests) = tokio::sync::mpsc::unbounded_channel();
+        let payload = json!({
+            "pid": "proc-one",
+            "runId": "run-one",
+            "requestId": "request-one",
+            "syscall": "shell.exec",
+            "target": "gsv",
+            "args": { "input": "date" }
+        });
+
+        process_chat_signal(
+            false,
+            "proc.run.hil.requested",
+            &payload,
+            &expected_run_id,
+            &awaiting_response,
+            &emitted_text,
+            &completed,
+            &hil_sender,
+        );
+
+        assert_eq!(hil_requests.try_recv().ok(), Some(payload));
+        assert!(awaiting_response.load(Ordering::SeqCst));
     }
 }

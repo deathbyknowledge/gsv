@@ -4,15 +4,15 @@ import type {
   AdapterConnectConfig,
   AdapterInstallationContext,
   AdapterMediaType,
-  AdapterOutboundMessage,
+  AdapterDeliveryContext,
+  AdapterGatewayRequestFrame,
+  AdapterGatewayResponseFrame,
   AdapterPairingWorkerInterface,
   AdapterSurfaceKind,
   AdapterSurface,
   AdapterWorkerActivityResult,
   AdapterWorkerConnectResult,
   AdapterWorkerDisconnectResult,
-  AdapterWorkerInterface,
-  AdapterWorkerSendResult,
 } from "../protocol/adapters";
 import type { ArgsOf, ResultOf, SyscallName } from "../protocol/syscalls/map";
 import { binaryBodySchema, type BinaryBody } from "../protocol/body";
@@ -182,31 +182,34 @@ export type AdapterTargetCancelResult = {
 export interface AdapterService {
   readonly adapterId: string;
   adapterDescribe(): Promise<AdapterServiceDescriptor>;
-  adapterConnect?: AdapterWorkerInterface["adapterConnect"] | ((
+  /**
+   * Canonical frame carrier for Gateway-to-adapter requests. Binary request
+   * bodies travel on the frame and every request returns a correlated response.
+   */
+  adapterFrame?: (
+    installation: AdapterInstallationContext,
+    context: AdapterDeliveryContext,
+    frame: AdapterGatewayRequestFrame,
+  ) => Promise<AdapterGatewayResponseFrame>;
+  adapterConnect?: (
     installation: AdapterInstallationContext,
     accountId: string,
     config?: AdapterConnectConfig,
-  ) => Promise<AdapterWorkerConnectResult>);
-  adapterDisconnect?: AdapterWorkerInterface["adapterDisconnect"] | ((
+  ) => Promise<AdapterWorkerConnectResult>;
+  adapterDisconnect?: (
     installation: AdapterInstallationContext,
     accountId: string,
-  ) => Promise<AdapterWorkerDisconnectResult>);
-  adapterSend?: AdapterWorkerInterface["adapterSend"] | ((
-    installation: AdapterInstallationContext,
-    accountId: string,
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ) => Promise<AdapterWorkerSendResult>);
-  adapterSetActivity?: AdapterWorkerInterface["adapterSetActivity"] | ((
+  ) => Promise<AdapterWorkerDisconnectResult>;
+  adapterSetActivity?: (
     installation: AdapterInstallationContext,
     accountId: string,
     surface: AdapterSurface,
     activity: AdapterActivity,
-  ) => Promise<AdapterWorkerActivityResult>);
-  adapterStatus?: AdapterWorkerInterface["adapterStatus"] | ((
+  ) => Promise<AdapterWorkerActivityResult>;
+  adapterStatus?: (
     installation: AdapterInstallationContext,
     accountId?: string,
-  ) => Promise<AdapterAccountStatus[]>);
+  ) => Promise<AdapterAccountStatus[]>;
   adapterPairingInfo?: AdapterPairingWorkerInterface["adapterPairingInfo"];
   adapterPairingInspect?: AdapterPairingWorkerInterface["adapterPairingInspect"];
   adapterPairingPrepare?: AdapterPairingWorkerInterface["adapterPairingPrepare"];

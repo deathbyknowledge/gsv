@@ -9,6 +9,8 @@ import {
   adapterInboundResultDisposition,
   InboundDeliveryLedger,
 } from "../../shared/src/inbound-delivery";
+import type { RenderedAdapterSend } from "../../shared/src/peer-render";
+import { runAdapterHilSqlMigrations } from "../../shared/src/schema/migrations";
 import { callAdapterGateway } from "../../shared/src/gateway-rpc";
 import type { AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
@@ -31,13 +33,21 @@ import type {
   AdapterInboundMessage,
   AdapterInstallationContext,
   AdapterOutboundMessage,
+  AdapterDeliveryContext,
   AdapterSendResult,
   AdapterSurface,
   BinaryBody,
 } from "./types";
 import {
   sendTelegramMarkdownMessage,
+  type TelegramTextMessageOptions,
 } from "./telegram-formatting";
+import {
+  attachTelegramApprovalMessage,
+  handleTelegramApprovalCallback,
+  prepareTelegramApproval,
+  type TelegramApprovalCallback,
+} from "./telegram-approval";
 import { planTelegramMediaDeliveries } from "./telegram-media";
 import {
   sendTelegramMediaGroupMessage,
@@ -48,7 +58,12 @@ import {
   loadTelegramInboundMedia,
   type TelegramInboundMediaSource,
 } from "./telegram-inbound-media";
-import { buildTelegramWebhookPath } from "./webhook-route";
+import {
+  buildTelegramWebhookPath,
+  reconcileTelegramApprovalWebhook,
+  telegramWebhookRegistration,
+  TELEGRAM_APPROVAL_WEBHOOK_VERSION,
+} from "./webhook-route";
 import type { callManagedTelegramApi } from "./managed-telegram-api";
 import * as z from "zod/mini";
 
@@ -137,6 +152,17 @@ export type TelegramUpdate = {
   edited_message?: TelegramMessage;
   channel_post?: TelegramMessage;
   edited_channel_post?: TelegramMessage;
+  callback_query?: TelegramCallbackQuery;
+};
+
+type TelegramCallbackQuery = {
+  id: string;
+  from: TelegramUser;
+  message?: {
+    message_id: number;
+    chat: TelegramChat;
+  };
+  data?: string;
 };
 
 type TelegramWebhookInfo = {
@@ -241,12 +267,22 @@ const telegramMessageSchema = z.object({
   animation: z.optional(telegramFileAttachmentSchema),
   sticker: z.optional(telegramStickerAttachmentSchema),
 });
+const telegramCallbackQuerySchema = z.object({
+  id: z.string(),
+  from: telegramUserSchema,
+  message: z.optional(z.object({
+    message_id: z.number(),
+    chat: telegramChatSchema,
+  })),
+  data: z.optional(z.string()),
+});
 export const telegramUpdateSchema = z.object({
   update_id: z.number(),
   message: z.optional(telegramMessageSchema),
   edited_message: z.optional(telegramMessageSchema),
   channel_post: z.optional(telegramMessageSchema),
   edited_channel_post: z.optional(telegramMessageSchema),
+  callback_query: z.optional(telegramCallbackQuerySchema),
 });
 
 type TelegramFile = {
@@ -271,6 +307,7 @@ type TelegramAccountState = {
   authenticated: boolean;
   webhookUrl: string | null;
   webhookSecret: string | null;
+  webhookUpdatesVersion: number;
   lastActivity: number | null;
   lastError: string | null;
 };
@@ -306,10 +343,11 @@ function toErrorMessage(error: Error | string): string {
 export class TelegramAccount extends DurableObject<Env> {
   private loaded = false;
   private readonly deliveries: DeliveryLedger;
-  private readonly inboundDeliveries: InboundDeliveryLedger<TelegramMessage>;
+  private readonly inboundDeliveries: InboundDeliveryLedger<TelegramMessage | TelegramApprovalCallback>;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    runAdapterHilSqlMigrations(ctx.storage);
     this.deliveries = new DeliveryLedger(this.ctx.storage);
     this.inboundDeliveries = new InboundDeliveryLedger(
       this.ctx.storage,
@@ -327,6 +365,7 @@ export class TelegramAccount extends DurableObject<Env> {
     authenticated: false,
     webhookUrl: null,
     webhookSecret: null,
+    webhookUpdatesVersion: 0,
     lastActivity: null,
     lastError: null,
   };
@@ -556,11 +595,7 @@ export class TelegramAccount extends DurableObject<Env> {
 
     await this.callTelegramApi<boolean>(
       "setWebhook",
-      {
-        url: webhookUrl,
-        secret_token: webhookSecret,
-        allowed_updates: ["message", "channel_post"],
-      },
+      telegramWebhookRegistration(webhookUrl, webhookSecret),
       normalizedToken,
     );
 
@@ -572,6 +607,7 @@ export class TelegramAccount extends DurableObject<Env> {
     this.state.authenticated = true;
     this.state.webhookUrl = webhookUrl;
     this.state.webhookSecret = webhookSecret;
+    this.state.webhookUpdatesVersion = TELEGRAM_APPROVAL_WEBHOOK_VERSION;
     this.state.lastError = null;
 
     await this.commitLifecycleState(Date.now() + INBOUND_WAKE_DELAY_MS);
@@ -637,6 +673,7 @@ export class TelegramAccount extends DurableObject<Env> {
   async sendMessage(
     message: AdapterOutboundMessage,
     body?: BinaryBody,
+    options: TelegramTextMessageOptions = {},
   ): Promise<AdapterSendResult> {
     await this.ensureLoaded();
 
@@ -679,7 +716,10 @@ export class TelegramAccount extends DurableObject<Env> {
 
     let requestFingerprint: string;
     try {
-      requestFingerprint = await fingerprintOutboundDelivery(message, mediaBytes);
+      requestFingerprint = await fingerprintOutboundDelivery(
+        telegramFingerprintMessage(message, options),
+        mediaBytes,
+      );
     } catch (error) {
       return {
         ok: false,
@@ -749,6 +789,7 @@ export class TelegramAccount extends DurableObject<Env> {
           message.surface.id,
           trimmedText,
           replyToMessageId,
+          options,
         );
         sentMessageId = String(sent.message_id);
       } else {
@@ -823,6 +864,7 @@ export class TelegramAccount extends DurableObject<Env> {
     chatId: string,
     text: string,
     replyToMessageId?: number,
+    options: TelegramTextMessageOptions = {},
   ): Promise<TelegramMessage> {
     return sendTelegramMarkdownMessage(
       (method, payload) =>
@@ -830,6 +872,7 @@ export class TelegramAccount extends DurableObject<Env> {
       chatId,
       text,
       replyToMessageId,
+      options,
     );
   }
 
@@ -851,6 +894,54 @@ export class TelegramAccount extends DurableObject<Env> {
         error,
       );
     }
+  }
+
+  async sendRoutedMessage(
+    context: AdapterDeliveryContext,
+    delivery: RenderedAdapterSend,
+    body?: BinaryBody,
+  ): Promise<AdapterSendResult> {
+    if (!delivery.hil) {
+      return await this.sendMessage(delivery.message, body);
+    }
+    const controls = await prepareTelegramApproval(
+      this.ctx.storage,
+      context,
+      delivery.hil,
+    );
+    if (controls) await this.ensureApprovalWebhook();
+    const message = controls
+      ? { ...delivery.message, text: controls.text }
+      : delivery.message;
+    const result = await this.sendMessage(
+      message,
+      body,
+      controls ? { replyMarkup: controls.replyMarkup } : {},
+    );
+    if (result.ok && controls) {
+      await attachTelegramApprovalMessage(
+        this.ctx.storage,
+        controls.token,
+        result.messageId,
+      );
+    }
+    return result;
+  }
+
+  private async ensureApprovalWebhook(): Promise<void> {
+    await this.ensureLoaded();
+    if (!this.state.botToken) throw new Error("Telegram approval webhook is not initialized");
+    const nextVersion = await reconcileTelegramApprovalWebhook(
+      this.state.webhookUpdatesVersion,
+      this.state.webhookUrl,
+      this.state.webhookSecret,
+      async (registration) => {
+        await this.callTelegramApi<boolean>("setWebhook", registration);
+      },
+    );
+    if (nextVersion === this.state.webhookUpdatesVersion) return;
+    this.state.webhookUpdatesVersion = nextVersion;
+    await this.saveState();
   }
 
   async handleWebhook(
@@ -875,8 +966,22 @@ export class TelegramAccount extends DurableObject<Env> {
       };
     }
 
-    const message = this.extractMessage(update);
     const updateId = this.normalizeUpdateId(update.update_id);
+    const callback = this.extractApprovalCallback(update);
+    if (callback) {
+      const deliveryId = `callback:${callback.callbackQueryId}`;
+      await this.inboundDeliveries.enqueueAndArm(
+        deliveryId,
+        callback,
+        Date.now() + INBOUND_WAKE_DELAY_MS,
+      );
+      if (this.canProcessInbound()) {
+        this.ctx.waitUntil(this.deliverPendingInbound(deliveryId));
+      }
+      return { ok: true };
+    }
+
+    const message = this.extractMessage(update);
     if (!message) {
       return { ok: true };
     }
@@ -954,6 +1059,38 @@ export class TelegramAccount extends DurableObject<Env> {
     return responseDisposition;
   }
 
+  private async forwardWebhookEvent(
+    event: TelegramMessage | TelegramApprovalCallback,
+    deliveryId: string,
+  ): Promise<{ terminal: boolean; error?: string }> {
+    if (!("callbackQueryId" in event)) {
+      return await this.forwardWebhookMessage(event, deliveryId);
+    }
+    await handleTelegramApprovalCallback(
+      this.ctx.storage,
+      this.env.GATEWAY,
+      this.getInstallationContext(),
+      event,
+      {
+        answerCallbackQuery: async (callbackQueryId, text) => {
+          await this.callTelegramApi<boolean>("answerCallbackQuery", {
+            callback_query_id: callbackQueryId,
+            text,
+          });
+        },
+        replaceMessage: async (surfaceId, providerMessageId, text) => {
+          await this.callTelegramApi<TelegramMessage>("editMessageText", {
+            chat_id: surfaceId,
+            message_id: Number.parseInt(providerMessageId, 10),
+            text,
+            reply_markup: { inline_keyboard: [] },
+          });
+        },
+      },
+    );
+    return { terminal: true };
+  }
+
   private normalizeUpdateId(value: number | null | undefined): number | null {
     if (value === undefined || value === null || !Number.isSafeInteger(value) || value < 0) {
       return null;
@@ -972,7 +1109,7 @@ export class TelegramAccount extends DurableObject<Env> {
   ): Promise<"completed" | "pending"> {
     const attempt = await this.inboundDeliveries.attempt(
       deliveryId,
-      async (message) => this.forwardWebhookMessage(message, deliveryId),
+      async (event) => this.forwardWebhookEvent(event, deliveryId),
       async (response) => this.sendMessage(response),
     );
     if (attempt.state !== "pending") {
@@ -1003,6 +1140,31 @@ export class TelegramAccount extends DurableObject<Env> {
 
   private extractMessage(update: TelegramUpdate): TelegramMessage | null {
     return update.message || update.channel_post || null;
+  }
+
+  private extractApprovalCallback(update: TelegramUpdate): TelegramApprovalCallback | null {
+    const query = update.callback_query;
+    const message = query?.message;
+    const data = query?.data;
+    if (
+      !query
+      || !message
+      || !data?.startsWith("gsvh:")
+      || message.chat.type !== "private"
+      || query.from.is_bot
+      || query.from.id !== message.chat.id
+      || !Number.isSafeInteger(message.message_id)
+      || message.message_id <= 0
+    ) {
+      return null;
+    }
+    return {
+      callbackQueryId: query.id,
+      actorId: `telegram:user:${query.from.id}`,
+      surfaceId: String(message.chat.id),
+      providerMessageId: String(message.message_id),
+      data,
+    };
   }
 
   private async toInboundMessage(message: TelegramMessage): Promise<TelegramInboundTransfer | null> {
@@ -1189,4 +1351,15 @@ export class TelegramAccount extends DurableObject<Env> {
       );
     }
   }
+}
+
+function telegramFingerprintMessage(
+  message: AdapterOutboundMessage,
+  options: TelegramTextMessageOptions,
+): AdapterOutboundMessage {
+  if (!options.replyMarkup) return message;
+  return {
+    ...message,
+    text: `${message.text}\n\n[gsv-telegram-controls:${JSON.stringify(options.replyMarkup)}]`,
+  };
 }

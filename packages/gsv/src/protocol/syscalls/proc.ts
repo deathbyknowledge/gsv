@@ -8,8 +8,9 @@
 
 import type { ProcessIdentity } from "./system";
 import type { InteractionOrigin } from "./interaction-origin";
-import type { JsonObject } from "../json";
+import { jsonValueSchema, type JsonObject } from "../json";
 import type { ResourceBlock } from "../resource";
+import * as z from "zod/mini";
 
 export type ProcMediaInput = {
   type: "image" | "audio" | "video" | "document";
@@ -115,6 +116,19 @@ export type ProcHilRequest = {
   createdAt: number;
 };
 
+export const procHilRequestSchema = z.strictObject({
+  pid: z.string(),
+  requestId: z.string(),
+  runId: z.string(),
+  conversationId: z.optional(z.string()),
+  callId: z.string(),
+  toolName: z.string(),
+  syscall: z.string(),
+  target: z.string(),
+  args: z.record(z.string(), jsonValueSchema),
+  createdAt: z.number(),
+});
+
 export type ProcHilArgs = {
   pid?: string;
   requestId: string;
@@ -133,6 +147,22 @@ export type ProcHilResult =
       pendingHil?: ProcHilRequest | null;
     }
   | { ok: false; error: string };
+
+export const procHilResultSchema = z.union([
+  z.strictObject({
+    ok: z.literal(true),
+    pid: z.string(),
+    requestId: z.string(),
+    decision: z.enum(["approve", "deny"]),
+    resumed: z.boolean(),
+    remembered: z.optional(z.boolean()),
+    pendingHil: z.optional(z.nullable(procHilRequestSchema)),
+  }),
+  z.strictObject({
+    ok: z.literal(false),
+    error: z.string(),
+  }),
+]);
 
 export type ProcSendResult =
   | {

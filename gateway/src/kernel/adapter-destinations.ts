@@ -16,7 +16,7 @@ const SURFACE_KINDS = new Set<AdapterSurfaceKind>([
   "channel",
   "thread",
 ]);
-const bindingSchema = z.object({ adapterSend: z.function() });
+const bindingSchema = z.object({ adapterFrame: z.function() });
 const surfaceKindSchema = z.enum(["dm", "group", "channel", "thread"]);
 const adapterSurfaceSchema = z.object({
   kind: z.enum(["dm", "group", "channel", "thread"]),

@@ -320,9 +320,14 @@ Current principal defaults from `buildSignalList()`:
     `failed`, `cancelled`, or `denied`. It carries no tool arguments, output, or
     error content. Delivery is best effort, like other Process signals.
 - `proc.run.hil.requested`
-  - Native clients answer with `proc.hil` and the exact `requestId`. Adapter DM
-    prompts render the same identity as `hil[requestId]`; bare or stale
-    decisions fail closed, and provider reply threading is not authorization.
+  - Web, Desktop, and CLI receive this structured signal. An exact routed
+    adapter receives the same request inside targeted `adapter.send`. Clients
+    answer with `proc.hil` and the exact `requestId`; adapters may render native
+    controls or direct the user to Chat without exposing the opaque request
+    identity. A native adapter callback submits
+    ordinary `proc.hil` through a Kernel-derived linked-human peer. Stale links,
+    route generations, destinations, provider-message correlations, and pending
+    requests fail closed; provider reply threading is not authorization.
     The payload includes the Process-resolved `target` so clients can explain
     the approval scope without reproducing routing policy from raw arguments.
 - `proc.run.finished`
@@ -356,8 +361,11 @@ Current principal defaults from `buildSignalList()`:
 
 ### Service peers
 
-Service peers receive no ambient signals. Adapter workers report state through
-the gateway service binding.
+Service peers receive no ambient WebSocket signals. Adapter workers report
+state through the Gateway service binding and receive only targeted
+`adapter.send` requests through `adapterFrame`. The surrounding Kernel-owned
+delivery context identifies the exact destination and carries structured HIL
+when present.
 
 An endpoint may send `peer.ping` with an optional payload and sequence. The
 Kernel echoes them in `peer.pong` while that endpoint is the active session for
@@ -376,8 +384,9 @@ current Kernel:
 - `proc.run.hil.requested` is broadcast to every connected user client for the
   process owner; its payload includes `pid`, and `proc.history` recovers pending
   requests after reconnects
-- adapter surfaces consume HIL prompts and committed Messages through their
-  exact run route; they do not render raw model output as a reply
+- adapter routes turn an exact `proc.run.hil.requested` or directed committed
+  Message into a targeted `adapter.send`; adapters do not parse prompt text or
+  render raw model output as a reply
 
 Canonical `conversation.*` and `message.*` signals are independent of raw
 Process observation. All connected clients for the owner can synchronize the

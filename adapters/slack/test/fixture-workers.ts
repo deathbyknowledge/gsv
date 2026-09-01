@@ -43,12 +43,13 @@ export function slackApiWorkerScript(mode: "managed" | "standalone"): string {
           : contentType.startsWith("application/json")
             ? await request.json()
             : Object.fromEntries(await request.formData());
-        calls.push({
+        const call = {
           method,
           body: mode === "managed"
             ? { ...body, authorization: request.headers.get("Authorization") }
             : body,
-        });
+        };
+        calls.push(call);
 
         if (mode === "managed" && method === "oauth.v2.access") {
           return Response.json({
@@ -180,11 +181,13 @@ export function slackApiWorkerScript(mode: "managed" | "standalone"): string {
         }
         if (method === "chat.postMessage") {
           nextTs += 1;
-          return Response.json({
+          const result = {
             ok: true,
             channel: body.channel,
             ts: String(nextTs) + ".000100",
-          });
+          };
+          call.result = result;
+          return Response.json(result);
         }
         if (method === "chat.update") {
           return Response.json({ ok: true, channel: body.channel, ts: body.ts });

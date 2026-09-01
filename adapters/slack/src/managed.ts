@@ -20,6 +20,7 @@ import type {
   AdapterTargetResponseFrame,
 } from "../../../packages/gsv/src/services/adapters.js";
 import { adapterTargetIdentitySchema } from "../../../packages/gsv/src/services/adapters.js";
+import { handleAdapterFrame } from "../../shared/src/adapter-frame";
 import { cancelBinaryBody } from "../../shared/src/media-body";
 import {
   LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
@@ -28,8 +29,11 @@ import {
 import type {
   AdapterAccountStatus,
   AdapterOutboundMessage,
+  AdapterDeliveryContext,
   AdapterSendResult,
   BinaryBody,
+  GatewayRequestFrame,
+  GatewayResponseFrame,
 } from "./types";
 import type { ManagedSlackPeerEnv } from "./managed-peer";
 import {
@@ -61,6 +65,7 @@ type ManagedSlackPeerStub = {
     installationId: string,
     message: AdapterOutboundMessage,
     body?: BinaryBody,
+    context?: AdapterDeliveryContext,
   ): Promise<AdapterSendResult>;
   disconnect(input: AdapterPairingDisconnectInput): Promise<AdapterPairingDisconnectResult>;
   listTargets(
@@ -170,6 +175,25 @@ export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements Adapte
     };
   }
 
+  async adapterFrame(
+    installation: AdapterInstallationContext,
+    context: AdapterDeliveryContext,
+    frame: GatewayRequestFrame,
+  ): Promise<GatewayResponseFrame> {
+    const parsed = parseManagedInstallation(installation);
+    const accountId = requireWorkspaceAccountId(context.accountId);
+    const actorId = requireSlackId(context.actorId, "Slack actor");
+    const peer = this.peer(accountId, actorId);
+    return await handleAdapterFrame(this.adapterId, context, frame, {
+      send: async (delivery, requestBody) => await peer.sendMessage(
+        parsed.installationId,
+        delivery.message,
+        requestBody,
+        context,
+      ),
+    });
+  }
+
   async adapterStatus(
     installation: AdapterInstallationContext,
     accountId?: string,
@@ -195,27 +219,6 @@ export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements Adapte
       error: status.error,
       extra,
     }];
-  }
-
-  async adapterSend(
-    installation: AdapterInstallationContext,
-    accountId: string,
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ): Promise<AdapterSendResult> {
-    try {
-      const parsed = parseManagedInstallation(installation);
-      const normalizedAccountId = requireWorkspaceAccountId(accountId);
-      const actorId = requireSlackId(message.actorId, "Slack actor");
-      return await this.peer(normalizedAccountId, actorId).sendMessage(
-        parsed.installationId,
-        message,
-        body,
-      );
-    } catch (error) {
-      await cancelBinaryBody(body, error);
-      return { ok: false, error: safeError(error) };
-    }
   }
 
   async adapterPairingInfo(
@@ -431,11 +434,4 @@ function targetError(id: string, code: number): AdapterTargetResponseFrame<"shel
 function typedStub<T>(value: DurableObjectStub): T & DurableObjectStub {
   // SAFETY: these namespaces are owned by this worker and expose the declared RPC contracts.
   return value as T & DurableObjectStub;
-}
-
-function safeError<T>(error: T): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return /Slack|route|destination|media/.test(message)
-    ? message
-    : "Managed Slack request failed";
 }

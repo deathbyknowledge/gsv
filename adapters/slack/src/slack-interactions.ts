@@ -2,14 +2,17 @@ import {
   requireSlackId,
   requireSlackTimestamp,
 } from "./slack-api";
-import type { SlackInbound } from "./slack-events";
+import {
+  renderAdapterHilResolution,
+  type AdapterHilPresentation,
+} from "../../shared/src/peer-render";
+import type { AdapterSurface } from "./types";
 import { z } from "zod";
 
 const APPROVE_ACTION_ID = "gsv_hil_approve";
 const APPROVE_ALWAYS_ACTION_ID = "gsv_hil_approve_always";
 const DENY_ACTION_ID = "gsv_hil_deny";
-const APPROVAL_TOKEN_PATTERN = /^hil\[[^\]\s]{1,180}\]$/;
-const ROUTE_GENERATION_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,190}[A-Za-z0-9])?$/;
+const APPROVAL_TOKEN_PATTERN = /^[A-Za-z0-9_-]{16}$/;
 const MAX_BLOCK_TEXT_LENGTH = 3_000;
 
 export type SlackApprovalAction = "approve" | "approve_always" | "deny";
@@ -34,16 +37,11 @@ export type SlackBlock =
         value: string;
         style?: "primary" | "danger";
       }>;
-    }
-  | {
-      type: "context";
-      elements: Array<{ type: "mrkdwn"; text: string }>;
     };
 
 const approvalValueSchema = z.object({
-  v: z.literal(1),
+  v: z.literal(2),
   token: z.string().regex(APPROVAL_TOKEN_PATTERN),
-  routeGeneration: z.string().regex(ROUTE_GENERATION_PATTERN).optional(),
 }).strict();
 
 const blockActionSchema = z.object({
@@ -72,21 +70,31 @@ const blockActionSchema = z.object({
 }).passthrough();
 
 export type SlackInteractionDisposition =
-  | { kind: "accepted"; inbound: SlackInbound }
+  | { kind: "accepted"; callback: SlackApprovalCallback }
   | { kind: "ignored" }
   | { kind: "invalid" };
 
+export type SlackApprovalCallback = {
+  deliveryId: string;
+  interactionId: string;
+  teamId: string;
+  actorId: string;
+  surface: AdapterSurface;
+  sourceMessageId: string;
+  action: SlackApprovalAction;
+  token: string;
+};
+
 export function buildSlackApprovalBlocks(
   text: string,
-  routeGeneration?: string,
+  token: string,
 ): SlackBlock[] | undefined {
-  const token = approvalTokenFromPrompt(text);
-  if (!token || text.length > MAX_BLOCK_TEXT_LENGTH) return undefined;
-  if (routeGeneration && !ROUTE_GENERATION_PATTERN.test(routeGeneration)) return undefined;
+  if (!APPROVAL_TOKEN_PATTERN.test(token) || !canRenderSlackApproval(text)) {
+    return undefined;
+  }
   const value = JSON.stringify({
-    v: 1,
+    v: 2,
     token,
-    ...(routeGeneration ? { routeGeneration } : undefined),
   });
   return [
     {
@@ -105,23 +113,22 @@ export function buildSlackApprovalBlocks(
   ];
 }
 
-export function buildSlackApprovalSubmittedMessage(
-  sourceText: string,
-  action: SlackApprovalAction,
+export function canRenderSlackApproval(text: string): boolean {
+  return text.length <= MAX_BLOCK_TEXT_LENGTH;
+}
+
+export function buildSlackApprovalStatusMessage(
+  presentation: AdapterHilPresentation | undefined,
+  status: string,
 ): SlackApprovalSubmittedMessage {
-  const status = `Decision submitted: ${approvalActionLabel(action)}.`;
-  const text = `${sourceText.trim()}\n\n${status}`.trim().slice(0, 40_000);
+  const text = renderAdapterHilResolution(presentation, status).slice(0, 40_000);
   const blocks: SlackBlock[] = [];
-  if (sourceText.trim().length <= MAX_BLOCK_TEXT_LENGTH) {
+  if (text.length <= MAX_BLOCK_TEXT_LENGTH) {
     blocks.push({
       type: "section",
-      text: { type: "mrkdwn", text: sourceText.trim() },
+      text: { type: "mrkdwn", text },
     });
   }
-  blocks.push({
-    type: "context",
-    elements: [{ type: "mrkdwn", text: `_${status}_` }],
-  });
   return { text, blocks };
 }
 
@@ -140,9 +147,6 @@ export function normalizeSlackInteraction<T>(
 
   const decoded = parseApprovalValue(payload.actions[0]!.value);
   if (!decoded) return { kind: "invalid" };
-  if (approvalTokenFromPrompt(payload.message.text) !== decoded.token) {
-    return { kind: "invalid" };
-  }
   let teamId: string;
   let actorId: string;
   let channelId: string;
@@ -171,32 +175,19 @@ export function normalizeSlackInteraction<T>(
     return { kind: "invalid" };
   }
 
-  const surface: SlackInbound["surface"] = { kind: "dm", id: channelId };
+  const surface: AdapterSurface = { kind: "dm", id: channelId };
   if (threadId) surface.threadId = threadId;
-  const decisionText = action === "approve"
-    ? `approve ${decoded.token}`
-    : action === "approve_always"
-      ? `approve always ${decoded.token}`
-      : `deny ${decoded.token}`;
   return {
     kind: "accepted",
-    inbound: {
+    callback: {
       deliveryId: `interaction:${sourceMessageId}:${actionMessageId}`,
-      eventId: `interaction:${actionMessageId}`,
+      interactionId: `interaction:${actionMessageId}`,
       teamId,
-      messageId: actionMessageId,
       actorId,
       surface,
-      text: decisionText,
-      replyToId: sourceMessageId,
-      timestamp: slackTimestampMilliseconds(actionMessageId),
-      wasMentioned: true,
-      interaction: {
-        sourceMessageId,
-        sourceText: payload.message.text,
-        action,
-        expectedRouteGeneration: decoded.routeGeneration,
-      },
+      sourceMessageId,
+      action,
+      token: decoded.token,
     },
   };
 }
@@ -216,17 +207,6 @@ function approvalButton(
   };
 }
 
-function approvalTokenFromPrompt(text: string): string | undefined {
-  const matches = text.match(/hil\[[^\]\s]{1,180}\]/g) ?? [];
-  const tokens = [...new Set(matches)].filter((token) => APPROVAL_TOKEN_PATTERN.test(token));
-  if (tokens.length !== 1) return undefined;
-  const token = tokens[0]!;
-  if (!text.includes(`"approve ${token}"`) || !text.includes(`"deny ${token}"`)) {
-    return undefined;
-  }
-  return token;
-}
-
 function parseApprovalValue(value: string): z.infer<typeof approvalValueSchema> | undefined {
   try {
     const parsed = approvalValueSchema.safeParse(JSON.parse(value));
@@ -241,18 +221,4 @@ function approvalAction(actionId: string): SlackApprovalAction | undefined {
   if (actionId === APPROVE_ALWAYS_ACTION_ID) return "approve_always";
   if (actionId === DENY_ACTION_ID) return "deny";
   return undefined;
-}
-
-function approvalActionLabel(action: SlackApprovalAction): string {
-  if (action === "approve") return "Approve once";
-  if (action === "approve_always") return "Always approve";
-  return "Deny";
-}
-
-function slackTimestampMilliseconds(value: string): number | undefined {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0 || parsed > Number.MAX_SAFE_INTEGER / 1_000) {
-    return undefined;
-  }
-  return Math.floor(parsed * 1_000);
 }

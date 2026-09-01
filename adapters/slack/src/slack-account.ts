@@ -4,6 +4,8 @@ import {
   adapterInboundResultDisposition,
   InboundDeliveryLedger,
 } from "../../shared/src/inbound-delivery";
+import type { RenderedAdapterSend } from "../../shared/src/peer-render";
+import { runAdapterHilSqlMigrations } from "../../shared/src/schema/migrations";
 import { callAdapterGateway, type AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import { cancelBinaryBody } from "../../shared/src/media-body";
 import {
@@ -14,6 +16,7 @@ import type {
   AdapterAccountStatus,
   AdapterInstallationContext,
   AdapterOutboundMessage,
+  AdapterDeliveryContext,
   AdapterSendResult,
   BinaryBody,
 } from "./types";
@@ -28,12 +31,18 @@ import {
 } from "./slack-api";
 import { deliverSlackMessage } from "./slack-delivery";
 import {
+  attachSlackApprovalMessage,
+  handleSlackApprovalCallback,
+  prepareSlackApproval,
+} from "./slack-approval";
+import {
   appendSlackMediaNotice,
   loadSlackInboundMedia,
 } from "./slack-media";
 import {
-  buildSlackApprovalSubmittedMessage,
   normalizeSlackInteraction,
+  type SlackApprovalCallback,
+  type SlackBlock,
 } from "./slack-interactions";
 import {
   normalizeSlackEvent,
@@ -79,7 +88,7 @@ const MAX_SOCKET_FRAME_BYTES = 1024 * 1024;
 
 export class SlackAccount extends DurableObject<Env> {
   private readonly deliveries: DeliveryLedger;
-  private readonly inboundDeliveries: InboundDeliveryLedger<SlackInbound>;
+  private readonly inboundDeliveries: InboundDeliveryLedger<SlackInbound | SlackApprovalCallback>;
   private state: SlackAccountState = {
     version: 1,
     installationId: null,
@@ -100,6 +109,7 @@ export class SlackAccount extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    runAdapterHilSqlMigrations(ctx.storage);
     this.deliveries = new DeliveryLedger(this.ctx.storage);
     this.inboundDeliveries = new InboundDeliveryLedger(
       this.ctx.storage,
@@ -190,6 +200,7 @@ export class SlackAccount extends DurableObject<Env> {
   async sendMessage(
     message: AdapterOutboundMessage,
     body?: BinaryBody,
+    blocks?: SlackBlock[],
   ): Promise<AdapterSendResult> {
     await this.ensureLoaded();
     return await deliverSlackMessage(
@@ -200,8 +211,37 @@ export class SlackAccount extends DurableObject<Env> {
       {
         slackFetch: this.slackFetch(),
         attributedActorId: message.surface.kind === "dm" ? undefined : message.actorId,
+        blocks,
       },
     );
+  }
+
+  async sendRoutedMessage(
+    context: AdapterDeliveryContext,
+    delivery: RenderedAdapterSend,
+    body?: BinaryBody,
+  ): Promise<AdapterSendResult> {
+    await this.ensureLoaded();
+    if (context.accountId !== this.state.accountId) {
+      await cancelBinaryBody(body, "Slack account changed before delivery");
+      return { ok: false, error: "Slack account changed before delivery" };
+    }
+    const controls = delivery.hil && this.state.teamId
+      ? await prepareSlackApproval(
+          this.ctx.storage,
+          this.state.teamId,
+          context,
+          delivery.hil,
+        )
+      : null;
+    const message = controls
+      ? { ...delivery.message, text: controls.text }
+      : delivery.message;
+    const result = await this.sendMessage(message, body, controls?.blocks);
+    if (result.ok && controls) {
+      await attachSlackApprovalMessage(this.ctx.storage, controls.token, result.messageId);
+    }
+    return result;
   }
 
   async alarm(): Promise<void> {
@@ -301,11 +341,11 @@ export class SlackAccount extends DurableObject<Env> {
       let enqueued = false;
       if (
         interaction.kind === "accepted"
-        && interaction.inbound.teamId === this.state.teamId
+        && interaction.callback.teamId === this.state.teamId
       ) {
         await this.inboundDeliveries.enqueueAndArm(
-          interaction.inbound.deliveryId,
-          interaction.inbound,
+          interaction.callback.deliveryId,
+          interaction.callback,
           Date.now() + INBOUND_WAKE_DELAY_MS,
         );
         enqueued = true;
@@ -391,7 +431,28 @@ export class SlackAccount extends DurableObject<Env> {
     }
   }
 
-  private async forwardInbound(inbound: SlackInbound) {
+  private async forwardInbound(inbound: SlackInbound | SlackApprovalCallback) {
+    if ("interactionId" in inbound) {
+      const botToken = this.state.botToken;
+      if (!botToken || inbound.teamId !== this.state.teamId) return { terminal: true };
+      // The durable approval delivery is authoritative; clearing buttons is best effort.
+      await handleSlackApprovalCallback(
+        this.ctx.storage,
+        this.env.GATEWAY,
+        this.installationContext(),
+        inbound,
+        {
+          updateMessage: async (callback, message) => {
+            await updateSlackMessage(botToken, {
+              channel: callback.surface.id,
+              messageTs: callback.sourceMessageId,
+              ...message,
+            }, this.slackFetch());
+          },
+        },
+      );
+      return { terminal: true };
+    }
     if (inbound.teamId !== this.state.teamId) return { terminal: true };
     const botToken = this.state.botToken;
     if (!botToken) return { terminal: true };
@@ -442,40 +503,7 @@ export class SlackAccount extends DurableObject<Env> {
       providerMessageId: inbound.messageId,
       actorId: inbound.actorId,
     });
-    if (inbound.interaction && disposition.terminal) {
-      await this.markInteractionSubmitted(inbound, botToken);
-    }
-    if (inbound.interaction && result.challenge) {
-      return { terminal: disposition.terminal, error: disposition.error };
-    }
     return disposition;
-  }
-
-  private async markInteractionSubmitted(
-    inbound: SlackInbound,
-    expectedBotToken: string,
-  ): Promise<void> {
-    const interaction = inbound.interaction;
-    if (!interaction || inbound.surface.kind !== "dm") return;
-    try {
-      if (
-        this.state.botToken !== expectedBotToken
-        || this.state.teamId !== inbound.teamId
-      ) {
-        return;
-      }
-      const rendered = buildSlackApprovalSubmittedMessage(
-        interaction.sourceText,
-        interaction.action,
-      );
-      await updateSlackMessage(expectedBotToken, {
-        channel: inbound.surface.id,
-        messageTs: interaction.sourceMessageId,
-        ...rendered,
-      }, this.slackFetch());
-    } catch {
-      // The durable approval delivery is authoritative; clearing buttons is best effort.
-    }
   }
 
   private async handleSocketClosed(): Promise<void> {

@@ -9,7 +9,10 @@ import {
   parseSlackUrlVerification,
 } from "./slack-events";
 import { normalizeSlackInteraction } from "./slack-interactions";
-import type { ManagedSlackAcceptedEvent } from "./managed-peer";
+import type {
+  ManagedSlackAcceptedEvent,
+  ManagedSlackAcceptedInteraction,
+} from "./managed-peer";
 import type {
   ManagedSlackWorkspaceAdmission,
 } from "./managed-workspace";
@@ -30,7 +33,7 @@ type ManagedWorkspaceStub = DurableObjectStub & {
 
 type ManagedPeerStub = DurableObjectStub & {
   acceptEvent(input: ManagedSlackAcceptedEvent): Promise<{ accepted: true }>;
-  acceptInteraction(input: ManagedSlackAcceptedEvent): Promise<{ accepted: boolean }>;
+  acceptInteraction(input: ManagedSlackAcceptedInteraction): Promise<{ accepted: boolean }>;
 };
 
 export type ManagedSlackHttpEnv = {
@@ -326,9 +329,9 @@ async function receiveSlackInteraction(
   const normalized = normalizeSlackInteraction(payload, admission.botUserId);
   if (normalized.kind === "ignored") return new Response(null, { status: 200 });
   if (normalized.kind === "invalid") return slackError(400);
-  const inbound = normalized.inbound;
+  const callback = normalized.callback;
   const id = env.MANAGED_SLACK_PEER.idFromName(
-    managedSlackPeerObjectName(admission.accountId, inbound.actorId),
+    managedSlackPeerObjectName(admission.accountId, callback.actorId),
   );
   // SAFETY: the peer namespace is owned by this worker and exposes acceptInteraction.
   const peer = env.MANAGED_SLACK_PEER.get(id) as ManagedPeerStub;
@@ -339,7 +342,7 @@ async function receiveSlackInteraction(
       teamName: admission.teamName,
       botUserId: admission.botUserId,
       workspaceGeneration: admission.generation,
-      inbound,
+      callback,
     });
   } catch {
     return new Response(null, { status: 503 });

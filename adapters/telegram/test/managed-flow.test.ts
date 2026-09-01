@@ -4,15 +4,37 @@ import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
 
 type TelegramApiMessage = {
   method: string;
-  body: { chat_id?: string; text?: string; caption?: string; audio?: { bytes?: number[] } };
-  result: { ok?: boolean };
+  body: {
+    chat_id?: string;
+    text?: string;
+    caption?: string;
+    audio?: { bytes?: number[] };
+    message_id?: string | number;
+    reply_markup?: {
+      inline_keyboard?: Array<Array<{ text?: string; callback_data?: string }>>;
+    };
+  };
+  result: { ok?: boolean; message_id?: number } | boolean;
 };
 
 type TelegramUpdateContent = { text?: string; voice?: { file_id: string; file_size: number; duration: number; mime_type: string } };
 type GatewayCall = {
   installation?: { installationId?: string };
+  linkedContext?: {
+    accountId?: string;
+    actorId?: string;
+    routeGeneration?: string;
+    interactionId?: string;
+  };
   call?: string;
-  args?: { routeGeneration?: string; message?: { text?: string; media?: Array<{ type: string }> } };
+  args?: {
+    routeGeneration?: string;
+    message?: { text?: string; media?: Array<{ type: string }> };
+    pid?: string;
+    requestId?: string;
+    decision?: string;
+    remember?: boolean;
+  };
   input?: { accountId?: string; actorId?: string; expectedGeneration?: string };
   bodyBytes?: number[];
 };
@@ -63,6 +85,27 @@ type ManagedPeerStub = {
       }>;
     },
     body?: ReturnType<typeof binaryBodyFromOwnedBytes>,
+    context?: {
+      deliveryId: string;
+      accountId: string;
+      actorId: string;
+      surface: { kind: "dm"; id: string };
+      routeGeneration: string;
+      processId: string;
+      runId: string;
+      processMode: "ship";
+      hil: {
+        pid: string;
+        requestId: string;
+        runId: string;
+        callId: string;
+        toolName: string;
+        syscall: string;
+        target: string;
+        args: { input: string };
+        createdAt: number;
+      };
+    },
   ): Promise<{ ok: boolean; messageId?: string; error?: string }>;
   setTyping(
     installationId: string,
@@ -101,6 +144,33 @@ function messageUpdate(
           first_name: "Hank",
           username: "hank_test",
         },
+      },
+    }),
+  });
+}
+
+function approvalUpdate(
+  updateId: number,
+  callbackQueryId: string,
+  messageId: number,
+  data: string,
+): Request {
+  return new Request("https://telegram.test/webhook", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "X-Telegram-Bot-Api-Secret-Token": "test_webhook_secret_123",
+    },
+    body: JSON.stringify({
+      update_id: updateId,
+      callback_query: {
+        id: callbackQueryId,
+        from: { id: 12345, is_bot: false, first_name: "Hank" },
+        message: {
+          message_id: messageId,
+          chat: { id: 12345, type: "private" },
+        },
+        data,
       },
     }),
   });
@@ -178,7 +248,124 @@ describe("managed Telegram clean-instance flow", () => {
       }));
     });
 
-    expect((await SELF.fetch(messageUpdate(3, 3, {
+    // The targeted send carries the exact HIL request, and the provider callback
+    // returns through the ordinary linked-human proc.hil path.
+    // SAFETY: The test environment exposes the declared Durable Object namespace binding.
+    const peers = env.MANAGED_TELEGRAM_PEER as DurableObjectNamespace;
+    const peer = typedStub<ManagedPeerStub>(peers.get(
+      peers.idFromName("managed:12345"),
+    ));
+    const hil = {
+      pid: "proc-approval",
+      requestId: "request-approval",
+      runId: "run-approval",
+      callId: "call-approval",
+      toolName: "Shell",
+      syscall: "shell.exec",
+      target: "gsv",
+      args: { input: "date" },
+      createdAt: 1_700_000_100_000,
+    };
+    const approvalContext = {
+      deliveryId: "run-approval:hil:request-approval",
+      accountId: "managed",
+      actorId: "12345",
+      surface: { kind: "dm" as const, id: "12345" },
+      routeGeneration: firstGeneration,
+      processId: "proc-approval",
+      runId: "run-approval",
+      processMode: "ship" as const,
+      hil,
+    };
+    await peer.sendMessage(
+      "installation_test",
+      {
+        deliveryId: approvalContext.deliveryId,
+        surface: approvalContext.surface,
+        actorId: approvalContext.actorId,
+        routeGeneration: approvalContext.routeGeneration,
+        text: "",
+      },
+      undefined,
+      approvalContext,
+    );
+    let approvalMessage: TelegramApiMessage | undefined;
+    await vi.waitFor(async () => {
+      approvalMessage = (await telegramMessages()).findLast((message) => (
+        (message.method === "sendMessage" || message.method === "sendRichMessage")
+        && message.body.reply_markup?.inline_keyboard?.length
+      ));
+      expect(approvalMessage).toBeDefined();
+    });
+    const approvalResult = approvalMessage?.result;
+    const approvalMessageId = approvalResult === undefined
+        || approvalResult === true
+        || approvalResult === false
+      ? undefined
+      : approvalResult.message_id;
+    const approveAlwaysData = approvalMessage?.body.reply_markup
+      ?.inline_keyboard?.[0]?.[1]?.callback_data;
+    expect(approvalMessage?.body.text).toContain("Requested action: run \"date\".");
+    expect(approvalMessageId).toBeTruthy();
+    expect(approveAlwaysData).toMatch(/^gsvh:[A-Za-z0-9_-]{16}:a$/);
+
+    expect((await SELF.fetch(approvalUpdate(
+      3,
+      "callback-approval",
+      approvalMessageId!,
+      approveAlwaysData!,
+    ))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
+        installation: { installationId: "installation_test" },
+        linkedContext: expect.objectContaining({
+          accountId: "managed",
+          actorId: "12345",
+          routeGeneration: firstGeneration,
+          interactionId: "callback-approval",
+        }),
+        call: "proc.hil",
+        args: {
+          pid: "proc-approval",
+          requestId: "request-approval",
+          decision: "approve",
+          remember: true,
+        },
+      }));
+      expect(await telegramMessages()).toContainEqual(expect.objectContaining({
+        method: "editMessageText",
+        body: expect.objectContaining({
+          chat_id: "12345",
+          message_id: approvalMessageId,
+          text: expect.stringContaining("Approved for this conversation."),
+        }),
+      }));
+    });
+    const resolvedApproval = (await telegramMessages()).findLast((message) => (
+      message.method === "editMessageText"
+      && message.body.message_id === approvalMessageId
+    ));
+    expect(resolvedApproval?.body.text).toContain("Requested action: run \"date\".");
+    expect(resolvedApproval?.body.text).not.toContain("I need your confirmation");
+    expect(resolvedApproval?.body.text).not.toContain("hil[");
+
+    const approvalCalls = (await gatewayCalls()).filter((call) => call.call === "proc.hil");
+    expect((await SELF.fetch(approvalUpdate(
+      100,
+      "callback-approval-replay",
+      approvalMessageId!,
+      approveAlwaysData!,
+    ))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect((await gatewayCalls()).filter((call) => call.call === "proc.hil"))
+        .toHaveLength(approvalCalls.length);
+      expect(await telegramMessages()).toContainEqual(expect.objectContaining({
+        method: "answerCallbackQuery",
+        body: expect.objectContaining({ callback_query_id: "callback-approval-replay" }),
+      }));
+    });
+
+    expect((await SELF.fetch(messageUpdate(4, 3, {
       voice: {
         file_id: "voice_file_123",
         file_size: 4,
@@ -207,7 +394,7 @@ describe("managed Telegram clean-instance flow", () => {
       }));
     });
 
-    expect((await SELF.fetch(update(4, 4, "__gateway_unavailable__"))).status).toBe(200);
+    expect((await SELF.fetch(update(5, 4, "__gateway_unavailable__"))).status).toBe(200);
     await vi.waitFor(async () => {
       expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
         args: expect.objectContaining({
@@ -216,7 +403,7 @@ describe("managed Telegram clean-instance flow", () => {
       }));
     });
     const messagesBeforePairCommand = (await telegramMessages()).length;
-    expect((await SELF.fetch(update(5, 5, "/start"))).status).toBe(200);
+    expect((await SELF.fetch(update(6, 5, "/start"))).status).toBe(200);
     await vi.waitFor(async () => {
       const messages = await telegramMessages();
       expect(messages.length).toBeGreaterThan(messagesBeforePairCommand);
@@ -262,11 +449,6 @@ describe("managed Telegram clean-instance flow", () => {
       }));
     });
 
-    // SAFETY: The test environment exposes the declared Durable Object namespace binding.
-    const peers = env.MANAGED_TELEGRAM_PEER as DurableObjectNamespace;
-    const peer = typedStub<ManagedPeerStub>(peers.get(
-      peers.idFromName("managed:12345"),
-    ));
     await expect(peer.setTyping(
       "installation_test",
       { kind: "dm", id: "12345" },

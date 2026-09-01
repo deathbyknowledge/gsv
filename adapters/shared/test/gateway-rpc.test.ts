@@ -3,6 +3,7 @@ import { adapterGatewayFrameSchema } from "../../../packages/gsv/src/protocol/ad
 
 import {
   callAdapterGateway,
+  callLinkedAdapterGateway,
   type AdapterGatewayBinding,
 } from "../src/gateway-rpc";
 import type {
@@ -31,6 +32,18 @@ const STATE_UPDATE_ARGS = {
     authenticated: true,
   },
 } as const;
+const CONTEXT = {
+  accountId: "account-1",
+  actorId: "actor-1",
+  surface: { kind: "dm" as const, id: "surface-1" },
+  routeGeneration: "route-1",
+  interactionId: "interaction-1",
+};
+const ARGS = {
+  pid: "proc-1",
+  requestId: "request-1",
+  decision: "approve" as const,
+};
 
 type TrackedBody = { body: BinaryBody; cancelled: () => Error | string | undefined };
 
@@ -55,20 +68,21 @@ function binding(
     frame: GatewayFrame,
   ) => Promise<GatewayFrame | null>,
 ): AdapterGatewayBinding {
-  const serviceFrame = vi.fn(async (
-    installationOrFrame: AdapterInstallationContext | GatewayFrame,
-    scopedFrame?: GatewayFrame,
-  ) => scopedFrame
-    ? await scopedServiceFrame(
-// SAFETY: This test fixture deliberately supplies the contract shape under test.
-        installationOrFrame as AdapterInstallationContext,
-        scopedFrame,
-      )
-    : null);
   return {
-// SAFETY: This test fixture deliberately supplies the contract shape under test.
-    serviceFrame: serviceFrame as AdapterGatewayBinding["serviceFrame"],
+    serviceFrame: vi.fn(scopedServiceFrame),
+    linkedPeerFrame: vi.fn(),
   };
+}
+
+function gatewayWithResponse(
+  response: (frame: { id: string }) => GatewayFrame,
+): AdapterGatewayBinding {
+  const gateway = {
+    serviceFrame: vi.fn(),
+    linkedPeerFrame: vi.fn(async (_installation, _context, frame) => response(frame)),
+  };
+  // SAFETY: The fixture supplies both adapter Gateway methods exercised by these tests.
+  return gateway as AdapterGatewayBinding;
 }
 
 describe("callAdapterGateway", () => {
@@ -160,16 +174,17 @@ describe("callAdapterGateway", () => {
     expect(request.cancelled()).toBeUndefined();
   });
 
-  it("uses the legacy one-argument Gateway RPC for standalone", async () => {
-    const serviceFrame = vi.fn(async (frame: GatewayFrame) => ({
+  it("passes explicit singleton context for standalone", async () => {
+    const serviceFrame = vi.fn(async (
+      _installation: AdapterInstallationContext,
+      frame: GatewayFrame,
+    ) => ({
       type: "res" as const,
       id: frame.type === "req" ? frame.id : "unexpected",
       ok: true,
       data: { ok: true },
     }));
-    const gateway: AdapterGatewayBinding = {
-      serviceFrame,
-    };
+    const gateway = binding(serviceFrame);
 
     await expect(callAdapterGateway(
       gateway,
@@ -178,13 +193,13 @@ describe("callAdapterGateway", () => {
       INBOUND_ARGS,
     )).resolves.toEqual({ ok: true });
     expect(serviceFrame).toHaveBeenCalledOnce();
-    expect(serviceFrame).toHaveBeenCalledWith(expect.objectContaining({
-      type: "req",
-      call: "adapter.inbound",
-    }));
+    expect(serviceFrame).toHaveBeenCalledWith(
+      { installationId: "singleton" },
+      expect.objectContaining({ type: "req", call: "adapter.inbound" }),
+    );
   });
 
-  it("uses the already-deployed two-argument Gateway RPC for managed installations", async () => {
+  it("passes explicit installation context for managed installations", async () => {
     const serviceFrame = vi.fn(async (
       installation: AdapterInstallationContext,
       frame: GatewayFrame,
@@ -259,9 +274,9 @@ describe("callAdapterGateway", () => {
   it("cancels response bodies on success and Gateway errors", async () => {
     const successBody = trackedBody();
     await expect(callAdapterGateway(
-      binding(async () => ({
+      binding(async (_installation, frame) => ({
         type: "res",
-        id: "success",
+        id: frame.type === "req" ? frame.id : "unexpected",
         ok: true,
         data: { ok: true },
         body: successBody.body,
@@ -277,9 +292,9 @@ describe("callAdapterGateway", () => {
     const acceptedRequestBody = trackedBody();
     const errorBody = trackedBody();
     await expect(callAdapterGateway(
-      binding(async () => ({
+      binding(async (_installation, frame) => ({
         type: "res",
-        id: "error",
+        id: frame.type === "req" ? frame.id : "unexpected",
         ok: false,
         error: { message: "Gateway rejected message" },
         body: errorBody.body,
@@ -295,14 +310,92 @@ describe("callAdapterGateway", () => {
 
   it("uses the existing call-specific fallback for malformed error responses", async () => {
     await expect(callAdapterGateway(
-      binding(async () => ({
+      binding(async (_installation, frame) => ({
         type: "res",
-        id: "error",
+        id: frame.type === "req" ? frame.id : "unexpected",
         ok: false,
       })),
       INSTALLATION,
       "adapter.state.update",
       STATE_UPDATE_ARGS,
     )).rejects.toThrow("Gateway error on adapter.state.update");
+  });
+
+  it("rejects a response correlated to another request", async () => {
+    const requestBody = trackedBody();
+    const responseBody = trackedBody();
+    await expect(callAdapterGateway(
+      binding(async (_installation, frame) => ({
+        type: "res",
+        id: frame.type === "req" ? `${frame.id}:mismatched` : "unexpected",
+        ok: true,
+        data: { ok: true },
+        body: responseBody.body,
+      })),
+      INSTALLATION,
+      "adapter.inbound",
+      INBOUND_ARGS,
+      requestBody.body,
+    )).rejects.toThrow("No response from gateway serviceFrame");
+    expect(requestBody.cancelled()).toBe("No response from gateway serviceFrame");
+    expect(responseBody.cancelled()).toBe("No response from gateway serviceFrame");
+  });
+});
+
+describe("callLinkedAdapterGateway", () => {
+  it("cancels a mismatched linked-peer response body before rejecting it", async () => {
+    const responseBody = trackedBody();
+    const gateway = gatewayWithResponse((frame) => ({
+      type: "res",
+      id: `${frame.id}:mismatched`,
+      ok: true,
+      data: { ok: true },
+      body: responseBody.body,
+    }));
+
+    await expect(callLinkedAdapterGateway(
+      gateway,
+      INSTALLATION,
+      CONTEXT,
+      "proc.hil",
+      ARGS,
+    )).rejects.toThrow("No response from linked adapter peer request");
+    expect(responseBody.cancelled()).toBe(
+      "Linked adapter response body is unsupported",
+    );
+  });
+
+  it("returns a terminal domain rejection for a stale linked route", async () => {
+    const gateway = gatewayWithResponse((frame) => ({
+      type: "res",
+      id: frame.id,
+      ok: false,
+      error: { code: 409, message: "route changed" },
+    }));
+
+    await expect(callLinkedAdapterGateway(
+      gateway,
+      INSTALLATION,
+      CONTEXT,
+      "proc.hil",
+      ARGS,
+    )).resolves.toEqual({ ok: false, error: "route changed" });
+  });
+
+  it("retries a transient linked-peer failure", async () => {
+    const gateway = gatewayWithResponse((frame) => ({
+      type: "res",
+      id: frame.id,
+      ok: false,
+      error: { code: 503, message: "unavailable" },
+    }));
+
+    await expect(callLinkedAdapterGateway(
+      gateway,
+      INSTALLATION,
+      CONTEXT,
+      "proc.hil",
+      ARGS,
+    )).rejects.toThrow("unavailable");
   });
 });

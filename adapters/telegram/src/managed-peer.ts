@@ -12,6 +12,7 @@ import {
   InboundDeliveryLedger,
   type InboundDeliveryDisposition,
 } from "../../shared/src/inbound-delivery";
+import { runAdapterHilSqlMigrations } from "../../shared/src/schema/migrations";
 import { callAdapterGateway, type AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
   cancelBinaryBody,
@@ -22,6 +23,7 @@ import {
 } from "../../shared/src/media-body";
 import type {
   AdapterOutboundMessage,
+  AdapterDeliveryContext,
   AdapterPairingActivateInput,
   AdapterPairingCandidate,
   AdapterPairingDisconnectInput,
@@ -32,6 +34,12 @@ import type {
   AdapterSurface,
   BinaryBody,
 } from "./types";
+import {
+  attachTelegramApprovalMessage,
+  handleTelegramApprovalCallback,
+  prepareTelegramApproval,
+} from "./telegram-approval";
+import type { TelegramTextMessageOptions } from "./telegram-formatting";
 import type {
   ManagedTelegramPairingEnv,
   ManagedTelegramPairingRecord,
@@ -64,6 +72,7 @@ import {
 import {
   isManagedTelegramPairCommand,
   type ManagedTelegramInbound,
+  type ManagedTelegramPeerEvent,
 } from "./managed-update";
 
 export interface ManagedTelegramPeerEnv extends ManagedTelegramPairingEnv {
@@ -73,10 +82,17 @@ export interface ManagedTelegramPeerEnv extends ManagedTelegramPairingEnv {
   TELEGRAM_API?: Fetcher;
 }
 
-type InboundPayload = {
-  inbound: ManagedTelegramInbound;
-  routeGeneration?: string;
-};
+type InboundPayload =
+  | {
+      kind: "message";
+      inbound: ManagedTelegramInbound;
+      routeGeneration?: string;
+    }
+  | {
+      kind: "approval";
+      callback: Extract<ManagedTelegramPeerEvent, { kind: "approval" }>["callback"];
+      routeGeneration?: string;
+    };
 
 type ResponseContext =
   | { kind: "platform"; claimId?: string }
@@ -108,6 +124,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
 
   constructor(ctx: DurableObjectState, env: ManagedTelegramPeerEnv) {
     super(ctx, env);
+    runAdapterHilSqlMigrations(ctx.storage);
     this.deliveries = new DeliveryLedger(this.ctx.storage);
     this.inboundDeliveries = new InboundDeliveryLedger(
       this.ctx.storage,
@@ -120,20 +137,27 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     );
   }
 
-  async handleWebhook(inbound: ManagedTelegramInbound): Promise<{ ok: true }> {
-    const routeGeneration = await this.ctx.storage.transaction(async (txn) => {
-      const state = await txn.get<ManagedTelegramPeerState>(STATE_KEY);
-      const next = bindManagedTelegramPeerIdentity(state, inbound);
-      await txn.put(STATE_KEY, next);
-      return next.activeRoute?.generation;
-    });
+  async handleWebhook(event: ManagedTelegramPeerEvent): Promise<{ ok: true }> {
+    const routeGeneration = event.kind === "message"
+      ? await this.ctx.storage.transaction(async (txn) => {
+          const state = await txn.get<ManagedTelegramPeerState>(STATE_KEY);
+          const next = bindManagedTelegramPeerIdentity(state, event.inbound);
+          await txn.put(STATE_KEY, next);
+          return next.activeRoute?.generation;
+        })
+      : (await this.requireState()).activeRoute?.generation;
+    const deliveryId = event.kind === "message"
+      ? event.inbound.deliveryId
+      : `callback:${event.callback.callbackQueryId}`;
     await this.inboundDeliveries.enqueueAndArm(
-      inbound.deliveryId,
-      { inbound, routeGeneration },
+      deliveryId,
+      event.kind === "message"
+        ? { kind: "message", inbound: event.inbound, routeGeneration }
+        : { kind: "approval", callback: event.callback, routeGeneration },
       Date.now() + INBOUND_WAKE_DELAY_MS,
     );
-    if (isManagedTelegramPairCommand(inbound.text)) {
-      await this.attemptInbound(inbound.deliveryId);
+    if (event.kind === "message" && isManagedTelegramPairCommand(event.inbound.text)) {
+      await this.attemptInbound(deliveryId);
     }
     this.ctx.waitUntil(this.drainInbound());
     return { ok: true };
@@ -143,6 +167,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     installationId: string,
     message: AdapterOutboundMessage,
     body?: BinaryBody,
+    context?: AdapterDeliveryContext,
   ): Promise<AdapterSendResult> {
     let state: ManagedTelegramPeerState;
     try {
@@ -161,11 +186,19 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       await cancelBinaryBody(body, "Telegram route changed before delivery");
       return { ok: false, error: "Telegram route changed before delivery" };
     }
-    return await this.deliverMessage(message, {
+    const controls = context?.hil
+      ? await prepareTelegramApproval(this.ctx.storage, context, context.hil)
+      : null;
+    const renderedMessage = controls ? { ...message, text: controls.text } : message;
+    const result = await this.deliverMessage(renderedMessage, {
       kind: "installation",
       installationId,
       generation: message.routeGeneration,
-    }, body);
+    }, body, controls ? { replyMarkup: controls.replyMarkup } : {});
+    if (result.ok && controls) {
+      await attachTelegramApprovalMessage(this.ctx.storage, controls.token, result.messageId);
+    }
+    return result;
   }
 
   async setTyping(
@@ -349,6 +382,38 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
   private async forwardInbound(
     payload: InboundPayload,
   ): Promise<InboundDeliveryDisposition<ResponseContext>> {
+    if (payload.kind === "approval") {
+      const state = await this.requireState();
+      const route = state.activeRoute;
+      if (!route || !payload.routeGeneration || route.generation !== payload.routeGeneration) {
+        return { terminal: true };
+      }
+      const token = this.botToken();
+      const fetcher = this.telegramFetch();
+      await handleTelegramApprovalCallback(
+        this.ctx.storage,
+        this.env.GATEWAY,
+        { installationId: route.installationId },
+        payload.callback,
+        {
+          answerCallbackQuery: async (callbackQueryId, text) => {
+            await callManagedTelegramApi<boolean>(token, "answerCallbackQuery", {
+              callback_query_id: callbackQueryId,
+              text,
+            }, fetcher);
+          },
+          replaceMessage: async (surfaceId, providerMessageId, text) => {
+            await callManagedTelegramApi<unknown>(token, "editMessageText", {
+              chat_id: surfaceId,
+              message_id: Number.parseInt(providerMessageId, 10),
+              text,
+              reply_markup: { inline_keyboard: [] },
+            }, fetcher);
+          },
+        },
+      );
+      return { terminal: true };
+    }
     const { inbound } = payload;
     const state = await this.requireState();
     if (inbound.unsupportedContent) {
@@ -529,6 +594,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     message: AdapterOutboundMessage,
     context: ResponseContext,
     body?: BinaryBody,
+    options: TelegramTextMessageOptions = {},
   ): Promise<AdapterSendResult> {
     try {
       const state = await this.requireState();
@@ -569,7 +635,10 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
 
     let fingerprint: string;
     try {
-      fingerprint = await fingerprintOutboundDelivery(message, mediaBytes);
+      fingerprint = await fingerprintOutboundDelivery(
+        telegramFingerprintMessage(message, options),
+        mediaBytes,
+      );
     } catch {
       return { ok: false, error: "Could not fingerprint Telegram delivery", retryable: true };
     }
@@ -611,6 +680,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
           text,
           replyToMessageId,
           fetcher,
+          options,
         );
         acceptedProviderDeliveries = 1;
         messageId = String(sent.message_id);
@@ -701,6 +771,17 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       ? (input, init) => this.env.TELEGRAM_API!.fetch(input, init)
       : fetch;
   }
+}
+
+function telegramFingerprintMessage(
+  message: AdapterOutboundMessage,
+  options: TelegramTextMessageOptions,
+): AdapterOutboundMessage {
+  if (!options.replyMarkup) return message;
+  return {
+    ...message,
+    text: `${message.text}\n\n[gsv-telegram-controls:${JSON.stringify(options.replyMarkup)}]`,
+  };
 }
 
 function typedStub<T, V = T>(value: V): T {

@@ -81,8 +81,16 @@ function integrationGatewayConfig(options: {
     ai: undefined,
     services: [
       { binding: "AI", service: DEPENDENCY_WORKER },
-      { binding: "CHANNEL_DISCORD", service: DEPENDENCY_WORKER },
-      { binding: "CHANNEL_TELEGRAM", service: DEPENDENCY_WORKER },
+      {
+        binding: "CHANNEL_DISCORD",
+        service: DEPENDENCY_WORKER,
+        entrypoint: "IntegrationDiscordAdapter",
+      },
+      {
+        binding: "CHANNEL_TELEGRAM",
+        service: DEPENDENCY_WORKER,
+        entrypoint: "IntegrationTelegramAdapter",
+      },
       { binding: "CHANNEL_WHATSAPP", service: DEPENDENCY_WORKER },
       { binding: "RIPGIT", service: DEPENDENCY_WORKER },
       ...(options.managed

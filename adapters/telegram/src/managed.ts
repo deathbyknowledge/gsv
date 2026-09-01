@@ -15,6 +15,7 @@ import type {
   AdapterService,
   AdapterServiceDescriptor,
 } from "../../../packages/gsv/src/services/adapters.js";
+import { handleAdapterFrame } from "../../shared/src/adapter-frame";
 import { cancelBinaryBody } from "../../shared/src/media-body";
 import {
   LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
@@ -24,9 +25,12 @@ import type {
   AdapterAccountStatus,
   AdapterActivity,
   AdapterOutboundMessage,
+  AdapterDeliveryContext,
   AdapterSendResult,
   AdapterSurface,
   BinaryBody,
+  GatewayRequestFrame,
+  GatewayResponseFrame,
 } from "./types";
 import type { ManagedTelegramPeerEnv } from "./managed-peer";
 import {
@@ -53,6 +57,7 @@ type ManagedTelegramPeerStub = {
     installationId: string,
     message: AdapterOutboundMessage,
     body?: BinaryBody,
+    context?: AdapterDeliveryContext,
   ): Promise<AdapterSendResult>;
   setTyping(
     installationId: string,
@@ -95,6 +100,31 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> implements Ada
     };
   }
 
+  async adapterFrame(
+    installation: AdapterInstallationContext,
+    context: AdapterDeliveryContext,
+    frame: GatewayRequestFrame,
+  ): Promise<GatewayResponseFrame> {
+    const parsed = parseManagedInstallation(installation);
+    if (
+      context.accountId !== MANAGED_TELEGRAM_ACCOUNT_ID
+      || context.surface.kind !== "dm"
+      || !context.actorId
+    ) {
+      await cancelBinaryBody(frame.body, "Managed Telegram frame destination is invalid");
+      throw new Error("Managed Telegram frame destination is invalid");
+    }
+    const peer = this.peer(context.surface.id);
+    return await handleAdapterFrame(this.adapterId, context, frame, {
+      send: async (delivery, requestBody) => await peer.sendMessage(
+        parsed.installationId,
+        delivery.message,
+        requestBody,
+        context,
+      ),
+    });
+  }
+
   async adapterStatus(
     installation: AdapterInstallationContext,
     accountId?: string,
@@ -112,31 +142,6 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> implements Ada
         ? { botUsername: normalizedManagedTelegramBotUsername(this.env.TELEGRAM_BOT_USERNAME) }
         : undefined,
     }];
-  }
-
-  async adapterSend(
-    installation: AdapterInstallationContext,
-    accountId: string,
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ): Promise<AdapterSendResult> {
-    try {
-      const parsed = parseManagedInstallation(installation);
-      if (accountId !== MANAGED_TELEGRAM_ACCOUNT_ID) {
-        throw new Error("Managed Telegram account ID is invalid");
-      }
-      if (message.surface.kind !== "dm" || !message.actorId) {
-        throw new Error("Managed Telegram supports direct messages only");
-      }
-      return await this.peer(message.surface.id).sendMessage(
-        parsed.installationId,
-        message,
-        body,
-      );
-    } catch (error) {
-      await cancelBinaryBody(body, error);
-      return { ok: false, error: safeError(error instanceof Error ? error : String(error)) };
-    }
   }
 
   async adapterSetActivity(

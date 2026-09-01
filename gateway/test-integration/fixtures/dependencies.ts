@@ -1,6 +1,7 @@
 import { DurableObject, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 import { z } from "zod";
 import {
+  adapterSendArgsSchema,
   encodeManagedInferenceStreamEvent,
   GSV_INFERENCE_PRODUCT_MODEL,
   GSV_INFERENCE_PROVIDER,
@@ -11,10 +12,11 @@ import type {
   AdapterConnectConfig,
   AdapterGatewayInterface,
   AdapterGatewayRequestFrame,
+  AdapterGatewayResponseFrame,
   AdapterInstallationContext,
   AdapterOutboundMessage,
+  AdapterDeliveryContext,
   AdapterSurface,
-  AdapterWorkerInterface,
   AuthorizeInstallationOnboardingInput,
   BinaryBody,
   CompleteInstallationOnboardingInput,
@@ -26,22 +28,15 @@ import type {
   ManagedInferenceResult,
 } from "@humansandmachines/gsv/protocol";
 import type {
+  AdapterService,
+  AdapterServiceDescriptor,
+} from "@humansandmachines/gsv/services/adapters";
+import type {
   InferenceService as ManagedInferenceService,
   InferenceTarget as ManagedInferenceTargetContract,
 } from "@humansandmachines/gsv/services/inference";
 import { SINGLETON_INSTALLATION_ID } from "../../src/installation/identity";
-import {
-  resolveAdapterActivityRpcArgs,
-  resolveAdapterConnectRpcArgs,
-  resolveAdapterDisconnectRpcArgs,
-  resolveAdapterSendRpcArgs,
-  resolveAdapterStatusRpcArgs,
-  type AdapterActivityRpcArgs,
-  type AdapterConnectRpcArgs,
-  type AdapterDisconnectRpcArgs,
-  type AdapterSendRpcArgs,
-  type AdapterStatusRpcArgs,
-} from "../../../adapters/shared/src/rpc-compat";
+import { handleAdapterFrame } from "../../../adapters/shared/src/adapter-frame";
 
 type ImportRequest = {
   remoteUrl?: string;
@@ -308,9 +303,55 @@ class ManagedInferenceTarget
 
 export default class TestDependencies
   extends WorkerEntrypoint<Env>
-  implements AdapterWorkerInterface
+  implements AdapterService
 {
-  readonly adapterId = "test";
+  readonly adapterId: string = "test";
+
+  async adapterDescribe(): Promise<AdapterServiceDescriptor> {
+    return {
+      version: 1,
+      id: this.adapterId,
+      displayName: `Integration ${this.adapterId}`,
+      capabilities: {
+        connect: true,
+        disconnect: true,
+        send: true,
+        status: true,
+        activity: true,
+        pairing: false,
+        surfaces: ["dm", "group", "channel", "thread"],
+        media: {
+          inbound: ["image", "audio", "video", "document"],
+          outbound: ["image", "audio", "video", "document"],
+        },
+      },
+    };
+  }
+
+  async adapterFrame(
+    installation: AdapterInstallationContext,
+    context: AdapterDeliveryContext,
+    frame: AdapterGatewayRequestFrame,
+  ): Promise<AdapterGatewayResponseFrame> {
+    let requestedAdapter = this.adapterId;
+    if (frame.call === "adapter.send") {
+      const args = adapterSendArgsSchema.safeParse(frame.args);
+      if (args.success) requestedAdapter = args.data.adapter.trim().toLowerCase();
+    }
+    return await handleAdapterFrame(
+      requestedAdapter,
+      context,
+      frame,
+      {
+        send: async (delivery, requestBody) => await this.#sendForInstallation(
+          installation,
+          context.accountId,
+          delivery.message,
+          requestBody,
+        ),
+      },
+    );
+  }
 
   async resolveHostname(hostname: string): Promise<InstallationDirectoryResult> {
     const handle = hostname.endsWith(".gsv.space")
@@ -485,22 +526,14 @@ export default class TestDependencies
   }
 
   async adapterConnect(
-    accountId: string,
-    config?: AdapterConnectConfig,
-  ): Promise<{ ok: true; connected: true; authenticated: true; message: string }>;
-  async adapterConnect(
     installation: AdapterInstallationContext,
     accountId: string,
     config?: AdapterConnectConfig,
-  ): Promise<{ ok: true; connected: true; authenticated: true; message: string }>;
-  async adapterConnect(
-    ...args: AdapterConnectRpcArgs
   ): Promise<{ ok: true; connected: true; authenticated: true; message: string }> {
-    const resolved = resolveAdapterConnectRpcArgs(args);
     return await this.#adapterConnectForInstallation(
-      resolved.installation,
-      resolved.accountId,
-      resolved.config,
+      installation,
+      accountId,
+      config,
     );
   }
 
@@ -518,19 +551,12 @@ export default class TestDependencies
   }
 
   async adapterDisconnect(
-    accountId: string,
-  ): Promise<{ ok: true; message: string }>;
-  async adapterDisconnect(
     installation: AdapterInstallationContext,
     accountId: string,
-  ): Promise<{ ok: true; message: string }>;
-  async adapterDisconnect(
-    ...args: AdapterDisconnectRpcArgs
   ): Promise<{ ok: true; message: string }> {
-    const resolved = resolveAdapterDisconnectRpcArgs(args);
     return await this.#adapterDisconnectForInstallation(
-      resolved.installation,
-      resolved.accountId,
+      installation,
+      accountId,
     );
   }
 
@@ -541,30 +567,7 @@ export default class TestDependencies
     return { ok: true, message: "disconnected by integration fixture" };
   }
 
-  async adapterSend(
-    accountId: string,
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ): Promise<{ ok: true; messageId: string }>;
-  async adapterSend(
-    installation: AdapterInstallationContext,
-    accountId: string,
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ): Promise<{ ok: true; messageId: string }>;
-  async adapterSend(
-    ...args: AdapterSendRpcArgs
-  ): Promise<{ ok: true; messageId: string }> {
-    const resolved = await resolveAdapterSendRpcArgs(args);
-    return await this.#adapterSendForInstallation(
-      resolved.installation,
-      resolved.accountId,
-      resolved.message,
-      resolved.body,
-    );
-  }
-
-  async #adapterSendForInstallation(
+  async #sendForInstallation(
     installation: AdapterInstallationContext,
     accountId: string,
     message: AdapterOutboundMessage,
@@ -582,25 +585,16 @@ export default class TestDependencies
   }
 
   async adapterSetActivity(
-    accountId: string,
-    surface: AdapterSurface,
-    activity: AdapterActivity,
-  ): Promise<{ ok: true }>;
-  async adapterSetActivity(
     installation: AdapterInstallationContext,
     accountId: string,
     surface: AdapterSurface,
     activity: AdapterActivity,
-  ): Promise<{ ok: true }>;
-  async adapterSetActivity(
-    ...args: AdapterActivityRpcArgs
   ): Promise<{ ok: true }> {
-    const resolved = resolveAdapterActivityRpcArgs(args);
     return await this.#adapterSetActivityForInstallation(
-      resolved.installation,
-      resolved.accountId,
-      resolved.surface,
-      resolved.activity,
+      installation,
+      accountId,
+      surface,
+      activity,
     );
   }
 
@@ -614,17 +608,12 @@ export default class TestDependencies
   }
 
   async adapterStatus(
-    accountId?: string,
-  ): Promise<AdapterAccountStatus[]>;
-  async adapterStatus(
     installation: AdapterInstallationContext,
     accountId?: string,
-  ): Promise<AdapterAccountStatus[]>;
-  async adapterStatus(...args: AdapterStatusRpcArgs): Promise<AdapterAccountStatus[]> {
-    const resolved = resolveAdapterStatusRpcArgs(args);
+  ): Promise<AdapterAccountStatus[]> {
     return await this.#adapterStatusForInstallation(
-      resolved.installation,
-      resolved.accountId,
+      installation,
+      accountId,
     );
   }
 
@@ -658,6 +647,14 @@ export default class TestDependencies
     const id = this.env.INTEGRATION_STATE.idFromName(SINGLETON_INSTALLATION_ID);
     return this.env.INTEGRATION_STATE.get(id);
   }
+}
+
+export class IntegrationTelegramAdapter extends TestDependencies {
+  override readonly adapterId = "telegram";
+}
+
+export class IntegrationDiscordAdapter extends TestDependencies {
+  override readonly adapterId = "discord";
 }
 
 class WorkersAiGatewayFixture extends RpcTarget {

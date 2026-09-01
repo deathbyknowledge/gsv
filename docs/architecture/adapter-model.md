@@ -110,7 +110,11 @@ Normalized message and body types live in
 returns a descriptor for lifecycle, status, activity, pairing, surface, and
 media support, plus an explicit target-support bit when applicable. Adapters
 call the Gateway's single `serviceFrame` entrypoint for `adapter.inbound` and
-`adapter.state.update`.
+`adapter.state.update`. In the other direction, the Gateway calls one
+`adapterFrame` carrier with an ordinary correlated `adapter.send` request. The
+request is sent only to the exact routed adapter destination; user-state signals
+remain an independent broadcast to clients. The descriptor's `send` capability
+advertises support; `adapterFrame` is the only outbound carrier.
 
 The canonical adapter identity comes from the trusted `CHANNEL_*` service
 binding. A descriptor must agree with that identity and cannot grant its Worker
@@ -141,9 +145,10 @@ thread to have been observed for that author before it will deliver there.
 
 Managed account objects use a collision-free internal name derived from
 `installationId` and the installation-local `accountId`. The explicit
-`singleton` compatibility installation retains the historical unscoped
-account name, so upgrading a standalone Telegram, Discord, WhatsApp, or test
-adapter reaches its existing Durable Object and provider session. Adapter
+`singleton` installation context retains the historical account object name,
+so upgrading a standalone Telegram, Discord, WhatsApp, or test adapter reaches
+its existing Durable Object and provider session. RPCs still carry
+`{ installationId: "singleton" }` explicitly. Adapter
 alarms and retries recover the installation context from the named Durable
 Object before calling the Gateway. Managed Telegram and Slack recover it from
 the peer's generation-fenced active route. They do not depend on a browser
@@ -191,14 +196,30 @@ The canonical outbound path is:
    from the owner's last-active linked private destination. A disconnected client
    conversation never jumps to an adapter, and other processes never use the fallback.
 4. The Kernel rechecks the linked actor's destination authority.
-5. If the endpoint is an adapter, the Kernel durably queues `message.committed` for
-   that adapter. Adapters never receive Process token or reasoning streams.
-6. The adapter buffers the committed message, formats it for the provider, and delivers it.
+5. If the endpoint is an adapter, the Kernel schedules the delivery and sends one
+   correlated `adapter.send` request with the exact route, content, and optional
+   body. Adapters never receive Process token or reasoning streams.
+6. The adapter formats and sends the provider message, then returns the correlated
+   response. Its provider ledger deduplicates a replay of the same `deliveryId`;
+   the Kernel classifies the response, retries only safe failures, and owns route
+   cleanup and terminal Process notices.
 7. Other signed-in clients synchronize the canonical message without treating it as
    directed to them.
 
 Again, the adapter is a transport surface, not the place where durable agent
 or conversation state lives.
+
+HIL uses the same structured request rather than a prompt-text side channel.
+Web, Desktop, and CLI receive `proc.run.hil.requested` as a broadcast signal; an
+exact routed adapter receives the same `ProcHilRequest` in its targeted
+`adapter.send`. Each surface chooses its presentation: Telegram and Slack use
+native buttons, while adapters without secure controls show the requested
+action and direct the user to Chat. Opaque request identities are never rendered
+to the human or accepted from free-form message text. A button callback is
+authenticated and durably correlated inside its adapter, then sent as an
+ordinary `proc.hil` request through a Kernel-derived, interaction-scoped
+linked-human peer. The adapter service account never receives ambient
+`proc.hil` authority, and provider reply threading is not authorization.
 
 The `message` shell command exposes delivery context and the explicit path for a
 separate or cross-channel message. `message current` describes the directed endpoint
@@ -256,16 +277,15 @@ does not deploy the email Worker, Queue, provider binding, or managed
 
 Each adapter derives a stable account-scoped ingress `deliveryId` from the
 provider's complete event identity. For example, WhatsApp includes the group
-participant as well as the stanza id. Before link, command, approval, routing,
-media, or Process side effects, the Kernel claims a durable receipt for that
+participant as well as the stanza id. Before link, command, routing, media, or
+Process side effects, the Kernel claims a durable receipt for that
 id. The actor and surface are recorded for audit and authorization but are not
 part of receipt identity, because provider aliases may normalize after the
 first delivery. A completed replay returns the stored disposition; a
 concurrent replay on the live Kernel observes the active claim, while an
-abandoned or post-restart claim is fenced and reclaimed. Checkpoints bind HIL
-decisions to their exact request and preserve staged media plus the stable
-Process run id, so reconciliation cannot turn an old approval into a new turn
-or upload the same media again. Both paths cancel any repeated media body before
+abandoned or post-restart claim is fenced and reclaimed. Checkpoints preserve
+staged media plus the stable Process run id, so reconciliation cannot create a
+new turn or upload the same media again. Both paths cancel any repeated media body before
 staging bytes. A Process admission predating the receipt migration reports
 whether that run is active, queued, or already recorded so the Kernel cannot
 resurrect a completed run's reply route or typing state.
@@ -282,8 +302,8 @@ worker failure cannot leave a durable record without a wake-up. This uses the
 account's existing storage and wake-up mechanism rather than introducing a
 second ingress scheduler or blob store.
 
-Command replies, link challenges, and HIL acknowledgements use the receipt's
-stable delivery ids. The Kernel prepares and completes the receipt with the
+Command replies and link challenges use the receipt's stable delivery ids. The
+Kernel prepares and completes the receipt with the
 exact result. Before provider delivery, the adapter replaces its durable raw
 payload with normalized response records. It then passes each response through
 the same account-local outbound ledger used by normal sends. A response retry
@@ -296,9 +316,9 @@ Kernel receipts are capped and retained for seven days.
 
 Outbound messages cross the adapter-worker boundary with a stable
 `deliveryId`. Committed run Messages, schedule occurrences, and the `message`
-CLI derive it before their first attempt. First-party
-adapter account Durable Objects retain a bounded delivery ledger and return a
-recorded success without contacting the provider again. Each ledger record also
+CLI derive it before their first attempt. First-party adapter account Durable
+Objects retain a bounded provider-delivery ledger and return a recorded success
+without contacting the provider again. Each ledger record also
 binds the id to a fingerprint of its exact destination, reply context, text,
 media metadata, and binary media bytes. Reusing an id with different content is
 rejected instead of being mistaken for a successful replay, and that binding is
@@ -306,15 +326,15 @@ retained across retry-safe failures. Only failures known to be safe are
 retryable. Outcomes that may already have reached a provider are reported as
 ambiguous and are not replayed; Discord can additionally reuse an
 enforced deterministic nonce, while Telegram and WhatsApp conservatively use
-at-most-once delivery. The Kernel persists retry-safe terminal delivery as its
-own scheduled work, stops typing after every attempt, and removes the reply
-route after success or after a terminal delivery notice is accepted by the
-Process. The canonical Message remains in conversation history and its delivery
-outcome remains inspectable in Process activity. Approval attempt one is durably queued before Process acknowledges the
-HIL signal; provider notification failure therefore cannot clear or fail a
-pending approval.
-Link challenges, adapter command responses, and human-approval acknowledgements
-use this same outbound ledger. The Kernel derives their delivery ids before the
+at-most-once delivery. The Kernel retains retry-safe delivery as scheduled work,
+stops typing after each attempt, and removes the reply route after success or
+after a terminal delivery notice is accepted by the Process. The canonical
+Message remains in conversation history and its delivery outcome remains
+inspectable in Process activity. Approval attempt one is durably scheduled
+before Process acknowledges the HIL signal; provider notification failure
+therefore cannot clear or fail a pending approval.
+Link challenges and adapter command responses use this same outbound ledger.
+The Kernel derives their delivery ids before the
 durable ingress claim and returns normalized response metadata. Provider
 delivery begins only after the inbound Gateway RPC returns, so it does not make
 a re-entrant call into the account Durable Object that is still reporting the
@@ -327,7 +347,8 @@ External actors are not automatically local users.
 
 GSV uses identity links so that a WhatsApp sender or Discord user can be mapped
 to a local uid. That mapping is what allows inbound messages to reach the right
-process and allows DM replies to satisfy pending human-in-the-loop approvals.
+process and lets authenticated native callbacks submit an exact pending
+human-in-the-loop decision as that linked human.
 
 Without a link:
 
@@ -346,9 +367,12 @@ that controller can open a direct line to an existing non-personal process;
 the current answer confirms it and the next message enters work. The Kernel
 rejects a late handoff if a newer private message or selection won. `/ship`
 clears the override immediately and gives the personal controller a typed
-return event containing the work PID without mirroring the transcript. Tokened
-HIL decisions search only the owner's `waiting_hil` interactive processes,
-which preserves approval correlation after leaving a work session.
+return event containing the work PID without mirroring the transcript. Native
+HIL callbacks retain the exact Process, run, request, route generation, actor,
+surface, and provider-message correlation. The Kernel rechecks the link,
+generation, destination authority, human capability, and current pending
+request before ordinary `proc.hil` dispatch, which preserves approval
+correlation after leaving a work session.
 
 Groups, channels, and threads use actor-scoped surface routes. Their key
 includes adapter, account, actor, surface kind, surface id, and optional thread
@@ -450,11 +474,17 @@ runtime.
 4. Persist reconstructable ingress before the first Gateway call and retry it
    with the account's existing wake-up mechanism until a terminal disposition.
 5. Implement mention/reply activation for every supported non-DM surface.
-6. Use the shared binary-body helpers and common media limits.
-7. Exercise DM linking, shared surfaces, media cancellation, reconnects,
+6. Implement `adapterFrame` by handling targeted `adapter.send` requests and
+   returning their correlated responses.
+7. Render structured HIL from the request context. Native callbacks, when the
+   platform supports them, must use the linked-peer `proc.hil` path. Otherwise,
+   present the action and direct the user to Chat; never synthesize approval
+   tokens in inbound message text.
+8. Use the shared binary-body helpers and common media limits.
+9. Exercise DM linking, shared surfaces, media cancellation, reconnects,
    request-bound approvals, duplicate ingress, canonical Messages, and directed
    endpoint routing.
-8. Add an `adapter.json` beside the implementation. The release and deployment
+10. Add an `adapter.json` beside the implementation. The release and deployment
    tools discover adapter directories and derive component identity, service
    bindings, entrypoints, Durable Objects, required secrets, and deployment
    order from that file. No central adapter list or CLI change is required.

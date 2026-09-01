@@ -183,18 +183,18 @@ the adapter so Slack issues a token with those permissions.
 
 ## Approval buttons
 
-Human-approval prompts in direct messages keep their complete text fallback and
-add **Approve once**, **Always approve**, and **Deny** buttons. A click becomes
-the same exact `approve hil[requestId]`, `approve always hil[requestId]`, or
-`deny hil[requestId]`
-command accepted by the Gateway; typed token-bearing replies continue to work.
-Once submitted, the original message is updated to remove its buttons.
+Human-approval prompts in direct messages use **Approve once**, **Always
+approve**, and **Deny** buttons. A click becomes
+an exact `proc.hil` request through the linked human's interaction-scoped peer.
+The opaque callback identity remains adapter-owned and is never rendered to the
+human. Once resolved, the original message is replaced with the decision and
+the action it applied to.
 
 The adapter durably records an interaction before acknowledging it. Managed
 button values are also bound to the linked route generation, so a delayed click
 from before a relink cannot reach the previous or replacement installation.
-The Gateway remains authoritative for the current HIL token and rejects stale
-or repeated decisions.
+The Process remains authoritative for pending HIL state, while the adapter
+makes repeated provider callbacks idempotent and keeps the first selection.
 
 ## Endpoints
 

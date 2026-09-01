@@ -4,11 +4,11 @@ import {
 } from "./managed-config";
 import {
   normalizeManagedTelegramUpdate,
-  type ManagedTelegramInbound,
+  type ManagedTelegramPeerEvent,
 } from "./managed-update";
 
 type ManagedTelegramPeerStub = DurableObjectStub & {
-  handleWebhook(inbound: ManagedTelegramInbound): Promise<{ ok: true }>;
+  handleWebhook(event: ManagedTelegramPeerEvent): Promise<{ ok: true }>;
 };
 
 export type ManagedTelegramHttpEnv = {
@@ -59,18 +59,23 @@ export async function handleManagedTelegramRequest(
     return Response.json({ ok: false, error: "Invalid Telegram update" }, { status: 400 });
   }
   if (normalized.kind === "ignored") return Response.json({ ok: true });
+  const event: ManagedTelegramPeerEvent = normalized.kind === "approval"
+    ? { kind: "approval", callback: normalized.callback }
+    : { kind: "message", inbound: normalized.inbound };
+  const actorId = event.kind === "approval" ? event.callback.actorId : event.inbound.actorId;
+  const surfaceId = event.kind === "approval" ? event.callback.surfaceId : event.inbound.surfaceId;
   const allowlist = allowedActorIds(env.TELEGRAM_ALLOWED_ACTOR_IDS);
-  if (allowlist && !allowlist.has(normalized.inbound.actorId)) {
+  if (allowlist && !allowlist.has(actorId)) {
     return Response.json({ ok: true });
   }
 
   const id = env.MANAGED_TELEGRAM_PEER.idFromName(
-    `managed:${normalized.inbound.surfaceId}`,
+    `managed:${surfaceId}`,
   );
   // SAFETY: the managed peer namespace is owned by this worker and exposes the handleWebhook RPC.
   const peer = env.MANAGED_TELEGRAM_PEER.get(id) as ManagedTelegramPeerStub;
   try {
-    await peer.handleWebhook(normalized.inbound);
+    await peer.handleWebhook(event);
   } catch {
     console.warn(JSON.stringify({
       component: "managed_telegram",

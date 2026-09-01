@@ -25,6 +25,7 @@ import {
 import type { KernelContext } from "./context";
 import type { Process } from "../process/do";
 import type { AuthStore } from "./auth-store";
+import type { AdapterService } from "../adapter-interface";
 
 const USER_IDENTITY: ProcessIdentity = {
   uid: 1000,
@@ -173,12 +174,12 @@ const TELEGRAM_DESTINATION = {
 };
 
 function makeAdapterSchedulerContext(
-  adapterSend: ReturnType<typeof vi.fn>,
+  adapterFrame: NonNullable<AdapterService["adapterFrame"]>,
 ): KernelContext {
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return makeSchedulerContext({
     env: {
-      CHANNEL_TELEGRAM: { adapterSend },
+      CHANNEL_TELEGRAM: { adapterFrame },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as Env,
     adapters: {
@@ -455,12 +456,24 @@ describe("scheduler", () => {
       env.KERNEL,
       `scheduler-one-shot-attempt-test-${crypto.randomUUID()}`,
     );
-    const adapterSend = vi.fn(async () => ({
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      ok: false as const,
-      error: "temporary adapter outage",
-      retryable: true,
-    }));
+    const adapterFrame: NonNullable<AdapterService["adapterFrame"]> = vi.fn(async (
+      _installation,
+      context,
+      frame,
+    ) => {
+      if (frame.type !== "req") throw new Error("Expected a request frame");
+      return {
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: {
+          ok: false,
+          error: "temporary adapter outage",
+          deliveryId: context.deliveryId,
+          retryable: true,
+        },
+      };
+    });
 
     const state = await runInDurableObject(kernel, async (instance: Kernel) => {
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -474,7 +487,7 @@ describe("scheduler", () => {
           mode: "due" | "force",
         ) => Promise<ScheduleRunResult>;
       };
-      k.buildScheduleContext = () => makeAdapterSchedulerContext(adapterSend);
+      k.buildScheduleContext = () => makeAdapterSchedulerContext(adapterFrame);
       k.scheduleScheduleWake = async () => "wake-retry";
 
       const now = Date.now();
@@ -552,7 +565,7 @@ describe("scheduler", () => {
     expect(state.cutoffOccurrenceId).toBeNull();
     expect(state.cutoffAttemptCount).toBe(0);
     expect(state.cutoffRunCount).toBe(102);
-    expect(adapterSend).toHaveBeenCalledTimes(3);
+    expect(adapterFrame).toHaveBeenCalledTimes(3);
   });
 
   it("records and summarizes an ambiguous adapter delivery without retrying", async () => {
@@ -560,12 +573,26 @@ describe("scheduler", () => {
       env.KERNEL,
       `scheduler-ambiguous-adapter-test-${crypto.randomUUID()}`,
     );
-    const adapterSend = vi.fn(async () => ({
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      ok: false as const,
-      error: "adapter acknowledgement was lost",
-      ambiguous: true,
-    }));
+    const adapterFrame: NonNullable<AdapterService["adapterFrame"]> = vi.fn(async (
+      _installation,
+      context,
+      frame,
+    ) => {
+      if (frame.type !== "req") throw new Error("Expected a request frame");
+      return {
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: {
+          ok: true,
+          adapter: "telegram",
+          accountId: context.accountId,
+          surfaceId: context.surface.id,
+          deliveryId: context.deliveryId,
+          deliveryState: "ambiguous",
+        },
+      };
+    });
 
     const state = await runInDurableObject(kernel, async (instance: Kernel) => {
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -578,7 +605,7 @@ describe("scheduler", () => {
           mode: "due" | "force",
         ) => Promise<ScheduleRunResult>;
       };
-      k.buildScheduleContext = () => makeAdapterSchedulerContext(adapterSend);
+      k.buildScheduleContext = () => makeAdapterSchedulerContext(adapterFrame);
 
       const now = Date.now();
       const created = k.schedules.create({
@@ -627,7 +654,7 @@ describe("scheduler", () => {
       surfaceId: "chat-42",
       deliveryState: "ambiguous",
     });
-    expect(adapterSend).toHaveBeenCalledTimes(1);
+    expect(adapterFrame).toHaveBeenCalledTimes(1);
   });
 
   it("rejects invalid cron and timezone expressions", () => {

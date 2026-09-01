@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  adapterDeliveryContextSchema,
   isAdapterAccountStatus,
   isAdapterConnectChallenge,
   isAdapterInboundResult,
   isAdapterWorkerActivityResult,
   isAdapterWorkerConnectResult,
   isAdapterWorkerDisconnectResult,
-  isAdapterWorkerSendResult,
+  isAdapterProviderSendResult,
   isAdapterWorkerStatusResult,
 } from "../dist/protocol/adapters.js";
 import { isAdapterConnectResult } from "../dist/protocol/syscalls/adapter.js";
@@ -45,6 +46,33 @@ test("validates an open-ended adapter service descriptor", () => {
   assert.equal(adapterServiceDescriptorSchema.safeParse({
     ...descriptor,
     id: "Matrix Plugin",
+  }).success, false);
+});
+
+test("validates structured adapter delivery context", () => {
+  const context = {
+    deliveryId: "run-1:hil:hil-1",
+    accountId: "account-1",
+    actorId: "actor-1",
+    surface: { kind: "dm", id: "surface-1" },
+    processId: "proc-1",
+    runId: "run-1",
+    hil: {
+      pid: "proc-1",
+      requestId: "hil-1",
+      runId: "run-1",
+      callId: "call-1",
+      toolName: "Shell",
+      syscall: "shell.exec",
+      target: "gsv",
+      args: { input: "date" },
+      createdAt: 1,
+    },
+  };
+  assert.equal(adapterDeliveryContextSchema.safeParse(context).success, true);
+  assert.equal(adapterDeliveryContextSchema.safeParse({
+    ...context,
+    hil: { ...context.hil, requestId: undefined },
   }).success, false);
 });
 
@@ -188,26 +216,26 @@ test("validates private adapter worker connect results at the gateway boundary",
   assert.equal(isAdapterWorkerConnectResult({ ok: true, connected: "yes" }), false);
 });
 
-test("validates every private adapter worker RPC result", () => {
+test("validates adapter worker and provider results", () => {
   assert.equal(isAdapterWorkerDisconnectResult({ ok: true, message: "Disconnected" }), true);
   assert.equal(isAdapterWorkerDisconnectResult({ ok: false, error: "" }), false);
 
-  assert.equal(isAdapterWorkerSendResult({
+  assert.equal(isAdapterProviderSendResult({
     ok: true,
     messageId: "provider-1",
     deduplicated: false,
   }), true);
-  assert.equal(isAdapterWorkerSendResult({
+  assert.equal(isAdapterProviderSendResult({
     ok: false,
     error: "unknown outcome",
     ambiguous: true,
   }), true);
-  assert.equal(isAdapterWorkerSendResult({
+  assert.equal(isAdapterProviderSendResult({
     ok: false,
     error: "unknown outcome",
     ambiguous: "yes",
   }), false);
-  assert.equal(isAdapterWorkerSendResult({
+  assert.equal(isAdapterProviderSendResult({
     ok: false,
     error: "contradictory outcome",
     retryable: true,

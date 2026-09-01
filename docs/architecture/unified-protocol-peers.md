@@ -115,7 +115,7 @@ Common combinations are:
 | CLI | human | human capabilities | user signals | none |
 | Desktop app | human | human capabilities | user signals | optional host operations |
 | Machine daemon | machine | minimal control calls | machine signals | filesystem, shell, network, and host operations |
-| Adapter Worker | service | `adapter.inbound`, `adapter.state.update` | none | none |
+| Adapter Worker | service | `adapter.inbound`, `adapter.state.update` | none | targeted `adapter.send` |
 | Linked adapter command | delegated human | command-specific intersection | none | none |
 
 A human endpoint with implementations remains a human peer. It is not promoted
@@ -173,18 +173,20 @@ adapter normalized req + optional BinaryBody
   -> AdapterGatewayEntrypoint validates deployment-owned binding props
   -> Kernel validates and dispatches the same logical req
   -> correlated res returns through the binding
+
+Kernel routed `adapter.send` req + optional BinaryBody
+  -> adapterFrame selects the deployment-owned adapter binding
+  -> exact adapter account or peer performs provider delivery
+  -> correlated res returns to the Kernel
 ```
 
 Workers RPC carries `BinaryBody.stream` as a `ReadableStream`; it is not
 base64-encoded or buffered into the frame. The service binding is part of the
 trust boundary: its `props` carry the adapter id and attenuated call grant, and
 Cloudflare supplies those props from deployment configuration rather than the
-adapter's request. Every first-party adapter uses the same entrypoint; adding
-one does not add another Gateway class. The generic Gateway entrypoint retains
-a narrow rolling-upgrade bridge for already-deployed adapters: it accepts only
-known adapter ids and the same two attenuated calls, deriving identity from the
-validated request. New bindings use only `AdapterGatewayEntrypoint`. During a
-rolling release, deploy the Gateway before adapters switch their bindings.
+adapter's request. Every first-party adapter uses `AdapterGatewayEntrypoint`;
+adding one does not add another Gateway class. The generic Gateway entrypoint
+does not accept adapter RPCs.
 
 Outbound adapter selection is the inverse mapping. The Kernel normalizes the
 adapter id to a deployment binding key such as `CHANNEL_TELEGRAM` and reads that
@@ -192,10 +194,14 @@ binding dynamically from its environment. The peer never supplies a binding
 key, and no central source registry has to change when deployment adds another
 adapter.
 
-Provider delivery APIs remain typed adapter RPC beneath this protocol. They own
-provider credentials, formatting, retry ledgers, and supported standalone
-rolling-upgrade compatibility; they do not create a second Kernel syscall
-model.
+Gateway-to-adapter delivery uses the same logical frame shapes. Every outbound
+message is a correlated `adapter.send` request sent only to the exact routed
+adapter. User-state signals remain broadcast independently. The surrounding
+delivery context carries the Kernel-owned route projection, including the exact
+structured HIL request when present. Provider credentials, formatting,
+idempotency, ambiguous-outcome classification, and rendering remain
+adapter-owned; durable retry and route cleanup remain Kernel-owned.
+`adapterFrame` is the only Gateway-to-adapter delivery carrier.
 
 ## Reverse calls and endpoints
 
@@ -252,6 +258,13 @@ grant containing only `proc.list`, then applies bounded text formatting.
 `/ship` intentionally remains a Kernel routing operation because it must clear
 the exact adapter route and preserve durable ingress/recovery fences.
 
+Native approval buttons use the same delegation rule. The adapter durably binds
+an opaque callback to the exact HIL request and provider message. On a click it
+submits an ordinary `proc.hil` request through `linkedPeerFrame`; the Kernel
+derives the linked human, intersects that user's capabilities with `proc.hil`,
+rechecks the route generation and destination, and enters the ordinary
+dispatcher. The adapter service principal itself is never granted `proc.hil`.
+
 Managed adapter pairing remains an explicit human action through
 `adapter.pair.*`. Pairing binds an external actor to an installation and local
 uid; it is not transport authentication and cannot be inferred from a Telegram
@@ -271,8 +284,9 @@ A client may inspect reasoning, tool calls, and output from several Processes
 without treating all of it as a message addressed to the user. A committed
 Message synchronizes through canonical Conversation history. Only the endpoint
 whose input admitted the run receives its transient directed Message stream.
-Adapters own provider delivery of committed Messages and do not render raw
-Process output as replies.
+Adapters receive targeted `adapter.send` requests for directed committed
+Messages and approvals, choose native controls or a safe Chat handoff, and do
+not render raw Process output as replies.
 
 ## Security and lifecycle invariants
 

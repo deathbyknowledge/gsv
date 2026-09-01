@@ -16,7 +16,6 @@ import {
   handleAdapterSend,
   handleAdapterStateUpdate,
   handleAdapterStatus,
-  renderAdapterHilPrompt,
   setAdapterActivityForKernel,
 } from "./adapter-handlers";
 import * as sharedUtils from "../shared/utils";
@@ -31,7 +30,10 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { PrivateAdapterDestinationStore } from "./private-adapter-destinations";
-import type { AdapterOutboundMessage } from "../adapter-interface";
+import type {
+  AdapterService,
+  AdapterServiceDescriptor,
+} from "../adapter-interface";
 import type { SurfaceRouteRecord } from "./surface-routes";
 import type { IdentityLinkRecord } from "./identity-links";
 import type { AdapterStatusRecord } from "./adapter-status";
@@ -63,6 +65,32 @@ type MakeContextOptions = {
 };
 // SAFETY: test fixture is constructed with the asserted kernel domain shape.
 const TEST_INSTALLATION_ID = "singleton" as KernelContext["installationId"];
+
+function successfulAdapterFrame(adapter: string, messageId: string) {
+  return vi.fn(async (
+    _installation: Parameters<NonNullable<AdapterService["adapterFrame"]>>[0],
+    context: Parameters<NonNullable<AdapterService["adapterFrame"]>>[1],
+    frame: Parameters<NonNullable<AdapterService["adapterFrame"]>>[2],
+  ) => {
+    if (frame.type !== "req" || frame.call !== "adapter.send") {
+      throw new Error("Expected an adapter.send request frame");
+    }
+    return {
+      type: "res" as const,
+      id: frame.id,
+      ok: true as const,
+      data: {
+        ok: true as const,
+        adapter,
+        accountId: context.accountId,
+        surfaceId: context.surface.id,
+        deliveryId: context.deliveryId,
+        messageId,
+        deliveryState: "sent" as const,
+      },
+    };
+  });
+}
 
 function makeStorageBucket() {
   return {
@@ -715,11 +743,21 @@ describe("adapter lifecycle handlers", () => {
 
   it("adapter.list discovers deployed adapter bindings and cached accounts", async () => {
     const whatsappService = {
-      adapterConnect: vi.fn(),
-      adapterDisconnect: vi.fn(),
-      adapterSend: vi.fn(),
-      adapterStatus: vi.fn(),
-      adapterSetActivity: vi.fn(),
+      adapterDescribe: vi.fn(async () => ({
+        version: 1 as const,
+        id: "whatsapp",
+        displayName: "WhatsApp",
+        capabilities: {
+          connect: true,
+          disconnect: true,
+          send: true,
+          status: true,
+          activity: true,
+          pairing: false,
+          surfaces: ["dm"] as const,
+          media: { inbound: [] as const, outbound: [] as const },
+        },
+      })),
     };
     const status = {
       upsert: vi.fn(),
@@ -751,7 +789,23 @@ describe("adapter lifecycle handlers", () => {
     const ctx = makeContext(
       {
         CHANNEL_WHATSAPP: whatsappService,
-        CHANNEL_DISCORD: { adapterStatus: vi.fn() },
+        CHANNEL_DISCORD: {
+          adapterDescribe: vi.fn(async () => ({
+            version: 1 as const,
+            id: "discord",
+            displayName: "Discord",
+            capabilities: {
+              connect: false,
+              disconnect: false,
+              send: false,
+              status: true,
+              activity: false,
+              pairing: false,
+              surfaces: ["dm"] as const,
+              media: { inbound: [] as const, outbound: [] as const },
+            },
+          })),
+        },
       },
       status,
     );
@@ -1111,8 +1165,10 @@ describe("adapter lifecycle handlers", () => {
 
     const result = await handleAdapterStatus({ adapter: "whatsapp" }, ctx);
 
-    expect(adapterStatus).toHaveBeenCalledWith("primary");
-    expect(adapterStatus).not.toHaveBeenCalledWith(undefined);
+    expect(adapterStatus).toHaveBeenCalledWith(
+      { installationId: TEST_INSTALLATION_ID },
+      "primary",
+    );
     expect(status.upsert).toHaveBeenCalledTimes(1);
     expect(status.upsert).toHaveBeenCalledWith(
       "whatsapp",
@@ -1287,7 +1343,10 @@ describe("adapter lifecycle handlers", () => {
     const result = await handleAdapterStatus({ adapter: "telegram" }, ctx);
 
     expect(listLinks).toHaveBeenCalledWith(1000);
-    expect(adapterStatus).toHaveBeenCalledWith("bot");
+    expect(adapterStatus).toHaveBeenCalledWith(
+      { installationId: TEST_INSTALLATION_ID },
+      "bot",
+    );
     expect(result.accounts).toEqual([
       expect.objectContaining({
         accountId: "bot",
@@ -1347,6 +1406,7 @@ describe("adapter lifecycle handlers", () => {
     );
 
     expect(service.adapterConnect).toHaveBeenCalledWith(
+      { installationId: TEST_INSTALLATION_ID },
       "default",
       undefined,
     );
@@ -1361,8 +1421,8 @@ describe("adapter lifecycle handlers", () => {
     expect(status.upsert).toHaveBeenCalled();
   });
 
-  it("uses already-deployed managed adapter method names and scoped arities", async () => {
-    const installationId = "inst_adapter_rpc_compat";
+  it("uses one installation-scoped adapter service contract", async () => {
+    const installationId = "inst_adapter_rpc";
     const installation = { installationId };
     const adapterConnect = vi.fn(async () => ({
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -1372,11 +1432,7 @@ describe("adapter lifecycle handlers", () => {
     }));
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterDisconnect = vi.fn(async () => ({ ok: true as const }));
-    const adapterSend = vi.fn(async () => ({
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      ok: true as const,
-      messageId: "managed-message-1",
-    }));
+    const adapterFrame = successfulAdapterFrame("whatsapp", "managed-message-1");
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSetActivity = vi.fn(async () => ({ ok: true as const }));
     const adapterStatus = vi.fn(async () => [{
@@ -1387,7 +1443,7 @@ describe("adapter lifecycle handlers", () => {
     const service = {
       adapterConnect,
       adapterDisconnect,
-      adapterSend,
+      adapterFrame,
       adapterSetActivity,
       adapterStatus,
     };
@@ -1430,11 +1486,17 @@ describe("adapter lifecycle handlers", () => {
     expect(adapterConnect).toHaveBeenCalledWith(installation, "primary", undefined);
     expect(adapterStatus).toHaveBeenCalledWith(installation, "primary");
     expect(adapterDisconnect).toHaveBeenCalledWith(installation, "primary");
-    expect(adapterSend).toHaveBeenCalledWith(
+    expect(adapterFrame).toHaveBeenCalledWith(
       installation,
-      "primary",
-      expect.objectContaining({ deliveryId: "managed-delivery-1" }),
-      undefined,
+      expect.objectContaining({
+        accountId: "primary",
+        deliveryId: "managed-delivery-1",
+      }),
+      expect.objectContaining({
+        type: "req",
+        call: "adapter.send",
+        args: expect.objectContaining({ deliveryId: "managed-delivery-1" }),
+      }),
     );
     expect(adapterSetActivity).toHaveBeenCalledWith(
       installation,
@@ -2311,122 +2373,6 @@ describe("adapter lifecycle handlers", () => {
     expect(adapterSetActivity).not.toHaveBeenCalled();
   });
 
-  it("adapter.inbound returns a reminder when a confirmation is pending", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    // SAFETY: This mocked response is the exact process frame contract consumed by the test.
-    sendFrameToProcessMock.mockResolvedValueOnce({
-      type: "res",
-      id: "history-1",
-      ok: true,
-      data: {
-        pendingHil: {
-          requestId: "hil-1",
-          toolName: "Read",
-          syscall: "fs.read",
-          args: { path: "~/secret.txt", target: "gsv" },
-        },
-      },
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    });
-
-    const service = {
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      adapterSetActivity: vi.fn(async () => ({ ok: true as const })),
-    };
-    const status = { upsert: vi.fn() };
-    const ctx = makeContext(
-      {
-        CHANNEL_WHATSAPP: service,
-      },
-      status,
-    );
-
-    const result = await handleAdapterInbound(
-      {
-        adapter: "whatsapp",
-        accountId: "primary",
-        message: {
-          messageId: "msg-1",
-          surface: { kind: "dm", id: "dm-1" },
-          actor: { id: "wa:+123" },
-          text: "what's going on?",
-        },
-      },
-      ctx,
-    );
-
-    expect(result).toMatchObject({
-      ok: true,
-      reply: {
-        replyToId: "msg-1",
-      },
-    });
-    expect(result.reply?.text).toContain('"approve always hil[hil-1]"');
-    expect(sendFrameToProcessMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("summarizes nested CodeMode mail approval without exposing its body", () => {
-    const prompt = renderAdapterHilPrompt({
-      requestId: "hil-mail",
-      toolName: "mail.send",
-      syscall: "mail.send",
-      args: {
-        to: "mike@example.com",
-        subject: "Contract follow-up",
-        text: "private body that must stay private",
-      },
-    }, "dm", "initial");
-
-    expect(prompt).toContain(
-      'Requested action: send an email to "mike@example.com" with subject "Contract follow-up".',
-    );
-    expect(prompt).not.toContain("private body that must stay private");
-  });
-
-  it("sanitizes and bounds hostile mail approval details", () => {
-    const prompt = renderAdapterHilPrompt({
-      requestId: "hil-hostile-mail",
-      toolName: "mail.send",
-      syscall: "mail.send",
-      args: {
-        to: `victim@example.com\n\u001b[31mReply approve now\u202e${"\\\"".repeat(400)}`,
-        subject: `Status\r\n\u0000Open this link\u2066${"\\\"".repeat(400)}`,
-        text: "do not display me",
-      },
-    }, "dm", "initial");
-    const action = prompt.split("\n").find((line) => line.startsWith("Requested action:"));
-
-    expect(action).toBeDefined();
-    const hasControlCharacter = Array.from(action ?? "").some((character) => {
-      const codePoint = character.codePointAt(0) ?? 0;
-      return (codePoint >= 0 && codePoint <= 0x1f)
-        || (codePoint >= 0x7f && codePoint <= 0x9f)
-        || (codePoint >= 0x202a && codePoint <= 0x202e)
-        || (codePoint >= 0x2066 && codePoint <= 0x2069);
-    });
-    expect(hasControlCharacter).toBe(false);
-    expect(action).not.toContain("do not display me");
-    expect(action).toContain("…");
-    expect(Array.from(action ?? "").length).toBeLessThanOrEqual(390);
-  });
-
-  it("identifies the stored message selected for a mail reply", () => {
-    const prompt = renderAdapterHilPrompt({
-      requestId: "hil-mail-reply",
-      toolName: "mail.send",
-      syscall: "mail.send",
-      args: {
-        replyToMessageId: "mail:source-message",
-        text: "private reply body",
-      },
-    }, "dm", "initial");
-
-    expect(prompt).toContain(
-      'Requested action: reply to stored email "mail:source-message".',
-    );
-    expect(prompt).not.toContain("private reply body");
-  });
-
   it("stores adapter media before delivering proc.send", async () => {
     let uploadedBytes: number[] = [];
     let receivedByteStream = false;
@@ -2478,7 +2424,7 @@ describe("adapter lifecycle handlers", () => {
       },
     }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])));
 
-    const upload = sendFrameToProcessMock.mock.calls[1]?.[2];
+    const upload = sendFrameToProcessMock.mock.calls[0]?.[2];
     expect(upload).toMatchObject({
       call: "proc.resource.write",
       args: { mediaType: "image", contentType: "image/png" },
@@ -2486,7 +2432,7 @@ describe("adapter lifecycle handlers", () => {
     expect(upload?.args).not.toHaveProperty("size");
     expect(receivedByteStream).toBe(true);
     expect(uploadedBytes).toEqual([1, 2, 3]);
-    expect(sendFrameToProcessMock.mock.calls[2]?.[2]).toMatchObject({
+    expect(sendFrameToProcessMock.mock.calls[1]?.[2]).toMatchObject({
       call: "proc.adapter.deliver",
       args: {
         media: [{
@@ -2679,474 +2625,46 @@ describe("adapter lifecycle handlers", () => {
     expect(adapterSetActivity).not.toHaveBeenCalled();
   });
 
-  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-  it("rejects a bare decision replying to an unverified old HIL prompt", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    sendFrameToProcessMock.mockResolvedValueOnce({
-      type: "res",
-      id: "history-current",
-      ok: true,
-      data: {
-        pendingHil: {
-          requestId: "hil-current",
-          toolName: "Read",
-          syscall: "fs.read",
-          args: { path: "~/current.txt" },
+  it("delivers approval-looking text as ordinary adapter input", async () => {
+    const text = "approve hil[not-a-capability]";
+    const ctx = makeContext({}, { upsert: vi.fn() }, { processState: "waiting_hil" });
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame: any) => {
+      if (frame.call !== "proc.adapter.deliver") {
+        throw new Error(`Unexpected call: ${frame.call}`);
+      }
+      expect(frame.args.message).toBe(text);
+      return {
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: {
+          ok: true,
+          status: "started",
+          runId: frame.args.runId,
+          queued: false,
         },
-      },
+      };
     });
-    const ctx = makeContext({}, { upsert: vi.fn() });
 
     const result = await handleAdapterInbound({
       adapter: "telegram",
       accountId: "bot",
       message: {
-        messageId: "decision-on-old-prompt",
+        messageId: "approval-looking-message",
         surface: { kind: "dm", id: "chat-1" },
         actor: { id: "telegram:user:1" },
-        text: "approve",
-        replyToId: "provider-hil-old",
+        text,
       },
     }, ctx);
 
-    expect(result).toMatchObject({
-      ok: true,
-      reply: { replyToId: "decision-on-old-prompt" },
-    });
-    expect(result.reply?.text).toContain("couldn’t verify");
-    expect(result.reply?.text).toContain('"approve hil[hil-current]"');
+    expect(result).toMatchObject({ ok: true, delivered: { pid: "pid-1" } });
     expect(sendFrameToProcessMock).toHaveBeenCalledTimes(1);
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    expect(sendFrameToProcessMock).not.toHaveBeenCalledWith(
-      TEST_INSTALLATION_ID,
-      "pid-1",
-      expect.objectContaining({ call: "proc.hil" }),
-    );
-  });
-
-// SAFETY: test fixture is constructed with the asserted kernel domain shape.
-
-  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-  it("rejects an old request token after the pending HIL prompt is replaced", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    sendFrameToProcessMock.mockResolvedValueOnce({
-      type: "res",
-      id: "history-replaced",
-      ok: true,
-      data: {
-        pendingHil: {
-          requestId: "hil-new",
-          toolName: "Write",
-          syscall: "fs.write",
-          args: { path: "~/new.txt" },
-        },
-      },
-    });
-    const ctx = makeContext({}, { upsert: vi.fn() }, { processState: "waiting_hil" });
-
-    const result = await handleAdapterInbound({
-      adapter: "discord",
-      accountId: "bot",
-      message: {
-        messageId: "decision-for-replaced-prompt",
-        surface: { kind: "dm", id: "channel-1" },
-        actor: { id: "discord:user:1" },
-        text: "approve hil[hil-old]",
-        replyToId: "provider-hil-old",
-      },
-    }, ctx);
-
-    expect(result.reply?.text).toContain("could not find a pending approval");
-    expect(result.reply?.text).not.toContain('"approve hil[hil-old]"');
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    expect(sendFrameToProcessMock).toHaveBeenCalledTimes(1);
-  });
-
-// SAFETY: test fixture is constructed with the asserted kernel domain shape.
-
-  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-  it("rejects a bare decision when the adapter supplies no reply correlation", async () => {
-    sendFrameToProcessMock.mockResolvedValueOnce({
-      type: "res",
-      id: "history-no-correlation",
-      ok: true,
-      data: {
-        pendingHil: {
-          requestId: "hil-no-correlation",
-          toolName: "Delete",
-          syscall: "fs.delete",
-          args: { path: "~/old.txt" },
-        },
-      },
-    });
-    const ctx = makeContext({}, { upsert: vi.fn() });
-
-    const result = await handleAdapterInbound({
-      adapter: "whatsapp",
-      accountId: "primary",
-      message: {
-        messageId: "bare-decision",
-        surface: { kind: "dm", id: "dm-1" },
-        actor: { id: "wa:+123" },
-        text: "deny",
-      },
-    }, ctx);
-
-    expect(result.reply?.text).toContain("couldn’t verify");
-    expect(result.reply?.text).toContain('"deny hil[hil-no-correlation]"');
-    expect(sendFrameToProcessMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("accepts the exact current HIL token without provider reply correlation", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const service = {
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      adapterSetActivity: vi.fn(async () => ({ ok: true as const })),
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    };
-    // SAFETY: The mocked response is the exact process frame contract consumed by this test.
-    // SAFETY: This mocked response is the exact process frame contract consumed by the test.
-    sendFrameToProcessMock
-      .mockResolvedValueOnce({
-        type: "res",
-        id: "history-1",
-        ok: true,
-        data: {
-          pendingHil: {
-            requestId: "hil-2",
-            toolName: "Read",
-            // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-            syscall: "fs.read",
-            // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-            args: { path: "~/secret.txt", target: "gsv" },
-          },
-        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-        },
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      })
-      .mockResolvedValueOnce({
-        type: "res",
-        id: "hil-2",
-        ok: true,
-        data: {
-          ok: true,
-          pid: "pid-1",
-          requestId: "hil-2",
-          decision: "approve",
-          resumed: true,
-          pendingHil: null,
-        },
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      });
-
-    const status = { upsert: vi.fn() };
-    const ctx = makeContext(
-      {
-        CHANNEL_WHATSAPP: service,
-      },
-      status,
-      { processState: "waiting_hil" },
-    );
-
-    const result = await handleAdapterInbound(
-      {
-        adapter: "whatsapp",
-        accountId: "primary",
-        message: {
-          messageId: "msg-2",
-          surface: { kind: "dm", id: "dm-1" },
-          actor: { id: "wa:+123" },
-          text: "approve hil[hil-2]",
-        },
-      },
-      ctx,
-    );
-
-    expect(result).toMatchObject({
-      ok: true,
-      reply: {
-        text: "Approved. Continuing.",
-        replyToId: "msg-2",
-      },
-    });
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    expect(service.adapterSetActivity).not.toHaveBeenCalled();
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    expect(sendFrameToProcessMock).toHaveBeenCalledTimes(2);
-  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-  });
-
-  it("replays a completed HIL decision without deciding twice", async () => {
-    // SAFETY: The mocked response is the exact process frame contract consumed by this test.
-    sendFrameToProcessMock
-      .mockResolvedValueOnce({
-        type: "res",
-        id: "history-once",
-        ok: true,
-        data: {
-          pendingHil: {
-            // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-            requestId: "hil-once",
-            // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-            toolName: "Write",
-            syscall: "fs.write",
-            // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-            args: { path: "~/result.txt" },
-          },
-        },
-      })
-      .mockResolvedValueOnce({
-        type: "res",
-        id: "hil-once",
-        ok: true,
-        data: {
-          ok: true,
-          requestId: "hil-once",
-          decision: "deny",
-          resumed: true,
-          pendingHil: null,
-        },
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      });
-    const ctx = makeContext({
-      CHANNEL_WHATSAPP: {
-        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-        adapterSetActivity: vi.fn(async () => ({ ok: true as const })),
-      },
-    }, { upsert: vi.fn() }, { processState: "waiting_hil" });
-    const inbound = {
-      adapter: "whatsapp",
-      accountId: "primary",
-      message: {
-        messageId: "hil-provider-once",
-        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-        surface: { kind: "dm" as const, id: "dm-1" },
-        actor: { id: "wa:+123" },
-        text: "deny hil[hil-once]",
-      },
-    };
-
-    const first = await handleAdapterInbound(inbound, ctx);
-    const replay = await handleAdapterInbound(inbound, ctx);
-
-    expect(replay).toEqual({ ...first, replayed: "completed" });
-    expect(replay.reply?.deliveryId).toBe(first.reply?.deliveryId);
-    expect(sendFrameToProcessMock).toHaveBeenCalledTimes(2);
-    expect(sendFrameToProcessMock.mock.calls.filter(([, , frame]) => (
+    expect(sendFrameToProcessMock.mock.calls.some(([, , frame]) => (
       frame.call === "proc.hil"
-    ))).toHaveLength(1);
+    ))).toBe(false);
   });
 
-  it("reconciles a crashed HIL decision without applying it to the next approval", async () => {
-    let historyReads = 0;
-    let hilAttempts = 0;
-    sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
-      if (frame.call === "proc.history") {
-        historyReads++;
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: {
-            pendingHil: historyReads === 1
-              ? {
-                  requestId: "hil-old",
-                  toolName: "Write",
-                  syscall: "fs.write",
-                  args: { path: "~/old.txt" },
-                }
-              : {
-                  requestId: "hil-new",
-                  toolName: "Write",
-                  syscall: "fs.write",
-                  args: { path: "~/new.txt" },
-                },
-          },
-        };
-      }
-      if (frame.call === "proc.hil") {
-        hilAttempts++;
-        expect(frame.args.requestId).toBe("hil-old");
-        if (hilAttempts === 1) {
-          // The Process committed the old decision, then its response was lost.
-          throw new Error("Process response lost after commit");
-        }
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: { ok: false, error: "Pending tool confirmation not found: hil-old" },
-        };
-      }
-      throw new Error(`Unexpected call: ${frame.call}`);
-    });
-    const ctx = makeContext({}, { upsert: vi.fn() }, { processState: "waiting_hil" });
-    const inbound = {
-      adapter: "whatsapp",
-      accountId: "primary",
-      message: {
-        messageId: "hil-crash-window",
-        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-        surface: { kind: "dm" as const, id: "dm-1" },
-        actor: { id: "wa:+123" },
-        text: "approve hil[hil-old]",
-      },
-    };
-
-    await expect(handleAdapterInbound(inbound, ctx)).rejects.toThrow(
-      "Process response lost after commit",
-    );
-    const result = await handleAdapterInbound(inbound, ctx);
-
-    expect(result).toMatchObject({ ok: true, reply: { replyToId: "hil-crash-window" } });
-    expect(result.reply?.text).toContain("~/new.txt");
-    expect(hilAttempts).toBe(2);
-    expect(historyReads).toBe(2);
-    expect(sendFrameToProcessMock.mock.calls.some(([, , frame]) => (
-      frame.call === "proc.adapter.deliver"
-    ))).toBe(false);
-    const checkpointOrder = vi.mocked(ctx.adapters.ingressReceipts.checkpoint)
-      .mock.invocationCallOrder[0];
-    const firstHilOrder = sendFrameToProcessMock.mock.invocationCallOrder[1];
-    expect(checkpointOrder).toBeLessThan(firstHilOrder);
-  });
-
-  it("does not turn a reclaimed HIL answer into a normal message", async () => {
-    let historyReads = 0;
-    let hilAttempts = 0;
-    sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
-      if (frame.call === "proc.history") {
-        historyReads++;
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: {
-            pendingHil: historyReads === 1
-              ? {
-                  requestId: "hil-finished",
-                  toolName: "Read",
-                  syscall: "fs.read",
-                  args: { path: "~/secret.txt" },
-                }
-              : null,
-          },
-        };
-      }
-      if (frame.call === "proc.hil") {
-        hilAttempts++;
-        if (hilAttempts === 1) throw new Error("response lost after commit");
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: { ok: false, error: "Pending tool confirmation not found: hil-finished" },
-        };
-      }
-      throw new Error(`Unexpected call: ${frame.call}`);
-    });
-    const ctx = makeContext({}, { upsert: vi.fn() }, { processState: "waiting_hil" });
-    const inbound = {
-      adapter: "telegram",
-      accountId: "bot",
-      message: {
-        messageId: "hil-no-normal-turn",
-        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-        surface: { kind: "dm" as const, id: "chat-1" },
-        actor: { id: "telegram:user:1" },
-        text: "deny hil[hil-finished]",
-      },
-    };
-
-    await expect(handleAdapterInbound(inbound, ctx)).rejects.toThrow("response lost after commit");
-    const result = await handleAdapterInbound(inbound, ctx);
-
-    expect(result.reply?.text).toBe("Denied. Continuing.");
-    expect(sendFrameToProcessMock.mock.calls.some(([, , frame]) => (
-      frame.call === "proc.adapter.deliver"
-    ))).toBe(false);
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-  });
-
-// SAFETY: test fixture is constructed with the asserted kernel domain shape.
-
-  it("adapter.inbound accepts approve always with remembered approval", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const service = {
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      adapterSetActivity: vi.fn(async () => ({ ok: true as const })),
-    };
-    // SAFETY: The mocked response is the exact process frame contract consumed by this test.
-    sendFrameToProcessMock
-      .mockResolvedValueOnce({
-        type: "res",
-        id: "history-1",
-        ok: true,
-        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-        data: {
-          pendingHil: {
-            requestId: "hil-3",
-            // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-            toolName: "Read",
-            syscall: "fs.read",
-            args: { path: "~/secret.txt", target: "gsv" },
-          },
-        },
-      })
-      .mockResolvedValueOnce({
-        type: "res",
-        id: "hil-3",
-        ok: true,
-        data: {
-          ok: true,
-          pid: "pid-1",
-          requestId: "hil-3",
-          decision: "approve",
-          resumed: true,
-          remembered: true,
-          pendingHil: null,
-        },
-      });
-
-    const status = { upsert: vi.fn() };
-    const ctx = makeContext(
-      {
-        CHANNEL_WHATSAPP: service,
-      },
-      status,
-      { processState: "waiting_hil" },
-    );
-
-    const result = await handleAdapterInbound(
-      {
-        adapter: "whatsapp",
-        accountId: "primary",
-        message: {
-          messageId: "msg-4",
-          surface: { kind: "dm", id: "dm-1" },
-          actor: { id: "wa:+123" },
-          text: "approve always hil[hil-3]",
-        },
-      },
-      ctx,
-    );
-
-    expect(result.reply?.text).toContain("remember");
-    expect(sendFrameToProcessMock).toHaveBeenNthCalledWith(
-      2,
-      TEST_INSTALLATION_ID,
-      "pid-1",
-      expect.objectContaining({
-        call: "proc.hil",
-        args: expect.objectContaining({
-          requestId: "hil-3",
-          decision: "approve",
-          remember: true,
-        }),
-      }),
-    );
-  });
-
   it("does not expose the removed /work command", async () => {
     const status = { upsert: vi.fn() };
     const ctx = makeContext({}, status, { routePid: null });
@@ -3645,69 +3163,6 @@ describe("adapter lifecycle handlers", () => {
     });
   });
 
-  it("correlates a tokened approval to waiting work after the DM returned to Ship", async () => {
-    const ctx = makeContext({}, { upsert: vi.fn() });
-    const personal = ctx.procs.get("pid-1")!;
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const work = {
-      ...personal,
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      processId: "proc:waiting-work",
-      isPersonalController: false,
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      state: "waiting_hil" as const,
-      activeRunId: "run-work",
-      interactive: false,
-    };
-    vi.mocked(ctx.procs.get).mockImplementation((pid: string) => (
-      pid === personal.processId ? personal : pid === work.processId ? work : null
-    ));
-    vi.mocked(ctx.procs.list).mockReturnValue([personal, work]);
-    sendFrameToProcessMock
-      .mockResolvedValueOnce({
-        type: "res",
-        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-        id: "history-work",
-        ok: true,
-        data: {
-          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-          pendingHil: {
-            requestId: "hil-work",
-            toolName: "Shell",
-            syscall: "shell.exec",
-            args: { input: "date" },
-          },
-        },
-      })
-      .mockResolvedValueOnce({
-        type: "res",
-        id: "approve-work",
-        ok: true,
-        data: { ok: true, pendingHil: null },
-      });
-
-    const result = await handleAdapterInbound({
-      adapter: "telegram",
-      accountId: "bot",
-      message: {
-        messageId: "approve-work-from-home",
-        surface: { kind: "dm", id: "chat-1" },
-        actor: { id: "telegram:user:1" },
-        text: "approve hil[hil-work]",
-      },
-    }, ctx);
-
-    expect(result.reply?.text).toBe("[WORK SESSION] Approved. Continuing.");
-    expect(sendFrameToProcessMock).toHaveBeenNthCalledWith(
-      2,
-      TEST_INSTALLATION_ID,
-      work.processId,
-      expect.objectContaining({ call: "proc.hil" }),
-    );
-    expect(ensurePersonalControllerMock).not.toHaveBeenCalled();
-    expect(ctx.adapters.surfaceRoutes.setRoute).not.toHaveBeenCalled();
-  });
-
   it("drains an active legacy DM route but clears it once idle", async () => {
     const route = {
       adapter: "telegram",
@@ -3741,7 +3196,12 @@ describe("adapter lifecycle handlers", () => {
       frame: any,
     ) => {
       if (frame.call === "proc.history") {
-        return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: { ok: true, pendingHil: null },
+        };
       }
       if (frame.call === "proc.adapter.deliver") {
         return {
@@ -4129,18 +3589,33 @@ describe("adapter lifecycle handlers", () => {
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       } as ReadableStream<Uint8Array>,
     };
-    const adapterSend = vi.fn(async (
-      _accountId: string,
-      _message: AdapterOutboundMessage,
-      forwardedBody: BinaryBody,
+    const adapterFrame: NonNullable<AdapterService["adapterFrame"]> = vi.fn(async (
+      _installation,
+      context,
+      frame,
     ) => {
-      expect(forwardedBody).toBe(body);
+      if (frame.type !== "req" || frame.call !== "adapter.send") {
+        throw new Error("Expected an adapter.send request frame");
+      }
+      expect(frame.body).toBe(body);
       expect(getReader).not.toHaveBeenCalled();
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      return { ok: true as const, messageId: "outbound-1" };
+      return {
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: {
+          ok: true,
+          adapter: "whatsapp",
+          accountId: context.accountId,
+          surfaceId: context.surface.id,
+          deliveryId: context.deliveryId,
+          messageId: "outbound-1",
+          deliveryState: "sent",
+        },
+      };
     });
     const ctx = makeContext({
-      CHANNEL_WHATSAPP: { adapterSend },
+      CHANNEL_WHATSAPP: { adapterFrame },
     }, { upsert: vi.fn() });
 
     const result = await handleAdapterSend({
@@ -4166,15 +3641,77 @@ describe("adapter lifecycle handlers", () => {
       messageId: "outbound-1",
       deliveryState: "sent",
     });
-    expect(adapterSend).toHaveBeenCalledWith(
-      "primary",
+    expect(adapterFrame).toHaveBeenCalledWith(
+      { installationId: TEST_INSTALLATION_ID },
       expect.objectContaining({
+        accountId: "primary",
+        deliveryId: "outbound-body-1",
         surface: { kind: "dm", id: "dm-1" },
-        media: [expect.objectContaining({ body: { offset: 0, length: 3 } })],
       }),
-      body,
+      expect.objectContaining({
+        type: "req",
+        call: "adapter.send",
+        body,
+        args: expect.objectContaining({
+          media: [expect.objectContaining({ body: { offset: 0, length: 3 } })],
+        }),
+      }),
     );
     expect(getReader).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("cancels an unconsumed body on a mismatched adapter frame response", async () => {
+    const cancel = vi.fn();
+    const responseBody: BinaryBody = {
+      length: 3,
+      stream: new ReadableStream<Uint8Array>({ cancel }),
+    };
+    const descriptor: AdapterServiceDescriptor = {
+      version: 1,
+      id: "telegram",
+      displayName: "Telegram",
+      capabilities: {
+        connect: true,
+        disconnect: true,
+        send: true,
+        status: true,
+        activity: true,
+        pairing: false,
+        surfaces: ["dm"],
+        media: { inbound: [], outbound: [] },
+      },
+    };
+    const adapterFrame: NonNullable<AdapterService["adapterFrame"]> = vi.fn(async (
+      _installation,
+      _context,
+      frame,
+    ) => ({
+      type: "res",
+      id: `${frame.id}:mismatched`,
+      ok: true,
+      data: { ok: true },
+      body: responseBody,
+    }));
+    const ctx = makeContext({
+      CHANNEL_TELEGRAM: {
+        adapterDescribe: vi.fn(async () => descriptor),
+        adapterFrame,
+      },
+    }, { upsert: vi.fn() });
+
+    await expect(handleAdapterSend({
+      adapter: "telegram",
+      accountId: "bot",
+      deliveryId: "frame-response-body-1",
+      surface: { kind: "dm", id: "chat-42" },
+      text: "hello",
+    }, ctx)).resolves.toEqual({
+      ok: false,
+      error: "Telegram delivery is temporarily unavailable",
+      deliveryId: "frame-response-body-1",
+      retryable: true,
+    });
     expect(cancel).toHaveBeenCalledOnce();
   });
 
@@ -4182,16 +3719,26 @@ describe("adapter lifecycle handlers", () => {
   it("rejects malformed send results without treating string flags as outcomes", async () => {
     const privatePayload = "private-send-payload";
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const ctx = makeContext({
-      CHANNEL_WHATSAPP: {
-        adapterSend: vi.fn(async () => ({
-          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-          ok: false as const,
+    const adapterFrame: NonNullable<AdapterService["adapterFrame"]> = vi.fn(async (
+      _installation,
+      _context,
+      frame,
+    ) => {
+      if (frame.type !== "req") throw new Error("Expected a request frame");
+      return {
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: {
+          ok: false,
           error: "provider failure",
           ambiguous: "yes",
           privatePayload,
-        })),
-      },
+        },
+      };
+    });
+    const ctx = makeContext({
+      CHANNEL_WHATSAPP: { adapterFrame },
     }, { upsert: vi.fn() });
 
     const result = await handleAdapterSend({
@@ -4204,13 +3751,13 @@ describe("adapter lifecycle handlers", () => {
 
     expect(result).toEqual({
       ok: false,
-      error: "Adapter returned an invalid send response: whatsapp",
+      error: "Adapter returned an invalid adapter.send response: whatsapp",
       deliveryId: "invalid-worker-result",
       retryable: false,
     });
     expect(JSON.stringify(result)).not.toContain(privatePayload);
     expect(errorLog).toHaveBeenCalledWith(
-      JSON.stringify({ component: "adapter", event: "send_invalid_response" }),
+      JSON.stringify({ component: "adapter", event: "send_frame_invalid_response" }),
     );
     errorLog.mockRestore();
   });
@@ -4246,10 +3793,9 @@ describe("adapter lifecycle handlers", () => {
   });
 
   it("accepts twenty outbound attachments and rejects a twenty-first", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "outbound-20" }));
+    const adapterFrame = successfulAdapterFrame("telegram", "outbound-20");
     const ctx = makeContext({
-      CHANNEL_TELEGRAM: { adapterSend },
+      CHANNEL_TELEGRAM: { adapterFrame },
     }, { upsert: vi.fn() });
     const media = Array.from({ length: 20 }, (_, index) => ({
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -4283,13 +3829,12 @@ describe("adapter lifecycle handlers", () => {
       error: "Adapter media exceeds item limit (20)",
       retryable: false,
     });
-    expect(adapterSend).toHaveBeenCalledTimes(1);
+    expect(adapterFrame).toHaveBeenCalledTimes(1);
   });
 
   it("allows one body-backed attachment to use the complete media byte budget", async () => {
     const maxBytes = 48 * 1024 * 1024;
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "outbound-48mib" }));
+    const adapterFrame = successfulAdapterFrame("telegram", "outbound-48mib");
     const cancel = vi.fn(async () => undefined);
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const body = {
@@ -4301,7 +3846,7 @@ describe("adapter lifecycle handlers", () => {
       } as ReadableStream<Uint8Array>,
     };
     const ctx = makeContext({
-      CHANNEL_TELEGRAM: { adapterSend },
+      CHANNEL_TELEGRAM: { adapterFrame },
     }, { upsert: vi.fn() });
 
     await expect(handleAdapterSend({
@@ -4316,14 +3861,13 @@ describe("adapter lifecycle handlers", () => {
         body: { offset: 0, length: maxBytes },
       }],
     }, ctx, body)).resolves.toMatchObject({ ok: true, messageId: "outbound-48mib" });
-    expect(adapterSend).toHaveBeenCalledOnce();
+    expect(adapterFrame).toHaveBeenCalledOnce();
     expect(cancel).toHaveBeenCalledOnce();
   });
 
   it("rejects an attachment larger than the complete media byte budget", async () => {
     const oversizedBytes = 48 * 1024 * 1024 + 1;
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "unexpected" }));
+    const adapterFrame = successfulAdapterFrame("telegram", "unexpected");
     const cancel = vi.fn(async () => undefined);
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const body = {
@@ -4335,7 +3879,7 @@ describe("adapter lifecycle handlers", () => {
       } as ReadableStream<Uint8Array>,
     };
     const ctx = makeContext({
-      CHANNEL_TELEGRAM: { adapterSend },
+      CHANNEL_TELEGRAM: { adapterFrame },
     }, { upsert: vi.fn() });
 
     await expect(handleAdapterSend({
@@ -4354,17 +3898,17 @@ describe("adapter lifecycle handlers", () => {
       error: `Adapter media body exceeds per-item limit (${oversizedBytes} bytes)`,
       retryable: false,
     });
-    expect(adapterSend).not.toHaveBeenCalled();
+    expect(adapterFrame).not.toHaveBeenCalled();
     expect(cancel).toHaveBeenCalledOnce();
   });
 
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it("classifies adapter service RPC throws as retryable transport failures", async () => {
-    const adapterSend = vi.fn(async () => {
+    const adapterFrame = vi.fn(async () => {
       throw new Error("service binding disconnected");
     });
     const ctx = makeContext({
-      CHANNEL_TELEGRAM: { adapterSend },
+      CHANNEL_TELEGRAM: { adapterFrame },
     }, { upsert: vi.fn() });
 
     const result = await handleAdapterSend({
@@ -4375,10 +3919,13 @@ describe("adapter lifecycle handlers", () => {
       text: "retry safely",
     }, ctx);
 
-    expect(adapterSend).toHaveBeenCalledWith(
-      "bot",
-      expect.objectContaining({ deliveryId: "retryable-delivery-1" }),
-      undefined,
+    expect(adapterFrame).toHaveBeenCalledWith(
+      { installationId: TEST_INSTALLATION_ID },
+      expect.objectContaining({
+        accountId: "bot",
+        deliveryId: "retryable-delivery-1",
+      }),
+      expect.objectContaining({ type: "req", call: "adapter.send" }),
     );
     expect(result).toEqual({
       ok: false,
@@ -4412,8 +3959,7 @@ describe("adapter lifecycle handlers", () => {
     patch,
     expectedError,
   ) => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
+    const adapterFrame = successfulAdapterFrame("telegram", "msg-1");
     const cancel = vi.fn(async () => undefined);
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const body = {
@@ -4424,7 +3970,7 @@ describe("adapter lifecycle handlers", () => {
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       } as ReadableStream<Uint8Array>,
     };
-    const ctx = makeContext({ CHANNEL_TELEGRAM: { adapterSend } }, { upsert: vi.fn() });
+    const ctx = makeContext({ CHANNEL_TELEGRAM: { adapterFrame } }, { upsert: vi.fn() });
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const args = {
       adapter: "telegram",
@@ -4440,18 +3986,17 @@ describe("adapter lifecycle handlers", () => {
       error: expectedError,
       retryable: false,
     });
-    expect(adapterSend).not.toHaveBeenCalled();
+    expect(adapterFrame).not.toHaveBeenCalled();
     expect(cancel).toHaveBeenCalledOnce();
   });
 
   it("denies adapter.send for non-root users without a linked account", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
+    const adapterFrame = successfulAdapterFrame("whatsapp", "msg-1");
     const status = {
       upsert: vi.fn(),
       list: vi.fn(() => []),
     };
-    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterSend } }, status, {
+    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterFrame } }, status, {
       identity: {
         role: "user",
         process: {
@@ -4477,17 +4022,16 @@ describe("adapter lifecycle handlers", () => {
     }, ctx);
 
     expect(result).toEqual({ ok: false, error: "Permission denied", retryable: false });
-    expect(adapterSend).not.toHaveBeenCalled();
+    expect(adapterFrame).not.toHaveBeenCalled();
   });
 
   it("allows adapter.send for non-root users with a linked account", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
+    const adapterFrame = successfulAdapterFrame("whatsapp", "msg-1");
     const status = {
       upsert: vi.fn(),
       list: vi.fn(() => []),
     };
-    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterSend } }, status, {
+    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterFrame } }, status, {
       identity: {
         role: "user",
         process: {
@@ -4530,27 +4074,28 @@ describe("adapter lifecycle handlers", () => {
       messageId: "msg-1",
       deliveryState: "sent",
     });
-    expect(adapterSend).toHaveBeenCalledWith(
-      "primary",
-      {
+    expect(adapterFrame).toHaveBeenCalledWith(
+      { installationId: TEST_INSTALLATION_ID },
+      expect.objectContaining({
+        accountId: "primary",
         deliveryId: "explicit-linked-1",
         surface: { kind: "dm", id: "wa:+123" },
-        text: "hello",
-        media: undefined,
-        replyToId: undefined,
-      },
-      undefined,
+      }),
+      expect.objectContaining({
+        type: "req",
+        call: "adapter.send",
+        args: expect.objectContaining({ text: "hello" }),
+      }),
     );
   });
 
   it("denies adapter.send to an unlinked surface on the same account", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
+    const adapterFrame = successfulAdapterFrame("whatsapp", "msg-1");
     const status = {
       upsert: vi.fn(),
       list: vi.fn(() => []),
     };
-    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterSend } }, status, {
+    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterFrame } }, status, {
       identity: {
         role: "user",
         process: {
@@ -4584,17 +4129,16 @@ describe("adapter lifecycle handlers", () => {
     }, ctx);
 
     expect(result).toEqual({ ok: false, error: "Permission denied", retryable: false });
-    expect(adapterSend).not.toHaveBeenCalled();
+    expect(adapterFrame).not.toHaveBeenCalled();
   });
 
   it("allows adapter.send to the linked challenge surface", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
+    const adapterFrame = successfulAdapterFrame("discord", "msg-1");
     const status = {
       upsert: vi.fn(),
       list: vi.fn(() => []),
     };
-    const ctx = makeContext({ CHANNEL_DISCORD: { adapterSend } }, status, {
+    const ctx = makeContext({ CHANNEL_DISCORD: { adapterFrame } }, status, {
       identity: {
         role: "user",
         process: {
@@ -4636,17 +4180,16 @@ describe("adapter lifecycle handlers", () => {
       accountId: "bot",
       messageId: "msg-1",
     }));
-    expect(adapterSend).toHaveBeenCalled();
+    expect(adapterFrame).toHaveBeenCalled();
   });
 
   it("allows adapter.send to a routed surface owned by the caller", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
+    const adapterFrame = successfulAdapterFrame("discord", "msg-1");
     const status = {
       upsert: vi.fn(),
       list: vi.fn(() => []),
     };
-    const ctx = makeContext({ CHANNEL_DISCORD: { adapterSend } }, status, {
+    const ctx = makeContext({ CHANNEL_DISCORD: { adapterFrame } }, status, {
       surfaceRoute: {
         adapter: "discord",
         accountId: "bot",
@@ -4698,12 +4241,11 @@ describe("adapter lifecycle handlers", () => {
       accountId: "bot",
       messageId: "msg-1",
     }));
-    expect(adapterSend).toHaveBeenCalled();
+    expect(adapterFrame).toHaveBeenCalled();
   });
 
   it("uses the caller owner uid when adapter.send runs from an agent process", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
+    const adapterFrame = successfulAdapterFrame("whatsapp", "msg-1");
     const listLinks = vi.fn(() => [{
       adapter: "whatsapp",
       accountId: "primary",
@@ -4717,7 +4259,7 @@ describe("adapter lifecycle handlers", () => {
       upsert: vi.fn(),
       list: vi.fn(() => []),
     };
-    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterSend } }, status, {
+    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterFrame } }, status, {
       callerOwnerUid: 1000,
       identity: {
         role: "user",
@@ -4750,12 +4292,11 @@ describe("adapter lifecycle handlers", () => {
       messageId: "msg-1",
     }));
     expect(listLinks).toHaveBeenCalledWith(1000);
-    expect(adapterSend).toHaveBeenCalled();
+    expect(adapterFrame).toHaveBeenCalled();
   });
 
   it("requires an explicit --also acknowledgement for the active reply destination", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-2" }));
+    const adapterFrame = successfulAdapterFrame("telegram", "msg-2");
     const link = {
       adapter: "telegram",
       accountId: "bot",
@@ -4765,7 +4306,7 @@ describe("adapter lifecycle handlers", () => {
       createdAt: 1,
       metadata: { surfaceKind: "dm", surfaceId: "chat-42" },
     };
-    const ctx = makeContext({ CHANNEL_TELEGRAM: { adapterSend } }, {
+    const ctx = makeContext({ CHANNEL_TELEGRAM: { adapterFrame } }, {
       upsert: vi.fn(),
       list: vi.fn(() => []),
     }, {
@@ -4803,7 +4344,7 @@ describe("adapter lifecycle handlers", () => {
       error: expect.stringContaining("directed endpoint"),
       retryable: false,
     });
-    expect(adapterSend).not.toHaveBeenCalled();
+    expect(adapterFrame).not.toHaveBeenCalled();
 
     await expect(handleAdapterSend({
       adapter: "telegram",
@@ -4812,16 +4353,28 @@ describe("adapter lifecycle handlers", () => {
       text: "intentional extra",
       also: true,
     }, ctx)).resolves.toEqual(expect.objectContaining({ ok: true, messageId: "msg-2" }));
-    expect(adapterSend).toHaveBeenCalledTimes(1);
+    expect(adapterFrame).toHaveBeenCalledTimes(1);
   });
 
   it("forwards reply threading and sanitizes directed message delivery failures", async () => {
-    const adapterSend = vi.fn(async () => ({
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      ok: false as const,
-      error: "Telegram API 400 chat_id=chat-42: raw provider response",
-      retryable: true,
-    }));
+    const adapterFrame: NonNullable<AdapterService["adapterFrame"]> = vi.fn(async (
+      _installation,
+      context,
+      frame,
+    ) => {
+      if (frame.type !== "req") throw new Error("Expected a request frame");
+      return {
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: {
+          ok: false,
+          error: "Telegram API 400 chat_id=chat-42: raw provider response",
+          deliveryId: context.deliveryId,
+          retryable: true,
+        },
+      };
+    });
     const link = {
       adapter: "telegram",
       accountId: "bot",
@@ -4832,7 +4385,7 @@ describe("adapter lifecycle handlers", () => {
       metadata: { surfaceKind: "dm", surfaceId: "chat-42" },
     };
     const ctx = makeContext({
-      CHANNEL_TELEGRAM: { adapterSend },
+      CHANNEL_TELEGRAM: { adapterFrame },
     }, { upsert: vi.fn() }, {
       identityLinks: { get: vi.fn(() => link) },
     });
@@ -4857,17 +4410,22 @@ describe("adapter lifecycle handlers", () => {
       ctx,
     );
 
-    expect(adapterSend).toHaveBeenCalledWith(
-      "bot",
-      {
+    expect(adapterFrame).toHaveBeenCalledWith(
+      { installationId: TEST_INSTALLATION_ID },
+      expect.objectContaining({
+        accountId: "bot",
+        actorId: "user-42",
         deliveryId: "run-1:finished",
         surface: { kind: "dm", id: "chat-42" },
-        actorId: "user-42",
-        text: "automatic reply",
-        media: undefined,
-        replyToId: "incoming-7",
-      },
-      undefined,
+      }),
+      expect.objectContaining({
+        type: "req",
+        call: "adapter.send",
+        args: expect.objectContaining({
+          text: "automatic reply",
+          replyToId: "incoming-7",
+        }),
+      }),
     );
     expect(result).toEqual({
       ok: false,
@@ -4878,10 +4436,9 @@ describe("adapter lifecycle handlers", () => {
   });
 
   it("rechecks the linked actor before delivering a directed message", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-3" }));
+    const adapterFrame = successfulAdapterFrame("telegram", "msg-3");
     const getLink = vi.fn(() => null);
-    const ctx = makeContext({ CHANNEL_TELEGRAM: { adapterSend } }, {
+    const ctx = makeContext({ CHANNEL_TELEGRAM: { adapterFrame } }, {
       upsert: vi.fn(),
       list: vi.fn(() => []),
     }, {
@@ -4903,7 +4460,7 @@ describe("adapter lifecycle handlers", () => {
       ok: false,
       error: "Adapter destination is not authorized",
     });
-    expect(adapterSend).not.toHaveBeenCalled();
+    expect(adapterFrame).not.toHaveBeenCalled();
   });
 });
 
@@ -5289,12 +4846,27 @@ describe("managed adapter pairing", () => {
     );
   });
 
-  it("advertises pairing only when the full managed lifecycle is available", async () => {
-    const full = pairingService();
-    const partial = { ...pairingService(), adapterPairingDisconnect: undefined };
+  it("advertises pairing from the adapter descriptor", async () => {
+    const describedService = (id: string, pairing: boolean) => ({
+      adapterDescribe: vi.fn(async (): Promise<AdapterServiceDescriptor> => ({
+        version: 1,
+        id,
+        displayName: id,
+        capabilities: {
+          connect: false,
+          disconnect: false,
+          send: true,
+          status: false,
+          activity: false,
+          pairing,
+          surfaces: ["dm"],
+          media: { inbound: [], outbound: [] },
+        },
+      })),
+    });
     const ctx = makeContext({
-      CHANNEL_TELEGRAM: full,
-      CHANNEL_DISCORD: partial,
+      CHANNEL_TELEGRAM: describedService("telegram", true),
+      CHANNEL_DISCORD: describedService("discord", false),
     }, {
       upsert: vi.fn(),
       listAll: vi.fn(() => []),

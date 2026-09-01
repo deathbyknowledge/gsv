@@ -108,12 +108,50 @@ describe("managed Telegram update normalization", () => {
     }))).toEqual({ kind: "ignored" });
   });
 
+  it("normalizes structured approval callbacks", () => {
+    expect(normalizeManagedTelegramUpdate({
+      update_id: 43,
+      callback_query: {
+        id: "callback-1",
+        from: { id: 12345, is_bot: false },
+        message: {
+          message_id: 8,
+          chat: { id: 12345, type: "private" },
+        },
+        data: "gsvh:abcdefghijklmnop:a",
+      },
+    })).toEqual({
+      kind: "approval",
+      callback: {
+        callbackQueryId: "callback-1",
+        actorId: "12345",
+        surfaceId: "12345",
+        providerMessageId: "8",
+        data: "gsvh:abcdefghijklmnop:a",
+      },
+    });
+  });
+
   it("rejects malformed envelopes and ignores unrelated update types", () => {
     expect(normalizeManagedTelegramUpdate(null)).toEqual({ kind: "invalid" });
     expect(normalizeManagedTelegramUpdate({ update_id: 1, message: null })).toEqual({
       kind: "invalid",
     });
     expect(normalizeManagedTelegramUpdate({ update_id: 1, callback_query: {} })).toEqual({
+      kind: "invalid",
+    });
+    expect(normalizeManagedTelegramUpdate({
+      update_id: 1,
+      callback_query: {
+        id: "callback-1",
+        from: { id: 12345, is_bot: false },
+        message: {
+          message_id: 8,
+          chat: { id: 12345, type: "private" },
+        },
+        data: "someone-else:action",
+      },
+    })).toEqual({
       kind: "ignored",
     });
   });

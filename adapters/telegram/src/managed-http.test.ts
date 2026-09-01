@@ -107,11 +107,45 @@ describe("managed Telegram HTTP boundary", () => {
     );
     expect(response.status).toBe(200);
     expect(idFromName).toHaveBeenCalledWith("managed:12345");
-    expect(handleWebhook).toHaveBeenCalledWith(expect.objectContaining({
-      actorId: "12345",
-      surfaceId: "12345",
-      deliveryId: "update:0000000000000042",
-    }));
+    expect(handleWebhook).toHaveBeenCalledWith({
+      kind: "message",
+      inbound: expect.objectContaining({
+        actorId: "12345",
+        surfaceId: "12345",
+        deliveryId: "update:0000000000000042",
+      }),
+    });
+  });
+
+  it("routes an approval callback as a structured peer event", async () => {
+    const { env, idFromName, handleWebhook } = makeEnv();
+    const response = await handleManagedTelegramRequest(
+      webhookRequest(JSON.stringify({
+        update_id: 43,
+        callback_query: {
+          id: "callback-1",
+          from: { id: 12345, is_bot: false },
+          message: {
+            message_id: 8,
+            chat: { id: 12345, type: "private" },
+          },
+          data: "gsvh:abcdefghijklmnop:o",
+        },
+      })),
+      env,
+    );
+    expect(response.status).toBe(200);
+    expect(idFromName).toHaveBeenCalledWith("managed:12345");
+    expect(handleWebhook).toHaveBeenCalledWith({
+      kind: "approval",
+      callback: {
+        callbackQueryId: "callback-1",
+        actorId: "12345",
+        surfaceId: "12345",
+        providerMessageId: "8",
+        data: "gsvh:abcdefghijklmnop:o",
+      },
+    });
   });
 
   it("asks Telegram to retry when the peer cannot durably enqueue the update", async () => {

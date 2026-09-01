@@ -4,14 +4,13 @@ import type {
   AdapterAccountStatus,
   AdapterInstallationContext,
   AdapterMedia,
-  AdapterOutboundMessage,
+  AdapterDeliveryContext,
   AdapterPairingCandidate,
   AdapterPairingPreparation,
   AdapterPairingWorkerInterface,
   AdapterService,
   AdapterServiceDescriptor,
   AdapterSurface,
-  AdapterWorkerInterface,
 } from "../adapter-interface";
 import type {
   AdapterConnectArgs,
@@ -42,23 +41,22 @@ import type {
   AdapterStatusResult,
   AdapterWorkerConnectResult,
   AdapterWorkerDisconnectResult,
-  AdapterWorkerSendResult,
   BinaryBody,
   ProcListResult,
   ResourceBlock,
   ProcessIdentity,
   ConversationMessageOrigin,
-  JsonObject,
   JsonValue,
 } from "@humansandmachines/gsv/protocol";
 import {
+  binaryBodySchema,
   cancelBinaryBody,
   consumeAdapterMediaBodyParts,
   adapterAccountStatusSchema,
   adapterWorkerActivityResultSchema,
   adapterWorkerConnectResultSchema,
   adapterWorkerDisconnectResultSchema,
-  adapterWorkerSendResultSchema,
+  adapterSendResultSchema,
   adapterSurfaceSchema,
   validateAdapterMediaBody,
 } from "@humansandmachines/gsv/protocol";
@@ -112,28 +110,6 @@ import {
   renderAdapterProcessList,
 } from "./adapter-commands";
 
-type LegacyStandaloneAdapterService = {
-  adapterConnect(
-    accountId: string,
-    config?: AdapterConnectConfig,
-  ): ReturnType<AdapterWorkerInterface["adapterConnect"]>;
-  adapterDisconnect(
-    accountId: string,
-  ): ReturnType<AdapterWorkerInterface["adapterDisconnect"]>;
-  adapterSend(
-    accountId: string,
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ): ReturnType<AdapterWorkerInterface["adapterSend"]>;
-  adapterSetActivity(
-    accountId: string,
-    surface: AdapterSurface,
-    activity: AdapterActivity,
-  ): ReturnType<AdapterWorkerInterface["adapterSetActivity"]>;
-  adapterStatus(
-    accountId?: string,
-  ): ReturnType<AdapterWorkerInterface["adapterStatus"]>;
-};
 type AdapterTargetServiceBinding = {
   adapterTargetList(
     ...args: Parameters<NonNullable<AdapterService["adapterTargetList"]>>
@@ -146,22 +122,31 @@ type AdapterTargetServiceBinding = {
   ): Promise<AdapterTargetCancelResult & Disposable>;
 };
 export type AdapterServiceBinding = Fetcher
-  & Partial<Pick<AdapterService, "adapterDescribe">>
+  & Partial<Omit<
+    AdapterService,
+    "adapterTargetList" | "adapterTargetExecute" | "adapterTargetCancel"
+  >>
   & Partial<AdapterTargetServiceBinding>
-  & Partial<AdapterWorkerInterface>
-  & Partial<AdapterPairingWorkerInterface>
-  & Partial<LegacyStandaloneAdapterService>;
+  & Partial<AdapterPairingWorkerInterface>;
 type AdapterBindingEnv = GatewayEnv & Record<
   `CHANNEL_${string}`,
   AdapterServiceBinding | undefined
 >;
 const adapterStatusListSchema = z.array(adapterAccountStatusSchema);
+const adapterFrameBodySchema = z.object({ body: binaryBodySchema });
 type AdapterCommandResult = {
   handled: boolean;
   reply?: {
     text: string;
     replyToId?: string;
   };
+};
+export type AdapterDeliveryPresentation = {
+  processId: string;
+  runId: string;
+  processMode?: AdapterDeliveryContext["processMode"];
+  shipDisplaced?: boolean;
+  hil?: AdapterDeliveryContext["hil"];
 };
 type AdapterInboundDisposition = Omit<
   AdapterInboundSyscallResult,
@@ -177,14 +162,6 @@ type AdapterInboundDisposition = Omit<
     expiresAt: number;
   };
 };
-type HilDecision = {
-  decision: "approve" | "deny";
-  remember: boolean;
-};
-type ParsedHilDecision = HilDecision & {
-  requestToken?: string;
-};
-const ADAPTER_HIL_MAIL_DETAIL_MAX_CHARS = 160;
 type AdapterIngressProcessRecovery = {
   kind: "process_delivery";
   uid: number;
@@ -196,13 +173,6 @@ type AdapterIngressProcessRecovery = {
   conversationId?: string;
   inputMessageId?: string;
   messageCreatedAt?: number;
-};
-type AdapterIngressHilRecovery = {
-  kind: "hil_decision";
-  pid: string;
-  requestId: string;
-  decision: "approve" | "deny";
-  remember: boolean;
 };
 type AdapterIngressWorkReturnRecovery = {
   kind: "work_return";
@@ -220,14 +190,7 @@ type AdapterIngressWorkReturnRecovery = {
 };
 type AdapterIngressRecovery =
   | AdapterIngressProcessRecovery
-  | AdapterIngressHilRecovery
   | AdapterIngressWorkReturnRecovery;
-export type AdapterHilRequest = {
-  requestId: string;
-  toolName: string;
-  syscall: string;
-  args: JsonObject;
-};
 
 const pairingInfoSchema = z.object({
   accountId: z.string().check(z.minLength(1)),
@@ -290,13 +253,6 @@ const adapterInteractionOriginSchema = z.object({
 });
 const adapterIngressRecoverySchema = z.discriminatedUnion("kind", [
   z.object({
-    kind: z.literal("hil_decision"),
-    pid: z.string(),
-    requestId: z.string(),
-    decision: z.enum(["approve", "deny"]),
-    remember: z.boolean(),
-  }),
-  z.object({
     kind: z.literal("process_delivery"),
     uid: z.number().check(z.int(), z.nonnegative()),
     pid: z.string(),
@@ -323,15 +279,6 @@ const adapterIngressRecoverySchema = z.discriminatedUnion("kind", [
     }),
   }),
 ]);
-const adapterHilRequestSchema = z.object({
-  requestId: z.string(),
-  toolName: z.string(),
-  syscall: z.string(),
-  args: z.record(z.string(), z.json()),
-  runId: z.optional(z.string()),
-  callId: z.optional(z.string()),
-});
-type AdapterHilRequestInput = Parameters<typeof adapterHilRequestSchema.safeParse>[0];
 const adapterSurfaceKindSchema = z.enum(["dm", "group", "channel", "thread"]);
 const optionalStringSchema = z.optional(z.string());
 const optionalBooleanSchema = z.optional(z.boolean());
@@ -873,6 +820,7 @@ export async function deliverAdapterDestination(
   },
   ctx: KernelContext,
   body?: BinaryBody,
+  presentation?: AdapterDeliveryPresentation,
 ): Promise<AdapterSendResult> {
   let normalized: AdapterMessageDestination;
   try {
@@ -892,7 +840,7 @@ export async function deliverAdapterDestination(
     actorId: normalized.actorId,
     surface: normalized.surface,
     ...message,
-  }, ctx, body);
+  }, ctx, body, presentation);
 }
 
 async function deliverAdapterMessage(
@@ -902,10 +850,11 @@ async function deliverAdapterMessage(
   },
   ctx: KernelContext,
   body?: BinaryBody,
+  presentation?: AdapterDeliveryPresentation,
 ): Promise<AdapterSendResult> {
   const startedAt = Date.now();
   try {
-    const result = await deliverAdapterMessageOwned(args, ctx, body);
+    const result = await deliverAdapterMessageOwned(args, ctx, body, presentation);
     emitTelemetry(ctx.env, {
       installationId: ctx.installationId,
       component: "gateway",
@@ -951,6 +900,7 @@ async function deliverAdapterMessageOwned(
   },
   ctx: KernelContext,
   body?: BinaryBody,
+  presentation?: AdapterDeliveryPresentation,
 ): Promise<AdapterSendResult> {
   const adapter = args.adapter.trim().toLowerCase();
   const accountId = args.accountId.trim();
@@ -979,7 +929,7 @@ async function deliverAdapterMessageOwned(
   }
 
   const service = resolveAdapterService(ctx.env, adapter);
-  if (!service?.adapterSend) {
+  if (!service?.adapterFrame) {
     await cancelBinaryBody(body, `Adapter service unavailable: ${adapter}`);
     return {
       ok: false,
@@ -1006,31 +956,89 @@ async function deliverAdapterMessageOwned(
     };
   }
 
-  const outbound: AdapterOutboundMessage = {
+  const context: AdapterDeliveryContext = {
     deliveryId,
+    accountId,
     surface: args.surface,
-    text: args.text,
-    media: args.media,
-    replyToId: args.replyToId,
+    ...presentation,
   };
-  if (args.actorId) outbound.actorId = args.actorId;
-  if (routeGeneration !== undefined) outbound.routeGeneration = routeGeneration;
-
-  let result: AdapterWorkerSendResult;
+  if (args.actorId) context.actorId = args.actorId;
+  if (routeGeneration !== undefined) context.routeGeneration = routeGeneration;
+  const request: RequestFrame<"adapter.send"> = {
+    type: "req",
+    id: crypto.randomUUID(),
+    call: "adapter.send",
+    args: {
+      adapter,
+      accountId,
+      deliveryId,
+      surface: args.surface,
+      text: args.text,
+      ...(args.replyToId === undefined ? undefined : { replyToId: args.replyToId }),
+      ...(args.media === undefined ? undefined : { media: args.media }),
+    },
+    ...(body === undefined ? undefined : { body }),
+  };
+  let responseBody: BinaryBody | undefined;
   try {
-    const decoded = adapterWorkerSendResultSchema.safeParse(
-      await callAdapterSend(service, ctx.installationId, accountId, outbound, body),
+    const response = await service.adapterFrame(
+      { installationId: ctx.installationId },
+      context,
+      request,
     );
-    if (!decoded.success) {
-      logAdapterBoundaryFailure("error", "send_invalid_response");
+    const parsedBody = adapterFrameBodySchema.safeParse(response);
+    if (parsedBody.success) responseBody = parsedBody.data.body;
+    if (!response || response.type !== "res" || response.id !== request.id) {
       return {
         ok: false,
-        error: `Adapter returned an invalid send response: ${adapter}`,
+        error: publicAdapterDeliveryError(adapter, true),
+        deliveryId,
+        retryable: true,
+      };
+    }
+    if (!response.ok) {
+      const retryable = response.error?.retryable === true;
+      return {
+        ok: false,
+        error: publicAdapterDeliveryError(adapter, retryable),
+        deliveryId,
+        retryable,
+      };
+    }
+    const decoded = adapterSendResultSchema.safeParse(response.data);
+    if (!decoded.success) {
+      logAdapterBoundaryFailure("error", "send_frame_invalid_response");
+      return {
+        ok: false,
+        error: `Adapter returned an invalid adapter.send response: ${adapter}`,
         deliveryId,
         retryable: false,
       };
     }
-    result = decoded.data;
+    const result = decoded.data;
+    if (!result.ok) {
+      return {
+        ok: false,
+        error: publicAdapterDeliveryError(adapter, result.retryable === true),
+        deliveryId,
+        retryable: result.retryable === true,
+      };
+    }
+    if (
+      result.adapter !== adapter
+      || result.accountId !== accountId
+      || result.surfaceId !== args.surface.id
+      || result.deliveryId !== deliveryId
+    ) {
+      logAdapterBoundaryFailure("error", "send_frame_mismatched_response");
+      return {
+        ok: false,
+        error: `Adapter returned a mismatched adapter.send response: ${adapter}`,
+        deliveryId,
+        retryable: false,
+      };
+    }
+    return result;
   } catch {
     return {
       ok: false,
@@ -1039,36 +1047,13 @@ async function deliverAdapterMessageOwned(
       retryable: true,
     };
   } finally {
-    await cancelBinaryBody(body, "adapter.send completed");
+    await Promise.all([
+      cancelBinaryBody(responseBody, "adapter.send response body is unsupported"),
+      responseBody === body
+        ? Promise.resolve()
+        : cancelBinaryBody(body, "adapter.send frame completed"),
+    ]);
   }
-  if (!result.ok) {
-    if (result.ambiguous) {
-      return {
-        ok: true,
-        adapter,
-        accountId,
-        surfaceId: args.surface.id,
-        deliveryId,
-        deliveryState: "ambiguous",
-      };
-    }
-    return {
-      ok: false,
-      error: publicAdapterDeliveryError(adapter, result.retryable === true),
-      deliveryId,
-      retryable: result.retryable === true,
-    };
-  }
-
-  return {
-    ok: true,
-    adapter,
-    accountId,
-    surfaceId: args.surface.id,
-    deliveryId,
-    messageId: result.messageId,
-    deliveryState: result.deduplicated ? "deduplicated" : "sent",
-  };
 }
 
 function publicAdapterDeliveryError(adapter: string, retryable: boolean): string {
@@ -1623,16 +1608,6 @@ async function resolveClaimedAdapterInbound(input: {
       checkpoint: { receiptId, claimToken },
     });
   }
-  if (recovery?.kind === "hil_decision") {
-    return deliverAdapterHilDecision({
-      adapter,
-      accountId,
-      message,
-      ctx,
-      recovery,
-      reconciling: true,
-    });
-  }
   if (recovery?.kind === "work_return") {
     if (recovery.uid !== uid) {
       return { ok: false, error: "Adapter ingress owner changed during recovery" };
@@ -1671,88 +1646,16 @@ async function resolveClaimedAdapterInbound(input: {
     return disposition;
   }
 
-  const parsedDecision = message.surface.kind === "dm"
-    ? parseHilDecision(message.text)
-    : null;
-  let pid: string;
-  let pendingHil: AdapterHilRequest | null;
-  if (parsedDecision?.requestToken) {
-    const correlated = await findPendingHilDecisionTarget(
-      uid,
-      parsedDecision.requestToken,
-      ctx,
-    );
-    if (correlated.kind !== "found") {
-      return {
-        ok: true,
-        reply: {
-          text: correlated.kind === "ambiguous"
-            ? "I found more than one pending approval with that token. Open Chat to resolve it safely."
-            : "I could not find a pending approval with that token. Use the token from the latest approval prompt.",
-          replyToId: message.messageId,
-        },
-      };
-    }
-    pid = correlated.pid;
-    pendingHil = correlated.pending;
-  } else {
-    pid = await resolveAdapterRoute(
-      adapter,
-      accountId,
-      actorId,
-      message.surface,
-      uid,
-      receiptId,
-      userIdentity,
-      ctx,
-    );
-    pendingHil = await getPendingHil(ctx.installationId, pid);
-  }
-  if (pendingHil) {
-    const decision = parsedDecision?.requestToken === adapterHilRequestToken(pendingHil.requestId)
-      ? parsedDecision
-      : null;
-
-    if (!decision) {
-      return {
-        ok: true,
-        reply: {
-          text: prefixAdapterDmProcessReply(
-            parsedDecision
-              ? renderAdapterHilCorrelationFailure(pendingHil, message.surface.kind)
-              : renderAdapterHilPrompt(pendingHil, message.surface.kind, "reminder"),
-            pid,
-            {
-              kind: "adapter",
-              adapter,
-              accountId,
-              actorId,
-              surface: message.surface,
-            },
-            ctx,
-          ),
-          replyToId: message.messageId,
-        },
-      };
-    }
-
-    const hilRecovery: AdapterIngressHilRecovery = {
-      kind: "hil_decision",
-      pid,
-      requestId: pendingHil.requestId,
-      decision: decision.decision,
-      remember: decision.remember,
-    };
-    ctx.adapters.ingressReceipts.checkpoint(receiptId, claimToken, hilRecovery);
-    return deliverAdapterHilDecision({
-      adapter,
-      accountId,
-      message,
-      ctx,
-      recovery: hilRecovery,
-      reconciling: false,
-    });
-  }
+  const pid = await resolveAdapterRoute(
+    adapter,
+    accountId,
+    actorId,
+    message.surface,
+    uid,
+    receiptId,
+    userIdentity,
+    ctx,
+  );
   return deliverAdapterInboundToProcess({
     adapter,
     accountId,
@@ -1765,110 +1668,6 @@ async function resolveClaimedAdapterInbound(input: {
     ctx,
     checkpoint: { receiptId, claimToken },
   });
-}
-
-async function deliverAdapterHilDecision(input: {
-  adapter: string;
-  accountId: string;
-  message: AdapterInboundMessage;
-  ctx: KernelContext;
-  recovery: AdapterIngressHilRecovery;
-  reconciling: boolean;
-}): Promise<AdapterInboundDisposition> {
-  const { adapter, accountId, message, ctx, recovery, reconciling } = input;
-  const request: RequestFrame<"proc.hil"> = {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.hil",
-    args: {
-      pid: recovery.pid,
-      requestId: recovery.requestId,
-      decision: recovery.decision,
-      remember: recovery.remember,
-    },
-  };
-  const response = await sendFrameToProcess(ctx.installationId, recovery.pid, request);
-
-  if (!response || response.type !== "res") {
-    throw new Error("No response from process");
-  }
-  if (!response.ok) {
-    // A Process error envelope does not prove whether the durable decision was
-    // committed. Leave the checkpoint reclaimable and retry the same request.
-    throw new Error(response.error.message);
-  }
-
-  const data = response.data;
-  if (data?.ok === false) {
-    if (!reconciling) {
-      return { ok: false, error: data.error || "Process rejected approval" };
-    }
-
-    // The earlier attempt may have committed and cleared this request before
-    // its response was lost. Query current state, but never apply the old
-    // YES/DENY to a newer approval or turn it into ordinary conversation text.
-    const current = await getPendingHil(ctx.installationId, recovery.pid);
-    if (current?.requestId === recovery.requestId) {
-      throw new Error(data.error || "Process has not reconciled approval yet");
-    }
-    if (current) {
-      return {
-        ok: true,
-        reply: {
-          text: prefixAdapterDmProcessReply(
-            renderAdapterHilPrompt(current, message.surface.kind, "reminder"),
-            recovery.pid,
-            adapterDestinationForInbound(adapter, accountId, message),
-            ctx,
-          ),
-          replyToId: message.messageId,
-        },
-      };
-    }
-    return adapterHilDecisionAcknowledgement(message, recovery, ctx, adapter, accountId);
-  }
-
-  const nextPendingHil = normalizeAdapterHilRequest(data?.pendingHil);
-  if (nextPendingHil) {
-    return {
-      ok: true,
-      reply: {
-        text: prefixAdapterDmProcessReply(
-          renderAdapterHilPrompt(nextPendingHil, message.surface.kind, "reminder"),
-          recovery.pid,
-          adapterDestinationForInbound(adapter, accountId, message),
-          ctx,
-        ),
-        replyToId: message.messageId,
-      },
-    };
-  }
-  return adapterHilDecisionAcknowledgement(message, recovery, ctx, adapter, accountId);
-}
-
-function adapterHilDecisionAcknowledgement(
-  message: AdapterInboundMessage,
-  recovery: AdapterIngressHilRecovery,
-  ctx: KernelContext,
-  adapter: string,
-  accountId: string,
-): AdapterInboundDisposition {
-  return {
-    ok: true,
-    reply: {
-      text: prefixAdapterDmProcessReply(
-        recovery.decision === "approve"
-          ? recovery.remember
-            ? "Approved. I will remember this for this conversation."
-            : "Approved. Continuing."
-          : "Denied. Continuing.",
-        recovery.pid,
-        adapterDestinationForInbound(adapter, accountId, message),
-        ctx,
-      ),
-      replyToId: message.messageId,
-    },
-  };
 }
 
 async function deliverAdapterInboundToProcess(input: {
@@ -2358,19 +2157,12 @@ function adapterListEntry(
     adapter,
     available: service !== null,
     descriptor: descriptor ?? undefined,
-    supportsConnect: capabilities?.connect ?? service?.adapterConnect !== undefined,
-    supportsDisconnect: capabilities?.disconnect ?? service?.adapterDisconnect !== undefined,
-    supportsSend: capabilities?.send ?? service?.adapterSend !== undefined,
-    supportsStatus: capabilities?.status ?? service?.adapterStatus !== undefined,
-    supportsActivity: capabilities?.activity ?? service?.adapterSetActivity !== undefined,
-    supportsPairing: capabilities?.pairing ?? (
-      service?.adapterPairingInfo !== undefined
-        && service.adapterPairingInspect !== undefined
-        && service.adapterPairingPrepare !== undefined
-        && service.adapterPairingActivate !== undefined
-        && service.adapterPairingFinalize !== undefined
-        && service.adapterPairingDisconnect !== undefined
-    ),
+    supportsConnect: capabilities?.connect ?? false,
+    supportsDisconnect: capabilities?.disconnect ?? false,
+    supportsSend: capabilities?.send ?? false,
+    supportsStatus: capabilities?.status ?? false,
+    supportsActivity: capabilities?.activity ?? false,
+    supportsPairing: capabilities?.pairing ?? false,
     accounts: [],
   };
 }
@@ -2499,9 +2291,7 @@ function callAdapterConnect(
   accountId: string,
   config?: AdapterConnectConfig,
 ) {
-  return ctx.installationId === SINGLETON_INSTALLATION_ID
-    ? service.adapterConnect!(accountId, config)
-    : service.adapterConnect!(adapterInstallationContext(ctx), accountId, config);
+  return service.adapterConnect!(adapterInstallationContext(ctx), accountId, config);
 }
 
 function callAdapterDisconnect(
@@ -2509,21 +2299,7 @@ function callAdapterDisconnect(
   ctx: KernelContext,
   accountId: string,
 ) {
-  return ctx.installationId === SINGLETON_INSTALLATION_ID
-    ? service.adapterDisconnect!(accountId)
-    : service.adapterDisconnect!(adapterInstallationContext(ctx), accountId);
-}
-
-function callAdapterSend(
-  service: AdapterServiceBinding,
-  installationId: KernelContext["installationId"],
-  accountId: string,
-  message: AdapterOutboundMessage,
-  body?: BinaryBody,
-) {
-  return installationId === SINGLETON_INSTALLATION_ID
-    ? service.adapterSend!(accountId, message, body)
-    : service.adapterSend!({ installationId }, accountId, message, body);
+  return service.adapterDisconnect!(adapterInstallationContext(ctx), accountId);
 }
 
 function callAdapterSetActivity(
@@ -2533,9 +2309,7 @@ function callAdapterSetActivity(
   surface: AdapterSurface,
   activity: AdapterActivity,
 ) {
-  return installationId === SINGLETON_INSTALLATION_ID
-    ? service.adapterSetActivity!(accountId, surface, activity)
-    : service.adapterSetActivity!({ installationId }, accountId, surface, activity);
+  return service.adapterSetActivity!({ installationId }, accountId, surface, activity);
 }
 
 function callAdapterStatus(
@@ -2543,9 +2317,7 @@ function callAdapterStatus(
   ctx: KernelContext,
   accountId?: string,
 ) {
-  return ctx.installationId === SINGLETON_INSTALLATION_ID
-    ? service.adapterStatus!(accountId)
-    : service.adapterStatus!(adapterInstallationContext(ctx), accountId);
+  return service.adapterStatus!(adapterInstallationContext(ctx), accountId);
 }
 
 function requirePairingService(
@@ -3008,13 +2780,29 @@ async function shouldDrainLegacyDmRoute(
   if (processHasUnfinishedWork(process)) {
     return true;
   }
-  const inspection = await inspectPendingHil(ctx.installationId, process.processId);
-  if (!inspection.ok) {
+  const pendingHil = await processHasPendingHil(ctx.installationId, process.processId);
+  if (pendingHil === null) {
     return true;
   }
   const current = ctx.procs.get(process.processId);
   return current !== null
-    && (processHasUnfinishedWork(current) || inspection.pending !== null);
+    && (processHasUnfinishedWork(current) || pendingHil);
+}
+
+async function processHasPendingHil(
+  installationId: KernelContext["installationId"],
+  pid: string,
+): Promise<boolean | null> {
+  const response = await sendFrameToProcess(installationId, pid, {
+    type: "req",
+    id: crypto.randomUUID(),
+    call: "proc.history",
+    args: { pid, limit: 1, offset: 0 },
+  });
+  if (!response || response.type !== "res" || !response.ok || !response.data?.ok) {
+    return null;
+  }
+  return response.data.pendingHil !== null && response.data.pendingHil !== undefined;
 }
 
 type RunnableAgent = {
@@ -3087,20 +2875,6 @@ export function prefixAdapterDmProcessReply(
   return text;
 }
 
-function adapterDestinationForInbound(
-  adapter: string,
-  accountId: string,
-  message: AdapterInboundMessage,
-): AdapterMessageDestination {
-  return {
-    kind: "adapter",
-    adapter,
-    accountId,
-    actorId: resolveActorId(message) ?? message.surface.id,
-    surface: message.surface,
-  };
-}
-
 function adapterPrivateActivityAt(timestamp: number | undefined): number {
   const now = Date.now();
   return timestamp !== undefined && Number.isSafeInteger(timestamp) && timestamp > 0
@@ -3145,219 +2919,4 @@ function adapterInteractionOrigin(
   const messageId = message.messageId.trim();
   if (messageId) origin.messageId = messageId;
   return origin;
-}
-
-async function getPendingHil(
-  installationId: KernelContext["installationId"],
-  pid: string,
-): Promise<AdapterHilRequest | null> {
-  const inspection = await inspectPendingHil(installationId, pid);
-  return inspection.ok ? inspection.pending : null;
-}
-
-async function inspectPendingHil(
-  installationId: KernelContext["installationId"],
-  pid: string,
-): Promise<{ ok: true; pending: AdapterHilRequest | null } | { ok: false }> {
-  const response = await sendFrameToProcess(installationId, pid, {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.history",
-    args: { pid, limit: 1, offset: 0 },
-  });
-
-  if (!response || response.type !== "res" || !response.ok) {
-    return { ok: false };
-  }
-
-  const data = response.data;
-  if (data?.ok === false) {
-    return { ok: false };
-  }
-  return { ok: true, pending: normalizeAdapterHilRequest(data?.pendingHil) };
-}
-
-async function findPendingHilDecisionTarget(
-  ownerUid: number,
-  requestToken: string,
-  ctx: KernelContext,
-): Promise<
-  | { kind: "found"; pid: string; pending: AdapterHilRequest }
-  | { kind: "missing" }
-  | { kind: "ambiguous" }
-> {
-  const candidates = ctx.procs.list(ownerUid).filter((process) => (
-    process.state === "waiting_hil"
-  ));
-  const inspected = await Promise.all(candidates.map(async (process) => ({
-    process,
-    inspection: await inspectPendingHil(ctx.installationId, process.processId),
-  })));
-  const matches = inspected.filter(({ inspection }) => (
-    inspection.ok
-    && inspection.pending !== null
-    && adapterHilRequestToken(inspection.pending.requestId) === requestToken
-  ));
-  if (matches.length === 0) {
-    return { kind: "missing" };
-  }
-  if (matches.length > 1) {
-    return { kind: "ambiguous" };
-  }
-  const match = matches[0];
-  if (!match.inspection.ok || !match.inspection.pending) {
-    return { kind: "missing" };
-  }
-  return {
-    kind: "found",
-    pid: match.process.processId,
-    pending: match.inspection.pending,
-  };
-}
-
-export function normalizeAdapterHilRequest(
-  value: AdapterHilRequestInput,
-  source: "pending" | "signal" = "pending",
-): AdapterHilRequest | null {
-  const parsed = adapterHilRequestSchema.safeParse(value);
-  if (!parsed.success) {
-    return null;
-  }
-  const record = parsed.data;
-  if (source === "signal" && (!record.runId || !record.callId)) return null;
-  return {
-    requestId: record.requestId,
-    toolName: record.toolName,
-    syscall: record.syscall,
-    args: record.args,
-  };
-}
-
-function parseHilDecision(text: string): ParsedHilDecision | null {
-  const normalized = text.trim().replace(/[.!?]+$/g, "");
-  const match = /^(approve\s+always|allow\s+always|yes\s+always|always\s+approve|always\s+allow|approve|allow|yes|deny|reject|no)(?:\s+(\S+))?$/i.exec(normalized);
-  if (!match) return null;
-
-  const phrase = match[1].toLowerCase().replace(/\s+/g, " ");
-  const decision = phrase === "deny" || phrase === "reject" || phrase === "no"
-    ? "deny"
-    : "approve";
-  const decisionResult: ParsedHilDecision = {
-    decision,
-    remember: decision === "approve" && phrase.includes("always"),
-  };
-  if (match[2]) decisionResult.requestToken = match[2];
-  return decisionResult;
-}
-
-function adapterHilRequestToken(requestId: string): string {
-  return `hil[${requestId}]`;
-}
-
-function renderAdapterHilCorrelationFailure(
-  pendingHil: AdapterHilRequest,
-  surfaceKind: AdapterSurface["kind"],
-): string {
-  return [
-    "I couldn\u2019t verify that approval response was for the current request.",
-    "",
-    renderAdapterHilPrompt(pendingHil, surfaceKind, "reminder"),
-  ].join("\n");
-}
-
-export function renderAdapterHilPrompt(
-  pendingHil: AdapterHilRequest,
-  surfaceKind: AdapterSurface["kind"],
-  phase: "initial" | "reminder",
-): string {
-  const action = summarizeAdapterHilRequest(pendingHil);
-  const requestToken = adapterHilRequestToken(pendingHil.requestId);
-  const responseLine = surfaceKind === "dm"
-    ? phase === "initial"
-      ? `Reply "approve ${requestToken}" to continue, "approve always ${requestToken}" to remember it for this conversation, or "deny ${requestToken}" to stop this action.`
-      : `Reply "approve ${requestToken}", "deny ${requestToken}", or "approve always ${requestToken}" to continue.`
-    : "Open Chat to approve or deny this action.";
-  return [
-    phase === "initial"
-      ? "I need your confirmation before I can continue."
-      : "I’m waiting for confirmation before I can continue.",
-    "",
-    action,
-    "",
-    responseLine,
-  ].join("\n");
-}
-
-function summarizeAdapterHilRequest(pendingHil: AdapterHilRequest): string {
-  const parsedPath = z.string().safeParse(pendingHil.args.path);
-  const parsedCommand = z.string().safeParse(pendingHil.args.input);
-  const path = parsedPath.success ? parsedPath.data : "";
-  const command = parsedCommand.success ? parsedCommand.data : "";
-
-  if (pendingHil.syscall === "shell.exec") {
-    return command
-      ? `Requested action: run \`${command}\`.`
-      : "Requested action: run a shell command.";
-  }
-  if (pendingHil.syscall === "fs.read") {
-    return path
-      ? `Requested action: read \`${path}\`.`
-      : "Requested action: read a file.";
-  }
-  if (pendingHil.syscall === "fs.write") {
-    return path
-      ? `Requested action: write \`${path}\`.`
-      : "Requested action: write a file.";
-  }
-  if (pendingHil.syscall === "fs.edit") {
-    return path
-      ? `Requested action: edit \`${path}\`.`
-      : "Requested action: edit a file.";
-  }
-  if (pendingHil.syscall === "fs.delete") {
-    return path
-      ? `Requested action: delete \`${path}\`.`
-      : "Requested action: delete a file.";
-  }
-  if (pendingHil.syscall === "mail.send") {
-    const recipient = summarizeAdapterHilMailDetail(pendingHil.args.to);
-    const subject = summarizeAdapterHilMailDetail(pendingHil.args.subject);
-    const replyToMessageId = summarizeAdapterHilMailDetail(
-      pendingHil.args.replyToMessageId,
-    );
-    if (recipient && subject) {
-      return `Requested action: send an email to ${recipient} with subject ${subject}.`;
-    }
-    if (recipient) {
-      return `Requested action: send an email to ${recipient}.`;
-    }
-    if (subject) {
-      return `Requested action: send an email with subject ${subject}.`;
-    }
-    if (replyToMessageId) {
-      return `Requested action: reply to stored email ${replyToMessageId}.`;
-    }
-    return "Requested action: send an email.";
-  }
-  return `Requested action: ${pendingHil.toolName}.`;
-}
-
-function summarizeAdapterHilMailDetail(value: JsonValue | undefined): string | null {
-  const parsed = z.string().safeParse(value);
-  if (!parsed.success) return null;
-  const raw = parsed.data;
-  const singleLine = raw
-    .replace(/[\p{Cc}\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!singleLine) return null;
-  const quoted = JSON.stringify(singleLine);
-  if (quoted.length <= ADAPTER_HIL_MAIL_DETAIL_MAX_CHARS) return quoted;
-  let encoded = "";
-  for (const character of singleLine) {
-    const part = JSON.stringify(character).slice(1, -1);
-    if (encoded.length + part.length > ADAPTER_HIL_MAIL_DETAIL_MAX_CHARS - 3) break;
-    encoded += part;
-  }
-  return `"${encoded}…"`;
 }

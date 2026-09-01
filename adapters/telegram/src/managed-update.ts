@@ -2,6 +2,7 @@ import {
   extractTelegramInboundContent,
   type TelegramInboundMediaSource,
 } from "./telegram-inbound-media";
+import type { TelegramApprovalCallback } from "./telegram-approval";
 import { z } from "zod";
 
 const MAX_TEXT_LENGTH = 16_384;
@@ -14,7 +15,20 @@ const telegramManagedMessageSchema = z.object({
   from: z.object({ id: z.number(), is_bot: z.boolean(), first_name: z.string().optional(), last_name: z.string().optional(), username: z.string().optional() }).passthrough(),
   reply_to_message: z.object({ message_id: z.number() }).passthrough().optional(),
 }).passthrough();
-const telegramManagedUpdateSchema = z.object({ update_id: z.number(), message: telegramManagedMessageSchema.optional() }).passthrough();
+const telegramManagedCallbackSchema = z.object({
+  id: z.string(),
+  from: z.object({ id: z.number(), is_bot: z.boolean() }).passthrough(),
+  message: z.object({
+    message_id: z.number(),
+    chat: z.object({ id: z.number(), type: z.string() }).passthrough(),
+  }).passthrough().optional(),
+  data: z.string().optional(),
+}).passthrough();
+const telegramManagedUpdateSchema = z.object({
+  update_id: z.number(),
+  message: telegramManagedMessageSchema.optional(),
+  callback_query: telegramManagedCallbackSchema.optional(),
+}).passthrough();
 
 const UNSUPPORTED_CONTENT_FIELDS = [
   "contact",
@@ -46,8 +60,13 @@ export type ManagedTelegramInbound = {
 
 export type ManagedTelegramUpdateDisposition =
   | { kind: "accepted"; inbound: ManagedTelegramInbound }
+  | { kind: "approval"; callback: TelegramApprovalCallback }
   | { kind: "ignored" }
   | { kind: "invalid" };
+
+export type ManagedTelegramPeerEvent =
+  | { kind: "message"; inbound: ManagedTelegramInbound }
+  | { kind: "approval"; callback: TelegramApprovalCallback };
 
 export function normalizeManagedTelegramUpdate<T>(
   value: T,
@@ -55,6 +74,36 @@ export function normalizeManagedTelegramUpdate<T>(
   const parsed = telegramManagedUpdateSchema.safeParse(value);
   if (!parsed.success) return { kind: "invalid" };
   const update = parsed.data;
+  if (update.callback_query) {
+    const query = update.callback_query;
+    const message = query.message;
+    const actorId = positiveTelegramId(query.from.id);
+    const surfaceId = positiveTelegramId(message?.chat.id ?? 0);
+    const providerMessageId = positiveIntegerString(message?.message_id);
+    if (
+      query.from.is_bot
+      || !message
+      || message.chat.type !== "private"
+      || !query.data?.startsWith("gsvh:")
+      || !query.id.trim()
+      || !actorId
+      || !surfaceId
+      || actorId !== surfaceId
+      || !providerMessageId
+    ) {
+      return { kind: "ignored" };
+    }
+    return {
+      kind: "approval",
+      callback: {
+        callbackQueryId: query.id,
+        actorId,
+        surfaceId,
+        providerMessageId,
+        data: query.data,
+      },
+    };
+  }
   if (!update.message) return { kind: "ignored" };
 
   const message = update.message;
