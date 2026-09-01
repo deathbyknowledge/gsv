@@ -10,9 +10,9 @@ import type {
   AdapterAccountStatus,
   AdapterActivity,
   AdapterConnectConfig,
-  AdapterGatewayFrame,
   AdapterGatewayInterface,
   AdapterGatewayRequestFrame,
+  AdapterGatewayResponseFrame,
   AdapterInstallationContext,
   AdapterOutboundMessage,
   AdapterDeliveryContext,
@@ -330,16 +330,15 @@ export default class TestDependencies
   async adapterFrame(
     installation: AdapterInstallationContext,
     context: AdapterDeliveryContext,
-    frame: AdapterGatewayFrame,
-  ): Promise<AdapterGatewayFrame | null> {
+    frame: AdapterGatewayRequestFrame,
+  ): Promise<AdapterGatewayResponseFrame> {
     let requestedAdapter = this.adapterId;
-    if (frame.type === "req" && frame.call === "adapter.send") {
+    if (frame.call === "adapter.send") {
       const args = adapterSendArgsSchema.safeParse(frame.args);
       if (args.success) requestedAdapter = args.data.adapter.trim().toLowerCase();
     }
     return await handleAdapterFrame(
       requestedAdapter,
-      installation,
       context,
       frame,
       {
