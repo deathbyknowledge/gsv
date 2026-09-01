@@ -1,0 +1,28 @@
+[project]
+name = "gsv-v1"
+version = "0.1.0"
+description = "A thin Verifiers v1 adapter for deterministic GSV Process-surface rollouts."
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "verifiers @ git+https://github.com/PrimeIntellect-ai/verifiers.git@71690b03861719026185e3db746bf4c371d05a90",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.4,<9",
+  "pytest-asyncio>=1.2,<2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["gsv_v1"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
