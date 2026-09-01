@@ -56,7 +56,10 @@ type ProcessingAdapterHilRecord = AdapterHilRecord & {
   processingAt: number;
 };
 
-const APPROVAL_PREFIX = "adapter_hil:v1:";
+type AdapterHilJsonRow = {
+  record_json: string;
+};
+
 const APPROVAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const APPROVAL_PROCESSING_LEASE_MS = 60_000;
 
@@ -81,10 +84,9 @@ export async function prepareAdapterHilApproval(
 
   const normalizedProvider = requireProvider(provider);
   const token = await approvalToken(normalizedProvider, context.deliveryId);
-  const key = approvalKey(normalizedProvider, token);
   const now = Date.now();
-  await storage.transaction(async (txn) => {
-    const existing = await txn.get<AdapterHilRecord>(key);
+  storage.transactionSync(() => {
+    const existing = readAdapterHilRecord(storage.sql, normalizedProvider, token);
     if (existing && existing.expiresAt > now) {
       if (!sameApproval(existing, normalizedProvider, binding, context, request)) {
         throw new Error("Adapter approval token is already bound to another request");
@@ -106,9 +108,9 @@ export async function prepareAdapterHilApproval(
       expiresAt: now + APPROVAL_RETENTION_MS,
     };
     if (binding !== undefined) record.binding = binding;
-    await txn.put(key, record);
+    writeAdapterHilRecord(storage.sql, record);
   });
-  await pruneAdapterHilApprovals(storage, now);
+  pruneAdapterHilApprovals(storage.sql, now);
   return token;
 }
 
@@ -119,11 +121,15 @@ export async function attachAdapterHilApprovalMessage(
   providerMessageId: string | undefined,
 ): Promise<void> {
   if (!providerMessageId) return;
-  const key = approvalKey(requireProvider(provider), token);
-  await storage.transaction(async (txn) => {
-    const record = await txn.get<AdapterHilRecord>(key);
+  const normalizedProvider = requireProvider(provider);
+  const normalizedToken = requireApprovalToken(token);
+  storage.transactionSync(() => {
+    const record = readAdapterHilRecord(storage.sql, normalizedProvider, normalizedToken);
     if (!record || record.providerMessageId === providerMessageId) return;
-    await txn.put(key, { ...record, providerMessageId } satisfies AdapterHilRecord);
+    writeAdapterHilRecord(storage.sql, {
+      ...record,
+      providerMessageId,
+    } satisfies AdapterHilRecord);
   });
 }
 
@@ -135,10 +141,10 @@ export async function submitAdapterHilApproval(
   callback: AdapterHilCallback,
 ): Promise<AdapterHilSubmission> {
   const provider = requireProvider(callback.provider);
-  const key = approvalKey(provider, callback.token);
+  const token = requireApprovalToken(callback.token);
   const now = Date.now();
-  const claimed = await storage.transaction(async (txn) => {
-    const record = await txn.get<AdapterHilRecord>(key);
+  const claimed = storage.transactionSync(() => {
+    const record = readAdapterHilRecord(storage.sql, provider, token);
     if (!matchesCallback(record, provider, callback, now)) {
       return { kind: "invalid" as const };
     }
@@ -166,7 +172,7 @@ export async function submitAdapterHilApproval(
       processingInteractionId: callback.interactionId,
       processingAt: now,
     };
-    await txn.put(key, processing);
+    writeAdapterHilRecord(storage.sql, processing);
     return { kind: "claimed" as const, record: processing };
   });
 
@@ -201,7 +207,7 @@ export async function submitAdapterHilApproval(
       },
     );
   } catch (error) {
-    await releaseAdapterHilApproval(storage, key, callback.interactionId);
+    releaseAdapterHilApproval(storage, provider, token, callback.interactionId);
     throw error;
   }
 
@@ -212,8 +218,8 @@ export async function submitAdapterHilApproval(
         ? "approve_always"
         : "approve"
     : "stale";
-  return await storage.transaction(async (txn): Promise<AdapterHilSubmission> => {
-    const current = await txn.get<AdapterHilRecord>(key);
+  return storage.transactionSync((): AdapterHilSubmission => {
+    const current = readAdapterHilRecord(storage.sql, provider, token);
     if (!current) return { kind: "invalid" };
     if (current.state === "resolved") {
       return {
@@ -236,7 +242,7 @@ export async function submitAdapterHilApproval(
       processingInteractionId: __,
       ...resolved
     } = current;
-    await txn.put(key, {
+    writeAdapterHilRecord(storage.sql, {
       ...resolved,
       state: "resolved",
       providerMessageId: current.providerMessageId ?? callback.providerMessageId,
@@ -276,13 +282,14 @@ function matchesCallback(
   );
 }
 
-async function releaseAdapterHilApproval(
+function releaseAdapterHilApproval(
   storage: DurableObjectStorage,
-  key: string,
+  provider: string,
+  token: string,
   interactionId: string,
-): Promise<void> {
-  await storage.transaction(async (txn) => {
-    const current = await txn.get<AdapterHilRecord>(key);
+): void {
+  storage.transactionSync(() => {
+    const current = readAdapterHilRecord(storage.sql, provider, token);
     if (
       current?.state !== "processing"
       || current.processingInteractionId !== interactionId
@@ -294,7 +301,10 @@ async function releaseAdapterHilApproval(
       processingInteractionId: __,
       ...pending
     } = current;
-    await txn.put(key, { ...pending, state: "pending" } satisfies AdapterHilRecord);
+    writeAdapterHilRecord(storage.sql, {
+      ...pending,
+      state: "pending",
+    } satisfies AdapterHilRecord);
   });
 }
 
@@ -327,9 +337,9 @@ async function approvalToken(provider: string, deliveryId: string): Promise<stri
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-function approvalKey(provider: string, token: string): string {
+function requireApprovalToken(token: string): string {
   if (!/^[A-Za-z0-9_-]{16}$/.test(token)) throw new Error("Adapter approval token is invalid");
-  return `${APPROVAL_PREFIX}${provider}:${token}`;
+  return token;
 }
 
 function requireProvider(value: string): string {
@@ -340,15 +350,44 @@ function requireProvider(value: string): string {
   return normalized;
 }
 
-async function pruneAdapterHilApprovals(
-  storage: DurableObjectStorage,
+function readAdapterHilRecord(
+  sql: SqlStorage,
+  provider: string,
+  token: string,
+): AdapterHilRecord | undefined {
+  const row = sql.exec<AdapterHilJsonRow>(
+    `SELECT record_json
+     FROM adapter_hil_approvals
+     WHERE provider = ? AND token = ?
+     LIMIT 1`,
+    provider,
+    token,
+  ).toArray()[0];
+  // SAFETY: This table is private to this module and every write serializes an
+  // AdapterHilRecord through writeAdapterHilRecord in the same schema version.
+  return row ? JSON.parse(row.record_json) as AdapterHilRecord : undefined;
+}
+
+function writeAdapterHilRecord(sql: SqlStorage, record: AdapterHilRecord): void {
+  sql.exec(
+    `INSERT INTO adapter_hil_approvals
+       (provider, token, state, record_json, expires_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(provider, token) DO UPDATE SET
+       state = excluded.state,
+       record_json = excluded.record_json,
+       expires_at = excluded.expires_at`,
+    record.provider,
+    record.token,
+    record.state,
+    JSON.stringify(record),
+    record.expiresAt,
+  );
+}
+
+function pruneAdapterHilApprovals(
+  sql: SqlStorage,
   now: number,
-): Promise<void> {
-  const records = await storage.list<AdapterHilRecord>({ prefix: APPROVAL_PREFIX });
-  const expired = [...records.entries()]
-    .filter(([, record]) => record.expiresAt <= now)
-    .map(([key]) => key);
-  for (let offset = 0; offset < expired.length; offset += 128) {
-    await storage.delete(expired.slice(offset, offset + 128));
-  }
+): void {
+  sql.exec("DELETE FROM adapter_hil_approvals WHERE expires_at <= ?", now);
 }

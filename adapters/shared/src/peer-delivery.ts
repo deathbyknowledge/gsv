@@ -58,9 +58,20 @@ type CompletedRecord = {
 
 type DeliveryRecord = PendingRecord | ReportingRecord | CompletedRecord;
 
-type StagingRecord = {
-  deliveryId: string;
-  createdAt: number;
+type DeliveryJsonRow = {
+  record_json: string;
+};
+
+type DeliveryIdRow = {
+  delivery_id: string;
+};
+
+type BodyChunkRow = {
+  content: ArrayBuffer;
+};
+
+type MinimumTimeRow = {
+  value: number | null;
 };
 
 export type AdapterPeerDeliveryAttemptHandlers = {
@@ -75,11 +86,6 @@ export type AdapterPeerDeliveryAttemptHandlers = {
   ): Promise<void>;
 };
 
-export const ADAPTER_PEER_DELIVERY_RECORD_PREFIX = "peer_delivery:v1:record:";
-export const ADAPTER_PEER_DELIVERY_PENDING_KEY = "peer_delivery:v1:pending";
-const RECORD_PREFIX = ADAPTER_PEER_DELIVERY_RECORD_PREFIX;
-const STAGING_PREFIX = "peer_delivery:v1:stage:";
-const BODY_PREFIX = "peer_delivery:v1:body:";
 const BODY_CHUNK_BYTES = 128 * 1024;
 const COMPLETED_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const STAGING_RETENTION_MS = 60 * 60 * 1000;
@@ -92,12 +98,15 @@ const MAX_DELIVERY_ATTEMPTS = 10;
  */
 export class AdapterPeerDeliveryQueue {
   private readonly active = new Set<string>();
+  private readonly sql: SqlStorage;
   private drainPromise?: Promise<void>;
 
   constructor(
     private readonly storage: DurableObjectStorage,
     private readonly retryDelayMs = 10_000,
-  ) {}
+  ) {
+    this.sql = storage.sql;
+  }
 
   async enqueueAndArm(
     delivery: AdapterPeerSignalDelivery,
@@ -111,10 +120,15 @@ export class AdapterPeerDeliveryQueue {
     });
 
     const stageId = crypto.randomUUID();
-    const stageKey = `${STAGING_PREFIX}${stageId}`;
     await this.storage.transaction(async (txn) => {
       const now = Date.now();
-      await txn.put(stageKey, { deliveryId, createdAt: now } satisfies StagingRecord);
+      this.sql.exec(
+        `INSERT INTO adapter_peer_delivery_stages (stage_id, delivery_id, created_at)
+         VALUES (?, ?, ?)`,
+        stageId,
+        deliveryId,
+        now,
+      );
       const current = await txn.getAlarm();
       if (shouldReplaceAlarm(current, alarmAt, now)) await txn.setAlarm(alarmAt);
     });
@@ -122,12 +136,11 @@ export class AdapterPeerDeliveryQueue {
     let storedBody: StoredBody | undefined;
     try {
       storedBody = await this.storeBody(stageId, body);
-      const fingerprint = await deliveryFingerprint(delivery, storedBody, this.storage);
+      const fingerprint = await deliveryFingerprint(delivery, storedBody, this.sql);
       let duplicate = false;
       await this.storage.transaction(async (txn) => {
-        const key = recordKey(deliveryId);
         const now = Date.now();
-        const existing = await txn.get<DeliveryRecord>(key);
+        const existing = readDeliveryRecord(this.sql, deliveryId);
         let pending = false;
         if (existing && (existing.state !== "completed" || existing.expiresAt > now)) {
           if (existing.fingerprint !== fingerprint) {
@@ -144,37 +157,42 @@ export class AdapterPeerDeliveryQueue {
             createdAt: now,
           };
           if (storedBody) record.body = storedBody;
-          await txn.put(key, record);
+          writeDeliveryRecord(this.sql, deliveryId, record);
           pending = true;
         }
         if (pending) {
-          await txn.put(ADAPTER_PEER_DELIVERY_PENDING_KEY, true);
           // The staging alarm can fire while a streamed body is still being
-          // persisted. Arm again with the durable record in the same
-          // transaction so acceptance can never leave work without an owner.
+          // persisted. Arm again atomically with accepting the durable record.
           const current = await txn.getAlarm();
           if (shouldReplaceAlarm(current, alarmAt, now)) await txn.setAlarm(alarmAt);
         }
-        await txn.delete(stageKey);
+        if (duplicate && storedBody) this.deleteStoredBody(storedBody);
+        this.sql.exec(
+          "DELETE FROM adapter_peer_delivery_stages WHERE stage_id = ?",
+          stageId,
+        );
       });
-      if (duplicate && storedBody) await this.deleteStoredBody(storedBody);
     } catch (error) {
       await cancelBinaryBody(body, error);
-      if (storedBody) await this.deleteStoredBody(storedBody).catch(() => {});
-      await this.deleteStage(stageId).catch(() => {});
+      try {
+        if (storedBody) this.deleteStoredBody(storedBody);
+        this.deleteStage(stageId);
+      } catch {
+        // The retained stage alarm remains the cleanup owner.
+      }
       throw error;
     }
   }
 
   async pendingIds(limit = 100): Promise<string[]> {
-    const records = await this.storage.list<DeliveryRecord>({ prefix: RECORD_PREFIX });
-    return [...records.entries()]
-      .filter(([, record]) => record.state !== "completed")
-      .sort(([leftKey, left], [rightKey, right]) =>
-        left.createdAt - right.createdAt || leftKey.localeCompare(rightKey)
-      )
-      .slice(0, Math.max(1, Math.min(100, Math.floor(limit))))
-      .map(([key]) => key.slice(RECORD_PREFIX.length));
+    return this.sql.exec<DeliveryIdRow>(
+      `SELECT delivery_id
+       FROM adapter_peer_deliveries
+       WHERE state IN ('pending', 'reporting')
+       ORDER BY created_at, delivery_id
+       LIMIT ?`,
+      Math.max(1, Math.min(100, Math.floor(limit))),
+    ).toArray().map((row) => row.delivery_id);
   }
 
   async drain(handlers: AdapterPeerDeliveryAttemptHandlers): Promise<void> {
@@ -201,26 +219,27 @@ export class AdapterPeerDeliveryQueue {
     if (this.active.has(normalized)) return "active";
     this.active.add(normalized);
     try {
-      const key = recordKey(normalized);
-      let record = await this.storage.get<DeliveryRecord>(key);
+      let record = readDeliveryRecord(this.sql, normalized);
       if (!record) return "missing";
       if (record.state === "completed") {
         if (record.expiresAt > Date.now()) return "completed";
-        await this.storage.delete(key);
-        await this.refreshPendingMarker();
+        this.sql.exec(
+          "DELETE FROM adapter_peer_deliveries WHERE delivery_id = ?",
+          normalized,
+        );
         return "missing";
       }
       if (record.state === "reporting") {
-        return await this.reportRecord(key, record, handlers);
+        return await this.reportRecord(normalized, record, handlers);
       }
 
       if (!await handlers.claim(record.delivery)) {
-        await this.completeWithoutReport(key, record);
+        await this.completeWithoutReport(normalized, record);
         return "completed";
       }
 
       const attempted: PendingRecord = { ...record, attempts: record.attempts + 1 };
-      await this.storage.put(key, attempted);
+      writeDeliveryRecord(this.sql, normalized, attempted);
       record = attempted;
       const body = record.body ? this.openStoredBody(record.body) : undefined;
       let result: AdapterSendResult;
@@ -250,8 +269,8 @@ export class AdapterPeerDeliveryQueue {
         createdAt: attempted.createdAt,
       };
       if (attempted.body) reporting.body = attempted.body;
-      await this.storage.put(key, reporting);
-      return await this.reportRecord(key, reporting, handlers);
+      writeDeliveryRecord(this.sql, normalized, reporting);
+      return await this.reportRecord(normalized, reporting, handlers);
     } finally {
       this.active.delete(normalized);
     }
@@ -266,14 +285,8 @@ export class AdapterPeerDeliveryQueue {
   }
 
   async armIfPending(alarmAt: number): Promise<boolean> {
-    const stageCleanupAt = await this.prune();
-    const records = await this.storage.list<DeliveryRecord>({ prefix: RECORD_PREFIX });
-    const pending = [...records.values()].some((record) => record.state !== "completed");
-    if (pending) {
-      await this.storage.put(ADAPTER_PEER_DELIVERY_PENDING_KEY, true);
-    } else {
-      await this.storage.delete(ADAPTER_PEER_DELIVERY_PENDING_KEY);
-    }
+    const stageCleanupAt = this.prune();
+    const pending = this.hasPending();
     // Interrupted streamed acceptance may leave only a stage. Schedule its
     // expiry without treating it as provider-delivery work or polling it.
     const nextAlarm = pending
@@ -283,8 +296,17 @@ export class AdapterPeerDeliveryQueue {
     return pending;
   }
 
+  hasPending(): boolean {
+    return this.sql.exec<DeliveryIdRow>(
+      `SELECT delivery_id
+       FROM adapter_peer_deliveries
+       WHERE state IN ('pending', 'reporting')
+       LIMIT 1`,
+    ).toArray().length > 0;
+  }
+
   private async reportRecord(
-    key: string,
+    deliveryId: string,
     record: ReportingRecord,
     handlers: AdapterPeerDeliveryAttemptHandlers,
   ): Promise<"completed" | "pending"> {
@@ -294,30 +316,32 @@ export class AdapterPeerDeliveryQueue {
       await this.arm(Date.now() + this.retryDelayMs);
       return "pending";
     }
-    // Keep the body reference in the reporting record until cleanup succeeds.
-    // A crash before this point safely replays the idempotent Kernel report;
-    // a crash after deletion can repeat the no-op deletion on the next alarm.
-    if (record.body) await this.deleteStoredBody(record.body);
-    await this.storage.put(key, {
-      state: "completed",
-      fingerprint: record.fingerprint,
-      outcome: record.outcome,
-      createdAt: record.createdAt,
-      expiresAt: Date.now() + COMPLETED_RETENTION_MS,
-    } satisfies CompletedRecord);
-    await this.refreshPendingMarker();
+    this.storage.transactionSync(() => {
+      if (record.body) this.deleteStoredBody(record.body);
+      writeDeliveryRecord(this.sql, deliveryId, {
+        state: "completed",
+        fingerprint: record.fingerprint,
+        outcome: record.outcome,
+        createdAt: record.createdAt,
+        expiresAt: Date.now() + COMPLETED_RETENTION_MS,
+      } satisfies CompletedRecord);
+    });
     return "completed";
   }
 
-  private async completeWithoutReport(key: string, record: PendingRecord): Promise<void> {
-    if (record.body) await this.deleteStoredBody(record.body);
-    await this.storage.put(key, {
-      state: "completed",
-      fingerprint: record.fingerprint,
-      createdAt: record.createdAt,
-      expiresAt: Date.now() + COMPLETED_RETENTION_MS,
-    } satisfies CompletedRecord);
-    await this.refreshPendingMarker();
+  private async completeWithoutReport(
+    deliveryId: string,
+    record: PendingRecord,
+  ): Promise<void> {
+    this.storage.transactionSync(() => {
+      if (record.body) this.deleteStoredBody(record.body);
+      writeDeliveryRecord(this.sql, deliveryId, {
+        state: "completed",
+        fingerprint: record.fingerprint,
+        createdAt: record.createdAt,
+        expiresAt: Date.now() + COMPLETED_RETENTION_MS,
+      } satisfies CompletedRecord);
+    });
   }
 
   private async storeBody(
@@ -342,7 +366,7 @@ export class AdapterPeerDeliveryQueue {
           offset += copied;
           length += copied;
           if (used === chunk.byteLength) {
-            await this.storage.put(bodyKey(stageId, chunks), chunk);
+            writeBodyChunk(this.sql, stageId, chunks, chunk);
             chunks += 1;
             chunk = new Uint8Array(BODY_CHUNK_BYTES);
             used = 0;
@@ -350,7 +374,7 @@ export class AdapterPeerDeliveryQueue {
         }
       }
       if (used > 0) {
-        await this.storage.put(bodyKey(stageId, chunks), chunk.slice(0, used));
+        writeBodyChunk(this.sql, stageId, chunks, chunk.slice(0, used));
         chunks += 1;
       }
       if (body.length !== undefined && body.length !== length) {
@@ -367,7 +391,7 @@ export class AdapterPeerDeliveryQueue {
 
   private openStoredBody(body: StoredBody): BinaryBody {
     let index = 0;
-    const storage = this.storage;
+    const sql = this.sql;
     return {
       length: body.length,
       stream: new ReadableStream<Uint8Array>({
@@ -376,7 +400,7 @@ export class AdapterPeerDeliveryQueue {
             controller.close();
             return;
           }
-          const value = await storage.get<Uint8Array>(bodyKey(body.stageId, index));
+          const value = readBodyChunk(sql, body.stageId, index);
           if (!value) {
             controller.error(new Error("Adapter signal body chunk is missing"));
             return;
@@ -388,57 +412,54 @@ export class AdapterPeerDeliveryQueue {
     };
   }
 
-  private async deleteStoredBody(body: StoredBody): Promise<void> {
-    if (body.chunks === 0) return;
-    const keys = Array.from({ length: body.chunks }, (_, index) => bodyKey(body.stageId, index));
-    for (let offset = 0; offset < keys.length; offset += 128) {
-      await this.storage.delete(keys.slice(offset, offset + 128));
-    }
+  private deleteStoredBody(body: StoredBody): void {
+    this.sql.exec(
+      "DELETE FROM adapter_peer_delivery_chunks WHERE stage_id = ?",
+      body.stageId,
+    );
   }
 
-  private async deleteStage(stageId: string): Promise<void> {
-    const chunks = await this.storage.list({ prefix: `${BODY_PREFIX}${stageId}:` });
-    const keys = [...chunks.keys(), `${STAGING_PREFIX}${stageId}`];
-    for (let offset = 0; offset < keys.length; offset += 128) {
-      await this.storage.delete(keys.slice(offset, offset + 128));
-    }
-  }
-
-  private async prune(): Promise<number | null> {
-    const now = Date.now();
-    const [records, stages] = await Promise.all([
-      this.storage.list<DeliveryRecord>({ prefix: RECORD_PREFIX }),
-      this.storage.list<StagingRecord>({ prefix: STAGING_PREFIX }),
-    ]);
-    const expired = [...records.entries()]
-      .filter(([, record]) => record.state === "completed" && record.expiresAt <= now)
-      .map(([key]) => key);
-    for (let offset = 0; offset < expired.length; offset += 128) {
-      await this.storage.delete(expired.slice(offset, offset + 128));
-    }
-    let stageCleanupAt: number | null = null;
-    for (const [key, stage] of stages) {
-      const expiresAt = stage.createdAt + STAGING_RETENTION_MS;
-      if (expiresAt > now) {
-        stageCleanupAt = stageCleanupAt === null
-          ? expiresAt
-          : Math.min(stageCleanupAt, expiresAt);
-        continue;
-      }
-      await this.deleteStage(key.slice(STAGING_PREFIX.length));
-    }
-    return stageCleanupAt;
-  }
-
-  private async refreshPendingMarker(): Promise<void> {
-    await this.storage.transaction(async (txn) => {
-      const records = await txn.list<DeliveryRecord>({ prefix: RECORD_PREFIX });
-      if ([...records.values()].some((record) => record.state !== "completed")) {
-        await txn.put(ADAPTER_PEER_DELIVERY_PENDING_KEY, true);
-      } else {
-        await txn.delete(ADAPTER_PEER_DELIVERY_PENDING_KEY);
-      }
+  private deleteStage(stageId: string): void {
+    this.storage.transactionSync(() => {
+      this.sql.exec(
+        "DELETE FROM adapter_peer_delivery_chunks WHERE stage_id = ?",
+        stageId,
+      );
+      this.sql.exec(
+        "DELETE FROM adapter_peer_delivery_stages WHERE stage_id = ?",
+        stageId,
+      );
     });
+  }
+
+  private prune(): number | null {
+    const now = Date.now();
+    this.storage.transactionSync(() => {
+      this.sql.exec(
+        `DELETE FROM adapter_peer_deliveries
+         WHERE state = 'completed' AND expires_at <= ?`,
+        now,
+      );
+      this.sql.exec(
+        `DELETE FROM adapter_peer_delivery_chunks
+         WHERE stage_id IN (
+           SELECT stage_id
+           FROM adapter_peer_delivery_stages
+           WHERE created_at <= ?
+         )`,
+        now - STAGING_RETENTION_MS,
+      );
+      this.sql.exec(
+        `DELETE FROM adapter_peer_delivery_stages
+         WHERE created_at <= ?`,
+        now - STAGING_RETENTION_MS,
+      );
+    });
+    return this.sql.exec<MinimumTimeRow>(
+      `SELECT MIN(created_at + ?) AS value
+       FROM adapter_peer_delivery_stages`,
+      STAGING_RETENTION_MS,
+    ).one().value;
   }
 }
 
@@ -505,12 +526,12 @@ export function gatewayPeerDeliveryHandlers(input: {
 async function deliveryFingerprint(
   delivery: AdapterPeerSignalDelivery,
   body: StoredBody | undefined,
-  storage: DurableObjectStorage,
+  sql: SqlStorage,
 ): Promise<string> {
   const chunkHashes: string[] = [];
   if (body) {
     for (let index = 0; index < body.chunks; index += 1) {
-      const chunk = await storage.get<Uint8Array>(bodyKey(body.stageId, index));
+      const chunk = readBodyChunk(sql, body.stageId, index);
       if (!chunk) throw new Error("Adapter signal body chunk disappeared during acceptance");
       chunkHashes.push(await sha256(chunk));
     }
@@ -552,12 +573,73 @@ async function sha256(bytes: Uint8Array): Promise<string> {
     .join("");
 }
 
-function recordKey(deliveryId: string): string {
-  return `${RECORD_PREFIX}${deliveryId}`;
+function readDeliveryRecord(
+  sql: SqlStorage,
+  deliveryId: string,
+): DeliveryRecord | undefined {
+  const row = sql.exec<DeliveryJsonRow>(
+    `SELECT record_json
+     FROM adapter_peer_deliveries
+     WHERE delivery_id = ?
+     LIMIT 1`,
+    deliveryId,
+  ).toArray()[0];
+  // SAFETY: This table is private to this module and every write serializes a
+  // DeliveryRecord through writeDeliveryRecord in the same schema version.
+  return row ? JSON.parse(row.record_json) as DeliveryRecord : undefined;
 }
 
-function bodyKey(stageId: string, index: number): string {
-  return `${BODY_PREFIX}${stageId}:${index.toString().padStart(6, "0")}`;
+function writeDeliveryRecord(
+  sql: SqlStorage,
+  deliveryId: string,
+  record: DeliveryRecord,
+): void {
+  sql.exec(
+    `INSERT INTO adapter_peer_deliveries
+       (delivery_id, state, record_json, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(delivery_id) DO UPDATE SET
+       state = excluded.state,
+       record_json = excluded.record_json,
+       created_at = excluded.created_at,
+       expires_at = excluded.expires_at`,
+    deliveryId,
+    record.state,
+    JSON.stringify(record),
+    record.createdAt,
+    record.state === "completed" ? record.expiresAt : null,
+  );
+}
+
+function writeBodyChunk(
+  sql: SqlStorage,
+  stageId: string,
+  index: number,
+  content: Uint8Array,
+): void {
+  sql.exec(
+    `INSERT INTO adapter_peer_delivery_chunks (stage_id, chunk_index, content)
+     VALUES (?, ?, ?)`,
+    stageId,
+    index,
+    content.slice().buffer,
+  );
+}
+
+function readBodyChunk(
+  sql: SqlStorage,
+  stageId: string,
+  index: number,
+): Uint8Array | undefined {
+  const row = sql.exec<BodyChunkRow>(
+    `SELECT content
+     FROM adapter_peer_delivery_chunks
+     WHERE stage_id = ? AND chunk_index = ?
+     LIMIT 1`,
+    stageId,
+    index,
+  ).toArray()[0];
+  return row ? new Uint8Array(row.content) : undefined;
 }
 
 function requireDeliveryId(value: string): string {

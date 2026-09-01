@@ -5,52 +5,9 @@ import {
   type AdapterPeerDeliveryAttemptHandlers,
   type AdapterPeerSignalDelivery,
 } from "../src/peer-delivery";
+import { runAdapterPeerSqlMigrations } from "../src/schema/migrations";
 import type { BinaryBody } from "../src/types";
-
-class MemoryStorage {
-  readonly values = new Map<string, unknown>();
-  alarm: number | null = null;
-  clearAlarmOnBodyPut = false;
-
-  async get<T>(key: string): Promise<T | undefined> {
-    // SAFETY: The fixture returns the generic value previously written for this key.
-    return this.values.get(key) as T | undefined;
-  }
-
-  async list<T>(options?: { prefix?: string }): Promise<Map<string, T>> {
-    // SAFETY: The fixture map is exposed through the generic storage list contract.
-    return new Map(
-      [...this.values.entries()].filter(([key]) => !options?.prefix || key.startsWith(options.prefix)),
-    ) as Map<string, T>;
-  }
-
-  async put<T>(key: string, value: T): Promise<void> {
-    this.values.set(key, value);
-    if (this.clearAlarmOnBodyPut && key.startsWith("peer_delivery:v1:body:")) {
-      this.clearAlarmOnBodyPut = false;
-      this.alarm = null;
-    }
-  }
-
-  async delete(key: string | string[]): Promise<boolean | number> {
-    if (Array.isArray(key)) {
-      return key.reduce((count, item) => count + (this.values.delete(item) ? 1 : 0), 0);
-    }
-    return this.values.delete(key);
-  }
-
-  async getAlarm(): Promise<number | null> {
-    return this.alarm;
-  }
-
-  async setAlarm(value: number | Date): Promise<void> {
-    this.alarm = value instanceof Date ? value.getTime() : value;
-  }
-
-  async transaction<T>(closure: (txn: MemoryStorage) => Promise<T>): Promise<T> {
-    return await closure(this);
-  }
-}
+import { TestDurableObjectStorage } from "./sqlite-storage";
 
 function body(bytes: number[]): BinaryBody {
   const value = new Uint8Array(bytes);
@@ -103,9 +60,9 @@ function delivery(id = "message-1"): AdapterPeerSignalDelivery {
 }
 
 function queueFixture() {
-  const storage = new MemoryStorage();
-  // SAFETY: The fixture implements every Durable Object storage operation used by the queue.
-  const durableStorage = storage as DurableObjectStorage;
+  const storage = new TestDurableObjectStorage();
+  const durableStorage = storage.asDurableStorage();
+  runAdapterPeerSqlMigrations(durableStorage);
   return {
     storage,
     queue: new AdapterPeerDeliveryQueue(durableStorage, 100),
@@ -120,7 +77,10 @@ describe("AdapterPeerDeliveryQueue", () => {
 
     const deliveredBytes: number[] = [];
     const handlers: AdapterPeerDeliveryAttemptHandlers = {
-      claim: vi.fn(async (value) => value === accepted),
+      claim: vi.fn(async (value) => {
+        expect(value).toEqual(accepted);
+        return true;
+      }),
       deliver: vi.fn(async (value, requestBody) => {
         expect(value).toEqual(accepted);
         const bytes = new Uint8Array(await new Response(requestBody?.stream).arrayBuffer());
@@ -137,14 +97,17 @@ describe("AdapterPeerDeliveryQueue", () => {
       messageId: "provider-1",
       attempts: 1,
     });
-    expect(storage.values.get("peer_delivery:v1:record:message-1"))
-      .not.toHaveProperty("delivery");
+    const completed = storage.rows<{ record_json: string }>(
+      "SELECT record_json FROM adapter_peer_deliveries WHERE delivery_id = ?",
+      "message-1",
+    )[0];
+    expect(JSON.parse(completed.record_json)).not.toHaveProperty("delivery");
   });
 
   it("re-arms after a staging alarm fires while the body is being stored", async () => {
     const { queue, storage } = queueFixture();
     const alarmAt = Date.now() + 1_000;
-    storage.clearAlarmOnBodyPut = true;
+    storage.clearAlarmOnChunkWrite = true;
 
     await queue.enqueueAndArm(delivery(), body([1, 2, 3, 4]), alarmAt);
 
@@ -157,13 +120,19 @@ describe("AdapterPeerDeliveryQueue", () => {
     try {
       vi.setSystemTime(1_000);
       const { queue, storage } = queueFixture();
-      storage.values.set("peer_delivery:v1:stage:orphan", {
-        deliveryId: "orphan",
-        createdAt: Date.now(),
-      });
-      storage.values.set(
-        "peer_delivery:v1:body:orphan:000000",
-        new Uint8Array([1, 2, 3, 4]),
+      storage.sql.exec(
+        `INSERT INTO adapter_peer_delivery_stages (stage_id, delivery_id, created_at)
+         VALUES (?, ?, ?)`,
+        "orphan",
+        "orphan",
+        Date.now(),
+      );
+      storage.sql.exec(
+        `INSERT INTO adapter_peer_delivery_chunks (stage_id, chunk_index, content)
+         VALUES (?, ?, ?)`,
+        "orphan",
+        0,
+        new Uint8Array([1, 2, 3, 4]).buffer,
       );
 
       await expect(queue.armIfPending(1_100)).resolves.toBe(false);
@@ -172,8 +141,12 @@ describe("AdapterPeerDeliveryQueue", () => {
       storage.alarm = null;
       vi.setSystemTime(3_601_000);
       await expect(queue.armIfPending(3_601_100)).resolves.toBe(false);
-      expect(storage.values.has("peer_delivery:v1:stage:orphan")).toBe(false);
-      expect(storage.values.has("peer_delivery:v1:body:orphan:000000")).toBe(false);
+      expect(storage.rows<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM adapter_peer_delivery_stages",
+      )[0].count).toBe(0);
+      expect(storage.rows<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM adapter_peer_delivery_chunks",
+      )[0].count).toBe(0);
       expect(storage.alarm).toBeNull();
     } finally {
       vi.useRealTimers();
@@ -258,16 +231,16 @@ describe("AdapterPeerDeliveryQueue", () => {
     };
 
     await expect(queue.attempt("message-1", handlers)).resolves.toBe("pending");
-    expect([...storage.values.keys()].some(
-      (key) => key.startsWith("peer_delivery:v1:body:"),
-    )).toBe(true);
+    expect(storage.rows<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM adapter_peer_delivery_chunks",
+    )[0].count).toBeGreaterThan(0);
 
     await expect(queue.attempt("message-1", handlers)).resolves.toBe("completed");
     expect(deliver).toHaveBeenCalledTimes(1);
     expect(report).toHaveBeenCalledTimes(2);
-    expect([...storage.values.keys()].some(
-      (key) => key.startsWith("peer_delivery:v1:body:"),
-    )).toBe(false);
+    expect(storage.rows<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM adapter_peer_delivery_chunks",
+    )[0].count).toBe(0);
   });
 
   it("deduplicates a repeated durable handoff and rejects conflicting reuse", async () => {

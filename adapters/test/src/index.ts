@@ -34,6 +34,7 @@ import {
   type AdapterPeerSignalDelivery,
 } from "../../shared/src/peer-delivery";
 import { renderAdapterPeerSignal } from "../../shared/src/peer-render";
+import { runAdapterPeerSqlMigrations } from "../../shared/src/schema/migrations";
 import type {
   AdapterAccountStatus,
   AdapterActivity,
@@ -82,6 +83,7 @@ export class TestChannelState extends DurableObject<Env> {
   
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    runAdapterPeerSqlMigrations(ctx.storage);
     this.deliveries = new DeliveryLedger(this.ctx.storage);
     this.peerDeliveries = new AdapterPeerDeliveryQueue(this.ctx.storage);
     // Load state from storage
@@ -177,6 +179,7 @@ export class TestChannelState extends DurableObject<Env> {
     this.connected = false;
     this.messages = [];
     await this.ctx.storage.deleteAll();
+    runAdapterPeerSqlMigrations(this.ctx.storage);
   }
 
   async acceptPeerSignal(

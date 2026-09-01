@@ -11,12 +11,12 @@ import {
   InboundDeliveryLedger,
 } from "../../shared/src/inbound-delivery";
 import {
-  ADAPTER_PEER_DELIVERY_PENDING_KEY,
   AdapterPeerDeliveryQueue,
   gatewayPeerDeliveryHandlers,
   type AdapterPeerSignalDelivery,
 } from "../../shared/src/peer-delivery";
 import { renderAdapterPeerSignal } from "../../shared/src/peer-render";
+import { runAdapterPeerSqlMigrations } from "../../shared/src/schema/migrations";
 import { callAdapterGateway } from "../../shared/src/gateway-rpc";
 import type { AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
@@ -176,6 +176,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    runAdapterPeerSqlMigrations(ctx.storage);
     this.deliveries = new DeliveryLedger(this.ctx.storage);
     this.inboundDeliveries = new InboundDeliveryLedger(
       this.ctx.storage,
@@ -694,8 +695,8 @@ export class WhatsAppAccount extends DurableObject<Env> {
         prefix: INBOUND_DELIVERY_PREFIX,
         limit: 1,
       });
-      const pendingPeerDelivery = await txn.get<boolean>(ADAPTER_PEER_DELIVERY_PENDING_KEY);
-      const hasPendingDelivery = pendingInbound.size > 0 || pendingPeerDelivery === true;
+      const pendingPeerDelivery = this.peerDeliveries.hasPending();
+      const hasPendingDelivery = pendingInbound.size > 0 || pendingPeerDelivery;
       if (currentAlarm === supersededDeadline) {
         if (canReplaceSupersededLifecycleAlarm(
           currentAlarm,
@@ -731,10 +732,10 @@ export class WhatsAppAccount extends DurableObject<Env> {
         prefix: INBOUND_DELIVERY_PREFIX,
         limit: 1,
       });
-      const pendingPeerDelivery = await txn.get<boolean>(ADAPTER_PEER_DELIVERY_PENDING_KEY);
+      const pendingPeerDelivery = this.peerDeliveries.hasPending();
       const nextDeadline = nextAccountAlarmDeadline(
         lifecycleDeadline,
-        pendingInbound.size > 0 || pendingPeerDelivery === true,
+        pendingInbound.size > 0 || pendingPeerDelivery,
         now,
       );
       if (

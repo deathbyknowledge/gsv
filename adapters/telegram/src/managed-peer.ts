@@ -18,6 +18,7 @@ import {
   type AdapterPeerSignalDelivery,
 } from "../../shared/src/peer-delivery";
 import { renderAdapterPeerSignal } from "../../shared/src/peer-render";
+import { runAdapterPeerSqlMigrations } from "../../shared/src/schema/migrations";
 import { callAdapterGateway, type AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
   cancelBinaryBody,
@@ -132,6 +133,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
 
   constructor(ctx: DurableObjectState, env: ManagedTelegramPeerEnv) {
     super(ctx, env);
+    runAdapterPeerSqlMigrations(ctx.storage);
     this.deliveries = new DeliveryLedger(this.ctx.storage);
     this.inboundDeliveries = new InboundDeliveryLedger(
       this.ctx.storage,
