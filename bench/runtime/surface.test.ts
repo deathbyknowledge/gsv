@@ -58,6 +58,8 @@ describe("GSV Process surface", () => {
     expect(new Set(
       artifact.observations.map(({ systemPromptSha256 }) => systemPromptSha256),
     ).size).toBe(1);
+    expect(seen[0]?.systemPrompt).toContain("Context availability baseline:");
+    expect(seen[0]?.systemPrompt).toContain("Accessible external targets:\n- (none)");
     expect(artifact.observations[0]?.projection.targets).toEqual([]);
     expect(artifact.observations[1]?.projection.targets.map(({ id }) => id))
       .toEqual(["gpu-lab"]);
@@ -327,6 +329,7 @@ describe("GSV Process surface", () => {
 
   it("recovers checkout across delegated mitigation and three durable runs", async () => {
     const scenario = await fixture("recover-checkout-incident.json");
+    const seen: Context[] = [];
     const shipResponses = [
       assistant(toolCall("ack", "Shell", {
         input: "message send --message 'Checkout incident acknowledged; investigating with operations.'",
@@ -398,6 +401,7 @@ describe("GSV Process surface", () => {
     ];
 
     const artifact = await runGsvSurfaceScenario(scenario, async (context) => {
+      seen.push(context);
       const delegated = String(context.messages[0]?.content)
         .includes("Delegated task from ship (ship).");
       const next = delegated ? workerResponses.shift() : shipResponses.shift();
@@ -449,6 +453,14 @@ describe("GSV Process surface", () => {
     ))).size).toBe(1);
     expect(JSON.stringify(shipObservations.find(({ run }) => run === 3)?.messages))
       .toContain("Checkout monitor observation window 1 of 2");
+    const workerObservation = artifact.observations.find(
+      ({ processId }) => processId === "proc:checkout-ops",
+    );
+    expect(workerObservation?.projection.targets[0]?.description)
+      .toContain("Operational interfaces");
+    expect(seen.find((context) => String(context.messages[0]?.content)
+      .includes("Delegated task from ship (ship)."))?.systemPrompt)
+      .toContain("releasectl rollback RELEASE");
   });
 });
 

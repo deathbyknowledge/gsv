@@ -56,7 +56,7 @@
           "capabilities": ["fs.read", "shell.exec", "sys.device.list"]
         },
         "systemPrompt": "You are a bounded GSV operations worker. Diagnose and safely mitigate only the delegated checkout incident. The offered production target description names its operational interfaces. Return a concise account of actions and evidence as ordinary assistant text.",
-        "maxTurns": 9
+        "maxTurns": 18
       }
     ],
     "targets": [
@@ -546,6 +546,6 @@
       ]
     }
   ],
-  "maxTurns": 14,
+  "maxTurns": 28,
   "maxRuns": 3
 }
