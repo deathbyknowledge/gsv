@@ -1,4 +1,21 @@
-import type { Tool } from "@earendil-works/pi-ai";
+import type { Tool, ToolCall } from "@earendil-works/pi-ai";
+import { z } from "zod";
+import {
+  parseRunControlCommand,
+  type RunControlCommandParseResult,
+} from "./run-control-command";
+
+export type RunControlShellCall = {
+  toolCall: ToolCall;
+  parsed: RunControlCommandParseResult;
+};
+
+const terminalShellToolArgsSchema = z.object({
+  input: z.string(),
+  target: z.enum(["gsv", "gateway"]).optional(),
+  cwd: z.string().optional(),
+  timeout: z.number().optional(),
+}).strict();
 
 export const FINAL_MESSAGE_BLOCK_EXAMPLE =
   "message send <<'GSV_MESSAGE' && yield\nyour user-visible response\nGSV_MESSAGE";
@@ -33,4 +50,22 @@ export function withRunControlInstructions(workTools: Tool[]): Tool[] {
     };
   });
   return foundShell ? tools : [...tools, RUN_CONTROL_SHELL_TOOL];
+}
+
+export function runControlShellCall(
+  toolCall: ToolCall,
+): RunControlShellCall | null {
+  if (toolCall.name !== "Shell") return null;
+  const args = terminalShellToolArgsSchema.safeParse(toolCall.arguments);
+  if (!args.success) return null;
+  const parsed = parseRunControlCommand(args.data.input);
+  return parsed ? { toolCall, parsed } : null;
+}
+
+export function missingRunControlCorrectionMessage(): string {
+  return [
+    "This run is not complete. Ordinary assistant text is Process activity and is not sent to the user.",
+    "Run `yield` now if the work is complete.",
+    `If the user still needs a final message, send and finish with:\n${FINAL_MESSAGE_BLOCK_EXAMPLE}`,
+  ].join("\n");
 }

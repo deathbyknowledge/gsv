@@ -2,6 +2,8 @@ import type { Tool } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import {
   FINAL_MESSAGE_BLOCK_EXAMPLE,
+  missingRunControlCorrectionMessage,
+  runControlShellCall,
   withRunControlInstructions,
 } from "./run-control-tool";
 
@@ -52,4 +54,56 @@ describe("withRunControlInstructions", () => {
       additionalProperties: false,
     });
   });
+});
+
+describe("runControlShellCall", () => {
+  it("recognizes Process-owned commands on the native target", () => {
+    const toolCall = {
+      type: "toolCall",
+      id: "finish",
+      name: "Shell",
+      arguments: {
+        input: "message send --message done && yield",
+        target: "gsv",
+      },
+    } as const;
+
+    expect(runControlShellCall(toolCall)).toEqual({
+      toolCall,
+      parsed: {
+        ok: true,
+        command: { action: "message", text: "done", finish: true },
+      },
+    });
+  });
+
+  it("does not intercept work sent to an external target", () => {
+    expect(runControlShellCall({
+      type: "toolCall",
+      id: "remote",
+      name: "Shell",
+      arguments: {
+        input: "message send --message done && yield",
+        target: "laptop",
+      },
+    })).toBeNull();
+  });
+
+  it("does not intercept ordinary native shell commands", () => {
+    expect(runControlShellCall({
+      type: "toolCall",
+      id: "work",
+      name: "Shell",
+      arguments: { input: "targets list" },
+    })).toBeNull();
+  });
+});
+
+it("renders the missing-yield correction from the shared run-control contract", () => {
+  expect(missingRunControlCorrectionMessage()).toContain(
+    "Ordinary assistant text is Process activity",
+  );
+  expect(missingRunControlCorrectionMessage()).toContain(
+    FINAL_MESSAGE_BLOCK_EXAMPLE,
+  );
 });

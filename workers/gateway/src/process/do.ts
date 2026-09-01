@@ -258,12 +258,11 @@ import {
   createCodeModeRequest,
 } from "../codemode/request";
 import { formatAgentToolResponse, materializeToolResponse } from "./tool-response";
+import type { RunControlCommandParseResult } from "./run-control-command";
 import {
-  parseRunControlCommand,
-  type RunControlCommandParseResult,
-} from "./run-control-command";
-import {
-  FINAL_MESSAGE_BLOCK_EXAMPLE,
+  missingRunControlCorrectionMessage,
+  runControlShellCall,
+  type RunControlShellCall,
   withRunControlInstructions,
 } from "./run-control-tool";
 import {
@@ -369,11 +368,6 @@ type MessageStreamProjection = {
   started: boolean;
   text: string;
   aborted: boolean;
-};
-
-type RunControlShellCall = {
-  toolCall: ToolCall;
-  parsed: RunControlCommandParseResult;
 };
 
 type RunResult = {
@@ -674,12 +668,6 @@ const toolDefinitionSchema = z.object({
 const piToolParametersSchema = z.custom<Tool["parameters"]>(
   (value) => jsonObjectSchema.safeParse(value).success,
 );
-const terminalShellToolArgsSchema = z.object({
-  input: z.string(),
-  target: z.enum(["gsv", "gateway"]).optional(),
-  cwd: z.string().optional(),
-  timeout: z.number().optional(),
-}).strict();
 const aiToolsDeviceSchema = z.object({
   id: z.string(),
   implements: z.array(z.string()),
@@ -7327,11 +7315,7 @@ export class Process extends DurableObject<GatewayEnv> {
     }
     run.terminalCorrectionRounds = (run.terminalCorrectionRounds ?? 0) + 1;
     this.currentRun = run;
-    const message = [
-      "This run is not complete. Ordinary assistant text is Process activity and is not sent to the user.",
-      "Run `yield` now if the work is complete.",
-      `If the user still needs a final message, send and finish with:\n${FINAL_MESSAGE_BLOCK_EXAMPLE}`,
-    ].join("\n");
+    const message = missingRunControlCorrectionMessage();
     this.store.appendMessage("system", message, { runId });
     await this.emitProcChanged(["messages"], {
       runId,
@@ -10898,14 +10882,6 @@ function conversationRunState(
   } catch {
     return {};
   }
-}
-
-function runControlShellCall(toolCall: ToolCall): RunControlShellCall | null {
-  if (toolCall.name !== "Shell") return null;
-  const args = terminalShellToolArgsSchema.safeParse(toolCall.arguments);
-  if (!args.success) return null;
-  const parsed = parseRunControlCommand(args.data.input);
-  return parsed ? { toolCall, parsed } : null;
 }
 
 function orderMessagesForProvider(messages: Message[]): Message[] {
