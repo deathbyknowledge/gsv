@@ -190,6 +190,7 @@ describe("GSV Process surface", () => {
         targetProcessId: "proc:incident-worker",
         state: "completed",
         resultText: "database migration checksum mismatch",
+        normalizedResultText: "database migration checksum mismatch",
       }),
     ]);
     expect(artifact.world.responsibilities).toMatchObject({

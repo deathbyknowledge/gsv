@@ -109,10 +109,7 @@
             "assignee": {
               "kind": "ship"
             },
-            "dedupeKey": "slack:incident-42",
-            "resolution": {
-              "cause": "database migration checksum mismatch"
-            }
+            "dedupeKey": "slack:incident-42"
           }
         }
       },
@@ -122,7 +119,7 @@
           "targetProcessId": "proc:incident-worker",
           "responsibilityId": "r12y:00000000-0000-4000-8000-000000000001",
           "state": "completed",
-          "resultText": "database migration checksum mismatch"
+          "normalizedResultText": "database migration checksum mismatch"
         }
       ],
       "adapters": {
@@ -177,10 +174,7 @@
                 "assignee": {
                   "kind": "ship"
                 },
-                "dedupeKey": "slack:incident-42",
-                "resolution": {
-                  "cause": "database migration checksum mismatch"
-                }
+                "dedupeKey": "slack:incident-42"
               }
             }
           }
@@ -208,7 +202,7 @@
               "sourceProcessId": "ship",
               "targetProcessId": "proc:incident-worker",
               "state": "completed",
-              "resultText": "database migration checksum mismatch"
+              "normalizedResultText": "database migration checksum mismatch"
             }
           ]
         }

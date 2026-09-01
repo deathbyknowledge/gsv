@@ -457,8 +457,10 @@ export class SyntheticKernel {
         USER: this.requireProcess(processId).username ?? processId,
         GSV_PID: processId,
       },
-      commands: [],
       customCommands: [
+        defineCommand("man", async (commandArgs) => (
+          this.runManCommand(commandArgs)
+        )),
         defineCommand("targets", async (commandArgs) => (
           this.runTargetsCommand(processId, commandArgs)
         )),
@@ -496,6 +498,28 @@ export class SyntheticKernel {
     } catch (error) {
       return shellFailure(error instanceof Error ? error.message : String(error));
     }
+  }
+
+  private runManCommand(args: string[]): ExecResult {
+    const [topic, ...rest] = args;
+    if (topic === "--search" || topic === "-k") {
+      const query = rest.filter((argument) => argument !== "--").join(" ");
+      return commandResult(renderManualSearch(query));
+    }
+    if (!topic || topic === "--help" || topic === "-h") {
+      return commandResult([
+        "Usage: man TOPIC",
+        "       man --search -- QUERY",
+        "",
+        "Synthetic GSV topics: targets, r12y, proc",
+        "",
+      ].join("\n"));
+    }
+    if (topic === "r12y") return commandResult(r12yUsage());
+    const manual = renderSyntheticManualPage(topic);
+    return manual
+      ? commandResult(manual)
+      : commandError("man", new Error("no manual entry for " + topic));
   }
 
   private runTargetsCommand(processId: string, args: string[]): ExecResult {
@@ -688,9 +712,13 @@ export class SyntheticKernel {
       };
     }
 
-    const completed = outcome.status === "returned" && outcome.resultText !== undefined;
+    const resultText = outcome.resultText;
+    const completed = outcome.status === "returned" && resultText !== undefined;
     delegation.state = completed ? "completed" : "failed";
-    if (completed) delegation.resultText = outcome.resultText;
+    if (completed) {
+      delegation.resultText = resultText;
+      delegation.normalizedResultText = resultText.trim();
+    }
     else delegation.error = outcome.error ?? "Delegated process did not return a result";
     if (input.responsibilityId) {
       const current = this.responsibilities.get(source, input.responsibilityId);
@@ -1164,6 +1192,53 @@ function r12yUsage(): string {
     "Responsibilities are durable unresolved work owned by the Kernel.",
     "",
   ].join("\n");
+}
+
+function renderManualSearch(query: string): string {
+  const normalized = query.trim().toLowerCase();
+  if (/event|target|device|online|available/u.test(normalized)) {
+    return [
+      "process-events - ordered [GSV EVENT] entries are delivered directly in Process context",
+      "targets - list the complete current target projection with `targets list --json`",
+      "",
+      "There is no separate event-log shell command. Act on the delivered event;",
+      "use `targets list --json` only when you need to inspect current target state.",
+      "",
+    ].join("\n");
+  }
+  if (/responsib|promise|ledger|r12y/u.test(normalized)) {
+    return "r12y - retain and supervise durable responsibilities (`man r12y`)\n";
+  }
+  if (/process|delegate|worker|ipc|proc/u.test(normalized)) {
+    return "proc - inspect processes and delegate bounded work (`man proc`)\n";
+  }
+  return [
+    "targets - discover Unix-shaped capability environments",
+    "r12y - retain and supervise durable responsibilities",
+    "proc - inspect processes and delegate bounded work",
+    "",
+  ].join("\n");
+}
+
+function renderSyntheticManualPage(topic: string): string | null {
+  switch (topic.trim().toLowerCase()) {
+    case "targets":
+    case "devices":
+      return [
+        "TARGETS(1)",
+        "",
+        "NAME",
+        "  targets - discover Unix-shaped capability environments",
+        "",
+        "SYNOPSIS",
+        "  targets list [--all] [--json]",
+        "",
+      ].join("\n");
+    case "proc":
+      return procUsage();
+    default:
+      return null;
+  }
 }
 
 function jsonSubset(value: JsonValue, expected: JsonValue): boolean {

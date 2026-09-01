@@ -100,4 +100,49 @@ describe("SyntheticKernel", () => {
       value: "Permission denied: process cannot call shell.exec",
     });
   });
+
+  it("keeps native shell discovery and Unix composition available", async () => {
+    const kernel = SyntheticKernel.fromSpec({
+      runtime: {
+        now: "2026-09-01T12:00:00.000Z",
+        timezone: "UTC",
+      },
+      processes: [{
+        id: "ship",
+        role: "ship",
+        uid: 1000,
+        gids: [1000],
+        capabilities: ["shell.exec"],
+      }],
+      targets: [],
+    });
+
+    const discovery = await kernel.dispatch("ship", "Shell", {
+      input: "man --search -- 'list the ordered GSV event log'",
+      target: "gsv",
+    });
+    expect(discovery).toMatchObject({
+      isError: false,
+      value: {
+        status: "completed",
+        exitCode: 0,
+      },
+    });
+    expect(JSON.stringify(discovery.value)).toContain(
+      "ordered [GSV EVENT] entries are delivered directly",
+    );
+
+    const composed = await kernel.dispatch("ship", "Shell", {
+      input: "r12y --help | head -1; echo ready",
+      target: "gsv",
+    });
+    expect(composed).toMatchObject({
+      isError: false,
+      value: {
+        status: "completed",
+        output: "Usage:\nready\n",
+        exitCode: 0,
+      },
+    });
+  });
 });

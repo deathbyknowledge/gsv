@@ -248,6 +248,7 @@ export type SyntheticDelegationSnapshot = {
   responsibilityId?: string;
   state: "in_progress" | "completed" | "failed";
   resultText?: string;
+  normalizedResultText?: string;
   error?: string;
 };
 
