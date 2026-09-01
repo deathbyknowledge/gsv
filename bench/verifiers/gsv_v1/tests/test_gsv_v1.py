@@ -191,6 +191,34 @@ def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
     (run_dir / "traces.jsonl").write_text(
         "".join(json.dumps(envelope) + "\n" for envelope in envelopes)
     )
+    legacy_run_dir = tmp_path / "legacy"
+    legacy_run_dir.mkdir()
+    (legacy_run_dir / "traces.jsonl").write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "errors": [],
+                "traces": [
+                    {
+                        "ok": True,
+                        "errors": [],
+                        "agent": {"config": {"model": "legacy/example"}},
+                        "rewards": {
+                            "scenario_outcome": {"score": 0.8}
+                        },
+                        "timing": {
+                            "agent": {"start": 1.0, "end": 3.0}
+                        },
+                        "calls": [
+                            {"time": {"start": 1.0, "end": 2.0}}
+                        ],
+                        "info": {"gsv_rubric": []},
+                    }
+                ],
+            }
+        )
+        + "\n"
+    )
     pricing_path = tmp_path / "pricing.json"
     pricing_path.write_text(
         json.dumps(
@@ -209,7 +237,12 @@ def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
     )
 
     summary = summarize_matrix(tmp_path, load_pricing(pricing_path))
-    model = summary["models"][0]
+    model = next(
+        model for model in summary["models"] if model["model"] == "qwen/example"
+    )
+    legacy = next(
+        model for model in summary["models"] if model["model"] == "legacy/example"
+    )
 
     assert model["model"] == "qwen/example"
     assert model["rollouts"] == 2
@@ -230,4 +263,10 @@ def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
         "total": 2,
         "rate": 0.5,
     }
+    assert legacy["usage_coverage"] == 0.0
+    assert legacy["input_tokens"] is None
+    assert legacy["completion_tokens"] is None
+    assert legacy["listed_cost_usd"] is None
     assert "qwen/example" in render_markdown(summary)
+    assert "legacy/example" in render_markdown(summary)
+    assert "n/a" in render_markdown(summary)
