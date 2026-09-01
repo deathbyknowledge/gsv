@@ -92,12 +92,15 @@ def summarize_matrix(
     for model_id, entries in sorted(groups.items()):
         scores: list[float] = []
         agent_seconds: list[float] = []
+        agent_starts: list[float] = []
+        agent_ends: list[float] = []
         request_seconds = 0.0
         prompt_tokens = 0
         completion_tokens = 0
         cached_input_tokens = 0
         reasoning_tokens = 0
         call_count = 0
+        usage_call_count = 0
         error_count = 0
         criteria: dict[str, dict[str, Any]] = {}
 
@@ -119,6 +122,12 @@ def summarize_matrix(
             timing = trace.get("timing", {})
             agent_timing = timing.get("agent", {}) if isinstance(timing, dict) else {}
             agent_seconds.append(_duration(agent_timing))
+            if isinstance(agent_timing, dict):
+                start = _number(agent_timing.get("start"))
+                end = _number(agent_timing.get("end"))
+                if start and end >= start:
+                    agent_starts.append(start)
+                    agent_ends.append(end)
 
             calls = trace.get("calls", [])
             if isinstance(calls, list):
@@ -127,9 +136,10 @@ def summarize_matrix(
                         continue
                     call_count += 1
                     request_seconds += _duration(call.get("time"))
-                    usage = call.get("usage", {})
+                    usage = call.get("usage")
                     if not isinstance(usage, dict):
                         continue
+                    usage_call_count += 1
                     prompt_tokens += int(_number(usage.get("prompt_tokens")))
                     completion_tokens += int(_number(usage.get("completion_tokens")))
                     cached_input_tokens += int(
@@ -168,10 +178,16 @@ def summarize_matrix(
 
         count = len(entries)
         total_agent_seconds = sum(agent_seconds)
+        wall_seconds = (
+            max(agent_ends) - min(agent_starts)
+            if agent_starts and agent_ends
+            else total_agent_seconds
+        )
         input_tokens = prompt_tokens + cached_input_tokens
+        usage_complete = usage_call_count == call_count and call_count > 0
         price = prices.get(model_id)
         estimated_cost = None
-        if price is not None:
+        if price is not None and usage_complete:
             estimated_cost = (
                 input_tokens * price["input_usd_per_mtok"]
                 + completion_tokens * price["output_usd_per_mtok"]
@@ -191,25 +207,38 @@ def summarize_matrix(
                 "calls": call_count,
                 "calls_per_rollout": call_count / count if count else 0.0,
                 "agent_seconds": total_agent_seconds,
+                "wall_seconds": wall_seconds,
                 "agent_seconds_p50": _percentile(agent_seconds, 0.5),
                 "agent_seconds_p95": _percentile(agent_seconds, 0.95),
                 "request_seconds": request_seconds,
-                "prompt_tokens": prompt_tokens,
-                "input_tokens": input_tokens,
-                "completion_tokens": completion_tokens,
-                "cached_input_tokens": cached_input_tokens,
-                "reasoning_tokens": reasoning_tokens,
+                "usage_calls": usage_call_count,
+                "usage_coverage": (
+                    usage_call_count / call_count if call_count else 0.0
+                ),
+                "prompt_tokens": prompt_tokens if usage_call_count else None,
+                "input_tokens": input_tokens if usage_call_count else None,
+                "completion_tokens": (completion_tokens if usage_call_count else None),
+                "cached_input_tokens": (
+                    cached_input_tokens if usage_call_count else None
+                ),
+                "reasoning_tokens": reasoning_tokens if usage_call_count else None,
                 "cached_input_rate": (
                     cached_input_tokens / input_tokens if input_tokens else 0.0
-                ),
+                )
+                if usage_call_count
+                else None,
                 "observed_output_tokens_per_second": (
-                    completion_tokens / total_agent_seconds
-                    if total_agent_seconds
+                    completion_tokens / wall_seconds
+                    if usage_call_count and wall_seconds
                     else 0.0
-                ),
+                )
+                if usage_call_count
+                else None,
                 "request_output_tokens_per_second": (
                     completion_tokens / request_seconds if request_seconds else 0.0
-                ),
+                )
+                if usage_call_count
+                else None,
                 "listed_cost_usd": estimated_cost,
                 "criteria": criteria,
             }
@@ -233,11 +262,16 @@ def render_markdown(summary: dict[str, Any]) -> str:
     for model in models:
         cost = model["listed_cost_usd"]
         cost_text = f"${cost:.4f}" if cost is not None else "n/a"
+        input_tokens = model["input_tokens"]
+        output_tokens = model["completion_tokens"]
+        e2e_rate = model["observed_output_tokens_per_second"]
+        request_rate = model["request_output_tokens_per_second"]
+        cached_rate = model["cached_input_rate"]
         lines.append(
             "| {model} | {rollouts} | {mean:.3f} | {median:.3f} | "
             "{full}/{rollouts} | {errors} | {calls:.1f} | {seconds:.1f} | "
-            "{prompt:,} | {output:,} | {rate:.1f} | {request_rate:.1f} | "
-            "{cached:.1%} | {cost} |".format(
+            "{prompt} | {output} | {rate} | {request_rate} | "
+            "{cached} | {cost} |".format(
                 model=model["model"],
                 rollouts=model["rollouts"],
                 mean=model["score_mean"],
@@ -246,11 +280,13 @@ def render_markdown(summary: dict[str, Any]) -> str:
                 errors=model["errors"],
                 calls=model["calls_per_rollout"],
                 seconds=model["agent_seconds_p50"],
-                prompt=model["input_tokens"],
-                output=model["completion_tokens"],
-                rate=model["observed_output_tokens_per_second"],
-                request_rate=model["request_output_tokens_per_second"],
-                cached=model["cached_input_rate"],
+                prompt=f"{input_tokens:,}" if input_tokens is not None else "n/a",
+                output=(f"{output_tokens:,}" if output_tokens is not None else "n/a"),
+                rate=f"{e2e_rate:.1f}" if e2e_rate is not None else "n/a",
+                request_rate=(
+                    f"{request_rate:.1f}" if request_rate is not None else "n/a"
+                ),
+                cached=(f"{cached_rate:.1%}" if cached_rate is not None else "n/a"),
                 cost=cost_text,
             )
         )
