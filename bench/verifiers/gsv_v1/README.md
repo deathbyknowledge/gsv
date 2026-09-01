@@ -32,6 +32,30 @@ Verifiers client flags:
 
 Pass taskset.scenario-path to select one fixture or another fixture directory.
 
+To compare several served models on the same stateful scenario from the local
+machine, use the matrix runner from the repository root:
+
+    GSV_BENCH_ROLLOUTS=3 \
+    GSV_BENCH_PARALLEL_MODELS=4 \
+    ./bench/scripts/run-verifiers-v1-matrix.sh \
+      qwen/qwen3-8b \
+      qwen/qwen3-30b-a3b-instruct-2507 \
+      openai/gpt-oss-120b \
+      deepseek/deepseek-v3.2
+
+By default the runner uses the stateful checkout incident, one active rollout
+per model, and the Prime Inference credentials already configured by `prime
+login`. It copies the exact scenario and its digest into an ignored output
+directory, snapshots current model pricing, keeps a log and trace per model,
+and emits `summary.md` plus a machine-readable `summary.json`. Listed cost is
+an estimate from total prompt and completion tokens at the snapshotted rates;
+it does not assume an unadvertised cache discount.
+
+`GSV_BENCH_SCENARIO`, `GSV_BENCH_OUTPUT_DIR`,
+`GSV_BENCH_MODEL_CONCURRENCY`, and `GSV_BENCH_TIMEOUT_SECONDS` override the
+corresponding defaults. Keep the scenario, rollout count, concurrency, and
+timeout fixed when comparing model quality or throughput.
+
 For a credential-free end-to-end smoke with a deterministic OpenAI-compatible
 backend, run this from the repository root:
 

@@ -1,8 +1,10 @@
 import copy
+import json
 
 import verifiers.v1 as vf
 
 from gsv_v1 import GsvHarness, GsvTaskset
+from gsv_v1.report import load_pricing, render_markdown, summarize_matrix
 from gsv_v1.taskset import GsvConfig, matches_assertion
 
 
@@ -140,3 +142,89 @@ def test_temporal_assertions_count_and_order_semantic_events() -> None:
             "max": 1,
         },
     )
+
+
+def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
+    run_dir = tmp_path / "qwen"
+    run_dir.mkdir()
+    envelopes = []
+    for score, passed, duration in [(1.0, True, 10.0), (0.4, False, 20.0)]:
+        envelopes.append(
+            {
+                "ok": True,
+                "errors": [],
+                "traces": [
+                    {
+                        "ok": True,
+                        "errors": [],
+                        "agent": {"config": {"model": "qwen/example"}},
+                        "rewards": {
+                            "scenario_outcome": {"score": score}
+                        },
+                        "timing": {
+                            "agent": {"start": 10.0, "end": 10.0 + duration}
+                        },
+                        "calls": [
+                            {
+                                "time": {"start": 1.0, "end": 5.0},
+                                "usage": {
+                                    "prompt_tokens": 1_000,
+                                    "completion_tokens": 100,
+                                    "cached_input_tokens": 500,
+                                    "reasoning_tokens": 80,
+                                },
+                            }
+                        ],
+                        "info": {
+                            "gsv_rubric": [
+                                {
+                                    "id": "durable-outcome",
+                                    "description": "The state is correct.",
+                                    "passed": passed,
+                                }
+                            ]
+                        },
+                    }
+                ],
+            }
+        )
+    (run_dir / "traces.jsonl").write_text(
+        "".join(json.dumps(envelope) + "\n" for envelope in envelopes)
+    )
+    pricing_path = tmp_path / "pricing.json"
+    pricing_path.write_text(
+        json.dumps(
+            {
+                "data": [
+                    {
+                        "id": "qwen/example",
+                        "pricing": {
+                            "input_usd_per_mtok": 1.0,
+                            "output_usd_per_mtok": 2.0,
+                        },
+                    }
+                ]
+            }
+        )
+    )
+
+    summary = summarize_matrix(tmp_path, load_pricing(pricing_path))
+    model = summary["models"][0]
+
+    assert model["model"] == "qwen/example"
+    assert model["rollouts"] == 2
+    assert model["score_mean"] == 0.7
+    assert model["score_median"] == 0.7
+    assert model["full_passes"] == 1
+    assert model["calls_per_rollout"] == 1.0
+    assert model["agent_seconds"] == 30.0
+    assert model["completion_tokens"] == 200
+    assert model["cached_input_rate"] == 0.5
+    assert model["listed_cost_usd"] == 0.0024
+    assert model["criteria"]["durable-outcome"] == {
+        "description": "The state is correct.",
+        "passed": 1,
+        "total": 2,
+        "rate": 0.5,
+    }
+    assert "qwen/example" in render_markdown(summary)
