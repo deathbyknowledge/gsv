@@ -263,6 +263,10 @@ import {
   type RunControlCommandParseResult,
 } from "./run-control-command";
 import {
+  FINAL_MESSAGE_BLOCK_EXAMPLE,
+  withRunControlInstructions,
+} from "./run-control-tool";
+import {
   extractStoredFsReadResource,
   extractFsReadResource,
   extractToolResultImages,
@@ -580,10 +584,6 @@ const USER_INTERRUPTED_TOOL_MESSAGE = "User interrupted tool execution";
 const MAX_TERMINAL_CORRECTION_ROUNDS = 1;
 const MAX_TERMINAL_COMMAND_FAILURES = 5;
 const MAX_TERMINAL_DELIVERY_FAILURES = 3;
-const FINAL_MESSAGE_BLOCK_EXAMPLE =
-  "message send <<'GSV_MESSAGE' && yield\nyour user-visible response\nGSV_MESSAGE";
-const RUN_CONTROL_INSTRUCTION =
-  `Use a direct \`message send\` Shell call whenever the user should receive a message; sending does not finish the run. After all work is complete, run \`yield\`, or compose the final message as:\n${FINAL_MESSAGE_BLOCK_EXAMPLE}\nOrdinary assistant text is Process activity and is not sent to the user.`;
 const USER_SUPERSEDED_TOOL_MESSAGE =
   "Cancelled for this agent run because a newer user message arrived; the underlying operation may still complete";
 const TOOL_EXECUTION_DENIED_BY_USER_MESSAGE = "Tool execution denied by user";
@@ -680,21 +680,6 @@ const terminalShellToolArgsSchema = z.object({
   cwd: z.string().optional(),
   timeout: z.number().optional(),
 }).strict();
-const RUN_CONTROL_SHELL_TOOL: Tool = {
-  name: "Shell",
-  description: `Run a GSV shell command. ${RUN_CONTROL_INSTRUCTION}`,
-  parameters: {
-    type: "object",
-    properties: {
-      input: {
-        type: "string",
-        description: "The message or run-control command to run on GSV.",
-      },
-    },
-    required: ["input"],
-    additionalProperties: false,
-  },
-};
 const aiToolsDeviceSchema = z.object({
   id: z.string(),
   implements: z.array(z.string()),
@@ -10913,19 +10898,6 @@ function conversationRunState(
   } catch {
     return {};
   }
-}
-
-function withRunControlInstructions(workTools: Tool[]): Tool[] {
-  let foundShell = false;
-  const tools = workTools.map((tool) => {
-    if (tool.name !== "Shell") return tool;
-    foundShell = true;
-    return {
-      ...tool,
-      description: `${tool.description} ${RUN_CONTROL_INSTRUCTION}`,
-    };
-  });
-  return foundShell ? tools : [...tools, RUN_CONTROL_SHELL_TOOL];
 }
 
 function runControlShellCall(toolCall: ToolCall): RunControlShellCall | null {
