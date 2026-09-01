@@ -227,8 +227,8 @@ def render_markdown(summary: dict[str, Any]) -> str:
     if not models:
         return "No traces found."
     lines = [
-        "| Model | n | Mean | Median | Full | Errors | Calls/n | P50 s | Input tok | Output tok | Output tok/s | Cached | Listed cost |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Model | n | Mean | Median | Full | Errors | Calls/n | P50 s | Input tok | Output tok | E2E out tok/s | Request out tok/s | Cached | Listed cost |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for model in models:
         cost = model["listed_cost_usd"]
@@ -236,7 +236,8 @@ def render_markdown(summary: dict[str, Any]) -> str:
         lines.append(
             "| {model} | {rollouts} | {mean:.3f} | {median:.3f} | "
             "{full}/{rollouts} | {errors} | {calls:.1f} | {seconds:.1f} | "
-            "{prompt:,} | {output:,} | {rate:.1f} | {cached:.1%} | {cost} |".format(
+            "{prompt:,} | {output:,} | {rate:.1f} | {request_rate:.1f} | "
+            "{cached:.1%} | {cost} |".format(
                 model=model["model"],
                 rollouts=model["rollouts"],
                 mean=model["score_mean"],
@@ -248,6 +249,7 @@ def render_markdown(summary: dict[str, Any]) -> str:
                 prompt=model["input_tokens"],
                 output=model["completion_tokens"],
                 rate=model["observed_output_tokens_per_second"],
+                request_rate=model["request_output_tokens_per_second"],
                 cached=model["cached_input_rate"],
                 cost=cost_text,
             )
