@@ -510,6 +510,7 @@ async function inferenceAttribution(
     actor: {
       localUid: process?.uid ?? 0,
     },
+    workload: "kernel",
   };
   if (ctx.processId) attribution.actor.processId = ctx.processId;
   if (ctx.processRunId) attribution.actor.runId = ctx.processRunId;

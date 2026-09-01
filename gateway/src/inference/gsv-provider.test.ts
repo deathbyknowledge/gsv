@@ -23,6 +23,7 @@ const ATTRIBUTION = {
   installationId: "inst_test",
   logicalRequestId: "request_test",
   actor: { localUid: 1000, processId: "proc_test", runId: "run_test" },
+  workload: "ipc" as const,
 };
 
 const CONTEXT: Context = {
@@ -111,6 +112,9 @@ describe("GSV inference provider", () => {
     expect(getByName).toHaveBeenCalledWith(ATTRIBUTION.installationId);
     expect(service.getInstallation).not.toHaveBeenCalled();
     expect(target.generateStream).toHaveBeenCalledOnce();
+    expect(target.generateStream).toHaveBeenCalledWith(
+      expect.objectContaining({ workload: "ipc" }),
+    );
     expect(dispose).toHaveBeenCalledOnce();
   });
 

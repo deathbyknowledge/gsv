@@ -21,6 +21,7 @@ export type {
   ManagedInferenceRequest,
   ManagedInferenceResult,
   ManagedInferenceStreamEvent,
+  ManagedInferenceWorkload,
 } from "../services/inference";
 
 export type ManagedMailSummaryRequest = {

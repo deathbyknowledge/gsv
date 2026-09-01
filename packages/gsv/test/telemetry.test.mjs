@@ -53,4 +53,46 @@ describe("telemetry contract", () => {
       log.mock.restore();
     }
   });
+
+  it("accepts bounded inference failure diagnostics without raw errors", () => {
+    const failure = createTelemetryRecord({
+      installationId: "inst_telemetry",
+      component: "inference",
+      event: {
+        stream: "operational",
+        name: "inference.request.finished",
+        properties: {
+          outcome: "failed",
+          purpose: "agent",
+          workload: "ipc",
+          provider: "workers-ai",
+          model: "@cf/example/model",
+          stopReason: "error",
+          durationMs: 123,
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          totalTokens: 0,
+          costNanoUsd: 0,
+          failureKind: "rate_limited",
+          failureStage: "provider",
+          retryable: true,
+          providerStatusCode: 429,
+        },
+      },
+    });
+
+    assert.equal(telemetryRecordSchema.safeParse(failure).success, true);
+    assert.equal(telemetryRecordSchema.safeParse({
+      ...failure,
+      event: {
+        ...failure.event,
+        properties: {
+          ...failure.event.properties,
+          errorMessage: "private provider response",
+        },
+      },
+    }).success, false);
+  });
 });
