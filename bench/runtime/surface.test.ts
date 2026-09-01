@@ -324,6 +324,132 @@ describe("GSV Process surface", () => {
         .map(({ systemPromptSha256 }) => systemPromptSha256)).size).toBe(1);
     }
   });
+
+  it("recovers checkout across delegated mitigation and three durable runs", async () => {
+    const scenario = await fixture("recover-checkout-incident.json");
+    const shipResponses = [
+      assistant(toolCall("ack", "Shell", {
+        input: "message send --message 'Checkout incident acknowledged; investigating with operations.'",
+      })),
+      assistant(toolCall("create", "Shell", {
+        input: "r12y create --title 'Restore stable checkout service' --dedupe 'slack:checkout-incident'",
+        target: "gsv",
+      })),
+      assistant(toolCall("agents", "Shell", {
+        input: "proc agents --json",
+        target: "gsv",
+      })),
+      assistant(toolCall("delegate", "Shell", {
+        input: "proc delegate --as ops --responsibility r12y:00000000-0000-4000-8000-000000000001 'Discover the production checkout target, diagnose the current incident, and safely restore the last known healthy release. Return the mitigation and evidence; do not claim independent health verification.'",
+        target: "gsv",
+      })),
+      assistant(toolCall("initial-health", "Read", {
+        path: "/checkout/health.json",
+        target: "checkout-monitor",
+      })),
+      assistant(toolCall("wait-1", "Shell", {
+        input: "r12y wait r12y:00000000-0000-4000-8000-000000000001 --until 2026-09-01T12:05:00.000Z --blocker 'awaiting independent stability evidence'",
+        target: "gsv",
+      })),
+      assistant(toolCall("yield-1", "Shell", { input: "yield" })),
+      assistant(toolCall("health-1", "Read", {
+        path: "/checkout/health.json",
+        target: "checkout-monitor",
+      })),
+      assistant(toolCall("wait-2", "Shell", {
+        input: "r12y wait r12y:00000000-0000-4000-8000-000000000001 --until 2026-09-01T12:10:00.000Z --blocker 'awaiting second consecutive healthy window'",
+        target: "gsv",
+      })),
+      assistant(toolCall("yield-2", "Shell", { input: "yield" })),
+      assistant(toolCall("health-2", "Read", {
+        path: "/checkout/health.json",
+        target: "checkout-monitor",
+      })),
+      assistant(toolCall("resolve", "Shell", {
+        input: "r12y resolve r12y:00000000-0000-4000-8000-000000000001 --json '{\"release\":\"checkout-2026.08.31\",\"healthyWindows\":2}'",
+        target: "gsv",
+      })),
+      assistant(toolCall("finish", "Shell", {
+        input: "message send --message 'Checkout is stable on checkout-2026.08.31 after rollback; two healthy monitor windows confirmed.' && yield",
+      })),
+    ];
+    const workerResponses = [
+      assistant(toolCall("targets", "Shell", {
+        input: "targets list --json",
+        target: "gsv",
+      })),
+      assistant(toolCall("status", "Shell", {
+        input: "releasectl status",
+        target: "checkout-production",
+      })),
+      assistant(toolCall("history", "Shell", {
+        input: "releasectl history",
+        target: "checkout-production",
+      })),
+      assistant(toolCall("errors", "Read", {
+        path: "/var/log/checkout/error.log",
+        target: "checkout-production",
+      })),
+      assistant(toolCall("rollback", "Shell", {
+        input: "releasectl rollback checkout-2026.08.31",
+        target: "checkout-production",
+      })),
+      textAssistant("Rolled back to checkout-2026.08.31; verification pending."),
+    ];
+
+    const artifact = await runGsvSurfaceScenario(scenario, async (context) => {
+      const delegated = String(context.messages[0]?.content)
+        .includes("Delegated task from ship (ship).");
+      const next = delegated ? workerResponses.shift() : shipResponses.shift();
+      if (!next) throw new Error("Unexpected model turn");
+      return next;
+    });
+
+    expect(artifact.status).toBe("yielded");
+    expect(artifact.runs.filter(({ processId }) => processId === "ship"))
+      .toEqual([
+        { run: 1, processId: "ship", status: "yielded" },
+        { run: 2, processId: "ship", status: "yielded" },
+        { run: 3, processId: "ship", status: "yielded" },
+      ]);
+    expect(artifact.world.targets["checkout-production"]?.state).toMatchObject({
+      activeRelease: "checkout-2026.08.31",
+      recoveryStarted: true,
+      lastAction: "rollback",
+    });
+    expect(artifact.world.targets["checkout-monitor"]?.state).toMatchObject({
+      status: "stable",
+      consecutiveHealthyWindows: 2,
+    });
+    expect(artifact.world.responsibilities.records[
+      "r12y:00000000-0000-4000-8000-000000000001"
+    ]).toMatchObject({ state: "resolved", assignee: { kind: "ship" } });
+    expect(artifact.world.externalEvents.map(({ state }) => state))
+      .toEqual(["applied", "applied"]);
+    expect(artifact.world.adapters.slack?.deliveries).toHaveLength(2);
+    expect(artifact.log.some((entry) => (
+      entry.type === "tool.call"
+      && entry.processId === "ship"
+      && entry.arguments.target === "checkout-production"
+    ))).toBe(false);
+    const health2 = artifact.log.findIndex((entry) => (
+      entry.type === "external.event" && entry.id === "checkout-health-window-2"
+    ));
+    const resolved = artifact.log.findIndex((entry) => (
+      entry.type === "responsibility.transition"
+      && entry.transition.kind === "resolved"
+    ));
+    expect(health2).toBeGreaterThan(-1);
+    expect(resolved).toBeGreaterThan(health2);
+    const shipObservations = artifact.observations.filter(
+      ({ processId }) => processId === "ship",
+    );
+    expect(new Set(shipObservations.map(({ systemPromptSha256 }) => (
+      systemPromptSha256
+    ))).size).toBe(1);
+    expect(JSON.stringify(shipObservations.find(({ run }) => run === 3)?.messages))
+      .toContain("Checkout monitor observation window 1 of 2");
+  });
 });
 
 async function fixture(name: string) {

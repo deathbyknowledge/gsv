@@ -56,6 +56,55 @@ server.listen(port, "127.0.0.1", () => {
 function selectResponse(messages: FakeMessage[]): FakeResponse {
   const transcript = JSON.stringify(messages);
   const resultCount = toolResultCount(messages);
+  if (
+    transcript.includes("Delegated task from ship (ship).")
+    && transcript.includes("safely restore the last known healthy release")
+  ) {
+    if (resultCount === 0) {
+      return {
+        id: "discover-checkout-target",
+        name: "Shell",
+        arguments: { input: "targets list --json", target: "gsv" },
+      };
+    }
+    if (resultCount === 1) {
+      return {
+        id: "inspect-checkout-status",
+        name: "Shell",
+        arguments: { input: "releasectl status", target: "checkout-production" },
+      };
+    }
+    if (resultCount === 2) {
+      return {
+        id: "inspect-checkout-history",
+        name: "Shell",
+        arguments: { input: "releasectl history", target: "checkout-production" },
+      };
+    }
+    if (resultCount === 3) {
+      return {
+        id: "read-checkout-errors",
+        name: "Read",
+        arguments: {
+          path: "/var/log/checkout/error.log",
+          target: "checkout-production",
+        },
+      };
+    }
+    if (resultCount === 4) {
+      return {
+        id: "rollback-checkout",
+        name: "Shell",
+        arguments: {
+          input: "releasectl rollback checkout-2026.08.31",
+          target: "checkout-production",
+        },
+      };
+    }
+    return {
+      text: "Rolled checkout back from checkout-2026.09.01 to the previous healthy release checkout-2026.08.31 after confirming the schema checksum mismatch; independent health verification is pending.",
+    };
+  }
   if (transcript.includes("Delegated task from ship (ship).")) {
     return resultCount === 0
       ? {
@@ -67,6 +116,125 @@ function selectResponse(messages: FakeMessage[]): FakeResponse {
         },
       }
       : { text: "database migration checksum mismatch" };
+  }
+  if (transcript.includes("two consecutive healthy observation windows")) {
+    if (resultCount === 0) {
+      return {
+        id: "acknowledge-checkout-incident",
+        name: "Shell",
+        arguments: {
+          input: "message send --message 'Checkout incident acknowledged; investigating with operations.'",
+        },
+      };
+    }
+    if (resultCount === 1) {
+      return {
+        id: "create-checkout-responsibility",
+        name: "Shell",
+        arguments: {
+          input: "r12y create --title 'Restore stable checkout service' --dedupe 'slack:checkout-incident'",
+          target: "gsv",
+        },
+      };
+    }
+    if (resultCount === 2) {
+      return {
+        id: "discover-operations-agent",
+        name: "Shell",
+        arguments: { input: "proc agents --json", target: "gsv" },
+      };
+    }
+    if (resultCount === 3) {
+      return {
+        id: "delegate-checkout-mitigation",
+        name: "Shell",
+        arguments: {
+          input: "proc delegate --as ops --responsibility r12y:00000000-0000-4000-8000-000000000001 'Discover the production checkout target, diagnose the current incident, and safely restore the last known healthy release. Return the mitigation and evidence; do not claim independent health verification.'",
+          target: "gsv",
+        },
+      };
+    }
+    if (resultCount === 4) {
+      return {
+        id: "inspect-initial-checkout-health",
+        name: "Read",
+        arguments: {
+          path: "/checkout/health.json",
+          target: "checkout-monitor",
+        },
+      };
+    }
+    if (resultCount === 5) {
+      return {
+        id: "wait-for-first-checkout-window",
+        name: "Shell",
+        arguments: {
+          input: "r12y wait r12y:00000000-0000-4000-8000-000000000001 --until 2026-09-01T12:05:00.000Z --blocker 'awaiting independent stability evidence'",
+          target: "gsv",
+        },
+      };
+    }
+    if (resultCount === 6) {
+      return {
+        id: "yield-for-first-checkout-window",
+        name: "Shell",
+        arguments: { input: "yield" },
+      };
+    }
+    if (resultCount === 7) {
+      return {
+        id: "inspect-first-checkout-window",
+        name: "Read",
+        arguments: {
+          path: "/checkout/health.json",
+          target: "checkout-monitor",
+        },
+      };
+    }
+    if (resultCount === 8) {
+      return {
+        id: "wait-for-second-checkout-window",
+        name: "Shell",
+        arguments: {
+          input: "r12y wait r12y:00000000-0000-4000-8000-000000000001 --until 2026-09-01T12:10:00.000Z --blocker 'awaiting second consecutive healthy window'",
+          target: "gsv",
+        },
+      };
+    }
+    if (resultCount === 9) {
+      return {
+        id: "yield-for-second-checkout-window",
+        name: "Shell",
+        arguments: { input: "yield" },
+      };
+    }
+    if (resultCount === 10) {
+      return {
+        id: "inspect-second-checkout-window",
+        name: "Read",
+        arguments: {
+          path: "/checkout/health.json",
+          target: "checkout-monitor",
+        },
+      };
+    }
+    if (resultCount === 11) {
+      return {
+        id: "resolve-checkout-incident",
+        name: "Shell",
+        arguments: {
+          input: "r12y resolve r12y:00000000-0000-4000-8000-000000000001 --json '{\"release\":\"checkout-2026.08.31\",\"healthyWindows\":2,\"mitigation\":\"rollback\"}'",
+          target: "gsv",
+        },
+      };
+    }
+    return {
+      id: "finish-checkout-incident",
+      name: "Shell",
+      arguments: {
+        input: "message send --message 'Checkout is stable on checkout-2026.08.31 after rollback; two healthy monitor windows confirmed.' && yield",
+      },
+    };
   }
   if (transcript.includes("slack:incident-42")) {
     if (resultCount === 0) {

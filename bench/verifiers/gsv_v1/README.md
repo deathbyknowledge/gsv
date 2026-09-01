@@ -11,6 +11,9 @@ the Verifiers interception endpoint, and stores the normalized artifact in
 trace.info["gsv"]. The `scenario_outcome` reward evaluates every fixture's
 explicit weighted rubric against that artifact and stores the per-criterion
 result in `trace.info["gsv_rubric"]`, so scoring can be recomputed offline.
+Scenarios may span several durable Process runs separated by logical-time
+external events. Rubrics can combine final-state subsets with semantic-event
+counts and ordering constraints; they do not prescribe an exact tool trace.
 
 ## Local evaluation
 
@@ -22,7 +25,7 @@ Verifiers client flags:
       --model MODEL \
       --env.agent.runtime.type subprocess \
       --no-serve --no-push \
-      --num-tasks 3 --num-rollouts 1 --max-concurrent 3
+      --num-tasks 4 --num-rollouts 1 --max-concurrent 4
 
 Pass taskset.scenario-path to select one fixture or another fixture directory.
 

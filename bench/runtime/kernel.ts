@@ -665,11 +665,27 @@ export class SyntheticKernel {
         }, this.now.valueOf());
         return this.responsibilityUpdateResult(process, responsibility);
       }
+      if (subcommand === "wait") {
+        this.requireCapability(processId, "r12y.update");
+        const input = parseResponsibilityWait(rest);
+        const patch: ResponsibilityPatch = { state: "waiting" };
+        if (input.untilMs !== undefined) patch.nextCheckAtMs = input.untilMs;
+        if (input.blocker !== undefined) patch.blocker = input.blocker;
+        const responsibility = this.responsibilities.update({
+          process,
+          id: input.id,
+          patch,
+        }, this.now.valueOf());
+        return this.responsibilityUpdateResult(process, responsibility);
+      }
       if (subcommand === "resolve" || subcommand === "cancel") {
         this.requireCapability(processId, "r12y.update");
         const id = requireValue(rest[0], "id");
         const patch: ResponsibilityPatch = {
           state: subcommand === "resolve" ? "resolved" : "cancelled",
+          blocker: null,
+          nextCheckAtMs: null,
+          leaseExpiresAtMs: null,
         };
         if (rest.length > 1) {
           if (rest.length !== 3 || rest[1] !== "--json") {
@@ -699,6 +715,24 @@ export class SyntheticKernel {
         return commandResult(procUsage());
       }
       if (subcommand === "self") return commandResult(processId + "\n");
+      if (subcommand === "agents") {
+        this.requireCapability(processId, "proc.spawn");
+        if (rest.some((argument) => argument !== "--json")) {
+          throw new Error("agents accepts only --json");
+        }
+        const ownerUid = processOwnerUid(this.requireProcess(processId));
+        const agents = [...this.delegateSpecs.entries()]
+          .filter(([, delegate]) => processOwnerUid(delegate.process) === ownerUid)
+          .map(([account, delegate]) => ({
+            account,
+            username: delegate.process.username ?? account,
+            role: delegate.process.role,
+          }))
+          .sort((left, right) => left.account.localeCompare(right.account));
+        return commandResult(rest.includes("--json")
+          ? JSON.stringify({ agents }) + "\n"
+          : renderAgentTable(agents));
+      }
       if (subcommand !== "delegate") {
         throw new Error("unknown command: " + subcommand + "\n" + procUsage());
       }
@@ -1024,6 +1058,12 @@ type ParsedResponsibilityCreate = {
   dedupeKey?: string;
 };
 
+type ParsedResponsibilityWait = {
+  id: string;
+  untilMs?: number;
+  blocker?: string;
+};
+
 function parseTargetsListArgs(
   args: string[],
 ): ParsedTargetList {
@@ -1065,6 +1105,26 @@ function parseResponsibilityCreate(args: string[]): ParsedResponsibilityCreate {
   if (details !== undefined) result.details = details;
   if (priority !== undefined) result.priority = priority;
   if (dedupeKey !== undefined) result.dedupeKey = dedupeKey;
+  return result;
+}
+
+function parseResponsibilityWait(args: string[]): ParsedResponsibilityWait {
+  const id = requireValue(args[0], "wait responsibility id");
+  let untilMs: number | undefined;
+  let blocker: string | undefined;
+  for (let index = 1; index < args.length; index += 1) {
+    const option = args[index];
+    index += 1;
+    const value = requireValue(args[index], option ?? "wait option");
+    if (option === "--until") {
+      untilMs = Date.parse(value);
+      if (Number.isNaN(untilMs)) throw new Error("invalid wait time: " + value);
+    } else if (option === "--blocker") blocker = value;
+    else throw new Error("unexpected wait option: " + option);
+  }
+  const result: ParsedResponsibilityWait = { id };
+  if (untilMs !== undefined) result.untilMs = untilMs;
+  if (blocker !== undefined) result.blocker = blocker;
   return result;
 }
 
@@ -1249,6 +1309,7 @@ function procUsage(): string {
   return [
     "Usage:",
     "  proc self",
+    "  proc agents [--json]",
     "  proc delegate [--as ACCOUNT] [--label LABEL] [--check-after 10m] [--responsibility ID] <task>",
     "",
     "proc delegate creates a durable child process and returns a task handle immediately.",
@@ -1264,12 +1325,23 @@ function r12yUsage(): string {
     "  r12y show ID",
     "  r12y create --title TITLE [--details JSON] [--priority PRIORITY] [--dedupe KEY]",
     "  r12y start ID",
+    "  r12y wait ID [--until ISO] [--blocker TEXT]",
     "  r12y resolve ID [--json RESOLUTION]",
     "  r12y cancel ID [--json RESOLUTION]",
     "",
     "Responsibilities are durable unresolved work owned by the Kernel.",
     "",
   ].join("\n");
+}
+
+function renderAgentTable(
+  agents: readonly { account: string; username: string; role: string }[],
+): string {
+  const lines = ["ACCOUNT\tUSERNAME\tROLE"];
+  for (const agent of agents) {
+    lines.push([agent.account, agent.username, agent.role].join("\t"));
+  }
+  return lines.join("\n") + "\n";
 }
 
 function renderManualSearch(query: string): string {

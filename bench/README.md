@@ -49,6 +49,14 @@ schemas, Process run-control behavior, append-only messages, and ordered
 [GSV EVENT] deltas. Administrative methods that connect targets, change ACLs, or
 mutate synthetic state are never exposed to the model.
 
+Synthetic Process epochs and history survive ordinary `yield` boundaries. A
+scenario may register ordered external events that advance logical time only
+after a run yields and their hidden world precondition is true. Those events can
+change target state, wake the same Process with an ordered GSV event, and evict
+its in-memory runtime projection before the next run. The frozen prompt,
+history, responsibility cursor, and target projection are reconstructed from
+durable episode state.
+
 ## Implemented tasks
 
 1. target-appears-after-inspection starts with an authorized server offline.
@@ -63,12 +71,20 @@ mutate synthetic state are never exposed to the model.
    promised work in `r12y`, delegates diagnostics to a worker that alone can read
    the incident server, returns the result over supervised IPC, resolves the
    responsibility, and sends one correlated Slack reply.
+4. recover-checkout-incident gives Ship only a read-only monitor, leaves
+   production authority with a discoverable operations account, and asks for an
+   outcome rather than a tool sequence. The Process acknowledges the incident,
+   retains it in r12y, delegates mitigation, yields across two logical health
+   windows and two simulated evictions, verifies independent state, rejects
+   older contradictory evidence, resolves the record, and closes the exact
+   Slack thread.
 
 The normalized artifact records observations, semantic events, committed
 messages, target state, Process projections, responsibilities, IPC calls,
 adapter delivery, and applied transitions. Every fixture has an explicit
 weighted rubric. Each criterion recursively matches an outcome subset of the
-artifact, providing partial credit without rewarding one exact action sequence.
+artifact and may assert semantic-event counts or ordering, providing partial
+credit without rewarding one exact action sequence.
 Exact semantic logs remain available for focused conformance tests.
 
 ## Production seams and fidelity
@@ -86,7 +102,7 @@ Before remote Prime workers, the TypeScript runner must also be bundled and
 versioned so the Python harness does not depend on a checkout and host
 node_modules.
 
-Cancellation and stale-response fencing, credentials, durable restart recovery,
-scheduling, media, complete Process history, and provider-specific adapter retry
-policy remain outside this batch. They should be added as explicit
-scenario-owned state machines, not hidden inside Python reward code.
+Cancellation fencing, credentials, durable storage failure, media, complete
+Process history, and provider-specific adapter retry policy remain outside this
+batch. They should be added as explicit scenario-owned state machines, not
+hidden inside Python reward code.

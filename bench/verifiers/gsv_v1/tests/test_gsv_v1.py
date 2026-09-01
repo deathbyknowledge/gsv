@@ -32,9 +32,10 @@ def test_plugin_exports_and_loads_deterministic_tasks() -> None:
     assert [task.key for task in tasks] == [
         "delegate-incident-from-slack",
         "deploy-release-across-targets",
+        "recover-checkout-incident",
         "target-appears-after-inspection",
     ]
-    assert tasks[2].data.scenario["transitions"][0]["after"] == {
+    assert tasks[3].data.scenario["transitions"][0]["after"] == {
         "processId": "ship",
         "tool": "Shell",
         "arguments": {
@@ -46,6 +47,10 @@ def test_plugin_exports_and_loads_deterministic_tasks() -> None:
     assert sum(
         criterion["weight"] for criterion in tasks[0].data.rubric
     ) == 1.0
+    assert tasks[2].data.scenario["maxRuns"] == 3
+    assert [
+        event["id"] for event in tasks[2].data.scenario["externalEvents"]
+    ] == ["checkout-health-window-1", "checkout-health-window-2"]
     assert isinstance(taskset, GsvTaskset)
     assert isinstance(harness, GsvHarness)
 
