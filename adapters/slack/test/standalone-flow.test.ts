@@ -1,6 +1,7 @@
 import { env, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
+import { renderAdapterHilText } from "../../shared/src/peer-render";
 import { SlackChannel } from "../src/index";
 import { SlackAccount } from "../src/slack-account";
 
@@ -223,33 +224,43 @@ describe("standalone Slack clean-instance flow", () => {
     });
 
     const channel = new SlackChannel(executionContextBinding({}), env);
+    const hil = {
+      pid: "proc-approval",
+      requestId: "standalone-request-1",
+      runId: "run-approval",
+      callId: "call-approval",
+      toolName: "Shell",
+      syscall: "shell.exec",
+      target: "gsv",
+      args: { input: "date" },
+      createdAt: 1_700_000_200_000,
+    } as const;
+    const deliveryId = "run-approval:hil:standalone-request-1";
     await expect(channel.adapterFrame(
       { installationId: "singleton" },
       {
-        deliveryId: "run-approval:hil:standalone-request-1",
+        deliveryId,
         accountId: "default",
         actorId: "UALICE01",
         surface: { kind: "dm", id: "DALICE01" },
         processId: "proc-approval",
         runId: "run-approval",
         processMode: "ship",
+        hil,
       },
       {
-        type: "sig",
-        signal: "proc.run.hil.requested",
-        payload: {
-          pid: "proc-approval",
-          requestId: "standalone-request-1",
-          runId: "run-approval",
-          callId: "call-approval",
-          toolName: "Shell",
-          syscall: "shell.exec",
-          target: "gsv",
-          args: { input: "date" },
-          createdAt: 1_700_000_200_000,
+        type: "req",
+        id: "send-approval",
+        call: "adapter.send",
+        args: {
+          adapter: "slack",
+          accountId: "default",
+          deliveryId,
+          surface: { kind: "dm", id: "DALICE01" },
+          text: renderAdapterHilText(hil, "dm"),
         },
       },
-    )).resolves.toBeNull();
+    )).resolves.toMatchObject({ type: "res", id: "send-approval", ok: true });
     let approvalPost: SlackApiCall | undefined;
     await vi.waitFor(async () => {
       approvalPost = (await slackApiCalls()).findLast((call) => (

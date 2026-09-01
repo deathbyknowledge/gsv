@@ -29,10 +29,11 @@ import {
 import type {
   AdapterAccountStatus,
   AdapterOutboundMessage,
-  AdapterPeerDeliveryContext,
+  AdapterDeliveryContext,
   AdapterSendResult,
   BinaryBody,
-  GatewayFrame,
+  GatewayRequestFrame,
+  GatewayResponseFrame,
 } from "./types";
 import type { ManagedSlackPeerEnv } from "./managed-peer";
 import {
@@ -64,13 +65,8 @@ type ManagedSlackPeerStub = {
     installationId: string,
     message: AdapterOutboundMessage,
     body?: BinaryBody,
+    context?: AdapterDeliveryContext,
   ): Promise<AdapterSendResult>;
-  acceptPeerSignal(
-    installation: AdapterInstallationContext,
-    context: AdapterPeerDeliveryContext,
-    frame: Extract<GatewayFrame, { type: "sig" }>,
-    body?: BinaryBody,
-  ): Promise<void>;
   disconnect(input: AdapterPairingDisconnectInput): Promise<AdapterPairingDisconnectResult>;
   listTargets(
     installationId: string,
@@ -181,23 +177,20 @@ export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements Adapte
 
   async adapterFrame(
     installation: AdapterInstallationContext,
-    context: AdapterPeerDeliveryContext,
-    frame: GatewayFrame,
-    body?: BinaryBody,
-  ): Promise<GatewayFrame | null> {
+    context: AdapterDeliveryContext,
+    frame: GatewayRequestFrame,
+  ): Promise<GatewayResponseFrame> {
     const parsed = parseManagedInstallation(installation);
     const accountId = requireWorkspaceAccountId(context.accountId);
     const actorId = requireSlackId(context.actorId, "Slack actor");
     const peer = this.peer(accountId, actorId);
-    return await handleAdapterFrame(this.adapterId, parsed, context, frame, body, {
-      send: async (message, requestBody) => await peer.sendMessage(
+    return await handleAdapterFrame(this.adapterId, context, frame, {
+      send: async (delivery, requestBody) => await peer.sendMessage(
         parsed.installationId,
-        message,
+        delivery.message,
         requestBody,
+        context,
       ),
-      acceptSignal: async (signalContext, signalFrame, signalBody) => {
-        await peer.acceptPeerSignal(parsed, signalContext, signalFrame, signalBody);
-      },
     });
   }
 

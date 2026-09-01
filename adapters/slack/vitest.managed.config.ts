@@ -23,17 +23,6 @@ export default defineConfig({
                   if (frame.call === "adapter.state.update") {
                     return { type: "res", id: frame.id, ok: true, data: { ok: true } };
                   }
-                  if (frame.call === "adapter.delivery.claim") {
-                    return {
-                      type: "res",
-                      id: frame.id,
-                      ok: true,
-                      data: { ok: true, deliver: true },
-                    };
-                  }
-                  if (frame.call === "adapter.delivery.report") {
-                    return { type: "res", id: frame.id, ok: true, data: { ok: true } };
-                  }
                   return {
                     type: "res",
                     id: frame.id,

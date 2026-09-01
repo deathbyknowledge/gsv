@@ -15,7 +15,7 @@ import type {
   AdapterGatewayRequestFrame,
   AdapterInstallationContext,
   AdapterOutboundMessage,
-  AdapterPeerDeliveryContext,
+  AdapterDeliveryContext,
   AdapterSurface,
   AuthorizeInstallationOnboardingInput,
   BinaryBody,
@@ -37,7 +37,6 @@ import type {
 } from "@humansandmachines/gsv/services/inference";
 import { SINGLETON_INSTALLATION_ID } from "../../src/installation/identity";
 import { handleAdapterFrame } from "../../../adapters/shared/src/adapter-frame";
-import { renderAdapterPeerSignal } from "../../../adapters/shared/src/peer-render";
 
 type ImportRequest = {
   remoteUrl?: string;
@@ -330,9 +329,8 @@ export default class TestDependencies
 
   async adapterFrame(
     installation: AdapterInstallationContext,
-    context: AdapterPeerDeliveryContext,
+    context: AdapterDeliveryContext,
     frame: AdapterGatewayFrame,
-    body?: BinaryBody,
   ): Promise<AdapterGatewayFrame | null> {
     let requestedAdapter = this.adapterId;
     if (frame.type === "req" && frame.call === "adapter.send") {
@@ -344,23 +342,13 @@ export default class TestDependencies
       installation,
       context,
       frame,
-      body,
       {
-        send: async (message, requestBody) => await this.#sendForInstallation(
+        send: async (delivery, requestBody) => await this.#sendForInstallation(
           installation,
           context.accountId,
-          message,
+          delivery.message,
           requestBody,
         ),
-        acceptSignal: async (signalContext, signalFrame, signalBody) => {
-          const rendered = renderAdapterPeerSignal(signalContext, signalFrame).message;
-          await this.#sendForInstallation(
-            installation,
-            signalContext.accountId,
-            rendered,
-            signalBody,
-          );
-        },
       },
     );
   }

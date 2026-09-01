@@ -142,9 +142,9 @@ Process DOs emit lifecycle and output signals such as `proc.run.started`,
 `proc.run.stream`, `proc.run.output`, `proc.run.hil.requested`, and
 `proc.run.finished`. Every user-visible process signal is broadcast exactly
 once to every connected user client for the owning uid. `run_routes` separately
-owns exact adapter delivery and terminal cleanup; an adapter durably accepts
-the routed committed-message or HIL signal and reports its provider outcome.
-`proc.changed` invalidates persisted process state.
+owns exact adapter delivery and terminal cleanup. It turns routed committed
+Messages and HIL requests into targeted `adapter.send` requests; `proc.changed`
+invalidates persisted process state.
 
 For CLI/browser-originated runs, `run_routes` maps `runId` to the originating WebSocket connection. For adapter-originated runs, it also binds the route to the process, owner, linked actor, adapter account, surface, optional thread, triggering message id, and managed peer-route generation. Delayed output and activity such as typing indicators are accepted only while that exact generation remains linked, so relinking the same external identity to the same user still fences work admitted before the relink. Terminal cleanup normally removes routes; the 30-day TTL is only a leak guard.
 
@@ -223,9 +223,10 @@ Independent Kernel ingress-receipt order completes the stale-handoff fence.
 Migration v032 adds the managed peer-route generation to exact adapter run
 routes so committed output cannot cross a later relink.
 
-Human-in-the-loop delivery uses the same exact signal as native clients. The
-adapter receives `proc.run.hil.requested`, persists it before acknowledgement,
-and renders native controls or a structured fallback. A native callback retains
+Human-in-the-loop delivery uses the same exact structured request as native
+clients. Clients receive `proc.run.hil.requested`; the exact adapter route
+receives a targeted `adapter.send` carrying its `ProcHilRequest` and renders
+native controls or a structured fallback. A native callback retains
 the Process, run, request, linked actor, surface, route generation, and provider
 message correlation. It reaches the Kernel through `linkedPeerFrame`; the
 Kernel derives an interaction-scoped human peer, intersects the linked user's
@@ -270,7 +271,7 @@ initial call runs on `gsv` or a registered provider. For shell continuations,
 |---|---|
 | `routing_table` | In-flight device-routed syscalls. |
 | `shell_sessions` | Device ownership and lifecycle for resumable shell sessions. |
-| `run_routes` | Routes process run signals back to connections or adapter surfaces. |
+| `run_routes` | Retains the exact connection endpoint or adapter destination for a process run. |
 | `processes` | Kernel process registry and process ownership. |
 | `devices`, `device_access` | Device catalog and group ACLs. |
 | `identity_links` | External adapter actor to local uid mapping. |

@@ -12,8 +12,6 @@ export type * from "./syscalls/responsibility";
 export { responsibilityRequiresAction } from "./syscalls/responsibility";
 export type * from "./syscalls/adapter";
 export {
-  adapterDeliveryClaimResultSchema,
-  adapterDeliveryReportResultSchema,
   adapterSendArgsSchema,
   adapterSendResultSchema,
   adapterStateUpdateResultSchema,

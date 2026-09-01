@@ -36,8 +36,6 @@ export default defineConfig({
                           replyToId: frame.args.message.messageId,
                         },
                       }
-                    : frame.call === "adapter.delivery.claim"
-                    ? { ok: true, deliver: true }
                     : { ok: true };
                   return { type: "res", id: frame.id, ok: true, data };
                 }

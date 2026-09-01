@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  adapterPeerSignalFrameSchema,
+  adapterDeliveryContextSchema,
   isAdapterAccountStatus,
   isAdapterConnectChallenge,
   isAdapterInboundResult,
@@ -49,11 +49,15 @@ test("validates an open-ended adapter service descriptor", () => {
   }).success, false);
 });
 
-test("validates exact adapter delivery signals", () => {
-  const hil = {
-    type: "sig",
-    signal: "proc.run.hil.requested",
-    payload: {
+test("validates structured adapter delivery context", () => {
+  const context = {
+    deliveryId: "run-1:hil:hil-1",
+    accountId: "account-1",
+    actorId: "actor-1",
+    surface: { kind: "dm", id: "surface-1" },
+    processId: "proc-1",
+    runId: "run-1",
+    hil: {
       pid: "proc-1",
       requestId: "hil-1",
       runId: "run-1",
@@ -65,34 +69,10 @@ test("validates exact adapter delivery signals", () => {
       createdAt: 1,
     },
   };
-  assert.equal(adapterPeerSignalFrameSchema.safeParse(hil).success, true);
-  assert.equal(adapterPeerSignalFrameSchema.safeParse({
-    ...hil,
-    payload: { ...hil.payload, requestId: undefined },
-  }).success, false);
-
-  const committed = {
-    type: "sig",
-    signal: "message.committed",
-    payload: {
-      directed: true,
-      message: {
-        id: "message-1",
-        conversationId: "conversation-1",
-        sequence: 1,
-        author: { kind: "process", pid: "proc-1", uid: 1000 },
-        text: "Done",
-        origin: { kind: "process", pid: "proc-1", runId: "run-1" },
-        processId: "proc-1",
-        runId: "run-1",
-        createdAt: 1,
-      },
-    },
-  };
-  assert.equal(adapterPeerSignalFrameSchema.safeParse(committed).success, true);
-  assert.equal(adapterPeerSignalFrameSchema.safeParse({
-    ...committed,
-    payload: { ...committed.payload, directed: false },
+  assert.equal(adapterDeliveryContextSchema.safeParse(context).success, true);
+  assert.equal(adapterDeliveryContextSchema.safeParse({
+    ...context,
+    hil: { ...context.hil, requestId: undefined },
   }).success, false);
 });
 

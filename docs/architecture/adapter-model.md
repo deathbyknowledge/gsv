@@ -111,10 +111,10 @@ returns a descriptor for lifecycle, status, activity, pairing, surface, and
 media support, plus an explicit target-support bit when applicable. Adapters
 call the Gateway's single `serviceFrame` entrypoint for `adapter.inbound` and
 `adapter.state.update`. In the other direction, the Gateway calls one
-`adapterFrame` carrier with ordinary `req`, `res`, and `sig` frames. Explicit
-`adapter.send` is a correlated request; directed Process delivery is
-`message.committed` or `proc.run.hil.requested`. The descriptor's `send`
-capability advertises support; `adapterFrame` is the only outbound carrier.
+`adapterFrame` carrier with an ordinary correlated `adapter.send` request. The
+request is sent only to the exact routed adapter destination; user-state signals
+remain an independent broadcast to clients. The descriptor's `send` capability
+advertises support; `adapterFrame` is the only outbound carrier.
 
 The canonical adapter identity comes from the trusted `CHANNEL_*` service
 binding. A descriptor must agree with that identity and cannot grant its Worker
@@ -196,26 +196,29 @@ The canonical outbound path is:
    from the owner's last-active linked private destination. A disconnected client
    conversation never jumps to an adapter, and other processes never use the fallback.
 4. The Kernel rechecks the linked actor's destination authority.
-5. If the endpoint is an adapter, the Kernel sends the exact directed
-   `message.committed` signal and any body sidecar to its `adapterFrame` carrier.
-   Adapters never receive Process token or reasoning streams.
-6. The account or peer Durable Object persists the frame and complete body before
-   acknowledging it. From that point the adapter owns provider formatting,
-   delivery retry, ambiguous outcomes, cleanup, and the final delivery report.
+5. If the endpoint is an adapter, the Kernel schedules the delivery and sends one
+   correlated `adapter.send` request with the exact route, content, and optional
+   body. Adapters never receive Process token or reasoning streams.
+6. The adapter formats and sends the provider message, then returns the correlated
+   response. Its provider ledger deduplicates a replay of the same `deliveryId`;
+   the Kernel classifies the response, retries only safe failures, and owns route
+   cleanup and terminal Process notices.
 7. Other signed-in clients synchronize the canonical message without treating it as
    directed to them.
 
 Again, the adapter is a transport surface, not the place where durable agent
 or conversation state lives.
 
-HIL uses the same rule rather than a prompt-text side channel. Web, Desktop,
-CLI, and a routed adapter all consume the same `proc.run.hil.requested` payload.
-Each surface chooses its presentation: Telegram and Slack use native buttons,
-while adapters without controls render a structured text fallback. A button
-callback is authenticated and durably correlated inside its adapter, then sent
-as an ordinary `proc.hil` request through a Kernel-derived, interaction-scoped
-linked-human peer. The adapter service account never receives ambient
-`proc.hil` authority, and provider reply threading is not authorization.
+HIL uses the same structured request rather than a prompt-text side channel.
+Web, Desktop, and CLI receive `proc.run.hil.requested` as a broadcast signal; an
+exact routed adapter receives the same `ProcHilRequest` in its targeted
+`adapter.send`. Each surface chooses its presentation: Telegram and Slack use
+native buttons, while adapters without controls render a structured text
+fallback. A button callback is authenticated and durably correlated inside its
+adapter, then sent as an ordinary `proc.hil` request through a Kernel-derived,
+interaction-scoped linked-human peer. The adapter service account never
+receives ambient `proc.hil` authority, and provider reply threading is not
+authorization.
 
 The `message` shell command exposes delivery context and the explicit path for a
 separate or cross-channel message. `message current` describes the directed endpoint
@@ -313,13 +316,9 @@ Kernel receipts are capped and retained for seven days.
 
 Outbound messages cross the adapter-worker boundary with a stable
 `deliveryId`. Committed run Messages, schedule occurrences, and the `message`
-CLI derive it before their first attempt. First-party
-adapter account Durable Objects first persist a routed signal and any body before
-the Kernel handoff returns. Before each provider attempt they claim the exact
-live run route from the Kernel; after a terminal provider outcome they report it
-back and replace the stored signal with a bounded, payload-free completion
-marker. Direct `adapter.send` requests use the same provider delivery ledger and
-return a recorded success without contacting the provider again. Each provider ledger record also
+CLI derive it before their first attempt. First-party adapter account Durable
+Objects retain a bounded provider-delivery ledger and return a recorded success
+without contacting the provider again. Each ledger record also
 binds the id to a fingerprint of its exact destination, reply context, text,
 media metadata, and binary media bytes. Reusing an id with different content is
 rejected instead of being mistaken for a successful replay, and that binding is
@@ -327,14 +326,13 @@ retained across retry-safe failures. Only failures known to be safe are
 retryable. Outcomes that may already have reached a provider are reported as
 ambiguous and are not replayed; Discord can additionally reuse an
 enforced deterministic nonce, while Telegram and WhatsApp conservatively use
-at-most-once delivery. The adapter retries only outcomes known to be safe and
-reports success, permanent failure, ambiguity, or bounded exhaustion. The
-Kernel removes the reply route after a successful final Message report or after
-a terminal delivery notice is accepted by the Process. The canonical Message
-remains in conversation history and its delivery outcome remains inspectable in
-Process activity. Approval attempt one is durably queued before the adapter
-acknowledges the HIL signal; provider notification failure therefore cannot
-clear or fail a pending approval.
+at-most-once delivery. The Kernel retains retry-safe delivery as scheduled work,
+stops typing after each attempt, and removes the reply route after success or
+after a terminal delivery notice is accepted by the Process. The canonical
+Message remains in conversation history and its delivery outcome remains
+inspectable in Process activity. Approval attempt one is durably scheduled
+before Process acknowledges the HIL signal; provider notification failure
+therefore cannot clear or fail a pending approval.
 Link challenges, adapter command responses, and human-approval acknowledgements
 use this same outbound ledger. The Kernel derives their delivery ids before the
 durable ingress claim and returns normalized response metadata. Provider
@@ -476,9 +474,9 @@ runtime.
 4. Persist reconstructable ingress before the first Gateway call and retry it
    with the account's existing wake-up mechanism until a terminal disposition.
 5. Implement mention/reply activation for every supported non-DM surface.
-6. Implement `adapterFrame`, durably accept routed signals and bodies before
-   acknowledgement, and use the shared delivery claim/report helpers.
-7. Render structured HIL from the signal payload. Native callbacks, when the
+6. Implement `adapterFrame` by handling targeted `adapter.send` requests and
+   returning their correlated responses.
+7. Render structured HIL from the request context. Native callbacks, when the
    platform supports them, must use the linked-peer `proc.hil` path rather than
    synthesizing inbound message text.
 8. Use the shared binary-body helpers and common media limits.

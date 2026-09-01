@@ -1,6 +1,5 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { handleAdapterFrame } from "../../shared/src/adapter-frame";
-import { cancelBinaryBody } from "../../shared/src/media-body";
 import {
   adapterAccountDurableObjectName,
   LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
@@ -13,14 +12,12 @@ import type {
   AdapterConnectResult,
   AdapterDisconnectResult,
   AdapterInstallationContext,
-  AdapterOutboundMessage,
-  AdapterPeerDeliveryContext,
-  AdapterSendResult,
+  AdapterDeliveryContext,
   AdapterService,
   AdapterServiceDescriptor,
   AdapterSurface,
-  BinaryBody,
-  GatewayFrame,
+  GatewayRequestFrame,
+  GatewayResponseFrame,
 } from "./types";
 import { parseTelegramWebhookPath } from "./webhook-route";
 import {
@@ -85,21 +82,14 @@ export class TelegramChannel
 
   async adapterFrame(
     installation: AdapterInstallationContext,
-    context: AdapterPeerDeliveryContext,
-    frame: GatewayFrame,
-    body?: BinaryBody,
-  ): Promise<GatewayFrame | null> {
+    context: AdapterDeliveryContext,
+    frame: GatewayRequestFrame,
+  ): Promise<GatewayResponseFrame> {
     const parsed = parseAdapterInstallationContext(installation);
     const { account } = this.getAccountDO(parsed, context.accountId);
-    return await handleAdapterFrame(this.adapterId, parsed, context, frame, body, {
-      send: async (message, requestBody) => await this.#sendForInstallation(
-        parsed,
-        context.accountId,
-        message,
-        requestBody,
-      ),
-      acceptSignal: async (signalContext, signalFrame, signalBody) => {
-        await account.acceptPeerSignal(parsed, signalContext, signalFrame, signalBody);
+    return await handleAdapterFrame(this.adapterId, context, frame, {
+      send: async (delivery, requestBody) => {
+        return await account.sendRoutedMessage(context, delivery, requestBody);
       },
     });
   }
@@ -229,27 +219,6 @@ export class TelegramChannel
 
     const { account } = this.getAccountDO(parsedInstallation, accountId);
     return [await account.getStatus()];
-  }
-
-  async #sendForInstallation(
-    installation: AdapterInstallationContext,
-    accountId: string,
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ): Promise<AdapterSendResult> {
-    try {
-      const parsedInstallation = parseAdapterInstallationContext(installation);
-      const { account } = this.getAccountDO(parsedInstallation, accountId);
-      const result = await account.sendMessage(message, body);
-      return result;
-    } catch (error) {
-      await cancelBinaryBody(body, error);
-      return {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-        retryable: true,
-      };
-    }
   }
 
   async adapterSetActivity(

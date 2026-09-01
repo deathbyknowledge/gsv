@@ -33,13 +33,7 @@ import type {
   AdapterMedia,
   AdapterMediaPart,
   AdapterActivity,
-  AdapterPeerDeliveryContext,
-  AdapterPeerSignalFrame,
   AdapterLinkedPeerContext,
-  AdapterDeliveryClaimArgs,
-  AdapterDeliveryClaimResult,
-  AdapterDeliveryReportArgs,
-  AdapterDeliveryReportResult,
   BinaryBody,
   ConnectedPeer,
   InstallationOnboardingAuthorization,
@@ -58,6 +52,7 @@ import type {
   NetFetchArgs,
   MessageAttachment,
   ProcessIdentity,
+  ProcHilRequest,
   ScheduleRecord,
   ScheduleRunResult,
   SchedulerRunArgs,
@@ -157,8 +152,8 @@ import { isInternalOnlySyscall } from "./syscall-exposure";
 import {
   deliverAdapterDestination,
   normalizeAdapterHilRequest,
-  resolveAdapterService,
   setAdapterActivityForKernel,
+  type AdapterDeliveryPresentation,
 } from "./adapter-handlers";
 import {
   assertAdapterMessageDestinationAccess,
@@ -236,7 +231,7 @@ const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
 const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
 const MAX_REQUEST_CANCEL_REASON_LENGTH = 512;
 const MAX_ONE_SHOT_SCHEDULE_DELIVERY_ATTEMPTS = 10;
-const MAX_ADAPTER_SIGNAL_DELIVERY_ATTEMPTS = 10;
+const MAX_ADAPTER_ROUTE_DELIVERY_ATTEMPTS = 10;
 
 type IpcCallTimeout = {
   callId: string;
@@ -259,8 +254,7 @@ type IpcCallSupervisionOptions = {
   lifecycleRecheckFor?: string;
 };
 
-type AdapterSignalDeliveryOutcome =
-  | { state: "accepted" }
+type AdapterRouteDeliveryOutcome =
   | { state: "delivered" }
   | { state: "skipped" }
   | { state: "retryable" | "permanent" | "ambiguous"; error: string };
@@ -275,26 +269,10 @@ function adapterTypingActivity(route: AdapterRunRoute, active: boolean): Adapter
   };
 }
 
-function adapterDeliveryMatchesRoute(
-  delivery: AdapterDeliveryClaimArgs | AdapterDeliveryReportArgs,
-  route: AdapterRunRoute,
-): boolean {
-  const destination = route.destination;
-  return delivery.processId === route.processId
-    && delivery.runId === route.runId
-    && delivery.adapter.trim().toLowerCase() === destination.adapter
-    && delivery.accountId === destination.accountId
-    && delivery.actorId === destination.actorId
-    && delivery.surface.kind === destination.surface.kind
-    && delivery.surface.id === destination.surface.id
-    && (delivery.surface.threadId ?? "") === (destination.surface.threadId ?? "")
-    && (delivery.routeGeneration ?? "") === (route.routeGeneration ?? "");
-}
-
-type AdapterSignalDeliveryRetry = {
+type AdapterRouteDeliveryRetry = {
   runId: string;
   processId: string;
-  signal: string;
+  event: string;
   payload?: JsonValue;
   attempt: number;
 };
@@ -341,7 +319,7 @@ function scheduleDeliveryRetryDelayMs(attempt: number): number {
   return Math.min(5 * 60_000, 5_000 * (2 ** Math.max(0, attempt - 1)));
 }
 
-function adapterSignalRetryDelayMs(attempt: number): number {
+function adapterRouteRetryDelayMs(attempt: number): number {
   return Math.min(30_000, 1_000 * (2 ** Math.max(0, attempt - 1)));
 }
 
@@ -460,7 +438,7 @@ type PendingManagedOnboardingCompletion = {
 };
 
 type KernelTask =
-  | { callback: "onAdapterSignalDelivery"; payload: AdapterSignalDeliveryRetry }
+  | { callback: "onAdapterRouteDelivery"; payload: AdapterRouteDeliveryRetry }
   | { callback: "onIpcCallDelivery"; payload: string }
   | { callback: "onIpcCallTimeout"; payload: IpcCallTimeout }
   | { callback: "onManagedOutboundEnqueue"; payload: string }
@@ -499,11 +477,11 @@ const execStatusPayloadSchema = z.object({
 
 const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
   z.object({
-    callback: z.literal("onAdapterSignalDelivery"),
+    callback: z.literal("onAdapterRouteDelivery"),
     payload: z.object({
       runId: z.string(),
       processId: z.string(),
-      signal: z.string(),
+      event: z.string(),
       payload: z.json().optional(),
       attempt: z.number().int().positive(),
     }),
@@ -990,8 +968,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
     task: DurableTask<KernelTask>,
   ): Promise<void> {
     switch (task.callback) {
-      case "onAdapterSignalDelivery":
-        await this.onAdapterSignalDelivery(task.payload);
+      case "onAdapterRouteDelivery":
+        await this.onAdapterRouteDelivery(task.payload);
         return;
       case "onIpcCallDelivery":
         await this.onIpcCallDelivery(task.payload);
@@ -1394,7 +1372,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         });
       }
       if (route?.kind === "adapter") {
-        await this.queueAdapterSignalDelivery(route, {
+        await this.queueAdapterRouteDelivery(route, {
           type: "sig",
           signal: "message.committed",
           payload: { message, directed: true },
@@ -1923,10 +1901,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
     }
 
     if (frame.signal === "proc.run.hil.requested") {
-      // HIL admission waits only for a durable outbox write, never for provider
-      // delivery. This prevents a Kernel crash during the first provider call
-      // from losing the approval notification after Process has entered HIL.
-      await this.queueAdapterSignalDelivery(route, userFrame, 1);
+      // HIL admission waits only for a durable retry task, never for provider
+      // delivery, so entering HIL cannot lose its approval notification.
+      await this.queueAdapterRouteDelivery(route, userFrame, 1);
       return;
     }
     if (frame.signal === "proc.run.finished") {
@@ -1944,7 +1921,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       }
       return;
     }
-    await this.deliverSignalToAdapter(route, userFrame);
+    await this.deliverAdapterRouteEvent(route, userFrame);
   }
 
   private materializePersonalAdapterFallback(
@@ -1987,12 +1964,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
     });
   }
 
-  private async attemptAdapterSignalDelivery(
+  private async attemptAdapterRouteDelivery(
     route: AdapterRunRoute,
     frame: SignalFrame,
     attempt: number,
   ): Promise<void> {
-    let outcome: AdapterSignalDeliveryOutcome;
+    let outcome: AdapterRouteDeliveryOutcome;
     try {
       const hilRequest = frame.signal === "proc.run.hil.requested"
         ? normalizeAdapterHilRequest(frame.payload, "signal")
@@ -2007,7 +1984,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       ) {
         outcome = { state: "skipped" };
       } else {
-        outcome = await this.deliverSignalToAdapter(route, frame);
+        outcome = await this.deliverAdapterRouteEvent(route, frame);
       }
     } catch (error) {
       outcome = {
@@ -2016,20 +1993,13 @@ export class Kernel extends DurableObject<GatewayEnv> {
       };
     }
 
-    if (outcome.state === "retryable" && attempt < MAX_ADAPTER_SIGNAL_DELIVERY_ATTEMPTS) {
-      await this.queueAdapterSignalDelivery(route, frame, attempt + 1);
+    if (outcome.state === "retryable" && attempt < MAX_ADAPTER_ROUTE_DELIVERY_ATTEMPTS) {
+      await this.queueAdapterRouteDelivery(route, frame, attempt + 1);
       return;
     }
 
-    if (
-      outcome.state === "accepted"
-      || outcome.state === "delivered"
-      || outcome.state === "skipped"
-    ) {
-      if (
-        frame.signal === "message.committed"
-        && outcome.state !== "accepted"
-      ) {
+    if (outcome.state === "delivered" || outcome.state === "skipped") {
+      if (frame.signal === "message.committed") {
         this.runRoutes.delete(route.runId);
       }
       return;
@@ -2050,22 +2020,22 @@ export class Kernel extends DurableObject<GatewayEnv> {
     });
   }
 
-  private async queueAdapterSignalDelivery(
+  private async queueAdapterRouteDelivery(
     route: AdapterRunRoute,
     frame: SignalFrame,
     attempt: number,
   ): Promise<void> {
     const payload = frame.payload === undefined ? undefined : z.json().parse(frame.payload);
-    const retry: AdapterSignalDeliveryRetry = {
+    const retry: AdapterRouteDeliveryRetry = {
       runId: route.runId,
       processId: route.processId,
-      signal: frame.signal,
+      event: frame.signal,
       attempt,
     };
     if (payload !== undefined) retry.payload = payload;
     await this.schedule(
-      new Date(Date.now() + (attempt === 1 ? 10 : adapterSignalRetryDelayMs(attempt - 1))),
-      "onAdapterSignalDelivery",
+      new Date(Date.now() + (attempt === 1 ? 10 : adapterRouteRetryDelayMs(attempt - 1))),
+      "onAdapterRouteDelivery",
       retry,
       {
         idempotent: true,
@@ -2074,14 +2044,14 @@ export class Kernel extends DurableObject<GatewayEnv> {
     );
   }
 
-  async onAdapterSignalDelivery(input: AdapterSignalDeliveryRetry): Promise<void> {
+  async onAdapterRouteDelivery(input: AdapterRouteDeliveryRetry): Promise<void> {
     const route = this.runRoutes.get(input.runId);
     if (!route || route.kind !== "adapter" || route.processId !== input.processId) {
       return;
     }
-    await this.attemptAdapterSignalDelivery(route, {
+    await this.attemptAdapterRouteDelivery(route, {
       type: "sig",
-      signal: input.signal,
+      signal: input.event,
       payload: input.payload,
     }, input.attempt);
   }
@@ -2162,62 +2132,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
         retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
       },
     );
-  }
-
-  private async claimAdapterDelivery(
-    args: AdapterDeliveryClaimArgs,
-  ): Promise<AdapterDeliveryClaimResult> {
-    const route = this.runRoutes.get(args.runId);
-    if (!route || route.kind !== "adapter") {
-      return { ok: true, deliver: false, reason: "missing_route" };
-    }
-    if (!adapterDeliveryMatchesRoute(args, route)) {
-      return { ok: true, deliver: false, reason: "route_changed" };
-    }
-    if (args.kind === "hil") {
-      const requestId = args.requestId?.trim();
-      if (
-        !requestId
-        || args.deliveryId !== `${args.runId}:hil:${requestId}`
-        || !await this.isAdapterHilRequestPending(args.processId, args.runId, requestId)
-      ) {
-        return { ok: true, deliver: false, reason: "approval_resolved" };
-      }
-    }
-    return { ok: true, deliver: true };
-  }
-
-  private async reportAdapterDelivery(
-    args: AdapterDeliveryReportArgs,
-  ): Promise<AdapterDeliveryReportResult> {
-    const route = this.runRoutes.get(args.runId);
-    if (!route || route.kind !== "adapter" || !adapterDeliveryMatchesRoute(args, route)) {
-      return { ok: true };
-    }
-
-    if (args.state === "sent" || args.state === "deduplicated") {
-      if (args.kind === "message") this.runRoutes.delete(args.runId);
-      return { ok: true };
-    }
-
-    const label = args.kind === "hil" ? "approval notification" : "message";
-    const state = args.state === "ambiguous"
-      ? "ambiguous"
-      : args.state === "exhausted"
-        ? "exhausted"
-        : "permanent";
-    const message = state === "ambiguous"
-      ? `The ${label} reached the adapter, but provider delivery is ambiguous. It was not retried to avoid a duplicate.`
-      : state === "exhausted"
-        ? `The ${label} stopped after ${Math.max(1, args.attempts)} retry-safe delivery attempts.`
-        : `The ${label} was rejected by ${args.adapter}.`;
-    await this.queueProcessDeliveryNoticeRecord(route, {
-      deliveryKind: args.kind === "hil" ? "hil" : "final",
-      requestId: args.requestId,
-      state,
-      message,
-    });
-    return { ok: true };
   }
 
   async onProcessDeliveryNotice(input: ProcessDeliveryNoticeRetry): Promise<void> {
@@ -2477,10 +2391,10 @@ export class Kernel extends DurableObject<GatewayEnv> {
     });
   }
 
-  private async deliverSignalToAdapter(
+  private async deliverAdapterRouteEvent(
     route: AdapterRunRoute,
     frame: SignalFrame,
-  ): Promise<AdapterSignalDeliveryOutcome> {
+  ): Promise<AdapterRouteDeliveryOutcome> {
     const { adapter, accountId, surface } = route.destination;
     if (frame.signal === "proc.run.started") {
       await setAdapterActivityForKernel(
@@ -2510,10 +2424,10 @@ export class Kernel extends DurableObject<GatewayEnv> {
       const request = parsedRequest.data;
 
       try {
-        return await this.deliverAdapterPeerSignal(route, {
-          type: "sig",
-          signal: "proc.run.hil.requested",
-          payload: request,
+        return await this.deliverAdapterRouteReply(route, {
+          deliveryId: `${route.runId}:hil:${request.requestId}`,
+          text: "",
+          hil: request,
         });
       } finally {
         await setAdapterActivityForKernel(
@@ -2533,7 +2447,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       const parsed = z.object({ message: adapterConversationMessageSchema }).safeParse(frame.payload);
       if (!parsed.success) return { state: "skipped" };
       const message = parsed.data.message;
-      if (!message || message.processId !== route.processId || message.runId !== route.runId) {
+      if (message.processId !== route.processId || message.runId !== route.runId) {
         return { state: "skipped" };
       }
       try {
@@ -2545,16 +2459,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
         if (!message.text.trim() && attachmentBundle.media.length === 0) {
           return { state: "delivered" };
         }
-        return await this.deliverAdapterPeerSignal(
-          route,
-          {
-            type: "sig",
-            signal: "message.committed",
-            payload: { message, directed: true },
-          },
-          attachmentBundle.media,
-          attachmentBundle.body,
-        );
+        const reply = {
+          deliveryId: message.id,
+          text: message.text,
+          media: attachmentBundle.media.length > 0 ? attachmentBundle.media : undefined,
+        };
+        return await this.deliverAdapterRouteReply(route, reply, attachmentBundle.body);
       } finally {
         await setAdapterActivityForKernel(
           this.bindings,
@@ -2570,22 +2480,21 @@ export class Kernel extends DurableObject<GatewayEnv> {
     return { state: "skipped" };
   }
 
-  private async deliverAdapterPeerSignal(
+  private async deliverAdapterRouteReply(
     route: AdapterRunRoute,
-    frame: AdapterPeerSignalFrame,
-    media: AdapterMedia[] = [],
+    message: {
+      deliveryId: string;
+      text: string;
+      media?: AdapterMedia[];
+      replyToId?: string;
+      hil?: ProcHilRequest;
+    },
     body?: BinaryBody,
-  ): Promise<AdapterSignalDeliveryOutcome> {
-    const service = resolveAdapterService(this.bindings, route.destination.adapter);
-    if (!service?.adapterFrame) {
-      await cancelBinaryBody(body, "Adapter service is unavailable");
-      return { state: "retryable", error: "Adapter service is unavailable" };
-    }
-
+  ): Promise<AdapterRouteDeliveryOutcome> {
     const ctx = this.buildProcessContext(route.processId, route.runId);
     if (!ctx) {
-      await cancelBinaryBody(body, "Adapter route references a missing process");
-      return { state: "permanent", error: "Adapter route references a missing process" };
+      await cancelBinaryBody(body, "Reply route references a missing process");
+      return { state: "permanent", error: "Reply route references a missing process" };
     }
     try {
       assertAdapterMessageDestinationAccess(route.destination, route.uid, ctx);
@@ -2599,24 +2508,14 @@ export class Kernel extends DurableObject<GatewayEnv> {
     }
 
     const process = this.procs.get(route.processId);
-    const deliveryId = frame.signal === "message.committed"
-      ? frame.payload.message.id
-      : `${route.runId}:hil:${frame.payload.requestId}`;
-    const context: AdapterPeerDeliveryContext = {
-      deliveryId,
-      accountId: route.destination.accountId,
-      actorId: route.destination.actorId,
-      surface: route.destination.surface,
+    const presentation: AdapterDeliveryPresentation = {
       processId: route.processId,
       runId: route.runId,
     };
-    if (route.replyToId !== undefined) context.replyToId = route.replyToId;
-    if (route.routeGeneration !== undefined) context.routeGeneration = route.routeGeneration;
-    if (media.length > 0) context.media = media;
     if (process?.isPersonalController === false) {
-      context.processMode = "work";
+      presentation.processMode = "work";
     } else if (process?.isPersonalController === true) {
-      context.processMode = "ship";
+      presentation.processMode = "ship";
       if (route.destination.surface.kind === "dm") {
         const selected = this.adapters.surfaceRoutes.resolveRoute({
           adapter: route.destination.adapter,
@@ -2627,33 +2526,33 @@ export class Kernel extends DurableObject<GatewayEnv> {
           threadId: route.destination.surface.threadId,
           uid: route.uid,
         });
-        if (selected?.mode === "work") context.shipDisplaced = true;
+        if (selected?.mode === "work") presentation.shipDisplaced = true;
       }
     }
+    if (message.hil) presentation.hil = message.hil;
 
-    try {
-      const response = await service.adapterFrame(
-        { installationId: this.installationId },
-        context,
-        frame,
-        body,
-      );
-      const responseBody = response && "body" in response ? response.body : undefined;
-      if (responseBody !== body) {
-        await cancelBinaryBody(responseBody, "Adapter returned a body for a signal");
-      }
-      if (response !== null) {
-        return { state: "permanent", error: "Adapter returned a response to a signal" };
-      }
-      return { state: "accepted" };
-    } catch (error) {
+    const result = await deliverAdapterDestination(route.destination, route.uid, {
+      deliveryId: message.deliveryId,
+      text: message.text,
+      ...(message.media === undefined ? undefined : { media: message.media }),
+      replyToId: message.replyToId ?? route.replyToId,
+      ...(route.routeGeneration === undefined
+        ? undefined
+        : { routeGeneration: route.routeGeneration }),
+    }, ctx, body, presentation);
+    if (!result.ok) {
       return {
-        state: "retryable",
-        error: error instanceof Error ? error.message : String(error),
+        state: result.retryable ? "retryable" : "permanent",
+        error: `Adapter reply failed (${route.destination.adapter}): ${result.error}`,
       };
-    } finally {
-      await cancelBinaryBody(body, "Adapter signal handoff completed");
     }
+    if (result.deliveryState === "ambiguous") {
+      return {
+        state: "ambiguous",
+        error: `Adapter delivery ${message.deliveryId} is ambiguous`,
+      };
+    }
+    return { state: "delivered" };
   }
 
   private async bundleConversationReplyMedia(
@@ -2947,8 +2846,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
       coordinateFederationInbound: this.coordinateFederationInbound.bind(this),
       coordinateFederationContact: this.coordinateFederationContact.bind(this),
       runSchedules: this.runSchedules.bind(this),
-      claimAdapterDelivery: this.claimAdapterDelivery.bind(this),
-      reportAdapterDelivery: this.reportAdapterDelivery.bind(this),
       addMcpServerConnection: (input) => this.addMcpServerConnection({
         ...input,
         callbackHost: input.callbackHost

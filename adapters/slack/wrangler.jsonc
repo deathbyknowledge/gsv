@@ -28,7 +28,7 @@
       "entrypoint": "AdapterGatewayEntrypoint",
       "props": {
         "id": "slack",
-        "calls": ["adapter.inbound", "adapter.state.update", "adapter.delivery.claim", "adapter.delivery.report"]
+        "calls": ["adapter.inbound", "adapter.state.update"]
       }
     }
   ]

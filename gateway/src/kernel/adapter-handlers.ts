@@ -4,7 +4,7 @@ import type {
   AdapterAccountStatus,
   AdapterInstallationContext,
   AdapterMedia,
-  AdapterPeerDeliveryContext,
+  AdapterDeliveryContext,
   AdapterPairingCandidate,
   AdapterPairingPreparation,
   AdapterPairingWorkerInterface,
@@ -18,10 +18,6 @@ import type {
   AdapterConnectResult as AdapterConnectSyscallResult,
   AdapterDisconnectArgs,
   AdapterDisconnectResult as AdapterDisconnectSyscallResult,
-  AdapterDeliveryClaimArgs,
-  AdapterDeliveryClaimResult,
-  AdapterDeliveryReportArgs,
-  AdapterDeliveryReportResult,
   AdapterInboundArgs,
   AdapterInboundSyscallResult,
   AdapterMessageDestination,
@@ -145,6 +141,13 @@ type AdapterCommandResult = {
     text: string;
     replyToId?: string;
   };
+};
+export type AdapterDeliveryPresentation = {
+  processId: string;
+  runId: string;
+  processMode?: AdapterDeliveryContext["processMode"];
+  shipDisplaced?: boolean;
+  hil?: AdapterDeliveryContext["hil"];
 };
 type AdapterInboundDisposition = Omit<
   AdapterInboundSyscallResult,
@@ -856,6 +859,7 @@ export async function deliverAdapterDestination(
   },
   ctx: KernelContext,
   body?: BinaryBody,
+  presentation?: AdapterDeliveryPresentation,
 ): Promise<AdapterSendResult> {
   let normalized: AdapterMessageDestination;
   try {
@@ -875,7 +879,7 @@ export async function deliverAdapterDestination(
     actorId: normalized.actorId,
     surface: normalized.surface,
     ...message,
-  }, ctx, body);
+  }, ctx, body, presentation);
 }
 
 async function deliverAdapterMessage(
@@ -885,10 +889,11 @@ async function deliverAdapterMessage(
   },
   ctx: KernelContext,
   body?: BinaryBody,
+  presentation?: AdapterDeliveryPresentation,
 ): Promise<AdapterSendResult> {
   const startedAt = Date.now();
   try {
-    const result = await deliverAdapterMessageOwned(args, ctx, body);
+    const result = await deliverAdapterMessageOwned(args, ctx, body, presentation);
     emitTelemetry(ctx.env, {
       installationId: ctx.installationId,
       component: "gateway",
@@ -934,6 +939,7 @@ async function deliverAdapterMessageOwned(
   },
   ctx: KernelContext,
   body?: BinaryBody,
+  presentation?: AdapterDeliveryPresentation,
 ): Promise<AdapterSendResult> {
   const adapter = args.adapter.trim().toLowerCase();
   const accountId = args.accountId.trim();
@@ -989,10 +995,11 @@ async function deliverAdapterMessageOwned(
     };
   }
 
-  const context: AdapterPeerDeliveryContext = {
+  const context: AdapterDeliveryContext = {
     deliveryId,
     accountId,
     surface: args.surface,
+    ...presentation,
   };
   if (args.actorId) context.actorId = args.actorId;
   if (routeGeneration !== undefined) context.routeGeneration = routeGeneration;
@@ -1020,12 +1027,21 @@ async function deliverAdapterMessageOwned(
     );
     const parsedBody = adapterFrameBodySchema.safeParse(response);
     if (parsedBody.success) responseBody = parsedBody.data.body;
-    if (!response || response.type !== "res" || response.id !== request.id || !response.ok) {
+    if (!response || response.type !== "res" || response.id !== request.id) {
       return {
         ok: false,
         error: publicAdapterDeliveryError(adapter, true),
         deliveryId,
         retryable: true,
+      };
+    }
+    if (!response.ok) {
+      const retryable = response.error?.retryable === true;
+      return {
+        ok: false,
+        error: publicAdapterDeliveryError(adapter, retryable),
+        deliveryId,
+        retryable,
       };
     }
     const decoded = adapterSendResultSchema.safeParse(response.data);
@@ -2343,37 +2359,6 @@ export function handleAdapterStateUpdate(
   }
 
   return { ok: true };
-}
-
-export async function handleAdapterDeliveryClaim(
-  args: AdapterDeliveryClaimArgs,
-  ctx: KernelContext,
-): Promise<AdapterDeliveryClaimResult> {
-  requireAdapterDeliveryService(args.adapter, ctx, "adapter.delivery.claim");
-  return await ctx.claimAdapterDelivery(args);
-}
-
-export async function handleAdapterDeliveryReport(
-  args: AdapterDeliveryReportArgs,
-  ctx: KernelContext,
-): Promise<AdapterDeliveryReportResult> {
-  requireAdapterDeliveryService(args.adapter, ctx, "adapter.delivery.report");
-  return await ctx.reportAdapterDelivery(args);
-}
-
-function requireAdapterDeliveryService(
-  adapter: string,
-  ctx: KernelContext,
-  call: "adapter.delivery.claim" | "adapter.delivery.report",
-): void {
-  const identity = ctx.identity;
-  if (!identity || identity.role !== "service") {
-    throw new Error(`${call} requires a service identity`);
-  }
-  const normalized = adapter.trim().toLowerCase();
-  if (!normalized || identity.channel !== normalized) {
-    throw new Error("Adapter service cannot report delivery for another adapter");
-  }
 }
 
 function adapterNameFromBindingKey(key: string): string | null {

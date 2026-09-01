@@ -9,13 +9,8 @@ import {
   adapterInboundResultDisposition,
   InboundDeliveryLedger,
 } from "../../shared/src/inbound-delivery";
-import {
-  AdapterPeerDeliveryQueue,
-  gatewayPeerDeliveryHandlers,
-  type AdapterPeerSignalDelivery,
-} from "../../shared/src/peer-delivery";
-import { renderAdapterPeerSignal } from "../../shared/src/peer-render";
-import { runAdapterPeerSqlMigrations } from "../../shared/src/schema/migrations";
+import type { RenderedAdapterSend } from "../../shared/src/peer-render";
+import { runAdapterHilSqlMigrations } from "../../shared/src/schema/migrations";
 import { callAdapterGateway } from "../../shared/src/gateway-rpc";
 import type { AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
@@ -38,8 +33,7 @@ import type {
   AdapterInboundMessage,
   AdapterInstallationContext,
   AdapterOutboundMessage,
-  AdapterPeerDeliveryContext,
-  AdapterPeerSignalFrame,
+  AdapterDeliveryContext,
   AdapterSendResult,
   AdapterSurface,
   BinaryBody,
@@ -331,7 +325,6 @@ const INBOUND_DELIVERY_PREFIX = "pending_inbound:";
 const INBOUND_WAKE_DELAY_MS = 1_000;
 const INBOUND_RETRY_DELAY_MS = 10_000;
 const INBOUND_RETRY_BATCH_SIZE = 100;
-const PEER_DELIVERY_RETRY_DELAY_MS = 10_000;
 const LEGACY_PENDING_UPDATE_PREFIX = "pending_update:";
 const LEGACY_PROCESSED_UPDATE_PREFIX = "processed_update:";
 
@@ -351,19 +344,14 @@ export class TelegramAccount extends DurableObject<Env> {
   private loaded = false;
   private readonly deliveries: DeliveryLedger;
   private readonly inboundDeliveries: InboundDeliveryLedger<TelegramMessage | TelegramApprovalCallback>;
-  private readonly peerDeliveries: AdapterPeerDeliveryQueue;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    runAdapterPeerSqlMigrations(ctx.storage);
+    runAdapterHilSqlMigrations(ctx.storage);
     this.deliveries = new DeliveryLedger(this.ctx.storage);
     this.inboundDeliveries = new InboundDeliveryLedger(
       this.ctx.storage,
       INBOUND_DELIVERY_PREFIX,
-    );
-    this.peerDeliveries = new AdapterPeerDeliveryQueue(
-      this.ctx.storage,
-      PEER_DELIVERY_RETRY_DELAY_MS,
     );
   }
 
@@ -646,9 +634,6 @@ export class TelegramAccount extends DurableObject<Env> {
     this.state.authenticated = false;
     this.state.lastError = null;
     await this.commitLifecycleState(null);
-    await this.peerDeliveries.armIfPending(
-      Date.now() + PEER_DELIVERY_RETRY_DELAY_MS,
-    );
     await this.notifyGatewayStatus();
   }
 
@@ -911,44 +896,22 @@ export class TelegramAccount extends DurableObject<Env> {
     }
   }
 
-  async acceptPeerSignal(
-    installation: AdapterInstallationContext,
-    context: AdapterPeerDeliveryContext,
-    frame: AdapterPeerSignalFrame,
-    body?: BinaryBody,
-  ): Promise<void> {
-    await this.peerDeliveries.enqueueAndArm(
-      { installation, context, frame },
-      body,
-      Date.now() + 10,
-    );
-    this.ctx.waitUntil(this.drainPeerDeliveries());
-  }
-
-  private async drainPeerDeliveries(): Promise<void> {
-    await this.peerDeliveries.drain(gatewayPeerDeliveryHandlers({
-      adapter: "telegram",
-      gateway: this.env.GATEWAY,
-      deliver: async (delivery, body) => await this.deliverPeerSignal(delivery, body),
-    }));
-  }
-
-  private async deliverPeerSignal(
-    delivery: AdapterPeerSignalDelivery,
+  async sendRoutedMessage(
+    context: AdapterDeliveryContext,
+    delivery: RenderedAdapterSend,
     body?: BinaryBody,
   ): Promise<AdapterSendResult> {
-    const rendered = renderAdapterPeerSignal(delivery.context, delivery.frame).message;
-    if (delivery.frame.signal !== "proc.run.hil.requested") {
-      return await this.sendMessage(rendered, body);
+    if (!delivery.hil) {
+      return await this.sendMessage(delivery.message, body);
     }
     const controls = await prepareTelegramApproval(
       this.ctx.storage,
-      delivery.context,
-      delivery.frame.payload,
+      context,
+      delivery.hil,
     );
     if (controls) await this.ensureApprovalWebhook();
     const result = await this.sendMessage(
-      rendered,
+      delivery.message,
       body,
       controls ? { replyMarkup: controls.replyMarkup } : {},
     );
@@ -1156,10 +1119,6 @@ export class TelegramAccount extends DurableObject<Env> {
 
   async alarm(): Promise<void> {
     await this.ensureLoaded();
-    await this.peerDeliveries.armIfPending(
-      Date.now() + PEER_DELIVERY_RETRY_DELAY_MS,
-    );
-    await this.drainPeerDeliveries();
     if (!this.canProcessInbound()) {
       return;
     }

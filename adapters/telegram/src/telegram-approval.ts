@@ -9,7 +9,7 @@ import {
 } from "../../shared/src/hil-approval";
 import type {
   AdapterInstallationContext,
-  AdapterPeerDeliveryContext,
+  AdapterDeliveryContext,
 } from "./types";
 
 export type TelegramApprovalCallback = {
@@ -43,7 +43,7 @@ const APPROVAL_CALLBACK_PREFIX = "gsvh:";
 /** Persist a callback capability before exposing its buttons to Telegram. */
 export async function prepareTelegramApproval(
   storage: DurableObjectStorage,
-  context: AdapterPeerDeliveryContext,
+  context: AdapterDeliveryContext,
   request: ProcHilRequest,
 ): Promise<TelegramApprovalControls | null> {
   const token = await prepareAdapterHilApproval(

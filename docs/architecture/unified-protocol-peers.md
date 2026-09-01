@@ -115,7 +115,7 @@ Common combinations are:
 | CLI | human | human capabilities | user signals | none |
 | Desktop app | human | human capabilities | user signals | optional host operations |
 | Machine daemon | machine | minimal control calls | machine signals | filesystem, shell, network, and host operations |
-| Adapter Worker | service | adapter ingress and delivery coordination | routed `message.committed`, `proc.run.hil.requested` | none |
+| Adapter Worker | service | `adapter.inbound`, `adapter.state.update` | none | targeted `adapter.send` |
 | Linked adapter command | delegated human | command-specific intersection | none | none |
 
 A human endpoint with implementations remains a human peer. It is not promoted
@@ -174,10 +174,10 @@ adapter normalized req + optional BinaryBody
   -> Kernel validates and dispatches the same logical req
   -> correlated res returns through the binding
 
-Kernel routed sig + optional BinaryBody
+Kernel routed `adapter.send` req + optional BinaryBody
   -> adapterFrame selects the deployment-owned adapter binding
-  -> adapter account or peer DO durably accepts the frame and body
-  -> null acknowledges signal ownership; provider delivery continues durably
+  -> exact adapter account or peer performs provider delivery
+  -> correlated res returns to the Kernel
 ```
 
 Workers RPC carries `BinaryBody.stream` as a `ReadableStream`; it is not
@@ -194,12 +194,13 @@ binding dynamically from its environment. The peer never supplies a binding
 key, and no central source registry has to change when deployment adds another
 adapter.
 
-Gateway-to-adapter delivery uses the same logical frame shapes. Explicit
-`adapter.send` is a correlated `req`/`res`; Process-directed delivery is an
-exact `message.committed` or `proc.run.hil.requested` signal. The surrounding
-delivery context carries the Kernel-owned route projection, not a second
-semantic operation. Provider credentials, formatting, durable acceptance,
-retry ledgers, ambiguous-outcome policy, and rendering remain adapter-owned.
+Gateway-to-adapter delivery uses the same logical frame shapes. Every outbound
+message is a correlated `adapter.send` request sent only to the exact routed
+adapter. User-state signals remain broadcast independently. The surrounding
+delivery context carries the Kernel-owned route projection, including the exact
+structured HIL request when present. Provider credentials, formatting,
+idempotency, ambiguous-outcome classification, and rendering remain
+adapter-owned; durable retry and route cleanup remain Kernel-owned.
 `adapterFrame` is the only Gateway-to-adapter delivery carrier.
 
 ## Reverse calls and endpoints
@@ -283,9 +284,9 @@ A client may inspect reasoning, tool calls, and output from several Processes
 without treating all of it as a message addressed to the user. A committed
 Message synchronizes through canonical Conversation history. Only the endpoint
 whose input admitted the run receives its transient directed Message stream.
-Adapters own provider delivery of directed committed Messages and approval
-requests, choose native or fallback presentation, and do not render raw Process
-output as replies.
+Adapters receive targeted `adapter.send` requests for directed committed
+Messages and approvals, choose native or fallback presentation, and do not
+render raw Process output as replies.
 
 ## Security and lifecycle invariants
 

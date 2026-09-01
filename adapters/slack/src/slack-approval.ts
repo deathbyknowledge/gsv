@@ -8,7 +8,7 @@ import {
 } from "../../shared/src/hil-approval";
 import type {
   AdapterInstallationContext,
-  AdapterPeerDeliveryContext,
+  AdapterDeliveryContext,
 } from "./types";
 import {
   buildSlackApprovalBlocks,
@@ -36,7 +36,7 @@ const PROVIDER = "slack";
 export async function prepareSlackApproval(
   storage: DurableObjectStorage,
   teamId: string,
-  context: AdapterPeerDeliveryContext,
+  context: AdapterDeliveryContext,
   request: ProcHilRequest,
   text: string,
 ): Promise<SlackApprovalControls | null> {

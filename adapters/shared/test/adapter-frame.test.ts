@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
+import type { AdapterSendArgs } from "../../../packages/gsv/src/protocol/syscalls/adapter";
 
 import { handleAdapterFrame } from "../src/adapter-frame";
 import type {
-  AdapterPeerDeliveryContext,
+  AdapterDeliveryContext,
   BinaryBody,
-  GatewayFrame,
+  GatewayRequestFrame,
 } from "../src/types";
 
-const INSTALLATION = { installationId: "inst_test" } as const;
-const CONTEXT: AdapterPeerDeliveryContext = {
+const CONTEXT: AdapterDeliveryContext = {
   deliveryId: "message-1",
   accountId: "account-1",
   actorId: "actor-1",
@@ -22,23 +22,18 @@ type TrackedBody = {
   cancelled: () => Error | string | undefined;
 };
 
-function committedFrame(): GatewayFrame {
+function sendFrame(overrides: Partial<AdapterSendArgs> = {}): GatewayRequestFrame {
   return {
-    type: "sig",
-    signal: "message.committed",
-    payload: {
-      message: {
-        id: "message-1",
-        conversationId: "conversation-1",
-        sequence: 1,
-        author: { kind: "process", pid: "proc-1", uid: 1000 },
-        text: "hello",
-        origin: { kind: "process", pid: "proc-1", runId: "run-1" },
-        processId: "proc-1",
-        runId: "run-1",
-        createdAt: 1,
-      },
-      directed: true,
+    type: "req",
+    id: "request-1",
+    call: "adapter.send",
+    args: {
+      adapter: "test",
+      accountId: "account-1",
+      deliveryId: "message-1",
+      surface: { kind: "dm", id: "surface-1" },
+      text: "hello",
+      ...overrides,
     },
   };
 }
@@ -63,78 +58,22 @@ function trackedBody(): TrackedBody {
 }
 
 describe("handleAdapterFrame", () => {
-  it("acknowledges a signal only after durable adapter acceptance", async () => {
-    let release!: () => void;
-    const accepted = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    let settled = false;
-    const pending = handleAdapterFrame(
-      "test",
-      INSTALLATION,
-      CONTEXT,
-      committedFrame(),
-      undefined,
-      {
-        send: vi.fn(),
-        acceptSignal: vi.fn(async () => await accepted),
-      },
-    ).finally(() => {
-      settled = true;
-    });
-
-    await Promise.resolve();
-    expect(settled).toBe(false);
-    release();
-    await expect(pending).resolves.toBeNull();
-  });
-
-  it("rejects a signal whose structured payload does not match its route", async () => {
-    const tracked = trackedBody();
-    const frame = committedFrame();
-    if (frame.type !== "sig" || frame.signal !== "message.committed") {
-      throw new Error("expected committed signal");
-    }
-    frame.payload.message.runId = "other-run";
-
-    await expect(handleAdapterFrame(
-      "test",
-      INSTALLATION,
-      CONTEXT,
-      frame,
-      tracked.body,
-      { send: vi.fn(), acceptSignal: vi.fn() },
-    )).rejects.toThrow("does not match");
-    expect(tracked.cancelled()).toBeInstanceOf(Error);
-  });
-
   it("dispatches adapter.send as a correlated request with its frame body", async () => {
     const tracked = trackedBody();
-    const send = vi.fn(async (_message, body?: BinaryBody) => {
+    const send = vi.fn(async (delivery, body?: BinaryBody) => {
+      expect(delivery.message.text).toBe("hello");
       expect(body).toBe(tracked.body);
       return { ok: true as const, messageId: "provider-1" };
     });
-    const frame: GatewayFrame = {
-      type: "req",
-      id: "request-1",
-      call: "adapter.send",
-      args: {
-        adapter: "test",
-        accountId: "account-1",
-        deliveryId: "message-1",
-        surface: { kind: "dm", id: "surface-1" },
-        text: "hello",
-      },
-      body: tracked.body,
-    };
+    const frame = sendFrame();
+    if (frame.type !== "req") throw new Error("expected request");
+    frame.body = tracked.body;
 
     await expect(handleAdapterFrame(
       "test",
-      INSTALLATION,
       CONTEXT,
       frame,
-      undefined,
-      { send, acceptSignal: vi.fn() },
+      { send },
     )).resolves.toEqual({
       type: "res",
       id: "request-1",
@@ -150,5 +89,61 @@ describe("handleAdapterFrame", () => {
       },
     });
     expect(tracked.cancelled()).toBe("Adapter request completed");
+  });
+
+  it("rejects a request that does not match its trusted route", async () => {
+    const tracked = trackedBody();
+    const frame = sendFrame({ deliveryId: "other-message" });
+    if (frame.type !== "req") throw new Error("expected request");
+    frame.body = tracked.body;
+
+    await expect(handleAdapterFrame(
+      "test",
+      CONTEXT,
+      frame,
+      { send: vi.fn() },
+    )).resolves.toMatchObject({
+      type: "res",
+      id: "request-1",
+      ok: false,
+      error: { code: 400 },
+    });
+    expect(tracked.cancelled()).toBeInstanceOf(Error);
+  });
+
+  it("passes the exact structured approval to adapter rendering", async () => {
+    const hil = {
+      pid: "proc-1",
+      requestId: "approval-1",
+      runId: "run-1",
+      callId: "call-1",
+      toolName: "Shell",
+      syscall: "shell.exec",
+      target: "gsv",
+      args: { input: "echo hello" },
+      createdAt: 1,
+    } as const;
+    const context: AdapterDeliveryContext = {
+      ...CONTEXT,
+      deliveryId: "run-1:hil:approval-1",
+      hil,
+    };
+    const frame = sendFrame({ deliveryId: context.deliveryId, text: "" });
+    const send = vi.fn(async (delivery) => {
+      expect(delivery.hil).toEqual(hil);
+      expect(delivery.message.text).toContain("echo hello");
+      return { ok: true as const };
+    });
+
+    await expect(handleAdapterFrame(
+      "test",
+      context,
+      frame,
+      { send },
+    )).resolves.toMatchObject({
+      type: "res",
+      id: "request-1",
+      ok: true,
+    });
   });
 });

@@ -8,10 +8,6 @@
 import type { MCPClientManager } from "agents/mcp/client";
 import type {
   FederationDeliveryReceipt,
-  AdapterDeliveryClaimArgs,
-  AdapterDeliveryClaimResult,
-  AdapterDeliveryReportArgs,
-  AdapterDeliveryReportResult,
   JsonObject,
   JsonValue,
   SchedulerRunArgs,
@@ -121,12 +117,6 @@ export type KernelContext = {
     identity?: ConnectionIdentity,
     callerOwnerUid?: number,
   ) => Promise<SchedulerRunResult>;
-  claimAdapterDelivery: (
-    args: AdapterDeliveryClaimArgs,
-  ) => Promise<AdapterDeliveryClaimResult>;
-  reportAdapterDelivery: (
-    args: AdapterDeliveryReportArgs,
-  ) => Promise<AdapterDeliveryReportResult>;
   addMcpServerConnection: (input: McpAddConnectionInput) => Promise<McpAddConnectionResult>;
   removeMcpServerConnection: (serverId: string) => Promise<void>;
   refreshMcpServerConnection: (serverId: string) => Promise<void>;

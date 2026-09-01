@@ -12,13 +12,7 @@ import {
   InboundDeliveryLedger,
   type InboundDeliveryDisposition,
 } from "../../shared/src/inbound-delivery";
-import {
-  AdapterPeerDeliveryQueue,
-  gatewayPeerDeliveryHandlers,
-  type AdapterPeerSignalDelivery,
-} from "../../shared/src/peer-delivery";
-import { renderAdapterPeerSignal } from "../../shared/src/peer-render";
-import { runAdapterPeerSqlMigrations } from "../../shared/src/schema/migrations";
+import { runAdapterHilSqlMigrations } from "../../shared/src/schema/migrations";
 import { callAdapterGateway, type AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
   cancelBinaryBody,
@@ -29,9 +23,7 @@ import {
 } from "../../shared/src/media-body";
 import type {
   AdapterOutboundMessage,
-  AdapterInstallationContext,
-  AdapterPeerDeliveryContext,
-  AdapterPeerSignalFrame,
+  AdapterDeliveryContext,
   AdapterPairingActivateInput,
   AdapterPairingCandidate,
   AdapterPairingDisconnectInput,
@@ -128,12 +120,11 @@ const MEDIA_UNAVAILABLE_TEXT =
 export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
   private readonly deliveries: DeliveryLedger;
   private readonly inboundDeliveries: InboundDeliveryLedger<InboundPayload, ResponseContext>;
-  private readonly peerDeliveries: AdapterPeerDeliveryQueue;
   private drainPromise?: Promise<void>;
 
   constructor(ctx: DurableObjectState, env: ManagedTelegramPeerEnv) {
     super(ctx, env);
-    runAdapterPeerSqlMigrations(ctx.storage);
+    runAdapterHilSqlMigrations(ctx.storage);
     this.deliveries = new DeliveryLedger(this.ctx.storage);
     this.inboundDeliveries = new InboundDeliveryLedger(
       this.ctx.storage,
@@ -143,10 +134,6 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
         maxRecords: INBOUND_MAX_RECORDS,
         pendingOrder: "key",
       },
-    );
-    this.peerDeliveries = new AdapterPeerDeliveryQueue(
-      this.ctx.storage,
-      INBOUND_RETRY_DELAY_MS,
     );
   }
 
@@ -176,77 +163,11 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     return { ok: true };
   }
 
-  async acceptPeerSignal(
-    installation: AdapterInstallationContext,
-    context: AdapterPeerDeliveryContext,
-    frame: AdapterPeerSignalFrame,
-    body?: BinaryBody,
-  ): Promise<void> {
-    try {
-      const state = await this.requireState();
-      this.assertPeerDestination(state, context.surface, context.actorId);
-      if (
-        context.accountId !== MANAGED_TELEGRAM_ACCOUNT_ID
-        || state.activeRoute?.installationId !== installation.installationId
-        || !context.routeGeneration
-        || state.activeRoute.generation !== context.routeGeneration
-      ) {
-        throw new Error("Telegram route changed before signal acceptance");
-      }
-      await this.peerDeliveries.enqueueAndArm(
-        { installation, context, frame },
-        body,
-        Date.now() + INBOUND_WAKE_DELAY_MS,
-      );
-    } catch (error) {
-      await cancelBinaryBody(body, error);
-      throw error;
-    }
-    this.ctx.waitUntil(this.drainPeerDeliveries());
-  }
-
-  private async drainPeerDeliveries(): Promise<void> {
-    await this.peerDeliveries.drain(gatewayPeerDeliveryHandlers({
-      adapter: "telegram",
-      gateway: this.env.GATEWAY,
-      deliver: async (delivery, body) => await this.deliverPeerSignal(delivery, body),
-    }));
-  }
-
-  private async deliverPeerSignal(
-    delivery: AdapterPeerSignalDelivery,
-    body?: BinaryBody,
-  ): Promise<AdapterSendResult> {
-    const generation = delivery.context.routeGeneration;
-    if (!generation) return { ok: false, error: "Telegram route generation is missing" };
-    const rendered = renderAdapterPeerSignal(delivery.context, delivery.frame).message;
-    const controls = delivery.frame.signal === "proc.run.hil.requested"
-      ? await prepareTelegramApproval(
-          this.ctx.storage,
-          delivery.context,
-          delivery.frame.payload,
-        )
-      : null;
-    const result = await this.deliverMessage(
-      rendered,
-      {
-        kind: "installation",
-        installationId: delivery.installation.installationId,
-        generation,
-      },
-      body,
-      controls ? { replyMarkup: controls.replyMarkup } : {},
-    );
-    if (result.ok && controls) {
-      await attachTelegramApprovalMessage(this.ctx.storage, controls.token, result.messageId);
-    }
-    return result;
-  }
-
   async sendMessage(
     installationId: string,
     message: AdapterOutboundMessage,
     body?: BinaryBody,
+    context?: AdapterDeliveryContext,
   ): Promise<AdapterSendResult> {
     let state: ManagedTelegramPeerState;
     try {
@@ -265,11 +186,18 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       await cancelBinaryBody(body, "Telegram route changed before delivery");
       return { ok: false, error: "Telegram route changed before delivery" };
     }
-    return await this.deliverMessage(message, {
+    const controls = context?.hil
+      ? await prepareTelegramApproval(this.ctx.storage, context, context.hil)
+      : null;
+    const result = await this.deliverMessage(message, {
       kind: "installation",
       installationId,
       generation: message.routeGeneration,
-    }, body);
+    }, body, controls ? { replyMarkup: controls.replyMarkup } : {});
+    if (result.ok && controls) {
+      await attachTelegramApprovalMessage(this.ctx.storage, controls.token, result.messageId);
+    }
+    return result;
   }
 
   async setTyping(
@@ -416,8 +344,6 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
   }
 
   async alarm(): Promise<void> {
-    await this.peerDeliveries.armIfPending(Date.now() + INBOUND_RETRY_DELAY_MS);
-    await this.drainPeerDeliveries();
     await this.drainInbound();
     await this.inboundDeliveries.armIfPending(Date.now() + INBOUND_RETRY_DELAY_MS);
   }

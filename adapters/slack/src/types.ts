@@ -10,8 +10,7 @@ export type {
   AdapterInstallationContext,
   AdapterMedia,
   AdapterOutboundMessage,
-  AdapterPeerDeliveryContext,
-  AdapterPeerSignalFrame,
+  AdapterDeliveryContext,
   AdapterPairingActivateInput,
   AdapterPairingCandidate,
   AdapterPairingDisconnectInput,
@@ -26,5 +25,6 @@ export type {
   AdapterServiceDescriptor,
   AdapterSurface,
   BinaryBody,
-  GatewayFrame,
+  GatewayRequestFrame,
+  GatewayResponseFrame,
 } from "../../shared/src/types";

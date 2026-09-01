@@ -1,10 +1,21 @@
 import { describe, expect, it } from "vitest";
 
-import { renderAdapterPeerSignal } from "../src/peer-render";
+import { renderAdapterSend } from "../src/peer-render";
 
-describe("renderAdapterPeerSignal", () => {
+describe("renderAdapterSend", () => {
   it("bounds and sanitizes approval details for provider presentation", () => {
-    const rendered = renderAdapterPeerSignal(
+    const request = {
+      pid: "proc-1",
+      requestId: "request-1",
+      runId: "run-1",
+      callId: "call-1",
+      toolName: "Shell",
+      syscall: "shell.exec",
+      target: "gsv",
+      args: { input: `echo\u202e${"x".repeat(10_000)}` },
+      createdAt: 1,
+    } as const;
+    const rendered = renderAdapterSend(
       {
         deliveryId: "run-1:hil:request-1",
         accountId: "account-1",
@@ -12,21 +23,13 @@ describe("renderAdapterPeerSignal", () => {
         surface: { kind: "dm", id: "surface-1" },
         processId: "proc-1",
         runId: "run-1",
+        hil: request,
       },
       {
-        type: "sig",
-        signal: "proc.run.hil.requested",
-        payload: {
-          pid: "proc-1",
-          requestId: "request-1",
-          runId: "run-1",
-          callId: "call-1",
-          toolName: "Shell",
-          syscall: "shell.exec",
-          target: "gsv",
-          args: { input: `echo\u202e${"x".repeat(10_000)}` },
-          createdAt: 1,
-        },
+        deliveryId: "run-1:hil:request-1",
+        surface: { kind: "dm", id: "surface-1" },
+        actorId: "actor-1",
+        text: "",
       },
     );
 

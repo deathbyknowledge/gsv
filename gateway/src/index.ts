@@ -164,8 +164,6 @@ export default {
 const ADAPTER_SERVICE_CALLS = [
   "adapter.inbound",
   "adapter.state.update",
-  "adapter.delivery.claim",
-  "adapter.delivery.report",
 ] as const;
 const adapterServicePeerProfileSchema = z.object({
   id: z.string().check(

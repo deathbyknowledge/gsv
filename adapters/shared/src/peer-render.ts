@@ -1,41 +1,36 @@
 import type {
+  AdapterDeliveryContext,
   AdapterOutboundMessage,
-  AdapterPeerDeliveryContext,
-  AdapterPeerSignalFrame,
   ProcHilRequest,
 } from "./types";
 import type { JsonValue } from "../../../packages/gsv/src/protocol/json.js";
 import * as z from "zod/mini";
 
-export type RenderedAdapterPeerSignal = {
+export type RenderedAdapterSend = {
   message: AdapterOutboundMessage;
   hil?: ProcHilRequest;
 };
 
 /** Default text/media projection. Platform adapters may replace presentation. */
-export function renderAdapterPeerSignal(
-  context: AdapterPeerDeliveryContext,
-  frame: AdapterPeerSignalFrame,
-): RenderedAdapterPeerSignal {
-  const message: AdapterOutboundMessage = {
-    deliveryId: context.deliveryId,
-    surface: context.surface,
-    text: frame.signal === "message.committed"
-      ? prefixProcessMode(frame.payload.message.text, context)
-      : prefixProcessMode(renderAdapterHilText(frame.payload, context.surface.kind), context),
+export function renderAdapterSend(
+  context: AdapterDeliveryContext,
+  input: AdapterOutboundMessage,
+): RenderedAdapterSend {
+  const message = {
+    ...input,
+    text: prefixProcessMode(
+      context.hil
+        ? renderAdapterHilText(context.hil, context.surface.kind)
+        : input.text,
+      context,
+    ),
   };
-  if (context.actorId) message.actorId = context.actorId;
-  if (context.routeGeneration) message.routeGeneration = context.routeGeneration;
-  if (context.replyToId) message.replyToId = context.replyToId;
-  if (context.media?.length) message.media = context.media;
-  return frame.signal === "proc.run.hil.requested"
-    ? { message, hil: frame.payload }
-    : { message };
+  return context.hil ? { message, hil: context.hil } : { message };
 }
 
 export function renderAdapterHilText(
   request: ProcHilRequest,
-  surfaceKind: AdapterPeerDeliveryContext["surface"]["kind"],
+  surfaceKind: AdapterDeliveryContext["surface"]["kind"],
 ): string {
   const requestToken = `hil[${request.requestId}]`;
   const responseLine = surfaceKind === "dm"
@@ -52,7 +47,7 @@ export function renderAdapterHilText(
 
 function prefixProcessMode(
   text: string,
-  context: AdapterPeerDeliveryContext,
+  context: AdapterDeliveryContext,
 ): string {
   const prefix = context.processMode === "work"
     ? "[WORK SESSION]"

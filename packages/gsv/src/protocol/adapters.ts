@@ -1,7 +1,6 @@
 import { binaryBodySchema, type BinaryBody } from "./body";
 import type { JsonPrimitive, JsonValue } from "./json";
 import { jsonPrimitiveSchema, jsonValueSchema } from "./json";
-import type { ConversationMessageCommittedSignal } from "./syscalls/conversation";
 import { procHilRequestSchema, type ProcHilRequest } from "./syscalls/proc";
 import * as z from "zod/mini";
 
@@ -149,35 +148,33 @@ export const adapterOutboundMessageSchema = z.strictObject({
  * The adapter id and installation id remain deployment-owned service-binding
  * context and are deliberately absent from this record.
  */
-export type AdapterPeerDeliveryContext = {
+export type AdapterDeliveryContext = {
   /** Stable identity for one logical provider delivery. */
   deliveryId: string;
   accountId: string;
   actorId?: string;
   surface: AdapterSurface;
-  replyToId?: string;
   routeGeneration?: string;
   processId?: string;
   runId?: string;
-  /** Binary-body projection for immutable resources referenced by the frame. */
-  media?: AdapterMedia[];
   /** Semantic process projection that adapters may present in their own style. */
   processMode?: "ship" | "work";
   shipDisplaced?: boolean;
+  /** Exact structured approval being presented by this send, when applicable. */
+  hil?: ProcHilRequest;
 };
 
-export const adapterPeerDeliveryContextSchema = z.strictObject({
+export const adapterDeliveryContextSchema = z.strictObject({
   deliveryId: nonEmptyStringSchema,
   accountId: trimmedNonEmptyStringSchema,
   actorId: z.optional(nonEmptyStringSchema),
   surface: adapterSurfaceSchema,
-  replyToId: z.optional(z.string()),
   routeGeneration: z.optional(nonEmptyStringSchema),
   processId: z.optional(nonEmptyStringSchema),
   runId: z.optional(nonEmptyStringSchema),
-  media: z.optional(z.array(adapterMediaSchema)),
   processMode: z.optional(z.enum(["ship", "work"])),
   shipDisplaced: z.optional(z.boolean()),
+  hil: z.optional(procHilRequestSchema),
 });
 
 /** Interaction-scoped external human identity presented by a trusted adapter. */
@@ -196,120 +193,6 @@ export const adapterLinkedPeerContextSchema = z.strictObject({
   routeGeneration: z.optional(nonEmptyStringSchema),
   interactionId: nonEmptyStringSchema,
 });
-
-export type AdapterPeerSignalFrame =
-  | {
-      type: "sig";
-      signal: "message.committed";
-      payload: ConversationMessageCommittedSignal & { directed: true };
-      seq?: number;
-    }
-  | {
-      type: "sig";
-      signal: "proc.run.hil.requested";
-      payload: ProcHilRequest;
-      seq?: number;
-    };
-
-const adapterProcMediaInputSchema = z.strictObject({
-  type: z.enum(["image", "audio", "video", "document"]),
-  mimeType: z.string(),
-  key: z.optional(z.string()),
-  conversationId: z.optional(z.string()),
-  path: z.optional(z.string()),
-  url: z.optional(z.string()),
-  filename: z.optional(z.string()),
-  size: z.optional(z.number()),
-  duration: z.optional(z.number()),
-  transcription: z.optional(z.string()),
-});
-const adapterResourceBlockSchema = z.strictObject({
-  type: z.literal("resource"),
-  ref: z.strictObject({
-    type: z.literal("file"),
-    target: z.string(),
-    path: z.string(),
-    revision: z.string(),
-    contentType: z.string(),
-    size: z.number(),
-    expiresAt: z.optional(z.number()),
-  }),
-  mediaType: z.optional(z.enum(["image", "audio", "video", "document"])),
-  filename: z.optional(z.string()),
-  duration: z.optional(z.number()),
-  transcription: z.optional(z.string()),
-});
-const adapterConversationMessageAuthorSchema = z.union([
-  z.strictObject({ kind: z.literal("user"), uid: z.number() }),
-  z.strictObject({
-    kind: z.literal("process"),
-    pid: z.string(),
-    uid: z.number(),
-  }),
-  z.strictObject({
-    kind: z.literal("contact"),
-    contactId: z.string(),
-    shipId: z.string(),
-    subjectId: z.string(),
-    displayName: z.string(),
-  }),
-]);
-const adapterConversationMessageOriginSchema = z.union([
-  z.strictObject({
-    kind: z.literal("client"),
-    clientId: z.optional(z.string()),
-    platform: z.optional(z.string()),
-  }),
-  z.strictObject({
-    kind: z.literal("adapter"),
-    adapter: z.string(),
-    accountId: z.string(),
-    actorId: z.string(),
-    surface: adapterSurfaceSchema,
-    providerMessageId: z.optional(z.string()),
-  }),
-  z.strictObject({ kind: z.literal("process"), pid: z.string(), runId: z.string() }),
-  z.strictObject({ kind: z.literal("device"), deviceId: z.string() }),
-  z.strictObject({ kind: z.literal("scheduler"), scheduleId: z.string() }),
-  z.strictObject({ kind: z.literal("mail"), messageId: z.string() }),
-  z.strictObject({
-    kind: z.literal("federation"),
-    contactId: z.string(),
-    deliveryId: z.string(),
-  }),
-]);
-const adapterConversationMessageSchema = z.strictObject({
-  id: z.string(),
-  conversationId: z.string(),
-  sequence: z.number(),
-  author: adapterConversationMessageAuthorSchema,
-  text: z.string(),
-  media: z.optional(z.array(z.union([
-    adapterResourceBlockSchema,
-    adapterProcMediaInputSchema,
-  ]))),
-  origin: adapterConversationMessageOriginSchema,
-  processId: z.optional(z.string()),
-  runId: z.optional(z.string()),
-  createdAt: z.number(),
-});
-export const adapterPeerSignalFrameSchema = z.union([
-  z.strictObject({
-    type: z.literal("sig"),
-    signal: z.literal("message.committed"),
-    payload: z.strictObject({
-      message: adapterConversationMessageSchema,
-      directed: z.literal(true),
-    }),
-    seq: z.optional(z.number()),
-  }),
-  z.strictObject({
-    type: z.literal("sig"),
-    signal: z.literal("proc.run.hil.requested"),
-    payload: procHilRequestSchema,
-    seq: z.optional(z.number()),
-  }),
-]);
 
 export type AdapterActivity =
   | { kind: "typing"; active: boolean; routeGeneration?: string }

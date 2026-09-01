@@ -179,7 +179,7 @@ function integrationDependencyConfig(
         entrypoint: "AdapterGatewayEntrypoint",
         props: {
           id: "telegram",
-          calls: ["adapter.inbound", "adapter.state.update", "adapter.delivery.claim", "adapter.delivery.report"],
+          calls: ["adapter.inbound", "adapter.state.update"],
         },
       },
       {
@@ -188,7 +188,7 @@ function integrationDependencyConfig(
         entrypoint: "AdapterGatewayEntrypoint",
         props: {
           id: "discord",
-          calls: ["adapter.inbound", "adapter.state.update", "adapter.delivery.claim", "adapter.delivery.report"],
+          calls: ["adapter.inbound", "adapter.state.update"],
         },
       },
     ],

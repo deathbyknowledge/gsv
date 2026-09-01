@@ -5,19 +5,11 @@ import {
   type JsonValue,
 } from "../../../packages/gsv/src/protocol/json.js";
 import type {
-  AdapterDeliveryClaimArgs,
-  AdapterDeliveryClaimResult,
-  AdapterDeliveryReportArgs,
-  AdapterDeliveryReportResult,
   AdapterInboundArgs,
   AdapterStateUpdateArgs,
   AdapterStateUpdateResult,
 } from "../../../packages/gsv/src/protocol/syscalls/adapter.js";
-import {
-  adapterDeliveryClaimResultSchema,
-  adapterDeliveryReportResultSchema,
-  adapterStateUpdateResultSchema,
-} from "../../../packages/gsv/src/protocol/syscalls/adapter.js";
+import { adapterStateUpdateResultSchema } from "../../../packages/gsv/src/protocol/syscalls/adapter.js";
 import { cancelBinaryBody } from "./media-body";
 import type {
   AdapterInstallationContext,
@@ -93,30 +85,13 @@ export function callAdapterGateway(
   args: AdapterStateUpdateArgs,
   body?: BinaryBody,
 ): Promise<AdapterStateUpdateResult>;
-export function callAdapterGateway(
-  gateway: AdapterGatewayBinding,
-  installation: AdapterInstallationContext,
-  call: "adapter.delivery.claim",
-  args: AdapterDeliveryClaimArgs,
-): Promise<AdapterDeliveryClaimResult>;
-export function callAdapterGateway(
-  gateway: AdapterGatewayBinding,
-  installation: AdapterInstallationContext,
-  call: "adapter.delivery.report",
-  args: AdapterDeliveryReportArgs,
-): Promise<AdapterDeliveryReportResult>;
 export async function callAdapterGateway(
   gateway: AdapterGatewayBinding,
   installation: AdapterInstallationContext,
-  call: "adapter.inbound" | "adapter.state.update" | "adapter.delivery.claim" | "adapter.delivery.report",
-  args: AdapterInboundArgs | AdapterStateUpdateArgs | AdapterDeliveryClaimArgs | AdapterDeliveryReportArgs,
+  call: "adapter.inbound" | "adapter.state.update",
+  args: AdapterInboundArgs | AdapterStateUpdateArgs,
   body?: BinaryBody,
-): Promise<
-  AdapterInboundResult
-  | AdapterStateUpdateResult
-  | AdapterDeliveryClaimResult
-  | AdapterDeliveryReportResult
-> {
+): Promise<AdapterInboundResult | AdapterStateUpdateResult> {
   let wireArgs: JsonValue;
   try {
     wireArgs = projectJsonMetadata(args);
@@ -163,11 +138,7 @@ export async function callAdapterGateway(
 
   const decoded = call === "adapter.inbound"
     ? adapterInboundResultSchema.safeParse(response.data)
-    : call === "adapter.state.update"
-      ? adapterStateUpdateResultSchema.safeParse(response.data)
-      : call === "adapter.delivery.claim"
-        ? adapterDeliveryClaimResultSchema.safeParse(response.data)
-        : adapterDeliveryReportResultSchema.safeParse(response.data);
+    : adapterStateUpdateResultSchema.safeParse(response.data);
   if (!decoded.success) {
     throw new Error(`Gateway returned an invalid ${call} response`);
   }
@@ -178,8 +149,6 @@ function projectJsonMetadata(
   value:
     | AdapterInboundArgs
     | AdapterStateUpdateArgs
-    | AdapterDeliveryClaimArgs
-    | AdapterDeliveryReportArgs
     | ProcHilArgs,
 ): JsonValue {
   const serialized = JSON.stringify(value);

@@ -448,8 +448,6 @@ const SYSCALL_NAMES = [
   "adapter.connect",
   "adapter.disconnect",
   "adapter.state.update",
-  "adapter.delivery.claim",
-  "adapter.delivery.report",
   "adapter.status",
   "adapter.list",
   "adapter.pair.info",

@@ -7,18 +7,18 @@ import {
   submitAdapterHilApproval,
   type AdapterHilCallback,
 } from "../src/hil-approval";
-import { runAdapterPeerSqlMigrations } from "../src/schema/migrations";
+import { runAdapterHilSqlMigrations } from "../src/schema/migrations";
 import type {
   AdapterInstallationContext,
   AdapterLinkedPeerContext,
-  AdapterPeerDeliveryContext,
+  AdapterDeliveryContext,
   GatewayFrame,
   GatewayRequestFrame,
 } from "../src/types";
 import { TestDurableObjectStorage } from "./sqlite-storage";
 
 const INSTALLATION = { installationId: "inst_test" } as const;
-const CONTEXT: AdapterPeerDeliveryContext = {
+const CONTEXT: AdapterDeliveryContext = {
   deliveryId: "run-1:hil:request-1",
   accountId: "account-1",
   actorId: "actor-1",
@@ -89,7 +89,7 @@ describe("adapter HIL approvals", () => {
     vi.spyOn(Date, "now").mockImplementation(() => now);
     const storage = new TestDurableObjectStorage();
     const durableStorage = storage.asDurableStorage();
-    runAdapterPeerSqlMigrations(durableStorage);
+    runAdapterHilSqlMigrations(durableStorage);
     const token = await prepareAdapterHilApproval(
       durableStorage,
       "telegram",

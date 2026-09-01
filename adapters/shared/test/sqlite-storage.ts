@@ -6,31 +6,22 @@ type NodeSqlRow = Record<string, SQLOutputValue>;
 /** Node-backed fixture for the synchronous Durable Object SQLite surface. */
 export class TestDurableObjectStorage {
   private readonly database = new DatabaseSync(":memory:");
-  alarm: number | null = null;
-  clearAlarmOnChunkWrite = false;
 
-  // SAFETY: The fixture implements every SqlStorage member exercised by the
-  // production stores; unsupported members are deliberately unreachable here.
+  // SAFETY: The fixture implements the synchronous SQLite members exercised by
+  // the production HIL store; unsupported members are deliberately unreachable.
   readonly sql = {
     exec: <T extends SqlRow>(query: string, ...bindings: SqlStorageValue[]) => {
       const statement = this.database.prepare(query);
       // SAFETY: Test query callsites supply T from their SELECT projection, and
       // normalizeRow converts Node BLOBs and integers to SqlStorageValue.
       const rows = statement.all(...bindings.map(databaseBinding)).map(normalizeRow) as T[];
-      if (
-        this.clearAlarmOnChunkWrite
-        && query.includes("INSERT INTO adapter_peer_delivery_chunks")
-      ) {
-        this.clearAlarmOnChunkWrite = false;
-        this.alarm = null;
-      }
       return sqlCursor(rows);
     },
   } as SqlStorage;
 
   asDurableStorage(): DurableObjectStorage {
-    // SAFETY: The fixture implements the SQL, transaction, and alarm methods
-    // exercised by adapter peer state.
+    // SAFETY: The fixture implements the SQL and synchronous transaction
+    // methods exercised by adapter HIL state.
     return this as DurableObjectStorage;
   }
 
@@ -44,30 +35,6 @@ export class TestDurableObjectStorage {
       this.database.exec("ROLLBACK");
       throw error;
     }
-  }
-
-  async transaction<T>(
-    closure: (txn: TestDurableObjectStorage) => Promise<T>,
-  ): Promise<T> {
-    const previousAlarm = this.alarm;
-    this.database.exec("BEGIN IMMEDIATE");
-    try {
-      const result = await closure(this);
-      this.database.exec("COMMIT");
-      return result;
-    } catch (error) {
-      this.database.exec("ROLLBACK");
-      this.alarm = previousAlarm;
-      throw error;
-    }
-  }
-
-  async getAlarm(): Promise<number | null> {
-    return this.alarm;
-  }
-
-  async setAlarm(value: number | Date): Promise<void> {
-    this.alarm = value instanceof Date ? value.getTime() : value;
   }
 
   rows<T extends SqlRow>(query: string, ...bindings: SqlStorageValue[]): T[] {

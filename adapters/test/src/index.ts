@@ -28,13 +28,6 @@ import {
   type AdapterGatewayBinding,
 } from "../../shared/src/gateway-rpc";
 import { handleAdapterFrame } from "../../shared/src/adapter-frame";
-import {
-  AdapterPeerDeliveryQueue,
-  gatewayPeerDeliveryHandlers,
-  type AdapterPeerSignalDelivery,
-} from "../../shared/src/peer-delivery";
-import { renderAdapterPeerSignal } from "../../shared/src/peer-render";
-import { runAdapterPeerSqlMigrations } from "../../shared/src/schema/migrations";
 import type {
   AdapterAccountStatus,
   AdapterActivity,
@@ -44,14 +37,14 @@ import type {
   AdapterInstallationContext,
   AdapterMedia,
   AdapterOutboundMessage,
-  AdapterPeerDeliveryContext,
-  AdapterPeerSignalFrame,
+  AdapterDeliveryContext,
   AdapterSendResult,
   AdapterService,
   AdapterServiceDescriptor,
   AdapterSurface,
   BinaryBody,
-  GatewayFrame,
+  GatewayRequestFrame,
+  GatewayResponseFrame,
 } from "../../shared/src/types";
 
 type RecordedMessage =
@@ -79,13 +72,10 @@ export class TestChannelState extends DurableObject<Env> {
   private connected = false;
   private messages: RecordedMessage[] = [];
   private readonly deliveries: DeliveryLedger;
-  private readonly peerDeliveries: AdapterPeerDeliveryQueue;
   
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    runAdapterPeerSqlMigrations(ctx.storage);
     this.deliveries = new DeliveryLedger(this.ctx.storage);
-    this.peerDeliveries = new AdapterPeerDeliveryQueue(this.ctx.storage);
     // Load state from storage
     this.ctx.blockConcurrencyWhile(async () => {
       this.connected = (await this.ctx.storage.get<boolean>("connected")) ?? false;
@@ -179,54 +169,6 @@ export class TestChannelState extends DurableObject<Env> {
     this.connected = false;
     this.messages = [];
     await this.ctx.storage.deleteAll();
-    runAdapterPeerSqlMigrations(this.ctx.storage);
-  }
-
-  async acceptPeerSignal(
-    installation: AdapterInstallationContext,
-    context: AdapterPeerDeliveryContext,
-    frame: AdapterPeerSignalFrame,
-    body?: BinaryBody,
-  ): Promise<void> {
-    await this.peerDeliveries.enqueueAndArm(
-      { installation, context, frame },
-      body,
-      Date.now() + 10,
-    );
-    this.ctx.waitUntil(this.drainPeerDeliveries());
-  }
-
-  async alarm(): Promise<void> {
-    await this.drainPeerDeliveries();
-    await this.peerDeliveries.armIfPending(Date.now() + 10_000);
-  }
-
-  private async drainPeerDeliveries(): Promise<void> {
-    await this.peerDeliveries.drain(gatewayPeerDeliveryHandlers({
-      adapter: "test",
-      gateway: this.env.GATEWAY,
-      deliver: async (delivery, body) => await this.deliverPeerSignal(delivery, body),
-    }));
-  }
-
-  private async deliverPeerSignal(
-    delivery: AdapterPeerSignalDelivery,
-    body?: BinaryBody,
-  ): Promise<AdapterSendResult> {
-    const rendered = renderAdapterPeerSignal(delivery.context, delivery.frame).message;
-    const mediaBytes = await readAdapterMediaBody(rendered.media, body, {
-      maxBytes: SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
-      maxPartBytes: SAFE_MATERIALIZED_MEDIA_PART_BYTES,
-    });
-    const fingerprint = await fingerprintOutboundDelivery(rendered, mediaBytes);
-    const outbound: AdapterOutboundMessage = {
-      ...rendered,
-      media: rendered.media?.map((item, index) => {
-        const { body: _body, ...metadata } = item;
-        return { ...metadata, size: metadata.size ?? mediaBytes[index]?.byteLength };
-      }),
-    };
-    return await this.recordOutboundMessage(outbound, fingerprint);
   }
 }
 
@@ -260,22 +202,17 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterService
 
   async adapterFrame(
     installation: AdapterInstallationContext,
-    context: AdapterPeerDeliveryContext,
-    frame: GatewayFrame,
-    body?: BinaryBody,
-  ): Promise<GatewayFrame | null> {
+    context: AdapterDeliveryContext,
+    frame: GatewayRequestFrame,
+  ): Promise<GatewayResponseFrame> {
     const parsed = parseAdapterInstallationContext(installation);
-    const state = this.getStateDO(parsed, context.accountId);
-    return await handleAdapterFrame(this.adapterId, parsed, context, frame, body, {
-      send: async (message, requestBody) => await this.#sendForInstallation(
+    return await handleAdapterFrame(this.adapterId, context, frame, {
+      send: async (delivery, requestBody) => await this.#sendForInstallation(
         parsed,
         context.accountId,
-        message,
+        delivery.message,
         requestBody,
       ),
-      acceptSignal: async (signalContext, signalFrame, signalBody) => {
-        await state.acceptPeerSignal(parsed, signalContext, signalFrame, signalBody);
-      },
     });
   }
 

@@ -20,17 +20,6 @@ export default defineConfig({
                     : undefined;
                   calls.push({ installation, call: frame.call, args: frame.args, bodyBytes });
                   if (frame.args.message?.text === "__gateway_unavailable__") return null;
-                  if (frame.call === "adapter.delivery.claim") {
-                    return {
-                      type: "res",
-                      id: frame.id,
-                      ok: true,
-                      data: { ok: true, deliver: true },
-                    };
-                  }
-                  if (frame.call === "adapter.delivery.report") {
-                    return { type: "res", id: frame.id, ok: true, data: { ok: true } };
-                  }
                   return {
                     type: "res",
                     id: frame.id,

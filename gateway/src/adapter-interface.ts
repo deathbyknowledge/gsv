@@ -17,7 +17,7 @@ export type {
   AdapterInboundResult,
   AdapterMedia,
   AdapterOutboundMessage,
-  AdapterPeerDeliveryContext,
+  AdapterDeliveryContext,
   AdapterPairingCandidate,
   AdapterPairingPreparation,
   AdapterSurface,

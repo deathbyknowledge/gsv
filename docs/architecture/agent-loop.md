@@ -239,9 +239,10 @@ Approval outcomes are:
 - `deny`: append a synthetic tool error.
 - `ask`: store `pending_hil` and emit `proc.run.hil.requested`.
 
-The run pauses while a HIL request is pending. Web, Desktop, CLI, and a routed
-adapter consume the same `proc.run.hil.requested` payload and resume through
-`proc.hil` with the exact pending `requestId`. Each peer owns presentation.
+The run pauses while a HIL request is pending. Web, Desktop, and CLI receive
+`proc.run.hil.requested`; an exact adapter route receives the same structured
+request in `adapter.send`. Decisions resume through `proc.hil` with the exact
+pending `requestId`. Each peer owns presentation.
 Telegram and Slack render native controls; adapters without controls use a
 structured text fallback that directs the user to a capable client. A native
 callback is bound durably to the exact request, linked actor, route generation,
@@ -252,11 +253,11 @@ Background children inherit the spawning run's human approval route, while the
 pending request remains inspectable and actionable from Process activity even
 when that endpoint disconnects.
 
-The Kernel broadcasts an admitted HIL request to connected user clients and
-hands the exact signal to an adapter route when one exists. The adapter persists
-the signal and any body before acknowledgement, claims the live route before
-provider delivery, and reports the terminal outcome afterward. A callback uses
-a Kernel-derived, interaction-scoped linked-human peer for ordinary `proc.hil`;
+The Kernel broadcasts an admitted HIL request to connected user clients and,
+when an adapter route exists, schedules a targeted `adapter.send` carrying that
+same structured request. The adapter returns a correlated provider outcome; its
+delivery ledger makes a Kernel retry with the same id safe. A callback uses a
+Kernel-derived, interaction-scoped linked-human peer for ordinary `proc.hil`;
 the adapter service account has no direct approval capability. Notification
 failure never rolls back or clears `pending_hil`.
 

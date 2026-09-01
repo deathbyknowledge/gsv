@@ -1,11 +1,9 @@
 import {
-  adapterPeerDeliveryContextSchema,
-  adapterPeerSignalFrameSchema,
-  type AdapterGatewayFrame,
-  type AdapterInstallationContext,
+  adapterDeliveryContextSchema,
+  type AdapterGatewayRequestFrame,
+  type AdapterGatewayResponseFrame,
   type AdapterOutboundMessage,
-  type AdapterPeerDeliveryContext,
-  type AdapterPeerSignalFrame,
+  type AdapterDeliveryContext,
   type AdapterProviderSendResult,
 } from "../../../packages/gsv/src/protocol/adapters.js";
 import { cancelBinaryBody } from "../../../packages/gsv/src/protocol/adapter-media-body.js";
@@ -15,52 +13,26 @@ import type {
   AdapterSendResult,
 } from "../../../packages/gsv/src/protocol/syscalls/adapter.js";
 import { adapterSendArgsSchema } from "../../../packages/gsv/src/protocol/syscalls/adapter.js";
+import { renderAdapterSend, type RenderedAdapterSend } from "./peer-render";
 
 export type AdapterFrameHandlers = {
-  send(message: AdapterOutboundMessage, body?: BinaryBody): Promise<AdapterProviderSendResult>;
-  acceptSignal(
-    context: AdapterPeerDeliveryContext,
-    frame: AdapterPeerSignalFrame,
-    body?: BinaryBody,
-  ): Promise<void>;
+  send(delivery: RenderedAdapterSend, body?: BinaryBody): Promise<AdapterProviderSendResult>;
 };
 
 /** Validate and dispatch one canonical Gateway-to-adapter frame. */
 export async function handleAdapterFrame(
   adapterId: string,
-  _installation: AdapterInstallationContext,
-  inputContext: AdapterPeerDeliveryContext,
-  inputFrame: AdapterGatewayFrame,
-  signalBody: BinaryBody | undefined,
+  inputContext: AdapterDeliveryContext,
+  inputFrame: AdapterGatewayRequestFrame,
   handlers: AdapterFrameHandlers,
-): Promise<AdapterGatewayFrame | null> {
-  let context: AdapterPeerDeliveryContext;
+): Promise<AdapterGatewayResponseFrame> {
+  let context: AdapterDeliveryContext;
   try {
-    context = adapterPeerDeliveryContextSchema.parse(inputContext);
+    context = adapterDeliveryContextSchema.parse(inputContext);
   } catch (error) {
-    await Promise.all([
-      cancelBinaryBody(signalBody, error),
-      inputFrame.type === "req" ? cancelBinaryBody(inputFrame.body, error) : Promise.resolve(),
-    ]);
+    await cancelBinaryBody(inputFrame.body, error);
     throw error;
   }
-  if (inputFrame.type === "sig") {
-    try {
-      const frame = adapterPeerSignalFrameSchema.parse(inputFrame);
-      validateSignalContext(context, frame);
-      await handlers.acceptSignal(context, frame, signalBody);
-      return null;
-    } catch (error) {
-      await cancelBinaryBody(signalBody, error);
-      throw error;
-    }
-  }
-
-  if (signalBody) {
-    await cancelBinaryBody(signalBody, "Request frames carry their body on the frame");
-    throw new Error("Adapter request supplied an invalid body sidecar");
-  }
-  if (inputFrame.type !== "req") return null;
   if (inputFrame.call !== "adapter.send") {
     await cancelBinaryBody(inputFrame.body, "Adapter does not implement this request");
     return errorFrame(inputFrame.id, 404, `Adapter does not implement ${inputFrame.call}`);
@@ -88,10 +60,11 @@ export async function handleAdapterFrame(
   if (context.routeGeneration) message.routeGeneration = context.routeGeneration;
   if (args.replyToId !== undefined) message.replyToId = args.replyToId;
   if (args.media !== undefined) message.media = args.media;
+  const delivery = renderAdapterSend(context, message);
 
   let result: AdapterProviderSendResult;
   try {
-    result = await handlers.send(message, inputFrame.body);
+    result = await handlers.send(delivery, inputFrame.body);
   } catch {
     return errorFrame(inputFrame.id, 503, "Adapter delivery is unavailable", true);
   } finally {
@@ -105,38 +78,9 @@ export async function handleAdapterFrame(
   };
 }
 
-function validateSignalContext(
-  context: AdapterPeerDeliveryContext,
-  frame: AdapterPeerSignalFrame,
-): void {
-  if (!context.actorId || !context.processId || !context.runId) {
-    throw new Error("Adapter signal route context is incomplete");
-  }
-  if (frame.signal === "proc.run.hil.requested") {
-    if (
-      frame.payload.pid !== context.processId
-      || frame.payload.runId !== context.runId
-      || context.deliveryId !== `${context.runId}:hil:${frame.payload.requestId}`
-    ) {
-      throw new Error("Adapter HIL signal does not match its route context");
-    }
-    return;
-  }
-  const message = frame.payload.message;
-  if (
-    message.id !== context.deliveryId
-    || message.processId !== context.processId
-    || message.runId !== context.runId
-    || message.author.kind !== "process"
-    || message.author.pid !== context.processId
-  ) {
-    throw new Error("Committed Message signal does not match its route context");
-  }
-}
-
 function validateSendContext(
   adapterId: string,
-  context: AdapterPeerDeliveryContext,
+  context: AdapterDeliveryContext,
   args: AdapterSendArgs,
 ): void {
   if (
@@ -149,11 +93,24 @@ function validateSendContext(
   ) {
     throw new Error("adapter.send request does not match its trusted route context");
   }
+  if (
+    context.hil
+    && (
+      !context.actorId
+      || !context.processId
+      || !context.runId
+      || context.hil.pid !== context.processId
+      || context.hil.runId !== context.runId
+      || context.deliveryId !== `${context.runId}:hil:${context.hil.requestId}`
+    )
+  ) {
+    throw new Error("Adapter HIL request does not match its trusted route context");
+  }
 }
 
 function publicSendResult(
   adapter: string,
-  context: AdapterPeerDeliveryContext,
+  context: AdapterDeliveryContext,
   result: AdapterProviderSendResult,
 ): AdapterSendResult {
   if (!result.ok) {
@@ -190,7 +147,7 @@ function errorFrame(
   code: number,
   message: string,
   retryable = false,
-): AdapterGatewayFrame {
+): AdapterGatewayResponseFrame {
   return {
     type: "res",
     id,

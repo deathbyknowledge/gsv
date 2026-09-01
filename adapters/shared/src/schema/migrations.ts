@@ -1,6 +1,6 @@
-import { ADAPTER_PEER_V001_STATE } from "./v001_adapter_peer_state";
+import { ADAPTER_HIL_V001_STATE } from "./v001_adapter_hil";
 
-type AdapterPeerSqlMigration = {
+type AdapterHilSqlMigration = {
   id: number;
   name: string;
   statements: readonly string[];
@@ -13,13 +13,13 @@ type AppliedMigration = {
 };
 
 const MIGRATIONS_TABLE = "_gsv_schema_migrations";
-const SCHEMA_COMPONENT = "adapter_peer";
+const SCHEMA_COMPONENT = "adapter_hil";
 
-export const ADAPTER_PEER_MIGRATIONS: readonly AdapterPeerSqlMigration[] = [
-  ADAPTER_PEER_V001_STATE,
+export const ADAPTER_HIL_MIGRATIONS: readonly AdapterHilSqlMigration[] = [
+  ADAPTER_HIL_V001_STATE,
 ];
 
-export function runAdapterPeerSqlMigrations(storage: DurableObjectStorage): void {
+export function runAdapterHilSqlMigrations(storage: DurableObjectStorage): void {
   validateMigrations();
   const sql = storage.sql;
   sql.exec(`
@@ -40,7 +40,7 @@ export function runAdapterPeerSqlMigrations(storage: DurableObjectStorage): void
     SCHEMA_COMPONENT,
   ).toArray().map((migration) => [migration.id, migration]));
 
-  for (const migration of ADAPTER_PEER_MIGRATIONS) {
+  for (const migration of ADAPTER_HIL_MIGRATIONS) {
     const checksum = migrationChecksum(migration);
     const existing = applied.get(migration.id);
     if (existing) {
@@ -69,19 +69,19 @@ export function runAdapterPeerSqlMigrations(storage: DurableObjectStorage): void
 
 function validateMigrations(): void {
   let previousId = 0;
-  for (const migration of ADAPTER_PEER_MIGRATIONS) {
+  for (const migration of ADAPTER_HIL_MIGRATIONS) {
     if (
       !Number.isSafeInteger(migration.id)
       || migration.id <= previousId
       || !migration.name.trim()
     ) {
-      throw new Error(`Invalid adapter peer schema migration: ${migration.id}`);
+      throw new Error(`Invalid adapter HIL schema migration: ${migration.id}`);
     }
     previousId = migration.id;
   }
 }
 
-function migrationChecksum(migration: AdapterPeerSqlMigration): string {
+function migrationChecksum(migration: AdapterHilSqlMigration): string {
   const input = JSON.stringify({
     id: migration.id,
     name: migration.name,

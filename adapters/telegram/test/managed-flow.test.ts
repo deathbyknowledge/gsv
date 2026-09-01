@@ -1,6 +1,7 @@
 import { env, SELF } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
+import { renderAdapterHilText } from "../../shared/src/peer-render";
 
 type TelegramApiMessage = {
   method: string;
@@ -68,34 +69,6 @@ type ManagedPairingStub = {
 };
 
 type ManagedPeerStub = {
-  acceptPeerSignal(
-    installation: { installationId: string },
-    context: {
-      deliveryId: string;
-      accountId: string;
-      actorId: string;
-      surface: { kind: "dm"; id: string };
-      routeGeneration: string;
-      processId: string;
-      runId: string;
-      processMode: "ship";
-    },
-    frame: {
-      type: "sig";
-      signal: "proc.run.hil.requested";
-      payload: {
-        pid: string;
-        requestId: string;
-        runId: string;
-        callId: string;
-        toolName: string;
-        syscall: string;
-        target: string;
-        args: { input: string };
-        createdAt: number;
-      };
-    },
-  ): Promise<void>;
   sendMessage(
     installationId: string,
     message: {
@@ -113,6 +86,27 @@ type ManagedPeerStub = {
       }>;
     },
     body?: ReturnType<typeof binaryBodyFromOwnedBytes>,
+    context?: {
+      deliveryId: string;
+      accountId: string;
+      actorId: string;
+      surface: { kind: "dm"; id: string };
+      routeGeneration: string;
+      processId: string;
+      runId: string;
+      processMode: "ship";
+      hil: {
+        pid: string;
+        requestId: string;
+        runId: string;
+        callId: string;
+        toolName: string;
+        syscall: string;
+        target: string;
+        args: { input: string };
+        createdAt: number;
+      };
+    },
   ): Promise<{ ok: boolean; messageId?: string; error?: string }>;
   setTyping(
     installationId: string,
@@ -255,40 +249,46 @@ describe("managed Telegram clean-instance flow", () => {
       }));
     });
 
-    // The Gateway signal is accepted durably before Telegram delivery, and
-    // the provider callback returns through the ordinary linked-human proc.hil path.
+    // The targeted send carries the exact HIL request, and the provider callback
+    // returns through the ordinary linked-human proc.hil path.
     // SAFETY: The test environment exposes the declared Durable Object namespace binding.
     const peers = env.MANAGED_TELEGRAM_PEER as DurableObjectNamespace;
     const peer = typedStub<ManagedPeerStub>(peers.get(
       peers.idFromName("managed:12345"),
     ));
-    await peer.acceptPeerSignal(
-      { installationId: "installation_test" },
+    const hil = {
+      pid: "proc-approval",
+      requestId: "request-approval",
+      runId: "run-approval",
+      callId: "call-approval",
+      toolName: "Shell",
+      syscall: "shell.exec",
+      target: "gsv",
+      args: { input: "date" },
+      createdAt: 1_700_000_100_000,
+    };
+    const approvalContext = {
+      deliveryId: "run-approval:hil:request-approval",
+      accountId: "managed",
+      actorId: "12345",
+      surface: { kind: "dm" as const, id: "12345" },
+      routeGeneration: firstGeneration,
+      processId: "proc-approval",
+      runId: "run-approval",
+      processMode: "ship" as const,
+      hil,
+    };
+    await peer.sendMessage(
+      "installation_test",
       {
-        deliveryId: "run-approval:hil:request-approval",
-        accountId: "managed",
-        actorId: "12345",
-        surface: { kind: "dm", id: "12345" },
-        routeGeneration: firstGeneration,
-        processId: "proc-approval",
-        runId: "run-approval",
-        processMode: "ship",
+        deliveryId: approvalContext.deliveryId,
+        surface: approvalContext.surface,
+        actorId: approvalContext.actorId,
+        routeGeneration: approvalContext.routeGeneration,
+        text: renderAdapterHilText(hil, "dm"),
       },
-      {
-        type: "sig",
-        signal: "proc.run.hil.requested",
-        payload: {
-          pid: "proc-approval",
-          requestId: "request-approval",
-          runId: "run-approval",
-          callId: "call-approval",
-          toolName: "Shell",
-          syscall: "shell.exec",
-          target: "gsv",
-          args: { input: "date" },
-          createdAt: 1_700_000_100_000,
-        },
-      },
+      undefined,
+      approvalContext,
     );
     let approvalMessage: TelegramApiMessage | undefined;
     await vi.waitFor(async () => {

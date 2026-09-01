@@ -3,7 +3,7 @@ import { callLinkedAdapterGateway, type AdapterGatewayBinding } from "./gateway-
 import type {
   AdapterInstallationContext,
   AdapterLinkedPeerContext,
-  AdapterPeerDeliveryContext,
+  AdapterDeliveryContext,
   AdapterSurface,
 } from "./types";
 
@@ -31,13 +31,17 @@ export type AdapterHilSubmission =
   | { kind: "submitted"; resolution: AdapterHilResolution };
 
 type StoredAdapterHilRequest = Pick<ProcHilRequest, "pid" | "requestId" | "runId">;
+type StoredAdapterHilContext = Pick<
+  AdapterDeliveryContext,
+  "deliveryId" | "accountId" | "actorId" | "surface" | "routeGeneration"
+>;
 
 type AdapterHilRecord = {
   version: 1;
   provider: string;
   token: string;
   binding?: string;
-  context: AdapterPeerDeliveryContext;
+  context: StoredAdapterHilContext;
   request: StoredAdapterHilRequest;
   state: "pending" | "processing" | "resolved";
   selection?: AdapterHilDecision;
@@ -68,7 +72,7 @@ export async function prepareAdapterHilApproval(
   storage: DurableObjectStorage,
   provider: string,
   binding: string | undefined,
-  context: AdapterPeerDeliveryContext,
+  context: AdapterDeliveryContext,
   request: ProcHilRequest,
 ): Promise<string | null> {
   if (
@@ -88,7 +92,7 @@ export async function prepareAdapterHilApproval(
   storage.transactionSync(() => {
     const existing = readAdapterHilRecord(storage.sql, normalizedProvider, token);
     if (existing && existing.expiresAt > now) {
-      if (!sameApproval(existing, normalizedProvider, binding, context, request)) {
+      if (!sameApproval(existing, binding, context, request)) {
         throw new Error("Adapter approval token is already bound to another request");
       }
       return;
@@ -97,7 +101,13 @@ export async function prepareAdapterHilApproval(
       version: 1,
       provider: normalizedProvider,
       token,
-      context,
+      context: {
+        deliveryId: context.deliveryId,
+        accountId: context.accountId,
+        actorId: context.actorId,
+        surface: context.surface,
+        routeGeneration: context.routeGeneration,
+      },
       request: {
         pid: request.pid,
         requestId: request.requestId,
@@ -145,7 +155,7 @@ export async function submitAdapterHilApproval(
   const now = Date.now();
   const claimed = storage.transactionSync(() => {
     const record = readAdapterHilRecord(storage.sql, provider, token);
-    if (!matchesCallback(record, provider, callback, now)) {
+    if (!matchesCallback(record, callback, now)) {
       return { kind: "invalid" as const };
     }
     if (record.state === "resolved") {
@@ -261,14 +271,12 @@ function sameHilSelection(
 
 function matchesCallback(
   record: AdapterHilRecord | undefined,
-  provider: string,
   callback: AdapterHilCallback,
   now: number,
 ): record is AdapterHilRecord {
   return Boolean(
     record
     && record.expiresAt > now
-    && record.provider === provider
     && record.binding === callback.binding
     && record.context.actorId === callback.actorId
     && record.context.surface.kind === "dm"
@@ -310,17 +318,17 @@ function releaseAdapterHilApproval(
 
 function sameApproval(
   record: AdapterHilRecord,
-  provider: string,
   binding: string | undefined,
-  context: AdapterPeerDeliveryContext,
+  context: AdapterDeliveryContext,
   request: ProcHilRequest,
 ): boolean {
-  return record.provider === provider
-    && record.binding === binding
+  return record.binding === binding
     && record.context.deliveryId === context.deliveryId
     && record.context.accountId === context.accountId
     && record.context.actorId === context.actorId
+    && record.context.surface.kind === context.surface.kind
     && record.context.surface.id === context.surface.id
+    && record.context.surface.threadId === context.surface.threadId
     && record.context.routeGeneration === context.routeGeneration
     && record.request.pid === request.pid
     && record.request.runId === request.runId

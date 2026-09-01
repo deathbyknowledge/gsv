@@ -1,6 +1,7 @@
 import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
+import { renderAdapterHilText } from "../../shared/src/peer-render";
 import { workspaceAccountId } from "../src/slack-api";
 import type { ManagedSlackPeer } from "../src/managed-peer";
 import type { ManagedSlackPeerState } from "../src/managed-peer-state";
@@ -113,34 +114,6 @@ type PairActivate = {
 };
 
 type PeerStub = {
-  acceptPeerSignal(
-    installation: { installationId: string },
-    context: {
-      deliveryId: string;
-      accountId: string;
-      actorId: string;
-      surface: { kind: "dm"; id: string };
-      routeGeneration: string;
-      processId: string;
-      runId: string;
-      processMode: "ship";
-    },
-    frame: {
-      type: "sig";
-      signal: "proc.run.hil.requested";
-      payload: {
-        pid: string;
-        requestId: string;
-        runId: string;
-        callId: string;
-        toolName: string;
-        syscall: string;
-        target: string;
-        args: { input: string };
-        createdAt: number;
-      };
-    },
-  ): Promise<void>;
   sendMessage(
     installationId: string,
     message: {
@@ -157,6 +130,27 @@ type PeerStub = {
       }>;
     },
     body?: ReturnType<typeof binaryBodyFromOwnedBytes>,
+    context?: {
+      deliveryId: string;
+      accountId: string;
+      actorId: string;
+      surface: { kind: "dm"; id: string };
+      routeGeneration: string;
+      processId: string;
+      runId: string;
+      processMode: "ship";
+      hil: {
+        pid: string;
+        requestId: string;
+        runId: string;
+        callId: string;
+        toolName: string;
+        syscall: string;
+        target: string;
+        args: { input: string };
+        createdAt: number;
+      };
+    },
   ): Promise<{ ok: boolean; error?: string; messageId?: string }>;
   listTargets(
     installationId: string,
@@ -481,33 +475,39 @@ async function sendApproval(
   deliveryId: string,
 ): Promise<{ messageId: string; sourceText: string; approveValue: string }> {
   const runId = `run-${deliveryId}`;
-  await peer.acceptPeerSignal(
-    { installationId: "installation-alice" },
+  const hil = {
+    pid: "proc-approval",
+    requestId: "managed-request-1",
+    runId,
+    callId: "call-approval",
+    toolName: "Shell",
+    syscall: "shell.exec",
+    target: "gsv",
+    args: { input: "date" },
+    createdAt: 1_700_000_100_000,
+  };
+  const context = {
+    deliveryId: `${runId}:hil:managed-request-1`,
+    accountId,
+    actorId: "UALICE01",
+    surface: { kind: "dm" as const, id: "DALICE01" },
+    routeGeneration,
+    processId: "proc-approval",
+    runId,
+    processMode: "ship" as const,
+    hil,
+  };
+  await peer.sendMessage(
+    "installation-alice",
     {
-      deliveryId: `${runId}:hil:managed-request-1`,
-      accountId,
-      actorId: "UALICE01",
-      surface: { kind: "dm", id: "DALICE01" },
+      deliveryId: context.deliveryId,
+      surface: context.surface,
+      actorId: context.actorId,
       routeGeneration,
-      processId: "proc-approval",
-      runId,
-      processMode: "ship",
+      text: renderAdapterHilText(hil, "dm"),
     },
-    {
-      type: "sig",
-      signal: "proc.run.hil.requested",
-      payload: {
-        pid: "proc-approval",
-        requestId: "managed-request-1",
-        runId,
-        callId: "call-approval",
-        toolName: "Shell",
-        syscall: "shell.exec",
-        target: "gsv",
-        args: { input: "date" },
-        createdAt: 1_700_000_100_000,
-      },
-    },
+    undefined,
+    context,
   );
   let approvalPost: SlackApiCall | undefined;
   await vi.waitFor(async () => {

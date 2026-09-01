@@ -4,8 +4,9 @@ import type {
   AdapterConnectConfig,
   AdapterInstallationContext,
   AdapterMediaType,
-  AdapterPeerDeliveryContext,
-  AdapterGatewayFrame,
+  AdapterDeliveryContext,
+  AdapterGatewayRequestFrame,
+  AdapterGatewayResponseFrame,
   AdapterPairingWorkerInterface,
   AdapterSurfaceKind,
   AdapterSurface,
@@ -182,16 +183,14 @@ export interface AdapterService {
   readonly adapterId: string;
   adapterDescribe(): Promise<AdapterServiceDescriptor>;
   /**
-   * Canonical frame carrier for Gateway-to-adapter delivery. A signal call
-   * resolves only after the owning adapter Durable Object has durably accepted
-   * the frame and any body sidecar. Requests return their correlated response.
+   * Canonical frame carrier for Gateway-to-adapter requests. Binary request
+   * bodies travel on the frame and every request returns a correlated response.
    */
   adapterFrame?: (
     installation: AdapterInstallationContext,
-    context: AdapterPeerDeliveryContext,
-    frame: AdapterGatewayFrame,
-    body?: BinaryBody,
-  ) => Promise<AdapterGatewayFrame | null>;
+    context: AdapterDeliveryContext,
+    frame: AdapterGatewayRequestFrame,
+  ) => Promise<AdapterGatewayResponseFrame>;
   adapterConnect?: (
     installation: AdapterInstallationContext,
     accountId: string,

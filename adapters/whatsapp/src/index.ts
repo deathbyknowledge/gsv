@@ -11,12 +11,12 @@ import type {
   AdapterConnectResult,
   AdapterDisconnectResult,
   AdapterInstallationContext,
-  AdapterPeerDeliveryContext,
+  AdapterDeliveryContext,
   AdapterService,
   AdapterServiceDescriptor,
   AdapterSurface,
-  BinaryBody,
-  GatewayFrame,
+  GatewayRequestFrame,
+  GatewayResponseFrame,
 } from "../../shared/src/types";
 import { errorFields, errorMessage, logWhatsApp } from "./logging";
 import { WhatsAppAccount } from "./whatsapp-account";
@@ -59,21 +59,17 @@ export class WhatsAppChannelEntrypoint
 
   async adapterFrame(
     installation: AdapterInstallationContext,
-    context: AdapterPeerDeliveryContext,
-    frame: GatewayFrame,
-    body?: BinaryBody,
-  ): Promise<GatewayFrame | null> {
+    context: AdapterDeliveryContext,
+    frame: GatewayRequestFrame,
+  ): Promise<GatewayResponseFrame> {
     const parsed = parseAdapterInstallationContext(installation);
     const account = this.getAccount(parsed, context.accountId);
-    return await handleAdapterFrame(this.adapterId, parsed, context, frame, body, {
-      send: async (message, requestBody) => await account.sendAccountMessage(
+    return await handleAdapterFrame(this.adapterId, context, frame, {
+      send: async (delivery, requestBody) => await account.sendAccountMessage(
         context.accountId,
-        message,
+        delivery.message,
         requestBody,
       ),
-      acceptSignal: async (signalContext, signalFrame, signalBody) => {
-        await account.acceptPeerSignal(parsed, signalContext, signalFrame, signalBody);
-      },
     });
   }
 

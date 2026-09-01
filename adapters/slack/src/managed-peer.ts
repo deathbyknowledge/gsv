@@ -14,13 +14,7 @@ import {
   InboundDeliveryLedger,
   type InboundDeliveryDisposition,
 } from "../../shared/src/inbound-delivery";
-import {
-  AdapterPeerDeliveryQueue,
-  gatewayPeerDeliveryHandlers,
-  type AdapterPeerSignalDelivery,
-} from "../../shared/src/peer-delivery";
-import { renderAdapterPeerSignal } from "../../shared/src/peer-render";
-import { runAdapterPeerSqlMigrations } from "../../shared/src/schema/migrations";
+import { runAdapterHilSqlMigrations } from "../../shared/src/schema/migrations";
 import { callAdapterGateway, type AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
   cancelBinaryBody,
@@ -31,9 +25,7 @@ import {
 } from "../../shared/src/media-body";
 import type {
   AdapterOutboundMessage,
-  AdapterInstallationContext,
-  AdapterPeerDeliveryContext,
-  AdapterPeerSignalFrame,
+  AdapterDeliveryContext,
   AdapterPairingActivateInput,
   AdapterPairingCandidate,
   AdapterPairingDisconnectInput,
@@ -247,13 +239,12 @@ const SLACK_TARGET_ID = "workspace";
 export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
   private readonly deliveries: DeliveryLedger;
   private readonly inboundDeliveries: InboundDeliveryLedger<InboundPayload, ResponseContext>;
-  private readonly peerDeliveries: AdapterPeerDeliveryQueue;
   private readonly targetCalls = new Map<string, ActiveManagedSlackTargetCall>();
   private drainPromise?: Promise<void>;
 
   constructor(ctx: DurableObjectState, env: ManagedSlackPeerEnv) {
     super(ctx, env);
-    runAdapterPeerSqlMigrations(ctx.storage);
+    runAdapterHilSqlMigrations(ctx.storage);
     this.deliveries = new DeliveryLedger(this.ctx.storage);
     this.inboundDeliveries = new InboundDeliveryLedger(
       this.ctx.storage,
@@ -263,10 +254,6 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
         maxRecords: INBOUND_MAX_RECORDS,
         pendingOrder: "created",
       },
-    );
-    this.peerDeliveries = new AdapterPeerDeliveryQueue(
-      this.ctx.storage,
-      INBOUND_RETRY_DELAY_MS,
     );
   }
 
@@ -330,6 +317,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     installationId: string,
     message: AdapterOutboundMessage,
     body?: BinaryBody,
+    context?: AdapterDeliveryContext,
   ): Promise<AdapterSendResult> {
     let state: ManagedSlackPeerState;
     try {
@@ -349,79 +337,21 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       await cancelBinaryBody(body, "Slack route changed before delivery");
       return { ok: false, error: "Slack route changed before delivery" };
     }
-    return await this.deliverMessage(message, {
+    const controls = context?.hil
+      ? await prepareSlackApproval(
+          this.ctx.storage,
+          state.teamId,
+          context,
+          context.hil,
+          message.text,
+        )
+      : null;
+    const result = await this.deliverMessage(message, {
       kind: "installation",
       installationId,
       generation: route.generation,
       workspaceGeneration: state.workspaceGeneration,
-    }, body);
-  }
-
-  async acceptPeerSignal(
-    installation: AdapterInstallationContext,
-    context: AdapterPeerDeliveryContext,
-    frame: AdapterPeerSignalFrame,
-    body?: BinaryBody,
-  ): Promise<void> {
-    try {
-      const state = await this.requireCurrentWorkspace();
-      this.assertDestination(state, context.surface, context.actorId);
-      if (
-        context.accountId !== state.accountId
-        || state.activeRoute?.installationId !== installation.installationId
-        || !context.routeGeneration
-        || state.activeRoute.generation !== context.routeGeneration
-      ) {
-        throw new Error("Slack route changed before signal acceptance");
-      }
-      await this.peerDeliveries.enqueueAndArm(
-        { installation, context, frame },
-        body,
-        Date.now() + INBOUND_WAKE_DELAY_MS,
-      );
-    } catch (error) {
-      await cancelBinaryBody(body, error);
-      throw error;
-    }
-    this.ctx.waitUntil(this.drainPeerDeliveries());
-  }
-
-  private async drainPeerDeliveries(): Promise<void> {
-    await this.peerDeliveries.drain(gatewayPeerDeliveryHandlers({
-      adapter: "slack",
-      gateway: this.env.GATEWAY,
-      deliver: async (delivery, body) => await this.deliverPeerSignal(delivery, body),
-    }));
-  }
-
-  private async deliverPeerSignal(
-    delivery: AdapterPeerSignalDelivery,
-    body?: BinaryBody,
-  ): Promise<AdapterSendResult> {
-    const state = await this.requireCurrentWorkspace();
-    const generation = delivery.context.routeGeneration;
-    if (!generation) return { ok: false, error: "Slack route generation is missing" };
-    const rendered = renderAdapterPeerSignal(delivery.context, delivery.frame).message;
-    const controls = delivery.frame.signal === "proc.run.hil.requested"
-      ? await prepareSlackApproval(
-          this.ctx.storage,
-          state.teamId,
-          delivery.context,
-          delivery.frame.payload,
-          rendered.text,
-        )
-      : null;
-    const result = await this.deliverMessage(
-      rendered,
-      {
-        kind: "installation",
-        installationId: delivery.installation.installationId,
-        generation,
-        workspaceGeneration: state.workspaceGeneration,
-      },
-      body,
-      controls?.blocks,
-    );
+    }, body, controls?.blocks);
     if (result.ok && controls) {
       await attachSlackApprovalMessage(this.ctx.storage, controls.token, result.messageId);
     }
@@ -698,8 +628,6 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
   }
 
   async alarm(): Promise<void> {
-    await this.peerDeliveries.armIfPending(Date.now() + INBOUND_RETRY_DELAY_MS);
-    await this.drainPeerDeliveries();
     await this.drainInbound();
     await this.inboundDeliveries.armIfPending(Date.now() + INBOUND_RETRY_DELAY_MS);
   }

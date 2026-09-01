@@ -54,10 +54,7 @@ const accountField = <T>(account: WhatsAppAccount, name: string): T => {
 };
 
 function fakeAccount<T>(fields: T): WhatsAppAccount {
-  return Object.assign(Object.create(WhatsAppAccount.prototype), {
-    peerDeliveries: { armIfPending: vi.fn(async () => false) },
-    drainPeerDeliveries: vi.fn(async () => undefined),
-  }, fields);
+  return Object.assign(Object.create(WhatsAppAccount.prototype), fields);
 }
 
 afterEach(() => {

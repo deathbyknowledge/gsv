@@ -20,12 +20,12 @@ import type {
   AdapterConnectResult,
   AdapterDisconnectResult,
   AdapterInstallationContext,
-  AdapterPeerDeliveryContext,
+  AdapterDeliveryContext,
   AdapterService,
   AdapterServiceDescriptor,
   AdapterSurface,
-  BinaryBody,
-  GatewayFrame,
+  GatewayRequestFrame,
+  GatewayResponseFrame,
 } from "../../shared/src/types";
 import { DiscordGateway } from "./discord-gateway";
 import * as z from "zod/mini";
@@ -80,16 +80,14 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterServ
 
   async adapterFrame(
     installation: AdapterInstallationContext,
-    context: AdapterPeerDeliveryContext,
-    frame: GatewayFrame,
-    body?: BinaryBody,
-  ): Promise<GatewayFrame | null> {
+    context: AdapterDeliveryContext,
+    frame: GatewayRequestFrame,
+  ): Promise<GatewayResponseFrame> {
     const parsed = parseAdapterInstallationContext(installation);
     const gateway = this.getGatewayDO(parsed, context.accountId);
-    return await handleAdapterFrame(this.adapterId, parsed, context, frame, body, {
-      send: async (message, requestBody) => await gateway.sendMessage(message, requestBody),
-      acceptSignal: async (signalContext, signalFrame, signalBody) => {
-        await gateway.acceptPeerSignal(parsed, signalContext, signalFrame, signalBody);
+    return await handleAdapterFrame(this.adapterId, context, frame, {
+      send: async (delivery, requestBody) => {
+        return await gateway.sendMessage(delivery.message, requestBody);
       },
     });
   }

@@ -10,11 +10,11 @@ import type {
   AdapterConnectResult,
   AdapterDisconnectResult,
   AdapterInstallationContext,
-  AdapterPeerDeliveryContext,
+  AdapterDeliveryContext,
   AdapterService,
   AdapterServiceDescriptor,
-  BinaryBody,
-  GatewayFrame,
+  GatewayRequestFrame,
+  GatewayResponseFrame,
 } from "./types";
 import { SlackAccount } from "./slack-account";
 import * as z from "zod/mini";
@@ -59,16 +59,14 @@ export class SlackChannel extends WorkerEntrypoint<Env> implements AdapterServic
 
   async adapterFrame(
     installation: AdapterInstallationContext,
-    context: AdapterPeerDeliveryContext,
-    frame: GatewayFrame,
-    body?: BinaryBody,
-  ): Promise<GatewayFrame | null> {
+    context: AdapterDeliveryContext,
+    frame: GatewayRequestFrame,
+  ): Promise<GatewayResponseFrame> {
     const parsed = parseAdapterInstallationContext(installation);
     const account = this.account(parsed, context.accountId);
-    return await handleAdapterFrame(this.adapterId, parsed, context, frame, body, {
-      send: async (message, requestBody) => await account.sendMessage(message, requestBody),
-      acceptSignal: async (signalContext, signalFrame, signalBody) => {
-        await account.acceptPeerSignal(parsed, signalContext, signalFrame, signalBody);
+    return await handleAdapterFrame(this.adapterId, context, frame, {
+      send: async (delivery, requestBody) => {
+        return await account.sendRoutedMessage(context, delivery, requestBody);
       },
     });
   }

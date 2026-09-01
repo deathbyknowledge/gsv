@@ -14,13 +14,6 @@ import {
   adapterInboundResultDisposition,
   InboundDeliveryLedger,
 } from "../../shared/src/inbound-delivery";
-import {
-  AdapterPeerDeliveryQueue,
-  gatewayPeerDeliveryHandlers,
-  type AdapterPeerSignalDelivery,
-} from "../../shared/src/peer-delivery";
-import { renderAdapterPeerSignal } from "../../shared/src/peer-render";
-import { runAdapterPeerSqlMigrations } from "../../shared/src/schema/migrations";
 import { callAdapterGateway } from "../../shared/src/gateway-rpc";
 import type { AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
@@ -30,7 +23,6 @@ import {
 } from "../../shared/src/installation";
 import {
   bundleAdapterMedia,
-  cancelBinaryBody,
   cancelResponseBody,
   responseBodyToBinaryBody,
   SAFE_MATERIALIZED_MEDIA_PART_BYTES,
@@ -46,8 +38,6 @@ import type {
   AdapterInstallationContext,
   AdapterMedia,
   AdapterOutboundMessage,
-  AdapterPeerDeliveryContext,
-  AdapterPeerSignalFrame,
   AdapterSendResult,
   BinaryBody,
 } from "../../shared/src/types";
@@ -152,7 +142,6 @@ export class DiscordGateway extends DurableObject<Env> {
   private ws: WebSocket | null = null;
   private readonly deliveries: DeliveryLedger;
   private readonly inboundDeliveries: InboundDeliveryLedger<string>;
-  private readonly peerDeliveries: AdapterPeerDeliveryQueue;
   private heartbeatInterval: number = 0;
   private loaded = false;
   private state: GatewayState = {
@@ -168,15 +157,10 @@ export class DiscordGateway extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    runAdapterPeerSqlMigrations(ctx.storage);
     this.deliveries = new DeliveryLedger(this.ctx.storage);
     this.inboundDeliveries = new InboundDeliveryLedger(
       this.ctx.storage,
       INBOUND_DELIVERY_PREFIX,
-    );
-    this.peerDeliveries = new AdapterPeerDeliveryQueue(
-      this.ctx.storage,
-      INBOUND_RETRY_DELAY_MS,
     );
     this.ctx.blockConcurrencyWhile(async () => this.loadState());
   }
@@ -238,7 +222,6 @@ export class DiscordGateway extends DurableObject<Env> {
     this.state.connected = false;
     await this.saveState();
     await this.ctx.storage.deleteAlarm();
-    await this.peerDeliveries.armIfPending(Date.now() + INBOUND_RETRY_DELAY_MS);
   }
 
   async getStatus(): Promise<AdapterAccountStatus> {
@@ -275,43 +258,6 @@ export class DiscordGateway extends DurableObject<Env> {
     );
   }
 
-  async acceptPeerSignal(
-    installation: AdapterInstallationContext,
-    context: AdapterPeerDeliveryContext,
-    frame: AdapterPeerSignalFrame,
-    body?: BinaryBody,
-  ): Promise<void> {
-    await this.loadState();
-    if (context.accountId !== this.getAccountId()) {
-      await cancelBinaryBody(body, "Discord account changed before signal acceptance");
-      throw new Error("Discord account changed before signal acceptance");
-    }
-    await this.peerDeliveries.enqueueAndArm(
-      { installation, context, frame },
-      body,
-      Date.now() + 25,
-    );
-    this.ctx.waitUntil(this.drainPeerDeliveries());
-  }
-
-  private async drainPeerDeliveries(): Promise<void> {
-    await this.peerDeliveries.drain(gatewayPeerDeliveryHandlers({
-      adapter: "discord",
-      gateway: this.env.GATEWAY,
-      deliver: async (delivery, body) => await this.deliverPeerSignal(delivery, body),
-    }));
-  }
-
-  private async deliverPeerSignal(
-    delivery: AdapterPeerSignalDelivery,
-    body?: BinaryBody,
-  ): Promise<AdapterSendResult> {
-    return await this.sendMessage(
-      renderAdapterPeerSignal(delivery.context, delivery.frame).message,
-      body,
-    );
-  }
-  
   /** Get the account ID name (e.g., "default"), falling back to hex DO id */
   private getAccountId(): string {
     return this.state.accountId ?? this.ctx.id.toString();
@@ -337,8 +283,6 @@ export class DiscordGateway extends DurableObject<Env> {
   async alarm() {
     // Reload state in case we hibernated
     await this.loadState();
-    await this.peerDeliveries.armIfPending(Date.now() + INBOUND_RETRY_DELAY_MS);
-    await this.drainPeerDeliveries();
 
     // An alarm is cleared when it starts. Persist the next wake-up before any
     // retry performs external I/O so a crash cannot strand durable ingress.
