@@ -106,6 +106,16 @@ export type SyntheticTransitionSpec = {
   effects: SyntheticTransitionEffect[];
 };
 
+export type SyntheticExternalEventSpec = {
+  id: string;
+  processId: string;
+  delayMs: number;
+  content: string;
+  when?: JsonObject;
+  effects?: SyntheticTransitionEffect[];
+  evictProcess?: boolean;
+};
+
 export type SyntheticWorldSpec = {
   runtime: {
     now: string;
@@ -122,7 +132,21 @@ export type GsvRubricCriterion = {
   description: string;
   weight: number;
   expected: JsonObject;
+  assertions?: GsvRubricAssertion[];
 };
+
+export type GsvRubricAssertion =
+  | {
+    type: "log_count";
+    entry: JsonObject;
+    min?: number;
+    max?: number;
+  }
+  | {
+    type: "log_order";
+    before: JsonObject;
+    after: JsonObject;
+  };
 
 export type GsvSemanticLogEntry =
   | {
@@ -165,6 +189,14 @@ export type GsvSemanticLogEntry =
     processId: string;
     text: string;
   }
+  | { type: "run.started"; processId: string; run: number }
+  | {
+    type: "external.event";
+    id: string;
+    processId: string;
+    atMs: number;
+  }
+  | { type: "process.evicted"; processId: string; afterRun: number }
   | { type: "message.committed"; processId: string; text: string }
   | { type: "run.yielded"; processId: string }
   | { type: "run.returned"; processId: string; text: string };
@@ -179,13 +211,16 @@ export type GsvSurfaceScenario = {
   entryRoute?: SyntheticAdapterRouteSpec;
   world: SyntheticWorldSpec;
   transitions: SyntheticTransitionSpec[];
+  externalEvents: SyntheticExternalEventSpec[];
   expected: JsonObject;
   rubric: GsvRubricCriterion[];
   expectedLog?: GsvSemanticLogEntry[];
   maxTurns: number;
+  maxRuns: number;
 };
 
 export type GsvSurfaceObservation = {
+  run: number;
   turn: number;
   processId: string;
   systemPromptSha256: string;
@@ -257,13 +292,31 @@ export type SyntheticResponsibilityLedgerSnapshot = {
   records: Record<string, ResponsibilityRecord>;
 };
 
+export type SyntheticExternalEventSnapshot = {
+  id: string;
+  processId: string;
+  state: "pending" | "applied";
+  appliedAtMs?: number;
+};
+
 export type SyntheticWorldSnapshot = {
+  runtime: {
+    now: string;
+    timezone: string;
+  };
   targets: Record<string, SyntheticTargetSnapshot>;
   processes: Record<string, SyntheticProcessSnapshot>;
   adapters: Record<string, SyntheticAdapterSnapshot>;
   responsibilities: SyntheticResponsibilityLedgerSnapshot;
   delegations: SyntheticDelegationSnapshot[];
+  externalEvents: SyntheticExternalEventSnapshot[];
   transitionsApplied: string[];
+};
+
+export type SyntheticRunSnapshot = {
+  run: number;
+  processId: string;
+  status: "yielded" | "returned" | "max_turns" | "invalid_action";
 };
 
 export type GsvSurfaceArtifact = {
@@ -273,6 +326,7 @@ export type GsvSurfaceArtifact = {
   status: "yielded" | "returned" | "max_turns" | "invalid_action";
   committedMessages: string[];
   resultText?: string;
+  runs: SyntheticRunSnapshot[];
   observations: GsvSurfaceObservation[];
   log: GsvSemanticLogEntry[];
   world: SyntheticWorldSnapshot;

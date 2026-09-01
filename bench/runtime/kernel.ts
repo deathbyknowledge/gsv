@@ -6,6 +6,7 @@ import {
 } from "just-bash";
 import {
   jsonObjectSchema,
+  jsonValueSchema,
   type AiToolsDevice,
   type JsonObject,
   type JsonValue,
@@ -42,6 +43,8 @@ import type {
   SyntheticAdapterSpec,
   SyntheticDelegateSpec,
   SyntheticDelegationSnapshot,
+  SyntheticExternalEventSnapshot,
+  SyntheticExternalEventSpec,
   SyntheticProcessSnapshot,
   SyntheticProcessSpec,
   SyntheticTargetSnapshot,
@@ -77,7 +80,7 @@ export type SyntheticProcessRunOutcome = {
 export type SyntheticDelegateRunRequest = {
   processId: string;
   systemPrompt: string;
-  prompt: string;
+  prompt?: string;
   maxTurns: number;
 };
 
@@ -88,6 +91,16 @@ type SyntheticDelegateRunner = (
 type EntryRoute = {
   route: SyntheticAdapterRouteSpec;
   sentCount: number;
+};
+
+type ExternalEventState = {
+  spec: SyntheticExternalEventSpec;
+  state: SyntheticExternalEventSnapshot["state"];
+  appliedAtMs?: number;
+};
+
+export type SyntheticAppliedExternalEvent = SyntheticExternalEventSnapshot & {
+  evictProcess: boolean;
 };
 
 const routingArgsSchema = z.object({
@@ -107,6 +120,7 @@ export class SyntheticKernel {
   private readonly delegateSpecs = new Map<string, SyntheticDelegateSpec>();
   private readonly delegations: SyntheticDelegationSnapshot[] = [];
   private readonly environments = new Map<string, SyntheticCapabilityEnvironment>();
+  private readonly externalEvents = new Map<string, ExternalEventState>();
   private readonly processes = new Map<string, SyntheticProcessSpec>();
   private readonly processEvents = new Map<string, SyntheticProcessEvent[]>();
   private readonly processParents = new Map<string, string>();
@@ -140,6 +154,7 @@ export class SyntheticKernel {
   static fromSpec(
     world: SyntheticWorldSpec,
     transitions: readonly SyntheticTransitionSpec[] = [],
+    externalEvents: readonly SyntheticExternalEventSpec[] = [],
   ): SyntheticKernel {
     const kernel = new SyntheticKernel(world.runtime);
     for (const process of world.processes) kernel.addProcess(process);
@@ -149,6 +164,7 @@ export class SyntheticKernel {
     }
     for (const adapter of world.adapters ?? []) kernel.addAdapter(adapter);
     for (const transition of transitions) kernel.afterCall(transition);
+    for (const event of externalEvents) kernel.afterYield(event);
     return kernel;
   }
 
@@ -210,6 +226,53 @@ export class SyntheticKernel {
     this.requireProcess(transition.after.processId);
     for (const effect of transition.effects) this.requireEnvironment(effect.targetId);
     this.transitions.set(transition.id, structuredClone(transition));
+  }
+
+  afterYield(event: SyntheticExternalEventSpec): void {
+    if (this.externalEvents.has(event.id)) {
+      throw new Error("Duplicate synthetic external event id: " + event.id);
+    }
+    this.requireProcess(event.processId);
+    for (const effect of event.effects ?? []) this.requireEnvironment(effect.targetId);
+    this.externalEvents.set(event.id, {
+      spec: structuredClone(event),
+      state: "pending",
+    });
+  }
+
+  advanceAfterYield(processId: string): SyntheticAppliedExternalEvent | null {
+    this.requireProcess(processId);
+    const event = [...this.externalEvents.values()].find(({ spec, state }) => (
+      state === "pending" && spec.processId === processId
+    ));
+    if (!event) return null;
+    if (
+      event.spec.when
+      && !jsonSubset(
+        jsonValueSchema.parse(this.snapshot()),
+        event.spec.when,
+      )
+    ) {
+      return null;
+    }
+    this.now.setTime(this.now.valueOf() + event.spec.delayMs);
+    for (const effect of event.spec.effects ?? []) this.applyEffect(effect);
+    event.state = "applied";
+    event.appliedAtMs = this.now.valueOf();
+    this.queueProcessEvent(processId, event.spec.content);
+    this.recordSemanticEvent?.({
+      type: "external.event",
+      id: event.spec.id,
+      processId,
+      atMs: event.appliedAtMs,
+    });
+    return {
+      id: event.spec.id,
+      processId,
+      state: event.state,
+      appliedAtMs: event.appliedAtMs,
+      evictProcess: event.spec.evictProcess === true,
+    };
   }
 
   bindAdapterIngress(
@@ -417,11 +480,26 @@ export class SyntheticKernel {
     }
 
     return {
+      runtime: {
+        now: this.now.toISOString(),
+        timezone: this.timezone,
+      },
       targets,
       processes,
       adapters,
       responsibilities: this.responsibilities.snapshot(),
       delegations: this.delegations.map((delegation) => structuredClone(delegation)),
+      externalEvents: [...this.externalEvents.values()].map((event) => {
+        const snapshot: SyntheticExternalEventSnapshot = {
+          id: event.spec.id,
+          processId: event.spec.processId,
+          state: event.state,
+        };
+        if (event.appliedAtMs !== undefined) {
+          snapshot.appliedAtMs = event.appliedAtMs;
+        }
+        return snapshot;
+      }),
       transitionsApplied: [...this.appliedTransitions],
     };
   }

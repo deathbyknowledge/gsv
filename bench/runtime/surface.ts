@@ -48,6 +48,7 @@ import type {
   GsvSurfaceArtifact,
   GsvSurfaceObservation,
   GsvSurfaceScenario,
+  SyntheticRunSnapshot,
 } from "./schema";
 
 export type GsvSurfaceModel = (context: Context) => Promise<AssistantMessage>;
@@ -66,11 +67,25 @@ type SurfaceTools = {
   workToolNames: Set<string>;
 };
 
+type SyntheticProcessEpochState = {
+  sourceSystemPrompt: string;
+  systemPrompt: string;
+  messages: Message[];
+  lastProjection: ContextProjection;
+  observedResponsibilityRevision: number;
+  timestamp: number;
+  nextRun: number;
+};
+
 export async function runGsvSurfaceScenario(
   scenario: GsvSurfaceScenario,
   generate: GsvSurfaceModel,
 ): Promise<GsvSurfaceArtifact> {
-  const kernel = SyntheticKernel.fromSpec(scenario.world, scenario.transitions);
+  const kernel = SyntheticKernel.fromSpec(
+    scenario.world,
+    scenario.transitions,
+    scenario.externalEvents,
+  );
   if (scenario.entryRoute) {
     kernel.bindAdapterIngress(scenario.entryProcessId, scenario.entryRoute);
   }
@@ -80,12 +95,33 @@ export async function runGsvSurfaceScenario(
     scenario.entryProcessId,
     generate,
   );
-  const outcome = await episode.runProcess({
-    processId: scenario.entryProcessId,
-    systemPrompt: scenario.systemPrompt,
-    prompt: scenario.prompt,
-    maxTurns: scenario.maxTurns,
-  });
+  let outcome: SyntheticProcessRunOutcome = {
+    status: "invalid_action",
+    error: "Synthetic scenario did not start",
+  };
+  for (let run = 1; run <= scenario.maxRuns; run += 1) {
+    outcome = await episode.runProcess({
+      processId: scenario.entryProcessId,
+      systemPrompt: scenario.systemPrompt,
+      prompt: run === 1 ? scenario.prompt : undefined,
+      maxTurns: scenario.maxTurns,
+    });
+    if (outcome.status !== "yielded") break;
+    const event = kernel.advanceAfterYield(scenario.entryProcessId);
+    if (!event) break;
+    if (event.evictProcess) {
+      episode.evictProcess(scenario.entryProcessId, run);
+    }
+    if (run === scenario.maxRuns) {
+      kernel.setProcessState(scenario.entryProcessId, "failed");
+      outcome = {
+        status: "max_turns",
+        error: "Synthetic scenario did not finish within "
+          + scenario.maxRuns
+          + " runs",
+      };
+    }
+  }
   return episode.artifact(outcome);
 }
 
@@ -110,8 +146,10 @@ export async function runSyntheticProcess(
 
 class SyntheticEpisode {
   private readonly committedMessages: string[] = [];
+  private readonly epochs = new Map<string, SyntheticProcessEpochState>();
   private readonly log: GsvSemanticLogEntry[] = [];
   private readonly observations: GsvSurfaceObservation[] = [];
+  private readonly runs: SyntheticRunSnapshot[] = [];
 
   constructor(
     private readonly kernel: SyntheticKernel,
@@ -127,26 +165,31 @@ class SyntheticEpisode {
     request: SyntheticDelegateRunRequest,
   ): Promise<SyntheticProcessRunOutcome> {
     const process = this.kernel.process(request.processId);
-    const messages: Message[] = [{
-      role: "user",
-      content: request.prompt,
-      timestamp: 0,
-    }];
-    const baseline = this.kernel.responsibilityBaseline(request.processId);
-    const systemPrompt = [
-      request.systemPrompt,
-      "Responsibility baseline:",
-      formatResponsibilityBaseline(baseline),
-    ].join("\n\n");
+    const epoch = this.processEpoch(request);
+    const messages = epoch.messages;
+    const systemPrompt = epoch.systemPrompt;
     const { modelTools, workToolNames } = buildSurfaceTools(
       process.capabilities,
       process.role === "ship",
     );
-    let lastProjection = this.kernel.projection(request.processId);
-    let observedResponsibilityRevision = baseline.revision;
+    let lastProjection = epoch.lastProjection;
+    let observedResponsibilityRevision = epoch.observedResponsibilityRevision;
     let correctionRounds = 0;
-    let timestamp = 1;
+    let timestamp = epoch.timestamp;
+    const run = epoch.nextRun;
+    epoch.nextRun += 1;
+    this.log.push({ type: "run.started", processId: request.processId, run });
     this.kernel.setProcessState(request.processId, "running");
+
+    const finish = (
+      result: SyntheticProcessRunOutcome,
+    ): SyntheticProcessRunOutcome => {
+      epoch.lastProjection = lastProjection;
+      epoch.observedResponsibilityRevision = observedResponsibilityRevision;
+      epoch.timestamp = timestamp;
+      this.runs.push({ run, processId: request.processId, status: result.status });
+      return result;
+    };
 
     for (let turn = 1; turn <= request.maxTurns; turn += 1) {
       const nextProjection = this.kernel.projection(request.processId);
@@ -200,6 +243,7 @@ class SyntheticEpisode {
         tools: modelTools,
       };
       this.observations.push(observation(
+        run,
         turn,
         request.processId,
         lastProjection,
@@ -224,7 +268,7 @@ class SyntheticEpisode {
             text,
           });
           this.kernel.setProcessState(request.processId, "returned");
-          return { status: "returned", resultText: text };
+          return finish({ status: "returned", resultText: text });
         }
         if (correctionRounds === 0) {
           correctionRounds += 1;
@@ -237,10 +281,10 @@ class SyntheticEpisode {
           continue;
         }
         this.kernel.setProcessState(request.processId, "failed");
-        return {
+        return finish({
           status: "invalid_action",
           error: "The model did not yield after correction",
-        };
+        });
       }
 
       const runControlCalls = process.role === "ship"
@@ -365,7 +409,7 @@ class SyntheticEpisode {
               processId: request.processId,
             });
             this.kernel.setProcessState(request.processId, "idle");
-            return { status: "yielded" };
+            return finish({ status: "yielded" });
           }
           continue;
         }
@@ -386,7 +430,7 @@ class SyntheticEpisode {
         });
         this.log.push({ type: "run.yielded", processId: request.processId });
         this.kernel.setProcessState(request.processId, "idle");
-        return { status: "yielded" };
+        return finish({ status: "yielded" });
       }
 
       for (const call of workCalls) {
@@ -436,10 +480,17 @@ class SyntheticEpisode {
     }
 
     this.kernel.setProcessState(request.processId, "failed");
-    return {
+    return finish({
       status: "max_turns",
       error: "Model did not finish within " + request.maxTurns + " turns",
-    };
+    });
+  }
+
+  evictProcess(processId: string, afterRun: number): void {
+    const epoch = this.epochs.get(processId);
+    if (!epoch) throw new Error("Cannot evict unknown synthetic Process epoch");
+    this.epochs.set(processId, structuredClone(epoch));
+    this.log.push({ type: "process.evicted", processId, afterRun });
   }
 
   artifact(outcome: SyntheticProcessRunOutcome): GsvSurfaceArtifact {
@@ -449,6 +500,7 @@ class SyntheticEpisode {
       entryProcessId: this.entryProcessId,
       status: outcome.status,
       committedMessages: [...this.committedMessages],
+      runs: structuredClone(this.runs),
       observations: structuredClone(this.observations),
       log: structuredClone(this.log),
       world: this.kernel.snapshot(),
@@ -458,6 +510,45 @@ class SyntheticEpisode {
       artifact.resultText = outcome.resultText;
     }
     return artifact;
+  }
+
+  private processEpoch(
+    request: SyntheticDelegateRunRequest,
+  ): SyntheticProcessEpochState {
+    const existing = this.epochs.get(request.processId);
+    if (existing) {
+      if (existing.sourceSystemPrompt !== request.systemPrompt) {
+        throw new Error("A live synthetic Process epoch cannot change its system prompt");
+      }
+      if (request.prompt !== undefined) {
+        existing.messages.push({
+          role: "user",
+          content: request.prompt,
+          timestamp: existing.timestamp,
+        });
+        existing.timestamp += 1;
+      }
+      return existing;
+    }
+    if (request.prompt === undefined) {
+      throw new Error("A new synthetic Process epoch requires initial input");
+    }
+    const baseline = this.kernel.responsibilityBaseline(request.processId);
+    const epoch: SyntheticProcessEpochState = {
+      sourceSystemPrompt: request.systemPrompt,
+      systemPrompt: [
+        request.systemPrompt,
+        "Responsibility baseline:",
+        formatResponsibilityBaseline(baseline),
+      ].join("\n\n"),
+      messages: [{ role: "user", content: request.prompt, timestamp: 0 }],
+      lastProjection: this.kernel.projection(request.processId),
+      observedResponsibilityRevision: baseline.revision,
+      timestamp: 1,
+      nextRun: 1,
+    };
+    this.epochs.set(request.processId, epoch);
+    return epoch;
   }
 }
 
@@ -517,12 +608,14 @@ function appendToolResult(
 }
 
 function observation(
+  run: number,
   turn: number,
   processId: string,
   projection: ContextProjection,
   context: Context,
 ): GsvSurfaceObservation {
   return {
+    run,
     turn,
     processId,
     systemPromptSha256: createHash("sha256")

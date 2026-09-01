@@ -3,7 +3,7 @@ import copy
 import verifiers.v1 as vf
 
 from gsv_v1 import GsvHarness, GsvTaskset
-from gsv_v1.taskset import GsvConfig
+from gsv_v1.taskset import GsvConfig, matches_assertion
 
 
 def make_trace(task) -> vf.Trace:
@@ -96,3 +96,42 @@ async def test_state_reward_is_offline_and_checks_nested_outcomes() -> None:
             "passed": False,
         },
     ]
+
+
+def test_temporal_assertions_count_and_order_semantic_events() -> None:
+    artifact = {
+        "log": [
+            {"type": "run.started", "processId": "ship", "run": 1},
+            {"type": "external.event", "id": "health-1"},
+            {"type": "run.started", "processId": "ship", "run": 2},
+            {"type": "external.event", "id": "health-2"},
+            {
+                "type": "responsibility.transition",
+                "transition": {"kind": "resolved"},
+            },
+        ]
+    }
+
+    assert matches_assertion(
+        artifact,
+        {"type": "log_count", "entry": {"type": "run.started"}, "min": 2},
+    )
+    assert matches_assertion(
+        artifact,
+        {
+            "type": "log_order",
+            "before": {"type": "external.event", "id": "health-2"},
+            "after": {
+                "type": "responsibility.transition",
+                "transition": {"kind": "resolved"},
+            },
+        },
+    )
+    assert not matches_assertion(
+        artifact,
+        {
+            "type": "log_count",
+            "entry": {"type": "external.event"},
+            "max": 1,
+        },
+    )

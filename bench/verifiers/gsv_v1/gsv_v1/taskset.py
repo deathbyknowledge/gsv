@@ -62,16 +62,29 @@ class GsvTask(vf.Task[GsvData]):
         total = 0.0
         for criterion in self.data.rubric:
             weight = float(criterion["weight"])
-            passed = matches_expected(artifact, criterion["expected"])
+            expected_passed = matches_expected(artifact, criterion["expected"])
+            assertion_results = [
+                {
+                    "type": assertion["type"],
+                    "passed": matches_assertion(artifact, assertion),
+                }
+                for assertion in criterion.get("assertions", [])
+            ]
+            passed = expected_passed and all(
+                result["passed"] for result in assertion_results
+            )
             total += weight
             if passed:
                 earned += weight
-            results.append({
+            result = {
                 "id": criterion["id"],
                 "description": criterion["description"],
                 "weight": weight,
                 "passed": passed,
-            })
+            }
+            if assertion_results:
+                result["assertions"] = assertion_results
+            results.append(result)
         trace.info["gsv_rubric"] = results
         return earned / total if total > 0 else 0.0
 
@@ -114,6 +127,7 @@ class GsvTaskset(vf.Taskset[GsvTask, GsvConfig]):
                     or not isinstance(criterion.get("expected"), dict)
                 ):
                     raise TypeError(f"Scenario {path} has an invalid rubric criterion")
+                validate_assertions(path, criterion.get("assertions", []))
             tasks.append(GsvTask(
                 GsvData(
                     idx=idx,
@@ -147,3 +161,66 @@ def matches_expected(actual: object, expected: object) -> bool:
             )
         )
     return actual == expected
+
+
+def validate_assertions(path: Path, assertions: object) -> None:
+    if not isinstance(assertions, list):
+        raise TypeError(f"Scenario {path} has invalid rubric assertions")
+    for assertion in assertions:
+        if not isinstance(assertion, dict):
+            raise TypeError(f"Scenario {path} has an invalid rubric assertion")
+        assertion_type = assertion.get("type")
+        if assertion_type == "log_count":
+            minimum = assertion.get("min")
+            maximum = assertion.get("max")
+            if (
+                not isinstance(assertion.get("entry"), dict)
+                or (minimum is None and maximum is None)
+                or (minimum is not None and not is_nonnegative_int(minimum))
+                or (maximum is not None and not is_nonnegative_int(maximum))
+                or (
+                    isinstance(minimum, int)
+                    and isinstance(maximum, int)
+                    and minimum > maximum
+                )
+            ):
+                raise TypeError(f"Scenario {path} has an invalid log_count assertion")
+            continue
+        if assertion_type == "log_order":
+            if not isinstance(assertion.get("before"), dict) or not isinstance(
+                assertion.get("after"), dict
+            ):
+                raise TypeError(f"Scenario {path} has an invalid log_order assertion")
+            continue
+        raise TypeError(f"Scenario {path} has an unknown rubric assertion")
+
+
+def matches_assertion(artifact: dict[str, Any], assertion: dict[str, Any]) -> bool:
+    log = artifact.get("log")
+    if not isinstance(log, list):
+        return False
+    assertion_type = assertion.get("type")
+    if assertion_type == "log_count":
+        count = sum(matches_expected(entry, assertion["entry"]) for entry in log)
+        minimum = assertion.get("min")
+        maximum = assertion.get("max")
+        return (minimum is None or count >= minimum) and (
+            maximum is None or count <= maximum
+        )
+    if assertion_type == "log_order":
+        before = [
+            index
+            for index, entry in enumerate(log)
+            if matches_expected(entry, assertion["before"])
+        ]
+        after = [
+            index
+            for index, entry in enumerate(log)
+            if matches_expected(entry, assertion["after"])
+        ]
+        return any(left < right for left in before for right in after)
+    return False
+
+
+def is_nonnegative_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0

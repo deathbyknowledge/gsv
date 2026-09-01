@@ -130,6 +130,36 @@ const transitionSchema = z.object({
   effects: z.array(transitionEffectSchema).min(1),
 }).strict();
 
+const externalEventSchema = z.object({
+  id: z.string().min(1),
+  processId: z.string().min(1),
+  delayMs: z.number().int().positive(),
+  content: z.string().min(1),
+  when: optionalJsonObjectSchema.optional(),
+  effects: z.array(transitionEffectSchema).default([]),
+  evictProcess: z.boolean().optional(),
+}).strict();
+
+const rubricAssertionSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("log_count"),
+    entry: jsonObjectSchema,
+    min: z.number().int().nonnegative().optional(),
+    max: z.number().int().nonnegative().optional(),
+  }).strict().refine(
+    ({ min, max }) => min !== undefined || max !== undefined,
+    "log_count requires min or max",
+  ).refine(
+    ({ min, max }) => min === undefined || max === undefined || min <= max,
+    "log_count min cannot exceed max",
+  ),
+  z.object({
+    type: z.literal("log_order"),
+    before: jsonObjectSchema,
+    after: jsonObjectSchema,
+  }).strict(),
+]);
+
 const semanticLogEntrySchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("tool.call"),
@@ -179,6 +209,22 @@ const semanticLogEntrySchema = z.discriminatedUnion("type", [
     text: z.string(),
   }).strict(),
   z.object({
+    type: z.literal("run.started"),
+    processId: z.string(),
+    run: z.number().int().positive(),
+  }).strict(),
+  z.object({
+    type: z.literal("external.event"),
+    id: z.string(),
+    processId: z.string(),
+    atMs: z.number().int(),
+  }).strict(),
+  z.object({
+    type: z.literal("process.evicted"),
+    processId: z.string(),
+    afterRun: z.number().int().positive(),
+  }).strict(),
+  z.object({
     type: z.literal("message.committed"),
     processId: z.string(),
     text: z.string(),
@@ -213,15 +259,18 @@ const scenarioSchema = z.object({
     adapters: z.array(adapterSchema).default([]),
   }).strict(),
   transitions: z.array(transitionSchema).default([]),
+  externalEvents: z.array(externalEventSchema).default([]),
   expected: jsonObjectSchema,
   rubric: z.array(z.object({
     id: z.string().min(1),
     description: z.string().min(1),
     weight: z.number().positive(),
     expected: jsonObjectSchema,
+    assertions: z.array(rubricAssertionSchema).min(1).optional(),
   }).strict()).min(1),
   expectedLog: z.array(semanticLogEntrySchema).optional(),
   maxTurns: z.number().int().positive().max(50),
+  maxRuns: z.number().int().positive().max(20).default(1),
 }).strict();
 
 export function parseGsvSurfaceScenario(value: JsonValue): GsvSurfaceScenario {
@@ -234,6 +283,7 @@ export function parseGsvSurfaceScenario(value: JsonValue): GsvSurfaceScenario {
   requireUnique(scenario.world.targets.map(({ id }) => id), "target");
   requireUnique(scenario.world.adapters.map(({ id }) => id), "adapter");
   requireUnique(scenario.transitions.map(({ id }) => id), "transition");
+  requireUnique(scenario.externalEvents.map(({ id }) => id), "external event");
   requireUnique(scenario.rubric.map(({ id }) => id), "rubric criterion");
   if (!scenario.world.processes.some(({ id }) => id === scenario.entryProcessId)) {
     throw new Error("entryProcessId does not name a synthetic process");
@@ -252,6 +302,16 @@ export function parseGsvSurfaceScenario(value: JsonValue): GsvSurfaceScenario {
       throw new Error("The native gsv target is implicit");
     }
     requireCapabilities(target.implements ?? [], "target " + target.id);
+  }
+  for (const event of scenario.externalEvents) {
+    if (!scenario.world.processes.some(({ id }) => id === event.processId)) {
+      throw new Error("External event does not name an initial process: " + event.id);
+    }
+    for (const effect of event.effects) {
+      if (!scenario.world.targets.some(({ id }) => id === effect.targetId)) {
+        throw new Error("External event effect does not name a target: " + event.id);
+      }
+    }
   }
   if (scenario.entryRoute) {
     const adapter = scenario.world.adapters.find(

@@ -45,6 +45,7 @@ describe("GSV Process surface", () => {
     expect(artifact.committedMessages).toEqual(["gpu-lab ready"]);
     expect(artifact.world.transitionsApplied).toEqual(["connect-gpu-lab"]);
     expect(artifact.log.map(({ type }) => type)).toEqual([
+      "run.started",
       "tool.call",
       "tool.result",
       "world.transition",
@@ -73,6 +74,101 @@ describe("GSV Process surface", () => {
       role: "user",
       content: delta?.type === "context.delta" ? delta.content : undefined,
     });
+  });
+
+  it("preserves one Process epoch across a logical-time wake and eviction", async () => {
+    const scenario = parseGsvSurfaceScenario({
+      schemaVersion: 2,
+      id: "multi-run-wake",
+      description: "Resume one Process after an external state change.",
+      systemPrompt: "Observe durable GSV events across runs.",
+      prompt: "Wait for the monitor update, then report ready.",
+      entryProcessId: "ship",
+      world: {
+        runtime: {
+          now: "2026-09-01T12:00:00.000Z",
+          timezone: "Europe/Amsterdam",
+        },
+        processes: [{
+          id: "ship",
+          role: "ship",
+          uid: 1000,
+          gids: [1000],
+          capabilities: ["shell.exec", "fs.read"],
+        }],
+        targets: [{
+          id: "monitor",
+          kind: "server",
+          ownerUid: 1000,
+          accessGids: [1000],
+          online: true,
+          implements: ["fs.read"],
+          files: { "/status": "pending\n" },
+        }],
+      },
+      transitions: [],
+      externalEvents: [{
+        id: "monitor-ready",
+        processId: "ship",
+        delayMs: 300_000,
+        content: "The monitor completed its next observation window.",
+        effects: [{
+          type: "target.file.write",
+          targetId: "monitor",
+          path: "/status",
+          content: "ready\n",
+        }],
+        evictProcess: true,
+      }],
+      expected: {},
+      rubric: [{
+        id: "complete",
+        description: "The resumed Process reports completion.",
+        weight: 1,
+        expected: {},
+      }],
+      maxTurns: 2,
+      maxRuns: 2,
+    });
+    const scripted = [
+      assistant(toolCall("wait", "Shell", { input: "yield" })),
+      assistant(toolCall("finish", "Shell", {
+        input: "message send --message 'ready' && yield",
+      })),
+    ];
+
+    const artifact = await runGsvSurfaceScenario(scenario, async () => {
+      const next = scripted.shift();
+      if (!next) throw new Error("Unexpected model turn");
+      return next;
+    });
+
+    expect(artifact.status).toBe("yielded");
+    expect(artifact.runs.filter(({ processId }) => processId === "ship"))
+      .toEqual([
+        { run: 1, processId: "ship", status: "yielded" },
+        { run: 2, processId: "ship", status: "yielded" },
+      ]);
+    expect(artifact.world.runtime.now).toBe("2026-09-01T12:05:00.000Z");
+    expect(artifact.world.targets.monitor?.files["/status"]).toBe("ready\n");
+    expect(artifact.world.externalEvents).toEqual([{
+      id: "monitor-ready",
+      processId: "ship",
+      state: "applied",
+      appliedAtMs: Date.parse("2026-09-01T12:05:00.000Z"),
+    }]);
+    expect(artifact.log.map(({ type }) => type)).toContain("process.evicted");
+    const shipObservations = artifact.observations.filter(
+      ({ processId }) => processId === "ship",
+    );
+    expect(shipObservations.map(({ run }) => run)).toEqual([1, 2]);
+    expect(new Set(shipObservations.map(({ systemPromptSha256 }) => (
+      systemPromptSha256
+    ))).size).toBe(1);
+    expect(JSON.stringify(shipObservations[1]?.messages)).toContain(
+      "The monitor completed its next observation window.",
+    );
+    expect(JSON.stringify(shipObservations[1]?.messages)).toContain("Run yielded");
   });
 
   it("routes one Process across laptop and server environments", async () => {
