@@ -139,6 +139,19 @@ routes and bodies at the component that owns them. A late response from an old
 peer session or adapter-account generation must never mutate or satisfy work on
 its replacement.
 
+## Run-scoped selection
+
+A direct client may attach one selected capability environment to an admitted
+conversation interaction. The Process retains that selection on the durable run
+and uses it as the default target for model-issued `fs.*`, `shell.exec`, and
+`net.fetch` calls, including nested CodeMode calls. A selected working directory
+defaults new shell commands and resolves relative filesystem paths.
+
+Selection is a default, not ambient authority. An explicit tool target wins,
+shell-session continuations stay on the target that created the session, and
+the Kernel still checks target visibility and syscall capabilities on every
+request. Runs without a selection retain the native `gsv` behavior.
+
 ## Related architecture
 
 - [Unified Protocol Peers](./unified-protocol-peers.md)

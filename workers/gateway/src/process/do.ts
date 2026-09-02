@@ -21,6 +21,7 @@ import type {
   ResponseOkFrame,
   SignalFrame,
 } from "../protocol/frames";
+import { isRoutableSyscall } from "../syscalls";
 import type { ArgsOf, ResultOf, SyscallName, ToolDefinition } from "../syscalls";
 import type { CodeModeExecArgs, CodeModeRunArgs, CodeModeRunResult } from "../syscalls/codemode";
 import { COMPACTION_SUMMARY_SYSTEM_PROMPT } from "../prompts/compaction";
@@ -35,6 +36,7 @@ import type {
   AiTextGenerateConfig,
   AiTextGenerateOptions,
   AiToolsDevice,
+  CapabilityEnvironmentSelection,
   InteractionOrigin,
   FileResourceReference,
   MessageAttachment,
@@ -324,6 +326,7 @@ type RunFinishedTelemetryProperties = Extract<
 
 type RunState = {
   runId: string;
+  environment?: CapabilityEnvironmentSelection;
   returnToCaller?: boolean;
   conversationId?: string;
   inputMessageId?: string;
@@ -801,6 +804,10 @@ const processMediaInputSchema = z.object({
   duration: z.number().optional(),
   transcription: z.string().optional(),
 });
+const capabilityEnvironmentSelectionSchema = z.object({
+  target: nonEmptyStringSchema,
+  cwd: nonEmptyStringSchema.optional().catch(undefined),
+});
 const runOutputMediaSchema = processMediaInputSchema.extend({
   key: z.string(),
   path: z.string(),
@@ -825,6 +832,7 @@ const assistantUsageSchema: z.ZodType<AssistantMessage["usage"]> = z.object({
 });
 const runStateSchema: z.ZodType<RunState> = z.object({
   runId: z.string(),
+  environment: capabilityEnvironmentSelectionSchema.optional(),
   returnToCaller: z.boolean().optional(),
   conversationId: z.string().optional(),
   inputMessageId: z.string().optional(),
@@ -1087,10 +1095,6 @@ const adapterMessageDestinationSchema = z.object({
   actorId: nonEmptyStringSchema,
   surface: archivedAdapterSurfaceSchema,
 });
-const capabilityEnvironmentSelectionSchema = z.object({
-  target: nonEmptyStringSchema,
-  cwd: optionalNonEmptyStringSchema,
-});
 const interactionOriginSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("client"),
@@ -1135,6 +1139,16 @@ function normalizeOptionalString(
 ): string | undefined {
   const result = nonEmptyStringSchema.safeParse(value);
   return result.success ? result.data : undefined;
+}
+
+function resolveEnvironmentPath(cwd: string, path: string): string {
+  const absolute = path === "~"
+    || path.startsWith("~/")
+    || path.startsWith("/")
+    || /^[a-zA-Z]:[\\/]/u.test(path);
+  if (absolute) return path;
+  const relative = path.replace(/^\.\//u, "");
+  return cwd.endsWith("/") ? `${cwd}${relative}` : `${cwd}/${relative}`;
 }
 
 function truncateTaskTitle(value: string): string {
@@ -2522,6 +2536,8 @@ export class Process extends DurableObject<GatewayEnv> {
           });
           this.maybeStartTaskTitleGeneration(args.message);
           const nextRun: RunState = { runId };
+          const environment = runEnvironmentFromOrigin(args.origin);
+          if (environment) nextRun.environment = environment;
           if (args.interaction) {
             nextRun.conversationId = args.interaction.conversationId;
             nextRun.inputMessageId = args.interaction.messageId;
@@ -2588,6 +2604,8 @@ export class Process extends DurableObject<GatewayEnv> {
       });
       this.maybeStartTaskTitleGeneration(args.message);
       const nextRun: RunState = { runId };
+      const environment = runEnvironmentFromOrigin(args.origin);
+      if (environment) nextRun.environment = environment;
       if (args.interaction) {
         nextRun.conversationId = args.interaction.conversationId;
         nextRun.inputMessageId = args.interaction.messageId;
@@ -6910,7 +6928,7 @@ export class Process extends DurableObject<GatewayEnv> {
         const syscall = TOOL_TO_SYSCALL[toolCall.name];
         const toolArgs = jsonObjectSchema.parse(toolCall.arguments);
         const prepared = syscall
-          ? this.prepareToolArgs(syscall, toolArgs)
+          ? this.prepareToolArgs(syscall, toolArgs, run.environment)
           : { args: toolArgs, missingShellSessionTarget: false };
         const dispatchId = crypto.randomUUID();
         this.store.register(
@@ -10259,7 +10277,24 @@ export class Process extends DurableObject<GatewayEnv> {
 
     try {
       const signal = this.runAbortSignal(runId);
-      const capabilities = this.currentRun?.config?.capabilities ?? [];
+      const activeRun = this.currentRun;
+      const capabilities = activeRun?.config?.capabilities ?? [];
+      const options: CodeModeExecutionOptions = {
+        mailDeliveryBase: await stableOpaqueId("mail-send", [
+          this.installationId,
+          this.pid,
+          runId,
+          dispatchId,
+        ]),
+        mcpToolBindings: await this.getCodeModeMcpToolBindings(signal),
+        signal,
+      };
+      if (activeRun?.runId === runId && activeRun.environment) {
+        options.defaultTarget = activeRun.environment.target;
+        if (activeRun.environment.cwd) {
+          options.defaultCwd = activeRun.environment.cwd;
+        }
+      }
       const result = await executeCodeMode(
         this.env,
         args.code,
@@ -10274,16 +10309,7 @@ export class Process extends DurableObject<GatewayEnv> {
           toolArgs,
           signal,
         ),
-        {
-          mailDeliveryBase: await stableOpaqueId("mail-send", [
-            this.installationId,
-            this.pid,
-            runId,
-            dispatchId,
-          ]),
-          mcpToolBindings: await this.getCodeModeMcpToolBindings(signal),
-          signal,
-        },
+        options,
       );
       if (this.handleRunStopped(runId) || !this.store.getPending(dispatchId)) {
         return;
@@ -10337,7 +10363,11 @@ export class Process extends DurableObject<GatewayEnv> {
     }
 
     const toolCallId = `codemode-${crypto.randomUUID()}`;
-    const prepared = this.prepareToolArgs(call, args);
+    const activeRun = context ? this.currentRun : null;
+    const environment = activeRun && activeRun.runId === context?.runId
+      ? activeRun.environment
+      : undefined;
+    const prepared = this.prepareToolArgs(call, args, environment);
     if (prepared.missingShellSessionTarget) {
       throw new Error(UNKNOWN_SHELL_SESSION_TARGET_MESSAGE);
     }
@@ -10609,32 +10639,56 @@ export class Process extends DurableObject<GatewayEnv> {
     return run.approvalPolicy;
   }
 
-  private prepareToolArgs(syscall: string, args: JsonObject): PreparedJsonToolArgs {
-    if (syscall !== "shell.exec") {
-      return { args, missingShellSessionTarget: false };
-    }
-
+  private prepareToolArgs(
+    syscall: SyscallName,
+    args: JsonObject,
+    environment?: CapabilityEnvironmentSelection,
+  ): PreparedJsonToolArgs {
     const record = parseOptionalJsonObject(args);
     if (!record) {
       return { args, missingShellSessionTarget: false };
     }
 
-    if (normalizeOptionalString(record.target)) {
+    const explicitTarget = normalizeOptionalString(record.target);
+    const sessionId = syscall === "shell.exec"
+      ? normalizeOptionalString(record.sessionId)
+      : undefined;
+    if (sessionId) {
+      if (explicitTarget) {
+        return { args, missingShellSessionTarget: false };
+      }
+      const target = this.loadShellSessionTarget(sessionId);
+      if (!target) {
+        return { args, missingShellSessionTarget: true };
+      }
+      return {
+        args: { ...record, target },
+        missingShellSessionTarget: false,
+      };
+    }
+
+    const selectedTarget = normalizeOptionalString(environment?.target);
+    if (!selectedTarget || !isRoutableSyscall(syscall)) {
       return { args, missingShellSessionTarget: false };
     }
 
-    const sessionId = normalizeOptionalString(record.sessionId);
-    if (!sessionId) {
-      return { args, missingShellSessionTarget: false };
-    }
-
-    const target = this.loadShellSessionTarget(sessionId);
-    if (!target) {
-      return { args, missingShellSessionTarget: true };
+    const usesSelectedEnvironment = !explicitTarget || explicitTarget === selectedTarget;
+    let prepared = explicitTarget ? record : { ...record, target: selectedTarget };
+    const cwd = usesSelectedEnvironment
+      ? normalizeOptionalString(environment?.cwd)
+      : undefined;
+    if (cwd && syscall === "shell.exec" && !normalizeOptionalString(prepared.cwd)) {
+      prepared = { ...prepared, cwd };
+    } else if (cwd && syscall.startsWith("fs.")) {
+      if (typeof prepared.path === "string") {
+        prepared = { ...prepared, path: resolveEnvironmentPath(cwd, prepared.path) };
+      } else if (syscall === "fs.search" && prepared.path === undefined) {
+        prepared = { ...prepared, path: cwd };
+      }
     }
 
     return {
-      args: { ...record, target },
+      args: prepared,
       missingShellSessionTarget: false,
     };
   }
@@ -10691,7 +10745,7 @@ export class Process extends DurableObject<GatewayEnv> {
     return true;
   }
 
-  private buildToolApprovalOverride(syscall: string, args: JsonObject): ToolApprovalRule {
+  private buildToolApprovalOverride(syscall: SyscallName, args: JsonObject): ToolApprovalRule {
     const prepared = this.prepareToolArgs(syscall, args);
     const target = resolveToolApprovalTarget(syscall, prepared.args);
     return {
@@ -10857,6 +10911,8 @@ export class Process extends DurableObject<GatewayEnv> {
       runId: next.runId,
       ...conversationRunState(next.kind, next.provenance),
     };
+    const environment = runEnvironmentFromOrigin(parseInteractionOrigin(next.origin));
+    if (environment) run.environment = environment;
     if (next.kind === "ipc.call") run.returnToCaller = true;
     this.currentRun = run;
     return next;
@@ -10918,6 +10974,13 @@ function conversationRunState(
   } catch {
     return {};
   }
+}
+
+function runEnvironmentFromOrigin(
+  origin: InteractionOrigin | undefined,
+): CapabilityEnvironmentSelection | undefined {
+  if (origin?.kind !== "client" || !origin.environment) return undefined;
+  return { ...origin.environment };
 }
 
 function withRunControlInstructions(workTools: Tool[]): Tool[] {

@@ -105,8 +105,13 @@ export function buildCodeModeSource(
   const __withShellDefaults = (options) => {
     const request = { ...options };
     if (!request.sessionId) {
+      const explicitTarget = request.target;
       if (__defaultTarget !== null && request.target === undefined) request.target = __defaultTarget;
-      if (__defaultCwd !== null && request.cwd === undefined) request.cwd = __defaultCwd;
+      if (
+        __defaultCwd !== null
+        && request.cwd === undefined
+        && (explicitTarget === undefined || explicitTarget === __defaultTarget)
+      ) request.cwd = __defaultCwd;
     }
     return request;
   };
@@ -115,9 +120,14 @@ export function buildCodeModeSource(
       throw new Error(name + " requires an object argument");
     }
     const request = { ...value };
+    const explicitTarget = request.target;
     if (__defaultTarget !== null && request.target === undefined) request.target = __defaultTarget;
-    if (__defaultCwd !== null && typeof request.path === "string") {
-      request.path = __joinPath(__defaultCwd, request.path);
+    if (__defaultCwd !== null && (explicitTarget === undefined || explicitTarget === __defaultTarget)) {
+      if (typeof request.path === "string") {
+        request.path = __joinPath(__defaultCwd, request.path);
+      } else if (name === "fs.search" && request.path === undefined) {
+        request.path = __defaultCwd;
+      }
     }
     return request;
   };

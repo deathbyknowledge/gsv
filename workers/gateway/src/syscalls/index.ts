@@ -47,7 +47,7 @@ function domainOf(syscall: SyscallName): SyscallDomain {
  * `proc` is a Kernel control-plane domain and is not target-routed.
  */
 const ROUTABLE_DOMAINS: SyscallDomain[] = ["fs", "shell", "net"];
-const TARGET_SCHEMA_DESCRIPTION = "Target to execute on. Use \"gsv\" for the native cloud target, or preserve the exact target from an authorized file reference. Run `targets list` in Shell to inspect accessible targets and their current online status.";
+const TARGET_SCHEMA_DESCRIPTION = "Target to execute on. Omit it to use the active interaction's selected capability environment, or \"gsv\" when none was selected. Preserve the exact target from an authorized file reference. Run `targets list` through Shell on target \"gsv\" to inspect accessible targets and their current online status.";
 
 /**
  * Inject a `target` property into a tool definition so the LLM can choose
@@ -68,8 +68,6 @@ export function intoSyscallTool(
     );
   }
 
-  const targetRequired = tool.name !== "Shell";
-
   return {
     name: tool.name,
     description: tool.description,
@@ -82,7 +80,7 @@ export function intoSyscallTool(
           description: TARGET_SCHEMA_DESCRIPTION,
         },
       },
-      required: targetRequired ? [...required, "target"] : required,
+      required,
     },
   };
 }

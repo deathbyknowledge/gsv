@@ -8,8 +8,10 @@ The native client adopts the user's terminal palette; this browser surface uses
 the curated GSV palette because it has no host terminal theme. Both render the
 same `user@target $ ` prompt grammar, styled Markdown, inspectable links, and
 canonical media artifacts, with input beginning on the prompt line. Type `@`
-into an empty draft to choose a capability environment. Press `Alt+M` to switch
-an assistant response between rendered Markdown and its source. Type `show me
+into an empty draft to choose a capability environment. In connected mode that
+selection becomes the new run's default filesystem, shell, and network target;
+an explicit target in a tool call still wins. Press `Alt+M` to switch an
+assistant response between rendered Markdown and its source. Type `show me
 Markdown and media` in the demo to exercise the rich-content path.
 In the native client, use `Left`/`Right` to choose among attachments and
 `Enter` to open or close the focused image; Vim mode adds `h`/`l` for the same

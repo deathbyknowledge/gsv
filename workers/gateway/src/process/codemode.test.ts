@@ -314,7 +314,8 @@ describe.sequential("CodeMode executor", () => {
       `
         const shellResult = await shell("pwd");
         const readResult = await fs.read({ path: "package.json" });
-        return { shellResult, readResult, argv, args };
+        const searchResult = await fs.search({ query: "needle" });
+        return { shellResult, readResult, searchResult, argv, args };
       `,
       async (call, args) => {
         calls.push({ call, args });
@@ -323,6 +324,9 @@ describe.sequential("CodeMode executor", () => {
         }
         if (call === "fs.read") {
           return { ok: true, path: String(args.path), content: "{}" };
+        }
+        if (call === "fs.search") {
+          return { ok: true, path: String(args.path), matches: [] };
         }
         throw new Error(`unexpected call: ${call}`);
       },
@@ -343,16 +347,55 @@ describe.sequential("CodeMode executor", () => {
         call: "fs.read",
         args: { target: "gsv", path: "/workspace/package.json" },
       },
+      {
+        call: "fs.search",
+        args: { target: "gsv", path: "/workspace", query: "needle" },
+      },
     ]);
     expect(result).toEqual({
       status: "completed",
       result: {
         shellResult: { status: "completed", output: "/workspace\n", exitCode: 0 },
         readResult: { ok: true, path: "/workspace/package.json", content: "{}" },
+        searchResult: { ok: true, path: "/workspace", matches: [] },
         argv: ["one", "two"],
         args: { mode: "check" },
       },
     });
+  });
+
+  it("does not apply a selected working directory to an explicit target override", async () => {
+    const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
+    const result = await executeCodeMode(
+      env,
+      `
+        await shell("pwd", { target: "gsv" });
+        await fs.read({ target: "gsv", path: "package.json" });
+        return "done";
+      `,
+      async (call, args) => {
+        calls.push({ call, args });
+        return call === "shell.exec"
+          ? { status: "completed", output: "/root\n", exitCode: 0 }
+          : { ok: true, path: String(args.path), content: "{}" };
+      },
+      {
+        defaultTarget: "macbook",
+        defaultCwd: "/Users/sam/project",
+      },
+    );
+
+    expect(result).toEqual({ status: "completed", result: "done" });
+    expect(calls).toEqual([
+      {
+        call: "shell.exec",
+        args: { target: "gsv", input: "pwd" },
+      },
+      {
+        call: "fs.read",
+        args: { target: "gsv", path: "package.json" },
+      },
+    ]);
   });
 
   // SAFETY: test fixture is constructed with the asserted domain shape.

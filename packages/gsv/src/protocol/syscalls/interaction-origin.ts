@@ -2,7 +2,8 @@ import type { AdapterSurface } from "../adapters";
 
 /**
  * The capability environment selected for one interaction. Selection supplies
- * model context only; target visibility and syscall authorization remain
+ * model context and the run-scoped default for target-routable tool calls;
+ * explicit tool targets win, while visibility and syscall authorization remain
  * independently enforced by the Kernel.
  */
 export type CapabilityEnvironmentSelection = {

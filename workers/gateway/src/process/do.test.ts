@@ -143,7 +143,11 @@ function registerToolBlock(
   for (const toolCall of toolCalls) {
     const syscall = TOOL_TO_SYSCALL[toolCall.name];
     const args = syscall
-      ? process.prepareToolArgs(syscall, toolCall.arguments).args
+      ? process.prepareToolArgs(
+          syscall,
+          toolCall.arguments,
+          process.currentRun?.environment,
+        ).args
       : toolCall.arguments;
     process.store.register(
       `dispatch-${toolCall.id}`,
@@ -16300,6 +16304,201 @@ describe("Process DO — mechanical", () => {
 
         expect(continuedRunIds).toEqual([]);
         expect(scheduledRunIds).toEqual(["run-multi-tool-batch"]);
+      });
+    });
+
+    it("persists a client-selected capability environment on its admitted run", async () => {
+      const pid = "mech-run-capability-environment";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.scheduleTick = vi.fn(async () => {});
+        process.announceRun = vi.fn(async () => {});
+
+        const result = await process.handleProcSend({
+          message: "work in this project",
+          origin: {
+            kind: "client",
+            connectionId: "tui-1",
+            environment: {
+              target: "macbook",
+              cwd: "/Users/sam/project",
+            },
+          },
+        });
+
+        expect(result).toMatchObject({ ok: true, status: "started" });
+        expect(process.currentRun).toMatchObject({
+          runId: result.runId,
+          environment: {
+            target: "macbook",
+            cwd: "/Users/sam/project",
+          },
+        });
+        process.currentRun = null;
+      });
+    });
+
+    it("defaults direct tools and approvals to the run capability environment", async () => {
+      const pid = "mech-tool-capability-environment";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const runId = "run-tool-capability-environment";
+        const environment = {
+          target: "macbook",
+          cwd: "/Users/sam/project",
+        };
+        const dispatched: Array<Record<string, ProcessTestValue>> = [];
+        process.sendSignal = vi.fn(async () => {});
+        process.schedule = vi.fn(async () => ({ id: "tool-timeout" }));
+        process.dispatchSyscall = vi.fn(async (
+          _runId: string,
+          dispatchId: string,
+          _syscall: string,
+          args: Record<string, ProcessTestValue>,
+        ) => {
+          dispatched.push(args);
+          process.store.resolve(dispatchId, { ok: true });
+        });
+        process.currentRun = {
+          runId,
+          environment,
+          tools: offeredTools("Read"),
+          approvalPolicy: {
+            default: "auto",
+            rules: [{ match: "fs.read", target: "macbook", action: "deny" }],
+          },
+        };
+
+        registerToolBlock(process, runId, [
+          {
+            id: "call-selected-read",
+            name: "Read",
+            arguments: { path: "notes.txt" },
+          },
+          {
+            id: "call-explicit-read",
+            name: "Read",
+            arguments: { target: "gsv", path: "notes.txt" },
+          },
+        ]);
+        await process.processToolCalls(runId);
+        await vi.waitFor(() => expect(process.dispatchSyscall).toHaveBeenCalledTimes(1));
+
+        expect(process.store.getResults(runId)).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            id: "call-selected-read",
+            status: "error",
+            args: {
+              target: "macbook",
+              path: "/Users/sam/project/notes.txt",
+            },
+            error: "Tool execution denied by policy",
+          }),
+        ]));
+        expect(dispatched).toEqual([{ target: "gsv", path: "notes.txt" }]);
+        expect(process.prepareToolArgs(
+          "shell.exec",
+          { input: "pwd" },
+          environment,
+        ).args).toEqual({
+          input: "pwd",
+          target: "macbook",
+          cwd: "/Users/sam/project",
+        });
+        expect(process.prepareToolArgs(
+          "fs.search",
+          { query: "needle" },
+          environment,
+        ).args).toEqual({
+          query: "needle",
+          target: "macbook",
+          path: "/Users/sam/project",
+        });
+        process.currentRun = null;
+      });
+    });
+
+    it("passes the run capability environment through CodeMode defaults", async () => {
+      const pid = "mech-codemode-capability-environment";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const runId = "run-codemode-capability-environment";
+        const callId = "call-codemode-capability-environment";
+        const dispatchId = `dispatch-${callId}`;
+        const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
+        process.currentRun = {
+          runId,
+          environment: {
+            target: "macbook",
+            cwd: "/Users/sam/project",
+          },
+          config: {
+            ...terminalTestConfig(pid),
+            capabilities: ["shell.exec", "fs.read"],
+          },
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        process.sendSignal = vi.fn(async () => {});
+        process.scheduleTick = vi.fn(async () => {});
+        process.getCodeModeMcpToolBindings = async () => [];
+        process.executeCodeModeSyscall = async (
+          _context: ProcessTestValue,
+          call: string,
+          args: Record<string, ProcessTestValue>,
+        ) => {
+          calls.push({ call, args });
+          return call === "shell.exec"
+            ? { status: "completed", output: "ok", exitCode: 0 }
+            : { ok: true, path: args.path, content: "notes" };
+        };
+        const code = [
+          'await shell("pwd");',
+          'await fs.read({ path: "notes.txt" });',
+          'await shell("pwd", { target: "gsv" });',
+          'return "done";',
+        ].join("\n");
+        registerToolBlock(process, runId, [{
+          id: callId,
+          name: "CodeMode",
+          arguments: { code },
+        }]);
+        process.store.markDispatched(dispatchId);
+
+        await process.executeCodeModeTool(
+          runId,
+          dispatchId,
+          { code },
+          process.currentRun.approvalPolicy,
+        );
+
+        expect(calls).toEqual([
+          {
+            call: "shell.exec",
+            args: {
+              target: "macbook",
+              cwd: "/Users/sam/project",
+              input: "pwd",
+            },
+          },
+          {
+            call: "fs.read",
+            args: {
+              target: "macbook",
+              path: "/Users/sam/project/notes.txt",
+            },
+          },
+          {
+            call: "shell.exec",
+            args: { target: "gsv", input: "pwd" },
+          },
+        ]);
+        process.currentRun = null;
       });
     });
 

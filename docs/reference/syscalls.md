@@ -505,11 +505,12 @@ client; Process and adapter service callers use private Kernel-owned admission p
 | `conversation.forProcess` | Kernel | Returns Ship for the personal Process or ensures a Work conversation for an owned interactive Process. |
 | `conversation.list` | Kernel | Lists the caller's canonical Ship, Work, and Group conversations. |
 | `conversation.history` | Conversation DO | Returns a newest-first page normalized into chronological order, paging transparently across hot SQLite messages and immutable R2 segments. |
-| `conversation.send` | Kernel | Idempotently commits user input, preinstalls the originating connection's directed run route, and admits the interaction to the conversation handler. The returned run id is deterministically bound to the canonical input message. |
+| `conversation.send` | Kernel | Idempotently commits user input, preinstalls the originating connection's directed run route, and admits the interaction to the conversation handler. An optional capability environment becomes that run's default target and working directory for target-routable model tools; explicit tool arguments still win. The returned run id is deterministically bound to the canonical input message. |
 | `conversation.media.read` | Conversation DO through Kernel | Compatibility reader for media copied by older conversation records. New messages carry resource blocks and resolve them with `fs.transfer.send`. |
 
 ```ts
 type ConversationKind = "ship" | "work" | "group" | "contact";
+type CapabilityEnvironmentSelection = { target: string; cwd?: string };
 type ConversationSummary = {
   id: string;
   kind: ConversationKind;
@@ -553,7 +554,13 @@ type ConversationSyscalls = {
     result: { conversation: ConversationSummary; messages: ConversationMessage[]; hasMore: boolean };
   };
   "conversation.send": {
-    args: { conversationId: string; text: string; media?: ResourceBlock[]; idempotencyKey?: string };
+    args: {
+      conversationId: string;
+      text: string;
+      media?: ResourceBlock[];
+      idempotencyKey?: string;
+      environment?: CapabilityEnvironmentSelection;
+    };
     result: { message: ConversationMessage; handlerPid: string; runId: string; queued?: boolean };
   };
   "conversation.media.read": {
