@@ -41,6 +41,18 @@ GSV_BENCH_FAKE_KEY=local-test uv run eval gsv-v1 \
   --run.name gsv-local-smoke --run.dir gsv-local-smoke --clean \
   >"$smoke_dir/eval.stdout"
 
+GSV_BENCH_FAKE_KEY=local-test uv run eval gsv-v1 \
+  --model gsv-bench-model \
+  --client.base-url "http://127.0.0.1:$fake_port/v1" \
+  --client.api-key-var GSV_BENCH_FAKE_KEY \
+  --env.agent.runtime.type subprocess \
+  --env.taskset.scenario-path "$package_dir/gsv_v1/families/release-recovery.json" \
+  --no-serve --no-push --no-rich \
+  --num-tasks 1 --num-rollouts 1 --max-concurrent 1 \
+  --output-dir "$smoke_dir/family-output" \
+  --run.name gsv-family-smoke --run.dir gsv-family-smoke --clean \
+  >"$smoke_dir/family-eval.stdout"
+
 trace="$smoke_dir/output/gsv-local-smoke/traces.jsonl"
 jq -s -e '
   length == 4 and
@@ -51,7 +63,9 @@ jq -s -e '
     (.traces[0].info.gsv.observations
       | group_by(.processId)
       | all(.[]; (map(.systemPromptSha256) | unique | length) == 1)) and
-    all(.traces[0].info.gsv_rubric[]; .passed == true)
+    .traces[0].info.gsv_evaluation.strict_pass == true and
+    all(.traces[0].info.gsv_evaluation.milestones[]; .passed == true) and
+    all(.traces[0].info.gsv_evaluation.constraints[]; .passed == true)
   ) and
   ([.[].traces[0].info.gsv.scenarioId] | sort) == [
     "delegate-incident-from-slack",
@@ -68,4 +82,19 @@ jq -s -e '
   ([.[].traces[0].calls | length] | add) == 30
 ' "$trace" >/dev/null
 
-echo "gsv Verifiers smoke passed: tasks=4 rewards=1 calls=30"
+family_trace="$smoke_dir/family-output/gsv-family-smoke/traces.jsonl"
+jq -s -e '
+  length == 1 and
+  .[0].ok == true and
+  .[0].traces[0].rewards.scenario_outcome.score == 1 and
+  .[0].traces[0].info.gsv.status == "yielded" and
+  .[0].traces[0].info.gsv.scenarioId == "release-recovery:checkout-schema" and
+  .[0].traces[0].info.gsv.scenarioFamily == "release-recovery" and
+  .[0].traces[0].info.gsv_evaluation.strict_pass == true and
+  all(.[0].traces[0].info.gsv_evaluation.milestones[]; .passed == true) and
+  all(.[0].traces[0].info.gsv_evaluation.constraints[]; .passed == true) and
+  (.[0].traces[0].info.gsv.world.delegations | length) == 4 and
+  (.[0].traces[0].info.gsv.world.externalEvents | map(.state) | unique) == ["applied"]
+' "$family_trace" >/dev/null
+
+echo "gsv Verifiers smoke passed: fixtures=4 family=1 rewards=1"

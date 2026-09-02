@@ -56,6 +56,277 @@ server.listen(port, "127.0.0.1", () => {
 function selectResponse(messages: FakeMessage[]): FakeResponse {
   const transcript = JSON.stringify(messages);
   const resultCount = toolResultCount(messages);
+  if (transcript.includes("read-only incident research Process")) {
+    const researchCalls: FakeToolCall[] = [
+      {
+        id: "discover-research-targets",
+        name: "Shell",
+        arguments: { input: "targets list --json", target: "gsv" },
+      },
+      {
+        id: "read-release-runbook",
+        name: "Read",
+        arguments: {
+          path: "/ops/runbooks/checkout.md",
+          target: "incident-laptop",
+        },
+      },
+      {
+        id: "inspect-diagnostic-summary",
+        name: "Shell",
+        arguments: {
+          input: "incidentctl summary",
+          target: "checkout-diagnostics",
+        },
+      },
+      {
+        id: "inspect-incident-thread",
+        name: "Shell",
+        arguments: {
+          input: "slack thread show INC-4821",
+          target: "checkout-slack",
+        },
+      },
+      {
+        id: "read-vendor-advisory",
+        name: "Read",
+        arguments: {
+          path: "/pages/advisory.txt",
+          target: "checkout-vendor-browser",
+        },
+      },
+    ];
+    return researchCalls[resultCount] ?? {
+      text: "Correlated the runbook, diagnostic snapshot, Slack chronology, and vendor advisory. The schema-checksum-mismatch-93bf began with checkout-2026.09.01; roll back to checkout-2026.08.31 and do not restart the bad build. checkout-2026.09.02-rc2 still requires approval and independent canary evidence.",
+    };
+  }
+  if (transcript.includes("least-privilege rollback operator")) {
+    const rollbackCalls: FakeToolCall[] = [
+      {
+        id: "discover-rollback-targets",
+        name: "Shell",
+        arguments: { input: "targets list --json", target: "gsv" },
+      },
+      {
+        id: "inspect-production-status",
+        name: "Shell",
+        arguments: {
+          input: "releasectl status",
+          target: "checkout-production",
+        },
+      },
+      {
+        id: "inspect-production-history",
+        name: "Shell",
+        arguments: {
+          input: "releasectl history",
+          target: "checkout-production",
+        },
+      },
+      {
+        id: "rollback-production",
+        name: "Shell",
+        arguments: {
+          input: "releasectl rollback checkout-2026.08.31",
+          target: "checkout-production",
+        },
+      },
+    ];
+    return rollbackCalls[resultCount] ?? {
+      text: "Rolled checkout back from checkout-2026.09.01 to checkout-2026.08.31. The rollback was accepted; independent monitoring must establish stability before canary work.",
+    };
+  }
+  if (transcript.includes("You are a canary operator")) {
+    const canaryCalls: FakeToolCall[] = [
+      {
+        id: "discover-canary-targets",
+        name: "Shell",
+        arguments: { input: "targets list --json", target: "gsv" },
+      },
+      {
+        id: "read-canary-approval",
+        name: "Read",
+        arguments: {
+          path: "/approvals/checkout.json",
+          target: "checkout-approval",
+        },
+      },
+      {
+        id: "deploy-canary",
+        name: "Shell",
+        arguments: {
+          input: "releasectl canary checkout-2026.09.02-rc2",
+          target: "checkout-canary",
+        },
+      },
+    ];
+    return canaryCalls[resultCount] ?? {
+      text: "Read approval APR-9921 and deployed checkout-2026.09.02-rc2 to canary. Independent canary health verification remains pending.",
+    };
+  }
+  if (transcript.includes("You are a promotion operator")) {
+    const promotionCalls: FakeToolCall[] = [
+      {
+        id: "discover-promotion-targets",
+        name: "Shell",
+        arguments: { input: "targets list --json", target: "gsv" },
+      },
+      {
+        id: "promote-candidate",
+        name: "Shell",
+        arguments: {
+          input: "releasectl promote checkout-2026.09.02-rc2",
+          target: "checkout-promotion",
+        },
+      },
+    ];
+    return promotionCalls[resultCount] ?? {
+      text: "Promoted checkout-2026.09.02-rc2 after Ship supplied the healthy canary evidence. Independent production stability verification remains pending.",
+    };
+  }
+  if (transcript.includes("Incident INC-4821")) {
+    const shipCalls: FakeToolCall[] = [
+      {
+        id: "ack-release-incident",
+        name: "Shell",
+        arguments: {
+          input: "message send --message 'Acknowledged INC-4821; I am coordinating bounded recovery and will update after verified stability.'",
+        },
+      },
+      {
+        id: "retain-release-incident",
+        name: "Shell",
+        arguments: {
+          input: "r12y create --title 'Recover checkout release safely' --dedupe 'slack:INC-4821'",
+          target: "gsv",
+        },
+      },
+      {
+        id: "discover-release-agents",
+        name: "Shell",
+        arguments: { input: "proc agents --json", target: "gsv" },
+      },
+      {
+        id: "delegate-release-research",
+        name: "Shell",
+        arguments: {
+          input: "proc delegate --as incident-research --responsibility r12y:00000000-0000-4000-8000-000000000001 'Correlate every available read-only source for INC-4821 and recommend the safe recovery policy, including what evidence remains required.'",
+          target: "gsv",
+        },
+      },
+      {
+        id: "delegate-release-rollback",
+        name: "Shell",
+        arguments: {
+          input: "proc delegate --as rollback-operator --responsibility r12y:00000000-0000-4000-8000-000000000001 'Inspect checkout production and perform the safe rollback justified by the incident evidence. Never restart the bad release; report what still needs independent verification.'",
+          target: "gsv",
+        },
+      },
+      {
+        id: "read-initial-release-health",
+        name: "Read",
+        arguments: {
+          path: "/health/checkout.json",
+          target: "checkout-monitor",
+        },
+      },
+      {
+        id: "wait-rollback-window",
+        name: "Shell",
+        arguments: {
+          input: "r12y wait r12y:00000000-0000-4000-8000-000000000001 --until 2026-09-02T09:05:00.000Z --blocker 'awaiting independent rollback stability and approval gate'",
+          target: "gsv",
+        },
+      },
+      {
+        id: "yield-rollback-window",
+        name: "Shell",
+        arguments: { input: "yield" },
+      },
+      {
+        id: "read-rollback-window",
+        name: "Read",
+        arguments: {
+          path: "/health/checkout.json",
+          target: "checkout-monitor",
+        },
+      },
+      {
+        id: "delegate-approved-canary",
+        name: "Shell",
+        arguments: {
+          input: "proc delegate --as canary-operator --responsibility r12y:00000000-0000-4000-8000-000000000001 'Check the authoritative checkout approval and, only if approved, deploy checkout-2026.09.02-rc2 to canary. Return the action without claiming health.'",
+          target: "gsv",
+        },
+      },
+      {
+        id: "wait-canary-window",
+        name: "Shell",
+        arguments: {
+          input: "r12y wait r12y:00000000-0000-4000-8000-000000000001 --until 2026-09-02T09:15:00.000Z --blocker 'awaiting independent canary health evidence'",
+          target: "gsv",
+        },
+      },
+      {
+        id: "yield-canary-window",
+        name: "Shell",
+        arguments: { input: "yield" },
+      },
+      {
+        id: "read-canary-window",
+        name: "Read",
+        arguments: {
+          path: "/health/checkout.json",
+          target: "checkout-monitor",
+        },
+      },
+      {
+        id: "delegate-promotion",
+        name: "Shell",
+        arguments: {
+          input: "proc delegate --as promotion-operator --responsibility r12y:00000000-0000-4000-8000-000000000001 'Independent monitoring now shows checkout-2026.09.02-rc2 healthy in canary. Promote that candidate and report the action without claiming final stability.'",
+          target: "gsv",
+        },
+      },
+      {
+        id: "wait-production-window",
+        name: "Shell",
+        arguments: {
+          input: "r12y wait r12y:00000000-0000-4000-8000-000000000001 --until 2026-09-02T09:30:00.000Z --blocker 'awaiting post-promotion production stability evidence'",
+          target: "gsv",
+        },
+      },
+      {
+        id: "yield-production-window",
+        name: "Shell",
+        arguments: { input: "yield" },
+      },
+      {
+        id: "read-production-window",
+        name: "Read",
+        arguments: {
+          path: "/health/checkout.json",
+          target: "checkout-monitor",
+        },
+      },
+      {
+        id: "resolve-release-incident",
+        name: "Shell",
+        arguments: {
+          input: "r12y resolve r12y:00000000-0000-4000-8000-000000000001 --json '{\"incident\":\"INC-4821\",\"release\":\"checkout-2026.09.02-rc2\",\"healthyWindows\":2}'",
+          target: "gsv",
+        },
+      },
+      {
+        id: "finish-release-incident",
+        name: "Shell",
+        arguments: {
+          input: "message send --message 'INC-4821 resolved: checkout-2026.09.02-rc2 is stable after rollback, approved canary, promotion, and independent production verification.' && yield",
+        },
+      },
+    ];
+    return shipCalls[resultCount] ?? { text: "Unexpected release scenario state" };
+  }
   if (
     transcript.includes("Delegated task from ship (ship).")
     && transcript.includes("safely restore the last known healthy release")

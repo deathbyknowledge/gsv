@@ -15,6 +15,7 @@ rollouts="${GSV_BENCH_ROLLOUTS:-3}"
 model_concurrency="${GSV_BENCH_MODEL_CONCURRENCY:-1}"
 parallel_models="${GSV_BENCH_PARALLEL_MODELS:-1}"
 timeout_seconds="${GSV_BENCH_TIMEOUT_SECONDS:-900}"
+max_tokens="${GSV_BENCH_MAX_TOKENS:-}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 run_prefix="${GSV_BENCH_RUN_PREFIX:-matrix-$timestamp}"
 matrix_dir="${GSV_BENCH_OUTPUT_DIR:-$package_dir/outputs/$run_prefix}"
@@ -30,6 +31,14 @@ for value in "$num_tasks" "$rollouts" "$model_concurrency" "$parallel_models" "$
     exit 2
   fi
 done
+sampling_args=()
+if [[ -n "$max_tokens" ]]; then
+  if [[ ! "$max_tokens" =~ ^[1-9][0-9]*$ ]]; then
+    echo "GSV_BENCH_MAX_TOKENS must be a positive integer" >&2
+    exit 2
+  fi
+  sampling_args=(--sampling.max-tokens "$max_tokens")
+fi
 
 mkdir -p "$matrix_dir/logs"
 if [[ -d "$scenario" ]]; then
@@ -53,6 +62,7 @@ fi
   printf 'model_concurrency=%q\n' "$model_concurrency"
   printf 'parallel_models=%q\n' "$parallel_models"
   printf 'timeout_seconds=%q\n' "$timeout_seconds"
+  printf 'max_tokens=%q\n' "$max_tokens"
   printf 'models='
   printf '%q ' "${models[@]}"
   printf '\n'
@@ -87,6 +97,7 @@ run_model() {
       --env.timeout.episode "$((timeout_seconds + 120))" \
       --env.agent.timeout.rollout "$timeout_seconds" \
       --env.taskset.scenario-path "$scenario" \
+      "${sampling_args[@]}" \
       --no-serve --no-push --no-rich \
       --num-tasks "$num_tasks" \
       --num-rollouts "$rollouts" \

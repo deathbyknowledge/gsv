@@ -27,9 +27,8 @@ import {
 import { TOOL_TO_SYSCALL } from "../../workers/gateway/src/syscalls/constants";
 import { SyntheticMessagingAdapter } from "./adapter";
 import {
-  environmentFromSpec,
-  type SyntheticCapabilityEnvironment,
   type SyntheticInvocationResult,
+  type SyntheticTargetEnvironment,
 } from "./environment";
 import {
   processOwnerUid,
@@ -47,12 +46,14 @@ import type {
   SyntheticExternalEventSpec,
   SyntheticProcessSnapshot,
   SyntheticProcessSpec,
+  SyntheticScenarioComponents,
   SyntheticTargetSnapshot,
   SyntheticTransitionEffect,
   SyntheticTransitionSpec,
   SyntheticWorldSnapshot,
   SyntheticWorldSpec,
 } from "./schema";
+import { SyntheticTargetRegistry } from "./target-registry";
 
 type TargetListEntry = {
   id: string;
@@ -119,7 +120,7 @@ export class SyntheticKernel {
   private readonly adapterRoutes = new Map<string, EntryRoute>();
   private readonly delegateSpecs = new Map<string, SyntheticDelegateSpec>();
   private readonly delegations: SyntheticDelegationSnapshot[] = [];
-  private readonly environments = new Map<string, SyntheticCapabilityEnvironment>();
+  private readonly environments = new Map<string, SyntheticTargetEnvironment>();
   private readonly externalEvents = new Map<string, ExternalEventState>();
   private readonly processes = new Map<string, SyntheticProcessSpec>();
   private readonly processEvents = new Map<string, SyntheticProcessEvent[]>();
@@ -153,18 +154,18 @@ export class SyntheticKernel {
 
   static fromSpec(
     world: SyntheticWorldSpec,
-    transitions: readonly SyntheticTransitionSpec[] = [],
-    externalEvents: readonly SyntheticExternalEventSpec[] = [],
+    components: SyntheticScenarioComponents,
+    targetRegistry: SyntheticTargetRegistry = new SyntheticTargetRegistry(),
   ): SyntheticKernel {
     const kernel = new SyntheticKernel(world.runtime);
     for (const process of world.processes) kernel.addProcess(process);
     for (const delegate of world.delegates ?? []) kernel.addDelegate(delegate);
-    for (const target of world.targets) {
-      kernel.addTarget(environmentFromSpec(target));
+    for (const target of components.targets) {
+      kernel.addTarget(targetRegistry.create(target));
     }
     for (const adapter of world.adapters ?? []) kernel.addAdapter(adapter);
-    for (const transition of transitions) kernel.afterCall(transition);
-    for (const event of externalEvents) kernel.afterYield(event);
+    for (const transition of components.transitions) kernel.afterCall(transition);
+    for (const event of components.events) kernel.afterYield(event);
     return kernel;
   }
 
@@ -209,7 +210,7 @@ export class SyntheticKernel {
     this.adapters.set(spec.id, new SyntheticMessagingAdapter(spec));
   }
 
-  addTarget(environment: SyntheticCapabilityEnvironment): void {
+  addTarget(environment: SyntheticTargetEnvironment): void {
     if (environment.id === "gsv") {
       throw new Error("The native gsv target is implicit and cannot be registered");
     }
@@ -223,7 +224,7 @@ export class SyntheticKernel {
     if (this.transitions.has(transition.id)) {
       throw new Error("Duplicate synthetic transition id: " + transition.id);
     }
-    this.requireProcess(transition.after.processId);
+    this.requireConfiguredProcess(transition.after.processId);
     for (const effect of transition.effects) this.requireEnvironment(effect.targetId);
     this.transitions.set(transition.id, structuredClone(transition));
   }
@@ -1006,7 +1007,7 @@ export class SyntheticKernel {
     }
   }
 
-  private visibleEnvironments(processId: string): SyntheticCapabilityEnvironment[] {
+  private visibleEnvironments(processId: string): SyntheticTargetEnvironment[] {
     const process = this.requireProcess(processId);
     return [...this.environments.values()]
       .filter((target) => target.canAccess(process.uid, process.gids))
@@ -1019,13 +1020,19 @@ export class SyntheticKernel {
     return process;
   }
 
+  private requireConfiguredProcess(processId: string): void {
+    if (!this.processes.has(processId) && !this.hasDelegateProcess(processId)) {
+      throw new Error("Unknown synthetic process: " + processId);
+    }
+  }
+
   private hasDelegateProcess(processId: string): boolean {
     return [...this.delegateSpecs.values()].some(({ process }) => (
       process.id === processId
     ));
   }
 
-  private requireEnvironment(targetId: string): SyntheticCapabilityEnvironment {
+  private requireEnvironment(targetId: string): SyntheticTargetEnvironment {
     const environment = this.environments.get(targetId);
     if (!environment) throw new Error("Unknown synthetic target: " + targetId);
     return environment;

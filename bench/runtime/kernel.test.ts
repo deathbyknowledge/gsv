@@ -81,6 +81,7 @@ describe("SyntheticKernel", () => {
         gids: [1000],
         capabilities: ["fs.read"],
       }],
+    }, {
       targets: [{
         id: "server",
         kind: "server",
@@ -88,6 +89,8 @@ describe("SyntheticKernel", () => {
         accessGids: [1000],
         online: true,
       }],
+      transitions: [],
+      events: [],
     });
 
     expect(kernel.projection("reader").targets.map(({ id }) => id)).toEqual(["server"]);
@@ -99,6 +102,56 @@ describe("SyntheticKernel", () => {
       isError: true,
       value: "Permission denied: process cannot call shell.exec",
     });
+  });
+
+  it("allows transitions owned by a configured delegate before it is spawned", () => {
+    expect(() => SyntheticKernel.fromSpec({
+      runtime: {
+        now: "2026-09-01T12:00:00.000Z",
+        timezone: "UTC",
+      },
+      processes: [{
+        id: "ship",
+        role: "ship",
+        uid: 1000,
+        gids: [1000],
+        capabilities: [],
+      }],
+      delegates: [{
+        account: "operator",
+        process: {
+          id: "proc:operator",
+          role: "worker",
+          uid: 2000,
+          gids: [2000],
+          capabilities: ["shell.exec"],
+        },
+        systemPrompt: "Operate the target.",
+        maxTurns: 4,
+      }],
+    }, {
+      targets: [{
+        id: "server",
+        kind: "server",
+        ownerUid: 2000,
+        accessGids: [2000],
+        online: true,
+      }],
+      transitions: [{
+        id: "operator-action",
+        after: {
+          processId: "proc:operator",
+          tool: "Shell",
+        },
+        effects: [{
+          type: "target.state.set",
+          targetId: "server",
+          key: "done",
+          value: true,
+        }],
+      }],
+      events: [],
+    })).not.toThrow();
   });
 
   it("keeps native shell discovery and Unix composition available", async () => {
@@ -114,8 +167,7 @@ describe("SyntheticKernel", () => {
         gids: [1000],
         capabilities: ["shell.exec"],
       }],
-      targets: [],
-    });
+    }, { targets: [], transitions: [], events: [] });
 
     const discovery = await kernel.dispatch("ship", "Shell", {
       input: "man --search -- 'list the ordered GSV event log'",

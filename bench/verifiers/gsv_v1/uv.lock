@@ -477,6 +477,7 @@ name = "gsv-v1"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "pyyaml" },
     { name = "verifiers" },
 ]
 
@@ -488,7 +489,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "verifiers", git = "https://github.com/PrimeIntellect-ai/verifiers.git?rev=71690b03861719026185e3db746bf4c371d05a90" }]
+requires-dist = [
+    { name = "pyyaml", specifier = ">=6.0.3,<7" },
+    { name = "verifiers", git = "https://github.com/PrimeIntellect-ai/verifiers.git?rev=71690b03861719026185e3db746bf4c371d05a90" },
+]
 
 [package.metadata.requires-dev]
 dev = [

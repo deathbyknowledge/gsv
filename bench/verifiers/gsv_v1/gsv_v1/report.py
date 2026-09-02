@@ -33,6 +33,26 @@ def _percentile(values: list[float], fraction: float) -> float:
     return ordered[rank]
 
 
+def _pass_at_k(trials: list[bool], k: int) -> float | None:
+    if len(trials) < k:
+        return None
+    successes = sum(trials)
+    return 1.0 - (
+        math.comb(len(trials) - successes, k) / math.comb(len(trials), k)
+        if len(trials) - successes >= k
+        else 0.0
+    )
+
+
+def _pass_power_k(trials: list[bool], k: int) -> float | None:
+    if len(trials) < k:
+        return None
+    successes = sum(trials)
+    return (
+        math.comb(successes, k) / math.comb(len(trials), k) if successes >= k else 0.0
+    )
+
+
 def _model_id(trace: dict[str, Any], run_name: str) -> str:
     agent = trace.get("agent")
     if isinstance(agent, dict):
@@ -45,6 +65,20 @@ def _model_id(trace: dict[str, Any], run_name: str) -> str:
             if isinstance(call, dict) and isinstance(call.get("model"), str):
                 return call["model"]
     return run_name
+
+
+def _scenario_id(trace: dict[str, Any]) -> str:
+    info = trace.get("info")
+    artifact = info.get("gsv") if isinstance(info, dict) else None
+    if isinstance(artifact, dict) and isinstance(artifact.get("scenarioId"), str):
+        return artifact["scenarioId"]
+    task = trace.get("task")
+    data = task.get("data") if isinstance(task, dict) else None
+    if isinstance(data, dict):
+        for key in ("scenario_id", "name"):
+            if isinstance(data.get(key), str):
+                return data[key]
+    return "unknown"
 
 
 def load_pricing(path: Path | None) -> dict[str, dict[str, float]]:
@@ -91,6 +125,7 @@ def summarize_matrix(
     models: list[dict[str, Any]] = []
     for model_id, entries in sorted(groups.items()):
         scores: list[float] = []
+        raw_scores: list[float] = []
         agent_seconds: list[float] = []
         agent_starts: list[float] = []
         agent_ends: list[float] = []
@@ -102,7 +137,12 @@ def summarize_matrix(
         call_count = 0
         usage_call_count = 0
         error_count = 0
-        criteria: dict[str, dict[str, Any]] = {}
+        milestones: dict[str, dict[str, Any]] = {}
+        dimensions: dict[str, dict[str, Any]] = {}
+        constraints: dict[str, dict[str, Any]] = {}
+        scenario_trials: dict[str, list[bool]] = defaultdict(list)
+        scenario_scores: dict[str, list[float]] = defaultdict(list)
+        strict_passes = 0
 
         for entry in entries:
             envelope = entry["envelope"]
@@ -111,13 +151,12 @@ def summarize_matrix(
             scenario_reward = (
                 rewards.get("scenario_outcome", {}) if isinstance(rewards, dict) else {}
             )
-            scores.append(
-                _number(
-                    scenario_reward.get("score")
-                    if isinstance(scenario_reward, dict)
-                    else None
-                )
+            score = _number(
+                scenario_reward.get("score")
+                if isinstance(scenario_reward, dict)
+                else None
             )
+            scores.append(score)
 
             timing = trace.get("timing", {})
             agent_timing = timing.get("agent", {}) if isinstance(timing, dict) else {}
@@ -157,24 +196,85 @@ def summarize_matrix(
             ):
                 error_count += 1
 
-            rubric = trace.get("info", {}).get("gsv_rubric", [])
-            if isinstance(rubric, list):
-                for criterion in rubric:
-                    if not isinstance(criterion, dict):
+            info = trace.get("info", {})
+            evaluation = (
+                info.get("gsv_evaluation", {}) if isinstance(info, dict) else {}
+            )
+            raw_scores.append(
+                _number(evaluation.get("raw_score"))
+                if isinstance(evaluation, dict) and "raw_score" in evaluation
+                else score
+            )
+            strict_pass = (
+                evaluation.get("strict_pass") is True
+                if isinstance(evaluation, dict)
+                else False
+            )
+            strict_passes += int(strict_pass)
+            scenario_id = _scenario_id(trace)
+            scenario_trials[scenario_id].append(strict_pass)
+            scenario_scores[scenario_id].append(score)
+
+            evaluated_milestones = (
+                evaluation.get("milestones", []) if isinstance(evaluation, dict) else []
+            )
+            if isinstance(evaluated_milestones, list):
+                for milestone in evaluated_milestones:
+                    if not isinstance(milestone, dict):
                         continue
-                    criterion_id = criterion.get("id")
-                    if not isinstance(criterion_id, str):
+                    milestone_id = milestone.get("id")
+                    if not isinstance(milestone_id, str):
                         continue
-                    summary = criteria.setdefault(
-                        criterion_id,
+                    summary = milestones.setdefault(
+                        milestone_id,
                         {
-                            "description": criterion.get("description", ""),
+                            "description": milestone.get("description", ""),
+                            "dimension": milestone.get("dimension", ""),
                             "passed": 0,
                             "total": 0,
                         },
                     )
                     summary["total"] += 1
-                    summary["passed"] += int(criterion.get("passed") is True)
+                    summary["passed"] += int(milestone.get("passed") is True)
+
+            evaluated_dimensions = (
+                evaluation.get("dimensions", {}) if isinstance(evaluation, dict) else {}
+            )
+            if isinstance(evaluated_dimensions, dict):
+                for dimension_id, dimension in evaluated_dimensions.items():
+                    if not isinstance(dimension_id, str) or not isinstance(
+                        dimension, dict
+                    ):
+                        continue
+                    summary = dimensions.setdefault(
+                        dimension_id, {"score_total": 0.0, "rollouts": 0}
+                    )
+                    summary["score_total"] += _number(dimension.get("score"))
+                    summary["rollouts"] += 1
+
+            evaluated_constraints = (
+                evaluation.get("constraints", [])
+                if isinstance(evaluation, dict)
+                else []
+            )
+            if isinstance(evaluated_constraints, list):
+                for constraint in evaluated_constraints:
+                    if not isinstance(constraint, dict):
+                        continue
+                    constraint_id = constraint.get("id")
+                    if not isinstance(constraint_id, str):
+                        continue
+                    summary = constraints.setdefault(
+                        constraint_id,
+                        {
+                            "description": constraint.get("description", ""),
+                            "severity": constraint.get("severity", ""),
+                            "violations": 0,
+                            "total": 0,
+                        },
+                    )
+                    summary["total"] += 1
+                    summary["violations"] += int(constraint.get("passed") is not True)
 
         count = len(entries)
         total_agent_seconds = sum(agent_seconds)
@@ -192,17 +292,54 @@ def summarize_matrix(
                 input_tokens * price["input_usd_per_mtok"]
                 + completion_tokens * price["output_usd_per_mtok"]
             ) / 1_000_000
-        for criterion in criteria.values():
-            total = criterion["total"]
-            criterion["rate"] = criterion["passed"] / total if total else 0.0
+        for milestone in milestones.values():
+            total = milestone["total"]
+            milestone["rate"] = milestone["passed"] / total if total else 0.0
+        for dimension in dimensions.values():
+            rollouts = dimension["rollouts"]
+            dimension["score_mean"] = (
+                dimension.pop("score_total") / rollouts if rollouts else 0.0
+            )
+        pass_at_3_values = [
+            value
+            for trials in scenario_trials.values()
+            if (value := _pass_at_k(trials, 3)) is not None
+        ]
+        pass_power_3_values = [
+            value
+            for trials in scenario_trials.values()
+            if (value := _pass_power_k(trials, 3)) is not None
+        ]
+        scenarios = {}
+        for scenario_id, trials in sorted(scenario_trials.items()):
+            per_scenario_scores = scenario_scores[scenario_id]
+            scenario_strict_passes = sum(trials)
+            scenarios[scenario_id] = {
+                "rollouts": len(trials),
+                "score_mean": statistics.fmean(per_scenario_scores),
+                "strict_passes": scenario_strict_passes,
+                "pass_at_1": scenario_strict_passes / len(trials),
+                "pass_at_3": _pass_at_k(trials, 3),
+                "pass_power_3": _pass_power_k(trials, 3),
+            }
 
         models.append(
             {
                 "model": model_id,
                 "rollouts": count,
                 "score_mean": statistics.fmean(scores) if scores else 0.0,
+                "raw_score_mean": (statistics.fmean(raw_scores) if raw_scores else 0.0),
                 "score_median": statistics.median(scores) if scores else 0.0,
-                "full_passes": sum(score >= 1.0 for score in scores),
+                "strict_passes": strict_passes,
+                "pass_at_1": strict_passes / count if count else 0.0,
+                "pass_at_3": (
+                    statistics.fmean(pass_at_3_values) if pass_at_3_values else None
+                ),
+                "pass_power_3": (
+                    statistics.fmean(pass_power_3_values)
+                    if pass_power_3_values
+                    else None
+                ),
                 "errors": error_count,
                 "calls": call_count,
                 "calls_per_rollout": call_count / count if count else 0.0,
@@ -240,7 +377,10 @@ def summarize_matrix(
                 if usage_call_count
                 else None,
                 "listed_cost_usd": estimated_cost,
-                "criteria": criteria,
+                "milestones": milestones,
+                "dimensions": dimensions,
+                "constraints": constraints,
+                "scenarios": scenarios,
             }
         )
 
@@ -256,8 +396,8 @@ def render_markdown(summary: dict[str, Any]) -> str:
     if not models:
         return "No traces found."
     lines = [
-        "| Model | n | Mean | Median | Full | Errors | Calls/n | P50 s | Input tok | Output tok | E2E out tok/s | Request out tok/s | Cached | Listed cost |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Model | n | Reward | Raw | Median | Strict | Pass@1 | Pass@3 | Pass^3 | Errors | Calls/n | P50 s | Input tok | Output tok | E2E out tok/s | Request out tok/s | Cached | Listed cost |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for model in models:
         cost = model["listed_cost_usd"]
@@ -268,15 +408,28 @@ def render_markdown(summary: dict[str, Any]) -> str:
         request_rate = model["request_output_tokens_per_second"]
         cached_rate = model["cached_input_rate"]
         lines.append(
-            "| {model} | {rollouts} | {mean:.3f} | {median:.3f} | "
-            "{full}/{rollouts} | {errors} | {calls:.1f} | {seconds:.1f} | "
+            "| {model} | {rollouts} | {mean:.3f} | {raw:.3f} | {median:.3f} | "
+            "{strict}/{rollouts} | {pass1:.1%} | {pass3} | {pass_power3} | "
+            "{errors} | {calls:.1f} | {seconds:.1f} | "
             "{prompt} | {output} | {rate} | {request_rate} | "
             "{cached} | {cost} |".format(
                 model=model["model"],
                 rollouts=model["rollouts"],
                 mean=model["score_mean"],
+                raw=model["raw_score_mean"],
                 median=model["score_median"],
-                full=model["full_passes"],
+                strict=model["strict_passes"],
+                pass1=model["pass_at_1"],
+                pass3=(
+                    f"{model['pass_at_3']:.1%}"
+                    if model["pass_at_3"] is not None
+                    else "n/a"
+                ),
+                pass_power3=(
+                    f"{model['pass_power_3']:.1%}"
+                    if model["pass_power_3"] is not None
+                    else "n/a"
+                ),
                 errors=model["errors"],
                 calls=model["calls_per_rollout"],
                 seconds=model["agent_seconds_p50"],
@@ -290,27 +443,89 @@ def render_markdown(summary: dict[str, Any]) -> str:
                 cost=cost_text,
             )
         )
-    criterion_ids = sorted(
-        {criterion_id for model in models for criterion_id in model["criteria"]}
+    milestone_ids = sorted(
+        {milestone_id for model in models for milestone_id in model["milestones"]}
     )
-    if criterion_ids:
+    if milestone_ids:
         lines.extend(
             [
                 "",
-                "| Model | " + " | ".join(criterion_ids) + " |",
-                "| --- | " + " | ".join("---:" for _ in criterion_ids) + " |",
+                "| Model | " + " | ".join(milestone_ids) + " |",
+                "| --- | " + " | ".join("---:" for _ in milestone_ids) + " |",
             ]
         )
         for model in models:
             cells = []
-            for criterion_id in criterion_ids:
-                criterion = model["criteria"].get(criterion_id)
+            for milestone_id in milestone_ids:
+                milestone = model["milestones"].get(milestone_id)
                 cells.append(
                     "n/a"
-                    if criterion is None
-                    else f"{criterion['passed']}/{criterion['total']}"
+                    if milestone is None
+                    else f"{milestone['passed']}/{milestone['total']}"
                 )
             lines.append(f"| {model['model']} | " + " | ".join(cells) + " |")
+    if any(model["scenarios"] for model in models):
+        lines.extend(
+            [
+                "",
+                "| Model | Scenario | n | Mean | Strict | Pass@3 | Pass^3 |",
+                "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
+            ]
+        )
+        for model in models:
+            for scenario_id, scenario in model["scenarios"].items():
+                pass_at_3 = scenario["pass_at_3"]
+                pass_power_3 = scenario["pass_power_3"]
+                lines.append(
+                    "| {model} | {scenario_id} | {rollouts} | {mean:.3f} | "
+                    "{strict}/{rollouts} | {pass_at_3} | {pass_power_3} |".format(
+                        model=model["model"],
+                        scenario_id=scenario_id,
+                        rollouts=scenario["rollouts"],
+                        mean=scenario["score_mean"],
+                        strict=scenario["strict_passes"],
+                        pass_at_3=(
+                            f"{pass_at_3:.1%}" if pass_at_3 is not None else "n/a"
+                        ),
+                        pass_power_3=(
+                            f"{pass_power_3:.1%}" if pass_power_3 is not None else "n/a"
+                        ),
+                    )
+                )
+    dimension_ids = sorted(
+        {dimension_id for model in models for dimension_id in model["dimensions"]}
+    )
+    if dimension_ids:
+        lines.extend(
+            [
+                "",
+                "| Model | " + " | ".join(dimension_ids) + " |",
+                "| --- | " + " | ".join("---:" for _ in dimension_ids) + " |",
+            ]
+        )
+        for model in models:
+            cells = [
+                "n/a"
+                if (dimension := model["dimensions"].get(dimension_id)) is None
+                else f"{dimension['score_mean']:.3f}"
+                for dimension_id in dimension_ids
+            ]
+            lines.append(f"| {model['model']} | " + " | ".join(cells) + " |")
+    if any(model["constraints"] for model in models):
+        lines.extend(
+            [
+                "",
+                "| Model | Constraint | Severity | Violations |",
+                "| --- | --- | --- | ---: |",
+            ]
+        )
+        for model in models:
+            for constraint_id, constraint in sorted(model["constraints"].items()):
+                lines.append(
+                    f"| {model['model']} | {constraint_id} | "
+                    f"{constraint['severity']} | {constraint['violations']}/"
+                    f"{constraint['total']} |"
+                )
     return "\n".join(lines)
 
 

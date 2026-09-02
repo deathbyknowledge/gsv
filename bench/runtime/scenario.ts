@@ -2,14 +2,19 @@ import {
   jsonObjectSchema,
   jsonValueSchema,
   type JsonValue,
-  type ResponsibilityTransition,
 } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import { isValidCapability } from "../../workers/gateway/src/kernel/capabilities";
-import type { GsvSurfaceScenario } from "./schema";
+import type {
+  GsvEvaluationPredicate,
+  GsvSurfaceScenario,
+} from "./schema";
 
 const optionalJsonObjectSchema = z.custom<z.infer<typeof jsonObjectSchema>>(
   (value) => jsonObjectSchema.safeParse(value).success,
+);
+const optionalJsonValueSchema = z.custom<JsonValue>(
+  (value) => jsonValueSchema.safeParse(value).success,
 );
 
 const processSchema = z.object({
@@ -76,6 +81,8 @@ const commandSchema = z.object({
 const targetSchema = z.object({
   id: z.string().min(1),
   kind: z.enum(["laptop", "server", "browser", "slack"]),
+  driver: z.string().min(1).optional(),
+  driverConfig: optionalJsonObjectSchema.optional(),
   ownerUid: z.number().int().nonnegative(),
   accessGids: z.array(z.number().int().nonnegative()),
   label: z.string().optional(),
@@ -140,109 +147,55 @@ const externalEventSchema = z.object({
   evictProcess: z.boolean().optional(),
 }).strict();
 
-const rubricAssertionSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("log_count"),
-    entry: jsonObjectSchema,
-    min: z.number().int().nonnegative().optional(),
-    max: z.number().int().nonnegative().optional(),
-  }).strict().refine(
-    ({ min, max }) => min !== undefined || max !== undefined,
-    "log_count requires min or max",
-  ).refine(
-    ({ min, max }) => min === undefined || max === undefined || min <= max,
-    "log_count min cannot exceed max",
-  ),
-  z.object({
-    type: z.literal("log_order"),
-    before: jsonObjectSchema,
-    after: jsonObjectSchema,
-  }).strict(),
-]);
-
-const semanticLogEntrySchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("tool.call"),
-    processId: z.string(),
-    name: z.string(),
-    arguments: jsonObjectSchema,
-  }).strict(),
-  z.object({
-    type: z.literal("tool.result"),
-    processId: z.string(),
-    name: z.string(),
-    content: z.string(),
-    isError: z.boolean(),
-  }).strict(),
-  z.object({
-    type: z.literal("world.transition"),
-    id: z.string(),
-  }).strict(),
-  z.object({
-    type: z.literal("context.delta"),
-    processId: z.string(),
-    content: z.string(),
-  }).strict(),
-  z.object({
-    type: z.literal("responsibility.transition"),
-    transition: z.custom<ResponsibilityTransition>(),
-  }).strict(),
-  z.object({
-    type: z.literal("process.spawned"),
-    processId: z.string(),
-    parentProcessId: z.string(),
-    account: z.string(),
-  }).strict(),
-  z.object({
-    type: z.literal("ipc.completed"),
-    callId: z.string(),
-    sourceProcessId: z.string(),
-    targetProcessId: z.string(),
-    resultText: z.string().optional(),
-    error: z.string().optional(),
-  }).strict(),
-  z.object({
-    type: z.literal("adapter.sent"),
-    adapterId: z.string(),
-    deliveryId: z.string(),
-    processId: z.string(),
-    text: z.string(),
-  }).strict(),
-  z.object({
-    type: z.literal("run.started"),
-    processId: z.string(),
-    run: z.number().int().positive(),
-  }).strict(),
-  z.object({
-    type: z.literal("external.event"),
-    id: z.string(),
-    processId: z.string(),
-    atMs: z.number().int(),
-  }).strict(),
-  z.object({
-    type: z.literal("process.evicted"),
-    processId: z.string(),
-    afterRun: z.number().int().positive(),
-  }).strict(),
-  z.object({
-    type: z.literal("message.committed"),
-    processId: z.string(),
-    text: z.string(),
-  }).strict(),
-  z.object({
-    type: z.literal("run.yielded"),
-    processId: z.string(),
-  }).strict(),
-  z.object({
-    type: z.literal("run.returned"),
-    processId: z.string(),
-    text: z.string(),
-  }).strict(),
-]);
+const evaluationPredicateSchema: z.ZodType<GsvEvaluationPredicate> = z.lazy(() => (
+  z.discriminatedUnion("type", [
+    z.object({
+      type: z.literal("match"),
+      path: z.string(),
+      mode: z.enum(["equals", "subset"]).default("subset"),
+      value: jsonValueSchema,
+    }).strict(),
+    z.object({
+      type: z.literal("count"),
+      path: z.string(),
+      where: optionalJsonValueSchema.optional(),
+      min: z.number().int().nonnegative().optional(),
+      max: z.number().int().nonnegative().optional(),
+    }).strict().refine(
+      ({ min, max }) => min !== undefined || max !== undefined,
+      "count requires min or max",
+    ).refine(
+      ({ min, max }) => min === undefined || max === undefined || min <= max,
+      "count min cannot exceed max",
+    ),
+    z.object({
+      type: z.literal("order"),
+      path: z.string(),
+      before: jsonValueSchema,
+      after: jsonValueSchema,
+    }).strict(),
+    z.object({
+      type: z.literal("sequence"),
+      path: z.string(),
+      items: z.array(jsonValueSchema).min(2),
+    }).strict(),
+    z.object({
+      type: z.enum(["all", "any"]),
+      predicates: z.array(evaluationPredicateSchema).min(1),
+    }).strict(),
+    z.object({
+      type: z.literal("not"),
+      predicate: evaluationPredicateSchema,
+    }).strict(),
+  ])
+));
 
 const scenarioSchema = z.object({
-  schemaVersion: z.literal(2),
+  schemaVersion: z.literal(3),
   id: z.string().min(1),
+  seed: z.string().min(1),
+  family: z.string().min(1).default("standalone"),
+  tags: z.array(z.string().min(1)).default([]),
   description: z.string().min(1),
   systemPrompt: z.string().min(1),
   prompt: z.string().min(1),
@@ -255,20 +208,31 @@ const scenarioSchema = z.object({
     }).strict(),
     processes: z.array(processSchema).min(1),
     delegates: z.array(delegateSchema).default([]),
-    targets: z.array(targetSchema),
     adapters: z.array(adapterSchema).default([]),
   }).strict(),
-  transitions: z.array(transitionSchema).default([]),
-  externalEvents: z.array(externalEventSchema).default([]),
-  expected: jsonObjectSchema,
-  rubric: z.array(z.object({
-    id: z.string().min(1),
-    description: z.string().min(1),
-    weight: z.number().positive(),
-    expected: jsonObjectSchema,
-    assertions: z.array(rubricAssertionSchema).min(1).optional(),
-  }).strict()).min(1),
-  expectedLog: z.array(semanticLogEntrySchema).optional(),
+  components: z.object({
+    targets: z.array(targetSchema).default([]),
+    transitions: z.array(transitionSchema).default([]),
+    events: z.array(externalEventSchema).default([]),
+  }).strict(),
+  groundTruth: optionalJsonObjectSchema.default({}),
+  evaluation: z.object({
+    milestones: z.array(z.object({
+      id: z.string().min(1),
+      description: z.string().min(1),
+      dimension: z.string().min(1),
+      weight: z.number().positive(),
+      requires: z.array(z.string().min(1)).default([]),
+      requiredForStrict: z.boolean().default(true),
+      predicates: z.array(evaluationPredicateSchema).min(1),
+    }).strict()).min(1),
+    constraints: z.array(z.object({
+      id: z.string().min(1),
+      description: z.string().min(1),
+      severity: z.enum(["hard", "advisory"]),
+      predicate: evaluationPredicateSchema,
+    }).strict()).default([]),
+  }).strict(),
   maxTurns: z.number().int().positive().max(50),
   maxRuns: z.number().int().positive().max(20).default(1),
 }).strict();
@@ -277,14 +241,15 @@ export function parseGsvSurfaceScenario(value: JsonValue): GsvSurfaceScenario {
   const scenario = scenarioSchema.parse(value);
   requireUnique([
     ...scenario.world.processes.map(({ id }) => id),
-    ...scenario.world.delegates.map(({ process }) => process.id),
+    ...(scenario.world.delegates ?? []).map(({ process }) => process.id),
   ], "process");
   requireUnique(scenario.world.delegates.map(({ account }) => account), "delegate account");
-  requireUnique(scenario.world.targets.map(({ id }) => id), "target");
+  requireUnique(scenario.components.targets.map(({ id }) => id), "target");
   requireUnique(scenario.world.adapters.map(({ id }) => id), "adapter");
-  requireUnique(scenario.transitions.map(({ id }) => id), "transition");
-  requireUnique(scenario.externalEvents.map(({ id }) => id), "external event");
-  requireUnique(scenario.rubric.map(({ id }) => id), "rubric criterion");
+  requireUnique(scenario.components.transitions.map(({ id }) => id), "transition");
+  requireUnique(scenario.components.events.map(({ id }) => id), "external event");
+  requireUnique(scenario.evaluation.milestones.map(({ id }) => id), "milestone");
+  requireUnique(scenario.evaluation.constraints.map(({ id }) => id), "constraint");
   if (!scenario.world.processes.some(({ id }) => id === scenario.entryProcessId)) {
     throw new Error("entryProcessId does not name a synthetic process");
   }
@@ -297,21 +262,23 @@ export function parseGsvSurfaceScenario(value: JsonValue): GsvSurfaceScenario {
       "delegate process " + delegate.process.id,
     );
   }
-  for (const target of scenario.world.targets) {
+  for (const target of scenario.components.targets) {
     if (target.id === "gsv") {
       throw new Error("The native gsv target is implicit");
     }
     requireCapabilities(target.implements ?? [], "target " + target.id);
   }
-  for (const event of scenario.externalEvents) {
+  for (const transition of scenario.components.transitions) {
+    if (!allProcessIds(scenario).has(transition.after.processId)) {
+      throw new Error("Transition does not name a synthetic process: " + transition.id);
+    }
+    requireTargetEffects(scenario, transition.id, transition.effects);
+  }
+  for (const event of scenario.components.events) {
     if (!scenario.world.processes.some(({ id }) => id === event.processId)) {
       throw new Error("External event does not name an initial process: " + event.id);
     }
-    for (const effect of event.effects) {
-      if (!scenario.world.targets.some(({ id }) => id === effect.targetId)) {
-        throw new Error("External event effect does not name a target: " + event.id);
-      }
-    }
+    requireTargetEffects(scenario, event.id, event.effects);
   }
   if (scenario.entryRoute) {
     const adapter = scenario.world.adapters.find(
@@ -327,7 +294,47 @@ export function parseGsvSurfaceScenario(value: JsonValue): GsvSurfaceScenario {
       throw new Error("entryRoute adapter owner does not own the entry process");
     }
   }
+  requireAcyclicMilestones(scenario);
   return scenario;
+}
+
+function allProcessIds(scenario: GsvSurfaceScenario): Set<string> {
+  return new Set([
+    ...scenario.world.processes.map(({ id }) => id),
+    ...(scenario.world.delegates ?? []).map(({ process }) => process.id),
+  ]);
+}
+
+function requireTargetEffects(
+  scenario: GsvSurfaceScenario,
+  owner: string,
+  effects: readonly { targetId: string }[],
+): void {
+  const targetIds = new Set(scenario.components.targets.map(({ id }) => id));
+  for (const effect of effects) {
+    if (!targetIds.has(effect.targetId)) {
+      throw new Error("Scenario component effect does not name a target: " + owner);
+    }
+  }
+}
+
+function requireAcyclicMilestones(scenario: GsvSurfaceScenario): void {
+  const milestones = new Map(
+    scenario.evaluation.milestones.map((milestone) => [milestone.id, milestone]),
+  );
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const visit = (id: string): void => {
+    if (visited.has(id)) return;
+    if (visiting.has(id)) throw new Error("Evaluation milestone dependency cycle at: " + id);
+    const milestone = milestones.get(id);
+    if (!milestone) throw new Error("Unknown evaluation milestone dependency: " + id);
+    visiting.add(id);
+    for (const required of milestone.requires) visit(required);
+    visiting.delete(id);
+    visited.add(id);
+  };
+  for (const id of milestones.keys()) visit(id);
 }
 
 function requireUnique(values: readonly string[], kind: string): void {

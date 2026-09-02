@@ -1,6 +1,7 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "id": "deploy-release-across-targets",
+  "seed": "deploy-release-across-targets-seed-001",
   "description": "Read release state from an authorized laptop, deploy it through an authorized server, and report the durable outcome.",
   "systemPrompt": "You are Ship in a synthetic GSV Process epoch. Use only the GSV tools and targets you are offered. Complete the requested work before committing a final message and yielding.",
   "prompt": "Read /workspace/release.txt from target build-laptop. Its contents name the release. Then run the command 'deploy RELEASE' on target deploy-server, replacing RELEASE with the value you read. If deployment succeeds, commit exactly 'release deployed' to this conversation and yield.",
@@ -25,7 +26,9 @@
         "gids": [2000],
         "capabilities": ["shell.exec"]
       }
-    ],
+    ]
+  },
+  "components": {
     "targets": [
       {
         "id": "build-laptop",
@@ -66,64 +69,72 @@
           }
         }
       }
-    ]
+    ],
+    "transitions": [],
+    "events": []
   },
-  "transitions": [],
-  "expected": {
-    "status": "yielded",
-    "committedMessages": ["release deployed"],
-    "world": {
-      "targets": {
-        "deploy-server": {
-          "state": {
-            "deployedRelease": "release-2026.09.01"
+  "evaluation": {
+    "milestones": [
+      {
+        "id": "human-completion",
+        "description": "Ship commits a user-visible deployment confirmation and yields.",
+        "dimension": "communication",
+        "weight": 0.4,
+        "requires": [],
+        "requiredForStrict": true,
+        "predicates": [
+          {
+            "type": "count",
+            "path": "/committedMessages",
+            "min": 1
+          },
+          {
+            "type": "match",
+            "path": "",
+            "mode": "subset",
+            "value": {
+              "status": "yielded"
+            }
           }
-        }
+        ]
       },
-      "processes": {
-        "ship": {
-          "visibleTargets": ["build-laptop", "deploy-server"]
-        },
-        "deploy-worker": {
-          "visibleTargets": ["deploy-server"]
-        }
-      }
-    }
-  },
-  "rubric": [
-    {
-      "id": "human-completion",
-      "description": "Ship commits the exact requested deployment confirmation and yields.",
-      "weight": 0.4,
-      "expected": {
-        "status": "yielded",
-        "committedMessages": ["release deployed"]
-      }
-    },
-    {
-      "id": "cross-target-outcome",
-      "description": "The release from the laptop is deployed on the server without broadening worker target access.",
-      "weight": 0.6,
-      "expected": {
-        "world": {
-          "targets": {
-            "deploy-server": {
-              "state": {
-                "deployedRelease": "release-2026.09.01"
+      {
+        "id": "cross-target-outcome",
+        "description": "The release from the laptop is deployed on the server without broadening worker target access.",
+        "dimension": "outcome",
+        "weight": 0.6,
+        "requires": [],
+        "requiredForStrict": true,
+        "predicates": [
+          {
+            "type": "match",
+            "path": "",
+            "mode": "subset",
+            "value": {
+              "world": {
+                "targets": {
+                  "deploy-server": {
+                    "state": {
+                      "deployedRelease": "release-2026.09.01"
+                    }
+                  }
+                },
+                "processes": {
+                  "ship": {
+                    "visibleTargets": ["build-laptop", "deploy-server"]
+                  },
+                  "deploy-worker": {
+                    "visibleTargets": ["deploy-server"]
+                  }
+                }
               }
             }
-          },
-          "processes": {
-            "ship": {
-              "visibleTargets": ["build-laptop", "deploy-server"]
-            },
-            "deploy-worker": {
-              "visibleTargets": ["deploy-server"]
-            }
           }
-        }
+        ]
       }
-    }
-  ],
-  "maxTurns": 5
+    ],
+    "constraints": []
+  },
+  "maxTurns": 5,
+  "maxRuns": 1
 }

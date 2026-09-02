@@ -83,8 +83,7 @@ export async function runGsvSurfaceScenario(
 ): Promise<GsvSurfaceArtifact> {
   const kernel = SyntheticKernel.fromSpec(
     scenario.world,
-    scenario.transitions,
-    scenario.externalEvents,
+    scenario.components,
   );
   if (scenario.entryRoute) {
     kernel.bindAdapterIngress(scenario.entryProcessId, scenario.entryRoute);
@@ -92,6 +91,8 @@ export async function runGsvSurfaceScenario(
   const episode = new SyntheticEpisode(
     kernel,
     scenario.id,
+    scenario.seed,
+    scenario.family,
     scenario.entryProcessId,
     generate,
   );
@@ -134,7 +135,14 @@ export async function runSyntheticProcess(
   maxTurns: number,
   generate: GsvSurfaceModel,
 ): Promise<GsvSurfaceArtifact> {
-  const episode = new SyntheticEpisode(kernel, scenarioId, processId, generate);
+  const episode = new SyntheticEpisode(
+    kernel,
+    scenarioId,
+    scenarioId,
+    "standalone",
+    processId,
+    generate,
+  );
   const outcome = await episode.runProcess({
     processId,
     systemPrompt,
@@ -154,6 +162,8 @@ class SyntheticEpisode {
   constructor(
     private readonly kernel: SyntheticKernel,
     private readonly scenarioId: string,
+    private readonly scenarioSeed: string,
+    private readonly scenarioFamily: string,
     private readonly entryProcessId: string,
     private readonly generate: GsvSurfaceModel,
   ) {
@@ -495,8 +505,10 @@ class SyntheticEpisode {
 
   artifact(outcome: SyntheticProcessRunOutcome): GsvSurfaceArtifact {
     const artifact: GsvSurfaceArtifact = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       scenarioId: this.scenarioId,
+      scenarioSeed: this.scenarioSeed,
+      scenarioFamily: this.scenarioFamily,
       entryProcessId: this.entryProcessId,
       status: outcome.status,
       committedMessages: [...this.committedMessages],

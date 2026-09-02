@@ -4,7 +4,9 @@ import {
   laptopEnvironment,
   serverEnvironment,
   slackEnvironment,
+  SyntheticCapabilityEnvironment,
 } from "./environment";
+import { SyntheticTargetRegistry } from "./target-registry";
 
 describe("synthetic capability environments", () => {
   it("implements deterministic filesystem and shell state", async () => {
@@ -89,5 +91,35 @@ describe("synthetic capability environments", () => {
       platform: "linux",
       implements: ["fs.*", "shell.exec"],
     });
+  });
+
+  it("constructs registered special targets through the shared driver seam", () => {
+    const registry = new SyntheticTargetRegistry();
+    registry.register("special-test", (spec) => new SyntheticCapabilityEnvironment({
+      ...spec,
+      state: { installedBy: "special-test" },
+    }));
+    const environment = registry.create({
+      id: "special",
+      kind: "server",
+      driver: "special-test",
+      ownerUid: 1000,
+      accessGids: [1000],
+      online: true,
+    });
+
+    expect(environment.snapshot()).toMatchObject({
+      id: "special",
+      driver: "special-test",
+      state: { installedBy: "special-test" },
+    });
+    expect(() => registry.create({
+      id: "unknown",
+      kind: "server",
+      driver: "missing",
+      ownerUid: 1000,
+      accessGids: [1000],
+      online: true,
+    })).toThrow("Unknown synthetic target driver: missing");
   });
 });

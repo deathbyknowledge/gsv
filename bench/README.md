@@ -27,15 +27,27 @@ routes, and environment state. These axes remain independent:
 
 One Kernel can hold Ship and multiple worker Processes. They share target state
 but retain distinct principals, grants, roles, context epochs, and responsibility
-visibility. A JSON scenario selects one entry Process and may register delegated
-agent templates. `proc delegate` creates the child, assigns its responsibility,
+visibility. A schema-v3 scenario selects one entry Process and may register
+delegated agent templates. Its `components` independently compose targets,
+call-triggered transitions, and scheduled events. `proc delegate` creates the child, assigns its responsibility,
 runs it through the same intercepted model endpoint, and returns ordinary worker
 output to its caller as an ordered GSV event.
+
+Scenario-family documents add deterministic dataset expansion above that runtime.
+A family has a base document, reusable modules, and seeded variants. Recursive
+object merge plus array composition lets variants share ordinary targets and
+evaluators while opting into special browser or service targets, extra Processes,
+scheduled events, and additional milestones. `${variable}` substitution happens
+only while materializing a variant; a placeholder occupying a complete JSON value
+preserves its number, boolean, object, or array type.
 
 ## Capability environments
 
 runtime/environment.ts provides a reusable SyntheticCapabilityEnvironment plus
-laptop, server, browser, and Slack factories. A scenario can configure:
+laptop, server, browser, and Slack factories. `SyntheticTargetRegistry` selects
+the driver declared by each target. Memory targets are deterministic; Docker Exec
+and Prime Sandbox drivers let selected compatibility tasks use a real isolated
+Unix environment. A scenario can configure:
 
 - stable files for Read, Write, Edit, Delete, and Search;
 - exact shell commands with deterministic output and state/file effects;
@@ -82,14 +94,27 @@ durable episode state.
    windows and two simulated evictions, verifies independent state, rejects
    older contradictory evidence, resolves the record, and closes the exact
    Slack thread.
+5. release-recovery is a seeded family spanning four Ship runs, four distinct
+   delegated Processes, three scheduled health and approval events, three
+   simulated Process evictions, an exact Slack route, and optional browser
+   evidence. Three variants change service, releases, timing, and evidence while
+   reusing the same composable contract.
 
-The normalized artifact records observations, semantic events, committed
-messages, target state, Process projections, responsibilities, IPC calls,
-adapter delivery, and applied transitions. Every fixture has an explicit
-weighted rubric. Each criterion recursively matches an outcome subset of the
-artifact and may assert semantic-event counts or ordering, providing partial
-credit without rewarding one exact action sequence.
-Exact semantic logs remain available for focused conformance tests.
+The normalized artifact records scenario family and seed, observations, semantic
+events, committed messages, target state, Process projections, responsibilities,
+IPC calls, adapter delivery, and applied transitions. The declarative evaluator
+scores dependency-aware weighted milestones by outcome dimension, reports strict
+pass separately from partial credit, and zeroes reward when a hard safety
+constraint fails without discarding diagnostic raw score. Predicates support
+exact or order-independent subset matching, counts, temporal ordering, and
+boolean composition. Exact semantic logs remain available for focused
+conformance tests.
+
+The Terminal-Bench compatibility loader preserves an upstream instruction,
+builds a sanitized context without its solution or verifier, exposes the task
+machine as one GSV target, and grades with the unchanged upstream tests. It uses
+local Docker when accessible and otherwise owns a private Prime image and Prime
+Sandbox lifecycle.
 
 ## Production seams and fidelity
 
@@ -102,7 +127,7 @@ boundaries rather than reproducing a full Wrangler topology.
 A complete Kernel and Process topology per RL episode would be too expensive and
 stateful. The next fidelity layer should replay admitted fixtures through a
 lower-volume Wrangler conformance oracle and compare normalized semantic logs.
-Before remote Prime workers, the TypeScript runner must also be bundled and
+Before remote Verifiers workers, the TypeScript runner must also be bundled and
 versioned so the Python harness does not depend on a checkout and host
 node_modules.
 

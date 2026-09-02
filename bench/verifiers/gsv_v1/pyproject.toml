@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "A thin Verifiers v1 adapter for deterministic GSV Process-surface rollouts."
 requires-python = ">=3.12,<3.14"
 dependencies = [
+  "pyyaml>=6.0.3,<7",
   "verifiers @ git+https://github.com/PrimeIntellect-ai/verifiers.git@71690b03861719026185e3db746bf4c371d05a90",
 ]
 

@@ -80,8 +80,9 @@ describe("GSV Process surface", () => {
 
   it("preserves one Process epoch across a logical-time wake and eviction", async () => {
     const scenario = parseGsvSurfaceScenario({
-      schemaVersion: 2,
+      schemaVersion: 3,
       id: "multi-run-wake",
+      seed: "multi-run-wake-001",
       description: "Resume one Process after an external state change.",
       systemPrompt: "Observe durable GSV events across runs.",
       prompt: "Wait for the monitor update, then report ready.",
@@ -98,6 +99,8 @@ describe("GSV Process surface", () => {
           gids: [1000],
           capabilities: ["shell.exec", "fs.read"],
         }],
+      },
+      components: {
         targets: [{
           id: "monitor",
           kind: "server",
@@ -107,28 +110,38 @@ describe("GSV Process surface", () => {
           implements: ["fs.read"],
           files: { "/status": "pending\n" },
         }],
-      },
-      transitions: [],
-      externalEvents: [{
-        id: "monitor-ready",
-        processId: "ship",
-        delayMs: 300_000,
-        content: "The monitor completed its next observation window.",
-        effects: [{
-          type: "target.file.write",
-          targetId: "monitor",
-          path: "/status",
-          content: "ready\n",
+        transitions: [],
+        events: [{
+          id: "monitor-ready",
+          processId: "ship",
+          delayMs: 300_000,
+          content: "The monitor completed its next observation window.",
+          effects: [{
+            type: "target.file.write",
+            targetId: "monitor",
+            path: "/status",
+            content: "ready\n",
+          }],
+          evictProcess: true,
         }],
-        evictProcess: true,
-      }],
-      expected: {},
-      rubric: [{
-        id: "complete",
-        description: "The resumed Process reports completion.",
-        weight: 1,
-        expected: {},
-      }],
+      },
+      evaluation: {
+        milestones: [{
+          id: "complete",
+          description: "The resumed Process reports completion.",
+          dimension: "outcome",
+          weight: 1,
+          requires: [],
+          requiredForStrict: true,
+          predicates: [{
+            type: "match",
+            path: "/status",
+            mode: "equals",
+            value: "yielded",
+          }],
+        }],
+        constraints: [],
+      },
       maxTurns: 2,
       maxRuns: 2,
     });
@@ -213,7 +226,7 @@ describe("GSV Process surface", () => {
 
   it("lets a bounded worker return ordinary assistant output", async () => {
     const scenario = await fixture("deploy-release-across-targets.json");
-    const kernel = SyntheticKernel.fromSpec(scenario.world);
+    const kernel = SyntheticKernel.fromSpec(scenario.world, scenario.components);
 
     const artifact = await runSyntheticProcess(
       kernel,
@@ -467,8 +480,9 @@ describe("GSV Process surface", () => {
 
   it("keeps long-run observations compact in the normalized artifact", async () => {
     const scenario = parseGsvSurfaceScenario({
-      schemaVersion: 2,
+      schemaVersion: 3,
       id: "compact-observations",
+      seed: "compact-observations-001",
       description: "Exercise a growing Process context without duplicating it.",
       systemPrompt: "Inspect the offered target repeatedly, then yield.",
       prompt: "Begin the inspection.",
@@ -485,6 +499,8 @@ describe("GSV Process surface", () => {
           gids: [1000],
           capabilities: ["fs.read", "shell.exec"],
         }],
+      },
+      components: {
         targets: [{
           id: "large-file",
           kind: "server",
@@ -494,15 +510,26 @@ describe("GSV Process surface", () => {
           implements: ["fs.read"],
           files: { "/sample": "x".repeat(4096) },
         }],
+        transitions: [],
+        events: [],
       },
-      transitions: [],
-      expected: {},
-      rubric: [{
-        id: "complete",
-        description: "The Process yields.",
-        weight: 1,
-        expected: {},
-      }],
+      evaluation: {
+        milestones: [{
+          id: "complete",
+          description: "The Process yields.",
+          dimension: "outcome",
+          weight: 1,
+          requires: [],
+          requiredForStrict: true,
+          predicates: [{
+            type: "match",
+            path: "/status",
+            mode: "equals",
+            value: "yielded",
+          }],
+        }],
+        constraints: [],
+      },
       maxTurns: 41,
     });
     let turn = 0;

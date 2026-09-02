@@ -64,6 +64,8 @@ export type SyntheticCommandSpec = {
 export type SyntheticTargetSpec = {
   id: string;
   kind: SyntheticTargetKind;
+  driver?: string;
+  driverConfig?: JsonObject;
   ownerUid: number;
   accessGids: number[];
   label?: string;
@@ -122,30 +124,70 @@ export type SyntheticWorldSpec = {
   };
   processes: SyntheticProcessSpec[];
   delegates?: SyntheticDelegateSpec[];
-  targets: SyntheticTargetSpec[];
   adapters?: SyntheticAdapterSpec[];
 };
 
-export type GsvRubricCriterion = {
-  id: string;
-  description: string;
-  weight: number;
-  expected: JsonObject;
-  assertions?: GsvRubricAssertion[];
+export type SyntheticScenarioComponents = {
+  targets: SyntheticTargetSpec[];
+  transitions: SyntheticTransitionSpec[];
+  events: SyntheticExternalEventSpec[];
 };
 
-export type GsvRubricAssertion =
+export type GsvEvaluationPredicate =
   | {
-    type: "log_count";
-    entry: JsonObject;
+    type: "match";
+    path: string;
+    mode?: "equals" | "subset";
+    value: JsonValue;
+  }
+  | {
+    type: "count";
+    path: string;
+    where?: JsonValue;
     min?: number;
     max?: number;
   }
   | {
-    type: "log_order";
-    before: JsonObject;
-    after: JsonObject;
+    type: "order";
+    path: string;
+    before: JsonValue;
+    after: JsonValue;
+  }
+  | {
+    type: "sequence";
+    path: string;
+    items: JsonValue[];
+  }
+  | {
+    type: "all" | "any";
+    predicates: GsvEvaluationPredicate[];
+  }
+  | {
+    type: "not";
+    predicate: GsvEvaluationPredicate;
   };
+
+export type GsvEvaluationMilestone = {
+  id: string;
+  description: string;
+  dimension: string;
+  weight: number;
+  requires: string[];
+  requiredForStrict: boolean;
+  predicates: GsvEvaluationPredicate[];
+};
+
+export type GsvEvaluationConstraint = {
+  id: string;
+  description: string;
+  severity: "hard" | "advisory";
+  predicate: GsvEvaluationPredicate;
+};
+
+export type GsvEvaluationSpec = {
+  milestones: GsvEvaluationMilestone[];
+  constraints: GsvEvaluationConstraint[];
+};
 
 export type GsvSemanticLogEntry =
   | {
@@ -201,19 +243,20 @@ export type GsvSemanticLogEntry =
   | { type: "run.returned"; processId: string; text: string };
 
 export type GsvSurfaceScenario = {
-  schemaVersion: 2;
+  schemaVersion: 3;
   id: string;
+  seed: string;
+  family: string;
+  tags: string[];
   description: string;
   systemPrompt: string;
   prompt: string;
   entryProcessId: string;
   entryRoute?: SyntheticAdapterRouteSpec;
   world: SyntheticWorldSpec;
-  transitions: SyntheticTransitionSpec[];
-  externalEvents: SyntheticExternalEventSpec[];
-  expected: JsonObject;
-  rubric: GsvRubricCriterion[];
-  expectedLog?: GsvSemanticLogEntry[];
+  components: SyntheticScenarioComponents;
+  groundTruth: JsonObject;
+  evaluation: GsvEvaluationSpec;
   maxTurns: number;
   maxRuns: number;
 };
@@ -231,6 +274,7 @@ export type GsvSurfaceObservation = {
 export type SyntheticTargetSnapshot = {
   id: string;
   kind: SyntheticTargetKind;
+  driver: string;
   ownerUid: number;
   accessGids: number[];
   label: string;
@@ -319,8 +363,10 @@ export type SyntheticRunSnapshot = {
 };
 
 export type GsvSurfaceArtifact = {
-  schemaVersion: 2;
+  schemaVersion: 3;
   scenarioId: string;
+  scenarioSeed: string;
+  scenarioFamily: string;
   entryProcessId: string;
   status: "yielded" | "returned" | "max_turns" | "invalid_action";
   committedMessages: string[];

@@ -27,6 +27,31 @@ export type SyntheticCapabilityCall =
   | "fs.search"
   | "shell.exec";
 
+export interface SyntheticTargetEnvironment {
+  readonly id: string;
+  readonly kind: SyntheticTargetKind;
+  readonly driver: string;
+  readonly ownerUid: number;
+  readonly label: string;
+  readonly description: string;
+  readonly platform: string;
+  readonly version: string;
+  readonly implements: string[];
+  isOnline(): boolean;
+  setOnline(online: boolean): void;
+  canAccess(uid: number, gids: readonly number[]): boolean;
+  canHandle(call: string): call is SyntheticCapabilityCall;
+  grantAccess(gid: number): void;
+  revokeAccess(gid: number): void;
+  setState(key: string, value: JsonValue): void;
+  writeFile(path: string, content: string): void;
+  invoke(
+    call: SyntheticCapabilityCall,
+    args: JsonObject,
+  ): Promise<SyntheticInvocationResult>;
+  snapshot(): SyntheticTargetSnapshot;
+}
+
 type EnvironmentDefaults = {
   label: string;
   description: string;
@@ -88,9 +113,10 @@ const shellArgsSchema = z.object({
   input: z.string(),
 }).passthrough();
 
-export class SyntheticCapabilityEnvironment {
+export class SyntheticCapabilityEnvironment implements SyntheticTargetEnvironment {
   readonly id: string;
   readonly kind: SyntheticTargetKind;
+  readonly driver: string;
   readonly ownerUid: number;
   readonly label: string;
   readonly description: string;
@@ -108,6 +134,7 @@ export class SyntheticCapabilityEnvironment {
     const defaults = TARGET_DEFAULTS[spec.kind];
     this.id = spec.id;
     this.kind = spec.kind;
+    this.driver = spec.driver ?? "memory";
     this.ownerUid = spec.ownerUid;
     this.label = spec.label ?? defaults.label;
     this.description = spec.description ?? defaults.description;
@@ -188,6 +215,7 @@ export class SyntheticCapabilityEnvironment {
     return {
       id: this.id,
       kind: this.kind,
+      driver: this.driver,
       ownerUid: this.ownerUid,
       accessGids: [...this.accessGids].sort((left, right) => left - right),
       label: this.label,

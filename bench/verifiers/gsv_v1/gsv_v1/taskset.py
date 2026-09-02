@@ -1,19 +1,30 @@
+import asyncio
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import verifiers.v1 as vf
 
+from gsv_v1.evaluation import evaluate_scenario, validate_evaluation
+from gsv_v1.families import load_scenarios
 from gsv_v1.harness import ARTIFACT_PATH, SCENARIO_PATH
+from gsv_v1.terminal_bench import (
+    grade_terminal_bench,
+    load_terminal_bench_scenarios,
+    start_terminal_bench,
+    stop_terminal_bench,
+)
 
 MAX_ARTIFACT_BYTES = 2 * 1024 * 1024
 
 
 class GsvData(vf.TaskData):
+    source: Literal["native", "terminal-bench"] = "native"
     scenario_id: str
     scenario: dict[str, Any]
-    expected: dict[str, Any]
-    rubric: list[dict[str, Any]]
+    evaluation: dict[str, Any]
+    terminal_task_dir: str | None = None
+    terminal_backend: Literal["auto", "docker", "prime"] = "auto"
 
 
 class GsvTask(vf.Task[GsvData]):
@@ -22,7 +33,6 @@ class GsvTask(vf.Task[GsvData]):
         return self.data.scenario_id
 
     async def setup(self, trace: vf.Trace, runtime: vf.Runtime) -> None:
-        del trace
         if not isinstance(self.data.prompt, str):
             raise TypeError("GSV surface scenarios require a string prompt")
         scenario = {
@@ -30,22 +40,62 @@ class GsvTask(vf.Task[GsvData]):
             "prompt": self.data.prompt,
             "systemPrompt": self.data.system_prompt,
         }
-        await runtime.write(
-            SCENARIO_PATH,
-            json.dumps(scenario, sort_keys=True).encode(),
-        )
+        if self.data.source == "terminal-bench":
+            if self.data.terminal_task_dir is None:
+                raise ValueError("Terminal-Bench task has no source directory")
+            scenario = await start_terminal_bench(
+                trace,
+                runtime,
+                scenario,
+                Path(self.data.terminal_task_dir),
+                self.data.terminal_backend,
+            )
+        try:
+            await runtime.write(
+                SCENARIO_PATH,
+                json.dumps(scenario, sort_keys=True).encode(),
+            )
+        except (Exception, asyncio.CancelledError):
+            if self.data.source == "terminal-bench":
+                await stop_terminal_bench(trace, runtime)
+            raise
 
     async def finalize(self, trace: vf.Trace, runtime: vf.Runtime) -> None:
-        raw = await runtime.read(ARTIFACT_PATH, max_bytes=MAX_ARTIFACT_BYTES)
-        artifact = json.loads(raw)
-        if not isinstance(artifact, dict) or artifact.get("schemaVersion") != 2:
-            raise ValueError("GSV runner returned an invalid artifact")
-        if artifact.get("scenarioId") != self.data.scenario_id:
-            raise ValueError("GSV runner artifact belongs to a different scenario")
-        trace.info["gsv"] = artifact
-        messages = artifact.get("committedMessages")
-        if isinstance(messages, list) and messages and isinstance(messages[-1], str):
-            trace.root_reply = messages[-1]
+        artifact_error: Exception | asyncio.CancelledError | None = None
+        try:
+            raw = await runtime.read(ARTIFACT_PATH, max_bytes=MAX_ARTIFACT_BYTES)
+            artifact = json.loads(raw)
+            if not isinstance(artifact, dict) or artifact.get("schemaVersion") != 3:
+                raise ValueError("GSV runner returned an invalid artifact")
+            if artifact.get("scenarioId") != self.data.scenario_id:
+                raise ValueError("GSV runner artifact belongs to a different scenario")
+            trace.info["gsv"] = artifact
+            messages = artifact.get("committedMessages")
+            if (
+                isinstance(messages, list)
+                and messages
+                and isinstance(messages[-1], str)
+            ):
+                trace.root_reply = messages[-1]
+        # Preserve any runtime/decoding failure while still owning target cleanup.
+        except (Exception, asyncio.CancelledError) as error:  # noqa: BLE001
+            artifact_error = error
+        if self.data.source == "terminal-bench":
+            if self.data.terminal_task_dir is None:
+                raise ValueError("Terminal-Bench task has no source directory")
+            try:
+                result = await grade_terminal_bench(
+                    trace, runtime, Path(self.data.terminal_task_dir)
+                )
+                trace.info["gsv_external"] = {"terminalBench": result}
+            except (Exception, asyncio.CancelledError) as grader_error:
+                if artifact_error is None:
+                    raise
+                artifact_error.add_note(
+                    f"Terminal-Bench grading or cleanup also failed: {grader_error}"
+                )
+        if artifact_error is not None:
+            raise artifact_error
 
     @vf.reward(weight=1.0)
     async def scenario_outcome(self, trace: vf.Trace) -> float:
@@ -53,174 +103,86 @@ class GsvTask(vf.Task[GsvData]):
         if not isinstance(artifact, dict):
             return 0.0
         if (
-            artifact.get("schemaVersion") != 2
+            artifact.get("schemaVersion") != 3
             or artifact.get("scenarioId") != self.data.scenario_id
         ):
             return 0.0
-        results = []
-        earned = 0.0
-        total = 0.0
-        for criterion in self.data.rubric:
-            weight = float(criterion["weight"])
-            expected_passed = matches_expected(artifact, criterion["expected"])
-            assertion_results = [
-                {
-                    "type": assertion["type"],
-                    "passed": matches_assertion(artifact, assertion),
-                }
-                for assertion in criterion.get("assertions", [])
-            ]
-            passed = expected_passed and all(
-                result["passed"] for result in assertion_results
-            )
-            total += weight
-            if passed:
-                earned += weight
-            result = {
-                "id": criterion["id"],
-                "description": criterion["description"],
-                "weight": weight,
-                "passed": passed,
-            }
-            if assertion_results:
-                result["assertions"] = assertion_results
-            results.append(result)
-        trace.info["gsv_rubric"] = results
-        return earned / total if total > 0 else 0.0
+        evaluation = evaluate_scenario(
+            self.data.evaluation,
+            artifact,
+            trace.info.get("gsv_external"),
+        )
+        trace.info["gsv_evaluation"] = evaluation
+        return float(evaluation["reward_score"])
 
 
 class GsvConfig(vf.TasksetConfig):
     scenario_path: Path | None = None
+    terminal_bench_path: Path | None = None
+    terminal_tasks: list[str] | None = None
+    terminal_backend: Literal["auto", "docker", "prime"] = "auto"
 
 
 class GsvTaskset(vf.Taskset[GsvTask, GsvConfig]):
     def load(self) -> list[GsvTask]:
+        if self.config.terminal_bench_path is not None:
+            if self.config.scenario_path is not None:
+                raise ValueError(
+                    "scenario_path and terminal_bench_path are mutually exclusive"
+                )
+            return self._load_terminal_bench()
         configured = self.config.scenario_path or (
-            Path(__file__).resolve().parent
-            / "fixtures"
+            Path(__file__).resolve().parent / "fixtures"
         )
-        paths = (
-            sorted(configured.glob("*.json"))
-            if configured.is_dir()
-            else [configured]
-        )
-        if not paths:
-            raise ValueError(f"No GSV scenarios found at {configured}")
         tasks: list[GsvTask] = []
-        for idx, path in enumerate(paths):
-            scenario = json.loads(path.read_text())
-            if scenario.get("schemaVersion") != 2:
-                raise ValueError(f"Scenario {path} does not use schemaVersion 2")
-            expected = scenario.get("expected")
-            if not isinstance(expected, dict):
-                raise TypeError(f"Scenario {path} has no expected object")
-            rubric = scenario.get("rubric")
-            if not isinstance(rubric, list) or not rubric:
-                raise TypeError(f"Scenario {path} has no rubric")
-            for criterion in rubric:
-                if (
-                    not isinstance(criterion, dict)
-                    or not isinstance(criterion.get("id"), str)
-                    or not isinstance(criterion.get("description"), str)
-                    or not isinstance(criterion.get("weight"), (int, float))
-                    or criterion["weight"] <= 0
-                    or not isinstance(criterion.get("expected"), dict)
-                ):
-                    raise TypeError(f"Scenario {path} has an invalid rubric criterion")
-                validate_assertions(path, criterion.get("assertions", []))
-            tasks.append(GsvTask(
-                GsvData(
-                    idx=idx,
-                    name=scenario["id"],
-                    description=scenario["description"],
-                    prompt=scenario["prompt"],
-                    system_prompt=scenario["systemPrompt"],
-                    scenario_id=scenario["id"],
-                    scenario=scenario,
-                    expected=expected,
-                    rubric=rubric,
-                ),
-                self.config.task,
-            ))
+        for idx, scenario in enumerate(load_scenarios(configured)):
+            evaluation = validate_evaluation(
+                scenario.get("evaluation"), f"scenario {scenario.get('id')}"
+            )
+            tasks.append(
+                GsvTask(
+                    GsvData(
+                        idx=idx,
+                        name=scenario["id"],
+                        description=scenario["description"],
+                        prompt=scenario["prompt"],
+                        system_prompt=scenario["systemPrompt"],
+                        scenario_id=scenario["id"],
+                        scenario=scenario,
+                        evaluation=evaluation,
+                    ),
+                    self.config.task,
+                )
+            )
         return tasks
 
-
-def matches_expected(actual: object, expected: object) -> bool:
-    if isinstance(expected, dict):
-        return isinstance(actual, dict) and all(
-            key in actual and matches_expected(actual[key], value)
-            for key, value in expected.items()
-        )
-    if isinstance(expected, list):
-        return (
-            isinstance(actual, list)
-            and len(actual) == len(expected)
-            and all(
-                matches_expected(actual_item, expected_item)
-                for actual_item, expected_item in zip(actual, expected, strict=True)
+    def _load_terminal_bench(self) -> list[GsvTask]:
+        assert self.config.terminal_bench_path is not None
+        tasks = []
+        for idx, (scenario, task_dir) in enumerate(
+            load_terminal_bench_scenarios(
+                self.config.terminal_bench_path, self.config.terminal_tasks
             )
-        )
-    return actual == expected
-
-
-def validate_assertions(path: Path, assertions: object) -> None:
-    if not isinstance(assertions, list):
-        raise TypeError(f"Scenario {path} has invalid rubric assertions")
-    for assertion in assertions:
-        if not isinstance(assertion, dict):
-            raise TypeError(f"Scenario {path} has an invalid rubric assertion")
-        assertion_type = assertion.get("type")
-        if assertion_type == "log_count":
-            minimum = assertion.get("min")
-            maximum = assertion.get("max")
-            if (
-                not isinstance(assertion.get("entry"), dict)
-                or (minimum is None and maximum is None)
-                or (minimum is not None and not is_nonnegative_int(minimum))
-                or (maximum is not None and not is_nonnegative_int(maximum))
-                or (
-                    isinstance(minimum, int)
-                    and isinstance(maximum, int)
-                    and minimum > maximum
+        ):
+            evaluation = validate_evaluation(
+                scenario["evaluation"], f"Terminal-Bench task {task_dir.name}"
+            )
+            tasks.append(
+                GsvTask(
+                    GsvData(
+                        idx=idx,
+                        name=scenario["id"],
+                        description=scenario["description"],
+                        prompt=scenario["prompt"],
+                        system_prompt=scenario["systemPrompt"],
+                        source="terminal-bench",
+                        scenario_id=scenario["id"],
+                        scenario=scenario,
+                        evaluation=evaluation,
+                        terminal_task_dir=str(task_dir),
+                        terminal_backend=self.config.terminal_backend,
+                    ),
+                    self.config.task,
                 )
-            ):
-                raise TypeError(f"Scenario {path} has an invalid log_count assertion")
-            continue
-        if assertion_type == "log_order":
-            if not isinstance(assertion.get("before"), dict) or not isinstance(
-                assertion.get("after"), dict
-            ):
-                raise TypeError(f"Scenario {path} has an invalid log_order assertion")
-            continue
-        raise TypeError(f"Scenario {path} has an unknown rubric assertion")
-
-
-def matches_assertion(artifact: dict[str, Any], assertion: dict[str, Any]) -> bool:
-    log = artifact.get("log")
-    if not isinstance(log, list):
-        return False
-    assertion_type = assertion.get("type")
-    if assertion_type == "log_count":
-        count = sum(matches_expected(entry, assertion["entry"]) for entry in log)
-        minimum = assertion.get("min")
-        maximum = assertion.get("max")
-        return (minimum is None or count >= minimum) and (
-            maximum is None or count <= maximum
-        )
-    if assertion_type == "log_order":
-        before = [
-            index
-            for index, entry in enumerate(log)
-            if matches_expected(entry, assertion["before"])
-        ]
-        after = [
-            index
-            for index, entry in enumerate(log)
-            if matches_expected(entry, assertion["after"])
-        ]
-        return any(left < right for left in before for right in after)
-    return False
-
-
-def is_nonnegative_int(value: object) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+            )
+        return tasks
