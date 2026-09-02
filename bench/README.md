@@ -10,6 +10,7 @@ through the real Verifiers interception endpoint.
 
 ## Reports
 
+- [2026-09-02 stateful release-recovery evaluation](reports/2026-09-02-stateful-release-recovery-evaluation.md)
 - [2026-09-02 current model evaluation](reports/2026-09-02-model-evaluation.md)
 
 ## Runtime ownership
