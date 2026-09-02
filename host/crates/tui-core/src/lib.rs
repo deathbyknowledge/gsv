@@ -89,6 +89,38 @@ pub struct CapabilityEnvironment {
     pub cwd: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileEntry {
+    pub name: String,
+    pub path: String,
+    pub is_directory: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileReference {
+    pub target: String,
+    pub path: String,
+    pub revision: String,
+    pub content_type: String,
+    pub size: u64,
+    pub filename: String,
+}
+
+impl FileReference {
+    fn artifact(&self) -> Artifact {
+        Artifact {
+            kind: media_kind_from_content_type(&self.content_type),
+            mime_type: self.content_type.clone(),
+            filename: Some(self.filename.clone()),
+            size: Some(self.size),
+            duration_ms: None,
+            transcription: None,
+            source: Some(format!("{}:{}", self.target, self.path)),
+            revision: Some(self.revision.clone()),
+        }
+    }
+}
+
 impl CapabilityEnvironment {
     pub fn new(target: impl Into<String>, label: impl Into<String>) -> Self {
         Self {
@@ -205,6 +237,7 @@ pub enum Action {
     MoveCursorHome,
     MoveCursorEnd,
     Newline,
+    OpenFiles,
     Submit,
     BeginCompose,
     Escape,
@@ -242,6 +275,7 @@ pub enum Effect {
         text: String,
         target: String,
         cwd: Option<String>,
+        references: Vec<FileReference>,
     },
     Shell {
         id: u64,
@@ -251,6 +285,17 @@ pub enum Effect {
     },
     OpenArtifact {
         artifact: Artifact,
+    },
+    BrowseFiles {
+        request_id: u64,
+        target: String,
+        directory: String,
+    },
+    ResolveFile {
+        request_id: u64,
+        target: String,
+        path: String,
+        filename: String,
     },
     Abort,
     DecideApproval {
@@ -266,12 +311,14 @@ struct PendingSubmission {
     id: u64,
     text: String,
     execution: ExecutionMode,
+    references: Vec<DraftReference>,
 }
 
 #[derive(Clone, Debug)]
 struct CommandHistoryEntry {
     text: String,
     execution: ExecutionMode,
+    references: Vec<DraftReference>,
 }
 
 #[derive(Clone, Debug)]
@@ -279,6 +326,27 @@ struct DraftSnapshot {
     text: String,
     cursor: usize,
     execution: ExecutionMode,
+    references: Vec<DraftReference>,
+}
+
+#[derive(Clone, Debug)]
+struct DraftReference {
+    start: usize,
+    end: usize,
+    reference: FileReference,
+}
+
+#[derive(Debug)]
+struct FilePicker {
+    request_id: u64,
+    target: String,
+    insertion: usize,
+    directory: String,
+    query: String,
+    choice: usize,
+    entries: Vec<FileEntry>,
+    loading: bool,
+    error: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -340,6 +408,7 @@ pub struct App {
     pending_scroll_direction: Option<ScrollDirection>,
     draft: String,
     draft_cursor: usize,
+    draft_references: Vec<DraftReference>,
     draft_visible: bool,
     command_history: Vec<CommandHistoryEntry>,
     history_position: Option<usize>,
@@ -358,6 +427,8 @@ pub struct App {
     environment_picker: bool,
     environment_query: String,
     environment_choice: usize,
+    file_picker: Option<FilePicker>,
+    next_file_request_id: u64,
     theme: Theme,
     raw_markdown: bool,
     vim_enabled: bool,
@@ -382,6 +453,7 @@ impl App {
             pending_scroll_direction: None,
             draft: String::new(),
             draft_cursor: 0,
+            draft_references: Vec::new(),
             draft_visible: true,
             command_history: Vec::new(),
             history_position: None,
@@ -400,6 +472,8 @@ impl App {
             environment_picker: false,
             environment_query: String::new(),
             environment_choice: 0,
+            file_picker: None,
+            next_file_request_id: 1,
             theme: Theme::Gsv,
             raw_markdown: false,
             vim_enabled: false,
@@ -441,7 +515,7 @@ impl App {
         if self.approval.is_some() || self.help_visible || self.media_expanded {
             return false;
         }
-        if self.environment_picker {
+        if self.environment_picker || self.file_picker.is_some() {
             return true;
         }
         self.draft_visible
@@ -461,6 +535,10 @@ impl App {
 
     pub fn environment_picker_visible(&self) -> bool {
         self.environment_picker
+    }
+
+    pub fn completion_picker_visible(&self) -> bool {
+        self.environment_picker || self.file_picker.is_some()
     }
 
     pub fn active_environment(&self) -> &CapabilityEnvironment {
@@ -547,6 +625,7 @@ impl App {
             .map(|moment| CommandHistoryEntry {
                 text: moment.text.clone(),
                 execution: moment.execution,
+                references: draft_references_from_artifacts(&moment.text, &moment.artifacts),
             })
             .collect();
         if self.command_history.len() > MAX_COMMAND_HISTORY {
@@ -591,6 +670,10 @@ impl App {
                 Action::Quit => vec![Effect::Quit],
                 _ => Vec::new(),
             };
+        }
+
+        if self.file_picker.is_some() {
+            return self.dispatch_file_picker(action);
         }
 
         if self.environment_picker {
@@ -668,7 +751,10 @@ impl App {
                     return Vec::new();
                 }
                 self.reset_history_navigation();
-                if value == "@" && self.draft.is_empty() {
+                if value == "@"
+                    && self.execution_mode == ExecutionMode::Ship
+                    && self.draft.is_empty()
+                {
                     self.environment_picker = true;
                     self.environment_query.clear();
                     self.environment_choice = self
@@ -679,30 +765,30 @@ impl App {
                     self.draft_visible = true;
                     return Vec::new();
                 }
+                if value == "@"
+                    && self.execution_mode == ExecutionMode::Ship
+                    && self.file_reference_can_begin_here()
+                {
+                    return self.open_file_picker();
+                }
                 self.media_expanded = false;
                 self.draft_visible = true;
                 self.follow_latest = true;
-                self.draft.insert_str(self.draft_cursor, &value);
-                self.draft_cursor += value.len();
+                self.insert_draft_text(&value);
                 Vec::new()
             }
             Action::Backspace => {
                 self.reset_history_navigation();
                 self.draft_visible = true;
                 self.follow_latest = true;
-                if let Some(previous) = previous_grapheme_boundary(&self.draft, self.draft_cursor) {
-                    self.draft.drain(previous..self.draft_cursor);
-                    self.draft_cursor = previous;
-                }
+                self.backspace_draft();
                 Vec::new()
             }
             Action::Delete => {
                 self.reset_history_navigation();
                 self.draft_visible = true;
                 self.follow_latest = true;
-                if let Some(next) = next_grapheme_boundary(&self.draft, self.draft_cursor) {
-                    self.draft.drain(self.draft_cursor..next);
-                }
+                self.delete_draft();
                 Vec::new()
             }
             Action::DeleteWord => {
@@ -714,20 +800,41 @@ impl App {
                 let word_start = trimmed.rfind(char::is_whitespace).map_or(0, |index| {
                     index + trimmed[index..].chars().next().map_or(0, char::len_utf8)
                 });
-                self.draft.drain(word_start..self.draft_cursor);
+                let word_start = self
+                    .draft_references
+                    .iter()
+                    .filter(|reference| {
+                        reference.start < self.draft_cursor && reference.end > word_start
+                    })
+                    .map(|reference| reference.start)
+                    .min()
+                    .unwrap_or(word_start);
+                self.delete_draft_range(word_start, self.draft_cursor);
                 self.draft_cursor = word_start;
                 Vec::new()
             }
             Action::MoveCursorLeft => {
-                if let Some(previous) = previous_grapheme_boundary(&self.draft, self.draft_cursor) {
-                    self.draft_cursor = previous;
-                }
+                self.draft_cursor = self
+                    .draft_references
+                    .iter()
+                    .find(|reference| {
+                        reference.start < self.draft_cursor && reference.end >= self.draft_cursor
+                    })
+                    .map(|reference| reference.start)
+                    .or_else(|| previous_grapheme_boundary(&self.draft, self.draft_cursor))
+                    .unwrap_or(self.draft_cursor);
                 Vec::new()
             }
             Action::MoveCursorRight => {
-                if let Some(next) = next_grapheme_boundary(&self.draft, self.draft_cursor) {
-                    self.draft_cursor = next;
-                }
+                self.draft_cursor = self
+                    .draft_references
+                    .iter()
+                    .find(|reference| {
+                        reference.start <= self.draft_cursor && reference.end > self.draft_cursor
+                    })
+                    .map(|reference| reference.end)
+                    .or_else(|| next_grapheme_boundary(&self.draft, self.draft_cursor))
+                    .unwrap_or(self.draft_cursor);
                 Vec::new()
             }
             Action::MoveCursorHome => {
@@ -746,10 +853,10 @@ impl App {
                 self.reset_history_navigation();
                 self.draft_visible = true;
                 self.follow_latest = true;
-                self.draft.insert(self.draft_cursor, '\n');
-                self.draft_cursor += 1;
+                self.insert_draft_text("\n");
                 Vec::new()
             }
+            Action::OpenFiles => self.open_file_picker(),
             Action::Submit => {
                 if self.draft.is_empty() {
                     self.begin_submission()
@@ -850,6 +957,9 @@ impl App {
             }
             Action::ToggleShell => {
                 self.reset_history_navigation();
+                if !self.draft_references.is_empty() {
+                    return Vec::new();
+                }
                 self.execution_mode = match self.execution_mode {
                     ExecutionMode::Ship => ExecutionMode::Shell,
                     ExecutionMode::Shell => ExecutionMode::Ship,
@@ -869,6 +979,346 @@ impl App {
         }
     }
 
+    fn dispatch_file_picker(&mut self, action: Action) -> Vec<Effect> {
+        match action {
+            Action::Insert(value) => {
+                let value = sanitize_draft_input(&value);
+                if let Some(picker) = self.file_picker.as_mut() {
+                    if !value.is_empty() {
+                        picker.query.push_str(&value);
+                        picker.choice = 0;
+                    }
+                }
+                Vec::new()
+            }
+            Action::Backspace | Action::Delete => {
+                let Some(picker) = self.file_picker.as_mut() else {
+                    return Vec::new();
+                };
+                if let Some(previous) =
+                    previous_grapheme_boundary(&picker.query, picker.query.len())
+                {
+                    picker.query.truncate(previous);
+                    picker.choice = 0;
+                } else {
+                    self.file_picker = None;
+                }
+                Vec::new()
+            }
+            Action::PreviousChoice | Action::PreviousTurn | Action::ScrollUp => {
+                let count = self.matching_file_entries().len();
+                if let Some(picker) = self.file_picker.as_mut() {
+                    if count > 0 {
+                        picker.choice = picker
+                            .choice
+                            .checked_sub(1)
+                            .unwrap_or(count.saturating_sub(1));
+                    }
+                }
+                Vec::new()
+            }
+            Action::NextChoice | Action::NextTurn | Action::ScrollDown => {
+                let count = self.matching_file_entries().len();
+                if let Some(picker) = self.file_picker.as_mut() {
+                    if count > 0 {
+                        picker.choice = (picker.choice + 1) % count;
+                    }
+                }
+                Vec::new()
+            }
+            Action::Submit => self.select_file_choice(),
+            Action::OpenFiles => {
+                self.file_picker = None;
+                self.open_file_picker()
+            }
+            Action::Escape => {
+                self.file_picker = None;
+                Vec::new()
+            }
+            Action::Quit => vec![Effect::Quit],
+            _ => Vec::new(),
+        }
+    }
+
+    fn file_reference_can_begin_here(&self) -> bool {
+        !self.draft.is_empty()
+            && (self.draft_cursor == 0
+                || self.draft[..self.draft_cursor]
+                    .chars()
+                    .next_back()
+                    .is_some_and(char::is_whitespace))
+    }
+
+    fn open_file_picker(&mut self) -> Vec<Effect> {
+        if self.execution_mode != ExecutionMode::Ship {
+            return Vec::new();
+        }
+        self.close_environment_picker();
+        let request_id = self.next_file_request_id;
+        self.next_file_request_id = self.next_file_request_id.saturating_add(1);
+        let environment = self.active_environment().clone();
+        let directory = environment
+            .cwd
+            .clone()
+            .filter(|cwd| !cwd.trim().is_empty())
+            .unwrap_or_else(|| "~".to_string());
+        self.file_picker = Some(FilePicker {
+            request_id,
+            target: environment.target.clone(),
+            insertion: self.draft_cursor,
+            directory: directory.clone(),
+            query: String::new(),
+            choice: 0,
+            entries: Vec::new(),
+            loading: true,
+            error: None,
+        });
+        self.draft_visible = true;
+        self.follow_latest = true;
+        self.media_expanded = false;
+        vec![Effect::BrowseFiles {
+            request_id,
+            target: environment.target,
+            directory,
+        }]
+    }
+
+    fn select_file_choice(&mut self) -> Vec<Effect> {
+        let matches = self.matching_file_entries();
+        let Some(picker) = self.file_picker.as_ref() else {
+            return Vec::new();
+        };
+        let loading = picker.loading;
+        let choice = picker.choice;
+        let request_id = picker.request_id;
+        let target = picker.target.clone();
+        if loading {
+            return Vec::new();
+        }
+        let Some(entry) = matches
+            .get(choice.min(matches.len().saturating_sub(1)))
+            .cloned()
+        else {
+            return Vec::new();
+        };
+        if entry.is_directory {
+            let request_id = self.next_file_request_id;
+            self.next_file_request_id = self.next_file_request_id.saturating_add(1);
+            if let Some(picker) = self.file_picker.as_mut() {
+                picker.request_id = request_id;
+                picker.directory.clone_from(&entry.path);
+                picker.query.clear();
+                picker.choice = 0;
+                picker.entries.clear();
+                picker.loading = true;
+                picker.error = None;
+            }
+            return vec![Effect::BrowseFiles {
+                request_id,
+                target,
+                directory: entry.path,
+            }];
+        }
+        if let Some(picker) = self.file_picker.as_mut() {
+            picker.loading = true;
+            picker.error = None;
+        }
+        vec![Effect::ResolveFile {
+            request_id,
+            target,
+            path: entry.path,
+            filename: entry.name,
+        }]
+    }
+
+    pub fn file_listing_loaded(
+        &mut self,
+        request_id: u64,
+        directory: String,
+        mut entries: Vec<FileEntry>,
+    ) {
+        let Some(picker) = self.file_picker.as_mut() else {
+            return;
+        };
+        if picker.request_id != request_id {
+            return;
+        }
+        entries.sort_by(|left, right| {
+            right
+                .is_directory
+                .cmp(&left.is_directory)
+                .then_with(|| {
+                    left.name
+                        .to_ascii_lowercase()
+                        .cmp(&right.name.to_ascii_lowercase())
+                })
+                .then_with(|| left.name.cmp(&right.name))
+        });
+        picker.directory = directory;
+        picker.entries = entries;
+        picker.choice = 0;
+        picker.loading = false;
+        picker.error = None;
+    }
+
+    pub fn file_picker_failed(&mut self, request_id: u64, error: impl Into<String>) {
+        let Some(picker) = self.file_picker.as_mut() else {
+            return;
+        };
+        if picker.request_id != request_id {
+            return;
+        }
+        picker.loading = false;
+        picker.error = Some(sanitize_label(
+            &error.into(),
+            "could not read this directory",
+            160,
+        ));
+    }
+
+    pub fn file_reference_resolved(&mut self, request_id: u64, reference: FileReference) {
+        let Some(picker) = self.file_picker.as_ref() else {
+            return;
+        };
+        if picker.request_id != request_id {
+            return;
+        }
+        let insertion = picker.insertion.min(self.draft.len());
+        self.file_picker = None;
+        self.insert_file_reference(insertion, reference);
+    }
+
+    fn matching_file_entries(&self) -> Vec<FileEntry> {
+        let Some(picker) = self.file_picker.as_ref() else {
+            return Vec::new();
+        };
+        let query = picker.query.trim().to_ascii_lowercase();
+        let parent = (query.is_empty())
+            .then(|| unix_parent(&picker.directory))
+            .flatten()
+            .map(|path| FileEntry {
+                name: "..".to_string(),
+                path,
+                is_directory: true,
+            });
+        parent
+            .into_iter()
+            .chain(
+                picker
+                    .entries
+                    .iter()
+                    .filter(|entry| {
+                        query.is_empty()
+                            || entry.name.to_ascii_lowercase().contains(&query)
+                            || entry.path.to_ascii_lowercase().contains(&query)
+                    })
+                    .cloned(),
+            )
+            .collect()
+    }
+
+    fn insert_file_reference(&mut self, insertion: usize, reference: FileReference) {
+        let token = reference_token(&reference);
+        let needs_leading_space = insertion > 0
+            && self.draft[..insertion]
+                .chars()
+                .next_back()
+                .is_some_and(|character| !character.is_whitespace());
+        let needs_trailing_space = insertion < self.draft.len()
+            && self.draft[insertion..]
+                .chars()
+                .next()
+                .is_some_and(|character| !character.is_whitespace());
+        let leading = if needs_leading_space { " " } else { "" };
+        let trailing = if needs_trailing_space { " " } else { "" };
+        let inserted = format!("{leading}{token}{trailing}");
+        self.draft_cursor = insertion;
+        self.insert_draft_text(&inserted);
+        let start = insertion + leading.len();
+        self.draft_references.push(DraftReference {
+            start,
+            end: start + token.len(),
+            reference,
+        });
+        self.draft_references
+            .sort_by_key(|reference| reference.start);
+    }
+
+    fn insert_draft_text(&mut self, value: &str) {
+        if value.is_empty() {
+            return;
+        }
+        let cursor = self.draft_cursor;
+        self.draft_references.retain_mut(|reference| {
+            if cursor > reference.start && cursor < reference.end {
+                return false;
+            }
+            if reference.start >= cursor {
+                reference.start = reference.start.saturating_add(value.len());
+                reference.end = reference.end.saturating_add(value.len());
+            }
+            true
+        });
+        self.draft.insert_str(cursor, value);
+        self.draft_cursor = cursor.saturating_add(value.len());
+    }
+
+    fn backspace_draft(&mut self) {
+        if let Some(reference) = self
+            .draft_references
+            .iter()
+            .find(|reference| {
+                reference.start < self.draft_cursor && reference.end >= self.draft_cursor
+            })
+            .cloned()
+        {
+            self.delete_draft_range(reference.start, reference.end);
+            self.draft_cursor = reference.start;
+            return;
+        }
+        if let Some(previous) = previous_grapheme_boundary(&self.draft, self.draft_cursor) {
+            self.delete_draft_range(previous, self.draft_cursor);
+            self.draft_cursor = previous;
+        }
+    }
+
+    fn delete_draft(&mut self) {
+        if let Some(reference) = self
+            .draft_references
+            .iter()
+            .find(|reference| {
+                reference.start <= self.draft_cursor && reference.end > self.draft_cursor
+            })
+            .cloned()
+        {
+            self.delete_draft_range(reference.start, reference.end);
+            self.draft_cursor = reference.start;
+            return;
+        }
+        if let Some(next) = next_grapheme_boundary(&self.draft, self.draft_cursor) {
+            self.delete_draft_range(self.draft_cursor, next);
+        }
+    }
+
+    fn delete_draft_range(&mut self, start: usize, end: usize) {
+        if start >= end || end > self.draft.len() {
+            return;
+        }
+        let removed = end - start;
+        self.draft_references.retain_mut(|reference| {
+            if reference.end <= start {
+                return true;
+            }
+            if reference.start >= end {
+                reference.start -= removed;
+                reference.end -= removed;
+                return true;
+            }
+            false
+        });
+        self.draft.drain(start..end);
+    }
+
     fn begin_submission(&mut self) -> Option<Effect> {
         if self.pending_submission.is_some() || self.draft.trim().is_empty() {
             return None;
@@ -878,19 +1328,31 @@ impl App {
         self.next_submission_id = self.next_submission_id.saturating_add(1);
         let execution = self.execution_mode;
         let text = std::mem::take(&mut self.draft);
+        let references = std::mem::take(&mut self.draft_references);
+        let resource_references = references
+            .iter()
+            .map(|reference| reference.reference.clone())
+            .collect::<Vec<_>>();
         self.draft_cursor = 0;
         self.draft_visible = true;
-        self.record_command(text.clone(), execution);
+        self.record_command(text.clone(), execution, references.clone());
         self.reset_history_navigation();
         self.pending_submission = Some(PendingSubmission {
             id,
             text: text.clone(),
             execution,
+            references: references.clone(),
         });
         self.moments.push(
             Moment::complete(format!("local:user:{id}"), Role::Human, text.clone())
                 .with_environment(self.active_environment().clone())
-                .with_execution(execution),
+                .with_execution(execution)
+                .with_artifacts(
+                    resource_references
+                        .iter()
+                        .map(FileReference::artifact)
+                        .collect(),
+                ),
         );
         self.moments.push(Moment {
             id: match execution {
@@ -930,6 +1392,7 @@ impl App {
                 text,
                 target: environment.target,
                 cwd: environment.cwd,
+                references: resource_references,
             }),
             ExecutionMode::Shell => {
                 self.active_shell = Some(id);
@@ -990,6 +1453,7 @@ impl App {
         }
         if self.draft.is_empty() {
             self.draft = pending.text;
+            self.draft_references = pending.references;
             self.draft_cursor = self.draft.len();
             self.draft_visible = true;
         }
@@ -1234,7 +1698,8 @@ impl App {
             }
         }
         if role == Role::Human {
-            self.record_command(text.clone(), ExecutionMode::Ship);
+            let references = draft_references_from_artifacts(&text, &artifacts);
+            self.record_command(text.clone(), ExecutionMode::Ship, references);
         }
         self.moments.push(Moment {
             id,
@@ -1381,12 +1846,20 @@ impl App {
         }
     }
 
-    fn record_command(&mut self, text: String, execution: ExecutionMode) {
+    fn record_command(
+        &mut self,
+        text: String,
+        execution: ExecutionMode,
+        references: Vec<DraftReference>,
+    ) {
         if text.trim().is_empty() {
             return;
         }
-        self.command_history
-            .push(CommandHistoryEntry { text, execution });
+        self.command_history.push(CommandHistoryEntry {
+            text,
+            execution,
+            references,
+        });
         if self.command_history.len() > MAX_COMMAND_HISTORY {
             self.command_history.remove(0);
         }
@@ -1408,6 +1881,7 @@ impl App {
                     text: self.draft.clone(),
                     cursor: self.draft_cursor,
                     execution: self.execution_mode,
+                    references: self.draft_references.clone(),
                 });
                 self.command_history.len() - 1
             }
@@ -1430,9 +1904,11 @@ impl App {
             text: String::new(),
             cursor: 0,
             execution: self.execution_mode,
+            references: Vec::new(),
         });
         self.history_position = None;
         self.draft = snapshot.text;
+        self.draft_references = snapshot.references;
         self.draft_cursor = snapshot.cursor.min(self.draft.len());
         self.execution_mode = snapshot.execution;
         self.draft_visible = true;
@@ -1445,6 +1921,7 @@ impl App {
             return;
         };
         self.draft.clone_from(&entry.text);
+        self.draft_references.clone_from(&entry.references);
         self.draft_cursor = self.draft.len();
         self.execution_mode = entry.execution;
         self.draft_visible = true;
@@ -1695,9 +2172,6 @@ impl App {
         if let Some(approval) = &self.approval {
             self.last_max_scroll = 0;
             render_approval(frame, canvas, approval, palette);
-        } else if self.environment_picker {
-            self.last_max_scroll = 0;
-            self.render_environment_picker(frame, canvas, cursor_phase);
         } else {
             self.render_transcript(frame, canvas, cursor_phase);
         }
@@ -1765,16 +2239,19 @@ impl App {
             return;
         }
 
-        let show_prompt = self.draft_visible || self.follow_latest;
+        let show_prompt =
+            self.draft_visible || self.follow_latest || self.completion_picker_visible();
         let mut prompt = show_prompt.then(|| {
+            let (draft, cursor, style_ranges) = self.visible_draft(palette);
             let mut prompt = prompted_text_lines(
                 self.input_prompt(self.active_environment(), self.execution_mode),
-                &self.draft,
+                &draft,
                 area.width,
                 Style::new().fg(palette.foreground),
-                Some(self.draft_cursor),
+                &style_ranges,
+                Some(cursor),
             );
-            if self.draft.is_empty() {
+            if draft.is_empty() {
                 if let Some(line) = prompt.lines.first_mut() {
                     line.spans.push(Span::styled(
                         match self.execution_mode {
@@ -1831,7 +2308,45 @@ impl App {
             } else {
                 moment.role.color(palette)
             };
+            let in_selected_turn = (turn_start..=turn_end).contains(&index);
+            let artifact_focus = moment
+                .artifacts
+                .iter()
+                .map(|_| {
+                    if in_selected_turn {
+                        let focused = selected_artifact_index == self.media_focus;
+                        selected_artifact_index = selected_artifact_index.saturating_add(1);
+                        focused
+                    } else {
+                        false
+                    }
+                })
+                .collect::<Vec<_>>();
+            let inline_artifacts = if moment.role == Role::Human {
+                inline_artifact_occurrences(body, &moment.artifacts)
+            } else {
+                vec![None; moment.artifacts.len()]
+            };
+            let inline_styles = inline_artifacts
+                .iter()
+                .zip(&artifact_focus)
+                .filter_map(|(occurrence, focused)| {
+                    occurrence.map(|(start, end)| TextStyleRange {
+                        start,
+                        end,
+                        style: Style::new()
+                            .fg(palette.path)
+                            .add_modifier(Modifier::UNDERLINED)
+                            .add_modifier(if *focused {
+                                Modifier::BOLD
+                            } else {
+                                Modifier::empty()
+                            }),
+                    })
+                })
+                .collect::<Vec<_>>();
             let mut has_content = !body.is_empty();
+            let body_top = document_height;
             if has_content {
                 let body_lines = match moment.role {
                     Role::Human => {
@@ -1844,6 +2359,7 @@ impl App {
                             body,
                             area.width,
                             Style::new().fg(body_color),
+                            &inline_styles,
                             None,
                         )
                         .lines
@@ -1863,9 +2379,23 @@ impl App {
                 };
                 push_transcript_text(&mut blocks, &mut document_height, body_lines, area.width);
             }
+            if inline_artifacts
+                .iter()
+                .zip(&artifact_focus)
+                .any(|(occurrence, focused)| occurrence.is_some() && *focused)
+            {
+                focused_media_range = Some((body_top, document_height));
+            }
 
-            let in_selected_turn = (turn_start..=turn_end).contains(&index);
-            for artifact in &moment.artifacts {
+            for ((artifact, inline), focused) in moment
+                .artifacts
+                .iter()
+                .zip(inline_artifacts)
+                .zip(artifact_focus)
+            {
+                if inline.is_some() {
+                    continue;
+                }
                 if has_content {
                     push_transcript_text(
                         &mut blocks,
@@ -1874,13 +2404,6 @@ impl App {
                         area.width,
                     );
                 }
-                let focused = if in_selected_turn {
-                    let focused = selected_artifact_index == self.media_focus;
-                    selected_artifact_index = selected_artifact_index.saturating_add(1);
-                    focused
-                } else {
-                    false
-                };
                 let top = document_height;
                 if artifact.kind == MediaKind::Image && image_height > 0 {
                     blocks.push(TranscriptBlock::Image {
@@ -2037,71 +2560,177 @@ impl App {
                     frame.set_cursor_position(Position::new(cursor_x, cursor_y));
                 }
             }
+            self.render_completion_picker(frame, area, prompt_area);
         }
     }
 
-    fn render_environment_picker(&self, frame: &mut Frame<'_>, area: Rect, cursor_phase: bool) {
-        let palette = self.theme.palette();
-        let query = format!("@{}", self.environment_query);
-        let mut prompt = prompted_text_lines(
-            self.input_prompt(self.active_environment(), self.execution_mode),
-            &query,
-            area.width,
-            Style::new().fg(palette.foreground),
-            Some(query.len()),
-        );
-        prompt.lines.push(Line::default());
-        let matches = self.matching_environment_indices();
-        for (choice, index) in matches.iter().copied().enumerate() {
-            let environment = &self.environments[index];
-            let selected = choice == self.environment_choice.min(matches.len().saturating_sub(1));
-            let marker = if selected { "› " } else { "  " };
-            let target = prompt_token(&environment.target, "target");
-            let label = sanitize_label(&environment.label, &target, 80);
-            let mut spans = vec![Span::styled(
-                format!("{marker}{target}"),
-                Style::new()
-                    .fg(if selected {
-                        palette.accent
-                    } else {
-                        palette.foreground
-                    })
-                    .add_modifier(if selected {
-                        Modifier::BOLD
-                    } else {
-                        Modifier::empty()
-                    }),
-            )];
-            if label != target {
-                spans.push(Span::styled(
-                    format!("  {label}"),
-                    Style::new().fg(palette.muted),
-                ));
+    fn visible_draft(&self, palette: Palette) -> (String, usize, Vec<TextStyleRange>) {
+        if self.environment_picker {
+            let value = format!("@{}", self.environment_query);
+            let end = value.len();
+            return (
+                value,
+                end,
+                vec![TextStyleRange {
+                    start: 0,
+                    end,
+                    style: Style::new().fg(palette.accent).add_modifier(Modifier::BOLD),
+                }],
+            );
+        }
+
+        let mut value = self.draft.clone();
+        let mut ranges = self
+            .draft_references
+            .iter()
+            .map(|reference| TextStyleRange {
+                start: reference.start,
+                end: reference.end,
+                style: Style::new()
+                    .fg(palette.path)
+                    .add_modifier(Modifier::UNDERLINED),
+            })
+            .collect::<Vec<_>>();
+        let mut cursor = self.draft_cursor;
+        if let Some(picker) = &self.file_picker {
+            let insertion = picker.insertion.min(value.len());
+            let completion = format!("@{}", picker.query);
+            let completion_len = completion.len();
+            for range in &mut ranges {
+                if range.start >= insertion {
+                    range.start = range.start.saturating_add(completion_len);
+                    range.end = range.end.saturating_add(completion_len);
+                }
             }
-            prompt.lines.push(Line::from(spans));
+            value.insert_str(insertion, &completion);
+            ranges.push(TextStyleRange {
+                start: insertion,
+                end: insertion.saturating_add(completion_len),
+                style: Style::new()
+                    .fg(palette.path)
+                    .add_modifier(Modifier::UNDERLINED),
+            });
+            cursor = insertion.saturating_add(completion_len);
         }
-        if matches.is_empty() {
-            prompt.lines.push(Line::from(Span::styled(
-                "  no matching target",
-                Style::new().fg(palette.muted),
-            )));
+        ranges.sort_by_key(|range| range.start);
+        (value, cursor, ranges)
+    }
+
+    fn render_completion_picker(&mut self, frame: &mut Frame<'_>, area: Rect, prompt_area: Rect) {
+        const MAX_ROWS: usize = 7;
+
+        if !self.completion_picker_visible() || prompt_area.y <= area.y {
+            return;
         }
-        let total_height = u16::try_from(prompt.lines.len())
+        let palette = self.theme.palette();
+        let mut lines = Vec::new();
+        if self.environment_picker {
+            let matches = self.matching_environment_indices();
+            let selected = self.environment_choice.min(matches.len().saturating_sub(1));
+            let start = selected.saturating_sub(MAX_ROWS.saturating_sub(1));
+            for (choice, index) in matches
+                .iter()
+                .copied()
+                .enumerate()
+                .skip(start)
+                .take(MAX_ROWS)
+            {
+                let environment = &self.environments[index];
+                let is_selected = choice == selected;
+                let marker = if is_selected { "› " } else { "  " };
+                let target = prompt_token(&environment.target, "target");
+                let label = sanitize_label(&environment.label, &target, 80);
+                let mut spans = vec![Span::styled(
+                    format!("{marker}{target}"),
+                    Style::new()
+                        .fg(if is_selected {
+                            palette.accent
+                        } else {
+                            palette.foreground
+                        })
+                        .add_modifier(if is_selected {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
+                )];
+                if label != target {
+                    spans.push(Span::styled(
+                        format!("  {label}"),
+                        Style::new().fg(palette.quiet),
+                    ));
+                }
+                lines.push(Line::from(spans));
+            }
+            if lines.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    "  no matching target",
+                    Style::new().fg(palette.quiet),
+                )));
+            }
+        } else if let Some(picker) = &self.file_picker {
+            if picker.loading {
+                lines.push(Line::from(Span::styled(
+                    "  …",
+                    Style::new().fg(palette.path),
+                )));
+            } else if let Some(error) = &picker.error {
+                lines.push(Line::from(Span::styled(
+                    format!("  {error}"),
+                    Style::new().fg(palette.error),
+                )));
+            } else {
+                let matches = self.matching_file_entries();
+                let selected = picker.choice.min(matches.len().saturating_sub(1));
+                let start = selected.saturating_sub(MAX_ROWS.saturating_sub(1));
+                for (choice, entry) in matches.iter().enumerate().skip(start).take(MAX_ROWS) {
+                    let is_selected = choice == selected;
+                    let marker = if is_selected { "› " } else { "  " };
+                    let name = sanitize_label(&entry.name, "file", 120);
+                    let suffix = if entry.is_directory { "/" } else { "" };
+                    lines.push(Line::from(Span::styled(
+                        format!("{marker}{name}{suffix}"),
+                        Style::new()
+                            .fg(if is_selected || entry.is_directory {
+                                palette.path
+                            } else {
+                                palette.foreground
+                            })
+                            .add_modifier(if is_selected {
+                                Modifier::BOLD
+                            } else {
+                                Modifier::empty()
+                            }),
+                    )));
+                }
+                if lines.is_empty() {
+                    lines.push(Line::from(Span::styled(
+                        "  no matching file",
+                        Style::new().fg(palette.quiet),
+                    )));
+                }
+            }
+        }
+
+        let available_height = prompt_area.y.saturating_sub(area.y);
+        let height = u16::try_from(lines.len())
             .unwrap_or(u16::MAX)
-            .min(area.height)
+            .min(available_height)
             .max(1);
+        let width = area.width.clamp(1, 72);
         let picker_area = Rect::new(
-            area.x,
-            area.y + area.height.saturating_sub(total_height) / 2,
-            area.width,
-            total_height,
+            prompt_area.x,
+            prompt_area.y.saturating_sub(height),
+            width,
+            height,
         );
-        frame.render_widget(Paragraph::new(prompt.lines), picker_area);
-        let cursor_y = picker_area.y + prompt.cursor_row;
-        let cursor_x = picker_area.x + prompt.cursor_col.min(picker_area.width.saturating_sub(1));
-        if cursor_phase && cursor_y < picker_area.bottom() {
-            frame.set_cursor_position(Position::new(cursor_x, cursor_y));
-        }
+        frame.render_widget(Clear, picker_area);
+        frame.render_widget(
+            Paragraph::new(lines).style(Style::new().fg(palette.foreground).bg(palette.background)),
+            picker_area,
+        );
+        self.media_slots
+            .retain(|slot| !rectangles_intersect(slot.area, picker_area));
     }
 
     fn push_media_slots(
@@ -2172,7 +2801,7 @@ impl App {
             help_line("type  ·  enter", "write  ·  send", palette),
             help_line("shift+enter", "new line", palette),
             help_line("tab", "Ship / literal shell", palette),
-            help_line("@", "choose a target", palette),
+            help_line("@  ·  ctrl+o", "target/file completion  ·  files", palette),
             help_line("escape", "browse without losing the draft", palette),
             help_line("up/down  ·  ctrl+p/n", "command history", palette),
             help_line("page up / page down", "scroll the transcript", palette),
@@ -2269,6 +2898,109 @@ impl App {
         }
         prompt
     }
+}
+
+fn media_kind_from_content_type(content_type: &str) -> MediaKind {
+    if content_type.starts_with("image/") {
+        MediaKind::Image
+    } else if content_type.starts_with("audio/") {
+        MediaKind::Audio
+    } else if content_type.starts_with("video/") {
+        MediaKind::Video
+    } else {
+        MediaKind::Document
+    }
+}
+
+fn reference_token(reference: &FileReference) -> String {
+    format!("@{}", sanitize_label(&reference.filename, "file", 200))
+}
+
+fn file_reference_from_artifact(artifact: &Artifact) -> Option<FileReference> {
+    let (target, path) = artifact.source.as_deref()?.split_once(':')?;
+    let revision = artifact.revision.as_deref()?;
+    let size = artifact.size?;
+    if target.is_empty() || path.is_empty() || revision.is_empty() {
+        return None;
+    }
+    Some(FileReference {
+        target: target.to_string(),
+        path: path.to_string(),
+        revision: revision.to_string(),
+        content_type: artifact.mime_type.clone(),
+        size,
+        filename: artifact.display_name().to_string(),
+    })
+}
+
+fn draft_references_from_artifacts(text: &str, artifacts: &[Artifact]) -> Vec<DraftReference> {
+    let mut references = Vec::new();
+    for artifact in artifacts {
+        let Some(reference) = file_reference_from_artifact(artifact) else {
+            continue;
+        };
+        let token = reference_token(&reference);
+        let occurrence = text.match_indices(&token).find(|(start, _)| {
+            let end = start.saturating_add(token.len());
+            references
+                .iter()
+                .all(|existing: &DraftReference| existing.end <= *start || existing.start >= end)
+        });
+        if let Some((start, _)) = occurrence {
+            references.push(DraftReference {
+                start,
+                end: start.saturating_add(token.len()),
+                reference,
+            });
+        }
+    }
+    references.sort_by_key(|reference| reference.start);
+    references
+}
+
+fn inline_artifact_occurrences(text: &str, artifacts: &[Artifact]) -> Vec<Option<(usize, usize)>> {
+    let mut occupied = Vec::<(usize, usize)>::new();
+    artifacts
+        .iter()
+        .map(|artifact| {
+            let reference = file_reference_from_artifact(artifact)?;
+            let token = reference_token(&reference);
+            let (start, _) = text.match_indices(&token).find(|(start, _)| {
+                let end = start.saturating_add(token.len());
+                occupied
+                    .iter()
+                    .all(|(left, right)| *right <= *start || *left >= end)
+            })?;
+            let occurrence = (start, start.saturating_add(token.len()));
+            occupied.push(occurrence);
+            Some(occurrence)
+        })
+        .collect()
+}
+
+fn unix_parent(path: &str) -> Option<String> {
+    let path = path.trim_end_matches('/');
+    if path.is_empty() || path == "~" {
+        return None;
+    }
+    if path == "/" {
+        return None;
+    }
+    let separator = path.rfind('/')?;
+    if separator == 0 {
+        Some("/".to_string())
+    } else if separator == 1 && path.starts_with('~') {
+        Some("~".to_string())
+    } else {
+        Some(path[..separator].to_string())
+    }
+}
+
+fn rectangles_intersect(left: Rect, right: Rect) -> bool {
+    left.x < right.right()
+        && left.right() > right.x
+        && left.y < right.bottom()
+        && left.bottom() > right.y
 }
 
 fn atomic_media_scroll(
@@ -2417,11 +3149,19 @@ struct PromptedText {
     cursor_col: u16,
 }
 
+#[derive(Clone, Copy)]
+struct TextStyleRange {
+    start: usize,
+    end: usize,
+    style: Style,
+}
+
 fn prompted_text_lines(
     prompt: Vec<Span<'static>>,
     value: &str,
     width: u16,
     text_style: Style,
+    style_ranges: &[TextStyleRange],
     cursor: Option<usize>,
 ) -> PromptedText {
     let width = width.max(1);
@@ -2436,7 +3176,7 @@ fn prompted_text_lines(
     // Only the first physical line owns the shell prompt. Subsequent explicit or soft-wrapped
     // lines continue at the terminal's left edge, exactly as one long terminal input stream.
     let continuation_width = 0;
-    let mut text_lines = vec![String::new()];
+    let mut text_lines = vec![Vec::<Span<'static>>::new()];
     let mut row = 0_u16;
     let mut col = prompt_width;
     let mut cursor_position = None;
@@ -2446,7 +3186,7 @@ fn prompted_text_lines(
             .unwrap_or(1)
             .max(1);
         if grapheme != "\n" && col.saturating_add(grapheme_width) > width {
-            text_lines.push(String::new());
+            text_lines.push(Vec::new());
             row = row.saturating_add(1);
             col = continuation_width;
         }
@@ -2454,17 +3194,25 @@ fn prompted_text_lines(
             cursor_position = Some((row, col));
         }
         if grapheme == "\n" {
-            text_lines.push(String::new());
+            text_lines.push(Vec::new());
             row = row.saturating_add(1);
             col = continuation_width;
             continue;
         }
         if let Some(line) = text_lines.last_mut() {
-            line.push_str(grapheme);
+            let style = style_ranges
+                .iter()
+                .find(|range| index >= range.start && index < range.end)
+                .map_or(text_style, |range| range.style);
+            if let Some(last) = line.last_mut().filter(|span| span.style == style) {
+                last.content.to_mut().push_str(grapheme);
+            } else {
+                line.push(Span::styled(grapheme.to_string(), style));
+            }
         }
         col = col.saturating_add(grapheme_width);
         if col >= width {
-            text_lines.push(String::new());
+            text_lines.push(Vec::new());
             row = row.saturating_add(1);
             col = continuation_width;
         }
@@ -2473,7 +3221,7 @@ fn prompted_text_lines(
         cursor_position.get_or_insert((row, col));
     }
     if text_lines.len() > 1
-        && text_lines.last().is_some_and(String::is_empty)
+        && text_lines.last().is_some_and(Vec::is_empty)
         && col == continuation_width
     {
         text_lines.pop();
@@ -2488,13 +3236,11 @@ fn prompted_text_lines(
         .into_iter()
         .enumerate()
         .map(|(index, text)| {
-            let mut spans = Vec::with_capacity(prompt.len().saturating_add(1));
+            let mut spans = Vec::with_capacity(prompt.len().saturating_add(text.len()));
             if index == 0 {
                 spans.extend(prompt.clone());
             }
-            if !text.is_empty() {
-                spans.push(Span::styled(text, text_style));
-            }
+            spans.extend(text);
             Line::from(spans)
         })
         .collect();
@@ -2742,7 +3488,8 @@ mod tests {
     use super::{
         atomic_media_scroll, image_is_partial, sanitize_status, text_metrics, Action, App,
         Approval, Artifact, CapabilityEnvironment, ConnectionState, Effect, ExecutionMode,
-        ImageRange, MediaKind, Moment, MomentState, Role, ScrollDirection, Theme,
+        FileEntry, FileReference, ImageRange, MediaKind, Moment, MomentState, Role,
+        ScrollDirection, Theme,
     };
 
     fn image_artifact(index: usize) -> Artifact {
@@ -2771,6 +3518,17 @@ mod tests {
         }
     }
 
+    fn file_reference(filename: &str) -> FileReference {
+        FileReference {
+            target: "macbook".to_string(),
+            path: format!("/Users/sam/Downloads/{filename}"),
+            revision: format!("mtime:{filename}"),
+            content_type: "text/markdown".to_string(),
+            size: 512,
+            filename: filename.to_string(),
+        }
+    }
+
     #[test]
     fn typing_replaces_the_moment_and_escape_preserves_the_draft() {
         let mut app = App::demo();
@@ -2796,6 +3554,7 @@ mod tests {
                 text: "show downloads".to_string(),
                 target: "gsv".to_string(),
                 cwd: None,
+                references: Vec::new(),
             }]
         );
         assert_eq!(app.moments().len(), 2);
@@ -2953,6 +3712,7 @@ mod tests {
             "abcdefghijkl",
             16,
             ratatui::style::Style::new(),
+            &[],
             Some(12),
         );
         let rows = prompted
@@ -3551,6 +4311,222 @@ mod tests {
     }
 
     #[test]
+    fn target_completion_stays_on_the_live_prompt_and_preserves_the_transcript(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut app = App::new(ConnectionState::Ready);
+        app.set_principal("john");
+        app.set_environments(vec![
+            CapabilityEnvironment::gsv(),
+            CapabilityEnvironment::new("macbook", "MacBook"),
+        ]);
+        app.replace_history(vec![Moment::complete(
+            "one",
+            Role::Intelligence,
+            "top marker\none\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        )]);
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|frame| app.render(frame))?;
+        let prompt_before = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(80)
+            .position(|row| {
+                row.iter()
+                    .map(|cell| cell.symbol())
+                    .collect::<String>()
+                    .contains("john@gsv $ type a request")
+            })
+            .expect("prompt row before completion");
+
+        app.dispatch(Action::Insert("@".to_string()));
+        terminal.draw(|frame| app.render(frame))?;
+        let rows = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(80)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>();
+        let prompt_after = rows
+            .iter()
+            .position(|row| row.contains("john@gsv $ @"))
+            .expect("live completion prompt");
+
+        assert_eq!(prompt_after, prompt_before);
+        assert!(prompt_after > 12);
+        assert!(rows.iter().any(|row| row.contains("top marker")));
+        assert!(rows.iter().any(|row| row.contains("macbook")));
+        Ok(())
+    }
+
+    #[test]
+    fn file_completion_resolves_and_submits_revision_bound_references() {
+        let mut app = App::new(ConnectionState::Ready);
+        app.set_environments(vec![
+            CapabilityEnvironment::gsv(),
+            CapabilityEnvironment::new("macbook", "MacBook").with_cwd("/Users/sam/Downloads"),
+        ]);
+        app.dispatch(Action::Insert("@".to_string()));
+        app.dispatch(Action::Insert("mac".to_string()));
+        app.dispatch(Action::Submit);
+        app.dispatch(Action::Insert("review ".to_string()));
+
+        assert_eq!(
+            app.dispatch(Action::Insert("@".to_string())),
+            vec![Effect::BrowseFiles {
+                request_id: 1,
+                target: "macbook".to_string(),
+                directory: "/Users/sam/Downloads".to_string(),
+            }]
+        );
+        assert_eq!(app.draft(), "review ");
+        app.file_listing_loaded(
+            1,
+            "/Users/sam/Downloads".to_string(),
+            vec![
+                FileEntry {
+                    name: "projects".to_string(),
+                    path: "/Users/sam/Downloads/projects".to_string(),
+                    is_directory: true,
+                },
+                FileEntry {
+                    name: "notes.md".to_string(),
+                    path: "/Users/sam/Downloads/notes.md".to_string(),
+                    is_directory: false,
+                },
+            ],
+        );
+        app.dispatch(Action::Insert("notes".to_string()));
+        assert_eq!(
+            app.dispatch(Action::Submit),
+            vec![Effect::ResolveFile {
+                request_id: 1,
+                target: "macbook".to_string(),
+                path: "/Users/sam/Downloads/notes.md".to_string(),
+                filename: "notes.md".to_string(),
+            }]
+        );
+        let reference = file_reference("notes.md");
+        app.file_reference_resolved(1, reference.clone());
+        assert_eq!(app.draft(), "review @notes.md");
+        assert!(!app.completion_picker_visible());
+
+        assert_eq!(
+            app.dispatch(Action::Submit),
+            vec![Effect::Submit {
+                id: 1,
+                text: "review @notes.md".to_string(),
+                target: "macbook".to_string(),
+                cwd: Some("/Users/sam/Downloads".to_string()),
+                references: vec![reference.clone()],
+            }]
+        );
+        assert_eq!(app.moments()[0].artifacts.len(), 1);
+        app.submission_failed(1, "offline");
+        assert_eq!(app.draft(), "review @notes.md");
+        assert_eq!(app.draft_references.len(), 1);
+        assert_eq!(app.draft_references[0].reference, reference);
+    }
+
+    #[test]
+    fn file_references_are_independently_atomic_in_the_editor() {
+        let mut app = App::new(ConnectionState::Ready);
+        app.dispatch(Action::Insert("compare ".to_string()));
+        app.insert_file_reference(app.draft_cursor, file_reference("one.md"));
+        app.dispatch(Action::Insert(" and ".to_string()));
+        app.insert_file_reference(app.draft_cursor, file_reference("two.md"));
+        assert_eq!(app.draft(), "compare @one.md and @two.md");
+        assert_eq!(app.draft_references.len(), 2);
+
+        app.dispatch(Action::MoveCursorLeft);
+        assert_eq!(app.draft_cursor, "compare @one.md and ".len());
+        app.dispatch(Action::MoveCursorRight);
+        assert_eq!(app.draft_cursor, app.draft().len());
+        app.dispatch(Action::Backspace);
+        assert_eq!(app.draft(), "compare @one.md and ");
+        assert_eq!(app.draft_references.len(), 1);
+        assert_eq!(app.draft_references[0].reference.filename, "one.md");
+    }
+
+    #[test]
+    fn at_sign_is_literal_in_shell_mode() {
+        let mut app = App::new(ConnectionState::Ready);
+        app.dispatch(Action::ToggleShell);
+        assert!(app.dispatch(Action::Insert("@".to_string())).is_empty());
+        assert_eq!(app.draft(), "@");
+        assert!(!app.completion_picker_visible());
+    }
+
+    #[test]
+    fn human_file_references_render_inline_without_a_duplicate_artifact_row(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut app = App::new(ConnectionState::Ready);
+        app.set_theme(Theme::Terminal);
+        app.replace_history(vec![Moment::complete(
+            "one",
+            Role::Human,
+            "review @notes.md",
+        )
+        .with_artifacts(vec![file_reference("notes.md").artifact()])]);
+        let backend = TestBackend::new(80, 20);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|frame| app.render(frame))?;
+        let rows = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(80)
+            .collect::<Vec<_>>();
+        let rendered = rows
+            .iter()
+            .flat_map(|row| row.iter())
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert_eq!(rendered.matches("notes.md").count(), 1);
+        let (row, column) = rows
+            .iter()
+            .enumerate()
+            .find_map(|(row, cells)| {
+                let text = cells.iter().map(|cell| cell.symbol()).collect::<String>();
+                text.find("@notes.md").map(|column| (row, column))
+            })
+            .expect("inline reference");
+        let cell = &rows[row][column];
+        assert_eq!(cell.fg, Theme::Terminal.palette().path);
+        assert!(cell.modifier.contains(Modifier::UNDERLINED));
+        Ok(())
+    }
+
+    #[test]
+    fn completion_overlay_withdraws_intersecting_native_image_layers(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut app = App::new(ConnectionState::Ready);
+        app.set_inline_images(true);
+        app.set_environments(
+            std::iter::once(CapabilityEnvironment::gsv())
+                .chain(
+                    (0..8).map(|index| {
+                        CapabilityEnvironment::new(format!("machine-{index}"), "machine")
+                    }),
+                )
+                .collect(),
+        );
+        app.replace_history(vec![Moment::complete("one", Role::Intelligence, "image")
+            .with_artifacts(vec![image_artifact(0)])]);
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|frame| app.render(frame))?;
+        assert_eq!(app.media_slots().len(), 1);
+
+        app.dispatch(Action::Insert("@".to_string()));
+        terminal.draw(|frame| app.render(frame))?;
+        assert!(app.media_slots().is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn target_picker_changes_both_prompt_and_submission_context(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut app = App::new(ConnectionState::Ready);
@@ -3569,6 +4545,7 @@ mod tests {
                 text: "open downloads".to_string(),
                 target: "macbook".to_string(),
                 cwd: None,
+                references: Vec::new(),
             }]
         );
         let backend = TestBackend::new(80, 24);

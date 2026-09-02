@@ -40,16 +40,22 @@ continuous scrollable document. The next `user@target $ ` prompt stays active
 while the matching Process run continues, including during streamed output.
 Only the directed stream of a user-visible Message is projected live; raw
 Process output and model reasoning stay out of conversation scrollback.
-Type `@` into an empty draft to select a visible target, use Up/Down or
-`Ctrl+P`/`Ctrl+N` to recall submitted input, use `Page Up`/`Page Down` to scroll,
-`?` for all keys, and `Ctrl+Q` to leave. Escape enters browse mode without hiding
-the prompt. The document uses every available terminal column and reflows on
-resize. The native interface adopts the host terminal palette, leaves mouse
-selection to the terminal, renders supported canonical images through the best
-graphics protocol available, and opens selected audio, video, or documents in
-the operating system's registered viewer. Mixed attachments retain their source
-order and occupy rows in that same scrollable document; incremental scrolling
-reveals or passes each image atomically rather than stopping inside it.
+Type `@` into an empty draft to select a visible target. Inside a Ship request,
+type `@` at a token boundary or press `Ctrl+O` to browse files from that target's
+current directory. Completion appears directly above the prompt without moving
+it or replacing the transcript. Enter traverses a selected directory or inserts
+the selected file as an underlined `@filename` reference; Backspace/Delete
+removes a reference atomically. Multiple references stay independent, and plain
+path text is never attached implicitly. Use Up/Down or `Ctrl+P`/`Ctrl+N` to
+recall submitted input, `Page Up`/`Page Down` to scroll, `?` for all keys, and
+`Ctrl+Q` to leave. Escape enters browse mode without hiding the prompt. The
+document uses every available terminal column and reflows on resize. The native
+interface adopts the host terminal palette, leaves mouse selection to the
+terminal, renders supported canonical images through the best graphics protocol
+available, and opens selected audio, video, or documents in the operating
+system's registered viewer. Mixed attachments retain their source order and
+occupy rows in that same scrollable document; incremental scrolling reveals or
+passes each image atomically rather than stopping inside it.
 Within the prompt, the principal uses terminal green, `@target` uses cyan, the
 cwd uses blue, and `$` plus input use the normal foreground. Transcript content
 has no permanent card or border; only the focused image receives a single
@@ -65,8 +71,12 @@ directory. The TUI polls any returned shell session until it completes. These
 direct command/output entries belong to the current client transcript and are
 not committed to the Ship conversation. In Ship mode the target remains a
 presentation choice for compatibility with deployed gateways;
-`conversation.send` receives no new target parameter. `Ctrl+.` aborts an active
-Ship run; the current `shell.exec` contract has no general session-kill action.
+`conversation.send` receives no new target parameter. File selection uses the
+existing `fs.read` and `fs.transfer.stat` syscalls and sends revision-bound
+references through the existing `conversation.send.media` field—no gateway
+schema change is required. File completion is disabled in literal shell mode,
+where `@` is ordinary command text. `Ctrl+.` aborts an active Ship run; the
+current `shell.exec` contract has no general session-kill action.
 
 `chat` resolves the Ship or selected Work conversation and sends with
 `conversation.send`. With `MESSAGE`, it waits for the canonical

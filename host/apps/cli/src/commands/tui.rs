@@ -11,11 +11,13 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use futures_util::StreamExt;
-use gsv::kernel_client::{cli_peer_identity, BinaryBodyLimits, GatewayAuth, KernelClient};
+use gsv::kernel_client::{
+    cli_peer_identity, BinaryBodyLimits, ConversationFileResource, GatewayAuth, KernelClient,
+};
 use gsv::protocol::Frame;
 use gsv_tui_core::{
     Action, App, Approval, ApprovalDecision, Artifact, CapabilityEnvironment, ConnectionState,
-    Effect, MediaKind, Moment, Role, Theme,
+    Effect, FileEntry, FileReference, MediaKind, Moment, Role, Theme,
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
@@ -61,6 +63,19 @@ enum RuntimeEvent {
     },
     ArtifactOpenFailed {
         filename: String,
+        error: String,
+    },
+    FilesListed {
+        request_id: u64,
+        directory: String,
+        entries: Vec<FileEntry>,
+    },
+    FileResolved {
+        request_id: u64,
+        reference: FileReference,
+    },
+    FileOperationFailed {
+        request_id: u64,
         error: String,
     },
 }
@@ -263,7 +278,12 @@ fn apply_effects(
 ) -> bool {
     for effect in effects {
         match effect {
-            Effect::Submit { id, text, .. } => {
+            Effect::Submit {
+                id,
+                text,
+                references,
+                ..
+            } => {
                 let Some(session) = session else {
                     app.complete_demo_submission(id, &text);
                     continue;
@@ -271,11 +291,23 @@ fn apply_effects(
                 let client = Arc::clone(&session.client);
                 let conversation_id = session.conversation_id.clone();
                 let sender = runtime_sender.clone();
+                let resources = references
+                    .into_iter()
+                    .map(|reference| ConversationFileResource {
+                        target: reference.target,
+                        path: reference.path,
+                        revision: reference.revision,
+                        content_type: reference.content_type,
+                        size: reference.size,
+                        filename: reference.filename,
+                    })
+                    .collect::<Vec<_>>();
                 let handle = tokio::spawn(async move {
                     let result = client
-                        .conversation_send(
+                        .conversation_send_with_resources(
                             &conversation_id,
                             &text,
+                            &resources,
                             &uuid::Uuid::new_v4().to_string(),
                         )
                         .await;
@@ -290,6 +322,52 @@ fn apply_effects(
                             error: error.to_string(),
                         },
                     };
+                    let _ = sender.send(event);
+                });
+                drop(handle);
+            }
+            Effect::BrowseFiles {
+                request_id,
+                target,
+                directory,
+            } => {
+                let Some(session) = session else {
+                    let entries = demo_file_entries(&directory);
+                    app.file_listing_loaded(request_id, directory, entries);
+                    continue;
+                };
+                let client = Arc::clone(&session.client);
+                let sender = runtime_sender.clone();
+                let handle = tokio::spawn(async move {
+                    let event = browse_files(client, request_id, target, directory).await;
+                    let _ = sender.send(event);
+                });
+                drop(handle);
+            }
+            Effect::ResolveFile {
+                request_id,
+                target,
+                path,
+                filename,
+            } => {
+                let Some(session) = session else {
+                    app.file_reference_resolved(
+                        request_id,
+                        FileReference {
+                            target,
+                            path: path.clone(),
+                            revision: "demo:1".to_string(),
+                            content_type: content_type_from_path(&path).to_string(),
+                            size: 0,
+                            filename,
+                        },
+                    );
+                    continue;
+                };
+                let client = Arc::clone(&session.client);
+                let sender = runtime_sender.clone();
+                let handle = tokio::spawn(async move {
+                    let event = resolve_file(client, request_id, target, path, filename).await;
                     let _ = sender.send(event);
                 });
                 drop(handle);
@@ -431,6 +509,22 @@ fn apply_runtime_event(app: &mut App, event: RuntimeEvent, session: Option<&Conn
         RuntimeEvent::ArtifactOpenFailed { filename, error } => {
             app.append_local_output(format!("Could not open {filename}.\n\n{error}"));
         }
+        RuntimeEvent::FilesListed {
+            request_id,
+            directory,
+            entries,
+        } => {
+            app.file_listing_loaded(request_id, directory, entries);
+        }
+        RuntimeEvent::FileResolved {
+            request_id,
+            reference,
+        } => {
+            app.file_reference_resolved(request_id, reference);
+        }
+        RuntimeEvent::FileOperationFailed { request_id, error } => {
+            app.file_picker_failed(request_id, error);
+        }
     }
 }
 
@@ -546,7 +640,7 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
         };
     }
 
-    if app.environment_picker_visible() {
+    if app.completion_picker_visible() {
         return match key.code {
             KeyCode::Char('q' | 'Q') if control => Some(Action::Quit),
             KeyCode::Esc => Some(Action::Escape),
@@ -565,6 +659,9 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
 
     if alt && matches!(key.code, KeyCode::Char('v' | 'V')) {
         return Some(Action::ToggleVim);
+    }
+    if control && matches!(key.code, KeyCode::Char('o' | 'O')) {
+        return Some(Action::OpenFiles);
     }
     if !command_modifier && key.code == KeyCode::Tab {
         return Some(Action::ToggleShell);
@@ -637,6 +734,217 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
         KeyCode::Up if !app.draft_visible() => Some(Action::ScrollUp),
         KeyCode::Down if !app.draft_visible() => Some(Action::ScrollDown),
         _ => None,
+    }
+}
+
+async fn browse_files(
+    client: Arc<KernelClient>,
+    request_id: u64,
+    target: String,
+    directory: String,
+) -> RuntimeEvent {
+    let payload = match client
+        .request_ok(
+            "fs.read",
+            Some(json!({
+                "target": target,
+                "path": directory,
+            })),
+        )
+        .await
+    {
+        Ok(payload) => payload,
+        Err(error) => {
+            return RuntimeEvent::FileOperationFailed {
+                request_id,
+                error: error.to_string(),
+            };
+        }
+    };
+    match parse_file_listing(&payload) {
+        Ok((directory, entries)) => RuntimeEvent::FilesListed {
+            request_id,
+            directory,
+            entries,
+        },
+        Err(error) => RuntimeEvent::FileOperationFailed { request_id, error },
+    }
+}
+
+async fn resolve_file(
+    client: Arc<KernelClient>,
+    request_id: u64,
+    target: String,
+    path: String,
+    filename: String,
+) -> RuntimeEvent {
+    let payload = match client
+        .request_ok(
+            "fs.transfer.stat",
+            Some(json!({
+                "target": target,
+                "path": path,
+            })),
+        )
+        .await
+    {
+        Ok(payload) => payload,
+        Err(error) => {
+            return RuntimeEvent::FileOperationFailed {
+                request_id,
+                error: error.to_string(),
+            };
+        }
+    };
+    match parse_file_reference(&payload, target, filename) {
+        Ok(reference) => RuntimeEvent::FileResolved {
+            request_id,
+            reference,
+        },
+        Err(error) => RuntimeEvent::FileOperationFailed { request_id, error },
+    }
+}
+
+fn parse_file_listing(payload: &Value) -> Result<(String, Vec<FileEntry>), String> {
+    if payload.get("ok").and_then(Value::as_bool) != Some(true) {
+        return Err(payload
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("The target could not read this directory")
+            .to_string());
+    }
+    let directory = payload
+        .get("path")
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty())
+        .ok_or_else(|| "The target returned no directory path".to_string())?;
+    let directories = payload
+        .get("directories")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "The selected path is not a directory".to_string())?;
+    let files = payload
+        .get("files")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "The selected path is not a directory".to_string())?;
+    let entries = directories
+        .iter()
+        .filter_map(Value::as_str)
+        .filter(|name| valid_file_name(name))
+        .map(|name| FileEntry {
+            name: name.to_string(),
+            path: join_unix_path(directory, name),
+            is_directory: true,
+        })
+        .chain(
+            files
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|name| valid_file_name(name))
+                .map(|name| FileEntry {
+                    name: name.to_string(),
+                    path: join_unix_path(directory, name),
+                    is_directory: false,
+                }),
+        )
+        .collect();
+    Ok((directory.to_string(), entries))
+}
+
+fn parse_file_reference(
+    payload: &Value,
+    target: String,
+    filename: String,
+) -> Result<FileReference, String> {
+    if payload.get("ok").and_then(Value::as_bool) != Some(true) {
+        return Err(payload
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("The target could not inspect this file")
+            .to_string());
+    }
+    if payload.get("isFile").and_then(Value::as_bool) != Some(true) {
+        return Err("The selected path is not a file".to_string());
+    }
+    let path = payload
+        .get("path")
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty())
+        .ok_or_else(|| "The target returned no file path".to_string())?;
+    let revision = payload
+        .get("revision")
+        .and_then(Value::as_str)
+        .filter(|revision| !revision.is_empty())
+        .ok_or_else(|| "The target returned no immutable file revision".to_string())?;
+    let size = payload
+        .get("size")
+        .and_then(Value::as_u64)
+        .filter(|size| *size <= 9_007_199_254_740_991)
+        .ok_or_else(|| "The target returned no valid file size".to_string())?;
+    let content_type = payload
+        .get("contentType")
+        .and_then(Value::as_str)
+        .filter(|content_type| !content_type.is_empty())
+        .unwrap_or("application/octet-stream");
+    Ok(FileReference {
+        target,
+        path: path.to_string(),
+        revision: revision.to_string(),
+        content_type: content_type.to_string(),
+        size,
+        filename,
+    })
+}
+
+fn valid_file_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && !name.contains('/')
+        && !name.chars().any(char::is_control)
+}
+
+fn join_unix_path(directory: &str, name: &str) -> String {
+    if directory == "/" {
+        format!("/{name}")
+    } else {
+        format!("{}/{name}", directory.trim_end_matches('/'))
+    }
+}
+
+fn demo_file_entries(directory: &str) -> Vec<FileEntry> {
+    [
+        ("projects", true),
+        ("notes.md", false),
+        ("reference.png", false),
+        ("voice.ogg", false),
+    ]
+    .into_iter()
+    .map(|(name, is_directory)| FileEntry {
+        name: name.to_string(),
+        path: join_unix_path(directory, name),
+        is_directory,
+    })
+    .collect()
+}
+
+fn content_type_from_path(path: &str) -> &'static str {
+    match path
+        .rsplit('.')
+        .next()
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("ogg") => "audio/ogg",
+        Some("mp3") => "audio/mpeg",
+        Some("wav") => "audio/wav",
+        Some("md") => "text/markdown",
+        Some("txt") => "text/plain",
+        Some("pdf") => "application/pdf",
+        _ => "application/octet-stream",
     }
 }
 
@@ -1074,12 +1382,13 @@ fn message_sequence(message: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use gsv_tui_core::{Action, App, ConnectionState, MediaKind, Role};
+    use gsv_tui_core::{Action, App, ConnectionState, FileEntry, MediaKind, Role};
     use serde_json::json;
 
     use super::{
         apply_signal, device_environments, history_moments, key_action, media_artifact,
-        parse_shell_response, truncate_chars, ShellResponse,
+        parse_file_listing, parse_file_reference, parse_shell_response, truncate_chars,
+        ShellResponse,
     };
 
     #[test]
@@ -1331,6 +1640,66 @@ mod tests {
         assert_eq!(key_action(&app, tab), Some(Action::ToggleShell));
         assert_eq!(key_action(&app, page_up), Some(Action::ScrollPageUp));
         assert_eq!(key_action(&app, page_down), Some(Action::ScrollPageDown));
+    }
+
+    #[test]
+    fn control_o_opens_file_completion() {
+        let app = App::new(ConnectionState::Ready);
+        let control_o = KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL);
+        assert_eq!(key_action(&app, control_o), Some(Action::OpenFiles));
+    }
+
+    #[test]
+    fn directory_results_become_exact_target_paths() {
+        let (directory, entries) = parse_file_listing(&json!({
+            "ok": true,
+            "path": "/Users/sam/Downloads",
+            "directories": ["projects", "..", "bad/name"],
+            "files": ["notes.md", "\u{001b}escape"]
+        }))
+        .expect("directory listing");
+
+        assert_eq!(directory, "/Users/sam/Downloads");
+        assert_eq!(
+            entries,
+            vec![
+                FileEntry {
+                    name: "projects".to_string(),
+                    path: "/Users/sam/Downloads/projects".to_string(),
+                    is_directory: true,
+                },
+                FileEntry {
+                    name: "notes.md".to_string(),
+                    path: "/Users/sam/Downloads/notes.md".to_string(),
+                    is_directory: false,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn transfer_stat_becomes_a_revision_bound_file_reference() {
+        let reference = parse_file_reference(
+            &json!({
+                "ok": true,
+                "path": "/Users/sam/Downloads/notes.md",
+                "size": 512,
+                "isFile": true,
+                "isDirectory": false,
+                "contentType": "text/markdown",
+                "revision": "mtime:42"
+            }),
+            "macbook".to_string(),
+            "notes.md".to_string(),
+        )
+        .expect("file reference");
+
+        assert_eq!(reference.target, "macbook");
+        assert_eq!(reference.path, "/Users/sam/Downloads/notes.md");
+        assert_eq!(reference.revision, "mtime:42");
+        assert_eq!(reference.content_type, "text/markdown");
+        assert_eq!(reference.size, 512);
+        assert_eq!(reference.filename, "notes.md");
     }
 
     #[test]

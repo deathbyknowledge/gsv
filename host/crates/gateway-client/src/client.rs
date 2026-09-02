@@ -35,6 +35,16 @@ pub struct ProcSendResult {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ConversationFileResource {
+    pub target: String,
+    pub path: String,
+    pub revision: String,
+    pub content_type: String,
+    pub size: u64,
+    pub filename: String,
+}
+
 pub struct KernelClient {
     conn: Connection,
 }
@@ -167,14 +177,26 @@ impl KernelClient {
         message: &str,
         idempotency_key: &str,
     ) -> Result<ProcSendResult, Box<dyn std::error::Error>> {
+        self.conversation_send_with_resources(conversation_id, message, &[], idempotency_key)
+            .await
+    }
+
+    pub async fn conversation_send_with_resources(
+        &self,
+        conversation_id: &str,
+        message: &str,
+        resources: &[ConversationFileResource],
+        idempotency_key: &str,
+    ) -> Result<ProcSendResult, Box<dyn std::error::Error>> {
         let payload = self
             .request_ok(
                 "conversation.send",
-                Some(json!({
-                    "conversationId": conversation_id,
-                    "text": message,
-                    "idempotencyKey": idempotency_key,
-                })),
+                Some(conversation_send_args(
+                    conversation_id,
+                    message,
+                    resources,
+                    idempotency_key,
+                )),
             )
             .await?;
         let run_id = payload
@@ -192,5 +214,104 @@ impl KernelClient {
             queued,
             error: None,
         })
+    }
+}
+
+fn conversation_send_args(
+    conversation_id: &str,
+    message: &str,
+    resources: &[ConversationFileResource],
+    idempotency_key: &str,
+) -> Value {
+    let mut args = json!({
+        "conversationId": conversation_id,
+        "text": message,
+        "idempotencyKey": idempotency_key,
+    });
+    if !resources.is_empty() {
+        args["media"] = Value::Array(
+            resources
+                .iter()
+                .map(|resource| {
+                    json!({
+                        "type": "resource",
+                        "ref": {
+                            "type": "file",
+                            "target": resource.target,
+                            "path": resource.path,
+                            "revision": resource.revision,
+                            "contentType": resource.content_type,
+                            "size": resource.size,
+                        },
+                        "mediaType": media_type(&resource.content_type),
+                        "filename": resource.filename,
+                    })
+                })
+                .collect(),
+        );
+    }
+    args
+}
+
+fn media_type(content_type: &str) -> &'static str {
+    if content_type.starts_with("image/") {
+        "image"
+    } else if content_type.starts_with("audio/") {
+        "audio"
+    } else if content_type.starts_with("video/") {
+        "video"
+    } else {
+        "document"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{conversation_send_args, ConversationFileResource};
+    use serde_json::json;
+
+    #[test]
+    fn conversation_resources_use_the_canonical_resource_shape() {
+        let args = conversation_send_args(
+            "conversation-one",
+            "review @notes.md",
+            &[ConversationFileResource {
+                target: "macbook".to_string(),
+                path: "/Users/sam/notes.md".to_string(),
+                revision: "mtime:42".to_string(),
+                content_type: "text/markdown".to_string(),
+                size: 512,
+                filename: "notes.md".to_string(),
+            }],
+            "once",
+        );
+
+        assert_eq!(
+            args,
+            json!({
+                "conversationId": "conversation-one",
+                "text": "review @notes.md",
+                "idempotencyKey": "once",
+                "media": [{
+                    "type": "resource",
+                    "ref": {
+                        "type": "file",
+                        "target": "macbook",
+                        "path": "/Users/sam/notes.md",
+                        "revision": "mtime:42",
+                        "contentType": "text/markdown",
+                        "size": 512,
+                    },
+                    "mediaType": "document",
+                    "filename": "notes.md",
+                }],
+            })
+        );
+    }
+
+    #[test]
+    fn text_only_conversation_send_omits_media() {
+        let args = conversation_send_args("conversation-one", "hello", &[], "once");
+        assert!(args.get("media").is_none());
     }
 }

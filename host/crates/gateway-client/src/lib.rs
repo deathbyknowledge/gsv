@@ -7,6 +7,6 @@ pub use body::{
     BinaryBody, BinaryBodyChannel, BinaryBodyLimits, BodyError, IncomingBody, OutgoingBody,
     RpcResponse,
 };
-pub use client::{GatewayAuth, GsvClient, KernelClient, ProcSendResult};
+pub use client::{ConversationFileResource, GatewayAuth, GsvClient, KernelClient, ProcSendResult};
 pub use connection::{Connection, ConnectionOptions, GatewayRpcError, PeerIdentity};
 pub use protocol::*;

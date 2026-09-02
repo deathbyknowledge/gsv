@@ -88,17 +88,32 @@ Markdown presentation preserves each source LF as a terminal row instead of
 applying CommonMark's browser-style soft-break collapse; an empty source line
 still creates a distinct paragraph gap.
 
-Typing `@` into an empty draft opens the capability-environment picker. `Tab`
-switches the same draft between Ship mode and literal shell mode. The latter is
-visibly marked as `user@target $ ! command`; the native client calls the
-established `shell.exec` syscall with the selected target and cwd, appends each
-returned output chunk, and polls an existing `sessionId` until its terminal
-result. Direct shell moments are client-local and are not canonical
-conversation messages. Ordinary Ship input remains an unchanged
-`conversation.send` request, with no target extension, so this client stays
+Typing `@` into an empty draft opens capability-environment completion. Typing
+`@` at a token boundary inside a Ship request, or pressing `Ctrl+O`, opens file
+completion at the selected target and working directory. Both completion lists
+overlay the rows immediately above the live prompt: they neither replace the
+transcript nor move the prompt. Directory traversal uses `fs.read`; selecting a
+file obtains its exact path, size, content type, and immutable revision through
+`fs.transfer.stat`. The draft displays the selection as one underlined
+`@filename` token, keeps multiple selections independently editable, and sends
+their structured references through the established `conversation.send.media`
+field. The gateway remains responsible for retaining those revisions before it
+commits the canonical Message. Plain path text never becomes an attachment
+implicitly.
+
+`Tab` switches the same draft between Ship mode and literal shell mode. The
+latter is visibly marked as `user@target $ ! command`; `@` remains ordinary
+shell text, and a draft with structured references stays in Ship mode until
+those references are removed. The native client calls the established
+`shell.exec` syscall with the selected target and cwd, appends each returned
+output chunk, and polls an existing `sessionId` until its terminal result.
+Direct shell moments are client-local and are not canonical conversation
+messages. Text-only Ship input remains an unchanged `conversation.send`
+request. File references use existing syscalls and the existing media field,
+with no target extension or gateway schema change, so the client stays
 compatible with an existing gateway deployment. The Kernel independently
-enforces target visibility and the caller's grant for the direct target
-operation; a presentation choice never grants authority.
+enforces target visibility and the caller's grant for each target operation; a
+presentation choice never grants authority.
 
 The native renderer inherits the terminal foreground, background, and ANSI
 palette instead of imposing a second terminal theme. The shared renderer owns
