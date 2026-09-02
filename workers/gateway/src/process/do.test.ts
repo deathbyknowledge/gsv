@@ -38,7 +38,7 @@ import { getProcessByPid, getKernelPtr } from "../shared/utils";
 import { stableOpaqueId } from "../shared/stable-id";
 import { TOOL_TO_SYSCALL } from "../syscalls/constants";
 import { DEFAULT_TOOL_APPROVAL_POLICY } from "./approval";
-import { estimateContextInputTokens } from "./context-pressure";
+import { buildProcContextState, estimateContextInputTokens } from "./context-pressure";
 import { PROCESS_V001_INITIAL_SCHEMA } from "./schema/v001_initial";
 import { PROCESS_V004_PENDING_TOOL_DISPATCH_ID } from "./schema/v004_pending_tool_dispatch_id";
 import { PROCESS_V005_TOOL_RESULT_OUTCOME } from "./schema/v005_tool_result_outcome";
@@ -10066,6 +10066,62 @@ describe("Process DO — mechanical", () => {
         }),
       ]);
 
+    });
+
+    it("selects manual compaction history by token pressure instead of message count", async () => {
+      const pid = "mech-conversation-compact-pressure-target";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: the Durable Object test fixture exposes Process internals for state setup.
+        const store = (instance as any).store;
+        store.appendMessage("user", `large old turn ${"x".repeat(20_000)}`);
+        for (let index = 0; index < 5; index += 1) {
+          store.appendMessage(index % 2 === 0 ? "assistant" : "user", `small recent turn ${index}`);
+        }
+        const stats = store.messageStats();
+        store.setContextState(buildProcContextState({
+          revision: store.nextContextStateRevision(),
+          messageCount: stats.count,
+          lastMessageId: stats.lastMessageId,
+          provider: "workers-ai",
+          model: "@cf/test/model",
+          contextWindowTokens: 11_000,
+          maxOutputTokens: 1_000,
+          measurement: {
+            estimatedInputTokens: 8_000,
+            inputTokens: 8_000,
+            confirmedInputTokens: 8_000,
+            estimatedTrailingInputTokens: 0,
+            source: "provider",
+          },
+        }));
+      });
+
+      // SAFETY: the typed Process test fixture returns a successful syscall response here.
+      const response = await stub.recvFrame(makeReq("proc.history.compact", {
+        targetPressure: 0.4,
+        summary: "The large old turn was archived.",
+      })) as ResponseOkFrame;
+
+      expect(response.data).toMatchObject({
+        ok: true,
+        pid,
+        archivedMessages: 1,
+      });
+      await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: the Durable Object test fixture exposes Process internals for verification.
+        const messages = (instance as any).store.getMessages();
+        expect(messages).toHaveLength(6);
+        expect(messages[0].content).toContain("The large old turn was archived.");
+        expect(messages.slice(1).map((message: any) => message.content)).toEqual([
+          "small recent turn 0",
+          "small recent turn 1",
+          "small recent turn 2",
+          "small recent turn 3",
+          "small recent turn 4",
+        ]);
+      });
     });
 
     it("builds bounded compaction input from complete JSON records", async () => {

@@ -15,7 +15,7 @@ type ChatDockPopoversProps = {
   activeProcessId: string;
   archiveOpen: boolean;
   canFreeContext: boolean;
-  compactKeepLast: number;
+  compactTargetPercent: number;
   compactPending: boolean;
   hasArchivedMessages: boolean;
   onFreeContext: () => void;
@@ -76,7 +76,7 @@ export function ChatDockPopovers({
   activeProcessId,
   archiveOpen,
   canFreeContext,
-  compactKeepLast,
+  compactTargetPercent,
   compactPending,
   hasArchivedMessages,
   onFreeContext,
@@ -105,7 +105,7 @@ export function ChatDockPopovers({
   const contextActions: PopoverActionProps[] = hasActiveProcess
     ? [
         {
-          label: compactPending ? "FREEING CONTEXT" : `FREE CONTEXT · KEEP ${compactKeepLast}`,
+          label: compactPending ? "FREEING CONTEXT" : `FREE CONTEXT · TARGET ${compactTargetPercent}%`,
           onClick: onFreeContext,
           glyph: <FreeContextGlyph size={13} />,
           disabled: !canFreeContext,

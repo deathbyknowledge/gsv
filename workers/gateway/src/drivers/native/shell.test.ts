@@ -2411,6 +2411,56 @@ describe("proc native command", () => {
     );
   });
 
+  it("requests manual compaction by model input pressure", async () => {
+    sendFrameToProcessMock.mockResolvedValueOnce({
+      type: "res",
+      id: "compact-1",
+      ok: true,
+      data: {
+        ok: true,
+        pid: "task:shell",
+        segment: {
+          id: "segment-1",
+          generation: 1,
+          kind: "compaction",
+          fromMessageId: 1,
+          toMessageId: 3,
+          archivePath: "/root/processes/task/history/segment-1.jsonl.gz",
+          summaryMessageId: 1,
+          createdAt: 1,
+        },
+        archivedMessages: 3,
+        archivedTo: "/root/processes/task/history/segment-1.jsonl.gz",
+        summaryMessageId: 1,
+      },
+    });
+
+    const result = await handleShellExec(
+      { input: "proc compact --target-pressure 0.4 --summary done" },
+      makeContext({
+        capabilities: ["proc.history.compact"],
+        procs: {
+          get: vi.fn((pid: string) => makeProcess({ processId: pid })),
+          getOwnerUid: vi.fn(() => IDENTITY.uid),
+        },
+      }),
+    );
+
+    expect(result.status).toBe("completed");
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
+      "task:shell",
+      expect.objectContaining({
+        call: "proc.history.compact",
+        args: {
+          pid: "task:shell",
+          summary: "done",
+          targetPressure: 0.4,
+        },
+      }),
+    );
+  });
+
   it("reads live process history from the native proc command surface", async () => {
     sendFrameToProcessMock.mockResolvedValueOnce({
       type: "res",

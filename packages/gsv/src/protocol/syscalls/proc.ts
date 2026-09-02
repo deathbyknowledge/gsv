@@ -427,6 +427,7 @@ export type ProcHistoryResult =
       pendingHil?: ProcHilRequest | null;
       context?: ProcContextState | null;
       contextRevision?: number;
+      historyPolicy?: ProcHistoryContextPolicy;
     }
   | { ok: false; error: string };
 
@@ -542,6 +543,8 @@ export type ProcHistoryCompactArgs = {
   pid?: string;
   summary?: string;
   generateSummary?: boolean;
+  /** Target fraction of the model input budget to retain after compaction. */
+  targetPressure?: number;
   keepLast?: number;
   throughMessageId?: number;
 };
