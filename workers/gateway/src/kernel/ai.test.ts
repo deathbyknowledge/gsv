@@ -1304,6 +1304,100 @@ describe("handleAiConfig", () => {
     expect(result.apiKey).toBe("profile-key");
   });
 
+  it("resolves one owner-ordered model stack without field-level inheritance", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [
+          {
+            id: "primary",
+            name: "Primary",
+            provider: "openrouter",
+            model: "openai/gpt-5-mini",
+            baseUrl: "https://openrouter.ai/api/v1",
+            providerStyle: "openai-chat-completions",
+            maxTokens: 16_384,
+            contextWindowTokens: 128_000,
+          },
+          {
+            id: "local",
+            name: "Local",
+            provider: "custom",
+            model: "qwen",
+            baseUrl: "http://127.0.0.1:8080/v1",
+            transportTarget: "home-server",
+          },
+          {
+            id: "workers-backup",
+            name: "Workers backup",
+            provider: "workers-ai",
+            model: "@cf/backup/model",
+          },
+        ],
+      }),
+      "users/1000/ai/models/primary/api_key": "primary-key",
+      "users/1000/ai/models/local/api_key": "local-key",
+      // These legacy values must not leak into complete canonical entries.
+      "users/1000/ai/provider": "stale-provider",
+      "users/1000/ai/model": "stale-model",
+      "users/1000/ai/max_tokens": "8192",
+    }));
+
+    expect(result).toMatchObject({
+      provider: "openrouter",
+      model: "openai/gpt-5-mini",
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKey: "primary-key",
+      maxTokens: 16_384,
+      contextWindowTokens: 128_000,
+    });
+    expect(result.fallbacks).toEqual([
+      expect.objectContaining({
+        profileId: "local",
+        profileName: "Local",
+        provider: "custom",
+        model: "qwen",
+        apiKey: "local-key",
+        baseUrl: "http://127.0.0.1:8080/v1",
+        transportTarget: "home-server",
+        maxTokens: 32_768,
+      }),
+      expect.objectContaining({
+        profileId: "workers-backup",
+        profileName: "Workers backup",
+        provider: "workers-ai",
+        model: "@cf/backup/model",
+        apiKey: "",
+        maxTokens: 32_768,
+      }),
+    ]);
+  });
+
+  it("moves a Process model preference ahead of the owner's remaining stack", async () => {
+    const stack = JSON.stringify({
+      version: 1,
+      models: [
+        { id: "primary", name: "Primary", provider: "openai", model: "gpt-primary" },
+        { id: "preferred", name: "Preferred", provider: "anthropic", model: "claude-preferred" },
+        { id: "last", name: "Last", provider: "workers-ai", model: "@cf/last" },
+      ],
+    });
+    const result = await handleAiConfig({
+      processProfile: { id: "preferred", appliedAt: 1 },
+    }, makeAiConfigContext({
+      "users/1000/ai/models": stack,
+    }));
+
+    expect([result.model, ...(result.fallbacks ?? []).map((fallback) => fallback.model)])
+      .toEqual(["claude-preferred", "gpt-primary", "@cf/last"]);
+  });
+
+  it("rejects an explicitly malformed owner model stack instead of silently changing models", async () => {
+    await expect(handleAiConfig({}, makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({ version: 1, models: [] }),
+    }))).rejects.toThrow("Invalid AI model stack at /sys/users/1000/ai/models");
+  });
+
   it("resolves fallback model presets from account fallback config", async () => {
     const result = await handleAiConfig({}, makeAiConfigContext({
       "config/ai/provider": "workers-ai",

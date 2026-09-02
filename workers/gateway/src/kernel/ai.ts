@@ -22,6 +22,8 @@ import {
   normalizeSpeechTextFormat,
 } from "@humansandmachines/gsv/protocol";
 import type {
+  AiModelEntry,
+  AiModelStack,
   ProcessIdentity,
   AiContextArgs,
   AiContextResult,
@@ -116,6 +118,13 @@ import { collectPromptSkillIndex } from "./skills";
 import { seedBuiltinSkillsToHome } from "./sys/skills-seed";
 import { listAllVisibleTargets, targetToAiDevice } from "./targets";
 import {
+  aiModelApiKeyConfigKey,
+  orderAiModelStack,
+  parseAiModelStack,
+  SYSTEM_AI_MODELS_CONFIG_KEY,
+  userAiModelsConfigKey,
+} from "./ai-model-stack";
+import {
   findProcessAiModelProfile,
   isProcessAiConfigKey,
   omitProcessAiConfigSecrets,
@@ -165,6 +174,18 @@ type AiTranscriptionStack = Pick<
   NonNullable<AiConfigResult["media"]>,
   "transcriptionProvider" | "transcriptionModel" | "transcriptionApiKey"
 >;
+
+type StoredAiModelStack = {
+  configKey: string;
+  stack: AiModelStack;
+  systemOwned: boolean;
+};
+
+type ResolvedAiTextModelStack = {
+  primary: AiModelStackConfig;
+  fallbacks: AiConfigFallback[];
+  defaultApiKey: string;
+};
 
 const ACCOUNT_MODEL_PROFILE_INFERENCE_BLOCKERS = [
   "provider",
@@ -278,58 +299,16 @@ export async function handleAiConfig(
     accountProfileOverrides,
     processOverrides,
   );
-  const processProvider = resolveAiProcessConfigValue(processOverrides, "provider");
-  const accountProvider = resolveAiConfigValue(config, accountConfigUids, accountProfileOverrides, "provider");
-  const systemProvider = config.get("config/ai/provider");
-
-  const provider =
-    processProvider ??
-    accountProvider ??
-    systemProvider ??
-    "workers-ai";
-
-  const model = resolveConfig("model") ?? DEFAULT_WORKERS_AI_MODEL;
-  const baseUrl = resolveConfig("base_url") ?? "";
-  const providerStyle = resolveConfig("provider_style") ?? "auto";
-  const transportTarget = resolveConfig("transport_target") ?? "gsv";
-  const apiKey = resolveConfig("api_key") ?? "";
-  const oauthAccountConfigUids = shouldResolveRootOpenAiCodexOAuth({
-    provider,
-    providerFromGlobalConfig: processProvider === null && accountProvider === null && systemProvider !== null,
-  })
-    ? withRootAiProfileScope(accountConfigUids)
-    : accountConfigUids;
-  const resolvedOAuth = await resolveAiProviderOAuthApiKey(
+  const textModels = await resolveAiTextModelStack({
     ctx,
-    oauthAccountConfigUids,
-    provider,
-    apiKey,
-  );
-  const resolvedApiKey = resolvedOAuth.apiKey;
-
-  const reasoning = resolveConfig("reasoning") ?? undefined;
-
-  const maxTokens = parseInt(
-    resolveConfig("max_tokens") ?? String(DEFAULT_TEXT_GENERATION_MAX_TOKENS),
-    10,
-  );
-  const contextWindowOverride = parsePositiveInt(
-    resolveAiProcessConfigValue(processOverrides, "context_window_tokens") ??
-    resolveAiConfigValue(config, accountConfigUids, accountProfileOverrides, "context_window_tokens"),
-  );
-  const modelContextWindow = await resolveModelContextWindow(provider, model);
-  const configuredContextWindow = parsePositiveInt(
-    config.get("config/ai/context_window_tokens"),
-  );
-  const contextWindowTokens =
-    contextWindowOverride ?? modelContextWindow ?? configuredContextWindow ?? null;
-  const contextWindowSource = contextWindowOverride !== null
-    ? "config"
-    : modelContextWindow !== null
-      ? "model"
-      : configuredContextWindow !== null
-        ? "config"
-        : "unknown";
+    uid,
+    owner,
+    accountUids: accountConfigUids,
+    accountProfileOverrides,
+    processOverrides,
+    processProfile: input.processProfile,
+  });
+  const primary = textModels.primary;
 
   const systemContextFiles = listConfigContextFiles(config, "config/ai/context.d");
 
@@ -343,46 +322,11 @@ export async function handleAiConfig(
     resolveConfig("max_context_bytes") ?? "32768",
     10,
   );
-  const generationTimeoutMs = resolveConfig("generation/timeout_ms", parsePositiveInt)
-    ?? DEFAULT_GENERATION_TIMEOUT_MS;
-  const generationStreaming = normalizeGenerationStreaming(
-    resolveConfig("generation/streaming"),
-  );
-  const fallbackSelection = resolveAiFallbackSelection(
-    ctx,
-    accountConfigUids,
-    accountProfileOverrides,
-    processOverrides,
-  );
-  const primary: AiModelStackConfig = {
-    provider,
-    model,
-    apiKey: resolvedApiKey,
-    providerStyle: providerStyle.trim().toLowerCase() || "auto",
-    transportTarget: normalizeTarget(transportTarget),
-    reasoning,
-    maxTokens,
-    contextWindowTokens,
-    contextWindowSource,
-    generationTimeoutMs,
-    generationStreaming,
-  };
-  const normalizedBaseUrl = baseUrl.trim();
-  if (normalizedBaseUrl) primary.baseUrl = normalizedBaseUrl;
-  if (resolvedOAuth.openAiCodexAccountId) {
-    primary.openAiCodex = { accountId: resolvedOAuth.openAiCodexAccountId };
-  }
-  const fallbacks = await resolveAiFallbackConfigs({
-    ctx,
-    accountUids: fallbackSelection?.accountUids ?? [],
-    selector: fallbackSelection?.selector ?? "",
-    primary,
-  });
   const media = resolveAiMediaConfig(
     config,
     accountConfigUids,
     accountProfileOverrides,
-    apiKey,
+    textModels.defaultApiKey,
     processOverrides,
   );
   const timezone = config.get("config/server/timezone") ?? "UTC";
@@ -400,15 +344,15 @@ export async function handleAiConfig(
   const result: AiConfigResult = {
     owner,
     executor: resolveAiTextExecutor(ctx),
-    provider,
-    model,
-    apiKey: resolvedApiKey,
-    providerStyle: providerStyle.trim().toLowerCase() || "auto",
-    transportTarget: normalizeTarget(transportTarget),
-    reasoning,
-    maxTokens,
-    contextWindowTokens,
-    contextWindowSource,
+    provider: primary.provider,
+    model: primary.model,
+    apiKey: primary.apiKey,
+    providerStyle: primary.providerStyle,
+    transportTarget: primary.transportTarget,
+    reasoning: primary.reasoning,
+    maxTokens: primary.maxTokens,
+    contextWindowTokens: primary.contextWindowTokens,
+    contextWindowSource: primary.contextWindowSource,
     systemContextFiles,
     system: {
       timezone,
@@ -418,15 +362,13 @@ export async function handleAiConfig(
     accountApprovalPolicy,
     capabilities: [...(ctx.identity?.capabilities ?? [])],
     maxContextBytes,
-    generationTimeoutMs,
-    generationStreaming,
+    generationTimeoutMs: primary.generationTimeoutMs,
+    generationStreaming: primary.generationStreaming,
     media,
   };
-  if (normalizedBaseUrl) result.baseUrl = normalizedBaseUrl;
-  if (resolvedOAuth.openAiCodexAccountId) {
-    result.openAiCodex = { accountId: resolvedOAuth.openAiCodexAccountId };
-  }
-  if (fallbacks.length > 0) result.fallbacks = fallbacks;
+  if (primary.baseUrl) result.baseUrl = primary.baseUrl;
+  if (primary.openAiCodex) result.openAiCodex = primary.openAiCodex;
+  if (textModels.fallbacks.length > 0) result.fallbacks = textModels.fallbacks;
   return result;
 }
 
@@ -1037,6 +979,265 @@ function createAiConfigValueResolver(
     return null;
   }
   return resolve;
+}
+
+async function resolveAiTextModelStack(options: {
+  ctx: KernelContext;
+  uid: number;
+  owner: ProcessIdentity | null;
+  accountUids: number[];
+  accountProfileOverrides: AiAccountProfileOverrides;
+  processOverrides: AiConfigValues;
+  processProfile: ProcAiConfigProfileRef | null | undefined;
+}): Promise<ResolvedAiTextModelStack> {
+  const stored = resolveStoredAiModelStack(
+    options.ctx,
+    resolveAiProfileOwnerUid(options.ctx, options.uid, options.owner),
+    options.accountUids,
+  );
+  if (stored) {
+    return await resolveStoredAiTextModelStack(options, stored);
+  }
+  return await resolveLegacyAiTextModelStack(options);
+}
+
+function resolveStoredAiModelStack(
+  ctx: KernelContext,
+  ownerUid: number,
+  accountUids: readonly number[],
+): StoredAiModelStack | null {
+  const ownerKey = userAiModelsConfigKey(ownerUid);
+  const ownerRaw = ctx.config.getExplicit(ownerKey);
+  if (ownerRaw !== null) {
+    return parseStoredAiModelStack(ownerKey, ownerRaw, false);
+  }
+
+  // An account that has not yet written the canonical list must retain its
+  // legacy behavior until the settings surface performs the one-time rewrite.
+  // Otherwise a code-default list could silently replace an existing model.
+  if (hasLegacyAccountTextModelConfig(ctx.config, accountUids)) {
+    return null;
+  }
+
+  const systemRaw = ctx.config.getExplicit(SYSTEM_AI_MODELS_CONFIG_KEY);
+  return systemRaw === null
+    ? null
+    : parseStoredAiModelStack(SYSTEM_AI_MODELS_CONFIG_KEY, systemRaw, true);
+}
+
+function parseStoredAiModelStack(
+  configKey: string,
+  raw: string,
+  systemOwned: boolean,
+): StoredAiModelStack {
+  const stack = parseAiModelStack(raw);
+  if (!stack) {
+    throw new Error(`Invalid AI model stack at /sys/${configKey}`);
+  }
+  return { configKey, stack, systemOwned };
+}
+
+function hasLegacyAccountTextModelConfig(
+  config: KernelContext["config"],
+  accountUids: readonly number[],
+): boolean {
+  const suffixes = [
+    "provider",
+    "model",
+    "base_url",
+    "provider_style",
+    "transport_target",
+    "api_key",
+    "max_tokens",
+    "context_window_tokens",
+    "model_profile",
+    "model_profiles",
+    "fallback_model_profile",
+  ] as const;
+  return accountUids.some((accountUid) => suffixes.some((suffix) =>
+    config.getExplicit(`users/${accountUid}/ai/${suffix}`) !== null
+  ));
+}
+
+async function resolveStoredAiTextModelStack(
+  options: {
+    ctx: KernelContext;
+    uid: number;
+    owner: ProcessIdentity | null;
+    accountUids: number[];
+    accountProfileOverrides: AiAccountProfileOverrides;
+    processOverrides: AiConfigValues;
+    processProfile: ProcAiConfigProfileRef | null | undefined;
+  },
+  stored: StoredAiModelStack,
+): Promise<ResolvedAiTextModelStack> {
+  const resolveConfig = createAiConfigValueResolver(
+    options.ctx.config,
+    options.accountUids,
+    new Map(),
+    options.processOverrides,
+  );
+  const preferredModelId = normalizeOptionalString(options.processProfile?.id)
+    ?? normalizeOptionalString(options.ctx.config.getExplicit(`users/${options.uid}/ai/preferred_model`))
+    ?? normalizeOptionalString(options.ctx.config.getExplicit(`users/${options.uid}/ai/model_profile`));
+  const models = orderAiModelStack(stored.stack, preferredModelId);
+  const reasoning = resolveConfig("reasoning") ?? undefined;
+  const generationTimeoutMs = resolveConfig("generation/timeout_ms", parsePositiveInt)
+    ?? DEFAULT_GENERATION_TIMEOUT_MS;
+  const generationStreaming = normalizeGenerationStreaming(
+    resolveConfig("generation/streaming"),
+  );
+  const configuredContextWindow = parsePositiveInt(
+    options.ctx.config.get("config/ai/context_window_tokens"),
+  );
+  const resolved: Array<{ entry: AiModelEntry; config: AiModelStackConfig; rawApiKey: string }> = [];
+  for (const entry of models) {
+    const rawApiKey = options.ctx.config.get(
+      aiModelApiKeyConfigKey(stored.configKey, entry.id),
+    ) ?? "";
+    const oauthAccountUids = stored.systemOwned
+      ? withRootAiProfileScope(options.accountUids)
+      : options.accountUids;
+    const oauth = await resolveAiProviderOAuthApiKey(
+      options.ctx,
+      oauthAccountUids,
+      entry.provider,
+      rawApiKey,
+    );
+    const modelContextWindow = await resolveModelContextWindow(entry.provider, entry.model);
+    const contextWindowTokens =
+      entry.contextWindowTokens ?? modelContextWindow ?? configuredContextWindow ?? null;
+    const contextWindowSource = entry.contextWindowTokens !== undefined
+      ? "config" as const
+      : modelContextWindow !== null
+        ? "model" as const
+        : configuredContextWindow !== null
+          ? "config" as const
+          : "unknown" as const;
+    const config: AiModelStackConfig = {
+      provider: entry.provider,
+      model: entry.model,
+      apiKey: oauth.apiKey,
+      providerStyle: entry.providerStyle?.trim().toLowerCase() || "auto",
+      transportTarget: normalizeTarget(entry.transportTarget ?? "gsv"),
+      reasoning,
+      maxTokens: entry.maxTokens ?? DEFAULT_TEXT_GENERATION_MAX_TOKENS,
+      contextWindowTokens,
+      contextWindowSource,
+      generationTimeoutMs,
+      generationStreaming,
+    };
+    if (entry.baseUrl) config.baseUrl = entry.baseUrl;
+    if (oauth.openAiCodexAccountId) {
+      config.openAiCodex = { accountId: oauth.openAiCodexAccountId };
+    }
+    if (!resolved.some((candidate) => isSameAiModelStack(candidate.config, config))) {
+      resolved.push({ entry, config, rawApiKey });
+    }
+  }
+
+  const [primary, ...fallbacks] = resolved;
+  if (!primary) {
+    throw new Error(`AI model stack at /sys/${stored.configKey} has no usable models`);
+  }
+  return {
+    primary: primary.config,
+    defaultApiKey: primary.rawApiKey,
+    fallbacks: fallbacks.map(({ entry, config }) => ({
+      profileId: entry.id,
+      profileName: entry.name,
+      ...config,
+    })),
+  };
+}
+
+async function resolveLegacyAiTextModelStack(options: {
+  ctx: KernelContext;
+  accountUids: number[];
+  accountProfileOverrides: AiAccountProfileOverrides;
+  processOverrides: AiConfigValues;
+}): Promise<ResolvedAiTextModelStack> {
+  const { ctx, accountUids, accountProfileOverrides, processOverrides } = options;
+  const config = ctx.config;
+  const resolveConfig = createAiConfigValueResolver(
+    config,
+    accountUids,
+    accountProfileOverrides,
+    processOverrides,
+  );
+  const processProvider = resolveAiProcessConfigValue(processOverrides, "provider");
+  const accountProvider = resolveAiConfigValue(config, accountUids, accountProfileOverrides, "provider");
+  const systemProvider = config.get("config/ai/provider");
+  const provider = processProvider ?? accountProvider ?? systemProvider ?? "workers-ai";
+  const model = resolveConfig("model") ?? DEFAULT_WORKERS_AI_MODEL;
+  const baseUrl = resolveConfig("base_url") ?? "";
+  const providerStyle = resolveConfig("provider_style") ?? "auto";
+  const transportTarget = resolveConfig("transport_target") ?? "gsv";
+  const apiKey = resolveConfig("api_key") ?? "";
+  const oauthAccountUids = shouldResolveRootOpenAiCodexOAuth({
+    provider,
+    providerFromGlobalConfig: processProvider === null && accountProvider === null && systemProvider !== null,
+  })
+    ? withRootAiProfileScope(accountUids)
+    : accountUids;
+  const oauth = await resolveAiProviderOAuthApiKey(ctx, oauthAccountUids, provider, apiKey);
+  const reasoning = resolveConfig("reasoning") ?? undefined;
+  const maxTokens = parseInt(
+    resolveConfig("max_tokens") ?? String(DEFAULT_TEXT_GENERATION_MAX_TOKENS),
+    10,
+  );
+  const contextWindowOverride = parsePositiveInt(
+    resolveAiProcessConfigValue(processOverrides, "context_window_tokens") ??
+    resolveAiConfigValue(config, accountUids, accountProfileOverrides, "context_window_tokens"),
+  );
+  const modelContextWindow = await resolveModelContextWindow(provider, model);
+  const configuredContextWindow = parsePositiveInt(config.get("config/ai/context_window_tokens"));
+  const contextWindowTokens =
+    contextWindowOverride ?? modelContextWindow ?? configuredContextWindow ?? null;
+  const contextWindowSource = contextWindowOverride !== null
+    ? "config" as const
+    : modelContextWindow !== null
+      ? "model" as const
+      : configuredContextWindow !== null
+        ? "config" as const
+        : "unknown" as const;
+  const generationTimeoutMs = resolveConfig("generation/timeout_ms", parsePositiveInt)
+    ?? DEFAULT_GENERATION_TIMEOUT_MS;
+  const generationStreaming = normalizeGenerationStreaming(resolveConfig("generation/streaming"));
+  const primary: AiModelStackConfig = {
+    provider,
+    model,
+    apiKey: oauth.apiKey,
+    providerStyle: providerStyle.trim().toLowerCase() || "auto",
+    transportTarget: normalizeTarget(transportTarget),
+    reasoning,
+    maxTokens,
+    contextWindowTokens,
+    contextWindowSource,
+    generationTimeoutMs,
+    generationStreaming,
+  };
+  const normalizedBaseUrl = baseUrl.trim();
+  if (normalizedBaseUrl) primary.baseUrl = normalizedBaseUrl;
+  if (oauth.openAiCodexAccountId) {
+    primary.openAiCodex = { accountId: oauth.openAiCodexAccountId };
+  }
+  const fallbackSelection = resolveAiFallbackSelection(
+    ctx,
+    accountUids,
+    accountProfileOverrides,
+    processOverrides,
+  );
+  return {
+    primary,
+    defaultApiKey: apiKey,
+    fallbacks: await resolveAiFallbackConfigs({
+      ctx,
+      accountUids: fallbackSelection?.accountUids ?? [],
+      selector: fallbackSelection?.selector ?? "",
+      primary,
+    }),
+  };
 }
 
 function resolveAiFallbackSelection(
