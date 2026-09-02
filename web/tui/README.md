@@ -6,11 +6,13 @@ input, IME composition, paste, and browser shortcut suppression.
 
 The native client adopts the user's terminal palette; this browser surface uses
 the curated GSV palette because it has no host terminal theme. Both render the
-same `user@target $ ` prompt grammar, styled Markdown, inspectable links, and
-canonical media artifacts, with input beginning on the prompt line. Type `@`
-into an empty draft to choose a capability environment. Press `Alt+M` to switch
-an assistant response between rendered Markdown and its source. Type `show me
-Markdown and media` in the demo to exercise the rich-content path.
+same continuous `user@target $ ` terminal document, styled Markdown,
+inspectable links, and canonical media artifacts, with input beginning on the
+prompt line. Type `@` into an empty draft to choose a capability environment;
+press `Tab` to switch the draft between Ship and the visibly literal
+`user@target $ ! command` mode. Press `Alt+M` to switch assistant output between
+rendered Markdown and its source. Type `show me Markdown and media` in the demo
+to exercise the rich-content path, or switch modes and try `pwd` or `ls`.
 In the native client, use `Left`/`Right` to choose among attachments and
 `Enter` to open or close the focused image; Vim mode adds `h`/`l` for the same
 navigation. Image-size variants are prepared in the background while the last

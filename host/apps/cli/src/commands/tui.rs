@@ -43,6 +43,14 @@ enum RuntimeEvent {
         id: u64,
         error: String,
     },
+    ShellOutput {
+        id: u64,
+        output: String,
+    },
+    ShellFinished {
+        id: u64,
+        error: Option<String>,
+    },
     ApprovalDecided {
         request_id: String,
     },
@@ -200,7 +208,7 @@ async fn run_interface(
     let mut insert_cursor = false;
 
     loop {
-        let next_insert_cursor = app.draft_visible();
+        let next_insert_cursor = app.cursor_visible();
         if insert_cursor != next_insert_cursor {
             let style = if next_insert_cursor {
                 SetCursorStyle::SteadyBar
@@ -281,6 +289,23 @@ fn apply_effects(
                 });
                 drop(handle);
             }
+            Effect::Shell {
+                id,
+                input,
+                target,
+                cwd,
+            } => {
+                let Some(session) = session else {
+                    app.complete_demo_shell(id, &input);
+                    continue;
+                };
+                let client = Arc::clone(&session.client);
+                let sender = runtime_sender.clone();
+                let handle = tokio::spawn(async move {
+                    run_shell_command(client, sender, id, input, target, cwd).await;
+                });
+                drop(handle);
+            }
             Effect::Abort => {
                 let Some(session) = session else {
                     app.set_activity(None);
@@ -357,6 +382,12 @@ fn apply_runtime_event(app: &mut App, event: RuntimeEvent, session: Option<&Conn
         }
         RuntimeEvent::SubmissionFailed { id, error } => {
             app.submission_failed(id, format!("That request was not sent.\n\n{error}"));
+        }
+        RuntimeEvent::ShellOutput { id, output } => {
+            app.append_shell_output(id, &output);
+        }
+        RuntimeEvent::ShellFinished { id, error } => {
+            app.finish_shell(id, error.as_deref());
         }
         RuntimeEvent::ApprovalDecided { request_id } => {
             app.leave_approval(&request_id);
@@ -504,6 +535,15 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
     if alt && matches!(key.code, KeyCode::Char('v' | 'V')) {
         return Some(Action::ToggleVim);
     }
+    if !command_modifier && key.code == KeyCode::Tab {
+        return Some(Action::ToggleShell);
+    }
+    if key.code == KeyCode::PageUp {
+        return Some(Action::ScrollPageUp);
+    }
+    if key.code == KeyCode::PageDown {
+        return Some(Action::ScrollPageDown);
+    }
 
     if app.vim_enabled() && !app.draft_visible() && !command_modifier {
         return match key.code {
@@ -561,12 +601,157 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
         KeyCode::End => Some(Action::MoveCursorEnd),
         KeyCode::Up if alt => Some(Action::PreviousTurn),
         KeyCode::Down if alt => Some(Action::NextTurn),
-        KeyCode::PageUp => Some(Action::ScrollUp),
-        KeyCode::PageDown => Some(Action::ScrollDown),
         KeyCode::Up if !app.draft_visible() => Some(Action::ScrollUp),
         KeyCode::Down if !app.draft_visible() => Some(Action::ScrollDown),
-        KeyCode::Tab if !command_modifier => Some(Action::Insert("    ".to_string())),
         _ => None,
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum ShellResponse {
+    Running { output: String, session_id: String },
+    Completed { output: String },
+    Failed { output: String, error: String },
+}
+
+async fn run_shell_command(
+    client: Arc<KernelClient>,
+    sender: mpsc::UnboundedSender<RuntimeEvent>,
+    id: u64,
+    input: String,
+    target: String,
+    cwd: Option<String>,
+) {
+    let mut args = json!({
+        "input": input,
+        "target": target,
+    });
+    if let Some(cwd) = cwd {
+        args["cwd"] = Value::String(cwd);
+    }
+
+    loop {
+        let payload = match client.request_ok("shell.exec", Some(args)).await {
+            Ok(payload) => payload,
+            Err(error) => {
+                let _ = sender.send(RuntimeEvent::ShellFinished {
+                    id,
+                    error: Some(error.to_string()),
+                });
+                return;
+            }
+        };
+        let response = match parse_shell_response(&payload) {
+            Ok(response) => response,
+            Err(error) => {
+                let _ = sender.send(RuntimeEvent::ShellFinished {
+                    id,
+                    error: Some(error),
+                });
+                return;
+            }
+        };
+        match response {
+            ShellResponse::Running { output, session_id } => {
+                if !output.is_empty()
+                    && sender
+                        .send(RuntimeEvent::ShellOutput { id, output })
+                        .is_err()
+                {
+                    return;
+                }
+                args = json!({
+                    "input": "",
+                    "sessionId": session_id,
+                });
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            ShellResponse::Completed { output } => {
+                if !output.is_empty()
+                    && sender
+                        .send(RuntimeEvent::ShellOutput { id, output })
+                        .is_err()
+                {
+                    return;
+                }
+                let _ = sender.send(RuntimeEvent::ShellFinished { id, error: None });
+                return;
+            }
+            ShellResponse::Failed { output, error } => {
+                if !output.is_empty()
+                    && sender
+                        .send(RuntimeEvent::ShellOutput { id, output })
+                        .is_err()
+                {
+                    return;
+                }
+                let _ = sender.send(RuntimeEvent::ShellFinished {
+                    id,
+                    error: Some(error),
+                });
+                return;
+            }
+        }
+    }
+}
+
+fn parse_shell_response(payload: &Value) -> Result<ShellResponse, String> {
+    let output = payload
+        .get("output")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            let stdout = payload.get("stdout").and_then(Value::as_str).unwrap_or("");
+            let stderr = payload.get("stderr").and_then(Value::as_str).unwrap_or("");
+            format!("{stdout}{stderr}")
+        });
+    match payload.get("status").and_then(Value::as_str) {
+        Some("running") => {
+            let session_id = payload
+                .get("sessionId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|session_id| !session_id.is_empty())
+                .ok_or_else(|| {
+                    "shell.exec returned a running command without a session id".to_string()
+                })?;
+            Ok(ShellResponse::Running {
+                output,
+                session_id: session_id.to_string(),
+            })
+        }
+        Some("completed") => Ok(ShellResponse::Completed { output }),
+        Some("failed") => Ok(ShellResponse::Failed {
+            output,
+            error: payload
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("Command failed")
+                .to_string(),
+        }),
+        Some(status) => Err(format!("shell.exec returned unknown status: {status}")),
+        None if payload.get("stdout").is_some()
+            || payload.get("stderr").is_some()
+            || payload.get("exitCode").is_some() =>
+        {
+            match payload.get("exitCode").and_then(Value::as_i64) {
+                Some(exit_code) if exit_code != 0 => Ok(ShellResponse::Failed {
+                    output,
+                    error: format!("Command exited with code {exit_code}"),
+                }),
+                _ => Ok(ShellResponse::Completed { output }),
+            }
+        }
+        None if payload.get("error").and_then(Value::as_str).is_some() => {
+            Ok(ShellResponse::Failed {
+                output,
+                error: payload["error"]
+                    .as_str()
+                    .unwrap_or("Command failed")
+                    .to_string(),
+            })
+        }
+        None => Err("shell.exec returned no command status".to_string()),
     }
 }
 
@@ -859,7 +1044,10 @@ mod tests {
     use gsv_tui_core::{Action, App, ConnectionState, MediaKind, Role};
     use serde_json::json;
 
-    use super::{apply_signal, device_environments, history_moments, key_action, truncate_chars};
+    use super::{
+        apply_signal, device_environments, history_moments, key_action, parse_shell_response,
+        truncate_chars, ShellResponse,
+    };
 
     #[test]
     fn conversation_history_becomes_user_visible_moments() {
@@ -971,6 +1159,61 @@ mod tests {
         let l = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE);
         assert_eq!(key_action(&app, h), Some(Action::PreviousMedia));
         assert_eq!(key_action(&app, l), Some(Action::NextMedia));
+    }
+
+    #[test]
+    fn tab_toggles_literal_shell_and_page_keys_scroll_the_document() {
+        let mut app = App::new(ConnectionState::Ready);
+        app.set_vim_enabled(true);
+        let tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
+        let page_up = KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE);
+        let page_down = KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE);
+        assert_eq!(key_action(&app, tab), Some(Action::ToggleShell));
+        assert_eq!(key_action(&app, page_up), Some(Action::ScrollPageUp));
+        assert_eq!(key_action(&app, page_down), Some(Action::ScrollPageDown));
+    }
+
+    #[test]
+    fn shell_responses_preserve_stream_chunks_and_legacy_output() {
+        assert_eq!(
+            parse_shell_response(&json!({
+                "status": "running",
+                "output": "one\n",
+                "sessionId": "shell-one"
+            })),
+            Ok(ShellResponse::Running {
+                output: "one\n".to_string(),
+                session_id: "shell-one".to_string(),
+            })
+        );
+        assert_eq!(
+            parse_shell_response(&json!({
+                "status": "completed",
+                "output": "two\n",
+                "exitCode": 0
+            })),
+            Ok(ShellResponse::Completed {
+                output: "two\n".to_string(),
+            })
+        );
+        assert_eq!(
+            parse_shell_response(&json!({
+                "stdout": "old out\n",
+                "stderr": "old err\n",
+                "exitCode": 7
+            })),
+            Ok(ShellResponse::Failed {
+                output: "old out\nold err\n".to_string(),
+                error: "Command exited with code 7".to_string(),
+            })
+        );
+        assert_eq!(
+            parse_shell_response(&json!({ "error": "permission denied" })),
+            Ok(ShellResponse::Failed {
+                output: String::new(),
+                error: "permission denied".to_string(),
+            })
+        );
     }
 
     #[test]

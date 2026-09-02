@@ -124,6 +124,7 @@ pub enum MomentState {
 pub struct Moment {
     pub id: String,
     pub role: Role,
+    pub execution: ExecutionMode,
     pub text: String,
     pub run_id: Option<String>,
     pub state: MomentState,
@@ -136,6 +137,7 @@ impl Moment {
         Self {
             id: id.into(),
             role,
+            execution: ExecutionMode::Ship,
             text: text.into(),
             run_id: None,
             state: MomentState::Complete,
@@ -151,6 +153,11 @@ impl Moment {
 
     pub fn with_environment(mut self, environment: CapabilityEnvironment) -> Self {
         self.environment = Some(environment);
+        self
+    }
+
+    pub fn with_execution(mut self, execution: ExecutionMode) -> Self {
+        self.execution = execution;
         self
     }
 }
@@ -178,6 +185,13 @@ pub enum ApprovalDecision {
     Deny,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ExecutionMode {
+    #[default]
+    Ship,
+    Shell,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Action {
     Insert(String),
@@ -198,6 +212,8 @@ pub enum Action {
     LastTurn,
     ScrollUp,
     ScrollDown,
+    ScrollPageUp,
+    ScrollPageDown,
     PreviousChoice,
     NextChoice,
     PreviousMedia,
@@ -205,6 +221,7 @@ pub enum Action {
     ToggleHelp,
     ToggleMarkdown,
     ToggleVim,
+    ToggleShell,
     ToggleMedia,
     Abort,
     DecideApproval {
@@ -222,6 +239,12 @@ pub enum Effect {
         target: String,
         cwd: Option<String>,
     },
+    Shell {
+        id: u64,
+        input: String,
+        target: String,
+        cwd: Option<String>,
+    },
     Abort,
     DecideApproval {
         request_id: String,
@@ -235,14 +258,18 @@ pub enum Effect {
 struct PendingSubmission {
     id: u64,
     text: String,
+    execution: ExecutionMode,
 }
 
 #[derive(Debug)]
 pub struct App {
     moments: Vec<Moment>,
     selected: usize,
-    moment_scroll: u16,
+    document_scroll: u16,
     last_max_scroll: u16,
+    last_viewport_height: u16,
+    follow_latest: bool,
+    scroll_anchor: Option<usize>,
     draft: String,
     draft_cursor: usize,
     draft_visible: bool,
@@ -250,6 +277,8 @@ pub struct App {
     connection: ConnectionState,
     activity: Option<String>,
     pending_submission: Option<PendingSubmission>,
+    active_run: Option<String>,
+    active_shell: Option<u64>,
     next_submission_id: u64,
     approval: Option<Approval>,
     principal: String,
@@ -261,6 +290,7 @@ pub struct App {
     theme: Theme,
     raw_markdown: bool,
     vim_enabled: bool,
+    execution_mode: ExecutionMode,
     inline_images: bool,
     media_expanded: bool,
     media_focus: usize,
@@ -272,8 +302,11 @@ impl App {
         Self {
             moments: Vec::new(),
             selected: 0,
-            moment_scroll: 0,
+            document_scroll: 0,
             last_max_scroll: 0,
+            last_viewport_height: 1,
+            follow_latest: true,
+            scroll_anchor: None,
             draft: String::new(),
             draft_cursor: 0,
             draft_visible: false,
@@ -281,6 +314,8 @@ impl App {
             connection,
             activity: None,
             pending_submission: None,
+            active_run: None,
+            active_shell: None,
             next_submission_id: 1,
             approval: None,
             principal: "you".to_string(),
@@ -292,6 +327,7 @@ impl App {
             theme: Theme::Gsv,
             raw_markdown: false,
             vim_enabled: false,
+            execution_mode: ExecutionMode::Ship,
             inline_images: false,
             media_expanded: false,
             media_focus: 0,
@@ -325,12 +361,31 @@ impl App {
         self.draft_visible
     }
 
+    pub fn cursor_visible(&self) -> bool {
+        if self.approval.is_some() || self.help_visible || self.media_expanded {
+            return false;
+        }
+        if self.environment_picker {
+            return true;
+        }
+        self.draft_visible
+            || (!self.vim_enabled
+                && self.follow_latest
+                && self.pending_submission.is_none()
+                && self.active_run.is_none()
+                && self.active_shell.is_none())
+    }
+
     pub fn approval(&self) -> Option<&Approval> {
         self.approval.as_ref()
     }
 
     pub fn vim_enabled(&self) -> bool {
         self.vim_enabled
+    }
+
+    pub fn execution_mode(&self) -> ExecutionMode {
+        self.execution_mode
     }
 
     pub fn environment_picker_visible(&self) -> bool {
@@ -413,7 +468,9 @@ impl App {
         }
         self.moments = moments;
         self.selected = self.moments.len().saturating_sub(1);
-        self.moment_scroll = 0;
+        self.document_scroll = 0;
+        self.follow_latest = true;
+        self.scroll_anchor = None;
         self.media_expanded = false;
         self.media_focus = 0;
     }
@@ -536,12 +593,14 @@ impl App {
                 }
                 self.media_expanded = false;
                 self.draft_visible = true;
+                self.follow_latest = true;
                 self.draft.insert_str(self.draft_cursor, &value);
                 self.draft_cursor += value.len();
                 Vec::new()
             }
             Action::Backspace => {
                 self.draft_visible = true;
+                self.follow_latest = true;
                 if let Some(previous) = previous_grapheme_boundary(&self.draft, self.draft_cursor) {
                     self.draft.drain(previous..self.draft_cursor);
                     self.draft_cursor = previous;
@@ -550,6 +609,7 @@ impl App {
             }
             Action::Delete => {
                 self.draft_visible = true;
+                self.follow_latest = true;
                 if let Some(next) = next_grapheme_boundary(&self.draft, self.draft_cursor) {
                     self.draft.drain(self.draft_cursor..next);
                 }
@@ -557,6 +617,7 @@ impl App {
             }
             Action::DeleteWord => {
                 self.draft_visible = true;
+                self.follow_latest = true;
                 let before = &self.draft[..self.draft_cursor];
                 let trimmed = before.trim_end_matches(char::is_whitespace);
                 let word_start = trimmed.rfind(char::is_whitespace).map_or(0, |index| {
@@ -592,6 +653,7 @@ impl App {
             }
             Action::Newline => {
                 self.draft_visible = true;
+                self.follow_latest = true;
                 self.draft.insert(self.draft_cursor, '\n');
                 self.draft_cursor += 1;
                 Vec::new()
@@ -600,6 +662,7 @@ impl App {
             Action::BeginCompose => {
                 self.media_expanded = false;
                 self.draft_visible = true;
+                self.follow_latest = true;
                 Vec::new()
             }
             Action::Escape => {
@@ -607,6 +670,7 @@ impl App {
                     self.media_expanded = false;
                 } else {
                     self.draft_visible = false;
+                    self.follow_latest = false;
                 }
                 Vec::new()
             }
@@ -621,7 +685,8 @@ impl App {
             Action::FirstTurn => {
                 if !self.draft_visible && !self.moments.is_empty() {
                     self.selected = self.turn_end(0);
-                    self.moment_scroll = 0;
+                    self.scroll_anchor = Some(0);
+                    self.follow_latest = false;
                     self.media_expanded = false;
                     self.media_focus = 0;
                 }
@@ -630,26 +695,27 @@ impl App {
             Action::LastTurn => {
                 if !self.draft_visible && !self.moments.is_empty() {
                     self.selected = self.moments.len().saturating_sub(1);
-                    self.moment_scroll = 0;
+                    self.scroll_anchor = Some(self.turn_start(self.selected));
+                    self.follow_latest = true;
                     self.media_expanded = false;
                     self.media_focus = 0;
                 }
                 Vec::new()
             }
             Action::ScrollUp => {
-                if self.moment_scroll > 0 {
-                    self.moment_scroll -= 1;
-                } else {
-                    self.previous_turn();
-                }
+                self.scroll_older(3);
                 Vec::new()
             }
             Action::ScrollDown => {
-                if self.moment_scroll < self.last_max_scroll {
-                    self.moment_scroll += 1;
-                } else {
-                    self.next_turn();
-                }
+                self.scroll_newer(3);
+                Vec::new()
+            }
+            Action::ScrollPageUp => {
+                self.scroll_older(self.last_viewport_height.saturating_sub(2).max(1));
+                Vec::new()
+            }
+            Action::ScrollPageDown => {
+                self.scroll_newer(self.last_viewport_height.saturating_sub(2).max(1));
                 Vec::new()
             }
             Action::PreviousChoice | Action::NextChoice => Vec::new(),
@@ -667,22 +733,34 @@ impl App {
             }
             Action::ToggleMarkdown => {
                 self.raw_markdown = !self.raw_markdown;
-                self.moment_scroll = 0;
+                self.scroll_anchor = Some(self.turn_start(self.selected));
                 Vec::new()
             }
             Action::ToggleVim => {
                 self.vim_enabled = !self.vim_enabled;
                 Vec::new()
             }
+            Action::ToggleShell => {
+                self.execution_mode = match self.execution_mode {
+                    ExecutionMode::Ship => ExecutionMode::Shell,
+                    ExecutionMode::Shell => ExecutionMode::Ship,
+                };
+                self.draft_visible = true;
+                self.follow_latest = true;
+                self.media_expanded = false;
+                Vec::new()
+            }
             Action::ToggleMedia => {
                 if self.inline_images && self.turn_has_images() {
                     self.clamp_media_focus();
                     self.media_expanded = !self.media_expanded;
-                    self.moment_scroll = 0;
                 }
                 Vec::new()
             }
-            Action::Abort => vec![Effect::Abort],
+            Action::Abort => self
+                .active_run
+                .as_ref()
+                .map_or_else(Vec::new, |_| vec![Effect::Abort]),
             Action::DecideApproval { .. } => Vec::new(),
             Action::Quit => vec![Effect::Quit],
         }
@@ -695,20 +773,27 @@ impl App {
 
         let id = self.next_submission_id;
         self.next_submission_id = self.next_submission_id.saturating_add(1);
+        let execution = self.execution_mode;
         let text = std::mem::take(&mut self.draft);
         self.draft_cursor = 0;
         self.draft_visible = false;
         self.pending_submission = Some(PendingSubmission {
             id,
             text: text.clone(),
+            execution,
         });
         self.moments.push(
             Moment::complete(format!("local:user:{id}"), Role::Human, text.clone())
-                .with_environment(self.active_environment().clone()),
+                .with_environment(self.active_environment().clone())
+                .with_execution(execution),
         );
         self.moments.push(Moment {
-            id: format!("local:gsv:{id}"),
+            id: match execution {
+                ExecutionMode::Ship => format!("local:gsv:{id}"),
+                ExecutionMode::Shell => format!("local:shell:{id}"),
+            },
             role: Role::Intelligence,
+            execution,
             text: String::new(),
             run_id: None,
             state: MomentState::Streaming,
@@ -716,7 +801,9 @@ impl App {
             environment: None,
         });
         self.selected = self.moments.len().saturating_sub(1);
-        self.moment_scroll = 0;
+        self.document_scroll = 0;
+        self.follow_latest = true;
+        self.scroll_anchor = None;
         self.media_expanded = false;
         self.media_focus = 0;
         self.connection = if self.connection == ConnectionState::Demo {
@@ -724,21 +811,38 @@ impl App {
         } else {
             ConnectionState::Working
         };
-        self.activity = Some("SENDING".to_string());
-        let environment = self.active_environment();
-        Some(Effect::Submit {
-            id,
-            text,
-            target: environment.target.clone(),
-            cwd: environment.cwd.clone(),
-        })
+        self.activity = Some(
+            match execution {
+                ExecutionMode::Ship => "SENDING",
+                ExecutionMode::Shell => "RUNNING",
+            }
+            .to_string(),
+        );
+        let environment = self.active_environment().clone();
+        match execution {
+            ExecutionMode::Ship => Some(Effect::Submit {
+                id,
+                text,
+                target: environment.target,
+                cwd: environment.cwd,
+            }),
+            ExecutionMode::Shell => {
+                self.active_shell = Some(id);
+                Some(Effect::Shell {
+                    id,
+                    input: text,
+                    target: environment.target,
+                    cwd: environment.cwd,
+                })
+            }
+        }
     }
 
     pub fn submission_accepted(&mut self, id: u64, run_id: String, queued: bool) {
         if self
             .pending_submission
             .as_ref()
-            .is_none_or(|pending| pending.id != id)
+            .is_none_or(|pending| pending.id != id || pending.execution != ExecutionMode::Ship)
         {
             return;
         }
@@ -747,6 +851,13 @@ impl App {
             if let Some(moment) = self.moments.iter_mut().find(|moment| moment.id == local_id) {
                 moment.run_id = Some(run_id.clone());
             }
+        }
+        if self.moments.iter().any(|moment| {
+            moment.run_id.as_deref() == Some(&run_id)
+                && moment.execution == ExecutionMode::Ship
+                && moment.state == MomentState::Streaming
+        }) {
+            self.active_run = Some(run_id);
         }
         self.activity = Some(if queued { "QUEUED" } else { "THINKING" }.to_string());
     }
@@ -777,6 +888,7 @@ impl App {
         if let Some(index) = self.streaming_moment_for(Some(run_id)) {
             self.moments[index].run_id = Some(run_id.to_string());
         }
+        self.active_run = Some(run_id.to_string());
         self.connection = if self.connection == ConnectionState::Demo {
             ConnectionState::Demo
         } else {
@@ -786,7 +898,7 @@ impl App {
     }
 
     pub fn append_delta(&mut self, run_id: Option<&str>, delta: &str) {
-        let followed_latest = self.selected + 1 >= self.moments.len();
+        let followed_latest = self.follow_latest;
         let index = self.streaming_moment_for(run_id);
         let index = match index {
             Some(index) => index,
@@ -796,6 +908,7 @@ impl App {
                         .map(|run_id| format!("run:{run_id}"))
                         .unwrap_or_else(|| format!("stream:{}", self.moments.len())),
                     role: Role::Intelligence,
+                    execution: ExecutionMode::Ship,
                     text: String::new(),
                     run_id: run_id.map(str::to_string),
                     state: MomentState::Streaming,
@@ -829,50 +942,85 @@ impl App {
                     .map(|run_id| format!("run:{run_id}"))
                     .unwrap_or_else(|| format!("output:{}", self.moments.len())),
                 role: Role::Intelligence,
+                execution: ExecutionMode::Ship,
                 text,
                 run_id: run_id.map(str::to_string),
                 state: MomentState::Streaming,
                 artifacts: Vec::new(),
                 environment: None,
             });
-            self.selected = self.moments.len().saturating_sub(1);
+            if self.follow_latest {
+                self.selected = self.moments.len().saturating_sub(1);
+            }
         }
         self.activity = Some("RESPONDING".to_string());
     }
 
     pub fn finish_run(&mut self, run_id: Option<&str>, error: Option<&str>) {
-        let index = match run_id {
-            Some(run_id) => self
-                .moments
-                .iter()
-                .rposition(|moment| moment.run_id.as_deref() == Some(run_id)),
-            None => self.moments.iter().rposition(|moment| {
-                moment.role == Role::Intelligence && moment.state == MomentState::Streaming
-            }),
-        };
-        let Some(index) = index else {
+        let effective_run = run_id
+            .map(str::to_string)
+            .or_else(|| self.active_run.clone());
+        let is_active = effective_run
+            .as_deref()
+            .is_some_and(|run_id| self.active_run.as_deref() == Some(run_id));
+        let index = self.moments.iter().rposition(|moment| {
+            moment.role == Role::Intelligence
+                && moment.execution == ExecutionMode::Ship
+                && moment.state == MomentState::Streaming
+                && effective_run
+                    .as_deref()
+                    .is_none_or(|run_id| moment.run_id.as_deref() == Some(run_id))
+        });
+        if !is_active && index.is_none() {
             return;
-        };
-        let moment = &mut self.moments[index];
-        if let Some(error) = error.filter(|error| !error.is_empty()) {
-            if !moment.text.is_empty() {
-                moment.text.push_str("\n\n");
-            }
-            moment.text.push_str(error);
-            moment.state = MomentState::Error;
-        } else {
-            if moment.text.is_empty() {
-                moment.text = "Done.".to_string();
-            }
-            moment.state = MomentState::Complete;
         }
-        self.connection = if self.connection == ConnectionState::Demo {
-            ConnectionState::Demo
-        } else {
-            ConnectionState::Ready
-        };
-        self.activity = None;
-        self.approval = None;
+
+        if let Some(error) = error.filter(|error| !error.is_empty()) {
+            if let Some(index) = index {
+                let moment = &mut self.moments[index];
+                if !moment.text.is_empty() {
+                    moment.text.push_str("\n\n");
+                }
+                moment.text.push_str(error);
+                moment.state = MomentState::Error;
+            } else {
+                self.moments.push(Moment {
+                    id: effective_run
+                        .as_deref()
+                        .map(|run_id| format!("error:{run_id}"))
+                        .unwrap_or_else(|| format!("error:{}", self.moments.len())),
+                    role: Role::Intelligence,
+                    execution: ExecutionMode::Ship,
+                    text: error.to_string(),
+                    run_id: effective_run.clone(),
+                    state: MomentState::Error,
+                    artifacts: Vec::new(),
+                    environment: None,
+                });
+            }
+        } else if let Some(index) = index {
+            if self.moments[index].text.is_empty() && self.moments[index].artifacts.is_empty() {
+                self.moments.remove(index);
+            } else {
+                self.moments[index].state = MomentState::Complete;
+            }
+        }
+
+        if is_active {
+            self.active_run = None;
+            self.connection = if self.connection == ConnectionState::Demo {
+                ConnectionState::Demo
+            } else if self.active_shell.is_some() {
+                ConnectionState::Working
+            } else {
+                ConnectionState::Ready
+            };
+            self.activity = None;
+            self.approval = None;
+            if self.follow_latest {
+                self.selected = self.moments.len().saturating_sub(1);
+            }
+        }
     }
 
     pub fn commit_message(
@@ -893,12 +1041,14 @@ impl App {
             let exact_run = run_id.as_deref().and_then(|run_id| {
                 self.moments.iter().rposition(|moment| {
                     moment.role == Role::Human
+                        && moment.execution == ExecutionMode::Ship
                         && moment.id.starts_with("local:user:")
                         && moment.run_id.as_deref() == Some(run_id)
                 })
             });
             let unbound = self.moments.iter().rposition(|moment| {
                 moment.role == Role::Human
+                    && moment.execution == ExecutionMode::Ship
                     && moment.id.starts_with("local:user:")
                     && moment.run_id.is_none()
                     && moment.text == text
@@ -910,35 +1060,49 @@ impl App {
                 moment.id = id;
                 moment.run_id = run_id;
                 moment.artifacts = artifacts;
-                moment.environment = environment;
+                if environment.is_some() {
+                    moment.environment = environment;
+                }
                 return;
             }
         }
         if role == Role::Intelligence {
             if let Some(index) = run_id.as_deref().and_then(|run_id| {
-                self.moments
-                    .iter()
-                    .rposition(|moment| moment.run_id.as_deref() == Some(run_id))
+                self.moments.iter().rposition(|moment| {
+                    moment.role == Role::Intelligence
+                        && moment.execution == ExecutionMode::Ship
+                        && moment.state == MomentState::Streaming
+                        && moment.run_id.as_deref() == Some(run_id)
+                })
             }) {
-                let moment = &mut self.moments[index];
-                moment.id = id;
-                moment.text = text;
-                moment.state = MomentState::Complete;
-                moment.artifacts = artifacts;
-                return;
+                let streamed = &self.moments[index].text;
+                let reconciles_stream = streamed.is_empty()
+                    || streamed == &text
+                    || text.starts_with(streamed.as_str())
+                    || streamed.starts_with(text.as_str());
+                if reconciles_stream {
+                    let moment = &mut self.moments[index];
+                    moment.id = id;
+                    moment.text = text;
+                    moment.state = MomentState::Complete;
+                    moment.artifacts = artifacts;
+                    return;
+                }
             }
         }
         self.moments.push(Moment {
             id,
             role,
+            execution: ExecutionMode::Ship,
             text,
             run_id,
             state: MomentState::Complete,
             artifacts,
             environment,
         });
-        self.selected = self.moments.len().saturating_sub(1);
-        self.moment_scroll = 0;
+        if self.follow_latest {
+            self.selected = self.moments.len().saturating_sub(1);
+        }
     }
 
     pub fn complete_demo_submission(&mut self, id: u64, request: &str) {
@@ -969,6 +1133,86 @@ impl App {
         self.finish_run(Some(&run_id), None);
     }
 
+    pub fn append_shell_output(&mut self, id: u64, output: &str) {
+        if self.active_shell != Some(id) || output.is_empty() {
+            return;
+        }
+        let Some(moment) = self.moments.iter_mut().find(|moment| {
+            moment.id == format!("local:shell:{id}")
+                && moment.execution == ExecutionMode::Shell
+                && moment.state == MomentState::Streaming
+        }) else {
+            return;
+        };
+        moment.text.push_str(output);
+        self.activity = Some("RUNNING".to_string());
+        if self.follow_latest {
+            self.selected = self.moments.len().saturating_sub(1);
+        }
+    }
+
+    pub fn finish_shell(&mut self, id: u64, error: Option<&str>) {
+        if self.active_shell != Some(id) {
+            return;
+        }
+        let index = self
+            .moments
+            .iter()
+            .position(|moment| moment.id == format!("local:shell:{id}"));
+        if let Some(index) = index {
+            if let Some(error) = error.filter(|error| !error.trim().is_empty()) {
+                let moment = &mut self.moments[index];
+                if !moment.text.is_empty() && !moment.text.ends_with('\n') {
+                    moment.text.push('\n');
+                }
+                moment.text.push_str(error);
+                moment.state = MomentState::Error;
+            } else if self.moments[index].text.is_empty() {
+                self.moments.remove(index);
+            } else {
+                self.moments[index].state = MomentState::Complete;
+            }
+        }
+        if self
+            .pending_submission
+            .as_ref()
+            .is_some_and(|pending| pending.id == id && pending.execution == ExecutionMode::Shell)
+        {
+            self.pending_submission = None;
+        }
+        self.active_shell = None;
+        self.connection = if self.connection == ConnectionState::Demo {
+            ConnectionState::Demo
+        } else if self.active_run.is_some() {
+            ConnectionState::Working
+        } else {
+            ConnectionState::Ready
+        };
+        self.activity = self.active_run.as_ref().map(|_| "THINKING".to_string());
+        if self.follow_latest {
+            self.selected = self.moments.len().saturating_sub(1);
+        }
+    }
+
+    pub fn complete_demo_shell(&mut self, id: u64, input: &str) {
+        let output = match input.trim() {
+            "pwd" => {
+                self.active_environment()
+                    .cwd
+                    .as_deref()
+                    .unwrap_or("~")
+                    .to_string()
+                    + "\n"
+            }
+            "ls" | "ls -la" | "ls -lah" => {
+                "Desktop  Documents  Downloads  Pictures  Projects\n".to_string()
+            }
+            _ => "Shell execution is unavailable in the disconnected preview.\n".to_string(),
+        };
+        self.append_shell_output(id, &output);
+        self.finish_shell(id, None);
+    }
+
     fn previous_turn(&mut self) {
         if self.draft_visible || self.moments.is_empty() {
             return;
@@ -976,7 +1220,8 @@ impl App {
         let start = self.turn_start(self.selected);
         if start > 0 {
             self.selected = start - 1;
-            self.moment_scroll = 0;
+            self.scroll_anchor = Some(self.turn_start(self.selected));
+            self.follow_latest = false;
             self.media_expanded = false;
             self.media_focus = 0;
         }
@@ -989,10 +1234,34 @@ impl App {
         let end = self.turn_end(self.turn_start(self.selected));
         if end + 1 < self.moments.len() {
             self.selected = self.turn_end(end + 1);
-            self.moment_scroll = 0;
+            self.scroll_anchor = Some(end + 1);
+            self.follow_latest = self.selected + 1 >= self.moments.len();
             self.media_expanded = false;
             self.media_focus = 0;
         }
+    }
+
+    fn scroll_older(&mut self, rows: u16) {
+        let current = if self.follow_latest {
+            self.last_max_scroll
+        } else {
+            self.document_scroll
+        };
+        self.document_scroll = current.saturating_sub(rows);
+        self.follow_latest = false;
+        self.scroll_anchor = None;
+        self.media_expanded = false;
+        self.draft_visible = false;
+    }
+
+    fn scroll_newer(&mut self, rows: u16) {
+        self.document_scroll = self
+            .document_scroll
+            .saturating_add(rows)
+            .min(self.last_max_scroll);
+        self.follow_latest = self.document_scroll >= self.last_max_scroll;
+        self.scroll_anchor = None;
+        self.media_expanded = false;
     }
 
     fn turn_start(&self, index: usize) -> usize {
@@ -1057,6 +1326,7 @@ impl App {
         } else {
             self.media_focus.checked_sub(1).unwrap_or(count - 1)
         };
+        self.scroll_anchor = Some(self.turn_start(self.selected));
     }
 
     fn matching_environment_indices(&self) -> Vec<usize> {
@@ -1089,21 +1359,25 @@ impl App {
 
     fn streaming_moment_for(&self, run_id: Option<&str>) -> Option<usize> {
         if let Some(run_id) = run_id {
-            if let Some(index) = self
-                .moments
-                .iter()
-                .rposition(|moment| moment.run_id.as_deref() == Some(run_id))
-            {
+            if let Some(index) = self.moments.iter().rposition(|moment| {
+                moment.role == Role::Intelligence
+                    && moment.execution == ExecutionMode::Ship
+                    && moment.state == MomentState::Streaming
+                    && moment.run_id.as_deref() == Some(run_id)
+            }) {
                 return Some(index);
             }
             return self.moments.iter().rposition(|moment| {
                 moment.role == Role::Intelligence
+                    && moment.execution == ExecutionMode::Ship
                     && moment.state == MomentState::Streaming
                     && moment.run_id.is_none()
             });
         }
         self.moments.iter().rposition(|moment| {
-            moment.role == Role::Intelligence && moment.state == MomentState::Streaming
+            moment.role == Role::Intelligence
+                && moment.execution == ExecutionMode::Ship
+                && moment.state == MomentState::Streaming
         })
     }
 
@@ -1138,11 +1412,8 @@ impl App {
         } else if self.environment_picker {
             self.last_max_scroll = 0;
             self.render_environment_picker(frame, canvas);
-        } else if self.draft_visible {
-            self.last_max_scroll = 0;
-            self.render_draft(frame, canvas);
         } else {
-            self.render_turn(frame, canvas);
+            self.render_transcript(frame, canvas);
         }
         if self.help_visible {
             self.media_slots.clear();
@@ -1150,24 +1421,19 @@ impl App {
         }
     }
 
-    fn render_turn(&mut self, frame: &mut Frame<'_>, area: Rect) {
+    fn render_transcript(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let palette = self.theme.palette();
-        if self.moments.is_empty() {
-            self.last_max_scroll = 0;
-            frame.render_widget(
-                Paragraph::new(self.shell_prompt(self.active_environment()))
-                    .style(Style::new().fg(palette.muted))
-                    .alignment(Alignment::Center),
-                area,
-            );
-            return;
-        }
-
-        let start = self.turn_start(self.selected);
-        let end = self.turn_end(start);
-        let turn = self.moments[start..=end].to_vec();
-        let image_artifacts = turn
-            .iter()
+        let (turn_start, turn_end) = if self.moments.is_empty() {
+            (0, 0)
+        } else {
+            let start = self.turn_start(self.selected);
+            (start, self.turn_end(start))
+        };
+        let image_artifacts = self
+            .moments
+            .get(turn_start..=turn_end)
+            .into_iter()
+            .flatten()
             .flat_map(|moment| moment.artifacts.iter())
             .filter(|artifact| artifact.kind == MediaKind::Image)
             .cloned()
@@ -1224,10 +1490,13 @@ impl App {
         let image_window_end = image_window_start + inline_image_count;
 
         let mut lines = Vec::new();
-        for moment in &turn {
-            if !lines.is_empty() {
+        let mut moment_line_starts = vec![0_usize; self.moments.len()];
+        let mut selected_image_index = 0_usize;
+        for (index, moment) in self.moments.iter().enumerate() {
+            if moment.role == Role::Human && !lines.is_empty() {
                 lines.push(Line::default());
             }
+            moment_line_starts[index] = lines.len();
             let body = if moment.text.is_empty() && moment.state == MomentState::Streaming {
                 "⋯"
             } else {
@@ -1246,7 +1515,7 @@ impl App {
                         .unwrap_or_else(|| self.default_environment());
                     lines.extend(
                         prompted_text_lines(
-                            &self.shell_prompt(environment),
+                            &self.input_prompt(environment, moment.execution),
                             body,
                             area.width,
                             Style::new().fg(palette.human).add_modifier(Modifier::BOLD),
@@ -1256,62 +1525,119 @@ impl App {
                         .lines,
                     );
                 }
-                Role::Intelligence if !self.raw_markdown => {
+                Role::Intelligence
+                    if moment.execution == ExecutionMode::Ship && !self.raw_markdown =>
+                {
                     lines.extend(render_markdown(body, palette));
+                }
+                Role::Intelligence if moment.execution == ExecutionMode::Shell => {
+                    lines.extend(render_plain(
+                        body.strip_suffix('\n').unwrap_or(body),
+                        Style::new().fg(body_color),
+                    ));
                 }
                 Role::Intelligence | Role::System => {
                     lines.extend(render_plain(body, Style::new().fg(body_color)));
                 }
             }
+            let fallback_artifacts = moment
+                .artifacts
+                .iter()
+                .filter(|artifact| {
+                    if artifact.kind != MediaKind::Image
+                        || !(turn_start..=turn_end).contains(&index)
+                    {
+                        return true;
+                    }
+                    let image_index = selected_image_index;
+                    selected_image_index = selected_image_index.saturating_add(1);
+                    !(image_window_start..image_window_end).contains(&image_index)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            if !fallback_artifacts.is_empty() {
+                if !body.is_empty() {
+                    lines.push(Line::default());
+                }
+                lines.extend(render_artifacts(&fallback_artifacts, palette));
+            }
         }
 
-        let fallback_artifacts = turn
-            .iter()
-            .flat_map(|moment| moment.artifacts.iter())
-            .filter(|artifact| artifact.kind != MediaKind::Image)
-            .chain(
-                image_artifacts
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, artifact)| {
-                        (!(image_window_start..image_window_end).contains(&index))
-                            .then_some(artifact)
-                    }),
-            )
-            .cloned()
-            .collect::<Vec<_>>();
-        if !fallback_artifacts.is_empty() {
-            lines.push(Line::default());
-            lines.extend(render_artifacts(&fallback_artifacts, palette));
-        }
-
-        let text = Text::from(lines);
-        let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
-        let line_count = u16::try_from(paragraph.line_count(area.width.max(1)))
-            .unwrap_or(u16::MAX)
-            .max(1);
+        let show_prompt = self.draft_visible
+            || (self.pending_submission.is_none()
+                && self.active_run.is_none()
+                && self.active_shell.is_none()
+                && self.follow_latest);
+        let mut prompt = show_prompt.then(|| {
+            let mut prompt = prompted_text_lines(
+                &self.input_prompt(self.active_environment(), self.execution_mode),
+                &self.draft,
+                area.width,
+                Style::new().fg(palette.human).add_modifier(Modifier::BOLD),
+                Style::new().fg(palette.foreground),
+                Some(self.draft_cursor),
+            );
+            if self.draft.is_empty() {
+                if let Some(line) = prompt.lines.first_mut() {
+                    line.spans.push(Span::styled(
+                        match self.execution_mode {
+                            ExecutionMode::Ship => "type a request",
+                            ExecutionMode::Shell => "literal shell command",
+                        },
+                        Style::new().fg(palette.quiet),
+                    ));
+                }
+            }
+            prompt
+        });
+        let prompt_height = prompt
+            .as_ref()
+            .map(|prompt| {
+                u16::try_from(prompt.lines.len())
+                    .unwrap_or(u16::MAX)
+                    .min(area.height)
+                    .max(1)
+            })
+            .unwrap_or(0);
+        let line_count = wrapped_line_count(&lines, area.width).max(u16::from(!lines.is_empty()));
+        let remaining = area.height.saturating_sub(prompt_height);
         let media_height = if inline_image_count > 0 {
-            (area.height.saturating_mul(2) / 5).clamp(5, 14)
+            (remaining.saturating_mul(2) / 5)
+                .clamp(5, 12)
+                .min(remaining)
         } else {
             0
         };
-        let gap = u16::from(media_height > 0);
-        let text_capacity = area.height.saturating_sub(media_height + gap).max(1);
+        let gap = u16::from(media_height > 0 && !lines.is_empty());
+        let text_capacity = remaining.saturating_sub(media_height + gap);
+        self.last_viewport_height = text_capacity.max(1);
         self.last_max_scroll = line_count.saturating_sub(text_capacity);
-        self.moment_scroll = self.moment_scroll.min(self.last_max_scroll);
-        let text_height = line_count.min(text_capacity).max(1);
-        let compound_height = text_height.saturating_add(media_height).saturating_add(gap);
-        let y = if self.last_max_scroll == 0 {
-            area.y + area.height.saturating_sub(compound_height) / 2
+        if self.follow_latest {
+            self.document_scroll = self.last_max_scroll;
+        } else if let Some(index) = self.scroll_anchor.take() {
+            let raw_line = moment_line_starts.get(index).copied().unwrap_or_default();
+            self.document_scroll =
+                wrapped_line_count(&lines[..raw_line.min(lines.len())], area.width)
+                    .min(self.last_max_scroll);
         } else {
-            area.y
-        };
-        let text_area = Rect::new(area.x, y, area.width, text_height);
-        frame.render_widget(paragraph.scroll((self.moment_scroll, 0)), text_area);
+            self.document_scroll = self.document_scroll.min(self.last_max_scroll);
+        }
+
+        if text_capacity > 0 && !lines.is_empty() {
+            let text_height = line_count.min(text_capacity).max(1);
+            let y = if line_count <= text_capacity {
+                area.y + text_capacity.saturating_sub(text_height)
+            } else {
+                area.y
+            };
+            let text_area = Rect::new(area.x, y, area.width, text_height);
+            let paragraph = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
+            frame.render_widget(paragraph.scroll((self.document_scroll, 0)), text_area);
+        }
         if inline_image_count > 0 {
             let media_area = Rect::new(
                 area.x,
-                text_area.bottom().saturating_add(gap),
+                area.y + text_capacity + gap,
                 area.width,
                 media_height,
             );
@@ -1322,39 +1648,27 @@ impl App {
                 Some(image_focus - image_window_start),
             );
         }
-    }
-
-    fn render_draft(&self, frame: &mut Frame<'_>, area: Rect) {
-        let palette = self.theme.palette();
-        let prompt = self.shell_prompt(self.active_environment());
-        let mut layout = prompted_text_lines(
-            &prompt,
-            &self.draft,
-            area.width,
-            Style::new().fg(palette.human).add_modifier(Modifier::BOLD),
-            Style::new().fg(palette.foreground),
-            Some(self.draft_cursor),
-        );
-        if self.draft.is_empty() {
-            if let Some(line) = layout.lines.first_mut() {
-                line.spans.push(Span::styled(
-                    "type a request",
-                    Style::new().fg(palette.quiet),
-                ));
+        if let Some(prompt) = prompt.take() {
+            let cursor_row = prompt.cursor_row;
+            let cursor_col = prompt.cursor_col;
+            let prompt_area = Rect::new(
+                area.x,
+                area.bottom().saturating_sub(prompt_height),
+                area.width,
+                prompt_height,
+            );
+            let scroll = cursor_row.saturating_sub(prompt_height.saturating_sub(1));
+            frame.render_widget(
+                Paragraph::new(prompt.lines).scroll((scroll, 0)),
+                prompt_area,
+            );
+            if self.cursor_visible() {
+                let cursor_y = prompt_area.y + cursor_row.saturating_sub(scroll);
+                let cursor_x = prompt_area.x + cursor_col.min(prompt_area.width.saturating_sub(1));
+                if cursor_y < prompt_area.bottom() {
+                    frame.set_cursor_position(Position::new(cursor_x, cursor_y));
+                }
             }
-        }
-        let total_rows = u16::try_from(layout.lines.len()).unwrap_or(u16::MAX).max(1);
-        let visible_rows = total_rows.min(area.height).max(1);
-        let y = area.y + area.height.saturating_sub(visible_rows) / 2;
-        let text_area = Rect::new(area.x, y, area.width, visible_rows);
-        let scroll = layout
-            .cursor_row
-            .saturating_sub(visible_rows.saturating_sub(1));
-        frame.render_widget(Paragraph::new(layout.lines).scroll((scroll, 0)), text_area);
-        let cursor_y = text_area.y + layout.cursor_row.saturating_sub(scroll);
-        let cursor_x = text_area.x + layout.cursor_col.min(text_area.width.saturating_sub(1));
-        if cursor_y < text_area.bottom() {
-            frame.set_cursor_position(Position::new(cursor_x, cursor_y));
         }
     }
 
@@ -1362,7 +1676,7 @@ impl App {
         let palette = self.theme.palette();
         let query = format!("@{}", self.environment_query);
         let mut prompt = prompted_text_lines(
-            &self.shell_prompt(self.active_environment()),
+            &self.input_prompt(self.active_environment(), self.execution_mode),
             &query,
             area.width,
             Style::new().fg(palette.human).add_modifier(Modifier::BOLD),
@@ -1478,7 +1792,7 @@ impl App {
     fn render_help(&self, frame: &mut Frame<'_>, area: Rect) {
         let palette = self.theme.palette();
         let width = area.width.saturating_sub(8).min(68);
-        let height = area.height.saturating_sub(4).min(24);
+        let height = area.height.saturating_sub(2).min(24);
         let popup = centered_rect(area, width, height);
         frame.render_widget(Clear, popup);
         let mut lines = vec![
@@ -1489,28 +1803,23 @@ impl App {
                     .add_modifier(Modifier::BOLD),
             )),
             Line::default(),
-            help_line("type anywhere", "write a request", palette),
-            help_line("enter", "send", palette),
+            help_line("type  ·  enter", "write  ·  send", palette),
             help_line("shift+enter", "new line", palette),
+            help_line("tab", "Ship / literal shell", palette),
             help_line("@", "choose a target", palette),
             help_line("escape", "browse without losing the draft", palette),
-            help_line("ctrl+p / ctrl+n", "previous / next turn", palette),
-            help_line("page up / page down", "move through a long turn", palette),
-            help_line("left / right", "choose media", palette),
-            help_line("enter", "open / close media", palette),
-            help_line("alt+m", "rendered / source Markdown", palette),
-            help_line("alt+v", "toggle Vim controls", palette),
-            help_line("ctrl+.", "stop the active run", palette),
-            help_line("ctrl+q", "leave GSV", palette),
+            help_line("ctrl+p / ctrl+n", "previous / next command", palette),
+            help_line("page up / page down", "scroll the transcript", palette),
+            help_line("left/right  ·  enter", "choose  ·  open media", palette),
+            help_line("alt+m  ·  alt+v", "Markdown  ·  Vim", palette),
+            help_line("ctrl+.  ·  ctrl+q", "stop Ship  ·  leave", palette),
         ];
         if self.vim_enabled {
             lines.extend([
                 Line::default(),
-                help_line("Vim: i / escape", "compose / browse", palette),
-                help_line("Vim: j / k", "next / previous turn", palette),
-                help_line("Vim: h / l", "previous / next media", palette),
-                help_line("Vim: g / G", "first / latest turn", palette),
-                help_line("Vim: enter", "open / close media", palette),
+                help_line("Vim: i/a  ·  escape", "compose  ·  browse", palette),
+                help_line("Vim: h/l  ·  j/k", "media  ·  commands", palette),
+                help_line("Vim: g/G  ·  enter", "ends  ·  open media", palette),
             ]);
         }
         lines.extend([
@@ -1529,7 +1838,7 @@ impl App {
                         .border_type(BorderType::Rounded)
                         .border_style(Style::new().fg(palette.quiet))
                         .style(Style::new().bg(palette.background))
-                        .padding(Padding::new(3, 3, 2, 2)),
+                        .padding(Padding::new(3, 3, 1, 1)),
                 )
                 .wrap(Wrap { trim: false }),
             popup,
@@ -1556,6 +1865,26 @@ impl App {
             None => format!("{}@{} $ ", self.principal, target),
         }
     }
+
+    fn input_prompt(
+        &self,
+        environment: &CapabilityEnvironment,
+        execution: ExecutionMode,
+    ) -> String {
+        let mut prompt = self.shell_prompt(environment);
+        if execution == ExecutionMode::Shell {
+            prompt.push_str("! ");
+        }
+        prompt
+    }
+}
+
+fn wrapped_line_count(lines: &[Line<'static>], width: u16) -> u16 {
+    if lines.is_empty() {
+        return 0;
+    }
+    let paragraph = Paragraph::new(Text::from(lines.to_vec())).wrap(Wrap { trim: false });
+    u16::try_from(paragraph.line_count(width.max(1))).unwrap_or(u16::MAX)
 }
 
 struct PromptedText {
@@ -1847,7 +2176,7 @@ mod tests {
 
     use super::{
         sanitize_status, text_metrics, Action, App, Approval, Artifact, CapabilityEnvironment,
-        ConnectionState, Effect, MediaKind, Moment, MomentState, Role,
+        ConnectionState, Effect, ExecutionMode, MediaKind, Moment, MomentState, Role,
     };
 
     fn image_artifact(index: usize) -> Artifact {
@@ -1866,10 +2195,12 @@ mod tests {
     #[test]
     fn typing_replaces_the_moment_and_escape_preserves_the_draft() {
         let mut app = App::demo();
+        assert!(app.cursor_visible());
         app.dispatch(Action::Insert("open downloads".to_string()));
         assert!(app.draft_visible());
         app.dispatch(Action::Escape);
         assert!(!app.draft_visible());
+        assert!(!app.cursor_visible());
         assert_eq!(app.draft(), "open downloads");
         app.dispatch(Action::Insert(" please".to_string()));
         assert_eq!(app.draft(), "open downloads please");
@@ -1911,8 +2242,8 @@ mod tests {
     }
 
     #[test]
-    fn render_contains_only_the_selected_command_result_turn(
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn render_keeps_commands_in_one_continuous_document() -> Result<(), Box<dyn std::error::Error>>
+    {
         let mut app = App::new(ConnectionState::Ready);
         app.replace_history(vec![
             Moment::complete("one", Role::Human, "older command"),
@@ -1932,7 +2263,135 @@ mod tests {
             .collect::<String>();
         assert!(rendered.contains("visible answer"));
         assert!(rendered.contains("you@gsv $ visible command"));
-        assert!(!rendered.contains("older secret"));
+        assert!(rendered.contains("older secret"));
+        assert!(rendered.contains("you@gsv $ older command"));
+        Ok(())
+    }
+
+    #[test]
+    fn one_run_can_commit_multiple_visible_messages_before_the_prompt_returns(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut app = App::new(ConnectionState::Ready);
+        app.dispatch(Action::Insert("work on it".to_string()));
+        app.dispatch(Action::Submit);
+        app.submission_accepted(1, "run:one".to_string(), false);
+        app.commit_message(
+            "message:one",
+            Role::Intelligence,
+            "First update.",
+            Some("run:one".to_string()),
+            Vec::new(),
+            None,
+        );
+        app.commit_message(
+            "message:two",
+            Role::Intelligence,
+            "Second update.",
+            Some("run:one".to_string()),
+            Vec::new(),
+            None,
+        );
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|frame| app.render(frame))?;
+        let running = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(running.contains("First update."));
+        assert!(running.contains("Second update."));
+        assert!(!running.contains("type a request"));
+
+        app.finish_run(Some("run:one"), None);
+        terminal.draw(|frame| app.render(frame))?;
+        let finished = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(finished.contains("type a request"));
+        assert!(!finished.contains("Done."));
+        Ok(())
+    }
+
+    #[test]
+    fn a_silent_run_returns_to_the_prompt_without_fabricating_output() {
+        let mut app = App::new(ConnectionState::Ready);
+        app.dispatch(Action::Insert("quietly update it".to_string()));
+        app.dispatch(Action::Submit);
+        app.submission_accepted(1, "run:quiet".to_string(), false);
+        app.finish_run(Some("run:quiet"), None);
+
+        assert_eq!(app.moments().len(), 1);
+        assert_eq!(app.moments()[0].role, Role::Human);
+        assert!(app.moments().iter().all(|moment| moment.text != "Done."));
+    }
+
+    #[test]
+    fn tab_mode_executes_the_literal_command_on_the_selected_target(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut app = App::new(ConnectionState::Ready);
+        app.set_principal("john");
+        app.set_environments(vec![
+            CapabilityEnvironment::gsv(),
+            CapabilityEnvironment::new("macbook", "MacBook").with_cwd("~/Downloads"),
+        ]);
+        app.dispatch(Action::Insert("@".to_string()));
+        app.dispatch(Action::Insert("mac".to_string()));
+        app.dispatch(Action::Submit);
+        app.dispatch(Action::ToggleShell);
+        assert_eq!(app.execution_mode(), ExecutionMode::Shell);
+        app.dispatch(Action::Insert("pwd".to_string()));
+        assert_eq!(
+            app.dispatch(Action::Submit),
+            vec![Effect::Shell {
+                id: 1,
+                input: "pwd".to_string(),
+                target: "macbook".to_string(),
+                cwd: Some("~/Downloads".to_string()),
+            }]
+        );
+        app.append_shell_output(1, "/Users/john/Downloads\n");
+        app.finish_shell(1, None);
+
+        assert_eq!(app.moments()[0].execution, ExecutionMode::Shell);
+        assert_eq!(app.moments()[1].execution, ExecutionMode::Shell);
+        assert_eq!(app.moments()[1].state, MomentState::Complete);
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|frame| app.render(frame))?;
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("john@macbook ~/Downloads $ ! pwd"));
+        assert!(rendered.contains("/Users/john/Downloads"));
+        assert!(rendered.contains("literal shell command"));
+        let rows = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(80)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>();
+        let output_row = rows
+            .iter()
+            .position(|row| row.contains("/Users/john/Downloads"))
+            .expect("shell output row");
+        let prompt_row = rows
+            .iter()
+            .position(|row| row.contains("literal shell command"))
+            .expect("next prompt row");
+        assert_eq!(prompt_row, output_row + 1);
         Ok(())
     }
 
@@ -2140,6 +2599,7 @@ mod tests {
     fn help_modal_withdraws_native_media_layers() -> Result<(), Box<dyn std::error::Error>> {
         let mut app = App::new(ConnectionState::Ready);
         app.set_inline_images(true);
+        app.set_vim_enabled(true);
         app.replace_history(vec![Moment::complete(
             "one",
             Role::Intelligence,
@@ -2154,6 +2614,15 @@ mod tests {
         app.dispatch(Action::ToggleHelp);
         terminal.draw(|frame| app.render(frame))?;
         assert!(app.media_slots().is_empty());
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("Vim: g/G"));
+        assert!(rendered.contains("Press ? or escape to return"));
         Ok(())
     }
 

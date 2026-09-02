@@ -8,7 +8,10 @@ use crate::Artifact;
 pub(crate) fn render_plain(source: &str, style: Style) -> Vec<Line<'static>> {
     source
         .split('\n')
-        .map(|line| Line::from(Span::styled(sanitize(line), style)))
+        .map(|line| {
+            let line = line.strip_suffix('\r').unwrap_or(line);
+            Line::from(Span::styled(sanitize(line), style))
+        })
         .collect()
 }
 
@@ -428,5 +431,11 @@ mod tests {
     fn markdown_control_characters_cannot_escape_the_cell_renderer() {
         let rendered = rendered_text(&render_markdown("hello\u{1b}[31m", Theme::Gsv.palette()));
         assert_eq!(rendered, "hello�[31m");
+    }
+
+    #[test]
+    fn plain_output_normalizes_windows_line_endings() {
+        let rendered = rendered_text(&render_plain("one\r\ntwo\r\n", Style::new()));
+        assert_eq!(rendered, "one\ntwo\n");
     }
 }

@@ -62,20 +62,26 @@ the interface without an account. The native backend owns terminal setup and
 restoration, maps Crossterm events into shared actions, and interprets shared
 effects through the existing gateway client. Conversation history and signals,
 Process run state, human-in-the-loop approvals, and abort remain gateway-owned.
-The shared renderer projects canonical messages into one command/result turn at
-a time. Human text begins on the same line as its `user@target $ ` prompt, while
-routine connection, role, time, and run metadata stay out of the document.
-Typing is the default interaction; `--vim` or `Alt+V` enables an optional browse
-mode without changing the beginner key map.
+The shared renderer projects canonical messages into one continuous scrollable
+terminal document. Human text begins on the same line as its `user@target $ `
+prompt, every committed message from one Process run remains in order beneath
+that command, and `proc.run.finished` restores the next prompt. A silent finish
+restores the prompt without fabricating output. Routine connection, role, time,
+and run metadata stay out of the document. Typing is the default interaction;
+`--vim` or `Alt+V` enables an optional browse mode without changing the beginner
+key map.
 
-Typing `@` into an empty draft opens the capability-environment picker. The
-selection currently owns the prompt identity, and the shared core includes it
-in local submission effects so an execution mode can use the established
-targeted syscall contracts. Ordinary Ship input remains an unchanged
-`conversation.send` request so this client stays compatible with an existing
-gateway deployment. The Kernel independently enforces target visibility and
-the caller's grant for any direct target operation; a presentation choice never
-grants authority.
+Typing `@` into an empty draft opens the capability-environment picker. `Tab`
+switches the same draft between Ship mode and literal shell mode. The latter is
+visibly marked as `user@target $ ! command`; the native client calls the
+established `shell.exec` syscall with the selected target and cwd, appends each
+returned output chunk, and polls an existing `sessionId` until its terminal
+result. Direct shell moments are client-local and are not canonical
+conversation messages. Ordinary Ship input remains an unchanged
+`conversation.send` request, with no target extension, so this client stays
+compatible with an existing gateway deployment. The Kernel independently
+enforces target visibility and the caller's grant for the direct target
+operation; a presentation choice never grants authority.
 
 The native renderer inherits the terminal foreground, background, and ANSI
 palette instead of imposing a second terminal theme. The shared renderer owns
@@ -115,9 +121,9 @@ cell buffer through Ratzilla's WebGL2 backend. A hidden native textarea owns
 Unicode input, IME composition, and paste; browser key and wheel events map to
 the same shared actions as the native backend. Because no host terminal owns
 its atmosphere, the browser backend uses the curated GSV palette. Markdown,
-prompt grammar, optional Vim navigation, and media artifact fallback remain
-identical. The
-preview currently uses local example responses. Production browser
+continuous prompt grammar, literal-shell mode, optional Vim navigation, and
+media artifact fallback remain identical. The preview currently uses local
+example responses for both Ship and shell effects. Production browser
 authentication and transport stay with the existing web gateway service and
 will interpret the same shared effects rather than moving protocol ownership
 into the renderer.

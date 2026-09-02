@@ -35,10 +35,23 @@ gsv shell
 Bare `gsv` and `gsv tui` open the full-screen, typing-first Ship interface.
 `--demo` runs a local no-account preview, `--pid` opens an explicitly labeled
 Process work session, and `--vim` enables Vim browse controls; `Alt+V` toggles
-that mode at runtime. Type `@` into an empty draft to select a visible target,
-`?` for all keys, and `Ctrl+Q` to leave. The native interface adopts the host
-terminal palette and renders supported canonical images through the best
-graphics protocol available.
+that mode at runtime. Commands and every committed Ship message render in one
+continuous scrollable document. The next `user@target $ ` prompt appears when
+the matching Process run finishes, including when the run completed silently.
+Type `@` into an empty draft to select a visible target, use `Page Up`/`Page
+Down` to scroll, `?` for all keys, and `Ctrl+Q` to leave. The native interface
+adopts the host terminal palette and renders supported canonical images through
+the best graphics protocol available.
+
+`Tab` switches between Ship input and literal shell input without changing the
+draft. Literal commands are marked `user@target $ ! command` and call the
+existing `shell.exec` syscall on the exact selected target and working
+directory. The TUI polls any returned shell session until it completes. These
+direct command/output entries belong to the current client transcript and are
+not committed to the Ship conversation. In Ship mode the target remains a
+presentation choice for compatibility with deployed gateways;
+`conversation.send` receives no new target parameter. `Ctrl+.` aborts an active
+Ship run; the current `shell.exec` contract has no general session-kill action.
 
 `chat` resolves the Ship or selected Work conversation and sends with
 `conversation.send`. With `MESSAGE`, it waits for the canonical

@@ -142,6 +142,14 @@ fn dispatch_action(app: &Rc<RefCell<App>>, action: Action) {
             } => {
                 app.borrow_mut().complete_demo_submission(id, &text);
             }
+            Effect::Shell {
+                id,
+                input,
+                target: _,
+                cwd: _,
+            } => {
+                app.borrow_mut().complete_demo_shell(id, &input);
+            }
             Effect::Abort => {
                 app.borrow_mut().set_activity(None);
             }
@@ -200,6 +208,15 @@ fn keyboard_action(app: &App, event: &KeyboardEvent) -> Option<Action> {
     if normalized == "v" && event.alt_key() {
         return Some(Action::ToggleVim);
     }
+    if normalized == "tab" && !command && !event.alt_key() {
+        return Some(Action::ToggleShell);
+    }
+    if normalized == "pageup" {
+        return Some(Action::ScrollPageUp);
+    }
+    if normalized == "pagedown" {
+        return Some(Action::ScrollPageDown);
+    }
 
     if app.vim_enabled() && !app.draft_visible() && !command && !event.alt_key() {
         return match key.as_str() {
@@ -244,11 +261,8 @@ fn keyboard_action(app: &App, event: &KeyboardEvent) -> Option<Action> {
         "end" => Some(Action::MoveCursorEnd),
         "arrowup" if event.alt_key() => Some(Action::PreviousTurn),
         "arrowdown" if event.alt_key() => Some(Action::NextTurn),
-        "pageup" => Some(Action::ScrollUp),
-        "pagedown" => Some(Action::ScrollDown),
         "arrowup" if !app.draft_visible() => Some(Action::ScrollUp),
         "arrowdown" if !app.draft_visible() => Some(Action::ScrollDown),
-        "tab" if !command => Some(Action::Insert("    ".to_string())),
         _ => None,
     }
 }
