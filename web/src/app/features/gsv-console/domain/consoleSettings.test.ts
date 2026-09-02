@@ -11,6 +11,7 @@ import {
   TOOL_MODEL_GROUPS,
   createModelProfile,
   effectiveAiValuesForViewer,
+  inheritsSystemModelStack,
   modelDisplayName,
   makeModelPrimary,
   modelProfileSaveEntries,
@@ -19,7 +20,6 @@ import {
   modelProfilesForConfig,
   modelStackDisplayName,
   modelValidationValuesFromProfileDrafts,
-  redactModelProfilesConfigValue,
   serializeModelProfiles,
   updateModelProfile,
 } from "./consoleSettings";
@@ -50,7 +50,7 @@ describe("console settings domain", () => {
     expect(AI_OPENAI_WORKERS_PROVIDER_OPTIONS.map((option) => option.value)).toEqual(["workers-ai", "openai"]);
   });
 
-  it("keeps model profile credentials out of serialized preset metadata", () => {
+  it("keeps model credentials out of serialized stack metadata", () => {
     const profiles = createModelProfile([], "Deep Research", {
       "config/ai/provider": "openai",
       "config/ai/model": "gpt-5",
@@ -58,7 +58,7 @@ describe("console settings domain", () => {
       "config/ai/max_tokens": "8192",
       "config/ai/context_window_tokens": "65536",
     }, 1000);
-    expect(() => createModelProfile(profiles, "Deep   Research", {}, 2000)).toThrow("Profile name already exists");
+    expect(() => createModelProfile(profiles, "Deep   Research", {}, 2000)).toThrow("Model name already exists");
 
     expect(profiles[0]).toMatchObject({
       id: "deep-research",
@@ -102,7 +102,7 @@ describe("console settings domain", () => {
     }, 2000);
     const nextProfiles = makeModelPrimary(edited, profiles[1].id);
     const clearedSecretKeys = new Map([[profiles[0].id, new Set<string>()]]);
-    const entries = modelProfileSaveEntries(0, profiles, nextProfiles, clearedSecretKeys);
+    const entries = modelProfileSaveEntries(0, nextProfiles, clearedSecretKeys);
     // SAFETY: Test fixture uses the asserted API shape for this focused case.
     const storedStack = JSON.parse(
       entries.find((entry) => entry.key === modelProfilesConfigKey(0))?.value ?? "{}",
@@ -114,6 +114,9 @@ describe("console settings domain", () => {
       key: modelProfileSecretConfigKey(0, profiles[0].id, "config/ai/api_key"),
       value: "sk-profile",
     });
+    expect(modelProfilesConfigKey(0)).toBe("config/ai/models");
+    expect(modelProfileSecretConfigKey(0, profiles[0].id, "config/ai/api_key"))
+      .toBe("config/ai/models/fast/api_key");
   });
 
   it("keeps fallback order in the stack and runtime policy out of model entries", () => {
@@ -160,32 +163,15 @@ describe("console settings domain", () => {
     expect(modelProfilesForConfig(config, 42)).toEqual([]);
     expect(modelProfilesForConfig(config, 42, { inheritSystem: true }).map((profile) => profile.id))
       .toEqual(["primary", "backup"]);
-    expect(modelProfileSaveEntries(42, [], [])[0]).toEqual({
+    expect(inheritsSystemModelStack(config, 42)).toBe(true);
+    expect(inheritsSystemModelStack(config, 0)).toBe(false);
+    expect(modelProfileSaveEntries(42, [])[0]).toEqual({
       key: "users/42/ai/models",
       value: "",
     });
-  });
-
-  it("redacts legacy secrets from model profile config JSON", () => {
-    // SAFETY: Test fixture uses the asserted API shape for this focused case.
-    const redacted = JSON.parse(redactModelProfilesConfigValue(JSON.stringify({
-      version: 1,
-      profiles: [{
-        id: "fast",
-        name: "Fast",
-        values: {
-          "config/ai/provider": "openai",
-          "config/ai/api_key": "sk-secret",
-          "config/ai/speech/api_key": "sk-speech",
-        },
-      }],
-    }))) as { profiles: Array<{ values: Record<string, string> }> };
-
-    expect(redacted.profiles[0].values).toEqual({
-      "config/ai/provider": "openai",
-      "config/ai/api_key": "",
-      "config/ai/speech/api_key": "",
-    });
+    expect(() => modelProfileSaveEntries(0, [])).toThrow(
+      "The system model stack must contain at least one model.",
+    );
   });
 
   it("omits blank profile secrets from validation unless explicitly cleared", () => {
@@ -207,16 +193,53 @@ describe("console settings domain", () => {
     )).toEqual(drafts);
   });
 
-  it("merges personal ai overrides over system values", () => {
+  it("uses the canonical stack for text while merging personal media limits", () => {
     const config: ConsoleConfigEntry[] = [
-      { key: "config/ai/provider", value: "workers-ai", redacted: false },
-      { key: "config/ai/model", value: "@cf/default/model", redacted: false },
-      { key: buildUserAiOverrideKey(42, "config/ai/model"), value: "anthropic/claude", redacted: false },
+      {
+        key: "config/ai/models",
+        value: JSON.stringify({
+          version: 1,
+          models: [{ id: "system", name: "System", provider: "workers-ai", model: "@cf/default/model" }],
+        }),
+        redacted: false,
+      },
+      {
+        key: buildUserAiOverrideKey(42, "config/ai/image/read/max_tokens"),
+        value: "1234",
+        redacted: false,
+      },
     ];
 
     expect(effectiveAiValuesForViewer(config, 42)).toMatchObject({
       "config/ai/provider": "workers-ai",
-      "config/ai/model": "anthropic/claude",
+      "config/ai/model": "@cf/default/model",
+      "config/ai/image/read/max_tokens": "1234",
+    });
+  });
+
+  it("does not fill a partial personal media connection from system fields", () => {
+    const config: ConsoleConfigEntry[] = [
+      {
+        key: "config/ai/transcription/provider",
+        value: "workers-ai",
+        redacted: false,
+      },
+      {
+        key: "config/ai/transcription/model",
+        value: "@cf/openai/whisper-large-v3-turbo",
+        redacted: false,
+      },
+      {
+        key: "users/42/ai/transcription/provider",
+        value: "openai",
+        redacted: false,
+      },
+    ];
+
+    expect(effectiveAiValuesForViewer(config, 42)).toMatchObject({
+      "config/ai/transcription/provider": "openai",
+      "config/ai/transcription/model": "",
+      "config/ai/transcription/api_key": "",
     });
   });
 
@@ -230,11 +253,6 @@ describe("console settings domain", () => {
       "config/ai/reasoning": "low",
     }, 1000);
     const config: ConsoleConfigEntry[] = [
-      { key: "config/ai/provider", value: "workers-ai", redacted: false },
-      { key: "config/ai/model", value: "@cf/default/model", redacted: false },
-      { key: "users/42/ai/model_profile", value: profiles[0].id, redacted: false },
-      { key: "users/42/ai/provider", value: "workers-ai", redacted: false },
-      { key: "users/42/ai/model", value: "stale-model", redacted: false },
       { key: modelProfilesConfigKey(42), value: serializeModelProfiles(profiles), redacted: false },
       {
         key: modelProfileSecretConfigKey(42, profiles[0].id, "config/ai/api_key"),
@@ -252,7 +270,7 @@ describe("console settings domain", () => {
     });
   });
 
-  it("infers profile-backed defaults from raw model overrides when the provider stack is not overridden", () => {
+  it("ignores obsolete scalar text-model overrides", () => {
     const profiles = createModelProfile([], "Fast Stack", {
       "config/ai/provider": "custom",
       "config/ai/model": "zai-glm-4.7",

@@ -17,10 +17,6 @@ import type {
   ConsoleTargetKind,
 } from "./consoleModels";
 import { consoleWorkProcesses } from "./consoleProcesses";
-import {
-  isModelProfilesConfigKey,
-  redactModelProfilesConfigValue,
-} from "./consoleSettings";
 import { z } from "zod";
 
 const SENSITIVE_CONFIG_KEY_RE = /(?:^|\/|_)(?:api[_-]?key|password|secret|token|credential)(?:$|\/|_)/i;
@@ -365,7 +361,7 @@ function normalizeConfigEntry(value: ConsoleWireValue): ConsoleConfigEntry | nul
   const entryValue = stringOrEmpty(record.value);
   return {
     key,
-    value: redacted ? "" : isModelProfilesConfigKey(key) ? redactModelProfilesConfigValue(entryValue) : entryValue,
+    value: redacted ? "" : entryValue,
     redacted,
   };
 }

@@ -33,7 +33,7 @@ import type {
   ConsoleProcess,
   ConsoleTarget,
 } from "../domain/consoleModels";
-import { modelProfileIdFromOptionValue } from "../domain/consoleAi";
+import { modelEntryIdFromOptionValue } from "../domain/consoleAi";
 import { isSensitiveSettingKey } from "../domain/consoleSettings";
 import { requestFsRead } from "../../../services/gateway/fsRead";
 import { z } from "zod";
@@ -147,7 +147,7 @@ export type SaveConsoleConfigEntriesResult = {
 
 export type ValidateConsoleModelConfigInput = {
   values: Record<string, string>;
-  presetId?: string;
+  modelId?: string;
 };
 
 export type ValidateConsoleModelConfigResult = {
@@ -335,13 +335,13 @@ export async function validateConsoleModelConfig(
   client: Pick<GSVClient, "call">,
   input: ValidateConsoleModelConfigInput,
 ): Promise<ValidateConsoleModelConfigResult> {
-  const presetId = input.presetId?.trim();
+  const modelId = input.modelId?.trim();
   const modelConfig = modelValidationConfig(input.values);
   const reasoning = input.values["config/ai/reasoning"]?.trim();
 
   const config: AiTextGenerateConfig = {
     modelConfig,
-    ...(presetId ? { modelId: presetId } : undefined),
+    ...(modelId ? { modelId } : undefined),
     ...(reasoning ? { reasoning } : undefined),
   };
   const secretValues = Object.entries(input.values)
@@ -989,7 +989,7 @@ async function saveAgentBehaviorConfig(
   const writes: Promise<unknown>[] = [];
 
   if (input.model !== undefined && (options.includeEmpty || model)) {
-    const modelId = modelProfileIdFromOptionValue(model);
+    const modelId = modelEntryIdFromOptionValue(model);
     if (model && !modelId) {
       throw new Error("model selection must reference an available model entry");
     }

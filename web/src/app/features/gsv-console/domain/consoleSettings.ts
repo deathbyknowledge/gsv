@@ -9,7 +9,7 @@ import { z } from "zod";
 
 const settingsValueSchema = z.unknown();
 type SettingsValue = z.input<typeof settingsValueSchema>;
-const settingsRecordSchema = z.record(z.string(), z.unknown());
+const settingsRecordSchema = z.record(z.string(), settingsValueSchema);
 type SettingsRecord = z.infer<typeof settingsRecordSchema>;
 interface ProfileValues { [key: string]: string }
 
@@ -58,15 +58,7 @@ export type ClearedModelProfileSecretKeys = ReadonlyMap<string, ReadonlySet<stri
 
 const MODEL_STACK_VERSION = 1;
 const MODEL_PROFILE_KEY = "models";
-const LEGACY_MODEL_PROFILE_KEY = "model_profiles";
 const MAX_PROFILE_NAME_LENGTH = 80;
-const ACCOUNT_MODEL_PROFILE_INFERENCE_BLOCKERS = [
-  "provider",
-  "base_url",
-  "provider_style",
-  "transport_target",
-  "api_key",
-] as const;
 
 export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
   {
@@ -213,7 +205,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
       {
         key: "config/ai/image/generation/api_key",
         label: "API key",
-        description: "Some providers require an API key, while others do not. Falls back to the agent API key when empty.",
+        description: "Credential owned by this image-generation configuration. Some providers do not require one.",
         kind: "password",
         placeholder: "sk-...",
       },
@@ -244,7 +236,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
       {
         key: "config/ai/transcription/api_key",
         label: "API key",
-        description: "Some providers require an API key, while others do not. Falls back to the agent API key when empty.",
+        description: "Credential owned by this transcription configuration. Some providers do not require one.",
         kind: "password",
         placeholder: "sk-...",
       },
@@ -282,7 +274,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
       {
         key: "config/ai/speech/api_key",
         label: "API key",
-        description: "Some providers require an API key, while others do not. Falls back to the agent API key when empty.",
+        description: "Credential owned by this speech configuration. Some providers do not require one.",
         kind: "password",
         placeholder: "sk-...",
       },
@@ -388,22 +380,18 @@ export function buildUserAiOverrideKey(uid: number, systemKey: string): string {
 }
 
 export function modelProfilesConfigKey(uid: number): string {
-  return `users/${uid}/ai/${MODEL_PROFILE_KEY}`;
-}
-
-export function isModelProfilesConfigKey(key: string): boolean {
-  return /^(?:config\/ai\/models|users\/\d+\/ai\/(?:models|model_profiles))$/.test(key);
+  return uid === 0 ? "config/ai/models" : `users/${uid}/ai/${MODEL_PROFILE_KEY}`;
 }
 
 export function modelProfileSecretConfigKey(uid: number, profileId: string, fieldKey: string): string {
   if (!fieldKey.startsWith("config/ai/")) {
-    throw new Error(`Cannot build model profile secret key for non-AI key: ${fieldKey}`);
+    throw new Error(`Cannot build model credential key for non-AI key: ${fieldKey}`);
   }
   const normalizedProfileId = normalizeProfileId(profileId);
   if (!normalizedProfileId) {
-    throw new Error("Profile id is required");
+    throw new Error("Model id is required");
   }
-  return `users/${uid}/ai/${MODEL_PROFILE_KEY}/${normalizedProfileId}/${fieldKey.slice("config/ai/".length)}`;
+  return `${modelProfilesConfigKey(uid)}/${normalizedProfileId}/${fieldKey.slice("config/ai/".length)}`;
 }
 
 export function configEntryForKey(
@@ -443,14 +431,23 @@ export function effectiveAiValuesForViewer(
   if (!validUid.success) {
     return values;
   }
-  const profileValues = effectiveAiProfileValuesForViewer(config, validUid.data);
-  for (const field of allAiSettingFields()) {
-    const profileValue = cleanValue(profileValues[field.key]);
-    const overrideValue = cleanValue(configValueForKey(config, buildUserAiOverrideKey(validUid.data, field.key)));
-    if (profileValue !== "") {
-      values[field.key] = profileValue;
-    } else if (overrideValue !== "") {
-      values[field.key] = overrideValue;
+  if (validUid.data !== 0) {
+    for (const group of TOOL_MODEL_GROUPS) {
+      const connectionFields = group.fields.filter((field) =>
+        isMediaConnectionField(field.key)
+      );
+      const connectionIsPersonal = connectionFields.some((field) =>
+        configEntryForKey(config, buildUserAiOverrideKey(validUid.data, field.key)) !== null
+      );
+      for (const field of group.fields) {
+        const overrideKey = buildUserAiOverrideKey(validUid.data, field.key);
+        const overrideValue = cleanValue(configValueForKey(config, overrideKey));
+        if (connectionIsPersonal && isMediaConnectionField(field.key)) {
+          values[field.key] = overrideValue;
+        } else if (overrideValue !== "") {
+          values[field.key] = overrideValue;
+        }
+      }
     }
   }
   const [primaryModel] = modelProfilesForConfig(config, validUid.data, {
@@ -462,58 +459,20 @@ export function effectiveAiValuesForViewer(
   return values;
 }
 
-function effectiveAiProfileValuesForViewer(
-  config: readonly ConsoleConfigEntry[],
-  uid: number,
-) {
-  const explicitSelector = cleanValue(configValueForKey(config, `users/${uid}/ai/model_profile`));
-  const inferredSelector = explicitSelector
-    ? ""
-    : inferAiProfileSelectorForViewer(config, uid);
-  const selector = explicitSelector || inferredSelector;
-  if (!selector) {
-    return {};
-  }
-  const profile = findAiProfileForViewer(config, uid, selector, {
-    matchModel: Boolean(inferredSelector),
-  });
-  return profile?.values ?? {};
+function isMediaConnectionField(key: string): boolean {
+  return key.endsWith("/provider") ||
+    key.endsWith("/model") ||
+    key.endsWith("/api_key") ||
+    key === "config/ai/speech/speaker";
 }
 
-function inferAiProfileSelectorForViewer(
+export function inheritsSystemModelStack(
   config: readonly ConsoleConfigEntry[],
-  uid: number,
-): string {
-  const model = cleanValue(configValueForKey(config, buildUserAiOverrideKey(uid, "config/ai/model")));
-  if (!model) {
-    return "";
-  }
-  const hasProviderStackOverride = ACCOUNT_MODEL_PROFILE_INFERENCE_BLOCKERS.some((key) => {
-    const overrideKey = `users/${uid}/ai/${key}`;
-    const entry = configEntryForKey(config, overrideKey);
-    return entry?.redacted === true || cleanValue(entry?.value) !== "";
-  });
-  return hasProviderStackOverride ? "" : model;
-}
-
-function findAiProfileForViewer(
-  config: readonly ConsoleConfigEntry[],
-  uid: number,
-  selector: string,
-  options: { matchModel?: boolean } = {},
-): ConsoleModelProfile | null {
-  const normalized = selector.trim().toLowerCase();
-  if (!normalized) {
-    return null;
-  }
-  return modelProfilesForConfig(config, uid).find((candidate) =>
-    candidate.id.toLowerCase() === normalized ||
-    candidate.name.toLowerCase() === normalized ||
-    (
-      options.matchModel === true &&
-      cleanValue(candidate.values["config/ai/model"]).toLowerCase() === normalized
-    )
-  ) ?? null;
+  uid: number | null | undefined,
+): boolean {
+  const validUid = z.number().finite().safeParse(uid);
+  return validUid.success && validUid.data !== 0 &&
+    configEntryForKey(config, modelProfilesConfigKey(validUid.data)) === null;
 }
 
 export function modelProfilesForConfig(
@@ -537,21 +496,7 @@ export function modelProfilesForConfig(
       ));
   }
 
-  const legacyKey = `users/${validUid.data}/ai/${LEGACY_MODEL_PROFILE_KEY}`;
-  const raw = configValueForKey(config, legacyKey);
-  if (!raw.trim()) return [];
-  try {
-    const payload = z.object({ profiles: z.array(settingsValueSchema) }).safeParse(JSON.parse(raw));
-    if (!payload.success) return [];
-    const profiles = payload.data.profiles;
-    return profiles
-      .map(normalizeModelProfile)
-      .filter((profile): profile is ConsoleModelProfile => profile !== null)
-      .map((profile) => hydrateLegacyModelProfileSecrets(config, validUid.data, profile))
-      .sort((left, right) => right.updatedAt - left.updatedAt || left.name.localeCompare(right.name));
-  } catch {
-    return [];
-  }
+  return [];
 }
 
 export function serializeModelProfiles(profiles: readonly ConsoleModelProfile[]): string {
@@ -567,14 +512,15 @@ export function serializeModelProfiles(profiles: readonly ConsoleModelProfile[])
 
 export function modelProfileSaveEntries(
   uid: number | null,
-  currentProfiles: readonly ConsoleModelProfile[],
   nextProfiles: readonly ConsoleModelProfile[],
   clearedSecretKeys: ClearedModelProfileSecretKeys = new Map(),
 ): ConsoleConfigWrite[] {
   if (uid === null) {
     throw new Error("A signed-in account is required to save models.");
   }
-  const nextIds = new Set(nextProfiles.map((profile) => profile.id));
+  if (uid === 0 && nextProfiles.length === 0) {
+    throw new Error("The system model stack must contain at least one model.");
+  }
   const entries: ConsoleConfigWrite[] = [{
     key: modelProfilesConfigKey(uid),
     value: nextProfiles.length > 0 ? serializeModelProfiles(nextProfiles) : "",
@@ -596,36 +542,7 @@ export function modelProfileSaveEntries(
       }
     }
   }
-  for (const profile of currentProfiles) {
-    if (nextIds.has(profile.id)) {
-      continue;
-    }
-    for (const field of MODEL_PROFILE_SECRET_FIELDS) {
-      entries.push({
-        key: modelProfileSecretConfigKey(uid, profile.id, field.key),
-        value: "",
-      });
-    }
-  }
   return entries;
-}
-
-export function redactModelProfilesConfigValue(raw: string): string {
-  if (!raw.trim()) {
-    return raw;
-  }
-  try {
-    const payload = z.object({ profiles: z.array(settingsValueSchema) }).passthrough().safeParse(JSON.parse(raw));
-    if (!payload.success) {
-      return raw;
-    }
-    return JSON.stringify({
-      ...payload.data,
-      profiles: payload.data.profiles.map(redactModelProfileSecrets),
-    });
-  } catch {
-    return raw;
-  }
 }
 
 export function createModelProfile(
@@ -636,10 +553,10 @@ export function createModelProfile(
 ): ConsoleModelProfile[] {
   const normalizedName = normalizeProfileName(name);
   if (!normalizedName) {
-    throw new Error("Profile name is required");
+    throw new Error("Model name is required");
   }
   if (profiles.some((profile) => profile.name.toLowerCase() === normalizedName.toLowerCase())) {
-    throw new Error("Profile name already exists");
+    throw new Error("Model name already exists");
   }
   return [
     ...profiles,
@@ -675,7 +592,7 @@ export function updateModelProfile(
 ): ConsoleModelProfile[] {
   const normalizedName = normalizeProfileName(name);
   if (!normalizedName) {
-    throw new Error("Profile name is required");
+    throw new Error("Model name is required");
   }
   return profiles.map((profile) => profile.id === profileId
     ? {
@@ -782,26 +699,6 @@ export function allModeledSettingKeys(): Set<string> {
   ].map((field) => field.key));
 }
 
-function normalizeModelProfile(raw: SettingsValue): ConsoleModelProfile | null {
-  const recordResult = settingsRecordSchema.safeParse(raw);
-  if (!recordResult.success) return null;
-  const record = recordResult.data;
-  const id = normalizeProfileId(record.id);
-  const name = normalizeProfileName(record.name);
-  if (!id || !name) {
-    return null;
-  }
-  return {
-    id,
-    name,
-    values: normalizeProfileValues(settingsRecordSchema.safeParse(record.values).success
-      ? settingsRecordSchema.parse(record.values)
-      : {}),
-    createdAt: normalizeTimestamp(record.createdAt),
-    updatedAt: normalizeTimestamp(record.updatedAt),
-  };
-}
-
 function parseCanonicalModelStack(raw: string): ConsoleModelProfile[] {
   let decoded: unknown;
   try {
@@ -812,7 +709,7 @@ function parseCanonicalModelStack(raw: string): ConsoleModelProfile[] {
   const payload = z.object({
     version: z.literal(1),
     models: z.array(settingsValueSchema),
-  }).safeParse(decoded);
+  }).strict().safeParse(decoded);
   if (!payload.success) return [];
   return payload.data.models
     .map(normalizeCanonicalModel)
@@ -830,7 +727,7 @@ function normalizeCanonicalModel(raw: SettingsValue): ConsoleModelProfile | null
     transportTarget: z.string().optional(),
     maxTokens: z.number().int().positive().optional(),
     contextWindowTokens: z.number().int().positive().optional(),
-  }).safeParse(raw);
+  }).strict().safeParse(raw);
   if (!parsed.success) return null;
   const id = normalizeProfileId(parsed.data.id);
   const name = normalizeProfileName(parsed.data.name);
@@ -881,22 +778,6 @@ function hydrateModelProfileSecrets(
   return { ...profile, values };
 }
 
-function hydrateLegacyModelProfileSecrets(
-  config: readonly ConsoleConfigEntry[],
-  uid: number,
-  profile: ConsoleModelProfile,
-): ConsoleModelProfile {
-  const values = { ...profile.values };
-  for (const field of MODEL_PROFILE_SECRET_FIELDS) {
-    const secret = configValueForKey(
-      config,
-      `users/${uid}/ai/${LEGACY_MODEL_PROFILE_KEY}/${profile.id}/${field.key.slice("config/ai/".length)}`,
-    );
-    if (secret) values[field.key] = secret;
-  }
-  return { ...profile, values };
-}
-
 interface CanonicalModelValues {
   provider: string;
   model: string;
@@ -936,32 +817,12 @@ function optionalPositiveInt(
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-function redactModelProfileSecrets(profile: SettingsValue): SettingsValue {
-  const profileResult = settingsRecordSchema.safeParse(profile);
-  if (!profileResult.success) return profile;
-  const record = profileResult.data;
-  const valuesResult = settingsRecordSchema.safeParse(record.values);
-  if (!valuesResult.success) return record;
-  const values = { ...valuesResult.data };
-  for (const key of Object.keys(values)) {
-    if (isSensitiveSettingKey(key)) {
-      values[key] = "";
-    }
-  }
-  return { ...record, values };
-}
-
 export function normalizeProfileName(value: SettingsValue): string {
   return String(value ?? "").trim().replace(/\s+/g, " ").slice(0, MAX_PROFILE_NAME_LENGTH);
 }
 
 function normalizeProfileId(value: SettingsValue): string {
   return String(value ?? "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
-}
-
-function normalizeTimestamp(value: SettingsValue): number {
-  const parsed = z.number().finite().safeParse(value);
-  return parsed.success && parsed.data > 0 ? parsed.data : Date.now();
 }
 
 function uniqueProfileId(profiles: readonly ConsoleModelProfile[], name: string): string {

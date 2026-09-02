@@ -9,167 +9,100 @@ import {
   overrideConfigEntries,
 } from "./consoleAi";
 
-const config: ConsoleConfigEntry[] = [
-  { key: "users/1/ai/model", value: "NEMOTRON 3", redacted: false },
-  { key: "users/1/ai/tools/approval", value: "manual", redacted: false },
-  { key: "gateway/theme", value: "gsv-live", redacted: false },
-  { key: "gateway/api_key", value: "", redacted: true },
-];
+function stackEntry(
+  key: string,
+  models: Array<Record<string, string>>,
+): ConsoleConfigEntry {
+  return {
+    key,
+    value: JSON.stringify({ version: 1, models }),
+    redacted: false,
+  };
+}
 
 describe("console AI config classification", () => {
-  it("preserves canonical owner model order and stable option ids", () => {
-    const canonical: ConsoleConfigEntry[] = [{
-      key: "users/1/ai/models",
-      value: JSON.stringify({
-        version: 1,
-        models: [
-          { id: "primary", name: "Primary", provider: "openai", model: "gpt-5.4" },
-          { id: "backup", name: "Backup", provider: "workers-ai", model: "@cf/backup" },
-        ],
-      }),
-      redacted: false,
-    }];
+  it("preserves the effective owner stack order and stable option ids", () => {
+    const config = [
+      stackEntry("config/ai/models", [
+        { id: "system", name: "System", provider: "workers-ai", model: "@cf/system" },
+      ]),
+      stackEntry("users/1/ai/models", [
+        { id: "primary", name: "Primary", provider: "openai", model: "gpt-5.4" },
+        { id: "backup", name: "Backup", provider: "workers-ai", model: "@cf/backup" },
+      ]),
+    ];
 
-    expect(modelProfilesForConfig(canonical, 1).map((profile) => profile.id))
+    expect(modelProfilesForConfig(config, 1).map((profile) => profile.id))
       .toEqual(["primary", "backup"]);
-    expect(modelOptionsForConfig(canonical).map((option) => option.value))
-      .toContain("model-profile:backup");
-    expect(modelConfigCount(canonical)).toBe(2);
+    expect(modelLabelsForConfig(config, 1)).toEqual(["Primary", "Backup"]);
+    expect(modelOptionsForConfig(config, 1)).toEqual([
+      {
+        value: "model-entry:primary",
+        label: "Primary",
+        description: "GPT 5 4",
+      },
+      {
+        value: "model-entry:backup",
+        label: "Backup",
+        description: "Backup",
+      },
+    ]);
+    expect(defaultModelLabelForConfig(config, 1)).toBe("Primary");
+    expect(modelConfigCount(config)).toBe(3);
   });
 
-  it("counts model config separately from system overrides", () => {
-    expect(defaultModelLabelForConfig(config)).toBe("NEMOTRON 3");
-    expect(modelConfigCount(config)).toBe(1);
+  it("inherits the system stack only when an owner stack is absent", () => {
+    const system = stackEntry("config/ai/models", [
+      { id: "system", name: "System Primary", provider: "workers-ai", model: "@cf/system" },
+    ]);
+    const owner = stackEntry("users/2/ai/models", [
+      { id: "owner", name: "Owner Primary", provider: "openai", model: "gpt-5.4" },
+    ]);
+
+    expect(defaultModelLabelForConfig([system], 2)).toBe("System Primary");
+    expect(defaultModelLabelForConfig([system, owner], 2)).toBe("Owner Primary");
+    expect(defaultModelLabelForConfig([], 2)).toBe("NOT CONFIGURED");
+  });
+
+  it("hydrates only the credential attached to the selected stack entry", () => {
+    const config: ConsoleConfigEntry[] = [
+      stackEntry("users/1/ai/models", [
+        { id: "fast", name: "Fast", provider: "openai", model: "gpt-5-mini" },
+      ]),
+      {
+        key: "users/1/ai/models/fast/api_key",
+        value: "sk-fast",
+        redacted: false,
+      },
+      {
+        key: "users/1/ai/api_key",
+        value: "sk-obsolete",
+        redacted: false,
+      },
+    ];
+
+    expect(modelProfilesForConfig(config, 1)[0]?.values["config/ai/api_key"])
+      .toBe("sk-fast");
+  });
+
+  it("ignores obsolete scalar and model_profiles entries", () => {
+    const config: ConsoleConfigEntry[] = [
+      { key: "config/ai/model", value: "legacy-system", redacted: false },
+      { key: "users/1/ai/model", value: "legacy-user", redacted: false },
+      {
+        key: "users/1/ai/model_profiles",
+        value: JSON.stringify({ profiles: [{ id: "legacy", name: "Legacy" }] }),
+        redacted: false,
+      },
+      { key: "config/ai/models/system/api_key", value: "", redacted: true },
+      { key: "gateway/theme", value: "gsv-live", redacted: false },
+    ];
+
+    expect(modelProfilesForConfig(config, 1)).toEqual([]);
+    expect(modelConfigCount(config)).toBe(0);
     expect(overrideConfigEntries(config).map((entry) => entry.key)).toEqual([
+      "config/ai/model",
       "gateway/theme",
-      "gateway/api_key",
-    ]);
-  });
-
-  it("omits sensitive values from parsed model profiles", () => {
-    const profiles = modelProfilesForConfig([
-      {
-        key: "users/1/ai/model_profiles",
-        value: JSON.stringify({
-          profiles: [{
-            id: "fast",
-            name: "Fast",
-            values: {
-              "config/ai/provider": "openai",
-              "config/ai/model": "gpt-5",
-              "config/ai/api_key": "sk-secret",
-            },
-          }],
-        }),
-        redacted: false,
-      },
-    ], 1);
-
-    expect(profiles[0].values).toEqual({
-      "config/ai/provider": "openai",
-      "config/ai/model": "gpt-5",
-    });
-  });
-
-  it("lists only chat model overrides and profile models as LLM options", () => {
-    const labels = modelLabelsForConfig([
-      { key: "config/ai/model", value: "system-llm", redacted: false },
-      { key: "config/ai/image/generation/model", value: "image-model", redacted: false },
-      { key: "config/ai/speech/model", value: "voice-model", redacted: false },
-      { key: "users/1/ai/model", value: "agent-llm", redacted: false },
-      {
-        key: "users/1/ai/model_profiles",
-        value: JSON.stringify({
-          profiles: [{
-            id: "profile-fast",
-            name: "Profile Fast",
-            values: {
-              "config/ai/model": "profile-llm",
-              "config/ai/image/generation/model": "profile-image",
-            },
-          }],
-        }),
-        redacted: false,
-      },
-    ]);
-
-    expect(labels).toEqual(["system-llm", "agent-llm", "profile-llm"]);
-  });
-
-  it("builds readable model dropdown options while preserving raw model ids", () => {
-    const options = modelOptionsForConfig([
-      { key: "config/ai/model", value: "anthropic/claude-sonnet-4.5", redacted: false },
-      {
-        key: "users/1/ai/model_profiles",
-        value: JSON.stringify({
-          profiles: [{
-            id: "deep-review",
-            name: "Deep Review",
-            values: {
-              "config/ai/model": "openai/gpt-5.1",
-            },
-          }],
-        }),
-        redacted: false,
-      },
-    ]);
-
-    expect(options).toEqual([
-      {
-        value: "anthropic/claude-sonnet-4.5",
-        label: "Claude Sonnet 4 5",
-        description: "anthropic/claude-sonnet-4.5",
-      },
-      {
-        value: "model-profile:deep-review",
-        label: "Deep Review",
-        description: "openai/gpt-5.1",
-      },
-    ]);
-  });
-
-  it("labels the fixed GSV model without exposing its internal alias", () => {
-    expect(modelOptionsForConfig([
-      { key: "config/ai/provider", value: "gsv", redacted: false },
-      { key: "config/ai/model", value: "default", redacted: false },
-    ])).toEqual([{
-      value: "default",
-      label: "GSV included",
-      description: "Included and managed by GSV",
-    }]);
-  });
-
-  it("prefers saved profile options over duplicate user raw model overrides", () => {
-    const options = modelOptionsForConfig([
-      { key: "config/ai/model", value: "@cf/default/model", redacted: false },
-      { key: "users/2/ai/model", value: "zai-glm-4.7", redacted: false },
-      {
-        key: "users/1/ai/model_profiles",
-        value: JSON.stringify({
-          profiles: [{
-            id: "fast-stack",
-            name: "Fast Stack",
-            values: {
-              "config/ai/provider": "custom",
-              "config/ai/model": "zai-glm-4.7",
-            },
-          }],
-        }),
-        redacted: false,
-      },
-    ]);
-
-    expect(options).toEqual([
-      {
-        value: "@cf/default/model",
-        label: "Model",
-        description: "@cf/default/model",
-      },
-      {
-        value: "model-profile:fast-stack",
-        label: "Fast Stack",
-        description: "custom · zai-glm-4.7",
-      },
     ]);
   });
 });

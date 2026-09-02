@@ -74,9 +74,9 @@ export function ConsoleAgentPage({
   const config = useConsoleConfig();
   const processes = useConsoleProcesses();
   const targets = useConsoleTargets();
-  const modelOptions = modelOptionsForConfig(config.config);
-  const toolTargets = agentToolTargetsForConsoleTargets(targets.targets);
   const ownerUid = viewerAccountForAgents(accounts.resource.data ?? [])?.uid ?? null;
+  const modelOptions = modelOptionsForConfig(config.config, ownerUid);
+  const toolTargets = agentToolTargetsForConsoleTargets(targets.targets);
   const inheritedNewAgentModel = inheritedModelLabelForAccount(config.config, -1, ownerUid);
   const inheritedNewAgentReasoning = inheritedReasoningForAccount(config.config, -1, ownerUid);
   const defaultApprovalPolicy = defaultApprovalPolicyForConfig(config.config, ownerUid);

@@ -56,6 +56,7 @@ import {
   createModelProfile,
   deleteModelProfile,
   effectiveAiValuesForViewer,
+  inheritsSystemModelStack,
   isSensitiveSettingKey,
   makeModelPrimary,
   modelProfileSaveEntries,
@@ -129,7 +130,7 @@ type RuntimeSelection = {
 
 type ValidateModelSettingsInput = {
   values: Record<string, string>;
-  presetId?: string;
+  modelId?: string;
 };
 
 type OpenAiCodexOAuthStart = {
@@ -332,6 +333,10 @@ function ModelSettingsPage({
     () => modelProfilesForConfig(config, viewer.uid, { inheritSystem: true }),
     [config, viewer.uid],
   );
+  const modelsInherited = useMemo(
+    () => inheritsSystemModelStack(config, viewer.uid),
+    [config, viewer.uid],
+  );
   const canEditAi = viewer.uid !== null;
   const scopeLabel = viewer.isRoot ? "GLOBAL" : viewer.account ? "PERSONAL" : "READ ONLY";
 
@@ -406,6 +411,7 @@ function ModelSettingsPage({
         effectiveValues={effectiveValues}
         embedded={embedded}
         profiles={profiles}
+        modelsInherited={modelsInherited}
         scopeLabel={scopeLabel}
         selection={selection}
         targets={targets}
@@ -437,6 +443,7 @@ function ModelSettingsPage({
         rows={profiles.map((profile, index) => profileRow(
           profile,
           index,
+          modelsInherited,
           () => setSelection({ kind: "profile", id: profile.id }),
         ))}
       />
@@ -450,6 +457,7 @@ function ModelSettingsDetail({
   effectiveValues,
   embedded,
   profiles,
+  modelsInherited,
   scopeLabel,
   selection,
   targets,
@@ -467,6 +475,7 @@ function ModelSettingsDetail({
   effectiveValues: Record<string, string>;
   embedded?: boolean;
   profiles: readonly ConsoleModelProfile[];
+  modelsInherited: boolean;
   scopeLabel: string;
   selection: ModelSelection;
   targets: readonly AgentToolTarget[];
@@ -527,6 +536,8 @@ function ModelSettingsDetail({
     ? profiles[0] ?? null
     : null;
   const isNewProfile = selection.kind === "new-profile" || !profile;
+  const writableProfiles = modelsInherited ? [] : profiles;
+  const profileEditable = editable && (isNewProfile || !modelsInherited);
   const title = selection.kind === "default"
     ? "PRIMARY MODEL"
     : profile?.name.toUpperCase() ?? "NEW MODEL";
@@ -550,8 +561,8 @@ function ModelSettingsDetail({
       icon="stars"
       title={title}
       typeLabel="GSV · MODEL"
-      statusLabel={profile ? "SAVED" : "DRAFT"}
-      tone={profile ? "online" : "idle"}
+      statusLabel={profile ? modelsInherited ? "INHERITED" : "SAVED" : "DRAFT"}
+      tone={profile && !modelsInherited ? "online" : "idle"}
       blurb="Reusable model configuration for agents, including provider credentials when this model needs its own key."
       parentLabel="MODELS"
       onBack={onBack}
@@ -559,19 +570,18 @@ function ModelSettingsDetail({
       <ModelProfileForm
         config={config}
         defaultValues={effectiveValues}
-        editable={editable}
+        editable={profileEditable}
         profile={profile}
-        profiles={profiles}
+        profiles={isNewProfile ? writableProfiles : profiles}
         step={newProfileStep}
         targets={targets}
         viewer={viewer}
         onStepChange={setNewProfileStep}
         onCancel={onBack}
-        onDelete={profile ? async () => {
+        onDelete={profile && !modelsInherited ? async () => {
           await onSaveEntries(modelProfileSaveEntries(
             viewer.uid,
-            profiles,
-            deleteModelProfile(profiles, profile.id),
+            deleteModelProfile(writableProfiles, profile.id),
           ));
           onCompleted();
         } : undefined}
@@ -581,8 +591,8 @@ function ModelSettingsDetail({
         onValidate={onValidateModelConfig}
         onSave={async (name, values, clearedSecretKeys, makeDefault) => {
           let nextProfiles = profile
-            ? updateModelProfile(profiles, profile.id, name, values)
-            : createModelProfile(profiles, name, values);
+            ? updateModelProfile(writableProfiles, profile.id, name, values)
+            : createModelProfile(writableProfiles, name, values);
           const savedProfile = profile
             ? nextProfiles.find((candidate) => candidate.id === profile.id)!
             : nextProfiles[nextProfiles.length - 1];
@@ -590,7 +600,7 @@ function ModelSettingsDetail({
             nextProfiles = makeModelPrimary(nextProfiles, savedProfile.id);
           }
           const clearedByProfile = new Map([[savedProfile.id, clearedSecretKeys]]);
-          const entries = modelProfileSaveEntries(viewer.uid, profiles, nextProfiles, clearedByProfile);
+          const entries = modelProfileSaveEntries(viewer.uid, nextProfiles, clearedByProfile);
           await onSaveEntries(entries);
           if (!profile) {
             onCompleted();
@@ -723,6 +733,7 @@ function runtimeSelectionTitle(selectionId: string): string {
 function profileRow(
   profile: ConsoleModelProfile,
   index: number,
+  inherited: boolean,
   onOpen: () => void,
 ): SettingsListRow {
   const model = profile.values["config/ai/model"] ?? "";
@@ -732,8 +743,8 @@ function profileRow(
     icon: "stars",
     label: profile.name,
     sub: label || model || "Saved model configuration",
-    statusLabel: model ? index === 0 ? "PRIMARY" : `FALLBACK ${index}` : "INCOMPLETE",
-    tone: model ? "online" : "warn",
+    statusLabel: inherited ? "INHERITED" : model ? index === 0 ? "PRIMARY" : `FALLBACK ${index}` : "INCOMPLETE",
+    tone: inherited ? "idle" : model ? "online" : "warn",
     tag: { label: label || "MODEL", tone: "info" },
     onOpen,
   };
@@ -1055,7 +1066,7 @@ function ModelProfileForm({
       : "Testing model...");
     await onValidate({
       values: validationValues,
-      ...(profile && !effectiveClearedSecretKeys.has(MODEL_API_KEY_FIELD_KEY) ? { presetId: profile.id } : undefined),
+      ...(profile && !effectiveClearedSecretKeys.has(MODEL_API_KEY_FIELD_KEY) ? { modelId: profile.id } : undefined),
     });
   };
   const validateDraftsWithOpenAiCodexLogin = async () => {
@@ -1214,8 +1225,8 @@ function ModelProfileForm({
   ) : null;
   const renderMakeDefaultOption = () => (
     <Checkbox
-      label="MAKE DEFAULT MODEL"
-      info="Use this model as the default for agent runs after saving."
+      label="MAKE PRIMARY MODEL"
+      info="Move this model to the front of the fallback order after saving."
       checked={makeDefault}
       disabled={!editable || pending}
       onChange={(checked) => {

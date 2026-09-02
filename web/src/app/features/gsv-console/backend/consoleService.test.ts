@@ -401,7 +401,7 @@ describe("console agent service", () => {
       name: "Scout Agent",
       role: "SCOUT",
       description: "Tracks fleet signals.",
-      model: "model-profile:nemotron-3",
+      model: "model-entry:nemotron-3",
       reasoning: "high",
       approval,
       files: [
@@ -497,7 +497,7 @@ describe("console agent service", () => {
 
     await saveConsoleAgentBehavior(client, {
       uid: 42,
-      model: "model-profile:fast-stack",
+      model: "model-entry:fast-stack",
       reasoning: "medium",
     });
 
@@ -519,7 +519,7 @@ describe("console agent service", () => {
 
     await saveConsoleAgentBehavior(client, {
       uid: 42,
-      model: "model-profile:fast-stack",
+      model: "model-entry:fast-stack",
       reasoning: "medium",
     });
 
@@ -924,7 +924,7 @@ describe("console agent service", () => {
     // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
     await validateConsoleModelConfig({ call } as any, {
-      presetId: "fast-stack",
+      modelId: "fast-stack",
       values: {
         "config/ai/provider": "workers-ai",
         "config/ai/model": "@cf/test/model",
@@ -970,7 +970,7 @@ describe("console agent service", () => {
     // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
     await validateConsoleModelConfig({ call } as any, {
-      presetId: "fast-stack",
+      modelId: "fast-stack",
       values: {
         "config/ai/provider": "workers-ai",
         "config/ai/model": "@cf/test/model",
@@ -1018,7 +1018,7 @@ describe("console agent service", () => {
     // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
     await validateConsoleModelConfig({ call } as any, {
-      presetId: "local",
+      modelId: "local",
       values: {
         "config/ai/provider": "custom",
         "config/ai/model": "local-chat",
