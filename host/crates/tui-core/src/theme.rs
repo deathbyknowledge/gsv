@@ -18,7 +18,6 @@ pub(crate) struct Palette {
     pub(crate) human: Color,
     pub(crate) warning: Color,
     pub(crate) error: Color,
-    pub(crate) success: Color,
     pub(crate) code_background: Option<Color>,
 }
 
@@ -34,7 +33,6 @@ impl Theme {
                 human: Color::LightCyan,
                 warning: Color::Yellow,
                 error: Color::Red,
-                success: Color::Green,
                 code_background: None,
             },
             Self::Gsv => Palette {
@@ -46,7 +44,6 @@ impl Theme {
                 human: Color::Rgb(190, 201, 255),
                 warning: Color::Rgb(244, 190, 108),
                 error: Color::Rgb(241, 126, 126),
-                success: Color::Rgb(130, 207, 160),
                 code_background: Some(Color::Rgb(18, 20, 24)),
             },
         }

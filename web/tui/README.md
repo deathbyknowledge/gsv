@@ -6,18 +6,20 @@ input, IME composition, paste, and browser shortcut suppression.
 
 The native client adopts the user's terminal palette; this browser surface uses
 the curated GSV palette because it has no host terminal theme. Both render the
-same `principal@ship $` prompt grammar, styled Markdown, inspectable links, and
-canonical media artifacts. Press `Alt+M` to switch an assistant response
-between rendered Markdown and its source. Type `show me Markdown and media` in
-the demo to exercise the rich-content path.
+same `user@target $ ` prompt grammar, styled Markdown, inspectable links, and
+canonical media artifacts, with input beginning on the prompt line. Type `@`
+into an empty draft to choose a capability environment. Press `Alt+M` to switch
+an assistant response between rendered Markdown and its source. Type `show me
+Markdown and media` in the demo to exercise the rich-content path.
 
 The preview intentionally uses local example responses. The production browser
 transport remains owned by the existing web gateway service; the next
 integration step is to route core effects through that authenticated client.
-Media currently has a faithful textual artifact view (kind, name, MIME type,
-size, duration, source, and transcription). Pixel previews belong in a backend
-that can resolve and own the resource body rather than in the shared cell
-renderer.
+The shared renderer exposes content-first media slots without unsolicited MIME,
+size, revision, or source metadata. The native client resolves those slots and
+renders images with terminal graphics; the browser preview retains the quiet
+name/transcription fallback until its authenticated resource-body integration
+lands.
 
 Run it from the repository root:
 
@@ -30,4 +32,4 @@ one of the prebuilt binaries from the
 The native preview needs no account:
 
     cd host
-    cargo run -p gsv -- tui --demo
+    cargo run -p gsv -- tui --demo --vim

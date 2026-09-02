@@ -39,12 +39,19 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let command = cli.command.unwrap_or(Commands::Tui {
         demo: false,
         pid: None,
+        vim: false,
     });
     match command {
-        Commands::Tui { demo: true, pid } => {
-            commands::run_tui(&url, GatewayAuth::default(), pid, true).await
-        }
-        Commands::Tui { demo: false, pid } => {
+        Commands::Tui {
+            demo: true,
+            pid,
+            vim,
+        } => commands::run_tui(&url, GatewayAuth::default(), pid, true, vim).await,
+        Commands::Tui {
+            demo: false,
+            pid,
+            vim,
+        } => {
             run_with_auto_setup_and_login_retry(
                 &url,
                 &cfg,
@@ -52,7 +59,7 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 cli_user_override.clone(),
                 cli_password_override.clone(),
                 "tui",
-                |auth| async { commands::run_tui(&url, auth, pid.clone(), false).await },
+                |auth| async { commands::run_tui(&url, auth, pid.clone(), false, vim).await },
             )
             .await
         }

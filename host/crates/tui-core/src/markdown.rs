@@ -33,50 +33,17 @@ pub(crate) fn render_artifacts(artifacts: &[Artifact], palette: Palette) -> Vec<
         }
         lines.push(Line::from(vec![
             Span::styled(
-                format!("{}  ", artifact.kind.label()),
-                Style::new()
-                    .fg(palette.warning)
-                    .add_modifier(Modifier::BOLD),
+                format!("{}  ", artifact.kind.symbol()),
+                Style::new().fg(palette.muted),
             ),
             Span::styled(
                 sanitize(artifact.display_name()),
-                Style::new()
-                    .fg(palette.foreground)
-                    .add_modifier(Modifier::BOLD),
+                Style::new().fg(palette.foreground),
             ),
         ]));
-
-        let mut metadata = vec![sanitize(&artifact.mime_type)];
-        if let Some(size) = artifact.size {
-            metadata.push(format_size(size));
-        }
-        if let Some(duration_ms) = artifact.duration_ms {
-            metadata.push(format_duration(duration_ms));
-        }
-        lines.push(Line::from(Span::styled(
-            format!("       {}", metadata.join("  ·  ")),
-            Style::new().fg(palette.muted),
-        )));
-
-        if let Some(source) = artifact.source.as_deref() {
-            let mut source_line = vec![Span::styled(
-                format!("       {}", sanitize(&shorten(source, 140))),
-                Style::new().fg(palette.quiet),
-            )];
-            if let Some(revision) = artifact.revision.as_deref() {
-                source_line.extend([
-                    Span::styled("  @  ", Style::new().fg(palette.muted)),
-                    Span::styled(
-                        sanitize(&shorten(revision, 64)),
-                        Style::new().fg(palette.quiet),
-                    ),
-                ]);
-            }
-            lines.push(Line::from(source_line));
-        }
         if let Some(transcription) = artifact.transcription.as_deref() {
             lines.push(Line::from(Span::styled(
-                format!("       “{}”", sanitize(&shorten(transcription, 180))),
+                sanitize(&shorten(transcription, 240)),
                 Style::new().fg(palette.muted),
             )));
         }
@@ -105,25 +72,15 @@ fn render_block(node: &Node, palette: Palette, output: &mut Vec<Line<'static>>) 
             } else {
                 palette.foreground
             };
-            let mut lines = render_inlines(
+            let lines = render_inlines(
                 &heading.children,
                 palette,
                 Style::new().fg(color).add_modifier(Modifier::BOLD),
             );
-            if let Some(first) = lines.first_mut() {
-                first
-                    .spans
-                    .insert(0, Span::styled("◆  ", Style::new().fg(palette.accent)));
-            }
             output.extend(lines);
             push_blank_line(output);
         }
         Node::Code(code) => {
-            let language = code.lang.as_deref().unwrap_or("text");
-            output.push(Line::from(Span::styled(
-                format!("CODE  {}", sanitize(language)),
-                Style::new().fg(palette.muted).add_modifier(Modifier::BOLD),
-            )));
             let mut code_style = Style::new().fg(palette.foreground);
             if let Some(background) = palette.code_background {
                 code_style = code_style.bg(background);
@@ -222,12 +179,7 @@ fn render_block(node: &Node, palette: Palette, output: &mut Vec<Line<'static>>) 
         }
         Node::ImageReference(image) => {
             output.push(Line::from(vec![
-                Span::styled(
-                    "IMAGE  ",
-                    Style::new()
-                        .fg(palette.warning)
-                        .add_modifier(Modifier::BOLD),
-                ),
+                Span::styled("▧  ", Style::new().fg(palette.muted)),
                 Span::styled(sanitize(&image.alt), Style::new().fg(palette.foreground)),
             ]));
             push_blank_line(output);
@@ -298,17 +250,20 @@ fn render_inline(node: &Node, palette: Palette, style: Style, lines: &mut Vec<Ve
         }
         Node::Break(_) => lines.push(Vec::new()),
         Node::Link(link) => {
+            let label = link.children.iter().map(node_text).collect::<String>();
             let link_style = style.fg(palette.accent).add_modifier(Modifier::UNDERLINED);
             for child in &link.children {
                 render_inline(child, palette, link_style, lines);
             }
-            push_span(
-                lines,
-                Span::styled(
-                    format!("  ‹{}›", sanitize(&shorten(&link.url, 120))),
-                    Style::new().fg(palette.muted),
-                ),
-            );
+            if label.trim() != link.url.trim() {
+                push_span(
+                    lines,
+                    Span::styled(
+                        format!("  ‹{}›", sanitize(&shorten(&link.url, 120))),
+                        Style::new().fg(palette.muted),
+                    ),
+                );
+            }
         }
         Node::LinkReference(link) => {
             let link_style = style.fg(palette.accent).add_modifier(Modifier::UNDERLINED);
@@ -321,11 +276,11 @@ fn render_inline(node: &Node, palette: Palette, style: Style, lines: &mut Vec<Ve
                 lines,
                 Span::styled(
                     format!(
-                        "IMAGE  {}  ‹{}›",
+                        "▧  {}  ‹{}›",
                         sanitize(&image.alt),
                         sanitize(&shorten(&image.url, 120))
                     ),
-                    Style::new().fg(palette.warning),
+                    Style::new().fg(palette.muted),
                 ),
             );
         }
@@ -333,8 +288,8 @@ fn render_inline(node: &Node, palette: Palette, style: Style, lines: &mut Vec<Ve
             push_span(
                 lines,
                 Span::styled(
-                    format!("IMAGE  {}", sanitize(&image.alt)),
-                    Style::new().fg(palette.warning),
+                    format!("▧  {}", sanitize(&image.alt)),
+                    Style::new().fg(palette.muted),
                 ),
             );
         }
@@ -353,12 +308,7 @@ fn render_inline(node: &Node, palette: Palette, style: Style, lines: &mut Vec<Ve
 
 fn render_markdown_image(alt: &str, url: &str, palette: Palette, output: &mut Vec<Line<'static>>) {
     output.push(Line::from(vec![
-        Span::styled(
-            "IMAGE  ",
-            Style::new()
-                .fg(palette.warning)
-                .add_modifier(Modifier::BOLD),
-        ),
+        Span::styled("▧  ", Style::new().fg(palette.muted)),
         Span::styled(sanitize(alt), Style::new().fg(palette.foreground)),
     ]));
     output.push(Line::from(Span::styled(
@@ -442,33 +392,6 @@ fn shorten(value: &str, max_chars: usize) -> String {
     }
 }
 
-fn format_size(bytes: u64) -> String {
-    const KIB: f64 = 1024.0;
-    const MIB: f64 = KIB * 1024.0;
-    const GIB: f64 = MIB * 1024.0;
-    let bytes_f64 = bytes as f64;
-    if bytes_f64 >= GIB {
-        format!("{:.1} GB", bytes_f64 / GIB)
-    } else if bytes_f64 >= MIB {
-        format!("{:.1} MB", bytes_f64 / MIB)
-    } else if bytes_f64 >= KIB {
-        format!("{:.1} KB", bytes_f64 / KIB)
-    } else {
-        format!("{bytes} B")
-    }
-}
-
-fn format_duration(duration_ms: u64) -> String {
-    let total_seconds = duration_ms / 1000;
-    let minutes = total_seconds / 60;
-    let seconds = total_seconds % 60;
-    if minutes > 0 {
-        format!("{minutes}:{seconds:02}")
-    } else {
-        format!("{seconds}s")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -494,9 +417,10 @@ mod tests {
             Theme::Gsv.palette(),
         );
         let rendered = rendered_text(&lines);
-        assert!(rendered.contains("◆  Result"));
+        assert!(rendered.contains("Result"));
         assert!(rendered.contains("‹https://example.com›"));
-        assert!(rendered.contains("CODE  rust"));
+        assert!(rendered.contains("│ let answer = 42;"));
+        assert!(!rendered.contains("CODE"));
         assert!(rendered.contains("• one"));
     }
 

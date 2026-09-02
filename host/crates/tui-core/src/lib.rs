@@ -40,12 +40,12 @@ pub enum MediaKind {
 }
 
 impl MediaKind {
-    fn label(self) -> &'static str {
+    fn symbol(self) -> &'static str {
         match self {
-            Self::Image => "IMAGE",
-            Self::Audio => "AUDIO",
-            Self::Video => "VIDEO",
-            Self::Document => "FILE",
+            Self::Image => "▧",
+            Self::Audio => "▶",
+            Self::Video => "▶",
+            Self::Document => "↗",
         }
     }
 }
@@ -65,9 +65,52 @@ pub struct Artifact {
 }
 
 impl Artifact {
-    fn display_name(&self) -> &str {
+    pub fn display_name(&self) -> &str {
         self.filename.as_deref().unwrap_or("untitled")
     }
+
+    fn cache_key(&self) -> String {
+        format!(
+            "{}\u{1f}{}\u{1f}{}",
+            self.source.as_deref().unwrap_or_default(),
+            self.revision.as_deref().unwrap_or_default(),
+            self.mime_type
+        )
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CapabilityEnvironment {
+    /// Exact routing identity. Display sanitization must never change this value.
+    pub target: String,
+    pub label: String,
+    pub cwd: Option<String>,
+}
+
+impl CapabilityEnvironment {
+    pub fn new(target: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            target: target.into(),
+            label: label.into(),
+            cwd: None,
+        }
+    }
+
+    pub fn gsv() -> Self {
+        Self::new("gsv", "gsv")
+    }
+
+    pub fn with_cwd(mut self, cwd: impl Into<String>) -> Self {
+        self.cwd = Some(cwd.into());
+        self
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MediaSlot {
+    pub key: String,
+    pub area: Rect,
+    pub artifact: Artifact,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -85,6 +128,7 @@ pub struct Moment {
     pub run_id: Option<String>,
     pub state: MomentState,
     pub artifacts: Vec<Artifact>,
+    pub environment: Option<CapabilityEnvironment>,
 }
 
 impl Moment {
@@ -96,11 +140,17 @@ impl Moment {
             run_id: None,
             state: MomentState::Complete,
             artifacts: Vec::new(),
+            environment: None,
         }
     }
 
     pub fn with_artifacts(mut self, artifacts: Vec<Artifact>) -> Self {
         self.artifacts = artifacts;
+        self
+    }
+
+    pub fn with_environment(mut self, environment: CapabilityEnvironment) -> Self {
+        self.environment = Some(environment);
         self
     }
 }
@@ -112,27 +162,6 @@ pub enum ConnectionState {
     Ready,
     Working,
     Offline,
-}
-
-impl ConnectionState {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Demo => "DEMO",
-            Self::Connecting => "CONNECTING",
-            Self::Ready => "READY",
-            Self::Working => "WORKING",
-            Self::Offline => "OFFLINE",
-        }
-    }
-
-    fn color(self, palette: Palette) -> Color {
-        match self {
-            Self::Demo => palette.warning,
-            Self::Connecting | Self::Working => palette.accent,
-            Self::Ready => palette.success,
-            Self::Offline => palette.error,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -161,13 +190,20 @@ pub enum Action {
     MoveCursorEnd,
     Newline,
     Submit,
+    BeginCompose,
     Escape,
-    PreviousMoment,
-    NextMoment,
+    PreviousTurn,
+    NextTurn,
+    FirstTurn,
+    LastTurn,
     ScrollUp,
     ScrollDown,
+    PreviousChoice,
+    NextChoice,
     ToggleHelp,
     ToggleMarkdown,
+    ToggleVim,
+    ToggleMedia,
     Abort,
     DecideApproval {
         decision: ApprovalDecision,
@@ -181,6 +217,8 @@ pub enum Effect {
     Submit {
         id: u64,
         text: String,
+        target: String,
+        cwd: Option<String>,
     },
     Abort,
     DecideApproval {
@@ -213,8 +251,17 @@ pub struct App {
     next_submission_id: u64,
     approval: Option<Approval>,
     principal: String,
+    environments: Vec<CapabilityEnvironment>,
+    active_environment: usize,
+    environment_picker: bool,
+    environment_query: String,
+    environment_choice: usize,
     theme: Theme,
     raw_markdown: bool,
+    vim_enabled: bool,
+    inline_images: bool,
+    media_expanded: bool,
+    media_slots: Vec<MediaSlot>,
 }
 
 impl App {
@@ -234,8 +281,17 @@ impl App {
             next_submission_id: 1,
             approval: None,
             principal: "you".to_string(),
+            environments: vec![CapabilityEnvironment::gsv()],
+            active_environment: 0,
+            environment_picker: false,
+            environment_query: String::new(),
+            environment_choice: 0,
             theme: Theme::Gsv,
             raw_markdown: false,
+            vim_enabled: false,
+            inline_images: false,
+            media_expanded: false,
+            media_slots: Vec::new(),
         }
     }
 
@@ -269,8 +325,65 @@ impl App {
         self.approval.as_ref()
     }
 
+    pub fn vim_enabled(&self) -> bool {
+        self.vim_enabled
+    }
+
+    pub fn environment_picker_visible(&self) -> bool {
+        self.environment_picker
+    }
+
+    pub fn active_environment(&self) -> &CapabilityEnvironment {
+        &self.environments[self.active_environment]
+    }
+
+    pub fn media_slots(&self) -> &[MediaSlot] {
+        &self.media_slots
+    }
+
     pub fn set_principal(&mut self, principal: impl AsRef<str>) {
         self.principal = prompt_token(principal.as_ref(), "you");
+    }
+
+    pub fn set_environments(&mut self, environments: Vec<CapabilityEnvironment>) {
+        let active_target = self.active_environment().target.clone();
+        let mut normalized = Vec::with_capacity(environments.len().saturating_add(1));
+        normalized.push(
+            environments
+                .iter()
+                .find(|environment| environment.target == "gsv")
+                .cloned()
+                .unwrap_or_else(CapabilityEnvironment::gsv),
+        );
+        for environment in environments {
+            if environment.target == "gsv"
+                || environment.target.trim().is_empty()
+                || normalized
+                    .iter()
+                    .any(|candidate| candidate.target == environment.target)
+            {
+                continue;
+            }
+            normalized.push(environment);
+        }
+        self.environments = normalized;
+        self.active_environment = self
+            .environments
+            .iter()
+            .position(|environment| environment.target == active_target)
+            .unwrap_or(0);
+        self.environment_choice = 0;
+    }
+
+    pub fn set_vim_enabled(&mut self, enabled: bool) {
+        self.vim_enabled = enabled;
+    }
+
+    pub fn set_inline_images(&mut self, enabled: bool) {
+        self.inline_images = enabled;
+        if !enabled {
+            self.media_expanded = false;
+        }
     }
 
     pub fn set_theme(&mut self, theme: Theme) {
@@ -324,6 +437,56 @@ impl App {
             };
         }
 
+        if self.environment_picker {
+            return match action {
+                Action::Insert(value) => {
+                    let value = sanitize_draft_input(&value);
+                    if !value.is_empty() {
+                        self.environment_query.push_str(&value);
+                        self.environment_choice = 0;
+                    }
+                    Vec::new()
+                }
+                Action::Backspace | Action::Delete => {
+                    if let Some(previous) = previous_grapheme_boundary(
+                        &self.environment_query,
+                        self.environment_query.len(),
+                    ) {
+                        self.environment_query.truncate(previous);
+                        self.environment_choice = 0;
+                    }
+                    Vec::new()
+                }
+                Action::PreviousChoice | Action::PreviousTurn | Action::ScrollUp => {
+                    let count = self.matching_environment_indices().len();
+                    if count > 0 {
+                        self.environment_choice = self
+                            .environment_choice
+                            .checked_sub(1)
+                            .unwrap_or(count.saturating_sub(1));
+                    }
+                    Vec::new()
+                }
+                Action::NextChoice | Action::NextTurn | Action::ScrollDown => {
+                    let count = self.matching_environment_indices().len();
+                    if count > 0 {
+                        self.environment_choice = (self.environment_choice + 1) % count;
+                    }
+                    Vec::new()
+                }
+                Action::Submit => {
+                    self.select_environment_choice();
+                    Vec::new()
+                }
+                Action::Escape => {
+                    self.close_environment_picker();
+                    Vec::new()
+                }
+                Action::Quit => vec![Effect::Quit],
+                _ => Vec::new(),
+            };
+        }
+
         if let Some(approval) = &self.approval {
             return match action {
                 Action::DecideApproval { decision, remember } => {
@@ -346,6 +509,17 @@ impl App {
             Action::Insert(value) => {
                 let value = sanitize_draft_input(&value);
                 if value.is_empty() {
+                    return Vec::new();
+                }
+                if value == "@" && self.draft.is_empty() {
+                    self.environment_picker = true;
+                    self.environment_query.clear();
+                    self.environment_choice = self
+                        .matching_environment_indices()
+                        .iter()
+                        .position(|index| *index == self.active_environment)
+                        .unwrap_or(0);
+                    self.draft_visible = true;
                     return Vec::new();
                 }
                 self.draft_visible = true;
@@ -410,23 +584,43 @@ impl App {
                 Vec::new()
             }
             Action::Submit => self.begin_submission().into_iter().collect(),
+            Action::BeginCompose => {
+                self.draft_visible = true;
+                Vec::new()
+            }
             Action::Escape => {
                 self.draft_visible = false;
                 Vec::new()
             }
-            Action::PreviousMoment => {
-                self.previous_moment();
+            Action::PreviousTurn => {
+                self.previous_turn();
                 Vec::new()
             }
-            Action::NextMoment => {
-                self.next_moment();
+            Action::NextTurn => {
+                self.next_turn();
+                Vec::new()
+            }
+            Action::FirstTurn => {
+                if !self.draft_visible && !self.moments.is_empty() {
+                    self.selected = self.turn_end(0);
+                    self.moment_scroll = 0;
+                    self.media_expanded = false;
+                }
+                Vec::new()
+            }
+            Action::LastTurn => {
+                if !self.draft_visible && !self.moments.is_empty() {
+                    self.selected = self.moments.len().saturating_sub(1);
+                    self.moment_scroll = 0;
+                    self.media_expanded = false;
+                }
                 Vec::new()
             }
             Action::ScrollUp => {
                 if self.moment_scroll > 0 {
                     self.moment_scroll -= 1;
                 } else {
-                    self.previous_moment();
+                    self.previous_turn();
                 }
                 Vec::new()
             }
@@ -434,10 +628,11 @@ impl App {
                 if self.moment_scroll < self.last_max_scroll {
                     self.moment_scroll += 1;
                 } else {
-                    self.next_moment();
+                    self.next_turn();
                 }
                 Vec::new()
             }
+            Action::PreviousChoice | Action::NextChoice => Vec::new(),
             Action::ToggleHelp => {
                 self.help_visible = true;
                 Vec::new()
@@ -445,6 +640,17 @@ impl App {
             Action::ToggleMarkdown => {
                 self.raw_markdown = !self.raw_markdown;
                 self.moment_scroll = 0;
+                Vec::new()
+            }
+            Action::ToggleVim => {
+                self.vim_enabled = !self.vim_enabled;
+                Vec::new()
+            }
+            Action::ToggleMedia => {
+                if self.turn_has_images() {
+                    self.media_expanded = !self.media_expanded;
+                    self.moment_scroll = 0;
+                }
                 Vec::new()
             }
             Action::Abort => vec![Effect::Abort],
@@ -467,11 +673,10 @@ impl App {
             id,
             text: text.clone(),
         });
-        self.moments.push(Moment::complete(
-            format!("local:user:{id}"),
-            Role::Human,
-            text.clone(),
-        ));
+        self.moments.push(
+            Moment::complete(format!("local:user:{id}"), Role::Human, text.clone())
+                .with_environment(self.active_environment().clone()),
+        );
         self.moments.push(Moment {
             id: format!("local:gsv:{id}"),
             role: Role::Intelligence,
@@ -479,6 +684,7 @@ impl App {
             run_id: None,
             state: MomentState::Streaming,
             artifacts: Vec::new(),
+            environment: None,
         });
         self.selected = self.moments.len().saturating_sub(1);
         self.moment_scroll = 0;
@@ -488,7 +694,13 @@ impl App {
             ConnectionState::Working
         };
         self.activity = Some("SENDING".to_string());
-        Some(Effect::Submit { id, text })
+        let environment = self.active_environment();
+        Some(Effect::Submit {
+            id,
+            text,
+            target: environment.target.clone(),
+            cwd: environment.cwd.clone(),
+        })
     }
 
     pub fn submission_accepted(&mut self, id: u64, run_id: String, queued: bool) {
@@ -557,6 +769,7 @@ impl App {
                     run_id: run_id.map(str::to_string),
                     state: MomentState::Streaming,
                     artifacts: Vec::new(),
+                    environment: None,
                 });
                 self.moments.len() - 1
             }
@@ -589,6 +802,7 @@ impl App {
                 run_id: run_id.map(str::to_string),
                 state: MomentState::Streaming,
                 artifacts: Vec::new(),
+                environment: None,
             });
             self.selected = self.moments.len().saturating_sub(1);
         }
@@ -637,6 +851,7 @@ impl App {
         text: impl Into<String>,
         run_id: Option<String>,
         artifacts: Vec<Artifact>,
+        environment: Option<CapabilityEnvironment>,
     ) {
         let id = id.into();
         let text = text.into();
@@ -664,6 +879,7 @@ impl App {
                 moment.id = id;
                 moment.run_id = run_id;
                 moment.artifacts = artifacts;
+                moment.environment = environment;
                 return;
             }
         }
@@ -688,6 +904,7 @@ impl App {
             run_id,
             state: MomentState::Complete,
             artifacts,
+            environment,
         });
         self.selected = self.moments.len().saturating_sub(1);
         self.moment_scroll = 0;
@@ -721,18 +938,92 @@ impl App {
         self.finish_run(Some(&run_id), None);
     }
 
-    fn previous_moment(&mut self) {
-        if !self.draft_visible && self.selected > 0 {
-            self.selected -= 1;
+    fn previous_turn(&mut self) {
+        if self.draft_visible || self.moments.is_empty() {
+            return;
+        }
+        let start = self.turn_start(self.selected);
+        if start > 0 {
+            self.selected = start - 1;
             self.moment_scroll = 0;
+            self.media_expanded = false;
         }
     }
 
-    fn next_moment(&mut self) {
-        if !self.draft_visible && self.selected + 1 < self.moments.len() {
-            self.selected += 1;
-            self.moment_scroll = 0;
+    fn next_turn(&mut self) {
+        if self.draft_visible || self.moments.is_empty() {
+            return;
         }
+        let end = self.turn_end(self.turn_start(self.selected));
+        if end + 1 < self.moments.len() {
+            self.selected = self.turn_end(end + 1);
+            self.moment_scroll = 0;
+            self.media_expanded = false;
+        }
+    }
+
+    fn turn_start(&self, index: usize) -> usize {
+        let index = index.min(self.moments.len().saturating_sub(1));
+        if self
+            .moments
+            .get(index)
+            .is_some_and(|moment| moment.role == Role::Human)
+        {
+            return index;
+        }
+        self.moments[..=index]
+            .iter()
+            .rposition(|moment| moment.role == Role::Human)
+            .unwrap_or(index)
+    }
+
+    fn turn_end(&self, start: usize) -> usize {
+        self.moments
+            .iter()
+            .enumerate()
+            .skip(start.saturating_add(1))
+            .find_map(|(index, moment)| (moment.role == Role::Human).then_some(index - 1))
+            .unwrap_or_else(|| self.moments.len().saturating_sub(1))
+    }
+
+    fn turn_has_images(&self) -> bool {
+        if self.moments.is_empty() {
+            return false;
+        }
+        let start = self.turn_start(self.selected);
+        let end = self.turn_end(start);
+        self.moments[start..=end]
+            .iter()
+            .flat_map(|moment| &moment.artifacts)
+            .any(|artifact| artifact.kind == MediaKind::Image)
+    }
+
+    fn matching_environment_indices(&self) -> Vec<usize> {
+        let query = self.environment_query.trim().to_ascii_lowercase();
+        self.environments
+            .iter()
+            .enumerate()
+            .filter_map(|(index, environment)| {
+                let matches = query.is_empty()
+                    || environment.target.to_ascii_lowercase().contains(&query)
+                    || environment.label.to_ascii_lowercase().contains(&query);
+                matches.then_some(index)
+            })
+            .collect()
+    }
+
+    fn select_environment_choice(&mut self) {
+        let matches = self.matching_environment_indices();
+        if let Some(index) = matches.get(self.environment_choice).copied() {
+            self.active_environment = index;
+            self.close_environment_picker();
+        }
+    }
+
+    fn close_environment_picker(&mut self) {
+        self.environment_picker = false;
+        self.environment_query.clear();
+        self.environment_choice = 0;
     }
 
     fn streaming_moment_for(&self, run_id: Option<&str>) -> Option<usize> {
@@ -758,11 +1049,12 @@ impl App {
     pub fn render(&mut self, frame: &mut Frame<'_>) {
         let palette = self.theme.palette();
         let area = frame.area();
+        self.media_slots.clear();
         frame.render_widget(
             Block::new().style(Style::new().bg(palette.background)),
             area,
         );
-        if area.width < 32 || area.height < 12 {
+        if area.width < 28 || area.height < 8 {
             frame.render_widget(
                 Paragraph::new("GSV needs a little more room")
                     .alignment(Alignment::Center)
@@ -772,227 +1064,292 @@ impl App {
             return;
         }
 
-        let [header, body, footer] = Layout::vertical([
-            Constraint::Length(3),
-            Constraint::Min(6),
-            Constraint::Length(3),
-        ])
-        .areas(area);
-        self.render_header(frame, header);
-        self.render_body(frame, body);
-        self.render_footer(frame, footer);
+        let horizontal_margin = if area.width > 104 {
+            area.width.saturating_sub(96) / 2
+        } else {
+            2
+        };
+        let vertical_margin = if area.height > 18 { 2 } else { 1 };
+        let canvas = area.inner(Margin::new(horizontal_margin, vertical_margin));
+        if let Some(approval) = &self.approval {
+            self.last_max_scroll = 0;
+            render_approval(frame, canvas, approval, palette);
+        } else if self.environment_picker {
+            self.last_max_scroll = 0;
+            self.render_environment_picker(frame, canvas);
+        } else if self.draft_visible {
+            self.last_max_scroll = 0;
+            self.render_draft(frame, canvas);
+        } else {
+            self.render_turn(frame, canvas);
+        }
         if self.help_visible {
             self.render_help(frame, area);
         }
     }
 
-    fn render_header(&self, frame: &mut Frame<'_>, area: Rect) {
-        let palette = self.theme.palette();
-        let [brand, status] = Layout::horizontal([Constraint::Min(12), Constraint::Length(24)])
-            .areas(area.inner(Margin::new(2, 0)));
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(
-                    "GSV",
-                    Style::new()
-                        .fg(palette.foreground)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("  /  SHIP", Style::new().fg(palette.muted)),
-            ])),
-            brand,
-        );
-        let activity = self.activity.as_deref().unwrap_or(self.connection.label());
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled("● ", Style::new().fg(self.connection.color(palette))),
-                Span::styled(activity, Style::new().fg(palette.muted)),
-            ]))
-            .alignment(Alignment::Right),
-            status,
-        );
-    }
-
-    fn render_body(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        let palette = self.theme.palette();
-        let [rail, canvas, _breathing_room] = Layout::horizontal([
-            Constraint::Length(5),
-            Constraint::Min(20),
-            Constraint::Length(4),
-        ])
-        .areas(area);
-        self.render_rail(frame, rail);
-
-        if let Some(approval) = &self.approval {
-            self.last_max_scroll = 0;
-            render_approval(frame, canvas, approval, palette);
-        } else if self.draft_visible {
-            self.last_max_scroll = 0;
-            self.render_draft(frame, canvas);
-        } else {
-            self.render_moment(frame, canvas);
-        }
-    }
-
-    fn render_rail(&self, frame: &mut Frame<'_>, area: Rect) {
+    fn render_turn(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let palette = self.theme.palette();
         if self.moments.is_empty() {
-            return;
-        }
-        let visible = usize::from(area.height.saturating_sub(4)).max(1);
-        let half = visible / 2;
-        let start = self
-            .selected
-            .saturating_sub(half)
-            .min(self.moments.len().saturating_sub(visible));
-        let end = (start + visible).min(self.moments.len());
-        let mut lines = Vec::with_capacity(end - start + 1);
-        for index in start..end {
-            let selected = index == self.selected;
-            lines.push(Line::from(Span::styled(
-                if selected { "  ●" } else { "  ·" },
-                Style::new().fg(if selected {
-                    palette.accent
-                } else {
-                    palette.quiet
-                }),
-            )));
-        }
-        let height = u16::try_from(lines.len())
-            .unwrap_or(u16::MAX)
-            .min(area.height);
-        let y = area.y + area.height.saturating_sub(height) / 2;
-        frame.render_widget(
-            Paragraph::new(lines),
-            Rect::new(area.x, y, area.width, height),
-        );
-    }
-
-    fn render_moment(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        let palette = self.theme.palette();
-        let Some(moment) = self.moments.get(self.selected) else {
             self.last_max_scroll = 0;
             frame.render_widget(
-                Paragraph::new("Start typing.")
+                Paragraph::new(self.shell_prompt(self.active_environment()))
                     .style(Style::new().fg(palette.muted))
                     .alignment(Alignment::Center),
                 area,
             );
             return;
+        }
+
+        let start = self.turn_start(self.selected);
+        let end = self.turn_end(start);
+        let turn = self.moments[start..=end].to_vec();
+        let image_artifacts = turn
+            .iter()
+            .flat_map(|moment| moment.artifacts.iter())
+            .filter(|artifact| artifact.kind == MediaKind::Image)
+            .cloned()
+            .collect::<Vec<_>>();
+        let inline_image_count = if self.inline_images {
+            image_artifacts.len().min(3)
+        } else {
+            0
         };
 
-        let content_area = area.inner(Margin::new(2, 1));
-        let text_width = content_area.width.max(1);
-        let body = if moment.text.is_empty() && moment.state == MomentState::Streaming {
-            "Thinking…"
-        } else {
-            moment.text.as_str()
-        };
-        let body_color = if moment.state == MomentState::Error {
-            palette.error
-        } else {
-            moment.role.color(palette)
-        };
-        let body_lines = if moment.role == Role::Intelligence && !self.raw_markdown {
-            render_markdown(body, palette)
-        } else {
-            render_plain(body, Style::new().fg(body_color))
-        };
-        let mut lines = vec![
-            Line::from(Span::styled(
-                self.moment_prompt(moment.role),
-                Style::new()
-                    .fg(moment.role.color(palette))
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::default(),
-        ];
-        lines.extend(body_lines);
-        if !moment.artifacts.is_empty() {
-            lines.push(Line::default());
-            lines.extend(render_artifacts(&moment.artifacts, palette));
+        if self.media_expanded && inline_image_count > 0 {
+            self.last_max_scroll = 0;
+            self.push_media_slots(frame, area, &image_artifacts[..inline_image_count]);
+            return;
         }
+
+        let mut lines = Vec::new();
+        for moment in &turn {
+            if !lines.is_empty() {
+                lines.push(Line::default());
+            }
+            let body = if moment.text.is_empty() && moment.state == MomentState::Streaming {
+                "⋯"
+            } else {
+                moment.text.as_str()
+            };
+            let body_color = if moment.state == MomentState::Error {
+                palette.error
+            } else {
+                moment.role.color(palette)
+            };
+            match moment.role {
+                Role::Human => {
+                    let environment = moment
+                        .environment
+                        .as_ref()
+                        .unwrap_or_else(|| self.default_environment());
+                    lines.extend(
+                        prompted_text_lines(
+                            &self.shell_prompt(environment),
+                            body,
+                            area.width,
+                            Style::new().fg(palette.human).add_modifier(Modifier::BOLD),
+                            Style::new().fg(body_color),
+                            None,
+                        )
+                        .lines,
+                    );
+                }
+                Role::Intelligence if !self.raw_markdown => {
+                    lines.extend(render_markdown(body, palette));
+                }
+                Role::Intelligence | Role::System => {
+                    lines.extend(render_plain(body, Style::new().fg(body_color)));
+                }
+            }
+        }
+
+        let fallback_artifacts = turn
+            .iter()
+            .flat_map(|moment| moment.artifacts.iter())
+            .filter(|artifact| artifact.kind != MediaKind::Image)
+            .chain(image_artifacts.iter().skip(inline_image_count))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !fallback_artifacts.is_empty() {
+            lines.push(Line::default());
+            lines.extend(render_artifacts(&fallback_artifacts, palette));
+        }
+
         let text = Text::from(lines);
         let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
-        let line_count_u16 = u16::try_from(paragraph.line_count(text_width))
+        let line_count = u16::try_from(paragraph.line_count(area.width.max(1)))
             .unwrap_or(u16::MAX)
             .max(1);
-        self.last_max_scroll = line_count_u16.saturating_sub(content_area.height);
-        self.moment_scroll = self.moment_scroll.min(self.last_max_scroll);
-        let render_height = line_count_u16.min(content_area.height).max(1);
-        let y = if self.last_max_scroll == 0 {
-            content_area.y + content_area.height.saturating_sub(render_height) / 2
+        let media_height = if inline_image_count > 0 {
+            (area.height.saturating_mul(2) / 5).clamp(5, 14)
         } else {
-            content_area.y
+            0
         };
-        let render_area = Rect::new(content_area.x, y, content_area.width, render_height);
-        frame.render_widget(paragraph.scroll((self.moment_scroll, 0)), render_area);
+        let gap = u16::from(media_height > 0);
+        let text_capacity = area.height.saturating_sub(media_height + gap).max(1);
+        self.last_max_scroll = line_count.saturating_sub(text_capacity);
+        self.moment_scroll = self.moment_scroll.min(self.last_max_scroll);
+        let text_height = line_count.min(text_capacity).max(1);
+        let compound_height = text_height.saturating_add(media_height).saturating_add(gap);
+        let y = if self.last_max_scroll == 0 {
+            area.y + area.height.saturating_sub(compound_height) / 2
+        } else {
+            area.y
+        };
+        let text_area = Rect::new(area.x, y, area.width, text_height);
+        frame.render_widget(paragraph.scroll((self.moment_scroll, 0)), text_area);
+        if inline_image_count > 0 {
+            let media_area = Rect::new(
+                area.x,
+                text_area.bottom().saturating_add(gap),
+                area.width,
+                media_height,
+            );
+            self.push_media_slots(frame, media_area, &image_artifacts[..inline_image_count]);
+        }
     }
 
     fn render_draft(&self, frame: &mut Frame<'_>, area: Rect) {
         let palette = self.theme.palette();
-        let content_area = area.inner(Margin::new(2, 1));
-        let label_height = 2;
-        let available_text_height = content_area.height.saturating_sub(label_height).max(1);
-        let width = content_area.width.max(1);
-        let (cursor_row, cursor_col, total_rows) =
-            text_metrics(&self.draft, self.draft_cursor, width);
-        let visible_rows = total_rows.min(available_text_height).max(1);
-        let compound_height = label_height + visible_rows;
-        let y = content_area.y + content_area.height.saturating_sub(compound_height) / 2;
-        let label_area = Rect::new(content_area.x, y, width, 1);
-        let text_area = Rect::new(content_area.x, y + label_height, width, visible_rows);
-        frame.render_widget(
-            Paragraph::new(format!("{}@ship $", self.principal))
-                .style(Style::new().fg(palette.human).add_modifier(Modifier::BOLD)),
-            label_area,
+        let prompt = self.shell_prompt(self.active_environment());
+        let mut layout = prompted_text_lines(
+            &prompt,
+            &self.draft,
+            area.width,
+            Style::new().fg(palette.human).add_modifier(Modifier::BOLD),
+            Style::new().fg(palette.foreground),
+            Some(self.draft_cursor),
         );
-        let scroll = cursor_row.saturating_sub(visible_rows.saturating_sub(1));
-        let draft_text = if self.draft.is_empty() {
-            Text::styled("What should happen?", Style::new().fg(palette.quiet))
-        } else {
-            Text::styled(self.draft.as_str(), Style::new().fg(palette.foreground))
-        };
-        frame.render_widget(
-            Paragraph::new(draft_text)
-                .wrap(Wrap { trim: false })
-                .scroll((scroll, 0)),
-            text_area,
-        );
-        let cursor_y = text_area.y + cursor_row.saturating_sub(scroll);
-        let cursor_x = text_area.x + cursor_col.min(text_area.width.saturating_sub(1));
+        if self.draft.is_empty() {
+            if let Some(line) = layout.lines.first_mut() {
+                line.spans.push(Span::styled(
+                    "type a request",
+                    Style::new().fg(palette.quiet),
+                ));
+            }
+        }
+        let total_rows = u16::try_from(layout.lines.len()).unwrap_or(u16::MAX).max(1);
+        let visible_rows = total_rows.min(area.height).max(1);
+        let y = area.y + area.height.saturating_sub(visible_rows) / 2;
+        let text_area = Rect::new(area.x, y, area.width, visible_rows);
+        let scroll = layout
+            .cursor_row
+            .saturating_sub(visible_rows.saturating_sub(1));
+        frame.render_widget(Paragraph::new(layout.lines).scroll((scroll, 0)), text_area);
+        let cursor_y = text_area.y + layout.cursor_row.saturating_sub(scroll);
+        let cursor_x = text_area.x + layout.cursor_col.min(text_area.width.saturating_sub(1));
         if cursor_y < text_area.bottom() {
             frame.set_cursor_position(Position::new(cursor_x, cursor_y));
         }
     }
 
-    fn render_footer(&self, frame: &mut Frame<'_>, area: Rect) {
+    fn render_environment_picker(&self, frame: &mut Frame<'_>, area: Rect) {
         let palette = self.theme.palette();
-        let hint = if self.approval.is_some() {
-            "O  ALLOW ONCE     A  ALWAYS ALLOW     D  DENY"
-        } else if self.draft_visible {
-            "ENTER  SEND     SHIFT+ENTER  NEW LINE     ESC  KEEP FOR LATER"
-        } else {
-            "TYPE  ASK ANYTHING     CTRL+P / CTRL+N  MOVE     ALT+M  SOURCE     ?  KEYS"
-        };
-        let inner = area.inner(Margin::new(2, 0));
-        frame.render_widget(
-            Paragraph::new(hint)
-                .style(Style::new().fg(palette.muted))
-                .alignment(Alignment::Center),
-            inner,
+        let query = format!("@{}", self.environment_query);
+        let mut prompt = prompted_text_lines(
+            &self.shell_prompt(self.active_environment()),
+            &query,
+            area.width,
+            Style::new().fg(palette.human).add_modifier(Modifier::BOLD),
+            Style::new().fg(palette.foreground),
+            Some(query.len()),
         );
+        prompt.lines.push(Line::default());
+        let matches = self.matching_environment_indices();
+        for (choice, index) in matches.iter().copied().enumerate() {
+            let environment = &self.environments[index];
+            let selected = choice == self.environment_choice.min(matches.len().saturating_sub(1));
+            let marker = if selected { "› " } else { "  " };
+            let target = prompt_token(&environment.target, "target");
+            let label = sanitize_label(&environment.label, &target, 80);
+            let mut spans = vec![Span::styled(
+                format!("{marker}{target}"),
+                Style::new()
+                    .fg(if selected {
+                        palette.accent
+                    } else {
+                        palette.foreground
+                    })
+                    .add_modifier(if selected {
+                        Modifier::BOLD
+                    } else {
+                        Modifier::empty()
+                    }),
+            )];
+            if label != target {
+                spans.push(Span::styled(
+                    format!("  {label}"),
+                    Style::new().fg(palette.muted),
+                ));
+            }
+            prompt.lines.push(Line::from(spans));
+        }
+        if matches.is_empty() {
+            prompt.lines.push(Line::from(Span::styled(
+                "  no matching target",
+                Style::new().fg(palette.muted),
+            )));
+        }
+        let total_height = u16::try_from(prompt.lines.len())
+            .unwrap_or(u16::MAX)
+            .min(area.height)
+            .max(1);
+        let picker_area = Rect::new(
+            area.x,
+            area.y + area.height.saturating_sub(total_height) / 2,
+            area.width,
+            total_height,
+        );
+        frame.render_widget(Paragraph::new(prompt.lines), picker_area);
+        let cursor_y = picker_area.y + prompt.cursor_row;
+        let cursor_x = picker_area.x + prompt.cursor_col.min(picker_area.width.saturating_sub(1));
+        if cursor_y < picker_area.bottom() {
+            frame.set_cursor_position(Position::new(cursor_x, cursor_y));
+        }
+    }
+
+    fn push_media_slots(&mut self, frame: &mut Frame<'_>, area: Rect, artifacts: &[Artifact]) {
+        if artifacts.is_empty() || area.width == 0 || area.height == 0 {
+            return;
+        }
+        let palette = self.theme.palette();
+        let count = u16::try_from(artifacts.len()).unwrap_or(u16::MAX).max(1);
+        let gap = 2_u16;
+        let total_gap = gap.saturating_mul(count.saturating_sub(1));
+        let slot_width = area.width.saturating_sub(total_gap) / count;
+        for (index, artifact) in artifacts.iter().enumerate() {
+            let index = u16::try_from(index).unwrap_or(u16::MAX);
+            let x = area.x + index.saturating_mul(slot_width.saturating_add(gap));
+            let width = if index + 1 == count {
+                area.right().saturating_sub(x)
+            } else {
+                slot_width
+            };
+            let slot_area = Rect::new(x, area.y, width, area.height);
+            frame.render_widget(
+                Paragraph::new(sanitize_label(artifact.display_name(), "image", 96))
+                    .style(Style::new().fg(palette.quiet))
+                    .alignment(Alignment::Center),
+                slot_area,
+            );
+            self.media_slots.push(MediaSlot {
+                key: artifact.cache_key(),
+                area: slot_area,
+                artifact: artifact.clone(),
+            });
+        }
     }
 
     fn render_help(&self, frame: &mut Frame<'_>, area: Rect) {
         let palette = self.theme.palette();
         let width = area.width.saturating_sub(8).min(68);
-        let height = area.height.saturating_sub(4).min(20);
+        let height = area.height.saturating_sub(4).min(22);
         let popup = centered_rect(area, width, height);
         frame.render_widget(Clear, popup);
-        let help = Text::from(vec![
+        let mut lines = vec![
             Line::from(Span::styled(
-                "THE GSV GRAMMAR",
+                "keys",
                 Style::new()
                     .fg(palette.foreground)
                     .add_modifier(Modifier::BOLD),
@@ -1001,19 +1358,32 @@ impl App {
             help_line("type anywhere", "write a request", palette),
             help_line("enter", "send", palette),
             help_line("shift+enter", "new line", palette),
-            help_line("escape", "hide the draft without losing it", palette),
-            help_line("ctrl+p / ctrl+n", "previous / next moment", palette),
-            help_line("alt+up / alt+down", "previous / next moment", palette),
-            help_line("page up / page down", "scroll a long moment", palette),
+            help_line("@", "choose a target", palette),
+            help_line("escape", "browse without losing the draft", palette),
+            help_line("ctrl+p / ctrl+n", "previous / next turn", palette),
+            help_line("page up / page down", "move through a long turn", palette),
             help_line("alt+m", "rendered / source Markdown", palette),
+            help_line("alt+v", "toggle Vim controls", palette),
             help_line("ctrl+.", "stop the active run", palette),
             help_line("ctrl+q", "leave GSV", palette),
+        ];
+        if self.vim_enabled {
+            lines.extend([
+                Line::default(),
+                help_line("Vim: i / escape", "compose / browse", palette),
+                help_line("Vim: j / k", "next / previous turn", palette),
+                help_line("Vim: g / G", "first / latest turn", palette),
+                help_line("Vim: enter", "expand media", palette),
+            ]);
+        }
+        lines.extend([
             Line::default(),
             Line::from(Span::styled(
                 "Press ? or escape to return",
                 Style::new().fg(palette.muted),
             )),
         ]);
+        let help = Text::from(lines);
         frame.render_widget(
             Paragraph::new(help)
                 .block(
@@ -1029,13 +1399,128 @@ impl App {
         );
     }
 
-    fn moment_prompt(&self, role: Role) -> String {
-        match role {
-            Role::Human => format!("{}@ship $", self.principal),
-            Role::Intelligence => "ship@gsv".to_string(),
-            Role::System => "system@gsv".to_string(),
+    fn default_environment(&self) -> &CapabilityEnvironment {
+        &self.environments[0]
+    }
+
+    fn shell_prompt(&self, environment: &CapabilityEnvironment) -> String {
+        let target = prompt_token(&environment.target, "gsv");
+        match environment
+            .cwd
+            .as_deref()
+            .filter(|cwd| !cwd.trim().is_empty())
+        {
+            Some(cwd) => format!(
+                "{}@{} {} $ ",
+                self.principal,
+                target,
+                sanitize_label(cwd, "~", 80)
+            ),
+            None => format!("{}@{} $ ", self.principal, target),
         }
     }
+}
+
+struct PromptedText {
+    lines: Vec<Line<'static>>,
+    cursor_row: u16,
+    cursor_col: u16,
+}
+
+fn prompted_text_lines(
+    prompt: &str,
+    value: &str,
+    width: u16,
+    prompt_style: Style,
+    text_style: Style,
+    cursor: Option<usize>,
+) -> PromptedText {
+    let width = width.max(1);
+    let prompt = fit_prompt(prompt, width);
+    let prompt_width = u16::try_from(UnicodeWidthStr::width(prompt.as_str()))
+        .unwrap_or(width)
+        .min(width.saturating_sub(1));
+    let continuation_width = prompt_width.min(width.saturating_sub(1));
+    let continuation = " ".repeat(usize::from(continuation_width));
+    let mut text_lines = vec![String::new()];
+    let mut row = 0_u16;
+    let mut col = prompt_width;
+    let mut cursor_position = None;
+
+    for (index, grapheme) in value.grapheme_indices(true) {
+        let grapheme_width = u16::try_from(UnicodeWidthStr::width(grapheme))
+            .unwrap_or(1)
+            .max(1);
+        if grapheme != "\n" && col.saturating_add(grapheme_width) > width {
+            text_lines.push(String::new());
+            row = row.saturating_add(1);
+            col = continuation_width;
+        }
+        if cursor == Some(index) {
+            cursor_position = Some((row, col));
+        }
+        if grapheme == "\n" {
+            text_lines.push(String::new());
+            row = row.saturating_add(1);
+            col = continuation_width;
+            continue;
+        }
+        if let Some(line) = text_lines.last_mut() {
+            line.push_str(grapheme);
+        }
+        col = col.saturating_add(grapheme_width);
+        if col >= width {
+            text_lines.push(String::new());
+            row = row.saturating_add(1);
+            col = continuation_width;
+        }
+    }
+    if cursor == Some(value.len()) || cursor.is_none() {
+        cursor_position.get_or_insert((row, col));
+    }
+    if text_lines.len() > 1
+        && text_lines.last().is_some_and(String::is_empty)
+        && col == continuation_width
+    {
+        text_lines.pop();
+        row = row.saturating_sub(1);
+        col = width;
+        if cursor == Some(value.len()) {
+            cursor_position = Some((row, col.saturating_sub(1)));
+        }
+    }
+
+    let lines = text_lines
+        .into_iter()
+        .enumerate()
+        .map(|(index, text)| {
+            let mut spans = Vec::with_capacity(2);
+            if index == 0 {
+                spans.push(Span::styled(prompt.clone(), prompt_style));
+            } else {
+                spans.push(Span::raw(continuation.clone()));
+            }
+            if !text.is_empty() {
+                spans.push(Span::styled(text, text_style));
+            }
+            Line::from(spans)
+        })
+        .collect();
+    let (cursor_row, cursor_col) = cursor_position.unwrap_or((row, col));
+    PromptedText {
+        lines,
+        cursor_row,
+        cursor_col,
+    }
+}
+
+fn fit_prompt(prompt: &str, width: u16) -> String {
+    if UnicodeWidthStr::width(prompt) < usize::from(width) {
+        return prompt.to_string();
+    }
+    let available = usize::from(width.saturating_sub(4)).max(1);
+    let compact = prompt.chars().take(available).collect::<String>();
+    format!("{compact}… ")
 }
 
 fn render_approval(frame: &mut Frame<'_>, area: Rect, approval: &Approval, palette: Palette) {
@@ -1061,6 +1546,13 @@ fn render_approval(frame: &mut Frame<'_>, area: Rect, approval: &Approval, palet
             .split('\n')
             .map(|line| Line::from(Span::styled(line, Style::new().fg(palette.muted)))),
     );
+    lines.extend([
+        Line::default(),
+        Line::from(Span::styled(
+            "o allow once   a always allow   d deny",
+            Style::new().fg(palette.muted),
+        )),
+    ]);
     let text = Text::from(lines);
     let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
     let width = content_area.width.max(1);
@@ -1160,6 +1652,7 @@ fn next_grapheme_boundary(value: &str, cursor: usize) -> Option<usize> {
         .or_else(|| (cursor < value.len()).then_some(value.len()))
 }
 
+#[cfg(test)]
 fn text_metrics(value: &str, cursor: usize, width: u16) -> (u16, u16, u16) {
     let width = width.max(1);
     let mut row = 0_u16;
@@ -1216,8 +1709,8 @@ mod tests {
     use ratatui::Terminal;
 
     use super::{
-        sanitize_status, text_metrics, Action, App, Approval, Artifact, ConnectionState, Effect,
-        MediaKind, Moment, MomentState, Role,
+        sanitize_status, text_metrics, Action, App, Approval, Artifact, CapabilityEnvironment,
+        ConnectionState, Effect, MediaKind, Moment, MomentState, Role,
     };
 
     #[test]
@@ -1241,6 +1734,8 @@ mod tests {
             vec![Effect::Submit {
                 id: 1,
                 text: "show downloads".to_string(),
+                target: "gsv".to_string(),
+                cwd: None,
             }]
         );
         assert_eq!(app.moments().len(), 2);
@@ -1250,25 +1745,30 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_style_navigation_keeps_one_selected_moment() {
+    fn navigation_moves_between_complete_turns() {
         let mut app = App::new(ConnectionState::Ready);
         app.replace_history(vec![
             Moment::complete("one", Role::Human, "one"),
             Moment::complete("two", Role::Intelligence, "two"),
+            Moment::complete("three", Role::Human, "three"),
+            Moment::complete("four", Role::Intelligence, "four"),
         ]);
+        assert_eq!(app.selected(), 3);
+        app.dispatch(Action::PreviousTurn);
         assert_eq!(app.selected(), 1);
-        app.dispatch(Action::PreviousMoment);
-        assert_eq!(app.selected(), 0);
-        app.dispatch(Action::NextMoment);
-        assert_eq!(app.selected(), 1);
+        app.dispatch(Action::NextTurn);
+        assert_eq!(app.selected(), 3);
     }
 
     #[test]
-    fn render_contains_only_the_selected_moment_body() -> Result<(), Box<dyn std::error::Error>> {
+    fn render_contains_only_the_selected_command_result_turn(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let mut app = App::new(ConnectionState::Ready);
         app.replace_history(vec![
-            Moment::complete("one", Role::Human, "older secret"),
-            Moment::complete("two", Role::Intelligence, "visible answer"),
+            Moment::complete("one", Role::Human, "older command"),
+            Moment::complete("two", Role::Intelligence, "older secret"),
+            Moment::complete("three", Role::Human, "visible command"),
+            Moment::complete("four", Role::Intelligence, "visible answer"),
         ]);
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend)?;
@@ -1281,6 +1781,7 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(rendered.contains("visible answer"));
+        assert!(rendered.contains("you@gsv $ visible command"));
         assert!(!rendered.contains("older secret"));
         Ok(())
     }
@@ -1365,6 +1866,7 @@ mod tests {
             "repeat",
             Some("run:first".to_string()),
             Vec::new(),
+            None,
         );
 
         assert!(app
@@ -1401,7 +1903,7 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>();
-        assert!(rendered.contains("jo31mhn@ship $"));
+        assert!(rendered.contains("jo31mhn@gsv $ hello"));
         assert!(!rendered.contains('\u{1b}'));
         assert_eq!(
             sanitize_status("ship@mac\u{1b}[2Jbook · shell.exec"),
@@ -1411,7 +1913,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_media_is_visible_as_an_addressable_artifact(
+    fn canonical_media_is_content_first_without_unsolicited_metadata(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut app = App::new(ConnectionState::Ready);
         app.replace_history(vec![Moment::complete(
@@ -1439,10 +1941,47 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>();
-        assert!(rendered.contains("IMAGE  chart.png"));
-        assert!(rendered.contains("image/png  ·  2.0 KB"));
-        assert!(rendered.contains("gsv:/home/ship/chart.png"));
-        assert!(rendered.contains("@  sha256:one"));
+        assert!(rendered.contains("▧  chart.png"));
+        assert!(rendered.contains("a chart"));
+        assert!(!rendered.contains("image/png"));
+        assert!(!rendered.contains("2.0 KB"));
+        assert!(!rendered.contains("gsv:/home/ship/chart.png"));
+        assert!(!rendered.contains("sha256:one"));
+        Ok(())
+    }
+
+    #[test]
+    fn target_picker_changes_both_prompt_and_submission_context(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut app = App::new(ConnectionState::Ready);
+        app.set_principal("john");
+        app.set_environments(vec![CapabilityEnvironment::new("macbook", "macbook")]);
+        app.dispatch(Action::Insert("@".to_string()));
+        assert!(app.environment_picker_visible());
+        app.dispatch(Action::Insert("mac".to_string()));
+        app.dispatch(Action::Submit);
+        assert_eq!(app.active_environment().target, "macbook");
+        app.dispatch(Action::Insert("open downloads".to_string()));
+        assert_eq!(
+            app.dispatch(Action::Submit),
+            vec![Effect::Submit {
+                id: 1,
+                text: "open downloads".to_string(),
+                target: "macbook".to_string(),
+                cwd: None,
+            }]
+        );
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|frame| app.render(frame))?;
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("john@macbook $ open downloads"));
         Ok(())
     }
 

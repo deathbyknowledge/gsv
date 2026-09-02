@@ -71,8 +71,11 @@ Open the full-screen interface from any terminal:
 gsv
 ```
 
-For a no-account preview, run `gsv tui --demo`. The line-oriented
-`gsv chat "..."` command remains available for scripts.
+For a no-account preview, run `gsv tui --demo`, then type
+`show me Markdown and media`. Type `@` on an empty prompt to choose a target,
+`?` for the compact key guide, or launch with `gsv tui --vim` for opt-in Vim
+browse controls. The line-oriented `gsv chat "..."` command remains available
+for scripts.
 
 To connect a messenger (Discord / Telegram / WhatsApp), add more devices, and see what to do next, follow the full guide at [docs.gsv.space/get-started](https://docs.gsv.space/get-started).
 
