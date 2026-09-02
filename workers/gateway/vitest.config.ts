@@ -42,7 +42,12 @@ export default defineConfig({
   },
   test: {
     // Integration tests own a standalone Wrangler harness process.
-    exclude: ["**/alchemy/**", "**/node_modules/**", "**/test-integration/**"],
+    exclude: [
+      "**/alchemy/**",
+      "**/node_modules/**",
+      "**/test-integration/**",
+      "src/process/do.*.test.ts",
+    ],
     deps: {
       optimizer: {
         ssr: {

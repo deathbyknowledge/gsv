@@ -5,6 +5,46 @@ const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
 
 type AccountContextRoot = "program" | "user";
+type AccountContextFile = {
+  name: string;
+  read: () => Promise<string | null>;
+};
+
+async function listAccountContextFiles(
+  input: PromptAssemblyInput,
+  account: PromptAssemblyInput["identity"],
+): Promise<AccountContextFile[]> {
+  const ripgit = input.ripgit;
+  if (ripgit) {
+    const repo = accountHomeRepoRef(account.username);
+    const contextTree = await ripgit.readPath(repo, "context.d");
+    if (contextTree.kind === "tree") {
+      return contextTree.entries
+        .filter((entry) => entry.type === "blob" && entry.name.endsWith(".md"))
+        .map((entry) => ({
+          name: entry.name,
+          read: async () => {
+            const file = await ripgit.readPath(repo, `context.d/${entry.name}`);
+            return file.kind === "file" ? TEXT_DECODER.decode(file.bytes) : null;
+          },
+        }))
+        .sort((left, right) => left.name.localeCompare(right.name));
+    }
+  }
+
+  const contextPrefix = `${account.home.replace(/^\//, "")}/context.d/`;
+  const listed = await input.storage.list({ prefix: contextPrefix });
+  return listed.objects
+    .filter((object) => object.key.endsWith(".md"))
+    .map((object) => ({
+      name: object.key.slice(contextPrefix.length),
+      read: async () => {
+        const stored = await input.storage.get(object.key);
+        return stored ? stored.text() : null;
+      },
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
 
 export async function collectAccountContext(
   input: PromptAssemblyInput,
@@ -13,67 +53,16 @@ export async function collectAccountContext(
   warningLabel: string,
 ): Promise<PromptSection[]> {
   const sections: PromptSection[] = [];
-  const repo = accountHomeRepoRef(account.username);
   const contextRoot = {
     key: root,
     label: root.toUpperCase(),
     access: "editable" as const,
     location: `${account.home}/context.d`,
   };
-
-  if (input.ripgit) {
-    const contextTree = await input.ripgit.readPath(repo, "context.d");
-    if (contextTree.kind === "tree") {
-      const contextFiles = contextTree.entries
-        .filter((entry) => entry.type === "blob" && entry.name.endsWith(".md"))
-        .map((entry) => entry.name)
-        .sort((left, right) => left.localeCompare(right));
-
-      let usedBytes = 0;
-      for (const name of contextFiles) {
-        const file = await input.ripgit.readPath(repo, `context.d/${name}`);
-        if (file.kind !== "file") {
-          continue;
-        }
-
-        const text = TEXT_DECODER.decode(file.bytes).trim();
-        if (!text) {
-          continue;
-        }
-
-        const bytes = TEXT_ENCODER.encode(text).length;
-        if (usedBytes + bytes > input.config.maxContextBytes) {
-          console.warn(
-            `[Prompt] ${warningLabel} budget exceeded at ${name}, skipping remaining`,
-          );
-          break;
-        }
-        usedBytes += bytes;
-        sections.push({ name, text, contextRoot });
-      }
-
-      return sections;
-    }
-  }
-
-  const homeKey = account.home.replace(/^\//, "");
-  const contextPrefix = `${homeKey}/context.d/`;
-  const listed = await input.storage.list({ prefix: contextPrefix });
-  const contextFiles = listed.objects
-    .filter((object) => object.key.endsWith(".md"))
-    .map((object) => ({
-      key: object.key,
-      name: object.key.slice(contextPrefix.length),
-    }))
-    .sort((left, right) => left.name.localeCompare(right.name));
-
+  const contextFiles = await listAccountContextFiles(input, account);
   let usedBytes = 0;
   for (const file of contextFiles) {
-    const object = await input.storage.get(file.key);
-    if (!object) {
-      continue;
-    }
-    const text = (await object.text()).trim();
+    const text = (await file.read())?.trim();
     if (!text) {
       continue;
     }

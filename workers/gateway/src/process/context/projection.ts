@@ -1,49 +1,12 @@
 import type {
-  AiContextResult,
-  AiSkillIndexMode,
-  AiToolsDevice,
-  JsonObject,
-  JsonValue,
+  AiContextResult, AiSkillIndexMode, AiToolsDevice, JsonObject, JsonValue,
 } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
-
-export type ContextProjectionTarget = {
-  id: string;
-  implements: string[];
-  label?: string;
-  description?: string;
-  platform?: string;
-};
-
-export type ContextProjectionSkill = {
-  id: string;
-  description: string;
-};
-
-export type ContextProjection = {
-  version: 1;
-  runtime: {
-    date: string;
-    timezone: string;
-  };
-  targets: ContextProjectionTarget[];
-  mcpServers: string[];
-  skills: {
-    mode: AiSkillIndexMode;
-    entries: ContextProjectionSkill[];
-  };
-};
+import { aiToolsDeviceSchema } from "../internal/schemas";
 
 const skillSchema = z.object({
   id: z.string(),
   description: z.string(),
-});
-const targetSchema = z.object({
-  id: z.string(),
-  implements: z.array(z.string()),
-  label: z.string().optional(),
-  description: z.string().optional(),
-  platform: z.string().optional(),
 });
 const contextProjectionSchema = z.object({
   version: z.literal(1),
@@ -51,13 +14,17 @@ const contextProjectionSchema = z.object({
     date: z.string(),
     timezone: z.string(),
   }),
-  targets: z.array(targetSchema),
+  targets: z.array(aiToolsDeviceSchema),
   mcpServers: z.array(z.string()),
   skills: z.object({
     mode: z.enum(["summary", "names", "off"]),
     entries: z.array(skillSchema),
   }),
 });
+
+export type ContextProjection = z.infer<typeof contextProjectionSchema>;
+export type ContextProjectionTarget = ContextProjection["targets"][number];
+type ContextProjectionSkill = ContextProjection["skills"]["entries"][number];
 
 export function createContextProjection(
   snapshot: AiContextResult,
@@ -98,7 +65,7 @@ export function contextProjectionsEqual(
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-export function normalizeContextTimezone(value: string | undefined): string {
+function normalizeContextTimezone(value: string | undefined): string {
   const candidate = value?.trim() || "UTC";
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: candidate }).format(new Date(0));
@@ -108,7 +75,7 @@ export function normalizeContextTimezone(value: string | undefined): string {
   }
 }
 
-export function formatContextDate(date: Date, timezone: string): string {
+function formatContextDate(date: Date, timezone: string): string {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
     year: "numeric",

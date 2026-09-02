@@ -1,6 +1,6 @@
-import { Kernel } from "../kernel/do";
 import { env } from "cloudflare:workers";
-import { Process } from "../process/do";
+import type { Kernel } from "../kernel/do";
+import type { Process } from "../process/do";
 import type {
   Frame,
   FrameBody,

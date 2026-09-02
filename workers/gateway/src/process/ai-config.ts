@@ -1,12 +1,8 @@
-import type {
-  JsonValue,
-  ProcAiConfigProfileRef,
-  ProcAiConfigSnapshot,
-} from "@humansandmachines/gsv/protocol";
+import type { JsonValue, ProcAiConfigProfileRef, ProcAiConfigSnapshot } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 
 export const PROCESS_AI_CONFIG_STORE_KEY = "aiConfigSnapshot";
-export const PROCESS_AI_CONFIG_KEY_PREFIX = "config/ai/";
+const PROCESS_AI_CONFIG_KEY_PREFIX = "config/ai/";
 
 export const PROCESS_AI_CONFIG_KEYS = [
   "config/ai/provider",
@@ -141,7 +137,7 @@ export function processAiConfigDirEntries(parts: string[] = []): string[] {
   return [...entries].sort();
 }
 
-export function normalizeProcessAiConfigValues(
+function normalizeProcessAiConfigValues(
   raw: Readonly<Record<string, JsonValue>>,
 ): ProcessAiConfigValues {
   const values: ProcessAiConfigValues = {};

@@ -97,12 +97,7 @@ async function prepareScheduleTargetProcess(
 
   await runInDurableObject(process, (instance: Process) => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const processStore = (instance as {
-      store: {
-        setValue(key: string, value: string): void;
-      };
-    }).store;
-    processStore.setValue("currentRun", JSON.stringify({
+    instance.store.state.setValue("currentRun", JSON.stringify({
       runId: `test-suppressed-${crypto.randomUUID()}`,
       queued: false,
     }));
@@ -1306,9 +1301,7 @@ describe("scheduler", () => {
 
     const messages = await runInDurableObject(process, (instance: Process) => {
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      return (instance as {
-        store: { getMessages: () => Array<{ role: string; content: string }> };
-      }).store.getMessages();
+      return instance.store.messages.getMessages();
     });
     expect(messages).toHaveLength(1);
     expect(messages[0].role).toBe("system");
@@ -1774,9 +1767,7 @@ describe("scheduler", () => {
 
     const messages = await runInDurableObject(process, (instance: Process) =>
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      (instance as {
-        store: { getMessages: () => Array<{ role: string; content: string }> };
-      }).store.getMessages(),
+      instance.store.messages.getMessages(),
     );
     expect(messages).toEqual([
       expect.objectContaining({
@@ -2029,9 +2020,7 @@ describe("scheduler", () => {
     });
     const messages = await runInDurableObject(process, (instance: Process) =>
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      (instance as {
-        store: { getMessages: () => Array<{ role: string; content: string }> };
-      }).store.getMessages(),
+      instance.store.messages.getMessages(),
     );
 
     expect(messages).toHaveLength(0);
@@ -2110,9 +2099,7 @@ describe("scheduler", () => {
 
     const messages = await runInDurableObject(process, (instance: Process) =>
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      (instance as {
-        store: { getMessages: () => Array<{ role: string; content: string }> };
-      }).store.getMessages(),
+      instance.store.messages.getMessages(),
     );
     expect(messages).toHaveLength(0);
 
@@ -2202,9 +2189,7 @@ describe("scheduler", () => {
 
     const messages = await runInDurableObject(process, (instance: Process) =>
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      (instance as {
-        store: { getMessages: () => Array<{ content: string }> };
-      }).store.getMessages(),
+      instance.store.messages.getMessages(),
     );
     expect(messages[0].content).toContain("Run early.");
   });
@@ -2417,9 +2402,7 @@ describe("scheduler", () => {
     const cronProcess = await getProcessByPid(spawned.pid!, installationId);
     const messages = await runInDurableObject(cronProcess, (instance: Process) =>
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      (instance as {
-        store: { getMessages: () => Array<{ role: string; content: string }> };
-      }).store.getMessages(),
+      instance.store.messages.getMessages(),
     );
     expect(messages[0]).toEqual(expect.objectContaining({
       role: "user",
