@@ -2219,7 +2219,7 @@ impl App {
         let palette = self.theme.palette();
         let target = prompt_token(&environment.target, "gsv");
         let mut prompt = vec![
-            Span::styled(self.principal.clone(), Style::new().fg(palette.muted)),
+            Span::styled(self.principal.clone(), Style::new().fg(palette.principal)),
             Span::styled("@", Style::new().fg(palette.accent)),
             Span::styled(
                 target,
@@ -2233,7 +2233,7 @@ impl App {
         {
             prompt.extend([
                 Span::raw(" "),
-                Span::styled(sanitize_label(cwd, "~", 80), Style::new().fg(palette.muted)),
+                Span::styled(sanitize_label(cwd, "~", 80), Style::new().fg(palette.path)),
             ]);
         }
         prompt.extend([
@@ -2977,6 +2977,7 @@ mod tests {
             let mut app = App::new(ConnectionState::Ready);
             app.set_theme(theme);
             app.set_principal("john");
+            app.set_environments(vec![CapabilityEnvironment::gsv().with_cwd("~/src")]);
             app.dispatch(Action::Insert("hello".to_string()));
             let backend = TestBackend::new(40, 12);
             let mut terminal = Terminal::new(backend)?;
@@ -2988,21 +2989,25 @@ mod tests {
                         .filter_map(|x| buffer.cell((x, *y)))
                         .map(|cell| cell.symbol())
                         .collect::<String>()
-                        .contains("john@gsv $ hello")
+                        .contains("john@gsv ~/src $ hello")
                 })
                 .expect("prompt row");
 
             let principal = buffer.cell((0, prompt_y)).expect("principal cell");
             let at = buffer.cell((4, prompt_y)).expect("at cell");
             let target = buffer.cell((5, prompt_y)).expect("target cell");
-            let shell = buffer.cell((9, prompt_y)).expect("shell marker cell");
-            let command = buffer.cell((11, prompt_y)).expect("command cell");
-            assert_eq!(principal.fg, palette.muted);
+            let path = buffer.cell((9, prompt_y)).expect("path cell");
+            let shell = buffer.cell((15, prompt_y)).expect("shell marker cell");
+            let command = buffer.cell((17, prompt_y)).expect("command cell");
+            assert_eq!(principal.fg, palette.principal);
+            assert_ne!(principal.fg, palette.muted);
             assert!(!principal.modifier.contains(Modifier::BOLD));
             assert_eq!(at.fg, palette.accent);
             assert!(!at.modifier.contains(Modifier::BOLD));
             assert_eq!(target.fg, palette.accent);
             assert!(target.modifier.contains(Modifier::BOLD));
+            assert_eq!(path.fg, palette.path);
+            assert_ne!(path.fg, palette.muted);
             assert_eq!(shell.fg, palette.foreground);
             assert!(shell.modifier.contains(Modifier::BOLD));
             assert_eq!(command.fg, palette.foreground);

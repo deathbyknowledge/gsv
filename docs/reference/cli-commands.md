@@ -50,10 +50,10 @@ graphics protocol available, and opens selected audio, video, or documents in
 the operating system's registered viewer. Mixed attachments retain their source
 order and occupy rows in that same scrollable document; incremental scrolling
 reveals or passes each image atomically rather than stopping inside it.
-Within the prompt, the principal and cwd are muted, `@target` uses the terminal's
-accent color, and `$` plus input use the normal foreground. Transcript content
-has no permanent card or border; only the focused image receives a single accent
-rail.
+Within the prompt, the principal uses terminal green, `@target` uses cyan, the
+cwd uses blue, and `$` plus input use the normal foreground. Transcript content
+has no permanent card or border; only the focused image receives a single
+accent rail.
 
 `Tab` switches between Ship input and literal shell input without changing the
 draft. Literal commands are marked `user@target $ ! command` and call the
