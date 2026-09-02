@@ -204,8 +204,10 @@ fn keyboard_action(app: &App, event: &KeyboardEvent) -> Option<Action> {
     if app.vim_enabled() && !app.draft_visible() && !command && !event.alt_key() {
         return match key.as_str() {
             "i" | "a" => Some(Action::BeginCompose),
+            "h" => Some(Action::PreviousMedia),
             "j" => Some(Action::NextTurn),
             "k" => Some(Action::PreviousTurn),
+            "l" => Some(Action::NextMedia),
             "g" => Some(Action::FirstTurn),
             "G" => Some(Action::LastTurn),
             "Enter" => Some(Action::ToggleMedia),
@@ -234,6 +236,8 @@ fn keyboard_action(app: &App, event: &KeyboardEvent) -> Option<Action> {
         "escape" => Some(Action::Escape),
         "backspace" => Some(Action::Backspace),
         "delete" => Some(Action::Delete),
+        "arrowleft" if !app.draft_visible() => Some(Action::PreviousMedia),
+        "arrowright" if !app.draft_visible() => Some(Action::NextMedia),
         "arrowleft" => Some(Action::MoveCursorLeft),
         "arrowright" => Some(Action::MoveCursorRight),
         "home" => Some(Action::MoveCursorHome),

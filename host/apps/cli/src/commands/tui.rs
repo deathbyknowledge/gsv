@@ -515,8 +515,10 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
     if app.vim_enabled() && !app.draft_visible() && !command_modifier {
         return match key.code {
             KeyCode::Char('i' | 'a') => Some(Action::BeginCompose),
+            KeyCode::Char('h') => Some(Action::PreviousMedia),
             KeyCode::Char('j') => Some(Action::NextTurn),
             KeyCode::Char('k') => Some(Action::PreviousTurn),
+            KeyCode::Char('l') => Some(Action::NextMedia),
             KeyCode::Char('g') => Some(Action::FirstTurn),
             KeyCode::Char('G') => Some(Action::LastTurn),
             KeyCode::Enter => Some(Action::ToggleMedia),
@@ -558,6 +560,8 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
         KeyCode::Esc => Some(Action::Escape),
         KeyCode::Backspace => Some(Action::Backspace),
         KeyCode::Delete => Some(Action::Delete),
+        KeyCode::Left if !app.draft_visible() => Some(Action::PreviousMedia),
+        KeyCode::Right if !app.draft_visible() => Some(Action::NextMedia),
         KeyCode::Left => Some(Action::MoveCursorLeft),
         KeyCode::Right => Some(Action::MoveCursorRight),
         KeyCode::Home => Some(Action::MoveCursorHome),
@@ -970,6 +974,19 @@ mod tests {
 
         let i = KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE);
         assert_eq!(key_action(&app, i), Some(Action::BeginCompose));
+        let h = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE);
+        let l = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE);
+        assert_eq!(key_action(&app, h), Some(Action::PreviousMedia));
+        assert_eq!(key_action(&app, l), Some(Action::NextMedia));
+    }
+
+    #[test]
+    fn arrow_keys_choose_media_while_browsing() {
+        let app = App::new(ConnectionState::Ready);
+        let left = KeyEvent::new(KeyCode::Left, KeyModifiers::NONE);
+        let right = KeyEvent::new(KeyCode::Right, KeyModifiers::NONE);
+        assert_eq!(key_action(&app, left), Some(Action::PreviousMedia));
+        assert_eq!(key_action(&app, right), Some(Action::NextMedia));
     }
 
     #[test]
