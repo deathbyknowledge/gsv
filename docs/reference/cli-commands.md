@@ -154,9 +154,10 @@ connected adapters, and adapter authentication loss.
 run, both text and JSON output include an opaque
 destination id suitable for a later `message send --to`; raw provider ids stay
 hidden. `message attach` adds one or more GSV filesystem files to the run's
-next current-conversation message; it does not create an extra message. Existing files
-in the current process's `/var/media` directory
-are reused, while other readable files are staged there. A direct Shell call using a literal block
+next current-conversation message; it does not create an extra message. The Process
+retains the exact source revision in its immutable media archive before committing
+the message. `--mime` can classify a single attachment for presentation, while the
+source reference keeps its authoritative stored content type. A direct Shell call using a literal block
 sends a message and leaves the run active:
 
 ```bash
@@ -214,7 +215,8 @@ final `shell.exec` stdout.
 `--to here` selects the current adapter endpoint. Any explicit destination send during an active
 run requires `--also`, acknowledging that it is intentionally sent to an explicit destination.
 `--attach` streams one GSV filesystem
-file; `--mime` overrides the inferred MIME type. Copy a file from a connected
+file; `--mime` supplies its delivery or presentation type. Retained resource
+references still preserve the source's stored content type. Copy a file from a connected
 target to GSV before attaching it:
 
 ```bash

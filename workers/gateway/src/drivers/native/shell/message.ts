@@ -6,7 +6,10 @@ import type {
   ConversationMessage,
   ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
-import { contactDisplayName } from "@humansandmachines/gsv/protocol";
+import {
+  contactDisplayName,
+  inferFsContentType,
+} from "@humansandmachines/gsv/protocol";
 import type { GsvFs } from "../../../fs/gsv-fs";
 import { hasCapability } from "../../../kernel/capabilities";
 import type { KernelContext } from "../../../kernel/context";
@@ -229,41 +232,14 @@ async function attachToReply(
   const resources: ResourceBlock[] = [];
   let totalBytes = 0;
   for (const requestedPath of paths) {
-    const path = shellCtx.fs.resolvePath(shellCtx.cwd, requestedPath);
-    const opened = await fs.openFile(path);
-    if (!opened.body) {
-      throw new Error(`cannot read attachment data for ${path}`);
-    }
-    await opened.body.cancel("Attachment will be resolved by immutable revision").catch(() => {});
-    if (!opened.etag) {
-      throw new Error(`cannot identify an immutable revision for ${path}`);
-    }
-    if (opened.size > MAX_MESSAGE_MEDIA_PART_BYTES) {
-      throw new Error(
-        `attachment exceeds per-file limit (${MAX_MESSAGE_MEDIA_PART_BYTES} bytes): ${path}`,
-      );
-    }
-    totalBytes += opened.size;
+    const resource = await referenceAttachment(requestedPath, requestedMime, shellCtx, fs);
+    totalBytes += resource.ref.size;
     if (totalBytes > MAX_MESSAGE_MEDIA_TOTAL_BYTES) {
       throw new Error(
         `attachments exceed total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
       );
     }
-
-    const contentType = requestedMime?.trim() || opened.contentType || inferMimeType(path);
-    resources.push({
-      type: "resource",
-      ref: {
-        type: "file",
-        target: "gsv",
-        path,
-        revision: opened.etag,
-        contentType,
-        size: opened.size,
-      },
-      mediaType: mediaTypeForMime(contentType),
-      filename: path.split("/").pop() || "attachment",
-    });
+    resources.push(resource);
   }
 
   const request: ProcessRunAttachRequestFrame = {
@@ -721,7 +697,8 @@ async function referenceAttachment(
       `attachment exceeds per-file limit (${MAX_MESSAGE_MEDIA_PART_BYTES} bytes): ${path}`,
     );
   }
-  const contentType = requestedMime?.trim() || opened.contentType || inferMimeType(path);
+  const contentType = opened.contentType ?? inferFsContentType(path);
+  const presentationContentType = requestedMime?.trim() || contentType;
   return {
     type: "resource",
     ref: {
@@ -732,7 +709,7 @@ async function referenceAttachment(
       contentType,
       size: opened.size,
     },
-    mediaType: mediaTypeForMime(contentType),
+    mediaType: mediaTypeForMime(presentationContentType),
     filename: path.split("/").pop() || "attachment",
   };
 }

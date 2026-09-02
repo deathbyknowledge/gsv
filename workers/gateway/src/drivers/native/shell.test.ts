@@ -4613,6 +4613,55 @@ describe("native administration shell commands", () => {
     );
   });
 
+  it("keeps immutable source metadata when a media hint differs", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "fs.read", "fs.write"],
+      processRunId: "run-native-mime",
+    });
+    const received = await handleFsTransferReceive({
+      path: "/tmp/voice.ogg",
+      contentType: "application/octet-stream",
+    }, ctx, bodyFromText("audio"));
+    expect(received).toMatchObject({
+      ok: true,
+      contentType: "application/octet-stream",
+    });
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
+      if (frame.type !== "req") return null;
+      if (frame.call === "proc.run.attach") {
+        return responseFixture({
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: { ok: true, runId: frame.args.runId, media: frame.args.media },
+        });
+      }
+      return null;
+    });
+
+    const result = await handleShellExec({
+      input: "message attach /tmp/voice.ogg --mime audio/ogg",
+    }, ctx);
+
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(sendFrameToProcessMock).toHaveBeenLastCalledWith(
+      TEST_INSTALLATION_ID,
+      "task:shell",
+      expect.objectContaining({
+        call: "proc.run.attach",
+        args: expect.objectContaining({
+          media: [expect.objectContaining({
+            mediaType: "audio",
+            ref: expect.objectContaining({
+              path: "/tmp/voice.ogg",
+              contentType: "application/octet-stream",
+            }),
+          })],
+        }),
+      }),
+    );
+  });
+
   it("leaves the source file intact when active-run registration fails", async () => {
     const ctx = makeContext({
       capabilities: ["shell.exec", "fs.read", "fs.write"],

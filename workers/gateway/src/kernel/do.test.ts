@@ -1394,15 +1394,46 @@ describe("Kernel canonical message commits", () => {
       actionId: "send-1",
       conversationId: conversation.id,
       text: "hello",
+      media: [{
+        type: "resource",
+        ref: {
+          type: "file",
+          target: "gsv",
+          path: "/home/personal/.gsv/media/image.png",
+          revision: "sha256:image",
+          contentType: "image/png",
+          size: 3,
+        },
+        mediaType: "image",
+        filename: "image.png",
+      }],
     });
 
     expect(JSON.parse(origin.send.mock.calls[0][0])).toMatchObject({
       signal: "message.committed",
-      payload: { message: { id: message.id, text: "hello" }, directed: true },
+      payload: {
+        message: {
+          id: message.id,
+          text: "hello",
+          media: [expect.objectContaining({
+            ref: expect.objectContaining({ contentType: "image/png" }),
+          })],
+        },
+        directed: true,
+      },
     });
     expect(JSON.parse(observer.send.mock.calls[0][0])).toMatchObject({
       signal: "message.committed",
-      payload: { message: { id: message.id, text: "hello" }, directed: false },
+      payload: {
+        message: {
+          id: message.id,
+          text: "hello",
+          media: [expect.objectContaining({
+            ref: expect.objectContaining({ contentType: "image/png" }),
+          })],
+        },
+        directed: false,
+      },
     });
     expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
   });
