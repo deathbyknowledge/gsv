@@ -2289,6 +2289,47 @@ describe("Kernel process signal routing", () => {
     expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
   });
 
+  it("emits content-free telemetry after adapter route delivery is terminal", async () => {
+    const route = adapterRoute("run-terminal-telemetry");
+    const kernel = buildKernel(route);
+    kernel.installationEnv = { GSV_TELEMETRY_ENABLED: "1" };
+    kernel.deliverAdapterRouteEvent.mockResolvedValue({
+      state: "retryable",
+      error: "private provider response for chat-1",
+    });
+    kernel.queueProcessDeliveryNotice = vi.fn(async () => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await kernel.attemptAdapterRouteDelivery(
+        route,
+        committedMessageFrame(route, "msg:terminal", "done"),
+        10,
+      );
+
+      expect(log).toHaveBeenCalledWith(expect.objectContaining({
+        installationId: TEST_INSTALLATION_ID,
+        component: "gateway",
+        event: {
+          stream: "operational",
+          name: "adapter.route_delivery.failed",
+          properties: {
+            adapter: "telegram",
+            deliveryKind: "message",
+            surface: "dm",
+            outcome: "failed",
+            failureKind: "exhausted",
+            attempts: 10,
+          },
+        },
+      }));
+      expect(JSON.stringify(log.mock.calls)).not.toContain("private provider response");
+      expect(JSON.stringify(log.mock.calls)).not.toContain("chat-1");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("keeps an adapter route after an intermediate message and clears it at the terminal signal", async () => {
     const route = adapterRoute("run-intermediate");
     const kernel = buildKernel(route);

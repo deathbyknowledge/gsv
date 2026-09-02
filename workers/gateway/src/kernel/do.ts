@@ -2029,9 +2029,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
     const terminalState = outcome.state === "retryable" ? "exhausted" : outcome.state;
     const deliveryError = outcome.error;
-    const label = frame.signal === "proc.run.hil.requested"
-      ? "approval notification"
-      : "message";
+    const approval = frame.signal === "proc.run.hil.requested";
+    const label = approval ? "approval notification" : "message";
     await this.queueProcessDeliveryNotice(route, frame, {
       state: terminalState,
       message: terminalState === "ambiguous"
@@ -2039,6 +2038,22 @@ export class Kernel extends DurableObject<GatewayEnv> {
         : terminalState === "permanent"
           ? `The ${label} could not be delivered: ${deliveryError}`
           : `The ${label} stopped after ${attempt} retry-safe delivery attempts: ${deliveryError}`,
+    });
+    emitTelemetry(this.bindings, {
+      installationId: this.installationId,
+      component: "gateway",
+      event: {
+        stream: "operational",
+        name: "adapter.route_delivery.failed",
+        properties: {
+          adapter: route.destination.adapter.trim().toLowerCase(),
+          deliveryKind: approval ? "approval" : "message",
+          surface: route.destination.surface.kind,
+          outcome: "failed",
+          failureKind: terminalState,
+          attempts: attempt,
+        },
+      },
     });
   }
 

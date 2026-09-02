@@ -95,4 +95,35 @@ describe("telemetry contract", () => {
       },
     }).success, false);
   });
+
+  it("accepts terminal adapter route diagnostics without delivery content", () => {
+    const failure = createTelemetryRecord({
+      installationId: "inst_telemetry",
+      component: "gateway",
+      event: {
+        stream: "operational",
+        name: "adapter.route_delivery.failed",
+        properties: {
+          adapter: "telegram",
+          deliveryKind: "message",
+          surface: "dm",
+          outcome: "failed",
+          failureKind: "exhausted",
+          attempts: 3,
+        },
+      },
+    });
+
+    assert.equal(telemetryRecordSchema.safeParse(failure).success, true);
+    assert.equal(telemetryRecordSchema.safeParse({
+      ...failure,
+      event: {
+        ...failure.event,
+        properties: {
+          ...failure.event.properties,
+          errorMessage: "private adapter response",
+        },
+      },
+    }).success, false);
+  });
 });
