@@ -2820,7 +2820,9 @@ describe("Process DO — mechanical", () => {
           .toMatchObject({
             status: "error",
             reason: "message.command.failed",
-            error: "message send does not accept --to for the current conversation",
+            error: expect.stringContaining(
+              "message send does not accept --to for the current conversation",
+            ),
           });
       });
     });

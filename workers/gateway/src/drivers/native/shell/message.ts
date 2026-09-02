@@ -305,17 +305,28 @@ async function showCurrentReplyDestination(
     : undefined;
   if (json) {
     // SAFETY: The payload extends the trusted route description with an optional display identifier.
-    const payload = { ...current } as RouteDescription & { destinationId?: string };
-    if (destinationId) payload.destinationId = destinationId;
+    const payload: CurrentConversationDescription = {
+      ...current,
+      reply: currentConversationReplyInstructions(),
+    };
+    if (destinationId) {
+      payload.destinationId = destinationId;
+      payload.destinationUse = "additional-delivery-only";
+    }
     return completed(`${JSON.stringify(payload, null, 2)}\n`);
   }
   return completed([
-    `directed endpoint: ${current.label}`,
+    `current conversation: ${current.label}`,
     `transport: ${current.transport}`,
-    ...(destinationId ? [`destination: ${destinationId}`] : []),
-    "Use a literal `message send <<'GSV_MESSAGE'` block to send here without finishing the run.",
+    "reply command: message send",
+    "attachment command: message attach PATH...",
+    "Issue each as its own direct Shell tool call; omit --to and --also.",
+    "A reply commits to this conversation without finishing the run.",
     "Run `yield` when the work is complete, or compose the final send with `&& yield`.",
-    "Use `message send --to ... --also` for a cross-channel delivery.",
+    ...(destinationId
+      ? [`additional adapter destination: ${destinationId}`]
+      : []),
+    "Use `message send --to DESTINATION --also` only for an additional delivery.",
     "",
   ].join("\n"));
 }
@@ -606,7 +617,9 @@ async function sendMessage(
   const activeRun = Boolean(ctx.processId && ctx.processRunId);
   if (activeRun && !also) {
     throw new Error(
-      "the current-conversation form of message send must be invoked as a direct Shell tool call; use --also for an explicit outbound destination",
+      "the current-conversation form of message send must be invoked as a direct Shell tool "
+      + "call: stage files first with `message attach PATH...`, then issue `message send ...` "
+      + "without --to or --also. Use --also only for an explicit additional destination",
     );
   }
   if (!to) throw new Error("message send requires --to outside its direct current-conversation form");
@@ -618,6 +631,14 @@ async function sendMessage(
   }
 
   const requestedDestination = to.trim();
+  if (requestedDestination.toLowerCase() === "here") {
+    throw new Error(
+      "--to here is not a message destination. To reply to the current conversation, "
+      + "stage files with `message attach PATH...`, then issue `message send ...` as its own "
+      + "direct Shell tool call without --to or --also. For an additional adapter delivery, "
+      + "copy an opaque destination from `message current --json` or `message destinations`",
+    );
+  }
   if (requestedDestination.startsWith("contact:")) {
     requireCommandCapability(ctx, "contact.send");
     const media = attachmentPath
@@ -644,9 +665,10 @@ async function sendMessage(
 
   requireCommandCapability(ctx, "adapter.send");
 
-  const destination = requestedDestination.toLowerCase() === "here"
-    ? destinationFromCurrentRoute(ctx)
-    : (await resolveVisibleAdapterMessageDestination(requestedDestination, ctx)).destination;
+  const destination = (await resolveVisibleAdapterMessageDestination(
+    requestedDestination,
+    ctx,
+  )).destination;
   const destinationId = await adapterMessageDestinationId(
     destination,
     resolveCallerOwnerUid(ctx),
@@ -821,6 +843,21 @@ type RouteDescription = {
   label: string;
   transport: "directed";
 };
+
+type CurrentConversationDescription = RouteDescription & {
+  reply: ReturnType<typeof currentConversationReplyInstructions>;
+  destinationId?: string;
+  destinationUse?: "additional-delivery-only";
+};
+
+function currentConversationReplyInstructions() {
+  return {
+    command: "message send",
+    attachmentCommand: "message attach PATH...",
+    requiresStandaloneShellCall: true,
+    finishesRun: false,
+  } as const;
+}
 function describeCurrentRoute(route: RunRoute | null): RouteDescription {
   if (route?.kind === "adapter") {
     const { adapter, surface } = route.destination;
@@ -873,7 +910,9 @@ function messageUsage(): string {
     "A literal `message send <<'GSV_MESSAGE'` block sends to the current conversation and keeps the run active.",
     "Run `yield` when work is complete, or append `&& yield` to the message block header.",
     "`message attach` adds files to the next current-conversation message.",
-    "Inside an active run, --also is required for a separate or cross-channel send.",
+    "Do not use --to or --also for the current conversation. Issue current-conversation",
+    "attach and send commands as separate direct Shell tool calls.",
+    "Inside an active run, --also is required for an additional destination send.",
     "Use `message destinations` and copy its opaque GSV id; do not use provider ids.",
     "Use `message route` to inspect routing, open a private-DM work direct line from personal,",
     "or manage groups, channels, and threads.",

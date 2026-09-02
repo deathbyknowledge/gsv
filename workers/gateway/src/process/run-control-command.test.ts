@@ -94,7 +94,9 @@ This block never closes.`,
     )).toEqual({
       ok: false,
       action: "message",
-      error: "message send does not accept --to for the current conversation",
+      error: "message send does not accept --to for the current conversation; "
+        + "stage files first with `message attach PATH...`, then issue `message send ...` "
+        + "as its own direct Shell tool call without --to or --also",
     });
   });
 

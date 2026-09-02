@@ -120,10 +120,12 @@ Managed deployments defer supervision checkpoints while the installation is inac
 reactivation resumes the same pending result route without admitting Process work during
 the restriction.
 
-During an adapter turn, `message current --json` exposes the current surface as
-an opaque GSV destination id. The personal intelligence can store that id with
-a commitment and use `message send --to DESTINATION --also` if a result merits a later
-update. Provider account, actor, and surface identifiers remain hidden.
+`message current --json` describes the transport-neutral current-conversation
+reply path without exposing ephemeral client identifiers. During an adapter
+turn it additionally exposes the current surface as an opaque GSV destination
+id. The personal intelligence can store that id with a commitment and use
+`message send --to DESTINATION --also` if a result merits a later update.
+Provider account, actor, and surface identifiers remain hidden.
 
 ## History, compaction, and branching
 

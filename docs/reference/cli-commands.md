@@ -211,17 +211,19 @@ reasoning, or structured output. The underlying `ai.image.read` response body
 streams decoded UTF-8 chunks; the gateway shell collects those chunks into its
 final `shell.exec` stdout.
 
-`--to here` selects the current adapter endpoint. Any explicit destination send during an active
-run requires `--also`, acknowledging that it is intentionally sent to an explicit destination.
-`--attach` streams one GSV filesystem
-file; `--mime` overrides the inferred MIME type. Copy a file from a connected
-target to GSV before attaching it:
+The current-conversation form is transport-neutral: issue `message attach`
+and `message send` as separate direct Shell tool calls without `--to` or
+`--also`. It works whether the run came from a WebSocket client, Desktop, or an
+adapter. An explicit destination send during an active run requires `--also`,
+acknowledging that it is an additional delivery. Its `--attach` option streams
+one GSV filesystem file and `--mime` overrides the inferred MIME type. Copy a
+file from a connected target to GSV before attaching it:
 
 ```bash
 cp laptop:/home/alice/report.pdf /tmp/report.pdf
 message attach /tmp/report.pdf
 message send --message "Here is the report." && yield
-message send --to here --message "Here is the report." --attach /tmp/report.pdf --also
+message send --to DESTINATION --message "Here is the report elsewhere." --attach /tmp/report.pdf --also
 ```
 
 `message send` allocates a stable delivery id before contacting an adapter and

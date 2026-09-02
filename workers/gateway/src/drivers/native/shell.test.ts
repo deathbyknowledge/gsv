@@ -93,7 +93,15 @@ function responseFixture(frame: ResponseFrame): ResponseFrame {
 }
 
 const currentDestinationOutputSchema = z.object({
-  destinationId: z.string(),
+  kind: z.enum(["adapter", "client", "process"]),
+  reply: z.object({
+    command: z.literal("message send"),
+    attachmentCommand: z.literal("message attach PATH..."),
+    requiresStandaloneShellCall: z.literal(true),
+    finishesRun: z.literal(false),
+  }),
+  destinationId: z.optional(z.string()),
+  destinationUse: z.optional(z.literal("additional-delivery-only")),
 });
 const destinationListOutputSchema = z.object({
   destinations: z.array(z.object({ id: z.string() })),
@@ -482,6 +490,15 @@ function enableTelegramMessaging(ctx: KernelContext) {
       : null),
   });
   return { adapterFrame, link, status };
+}
+
+async function currentAdapterDestinationId(ctx: KernelContext): Promise<string> {
+  const current = await handleShellExec({ input: "message current --json" }, ctx);
+  const parsed = currentDestinationOutputSchema.safeParse(JSON.parse(current.stdout));
+  if (!parsed.success || !parsed.data.destinationId) {
+    throw new Error("Current run does not expose an adapter destination");
+  }
+  return parsed.data.destinationId;
 }
 
 function enableMessageRouteStore(
@@ -3733,30 +3750,44 @@ describe("native administration shell commands", () => {
     const duplicate = await handleShellExec({
       input: 'message send --to here --message "duplicate reply"',
     }, ctx);
-    const intentional = await handleShellExec({
-      input: 'message send --to here --message "extra update" --also',
-    }, ctx);
 
     expect(current).toMatchObject({ status: "completed", exitCode: 0 });
-    expect(current.stdout).toContain("directed endpoint: Telegram direct message");
-    expect(current.stdout).toContain("cross-channel delivery");
+    expect(current.stdout).toContain("current conversation: Telegram direct message");
+    expect(current.stdout).toContain("reply command: message send");
+    expect(current.stdout).toContain("omit --to and --also");
     const currentOutput = currentDestinationOutputSchema.safeParse(
       JSON.parse(currentJson.stdout),
     );
     expect(currentOutput.success).toBe(true);
     if (!currentOutput.success) throw new Error("invalid message current output");
-    const { destinationId } = currentOutput.data;
+    expect(currentOutput.data.reply).toEqual({
+      command: "message send",
+      attachmentCommand: "message attach PATH...",
+      requiresStandaloneShellCall: true,
+      finishesRun: false,
+    });
+    const destinationId = currentOutput.data.destinationId;
+    if (!destinationId) throw new Error("missing additional adapter destination");
+    expect(currentOutput.data.destinationUse).toBe("additional-delivery-only");
     expect(destinationId).toMatch(/^message-destination:[0-9a-f]{64}$/);
-    expect(current.stdout).toContain(`destination: ${destinationId}`);
+    expect(current.stdout).toContain(`additional adapter destination: ${destinationId}`);
     expect(current.stdout).not.toContain("chat-42");
     expect(currentJson.stdout).not.toContain("chat-42");
     expect(duplicate.status).toBe("failed");
-    expect(duplicate.stderr).toContain("current-conversation form");
-    expect(duplicate.stderr).toContain("--also");
+    expect(duplicate.stderr).toContain("stage files first with `message attach PATH...`");
+    expect(duplicate.stderr).toContain("without --to or --also");
     expect(terminalFallback).toMatchObject({ status: "failed", exitCode: 1 });
     expect(terminalFallback.stderr).toContain("direct Shell tool call");
     expect(yieldFallback).toMatchObject({ status: "failed", exitCode: 1 });
     expect(yieldFallback.stderr).toContain("direct Shell tool call");
+    const ambiguousHere = await handleShellExec({
+      input: 'message send --to here --message "extra update" --also',
+    }, ctx);
+    expect(ambiguousHere).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(ambiguousHere.stderr).toContain("--to here is not a message destination");
+    const intentional = await handleShellExec({
+      input: `message send --to ${destinationId} --message "extra update" --also`,
+    }, ctx);
     expect(intentional).toMatchObject({ status: "completed", exitCode: 0 });
     expect(intentional.stdout).toContain("sent=true");
     expect(intentional.stdout).toMatch(/destination=message-destination:[0-9a-f]{64}/);
@@ -3776,6 +3807,39 @@ describe("native administration shell commands", () => {
         args: expect.objectContaining({ text: "extra update" }),
       }),
     );
+  });
+
+  it("describes the same current-conversation reply path for native clients", async () => {
+    const ctx = makeContext({ processRunId: "run-client" });
+    ctx.runRoutes = focusedFixture<KernelContext["runRoutes"]>({
+      get: vi.fn(() => ({
+        kind: "connection",
+        runId: "run-client",
+        processId: ctx.processId!,
+        uid: IDENTITY.uid,
+        connectionId: "private-connection-id",
+        createdAt: 1,
+        expiresAt: Date.now() + 60_000,
+      })),
+    });
+
+    const current = await handleShellExec({ input: "message current --json" }, ctx);
+    const parsed = currentDestinationOutputSchema.safeParse(JSON.parse(current.stdout));
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error("invalid message current output");
+    expect(parsed.data).toMatchObject({
+      kind: "client",
+      reply: {
+        command: "message send",
+        attachmentCommand: "message attach PATH...",
+        requiresStandaloneShellCall: true,
+        finishesRun: false,
+      },
+    });
+    expect(parsed.data.destinationId).toBeUndefined();
+    expect(parsed.data.destinationUse).toBeUndefined();
+    expect(current.stdout).not.toContain("private-connection-id");
   });
 
   it("lists and resolves opaque destinations without provider identifiers", async () => {
@@ -4415,9 +4479,10 @@ describe("native administration shell commands", () => {
     });
     const { adapterFrame } = enableTelegramMessaging(ctx);
     await handleFsWrite({ path: "/tmp/share.png", content: "PNG" }, ctx);
+    const destinationId = await currentAdapterDestinationId(ctx);
 
     const result = await handleShellExec({
-      input: "message send --to here --attach /tmp/share.png --also",
+      input: `message send --to ${destinationId} --attach /tmp/share.png --also`,
     }, ctx);
 
     expect(result).toMatchObject({ status: "completed", exitCode: 0 });
@@ -4471,9 +4536,10 @@ describe("native administration shell commands", () => {
     Object.assign(ctx.env, {
       CHANNEL_TELEGRAM: { adapterFrame },
     });
+    const destinationId = await currentAdapterDestinationId(ctx);
 
     const result = await handleShellExec({
-      input: "message send --to here --message retry --delivery-id logical-send-1 --also",
+      input: `message send --to ${destinationId} --message retry --delivery-id logical-send-1 --also`,
     }, ctx);
 
     expect(result).toMatchObject({ status: "completed", exitCode: 0 });
@@ -4514,9 +4580,10 @@ describe("native administration shell commands", () => {
     Object.assign(ctx.env, {
       CHANNEL_TELEGRAM: { adapterFrame },
     });
+    const destinationId = await currentAdapterDestinationId(ctx);
 
     const result = await handleShellExec({
-      input: "message send --to here --message uncertain --delivery-id logical-send-ambiguous --also",
+      input: `message send --to ${destinationId} --message uncertain --delivery-id logical-send-ambiguous --also`,
     }, ctx);
 
     expect(result).toMatchObject({ status: "completed", exitCode: 0 });
@@ -4556,9 +4623,10 @@ describe("native administration shell commands", () => {
     Object.assign(ctx.env, {
       CHANNEL_TELEGRAM: { adapterFrame },
     });
+    const destinationId = await currentAdapterDestinationId(ctx);
 
     const result = await handleShellExec({
-      input: "message send --to here --attach /tmp/retry-share.png --delivery-id logical-send-file --also",
+      input: `message send --to ${destinationId} --attach /tmp/retry-share.png --delivery-id logical-send-file --also`,
     }, ctx);
 
     expect(result).toMatchObject({ status: "failed", exitCode: 1 });

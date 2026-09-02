@@ -6998,7 +6998,7 @@ export class Process extends DurableObject<GatewayEnv> {
               : "Message committed; run remains active"
             : "Run yielded"
           : runControlResult.failureKind === "command"
-            ? `Run-control command rejected (attempt ${runControlFailureAttempt?.count ?? 1} of ${runControlFailureAttempt?.limit ?? MAX_TERMINAL_COMMAND_FAILURES}): ${runControlResult.error}\nSend with a literal message block, and run \`yield\` only when the work is complete.`
+            ? `Run-control command rejected (attempt ${runControlFailureAttempt?.count ?? 1} of ${runControlFailureAttempt?.limit ?? MAX_TERMINAL_COMMAND_FAILURES}): ${runControlResult.error}\nTo reply here, stage files first with \`message attach PATH...\`. Then issue \`message send ...\` as its own direct Shell tool call with no other tool calls or shell commands. Omit --to and --also. Run \`yield\` only when the work is complete.`
             : `Message delivery failed (attempt ${runControlFailureAttempt?.count ?? 1} of ${runControlFailureAttempt?.limit ?? MAX_TERMINAL_DELIVERY_FAILURES}): ${runControlResult.error}\nRetry the exact same message command unchanged.`,
         !runControlResult.ok,
         runId,
