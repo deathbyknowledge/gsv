@@ -1412,6 +1412,26 @@ describe("handleAiConfig", () => {
       .toEqual(["claude-preferred", "gpt-primary", "@cf/last"]);
   });
 
+  it("uses the canonical system stack when the owner has no text-model config", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "config/ai/models": JSON.stringify({
+        version: 1,
+        models: [
+          { id: "system-primary", name: "System primary", provider: "workers-ai", model: "@cf/primary" },
+          { id: "system-fallback", name: "System fallback", provider: "workers-ai", model: "@cf/fallback" },
+        ],
+      }),
+    }));
+
+    expect(result.model).toBe("@cf/primary");
+    expect(result.fallbacks).toEqual([
+      expect.objectContaining({
+        profileId: "system-fallback",
+        model: "@cf/fallback",
+      }),
+    ]);
+  });
+
   it("rejects an explicitly malformed owner model stack instead of silently changing models", async () => {
     await expect(handleAiConfig({}, makeAiConfigContext({
       "users/1000/ai/models": JSON.stringify({ version: 1, models: [] }),

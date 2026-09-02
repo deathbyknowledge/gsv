@@ -3,13 +3,13 @@
  *
  * ai.tools — returns available tool schemas, online devices, and ready MCP servers accessible to caller.
  * ai.context — returns the current prompt-relevant Kernel projection without model credentials.
- * ai.config — reads model/provider/apiKey from /sys/ (kernel SQLite via ConfigStore).
+ * ai.config — resolves the owner's ordered model stack from /sys/.
  *
  * Config resolution order:
- *   process overrides → /sys/users/{run-as uid}/ai/* → /sys/users/{owner uid}/ai/* → /sys/config/ai/*
- *   A users/{uid}/ai/model_profile selection expands into that account's step.
+ *   process preference → /sys/users/{owner uid}/ai/models → /sys/config/ai/models
+ *   Reasoning and runtime policy remain orthogonal account/system settings.
  *
- * Runtime reads are explicit SQLite overrides over code defaults.
+ * Legacy per-field/model-profile settings remain a read-only compatibility path.
  */
 
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
@@ -1017,9 +1017,21 @@ function resolveStoredAiModelStack(
   }
 
   const systemRaw = ctx.config.getExplicit(SYSTEM_AI_MODELS_CONFIG_KEY);
-  return systemRaw === null
+  if (systemRaw !== null) {
+    return parseStoredAiModelStack(SYSTEM_AI_MODELS_CONFIG_KEY, systemRaw, true);
+  }
+
+  // Preserve an explicitly configured legacy system model until an owner edits
+  // settings. New installations and untouched standalone deployments use the
+  // canonical code-default stack below.
+  if (hasLegacySystemTextModelConfig(ctx.config)) {
+    return null;
+  }
+
+  const defaultRaw = ctx.config.get(SYSTEM_AI_MODELS_CONFIG_KEY);
+  return defaultRaw === null
     ? null
-    : parseStoredAiModelStack(SYSTEM_AI_MODELS_CONFIG_KEY, systemRaw, true);
+    : parseStoredAiModelStack(SYSTEM_AI_MODELS_CONFIG_KEY, defaultRaw, true);
 }
 
 function parseStoredAiModelStack(
@@ -1054,6 +1066,22 @@ function hasLegacyAccountTextModelConfig(
   return accountUids.some((accountUid) => suffixes.some((suffix) =>
     config.getExplicit(`users/${accountUid}/ai/${suffix}`) !== null
   ));
+}
+
+function hasLegacySystemTextModelConfig(config: KernelContext["config"]): boolean {
+  const suffixes = [
+    "provider",
+    "model",
+    "base_url",
+    "provider_style",
+    "transport_target",
+    "api_key",
+    "max_tokens",
+    "fallback_model_profile",
+  ] as const;
+  return suffixes.some((suffix) =>
+    config.getExplicit(`config/ai/${suffix}`) !== null
+  );
 }
 
 async function resolveStoredAiTextModelStack(

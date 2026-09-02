@@ -8,11 +8,14 @@ import {
 } from "../inference/default-models";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { MAIL_STATUS } from "../syscalls/constants";
+import { parseAiModelStack } from "./ai-model-stack";
 
 describe("ConfigStore", () => {
   it("defaults text and image generation to their supported output budgets", () => {
-    expect(SYSTEM_CONFIG_DEFAULTS["config/ai/max_tokens"])
-      .toBe(String(DEFAULT_TEXT_GENERATION_MAX_TOKENS));
+    const stack = parseAiModelStack(SYSTEM_CONFIG_DEFAULTS["config/ai/models"]);
+    expect(stack?.models.every((model) =>
+      model.maxTokens === DEFAULT_TEXT_GENERATION_MAX_TOKENS
+    )).toBe(true);
     expect(SYSTEM_CONFIG_DEFAULTS["config/ai/image/read/max_tokens"])
       .toBe("28672");
   });
@@ -36,8 +39,8 @@ describe("ConfigStore", () => {
   configuredStoreTest(
     "get overlays defaults unless an explicit value is set",
     ({ store }) => {
-      expect(store.get("config/ai/api_key")).toBe("");
-      expect(store.getExplicit("config/ai/api_key")).toBeNull();
+      expect(store.get("config/ai/models")).toBeTruthy();
+      expect(store.getExplicit("config/ai/models")).toBeNull();
       expect(store.get("config/ai/provider")).toBe("anthropic");
       expect(store.getExplicit("config/ai/provider")).toBe("anthropic");
     },
@@ -48,7 +51,7 @@ describe("ConfigStore", () => {
     ({ store }) => {
       expect(store.delete("config/ai/provider")).toBe(true);
       expect(store.getExplicit("config/ai/provider")).toBeNull();
-      expect(store.get("config/ai/provider")).toBe("workers-ai");
+      expect(store.get("config/ai/provider")).toBeNull();
       expect(store.delete("config/ai/provider")).toBe(false);
     },
   );
@@ -72,7 +75,7 @@ describe("ConfigStore", () => {
     ({ store }) => {
       const ai = store.list("config/ai");
       const values = new Map(ai.map((entry) => [entry.key, entry.value]));
-      expect(values.get("config/ai/api_key")).toBe("");
+      expect(values.get("config/ai/models")).toBeTruthy();
       expect(values.get("config/ai/provider")).toBe("anthropic");
       expect(values.get("config/ai/model")).toBe("claude-sonnet-4-6");
       expect(values.get("config/ai/generation/streaming")).toBe("auto");
@@ -82,29 +85,28 @@ describe("ConfigStore", () => {
     },
   );
 
-  it("ships a Workers AI primary model and root fallback profile", () =>
+  it("ships an ordered Workers AI primary and fallback stack", () =>
     runWithRealKernelSql((sql) => {
       const store = new ConfigStore(sql);
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      const rootProfiles = JSON.parse(
-        store.get("users/0/ai/model_profiles") ?? "{}",
+      const stack = JSON.parse(
+        store.get("config/ai/models") ?? "{}",
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       ) as {
-        profiles?: Array<{ id?: string; values?: Record<string, string> }>;
+        models?: Array<{ id?: string; provider?: string; model?: string }>;
       };
-      const fallbackProfile = rootProfiles.profiles?.find(
-        (profile) => profile.id === DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID,
-      );
 
-      expect(store.get("config/ai/provider")).toBe("workers-ai");
-      expect(store.get("config/ai/model")).toBe(DEFAULT_WORKERS_AI_MODEL);
-      expect(store.get("config/ai/fallback_model_profile")).toBe(
-        DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID,
-      );
-      expect(fallbackProfile?.values).toMatchObject({
-        "config/ai/provider": "workers-ai",
-        "config/ai/model": DEFAULT_WORKERS_AI_FALLBACK_MODEL,
-      });
+      expect(stack.models).toEqual([
+        expect.objectContaining({
+          provider: "workers-ai",
+          model: DEFAULT_WORKERS_AI_MODEL,
+        }),
+        expect.objectContaining({
+          id: DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID,
+          provider: "workers-ai",
+          model: DEFAULT_WORKERS_AI_FALLBACK_MODEL,
+        }),
+      ]);
     }));
 
   configuredStoreTest(

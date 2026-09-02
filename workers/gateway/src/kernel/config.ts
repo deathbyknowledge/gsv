@@ -5,8 +5,8 @@
  * and /sys/users/{uid}/* (per-user, owner or root writes).
  *
  * Keys are virtual path segments stripped of the /sys/ prefix:
- *   "config/ai/provider"   → /sys/config/ai/provider
- *   "users/0/ai/model"     → /sys/users/0/ai/model
+ *   "config/ai/models"       → /sys/config/ai/models
+ *   "users/1000/ai/models"   → /sys/users/1000/ai/models
  *
  * SQLite stores explicit overrides. SYSTEM_CONFIG_DEFAULTS is overlaid at
  * read time so code defaults remain live unless a key is explicitly set.
@@ -56,44 +56,34 @@ function defineSystemConfigDefaults<T extends SystemConfigDefaults>(
   return defaults;
 }
 
-const DEFAULT_ROOT_MODEL_PROFILES = JSON.stringify({
+const DEFAULT_AI_MODELS = JSON.stringify({
   version: 1,
-  profiles: [{
-    id: DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID,
-    name: DEFAULT_WORKERS_AI_FALLBACK_PROFILE_NAME,
-    values: {
-      "config/ai/provider": "workers-ai",
-      "config/ai/model": DEFAULT_WORKERS_AI_FALLBACK_MODEL,
-      "config/ai/provider_style": "auto",
-      "config/ai/transport_target": "gsv",
-      "config/ai/reasoning": "medium",
-      "config/ai/max_tokens": String(DEFAULT_TEXT_GENERATION_MAX_TOKENS),
-      "config/ai/max_context_bytes": "32768",
+  models: [
+    {
+      id: "workers-ai-glm-5-3-flash",
+      name: "GLM 5.3 Flash",
+      provider: "workers-ai",
+      model: DEFAULT_WORKERS_AI_MODEL,
+      maxTokens: DEFAULT_TEXT_GENERATION_MAX_TOKENS,
     },
-    createdAt: 1,
-    updatedAt: 1,
-  }],
+    {
+      id: DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID,
+      name: DEFAULT_WORKERS_AI_FALLBACK_PROFILE_NAME,
+      provider: "workers-ai",
+      model: DEFAULT_WORKERS_AI_FALLBACK_MODEL,
+      maxTokens: DEFAULT_TEXT_GENERATION_MAX_TOKENS,
+    },
+  ],
 });
 
 export const SYSTEM_CONFIG_DEFAULTS = defineSystemConfigDefaults({
   // -- AI / LLM ---------------------------------------------------------------
-  // The LLM provider to use (workers-ai, anthropic, openai, google, mistral, etc.)
-  "config/ai/provider": "workers-ai",
-  // The model identifier for the LLM provider
-  "config/ai/model": DEFAULT_WORKERS_AI_MODEL,
-  // Optional custom provider base URL. Leave empty to use the built-in provider endpoint.
-  "config/ai/base_url": "",
-  // Optional custom provider API style: auto, openai-chat-completions, openai-responses, or anthropic-messages.
-  "config/ai/provider_style": "auto",
-  // Where custom provider HTTP requests exit: gsv/worker or a connected device id.
-  "config/ai/transport_target": "gsv",
-  // API key for the LLM provider. Empty is valid for local providers such as Workers AI.
-  "config/ai/api_key": "",
+  // Complete text-model entries in primary/fallback order. Per-owner stacks
+  // live at users/{uid}/ai/models and replace this list as a unit.
+  "config/ai/models": DEFAULT_AI_MODELS,
   // Reasoning effort/mode hint passed to the model (off, minimal, low, medium, high, xhigh).
   // Only applies to models that support extended thinking.
   "config/ai/reasoning": "medium",
-  // Max tokens for LLM responses (model-dependent upper bound).
-  "config/ai/max_tokens": String(DEFAULT_TEXT_GENERATION_MAX_TOKENS),
   // Fallback context window for providers that are not in the local model registry.
   "config/ai/context_window_tokens": "256000",
   // System prompt context, assembled in lexical order, applied to every
@@ -114,10 +104,6 @@ export const SYSTEM_CONFIG_DEFAULTS = defineSystemConfigDefaults({
   "config/ai/generation/timeout_ms": "180000",
   // Generation streaming transport: auto streams when supported, off forces final-output only.
   "config/ai/generation/streaming": "auto",
-  // Saved model profile id used when the primary text model fails.
-  "config/ai/fallback_model_profile": DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID,
-  // Root-owned shipped model profiles referenced by global defaults.
-  "users/0/ai/model_profiles": DEFAULT_ROOT_MODEL_PROFILES,
   // Moondream image-reading resource limits used by process attachments and AI syscalls.
   "config/ai/image/read/max_bytes": "10485760",
   "config/ai/image/read/max_tokens": "28672",
