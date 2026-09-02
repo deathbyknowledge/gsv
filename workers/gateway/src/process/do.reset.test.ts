@@ -39,15 +39,22 @@ describe("proc.reset", () => {
     expect(sendData.queued).toBeUndefined();
   });
 
-  it("fences an in-flight generation before archiving reset history", async () => {
+  it("fences generation and defers alarms while reset is in flight", async () => {
     const pid = "mech-reset-fences-generation";
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
-    await runInProcess(stub, async (process) => {
+    await runInProcess(stub, async (process, state) => {
       const { promise: generationBlocked, resolve: releaseGeneration } = deferred();
       const { promise: generationStarted, resolve: markGenerationStarted } = deferred();
       const { promise: archiveBlocked, resolve: releaseArchive } = deferred();
       const { promise: archiveStarted, resolve: markArchiveStarted } = deferred();
+      const delayedFinishId = "run-reset-delayed-finish";
+      const deliverFinish = vi.spyOn(process.finishDelivery, "deliver").mockResolvedValue();
+      const delayedFinish = await process.run.schedule(
+        new Date(Date.now() + 60_000),
+        "onRunFinishDelivery",
+        delayedFinishId,
+      );
       process.sendSignal = vi.fn();
       mockGeneration(process, async () => {
         markGenerationStarted();
@@ -77,6 +84,13 @@ describe("proc.reset", () => {
       const resetting = process.controller.handleProcReset();
       await archiveStarted;
       expect(process.runs.active).toBeNull();
+      state.storage.sql.exec(
+        "UPDATE cf_agents_schedules SET time = 0 WHERE id = ?",
+        delayedFinish.id,
+      );
+      const alarming = process.alarm();
+      await Promise.resolve();
+      expect(deliverFinish).not.toHaveBeenCalledWith(delayedFinishId);
 
       releaseGeneration();
       await ticking;
@@ -87,7 +101,8 @@ describe("proc.reset", () => {
       ).toBe(false);
 
       releaseArchive();
-      await resetting;
+      await Promise.all([resetting, alarming]);
+      expect(deliverFinish).toHaveBeenCalledWith(delayedFinishId);
       expect(process.store.messages.getMessages()).toEqual([]);
     });
   });
