@@ -26,9 +26,19 @@ the cached session token from `gsv auth login`, or prompt/login when needed.
 ## Chat and Shell
 
 ```bash
+gsv
+gsv tui [--demo] [--pid PID] [--vim]
 gsv chat [MESSAGE] [--pid PID]
 gsv shell
 ```
+
+Bare `gsv` and `gsv tui` open the full-screen, typing-first Ship interface.
+`--demo` runs a local no-account preview, `--pid` opens an explicitly labeled
+Process work session, and `--vim` enables Vim browse controls; `Alt+V` toggles
+that mode at runtime. Type `@` into an empty draft to select a visible target,
+`?` for all keys, and `Ctrl+Q` to leave. The native interface adopts the host
+terminal palette and renders supported canonical images through the best
+graphics protocol available.
 
 `chat` resolves the Ship or selected Work conversation and sends with
 `conversation.send`. With `MESSAGE`, it waits for the canonical

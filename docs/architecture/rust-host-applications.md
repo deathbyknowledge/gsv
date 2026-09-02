@@ -62,12 +62,29 @@ the interface without an account. The native backend owns terminal setup and
 restoration, maps Crossterm events into shared actions, and interprets shared
 effects through the existing gateway client. Conversation history and signals,
 Process run state, human-in-the-loop approvals, and abort remain gateway-owned.
+The shared renderer projects canonical messages into one command/result turn at
+a time. Human text begins on the same line as its `user@target $ ` prompt, while
+routine connection, role, time, and run metadata stay out of the document.
+Typing is the default interaction; `--vim` or `Alt+V` enables an optional browse
+mode without changing the beginner key map.
+
+Typing `@` into an empty draft opens the capability-environment picker. The
+selected exact target and optional working directory are carried on that
+conversation interaction and its canonical origin. The Kernel validates that
+the target is visible before committing the message, and independently enforces
+the Process's syscall grant when work executes; a presentation choice never
+grants authority. Process context names the selected environment so Ship can
+interpret an English request relative to the prompt the user saw.
+
 The native renderer inherits the terminal foreground, background, and ANSI
 palette instead of imposing a second terminal theme. The shared renderer owns
 semantic color roles, Markdown presentation, source-mode toggling, and the
-textual presentation of canonical media resources. Fetching or decoding media
-bytes remains with the client and gateway paths that own those bodies; a client
-may add an inline-image backend without changing the resource contract.
+content-first fallback for canonical media resources. The native backend owns
+inline-image presentation: it detects Kitty, Sixel, or iTerm2 graphics support,
+falls back to Unicode half blocks, verifies immutable resource metadata before
+reading the body, bounds decoding, and performs resize/encoding work away from
+the input loop. This does not change the canonical resource contract or body
+ownership.
 The line-oriented `gsv chat` command remains available for scripts and basic
 terminal sessions.
 
@@ -97,7 +114,8 @@ cell buffer through Ratzilla's WebGL2 backend. A hidden native textarea owns
 Unicode input, IME composition, and paste; browser key and wheel events map to
 the same shared actions as the native backend. Because no host terminal owns
 its atmosphere, the browser backend uses the curated GSV palette. Markdown,
-prompt grammar, navigation, and media artifact fallback remain identical. The
+prompt grammar, optional Vim navigation, and media artifact fallback remain
+identical. The
 preview currently uses local example responses. Production browser
 authentication and transport stay with the existing web gateway service and
 will interpret the same shared effects rather than moving protocol ownership

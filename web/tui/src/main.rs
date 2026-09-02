@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use gsv_tui_core::{Action, App, ApprovalDecision, Effect, Theme};
+use gsv_tui_core::{Action, App, ApprovalDecision, CapabilityEnvironment, Effect, Theme};
 use ratzilla::backend::webgl2::WebGl2BackendOptions;
 use ratzilla::ratatui::Terminal;
 use ratzilla::{FontAtlasConfig, SelectionMode, WebGl2Backend, WebRenderer};
@@ -19,6 +19,11 @@ fn main() {
 fn run() -> Result<(), JsValue> {
     let mut state = App::demo();
     state.set_theme(Theme::Gsv);
+    state.set_environments(vec![
+        CapabilityEnvironment::gsv(),
+        CapabilityEnvironment::new("macbook", "MacBook"),
+        CapabilityEnvironment::new("browser", "Browser"),
+    ]);
     let app = Rc::new(RefCell::new(state));
     let options = WebGl2BackendOptions::new()
         .grid_id("terminal")
@@ -64,6 +69,9 @@ fn install_input_bridge(app: Rc<RefCell<App>>) -> Result<(), JsValue> {
             return;
         }
         input_for_text.set_value("");
+        if app_for_text.borrow().vim_enabled() && !app_for_text.borrow().draft_visible() {
+            return;
+        }
         dispatch_action(&app_for_text, Action::Insert(value));
     });
     input.add_event_listener_with_callback("input", on_input.as_ref().unchecked_ref())?;
@@ -74,13 +82,18 @@ fn install_input_bridge(app: Rc<RefCell<App>>) -> Result<(), JsValue> {
         if event.is_composing() {
             return;
         }
-        let action = {
+        let (action, vim_browse) = {
             let app = app_for_key.borrow();
-            keyboard_action(&app, &event)
+            (
+                keyboard_action(&app, &event),
+                app.vim_enabled() && !app.draft_visible(),
+            )
         };
         if let Some(action) = action {
             event.prevent_default();
             dispatch_action(&app_for_key, action);
+        } else if vim_browse && key_is_text(&event.key()) {
+            event.prevent_default();
         }
     });
     input.add_event_listener_with_callback("keydown", on_key.as_ref().unchecked_ref())?;
@@ -121,7 +134,12 @@ fn dispatch_action(app: &Rc<RefCell<App>>, action: Action) {
     let effects = app.borrow_mut().dispatch(action);
     for effect in effects {
         match effect {
-            Effect::Submit { id, text } => {
+            Effect::Submit {
+                id,
+                text,
+                target: _,
+                cwd: _,
+            } => {
                 app.borrow_mut().complete_demo_submission(id, &text);
             }
             Effect::Abort => {
@@ -166,11 +184,43 @@ fn keyboard_action(app: &App, event: &KeyboardEvent) -> Option<Action> {
         };
     }
 
+    if app.environment_picker_visible() {
+        return match normalized.as_str() {
+            "escape" => Some(Action::Escape),
+            "enter" => Some(Action::Submit),
+            "backspace" | "delete" => Some(Action::Backspace),
+            "arrowup" => Some(Action::PreviousChoice),
+            "arrowdown" => Some(Action::NextChoice),
+            "p" if command => Some(Action::PreviousChoice),
+            "n" if command => Some(Action::NextChoice),
+            _ => None,
+        };
+    }
+
+    if normalized == "v" && event.alt_key() {
+        return Some(Action::ToggleVim);
+    }
+
+    if app.vim_enabled() && !app.draft_visible() && !command && !event.alt_key() {
+        return match key.as_str() {
+            "i" | "a" => Some(Action::BeginCompose),
+            "j" => Some(Action::NextTurn),
+            "k" => Some(Action::PreviousTurn),
+            "g" => Some(Action::FirstTurn),
+            "G" => Some(Action::LastTurn),
+            "Enter" => Some(Action::ToggleMedia),
+            "?" => Some(Action::ToggleHelp),
+            _ => None,
+        };
+    }
+
     match normalized.as_str() {
         "q" if command => Some(Action::Quit),
         "." if command => Some(Action::Abort),
-        "p" if command => Some(Action::PreviousMoment),
-        "n" if command => Some(Action::NextMoment),
+        "p" if command => Some(Action::PreviousTurn),
+        "n" if command => Some(Action::NextTurn),
+        "u" if command && app.vim_enabled() && !app.draft_visible() => Some(Action::ScrollUp),
+        "d" if command && app.vim_enabled() && !app.draft_visible() => Some(Action::ScrollDown),
         "a" if command => Some(Action::MoveCursorHome),
         "e" if command => Some(Action::MoveCursorEnd),
         "b" if command => Some(Action::MoveCursorLeft),
@@ -179,6 +229,7 @@ fn keyboard_action(app: &App, event: &KeyboardEvent) -> Option<Action> {
         "m" if event.alt_key() => Some(Action::ToggleMarkdown),
         "?" if !app.draft_visible() && !command => Some(Action::ToggleHelp),
         "enter" if event.shift_key() || command => Some(Action::Newline),
+        "enter" if !app.draft_visible() => Some(Action::ToggleMedia),
         "enter" => Some(Action::Submit),
         "escape" => Some(Action::Escape),
         "backspace" => Some(Action::Backspace),
@@ -187,8 +238,8 @@ fn keyboard_action(app: &App, event: &KeyboardEvent) -> Option<Action> {
         "arrowright" => Some(Action::MoveCursorRight),
         "home" => Some(Action::MoveCursorHome),
         "end" => Some(Action::MoveCursorEnd),
-        "arrowup" if event.alt_key() => Some(Action::PreviousMoment),
-        "arrowdown" if event.alt_key() => Some(Action::NextMoment),
+        "arrowup" if event.alt_key() => Some(Action::PreviousTurn),
+        "arrowdown" if event.alt_key() => Some(Action::NextTurn),
         "pageup" => Some(Action::ScrollUp),
         "pagedown" => Some(Action::ScrollDown),
         "arrowup" if !app.draft_visible() => Some(Action::ScrollUp),
@@ -196,6 +247,10 @@ fn keyboard_action(app: &App, event: &KeyboardEvent) -> Option<Action> {
         "tab" if !command => Some(Action::Insert("    ".to_string())),
         _ => None,
     }
+}
+
+fn key_is_text(key: &str) -> bool {
+    key.chars().count() == 1
 }
 
 fn display_error(error: impl std::fmt::Display) -> JsValue {

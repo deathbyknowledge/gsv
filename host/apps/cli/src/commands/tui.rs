@@ -1,7 +1,7 @@
 use std::io::{self, IsTerminal};
 use std::sync::Arc;
 
-use crossterm::cursor::Show;
+use crossterm::cursor::{SetCursorStyle, Show};
 use crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
     Event as TerminalEvent, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
@@ -15,8 +15,8 @@ use futures_util::StreamExt;
 use gsv::kernel_client::{cli_peer_identity, BinaryBodyLimits, GatewayAuth, KernelClient};
 use gsv::protocol::Frame;
 use gsv_tui_core::{
-    Action, App, Approval, ApprovalDecision, Artifact, ConnectionState, Effect, MediaKind, Moment,
-    Role, Theme,
+    Action, App, Approval, ApprovalDecision, Artifact, CapabilityEnvironment, ConnectionState,
+    Effect, MediaKind, Moment, Role, Theme,
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
@@ -24,6 +24,10 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
 use super::chat::{implicit_personal_owner_uid, personal_process_id};
+
+mod media;
+
+use media::ImageManager;
 
 enum RuntimeEvent {
     Signal {
@@ -64,6 +68,7 @@ impl Drop for TerminalRestore {
         let _ = execute!(
             io::stdout(),
             Show,
+            SetCursorStyle::DefaultUserShape,
             DisableBracketedPaste,
             DisableMouseCapture,
             LeaveAlternateScreen
@@ -76,11 +81,18 @@ pub(crate) async fn run_tui(
     auth: GatewayAuth,
     preferred_pid: Option<String>,
     demo: bool,
+    vim: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (runtime_sender, runtime_receiver) = mpsc::unbounded_channel();
     if demo {
         let mut app = App::demo();
         app.set_principal(whoami::username());
+        app.set_environments(vec![
+            CapabilityEnvironment::gsv(),
+            CapabilityEnvironment::new("macbook", "MacBook"),
+            CapabilityEnvironment::new("browser", "Browser"),
+        ]);
+        app.set_vim_enabled(vim);
         return run_interface(app, None, runtime_sender, runtime_receiver).await;
     }
 
@@ -120,18 +132,22 @@ pub(crate) async fn run_tui(
         }
     };
     let conversation_id = client.conversation_for_process(&pid).await?;
-    let history = client
-        .request_ok(
+    let (history, environments) = tokio::join!(
+        client.request_ok(
             "conversation.history",
             Some(json!({
                 "conversationId": conversation_id,
                 "limit": 200,
             })),
-        )
-        .await?;
+        ),
+        available_environments(&client),
+    );
+    let history = history?;
 
     let mut app = App::new(ConnectionState::Ready);
     app.set_principal(principal);
+    app.set_vim_enabled(vim);
+    app.set_environments(environments);
     let moments = history_moments(&history);
     if moments.is_empty() {
         app.replace_history(vec![Moment::complete(
@@ -175,13 +191,33 @@ async fn run_interface(
         EnableMouseCapture,
         EnableBracketedPaste
     )?;
+    let mut image_manager = ImageManager::detect();
+    app.set_inline_images(true);
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
     let mut terminal_events = EventStream::new();
+    let mut insert_cursor = false;
 
     loop {
-        terminal.draw(|frame| app.render(frame))?;
+        let next_insert_cursor = app.draft_visible();
+        if insert_cursor != next_insert_cursor {
+            let style = if next_insert_cursor {
+                SetCursorStyle::SteadyBar
+            } else {
+                SetCursorStyle::DefaultUserShape
+            };
+            execute!(terminal.backend_mut(), style)?;
+            insert_cursor = next_insert_cursor;
+        }
+        terminal.draw(|frame| {
+            app.render(frame);
+            image_manager.render(frame, app.media_slots());
+        })?;
+        image_manager.synchronize(
+            app.media_slots(),
+            session.as_ref().map(|session| &session.client),
+        );
         tokio::select! {
             maybe_event = terminal_events.next() => {
                 let Some(event) = maybe_event else {
@@ -199,6 +235,7 @@ async fn run_interface(
             Some(event) = runtime_receiver.recv() => {
                 apply_runtime_event(&mut app, event, session.as_ref());
             }
+            () = image_manager.next_event() => {}
         }
     }
 
@@ -213,7 +250,12 @@ fn apply_effects(
 ) -> bool {
     for effect in effects {
         match effect {
-            Effect::Submit { id, text } => {
+            Effect::Submit {
+                id,
+                text,
+                target,
+                cwd,
+            } => {
                 let Some(session) = session else {
                     app.complete_demo_submission(id, &text);
                     continue;
@@ -223,10 +265,12 @@ fn apply_effects(
                 let sender = runtime_sender.clone();
                 let handle = tokio::spawn(async move {
                     let result = client
-                        .conversation_send(
+                        .conversation_send_in_environment(
                             &conversation_id,
                             &text,
                             &uuid::Uuid::new_v4().to_string(),
+                            &target,
+                            cwd.as_deref(),
                         )
                         .await;
                     let event = match result {
@@ -447,11 +491,51 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
         };
     }
 
+    if app.environment_picker_visible() {
+        return match key.code {
+            KeyCode::Char('q' | 'Q') if control => Some(Action::Quit),
+            KeyCode::Esc => Some(Action::Escape),
+            KeyCode::Enter => Some(Action::Submit),
+            KeyCode::Backspace | KeyCode::Delete => Some(Action::Backspace),
+            KeyCode::Up => Some(Action::PreviousChoice),
+            KeyCode::Down => Some(Action::NextChoice),
+            KeyCode::Char('p' | 'P') if control => Some(Action::PreviousChoice),
+            KeyCode::Char('n' | 'N') if control => Some(Action::NextChoice),
+            KeyCode::Char(character) if !command_modifier => {
+                Some(Action::Insert(character.to_string()))
+            }
+            _ => None,
+        };
+    }
+
+    if alt && matches!(key.code, KeyCode::Char('v' | 'V')) {
+        return Some(Action::ToggleVim);
+    }
+
+    if app.vim_enabled() && !app.draft_visible() && !command_modifier {
+        return match key.code {
+            KeyCode::Char('i' | 'a') => Some(Action::BeginCompose),
+            KeyCode::Char('j') => Some(Action::NextTurn),
+            KeyCode::Char('k') => Some(Action::PreviousTurn),
+            KeyCode::Char('g') => Some(Action::FirstTurn),
+            KeyCode::Char('G') => Some(Action::LastTurn),
+            KeyCode::Enter => Some(Action::ToggleMedia),
+            KeyCode::Char('?') => Some(Action::ToggleHelp),
+            _ => None,
+        };
+    }
+
     match key.code {
         KeyCode::Char('q' | 'Q') if control => Some(Action::Quit),
         KeyCode::Char('.') if control => Some(Action::Abort),
-        KeyCode::Char('p' | 'P') if control => Some(Action::PreviousMoment),
-        KeyCode::Char('n' | 'N') if control => Some(Action::NextMoment),
+        KeyCode::Char('p' | 'P') if control => Some(Action::PreviousTurn),
+        KeyCode::Char('n' | 'N') if control => Some(Action::NextTurn),
+        KeyCode::Char('u' | 'U') if control && app.vim_enabled() && !app.draft_visible() => {
+            Some(Action::ScrollUp)
+        }
+        KeyCode::Char('d' | 'D') if control && app.vim_enabled() && !app.draft_visible() => {
+            Some(Action::ScrollDown)
+        }
         KeyCode::Char('a' | 'A') if control => Some(Action::MoveCursorHome),
         KeyCode::Char('e' | 'E') if control => Some(Action::MoveCursorEnd),
         KeyCode::Char('b' | 'B') if control => Some(Action::MoveCursorLeft),
@@ -469,6 +553,7 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
         {
             Some(Action::Newline)
         }
+        KeyCode::Enter if !app.draft_visible() => Some(Action::ToggleMedia),
         KeyCode::Enter => Some(Action::Submit),
         KeyCode::Esc => Some(Action::Escape),
         KeyCode::Backspace => Some(Action::Backspace),
@@ -477,8 +562,8 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
         KeyCode::Right => Some(Action::MoveCursorRight),
         KeyCode::Home => Some(Action::MoveCursorHome),
         KeyCode::End => Some(Action::MoveCursorEnd),
-        KeyCode::Up if alt => Some(Action::PreviousMoment),
-        KeyCode::Down if alt => Some(Action::NextMoment),
+        KeyCode::Up if alt => Some(Action::PreviousTurn),
+        KeyCode::Down if alt => Some(Action::NextTurn),
         KeyCode::PageUp => Some(Action::ScrollUp),
         KeyCode::PageDown => Some(Action::ScrollDown),
         KeyCode::Up if !app.draft_visible() => Some(Action::ScrollUp),
@@ -486,6 +571,39 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
         KeyCode::Tab if !command_modifier => Some(Action::Insert("    ".to_string())),
         _ => None,
     }
+}
+
+async fn available_environments(client: &KernelClient) -> Vec<CapabilityEnvironment> {
+    let mut environments = vec![CapabilityEnvironment::gsv()];
+    let Ok(payload) = client
+        .request_ok("sys.device.list", Some(json!({ "includeOffline": false })))
+        .await
+    else {
+        return environments;
+    };
+    environments.extend(device_environments(&payload));
+    environments
+}
+
+fn device_environments(payload: &Value) -> Vec<CapabilityEnvironment> {
+    payload
+        .get("devices")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|device| {
+            let target = device.get("deviceId").and_then(Value::as_str)?;
+            if target.trim().is_empty() {
+                return None;
+            }
+            let label = device
+                .get("label")
+                .and_then(Value::as_str)
+                .filter(|label| !label.trim().is_empty())
+                .unwrap_or(target);
+            Some(CapabilityEnvironment::new(target, label))
+        })
+        .collect()
 }
 
 fn history_moments(payload: &Value) -> Vec<Moment> {
@@ -501,6 +619,7 @@ fn history_moments(payload: &Value) -> Vec<Moment> {
             let role = role_from_author(message.get("author"));
             let mut moment = Moment::complete(id, role, text)
                 .with_artifacts(media_artifacts(message.get("media")));
+            moment.environment = message_environment(message);
             moment.run_id = message
                 .get("runId")
                 .and_then(Value::as_str)
@@ -526,7 +645,22 @@ fn commit_signal_message(app: &mut App, message: &Value) {
         text,
         run_id,
         media_artifacts(message.get("media")),
+        message_environment(message),
     );
+}
+
+fn message_environment(message: &Value) -> Option<CapabilityEnvironment> {
+    let environment = message.get("origin")?.get("environment")?;
+    let target = environment.get("target")?.as_str()?;
+    if target.trim().is_empty() {
+        return None;
+    }
+    let mut selected = CapabilityEnvironment::new(target, target);
+    selected.cwd = environment
+        .get("cwd")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    Some(selected)
 }
 
 fn media_artifacts(value: Option<&Value>) -> Vec<Artifact> {
@@ -724,10 +858,11 @@ fn message_sequence(message: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use gsv_tui_core::{App, ConnectionState, MediaKind, Role};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use gsv_tui_core::{Action, App, ConnectionState, MediaKind, Role};
     use serde_json::json;
 
-    use super::{apply_signal, history_moments, truncate_chars};
+    use super::{apply_signal, device_environments, history_moments, key_action, truncate_chars};
 
     #[test]
     fn conversation_history_becomes_user_visible_moments() {
@@ -736,7 +871,14 @@ mod tests {
                 {
                     "id": 1,
                     "author": { "kind": "user" },
-                    "text": "hello"
+                    "text": "hello",
+                    "origin": {
+                        "kind": "client",
+                        "environment": {
+                            "target": "macbook",
+                            "cwd": "/Users/sam/Downloads"
+                        }
+                    }
                 },
                 {
                     "id": 2,
@@ -764,6 +906,20 @@ mod tests {
         }));
         assert_eq!(moments.len(), 2);
         assert_eq!(moments[0].role, Role::Human);
+        assert_eq!(
+            moments[0]
+                .environment
+                .as_ref()
+                .map(|environment| environment.target.as_str()),
+            Some("macbook")
+        );
+        assert_eq!(
+            moments[0]
+                .environment
+                .as_ref()
+                .and_then(|environment| environment.cwd.as_deref()),
+            Some("/Users/sam/Downloads")
+        );
         assert_eq!(moments[1].role, Role::Intelligence);
         assert_eq!(moments[1].run_id.as_deref(), Some("run-one"));
         assert_eq!(moments[1].artifacts.len(), 1);
@@ -801,5 +957,33 @@ mod tests {
         let truncated = truncate_chars(&value, 800);
         assert_eq!(truncated.chars().count(), 801);
         assert!(truncated.ends_with('…'));
+    }
+
+    #[test]
+    fn vim_browse_keys_are_opt_in() {
+        let mut app = App::new(ConnectionState::Ready);
+        let j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        assert_eq!(key_action(&app, j), Some(Action::Insert("j".to_string())));
+
+        app.set_vim_enabled(true);
+        assert_eq!(key_action(&app, j), Some(Action::NextTurn));
+
+        let i = KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE);
+        assert_eq!(key_action(&app, i), Some(Action::BeginCompose));
+    }
+
+    #[test]
+    fn target_discovery_preserves_exact_ids_and_human_labels() {
+        let environments = device_environments(&json!({
+            "devices": [
+                { "deviceId": "macbook.local", "label": "Sam's MacBook" },
+                { "deviceId": "studio", "label": "" }
+            ]
+        }));
+        assert_eq!(environments.len(), 2);
+        assert_eq!(environments[0].target, "macbook.local");
+        assert_eq!(environments[0].label, "Sam's MacBook");
+        assert_eq!(environments[1].target, "studio");
+        assert_eq!(environments[1].label, "studio");
     }
 }

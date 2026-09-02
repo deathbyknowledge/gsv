@@ -39,6 +39,10 @@ pub(crate) enum Commands {
         /// Process ID to open (defaults to the personal intelligence)
         #[arg(long)]
         pid: Option<String>,
+
+        /// Enable Vim-style browse controls (also configurable with GSV_TUI_VIM)
+        #[arg(long, env = "GSV_TUI_VIM")]
+        vim: bool,
     },
 
     /// Send a message to the agent (interactive or one-shot)
@@ -626,7 +630,18 @@ mod tests {
             demo.command,
             Some(Commands::Tui {
                 demo: true,
-                pid: None
+                pid: None,
+                vim: false,
+            })
+        ));
+
+        let vim = Cli::try_parse_from(["gsv", "tui", "--vim"]).expect("Vim TUI parses");
+        assert!(matches!(
+            vim.command,
+            Some(Commands::Tui {
+                demo: false,
+                pid: None,
+                vim: true,
             })
         ));
     }
