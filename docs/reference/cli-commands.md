@@ -54,6 +54,9 @@ Within the prompt, the principal uses terminal green, `@target` uses cyan, the
 cwd uses blue, and `$` plus input use the normal foreground. Transcript content
 has no permanent card or border; only the focused image receives a single
 accent rail.
+Markdown keeps single source newlines as terminal line breaks. Blank source
+lines remain blank paragraph separators, so structured output does not require
+double-spacing every row.
 
 `Tab` switches between Ship input and literal shell input without changing the
 draft. Literal commands are marked `user@target $ ! command` and call the

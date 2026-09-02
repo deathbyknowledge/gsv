@@ -84,6 +84,9 @@ cwd use the terminal's green and blue, `@target` uses cyan, and `$` plus command
 text use the ordinary foreground. Content has no permanent framing; a focused
 image gains only one accent rail. The curated GSV palette maps the same roles to
 sage, periwinkle, and lavender for surfaces without a host terminal theme.
+Markdown presentation preserves each source LF as a terminal row instead of
+applying CommonMark's browser-style soft-break collapse; an empty source line
+still creates a distinct paragraph gap.
 
 Typing `@` into an empty draft opens the capability-environment picker. `Tab`
 switches the same draft between Ship mode and literal shell mode. The latter is

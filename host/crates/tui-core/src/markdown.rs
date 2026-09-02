@@ -367,7 +367,7 @@ fn prefixed_line(
 fn push_text(lines: &mut Vec<Vec<Span<'static>>>, value: &str, style: Style) {
     for (index, part) in value.split('\n').enumerate() {
         if index > 0 {
-            push_span(lines, Span::styled(" ", style));
+            lines.push(Vec::new());
         }
         if !part.is_empty() {
             push_span(lines, Span::styled(sanitize(part), style));
@@ -446,6 +446,27 @@ mod tests {
         assert!(rendered.contains("│ let answer = 42;"));
         assert!(!rendered.contains("CODE"));
         assert!(rendered.contains("• one"));
+    }
+
+    #[test]
+    fn markdown_preserves_source_line_breaks_inside_a_paragraph() {
+        let rendered = rendered_text(&render_markdown(
+            "device: OnePlus | android 16\nfs: bounded vfs\nscreen: 1440x3168",
+            Theme::Gsv.palette(),
+        ));
+        assert_eq!(
+            rendered,
+            "device: OnePlus | android 16\nfs: bounded vfs\nscreen: 1440x3168"
+        );
+    }
+
+    #[test]
+    fn markdown_keeps_paragraph_spacing_distinct_from_source_line_breaks() {
+        let rendered = rendered_text(&render_markdown(
+            "first row\nsecond row\n\nnext paragraph",
+            Theme::Gsv.palette(),
+        ));
+        assert_eq!(rendered, "first row\nsecond row\n\nnext paragraph");
     }
 
     #[test]
