@@ -165,6 +165,26 @@ describe("AI media capability adapters", () => {
     );
   });
 
+  it("rejects unsupported Flux output formats before inference", async () => {
+    const workersAi = { run: vi.fn() };
+
+    let failure: unknown;
+    try {
+      await generateImage({ workersAi }, {
+        provider: "workers-ai",
+        prompt: "a quiet desktop tool screenshot",
+        format: "png",
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toEqual(expect.objectContaining({
+      message: expect.stringContaining("returns JPEG and does not support png output"),
+    }));
+    expect(workersAi.run).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["@cf/custom/image", "iVBORw0KGgo=", "image/png"],
     ["@cf/custom/image", "R0lGODlh", "image/gif"],

@@ -192,6 +192,14 @@ the change keeps its direct messages routed to the conversation that started it.
 Repeated `route set` calls from the same current run to the same work process
 are idempotent. Newer private activity or a newer selection fences a late call.
 
+`txt2img` infers `png`, `jpeg`, or `webp` output format from a known output
+extension when `--format` is omitted. `tts` similarly infers its encoding and,
+where needed, container from `.mp3`, `.wav`, `.ogg`, `.opus`, `.flac`, or
+`.aac`. Both commands verify the returned MIME type before writing. A provider
+that cannot honor the requested representation fails without writing
+mislabeled bytes; `--json` reports the authoritative MIME type and size on
+success.
+
 `img2txt` uses Moondream 3.1 as its only image reader. With no subcommand it
 returns a normal caption. `query` requires the caller's prompt; there is no
 system query prompt. `ocr` has an extraction-specific default and accepts an

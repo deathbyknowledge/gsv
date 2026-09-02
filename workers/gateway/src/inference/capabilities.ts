@@ -135,10 +135,10 @@ export async function generateImage(
 ): Promise<ImageGenerationResult | null> {
   const provider = normalizeProvider(request.provider);
   if (isWorkersAiProvider(provider)) {
-    return generateImageWithWorkersAi(runtime.workersAi, request);
+    return await generateImageWithWorkersAi(runtime.workersAi, request);
   }
   if (isOpenAiProvider(provider)) {
-    return generateImageWithOpenAi(getFetch(runtime.fetch), {
+    return await generateImageWithOpenAi(getFetch(runtime.fetch), {
       ...request,
       provider,
       model: normalizeOptionalText(request.model) || DEFAULT_OPENAI_IMAGE_MODEL,
@@ -267,6 +267,12 @@ async function generateImageWithWorkersAi(
   const prompt = normalizeOptionalText(request.prompt);
   if (!prompt) {
     return null;
+  }
+  const requestedFormat = normalizeImageOutputFormat(request.format);
+  if (model === DEFAULT_IMAGE_GENERATION_MODEL && requestedFormat && requestedFormat !== "jpeg") {
+    throw new Error(
+      `${DEFAULT_IMAGE_GENERATION_MODEL} returns JPEG and does not support ${requestedFormat} output`,
+    );
   }
   const timeoutMs = normalizePositiveNumber(request.timeoutMs) ?? DEFAULT_IMAGE_GENERATION_TIMEOUT_MS;
   const response = await withTimeout(
