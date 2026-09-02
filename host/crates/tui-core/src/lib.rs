@@ -200,6 +200,8 @@ pub enum Action {
     ScrollDown,
     PreviousChoice,
     NextChoice,
+    PreviousMedia,
+    NextMedia,
     ToggleHelp,
     ToggleMarkdown,
     ToggleVim,
@@ -261,6 +263,7 @@ pub struct App {
     vim_enabled: bool,
     inline_images: bool,
     media_expanded: bool,
+    media_focus: usize,
     media_slots: Vec<MediaSlot>,
 }
 
@@ -291,6 +294,7 @@ impl App {
             vim_enabled: false,
             inline_images: false,
             media_expanded: false,
+            media_focus: 0,
             media_slots: Vec::new(),
         }
     }
@@ -341,6 +345,10 @@ impl App {
         &self.media_slots
     }
 
+    pub fn media_expanded(&self) -> bool {
+        self.media_expanded
+    }
+
     pub fn set_principal(&mut self, principal: impl AsRef<str>) {
         self.principal = prompt_token(principal.as_ref(), "you");
     }
@@ -383,6 +391,7 @@ impl App {
         self.inline_images = enabled;
         if !enabled {
             self.media_expanded = false;
+            self.media_focus = 0;
         }
     }
 
@@ -405,6 +414,8 @@ impl App {
         self.moments = moments;
         self.selected = self.moments.len().saturating_sub(1);
         self.moment_scroll = 0;
+        self.media_expanded = false;
+        self.media_focus = 0;
     }
 
     pub fn enter_approval(&mut self, mut approval: Approval) {
@@ -413,6 +424,7 @@ impl App {
         approval.preview = sanitize_multiline(&approval.preview, 4_000);
         self.approval = Some(approval);
         self.draft_visible = false;
+        self.media_expanded = false;
     }
 
     pub fn leave_approval(&mut self, request_id: &str) {
@@ -522,6 +534,7 @@ impl App {
                     self.draft_visible = true;
                     return Vec::new();
                 }
+                self.media_expanded = false;
                 self.draft_visible = true;
                 self.draft.insert_str(self.draft_cursor, &value);
                 self.draft_cursor += value.len();
@@ -585,11 +598,16 @@ impl App {
             }
             Action::Submit => self.begin_submission().into_iter().collect(),
             Action::BeginCompose => {
+                self.media_expanded = false;
                 self.draft_visible = true;
                 Vec::new()
             }
             Action::Escape => {
-                self.draft_visible = false;
+                if self.media_expanded {
+                    self.media_expanded = false;
+                } else {
+                    self.draft_visible = false;
+                }
                 Vec::new()
             }
             Action::PreviousTurn => {
@@ -605,6 +623,7 @@ impl App {
                     self.selected = self.turn_end(0);
                     self.moment_scroll = 0;
                     self.media_expanded = false;
+                    self.media_focus = 0;
                 }
                 Vec::new()
             }
@@ -613,6 +632,7 @@ impl App {
                     self.selected = self.moments.len().saturating_sub(1);
                     self.moment_scroll = 0;
                     self.media_expanded = false;
+                    self.media_focus = 0;
                 }
                 Vec::new()
             }
@@ -633,6 +653,14 @@ impl App {
                 Vec::new()
             }
             Action::PreviousChoice | Action::NextChoice => Vec::new(),
+            Action::PreviousMedia => {
+                self.move_media_focus(false);
+                Vec::new()
+            }
+            Action::NextMedia => {
+                self.move_media_focus(true);
+                Vec::new()
+            }
             Action::ToggleHelp => {
                 self.help_visible = true;
                 Vec::new()
@@ -647,7 +675,8 @@ impl App {
                 Vec::new()
             }
             Action::ToggleMedia => {
-                if self.turn_has_images() {
+                if self.inline_images && self.turn_has_images() {
+                    self.clamp_media_focus();
                     self.media_expanded = !self.media_expanded;
                     self.moment_scroll = 0;
                 }
@@ -688,6 +717,8 @@ impl App {
         });
         self.selected = self.moments.len().saturating_sub(1);
         self.moment_scroll = 0;
+        self.media_expanded = false;
+        self.media_focus = 0;
         self.connection = if self.connection == ConnectionState::Demo {
             ConnectionState::Demo
         } else {
@@ -947,6 +978,7 @@ impl App {
             self.selected = start - 1;
             self.moment_scroll = 0;
             self.media_expanded = false;
+            self.media_focus = 0;
         }
     }
 
@@ -959,6 +991,7 @@ impl App {
             self.selected = self.turn_end(end + 1);
             self.moment_scroll = 0;
             self.media_expanded = false;
+            self.media_focus = 0;
         }
     }
 
@@ -987,15 +1020,43 @@ impl App {
     }
 
     fn turn_has_images(&self) -> bool {
+        self.turn_image_count() > 0
+    }
+
+    fn turn_image_count(&self) -> usize {
         if self.moments.is_empty() {
-            return false;
+            return 0;
         }
         let start = self.turn_start(self.selected);
         let end = self.turn_end(start);
         self.moments[start..=end]
             .iter()
             .flat_map(|moment| &moment.artifacts)
-            .any(|artifact| artifact.kind == MediaKind::Image)
+            .filter(|artifact| artifact.kind == MediaKind::Image)
+            .count()
+    }
+
+    fn clamp_media_focus(&mut self) {
+        self.media_focus = self
+            .media_focus
+            .min(self.turn_image_count().saturating_sub(1));
+    }
+
+    fn move_media_focus(&mut self, forward: bool) {
+        if !self.inline_images {
+            return;
+        }
+        let count = self.turn_image_count();
+        if count == 0 {
+            self.media_focus = 0;
+            self.media_expanded = false;
+            return;
+        }
+        self.media_focus = if forward {
+            (self.media_focus + 1) % count
+        } else {
+            self.media_focus.checked_sub(1).unwrap_or(count - 1)
+        };
     }
 
     fn matching_environment_indices(&self) -> Vec<usize> {
@@ -1084,6 +1145,7 @@ impl App {
             self.render_turn(frame, canvas);
         }
         if self.help_visible {
+            self.media_slots.clear();
             self.render_help(frame, area);
         }
     }
@@ -1118,9 +1180,48 @@ impl App {
 
         if self.media_expanded && inline_image_count > 0 {
             self.last_max_scroll = 0;
-            self.push_media_slots(frame, area, &image_artifacts[..inline_image_count]);
+            let focus = self
+                .media_focus
+                .min(image_artifacts.len().saturating_sub(1));
+            let footer_height = u16::from(image_artifacts.len() > 1);
+            let media_area = Rect::new(
+                area.x,
+                area.y,
+                area.width,
+                area.height.saturating_sub(footer_height),
+            );
+            self.push_media_slots(
+                frame,
+                media_area,
+                std::slice::from_ref(&image_artifacts[focus]),
+                None,
+            );
+            if footer_height > 0 {
+                frame.render_widget(
+                    Paragraph::new(format!(
+                        "\u{2039}  {} / {}  \u{203a}",
+                        focus + 1,
+                        image_artifacts.len()
+                    ))
+                    .style(Style::new().fg(self.theme.palette().quiet))
+                    .alignment(Alignment::Center),
+                    Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1),
+                );
+            }
             return;
         }
+
+        let image_focus = self
+            .media_focus
+            .min(image_artifacts.len().saturating_sub(1));
+        let image_window_start = if inline_image_count > 0 {
+            image_focus
+                .saturating_sub(inline_image_count / 2)
+                .min(image_artifacts.len().saturating_sub(inline_image_count))
+        } else {
+            0
+        };
+        let image_window_end = image_window_start + inline_image_count;
 
         let mut lines = Vec::new();
         for moment in &turn {
@@ -1168,7 +1269,15 @@ impl App {
             .iter()
             .flat_map(|moment| moment.artifacts.iter())
             .filter(|artifact| artifact.kind != MediaKind::Image)
-            .chain(image_artifacts.iter().skip(inline_image_count))
+            .chain(
+                image_artifacts
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, artifact)| {
+                        (!(image_window_start..image_window_end).contains(&index))
+                            .then_some(artifact)
+                    }),
+            )
             .cloned()
             .collect::<Vec<_>>();
         if !fallback_artifacts.is_empty() {
@@ -1206,7 +1315,12 @@ impl App {
                 area.width,
                 media_height,
             );
-            self.push_media_slots(frame, media_area, &image_artifacts[..inline_image_count]);
+            self.push_media_slots(
+                frame,
+                media_area,
+                &image_artifacts[image_window_start..image_window_end],
+                Some(image_focus - image_window_start),
+            );
         }
     }
 
@@ -1309,7 +1423,13 @@ impl App {
         }
     }
 
-    fn push_media_slots(&mut self, frame: &mut Frame<'_>, area: Rect, artifacts: &[Artifact]) {
+    fn push_media_slots(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        artifacts: &[Artifact],
+        focused: Option<usize>,
+    ) {
         if artifacts.is_empty() || area.width == 0 || area.height == 0 {
             return;
         }
@@ -1327,15 +1447,29 @@ impl App {
                 slot_width
             };
             let slot_area = Rect::new(x, area.y, width, area.height);
+            let content_area = if focused.is_some() && width > 2 && area.height > 2 {
+                slot_area.inner(Margin::new(1, 1))
+            } else {
+                slot_area
+            };
+            if focused == Some(usize::from(index)) {
+                frame.render_widget(
+                    Block::new()
+                        .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
+                        .border_style(Style::new().fg(palette.accent)),
+                    slot_area,
+                );
+            }
             frame.render_widget(
                 Paragraph::new(sanitize_label(artifact.display_name(), "image", 96))
                     .style(Style::new().fg(palette.quiet))
                     .alignment(Alignment::Center),
-                slot_area,
+                content_area,
             );
             self.media_slots.push(MediaSlot {
                 key: artifact.cache_key(),
-                area: slot_area,
+                area: content_area,
                 artifact: artifact.clone(),
             });
         }
@@ -1344,7 +1478,7 @@ impl App {
     fn render_help(&self, frame: &mut Frame<'_>, area: Rect) {
         let palette = self.theme.palette();
         let width = area.width.saturating_sub(8).min(68);
-        let height = area.height.saturating_sub(4).min(22);
+        let height = area.height.saturating_sub(4).min(24);
         let popup = centered_rect(area, width, height);
         frame.render_widget(Clear, popup);
         let mut lines = vec![
@@ -1362,6 +1496,8 @@ impl App {
             help_line("escape", "browse without losing the draft", palette),
             help_line("ctrl+p / ctrl+n", "previous / next turn", palette),
             help_line("page up / page down", "move through a long turn", palette),
+            help_line("left / right", "choose media", palette),
+            help_line("enter", "open / close media", palette),
             help_line("alt+m", "rendered / source Markdown", palette),
             help_line("alt+v", "toggle Vim controls", palette),
             help_line("ctrl+.", "stop the active run", palette),
@@ -1372,8 +1508,9 @@ impl App {
                 Line::default(),
                 help_line("Vim: i / escape", "compose / browse", palette),
                 help_line("Vim: j / k", "next / previous turn", palette),
+                help_line("Vim: h / l", "previous / next media", palette),
                 help_line("Vim: g / G", "first / latest turn", palette),
-                help_line("Vim: enter", "expand media", palette),
+                help_line("Vim: enter", "open / close media", palette),
             ]);
         }
         lines.extend([
@@ -1713,6 +1850,19 @@ mod tests {
         ConnectionState, Effect, MediaKind, Moment, MomentState, Role,
     };
 
+    fn image_artifact(index: usize) -> Artifact {
+        Artifact {
+            kind: MediaKind::Image,
+            mime_type: "image/png".to_string(),
+            filename: Some(format!("image-{index}.png")),
+            size: Some(2048),
+            duration_ms: None,
+            transcription: None,
+            source: Some(format!("gsv:/home/ship/image-{index}.png")),
+            revision: Some(format!("sha256:{index}")),
+        }
+    }
+
     #[test]
     fn typing_replaces_the_moment_and_escape_preserves_the_draft() {
         let mut app = App::demo();
@@ -1947,6 +2097,63 @@ mod tests {
         assert!(!rendered.contains("2.0 KB"));
         assert!(!rendered.contains("gsv:/home/ship/chart.png"));
         assert!(!rendered.contains("sha256:one"));
+        Ok(())
+    }
+
+    #[test]
+    fn media_focus_selects_the_exact_image_that_opens() -> Result<(), Box<dyn std::error::Error>> {
+        let mut app = App::new(ConnectionState::Ready);
+        app.set_inline_images(true);
+        app.replace_history(vec![Moment::complete(
+            "one",
+            Role::Intelligence,
+            "Four images.",
+        )
+        .with_artifacts((0..4).map(image_artifact).collect())]);
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend)?;
+
+        app.dispatch(Action::NextMedia);
+        app.dispatch(Action::NextMedia);
+        app.dispatch(Action::ToggleMedia);
+        terminal.draw(|frame| app.render(frame))?;
+        assert!(app.media_expanded());
+        assert_eq!(app.media_slots().len(), 1);
+        assert_eq!(
+            app.media_slots()[0].artifact.source.as_deref(),
+            Some("gsv:/home/ship/image-2.png")
+        );
+
+        app.dispatch(Action::NextMedia);
+        terminal.draw(|frame| app.render(frame))?;
+        assert_eq!(
+            app.media_slots()[0].artifact.source.as_deref(),
+            Some("gsv:/home/ship/image-3.png")
+        );
+
+        app.dispatch(Action::Escape);
+        assert!(!app.media_expanded());
+        Ok(())
+    }
+
+    #[test]
+    fn help_modal_withdraws_native_media_layers() -> Result<(), Box<dyn std::error::Error>> {
+        let mut app = App::new(ConnectionState::Ready);
+        app.set_inline_images(true);
+        app.replace_history(vec![Moment::complete(
+            "one",
+            Role::Intelligence,
+            "An image.",
+        )
+        .with_artifacts(vec![image_artifact(0)])]);
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend)?;
+
+        terminal.draw(|frame| app.render(frame))?;
+        assert_eq!(app.media_slots().len(), 1);
+        app.dispatch(Action::ToggleHelp);
+        terminal.draw(|frame| app.render(frame))?;
+        assert!(app.media_slots().is_empty());
         Ok(())
     }
 

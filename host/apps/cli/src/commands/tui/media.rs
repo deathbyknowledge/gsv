@@ -7,17 +7,19 @@ use gsv::kernel_client::KernelClient;
 use gsv_tui_core::{Artifact, MediaSlot};
 use image::imageops::FilterType;
 use image::{DynamicImage, ImageBuffer, ImageReader, Limits, Rgba};
+use ratatui::layout::{Rect, Size};
 use ratatui::Frame;
 use ratatui_image::picker::{Capability, Picker};
-use ratatui_image::thread::{ResizeRequest, ResizeResponse, ThreadProtocol};
-use ratatui_image::{Resize, StatefulImage};
+use ratatui_image::protocol::Protocol;
+use ratatui_image::{Image, Resize};
 use serde_json::{json, Value};
-use tokio::sync::mpsc::{self, UnboundedReceiver};
+use tokio::sync::mpsc;
 
 const MAX_MEDIA_BYTES: usize = 48 * 1024 * 1024;
 const MAX_DECODE_ALLOCATION: u64 = 256 * 1024 * 1024;
 const MAX_IMAGE_DIMENSION: u32 = 16_384;
 const MEDIA_CACHE_ITEMS: usize = 8;
+const IMAGE_VARIANTS_PER_ITEM: usize = 4;
 const RESOURCE_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(super) struct ImageManager {
@@ -26,6 +28,7 @@ pub(super) struct ImageManager {
     event_sender: mpsc::UnboundedSender<MediaEvent>,
     event_receiver: mpsc::UnboundedReceiver<MediaEvent>,
     generation: u64,
+    background: Option<Rgba<u8>>,
 }
 
 struct ImageEntry {
@@ -48,8 +51,16 @@ impl Drop for ImageState {
 }
 
 struct ReadyImage {
-    protocol: ThreadProtocol,
-    resize_requests: UnboundedReceiver<ResizeRequest>,
+    source: Arc<DynamicImage>,
+    encoding: Option<Size>,
+    failed: Option<Size>,
+    variants: Vec<ImageVariant>,
+}
+
+struct ImageVariant {
+    requested: Size,
+    protocol: Box<Protocol>,
+    last_used: u64,
 }
 
 enum MediaEvent {
@@ -57,9 +68,10 @@ enum MediaEvent {
         key: String,
         result: Result<DynamicImage, String>,
     },
-    Resized {
+    Encoded {
         key: String,
-        result: Box<Result<ResizeResponse, String>>,
+        requested: Size,
+        result: Result<Box<Protocol>, String>,
     },
 }
 
@@ -75,14 +87,15 @@ struct ResourceReference {
 impl ImageManager {
     pub(super) fn detect() -> Self {
         let mut picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
-        if let Some((red, green, blue)) = picker.capabilities().iter().find_map(|capability| {
+        let background = picker.capabilities().iter().find_map(|capability| {
             if let Capability::Background(red, green, blue) = capability {
-                Some((*red, *green, *blue))
+                Some(Rgba([*red, *green, *blue, 255]))
             } else {
                 None
             }
-        }) {
-            picker.set_background_color(Some(Rgba([red, green, blue, 255])));
+        });
+        if let Some(background) = background {
+            picker.set_background_color(Some(background));
         }
         let (event_sender, event_receiver) = mpsc::unbounded_channel();
         Self {
@@ -91,6 +104,7 @@ impl ImageManager {
             event_sender,
             event_receiver,
             generation: 0,
+            background,
         }
     }
 
@@ -104,10 +118,27 @@ impl ImageManager {
             let ImageState::Ready(ready) = &mut entry.state else {
                 continue;
             };
-            frame.render_stateful_widget(
-                StatefulImage::new().resize(Resize::Fit(Some(FilterType::Lanczos3))),
-                slot.area,
-                &mut ready.protocol,
+            let requested = slot.area.as_size();
+            let variant = ready
+                .variants
+                .iter()
+                .position(|variant| variant.requested == requested)
+                .or_else(|| {
+                    ready
+                        .variants
+                        .iter()
+                        .enumerate()
+                        .max_by_key(|(_, variant)| variant.last_used)
+                        .map(|(index, _)| index)
+                });
+            let Some(variant) = variant.and_then(|index| ready.variants.get_mut(index)) else {
+                continue;
+            };
+            variant.last_used = self.generation;
+            let render_area = centered_protocol_area(slot.area, variant.protocol.size());
+            frame.render_widget(
+                Image::new(variant.protocol.as_ref()).allow_clipping(true),
+                render_area,
             );
         }
     }
@@ -144,22 +175,41 @@ impl ImageManager {
             );
         }
 
-        let mut resize_work = Vec::new();
-        for (key, entry) in &mut self.entries {
+        let mut encode_work = Vec::new();
+        for slot in slots {
+            let Some(entry) = self.entries.get_mut(&slot.key) else {
+                continue;
+            };
             let ImageState::Ready(ready) = &mut entry.state else {
                 continue;
             };
-            while let Ok(request) = ready.resize_requests.try_recv() {
-                resize_work.push((key.clone(), request));
+            let requested = slot.area.as_size();
+            let already_encoded = ready
+                .variants
+                .iter()
+                .any(|variant| variant.requested == requested);
+            if requested.width == 0
+                || requested.height == 0
+                || already_encoded
+                || ready.encoding.is_some()
+                || ready.failed == Some(requested)
+            {
+                continue;
             }
+            ready.encoding = Some(requested);
+            encode_work.push((slot.key.clone(), Arc::clone(&ready.source), requested));
         }
-        for (key, request) in resize_work {
+        for (key, source, requested) in encode_work {
             let sender = self.event_sender.clone();
+            let picker = self.picker.clone();
+            let background = self.background;
             let handle = tokio::task::spawn_blocking(move || {
-                let result = request.resize_encode().map_err(|error| error.to_string());
-                let _ = sender.send(MediaEvent::Resized {
+                let result =
+                    encode_image(&picker, source.as_ref(), requested, background).map(Box::new);
+                let _ = sender.send(MediaEvent::Encoded {
                     key,
-                    result: Box::new(result),
+                    requested,
+                    result,
                 });
             });
             drop(handle);
@@ -193,18 +243,20 @@ impl ImageManager {
                     return;
                 };
                 entry.state = match result {
-                    Ok(image) => {
-                        let (resize_sender, resize_requests) = mpsc::unbounded_channel();
-                        let protocol = self.picker.new_resize_protocol(image);
-                        ImageState::Ready(Box::new(ReadyImage {
-                            protocol: ThreadProtocol::new(resize_sender, Some(protocol)),
-                            resize_requests,
-                        }))
-                    }
+                    Ok(image) => ImageState::Ready(Box::new(ReadyImage {
+                        source: Arc::new(image),
+                        encoding: None,
+                        failed: None,
+                        variants: Vec::new(),
+                    })),
                     Err(_) => ImageState::Failed,
                 };
             }
-            MediaEvent::Resized { key, result } => {
+            MediaEvent::Encoded {
+                key,
+                requested,
+                result,
+            } => {
                 let Some(ImageEntry {
                     state: ImageState::Ready(ready),
                     ..
@@ -212,17 +264,67 @@ impl ImageManager {
                 else {
                     return;
                 };
-                match *result {
-                    Ok(response) => {
-                        ready.protocol.update_resized_protocol(response);
+                if ready.encoding != Some(requested) {
+                    return;
+                }
+                ready.encoding = None;
+                match result {
+                    Ok(protocol) => {
+                        ready.failed = None;
+                        ready
+                            .variants
+                            .retain(|variant| variant.requested != requested);
+                        ready.variants.push(ImageVariant {
+                            requested,
+                            protocol,
+                            last_used: self.generation,
+                        });
+                        if ready.variants.len() > IMAGE_VARIANTS_PER_ITEM {
+                            let stale = ready
+                                .variants
+                                .iter()
+                                .enumerate()
+                                .min_by_key(|(_, variant)| variant.last_used)
+                                .map(|(index, _)| index)
+                                .unwrap_or(0);
+                            ready.variants.remove(stale);
+                        }
                     }
                     Err(_) => {
-                        ready.protocol.empty_protocol();
+                        ready.failed = Some(requested);
                     }
                 }
             }
         }
     }
+}
+
+fn encode_image(
+    picker: &Picker,
+    source: &DynamicImage,
+    requested: Size,
+    background: Option<Rgba<u8>>,
+) -> Result<Protocol, String> {
+    let resize = Resize::Fit(Some(FilterType::Lanczos3));
+    let encoded_size = resize.size_for(source, picker.font_size(), requested);
+    if encoded_size.width == 0 || encoded_size.height == 0 {
+        return Err("The terminal image area is empty".to_string());
+    }
+    let image = resize.resize(source, picker.font_size(), encoded_size, background);
+    picker
+        .new_protocol(image, encoded_size, Resize::Fit(None))
+        .map_err(|error| error.to_string())
+}
+
+fn centered_protocol_area(area: Rect, image: Size) -> Rect {
+    let width = image.width.min(area.width);
+    let height = image.height.min(area.height);
+    Rect::new(
+        area.x + area.width.saturating_sub(width) / 2,
+        area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    )
 }
 
 async fn load_image(
@@ -366,8 +468,10 @@ fn demo_image() -> DynamicImage {
 #[cfg(test)]
 mod tests {
     use gsv_tui_core::{Artifact, MediaKind};
+    use ratatui::layout::Size;
+    use ratatui_image::picker::Picker;
 
-    use super::{demo_image, resource_reference, ImageState};
+    use super::{demo_image, encode_image, resource_reference, ImageState};
 
     #[test]
     fn canonical_resource_is_parsed_without_changing_its_identity() {
@@ -392,6 +496,22 @@ mod tests {
         let image = demo_image();
         assert_eq!(image.width(), 960);
         assert_eq!(image.height(), 540);
+    }
+
+    #[test]
+    fn encoding_a_new_size_leaves_the_visible_variant_intact() {
+        let picker = Picker::halfblocks();
+        let image = demo_image();
+        let compact =
+            encode_image(&picker, &image, Size::new(20, 8), None).expect("compact terminal image");
+        let compact_size = compact.size();
+
+        let expanded = encode_image(&picker, &image, Size::new(60, 20), None)
+            .expect("expanded terminal image");
+
+        assert_eq!(compact.size(), compact_size);
+        assert!(expanded.size().width >= compact.size().width);
+        assert!(expanded.size().height >= compact.size().height);
     }
 
     #[tokio::test]

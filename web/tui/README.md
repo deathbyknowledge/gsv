@@ -11,6 +11,10 @@ canonical media artifacts, with input beginning on the prompt line. Type `@`
 into an empty draft to choose a capability environment. Press `Alt+M` to switch
 an assistant response between rendered Markdown and its source. Type `show me
 Markdown and media` in the demo to exercise the rich-content path.
+In the native client, use `Left`/`Right` to choose among attachments and
+`Enter` to open or close the focused image; Vim mode adds `h`/`l` for the same
+navigation. Image-size variants are prepared in the background while the last
+rendered variant stays visible.
 
 The preview intentionally uses local example responses. The production browser
 transport remains owned by the existing web gateway service; the next
