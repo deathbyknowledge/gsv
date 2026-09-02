@@ -8,6 +8,10 @@ and all agent-visible semantics.
 Run ./bench/scripts/test-verifiers-v1.sh for a credential-free end-to-end smoke
 through the real Verifiers interception endpoint.
 
+## Reports
+
+- [2026-09-02 current model evaluation](reports/2026-09-02-model-evaluation.md)
+
 ## Runtime ownership
 
 SyntheticKernel is one isolated GSV installation per episode. It holds Process
