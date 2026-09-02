@@ -68,7 +68,7 @@ function modelProfileIsActive(
   if (!config) {
     return false;
   }
-  return config.profile?.id === profile.id || config.profile?.name === profile.name;
+  return config.modelId === profile.id;
 }
 
 export function ChatDockPopovers({
@@ -99,7 +99,7 @@ export function ChatDockPopovers({
   canStartNewTask,
   taskCount,
 }: ChatDockPopoversProps) {
-  const processReasoning = processAiConfig?.values["config/ai/reasoning"]?.trim() ?? "";
+  const processReasoning = processAiConfig?.reasoning?.trim() ?? "";
   const currentReasoning = (processReasoning || context?.reasoning || "").trim().toLowerCase();
 
   const contextActions: PopoverActionProps[] = hasActiveProcess

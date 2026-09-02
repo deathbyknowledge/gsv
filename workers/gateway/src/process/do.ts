@@ -271,9 +271,9 @@ import {
   wrapStoredToolResult,
 } from "./tool-result-media";
 import {
-  createProcessAiConfigSnapshot,
-  isProcessAiConfigKey,
-  redactProcessAiConfigSnapshot,
+  createProcessAiConfig,
+  normalizeProcessAiModelId,
+  normalizeProcessAiReasoning,
 } from "./ai-config";
 import { runProcessSqlMigrations } from "./schema/migrations";
 import {
@@ -652,19 +652,14 @@ const processIdentitySchema = z.object({
   cwd: z.string(),
 });
 const stringRecordSchema = z.record(z.string(), z.string());
-const processAiConfigProfileRefSchema = z.object({
-  id: z.string().optional(),
-  name: z.string().optional(),
-  appliedAt: z.number(),
-});
 const aiTextGenerateConfigSchema = z.object({
   preset: z.object({
     id: z.string().optional(),
     name: z.string().optional(),
   }).optional(),
   overrides: stringRecordSchema.optional(),
-  processOverrides: stringRecordSchema.optional(),
-  processProfile: processAiConfigProfileRefSchema.nullable().optional(),
+  modelId: z.string().optional(),
+  reasoning: z.string().optional(),
 });
 const toolDefinitionSchema = z.object({
   name: z.string(),
@@ -2994,47 +2989,51 @@ export class Process extends DurableObject<GatewayEnv> {
     };
   }
 
-  private handleProcAiConfigGet(args: ProcAiConfigGetArgs): ProcAiConfigGetResult {
-    const snapshot = this.store.getAiConfigSnapshot();
+  private handleProcAiConfigGet(_args: ProcAiConfigGetArgs): ProcAiConfigGetResult {
     return {
       ok: true,
       pid: this.pid,
-      config: args.redacted === false ? snapshot : redactProcessAiConfigSnapshot(snapshot),
+      config: this.store.getAiConfig(),
     };
   }
 
   private async handleProcAiConfigSet(args: ProcAiConfigSetArgs): Promise<ProcAiConfigSetResult> {
-    let snapshot: ReturnType<typeof createProcessAiConfigSnapshot> | null;
+    let config;
     if ("clear" in args) {
-      snapshot = null;
-    } else if ("values" in args) {
-      snapshot = createProcessAiConfigSnapshot(args.values, args.profile);
-    } else if ("key" in args) {
-      if (!isProcessAiConfigKey(args.key)) {
-        return { ok: false, error: `Unsupported AI config key: ${args.key}` };
-      }
-      const current = this.store.getAiConfigSnapshot();
-      const values = { ...current?.values };
-      const value = args.value.trim();
-      if (value) {
-        values[args.key] = value;
-      } else {
-        delete values[args.key];
-      }
-
-      snapshot = createProcessAiConfigSnapshot(values, current?.profile);
+      config = null;
     } else {
-      return { ok: false, error: "proc.ai.config.set requires clear, values, or key/value" };
+      if (
+        args.modelId !== undefined &&
+        args.modelId !== null &&
+        args.modelId.trim() &&
+        !normalizeProcessAiModelId(args.modelId)
+      ) {
+        return { ok: false, error: "modelId must be a stable model id" };
+      }
+      if (
+        args.reasoning !== undefined &&
+        args.reasoning !== null &&
+        args.reasoning.trim() &&
+        !normalizeProcessAiReasoning(args.reasoning)
+      ) {
+        return {
+          ok: false,
+          error: "reasoning must be off, minimal, low, medium, high, or xhigh",
+        };
+      }
+      const current = this.store.getAiConfig();
+      config = createProcessAiConfig({
+        modelId: args.modelId === undefined ? current?.modelId : args.modelId,
+        reasoning: args.reasoning === undefined ? current?.reasoning : args.reasoning,
+      });
     }
 
-    if (snapshot && (Object.keys(snapshot.values).length > 0 || snapshot.profile)) {
-      this.store.setAiConfigSnapshot(snapshot);
+    if (config) {
+      this.store.setAiConfig(config);
     } else {
-      snapshot = null;
-      this.store.clearAiConfigSnapshot();
+      this.store.clearAiConfig();
     }
 
-    const config = redactProcessAiConfigSnapshot(snapshot);
     await this.emitProcChanged(["ai.config"], { aiConfig: config });
     return { ok: true, pid: this.pid, config };
   }
@@ -7517,18 +7516,14 @@ export class Process extends DurableObject<GatewayEnv> {
   }
 
   private buildAiTextGenerateConfig(): AiTextGenerateConfig | undefined {
-    const snapshot = this.store.getAiConfigSnapshot();
-    if (!snapshot) {
+    const processConfig = this.store.getAiConfig();
+    if (!processConfig) {
       return undefined;
     }
     const config: AiTextGenerateConfig = {};
-    if (Object.keys(snapshot.values).length > 0) {
-      config.processOverrides = { ...snapshot.values };
-    }
-    if (snapshot.profile) {
-      config.processProfile = snapshot.profile;
-    }
-    return config.processOverrides || config.processProfile ? config : undefined;
+    if (processConfig.modelId) config.modelId = processConfig.modelId;
+    if (processConfig.reasoning) config.reasoning = processConfig.reasoning;
+    return config;
   }
 
   private recordUnpersistedAssistantUsage(
@@ -8201,23 +8196,17 @@ export class Process extends DurableObject<GatewayEnv> {
   }
 
   private async resolveAiConfig(signal?: AbortSignal): Promise<AiConfigResult> {
-    const snapshot = this.store.getAiConfigSnapshot();
-    return await this.kernelRpc("ai.config", snapshot
+    const processConfig = this.store.getAiConfig();
+    return await this.kernelRpc("ai.config", processConfig
       ? {
-          processOverrides: snapshot.values,
-          processProfile: snapshot.profile ?? null,
+          modelId: processConfig.modelId,
+          reasoning: processConfig.reasoning,
         }
       : {}, signal);
   }
 
   private async resolveAiContext(signal?: AbortSignal): Promise<AiContextResult> {
-    const snapshot = this.store.getAiConfigSnapshot();
-    return await this.kernelRpc("ai.context", snapshot
-      ? {
-          processOverrides: snapshot.values,
-          processProfile: snapshot.profile ?? null,
-        }
-      : {}, signal);
+    return await this.kernelRpc("ai.context", {}, signal);
   }
 
   /**

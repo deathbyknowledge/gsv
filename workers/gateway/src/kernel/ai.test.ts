@@ -170,11 +170,15 @@ function makeContext(
   } as KernelContext;
 }
 
-function attachProcessAiSnapshot(
+function attachProcessAiPreference(
   ctx: KernelContext,
   values: Record<string, string>,
   pid = "proc:test",
-  profile?: { id?: string; name?: string; appliedAt: number },
+  profile: { id?: string; name?: string; appliedAt: number } = {
+    id: "process-model",
+    name: "Process model",
+    appliedAt: 1,
+  },
 ): KernelContext {
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   (ctx as { processId?: string }).processId = pid;
@@ -182,6 +186,23 @@ function attachProcessAiSnapshot(
   (ctx as { procs?: { getOwnerUid: ReturnType<typeof vi.fn> } }).procs = {
     getOwnerUid: vi.fn(() => ctx.identity?.process.uid ?? 1000),
   };
+  const ownerUid = ctx.identity?.process.uid ?? 1000;
+  const modelId = profile.id ?? "process-model";
+  const originalGet = vi.mocked(ctx.config.get).getMockImplementation();
+  vi.mocked(ctx.config.get).mockImplementation((key: string) => {
+    if (key === `users/${ownerUid}/ai/model_profiles`) {
+      return JSON.stringify({
+        profiles: [{
+          id: modelId,
+          name: profile.name ?? modelId,
+          values,
+          createdAt: 1,
+          updatedAt: 1,
+        }],
+      });
+    }
+    return originalGet?.(key) ?? null;
+  });
   sendFrameToProcessMock.mockResolvedValueOnce({
     type: "res",
     id: "proc-ai-config",
@@ -189,12 +210,7 @@ function attachProcessAiSnapshot(
     data: {
       ok: true,
       pid,
-      config: {
-        version: 1,
-        values,
-        ...(profile ? { profile } : undefined),
-        updatedAt: 1,
-      },
+      config: { version: 2, modelId, updatedAt: 1 },
     },
   });
   return ctx;
@@ -895,7 +911,7 @@ describe("handleAiConfig", () => {
     expect(createGenerationServiceMock).toHaveBeenCalledWith({});
   });
 
-  it("generates text with process snapshot config in the kernel", async () => {
+  it("generates text with a stable Process model preference in the kernel", async () => {
     generateMock.mockImplementationOnce(async (request: any) => {
       expect(request.config).toMatchObject({
         executor: { kind: "kernel" },
@@ -926,17 +942,21 @@ describe("handleAiConfig", () => {
       systemPrompt: "Be direct.",
       messages: [{ role: "user", content: "ping" }],
       config: {
-        processOverrides: {
-          "config/ai/provider": "anthropic",
-          "config/ai/model": "claude-process",
-        },
-        processProfile: {
-          id: "fast-stack",
-          name: "Fast Stack",
-          appliedAt: 1,
-        },
+        modelId: "fast-stack",
       },
     }, makeAiConfigContext({
+      "users/1000/ai/model_profiles": JSON.stringify({
+        profiles: [{
+          id: "fast-stack",
+          name: "Fast Stack",
+          values: {
+            "config/ai/provider": "anthropic",
+            "config/ai/model": "claude-process",
+          },
+          createdAt: 1,
+          updatedAt: 1,
+        }],
+      }),
       "users/1000/ai/model_profiles/fast-stack/api_key": "profile-secret",
     }, {
       processId: "task-1",
@@ -1383,7 +1403,7 @@ describe("handleAiConfig", () => {
       ],
     });
     const result = await handleAiConfig({
-      processProfile: { id: "preferred", appliedAt: 1 },
+      modelId: "preferred",
     }, makeAiConfigContext({
       "users/1000/ai/models": stack,
     }));
@@ -1640,9 +1660,9 @@ describe("handleAiConfig", () => {
     expect(result.accountApprovalPolicy).toBe('{"default":"auto","rules":[]}');
   });
 
-  it("prefers process AI config overrides over account and system config", async () => {
+  it("keeps complete request-local validation overrides out of persisted Process config", async () => {
     const result = await handleAiConfig({
-      processOverrides: {
+      overrides: {
         "config/ai/provider": "openai",
         "config/ai/model": "gpt-4.1-mini",
         "config/ai/api_key": "process-chat-key",
@@ -1697,7 +1717,7 @@ describe("handleAiConfig", () => {
 
   it("falls through invalid normalized process config values", async () => {
     const result = await handleAiConfig({
-      processOverrides: {
+      overrides: {
         "config/ai/generation/timeout_ms": "invalid",
         "config/ai/image/read/max_tokens": "invalid",
       },
@@ -1714,17 +1734,21 @@ describe("handleAiConfig", () => {
 
   it("hydrates process profile secrets inside internal AI config resolution", async () => {
     const result = await handleAiConfig({
-      processOverrides: {
-        "config/ai/provider": "openai",
-        "config/ai/model": "gpt-4.1-mini",
-      },
-      processProfile: {
-        id: "fast-stack",
-        name: "Fast Stack",
-        appliedAt: 1,
-      },
+      modelId: "fast-stack",
     }, makeAiConfigContext({
       "users/1000/ai/api_key": "owner-key",
+      "users/1000/ai/model_profiles": JSON.stringify({
+        profiles: [{
+          id: "fast-stack",
+          name: "Fast Stack",
+          values: {
+            "config/ai/provider": "openai",
+            "config/ai/model": "gpt-4.1-mini",
+          },
+          createdAt: 1,
+          updatedAt: 1,
+        }],
+      }),
       "users/1000/ai/model_profiles/fast-stack/api_key": "sk-profile-chat",
       "config/ai/api_key": "system-key",
     }));
@@ -1891,7 +1915,7 @@ describe("handleAiTranscriptionCreate", () => {
   });
 
   it("honors process-local transcription media overrides", async () => {
-    const ctx = attachProcessAiSnapshot(makeTranscriptionContext(), {
+    const ctx = attachProcessAiPreference(makeTranscriptionContext(), {
       "config/ai/transcription/model": "@cf/openai/whisper-large-v3-turbo",
       "config/ai/transcription/max_bytes": "8",
     });
@@ -1908,7 +1932,7 @@ describe("handleAiTranscriptionCreate", () => {
       "proc:test",
       expect.objectContaining({
         call: "proc.ai.config.get",
-        args: { redacted: false },
+        args: {},
       }),
     );
     expect(ctx.env.AI.run).toHaveBeenCalledWith(
@@ -1923,6 +1947,15 @@ describe("handleAiTranscriptionCreate", () => {
       config: {
         "users/2000/ai/transcription/model": "@cf/agent/transcriber",
         "users/1000/ai/transcription/model": "@cf/owner/transcriber",
+        "users/1000/ai/model_profiles": JSON.stringify({
+          profiles: [{
+            id: "process-model",
+            name: "Process model",
+            values: { "config/ai/transcription/model": "@cf/process/transcriber" },
+            createdAt: 1,
+            updatedAt: 1,
+          }],
+        }),
       },
     });
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -1957,10 +1990,8 @@ describe("handleAiTranscriptionCreate", () => {
         ok: true,
         pid: "proc:agent",
         config: {
-          version: 1,
-          values: {
-            "config/ai/transcription/model": "@cf/process/transcriber",
-          },
+          version: 2,
+          modelId: "process-model",
           updatedAt: 1,
         },
       },
@@ -1997,7 +2028,19 @@ describe("handleAiTranscriptionCreate", () => {
   });
 
   it("allows root to use another owner's process configuration", async () => {
-    const ctx = makeTranscriptionContext();
+    const ctx = makeTranscriptionContext({
+      config: {
+        "users/1000/ai/model_profiles": JSON.stringify({
+          profiles: [{
+            id: "root-selected",
+            name: "Root selected",
+            values: { "config/ai/transcription/model": "@cf/root-selected/transcriber" },
+            createdAt: 1,
+            updatedAt: 1,
+          }],
+        }),
+      },
+    });
     ctx.identity!.process.uid = 0;
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     (ctx as { procs: KernelTestValue }).procs = {
@@ -2031,8 +2074,8 @@ describe("handleAiTranscriptionCreate", () => {
         ok: true,
         pid: "proc:other",
         config: {
-          version: 1,
-          values: { "config/ai/transcription/model": "@cf/root-selected/transcriber" },
+          version: 2,
+          modelId: "root-selected",
           updatedAt: 1,
         },
       },
@@ -2261,7 +2304,7 @@ describe("handleAiImageRead", () => {
   });
 
   it("honors resource limits but ignores obsolete image-reader dialect config", async () => {
-    const ctx = attachProcessAiSnapshot(makeImageReadContext({
+    const ctx = attachProcessAiPreference(makeImageReadContext({
       response: {
         objects: [{ x_min: 0.1, y_min: 0.2, x_max: 0.3, y_max: 0.4 }],
       },
@@ -2423,7 +2466,7 @@ describe("handleAiImageGenerate", () => {
   });
 
   it("honors process-local image generation media overrides", async () => {
-    const ctx = attachProcessAiSnapshot(makeImageGenerateContext(), {
+    const ctx = attachProcessAiPreference(makeImageGenerateContext(), {
       "config/ai/image/generation/model": "@cf/black-forest-labs/flux-1-schnell",
     });
 
@@ -2442,7 +2485,7 @@ describe("handleAiImageGenerate", () => {
         headers: { "content-type": "application/json" },
       }),
     );
-    const ctx = attachProcessAiSnapshot(makeImageGenerateContext({
+    const ctx = attachProcessAiPreference(makeImageGenerateContext({
       config: {
         "users/1000/ai/model_profiles/fast-stack/image/generation/api_key": "sk-profile-image",
       },
@@ -2570,7 +2613,7 @@ describe("handleAiSpeechCreate", () => {
   });
 
   it("honors process-local speech media overrides", async () => {
-    const ctx = attachProcessAiSnapshot(makeSpeechContext(), {
+    const ctx = attachProcessAiPreference(makeSpeechContext(), {
       "config/ai/speech/model": "@cf/deepgram/aura-1",
       "config/ai/speech/speaker": "orpheus",
       "config/ai/speech/encoding": "wav",

@@ -10,10 +10,6 @@ import { IconButton } from "../../../components/ui/IconButton";
 import { MessageInput, type MessageInputAttachment } from "../../../components/ui/MessageInput";
 import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
 import { Hint, closeAllTooltips } from "../../../components/ui/Tooltip";
-import {
-  aiProviderDisplayLabel,
-  fixedAiProviderModel,
-} from "../../../domain/aiProviders";
 import type { JSX } from "preact";
 import {
   buildChatAgentViewModel,
@@ -688,12 +684,11 @@ export function ChatDock({
   }, [controlError]);
   const taskCount = activeAgent.tasksTotal > 0 ? activeAgent.tasksTotal : activeAgent.tasks.length;
   const contextLevel = context?.level ? context.level.toUpperCase() : contextPercent === null ? "UNKNOWN" : "ESTIMATED";
-  const processModel = processAiConfig.data?.values["config/ai/model"]?.trim() ?? "";
-  const processProvider = processAiConfig.data?.values["config/ai/provider"]?.trim() ?? "";
-  const currentModelLabel = fixedAiProviderModel(processProvider) === processModel
-    ? aiProviderDisplayLabel(processProvider)
-    : processModel || activeAgent.modelLabel;
-  const processReasoning = processAiConfig.data?.values["config/ai/reasoning"]?.trim() ?? "";
+  const processModel = activeAgent.modelProfiles.find((profile) =>
+    profile.id === processAiConfig.data?.modelId
+  );
+  const currentModelLabel = processModel?.name || activeAgent.modelLabel;
+  const processReasoning = processAiConfig.data?.reasoning?.trim() ?? "";
   const contextReasoning = context?.reasoning?.trim() ?? "";
   const currentReasoningLabel = formatChatReasoningLabel(processReasoning || contextReasoning || activeAgent.reasoningLabel);
   const compactKeepLast = Math.max(1, Math.min(48, Math.floor(runtime.messageCount / 2)));
@@ -915,14 +910,13 @@ export function ChatDock({
     });
   };
 
-  const setProcessAiKey = (key: string, value: string) => {
+  const setProcessReasoning = (reasoning: string) => {
     if (!hasActiveProcess || setProcessAiConfig.isPending) {
       return;
     }
     setProcessAiConfig.mutate({
       pid: activeProcessId,
-      key,
-      value,
+      reasoning,
     });
   };
 
@@ -932,8 +926,7 @@ export function ChatDock({
     }
     setProcessAiConfig.mutate({
       pid: activeProcessId,
-      profileId: profile.id,
-      profileName: profile.name,
+      modelId: profile.id,
     });
   };
 
@@ -1186,7 +1179,7 @@ export function ChatDock({
         }}
         onOpenTaskProcess={openTaskProcess}
         onStartNewTask={prepareNewTask}
-        onSetReasoning={(reasoning) => setProcessAiKey("config/ai/reasoning", reasoning)}
+        onSetReasoning={setProcessReasoning}
       />
 
       {bodyState === "agent" ? (

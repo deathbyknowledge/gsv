@@ -1,17 +1,42 @@
 import { describe, expect, it } from "vitest";
 import {
-  createProcessAiConfigSnapshot,
+  createProcessAiConfig,
+  parseProcessAiConfig,
   parseProcessAiModelProfiles,
 } from "./ai-config";
 
 describe("process ai config", () => {
-  it("keeps fallback model profile in process snapshots", () => {
-    const snapshot = createProcessAiConfigSnapshot({
-      "config/ai/model": "primary-model",
-      "config/ai/fallback_model_profile": "backup-stack",
-    });
+  it("stores only a stable model reference and reasoning preference", () => {
+    const config = createProcessAiConfig({ modelId: "fast", reasoning: "high" }, 123);
 
-    expect(snapshot.values["config/ai/fallback_model_profile"]).toBe("backup-stack");
+    expect(config).toEqual({
+      version: 2,
+      modelId: "fast",
+      reasoning: "high",
+      updatedAt: 123,
+    });
+  });
+
+  it("migrates a legacy snapshot without retaining copied model limits or credentials", () => {
+    const config = parseProcessAiConfig(JSON.stringify({
+      version: 1,
+      values: {
+        "config/ai/provider": "openai",
+        "config/ai/model": "gpt-old",
+        "config/ai/api_key": "secret",
+        "config/ai/max_tokens": "8192",
+        "config/ai/reasoning": "low",
+      },
+      profile: { id: "fast", name: "Fast", appliedAt: 100 },
+      updatedAt: 123,
+    }));
+
+    expect(config).toEqual({
+      version: 2,
+      modelId: "fast",
+      reasoning: "low",
+      updatedAt: 123,
+    });
   });
 
   it("drops fallback model profile from stored model presets", () => {

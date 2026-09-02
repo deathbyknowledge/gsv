@@ -13,7 +13,7 @@
  */
 
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
-import type { FrameBody } from "../protocol/frames";
+import type { FrameBody, ResponseFrame } from "../protocol/frames";
 import type { Context, Message, Tool } from "@earendil-works/pi-ai";
 import {
   bodyFromBytes,
@@ -48,8 +48,6 @@ import type {
   AiTranscriptionCreateArgs,
   AiTranscriptionCreateResult,
   ContextFile,
-  ProcAiConfigGetResult,
-  ProcAiConfigProfileRef,
 } from "@humansandmachines/gsv/protocol";
 import type { ToolDefinition, SyscallName } from "../syscalls";
 import { intoSyscallTool, isRoutableSyscall } from "../syscalls";
@@ -127,10 +125,8 @@ import {
 import {
   findProcessAiModelProfile,
   isProcessAiConfigKey,
-  omitProcessAiConfigSecrets,
   parseProcessAiModelProfiles,
   PROCESS_AI_CONFIG_SECRET_KEYS,
-  processAiModelProfileSecretConfigKey,
 } from "../process/ai-config";
 import { raceWithAbort } from "../shared/abort";
 import { sendFrameToProcess } from "../shared/utils";
@@ -235,13 +231,14 @@ export async function handleAiContext(
   const uid = ctx.identity?.process.uid ?? 0;
   const owner = resolveOwnerIdentity(ctx);
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
-  const processOverrides = resolveEffectiveAiProcessOverrides(
+  const requestOverrides = resolveEffectiveAiProcessOverrides(
     ctx,
     uid,
     owner,
-    args.processOverrides,
-    args.processProfile,
+    args.overrides,
+    args.modelId,
   );
+  const processOverrides = withAiReasoningOverride(requestOverrides, args.reasoning);
   const accountProfileOverrides = resolveAiAccountProfileOverrides(config, accountConfigUids);
   const resolveConfig = createAiConfigValueResolver(
     config,
@@ -285,13 +282,14 @@ export async function handleAiConfig(
   const builtinSkillsReady = ensureBuiltinSkillsForPrompt(ctx, owner);
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
   const input = args;
-  const processOverrides = resolveEffectiveAiProcessOverrides(
+  const requestOverrides = resolveEffectiveAiProcessOverrides(
     ctx,
     uid,
     owner,
-    input.processOverrides,
-    input.processProfile,
+    input.overrides,
+    input.modelId,
   );
+  const processOverrides = withAiReasoningOverride(requestOverrides, input.reasoning);
   const accountProfileOverrides = resolveAiAccountProfileOverrides(config, accountConfigUids);
   const resolveConfig = createAiConfigValueResolver(
     config,
@@ -306,7 +304,7 @@ export async function handleAiConfig(
     accountUids: accountConfigUids,
     accountProfileOverrides,
     processOverrides,
-    processProfile: input.processProfile,
+    processModelId: input.modelId,
   });
   const primary = textModels.primary;
 
@@ -720,23 +718,15 @@ async function resolveAiTextGenerationConfig(
   input: AiTextGenerateConfig | undefined,
   ctx: KernelContext,
 ): Promise<AiConfigResult> {
-  const overrides = {
-    ...normalizeAiProcessOverrideValues(input?.processOverrides ?? {}),
-    ...normalizeAiProcessOverrideValues(input?.overrides ?? {}, { preserveEmpty: true }),
-  };
-  const processProfile = input?.processProfile;
+  const overrides = normalizeAiProcessOverrideValues(input?.overrides ?? {}, { preserveEmpty: true });
   const preset = input?.preset;
   if (!preset) {
     return withAiTextExecutor(
-      await handleAiConfig(
-        Object.keys(overrides).length > 0 || processProfile
-          ? {
-              processOverrides: overrides,
-              processProfile: processProfile ?? null,
-            }
-          : {},
-        ctx,
-      ),
+      await handleAiConfig({
+        ...(Object.keys(overrides).length > 0 ? { overrides } : undefined),
+        ...(input?.modelId ? { modelId: input.modelId } : undefined),
+        ...(input?.reasoning ? { reasoning: input.reasoning } : undefined),
+      }, ctx),
       { kind: "kernel" },
     );
   }
@@ -749,6 +739,19 @@ async function resolveAiTextGenerationConfig(
   const uid = ctx.identity?.process.uid ?? 0;
   const owner = resolveOwnerIdentity(ctx);
   const ownerUid = resolveAiProfileOwnerUid(ctx, uid, owner);
+  const stored = resolveStoredAiModelStack(ctx, ownerUid, resolveAiConfigAccountUids(uid, owner));
+  const storedModel = stored?.stack.models.find((candidate) =>
+    candidate.id.toLowerCase() === selector.toLowerCase() ||
+    candidate.name.toLowerCase() === selector.toLowerCase()
+  );
+  if (storedModel) {
+    const config = await handleAiConfig({
+      modelId: storedModel.id,
+      ...(Object.keys(overrides).length > 0 ? { overrides } : undefined),
+      ...(input?.reasoning ? { reasoning: input.reasoning } : undefined),
+    }, ctx);
+    return withAiTextExecutor(config, { kind: "kernel" });
+  }
   const profile = findProcessAiModelProfile(
     ctx.config.get(`users/${ownerUid}/ai/model_profiles`),
     ownerUid,
@@ -759,15 +762,9 @@ async function resolveAiTextGenerationConfig(
   }
 
   const config = await handleAiConfig({
-    processOverrides: {
-      ...omitProcessAiConfigSecrets(profile.values),
-      ...overrides,
-    },
-    processProfile: {
-      id: profile.id,
-      name: profile.name,
-      appliedAt: Date.now(),
-    },
+    modelId: profile.id,
+    ...(Object.keys(overrides).length > 0 ? { overrides } : undefined),
+    ...(input?.reasoning ? { reasoning: input.reasoning } : undefined),
   }, ctx);
   return withAiTextExecutor(config, { kind: "kernel" });
 }
@@ -988,7 +985,7 @@ async function resolveAiTextModelStack(options: {
   accountUids: number[];
   accountProfileOverrides: AiAccountProfileOverrides;
   processOverrides: AiConfigValues;
-  processProfile: ProcAiConfigProfileRef | null | undefined;
+  processModelId: string | null | undefined;
 }): Promise<ResolvedAiTextModelStack> {
   const stored = resolveStoredAiModelStack(
     options.ctx,
@@ -1067,7 +1064,7 @@ async function resolveStoredAiTextModelStack(
     accountUids: number[];
     accountProfileOverrides: AiAccountProfileOverrides;
     processOverrides: AiConfigValues;
-    processProfile: ProcAiConfigProfileRef | null | undefined;
+    processModelId: string | null | undefined;
   },
   stored: StoredAiModelStack,
 ): Promise<ResolvedAiTextModelStack> {
@@ -1077,7 +1074,7 @@ async function resolveStoredAiTextModelStack(
     new Map(),
     options.processOverrides,
   );
-  const preferredModelId = normalizeOptionalString(options.processProfile?.id)
+  const preferredModelId = normalizeOptionalString(options.processModelId)
     ?? normalizeOptionalString(options.ctx.config.getExplicit(`users/${options.uid}/ai/preferred_model`))
     ?? normalizeOptionalString(options.ctx.config.getExplicit(`users/${options.uid}/ai/model_profile`));
   const models = orderAiModelStack(stored.stack, preferredModelId);
@@ -1506,7 +1503,7 @@ async function resolveAiMediaContext(ctx: KernelContext): Promise<{
   const uid = ctx.identity?.process.uid ?? 0;
   const owner = resolveOwnerIdentity(ctx);
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
-  const processOverrides = await resolveAiProcessOverridesForContext(ctx, uid, owner);
+  const processOverrides = await resolveAiProcessModelOverridesForContext(ctx, uid, owner);
   const accountProfileOverrides = resolveAiAccountProfileOverrides(ctx.config, accountConfigUids);
   const apiKey =
     resolveAiProcessConfigValue(processOverrides, "api_key") ??
@@ -1521,7 +1518,7 @@ async function resolveAiMediaContext(ctx: KernelContext): Promise<{
   };
 }
 
-async function resolveAiProcessOverridesForContext(
+async function resolveAiProcessModelOverridesForContext(
   ctx: KernelContext,
   uid: number,
   owner: ProcessIdentity | null,
@@ -1529,15 +1526,14 @@ async function resolveAiProcessOverridesForContext(
   if (!ctx.processId) {
     return {};
   }
-
-  let frame: Awaited<ReturnType<typeof sendFrameToProcess>>;
+  let frame: ResponseFrame<"proc.ai.config.get"> | null;
   try {
     frame = await raceWithAbort(
       sendFrameToProcess(ctx.installationId, ctx.processId, {
         type: "req",
         id: crypto.randomUUID(),
         call: "proc.ai.config.get",
-        args: { redacted: false },
+        args: {},
       }),
       ctx.requestSignal,
     );
@@ -1550,38 +1546,48 @@ async function resolveAiProcessOverridesForContext(
   if (!frame || frame.type !== "res" || !frame.ok) {
     return {};
   }
-
-  // SAFETY: proc.ai.config.get returns the typed result for this exact internal request.
-  const result = frame.data as ProcAiConfigGetResult;
-  if (!result.ok || !result.config) {
-    return {};
-  }
-  return resolveEffectiveAiProcessOverrides(
-    ctx,
-    uid,
-    owner,
-    result.config.values,
-    result.config.profile,
-  );
+  const result = frame.data;
+  return result?.ok && result.config?.modelId
+    ? resolveEffectiveAiProcessOverrides(ctx, uid, owner, {}, result.config.modelId)
+    : {};
 }
 
 function resolveEffectiveAiProcessOverrides(
   ctx: KernelContext,
   uid: number,
   owner: ProcessIdentity | null,
-  processOverrides: AiConfigValues | undefined,
-  processProfile: ProcAiConfigProfileRef | null | undefined,
+  requestOverrides: AiConfigValues | undefined,
+  modelId: string | null | undefined,
 ): AiConfigValues {
-  const profileSecretOverrides = resolveAiProfileSecretOverrides(
-    ctx.config,
-    resolveAiProfileOwnerUid(ctx, uid, owner),
-    processProfile,
+  const ownerUid = resolveAiProfileOwnerUid(ctx, uid, owner);
+  const selector = normalizeOptionalString(modelId);
+  const hasCanonicalOwnerStack = ctx.config.getExplicit(userAiModelsConfigKey(ownerUid)) !== null;
+  const profile = selector && !hasCanonicalOwnerStack
+    ? findProcessAiModelProfile(
+        ctx.config.get(`users/${ownerUid}/ai/model_profiles`),
+        ownerUid,
+        selector,
+        (key) => ctx.config.get(key),
+      )
+    : null;
+  const normalizedOverrides = normalizeAiProcessOverrideValues(
+    requestOverrides ?? {},
+    { preserveEmpty: true },
   );
-  const normalizedOverrides = normalizeAiProcessOverrideValues(processOverrides ?? {});
   return {
-    ...profileSecretOverrides,
+    ...profile?.values,
     ...normalizedOverrides,
   };
+}
+
+function withAiReasoningOverride(
+  overrides: AiConfigValues,
+  reasoning: string | null | undefined,
+): AiConfigValues {
+  const normalized = normalizeOptionalString(reasoning);
+  return normalized
+    ? { ...overrides, "config/ai/reasoning": normalized }
+    : overrides;
 }
 
 function resolveAiAccountProfileOverrides(
@@ -1673,27 +1679,6 @@ function resolveAiProfileOwnerUid(
     }
   }
   return uid;
-}
-
-function resolveAiProfileSecretOverrides(
-  config: KernelContext["config"],
-  ownerUid: number,
-  profile: ProcAiConfigProfileRef | null | undefined,
-): AiConfigValues {
-  const profileId = normalizeOptionalString(profile?.id);
-  if (!profileId) {
-    return {};
-  }
-  const values: AiConfigValues = {};
-  for (const key of PROCESS_AI_CONFIG_SECRET_KEYS) {
-    const value = normalizeOptionalString(
-      config.get(processAiModelProfileSecretConfigKey(ownerUid, profileId, key)),
-    );
-    if (value) {
-      values[key] = value;
-    }
-  }
-  return values;
 }
 
 function resolveAiMediaConfig(

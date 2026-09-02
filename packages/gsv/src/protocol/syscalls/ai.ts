@@ -1,5 +1,4 @@
 import type { ProcessIdentity } from "./system";
-import type { ProcAiConfigProfileRef } from "./proc";
 import type { JsonObject } from "../json";
 
 export type ToolDefinition = {
@@ -77,8 +76,12 @@ export type AiModelStack = {
 };
 
 export type AiConfigArgs = {
-  processOverrides?: Record<string, string>;
-  processProfile?: ProcAiConfigProfileRef | null;
+  /** Request-local complete-field overrides, used by model validation. */
+  overrides?: Record<string, string>;
+  /** Stable model entry preference; it only reorders the owner's stack. */
+  modelId?: string;
+  /** Request or Process-local reasoning preference. */
+  reasoning?: string;
 };
 
 export type ContextFile = {
@@ -279,8 +282,8 @@ export type AiTextGenerateConfig = {
     name?: string;
   };
   overrides?: Record<string, string>;
-  processOverrides?: Record<string, string>;
-  processProfile?: ProcAiConfigProfileRef | null;
+  modelId?: string;
+  reasoning?: string;
 };
 
 export type AiTextGenerateArgs = {

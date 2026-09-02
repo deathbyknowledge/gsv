@@ -250,6 +250,15 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     ["config/ai/api_key", "sk-system"],
     ["config/ai/image/read/max_objects", "150"],
     ["config/ai/speech/provider", "workers-ai"],
+    ["users/1000/ai/models", JSON.stringify({
+      version: 1,
+      models: [{
+        id: "fast-stack",
+        name: "Fast Stack",
+        provider: "openai",
+        model: "gpt-4.1-mini",
+      }],
+    })],
     ["users/1000/ai/model_profiles", JSON.stringify({
       version: 1,
       profiles: [
@@ -326,6 +335,9 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     caps: null /* SAFETY: unused fixture store. */ as never,
     config: {
       get(key: string) {
+        return configEntries.get(key) ?? null;
+      },
+      getExplicit(key: string) {
         return configEntries.get(key) ?? null;
       },
       set(key: string, value: string) {
@@ -406,30 +418,16 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
           processAiConfig = null;
           return { ok: true, pid, config: null };
         }
-        if ("values" in args && args.values) {
-          processAiConfig = {
-            version: 1,
-            values: { ...args.values },
-            updatedAt: now,
-          };
-          if (args.profile) {
-            processAiConfig.profile = { ...args.profile, appliedAt: now };
-          }
-          return { ok: true, pid, config: processAiConfig };
-        }
-        if ("key" in args && args.key) {
-          const values = { ...processAiConfig?.values };
-          const value = String(args.value ?? "").trim();
-          if (value) {
-            values[args.key] = value;
-          } else {
-            delete values[args.key];
-          }
-          processAiConfig = Object.keys(values).length > 0
-            ? { version: 1, values, updatedAt: now }
-            : null;
-          return { ok: true, pid, config: processAiConfig };
-        }
+        const modelId = args.modelId === undefined
+          ? processAiConfig?.modelId
+          : args.modelId || undefined;
+        const reasoning = args.reasoning === undefined
+          ? processAiConfig?.reasoning
+          : args.reasoning || undefined;
+        processAiConfig = modelId || reasoning
+          ? { version: 2, modelId, reasoning, updatedAt: now }
+          : null;
+        return { ok: true, pid, config: processAiConfig };
       }
       if (call === "proc.history") {
         const offset = Number(args?.offset ?? 0);
@@ -1284,78 +1282,47 @@ describe("GsvFs Linux-like runtime views", () => {
     await expect(fs.readdir("/proc/task-foreign")).rejects.toThrow("ENOENT");
   });
 
-  it("applies process-local AI profiles through /proc with redacted reads", async () => {
+  it("applies Process model and reasoning preferences through /proc", async () => {
     const fs = makeRuntimeViewFs(SAM, "task-alpha");
 
     await expect(fs.readdir("/proc/task-alpha/ai")).resolves.toEqual([
-      "api_key",
-      "base_url",
-      "context_window_tokens",
       "effective.json",
-      "fallback_model_profile",
-      "generation",
-      "image",
       "local.json",
-      "max_context_bytes",
-      "max_tokens",
       "model",
-      "profile",
-      "profiles",
-      "provider",
-      "provider_style",
+      "models",
       "reasoning",
-      "speech",
-      "transcription",
-      "transport_target",
-    ]);
-    await expect(fs.readdir("/proc/task-alpha/ai/image/read")).resolves.toEqual([
-      "max_bytes",
-      "max_objects",
-      "max_tokens",
-      "timeout_ms",
     ]);
 
-    const profiles = JSON.parse(await fs.readFile("/proc/task-alpha/ai/profiles"));
-    expect(profiles).toHaveLength(1);
-    expect(profiles[0]).toMatchObject({
+    const models = JSON.parse(await fs.readFile("/proc/task-alpha/ai/models"));
+    expect(models).toHaveLength(1);
+    expect(models[0]).toMatchObject({
       id: "fast-stack",
       name: "Fast Stack",
-      values: {
-        "config/ai/api_key": "redacted",
-        "config/ai/model": "gpt-4.1-mini",
-      },
+      provider: "openai",
+      model: "gpt-4.1-mini",
     });
 
-    await fs.writeFile("/proc/task-alpha/ai/profile", "fast-stack");
+    await fs.writeFile("/proc/task-alpha/ai/model", "fast-stack");
+    await fs.writeFile("/proc/task-alpha/ai/reasoning", "high");
 
-    await expect(fs.readFile("/proc/task-alpha/ai/profile")).resolves.toBe("Fast Stack\n");
-    await expect(fs.readFile("/proc/task-alpha/ai/provider")).resolves.toBe("openai\n");
-    await expect(fs.readFile("/proc/task-alpha/ai/model")).resolves.toBe("gpt-4.1-mini\n");
-    await expect(fs.readFile("/proc/task-alpha/ai/api_key")).resolves.toBe("redacted\n");
+    await expect(fs.readFile("/proc/task-alpha/ai/model")).resolves.toBe("fast-stack\n");
+    await expect(fs.readFile("/proc/task-alpha/ai/reasoning")).resolves.toBe("high\n");
 
     const local = JSON.parse(await fs.readFile("/proc/task-alpha/ai/local.json"));
     expect(local).toMatchObject({
-      profile: { id: "fast-stack", name: "Fast Stack" },
-      values: {
-        "config/ai/provider": "openai",
-        "config/ai/model": "gpt-4.1-mini",
-      },
+      version: 2,
+      modelId: "fast-stack",
+      reasoning: "high",
     });
-    expect(local.values).not.toHaveProperty("config/ai/api_key");
 
     const effective = JSON.parse(await fs.readFile("/proc/task-alpha/ai/effective.json"));
-    expect(effective.values).toMatchObject({
-      "config/ai/provider": "openai",
-      "config/ai/model": "gpt-4.1-mini",
-      "config/ai/api_key": "redacted",
+    expect(effective).toEqual({
+      modelId: "fast-stack",
+      reasoning: "high",
     });
 
-    await fs.writeFile("/proc/task-alpha/ai/model", "gpt-4.2");
-    await expect(fs.readFile("/proc/task-alpha/ai/model")).resolves.toBe("gpt-4.2\n");
-    await expect(fs.readFile("/proc/task-alpha/ai/profile")).resolves.toBe("\n");
-
     await fs.writeFile("/proc/task-alpha/ai/model", "");
-    await expect(fs.readFile("/proc/task-alpha/ai/model")).resolves.toBe("@cf/system/model\n");
+    await expect(fs.readFile("/proc/task-alpha/ai/model")).resolves.toBe("\n");
   });
 
   it("exposes crontabs and scheduler run history under /var", async () => {

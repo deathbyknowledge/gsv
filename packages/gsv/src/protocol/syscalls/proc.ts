@@ -374,29 +374,24 @@ export type ProcContextState = {
   updatedAt: number;
 };
 
-export type ProcAiConfigProfileRef = {
-  id?: string;
-  name?: string;
-  appliedAt: number;
-};
-
-export type ProcAiConfigSnapshot = {
-  version: 1;
-  values: Record<string, string>;
-  profile?: ProcAiConfigProfileRef;
+export type ProcAiConfig = {
+  version: 2;
+  /** Stable id in the owning human's ordered model stack. */
+  modelId?: string;
+  /** Process-local reasoning preference; omitted to inherit the agent/account setting. */
+  reasoning?: string;
   updatedAt: number;
 };
 
 export type ProcAiConfigGetArgs = {
   pid?: string;
-  redacted?: boolean;
 };
 
 export type ProcAiConfigGetResult =
   | {
       ok: true;
       pid: string;
-      config: ProcAiConfigSnapshot | null;
+      config: ProcAiConfig | null;
     }
   | { ok: false; error: string };
 
@@ -407,33 +402,15 @@ export type ProcAiConfigSetArgs =
     }
   | {
       pid?: string;
-      profileId: string;
-      profileName?: string;
-    }
-  | {
-      pid?: string;
-      profileName: string;
-      profileId?: string;
-    }
-  | {
-      pid?: string;
-      values: Record<string, string>;
-      profile?: {
-        id?: string;
-        name?: string;
-      };
-    }
-  | {
-      pid?: string;
-      key: string;
-      value: string;
+      modelId?: string | null;
+      reasoning?: string | null;
     };
 
 export type ProcAiConfigSetResult =
   | {
       ok: true;
       pid: string;
-      config: ProcAiConfigSnapshot | null;
+      config: ProcAiConfig | null;
     }
   | { ok: false; error: string };
 

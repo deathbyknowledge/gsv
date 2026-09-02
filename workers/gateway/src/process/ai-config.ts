@@ -1,11 +1,11 @@
 import type {
   JsonValue,
-  ProcAiConfigProfileRef,
-  ProcAiConfigSnapshot,
+  ProcAiConfig,
 } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 
-export const PROCESS_AI_CONFIG_STORE_KEY = "aiConfigSnapshot";
+export const PROCESS_AI_CONFIG_STORE_KEY = "aiConfig";
+export const LEGACY_PROCESS_AI_CONFIG_STORE_KEY = "aiConfigSnapshot";
 export const PROCESS_AI_CONFIG_KEY_PREFIX = "config/ai/";
 
 export const PROCESS_AI_CONFIG_KEYS = [
@@ -54,22 +54,25 @@ export const PROCESS_AI_CONFIG_SECRET_KEYS = new Set<string>(
 export type ProcessAiModelProfile = {
   id: string;
   name: string;
-  values: ProcAiConfigSnapshot["values"];
+  values: Record<string, string>;
   createdAt: number;
   updatedAt: number;
 };
 
-type ProcessAiConfigValues = ProcAiConfigSnapshot["values"];
-type ProcessAiProfileInput = {
-  id?: JsonValue;
-  name?: JsonValue;
-  appliedAt?: JsonValue;
-};
+interface ProcessAiConfigValues {
+  [key: string]: string;
+}
 
 const positiveTimestampSchema = z.number().finite().positive();
 const processAiJsonValueSchema: z.ZodType<JsonValue> = z.json();
 const processAiJsonObjectSchema = z.record(z.string(), processAiJsonValueSchema);
-const storedProcessAiConfigSnapshotSchema = z.object({
+const storedProcessAiConfigSchema = z.object({
+  version: z.literal(2),
+  modelId: processAiJsonValueSchema.optional(),
+  reasoning: processAiJsonValueSchema.optional(),
+  updatedAt: positiveTimestampSchema.optional().catch(undefined),
+}).passthrough();
+const legacyProcessAiConfigSnapshotSchema = z.object({
   values: processAiJsonObjectSchema.optional().catch(undefined),
   updatedAt: positiveTimestampSchema.optional().catch(undefined),
   profile: z.object({
@@ -92,8 +95,9 @@ const storedProcessAiModelProfilesSchema = z.object({
 const PROCESS_AI_ROOT_FILES = [
   "effective.json",
   "local.json",
-  "profile",
-  "profiles",
+  "model",
+  "models",
+  "reasoning",
 ] as const;
 
 export function isProcessAiConfigKey(key: string): boolean {
@@ -116,29 +120,7 @@ export function processAiPathToConfigKey(parts: string[]): string | null {
 }
 
 export function processAiConfigDirEntries(parts: string[] = []): string[] {
-  const prefix = parts.filter(Boolean).join("/");
-  const prefixWithSlash = prefix ? `${prefix}/` : "";
-  const entries = new Set<string>();
-
-  if (!prefix) {
-    for (const entry of PROCESS_AI_ROOT_FILES) {
-      entries.add(entry);
-    }
-  }
-
-  for (const key of PROCESS_AI_CONFIG_KEYS) {
-    const suffix = processAiConfigSuffix(key);
-    if (prefix && !suffix.startsWith(prefixWithSlash)) {
-      continue;
-    }
-    const rest = prefix ? suffix.slice(prefixWithSlash.length) : suffix;
-    const child = rest.split("/")[0];
-    if (child) {
-      entries.add(child);
-    }
-  }
-
-  return [...entries].sort();
+  return parts.filter(Boolean).length === 0 ? [...PROCESS_AI_ROOT_FILES].sort() : [];
 }
 
 export function normalizeProcessAiConfigValues(
@@ -158,52 +140,46 @@ export function normalizeProcessAiConfigValues(
   return values;
 }
 
-export function createProcessAiConfigSnapshot(
-  values: ProcessAiConfigValues,
-  profile?: Pick<ProcAiConfigProfileRef, "id" | "name">,
+export function createProcessAiConfig(
+  input: { modelId?: string | null; reasoning?: string | null },
   now = Date.now(),
-): ProcAiConfigSnapshot {
-  const snapshot: ProcAiConfigSnapshot = {
-    version: 1,
-    values: normalizeProcessAiConfigValues(values),
+): ProcAiConfig | null {
+  const modelId = normalizeProcessAiModelId(input.modelId);
+  const reasoning = normalizeProcessAiReasoning(input.reasoning);
+  if (!modelId && !reasoning) {
+    return null;
+  }
+  const config: ProcAiConfig = {
+    version: 2,
     updatedAt: now,
   };
-  const profileRef = normalizeProfileRef(profile, now);
-  if (profileRef) {
-    snapshot.profile = profileRef;
-  }
-  return snapshot;
+  if (modelId) config.modelId = modelId;
+  if (reasoning) config.reasoning = reasoning;
+  return config;
 }
 
-export function parseProcessAiConfigSnapshot(raw: string): ProcAiConfigSnapshot | null {
-  const parsed = storedProcessAiConfigSnapshotSchema.safeParse(JSON.parse(raw));
-  if (!parsed.success) {
+export function parseProcessAiConfig(raw: string): ProcAiConfig | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
     return null;
   }
-  const values = parsed.data.values
-    ? normalizeProcessAiConfigValues(parsed.data.values)
-    : {};
-  const updatedAt = parsed.data.updatedAt ?? Date.now();
-  const snapshot: ProcAiConfigSnapshot = {
-    version: 1,
-    values,
-    updatedAt,
-  };
-  const profile = normalizeProfileRef(parsed.data.profile, updatedAt);
-  if (profile) {
-    snapshot.profile = profile;
+  const current = storedProcessAiConfigSchema.safeParse(value);
+  if (current.success) {
+    return createProcessAiConfig({
+      modelId: normalizeOptionalText(current.data.modelId),
+      reasoning: normalizeOptionalText(current.data.reasoning),
+    }, current.data.updatedAt ?? Date.now());
   }
-  return snapshot;
-}
-
-export function redactProcessAiConfigSnapshot(snapshot: ProcAiConfigSnapshot | null): ProcAiConfigSnapshot | null {
-  if (!snapshot) {
+  const legacy = legacyProcessAiConfigSnapshotSchema.safeParse(value);
+  if (!legacy.success) {
     return null;
   }
-  return {
-    ...snapshot,
-    values: redactProcessAiConfigValues(snapshot.values),
-  };
+  return createProcessAiConfig({
+    modelId: normalizeOptionalText(legacy.data.profile?.id),
+    reasoning: normalizeOptionalText(legacy.data.values?.["config/ai/reasoning"]),
+  }, legacy.data.updatedAt ?? Date.now());
 }
 
 export function redactProcessAiConfigValues(values: ProcessAiConfigValues): ProcessAiConfigValues {
@@ -231,22 +207,23 @@ export function redactProcessAiConfigValue(key: string, value: string | null | u
   return PROCESS_AI_CONFIG_SECRET_KEYS.has(key) ? "redacted" : value;
 }
 
-function normalizeProfileRef(
-  raw: ProcessAiProfileInput | undefined,
-  fallbackAppliedAt: number,
-): ProcAiConfigProfileRef | null {
-  const id = normalizeOptionalText(raw?.id);
-  const name = normalizeOptionalText(raw?.name);
-  if (!id && !name) {
-    return null;
-  }
-  const appliedAt = positiveTimestampSchema.safeParse(raw?.appliedAt);
-  const profile: ProcAiConfigProfileRef = {
-    appliedAt: appliedAt.success ? appliedAt.data : fallbackAppliedAt,
-  };
-  if (id) profile.id = id;
-  if (name) profile.name = name;
-  return profile;
+export function normalizeProcessAiModelId(value: string | null | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized && /^[a-z0-9][a-z0-9_-]{0,79}$/.test(normalized)
+    ? normalized
+    : undefined;
+}
+
+export function normalizeProcessAiReasoning(value: string | null | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "off" ||
+      normalized === "minimal" ||
+      normalized === "low" ||
+      normalized === "medium" ||
+      normalized === "high" ||
+      normalized === "xhigh"
+    ? normalized
+    : undefined;
 }
 
 function normalizeOptionalText(value: JsonValue | undefined): string | undefined {

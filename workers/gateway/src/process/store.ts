@@ -13,7 +13,7 @@ import type { SyscallName } from "../syscalls";
 import type {
   JsonObject,
   JsonValue,
-  ProcAiConfigSnapshot,
+  ProcAiConfig,
   ProcContextState,
   ProcMessageMetadata,
   ProcMessageModelMetadata,
@@ -53,8 +53,9 @@ import {
   type ProcessHistorySegmentRecord,
 } from "./history";
 import {
+  LEGACY_PROCESS_AI_CONFIG_STORE_KEY,
   PROCESS_AI_CONFIG_STORE_KEY,
-  parseProcessAiConfigSnapshot,
+  parseProcessAiConfig,
 } from "./ai-config";
 import { materializeLegacyToolResultImages } from "./tool-result-media";
 import { z } from "zod";
@@ -1434,24 +1435,34 @@ export class ProcessStore {
     this.sql.exec("DELETE FROM process_kv WHERE key = ?", key);
   }
 
-  getAiConfigSnapshot(): ProcAiConfigSnapshot | null {
-    const raw = this.getValue(PROCESS_AI_CONFIG_STORE_KEY);
+  getAiConfig(): ProcAiConfig | null {
+    const current = this.getValue(PROCESS_AI_CONFIG_STORE_KEY);
+    const legacy = current ? null : this.getValue(LEGACY_PROCESS_AI_CONFIG_STORE_KEY);
+    const raw = current ?? legacy;
     if (!raw) {
       return null;
     }
     try {
-      return parseProcessAiConfigSnapshot(raw);
+      const config = parseProcessAiConfig(raw);
+      if (legacy) {
+        if (config) {
+          this.setAiConfig(config);
+        }
+        this.deleteValue(LEGACY_PROCESS_AI_CONFIG_STORE_KEY);
+      }
+      return config;
     } catch {
       return null;
     }
   }
 
-  setAiConfigSnapshot(snapshot: ProcAiConfigSnapshot): void {
-    this.setValue(PROCESS_AI_CONFIG_STORE_KEY, JSON.stringify(snapshot));
+  setAiConfig(config: ProcAiConfig): void {
+    this.setValue(PROCESS_AI_CONFIG_STORE_KEY, JSON.stringify(config));
   }
 
-  clearAiConfigSnapshot(): void {
+  clearAiConfig(): void {
     this.deleteValue(PROCESS_AI_CONFIG_STORE_KEY);
+    this.deleteValue(LEGACY_PROCESS_AI_CONFIG_STORE_KEY);
   }
 
   getContextState(): ProcContextState | null {
