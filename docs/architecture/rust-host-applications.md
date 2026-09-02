@@ -75,6 +75,16 @@ shell input share a bounded client-side recall history through Up/Down or
 `Ctrl+P`/`Ctrl+N`; Page Up/Down scrolls the transcript. Typing is the default
 interaction; `--vim` or `Alt+V` enables an optional browse mode without changing
 the beginner key map. Escape changes editing mode without removing the prompt.
+An in-document block cursor blinks while a request is being admitted, Ship is
+thinking, a file listing is loading, or output is streaming; streamed text owns
+the cursor until its run completes. The native backend schedules redraws only
+while one of those states is active. Tool start and finish signals project a
+bounded action trail directly under the matching command. Live actions are
+expanded, then fold into one quiet count when the run finishes; `Alt+A` toggles
+the selected run. Startup restores the same safe projection from the existing
+`proc.trace` syscall. It admits only the tool name, syscall, target, and outcome:
+tool arguments, results, raw Process output, and reasoning never enter this
+presentation state.
 The document consumes the live terminal width and recomputes wrapping and media
 geometry after every resize. Incremental scrolling treats each image as one
 atomic stop, while page scrolling snaps away from partially visible images.
@@ -101,7 +111,10 @@ underlined `@filename` token, keeps multiple selections independently editable,
 and sends their structured references through the established
 `conversation.send.media` field. The gateway remains responsible for retaining
 those revisions before it commits the canonical Message. Plain path text never
-becomes an attachment implicitly.
+becomes an attachment implicitly. When a committed human Message contains one
+of those structured references, its `@filename` anchor remains inline and
+image, audio, or video content renders once immediately after the command.
+Document references remain inline-only, avoiding a duplicate metadata row.
 
 `Tab` switches the same draft between Ship mode and literal shell mode. The
 latter is visibly marked as `user@target $ ! command`; `@` remains ordinary
@@ -112,8 +125,9 @@ output chunk, and polls an existing `sessionId` until its terminal result.
 Direct shell moments are client-local and are not canonical conversation
 messages. Text-only Ship input remains an unchanged `conversation.send`
 request. File references use existing syscalls and the existing media field,
-with no target extension or gateway schema change, so the client stays
-compatible with an existing gateway deployment. The Kernel independently
+and action restoration uses the existing `proc.trace` syscall, with no target
+extension or gateway schema change, so the client stays compatible with an
+existing gateway deployment. The Kernel independently
 enforces target visibility and the caller's grant for each target operation; a
 presentation choice never grants authority.
 

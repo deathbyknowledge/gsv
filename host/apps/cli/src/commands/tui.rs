@@ -17,13 +17,14 @@ use gsv::kernel_client::{
 };
 use gsv::protocol::Frame;
 use gsv_tui_core::{
-    Action, App, Approval, ApprovalDecision, Artifact, CapabilityEnvironment, ConnectionState,
-    Effect, FileEntry, FileReference, MediaKind, Moment, Role, Theme,
+    Action, AgentActionSnapshot, App, Approval, ApprovalDecision, Artifact, CapabilityEnvironment,
+    ConnectionState, Effect, FileEntry, FileReference, MediaKind, Moment, Role, Theme,
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
+use tokio::time::MissedTickBehavior;
 
 use super::chat::{implicit_personal_owner_uid, personal_process_id};
 
@@ -86,6 +87,9 @@ enum RuntimeEvent {
     FileOperationFailed {
         request_id: u64,
         error: String,
+    },
+    ActionHistoryLoaded {
+        actions: Vec<AgentActionSnapshot>,
     },
 }
 
@@ -216,6 +220,23 @@ async fn run_interface(
         return Err("The GSV interface needs an interactive terminal".into());
     }
     app.set_theme(Theme::Terminal);
+    if let Some(session) = session.as_ref() {
+        let client = Arc::clone(&session.client);
+        let pid = session.pid.clone();
+        let sender = runtime_sender.clone();
+        let handle = tokio::spawn(async move {
+            if let Ok(payload) = client
+                .request_ok("proc.trace", Some(json!({ "pid": pid, "limit": 1_000 })))
+                .await
+            {
+                let actions = trace_actions(&payload);
+                if !actions.is_empty() {
+                    let _ = sender.send(RuntimeEvent::ActionHistoryLoaded { actions });
+                }
+            }
+        });
+        drop(handle);
+    }
 
     enable_raw_mode()?;
     let _restore = TerminalRestore;
@@ -228,8 +249,19 @@ async fn run_interface(
     terminal.clear()?;
     let mut terminal_events = EventStream::new();
     let mut insert_cursor = false;
+    let mut activity_phase = true;
+    let mut animation_active = app.animation_active();
+    let mut animation_tick = tokio::time::interval(Duration::from_millis(480));
+    animation_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    animation_tick.reset();
 
     loop {
+        let next_animation_active = app.animation_active();
+        if next_animation_active && !animation_active {
+            activity_phase = true;
+            animation_tick.reset();
+        }
+        animation_active = next_animation_active;
         let next_insert_cursor = app.cursor_visible();
         if insert_cursor != next_insert_cursor {
             let style = if next_insert_cursor {
@@ -241,7 +273,7 @@ async fn run_interface(
             insert_cursor = next_insert_cursor;
         }
         terminal.draw(|frame| {
-            app.render(frame);
+            app.render_with_animation(frame, activity_phase);
             image_manager.render(frame, app.media_slots());
         })?;
         image_manager.synchronize(
@@ -272,6 +304,9 @@ async fn run_interface(
                 apply_runtime_event(&mut app, event, session.as_ref());
             }
             () = image_manager.next_event() => {}
+            _ = animation_tick.tick(), if animation_active => {
+                activity_phase = !activity_phase;
+            }
         }
     }
 
@@ -534,6 +569,11 @@ fn apply_runtime_event(app: &mut App, event: RuntimeEvent, session: Option<&Conn
         RuntimeEvent::FileOperationFailed { request_id, error } => {
             app.file_picker_failed(request_id, error);
         }
+        RuntimeEvent::ActionHistoryLoaded { actions } => {
+            for action in actions {
+                app.restore_agent_action(action);
+            }
+        }
     }
 }
 
@@ -576,6 +616,16 @@ fn apply_signal(app: &mut App, pid: &str, conversation_id: &str, name: &str, pay
             }
         }
         "proc.run.tool.started" => {
+            let Some(run_id) = run_id else {
+                return;
+            };
+            let Some(execution_id) = payload.get("executionId").and_then(Value::as_str) else {
+                return;
+            };
+            let name = payload
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             let syscall = payload
                 .get("syscall")
                 .and_then(Value::as_str)
@@ -583,9 +633,17 @@ fn apply_signal(app: &mut App, pid: &str, conversation_id: &str, name: &str, pay
             let target = payload
                 .get("target")
                 .or_else(|| payload.get("args").and_then(|args| args.get("target")))
-                .and_then(Value::as_str)
-                .unwrap_or("gsv");
-            app.set_activity(Some(format!("ship@{target} · {syscall}")));
+                .and_then(Value::as_str);
+            app.start_agent_action(run_id, execution_id, name, syscall, target);
+        }
+        "proc.run.tool.finished" => {
+            if let (Some(run_id), Some(execution_id), Some(outcome)) = (
+                run_id,
+                payload.get("executionId").and_then(Value::as_str),
+                payload.get("outcome").and_then(Value::as_str),
+            ) {
+                app.finish_agent_action(run_id, execution_id, outcome);
+            }
         }
         "proc.run.retrying" => {
             app.set_activity(Some("TRYING ANOTHER PATH".to_string()));
@@ -668,6 +726,9 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
 
     if alt && matches!(key.code, KeyCode::Char('v' | 'V')) {
         return Some(Action::ToggleVim);
+    }
+    if alt && matches!(key.code, KeyCode::Char('a' | 'A')) {
+        return Some(Action::ToggleActions);
     }
     if control && matches!(key.code, KeyCode::Char('o' | 'O')) {
         return Some(Action::OpenFiles);
@@ -1371,6 +1432,60 @@ fn truncate_chars(value: &str, limit: usize) -> String {
     }
 }
 
+fn trace_actions(payload: &Value) -> Vec<AgentActionSnapshot> {
+    if payload.get("ok").and_then(Value::as_bool) != Some(true) {
+        return Vec::new();
+    }
+    let active_run_id = payload.get("activeRunId").and_then(Value::as_str);
+    payload
+        .get("spans")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|span| {
+            if span.get("kind").and_then(Value::as_str) != Some("tool") {
+                return None;
+            }
+            let id = span.get("id").and_then(Value::as_str)?;
+            let fallback_execution_id = id.strip_prefix("tool:")?;
+            let run_id = span.get("runId").and_then(Value::as_str)?;
+            let execution_id = span
+                .get("reference")
+                .filter(|reference| reference.get("kind").and_then(Value::as_str) == Some("tool"))
+                .and_then(|reference| reference.get("executionId"))
+                .and_then(Value::as_str)
+                .unwrap_or(fallback_execution_id);
+            if run_id.is_empty() || execution_id.is_empty() {
+                return None;
+            }
+            let name = span.get("name").and_then(Value::as_str).unwrap_or("action");
+            let syscall = span
+                .get("attributes")
+                .and_then(|attributes| attributes.get("syscall"))
+                .and_then(Value::as_str)
+                .unwrap_or(name);
+            let target = span
+                .get("attributes")
+                .and_then(|attributes| attributes.get("target"))
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let status = span
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("error");
+            Some(AgentActionSnapshot {
+                run_id: run_id.to_string(),
+                execution_id: execution_id.to_string(),
+                name: name.to_string(),
+                syscall: syscall.to_string(),
+                target,
+                status: status.to_string(),
+                live: active_run_id == Some(run_id) && status == "running",
+            })
+        })
+        .collect()
+}
+
 fn signal_run_id(payload: &Value) -> Option<&str> {
     payload
         .get("runId")
@@ -1428,7 +1543,7 @@ mod tests {
     use super::{
         apply_signal, device_environments, file_inspection_request, history_moments, key_action,
         media_artifact, parse_file_listing, parse_file_reference, parse_shell_response,
-        truncate_chars, FileInspectionKind, ShellResponse,
+        trace_actions, truncate_chars, FileInspectionKind, ShellResponse,
     };
 
     #[test]
@@ -1687,6 +1802,63 @@ mod tests {
         let app = App::new(ConnectionState::Ready);
         let control_o = KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL);
         assert_eq!(key_action(&app, control_o), Some(Action::OpenFiles));
+    }
+
+    #[test]
+    fn alt_a_toggles_the_selected_runs_actions() {
+        let app = App::new(ConnectionState::Ready);
+        let alt_a = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::ALT);
+        assert_eq!(key_action(&app, alt_a), Some(Action::ToggleActions));
+    }
+
+    #[test]
+    fn process_trace_projects_only_parent_tool_actions() {
+        let actions = trace_actions(&json!({
+            "ok": true,
+            "activeRunId": "run-one",
+            "spans": [
+                {
+                    "id": "tool:execution-one",
+                    "runId": "run-one",
+                    "kind": "tool",
+                    "name": "Read",
+                    "status": "running",
+                    "reference": {
+                        "kind": "tool",
+                        "callId": "call-one",
+                        "executionId": "execution-one"
+                    },
+                    "attributes": {
+                        "syscall": "fs.read",
+                        "target": "macbook",
+                        "private": "must not be projected"
+                    }
+                },
+                {
+                    "id": "execution:execution-one",
+                    "runId": "run-one",
+                    "kind": "tool",
+                    "name": "fs.read",
+                    "status": "running"
+                },
+                {
+                    "id": "reasoning:one",
+                    "runId": "run-one",
+                    "kind": "reasoning",
+                    "name": "private reasoning",
+                    "status": "ok"
+                }
+            ]
+        }));
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].run_id, "run-one");
+        assert_eq!(actions[0].execution_id, "execution-one");
+        assert_eq!(actions[0].name, "Read");
+        assert_eq!(actions[0].syscall, "fs.read");
+        assert_eq!(actions[0].target.as_deref(), Some("macbook"));
+        assert_eq!(actions[0].status, "running");
+        assert!(actions[0].live);
     }
 
     #[test]

@@ -40,14 +40,23 @@ continuous scrollable document. The next `user@target $ ` prompt stays active
 while the matching Process run continues, including during streamed output.
 Only the directed stream of a user-visible Message is projected live; raw
 Process output and model reasoning stay out of conversation scrollback.
+Waiting and streamed states use a blinking in-document block cursor instead of
+a static ellipsis. Safe tool names and targets appear as a bounded live action
+trail under the matching command, then collapse to a single count when the run
+ends. Press `Alt+A` to expand or collapse the selected run. The trail is
+restored from `proc.trace` when the TUI opens and never displays tool arguments,
+results, or model reasoning.
 Type `@` into an empty draft to select a visible target. Inside a Ship request,
 type `@` at a token boundary or press `Ctrl+O` to browse files from that target's
 current directory. Completion appears directly above the prompt without moving
 it or replacing the transcript. Enter traverses a selected directory or inserts
 the selected file as an underlined `@filename` reference; Backspace/Delete
 removes a reference atomically. Multiple references stay independent, and plain
-path text is never attached implicitly. Use Up/Down or `Ctrl+P`/`Ctrl+N` to
-recall submitted input, `Page Up`/`Page Down` to scroll, `?` for all keys, and
+path text is never attached implicitly. A structured image, audio, or video
+reference keeps its inline `@filename` anchor and renders its media once beneath
+the command; document references stay inline-only. Use Up/Down or
+`Ctrl+P`/`Ctrl+N` to recall submitted input, `Page Up`/`Page Down` to scroll,
+`?` for all keys, and
 `Ctrl+Q` to leave. Escape enters browse mode without hiding the prompt. The
 document uses every available terminal column and reflows on resize. The native
 interface adopts the host terminal palette, leaves mouse selection to the
