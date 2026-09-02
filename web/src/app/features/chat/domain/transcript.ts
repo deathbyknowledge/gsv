@@ -90,12 +90,17 @@ const adapterDestinationSchema = z.object({
   surface: adapterSurfaceSchema,
   actorId: z.string(),
 });
+const capabilityEnvironmentSelectionSchema = z.object({
+  target: z.string(),
+  cwd: z.string().optional(),
+});
 const interactionOriginSchema: z.ZodType<InteractionOrigin> = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("client"),
     connectionId: z.string(),
     clientId: z.string().optional(),
     platform: z.string().optional(),
+    environment: capabilityEnvironmentSelectionSchema.optional(),
   }),
   z.object({
     kind: z.literal("adapter"),

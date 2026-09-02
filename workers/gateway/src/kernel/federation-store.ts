@@ -202,6 +202,10 @@ const conversationMessageOriginSchema = z.discriminatedUnion("kind", [
     kind: z.literal("client"),
     clientId: z.string().optional(),
     platform: z.string().optional(),
+    environment: z.strictObject({
+      target: z.string(),
+      cwd: z.string().optional(),
+    }).optional(),
   }),
   z.strictObject({
     kind: z.literal("adapter"),

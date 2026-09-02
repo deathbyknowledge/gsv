@@ -1087,12 +1087,17 @@ const adapterMessageDestinationSchema = z.object({
   actorId: nonEmptyStringSchema,
   surface: archivedAdapterSurfaceSchema,
 });
+const capabilityEnvironmentSelectionSchema = z.object({
+  target: nonEmptyStringSchema,
+  cwd: optionalNonEmptyStringSchema,
+});
 const interactionOriginSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("client"),
     connectionId: nonEmptyStringSchema,
     clientId: optionalNonEmptyStringSchema,
     platform: optionalNonEmptyStringSchema,
+    environment: capabilityEnvironmentSelectionSchema.optional().catch(undefined),
   }),
   z.object({
     kind: z.literal("adapter"),
@@ -11192,7 +11197,10 @@ function formatInteractionOriginForContext(origin: InteractionOrigin | undefined
   }
 
   if (origin.kind === "client") {
-    return formatClientOriginForContext(origin.platform, origin.clientId);
+    const client = formatClientOriginForContext(origin.platform, origin.clientId);
+    if (!origin.environment) return client;
+    const cwd = origin.environment.cwd ? ` cwd ${origin.environment.cwd}` : "";
+    return `${client}; selected target ${origin.environment.target}${cwd}`;
   }
 
   if (origin.kind === "device") {

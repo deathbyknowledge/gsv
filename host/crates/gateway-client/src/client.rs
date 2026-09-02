@@ -167,15 +167,53 @@ impl KernelClient {
         message: &str,
         idempotency_key: &str,
     ) -> Result<ProcSendResult, Box<dyn std::error::Error>> {
+        self.conversation_send_with_environment(
+            conversation_id,
+            message,
+            idempotency_key,
+            None,
+        )
+        .await
+    }
+
+    pub async fn conversation_send_in_environment(
+        &self,
+        conversation_id: &str,
+        message: &str,
+        idempotency_key: &str,
+        target: &str,
+        cwd: Option<&str>,
+    ) -> Result<ProcSendResult, Box<dyn std::error::Error>> {
+        let mut environment = json!({ "target": target });
+        if let Some(cwd) = cwd {
+            environment["cwd"] = Value::String(cwd.to_string());
+        }
+        self.conversation_send_with_environment(
+            conversation_id,
+            message,
+            idempotency_key,
+            Some(environment),
+        )
+        .await
+    }
+
+    async fn conversation_send_with_environment(
+        &self,
+        conversation_id: &str,
+        message: &str,
+        idempotency_key: &str,
+        environment: Option<Value>,
+    ) -> Result<ProcSendResult, Box<dyn std::error::Error>> {
+        let mut args = json!({
+            "conversationId": conversation_id,
+            "text": message,
+            "idempotencyKey": idempotency_key,
+        });
+        if let Some(environment) = environment {
+            args["environment"] = environment;
+        }
         let payload = self
-            .request_ok(
-                "conversation.send",
-                Some(json!({
-                    "conversationId": conversation_id,
-                    "text": message,
-                    "idempotencyKey": idempotency_key,
-                })),
-            )
+            .request_ok("conversation.send", Some(args))
             .await?;
         let run_id = payload
             .get("runId")

@@ -1,10 +1,21 @@
 import type { AdapterSurface } from "../adapters";
 
+/**
+ * The capability environment selected for one interaction. Selection supplies
+ * model context only; target visibility and syscall authorization remain
+ * independently enforced by the Kernel.
+ */
+export type CapabilityEnvironmentSelection = {
+  target: string;
+  cwd?: string;
+};
+
 export type ClientInteractionOrigin = {
   kind: "client";
   connectionId: string;
   clientId?: string;
   platform?: string;
+  environment?: CapabilityEnvironmentSelection;
 };
 
 export type AdapterInteractionOrigin = {

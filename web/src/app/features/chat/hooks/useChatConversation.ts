@@ -37,8 +37,17 @@ const mediaInputSchema = z.object({
   duration: z.number().optional(),
   transcription: z.string().optional(),
 });
+const capabilityEnvironmentSelectionSchema = z.object({
+  target: z.string(),
+  cwd: z.string().optional(),
+});
 const originSchema: z.ZodType<ConversationMessageOrigin> = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("client"), clientId: z.string().optional(), platform: z.string().optional() }),
+  z.object({
+    kind: z.literal("client"),
+    clientId: z.string().optional(),
+    platform: z.string().optional(),
+    environment: capabilityEnvironmentSelectionSchema.optional(),
+  }),
   z.object({
     kind: z.literal("adapter"), adapter: z.string(), accountId: z.string(), actorId: z.string(),
     surface: z.object({ kind: z.enum(["dm", "group", "channel", "thread"]), id: z.string(), threadId: z.string().optional() }),

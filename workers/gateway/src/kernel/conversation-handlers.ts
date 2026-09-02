@@ -11,6 +11,7 @@ import type {
   ConversationSendArgs,
   ConversationSendResult,
   ConversationSummary,
+  CapabilityEnvironmentSelection,
   InteractionOrigin,
   ProcSendResult,
   ResourceBlock,
@@ -25,6 +26,7 @@ import { stableOpaqueId } from "../shared/stable-id";
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import { ensurePersonalController } from "./personal-controller";
+import { GSV_TARGET_ID, resolveVisibleTarget } from "./targets";
 import * as z from "zod/mini";
 
 const conversationClientStateSchema = z.object({
@@ -110,8 +112,9 @@ export async function handleConversationSend(
   const idempotencyKey = normalizeOptionalId(args.idempotencyKey) ?? crypto.randomUUID();
   const messageId = await stableOpaqueId("msg", [conversation.id, idempotencyKey]);
   const runId = `run:${messageId}`;
-  const origin = conversationOrigin(ctx);
-  const interactionOrigin = processInteractionOrigin(ctx);
+  const environment = await resolveInteractionEnvironment(args.environment, ctx);
+  const origin = conversationOrigin(ctx, environment);
+  const interactionOrigin = processInteractionOrigin(ctx, environment);
   const media = await retainConversationResources(
     args.media,
     conversation.handlerPid,
@@ -323,7 +326,10 @@ function requireConversationReader(ctx: KernelContext): number {
   throw new Error("Conversation history requires a signed-in human or their Ship");
 }
 
-function conversationOrigin(ctx: KernelContext): ConversationMessageOrigin {
+function conversationOrigin(
+  ctx: KernelContext,
+  environment?: CapabilityEnvironmentSelection,
+): ConversationMessageOrigin {
   const identity = ctx.identity!;
   if (identity.role === "driver") {
     return { kind: "device", deviceId: identity.device };
@@ -333,10 +339,14 @@ function conversationOrigin(ctx: KernelContext): ConversationMessageOrigin {
     kind: "client",
     clientId: state.clientId?.trim() || undefined,
     platform: state.clientPlatform?.trim() || undefined,
+    environment,
   };
 }
 
-function processInteractionOrigin(ctx: KernelContext): InteractionOrigin | undefined {
+function processInteractionOrigin(
+  ctx: KernelContext,
+  environment?: CapabilityEnvironmentSelection,
+): InteractionOrigin | undefined {
   const identity = ctx.identity;
   if (!identity) return undefined;
   if (identity.role === "driver") {
@@ -349,7 +359,45 @@ function processInteractionOrigin(ctx: KernelContext): InteractionOrigin | undef
     connectionId: ctx.connection.id,
     clientId: state.clientId?.trim() || undefined,
     platform: state.clientPlatform?.trim() || undefined,
+    environment,
   };
+}
+
+async function resolveInteractionEnvironment(
+  value: CapabilityEnvironmentSelection | undefined,
+  ctx: KernelContext,
+): Promise<CapabilityEnvironmentSelection | undefined> {
+  if (value === undefined) return undefined;
+  if (!value || typeof value.target !== "string") {
+    throw new Error("conversation.send environment target is invalid");
+  }
+  const target = value.target;
+  if (
+    !target
+    || target !== target.trim()
+    || target.length > 256
+    || /[\u0000-\u001f\u007f-\u009f]/u.test(target)
+  ) {
+    throw new Error("conversation.send environment target is invalid");
+  }
+  if (target !== GSV_TARGET_ID && !(await resolveVisibleTarget(ctx, target))) {
+    throw new Error(`Target is unavailable: ${target}`);
+  }
+  if (value.cwd !== undefined) {
+    if (typeof value.cwd !== "string") {
+      throw new Error("conversation.send environment cwd is invalid");
+    }
+    const cwd = value.cwd;
+    if (
+      !cwd.trim()
+      || cwd.length > 4_096
+      || /[\u0000-\u001f\u007f-\u009f]/u.test(cwd)
+    ) {
+      throw new Error("conversation.send environment cwd is invalid");
+    }
+    return { target, cwd };
+  }
+  return { target };
 }
 
 function normalizeId(value: string | undefined, label: string): string {

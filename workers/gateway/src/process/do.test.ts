@@ -3816,7 +3816,9 @@ describe("Process DO — mechanical", () => {
             expect(third.role).toBe("user");
             expect(third.content).toBe("same source follow-up");
             expect(fourth.role).toBe("user");
-            expect(fourth.content).toContain("[From: GSV Web Desktop]");
+            expect(fourth.content).toContain(
+              "[From: GSV Web Desktop; selected target macbook cwd /Users/sam]",
+            );
             expect(fourth.content).toContain(
               "[Directed endpoint: this GSV client.]",
             );
@@ -3882,6 +3884,7 @@ describe("Process DO — mechanical", () => {
             connectionId: "conn-1",
             clientId: "gsv-ui",
             platform: "browser",
+            environment: { target: "macbook", cwd: "/Users/sam" },
           }),
         });
         process.currentRun = {

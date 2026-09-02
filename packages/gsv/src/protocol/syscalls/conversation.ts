@@ -1,5 +1,6 @@
 import type { MessageAttachment } from "./proc";
 import type { ResourceBlock } from "../resource";
+import type { CapabilityEnvironmentSelection } from "./interaction-origin";
 
 export type ConversationKind = "ship" | "work" | "group" | "contact";
 
@@ -38,6 +39,7 @@ export type ConversationMessageOrigin =
       kind: "client";
       clientId?: string;
       platform?: string;
+      environment?: CapabilityEnvironmentSelection;
     }
   | {
       kind: "adapter";
@@ -100,6 +102,7 @@ export type ConversationSendArgs = {
   text: string;
   media?: ResourceBlock[];
   idempotencyKey?: string;
+  environment?: CapabilityEnvironmentSelection;
 };
 
 export type ConversationSendResult = {

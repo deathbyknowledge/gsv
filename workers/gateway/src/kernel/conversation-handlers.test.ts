@@ -67,6 +67,14 @@ function context(ownerUid = 1000): KernelContext {
       get: vi.fn((pid: string) => pid === PROCESS.processId ? PROCESS : null),
       getOwnerUid: vi.fn((pid: string) => pid === PROCESS.processId ? PROCESS.ownerUid : null),
     },
+    devices: {
+      canAccess: vi.fn(() => false),
+    },
+    adapters: {
+      identityLinks: {
+        list: vi.fn(() => []),
+      },
+    },
     conversations: {
       ensureShip: vi.fn(() => SHIP),
       get: vi.fn((id: string) => id === SHIP.id ? SHIP : null),
@@ -188,8 +196,15 @@ describe("conversation handlers", () => {
       conversationId: SHIP.id,
       text: "hello",
       idempotencyKey: "desktop:two",
+      environment: { target: "gsv", cwd: "/home/user-1000/project" },
     }, ctx);
 
+    expect(append).toHaveBeenCalledWith(expect.objectContaining({
+      origin: expect.objectContaining({
+        kind: "client",
+        environment: { target: "gsv", cwd: "/home/user-1000/project" },
+      }),
+    }));
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
       "singleton",
       PROCESS.processId,
@@ -197,6 +212,10 @@ describe("conversation handlers", () => {
         call: "proc.send",
         args: expect.objectContaining({
           message: "hello",
+          origin: expect.objectContaining({
+            kind: "client",
+            environment: { target: "gsv", cwd: "/home/user-1000/project" },
+          }),
           interaction: {
             conversationId: SHIP.id,
             messageId: result.message.id,
@@ -212,6 +231,36 @@ describe("conversation handlers", () => {
     });
     expect(vi.mocked(ctx.runRoutes.setConnectionRoute).mock.invocationCallOrder[0])
       .toBeLessThan(sendFrameToProcessMock.mock.invocationCallOrder[0]);
+  });
+
+  it("rejects an invalid selected capability environment before committing input", async () => {
+    const append = vi.fn();
+    getConversationByIdMock.mockReturnValue({ append });
+    const ctx = context();
+
+    await expect(handleConversationSend({
+      conversationId: SHIP.id,
+      text: "hello",
+      environment: { target: "\n" },
+    }, ctx)).rejects.toThrow("conversation.send environment target is invalid");
+
+    expect(append).not.toHaveBeenCalled();
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a selected capability environment that the caller cannot see", async () => {
+    const append = vi.fn();
+    getConversationByIdMock.mockReturnValue({ append });
+    const ctx = context();
+
+    await expect(handleConversationSend({
+      conversationId: SHIP.id,
+      text: "hello",
+      environment: { target: "not-visible" },
+    }, ctx)).rejects.toThrow("Target is unavailable: not-visible");
+
+    expect(append).not.toHaveBeenCalled();
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
   it("forwards client cancellation to in-flight resource retention", async () => {
