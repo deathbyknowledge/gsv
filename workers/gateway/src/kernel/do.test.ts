@@ -1653,6 +1653,46 @@ describe("Kernel process signal routing", () => {
     };
   }
 
+  function adapterRoute(runId: string) {
+    return {
+      kind: "adapter" as const,
+      runId,
+      processId: "proc-1",
+      uid: 1000,
+      destination: {
+        kind: "adapter" as const,
+        adapter: "telegram",
+        accountId: "bot",
+        actorId: "actor-1",
+        surface: { kind: "dm" as const, id: "chat-1" },
+      },
+    };
+  }
+
+  function committedMessageFrame(
+    route: ReturnType<typeof adapterRoute>,
+    messageId: string,
+    text: string,
+  ) {
+    return {
+      type: "sig" as const,
+      signal: "message.committed",
+      payload: {
+        message: {
+          id: messageId,
+          conversationId: "conv:home",
+          sequence: 2,
+          author: { kind: "process" as const, pid: route.processId, uid: 1001 },
+          text,
+          origin: { kind: "process" as const, pid: route.processId, runId: route.runId },
+          processId: route.processId,
+          runId: route.runId,
+          createdAt: 2,
+        },
+      },
+    };
+  }
+
   it("sends the exact HIL request to the routed adapter", async () => {
     const adapterFrame = vi.fn<NonNullable<AdapterService["adapterFrame"]>>(
       async (_installation, context, frame) => ({
@@ -2240,12 +2280,62 @@ describe("Kernel process signal routing", () => {
       expect.objectContaining({
         runId: route.runId,
         processId: route.processId,
+        route,
         event: "message.committed",
         attempt: 2,
       }),
       expect.objectContaining({ idempotent: true }),
     );
     expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
+  });
+
+  it("keeps an adapter route after an intermediate message and clears it at the terminal signal", async () => {
+    const route = adapterRoute("run-intermediate");
+    const kernel = buildKernel(route);
+    kernel.deliverAdapterRouteEvent.mockResolvedValue({ state: "delivered" });
+    const committed = committedMessageFrame(route, "msg:intermediate", "still working");
+
+    await kernel.attemptAdapterRouteDelivery(route, committed, 1);
+    expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
+
+    const finished = {
+      type: "sig" as const,
+      signal: "proc.run.finished",
+      payload: {
+        pid: route.processId,
+        runId: route.runId,
+        status: "ok",
+        queuedCount: 0,
+        delivery: { kind: "message", messageId: "msg:final" },
+      },
+    };
+    await kernel.handleProcessSignal(route.processId, finished, finished);
+
+    expect(kernel.runRoutes.delete).toHaveBeenCalledOnce();
+    expect(kernel.runRoutes.delete).toHaveBeenCalledWith(route.runId);
+  });
+
+  it("delivers a committed message from its owned route after terminal cleanup", async () => {
+    const route = adapterRoute("run-owned-delivery");
+    const kernel = buildKernel(null);
+    kernel.deliverAdapterRouteEvent.mockResolvedValue({ state: "delivered" });
+    const frame = committedMessageFrame(route, "msg:owned", "done");
+
+    await kernel.onAdapterRouteDelivery({
+      runId: route.runId,
+      processId: route.processId,
+      route,
+      event: "message.committed",
+      payload: frame.payload,
+      attempt: 1,
+    });
+
+    expect(kernel.runRoutes.get).not.toHaveBeenCalled();
+    expect(kernel.deliverAdapterRouteEvent).toHaveBeenCalledWith(route, {
+      type: "sig",
+      signal: "message.committed",
+      payload: frame.payload,
+    });
   });
 
   it("keeps a committed-message route until its ambiguous delivery notice is acknowledged", async () => {
@@ -2393,25 +2483,22 @@ describe("Kernel process signal routing", () => {
     expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
   });
 
-  it("clears a final run route only after its delivery notice is accepted", async () => {
+  it("delivers an owned message notice after the terminal run route is cleared", async () => {
     sendFrameToProcessMock.mockReset();
     sendFrameToProcessMock.mockResolvedValueOnce(null);
-    const route = {
-      kind: "adapter",
-      runId: "run-notice",
-      processId: "proc-1",
-    };
+    const route = adapterRoute("run-notice");
     const kernel = createRoutedKernel();
-    kernel.runRoutes = { get: vi.fn(() => route), delete: vi.fn() };
+    kernel.runRoutes = { get: vi.fn(() => null), delete: vi.fn() };
 
     await kernel.onProcessDeliveryNotice({
       noticeId: "notice:accepted",
       runId: route.runId,
       processId: route.processId,
-      deliveryKind: "final",
+      deliveryKind: "message",
+      deliveryId: "msg:notice",
       state: "ambiguous",
       message: "Delivery is ambiguous.",
-      cleanupRunRoute: true,
+      route,
     });
 
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
@@ -2422,7 +2509,7 @@ describe("Kernel process signal routing", () => {
         payload: expect.objectContaining({ noticeId: "notice:accepted" }),
       }),
     );
-    expect(kernel.runRoutes.delete).toHaveBeenCalledWith(route.runId);
+    expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
   });
 });
 
