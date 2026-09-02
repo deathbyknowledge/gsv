@@ -1038,8 +1038,7 @@
               {
                 "type": "count",
                 "path": "/committedMessages",
-                "min": 2,
-                "max": 2
+                "min": 2
               },
               {
                 "type": "sequence",

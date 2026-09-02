@@ -131,7 +131,11 @@ for ((offset = 0; offset < model_count; offset += parallel_models)); do
 done
 
 cd "$package_dir"
-report_args=("$matrix_dir" --output "$matrix_dir/summary.json")
+report_args=(
+  "$matrix_dir"
+  --scenario "$matrix_dir/scenario.json"
+  --output "$matrix_dir/summary.json"
+)
 if [[ -f "$matrix_dir/pricing.json" ]]; then
   report_args+=(--pricing "$matrix_dir/pricing.json")
 fi

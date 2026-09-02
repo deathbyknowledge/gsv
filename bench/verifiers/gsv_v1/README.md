@@ -72,7 +72,9 @@ strict Pass@1, unbiased Pass@3, Pass^3 reliability, per-scenario results,
 milestones, dimensions, latency, per-Process end-to-end tok/s, aggregate tok/s at
 the configured concurrency, provider-request tok/s, and listed cost. Listed cost
 is an estimate from total input (cached plus uncached) and completion tokens at
-the snapshotted rates; it does not assume an unadvertised cache discount.
+the snapshotted rates; it does not assume an unadvertised cache discount. A
+leading `≥` marks known usage from a trace with an interrupted request and is a
+lower bound rather than silently dropping the cost estimate.
 
 `GSV_BENCH_SCENARIO`, `GSV_BENCH_OUTPUT_DIR`,
 `GSV_BENCH_NUM_TASKS`, `GSV_BENCH_MODEL_CONCURRENCY`, and
@@ -82,6 +84,12 @@ models that otherwise spend the provider default before issuing a tool call. A s
 directory can be paired with its fixture count to run a suite. Keep the
 scenario set, rollout count, concurrency, and timeout fixed when comparing
 model quality or throughput.
+
+The matrix report regrades normalized artifacts offline against the frozen
+scenario copy in its output directory. To audit a rubric revision without
+rerunning inference, pass another fixture, directory, or family with
+`python -m gsv_v1.report MATRIX_DIR --scenario SCENARIO` and preserve both
+summaries and scenario digests.
 
 For a credential-free end-to-end smoke with a deterministic OpenAI-compatible
 backend, run this from the repository root:

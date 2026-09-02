@@ -1,5 +1,6 @@
 import copy
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -8,7 +9,12 @@ import verifiers.v1 as vf
 from gsv_v1 import GsvHarness, GsvTaskset, terminal_bench
 from gsv_v1.evaluation import evaluate_predicate, evaluate_scenario, matches_subset
 from gsv_v1.families import expand_family, load_scenarios
-from gsv_v1.report import load_pricing, render_markdown, summarize_matrix
+from gsv_v1.report import (
+    load_evaluations,
+    load_pricing,
+    render_markdown,
+    summarize_matrix,
+)
 from gsv_v1.taskset import GsvConfig
 from gsv_v1.terminal_bench import scenario_from_task
 
@@ -458,6 +464,33 @@ def test_family_expansion_rejects_unknown_modules_and_placeholders() -> None:
         expand_family(base, "inline")
 
 
+def test_release_recovery_communication_allows_progress_updates() -> None:
+    family_path = (
+        Path(__file__).resolve().parents[1]
+        / "gsv_v1"
+        / "families"
+        / "release-recovery.json"
+    )
+    scenario = load_scenarios(family_path)[0]
+    communication = next(
+        milestone
+        for milestone in scenario["evaluation"]["milestones"]
+        if milestone["id"] == "incident-communication"
+    )
+    message_count = next(
+        predicate
+        for predicate in communication["predicates"]
+        if predicate.get("path") == "/committedMessages"
+    )
+
+    assert message_count == {
+        "type": "count",
+        "path": "/committedMessages",
+        "min": 2,
+    }
+    assert load_evaluations(family_path)[scenario["id"]] == scenario["evaluation"]
+
+
 def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
     run_dir = tmp_path / "qwen"
     run_dir.mkdir()
@@ -490,7 +523,10 @@ def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
                             }
                         ],
                         "info": {
-                            "gsv": {"scenarioId": "scenario-a"},
+                            "gsv": {
+                                "scenarioId": "scenario-a",
+                                "status": "yielded",
+                            },
                             "gsv_evaluation": {
                                 "strict_pass": passed,
                                 "raw_score": score,
@@ -589,7 +625,9 @@ def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
     assert model["e2e_output_tokens_per_second"] == 5.0
     assert model["aggregate_output_tokens_per_second"] == 10.0
     assert model["request_output_tokens_per_second"] == 25.0
+    assert model["terminal_outcomes"] == {"yielded": 3}
     assert model["listed_cost_usd"] == pytest.approx(0.0051)
+    assert model["listed_cost_complete"] is True
     scenario_summary = model["scenarios"]["scenario-a"]
     assert scenario_summary["score_mean"] == pytest.approx(0.8)
     assert {
@@ -616,6 +654,39 @@ def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
     assert legacy["input_tokens"] is None
     assert legacy["completion_tokens"] is None
     assert legacy["listed_cost_usd"] is None
+    assert legacy["listed_cost_complete"] is None
     assert "qwen/example" in render_markdown(summary)
     assert "legacy/example" in render_markdown(summary)
     assert "n/a" in render_markdown(summary)
+
+    regraded = summarize_matrix(
+        tmp_path,
+        load_pricing(pricing_path),
+        {
+            "scenario-a": {
+                "milestones": [
+                    {
+                        "id": "offline-regrade",
+                        "description": "The revised outcome passes.",
+                        "dimension": "outcome",
+                        "weight": 1.0,
+                        "requires": [],
+                        "requiredForStrict": True,
+                        "predicates": [
+                            {
+                                "type": "match",
+                                "path": "/status",
+                                "value": "yielded",
+                            }
+                        ],
+                    }
+                ],
+                "constraints": [],
+            }
+        },
+    )
+    regraded_model = next(
+        model for model in regraded["models"] if model["model"] == "qwen/example"
+    )
+    assert regraded_model["score_mean"] == 1.0
+    assert regraded_model["strict_passes"] == 3

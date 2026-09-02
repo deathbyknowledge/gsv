@@ -10,6 +10,9 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from gsv_v1.evaluation import evaluate_scenario
+from gsv_v1.families import load_scenarios
+
 
 def _number(value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, int | float):
@@ -81,6 +84,23 @@ def _scenario_id(trace: dict[str, Any]) -> str:
     return "unknown"
 
 
+def _terminal_outcome(trace: dict[str, Any]) -> str | None:
+    info = trace.get("info")
+    artifact = info.get("gsv") if isinstance(info, dict) else None
+    if isinstance(artifact, dict) and isinstance(artifact.get("status"), str):
+        return artifact["status"]
+    errors = trace.get("errors")
+    if isinstance(errors, list):
+        messages = " ".join(
+            error.get("message", "")
+            for error in errors
+            if isinstance(error, dict) and isinstance(error.get("message"), str)
+        ).lower()
+        if "timeout" in messages:
+            return "timeout"
+    return "harness_error" if trace.get("ok") is False else None
+
+
 def load_pricing(path: Path | None) -> dict[str, dict[str, float]]:
     if path is None or not path.is_file():
         return {}
@@ -100,9 +120,16 @@ def load_pricing(path: Path | None) -> dict[str, dict[str, float]]:
     return result
 
 
+def load_evaluations(path: Path | None) -> dict[str, dict[str, Any]]:
+    if path is None:
+        return {}
+    return {scenario["id"]: scenario["evaluation"] for scenario in load_scenarios(path)}
+
+
 def summarize_matrix(
     matrix_dir: Path,
     pricing: dict[str, dict[str, float]] | None = None,
+    evaluations: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     trace_files = sorted(matrix_dir.glob("*/traces.jsonl"))
@@ -140,6 +167,7 @@ def summarize_matrix(
         milestones: dict[str, dict[str, Any]] = {}
         dimensions: dict[str, dict[str, Any]] = {}
         constraints: dict[str, dict[str, Any]] = {}
+        terminal_outcomes: dict[str, int] = defaultdict(int)
         scenario_trials: dict[str, list[bool]] = defaultdict(list)
         scenario_scores: dict[str, list[float]] = defaultdict(list)
         strict_passes = 0
@@ -156,8 +184,6 @@ def summarize_matrix(
                 if isinstance(scenario_reward, dict)
                 else None
             )
-            scores.append(score)
-
             timing = trace.get("timing", {})
             agent_timing = timing.get("agent", {}) if isinstance(timing, dict) else {}
             agent_seconds.append(_duration(agent_timing))
@@ -195,11 +221,25 @@ def summarize_matrix(
                 or bool(trace_errors)
             ):
                 error_count += 1
+            terminal_outcome = _terminal_outcome(trace)
+            if terminal_outcome is not None:
+                terminal_outcomes[terminal_outcome] += 1
 
             info = trace.get("info", {})
             evaluation = (
                 info.get("gsv_evaluation", {}) if isinstance(info, dict) else {}
             )
+            scenario_id = _scenario_id(trace)
+            artifact = info.get("gsv") if isinstance(info, dict) else None
+            configured_evaluation = (evaluations or {}).get(scenario_id)
+            if isinstance(artifact, dict) and configured_evaluation is not None:
+                evaluation = evaluate_scenario(
+                    configured_evaluation,
+                    artifact,
+                    info.get("gsv_external"),
+                )
+                score = _number(evaluation.get("reward_score"))
+            scores.append(score)
             raw_scores.append(
                 _number(evaluation.get("raw_score"))
                 if isinstance(evaluation, dict) and "raw_score" in evaluation
@@ -211,7 +251,6 @@ def summarize_matrix(
                 else False
             )
             strict_passes += int(strict_pass)
-            scenario_id = _scenario_id(trace)
             scenario_trials[scenario_id].append(strict_pass)
             scenario_scores[scenario_id].append(score)
 
@@ -287,7 +326,7 @@ def summarize_matrix(
         usage_complete = usage_call_count == call_count and call_count > 0
         price = prices.get(model_id)
         estimated_cost = None
-        if price is not None and usage_complete:
+        if price is not None and usage_call_count:
             estimated_cost = (
                 input_tokens * price["input_usd_per_mtok"]
                 + completion_tokens * price["output_usd_per_mtok"]
@@ -384,10 +423,14 @@ def summarize_matrix(
                 if usage_call_count
                 else None,
                 "listed_cost_usd": estimated_cost,
+                "listed_cost_complete": (
+                    usage_complete if estimated_cost is not None else None
+                ),
                 "milestones": milestones,
                 "dimensions": dimensions,
                 "constraints": constraints,
                 "scenarios": scenarios,
+                "terminal_outcomes": dict(sorted(terminal_outcomes.items())),
             }
         )
 
@@ -408,7 +451,11 @@ def render_markdown(summary: dict[str, Any]) -> str:
     ]
     for model in models:
         cost = model["listed_cost_usd"]
-        cost_text = f"${cost:.4f}" if cost is not None else "n/a"
+        cost_text = (
+            ("" if model["listed_cost_complete"] else "≥") + f"${cost:.4f}"
+            if cost is not None
+            else "n/a"
+        )
         input_tokens = model["input_tokens"]
         output_tokens = model["completion_tokens"]
         e2e_rate = model["e2e_output_tokens_per_second"]
@@ -454,6 +501,20 @@ def render_markdown(summary: dict[str, Any]) -> str:
                 cost=cost_text,
             )
         )
+    if any(model["terminal_outcomes"] for model in models):
+        lines.extend(
+            [
+                "",
+                "| Model | Terminal outcomes |",
+                "| --- | --- |",
+            ]
+        )
+        for model in models:
+            outcomes = ", ".join(
+                f"{status}: {count}"
+                for status, count in model["terminal_outcomes"].items()
+            )
+            lines.append(f"| {model['model']} | {outcomes or 'n/a'} |")
     milestone_ids = sorted(
         {milestone_id for model in models for milestone_id in model["milestones"]}
     )
@@ -546,10 +607,19 @@ def main() -> None:
     )
     parser.add_argument("matrix_dir", type=Path)
     parser.add_argument("--pricing", type=Path)
+    parser.add_argument(
+        "--scenario",
+        type=Path,
+        help="Regrade artifacts offline with this fixture, directory, or family.",
+    )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
-    summary = summarize_matrix(args.matrix_dir, load_pricing(args.pricing))
+    summary = summarize_matrix(
+        args.matrix_dir,
+        load_pricing(args.pricing),
+        load_evaluations(args.scenario),
+    )
     if args.output is not None:
         args.output.write_text(json.dumps(summary, indent=2) + "\n")
     print(render_markdown(summary))
