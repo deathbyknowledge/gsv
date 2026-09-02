@@ -1333,9 +1333,9 @@ describe("media native commands", () => {
           "printf 'audio-bytes' > sample.mp3",
           "img2txt media.png",
           "stt sample.mp3",
-          "printf 'green square' | txt2img -o out.png",
+          "printf 'green square' | txt2img -o out.jpg",
           "printf 'hello voice' | tts -o speech.mp3",
-          "ls out.png speech.mp3",
+          "ls out.jpg speech.mp3",
         ].join("; "),
       },
       makeContext({
@@ -1369,23 +1369,24 @@ describe("media native commands", () => {
     );
 
     expect(result.ok).toBe(true);
+    expect(result.stderr).toBe("");
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("terminal screenshot");
     expect(result.stdout).toContain("hello audio");
-    expect(result.stdout).toContain("/home/sam/out.png");
+    expect(result.stdout).toContain("/home/sam/out.jpg");
     expect(result.stdout).toContain("/home/sam/speech.mp3");
-    expect(result.stdout).toContain("out.png");
+    expect(result.stdout).toContain("out.jpg");
     expect(result.stdout).toContain("speech.mp3");
   });
 
-  it("preserves generated image MIME when the output extension differs", async () => {
-    const key = "home/sam/generated-jpeg.png";
+  it("preserves generated image MIME through a subsequent read", async () => {
+    const key = "home/sam/generated-jpeg.jpg";
     let imageReadInput: ShellAiInput | undefined;
     await env.STORAGE.delete(key);
 
     const result = await handleShellExec(
       {
-        input: "txt2img -o generated-jpeg.png green-square; img2txt generated-jpeg.png",
+        input: "txt2img -o generated-jpeg.jpg green-square; img2txt generated-jpeg.jpg",
       },
       makeContext({
         capabilities: ["ai.image.read", "ai.image.generate"],
