@@ -52,6 +52,30 @@ export type AiSkillIndexEntry = {
 
 export type AiSkillIndexMode = "summary" | "names" | "off";
 
+/**
+ * One complete text-model connection owned by a human account. Credentials are
+ * stored separately from this public shape at the entry's config path.
+ */
+export type AiModelEntry = {
+  /** Stable reference used by agent and Process preferences. */
+  id: string;
+  /** Human-readable label shown in model pickers. */
+  name: string;
+  provider: string;
+  model: string;
+  baseUrl?: string;
+  providerStyle?: string;
+  transportTarget?: string;
+  maxTokens?: number;
+  contextWindowTokens?: number;
+};
+
+/** First entry is primary; each later entry is tried in order as a fallback. */
+export type AiModelStack = {
+  version: 1;
+  models: AiModelEntry[];
+};
+
 export type AiConfigArgs = {
   processOverrides?: Record<string, string>;
   processProfile?: ProcAiConfigProfileRef | null;
