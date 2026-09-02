@@ -114,7 +114,11 @@ The Terminal-Bench compatibility loader preserves an upstream instruction,
 builds a sanitized context without its solution or verifier, exposes the task
 machine as one GSV target, and grades with the unchanged upstream tests. It uses
 local Docker when accessible and otherwise owns a private Prime image and Prime
-Sandbox lifecycle.
+Sandbox lifecycle. The adapter deliberately accepts only tasks whose Compose
+file describes one task-root Dockerfile and no runtime semantics beyond the
+standard Terminal-Bench client wrapper. Multi-service tasks and special network,
+platform, tmpfs, or resource requirements fail during loading instead of being
+silently evaluated in a different environment.
 
 ## Production seams and fidelity
 

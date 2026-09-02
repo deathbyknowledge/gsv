@@ -64,6 +64,7 @@ def scenario_from_task(task_dir: Path) -> dict[str, Any]:
         raise ValueError(f"Terminal-Bench task has no Dockerfile: {task_dir.name}")
     if not (task_dir / "run-tests.sh").is_file() or not (task_dir / "tests").is_dir():
         raise ValueError(f"Terminal-Bench task has no pytest verifier: {task_dir.name}")
+    validate_compose_compatibility(task_dir)
 
     digest = task_digest(task_dir)
     return {
@@ -329,8 +330,65 @@ async def start_prime_target(
             "Prime sandbox creation returned no id: " + created.stdout.strip()[-500:]
         )
     sandbox_id = matched.group(1)
-    await wait_for_prime_sandbox(runtime, sandbox_id)
+    try:
+        await wait_for_prime_sandbox(runtime, sandbox_id)
+    except (Exception, asyncio.CancelledError):
+        await stop_target(runtime, "prime", sandbox_id)
+        raise
     return sandbox_id
+
+
+def validate_compose_compatibility(task_dir: Path) -> None:
+    compose_path = task_dir / "docker-compose.yaml"
+    if not compose_path.is_file():
+        return
+    document = yaml.safe_load(compose_path.read_text())
+    services = document.get("services") if isinstance(document, dict) else None
+    if not isinstance(services, dict) or len(services) != 1:
+        count = len(services) if isinstance(services, dict) else 0
+        raise ValueError(
+            f"Terminal-Bench task {task_dir.name} requires {count} compose services; "
+            "the GSV adapter currently supports one"
+        )
+    service = next(iter(services.values()))
+    if not isinstance(service, dict):
+        raise TypeError(f"Invalid Terminal-Bench compose service: {task_dir.name}")
+    supported = {
+        "build",
+        "command",
+        "container_name",
+        "environment",
+        "image",
+        "volumes",
+        "working_dir",
+    }
+    unsupported = sorted(set(service) - supported)
+    if unsupported:
+        raise ValueError(
+            f"Terminal-Bench task {task_dir.name} requires unsupported compose "
+            f"options: {', '.join(unsupported)}"
+        )
+    build = service.get("build")
+    if isinstance(build, str):
+        context = build
+        dockerfile = "Dockerfile"
+    elif isinstance(build, dict):
+        context = build.get("context", ".")
+        dockerfile = build.get("dockerfile", "Dockerfile")
+    else:
+        raise TypeError(
+            f"Terminal-Bench task {task_dir.name} has no supported compose build"
+        )
+    if context not in {".", ""} or dockerfile != "Dockerfile":
+        raise ValueError(
+            f"Terminal-Bench task {task_dir.name} requires a non-default build "
+            "context; the GSV adapter currently supports the task root Dockerfile"
+        )
+    if service.get("working_dir", "/app") != "/app":
+        raise ValueError(
+            f"Terminal-Bench task {task_dir.name} requires a working directory "
+            "other than /app"
+        )
 
 
 async def find_prime_image(

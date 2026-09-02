@@ -1,10 +1,11 @@
 import copy
 import json
+from types import SimpleNamespace
 
 import pytest
 import verifiers.v1 as vf
 
-from gsv_v1 import GsvHarness, GsvTaskset
+from gsv_v1 import GsvHarness, GsvTaskset, terminal_bench
 from gsv_v1.evaluation import evaluate_predicate, evaluate_scenario, matches_subset
 from gsv_v1.families import expand_family, load_scenarios
 from gsv_v1.report import load_pricing, render_markdown, summarize_matrix
@@ -262,6 +263,69 @@ def test_terminal_bench_task_becomes_a_special_target_scenario(tmp_path) -> None
     assert scenario["evaluation"]["milestones"][0]["predicates"][0]["path"] == (
         "/external/terminalBench/reward"
     )
+
+
+def test_terminal_bench_rejects_compose_semantics_it_cannot_preserve(tmp_path) -> None:
+    task_dir = tmp_path / "multi-service"
+    (task_dir / "tests").mkdir(parents=True)
+    (task_dir / "task.yaml").write_text(
+        "instruction: Repair the service\nparser_name: pytest\n"
+    )
+    (task_dir / "Dockerfile").write_text("FROM alpine:3.20\nWORKDIR /app\n")
+    (task_dir / "run-tests.sh").write_text("#!/bin/sh\nexit 0\n")
+    (task_dir / "tests" / "test_output.py").write_text("def test_output(): pass\n")
+    (task_dir / "docker-compose.yaml").write_text(
+        "services:\n  client:\n    build:\n      dockerfile: Dockerfile\n"
+        "  database:\n    image: postgres:17\n"
+    )
+
+    with pytest.raises(ValueError, match="requires 2 compose services"):
+        scenario_from_task(task_dir)
+
+
+async def test_prime_sandbox_is_deleted_when_readiness_fails(
+    tmp_path, monkeypatch
+) -> None:
+    task_dir = tmp_path / "prime-cleanup"
+    task_dir.mkdir()
+    commands: list[list[str]] = []
+
+    class Runtime:
+        async def run(self, command, _options):
+            commands.append(command)
+            if command[:4] == ["prime", "--plain", "sandbox", "create"]:
+                return SimpleNamespace(
+                    exit_code=0,
+                    stdout="Successfully created sandbox sandbox-123",
+                    stderr="",
+                )
+            return SimpleNamespace(exit_code=0, stdout="", stderr="")
+
+    async def find_image(*_args):
+        return "registry.example/image:tag"
+
+    async def fail_readiness(*_args):
+        raise RuntimeError("sandbox failed readiness")
+
+    monkeypatch.setattr(terminal_bench, "find_prime_image", find_image)
+    monkeypatch.setattr(terminal_bench, "wait_for_prime_sandbox", fail_readiness)
+
+    with pytest.raises(RuntimeError, match="failed readiness"):
+        await terminal_bench.start_prime_target(
+            SimpleNamespace(id="trace-123456789"),
+            Runtime(),
+            task_dir,
+            "a" * 64,
+        )
+
+    assert [
+        "prime",
+        "--plain",
+        "sandbox",
+        "delete",
+        "--yes",
+        "sandbox-123",
+    ] in commands
 
 
 def test_family_modules_compose_optional_targets_events_and_typed_values(
