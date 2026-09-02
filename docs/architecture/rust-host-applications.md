@@ -75,6 +75,9 @@ shell input share a bounded client-side recall history through Up/Down or
 `Ctrl+P`/`Ctrl+N`; Page Up/Down scrolls the transcript. Typing is the default
 interaction; `--vim` or `Alt+V` enables an optional browse mode without changing
 the beginner key map. Escape changes editing mode without removing the prompt.
+The document consumes the live terminal width and recomputes wrapping and media
+geometry after every resize. Incremental scrolling treats each image as one
+atomic stop, while page scrolling snaps away from partially visible images.
 
 Typing `@` into an empty draft opens the capability-environment picker. `Tab`
 switches the same draft between Ship mode and literal shell mode. The latter is

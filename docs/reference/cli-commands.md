@@ -43,11 +43,13 @@ Process output and model reasoning stay out of conversation scrollback.
 Type `@` into an empty draft to select a visible target, use Up/Down or
 `Ctrl+P`/`Ctrl+N` to recall submitted input, use `Page Up`/`Page Down` to scroll,
 `?` for all keys, and `Ctrl+Q` to leave. Escape enters browse mode without hiding
-the prompt. The native interface adopts the host terminal palette, leaves mouse
+the prompt. The document uses every available terminal column and reflows on
+resize. The native interface adopts the host terminal palette, leaves mouse
 selection to the terminal, renders supported canonical images through the best
 graphics protocol available, and opens selected audio, video, or documents in
 the operating system's registered viewer. Mixed attachments retain their source
-order and occupy rows in that same scrollable document.
+order and occupy rows in that same scrollable document; incremental scrolling
+reveals or passes each image atomically rather than stopping inside it.
 
 `Tab` switches between Ship input and literal shell input without changing the
 draft. Literal commands are marked `user@target $ ! command` and call the
