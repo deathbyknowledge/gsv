@@ -10,6 +10,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 package_dir="$repo_root/bench/verifiers/gsv_v1"
 default_scenario="$package_dir/gsv_v1/fixtures/recover-checkout-incident.json"
 scenario="${GSV_BENCH_SCENARIO:-$default_scenario}"
+num_tasks="${GSV_BENCH_NUM_TASKS:-1}"
 rollouts="${GSV_BENCH_ROLLOUTS:-3}"
 model_concurrency="${GSV_BENCH_MODEL_CONCURRENCY:-1}"
 parallel_models="${GSV_BENCH_PARALLEL_MODELS:-1}"
@@ -19,11 +20,11 @@ run_prefix="${GSV_BENCH_RUN_PREFIX:-matrix-$timestamp}"
 matrix_dir="${GSV_BENCH_OUTPUT_DIR:-$package_dir/outputs/$run_prefix}"
 models=("$@")
 
-if [[ ! -f "$scenario" ]]; then
+if [[ ! -e "$scenario" ]]; then
   echo "scenario does not exist: $scenario" >&2
   exit 2
 fi
-for value in "$rollouts" "$model_concurrency" "$parallel_models" "$timeout_seconds"; do
+for value in "$num_tasks" "$rollouts" "$model_concurrency" "$parallel_models" "$timeout_seconds"; do
   if [[ ! "$value" =~ ^[1-9][0-9]*$ ]]; then
     echo "rollout, concurrency, and timeout values must be positive integers" >&2
     exit 2
@@ -31,10 +32,23 @@ for value in "$rollouts" "$model_concurrency" "$parallel_models" "$timeout_secon
 done
 
 mkdir -p "$matrix_dir/logs"
-cp "$scenario" "$matrix_dir/scenario.json"
+if [[ -d "$scenario" ]]; then
+  cp -R "$scenario" "$matrix_dir/scenarios"
+  scenario_sha256="$(
+    find "$scenario" -maxdepth 1 -type f -name '*.json' -print0 \
+      | sort -z \
+      | xargs -0 sha256sum \
+      | sha256sum \
+      | cut -d ' ' -f 1
+  )"
+else
+  cp "$scenario" "$matrix_dir/scenario.json"
+  scenario_sha256="$(sha256sum "$scenario" | cut -d ' ' -f 1)"
+fi
 {
   printf 'scenario=%q\n' "$scenario"
-  printf 'scenario_sha256=%q\n' "$(sha256sum "$scenario" | cut -d ' ' -f 1)"
+  printf 'scenario_sha256=%q\n' "$scenario_sha256"
+  printf 'num_tasks=%q\n' "$num_tasks"
   printf 'rollouts=%q\n' "$rollouts"
   printf 'model_concurrency=%q\n' "$model_concurrency"
   printf 'parallel_models=%q\n' "$parallel_models"
@@ -74,7 +88,7 @@ run_model() {
       --env.agent.timeout.rollout "$timeout_seconds" \
       --env.taskset.scenario-path "$scenario" \
       --no-serve --no-push --no-rich \
-      --num-tasks 1 \
+      --num-tasks "$num_tasks" \
       --num-rollouts "$rollouts" \
       --max-concurrent "$model_concurrency" \
       --output-dir "$matrix_dir" \

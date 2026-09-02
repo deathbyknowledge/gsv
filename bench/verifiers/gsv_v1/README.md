@@ -52,9 +52,11 @@ an estimate from total input (cached plus uncached) and completion tokens at the
 snapshotted rates; it does not assume an unadvertised cache discount.
 
 `GSV_BENCH_SCENARIO`, `GSV_BENCH_OUTPUT_DIR`,
-`GSV_BENCH_MODEL_CONCURRENCY`, and `GSV_BENCH_TIMEOUT_SECONDS` override the
-corresponding defaults. Keep the scenario, rollout count, concurrency, and
-timeout fixed when comparing model quality or throughput.
+`GSV_BENCH_NUM_TASKS`, `GSV_BENCH_MODEL_CONCURRENCY`, and
+`GSV_BENCH_TIMEOUT_SECONDS` override the corresponding defaults. A scenario
+directory can be paired with its fixture count to run a suite. Keep the
+scenario set, rollout count, concurrency, and timeout fixed when comparing
+model quality or throughput.
 
 For a credential-free end-to-end smoke with a deterministic OpenAI-compatible
 backend, run this from the repository root:
