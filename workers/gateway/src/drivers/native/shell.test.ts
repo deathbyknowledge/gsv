@@ -34,6 +34,7 @@ import {
 import type { ResponsibilityUpdateInput } from "../../kernel/responsibility-store";
 import type { RequestFrame, ResponseFrame } from "../../protocol/frames";
 import type { InstallationIdentity } from "../../installation/identity";
+import { SYSTEM_CONFIG_DEFAULTS } from "../../kernel/config";
 import { stableOpaqueId } from "../../shared/stable-id";
 import * as z from "zod/mini";
 
@@ -276,7 +277,7 @@ function makeContext(options?: {
       get(key: string) {
         if (key === "config/server/name") return "gsv";
         if (key === "config/server/version") return "0.4.1";
-        return configValues.get(key) ?? null;
+        return configValues.get(key) ?? SYSTEM_CONFIG_DEFAULTS[key] ?? null;
       },
       getExplicit(key: string) {
         return configValues.get(key) ?? null;
@@ -1246,7 +1247,7 @@ describe("media native commands", () => {
     expect(result.stderr).toContain("llm: billing required");
   });
 
-  it("uses the native net.fetch transport for llm presets with an origin machine", async () => {
+  it("uses the native net.fetch transport for model entries with an origin machine", async () => {
     generateMock.mockImplementationOnce(async (request: any) => {
       expect(request.config).toMatchObject({
         provider: "custom",
@@ -1286,28 +1287,24 @@ describe("media native commands", () => {
     const requestDevice = vi.fn();
 
     const result = await handleShellExec(
-      { input: "llm --preset local hello" },
+      { input: "llm --model-id local hello" },
       makeContext({
         capabilities: ["ai.text.generate"],
         devices,
         config: {
-          "users/1000/ai/model_profiles": JSON.stringify({
-            profiles: [{
+          "users/1000/ai/models": JSON.stringify({
+            version: 1,
+            models: [{
               id: "local",
               name: "Local",
-              values: {
-                "config/ai/provider": "custom",
-                "config/ai/model": "local-model",
-                "config/ai/base_url": "http://127.0.0.1:18081/v1",
-                "config/ai/provider_style": "openai-chat-completions",
-                "config/ai/transport_target": "linux-machine",
-                "config/ai/api_key": "redacted",
-              },
-              createdAt: 1,
-              updatedAt: 1,
+              provider: "custom",
+              model: "local-model",
+              baseUrl: "http://127.0.0.1:18081/v1",
+              providerStyle: "openai-chat-completions",
+              transportTarget: "linux-machine",
             }],
           }),
-          "users/1000/ai/model_profiles/local/api_key": "local-key",
+          "users/1000/ai/models/local/api_key": "local-key",
         },
       }),
       {

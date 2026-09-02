@@ -40,15 +40,6 @@ import { z } from "zod";
 export type { AgentApprovalAction } from "../domain/consoleAgentBehavior";
 
 export const DEFAULT_CONSOLE_ADAPTERS = ["whatsapp", "discord", "telegram", "slack"] as const;
-const TEXT_MODEL_VALIDATION_KEYS = [
-  "config/ai/provider",
-  "config/ai/model",
-  "config/ai/base_url",
-  "config/ai/provider_style",
-  "config/ai/transport_target",
-  "config/ai/api_key",
-  "config/ai/reasoning",
-] as const;
 const MODEL_VALIDATION_SYSTEM_PROMPT = "You are validating a text-generation model configuration. Reply with exactly: ok";
 const MODEL_VALIDATION_USER_MESSAGE = "Reply with ok.";
 const OPENAI_CODEX_PROVIDER = "openai-codex";
@@ -345,19 +336,17 @@ export async function validateConsoleModelConfig(
   input: ValidateConsoleModelConfigInput,
 ): Promise<ValidateConsoleModelConfigResult> {
   const presetId = input.presetId?.trim();
-  const overrides = modelValidationOverrides(input.values);
-  const model = overrides["config/ai/model"] || input.values["config/ai/model"]?.trim();
-  if (!presetId && !model) {
-    throw new Error("model is required");
-  }
+  const modelConfig = modelValidationConfig(input.values);
+  const reasoning = input.values["config/ai/reasoning"]?.trim();
 
   const config: AiTextGenerateConfig = {
-    ...(presetId ? { preset: { id: presetId } } : undefined),
-    ...(Object.keys(overrides).length > 0 ? { overrides } : undefined),
+    modelConfig,
+    ...(presetId ? { modelId: presetId } : undefined),
+    ...(reasoning ? { reasoning } : undefined),
   };
-  const secretValues = Object.entries(overrides)
+  const secretValues = Object.entries(input.values)
     .filter(([key, value]) => isSensitiveSettingKey(key) && value.length > 0)
-    .map(([, value]) => value);
+    .map(([, value]) => value.trim());
 
   try {
     const result = await client.call("ai.text.generate", {
@@ -863,14 +852,37 @@ function normalizeIdentityLinkField(value: string, field: string): string {
   return normalized;
 }
 
-function modelValidationOverrides(values: Record<string, string>) {
-  const overrides: Record<string, string> = {};
-  for (const key of TEXT_MODEL_VALIDATION_KEYS) {
-    if (Object.prototype.hasOwnProperty.call(values, key)) {
-      overrides[key] = (values[key] ?? "").trim();
-    }
+function modelValidationConfig(
+  values: Record<string, string>,
+): NonNullable<AiTextGenerateConfig["modelConfig"]> {
+  const provider = values["config/ai/provider"]?.trim();
+  const model = values["config/ai/model"]?.trim();
+  if (!provider || !model) {
+    throw new Error("provider and model are required");
   }
-  return overrides;
+  const config: NonNullable<AiTextGenerateConfig["modelConfig"]> = {
+    provider,
+    model,
+  };
+  if (Object.prototype.hasOwnProperty.call(values, "config/ai/api_key")) {
+    config.apiKey = values["config/ai/api_key"]?.trim() ?? "";
+  }
+  const baseUrl = values["config/ai/base_url"]?.trim();
+  if (baseUrl) config.baseUrl = baseUrl;
+  const providerStyle = values["config/ai/provider_style"]?.trim();
+  if (providerStyle) config.providerStyle = providerStyle;
+  const transportTarget = values["config/ai/transport_target"]?.trim();
+  if (transportTarget) config.transportTarget = transportTarget;
+  const maxTokens = positiveInteger(values["config/ai/max_tokens"]);
+  if (maxTokens) config.maxTokens = maxTokens;
+  const contextWindowTokens = positiveInteger(values["config/ai/context_window_tokens"]);
+  if (contextWindowTokens) config.contextWindowTokens = contextWindowTokens;
+  return config;
+}
+
+function positiveInteger(value: string | undefined): number | undefined {
+  const parsed = Number(value?.trim());
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function hasOpenAiCodexAccountId(metadata: GatewayPayload): boolean {

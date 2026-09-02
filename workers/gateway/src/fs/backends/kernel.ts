@@ -15,7 +15,6 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import type { ProcessRecord } from "../../kernel/processes";
 import {
-  parseProcessAiModelProfiles,
   processAiConfigDirEntries,
 } from "../../process/ai-config";
 import {
@@ -390,18 +389,7 @@ export class KernelMountBackend implements MountBackend {
       ? ownerKey
       : SYSTEM_AI_MODELS_CONFIG_KEY;
     const stack = parseAiModelStack(this.kernel?.config?.get(key));
-    if (stack) {
-      return stack.models;
-    }
-    return parseProcessAiModelProfiles(
-      this.kernel?.config?.get(`users/${ownerUid}/ai/model_profiles`),
-      ownerUid,
-    ).flatMap((profile): AiModelEntry[] => {
-      const provider = profile.values["config/ai/provider"]?.trim();
-      const model = profile.values["config/ai/model"]?.trim();
-      if (!provider || !model) return [];
-      return [{ id: profile.id, name: profile.name, provider, model }];
-    });
+    return stack?.models ?? [];
   }
 
   private readDev(path: string): string | undefined {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
   DEFAULT_AUDIO_TRANSCRIPTION_TIMEOUT_MS,
   transcribeAudioWithWorkersAi,
 } from "./transcription";
@@ -20,6 +21,7 @@ describe("Workers AI transcription", () => {
 
     const request = transcribeAudioWithWorkersAi({ run }, {
       data: "AQID",
+      model: DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
       signal: controller.signal,
     });
     await Promise.resolve();
@@ -41,6 +43,7 @@ describe("Workers AI transcription", () => {
 
     const request = transcribeAudioWithWorkersAi({ run }, {
       data: "AQID",
+      model: DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
       timeoutMs: DEFAULT_AUDIO_TRANSCRIPTION_TIMEOUT_MS,
     });
     const rejection = expect(request).rejects.toThrow(

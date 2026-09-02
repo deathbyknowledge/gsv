@@ -503,8 +503,8 @@ Without `--local`, commands use Kernel `sys.config.get` and `sys.config.set`.
 Keys use ConfigStore paths, for example:
 
 ```bash
-gsv config get config/ai/provider
-gsv config set users/1000/ai/model gpt-4.1-mini
+gsv config get config/ai/models
+gsv config set users/1000/ai/preferred_model primary
 ```
 
 Omit `KEY` on remote `get` to list visible entries. Sensitive remote values are

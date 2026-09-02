@@ -175,10 +175,10 @@ describe("managed installation routing integration", () => {
     const response = await managedRpc(socket, "generate-managed", "ai.text.generate", {
       messages: [{ role: "user", content: "ping" }],
       config: {
-        overrides: {
-          "config/ai/provider": "gsv",
-          "config/ai/model": "default",
-          "config/ai/api_key": "",
+        modelConfig: {
+          provider: "gsv",
+          model: "default",
+          apiKey: "",
         },
       },
       options: { maxTokens: 128, reasoning: "low", timeoutMs: 5_000 },

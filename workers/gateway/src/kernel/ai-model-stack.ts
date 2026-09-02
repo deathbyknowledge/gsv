@@ -16,11 +16,11 @@ const storedAiModelEntrySchema = z.object({
   transportTarget: optionalTextSchema,
   maxTokens: positiveIntegerSchema,
   contextWindowTokens: positiveIntegerSchema,
-}).passthrough();
+}).strict();
 const storedAiModelStackSchema = z.object({
   version: z.literal(1),
   models: z.array(z.unknown()).min(1),
-}).passthrough();
+}).strict();
 
 export function userAiModelsConfigKey(ownerUid: number): string {
   return `users/${ownerUid}/ai/models`;
@@ -28,6 +28,29 @@ export function userAiModelsConfigKey(ownerUid: number): string {
 
 export function aiModelApiKeyConfigKey(scopeKey: string, modelId: string): string {
   return `${scopeKey}/${modelId}/api_key`;
+}
+
+export function parseAiModelApiKeyConfigKey(
+  key: string,
+): { stackKey: string; modelId: string } | null {
+  const match = /^(config\/ai\/models|users\/\d+\/ai\/models)\/([^/]+)\/api_key$/.exec(key);
+  return match ? { stackKey: match[1], modelId: match[2] } : null;
+}
+
+export function isAiModelStackConfigKey(key: string): boolean {
+  return key === SYSTEM_AI_MODELS_CONFIG_KEY || /^users\/\d+\/ai\/models$/.test(key);
+}
+
+export function isSameAiModelCredentialScope(
+  left: Pick<AiModelEntry, "provider" | "model" | "baseUrl" | "providerStyle" | "transportTarget">,
+  right: Pick<AiModelEntry, "provider" | "model" | "baseUrl" | "providerStyle" | "transportTarget">,
+): boolean {
+  return left.provider.trim().toLowerCase() === right.provider.trim().toLowerCase() &&
+    left.model.trim() === right.model.trim() &&
+    normalizeOptionalText(left.baseUrl) === normalizeOptionalText(right.baseUrl) &&
+    (normalizeOptionalText(left.providerStyle)?.toLowerCase() ?? "auto") ===
+      (normalizeOptionalText(right.providerStyle)?.toLowerCase() ?? "auto") &&
+    normalizeTransportTarget(left.transportTarget) === normalizeTransportTarget(right.transportTarget);
 }
 
 export function parseAiModelStack(raw: string | null | undefined): AiModelStack | null {
@@ -93,4 +116,14 @@ function copyModelEntry(model: z.infer<typeof storedAiModelEntrySchema>): AiMode
     entry.contextWindowTokens = model.contextWindowTokens;
   }
   return entry;
+}
+
+function normalizeOptionalText(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized || undefined;
+}
+
+function normalizeTransportTarget(value: string | undefined): string {
+  const normalized = normalizeOptionalText(value);
+  return !normalized || normalized === "worker" ? "gsv" : normalized;
 }

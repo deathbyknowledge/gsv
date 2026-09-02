@@ -53,7 +53,6 @@ import {
   type ProcessHistorySegmentRecord,
 } from "./history";
 import {
-  LEGACY_PROCESS_AI_CONFIG_STORE_KEY,
   PROCESS_AI_CONFIG_STORE_KEY,
   parseProcessAiConfig,
 } from "./ai-config";
@@ -1436,21 +1435,12 @@ export class ProcessStore {
   }
 
   getAiConfig(): ProcAiConfig | null {
-    const current = this.getValue(PROCESS_AI_CONFIG_STORE_KEY);
-    const legacy = current ? null : this.getValue(LEGACY_PROCESS_AI_CONFIG_STORE_KEY);
-    const raw = current ?? legacy;
+    const raw = this.getValue(PROCESS_AI_CONFIG_STORE_KEY);
     if (!raw) {
       return null;
     }
     try {
-      const config = parseProcessAiConfig(raw);
-      if (legacy) {
-        if (config) {
-          this.setAiConfig(config);
-        }
-        this.deleteValue(LEGACY_PROCESS_AI_CONFIG_STORE_KEY);
-      }
-      return config;
+      return parseProcessAiConfig(raw);
     } catch {
       return null;
     }
@@ -1462,7 +1452,6 @@ export class ProcessStore {
 
   clearAiConfig(): void {
     this.deleteValue(PROCESS_AI_CONFIG_STORE_KEY);
-    this.deleteValue(LEGACY_PROCESS_AI_CONFIG_STORE_KEY);
   }
 
   getContextState(): ProcContextState | null {

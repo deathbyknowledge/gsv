@@ -508,21 +508,16 @@ describe("proc handlers", () => {
       },
     } satisfies ResponseFrame);
     const configEntries = new Map<string, string>([
-      ["users/1000/ai/model_profiles", JSON.stringify({
+      ["users/1000/ai/models", JSON.stringify({
         version: 1,
-        profiles: [{
+        models: [{
           id: "fast-stack",
           name: "Fast Stack",
-          values: {
-            "config/ai/provider": "openai",
-            "config/ai/model": "gpt-4.1-mini",
-            "config/ai/image/read/max_tokens": "4096",
-          },
-          createdAt: 10,
-          updatedAt: 20,
+          provider: "openai",
+          model: "gpt-4.1-mini",
         }],
       })],
-      ["users/1000/ai/model_profiles/fast-stack/api_key", "sk-chat"],
+      ["users/1000/ai/models/fast-stack/api_key", "sk-chat"],
     ]);
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {

@@ -29,6 +29,13 @@ import {
 } from "../inference/default-models";
 import { MAIL_SEND } from "../syscalls/constants";
 import { DEFAULT_SHELL_EXEC_TIMEOUT_MS } from "@humansandmachines/gsv/protocol";
+import {
+  aiModelApiKeyConfigKey,
+  isAiModelStackConfigKey,
+  isSameAiModelCredentialScope,
+  parseAiModelApiKeyConfigKey,
+  parseAiModelStack,
+} from "./ai-model-stack";
 
 // =============================================================================
 // System config defaults — every field documented.
@@ -84,8 +91,6 @@ export const SYSTEM_CONFIG_DEFAULTS = defineSystemConfigDefaults({
   // Reasoning effort/mode hint passed to the model (off, minimal, low, medium, high, xhigh).
   // Only applies to models that support extended thinking.
   "config/ai/reasoning": "medium",
-  // Fallback context window for providers that are not in the local model registry.
-  "config/ai/context_window_tokens": "256000",
   // System prompt context, assembled in lexical order, applied to every
   // process. Per-agent persona/context lives in each account's home
   // (/home/<account>/context.d), seeded at account creation.
@@ -147,7 +152,7 @@ export const SYSTEM_CONFIG_DEFAULTS = defineSystemConfigDefaults({
 });
 
 // Per-user config keys follow the same structure under "users/{uid}/ai/*".
-// e.g. "users/1000/ai/provider" overrides "config/ai/provider" for uid 1000.
+// e.g. "users/1000/ai/models" replaces "config/ai/models" for uid 1000.
 // Only AI config and UI presentation prefs (e.g. "users/{uid}/ui/avatar") are
 // user-overridable; server/shell/process config is system-only.
 export const USER_OVERRIDABLE_PREFIXES = ["ai/", "ui/"] as const;
@@ -168,6 +173,26 @@ export class ConfigStore {
   }
 
   set(key: string, value: string): void {
+    const credential = parseAiModelApiKeyConfigKey(key);
+    if (credential) {
+      const stack = parseAiModelStack(this.get(credential.stackKey));
+      if (!stack?.models.some((model) => model.id === credential.modelId)) {
+        throw new Error(
+          `AI model ${credential.modelId} is not configured at /sys/${credential.stackKey}`,
+        );
+      }
+    }
+    if (isAiModelStackConfigKey(key)) {
+      if (key.startsWith("users/") && value.trim().length === 0) {
+        this.delete(key);
+        return;
+      }
+      const nextStack = parseAiModelStack(value);
+      if (!nextStack) {
+        throw new Error(`Invalid AI model stack at /sys/${key}`);
+      }
+      this.clearDetachedAiModelCredentials(key, nextStack);
+    }
     this.sql.exec(
       "INSERT OR REPLACE INTO config_kv (key, value) VALUES (?, ?)",
       key,
@@ -177,6 +202,9 @@ export class ConfigStore {
 
   delete(key: string): boolean {
     const existing = this.getExplicit(key);
+    if (isAiModelStackConfigKey(key) && (existing !== null || key.startsWith("users/"))) {
+      this.clearDetachedAiModelCredentials(key, null);
+    }
     if (existing === null) return false;
     this.sql.exec("DELETE FROM config_kv WHERE key = ?", key);
     return true;
@@ -215,6 +243,31 @@ export class ConfigStore {
       "SELECT key, value FROM config_kv WHERE key LIKE ? ORDER BY key",
       pattern + "%",
     ).toArray();
+  }
+
+  private clearDetachedAiModelCredentials(
+    stackKey: string,
+    nextStack: ReturnType<typeof parseAiModelStack>,
+  ): void {
+    const currentStack = parseAiModelStack(this.get(stackKey));
+    const currentById = new Map((currentStack?.models ?? []).map((model) => [model.id, model]));
+    const nextById = new Map((nextStack?.models ?? []).map((model) => [model.id, model]));
+    for (const entry of this.listExplicit(stackKey)) {
+      const relative = entry.key.slice(`${stackKey}/`.length);
+      const match = /^([^/]+)\/api_key$/.exec(relative);
+      if (!match) {
+        continue;
+      }
+      const modelId = match[1];
+      const current = currentById.get(modelId);
+      const next = nextById.get(modelId);
+      if (!current || !next || !isSameAiModelCredentialScope(current, next)) {
+        this.sql.exec(
+          "DELETE FROM config_kv WHERE key = ?",
+          aiModelApiKeyConfigKey(stackKey, modelId),
+        );
+      }
+    }
   }
 }
 

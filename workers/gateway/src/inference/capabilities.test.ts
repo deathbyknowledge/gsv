@@ -28,6 +28,7 @@ describe("AI media capability adapters", () => {
     const result = await transcribeAudio({ fetch: fetchFn }, {
       provider: "openai",
       apiKey: "openai-key",
+      model: DEFAULT_OPENAI_TRANSCRIPTION_MODEL,
       data: "data:audio/webm;base64,AQID",
       mimeType: "audio/webm",
       filename: "note.webm",
@@ -63,6 +64,7 @@ describe("AI media capability adapters", () => {
     const request = transcribeAudio({ fetch: fetchFn }, {
       provider: "openai",
       apiKey: "openai-key",
+      model: DEFAULT_OPENAI_TRANSCRIPTION_MODEL,
       data: "AQID",
       mimeType: "audio/webm",
       signal: controller.signal,
@@ -91,6 +93,7 @@ describe("AI media capability adapters", () => {
     const request = transcribeAudio({ fetch: fetchFn }, {
       provider: "openai",
       apiKey: "openai-key",
+      model: DEFAULT_OPENAI_TRANSCRIPTION_MODEL,
       data: "AQID",
       mimeType: "audio/webm",
       timeoutMs: 25,
@@ -113,6 +116,8 @@ describe("AI media capability adapters", () => {
     const result = await synthesizeSpeech({ fetch: fetchFn }, {
       provider: "openai",
       apiKey: "openai-key",
+      model: DEFAULT_OPENAI_SPEECH_MODEL,
+      voice: DEFAULT_OPENAI_SPEECH_VOICE,
       text: "Hello",
     });
 
@@ -150,6 +155,7 @@ describe("AI media capability adapters", () => {
 
     const result = await generateImage({ workersAi }, {
       provider: "workers-ai",
+      model: DEFAULT_IMAGE_GENERATION_MODEL,
       prompt: "a quiet desktop tool screenshot",
     });
 
@@ -172,6 +178,7 @@ describe("AI media capability adapters", () => {
     try {
       await generateImage({ workersAi }, {
         provider: "workers-ai",
+        model: DEFAULT_IMAGE_GENERATION_MODEL,
         prompt: "a quiet desktop tool screenshot",
         format: "png",
       });
@@ -246,6 +253,7 @@ describe("AI media capability adapters", () => {
         workersAi: { run: vi.fn(async () => testCase.value) },
       }, {
         provider: "workers-ai",
+        model: DEFAULT_IMAGE_GENERATION_MODEL,
         prompt: "a generated image",
       });
       expect(result?.mimeType).toBe(testCase.mimeType);
@@ -265,6 +273,7 @@ describe("AI media capability adapters", () => {
     const result = await generateImage({ fetch: fetchFn }, {
       provider: "openai",
       apiKey: "openai-key",
+      model: DEFAULT_OPENAI_IMAGE_MODEL,
       prompt: "desktop tool",
       format: "webp",
     });

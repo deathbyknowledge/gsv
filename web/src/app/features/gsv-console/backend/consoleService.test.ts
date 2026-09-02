@@ -492,7 +492,7 @@ describe("console agent service", () => {
 
   // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
-  it("persists selected model presets as profile references", async () => {
+  it("persists selected models as stable entry references", async () => {
     const { client, setConfig } = createMockClient(42);
 
     await saveConsoleAgentBehavior(client, {
@@ -812,12 +812,12 @@ describe("console agent service", () => {
 
     expect(call).toHaveBeenCalledWith("ai.text.generate", expect.objectContaining({
       config: {
-        overrides: {
-          "config/ai/provider": "anthropic",
-          "config/ai/model": "claude-test",
-          "config/ai/api_key": "sk-live",
-          "config/ai/reasoning": "high",
+        modelConfig: {
+          provider: "anthropic",
+          model: "claude-test",
+          apiKey: "sk-live",
         },
+        reasoning: "high",
       },
       options: {
         maxTokens: 2_048,
@@ -865,9 +865,9 @@ describe("console agent service", () => {
 
     expect(call).toHaveBeenCalledWith("ai.text.generate", expect.objectContaining({
       config: {
-        overrides: {
-          "config/ai/provider": "openai-codex",
-          "config/ai/model": "gpt-5.5",
+        modelConfig: {
+          provider: "openai-codex",
+          model: "gpt-5.5",
         },
       },
       sessionAffinityKey: "gsv-console:model-validation",
@@ -898,7 +898,7 @@ describe("console agent service", () => {
     expect(caught?.message).not.toContain("Ray ID");
   });
 
-  it("validates saved presets by preset id", async () => {
+  it("validates saved models by stable entry id", async () => {
     const call = vi.fn(async () => ({
       provider: "workers-ai",
       model: "@cf/test/model",
@@ -933,10 +933,10 @@ describe("console agent service", () => {
 
     expect(call).toHaveBeenCalledWith("ai.text.generate", expect.objectContaining({
       config: {
-        preset: { id: "fast-stack" },
-        overrides: {
-          "config/ai/provider": "workers-ai",
-          "config/ai/model": "@cf/test/model",
+        modelId: "fast-stack",
+        modelConfig: {
+          provider: "workers-ai",
+          model: "@cf/test/model",
         },
       },
     }));
@@ -944,7 +944,7 @@ describe("console agent service", () => {
 
   // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
-  it("validates explicit API key clears as empty overrides", async () => {
+  it("validates an explicit API key clear in the complete model", async () => {
     const call = vi.fn(async () => ({
       provider: "workers-ai",
       model: "@cf/test/model",
@@ -980,11 +980,11 @@ describe("console agent service", () => {
 
     expect(call).toHaveBeenCalledWith("ai.text.generate", expect.objectContaining({
       config: {
-        preset: { id: "fast-stack" },
-        overrides: {
-          "config/ai/provider": "workers-ai",
-          "config/ai/model": "@cf/test/model",
-          "config/ai/api_key": "",
+        modelId: "fast-stack",
+        modelConfig: {
+          provider: "workers-ai",
+          model: "@cf/test/model",
+          apiKey: "",
         },
       },
     }));
@@ -992,7 +992,7 @@ describe("console agent service", () => {
 
   // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
-  it("validates explicit base URL clears as empty overrides", async () => {
+  it("validates a complete model without inheriting a stored base URL", async () => {
     const call = vi.fn(async () => ({
       provider: "custom",
       model: "local-chat",
@@ -1028,11 +1028,10 @@ describe("console agent service", () => {
 
     expect(call).toHaveBeenCalledWith("ai.text.generate", expect.objectContaining({
       config: {
-        preset: { id: "local" },
-        overrides: {
-          "config/ai/provider": "custom",
-          "config/ai/model": "local-chat",
-          "config/ai/base_url": "",
+        modelId: "local",
+        modelConfig: {
+          provider: "custom",
+          model: "local-chat",
         },
       },
     }));

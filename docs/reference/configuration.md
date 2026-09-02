@@ -60,20 +60,21 @@ The owner controls one ordered list of complete text-model entries at `users/{ow
 }
 ```
 
-`id`, `name`, `provider`, and `model` are required. `baseUrl`, `providerStyle`, `transportTarget`, `maxTokens`, and `contextWindowTokens` are optional entry properties. A credential is stored separately at `users/{ownerUid}/ai/models/{id}/api_key` (or `config/ai/models/{id}/api_key` for a system entry), so list reads never expose it.
+`id`, `name`, `provider`, and `model` are required. `baseUrl`, `providerStyle`, `transportTarget`, `maxTokens`, and `contextWindowTokens` are optional entry properties. A credential is stored separately at `users/{ownerUid}/ai/models/{id}/api_key` (or `config/ai/models/{id}/api_key` for a system entry), so list reads never expose it. The config store retains that credential across renames, ordering, and policy changes, but clears it when the entry's provider, model, endpoint, API style, or transport target changes.
 
-An agent or Process may prefer an entry by its stable ID through `users/{uid}/ai/preferred_model` or its Process-local AI configuration. The preferred entry moves to the front for that Process; the rest of the owner's list retains its order. Reasoning remains an orthogonal preference.
+An agent or Process may prefer an entry by its stable ID through `users/{uid}/ai/preferred_model` or its Process-local AI configuration. The preferred entry moves to the front for that Process; the rest of the owner's list retains its order. Reasoning remains an orthogonal preference. Request-local validation also supplies one complete model configuration; it cannot merge individual provider fields into a stored entry. It may reference the credential attached to a stable entry only while the provider, model, endpoint, API style, and transport target still match that entry.
 
 | System Key | User Override | Default | Description |
 |---|---|---|---|
 | `config/ai/models` | `users/{ownerUid}/ai/models` | Workers AI primary plus fallback | Ordered complete text-model stack. |
 | — | `users/{uid}/ai/preferred_model` | empty | Stable entry ID preferred by this agent account. |
 | `config/ai/reasoning` | `users/{uid}/ai/reasoning` | `medium` | Reasoning mode hint: `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`. Unsupported values are clamped to the nearest model-supported level at generation time. |
-| `config/ai/context_window_tokens` | — | `256000` | Last-resort context window when neither an entry nor the model registry supplies one. |
 | `config/ai/max_context_bytes` | `users/{uid}/ai/max_context_bytes` | `32768` | Prompt context budget before messages. |
 | `config/ai/skills/index_mode` | `users/{uid}/ai/skills/index_mode` | `summary` | Skill index included in standing context: ids and descriptions with `summary`, ids only with `names`, or omitted with `off`. Live discovery remains available in every mode. |
 
-Legacy per-field model keys and `model_profiles` are still read so existing installations keep their behavior, but current setup and settings surfaces only write the ordered stack.
+Image generation, transcription, and speech each own a separate complete configuration under `config/ai/{capability}` or `users/{uid}/ai/{capability}`. Setting any user-scoped provider, model, credential, or speaker selects that whole scope; provider and model must both be present, and missing values are not borrowed from the text stack or system capability configuration. Their `api_key` values belong only to that capability configuration.
+
+Legacy per-field text-model keys and `model_profiles` are not read. Move each connection into the ordered `models` stack before upgrading.
 
 ## System Context
 

@@ -58,6 +58,16 @@ describe("AI model stacks", () => {
         { id: "same", name: "B", provider: "b", model: "b" },
       ],
     }))).toBeNull();
+    expect(parseAiModelStack(JSON.stringify({
+      version: 1,
+      models: [{
+        id: "embedded-secret",
+        name: "Embedded secret",
+        provider: "openai",
+        model: "gpt-5.4",
+        apiKey: "must-live-at-the-entry-secret-path",
+      }],
+    }))).toBeNull();
   });
 
   it("moves a preferred entry to the front without duplicating it", () => {

@@ -24,7 +24,7 @@ export type AiToolsResult = {
 };
 
 /** Internal prompt-relevant snapshot used to keep a Process epoch current. */
-export type AiContextArgs = AiConfigArgs;
+export type AiContextArgs = Record<string, never>;
 
 export type AiContextResult = {
   devices: AiToolsDevice[];
@@ -51,22 +51,28 @@ export type AiSkillIndexEntry = {
 
 export type AiSkillIndexMode = "summary" | "names" | "off";
 
-/**
- * One complete text-model connection owned by a human account. Credentials are
- * stored separately from this public shape at the entry's config path.
- */
-export type AiModelEntry = {
-  /** Stable reference used by agent and Process preferences. */
-  id: string;
-  /** Human-readable label shown in model pickers. */
-  name: string;
+/** One complete text-model connection. */
+export type AiModelConfig = {
   provider: string;
   model: string;
+  /** Empty for providers whose deployment binding supplies authentication. */
+  apiKey: string;
   baseUrl?: string;
   providerStyle?: string;
   transportTarget?: string;
   maxTokens?: number;
   contextWindowTokens?: number;
+};
+
+/**
+ * A stored model connection. Its credential lives at the entry's config path
+ * so callers may list the stack without gaining access to the secret.
+ */
+export type AiModelEntry = Omit<AiModelConfig, "apiKey"> & {
+  /** Stable reference used by agent and Process preferences. */
+  id: string;
+  /** Human-readable label shown in model pickers. */
+  name: string;
 };
 
 /** First entry is primary; each later entry is tried in order as a fallback. */
@@ -76,8 +82,13 @@ export type AiModelStack = {
 };
 
 export type AiConfigArgs = {
-  /** Request-local complete-field overrides, used by model validation. */
-  overrides?: Record<string, string>;
+  /**
+   * Complete request-local model configuration, used by model validation.
+   * When modelId identifies the same stored connection, omitting apiKey retains
+   * that entry's credential; changed connection fields make the request
+   * keyless, and an explicit empty string always clears it for the request.
+   */
+  modelConfig?: Omit<AiModelConfig, "apiKey"> & { apiKey?: string };
   /** Stable model entry preference; it only reorders the owner's stack. */
   modelId?: string;
   /** Request or Process-local reasoning preference. */
@@ -154,8 +165,8 @@ export type AiConfigResult = {
 };
 
 export type AiConfigFallback = {
-  profileId?: string;
-  profileName?: string;
+  modelId?: string;
+  modelName?: string;
   provider: string;
   model: string;
   apiKey: string;
@@ -277,11 +288,7 @@ export type AiTextGenerateOptions = {
 };
 
 export type AiTextGenerateConfig = {
-  preset?: {
-    id?: string;
-    name?: string;
-  };
-  overrides?: Record<string, string>;
+  modelConfig?: Omit<AiModelConfig, "apiKey"> & { apiKey?: string };
   modelId?: string;
   reasoning?: string;
 };

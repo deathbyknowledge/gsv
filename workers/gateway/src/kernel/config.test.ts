@@ -28,9 +28,8 @@ describe("ConfigStore", () => {
     store: async ({ task: _task }, use) => {
       await runWithRealKernelSql(async (sql) => {
         const store = new ConfigStore(sql);
-        store.set("config/ai/provider", "anthropic");
-        store.set("config/ai/model", "claude-sonnet-4-6");
-        store.set("users/0/ai/model", "gpt-4.1");
+        store.set("config/ai/generation/streaming", "off");
+        store.set("users/0/ai/preferred_model", "fast");
         await use(store);
       });
     },
@@ -41,18 +40,18 @@ describe("ConfigStore", () => {
     ({ store }) => {
       expect(store.get("config/ai/models")).toBeTruthy();
       expect(store.getExplicit("config/ai/models")).toBeNull();
-      expect(store.get("config/ai/provider")).toBe("anthropic");
-      expect(store.getExplicit("config/ai/provider")).toBe("anthropic");
+      expect(store.get("config/ai/generation/streaming")).toBe("off");
+      expect(store.getExplicit("config/ai/generation/streaming")).toBe("off");
     },
   );
 
   configuredStoreTest(
     "delete removes explicit values and reveals defaults",
     ({ store }) => {
-      expect(store.delete("config/ai/provider")).toBe(true);
-      expect(store.getExplicit("config/ai/provider")).toBeNull();
-      expect(store.get("config/ai/provider")).toBeNull();
-      expect(store.delete("config/ai/provider")).toBe(false);
+      expect(store.delete("config/ai/generation/streaming")).toBe(true);
+      expect(store.getExplicit("config/ai/generation/streaming")).toBeNull();
+      expect(store.get("config/ai/generation/streaming")).toBe("auto");
+      expect(store.delete("config/ai/generation/streaming")).toBe(false);
     },
   );
 
@@ -61,9 +60,8 @@ describe("ConfigStore", () => {
     ({ store }) => {
       const all = store.list("");
       expect(store.listExplicit("").map((entry) => entry.key)).toEqual([
-        "config/ai/model",
-        "config/ai/provider",
-        "users/0/ai/model",
+        "config/ai/generation/streaming",
+        "users/0/ai/preferred_model",
       ]);
       expect(all.length).toBeGreaterThan(3);
       expect(new Set(all.map((entry) => entry.key)).size).toBe(all.length);
@@ -76,14 +74,73 @@ describe("ConfigStore", () => {
       const ai = store.list("config/ai");
       const values = new Map(ai.map((entry) => [entry.key, entry.value]));
       expect(values.get("config/ai/models")).toBeTruthy();
-      expect(values.get("config/ai/provider")).toBe("anthropic");
-      expect(values.get("config/ai/model")).toBe("claude-sonnet-4-6");
-      expect(values.get("config/ai/generation/streaming")).toBe("auto");
+      expect(values.get("config/ai/generation/streaming")).toBe("off");
       expect(values.get("config/ai/context.d/01-gsv.md")).toContain(
         "[GSV EVENT]",
       );
     },
   );
+
+  it("keeps model credentials attached to one unchanged connection", () =>
+    runWithRealKernelSql((sql) => {
+      const store = new ConfigStore(sql);
+      const stackKey = "users/1000/ai/models";
+      const primary = { id: "primary", name: "Primary", provider: "openai", model: "gpt-5" };
+      const backup = { id: "backup", name: "Backup", provider: "anthropic", model: "claude" };
+      store.set(stackKey, JSON.stringify({ version: 1, models: [primary, backup] }));
+      store.set(`${stackKey}/primary/api_key`, "sk-primary");
+      store.set(`${stackKey}/backup/api_key`, "sk-backup");
+
+      store.set(stackKey, JSON.stringify({
+        version: 1,
+        models: [{ ...backup, name: "Fallback", maxTokens: 16_384 }, primary],
+      }));
+      expect(store.get(`${stackKey}/primary/api_key`)).toBe("sk-primary");
+      expect(store.get(`${stackKey}/backup/api_key`)).toBe("sk-backup");
+
+      store.set(stackKey, JSON.stringify({
+        version: 1,
+        models: [{ ...backup, provider: "custom", baseUrl: "https://new.example/v1" }, primary],
+      }));
+      expect(store.get(`${stackKey}/primary/api_key`)).toBe("sk-primary");
+      expect(store.get(`${stackKey}/backup/api_key`)).toBeNull();
+
+      store.set(stackKey, "");
+      expect(store.getExplicit(stackKey)).toBeNull();
+      expect(store.get(`${stackKey}/primary/api_key`)).toBeNull();
+    }));
+
+  it("rejects an invalid model stack without detaching its credential", () =>
+    runWithRealKernelSql((sql) => {
+      const store = new ConfigStore(sql);
+      const stackKey = "users/1000/ai/models";
+      const stack = JSON.stringify({
+        version: 1,
+        models: [{ id: "primary", name: "Primary", provider: "openai", model: "gpt-5" }],
+      });
+      store.set(stackKey, stack);
+      store.set(`${stackKey}/primary/api_key`, "sk-primary");
+
+      expect(() => store.set(
+        stackKey,
+        JSON.stringify({ version: 1, models: [] }),
+      )).toThrow(`Invalid AI model stack at /sys/${stackKey}`);
+      expect(store.get(stackKey)).toBe(stack);
+      expect(store.get(`${stackKey}/primary/api_key`)).toBe("sk-primary");
+    }));
+
+  it("rejects a credential without its model entry", () =>
+    runWithRealKernelSql((sql) => {
+      const store = new ConfigStore(sql);
+
+      expect(() => store.set(
+        "users/1000/ai/models/missing/api_key",
+        "sk-detached",
+      )).toThrow(
+        "AI model missing is not configured at /sys/users/1000/ai/models",
+      );
+      expect(store.get("users/1000/ai/models/missing/api_key")).toBeNull();
+    }));
 
   it("ships an ordered Workers AI primary and fallback stack", () =>
     runWithRealKernelSql((sql) => {

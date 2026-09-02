@@ -651,16 +651,21 @@ const processIdentitySchema = z.object({
   home: z.string(),
   cwd: z.string(),
 });
-const stringRecordSchema = z.record(z.string(), z.string());
+const aiModelConfigSchema = z.object({
+  provider: z.string(),
+  model: z.string(),
+  apiKey: z.string().optional(),
+  baseUrl: z.string().optional(),
+  providerStyle: z.string().optional(),
+  transportTarget: z.string().optional(),
+  maxTokens: z.number().int().positive().optional(),
+  contextWindowTokens: z.number().int().positive().optional(),
+}).strict();
 const aiTextGenerateConfigSchema = z.object({
-  preset: z.object({
-    id: z.string().optional(),
-    name: z.string().optional(),
-  }).optional(),
-  overrides: stringRecordSchema.optional(),
+  modelConfig: aiModelConfigSchema.optional(),
   modelId: z.string().optional(),
   reasoning: z.string().optional(),
-});
+}).strict();
 const toolDefinitionSchema = z.object({
   name: z.string(),
   description: z.string(),
@@ -703,8 +708,8 @@ const aiTextExecutorSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("device"), target: z.string() }),
 ]);
 const aiConfigFallbackSchema = z.object({
-  profileId: z.string().optional(),
-  profileName: z.string().optional(),
+  modelId: z.string().optional(),
+  modelName: z.string().optional(),
   provider: z.string(),
   model: z.string(),
   apiKey: z.string(),

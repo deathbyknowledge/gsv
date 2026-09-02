@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   createProcessAiConfig,
   parseProcessAiConfig,
-  parseProcessAiModelProfiles,
 } from "./ai-config";
 
 describe("process ai config", () => {
@@ -17,7 +16,7 @@ describe("process ai config", () => {
     });
   });
 
-  it("migrates a legacy snapshot without retaining copied model limits or credentials", () => {
+  it("rejects obsolete copied model snapshots", () => {
     const config = parseProcessAiConfig(JSON.stringify({
       version: 1,
       values: {
@@ -31,32 +30,17 @@ describe("process ai config", () => {
       updatedAt: 123,
     }));
 
-    expect(config).toEqual({
+    expect(config).toBeNull();
+    expect(parseProcessAiConfig(JSON.stringify({
       version: 2,
       modelId: "fast",
-      reasoning: "low",
+      overrides: { "config/ai/model": "gpt-old" },
       updatedAt: 123,
-    });
-  });
-
-  it("drops fallback model profile from stored model presets", () => {
-    const profiles = parseProcessAiModelProfiles(JSON.stringify({
-      version: 1,
-      profiles: [{
-        id: "fast",
-        name: "Fast",
-        values: {
-          "config/ai/provider": "custom",
-          "config/ai/model": "fast-model",
-          "config/ai/fallback_model_profile": "backup-stack",
-        },
-      }],
-    }), 1000);
-
-    expect(profiles).toHaveLength(1);
-    expect(profiles[0].values).toEqual({
-      "config/ai/provider": "custom",
-      "config/ai/model": "fast-model",
-    });
+    }))).toBeNull();
+    expect(parseProcessAiConfig(JSON.stringify({
+      version: 2,
+      modelId: 42,
+      updatedAt: 123,
+    }))).toBeNull();
   });
 });

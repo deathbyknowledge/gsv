@@ -39,9 +39,6 @@ import { ensurePersonalAgent } from "./agents";
 import { accountIdentity } from "./accounts";
 import { canOwnerDelegateRunAs } from "./account-access";
 import {
-  findProcessAiModelProfile,
-} from "../process/ai-config";
-import {
   parseAiModelStack,
   SYSTEM_AI_MODELS_CONFIG_KEY,
   userAiModelsConfigKey,
@@ -891,14 +888,7 @@ function withValidatedProcAiConfig(
   const modelsRaw = ctx.config.get(modelsKey);
   const stack = parseAiModelStack(modelsRaw);
   const storedModel = stack?.models.find((model) => model.id.toLowerCase() === modelId);
-  const legacyProfile = storedModel
-    ? null
-    : findProcessAiModelProfile(
-        ctx.config.get(`users/${ownerUid}/ai/model_profiles`),
-        ownerUid,
-        modelId,
-      );
-  if (!storedModel && !legacyProfile) {
+  if (!storedModel) {
     throw new Error(`AI model not found: ${modelId}`);
   }
 
@@ -906,7 +896,7 @@ function withValidatedProcAiConfig(
     ...frame,
     args: {
       ...args,
-      modelId: storedModel?.id ?? legacyProfile!.id,
+      modelId: storedModel.id,
     },
   };
 }

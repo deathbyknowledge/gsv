@@ -245,9 +245,11 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     ["daily", "0 5 * * * proc compact init:1000 --keep-last 80\n"],
   ]);
   const configEntries = new Map<string, string>([
-    ["config/ai/provider", "workers-ai"],
-    ["config/ai/model", "@cf/system/model"],
-    ["config/ai/api_key", "sk-system"],
+    ["config/ai/models", JSON.stringify({
+      version: 1,
+      models: [{ id: "system", name: "System", provider: "workers-ai", model: "@cf/system/model" }],
+    })],
+    ["config/ai/models/system/api_key", "sk-system"],
     ["config/ai/image/read/max_objects", "150"],
     ["config/ai/speech/provider", "workers-ai"],
     ["users/1000/ai/models", JSON.stringify({
@@ -259,26 +261,7 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
         model: "gpt-4.1-mini",
       }],
     })],
-    ["users/1000/ai/model_profiles", JSON.stringify({
-      version: 1,
-      profiles: [
-        {
-          id: "fast-stack",
-          name: "Fast Stack",
-          values: {
-            "config/ai/provider": "openai",
-            "config/ai/model": "gpt-4.1-mini",
-            "config/ai/image/read/max_tokens": "4096",
-            "config/ai/speech/provider": "openai",
-            "config/ai/speech/model": "gpt-4o-mini-tts",
-          },
-          createdAt: 1000,
-          updatedAt: 2000,
-        },
-      ],
-    })],
-    ["users/1000/ai/model_profiles/fast-stack/api_key", "sk-profile"],
-    ["users/1000/ai/model_profiles/fast-stack/speech/api_key", "sk-speech"],
+    ["users/1000/ai/models/fast-stack/api_key", "sk-model"],
   ]);
   let processAiConfig: any = null;
   const passwdEntries = [ROOT, SAM, ALICE, SAM_AGENT].map((user) => ({
@@ -1079,10 +1062,13 @@ describe("GsvFs virtual /dev", () => {
 
 describe("GsvFs virtual /sys config tree", () => {
   it("lists nested /sys/config directories based on config key prefixes", async () => {
+    const models = JSON.stringify({
+      version: 1,
+      models: [{ id: "claude", name: "Claude", provider: "anthropic", model: "claude-sonnet-4-6" }],
+    });
     const fs = makeConfigBackedFs(ROOT, {
-      "config/ai/provider": "anthropic",
-      "config/ai/model": "claude-sonnet-4-6",
-      "config/ai/api_key": "sk-test",
+      "config/ai/models": models,
+      "config/ai/models/claude/api_key": "sk-test",
       "config/server/name": "gsv",
     });
 
@@ -1090,20 +1076,18 @@ describe("GsvFs virtual /sys config tree", () => {
     expect(top).toEqual(["ai", "server"]);
 
     const ai = await fs.readdir("/sys/config/ai");
-    expect(ai).toEqual(["api_key", "model", "provider"]);
+    expect(ai).toEqual(["models"]);
 
     const stat = await fs.stat("/sys/config/ai");
     expect(stat.isDirectory).toBe(true);
 
-    const provider = await fs.readFile("/sys/config/ai/provider");
-    expect(provider).toBe("anthropic\n");
+    await expect(fs.readFile("/sys/config/ai/models")).resolves.toBe(`${models}\n`);
   });
 
   it("lists nested /sys/users/{uid} directories based on user config key prefixes", async () => {
     const fs = makeConfigBackedFs(ROOT, {
-      "users/0/ai/provider": "openai",
-      "users/0/ai/model": "gpt-4.1",
-      "users/1000/ai/model": "gpt-4.1-mini",
+      "users/0/ai/preferred_model": "gpt-4.1",
+      "users/1000/ai/preferred_model": "gpt-4.1-mini",
     });
 
     const users = await fs.readdir("/sys/users");
@@ -1113,33 +1097,36 @@ describe("GsvFs virtual /sys config tree", () => {
     expect(user0).toEqual(["ai"]);
 
     const user0Ai = await fs.readdir("/sys/users/0/ai");
-    expect(user0Ai).toEqual(["model", "provider"]);
+    expect(user0Ai).toEqual(["preferred_model"]);
   });
 
   it("returns ENOENT for unknown config subtree", async () => {
     const fs = makeConfigBackedFs(ROOT, {
-      "config/ai/provider": "anthropic",
+      "config/ai/models": "{}",
     });
     await expect(fs.readdir("/sys/config/missing")).rejects.toThrow("ENOENT");
   });
 
   it("hides sensitive system config keys for non-root users", async () => {
+    const models = JSON.stringify({
+      version: 1,
+      models: [{ id: "claude", name: "Claude", provider: "anthropic", model: "claude-sonnet-4-6" }],
+    });
     const fs = makeConfigBackedFs(SAM, {
-      "config/ai/provider": "anthropic",
-      "config/ai/model": "claude-sonnet-4-6",
-      "config/ai/api_key": "sk-test",
+      "config/ai/models": models,
+      "config/ai/models/claude/api_key": "sk-test",
     });
 
     const entries = await fs.readdir("/sys/config/ai");
-    expect(entries).toEqual(["model", "provider"]);
+    expect(entries).toEqual(["models"]);
 
-    await expect(fs.readFile("/sys/config/ai/api_key")).rejects.toThrow("ENOENT");
+    await expect(fs.readFile("/sys/config/ai/models/claude/api_key")).rejects.toThrow("ENOENT");
   });
 
   it("shows only own user namespace under /sys/users for non-root users", async () => {
     const fs = makeConfigBackedFs(SAM, {
-      "users/1000/ai/model": "gpt-4.1-mini",
-      "users/1001/ai/model": "gpt-4.1",
+      "users/1000/ai/preferred_model": "gpt-4.1-mini",
+      "users/1001/ai/preferred_model": "gpt-4.1",
     });
 
     const users = await fs.readdir("/sys/users");

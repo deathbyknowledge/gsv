@@ -16,7 +16,7 @@ export type TranscriptionMode = "transcribe" | "translate";
 
 export type AudioTranscriptionRequest = {
   data: string;
-  model?: string;
+  model: string;
   provider?: string;
   apiKey?: string;
   mimeType?: string;
@@ -54,7 +54,10 @@ export async function transcribeAudioWithWorkersAi(
     return null;
   }
 
-  const model = request.model || DEFAULT_AUDIO_TRANSCRIPTION_MODEL;
+  const model = request.model.trim();
+  if (!model) {
+    throw new Error("Audio transcription model is required");
+  }
   const input: JsonObject = {
     audio: normalizeBase64Data(request.data),
     task: request.mode || "transcribe",

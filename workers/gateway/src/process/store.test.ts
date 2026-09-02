@@ -1286,7 +1286,7 @@ describe("ProcessStore", () => {
       });
     });
 
-    it("persists Process model preferences and migrates legacy snapshots", async () => {
+    it("persists Process model preferences", async () => {
       const stub = await getProcessByPid("kv-ai-config");
       // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
@@ -1307,25 +1307,6 @@ describe("ProcessStore", () => {
           reasoning: "high",
           updatedAt: 1000,
         });
-
-        store.clearAiConfig();
-        store.setValue("aiConfigSnapshot", JSON.stringify({
-          version: 1,
-          values: {
-            "config/ai/api_key": "sk-test",
-            "config/ai/max_tokens": "8192",
-            "config/ai/reasoning": "low",
-          },
-          profile: { id: "legacy", name: "Legacy", appliedAt: 500 },
-          updatedAt: 500,
-        }));
-        expect(store.getAiConfig()).toEqual({
-          version: 2,
-          modelId: "legacy",
-          reasoning: "low",
-          updatedAt: 500,
-        });
-        expect(store.getValue("aiConfigSnapshot")).toBeNull();
 
         store.clearAiConfig();
         expect(store.getAiConfig()).toBeNull();
