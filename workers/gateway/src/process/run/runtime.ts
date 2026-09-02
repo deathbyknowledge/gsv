@@ -1543,6 +1543,8 @@ export class ProcessRun {
   }
 
   async alarm(): Promise<void> {
+    if (this.host.resetTransition) await this.host.resetTransition;
+    if (this.host.killTransition) await this.host.killTransition;
     if (this.host.killed) {
       if (this.host.killedTombstone?.cleanup === "pending") {
         await this.host.controller.completeKilledProcessCleanup();
