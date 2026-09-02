@@ -1,17 +1,9 @@
-import type { StoredProcessMedia } from "./media";
+import { storedProcessMediaSchema, type StoredProcessMedia } from "./media";
 import {
-  fileResourceReferenceSchema,
-  jsonObjectSchema,
-  jsonValueSchema,
-  resourceBlockSchema,
-  type FileResourceReference,
-  type JsonObject,
-  type JsonValue,
+  fileResourceReferenceSchema, jsonObjectSchema, jsonValueSchema, resourceBlockSchema, type FileResourceReference,
+  type JsonObject, type JsonValue,
 } from "@humansandmachines/gsv/protocol";
-import {
-  binaryDataFromBase64,
-  encodeBase64Bytes,
-} from "../shared/base64";
+import { binaryDataFromBase64, encodeBase64Bytes } from "../shared/base64";
 import { z } from "zod";
 
 const STORED_TOOL_RESULT_VERSION = 1;
@@ -41,21 +33,10 @@ const imageContentSchema = z.object({
   data: z.string(),
   mimeType: z.string(),
 }).catchall(jsonValueSchema);
-const storedMediaSchema = z.object({
-  type: z.enum(["image", "audio", "video", "document"]),
-  mimeType: z.string(),
-  key: z.string().optional(),
-  path: z.string().optional(),
-  url: z.string().optional(),
-  filename: z.string().optional(),
-  size: z.number().optional(),
-  duration: z.number().optional(),
-  transcription: z.string().optional(),
-});
 const storedToolResultSchema = z.object({
   __gsvStoredToolResult: z.literal(STORED_TOOL_RESULT_VERSION),
   output: z.json(),
-  media: z.array(storedMediaSchema),
+  media: z.array(storedProcessMediaSchema),
 });
 const fsReadResourceResultSchema = z.object({
   ok: z.literal(true),
@@ -64,7 +45,7 @@ const fsReadResourceResultSchema = z.object({
   content: z.array(z.json()),
 }).catchall(z.json());
 
-export type ExtractedToolResultImage = {
+type ExtractedToolResultImage = {
   bytes: Uint8Array;
   mimeType: string;
   placeholder: ToolResultRecord;

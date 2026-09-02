@@ -1,12 +1,8 @@
-import type {
-  AiConfigResult,
-  AiToolsDevice,
-  ProcessIdentity,
-} from "@humansandmachines/gsv/protocol";
+import type { AiConfigResult, AiToolsDevice, ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { RipgitClient } from "../../fs/ripgit/client";
 
-export type PromptStorage = Pick<R2Bucket, "get" | "list">;
-export type PromptRipgitClient = Pick<RipgitClient, "readPath">;
+type PromptStorage = Pick<R2Bucket, "get" | "list">;
+type PromptRipgitClient = Pick<RipgitClient, "readPath">;
 
 export type PromptAssemblyInput = {
   config: AiConfigResult;

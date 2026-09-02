@@ -1,57 +1,32 @@
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
-
 import type { ProcMediaInput } from "@humansandmachines/gsv/protocol";
-import {
-  DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES,
-  type AudioTranscriptionBinding,
-} from "../inference/transcription";
+import { DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES, type AudioTranscriptionBinding } from "../inference/transcription";
 import { transcribeAudio } from "../inference/capabilities";
 import {
-  DEFAULT_IMAGE_READING_MAX_TOKENS,
-  DEFAULT_IMAGE_READING_TIMEOUT_MS,
-  DEFAULT_MAX_IMAGE_READING_BYTES,
-  readImage,
+  DEFAULT_IMAGE_READING_MAX_TOKENS, DEFAULT_IMAGE_READING_TIMEOUT_MS, DEFAULT_MAX_IMAGE_READING_BYTES, readImage,
   type ImageReadingBinding,
 } from "../inference/image-reading";
 import { isVectorImageMimeType } from "../inference/image-mime";
 import { isWorkersAiProvider } from "../inference/workers-ai";
 import { encodeBase64Bytes } from "../shared/base64";
-import {
-  processMediaPath,
-  processMediaPrefix,
-} from "../shared/process-media-path";
+import { processMediaPath, processMediaPrefix } from "../shared/process-media-path";
 import { z } from "zod";
 
 export { processMediaPath, processMediaPrefix } from "../shared/process-media-path";
 
 export {
   DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
-  DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES,
   type AudioTranscriptionBinding,
 } from "../inference/transcription";
 
 export {
   DEFAULT_IMAGE_READING_MODEL,
-  DEFAULT_MAX_IMAGE_READING_BYTES,
   type ImageReadingBinding,
 } from "../inference/image-reading";
 
-export type StoredProcessMedia = {
-  type: ProcMediaInput["type"];
-  mimeType: string;
-  key?: string;
-  path?: string;
-  url?: string;
-  filename?: string;
-  size?: number;
-  duration?: number;
-  transcription?: string;
-  description?: string;
-};
-
 const ARCHIVED_PROCESS_MEDIA_KEY =
   /^(?:root|home\/(?!\.{1,2}\/)[^/\\]+)\/\.gsv\/media\/archived-media:[0-9a-f]{64}$/;
-const storedMediaSchema = z.object({
+export const storedProcessMediaSchema = z.object({
   type: z.enum(["image", "audio", "video", "document"]),
   mimeType: z.string(),
   key: z.string().optional(),
@@ -64,7 +39,9 @@ const storedMediaSchema = z.object({
   description: z.string().optional(),
 });
 
-export function archivedProcessMediaPath(key: string): string | null {
+export type StoredProcessMedia = z.infer<typeof storedProcessMediaSchema>;
+
+function archivedProcessMediaPath(key: string): string | null {
   return ARCHIVED_PROCESS_MEDIA_KEY.test(key) ? `/${key}` : null;
 }
 
@@ -81,6 +58,48 @@ export type StoreIncomingProcessMediaOptions = {
   allowedStoredKeys?: ReadonlySet<string>;
 };
 
+function mediaProcessingLimit(
+  type: ProcMediaInput["type"],
+  options: StoreIncomingProcessMediaOptions,
+): number {
+  if (type === "audio") {
+    return options.maxTranscriptionBytes ?? DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES;
+  }
+  if (type === "image") {
+    return options.imageReadingMaxBytes ?? DEFAULT_MAX_IMAGE_READING_BYTES;
+  }
+  return 0;
+}
+
+async function resolveIncomingMediaSource(
+  bucket: R2Bucket,
+  prefix: string,
+  input: ProcMediaInput,
+  stored: StoredProcessMedia,
+  options: StoreIncomingProcessMediaOptions,
+): Promise<Uint8Array | null> {
+  if (!input.key) {
+    if (input.url) stored.url = input.url;
+    return null;
+  }
+  const path = processMediaPath(input.key) ?? archivedProcessMediaPath(input.key);
+  const processOwned = input.key.startsWith(prefix) && processMediaPath(input.key) !== null;
+  if ((!processOwned && !options.allowedStoredKeys?.has(input.key)) || !path) {
+    throw new Error("media key is outside this process");
+  }
+  const metadata = await bucket.head(input.key);
+  if (!metadata) throw new Error(`media not found: ${input.key}`);
+  stored.key = input.key;
+  stored.path = path;
+  stored.size = metadata.size;
+  const limit = mediaProcessingLimit(input.type, options);
+  if (limit === 0 || metadata.size > limit) return null;
+  const object = await bucket.get(input.key);
+  if (!object) return null;
+  const bytes = new Uint8Array(await object.arrayBuffer());
+  options.signal?.throwIfAborted();
+  return bytes;
+}
 
 export async function storeIncomingProcessMedia(
   bucket: R2Bucket,
@@ -107,42 +126,10 @@ export async function storeIncomingProcessMedia(
       transcription: item.transcription,
     };
 
-    let bytes: Uint8Array | null = null;
-    let base64: string | null = null;
-
-    if (item.key && item.key.length > 0) {
-      const path = processMediaPath(item.key) ?? archivedProcessMediaPath(item.key);
-      const processOwned = item.key.startsWith(prefix) && processMediaPath(item.key) !== null;
-      if ((!processOwned && !options.allowedStoredKeys?.has(item.key)) || !path) {
-        throw new Error("media key is outside this process");
-      }
-      const object = await bucket.head(item.key);
-      if (!object) {
-        throw new Error(`media not found: ${item.key}`);
-      }
-      next.key = item.key;
-      next.path = path;
-      next.size = object.size;
-
-      const processingLimit = item.type === "audio"
-        ? options.maxTranscriptionBytes ?? DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES
-        : item.type === "image"
-          ? options.imageReadingMaxBytes ?? DEFAULT_MAX_IMAGE_READING_BYTES
-          : 0;
-      if (processingLimit > 0 && object.size <= processingLimit) {
-        const stored = await bucket.get(item.key);
-        if (stored) {
-          bytes = new Uint8Array(await stored.arrayBuffer());
-          options.signal?.throwIfAborted();
-          base64 = encodeBase64Bytes(bytes);
-        }
-      }
-    } else if (item.url && item.url.length > 0) {
-      next.url = item.url;
-    }
+    const bytes = await resolveIncomingMediaSource(bucket, prefix, item, next, options);
 
     if (shouldTranscribeAudio(item, next, bytes, options)) {
-      const result = await transcribeIncomingAudio(options.ai, base64!, {
+      const result = await transcribeIncomingAudio(options.ai, encodeBase64Bytes(bytes!), {
         provider: options.audioTranscriptionProvider!,
         apiKey: options.audioTranscriptionApiKey,
         model: options.audioTranscriptionModel!,
@@ -159,11 +146,16 @@ export async function storeIncomingProcessMedia(
     }
 
     if (shouldReadImage(item, next, bytes, options)) {
-      const result = await describeIncomingImage(options.ai, base64!, item.mimeType, {
-        maxTokens: options.imageReadingMaxTokens,
-        timeoutMs: options.imageReadingTimeoutMs,
-        signal: options.signal,
-      });
+      const result = await describeIncomingImage(
+        options.ai,
+        encodeBase64Bytes(bytes!),
+        item.mimeType,
+        {
+          maxTokens: options.imageReadingMaxTokens,
+          timeoutMs: options.imageReadingTimeoutMs,
+          signal: options.signal,
+        },
+      );
       if (result) {
         next.description = result;
       }
@@ -211,7 +203,7 @@ export function parseStoredProcessMedia(raw: string | null): StoredProcessMedia[
     return [];
   }
 
-  const entries = z.array(storedMediaSchema).safeParse(parsed);
+  const entries = z.array(storedProcessMediaSchema).safeParse(parsed);
   if (!entries.success) {
     return [];
   }
@@ -224,18 +216,20 @@ export function parseStoredProcessMedia(raw: string | null): StoredProcessMedia[
     };
     if (candidate.key && candidate.key.length > 0) {
       next.key = candidate.key;
-      const persistedPath = candidate.path
-        && candidate.path === `/${candidate.key}`
-        ? archivedProcessMediaPath(candidate.key)
-        : null;
+      const persistedPath =
+        candidate.path && candidate.path === `/${candidate.key}`
+          ? archivedProcessMediaPath(candidate.key)
+          : null;
       next.path = processMediaPath(candidate.key) ?? persistedPath ?? undefined;
     }
     if (candidate.url && candidate.url.length > 0) next.url = candidate.url;
     if (candidate.filename && candidate.filename.length > 0) next.filename = candidate.filename;
     if (candidate.size !== undefined) next.size = candidate.size;
     if (candidate.duration !== undefined) next.duration = candidate.duration;
-    if (candidate.transcription && candidate.transcription.length > 0) next.transcription = candidate.transcription;
-    if (candidate.description && candidate.description.length > 0) next.description = candidate.description;
+    if (candidate.transcription && candidate.transcription.length > 0)
+      next.transcription = candidate.transcription;
+    if (candidate.description && candidate.description.length > 0)
+      next.description = candidate.description;
     return [next];
   });
 }
@@ -274,19 +268,14 @@ export function describeStoredProcessMedia(media: StoredProcessMedia): string {
   return `${base}${location}`;
 }
 
-export function buildFallbackMediaBlocks(
-  media: StoredProcessMedia[],
-): TextContent[] {
+export function buildFallbackMediaBlocks(media: StoredProcessMedia[]): TextContent[] {
   return media.map((item) => ({
     type: "text",
     text: describeStoredProcessMedia(item),
   }));
 }
 
-export function buildImageBlock(
-  data: string,
-  mimeType: string,
-): ImageContent {
+export function buildImageBlock(data: string, mimeType: string): ImageContent {
   return {
     type: "image",
     data,
@@ -358,18 +347,21 @@ async function transcribeIncomingAudio(
   },
 ): Promise<{ text: string; duration?: number } | null> {
   try {
-    return await transcribeAudio({ workersAi: ai }, {
-      data: base64,
-      provider: options.provider,
-      apiKey: options.apiKey,
-      model: options.model,
-      mimeType: options.mimeType,
-      filename: options.filename,
-      signal: options.signal,
-      mode: "transcribe",
-      vadFilter: true,
-      conditionOnPreviousText: false,
-    });
+    return await transcribeAudio(
+      { workersAi: ai },
+      {
+        data: base64,
+        provider: options.provider,
+        apiKey: options.apiKey,
+        model: options.model,
+        mimeType: options.mimeType,
+        filename: options.filename,
+        signal: options.signal,
+        mode: "transcribe",
+        vadFilter: true,
+        conditionOnPreviousText: false,
+      },
+    );
   } catch (error) {
     if (options.signal?.aborted) {
       throw options.signal.reason ?? error;
