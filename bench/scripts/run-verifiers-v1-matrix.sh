@@ -116,13 +116,12 @@ run_model() {
 }
 
 failed=0
-for ((offset = 0; offset < ${#models[@]}; offset += parallel_models)); do
+model_count="${#models[@]}"
+for ((offset = 0; offset < model_count; offset += parallel_models)); do
   pids=()
-  batch=()
-  for ((index = offset; index < offset + parallel_models && index < ${#models[@]}; index++)); do
+  for ((index = offset; index < offset + parallel_models && index < model_count; index++)); do
     run_model "${models[$index]}" &
     pids+=("$!")
-    batch+=("${models[$index]}")
   done
   for index in "${!pids[@]}"; do
     if ! wait "${pids[$index]}"; then
