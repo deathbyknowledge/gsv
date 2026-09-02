@@ -4,9 +4,9 @@
  * Thin wrappers around ConfigStore with key-level permission checks.
  *
  * Key format mirrors ConfigStore internals:
- *   "config/ai/provider"     → system-wide AI provider
+ *   "config/ai/models"       → system-wide ordered AI model stack
  *   "config/shell/timeout_ms" → system-wide shell timeout
- *   "users/1000/ai/model"    → per-user AI model override
+ *   "users/1000/ai/models"   → owner AI model stack
  *
  * Permission model:
  *   Read:  root reads all; non-root reads own users/{uid}/*, delegated agent

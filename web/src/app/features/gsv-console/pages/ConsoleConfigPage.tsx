@@ -47,7 +47,6 @@ import {
   serializeApprovalPolicy,
 } from "../domain/consoleAgentBehavior";
 import {
-  AGENT_MODEL_FIELDS,
   MODEL_PROFILE_FIELDS,
   RUNTIME_SETTING_GROUPS,
   TOOL_MODEL_GROUPS,
@@ -58,11 +57,10 @@ import {
   deleteModelProfile,
   effectiveAiValuesForViewer,
   isSensitiveSettingKey,
-  modelProfileDefaultEntries,
+  makeModelPrimary,
   modelProfileSaveEntries,
   modelValidationValuesFromProfileDrafts,
   modelProfileSecretConfigKey,
-  modelProfileSummary,
   modelProfilesForConfig,
   modelStackDisplayName,
   normalizeProfileName,
@@ -169,7 +167,6 @@ type SettingsFieldGroupProps = {
   fields: readonly ConsoleSettingField[];
   initialValues?: Record<string, string>;
   meta?: string;
-  modelProfiles?: readonly ConsoleModelProfile[];
   onCheckOpenAiCodexOAuth?: () => Promise<boolean>;
   onPollOpenAiCodexOAuth?: (flowId: string) => Promise<OpenAiCodexOAuthPoll>;
   onSave: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>;
@@ -183,12 +180,10 @@ type SettingsFieldGroupProps = {
 const TOOL_APPROVAL_RUNTIME_ID = "tool-approval";
 const MODEL_ADVANCED_FIELD_KEYS = new Set([
   "config/ai/base_url",
-  "config/ai/fallback_model_profile",
   "config/ai/provider_style",
   "config/ai/transport_target",
-  "config/ai/reasoning",
   "config/ai/max_tokens",
-  "config/ai/max_context_bytes",
+  "config/ai/context_window_tokens",
 ]);
 const MODEL_PROVIDER_FIELD_KEY = "config/ai/provider";
 const MODEL_BASE_URL_FIELD_KEY = "config/ai/base_url";
@@ -334,7 +329,7 @@ function ModelSettingsPage({
     [config, viewer.uid],
   );
   const profiles = useMemo(
-    () => modelProfilesForConfig(config, viewer.uid),
+    () => modelProfilesForConfig(config, viewer.uid, { inheritSystem: true }),
     [config, viewer.uid],
   );
   const canEditAi = viewer.uid !== null;
@@ -392,7 +387,7 @@ function ModelSettingsPage({
   const detailLabel = !selection
     ? null
     : selection.kind === "default"
-    ? "DEFAULT AGENT MODEL"
+    ? "PRIMARY MODEL"
     : selection.kind === "new-profile"
     ? "NEW MODEL"
     : selection.kind === "tool"
@@ -433,21 +428,17 @@ function ModelSettingsPage({
     <section class="gsv-console-settings-index">
       {embedded ? null : <SectionHeader title="MODELS" headingLevel={2} divider />}
       <SettingsListPanel
-        title="DEFAULT AGENT MODEL"
-        meta={scopeLabel}
-        emptyLabel="NO DEFAULT MODEL"
-        fitContent
-        headingLevel={3}
-        rows={[defaultModelRow(effectiveValues, () => setSelection({ kind: "default" }))]}
-      />
-      <SettingsListPanel
-        title="SAVED MODELS"
+        title="AGENT MODEL ORDER"
         meta={`${profiles.length} MODEL${profiles.length === 1 ? "" : "S"}`}
-        emptyLabel="NO SAVED MODELS"
+        emptyLabel="NO MODELS CONFIGURED"
         fitContent
         headingLevel={3}
         action={{ label: "NEW MODEL", onClick: canEditAi ? () => setSelection({ kind: "new-profile" }) : undefined }}
-        rows={profiles.map((profile) => profileRow(profile, () => setSelection({ kind: "profile", id: profile.id })))}
+        rows={profiles.map((profile, index) => profileRow(
+          profile,
+          index,
+          () => setSelection({ kind: "profile", id: profile.id }),
+        ))}
       />
     </section>
   );
@@ -496,44 +487,6 @@ function ModelSettingsDetail({
     setNewProfileStep(0);
   }, [selection.kind, selection.kind === "profile" ? selection.id : ""]);
 
-  if (selection.kind === "default") {
-    return (
-      <ConsoleDetailPage
-        embedded={embedded}
-        icon="stars"
-        title="DEFAULT AGENT MODEL"
-        typeLabel="GSV · MODELS"
-        statusLabel={scopeLabel}
-        tone={editable ? "online" : "idle"}
-        blurb="Fallback model stack used when an agent inherits model behavior."
-        parentLabel="MODELS"
-        onBack={onBack}
-      >
-        <SettingsFieldGroup
-          config={config}
-          description={viewer.isRoot
-            ? "Global fallback used by agents without personal model overrides."
-            : "Your personal fallback used when your agents inherit model behavior."}
-          editable={editable}
-          fields={AGENT_MODEL_FIELDS}
-          initialValues={effectiveValues}
-          meta={scopeLabel}
-          modelProfiles={profiles}
-          targets={targets}
-          title="Default Agent Model"
-          validateBeforeSave={(values) => onValidateModelConfig({ values })}
-          writeKeyForField={(field) => viewer.isRoot || viewer.uid === null
-            ? field.key
-            : buildUserAiOverrideKey(viewer.uid, field.key)}
-          onCheckOpenAiCodexOAuth={onCheckOpenAiCodexOAuth}
-          onPollOpenAiCodexOAuth={onPollOpenAiCodexOAuth}
-          onSave={onSaveEntries}
-          onStartOpenAiCodexOAuth={onStartOpenAiCodexOAuth}
-        />
-      </ConsoleDetailPage>
-    );
-  }
-
   if (selection.kind === "tool") {
     const group = TOOL_MODEL_GROUPS.find((candidate) => candidate.id === selection.id) ?? TOOL_MODEL_GROUPS[0];
     return (
@@ -570,9 +523,13 @@ function ModelSettingsDetail({
 
   const profile = selection.kind === "profile"
     ? profiles.find((candidate) => candidate.id === selection.id) ?? null
+    : selection.kind === "default"
+    ? profiles[0] ?? null
     : null;
-  const isNewProfile = selection.kind === "new-profile";
-  const title = profile?.name.toUpperCase() ?? "NEW MODEL";
+  const isNewProfile = selection.kind === "new-profile" || !profile;
+  const title = selection.kind === "default"
+    ? "PRIMARY MODEL"
+    : profile?.name.toUpperCase() ?? "NEW MODEL";
 
   return (
     <ConsoleDetailPage
@@ -623,23 +580,17 @@ function ModelSettingsDetail({
         onStartOpenAiCodexOAuth={onStartOpenAiCodexOAuth}
         onValidate={onValidateModelConfig}
         onSave={async (name, values, clearedSecretKeys, makeDefault) => {
-          const nextProfiles = profile
+          let nextProfiles = profile
             ? updateModelProfile(profiles, profile.id, name, values)
             : createModelProfile(profiles, name, values);
           const savedProfile = profile
             ? nextProfiles.find((candidate) => candidate.id === profile.id)!
-            : nextProfiles[0];
+            : nextProfiles[nextProfiles.length - 1];
+          if (makeDefault || selection.kind === "default") {
+            nextProfiles = makeModelPrimary(nextProfiles, savedProfile.id);
+          }
           const clearedByProfile = new Map([[savedProfile.id, clearedSecretKeys]]);
           const entries = modelProfileSaveEntries(viewer.uid, profiles, nextProfiles, clearedByProfile);
-          if (makeDefault) {
-            entries.push(...modelProfileDefaultEntries(
-              config,
-              viewer.uid,
-              viewer.isRoot,
-              savedProfile,
-              clearedByProfile,
-            ));
-          }
           await onSaveEntries(entries);
           if (!profile) {
             onCompleted();
@@ -769,22 +720,11 @@ function runtimeSelectionTitle(selectionId: string): string {
   return (RUNTIME_SETTING_GROUPS.find((group) => group.id === selectionId)?.title ?? "RUNTIME").toUpperCase();
 }
 
-function defaultModelRow(values: Record<string, string>, onOpen: () => void): SettingsListRow {
-  const model = values["config/ai/model"] ?? "";
-  const label = modelStackDisplayName(values) || "Not configured";
-  const fixedModel = fixedAiProviderModel(values["config/ai/provider"] ?? "");
-  return {
-    id: "default-agent-model",
-    icon: "stars",
-    label,
-    sub: fixedModel ? "Model selection managed by GSV" : model || "Default agent model stack",
-    statusLabel: model ? "DEFAULT" : "EMPTY",
-    tone: model ? "online" : "idle",
-    onOpen,
-  };
-}
-
-function profileRow(profile: ConsoleModelProfile, onOpen: () => void): SettingsListRow {
+function profileRow(
+  profile: ConsoleModelProfile,
+  index: number,
+  onOpen: () => void,
+): SettingsListRow {
   const model = profile.values["config/ai/model"] ?? "";
   const label = modelStackDisplayName(profile.values);
   return {
@@ -792,7 +732,7 @@ function profileRow(profile: ConsoleModelProfile, onOpen: () => void): SettingsL
     icon: "stars",
     label: profile.name,
     sub: label || model || "Saved model configuration",
-    statusLabel: model ? "MODEL" : "INCOMPLETE",
+    statusLabel: model ? index === 0 ? "PRIMARY" : `FALLBACK ${index}` : "INCOMPLETE",
     tone: model ? "online" : "warn",
     tag: { label: label || "MODEL", tone: "info" },
     onOpen,
@@ -1210,8 +1150,6 @@ function ModelProfileForm({
       <SettingFieldInput
         field={field}
         disabled={!editable || pending}
-        modelProfiles={profiles}
-        excludeModelProfileId={profile?.id}
         targets={targets}
         cleared={clearedSecretKeys.has(field.key)}
         redacted={isModelProfileFieldRedacted(config, viewer, profile, field)}
@@ -1573,7 +1511,6 @@ function SettingsFieldGroup({
   editable,
   fields,
   initialValues,
-  modelProfiles = [],
   onCheckOpenAiCodexOAuth,
   onPollOpenAiCodexOAuth,
   onSave,
@@ -1771,7 +1708,6 @@ function SettingsFieldGroup({
       <SettingFieldInput
         disabled={!editable || pending || field.kind === "readonly"}
         field={openAiCodexSettingsField(field, isOpenAiCodexSettings)}
-        modelProfiles={modelProfiles}
         targets={targets}
         cleared={clearedSensitiveKeys.has(field.key)}
         redacted={isFieldRedacted(config, field, writeKeyForField(field))}
@@ -2091,11 +2027,9 @@ function defaultBuiltInProvider(
 
 function shouldOpenModelAdvancedFields(values: Record<string, string>): boolean {
   const baseUrl = values["config/ai/base_url"]?.trim() ?? "";
-  const fallbackModelProfile = values["config/ai/fallback_model_profile"]?.trim() ?? "";
   const providerStyle = values["config/ai/provider_style"]?.trim() ?? "";
   const transportTarget = values[MODEL_TRANSPORT_TARGET_KEY]?.trim() ?? "";
   return baseUrl.length > 0 ||
-    fallbackModelProfile.length > 0 ||
     (providerStyle.length > 0 && providerStyle !== "auto") ||
     (transportTarget.length > 0 && transportTarget !== "gsv");
 }
@@ -2115,9 +2049,7 @@ function SettingsStatus({
 function SettingFieldInput({
   cleared = false,
   disabled,
-  excludeModelProfileId,
   field,
-  modelProfiles = [],
   redacted = false,
   targets = [],
   value,
@@ -2126,9 +2058,7 @@ function SettingFieldInput({
 }: {
   cleared?: boolean;
   disabled: boolean;
-  excludeModelProfileId?: string;
   field: ConsoleSettingField;
-  modelProfiles?: readonly ConsoleModelProfile[];
   redacted?: boolean;
   targets?: readonly AgentToolTarget[];
   value: string;
@@ -2163,25 +2093,6 @@ function SettingFieldInput({
         size={field.size}
         block
         onChange={(index) => onChange(selectOptionValue(options[index]) || "gsv")}
-      />
-    );
-  }
-
-  if (field.key === "config/ai/fallback_model_profile") {
-    const options = fallbackModelProfileOptionsForValue(value, modelProfiles, excludeModelProfileId);
-    const selectedValue = value.trim();
-    const selectedIndex = Math.max(0, options.findIndex((option) => selectOptionValue(option) === selectedValue));
-    return (
-      <Select
-        label={field.label}
-        info={description}
-        requirement={field.requirement}
-        options={options}
-        value={selectedIndex}
-        disabled={disabled}
-        size={field.size}
-        block
-        onChange={(index) => onChange(selectOptionValue(options[index]) || "")}
       />
     );
   }
@@ -2301,36 +2212,6 @@ function SettingFieldInput({
       onChange={onChange}
     />
   );
-}
-
-function fallbackModelProfileOptionsForValue(
-  value: string,
-  profiles: readonly ConsoleModelProfile[],
-  excludeProfileId?: string,
-): SelectOption[] {
-  const profileOptions = profiles
-    .filter((profile) => profile.id !== excludeProfileId)
-    .map((profile) => ({
-      label: profile.name,
-      value: profile.id,
-      description: modelProfileSummary(profile.values),
-    }));
-  const options: SelectOption[] = [
-    { label: "None", value: "" },
-    ...profileOptions,
-  ];
-  const selectedValue = value.trim();
-  if (!selectedValue || options.some((option) => selectOptionValue(option) === selectedValue)) {
-    return options;
-  }
-  return [
-    ...options,
-    {
-      label: selectedValue,
-      value: selectedValue,
-      description: "Stored fallback model is not currently available.",
-    },
-  ];
 }
 
 function transportTargetOptionsForValue(

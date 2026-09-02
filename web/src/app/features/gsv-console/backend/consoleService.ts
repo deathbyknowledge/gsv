@@ -98,7 +98,6 @@ export type CreateConsoleAgentInput = {
   role: string;
   description: string;
   model?: string;
-  fallbackModel?: string;
   reasoning?: string;
   approval?: string;
   /** Fixed portrait assigned at creation (see agentPresentation.pickAgentImage). */
@@ -125,8 +124,7 @@ export type SaveConsoleAgentContextResult = {
 
 export type SaveConsoleAgentBehaviorInput = {
   uid: number;
-  model: string;
-  fallbackModel?: string;
+  model?: string;
   reasoning: string;
   approval?: string;
 };
@@ -963,7 +961,6 @@ async function loadOptionalPayload(load: () => Promise<GatewayPayload>): Promise
 
 type AgentBehaviorConfigDraft = {
   model?: string;
-  fallbackModel?: string;
   reasoning?: string;
   approval?: string;
 };
@@ -975,28 +972,18 @@ async function saveAgentBehaviorConfig(
   options: { includeEmpty?: boolean } = {},
 ): Promise<void> {
   const model = input.model?.trim() ?? "";
-  const fallbackModel = input.fallbackModel?.trim() ?? "";
   const reasoning = input.reasoning?.trim() ?? "";
   const approval = input.approval?.trim() ?? "";
   const writes: Promise<unknown>[] = [];
 
   if (input.model !== undefined && (options.includeEmpty || model)) {
-    const modelProfile = modelProfileIdFromOptionValue(model);
-    if (options.includeEmpty || modelProfile) {
-      writes.push(client.sys.config.set({
-        key: `users/${uid}/ai/model_profile`,
-        value: modelProfile ?? "",
-      }));
+    const modelId = modelProfileIdFromOptionValue(model);
+    if (model && !modelId) {
+      throw new Error("model selection must reference an available model entry");
     }
     writes.push(client.sys.config.set({
-      key: `users/${uid}/ai/model`,
-      value: modelProfile ? "" : model,
-    }));
-  }
-  if (input.fallbackModel !== undefined && (options.includeEmpty || fallbackModel)) {
-    writes.push(client.sys.config.set({
-      key: `users/${uid}/ai/fallback_model_profile`,
-      value: modelProfileIdFromOptionValue(fallbackModel) ?? fallbackModel,
+      key: `users/${uid}/ai/preferred_model`,
+      value: modelId ?? "",
     }));
   }
   if (input.approval !== undefined && (options.includeEmpty || approval)) {

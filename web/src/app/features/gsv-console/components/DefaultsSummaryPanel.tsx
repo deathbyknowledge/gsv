@@ -12,8 +12,6 @@ const SUMMARY_ROW_STYLE: JSX.CSSProperties = {
 
 export interface DefaultsSummaryPanelProps {
   /** Display values — already resolved to their effective labels. */
-  model: string;
-  fallback: string;
   reasoning: string;
   /** Default approval action label, e.g. "ALLOW". */
   permissionsAction: string;
@@ -53,8 +51,6 @@ function SummaryRow({ value, field, onClick }: {
  *  Every row clicks through to the in-body editor's matching section.
  *  Reusable on the agent detail page later. */
 export function DefaultsSummaryPanel({
-  model,
-  fallback,
   reasoning,
   permissionsAction,
   overridesCount,
@@ -94,8 +90,6 @@ export function DefaultsSummaryPanel({
       {showBody ? (
         <>
           <div class="gsv-defaults-summary-list">
-            <SummaryRow value={model} field="MODEL" onClick={openSection(onEditDefaults)} />
-            <SummaryRow value={fallback} field="FALLBACK" onClick={openSection(onEditDefaults)} />
             <SummaryRow value={reasoning} field="REASONING" onClick={openSection(onEditDefaults)} />
             <SummaryRow
               value={`${permissionsAction} (${overridesLabel})`}

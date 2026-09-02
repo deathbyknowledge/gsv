@@ -28,7 +28,7 @@ export const MODEL_PROFILE_OPTION_PREFIX = "model-profile:";
 
 const PRIMARY_MODEL_KEY_RE = /^(?:config\/ai|users\/\d+\/ai)\/model$/;
 const AGENT_BEHAVIOR_CONFIG_KEY_RE = /^users\/[^/]+\/ai\//i;
-const MODEL_PROFILES_KEY_RE = /^users\/(\d+)\/ai\/model_profiles$/;
+const MODEL_PROFILES_KEY_RE = /^(?:config\/ai\/models|users\/(\d+)\/ai\/(?:models|model_profiles))$/;
 const SENSITIVE_PROFILE_VALUE_KEY_RE = /(?:^|\/|_)(?:api[_-]?key|password|secret|token|credential)(?:$|\/|_)/i;
 
 const profileScalarSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
@@ -41,6 +41,21 @@ const modelProfileSchema = z.object({
 });
 const modelProfilesPayloadSchema = z.object({
   profiles: z.array(modelProfileSchema).optional(),
+});
+const canonicalModelSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  provider: z.string(),
+  model: z.string(),
+  baseUrl: z.string().optional(),
+  providerStyle: z.string().optional(),
+  transportTarget: z.string().optional(),
+  maxTokens: z.number().int().positive().optional(),
+  contextWindowTokens: z.number().int().positive().optional(),
+});
+const canonicalModelStackSchema = z.object({
+  version: z.literal(1),
+  models: z.array(canonicalModelSchema),
 });
 type ParsedModelProfile = z.infer<typeof modelProfileSchema>;
 type ProfileScalar = z.infer<typeof profileScalarSchema>;
@@ -58,6 +73,15 @@ function normalizeModelLabel(value: string): string {
 }
 
 export function defaultModelLabelForConfig(config: readonly ConsoleConfigEntry[]): string {
+  const canonicalSystem = config.find((entry) =>
+    !entry.redacted && entry.key === "config/ai/models"
+  );
+  const canonicalPrimary = canonicalSystem?.value.trim()
+    ? parseModelProfiles(canonicalSystem.value)[0]
+    : null;
+  if (canonicalPrimary) {
+    return canonicalPrimary.name;
+  }
   const system = config.find((entry) => isModelConfigEntry(entry) && entry.key === "config/ai/model");
   const fallback = system ?? config.find(isModelConfigEntry);
   if (fallback) {
@@ -197,9 +221,14 @@ export function modelProfilesForConfig(
   if (uid === null || uid === undefined || !Number.isFinite(uid)) {
     return [];
   }
+  const canonicalEntry = config.find((candidate) =>
+    !candidate.redacted && candidate.key === `users/${uid}/ai/models`
+  );
+  if (canonicalEntry?.value.trim()) {
+    return parseModelProfiles(canonicalEntry.value);
+  }
   const entry = config.find((candidate) =>
     !candidate.redacted &&
-    MODEL_PROFILES_KEY_RE.test(candidate.key) &&
     candidate.key === `users/${uid}/ai/model_profiles`
   );
   if (!entry?.value.trim()) {
@@ -241,7 +270,11 @@ export function modelConfigEntries(config: readonly ConsoleConfigEntry[]): Conso
 }
 
 export function modelConfigCount(config: readonly ConsoleConfigEntry[]): number {
-  return modelConfigEntries(config).length;
+  const stacked = config.reduce((count, entry) =>
+    entry.redacted || !MODEL_PROFILES_KEY_RE.test(entry.key)
+      ? count
+      : count + parseModelProfiles(entry.value).length, 0);
+  return stacked || modelConfigEntries(config).length;
 }
 
 export function overrideConfigEntries(config: readonly ConsoleConfigEntry[]): ConsoleConfigEntry[] {
@@ -258,6 +291,26 @@ function parseModelProfiles(rawValue: string): ConsoleModelProfile[] {
     decoded = JSON.parse(rawValue);
   } catch {
     return [];
+  }
+  const canonical = canonicalModelStackSchema.safeParse(decoded);
+  if (canonical.success) {
+    return canonical.data.models.map((model) => ({
+      id: normalizeProfileId(model.id),
+      name: normalizeProfileName(model.name),
+      values: {
+        "config/ai/provider": model.provider,
+        "config/ai/model": model.model,
+        ...(model.baseUrl ? { "config/ai/base_url": model.baseUrl } : undefined),
+        ...(model.providerStyle ? { "config/ai/provider_style": model.providerStyle } : undefined),
+        ...(model.transportTarget ? { "config/ai/transport_target": model.transportTarget } : undefined),
+        ...(model.maxTokens !== undefined ? { "config/ai/max_tokens": String(model.maxTokens) } : undefined),
+        ...(model.contextWindowTokens !== undefined
+          ? { "config/ai/context_window_tokens": String(model.contextWindowTokens) }
+          : undefined),
+      },
+      createdAt: 0,
+      updatedAt: 0,
+    })).filter((profile) => profile.id && profile.name);
   }
   const parsed = modelProfilesPayloadSchema.safeParse(decoded);
   if (!parsed.success) {

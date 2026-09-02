@@ -17,6 +17,26 @@ const config: ConsoleConfigEntry[] = [
 ];
 
 describe("console AI config classification", () => {
+  it("preserves canonical owner model order and stable option ids", () => {
+    const canonical: ConsoleConfigEntry[] = [{
+      key: "users/1/ai/models",
+      value: JSON.stringify({
+        version: 1,
+        models: [
+          { id: "primary", name: "Primary", provider: "openai", model: "gpt-5.4" },
+          { id: "backup", name: "Backup", provider: "workers-ai", model: "@cf/backup" },
+        ],
+      }),
+      redacted: false,
+    }];
+
+    expect(modelProfilesForConfig(canonical, 1).map((profile) => profile.id))
+      .toEqual(["primary", "backup"]);
+    expect(modelOptionsForConfig(canonical).map((option) => option.value))
+      .toContain("model-profile:backup");
+    expect(modelConfigCount(canonical)).toBe(2);
+  });
+
   it("counts model config separately from system overrides", () => {
     expect(defaultModelLabelForConfig(config)).toBe("NEMOTRON 3");
     expect(modelConfigCount(config)).toBe(1);

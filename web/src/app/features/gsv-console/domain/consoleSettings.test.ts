@@ -12,7 +12,7 @@ import {
   createModelProfile,
   effectiveAiValuesForViewer,
   modelDisplayName,
-  modelProfileDefaultEntries,
+  makeModelPrimary,
   modelProfileSaveEntries,
   modelProfileSecretConfigKey,
   modelProfilesConfigKey,
@@ -54,11 +54,9 @@ describe("console settings domain", () => {
     const profiles = createModelProfile([], "Deep Research", {
       "config/ai/provider": "openai",
       "config/ai/model": "gpt-5",
-      "config/ai/fallback_model_profile": "backup-stack",
       "config/ai/api_key": "sk-secret",
-      "config/ai/reasoning": "high",
       "config/ai/max_tokens": "8192",
-      "config/ai/max_context_bytes": "65536",
+      "config/ai/context_window_tokens": "65536",
     }, 1000);
     expect(() => createModelProfile(profiles, "Deep   Research", {}, 2000)).toThrow("Profile name already exists");
 
@@ -69,77 +67,61 @@ describe("console settings domain", () => {
         "config/ai/provider": "openai",
         "config/ai/model": "gpt-5",
         "config/ai/api_key": "sk-secret",
-        "config/ai/reasoning": "high",
         "config/ai/max_tokens": "8192",
-        "config/ai/max_context_bytes": "65536",
+        "config/ai/context_window_tokens": "65536",
       },
     });
-    expect(profiles[0].values["config/ai/fallback_model_profile"]).toBeUndefined();
 
     // SAFETY: Test fixture uses the asserted API shape for this focused case.
     const serialized = JSON.parse(serializeModelProfiles(profiles)) as {
-      profiles: Array<{ values: Record<string, string> }>;
+      models: Array<Record<string, string | number>>;
     };
-    expect(serialized.profiles[0].values).toEqual({
-      "config/ai/provider": "openai",
-      "config/ai/model": "gpt-5",
-      "config/ai/reasoning": "high",
-      "config/ai/max_tokens": "8192",
-      "config/ai/max_context_bytes": "65536",
+    expect(serialized.models[0]).toEqual({
+      id: "deep-research",
+      name: "Deep Research",
+      provider: "openai",
+      model: "gpt-5",
+      maxTokens: 8192,
+      contextWindowTokens: 65536,
     });
   });
 
-  it("builds saved profile and default writes from the same edited model", () => {
-    const profiles = createModelProfile([], "Fast", {
+  it("stores one ordered stack and promotes a model without copying fields", () => {
+    const first = createModelProfile([], "Fast", {
       "config/ai/provider": "openai",
       "config/ai/model": "gpt-old",
       "config/ai/api_key": "sk-profile",
     }, 1000);
-    const nextProfiles = updateModelProfile(profiles, profiles[0].id, "Fast", {
+    const profiles = createModelProfile(first, "Backup", {
+      "config/ai/provider": "workers-ai",
+      "config/ai/model": "@cf/backup",
+    }, 1500);
+    const edited = updateModelProfile(profiles, profiles[0].id, "Fast", {
       ...profiles[0].values,
       "config/ai/model": "gpt-new",
     }, 2000);
+    const nextProfiles = makeModelPrimary(edited, profiles[1].id);
     const clearedSecretKeys = new Map([[profiles[0].id, new Set<string>()]]);
-    const entries = [
-      ...modelProfileSaveEntries(0, profiles, nextProfiles, clearedSecretKeys),
-      ...modelProfileDefaultEntries([], 0, true, nextProfiles[0], clearedSecretKeys),
-    ];
+    const entries = modelProfileSaveEntries(0, profiles, nextProfiles, clearedSecretKeys);
     // SAFETY: Test fixture uses the asserted API shape for this focused case.
-    const storedProfiles = JSON.parse(
+    const storedStack = JSON.parse(
       entries.find((entry) => entry.key === modelProfilesConfigKey(0))?.value ?? "{}",
-    ) as { profiles?: Array<{ values: Record<string, string> }> };
+    ) as { models?: Array<{ id: string; model: string }> };
 
-    expect(storedProfiles.profiles?.[0].values["config/ai/model"]).toBe("gpt-new");
+    expect(storedStack.models?.map((model) => model.id)).toEqual(["backup", "fast"]);
+    expect(storedStack.models?.[1].model).toBe("gpt-new");
     expect(entries).toContainEqual({
       key: modelProfileSecretConfigKey(0, profiles[0].id, "config/ai/api_key"),
       value: "sk-profile",
     });
-    expect(entries).toContainEqual({ key: "config/ai/model", value: "gpt-new" });
-    expect(entries).toContainEqual({ key: "config/ai/api_key", value: "sk-profile" });
   });
 
-  it("copies an unchanged redacted profile secret when making it default", () => {
-    const profiles = createModelProfile([], "Fast", {
-      "config/ai/provider": "openai",
-      "config/ai/model": "gpt-5",
-      "config/ai/api_key": "",
-    }, 1000);
-    const profileSecretKey = modelProfileSecretConfigKey(42, profiles[0].id, "config/ai/api_key");
-    const config: ConsoleConfigEntry[] = [{
-      key: profileSecretKey,
-      value: "",
-      redacted: true,
-    }];
-
-    expect(modelProfileDefaultEntries(config, 42, false, profiles[0])).toContainEqual({
-      key: "users/42/ai/api_key",
-      copyFromKey: profileSecretKey,
-    });
-  });
-
-  it("keeps fallback selection out of model preset fields", () => {
-    expect(AGENT_MODEL_FIELDS.some((field) => field.key === "config/ai/fallback_model_profile")).toBe(true);
-    expect(MODEL_PROFILE_FIELDS.some((field) => field.key === "config/ai/fallback_model_profile")).toBe(false);
+  it("keeps fallback order in the stack and runtime policy out of model entries", () => {
+    expect(MODEL_PROFILE_FIELDS).toBe(AGENT_MODEL_FIELDS);
+    expect(AGENT_MODEL_FIELDS.some((field) => field.key === "config/ai/fallback_model_profile")).toBe(false);
+    expect(AGENT_MODEL_FIELDS.some((field) => field.key === "config/ai/reasoning")).toBe(false);
+    expect(AGENT_MODEL_FIELDS.some((field) => field.key === "config/ai/max_context_bytes")).toBe(false);
+    expect(AGENT_MODEL_FIELDS.some((field) => field.key === "config/ai/context_window_tokens")).toBe(true);
   });
 
   it("reads viewer model profiles and hydrates separate credential config", () => {
@@ -160,6 +142,28 @@ describe("console settings domain", () => {
     expect(modelProfilesForConfig(config, 42).map((profile) => profile.name)).toEqual(["Fast"]);
     expect(modelProfilesForConfig(config, 42)[0].values["config/ai/api_key"]).toBe("sk-fast");
     expect(modelProfilesForConfig(config, 7)).toEqual([]);
+  });
+
+  it("shows the inherited system order until the owner writes a stack", () => {
+    const config: ConsoleConfigEntry[] = [{
+      key: "config/ai/models",
+      value: JSON.stringify({
+        version: 1,
+        models: [
+          { id: "primary", name: "Primary", provider: "workers-ai", model: "@cf/primary" },
+          { id: "backup", name: "Backup", provider: "workers-ai", model: "@cf/backup" },
+        ],
+      }),
+      redacted: false,
+    }];
+
+    expect(modelProfilesForConfig(config, 42)).toEqual([]);
+    expect(modelProfilesForConfig(config, 42, { inheritSystem: true }).map((profile) => profile.id))
+      .toEqual(["primary", "backup"]);
+    expect(modelProfileSaveEntries(42, [], [])[0]).toEqual({
+      key: "users/42/ai/models",
+      value: "",
+    });
   });
 
   it("redacts legacy secrets from model profile config JSON", () => {
@@ -245,7 +249,6 @@ describe("console settings domain", () => {
       "config/ai/base_url": "https://provider.example/v1",
       "config/ai/provider_style": "openai-chat-completions",
       "config/ai/api_key": "sk-profile",
-      "config/ai/reasoning": "low",
     });
   });
 

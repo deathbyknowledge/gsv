@@ -401,7 +401,7 @@ describe("console agent service", () => {
       name: "Scout Agent",
       role: "SCOUT",
       description: "Tracks fleet signals.",
-      model: "NEMOTRON 3",
+      model: "model-profile:nemotron-3",
       reasoning: "high",
       approval,
       files: [
@@ -426,8 +426,8 @@ describe("console agent service", () => {
       contextFiles: [{ name: "operating-notes.md", text: "# Notes\n\nPrefer concise reports." }],
     });
     expect(setConfig).toHaveBeenNthCalledWith(1, {
-      key: "users/42/ai/model",
-      value: "NEMOTRON 3",
+      key: "users/42/ai/preferred_model",
+      value: "nemotron-3",
     });
     expect(setConfig).toHaveBeenNthCalledWith(2, {
       key: "users/42/ai/tools/approval",
@@ -461,55 +461,33 @@ describe("console agent service", () => {
     await saveConsoleAgentBehavior(client, {
       uid: 42,
       model: "",
-      fallbackModel: "",
       reasoning: "",
       approval: "",
     });
 
     expect(setConfig).toHaveBeenNthCalledWith(1, {
-      key: "users/42/ai/model_profile",
+      key: "users/42/ai/preferred_model",
       value: "",
     });
     expect(setConfig).toHaveBeenNthCalledWith(2, {
-      key: "users/42/ai/model",
-      value: "",
-    });
-    expect(setConfig).toHaveBeenNthCalledWith(3, {
-      key: "users/42/ai/fallback_model_profile",
-      value: "",
-    });
-    expect(setConfig).toHaveBeenNthCalledWith(4, {
       key: "users/42/ai/tools/approval",
       value: "",
     });
-    expect(setConfig).toHaveBeenNthCalledWith(5, {
+    expect(setConfig).toHaveBeenNthCalledWith(3, {
       key: "users/42/ai/reasoning",
       value: "",
     });
   });
 
-  it("can save model and reasoning without touching tool approval", async () => {
+  it("rejects raw model names that are not stable entry references", async () => {
     const { client, setConfig } = createMockClient(42);
 
-    await saveConsoleAgentBehavior(client, {
+    await expect(saveConsoleAgentBehavior(client, {
       uid: 42,
       model: "NEMOTRON 3",
       reasoning: "medium",
-    });
-
-    expect(setConfig).toHaveBeenNthCalledWith(1, {
-      key: "users/42/ai/model_profile",
-      value: "",
-    });
-    expect(setConfig).toHaveBeenNthCalledWith(2, {
-      key: "users/42/ai/model",
-      value: "NEMOTRON 3",
-    });
-    expect(setConfig).toHaveBeenNthCalledWith(3, {
-      key: "users/42/ai/reasoning",
-      value: "medium",
-    });
-    expect(setConfig).toHaveBeenCalledTimes(3);
+    })).rejects.toThrow("model selection must reference an available model entry");
+    expect(setConfig).not.toHaveBeenCalled();
   });
 
   // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
@@ -524,49 +502,39 @@ describe("console agent service", () => {
     });
 
     expect(setConfig).toHaveBeenNthCalledWith(1, {
-      key: "users/42/ai/model_profile",
+      key: "users/42/ai/preferred_model",
       value: "fast-stack",
     });
     expect(setConfig).toHaveBeenNthCalledWith(2, {
-      key: "users/42/ai/model",
-      value: "",
-    });
-    expect(setConfig).toHaveBeenNthCalledWith(3, {
       key: "users/42/ai/reasoning",
       value: "medium",
     });
-    expect(setConfig).toHaveBeenCalledTimes(3);
+    expect(setConfig).toHaveBeenCalledTimes(2);
   });
 
   // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
-  it("persists selected fallback presets as account fallback references", async () => {
+  it("does not persist a second per-agent fallback selector", async () => {
     const { client, setConfig } = createMockClient(42);
 
     await saveConsoleAgentBehavior(client, {
       uid: 42,
       model: "model-profile:fast-stack",
-      fallbackModel: "model-profile:safe-stack",
       reasoning: "medium",
     });
 
     expect(setConfig).toHaveBeenNthCalledWith(1, {
-      key: "users/42/ai/model_profile",
+      key: "users/42/ai/preferred_model",
       value: "fast-stack",
     });
     expect(setConfig).toHaveBeenNthCalledWith(2, {
-      key: "users/42/ai/model",
-      value: "",
-    });
-    expect(setConfig).toHaveBeenNthCalledWith(3, {
-      key: "users/42/ai/fallback_model_profile",
-      value: "safe-stack",
-    });
-    expect(setConfig).toHaveBeenNthCalledWith(4, {
       key: "users/42/ai/reasoning",
       value: "medium",
     });
-    expect(setConfig).toHaveBeenCalledTimes(4);
+    expect(setConfig).toHaveBeenCalledTimes(2);
+    expect(setConfig).not.toHaveBeenCalledWith(expect.objectContaining({
+      key: expect.stringContaining("fallback"),
+    }));
   });
 
   it("reconciles renamed and deleted agent context files", async () => {

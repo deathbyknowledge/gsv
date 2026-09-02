@@ -56,10 +56,10 @@ export type ConsoleConfigWrite = {
 
 export type ClearedModelProfileSecretKeys = ReadonlyMap<string, ReadonlySet<string>>;
 
-const MODEL_PROFILES_VERSION = 1;
-const MODEL_PROFILE_KEY = "model_profiles";
+const MODEL_STACK_VERSION = 1;
+const MODEL_PROFILE_KEY = "models";
+const LEGACY_MODEL_PROFILE_KEY = "model_profiles";
 const MAX_PROFILE_NAME_LENGTH = 80;
-const MODEL_FALLBACK_PROFILE_KEY = "config/ai/fallback_model_profile";
 const ACCOUNT_MODEL_PROFILE_INFERENCE_BLOCKERS = [
   "provider",
   "base_url",
@@ -98,15 +98,6 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     size: "large",
   },
   {
-    key: "config/ai/fallback_model_profile",
-    label: "Fallback model",
-    description: "Saved model to try if the selected model fails.",
-    kind: "select",
-    requirement: "optional",
-    size: "large",
-    options: [{ value: "", label: "None" }],
-  },
-  {
     key: "config/ai/provider_style",
     label: "Provider style",
     description: "Request API used for custom endpoints.",
@@ -138,22 +129,6 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     size: "large",
   },
   {
-    key: "config/ai/reasoning",
-    label: "Reasoning",
-    description: "Reasoning effort hint for models that support extended thinking.",
-    kind: "select",
-    requirement: "optional",
-    size: "small",
-    options: [
-      { value: "off", label: "Off" },
-      { value: "minimal", label: "Minimal" },
-      { value: "low", label: "Low" },
-      { value: "medium", label: "Medium" },
-      { value: "high", label: "High" },
-      { value: "xhigh", label: "Extra High" },
-    ],
-  },
-  {
     key: "config/ai/max_tokens",
     label: "Max tokens",
     description: "Upper bound for generated response size.",
@@ -163,9 +138,9 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     half: true,
   },
   {
-    key: "config/ai/max_context_bytes",
-    label: "Max bytes",
-    description: "Maximum bytes of home context injected into prompts.",
+    key: "config/ai/context_window_tokens",
+    label: "Context window",
+    description: "Provider context-window size when GSV cannot discover it from the model registry.",
     kind: "number",
     requirement: "optional",
     size: "small",
@@ -173,8 +148,7 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
   },
 ];
 
-export const MODEL_PROFILE_FIELDS: readonly ConsoleSettingField[] = AGENT_MODEL_FIELDS
-  .filter((field) => field.key !== MODEL_FALLBACK_PROFILE_KEY);
+export const MODEL_PROFILE_FIELDS: readonly ConsoleSettingField[] = AGENT_MODEL_FIELDS;
 export const MODEL_PROFILE_SECRET_FIELDS: readonly ConsoleSettingField[] = MODEL_PROFILE_FIELDS
   .filter((field) => isSensitiveSettingKey(field.key));
 
@@ -418,7 +392,7 @@ export function modelProfilesConfigKey(uid: number): string {
 }
 
 export function isModelProfilesConfigKey(key: string): boolean {
-  return /^users\/\d+\/ai\/model_profiles$/.test(key);
+  return /^(?:config\/ai\/models|users\/\d+\/ai\/(?:models|model_profiles))$/.test(key);
 }
 
 export function modelProfileSecretConfigKey(uid: number, profileId: string, fieldKey: string): string {
@@ -478,6 +452,12 @@ export function effectiveAiValuesForViewer(
     } else if (overrideValue !== "") {
       values[field.key] = overrideValue;
     }
+  }
+  const [primaryModel] = modelProfilesForConfig(config, validUid.data, {
+    inheritSystem: true,
+  });
+  if (primaryModel) {
+    Object.assign(values, primaryModel.values);
   }
   return values;
 }
@@ -539,16 +519,27 @@ function findAiProfileForViewer(
 export function modelProfilesForConfig(
   config: readonly ConsoleConfigEntry[],
   uid: number | null | undefined,
+  options: { inheritSystem?: boolean } = {},
 ): ConsoleModelProfile[] {
   const validUid = z.number().finite().safeParse(uid);
   if (!validUid.success) {
     return [];
   }
-  const raw = configValueForKey(config, modelProfilesConfigKey(validUid.data));
-  if (!raw.trim()) {
-    return [];
+  const accountKey = modelProfilesConfigKey(validUid.data);
+  const canonicalEntry = configEntryForKey(config, accountKey)
+    ?? (options.inheritSystem ? configEntryForKey(config, "config/ai/models") : null);
+  if (canonicalEntry && !canonicalEntry.redacted && canonicalEntry.value.trim()) {
+    return parseCanonicalModelStack(canonicalEntry.value)
+      .map((profile) => hydrateModelProfileSecrets(
+        config,
+        canonicalEntry.key,
+        profile,
+      ));
   }
 
+  const legacyKey = `users/${validUid.data}/ai/${LEGACY_MODEL_PROFILE_KEY}`;
+  const raw = configValueForKey(config, legacyKey);
+  if (!raw.trim()) return [];
   try {
     const payload = z.object({ profiles: z.array(settingsValueSchema) }).safeParse(JSON.parse(raw));
     if (!payload.success) return [];
@@ -556,7 +547,7 @@ export function modelProfilesForConfig(
     return profiles
       .map(normalizeModelProfile)
       .filter((profile): profile is ConsoleModelProfile => profile !== null)
-      .map((profile) => hydrateModelProfileSecrets(config, validUid.data, profile))
+      .map((profile) => hydrateLegacyModelProfileSecrets(config, validUid.data, profile))
       .sort((left, right) => right.updatedAt - left.updatedAt || left.name.localeCompare(right.name));
   } catch {
     return [];
@@ -565,13 +556,11 @@ export function modelProfilesForConfig(
 
 export function serializeModelProfiles(profiles: readonly ConsoleModelProfile[]): string {
   return JSON.stringify({
-    version: MODEL_PROFILES_VERSION,
-    profiles: profiles.map((profile) => ({
+    version: MODEL_STACK_VERSION,
+    models: profiles.map((profile) => ({
       id: profile.id,
       name: normalizeProfileName(profile.name),
-      values: normalizeProfileStorageValues(profile.values),
-      createdAt: profile.createdAt,
-      updatedAt: profile.updatedAt,
+      ...canonicalModelValues(profile.values),
     })),
   });
 }
@@ -588,7 +577,7 @@ export function modelProfileSaveEntries(
   const nextIds = new Set(nextProfiles.map((profile) => profile.id));
   const entries: ConsoleConfigWrite[] = [{
     key: modelProfilesConfigKey(uid),
-    value: serializeModelProfiles(nextProfiles),
+    value: nextProfiles.length > 0 ? serializeModelProfiles(nextProfiles) : "",
   }];
   for (const profile of nextProfiles) {
     const clearedForProfile = clearedSecretKeys.get(profile.id);
@@ -619,34 +608,6 @@ export function modelProfileSaveEntries(
     }
   }
   return entries;
-}
-
-export function modelProfileDefaultEntries(
-  config: readonly ConsoleConfigEntry[],
-  uid: number | null,
-  isRoot: boolean,
-  profile: ConsoleModelProfile,
-  clearedSecretKeys: ClearedModelProfileSecretKeys = new Map(),
-): ConsoleConfigWrite[] {
-  if (uid === null) {
-    throw new Error("A signed-in account is required to update the default model.");
-  }
-  const clearedForProfile = clearedSecretKeys.get(profile.id);
-  return MODEL_PROFILE_FIELDS.flatMap((field): ConsoleConfigWrite[] => {
-    const key = isRoot ? field.key : buildUserAiOverrideKey(uid, field.key);
-    const value = profile.values[field.key] ?? "";
-    if (isSensitiveSettingKey(field.key) && value.length === 0) {
-      if (clearedForProfile?.has(field.key)) {
-        return [{ key, value: "" }];
-      }
-      const copyFromKey = modelProfileSecretConfigKey(uid, profile.id, field.key);
-      if (configEntryForKey(config, copyFromKey)?.redacted === true) {
-        return [{ key, copyFromKey }];
-      }
-      return [];
-    }
-    return [{ key, value }];
-  });
 }
 
 export function redactModelProfilesConfigValue(raw: string): string {
@@ -681,6 +642,7 @@ export function createModelProfile(
     throw new Error("Profile name already exists");
   }
   return [
+    ...profiles,
     {
       id: uniqueProfileId(profiles, normalizedName),
       name: normalizedName,
@@ -688,7 +650,19 @@ export function createModelProfile(
       createdAt: now,
       updatedAt: now,
     },
-    ...profiles,
+  ];
+}
+
+export function makeModelPrimary(
+  profiles: readonly ConsoleModelProfile[],
+  profileId: string,
+): ConsoleModelProfile[] {
+  const index = profiles.findIndex((profile) => profile.id === profileId);
+  if (index <= 0) return [...profiles];
+  return [
+    profiles[index],
+    ...profiles.slice(0, index),
+    ...profiles.slice(index + 1),
   ];
 }
 
@@ -740,11 +714,10 @@ export function modelValidationValuesFromProfileDrafts(
 export function modelProfileSummary(values: Record<string, string>): string {
   const provider = cleanValue(values["config/ai/provider"]) || "provider";
   const model = cleanValue(values["config/ai/model"]) || "model";
-  const reasoning = cleanValue(values["config/ai/reasoning"]) || "default";
   if (fixedAiProviderModel(provider)) {
-    return `${aiProviderDisplayLabel(provider)} / reasoning ${reasoning}`;
+    return aiProviderDisplayLabel(provider);
   }
-  return `${provider} / ${modelDisplayName(model)} / reasoning ${reasoning}`;
+  return `${provider} / ${modelDisplayName(model)}`;
 }
 
 export function modelStackDisplayName(values: Record<string, string>): string {
@@ -829,6 +802,59 @@ function normalizeModelProfile(raw: SettingsValue): ConsoleModelProfile | null {
   };
 }
 
+function parseCanonicalModelStack(raw: string): ConsoleModelProfile[] {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  const payload = z.object({
+    version: z.literal(1),
+    models: z.array(settingsValueSchema),
+  }).safeParse(decoded);
+  if (!payload.success) return [];
+  return payload.data.models
+    .map(normalizeCanonicalModel)
+    .filter((profile): profile is ConsoleModelProfile => profile !== null);
+}
+
+function normalizeCanonicalModel(raw: SettingsValue): ConsoleModelProfile | null {
+  const parsed = z.object({
+    id: z.string(),
+    name: z.string(),
+    provider: z.string(),
+    model: z.string(),
+    baseUrl: z.string().optional(),
+    providerStyle: z.string().optional(),
+    transportTarget: z.string().optional(),
+    maxTokens: z.number().int().positive().optional(),
+    contextWindowTokens: z.number().int().positive().optional(),
+  }).safeParse(raw);
+  if (!parsed.success) return null;
+  const id = normalizeProfileId(parsed.data.id);
+  const name = normalizeProfileName(parsed.data.name);
+  const provider = parsed.data.provider.trim();
+  const model = parsed.data.model.trim();
+  if (!id || !name || !provider || !model) return null;
+  return {
+    id,
+    name,
+    values: normalizeProfileValues({
+      "config/ai/provider": provider,
+      "config/ai/model": model,
+      "config/ai/base_url": parsed.data.baseUrl ?? "",
+      "config/ai/provider_style": parsed.data.providerStyle ?? "",
+      "config/ai/transport_target": parsed.data.transportTarget ?? "",
+      "config/ai/max_tokens": parsed.data.maxTokens ?? "",
+      "config/ai/context_window_tokens": parsed.data.contextWindowTokens ?? "",
+      "config/ai/api_key": "",
+    }),
+    createdAt: 0,
+    updatedAt: 0,
+  };
+}
+
 function normalizeProfileValues(values: SettingsRecord): ProfileValues {
   const normalized: ProfileValues = {};
   for (const field of MODEL_PROFILE_FIELDS) {
@@ -837,32 +863,77 @@ function normalizeProfileValues(values: SettingsRecord): ProfileValues {
   return normalized;
 }
 
-function normalizeProfileStorageValues(values: SettingsRecord): Record<string, string> {
-  const normalized = normalizeProfileValues(values);
-  for (const [key, value] of Object.entries(normalized)) {
-    if (!value.trim()) {
-      delete normalized[key];
+function hydrateModelProfileSecrets(
+  config: readonly ConsoleConfigEntry[],
+  stackKey: string,
+  profile: ConsoleModelProfile,
+): ConsoleModelProfile {
+  const values = { ...profile.values };
+  for (const field of MODEL_PROFILE_SECRET_FIELDS) {
+    const secret = configValueForKey(
+      config,
+      `${stackKey}/${profile.id}/${field.key.slice("config/ai/".length)}`,
+    );
+    if (secret) {
+      values[field.key] = secret;
     }
   }
-  for (const field of MODEL_PROFILE_SECRET_FIELDS) {
-    delete normalized[field.key];
-  }
-  return normalized;
+  return { ...profile, values };
 }
 
-function hydrateModelProfileSecrets(
+function hydrateLegacyModelProfileSecrets(
   config: readonly ConsoleConfigEntry[],
   uid: number,
   profile: ConsoleModelProfile,
 ): ConsoleModelProfile {
   const values = { ...profile.values };
   for (const field of MODEL_PROFILE_SECRET_FIELDS) {
-    const secret = configValueForKey(config, modelProfileSecretConfigKey(uid, profile.id, field.key));
-    if (secret) {
-      values[field.key] = secret;
-    }
+    const secret = configValueForKey(
+      config,
+      `users/${uid}/ai/${LEGACY_MODEL_PROFILE_KEY}/${profile.id}/${field.key.slice("config/ai/".length)}`,
+    );
+    if (secret) values[field.key] = secret;
   }
   return { ...profile, values };
+}
+
+interface CanonicalModelValues {
+  provider: string;
+  model: string;
+  baseUrl?: string;
+  providerStyle?: string;
+  transportTarget?: string;
+  maxTokens?: number;
+  contextWindowTokens?: number;
+}
+
+function canonicalModelValues(values: SettingsRecord): CanonicalModelValues {
+  const baseUrl = cleanValue(values["config/ai/base_url"]);
+  const providerStyle = cleanValue(values["config/ai/provider_style"]);
+  const transportTarget = cleanValue(values["config/ai/transport_target"]);
+  const maxTokens = optionalPositiveInt(values["config/ai/max_tokens"]);
+  const contextWindowTokens = optionalPositiveInt(
+    values["config/ai/context_window_tokens"],
+  );
+  const result: CanonicalModelValues = {
+    provider: cleanValue(values["config/ai/provider"]),
+    model: cleanValue(values["config/ai/model"]),
+  };
+  if (baseUrl) result.baseUrl = baseUrl;
+  if (providerStyle) result.providerStyle = providerStyle;
+  if (transportTarget) result.transportTarget = transportTarget;
+  if (maxTokens) result.maxTokens = maxTokens;
+  if (contextWindowTokens) result.contextWindowTokens = contextWindowTokens;
+  return result;
+}
+
+function optionalPositiveInt(
+  value: SettingsValue,
+): number | undefined {
+  const normalized = cleanValue(value);
+  if (!normalized) return undefined;
+  const parsed = Number(normalized);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function redactModelProfileSecrets(profile: SettingsValue): SettingsValue {

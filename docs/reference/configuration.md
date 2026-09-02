@@ -23,9 +23,9 @@ Sensitive final path segments include `api_key`, `secret`, `token`, `password`, 
 Inside a GSV shell, use the filesystem view:
 
 ```sh
-cat /sys/config/ai/provider
-cat /sys/users/1000/ai/model
-printf '%s\n' openai > /sys/users/1000/ai/provider
+cat /sys/config/ai/models
+cat /sys/users/1000/ai/models
+printf '%s\n' '{"version":1,"models":[{"id":"primary","name":"Primary","provider":"openai","model":"gpt-5.4"}]}' > /sys/users/1000/ai/models
 ```
 
 From an API or WebSocket client, use syscalls:
@@ -35,25 +35,45 @@ From an API or WebSocket client, use syscalls:
 ```
 
 ```json
-{ "key": "users/1000/ai/model", "value": "gpt-4.1-mini" }
+{ "key": "users/1000/ai/preferred_model", "value": "primary" }
 ```
 
 Reading a prefix returns every readable key below that prefix. Reading an exact key returns that key's value or fails if access is denied.
 
 ## AI Model Config
 
-The AI runtime resolves per-user values first, then falls back to system defaults.
+The owner controls one ordered list of complete text-model entries at `users/{ownerUid}/ai/models`. The first entry is primary and every later entry is tried in order after an eligible provider failure. If an owner has no list, `config/ai/models` supplies the system stack.
+
+```json
+{
+  "version": 1,
+  "models": [
+    {
+      "id": "primary",
+      "name": "Primary",
+      "provider": "openai",
+      "model": "gpt-5.4",
+      "maxTokens": 32768,
+      "contextWindowTokens": 256000
+    }
+  ]
+}
+```
+
+`id`, `name`, `provider`, and `model` are required. `baseUrl`, `providerStyle`, `transportTarget`, `maxTokens`, and `contextWindowTokens` are optional entry properties. A credential is stored separately at `users/{ownerUid}/ai/models/{id}/api_key` (or `config/ai/models/{id}/api_key` for a system entry), so list reads never expose it.
+
+An agent or Process may prefer an entry by its stable ID through `users/{uid}/ai/preferred_model` or its Process-local AI configuration. The preferred entry moves to the front for that Process; the rest of the owner's list retains its order. Reasoning remains an orthogonal preference.
 
 | System Key | User Override | Default | Description |
 |---|---|---|---|
-| `config/ai/provider` | `users/{uid}/ai/provider` | `workers-ai` | Provider adapter. |
-| `config/ai/model` | `users/{uid}/ai/model` | `@cf/zai-org/glm-5.2` | Provider model identifier. |
-| `config/ai/fallback_model_profile` | `users/{uid}/ai/fallback_model_profile` | `workers-ai-kimi-k2-6` | Saved model profile to try after eligible generation failures. Context overflow is handled by the process history policy instead. |
-| `config/ai/api_key` | `users/{uid}/ai/api_key` | empty | Provider credential. Sensitive. |
+| `config/ai/models` | `users/{ownerUid}/ai/models` | Workers AI primary plus fallback | Ordered complete text-model stack. |
+| — | `users/{uid}/ai/preferred_model` | empty | Stable entry ID preferred by this agent account. |
 | `config/ai/reasoning` | `users/{uid}/ai/reasoning` | `medium` | Reasoning mode hint: `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`. Unsupported values are clamped to the nearest model-supported level at generation time. |
-| `config/ai/max_tokens` | `users/{uid}/ai/max_tokens` | `32768` | Maximum output tokens. |
+| `config/ai/context_window_tokens` | — | `256000` | Last-resort context window when neither an entry nor the model registry supplies one. |
 | `config/ai/max_context_bytes` | `users/{uid}/ai/max_context_bytes` | `32768` | Prompt context budget before messages. |
 | `config/ai/skills/index_mode` | `users/{uid}/ai/skills/index_mode` | `summary` | Skill index included in standing context: ids and descriptions with `summary`, ids only with `names`, or omitted with `off`. Live discovery remains available in every mode. |
+
+Legacy per-field model keys and `model_profiles` are still read so existing installations keep their behavior, but current setup and settings surfaces only write the ordered stack.
 
 ## System Context
 
@@ -120,7 +140,7 @@ not a writable configuration key.
 
 ## Practical Notes
 
-All values are strings. Callers parse booleans and numbers at the point of use. Prefer user-scoped AI overrides for per-user model settings, and reserve system keys for defaults that should apply across the GSV instance.
+Top-level configuration values are strings; structured values such as the model stack are JSON strings. Prefer the owner-scoped model stack and reserve system keys for defaults that should apply across the GSV instance.
 
 ## See also
 
