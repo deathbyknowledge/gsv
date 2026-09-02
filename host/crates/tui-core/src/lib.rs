@@ -281,6 +281,40 @@ struct DraftSnapshot {
     execution: ExecutionMode,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum ScrollAnchor {
+    Moment(usize),
+    Media,
+}
+
+enum TranscriptBlock {
+    Text {
+        top: u16,
+        height: u16,
+        lines: Vec<Line<'static>>,
+    },
+    Image {
+        top: u16,
+        height: u16,
+        artifact: Artifact,
+        focused: bool,
+    },
+}
+
+impl TranscriptBlock {
+    fn top(&self) -> u16 {
+        match self {
+            Self::Text { top, .. } | Self::Image { top, .. } => *top,
+        }
+    }
+
+    fn height(&self) -> u16 {
+        match self {
+            Self::Text { height, .. } | Self::Image { height, .. } => *height,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct App {
     moments: Vec<Moment>,
@@ -289,7 +323,7 @@ pub struct App {
     last_max_scroll: u16,
     last_viewport_height: u16,
     follow_latest: bool,
-    scroll_anchor: Option<usize>,
+    scroll_anchor: Option<ScrollAnchor>,
     draft: String,
     draft_cursor: usize,
     draft_visible: bool,
@@ -741,7 +775,7 @@ impl App {
             Action::FirstTurn => {
                 if !self.draft_visible && !self.moments.is_empty() {
                     self.selected = self.turn_end(0);
-                    self.scroll_anchor = Some(0);
+                    self.scroll_anchor = Some(ScrollAnchor::Moment(0));
                     self.follow_latest = false;
                     self.media_expanded = false;
                     self.media_focus = 0;
@@ -751,7 +785,7 @@ impl App {
             Action::LastTurn => {
                 if !self.draft_visible && !self.moments.is_empty() {
                     self.selected = self.moments.len().saturating_sub(1);
-                    self.scroll_anchor = Some(self.turn_start(self.selected));
+                    self.scroll_anchor = Some(ScrollAnchor::Moment(self.turn_start(self.selected)));
                     self.follow_latest = true;
                     self.media_expanded = false;
                     self.media_focus = 0;
@@ -789,7 +823,7 @@ impl App {
             }
             Action::ToggleMarkdown => {
                 self.raw_markdown = !self.raw_markdown;
-                self.scroll_anchor = Some(self.turn_start(self.selected));
+                self.scroll_anchor = Some(ScrollAnchor::Moment(self.turn_start(self.selected)));
                 Vec::new()
             }
             Action::ToggleVim => {
@@ -965,26 +999,65 @@ impl App {
         self.activity = Some("THINKING".to_string());
     }
 
-    pub fn append_delta(&mut self, run_id: Option<&str>, delta: &str) {
+    pub fn start_message_stream(&mut self, run_id: &str, message_id: &str) {
+        self.start_run(run_id);
+        if self.moments.iter().any(|moment| moment.id == message_id) {
+            return;
+        }
+        if let Some(index) = self.streaming_moment_for(Some(run_id)) {
+            if self.moments[index].text.is_empty() && self.moments[index].artifacts.is_empty() {
+                self.moments[index].id = message_id.to_string();
+                self.moments[index].run_id = Some(run_id.to_string());
+                return;
+            }
+        }
+        self.moments.push(Moment {
+            id: message_id.to_string(),
+            role: Role::Intelligence,
+            execution: ExecutionMode::Ship,
+            text: String::new(),
+            run_id: Some(run_id.to_string()),
+            state: MomentState::Streaming,
+            artifacts: Vec::new(),
+            environment: None,
+        });
+        if self.follow_latest {
+            self.selected = self.moments.len().saturating_sub(1);
+        }
+    }
+
+    pub fn append_message_delta(&mut self, run_id: Option<&str>, message_id: &str, delta: &str) {
         let followed_latest = self.follow_latest;
-        let index = self.streaming_moment_for(run_id);
-        let index = match index {
-            Some(index) => index,
-            None => {
+        let mut index = self.moments.iter().rposition(|moment| {
+            moment.id == message_id
+                && moment.role == Role::Intelligence
+                && moment.execution == ExecutionMode::Ship
+                && moment.state == MomentState::Streaming
+        });
+        if index.is_none() {
+            if let Some(run_id) = run_id {
+                self.start_message_stream(run_id, message_id);
+            } else if !self.moments.iter().any(|moment| moment.id == message_id) {
                 self.moments.push(Moment {
-                    id: run_id
-                        .map(|run_id| format!("run:{run_id}"))
-                        .unwrap_or_else(|| format!("stream:{}", self.moments.len())),
+                    id: message_id.to_string(),
                     role: Role::Intelligence,
                     execution: ExecutionMode::Ship,
                     text: String::new(),
-                    run_id: run_id.map(str::to_string),
+                    run_id: None,
                     state: MomentState::Streaming,
                     artifacts: Vec::new(),
                     environment: None,
                 });
-                self.moments.len() - 1
             }
+            index = self.moments.iter().rposition(|moment| {
+                moment.id == message_id
+                    && moment.role == Role::Intelligence
+                    && moment.execution == ExecutionMode::Ship
+                    && moment.state == MomentState::Streaming
+            });
+        }
+        let Some(index) = index else {
+            return;
         };
         if self.moments[index].run_id.is_none() {
             self.moments[index].run_id = run_id.map(str::to_string);
@@ -996,32 +1069,17 @@ impl App {
         }
     }
 
-    pub fn replace_run_text(&mut self, run_id: Option<&str>, text: impl Into<String>) {
-        let text = text.into();
-        let index = self.streaming_moment_for(run_id);
-        if let Some(index) = index {
-            self.moments[index].text = text;
-            if self.moments[index].run_id.is_none() {
-                self.moments[index].run_id = run_id.map(str::to_string);
-            }
-        } else {
-            self.moments.push(Moment {
-                id: run_id
-                    .map(|run_id| format!("run:{run_id}"))
-                    .unwrap_or_else(|| format!("output:{}", self.moments.len())),
-                role: Role::Intelligence,
-                execution: ExecutionMode::Ship,
-                text,
-                run_id: run_id.map(str::to_string),
-                state: MomentState::Streaming,
-                artifacts: Vec::new(),
-                environment: None,
-            });
-            if self.follow_latest {
-                self.selected = self.moments.len().saturating_sub(1);
-            }
-        }
-        self.activity = Some("RESPONDING".to_string());
+    pub fn abort_message_stream(&mut self, message_id: &str) {
+        let Some(index) = self.moments.iter().position(|moment| {
+            moment.id == message_id
+                && moment.role == Role::Intelligence
+                && moment.execution == ExecutionMode::Ship
+                && moment.state == MomentState::Streaming
+        }) else {
+            return;
+        };
+        self.moments.remove(index);
+        self.selected = self.selected.min(self.moments.len().saturating_sub(1));
     }
 
     pub fn finish_run(&mut self, run_id: Option<&str>, error: Option<&str>) {
@@ -1139,7 +1197,8 @@ impl App {
                 self.moments.iter().rposition(|moment| {
                     moment.role == Role::Intelligence
                         && moment.execution == ExecutionMode::Ship
-                        && moment.state == MomentState::Streaming
+                        && (moment.state == MomentState::Streaming
+                            || moment.id.starts_with("draft:"))
                         && moment.run_id.as_deref() == Some(run_id)
                 })
             }) {
@@ -1178,8 +1237,10 @@ impl App {
 
     pub fn complete_demo_submission(&mut self, id: u64, request: &str) {
         let run_id = format!("demo:{id}");
+        let message_id = format!("demo:message:{id}");
         self.submission_accepted(id, run_id.clone(), false);
-        self.append_delta(Some(&run_id), &demo_reply(request));
+        self.start_message_stream(&run_id, &message_id);
+        self.append_message_delta(Some(&run_id), &message_id, &demo_reply(request));
         if request.to_ascii_lowercase().contains("media") {
             if let Some(moment) = self
                 .moments
@@ -1382,7 +1443,7 @@ impl App {
         let start = self.turn_start(self.selected);
         if start > 0 {
             self.selected = start - 1;
-            self.scroll_anchor = Some(self.turn_start(self.selected));
+            self.scroll_anchor = Some(ScrollAnchor::Moment(self.turn_start(self.selected)));
             self.follow_latest = false;
             self.media_expanded = false;
             self.media_focus = 0;
@@ -1396,7 +1457,7 @@ impl App {
         let end = self.turn_end(self.turn_start(self.selected));
         if end + 1 < self.moments.len() {
             self.selected = self.turn_end(end + 1);
-            self.scroll_anchor = Some(end + 1);
+            self.scroll_anchor = Some(ScrollAnchor::Moment(end + 1));
             self.follow_latest = self.selected + 1 >= self.moments.len();
             self.media_expanded = false;
             self.media_focus = 0;
@@ -1498,7 +1559,8 @@ impl App {
         {
             self.media_expanded = false;
         }
-        self.scroll_anchor = Some(self.turn_start(self.selected));
+        self.scroll_anchor = Some(ScrollAnchor::Media);
+        self.follow_latest = false;
     }
 
     fn matching_environment_indices(&self) -> Vec<usize> {
@@ -1622,13 +1684,9 @@ impl App {
         let focused_image = image_artifacts
             .iter()
             .position(|(artifact_index, _)| *artifact_index == self.media_focus);
-        let inline_image_count = if self.inline_images {
-            image_artifacts.len().min(3)
-        } else {
-            0
-        };
+        let has_inline_images = self.inline_images && !image_artifacts.is_empty();
 
-        if self.media_expanded && inline_image_count > 0 && focused_image.is_some() {
+        if self.media_expanded && has_inline_images && focused_image.is_some() {
             self.last_max_scroll = 0;
             let focus = focused_image.unwrap_or_default();
             let footer_height = u16::from(image_artifacts.len() > 1);
@@ -1657,99 +1715,6 @@ impl App {
                 );
             }
             return;
-        }
-
-        let image_focus = focused_image.unwrap_or_default();
-        let image_window_start = if inline_image_count > 0 {
-            image_focus
-                .saturating_sub(inline_image_count / 2)
-                .min(image_artifacts.len().saturating_sub(inline_image_count))
-        } else {
-            0
-        };
-        let image_window_end = image_window_start + inline_image_count;
-
-        let mut lines = Vec::new();
-        let mut moment_line_starts = vec![0_usize; self.moments.len()];
-        let mut selected_artifact_index = 0_usize;
-        let mut selected_image_index = 0_usize;
-        for (index, moment) in self.moments.iter().enumerate() {
-            if moment.role == Role::Human && !lines.is_empty() {
-                lines.push(Line::default());
-            }
-            moment_line_starts[index] = lines.len();
-            let body = if moment.text.is_empty() && moment.state == MomentState::Streaming {
-                "⋯"
-            } else {
-                moment.text.as_str()
-            };
-            let body_color = if moment.state == MomentState::Error {
-                palette.error
-            } else {
-                moment.role.color(palette)
-            };
-            match moment.role {
-                Role::Human => {
-                    let environment = moment
-                        .environment
-                        .as_ref()
-                        .unwrap_or_else(|| self.default_environment());
-                    lines.extend(
-                        prompted_text_lines(
-                            &self.input_prompt(environment, moment.execution),
-                            body,
-                            area.width,
-                            Style::new().fg(palette.human).add_modifier(Modifier::BOLD),
-                            Style::new().fg(body_color),
-                            None,
-                        )
-                        .lines,
-                    );
-                }
-                Role::Intelligence
-                    if moment.execution == ExecutionMode::Ship && !self.raw_markdown =>
-                {
-                    lines.extend(render_markdown(body, palette));
-                }
-                Role::Intelligence if moment.execution == ExecutionMode::Shell => {
-                    lines.extend(render_plain(
-                        body.strip_suffix('\n').unwrap_or(body),
-                        Style::new().fg(body_color),
-                    ));
-                }
-                Role::Intelligence | Role::System => {
-                    lines.extend(render_plain(body, Style::new().fg(body_color)));
-                }
-            }
-            let in_selected_turn = (turn_start..=turn_end).contains(&index);
-            let fallback_artifacts = moment
-                .artifacts
-                .iter()
-                .filter_map(|artifact| {
-                    let focused = if in_selected_turn {
-                        let focused = selected_artifact_index == self.media_focus;
-                        selected_artifact_index = selected_artifact_index.saturating_add(1);
-                        focused
-                    } else {
-                        false
-                    };
-                    let inline = if artifact.kind == MediaKind::Image && in_selected_turn {
-                        let image_index = selected_image_index;
-                        selected_image_index = selected_image_index.saturating_add(1);
-                        self.inline_images
-                            && (image_window_start..image_window_end).contains(&image_index)
-                    } else {
-                        false
-                    };
-                    (!inline).then_some((artifact, focused))
-                })
-                .collect::<Vec<_>>();
-            if !fallback_artifacts.is_empty() {
-                if !body.is_empty() {
-                    lines.push(Line::default());
-                }
-                lines.extend(render_artifacts(&fallback_artifacts, palette));
-            }
         }
 
         let show_prompt = self.draft_visible || self.follow_latest;
@@ -1784,56 +1749,209 @@ impl App {
                     .max(1)
             })
             .unwrap_or(0);
-        let line_count = wrapped_line_count(&lines, area.width).max(u16::from(!lines.is_empty()));
-        let remaining = area.height.saturating_sub(prompt_height);
-        let media_height = if inline_image_count > 0 {
-            (remaining.saturating_mul(2) / 5)
+        let viewport_height = area.height.saturating_sub(prompt_height);
+        let image_height = if self.inline_images && viewport_height > 0 {
+            (area.height.saturating_mul(2) / 5)
                 .clamp(5, 12)
-                .min(remaining)
+                .min(viewport_height)
         } else {
             0
         };
-        let gap = u16::from(media_height > 0 && !lines.is_empty());
-        let text_capacity = remaining.saturating_sub(media_height + gap);
-        self.last_viewport_height = text_capacity.max(1);
-        self.last_max_scroll = line_count.saturating_sub(text_capacity);
-        if self.follow_latest {
-            self.document_scroll = self.last_max_scroll;
-        } else if let Some(index) = self.scroll_anchor.take() {
-            let raw_line = moment_line_starts.get(index).copied().unwrap_or_default();
-            self.document_scroll =
-                wrapped_line_count(&lines[..raw_line.min(lines.len())], area.width)
-                    .min(self.last_max_scroll);
-        } else {
-            self.document_scroll = self.document_scroll.min(self.last_max_scroll);
+        let mut blocks = Vec::new();
+        let mut document_height = 0_u16;
+        let mut moment_starts = vec![0_u16; self.moments.len()];
+        let mut selected_artifact_index = 0_usize;
+        let mut focused_media_range = None;
+
+        for (index, moment) in self.moments.iter().enumerate() {
+            if moment.role == Role::Human && document_height > 0 {
+                push_transcript_text(
+                    &mut blocks,
+                    &mut document_height,
+                    vec![Line::default()],
+                    area.width,
+                );
+            }
+            moment_starts[index] = document_height;
+            let body = if moment.text.is_empty() && moment.state == MomentState::Streaming {
+                "⋯"
+            } else {
+                moment.text.as_str()
+            };
+            let body_color = if moment.state == MomentState::Error {
+                palette.error
+            } else {
+                moment.role.color(palette)
+            };
+            let mut has_content = !body.is_empty();
+            if has_content {
+                let body_lines = match moment.role {
+                    Role::Human => {
+                        let environment = moment
+                            .environment
+                            .as_ref()
+                            .unwrap_or_else(|| self.default_environment());
+                        prompted_text_lines(
+                            &self.input_prompt(environment, moment.execution),
+                            body,
+                            area.width,
+                            Style::new().fg(palette.human).add_modifier(Modifier::BOLD),
+                            Style::new().fg(body_color),
+                            None,
+                        )
+                        .lines
+                    }
+                    Role::Intelligence
+                        if moment.execution == ExecutionMode::Ship && !self.raw_markdown =>
+                    {
+                        render_markdown(body, palette)
+                    }
+                    Role::Intelligence if moment.execution == ExecutionMode::Shell => render_plain(
+                        body.strip_suffix('\n').unwrap_or(body),
+                        Style::new().fg(body_color),
+                    ),
+                    Role::Intelligence | Role::System => {
+                        render_plain(body, Style::new().fg(body_color))
+                    }
+                };
+                push_transcript_text(&mut blocks, &mut document_height, body_lines, area.width);
+            }
+
+            let in_selected_turn = (turn_start..=turn_end).contains(&index);
+            for artifact in &moment.artifacts {
+                if has_content {
+                    push_transcript_text(
+                        &mut blocks,
+                        &mut document_height,
+                        vec![Line::default()],
+                        area.width,
+                    );
+                }
+                let focused = if in_selected_turn {
+                    let focused = selected_artifact_index == self.media_focus;
+                    selected_artifact_index = selected_artifact_index.saturating_add(1);
+                    focused
+                } else {
+                    false
+                };
+                let top = document_height;
+                if artifact.kind == MediaKind::Image && image_height > 0 {
+                    blocks.push(TranscriptBlock::Image {
+                        top,
+                        height: image_height,
+                        artifact: artifact.clone(),
+                        focused,
+                    });
+                    document_height = document_height.saturating_add(image_height);
+                } else {
+                    push_transcript_text(
+                        &mut blocks,
+                        &mut document_height,
+                        render_artifacts(&[(artifact, focused)], palette),
+                        area.width,
+                    );
+                }
+                if focused {
+                    focused_media_range = Some((top, document_height));
+                }
+                has_content = true;
+            }
         }
 
-        if text_capacity > 0 && !lines.is_empty() {
-            let text_height = line_count.min(text_capacity).max(1);
-            let y = if line_count <= text_capacity {
-                area.y + text_capacity.saturating_sub(text_height)
-            } else {
-                area.y
-            };
-            let text_area = Rect::new(area.x, y, area.width, text_height);
-            let paragraph = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
-            frame.render_widget(paragraph.scroll((self.document_scroll, 0)), text_area);
+        self.last_viewport_height = viewport_height.max(1);
+        self.last_max_scroll = document_height.saturating_sub(viewport_height);
+        let anchor = self.scroll_anchor.take();
+        if self.follow_latest {
+            self.document_scroll = self.last_max_scroll;
+        } else {
+            self.document_scroll = self.document_scroll.min(self.last_max_scroll);
+            match anchor {
+                Some(ScrollAnchor::Moment(index)) => {
+                    self.document_scroll = moment_starts
+                        .get(index)
+                        .copied()
+                        .unwrap_or_default()
+                        .min(self.last_max_scroll);
+                }
+                Some(ScrollAnchor::Media) => {
+                    if let Some((top, bottom)) = focused_media_range {
+                        let viewport_bottom = self.document_scroll.saturating_add(viewport_height);
+                        if top < self.document_scroll {
+                            self.document_scroll = top;
+                        } else if bottom > viewport_bottom {
+                            self.document_scroll = bottom
+                                .saturating_sub(viewport_height)
+                                .min(self.last_max_scroll);
+                        }
+                    }
+                }
+                None => {}
+            }
         }
-        if inline_image_count > 0 {
-            let media_area = Rect::new(
-                area.x,
-                area.y + text_capacity + gap,
-                area.width,
-                media_height,
-            );
-            let visible_images = image_artifacts[image_window_start..image_window_end]
-                .iter()
-                .map(|(_, artifact)| artifact.clone())
-                .collect::<Vec<_>>();
-            let focused = focused_image
-                .filter(|focus| (image_window_start..image_window_end).contains(focus))
-                .map(|focus| focus - image_window_start);
-            self.push_media_slots(frame, media_area, &visible_images, focused);
+
+        if viewport_height > 0 && document_height > 0 {
+            let viewport_top = self.document_scroll;
+            let viewport_bottom = viewport_top.saturating_add(viewport_height);
+            let bottom_alignment = viewport_height.saturating_sub(document_height);
+            for block in blocks {
+                let block_top = block.top();
+                let block_bottom = block_top.saturating_add(block.height());
+                let visible_top = block_top.max(viewport_top);
+                let visible_bottom = block_bottom.min(viewport_bottom);
+                if visible_top >= visible_bottom {
+                    continue;
+                }
+                let block_area = Rect::new(
+                    area.x,
+                    area.y + bottom_alignment + visible_top.saturating_sub(viewport_top),
+                    area.width,
+                    visible_bottom.saturating_sub(visible_top),
+                );
+                match block {
+                    TranscriptBlock::Text { lines, .. } => {
+                        frame.render_widget(
+                            Paragraph::new(Text::from(lines))
+                                .wrap(Wrap { trim: false })
+                                .scroll((visible_top.saturating_sub(block_top), 0)),
+                            block_area,
+                        );
+                    }
+                    TranscriptBlock::Image {
+                        artifact, focused, ..
+                    } if visible_top == block_top && visible_bottom == block_bottom => {
+                        self.push_media_slots(
+                            frame,
+                            block_area,
+                            std::slice::from_ref(&artifact),
+                            focused.then_some(0),
+                        );
+                    }
+                    TranscriptBlock::Image {
+                        artifact, focused, ..
+                    } => {
+                        let style = Style::new()
+                            .fg(if focused {
+                                palette.accent
+                            } else {
+                                palette.quiet
+                            })
+                            .add_modifier(if focused {
+                                Modifier::BOLD
+                            } else {
+                                Modifier::empty()
+                            });
+                        frame.render_widget(
+                            Paragraph::new(format!(
+                                "▧  {}",
+                                sanitize_label(artifact.display_name(), "image", 96)
+                            ))
+                            .style(style)
+                            .alignment(Alignment::Center),
+                            block_area,
+                        );
+                    }
+                }
+            }
         }
         if let Some(prompt) = prompt.take() {
             let cursor_row = prompt.cursor_row;
@@ -1948,7 +2066,7 @@ impl App {
                 slot_width
             };
             let slot_area = Rect::new(x, area.y, width, area.height);
-            let content_area = if focused.is_some() && width > 2 && area.height > 2 {
+            let content_area = if width > 2 && area.height > 2 {
                 slot_area.inner(Margin::new(1, 1))
             } else {
                 slot_area
@@ -2064,6 +2182,24 @@ impl App {
         }
         prompt
     }
+}
+
+fn push_transcript_text(
+    blocks: &mut Vec<TranscriptBlock>,
+    document_height: &mut u16,
+    lines: Vec<Line<'static>>,
+    width: u16,
+) {
+    let height = wrapped_line_count(&lines, width);
+    if height == 0 {
+        return;
+    }
+    blocks.push(TranscriptBlock::Text {
+        top: *document_height,
+        height,
+        lines,
+    });
+    *document_height = document_height.saturating_add(height);
 }
 
 fn wrapped_line_count(lines: &[Line<'static>], width: u16) -> u16 {
@@ -2378,6 +2514,19 @@ mod tests {
             transcription: None,
             source: Some(format!("gsv:/home/ship/image-{index}.png")),
             revision: Some(format!("sha256:{index}")),
+        }
+    }
+
+    fn audio_artifact(index: usize) -> Artifact {
+        Artifact {
+            kind: MediaKind::Audio,
+            mime_type: "audio/ogg".to_string(),
+            filename: Some(format!("voice-{index}.ogg")),
+            size: Some(2048),
+            duration_ms: Some(1_000),
+            transcription: None,
+            source: Some(format!("gsv:/home/ship/voice-{index}.ogg")),
+            revision: Some(format!("sha256:voice-{index}")),
         }
     }
 
@@ -2697,7 +2846,8 @@ mod tests {
         app.dispatch(Action::Insert("do it".to_string()));
         app.dispatch(Action::Submit);
         app.submission_accepted(1, "run:current".to_string(), false);
-        app.append_delta(Some("run:current"), "still working");
+        app.start_message_stream("run:current", "draft:current");
+        app.append_message_delta(Some("run:current"), "draft:current", "still working");
         app.enter_approval(Approval {
             request_id: "approval:current".to_string(),
             syscall: "shell.exec".to_string(),
@@ -2858,32 +3008,129 @@ mod tests {
     #[test]
     fn media_focus_opens_the_exact_audio_artifact() {
         let mut app = App::new(ConnectionState::Ready);
-        let audio = |index| Artifact {
-            kind: MediaKind::Audio,
-            mime_type: "audio/ogg".to_string(),
-            filename: Some(format!("voice-{index}.ogg")),
-            size: Some(2048),
-            duration_ms: Some(1_000),
-            transcription: None,
-            source: Some(format!("gsv:/home/ship/voice-{index}.ogg")),
-            revision: Some(format!("sha256:voice-{index}")),
-        };
         app.replace_history(vec![Moment::complete(
             "one",
             Role::Intelligence,
             "Two clips.",
         )
-        .with_artifacts(vec![audio(0), audio(1)])]);
+        .with_artifacts(vec![audio_artifact(0), audio_artifact(1)])]);
 
         app.dispatch(Action::NextMedia);
         assert_eq!(
             app.dispatch(Action::ToggleMedia),
-            vec![Effect::OpenArtifact { artifact: audio(1) }]
+            vec![Effect::OpenArtifact {
+                artifact: audio_artifact(1)
+            }]
         );
         assert_eq!(
             app.dispatch(Action::Submit),
-            vec![Effect::OpenArtifact { artifact: audio(1) }]
+            vec![Effect::OpenArtifact {
+                artifact: audio_artifact(1)
+            }]
         );
+    }
+
+    #[test]
+    fn mixed_media_keeps_source_order_in_the_document() -> Result<(), Box<dyn std::error::Error>> {
+        let mut app = App::new(ConnectionState::Ready);
+        app.set_inline_images(true);
+        app.replace_history(vec![Moment::complete(
+            "one",
+            Role::Intelligence,
+            "Four attachments.",
+        )
+        .with_artifacts(vec![
+            image_artifact(0),
+            audio_artifact(0),
+            image_artifact(1),
+            audio_artifact(1),
+        ])]);
+        let backend = TestBackend::new(80, 48);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|frame| app.render(frame))?;
+
+        assert_eq!(app.media_slots().len(), 2);
+        let rows = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(80)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>();
+        let first_audio = rows
+            .iter()
+            .position(|row| row.contains("voice-0.ogg"))
+            .expect("first audio row");
+        let second_audio = rows
+            .iter()
+            .position(|row| row.contains("voice-1.ogg"))
+            .expect("second audio row");
+        let first_image = usize::from(app.media_slots()[0].area.y);
+        let second_image = usize::from(app.media_slots()[1].area.y);
+        assert!(first_image < first_audio);
+        assert!(first_audio < second_image);
+        assert!(second_image < second_audio);
+        Ok(())
+    }
+
+    #[test]
+    fn media_focus_scrolls_to_the_corresponding_document_block(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut app = App::new(ConnectionState::Ready);
+        app.set_inline_images(true);
+        app.replace_history(vec![Moment::complete(
+            "one",
+            Role::Intelligence,
+            "Four attachments.",
+        )
+        .with_artifacts(vec![
+            image_artifact(0),
+            audio_artifact(0),
+            image_artifact(1),
+            audio_artifact(1),
+        ])]);
+        app.dispatch(Action::Escape);
+        app.dispatch(Action::NextMedia);
+        app.dispatch(Action::NextMedia);
+        let backend = TestBackend::new(60, 18);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|frame| app.render(frame))?;
+
+        assert!(app
+            .media_slots()
+            .iter()
+            .any(|slot| { slot.artifact.source.as_deref() == Some("gsv:/home/ship/image-1.png") }));
+        Ok(())
+    }
+
+    #[test]
+    fn image_blocks_participate_in_scrolling_instead_of_staying_pinned(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let body = (0..20)
+            .map(|index| format!("line {index}"))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let moment = Moment::complete("one", Role::Intelligence, body)
+            .with_artifacts(vec![image_artifact(0)]);
+        let backend = TestBackend::new(60, 18);
+        let mut terminal = Terminal::new(backend)?;
+
+        let mut fallback = App::new(ConnectionState::Ready);
+        fallback.replace_history(vec![moment.clone()]);
+        terminal.draw(|frame| fallback.render(frame))?;
+        let fallback_max_scroll = fallback.last_max_scroll;
+
+        let mut inline = App::new(ConnectionState::Ready);
+        inline.set_inline_images(true);
+        inline.replace_history(vec![moment]);
+        terminal.draw(|frame| inline.render(frame))?;
+        assert!(inline.last_max_scroll > fallback_max_scroll);
+        assert_eq!(inline.media_slots().len(), 1);
+
+        inline.dispatch(Action::ScrollUp);
+        terminal.draw(|frame| inline.render(frame))?;
+        assert!(inline.media_slots().is_empty());
+        Ok(())
     }
 
     #[test]

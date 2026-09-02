@@ -66,7 +66,10 @@ The shared renderer projects canonical messages into one continuous scrollable
 terminal document. Human text begins on the same line as its `user@target $ `
 prompt, every committed message from one Process run remains in order beneath
 that command, and the next prompt remains available while the Process continues
-working. A silent finish never fabricates output. Routine connection, role,
+working. The originating connection may project `message.started` and
+`message.delta` until their canonical commit, but raw `proc.run.output` text and
+reasoning remain Process inspection data and never enter conversation
+scrollback. A silent finish never fabricates output. Routine connection, role,
 time, and run metadata stay out of the document. Submitted Ship and literal
 shell input share a bounded client-side recall history through Up/Down or
 `Ctrl+P`/`Ctrl+N`; Page Up/Down scrolls the transcript. Typing is the default
@@ -88,7 +91,10 @@ operation; a presentation choice never grants authority.
 The native renderer inherits the terminal foreground, background, and ANSI
 palette instead of imposing a second terminal theme. The shared renderer owns
 semantic color roles, Markdown presentation, source-mode toggling, and the
-content-first fallback for canonical media resources. The native backend owns
+content-first fallback for canonical media resources. Text and media are
+measured as one ordered block document, so every attachment contributes to the
+same scroll coordinates and media focus follows its visible position. The
+native backend owns
 inline-image presentation: it detects Kitty, Sixel, or iTerm2 graphics support,
 falls back to Unicode half blocks, verifies immutable resource metadata before
 reading the body, bounds decoding, and performs resize/encoding work away from

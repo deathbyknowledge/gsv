@@ -442,23 +442,29 @@ fn apply_signal(app: &mut App, pid: &str, conversation_id: &str, name: &str, pay
     }
     let run_id = signal_run_id(payload);
     match name {
-        "proc.run.started" | "message.started" => {
+        "proc.run.started" => {
             if let Some(run_id) = run_id {
                 app.start_run(run_id);
             }
         }
-        "message.delta" => {
-            if let Some(delta) = payload.get("delta").and_then(Value::as_str) {
-                app.append_delta(run_id, delta);
+        "message.started" => {
+            if let (Some(run_id), Some(message_id)) =
+                (run_id, payload.get("messageId").and_then(Value::as_str))
+            {
+                app.start_message_stream(run_id, message_id);
             }
         }
-        "proc.run.output" => {
-            let text = payload
-                .get("text")
-                .or_else(|| payload.get("output"))
-                .and_then(Value::as_str);
-            if let Some(text) = text {
-                app.replace_run_text(run_id, text);
+        "message.delta" => {
+            if let (Some(message_id), Some(delta)) = (
+                payload.get("messageId").and_then(Value::as_str),
+                payload.get("delta").and_then(Value::as_str),
+            ) {
+                app.append_message_delta(run_id, message_id, delta);
+            }
+        }
+        "message.aborted" => {
+            if let Some(message_id) = payload.get("messageId").and_then(Value::as_str) {
+                app.abort_message_stream(message_id);
             }
         }
         "message.committed" => {
@@ -1185,6 +1191,109 @@ mod tests {
             }),
         );
         assert!(app.moments().is_empty());
+    }
+
+    #[test]
+    fn internal_process_output_never_becomes_conversation_content() {
+        let mut app = App::new(ConnectionState::Ready);
+        apply_signal(
+            &mut app,
+            "proc-one",
+            "conversation-one",
+            "proc.run.output",
+            &json!({
+                "pid": "proc-one",
+                "runId": "run-one",
+                "text": "transient model turn",
+                "thinking": [{
+                    "type": "thinking",
+                    "thinking": "private reasoning"
+                }]
+            }),
+        );
+
+        assert!(app.moments().is_empty());
+    }
+
+    #[test]
+    fn live_message_reconciles_with_its_commit_even_after_run_completion() {
+        let mut app = App::new(ConnectionState::Ready);
+        let target = ("proc-one", "conversation-one");
+        apply_signal(
+            &mut app,
+            target.0,
+            target.1,
+            "proc.run.output",
+            &json!({
+                "pid": target.0,
+                "runId": "run-one",
+                "text": "internal assistant turn"
+            }),
+        );
+        apply_signal(
+            &mut app,
+            target.0,
+            target.1,
+            "message.started",
+            &json!({
+                "pid": target.0,
+                "conversationId": target.1,
+                "runId": "run-one",
+                "messageId": "draft:run-one:action-one"
+            }),
+        );
+        apply_signal(
+            &mut app,
+            target.0,
+            target.1,
+            "message.delta",
+            &json!({
+                "pid": target.0,
+                "conversationId": target.1,
+                "runId": "run-one",
+                "messageId": "draft:run-one:action-one",
+                "delta": "The committed reply."
+            }),
+        );
+        apply_signal(
+            &mut app,
+            target.0,
+            target.1,
+            "proc.run.finished",
+            &json!({
+                "pid": target.0,
+                "conversationId": target.1,
+                "runId": "run-one"
+            }),
+        );
+        let committed = json!({
+            "message": {
+                "id": "msg:one",
+                "conversationId": target.1,
+                "pid": target.0,
+                "runId": "run-one",
+                "author": { "kind": "process" },
+                "text": "The committed reply."
+            }
+        });
+        apply_signal(
+            &mut app,
+            target.0,
+            target.1,
+            "message.committed",
+            &committed,
+        );
+        apply_signal(
+            &mut app,
+            target.0,
+            target.1,
+            "message.committed",
+            &committed,
+        );
+
+        assert_eq!(app.moments().len(), 1);
+        assert_eq!(app.moments()[0].id, "msg:one");
+        assert_eq!(app.moments()[0].text, "The committed reply.");
     }
 
     #[test]

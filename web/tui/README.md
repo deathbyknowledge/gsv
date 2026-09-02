@@ -18,7 +18,8 @@ document. Escape enters browse mode without removing the prompt. In browse
 mode, use `Left`/`Right` to choose among attachments and `Enter` to open the
 focused artifact; Vim mode adds `h`/`l` for the same navigation. Native images
 expand in place, while audio, video, and documents open in their registered OS
-viewer. Image-size variants are prepared in the background while the last
+viewer. Mixed media remains in source order and every artifact occupies space
+in the same scrollable document. Image-size variants are prepared in the background while the last
 rendered variant stays visible.
 
 The preview intentionally uses local example responses. The production browser
