@@ -1432,6 +1432,43 @@ describe("handleAiConfig", () => {
     ]);
   });
 
+  it("applies request-local validation overrides only to the selected canonical entry", async () => {
+    const result = await handleAiConfig({
+      modelId: "primary",
+      overrides: {
+        "config/ai/provider": "custom",
+        "config/ai/model": "draft-model",
+        "config/ai/base_url": "https://draft.example/v1",
+        "config/ai/api_key": "draft-key",
+        "config/ai/max_tokens": "12345",
+      },
+    }, makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [
+          { id: "primary", name: "Primary", provider: "openai", model: "stored-model" },
+          { id: "fallback", name: "Fallback", provider: "workers-ai", model: "@cf/fallback" },
+        ],
+      }),
+      "users/1000/ai/models/primary/api_key": "stored-key",
+    }));
+
+    expect(result).toMatchObject({
+      provider: "custom",
+      model: "draft-model",
+      baseUrl: "https://draft.example/v1",
+      apiKey: "draft-key",
+      maxTokens: 12345,
+    });
+    expect(result.fallbacks).toEqual([
+      expect.objectContaining({
+        provider: "workers-ai",
+        model: "@cf/fallback",
+        apiKey: "",
+      }),
+    ]);
+  });
+
   it("rejects an explicitly malformed owner model stack instead of silently changing models", async () => {
     await expect(handleAiConfig({}, makeAiConfigContext({
       "users/1000/ai/models": JSON.stringify({ version: 1, models: [] }),

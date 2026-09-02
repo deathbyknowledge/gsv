@@ -1116,23 +1116,34 @@ async function resolveStoredAiTextModelStack(
     options.ctx.config.get("config/ai/context_window_tokens"),
   );
   const resolved: Array<{ entry: AiModelEntry; config: AiModelStackConfig; rawApiKey: string }> = [];
-  for (const entry of models) {
-    const rawApiKey = options.ctx.config.get(
-      aiModelApiKeyConfigKey(stored.configKey, entry.id),
-    ) ?? "";
+  for (const [index, entry] of models.entries()) {
+    const requestValue = (key: string): string | null => index === 0
+      ? resolveAiProcessConfigValue(options.processOverrides, key)
+      : null;
+    const provider = requestValue("provider")?.trim() || entry.provider;
+    const model = requestValue("model")?.trim() || entry.model;
+    const baseUrlOverride = requestValue("base_url");
+    const providerStyleOverride = requestValue("provider_style");
+    const transportTargetOverride = requestValue("transport_target");
+    const apiKeyOverride = requestValue("api_key");
+    const maxTokensOverride = parsePositiveInt(requestValue("max_tokens"));
+    const contextWindowOverride = parsePositiveInt(requestValue("context_window_tokens"));
+    const rawApiKey = apiKeyOverride !== null
+      ? apiKeyOverride
+      : options.ctx.config.get(aiModelApiKeyConfigKey(stored.configKey, entry.id)) ?? "";
     const oauthAccountUids = stored.systemOwned
       ? withRootAiProfileScope(options.accountUids)
       : options.accountUids;
     const oauth = await resolveAiProviderOAuthApiKey(
       options.ctx,
       oauthAccountUids,
-      entry.provider,
+      provider,
       rawApiKey,
     );
-    const modelContextWindow = await resolveModelContextWindow(entry.provider, entry.model);
+    const modelContextWindow = await resolveModelContextWindow(provider, model);
     const contextWindowTokens =
-      entry.contextWindowTokens ?? modelContextWindow ?? configuredContextWindow ?? null;
-    const contextWindowSource = entry.contextWindowTokens !== undefined
+      contextWindowOverride ?? entry.contextWindowTokens ?? modelContextWindow ?? configuredContextWindow ?? null;
+    const contextWindowSource = contextWindowOverride !== null || entry.contextWindowTokens !== undefined
       ? "config" as const
       : modelContextWindow !== null
         ? "model" as const
@@ -1140,19 +1151,24 @@ async function resolveStoredAiTextModelStack(
           ? "config" as const
           : "unknown" as const;
     const config: AiModelStackConfig = {
-      provider: entry.provider,
-      model: entry.model,
+      provider,
+      model,
       apiKey: oauth.apiKey,
-      providerStyle: entry.providerStyle?.trim().toLowerCase() || "auto",
-      transportTarget: normalizeTarget(entry.transportTarget ?? "gsv"),
+      providerStyle: (providerStyleOverride !== null
+        ? providerStyleOverride
+        : entry.providerStyle)?.trim().toLowerCase() || "auto",
+      transportTarget: normalizeTarget(
+        transportTargetOverride !== null ? transportTargetOverride : entry.transportTarget ?? "gsv",
+      ),
       reasoning,
-      maxTokens: entry.maxTokens ?? DEFAULT_TEXT_GENERATION_MAX_TOKENS,
+      maxTokens: maxTokensOverride ?? entry.maxTokens ?? DEFAULT_TEXT_GENERATION_MAX_TOKENS,
       contextWindowTokens,
       contextWindowSource,
       generationTimeoutMs,
       generationStreaming,
     };
-    if (entry.baseUrl) config.baseUrl = entry.baseUrl;
+    const baseUrl = (baseUrlOverride !== null ? baseUrlOverride : entry.baseUrl)?.trim();
+    if (baseUrl) config.baseUrl = baseUrl;
     if (oauth.openAiCodexAccountId) {
       config.openAiCodex = { accountId: oauth.openAiCodexAccountId };
     }
