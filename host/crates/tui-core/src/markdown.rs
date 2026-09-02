@@ -28,20 +28,41 @@ pub(crate) fn render_markdown(source: &str, palette: Palette) -> Vec<Line<'stati
     lines
 }
 
-pub(crate) fn render_artifacts(artifacts: &[Artifact], palette: Palette) -> Vec<Line<'static>> {
+pub(crate) fn render_artifacts(
+    artifacts: &[(&Artifact, bool)],
+    palette: Palette,
+) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    for artifact in artifacts {
+    for (artifact, focused) in artifacts {
         if !lines.is_empty() {
             lines.push(Line::default());
         }
         lines.push(Line::from(vec![
             Span::styled(
+                if *focused { "› " } else { "  " },
+                Style::new().fg(if *focused {
+                    palette.accent
+                } else {
+                    palette.muted
+                }),
+            ),
+            Span::styled(
                 format!("{}  ", artifact.kind.symbol()),
-                Style::new().fg(palette.muted),
+                Style::new().fg(if *focused {
+                    palette.accent
+                } else {
+                    palette.muted
+                }),
             ),
             Span::styled(
                 sanitize(artifact.display_name()),
-                Style::new().fg(palette.foreground),
+                Style::new()
+                    .fg(palette.foreground)
+                    .add_modifier(if *focused {
+                        Modifier::BOLD
+                    } else {
+                        Modifier::empty()
+                    }),
             ),
         ]));
         if let Some(transcription) = artifact.transcription.as_deref() {

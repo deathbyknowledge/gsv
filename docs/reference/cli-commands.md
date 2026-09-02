@@ -36,12 +36,15 @@ Bare `gsv` and `gsv tui` open the full-screen, typing-first Ship interface.
 `--demo` runs a local no-account preview, `--pid` opens an explicitly labeled
 Process work session, and `--vim` enables Vim browse controls; `Alt+V` toggles
 that mode at runtime. Commands and every committed Ship message render in one
-continuous scrollable document. The next `user@target $ ` prompt appears when
-the matching Process run finishes, including when the run completed silently.
-Type `@` into an empty draft to select a visible target, use `Page Up`/`Page
-Down` to scroll, `?` for all keys, and `Ctrl+Q` to leave. The native interface
-adopts the host terminal palette and renders supported canonical images through
-the best graphics protocol available.
+continuous scrollable document. The next `user@target $ ` prompt stays active
+while the matching Process run continues, including during streamed output.
+Type `@` into an empty draft to select a visible target, use Up/Down or
+`Ctrl+P`/`Ctrl+N` to recall submitted input, use `Page Up`/`Page Down` to scroll,
+`?` for all keys, and `Ctrl+Q` to leave. Escape enters browse mode without hiding
+the prompt. The native interface adopts the host terminal palette, leaves mouse
+selection to the terminal, renders supported canonical images through the best
+graphics protocol available, and opens selected audio, video, or documents in
+the operating system's registered viewer.
 
 `Tab` switches between Ship input and literal shell input without changing the
 draft. Literal commands are marked `user@target $ ! command` and call the

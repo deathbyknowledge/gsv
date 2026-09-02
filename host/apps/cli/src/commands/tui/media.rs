@@ -1,5 +1,8 @@
 use std::collections::{HashMap, HashSet};
-use std::io::Cursor;
+use std::fs::{self, OpenOptions};
+use std::io::{BufWriter, Cursor, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -29,6 +32,10 @@ pub(super) struct ImageManager {
     event_receiver: mpsc::UnboundedReceiver<MediaEvent>,
     generation: u64,
     background: Option<Rgba<u8>>,
+}
+
+pub(super) struct ArtifactStore {
+    directory: Result<tempfile::TempDir, String>,
 }
 
 struct ImageEntry {
@@ -82,6 +89,28 @@ struct ResourceReference {
     revision: String,
     content_type: String,
     size: u64,
+}
+
+impl ArtifactStore {
+    pub(super) fn new() -> Self {
+        let directory = tempfile::Builder::new()
+            .prefix("gsv-tui-open-")
+            .tempdir()
+            .map_err(|error| format!("Could not create a private media directory: {error}"))
+            .and_then(|directory| {
+                restrict_directory(directory.path())
+                    .map_err(|error| format!("Could not protect the media directory: {error}"))?;
+                Ok(directory)
+            });
+        Self { directory }
+    }
+
+    pub(super) fn directory(&self) -> Result<PathBuf, String> {
+        self.directory
+            .as_ref()
+            .map(|directory| directory.path().to_path_buf())
+            .map_err(Clone::clone)
+    }
 }
 
 impl ImageManager {
@@ -334,6 +363,9 @@ async fn load_image(
     if artifact.revision.as_deref() == Some("demo:1") {
         return Ok(demo_image());
     }
+    if !artifact.mime_type.starts_with("image/") {
+        return Err("The artifact is not an image".to_string());
+    }
     let reference = resource_reference(&artifact)?;
     let client = client.ok_or_else(|| "Stored media needs a connected GSV session".to_string())?;
     let bytes = fetch_resource(client, &reference).await?;
@@ -357,29 +389,26 @@ fn decode_image(bytes: Vec<u8>) -> Result<DynamicImage, String> {
 }
 
 fn resource_reference(artifact: &Artifact) -> Result<ResourceReference, String> {
-    if !artifact.mime_type.starts_with("image/") {
-        return Err("The artifact is not an image".to_string());
-    }
     let source = artifact
         .source
         .as_deref()
-        .ok_or_else(|| "The image has no resource source".to_string())?;
+        .ok_or_else(|| "The artifact has no resource source".to_string())?;
     let (target, path) = source
         .split_once(':')
-        .ok_or_else(|| "The image source is not a target resource".to_string())?;
+        .ok_or_else(|| "The artifact source is not a target resource".to_string())?;
     if target.is_empty() || !path.starts_with('/') {
-        return Err("The image source is not a canonical target path".to_string());
+        return Err("The artifact source is not a canonical target path".to_string());
     }
     let revision = artifact
         .revision
         .as_deref()
-        .ok_or_else(|| "The image has no immutable revision".to_string())?;
+        .ok_or_else(|| "The artifact has no immutable revision".to_string())?;
     let size = artifact
         .size
-        .ok_or_else(|| "The image has no declared size".to_string())?;
+        .ok_or_else(|| "The artifact has no declared size".to_string())?;
     if size > MAX_MEDIA_BYTES as u64 {
         return Err(format!(
-            "The image exceeds the {MAX_MEDIA_BYTES}-byte transfer limit"
+            "The artifact exceeds the {MAX_MEDIA_BYTES}-byte transfer limit"
         ));
     }
     Ok(ResourceReference {
@@ -389,6 +418,170 @@ fn resource_reference(artifact: &Artifact) -> Result<ResourceReference, String> 
         content_type: artifact.mime_type.clone(),
         size,
     })
+}
+
+pub(super) async fn open_artifact(
+    directory: PathBuf,
+    client: Option<Arc<KernelClient>>,
+    artifact: Artifact,
+) -> Result<(), String> {
+    let reference = resource_reference(&artifact)?;
+    let client = client.ok_or_else(|| "Stored media needs a connected GSV session".to_string())?;
+    let bytes = fetch_resource(&client, &reference).await?;
+    tokio::task::spawn_blocking(move || {
+        let path = materialize_artifact(&directory, &artifact, &bytes)?;
+        open_with_system(&path)
+    })
+    .await
+    .map_err(|error| format!("Opening the artifact stopped unexpectedly: {error}"))?
+}
+
+fn materialize_artifact(
+    directory: &Path,
+    artifact: &Artifact,
+    bytes: &[u8],
+) -> Result<PathBuf, String> {
+    let extension = extension_for_mime(&artifact.mime_type)
+        .map(str::to_string)
+        .or_else(|| safe_extension(artifact.filename.as_deref()));
+    let stem = format!("media-{}", uuid::Uuid::new_v4());
+    let path = directory.join(match extension.as_deref() {
+        Some(extension) => format!("{stem}.{extension}"),
+        None => stem,
+    });
+    let partial = path.with_extension(match extension.as_deref() {
+        Some(extension) => format!("{extension}.part"),
+        None => "part".to_string(),
+    });
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&partial)
+        .map_err(|error| format!("Could not create the local media file: {error}"))?;
+    restrict_file(&partial)
+        .map_err(|error| format!("Could not protect the local media file: {error}"))?;
+    let mut writer = BufWriter::new(file);
+    if let Err(error) = writer.write_all(bytes).and_then(|_| writer.flush()) {
+        let _ = fs::remove_file(&partial);
+        return Err(format!("Could not write the local media file: {error}"));
+    }
+    if let Err(error) = writer.get_ref().sync_all() {
+        let _ = fs::remove_file(&partial);
+        return Err(format!("Could not finish the local media file: {error}"));
+    }
+    if let Err(error) = fs::rename(&partial, &path) {
+        let _ = fs::remove_file(&partial);
+        return Err(format!("Could not publish the local media file: {error}"));
+    }
+    Ok(path)
+}
+
+fn safe_extension(filename: Option<&str>) -> Option<String> {
+    let extension = Path::new(filename?)
+        .extension()?
+        .to_string_lossy()
+        .to_ascii_lowercase();
+    matches!(
+        extension.as_str(),
+        "pdf"
+            | "txt"
+            | "csv"
+            | "json"
+            | "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "webp"
+            | "svg"
+            | "mp3"
+            | "m4a"
+            | "ogg"
+            | "opus"
+            | "wav"
+            | "flac"
+            | "mp4"
+            | "webm"
+            | "mov"
+    )
+    .then_some(extension)
+}
+
+fn extension_for_mime(mime_type: &str) -> Option<&'static str> {
+    match mime_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "application/pdf" => Some("pdf"),
+        "audio/mpeg" => Some("mp3"),
+        "audio/mp4" => Some("m4a"),
+        "audio/ogg" | "application/ogg" => Some("ogg"),
+        "audio/opus" => Some("opus"),
+        "audio/wav" | "audio/x-wav" => Some("wav"),
+        "audio/flac" => Some("flac"),
+        "video/mp4" => Some("mp4"),
+        "video/webm" => Some("webm"),
+        "video/quicktime" => Some("mov"),
+        "image/png" => Some("png"),
+        "image/jpeg" => Some("jpg"),
+        "image/gif" => Some("gif"),
+        "image/webp" => Some("webp"),
+        "image/svg+xml" => Some("svg"),
+        "text/plain" => Some("txt"),
+        "text/csv" => Some("csv"),
+        "application/json" => Some("json"),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn open_with_system(path: &Path) -> Result<(), String> {
+    spawn_opener(Command::new("open").arg(path))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn open_with_system(path: &Path) -> Result<(), String> {
+    spawn_opener(Command::new("xdg-open").arg(path))
+}
+
+#[cfg(windows)]
+fn open_with_system(path: &Path) -> Result<(), String> {
+    spawn_opener(Command::new("cmd").args(["/C", "start", ""]).arg(path))
+}
+
+fn spawn_opener(command: &mut Command) -> Result<(), String> {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(drop)
+        .map_err(|error| format!("Could not launch the system media viewer: {error}"))
+}
+
+#[cfg(unix)]
+fn restrict_directory(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+}
+
+#[cfg(not(unix))]
+fn restrict_directory(_: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn restrict_file(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(not(unix))]
+fn restrict_file(_: &Path) -> std::io::Result<()> {
+    Ok(())
 }
 
 async fn fetch_resource(
@@ -471,7 +664,7 @@ mod tests {
     use ratatui::layout::Size;
     use ratatui_image::picker::Picker;
 
-    use super::{demo_image, encode_image, resource_reference, ImageState};
+    use super::{demo_image, encode_image, materialize_artifact, resource_reference, ImageState};
 
     #[test]
     fn canonical_resource_is_parsed_without_changing_its_identity() {
@@ -489,6 +682,31 @@ mod tests {
         assert_eq!(reference.target, "macbook");
         assert_eq!(reference.path, "/Users/sam/chart.png");
         assert_eq!(reference.revision, "sha256:exact");
+    }
+
+    #[test]
+    fn ogg_audio_materializes_with_a_playable_extension() {
+        let directory = tempfile::tempdir().expect("temporary artifact directory");
+        let artifact = Artifact {
+            kind: MediaKind::Audio,
+            mime_type: "audio/ogg".to_string(),
+            filename: Some("voice-message.ogg".to_string()),
+            size: Some(4),
+            duration_ms: Some(500),
+            transcription: None,
+            source: Some("gsv:/home/ship/voice-message.ogg".to_string()),
+            revision: Some("sha256:voice".to_string()),
+        };
+
+        let reference = resource_reference(&artifact).expect("canonical audio reference");
+        assert_eq!(reference.content_type, "audio/ogg");
+        let path =
+            materialize_artifact(directory.path(), &artifact, b"OggS").expect("materialized audio");
+        assert_eq!(
+            path.extension().and_then(|value| value.to_str()),
+            Some("ogg")
+        );
+        assert_eq!(std::fs::read(path).expect("audio bytes"), b"OggS");
     }
 
     #[test]

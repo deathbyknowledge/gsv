@@ -3,9 +3,8 @@ use std::sync::Arc;
 
 use crossterm::cursor::{SetCursorStyle, Show};
 use crossterm::event::{
-    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    Event as TerminalEvent, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
-    MouseEventKind,
+    DisableBracketedPaste, EnableBracketedPaste, Event as TerminalEvent, EventStream, KeyCode,
+    KeyEvent, KeyEventKind, KeyModifiers,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -27,7 +26,7 @@ use super::chat::{implicit_personal_owner_uid, personal_process_id};
 
 mod media;
 
-use media::ImageManager;
+use media::{ArtifactStore, ImageManager};
 
 enum RuntimeEvent {
     Signal {
@@ -60,6 +59,10 @@ enum RuntimeEvent {
     AbortFinished {
         error: Option<String>,
     },
+    ArtifactOpenFailed {
+        filename: String,
+        error: String,
+    },
 }
 
 struct ConnectedSession {
@@ -78,7 +81,6 @@ impl Drop for TerminalRestore {
             Show,
             SetCursorStyle::DefaultUserShape,
             DisableBracketedPaste,
-            DisableMouseCapture,
             LeaveAlternateScreen
         );
     }
@@ -193,13 +195,9 @@ async fn run_interface(
 
     enable_raw_mode()?;
     let _restore = TerminalRestore;
-    execute!(
-        io::stdout(),
-        EnterAlternateScreen,
-        EnableMouseCapture,
-        EnableBracketedPaste
-    )?;
+    execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)?;
     let mut image_manager = ImageManager::detect();
+    let artifact_store = ArtifactStore::new();
     app.set_inline_images(true);
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
@@ -211,7 +209,7 @@ async fn run_interface(
         let next_insert_cursor = app.cursor_visible();
         if insert_cursor != next_insert_cursor {
             let style = if next_insert_cursor {
-                SetCursorStyle::SteadyBar
+                SetCursorStyle::BlinkingBlock
             } else {
                 SetCursorStyle::DefaultUserShape
             };
@@ -235,7 +233,13 @@ async fn run_interface(
                 let action = terminal_action(&app, event);
                 if let Some(action) = action {
                     let effects = app.dispatch(action);
-                    if apply_effects(&mut app, effects, session.as_ref(), &runtime_sender) {
+                    if apply_effects(
+                        &mut app,
+                        effects,
+                        session.as_ref(),
+                        &artifact_store,
+                        &runtime_sender,
+                    ) {
                         break;
                     }
                 }
@@ -254,6 +258,7 @@ fn apply_effects(
     app: &mut App,
     effects: Vec<Effect>,
     session: Option<&ConnectedSession>,
+    artifact_store: &ArtifactStore,
     runtime_sender: &mpsc::UnboundedSender<RuntimeEvent>,
 ) -> bool {
     for effect in effects {
@@ -303,6 +308,27 @@ fn apply_effects(
                 let sender = runtime_sender.clone();
                 let handle = tokio::spawn(async move {
                     run_shell_command(client, sender, id, input, target, cwd).await;
+                });
+                drop(handle);
+            }
+            Effect::OpenArtifact { artifact } => {
+                let directory = match artifact_store.directory() {
+                    Ok(directory) => directory,
+                    Err(error) => {
+                        app.append_local_output(format!(
+                            "Could not open {}.\n\n{error}",
+                            artifact.display_name()
+                        ));
+                        continue;
+                    }
+                };
+                let client = session.map(|session| Arc::clone(&session.client));
+                let filename = artifact.display_name().to_string();
+                let sender = runtime_sender.clone();
+                let handle = tokio::spawn(async move {
+                    if let Err(error) = media::open_artifact(directory, client, artifact).await {
+                        let _ = sender.send(RuntimeEvent::ArtifactOpenFailed { filename, error });
+                    }
                 });
                 drop(handle);
             }
@@ -402,6 +428,9 @@ fn apply_runtime_event(app: &mut App, event: RuntimeEvent, session: Option<&Conn
                 None => "STOPPING".to_string(),
             }));
         }
+        RuntimeEvent::ArtifactOpenFailed { filename, error } => {
+            app.append_local_output(format!("Could not open {filename}.\n\n{error}"));
+        }
     }
 }
 
@@ -472,11 +501,7 @@ fn terminal_action(app: &App, event: TerminalEvent) -> Option<Action> {
         {
             key_action(app, key)
         }
-        TerminalEvent::Mouse(mouse) => match mouse.kind {
-            MouseEventKind::ScrollUp => Some(Action::ScrollUp),
-            MouseEventKind::ScrollDown => Some(Action::ScrollDown),
-            _ => None,
-        },
+        TerminalEvent::Mouse(_) => None,
         TerminalEvent::Paste(text) => Some(Action::Insert(text)),
         TerminalEvent::Resize(_, _)
         | TerminalEvent::FocusGained
@@ -563,8 +588,8 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
     match key.code {
         KeyCode::Char('q' | 'Q') if control => Some(Action::Quit),
         KeyCode::Char('.') if control => Some(Action::Abort),
-        KeyCode::Char('p' | 'P') if control => Some(Action::PreviousTurn),
-        KeyCode::Char('n' | 'N') if control => Some(Action::NextTurn),
+        KeyCode::Char('p' | 'P') if control => Some(Action::PreviousCommand),
+        KeyCode::Char('n' | 'N') if control => Some(Action::NextCommand),
         KeyCode::Char('u' | 'U') if control && app.vim_enabled() && !app.draft_visible() => {
             Some(Action::ScrollUp)
         }
@@ -601,6 +626,8 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
         KeyCode::End => Some(Action::MoveCursorEnd),
         KeyCode::Up if alt => Some(Action::PreviousTurn),
         KeyCode::Down if alt => Some(Action::NextTurn),
+        KeyCode::Up if app.draft_visible() => Some(Action::PreviousCommand),
+        KeyCode::Down if app.draft_visible() => Some(Action::NextCommand),
         KeyCode::Up if !app.draft_visible() => Some(Action::ScrollUp),
         KeyCode::Down if !app.draft_visible() => Some(Action::ScrollDown),
         _ => None,
@@ -1045,8 +1072,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        apply_signal, device_environments, history_moments, key_action, parse_shell_response,
-        truncate_chars, ShellResponse,
+        apply_signal, device_environments, history_moments, key_action, media_artifact,
+        parse_shell_response, truncate_chars, ShellResponse,
     };
 
     #[test]
@@ -1117,6 +1144,30 @@ mod tests {
             moments[1].artifacts[0].revision.as_deref(),
             Some("sha256:one")
         );
+    }
+
+    #[test]
+    fn canonical_ogg_message_media_becomes_interactive_audio() {
+        let artifact = media_artifact(&json!({
+            "type": "resource",
+            "ref": {
+                "type": "file",
+                "target": "gsv",
+                "path": "/home/ship/voice.ogg",
+                "revision": "sha256:voice",
+                "contentType": "audio/ogg",
+                "size": 4096
+            },
+            "mediaType": "audio",
+            "filename": "voice.ogg",
+            "duration": 1.5
+        }))
+        .expect("audio artifact");
+
+        assert_eq!(artifact.kind, MediaKind::Audio);
+        assert_eq!(artifact.source.as_deref(), Some("gsv:/home/ship/voice.ogg"));
+        assert_eq!(artifact.revision.as_deref(), Some("sha256:voice"));
+        assert_eq!(artifact.duration_ms, Some(1_500));
     }
 
     #[test]
@@ -1218,11 +1269,25 @@ mod tests {
 
     #[test]
     fn arrow_keys_choose_media_while_browsing() {
-        let app = App::new(ConnectionState::Ready);
+        let mut app = App::new(ConnectionState::Ready);
+        app.dispatch(Action::Escape);
         let left = KeyEvent::new(KeyCode::Left, KeyModifiers::NONE);
         let right = KeyEvent::new(KeyCode::Right, KeyModifiers::NONE);
         assert_eq!(key_action(&app, left), Some(Action::PreviousMedia));
         assert_eq!(key_action(&app, right), Some(Action::NextMedia));
+    }
+
+    #[test]
+    fn arrow_and_control_keys_recall_commands_while_composing() {
+        let app = App::new(ConnectionState::Ready);
+        let up = KeyEvent::new(KeyCode::Up, KeyModifiers::NONE);
+        let down = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
+        let control_p = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL);
+        let control_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL);
+        assert_eq!(key_action(&app, up), Some(Action::PreviousCommand));
+        assert_eq!(key_action(&app, down), Some(Action::NextCommand));
+        assert_eq!(key_action(&app, control_p), Some(Action::PreviousCommand));
+        assert_eq!(key_action(&app, control_n), Some(Action::NextCommand));
     }
 
     #[test]

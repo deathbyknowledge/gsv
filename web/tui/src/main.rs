@@ -4,7 +4,7 @@ use std::rc::Rc;
 use gsv_tui_core::{Action, App, ApprovalDecision, CapabilityEnvironment, Effect, Theme};
 use ratzilla::backend::webgl2::WebGl2BackendOptions;
 use ratzilla::ratatui::Terminal;
-use ratzilla::{FontAtlasConfig, SelectionMode, WebGl2Backend, WebRenderer};
+use ratzilla::{CursorShape, FontAtlasConfig, SelectionMode, WebGl2Backend, WebRenderer};
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{Event, HtmlTextAreaElement, InputEvent, KeyboardEvent, MouseEvent, WheelEvent};
@@ -32,6 +32,7 @@ fn run() -> Result<(), JsValue> {
             17.0,
         ))
         .canvas_padding_color(ratzilla::ratatui::style::Color::Rgb(8, 9, 11))
+        .cursor_shape(CursorShape::SteadyBlock)
         .enable_mouse_selection_with_mode(SelectionMode::Linear)
         .disable_auto_css_resize();
     let backend = WebGl2Backend::new_with_options(options).map_err(display_error)?;
@@ -39,8 +40,11 @@ fn run() -> Result<(), JsValue> {
 
     install_input_bridge(Rc::clone(&app))?;
 
+    let blink_origin = js_sys::Date::now();
     terminal.draw_web(move |frame| {
-        app.borrow_mut().render(frame);
+        let cursor_phase =
+            (((js_sys::Date::now() - blink_origin) / 550.0) as u64).is_multiple_of(2);
+        app.borrow_mut().render_with_cursor(frame, cursor_phase);
     });
     Ok(())
 }
@@ -116,7 +120,7 @@ fn install_input_bridge(app: Rc<RefCell<App>>) -> Result<(), JsValue> {
     let on_pointer = Closure::<dyn FnMut(MouseEvent)>::new(move |_event: MouseEvent| {
         let _ = input_for_focus.focus();
     });
-    terminal.add_event_listener_with_callback("mousedown", on_pointer.as_ref().unchecked_ref())?;
+    terminal.add_event_listener_with_callback("click", on_pointer.as_ref().unchecked_ref())?;
     on_pointer.forget();
 
     let input_for_window_focus = input.clone();
@@ -149,6 +153,12 @@ fn dispatch_action(app: &Rc<RefCell<App>>, action: Action) {
                 cwd: _,
             } => {
                 app.borrow_mut().complete_demo_shell(id, &input);
+            }
+            Effect::OpenArtifact { artifact } => {
+                app.borrow_mut().append_local_output(format!(
+                    "The disconnected preview cannot open {}.",
+                    artifact.display_name()
+                ));
             }
             Effect::Abort => {
                 app.borrow_mut().set_activity(None);
@@ -236,8 +246,8 @@ fn keyboard_action(app: &App, event: &KeyboardEvent) -> Option<Action> {
     match normalized.as_str() {
         "q" if command => Some(Action::Quit),
         "." if command => Some(Action::Abort),
-        "p" if command => Some(Action::PreviousTurn),
-        "n" if command => Some(Action::NextTurn),
+        "p" if command => Some(Action::PreviousCommand),
+        "n" if command => Some(Action::NextCommand),
         "u" if command && app.vim_enabled() && !app.draft_visible() => Some(Action::ScrollUp),
         "d" if command && app.vim_enabled() && !app.draft_visible() => Some(Action::ScrollDown),
         "a" if command => Some(Action::MoveCursorHome),
@@ -261,6 +271,8 @@ fn keyboard_action(app: &App, event: &KeyboardEvent) -> Option<Action> {
         "end" => Some(Action::MoveCursorEnd),
         "arrowup" if event.alt_key() => Some(Action::PreviousTurn),
         "arrowdown" if event.alt_key() => Some(Action::NextTurn),
+        "arrowup" if app.draft_visible() => Some(Action::PreviousCommand),
+        "arrowdown" if app.draft_visible() => Some(Action::NextCommand),
         "arrowup" if !app.draft_visible() => Some(Action::ScrollUp),
         "arrowdown" if !app.draft_visible() => Some(Action::ScrollDown),
         _ => None,

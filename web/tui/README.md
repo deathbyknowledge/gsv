@@ -13,9 +13,12 @@ press `Tab` to switch the draft between Ship and the visibly literal
 `user@target $ ! command` mode. Press `Alt+M` to switch assistant output between
 rendered Markdown and its source. Type `show me Markdown and media` in the demo
 to exercise the rich-content path, or switch modes and try `pwd` or `ls`.
-In the native client, use `Left`/`Right` to choose among attachments and
-`Enter` to open or close the focused image; Vim mode adds `h`/`l` for the same
-navigation. Image-size variants are prepared in the background while the last
+Up/Down and `Ctrl+P`/`Ctrl+N` recall submitted input; Page Up/Down scrolls the
+document. Escape enters browse mode without removing the prompt. In browse
+mode, use `Left`/`Right` to choose among attachments and `Enter` to open the
+focused artifact; Vim mode adds `h`/`l` for the same navigation. Native images
+expand in place, while audio, video, and documents open in their registered OS
+viewer. Image-size variants are prepared in the background while the last
 rendered variant stays visible.
 
 The preview intentionally uses local example responses. The production browser

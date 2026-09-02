@@ -46,6 +46,7 @@ ratatui-image = { version = "=11.0.6", default-features = false, features = [
     "crossterm",
     "tokio",
 ] }
+tempfile = "3"
 
 # TLS backends - use native-tls by default (respects system certs)
 # CI builds for Linux use rustls feature to avoid OpenSSL dependency

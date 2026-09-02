@@ -12,6 +12,8 @@ use unicode_width::UnicodeWidthStr;
 use markdown::{render_artifacts, render_markdown, render_plain};
 use theme::Palette;
 
+const MAX_COMMAND_HISTORY: usize = 500;
+
 pub use theme::Theme;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -206,6 +208,8 @@ pub enum Action {
     Submit,
     BeginCompose,
     Escape,
+    PreviousCommand,
+    NextCommand,
     PreviousTurn,
     NextTurn,
     FirstTurn,
@@ -245,6 +249,9 @@ pub enum Effect {
         target: String,
         cwd: Option<String>,
     },
+    OpenArtifact {
+        artifact: Artifact,
+    },
     Abort,
     DecideApproval {
         request_id: String,
@@ -261,6 +268,19 @@ struct PendingSubmission {
     execution: ExecutionMode,
 }
 
+#[derive(Clone, Debug)]
+struct CommandHistoryEntry {
+    text: String,
+    execution: ExecutionMode,
+}
+
+#[derive(Clone, Debug)]
+struct DraftSnapshot {
+    text: String,
+    cursor: usize,
+    execution: ExecutionMode,
+}
+
 #[derive(Debug)]
 pub struct App {
     moments: Vec<Moment>,
@@ -273,6 +293,9 @@ pub struct App {
     draft: String,
     draft_cursor: usize,
     draft_visible: bool,
+    command_history: Vec<CommandHistoryEntry>,
+    history_position: Option<usize>,
+    history_draft: Option<DraftSnapshot>,
     help_visible: bool,
     connection: ConnectionState,
     activity: Option<String>,
@@ -309,7 +332,10 @@ impl App {
             scroll_anchor: None,
             draft: String::new(),
             draft_cursor: 0,
-            draft_visible: false,
+            draft_visible: true,
+            command_history: Vec::new(),
+            history_position: None,
+            history_draft: None,
             help_visible: false,
             connection,
             activity: None,
@@ -369,11 +395,6 @@ impl App {
             return true;
         }
         self.draft_visible
-            || (!self.vim_enabled
-                && self.follow_latest
-                && self.pending_submission.is_none()
-                && self.active_run.is_none()
-                && self.active_shell.is_none())
     }
 
     pub fn approval(&self) -> Option<&Approval> {
@@ -439,14 +460,18 @@ impl App {
     }
 
     pub fn set_vim_enabled(&mut self, enabled: bool) {
+        if self.vim_enabled == enabled {
+            return;
+        }
         self.vim_enabled = enabled;
+        self.draft_visible = !enabled;
+        self.follow_latest = true;
     }
 
     pub fn set_inline_images(&mut self, enabled: bool) {
         self.inline_images = enabled;
         if !enabled {
             self.media_expanded = false;
-            self.media_focus = 0;
         }
     }
 
@@ -466,6 +491,19 @@ impl App {
         if moments.is_empty() {
             return;
         }
+        self.command_history = moments
+            .iter()
+            .filter(|moment| moment.role == Role::Human && !moment.text.trim().is_empty())
+            .map(|moment| CommandHistoryEntry {
+                text: moment.text.clone(),
+                execution: moment.execution,
+            })
+            .collect();
+        if self.command_history.len() > MAX_COMMAND_HISTORY {
+            self.command_history
+                .drain(..self.command_history.len() - MAX_COMMAND_HISTORY);
+        }
+        self.reset_history_navigation();
         self.moments = moments;
         self.selected = self.moments.len().saturating_sub(1);
         self.document_scroll = 0;
@@ -480,7 +518,6 @@ impl App {
         approval.target = sanitize_label(&approval.target, "unknown target", 96);
         approval.preview = sanitize_multiline(&approval.preview, 4_000);
         self.approval = Some(approval);
-        self.draft_visible = false;
         self.media_expanded = false;
     }
 
@@ -580,6 +617,7 @@ impl App {
                 if value.is_empty() {
                     return Vec::new();
                 }
+                self.reset_history_navigation();
                 if value == "@" && self.draft.is_empty() {
                     self.environment_picker = true;
                     self.environment_query.clear();
@@ -599,6 +637,7 @@ impl App {
                 Vec::new()
             }
             Action::Backspace => {
+                self.reset_history_navigation();
                 self.draft_visible = true;
                 self.follow_latest = true;
                 if let Some(previous) = previous_grapheme_boundary(&self.draft, self.draft_cursor) {
@@ -608,6 +647,7 @@ impl App {
                 Vec::new()
             }
             Action::Delete => {
+                self.reset_history_navigation();
                 self.draft_visible = true;
                 self.follow_latest = true;
                 if let Some(next) = next_grapheme_boundary(&self.draft, self.draft_cursor) {
@@ -616,6 +656,7 @@ impl App {
                 Vec::new()
             }
             Action::DeleteWord => {
+                self.reset_history_navigation();
                 self.draft_visible = true;
                 self.follow_latest = true;
                 let before = &self.draft[..self.draft_cursor];
@@ -652,13 +693,21 @@ impl App {
                 Vec::new()
             }
             Action::Newline => {
+                self.reset_history_navigation();
                 self.draft_visible = true;
                 self.follow_latest = true;
                 self.draft.insert(self.draft_cursor, '\n');
                 self.draft_cursor += 1;
                 Vec::new()
             }
-            Action::Submit => self.begin_submission().into_iter().collect(),
+            Action::Submit => {
+                if self.draft.is_empty() {
+                    self.begin_submission()
+                        .map_or_else(|| self.activate_media(), |effect| vec![effect])
+                } else {
+                    self.begin_submission().into_iter().collect()
+                }
+            }
             Action::BeginCompose => {
                 self.media_expanded = false;
                 self.draft_visible = true;
@@ -670,8 +719,15 @@ impl App {
                     self.media_expanded = false;
                 } else {
                     self.draft_visible = false;
-                    self.follow_latest = false;
                 }
+                Vec::new()
+            }
+            Action::PreviousCommand => {
+                self.recall_previous_command();
+                Vec::new()
+            }
+            Action::NextCommand => {
+                self.recall_next_command();
                 Vec::new()
             }
             Action::PreviousTurn => {
@@ -738,9 +794,12 @@ impl App {
             }
             Action::ToggleVim => {
                 self.vim_enabled = !self.vim_enabled;
+                self.draft_visible = !self.vim_enabled;
+                self.follow_latest = true;
                 Vec::new()
             }
             Action::ToggleShell => {
+                self.reset_history_navigation();
                 self.execution_mode = match self.execution_mode {
                     ExecutionMode::Ship => ExecutionMode::Shell,
                     ExecutionMode::Shell => ExecutionMode::Ship,
@@ -750,13 +809,7 @@ impl App {
                 self.media_expanded = false;
                 Vec::new()
             }
-            Action::ToggleMedia => {
-                if self.inline_images && self.turn_has_images() {
-                    self.clamp_media_focus();
-                    self.media_expanded = !self.media_expanded;
-                }
-                Vec::new()
-            }
+            Action::ToggleMedia => self.activate_media(),
             Action::Abort => self
                 .active_run
                 .as_ref()
@@ -776,7 +829,9 @@ impl App {
         let execution = self.execution_mode;
         let text = std::mem::take(&mut self.draft);
         self.draft_cursor = 0;
-        self.draft_visible = false;
+        self.draft_visible = true;
+        self.record_command(text.clone(), execution);
+        self.reset_history_navigation();
         self.pending_submission = Some(PendingSubmission {
             id,
             text: text.clone(),
@@ -835,6 +890,19 @@ impl App {
                     cwd: environment.cwd,
                 })
             }
+        }
+    }
+
+    fn activate_media(&mut self) -> Vec<Effect> {
+        self.clamp_media_focus();
+        let Some(artifact) = self.selected_artifact().cloned() else {
+            return Vec::new();
+        };
+        if self.inline_images && artifact.kind == MediaKind::Image {
+            self.media_expanded = !self.media_expanded;
+            Vec::new()
+        } else {
+            vec![Effect::OpenArtifact { artifact }]
         }
     }
 
@@ -1090,6 +1158,9 @@ impl App {
                 }
             }
         }
+        if role == Role::Human {
+            self.record_command(text.clone(), ExecutionMode::Ship);
+        }
         self.moments.push(Moment {
             id,
             role,
@@ -1213,6 +1284,97 @@ impl App {
         self.finish_shell(id, None);
     }
 
+    pub fn append_local_output(&mut self, text: impl AsRef<str>) {
+        let text = sanitize_multiline(text.as_ref(), 4_000);
+        if text.is_empty() {
+            return;
+        }
+        self.moments.push(Moment {
+            id: format!("local:output:{}", self.moments.len()),
+            role: Role::System,
+            execution: self.execution_mode,
+            text,
+            run_id: None,
+            state: MomentState::Error,
+            artifacts: Vec::new(),
+            environment: None,
+        });
+        if self.follow_latest {
+            self.selected = self.moments.len().saturating_sub(1);
+        }
+    }
+
+    fn record_command(&mut self, text: String, execution: ExecutionMode) {
+        if text.trim().is_empty() {
+            return;
+        }
+        self.command_history
+            .push(CommandHistoryEntry { text, execution });
+        if self.command_history.len() > MAX_COMMAND_HISTORY {
+            self.command_history.remove(0);
+        }
+    }
+
+    fn reset_history_navigation(&mut self) {
+        self.history_position = None;
+        self.history_draft = None;
+    }
+
+    fn recall_previous_command(&mut self) {
+        if self.command_history.is_empty() {
+            return;
+        }
+        let position = match self.history_position {
+            Some(position) => position.saturating_sub(1),
+            None => {
+                self.history_draft = Some(DraftSnapshot {
+                    text: self.draft.clone(),
+                    cursor: self.draft_cursor,
+                    execution: self.execution_mode,
+                });
+                self.command_history.len() - 1
+            }
+        };
+        self.history_position = Some(position);
+        self.load_history_position(position);
+    }
+
+    fn recall_next_command(&mut self) {
+        let Some(position) = self.history_position else {
+            return;
+        };
+        if position + 1 < self.command_history.len() {
+            let position = position + 1;
+            self.history_position = Some(position);
+            self.load_history_position(position);
+            return;
+        }
+        let snapshot = self.history_draft.take().unwrap_or(DraftSnapshot {
+            text: String::new(),
+            cursor: 0,
+            execution: self.execution_mode,
+        });
+        self.history_position = None;
+        self.draft = snapshot.text;
+        self.draft_cursor = snapshot.cursor.min(self.draft.len());
+        self.execution_mode = snapshot.execution;
+        self.draft_visible = true;
+        self.follow_latest = true;
+        self.media_expanded = false;
+    }
+
+    fn load_history_position(&mut self, position: usize) {
+        let Some(entry) = self.command_history.get(position) else {
+            return;
+        };
+        self.draft.clone_from(&entry.text);
+        self.draft_cursor = self.draft.len();
+        self.execution_mode = entry.execution;
+        self.draft_visible = true;
+        self.follow_latest = true;
+        self.media_expanded = false;
+    }
+
     fn previous_turn(&mut self) {
         if self.draft_visible || self.moments.is_empty() {
             return;
@@ -1288,11 +1450,7 @@ impl App {
             .unwrap_or_else(|| self.moments.len().saturating_sub(1))
     }
 
-    fn turn_has_images(&self) -> bool {
-        self.turn_image_count() > 0
-    }
-
-    fn turn_image_count(&self) -> usize {
+    fn turn_artifact_count(&self) -> usize {
         if self.moments.is_empty() {
             return 0;
         }
@@ -1301,21 +1459,29 @@ impl App {
         self.moments[start..=end]
             .iter()
             .flat_map(|moment| &moment.artifacts)
-            .filter(|artifact| artifact.kind == MediaKind::Image)
             .count()
+    }
+
+    fn selected_artifact(&self) -> Option<&Artifact> {
+        if self.moments.is_empty() {
+            return None;
+        }
+        let start = self.turn_start(self.selected);
+        let end = self.turn_end(start);
+        self.moments[start..=end]
+            .iter()
+            .flat_map(|moment| &moment.artifacts)
+            .nth(self.media_focus)
     }
 
     fn clamp_media_focus(&mut self) {
         self.media_focus = self
             .media_focus
-            .min(self.turn_image_count().saturating_sub(1));
+            .min(self.turn_artifact_count().saturating_sub(1));
     }
 
     fn move_media_focus(&mut self, forward: bool) {
-        if !self.inline_images {
-            return;
-        }
-        let count = self.turn_image_count();
+        let count = self.turn_artifact_count();
         if count == 0 {
             self.media_focus = 0;
             self.media_expanded = false;
@@ -1326,6 +1492,12 @@ impl App {
         } else {
             self.media_focus.checked_sub(1).unwrap_or(count - 1)
         };
+        if self
+            .selected_artifact()
+            .is_none_or(|artifact| artifact.kind != MediaKind::Image)
+        {
+            self.media_expanded = false;
+        }
         self.scroll_anchor = Some(self.turn_start(self.selected));
     }
 
@@ -1382,6 +1554,10 @@ impl App {
     }
 
     pub fn render(&mut self, frame: &mut Frame<'_>) {
+        self.render_with_cursor(frame, true);
+    }
+
+    pub fn render_with_cursor(&mut self, frame: &mut Frame<'_>, cursor_phase: bool) {
         let palette = self.theme.palette();
         let area = frame.area();
         self.media_slots.clear();
@@ -1411,9 +1587,9 @@ impl App {
             render_approval(frame, canvas, approval, palette);
         } else if self.environment_picker {
             self.last_max_scroll = 0;
-            self.render_environment_picker(frame, canvas);
+            self.render_environment_picker(frame, canvas, cursor_phase);
         } else {
-            self.render_transcript(frame, canvas);
+            self.render_transcript(frame, canvas, cursor_phase);
         }
         if self.help_visible {
             self.media_slots.clear();
@@ -1421,7 +1597,7 @@ impl App {
         }
     }
 
-    fn render_transcript(&mut self, frame: &mut Frame<'_>, area: Rect) {
+    fn render_transcript(&mut self, frame: &mut Frame<'_>, area: Rect, cursor_phase: bool) {
         let palette = self.theme.palette();
         let (turn_start, turn_end) = if self.moments.is_empty() {
             (0, 0)
@@ -1429,26 +1605,32 @@ impl App {
             let start = self.turn_start(self.selected);
             (start, self.turn_end(start))
         };
-        let image_artifacts = self
+        let turn_artifacts = self
             .moments
             .get(turn_start..=turn_end)
             .into_iter()
             .flatten()
             .flat_map(|moment| moment.artifacts.iter())
-            .filter(|artifact| artifact.kind == MediaKind::Image)
             .cloned()
             .collect::<Vec<_>>();
+        let image_artifacts = turn_artifacts
+            .iter()
+            .enumerate()
+            .filter(|(_, artifact)| artifact.kind == MediaKind::Image)
+            .map(|(artifact_index, artifact)| (artifact_index, artifact.clone()))
+            .collect::<Vec<_>>();
+        let focused_image = image_artifacts
+            .iter()
+            .position(|(artifact_index, _)| *artifact_index == self.media_focus);
         let inline_image_count = if self.inline_images {
             image_artifacts.len().min(3)
         } else {
             0
         };
 
-        if self.media_expanded && inline_image_count > 0 {
+        if self.media_expanded && inline_image_count > 0 && focused_image.is_some() {
             self.last_max_scroll = 0;
-            let focus = self
-                .media_focus
-                .min(image_artifacts.len().saturating_sub(1));
+            let focus = focused_image.unwrap_or_default();
             let footer_height = u16::from(image_artifacts.len() > 1);
             let media_area = Rect::new(
                 area.x,
@@ -1459,7 +1641,7 @@ impl App {
             self.push_media_slots(
                 frame,
                 media_area,
-                std::slice::from_ref(&image_artifacts[focus]),
+                std::slice::from_ref(&image_artifacts[focus].1),
                 None,
             );
             if footer_height > 0 {
@@ -1477,9 +1659,7 @@ impl App {
             return;
         }
 
-        let image_focus = self
-            .media_focus
-            .min(image_artifacts.len().saturating_sub(1));
+        let image_focus = focused_image.unwrap_or_default();
         let image_window_start = if inline_image_count > 0 {
             image_focus
                 .saturating_sub(inline_image_count / 2)
@@ -1491,6 +1671,7 @@ impl App {
 
         let mut lines = Vec::new();
         let mut moment_line_starts = vec![0_usize; self.moments.len()];
+        let mut selected_artifact_index = 0_usize;
         let mut selected_image_index = 0_usize;
         for (index, moment) in self.moments.iter().enumerate() {
             if moment.role == Role::Human && !lines.is_empty() {
@@ -1540,20 +1721,28 @@ impl App {
                     lines.extend(render_plain(body, Style::new().fg(body_color)));
                 }
             }
+            let in_selected_turn = (turn_start..=turn_end).contains(&index);
             let fallback_artifacts = moment
                 .artifacts
                 .iter()
-                .filter(|artifact| {
-                    if artifact.kind != MediaKind::Image
-                        || !(turn_start..=turn_end).contains(&index)
-                    {
-                        return true;
-                    }
-                    let image_index = selected_image_index;
-                    selected_image_index = selected_image_index.saturating_add(1);
-                    !(image_window_start..image_window_end).contains(&image_index)
+                .filter_map(|artifact| {
+                    let focused = if in_selected_turn {
+                        let focused = selected_artifact_index == self.media_focus;
+                        selected_artifact_index = selected_artifact_index.saturating_add(1);
+                        focused
+                    } else {
+                        false
+                    };
+                    let inline = if artifact.kind == MediaKind::Image && in_selected_turn {
+                        let image_index = selected_image_index;
+                        selected_image_index = selected_image_index.saturating_add(1);
+                        self.inline_images
+                            && (image_window_start..image_window_end).contains(&image_index)
+                    } else {
+                        false
+                    };
+                    (!inline).then_some((artifact, focused))
                 })
-                .cloned()
                 .collect::<Vec<_>>();
             if !fallback_artifacts.is_empty() {
                 if !body.is_empty() {
@@ -1563,11 +1752,7 @@ impl App {
             }
         }
 
-        let show_prompt = self.draft_visible
-            || (self.pending_submission.is_none()
-                && self.active_run.is_none()
-                && self.active_shell.is_none()
-                && self.follow_latest);
+        let show_prompt = self.draft_visible || self.follow_latest;
         let mut prompt = show_prompt.then(|| {
             let mut prompt = prompted_text_lines(
                 &self.input_prompt(self.active_environment(), self.execution_mode),
@@ -1641,12 +1826,14 @@ impl App {
                 area.width,
                 media_height,
             );
-            self.push_media_slots(
-                frame,
-                media_area,
-                &image_artifacts[image_window_start..image_window_end],
-                Some(image_focus - image_window_start),
-            );
+            let visible_images = image_artifacts[image_window_start..image_window_end]
+                .iter()
+                .map(|(_, artifact)| artifact.clone())
+                .collect::<Vec<_>>();
+            let focused = focused_image
+                .filter(|focus| (image_window_start..image_window_end).contains(focus))
+                .map(|focus| focus - image_window_start);
+            self.push_media_slots(frame, media_area, &visible_images, focused);
         }
         if let Some(prompt) = prompt.take() {
             let cursor_row = prompt.cursor_row;
@@ -1662,7 +1849,7 @@ impl App {
                 Paragraph::new(prompt.lines).scroll((scroll, 0)),
                 prompt_area,
             );
-            if self.cursor_visible() {
+            if self.cursor_visible() && cursor_phase {
                 let cursor_y = prompt_area.y + cursor_row.saturating_sub(scroll);
                 let cursor_x = prompt_area.x + cursor_col.min(prompt_area.width.saturating_sub(1));
                 if cursor_y < prompt_area.bottom() {
@@ -1672,7 +1859,7 @@ impl App {
         }
     }
 
-    fn render_environment_picker(&self, frame: &mut Frame<'_>, area: Rect) {
+    fn render_environment_picker(&self, frame: &mut Frame<'_>, area: Rect, cursor_phase: bool) {
         let palette = self.theme.palette();
         let query = format!("@{}", self.environment_query);
         let mut prompt = prompted_text_lines(
@@ -1732,7 +1919,7 @@ impl App {
         frame.render_widget(Paragraph::new(prompt.lines), picker_area);
         let cursor_y = picker_area.y + prompt.cursor_row;
         let cursor_x = picker_area.x + prompt.cursor_col.min(picker_area.width.saturating_sub(1));
-        if cursor_y < picker_area.bottom() {
+        if cursor_phase && cursor_y < picker_area.bottom() {
             frame.set_cursor_position(Position::new(cursor_x, cursor_y));
         }
     }
@@ -1808,7 +1995,7 @@ impl App {
             help_line("tab", "Ship / literal shell", palette),
             help_line("@", "choose a target", palette),
             help_line("escape", "browse without losing the draft", palette),
-            help_line("ctrl+p / ctrl+n", "previous / next command", palette),
+            help_line("up/down  ·  ctrl+p/n", "command history", palette),
             help_line("page up / page down", "scroll the transcript", palette),
             help_line("left/right  ·  enter", "choose  ·  open media", palette),
             help_line("alt+m  ·  alt+v", "Markdown  ·  Vim", palette),
@@ -1906,8 +2093,10 @@ fn prompted_text_lines(
     let prompt_width = u16::try_from(UnicodeWidthStr::width(prompt.as_str()))
         .unwrap_or(width)
         .min(width.saturating_sub(1));
-    let continuation_width = prompt_width.min(width.saturating_sub(1));
-    let continuation = " ".repeat(usize::from(continuation_width));
+    // Only the first physical line owns the shell prompt. Subsequent explicit or soft-wrapped
+    // lines continue at the terminal's left edge, exactly as one long terminal input stream.
+    let continuation_width = 0;
+    let continuation = String::new();
     let mut text_lines = vec![String::new()];
     let mut row = 0_u16;
     let mut col = prompt_width;
@@ -2235,6 +2424,7 @@ mod tests {
             Moment::complete("four", Role::Intelligence, "four"),
         ]);
         assert_eq!(app.selected(), 3);
+        app.dispatch(Action::Escape);
         app.dispatch(Action::PreviousTurn);
         assert_eq!(app.selected(), 1);
         app.dispatch(Action::NextTurn);
@@ -2269,7 +2459,7 @@ mod tests {
     }
 
     #[test]
-    fn one_run_can_commit_multiple_visible_messages_before_the_prompt_returns(
+    fn one_run_can_commit_multiple_visible_messages_while_the_prompt_stays_active(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut app = App::new(ConnectionState::Ready);
         app.dispatch(Action::Insert("work on it".to_string()));
@@ -2304,7 +2494,9 @@ mod tests {
             .collect::<String>();
         assert!(running.contains("First update."));
         assert!(running.contains("Second update."));
-        assert!(!running.contains("type a request"));
+        assert!(running.contains("type a request"));
+        assert!(app.draft_visible());
+        assert!(app.cursor_visible());
 
         app.finish_run(Some("run:one"), None);
         terminal.draw(|frame| app.render(frame))?;
@@ -2318,6 +2510,74 @@ mod tests {
         assert!(finished.contains("type a request"));
         assert!(!finished.contains("Done."));
         Ok(())
+    }
+
+    #[test]
+    fn escape_leaves_the_prompt_visible_in_browse_mode() -> Result<(), Box<dyn std::error::Error>> {
+        let mut app = App::new(ConnectionState::Ready);
+        app.dispatch(Action::Insert("unfinished".to_string()));
+        app.dispatch(Action::Escape);
+        assert!(!app.draft_visible());
+        assert!(!app.cursor_visible());
+
+        let backend = TestBackend::new(60, 12);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|frame| app.render(frame))?;
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("you@gsv $ unfinished"));
+        Ok(())
+    }
+
+    #[test]
+    fn command_history_recalls_ship_and_shell_input_and_restores_the_draft() {
+        let mut app = App::new(ConnectionState::Ready);
+        app.replace_history(vec![
+            Moment::complete("one", Role::Human, "first"),
+            Moment::complete("two", Role::Human, "pwd").with_execution(ExecutionMode::Shell),
+        ]);
+        app.dispatch(Action::Insert("scratch".to_string()));
+
+        app.dispatch(Action::PreviousCommand);
+        assert_eq!(app.draft(), "pwd");
+        assert_eq!(app.execution_mode(), ExecutionMode::Shell);
+        app.dispatch(Action::PreviousCommand);
+        assert_eq!(app.draft(), "first");
+        assert_eq!(app.execution_mode(), ExecutionMode::Ship);
+        app.dispatch(Action::NextCommand);
+        assert_eq!(app.draft(), "pwd");
+        app.dispatch(Action::NextCommand);
+        assert_eq!(app.draft(), "scratch");
+        assert_eq!(app.execution_mode(), ExecutionMode::Ship);
+    }
+
+    #[test]
+    fn prompt_input_wraps_from_the_terminal_left_edge() {
+        let prompted = super::prompted_text_lines(
+            "you@gsv $ ",
+            "abcdefghijkl",
+            16,
+            ratatui::style::Style::new(),
+            ratatui::style::Style::new(),
+            Some(12),
+        );
+        let rows = prompted
+            .lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(rows, vec!["you@gsv $ abcdef", "ghijkl"]);
+        assert_eq!((prompted.cursor_row, prompted.cursor_col), (1, 6));
     }
 
     #[test]
@@ -2593,6 +2853,37 @@ mod tests {
         app.dispatch(Action::Escape);
         assert!(!app.media_expanded());
         Ok(())
+    }
+
+    #[test]
+    fn media_focus_opens_the_exact_audio_artifact() {
+        let mut app = App::new(ConnectionState::Ready);
+        let audio = |index| Artifact {
+            kind: MediaKind::Audio,
+            mime_type: "audio/ogg".to_string(),
+            filename: Some(format!("voice-{index}.ogg")),
+            size: Some(2048),
+            duration_ms: Some(1_000),
+            transcription: None,
+            source: Some(format!("gsv:/home/ship/voice-{index}.ogg")),
+            revision: Some(format!("sha256:voice-{index}")),
+        };
+        app.replace_history(vec![Moment::complete(
+            "one",
+            Role::Intelligence,
+            "Two clips.",
+        )
+        .with_artifacts(vec![audio(0), audio(1)])]);
+
+        app.dispatch(Action::NextMedia);
+        assert_eq!(
+            app.dispatch(Action::ToggleMedia),
+            vec![Effect::OpenArtifact { artifact: audio(1) }]
+        );
+        assert_eq!(
+            app.dispatch(Action::Submit),
+            vec![Effect::OpenArtifact { artifact: audio(1) }]
+        );
     }
 
     #[test]

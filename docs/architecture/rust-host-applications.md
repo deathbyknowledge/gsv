@@ -65,11 +65,13 @@ Process run state, human-in-the-loop approvals, and abort remain gateway-owned.
 The shared renderer projects canonical messages into one continuous scrollable
 terminal document. Human text begins on the same line as its `user@target $ `
 prompt, every committed message from one Process run remains in order beneath
-that command, and `proc.run.finished` restores the next prompt. A silent finish
-restores the prompt without fabricating output. Routine connection, role, time,
-and run metadata stay out of the document. Typing is the default interaction;
-`--vim` or `Alt+V` enables an optional browse mode without changing the beginner
-key map.
+that command, and the next prompt remains available while the Process continues
+working. A silent finish never fabricates output. Routine connection, role,
+time, and run metadata stay out of the document. Submitted Ship and literal
+shell input share a bounded client-side recall history through Up/Down or
+`Ctrl+P`/`Ctrl+N`; Page Up/Down scrolls the transcript. Typing is the default
+interaction; `--vim` or `Alt+V` enables an optional browse mode without changing
+the beginner key map. Escape changes editing mode without removing the prompt.
 
 Typing `@` into an empty draft opens the capability-environment picker. `Tab`
 switches the same draft between Ship mode and literal shell mode. The latter is
@@ -90,8 +92,11 @@ content-first fallback for canonical media resources. The native backend owns
 inline-image presentation: it detects Kitty, Sixel, or iTerm2 graphics support,
 falls back to Unicode half blocks, verifies immutable resource metadata before
 reading the body, bounds decoding, and performs resize/encoding work away from
-the input loop. This does not change the canonical resource contract or body
-ownership.
+the input loop. Canonical audio, video, and document artifacts use the same
+verified read path, materialize into a private session directory, and open with
+the operating system's registered viewer. Native mouse reporting stays disabled
+so the host terminal retains ordinary text selection. This does not change the
+canonical resource contract or body ownership.
 The line-oriented `gsv chat` command remains available for scripts and basic
 terminal sessions.
 
@@ -119,11 +124,12 @@ machine runtime in the CLI process.
 `web/tui/` compiles the same `tui-core` crate to WebAssembly and renders its
 cell buffer through Ratzilla's WebGL2 backend. A hidden native textarea owns
 Unicode input, IME composition, and paste; browser key and wheel events map to
-the same shared actions as the native backend. Because no host terminal owns
-its atmosphere, the browser backend uses the curated GSV palette. Markdown,
-continuous prompt grammar, literal-shell mode, optional Vim navigation, and
-media artifact fallback remain identical. The preview currently uses local
-example responses for both Ship and shell effects. Production browser
+the same shared actions as the native backend. Ratzilla owns linear mouse text
+selection, and the preview supplies a blinking block cursor. Because no host
+terminal owns its atmosphere, the browser backend uses the curated GSV palette.
+Markdown, continuous prompt grammar, literal-shell mode, optional Vim
+navigation, and media artifact fallback remain identical. The preview currently
+uses local example responses for both Ship and shell effects. Production browser
 authentication and transport stay with the existing web gateway service and
 will interpret the same shared effects rather than moving protocol ownership
 into the renderer.

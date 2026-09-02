@@ -75,7 +75,9 @@ For a no-account preview, run `gsv tui --demo`, then type
 `show me Markdown and media`. Type `@` on an empty prompt to choose a target,
 press `Tab` to switch between Ship and a literal shell on that target, type `?`
 for the compact key guide, or launch with `gsv tui --vim` for opt-in Vim browse
-controls. Commands and replies remain in one scrollable terminal document. The
+controls. Up/Down recalls commands, Page Up/Down scrolls the transcript, and
+Escape leaves the prompt visible while browsing media or earlier output.
+Commands and replies remain in one scrollable terminal document. The
 line-oriented `gsv chat "..."` command remains available for scripts.
 
 To connect a messenger (Discord / Telegram / WhatsApp), add more devices, and see what to do next, follow the full guide at [docs.gsv.space/get-started](https://docs.gsv.space/get-started).
