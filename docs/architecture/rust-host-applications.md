@@ -93,13 +93,15 @@ Typing `@` into an empty draft opens capability-environment completion. Typing
 completion at the selected target and working directory. Both completion lists
 overlay the rows immediately above the live prompt: they neither replace the
 transcript nor move the prompt. Directory traversal uses `fs.read`; selecting a
-file obtains its exact path, size, content type, and immutable revision through
-`fs.transfer.stat`. The draft displays the selection as one underlined
-`@filename` token, keeps multiple selections independently editable, and sends
-their structured references through the established `conversation.send.media`
-field. The gateway remains responsible for retaining those revisions before it
-commits the canonical Message. Plain path text never becomes an attachment
-implicitly.
+native GSV file obtains its exact path, size, content type, and immutable
+revision through `fs.transfer.stat`. Routed targets expose the same metadata in
+the `fs.transfer.send` response; the TUI immediately cancels its unneeded body
+without materializing a local copy. The draft displays the selection as one
+underlined `@filename` token, keeps multiple selections independently editable,
+and sends their structured references through the established
+`conversation.send.media` field. The gateway remains responsible for retaining
+those revisions before it commits the canonical Message. Plain path text never
+becomes an attachment implicitly.
 
 `Tab` switches the same draft between Ship mode and literal shell mode. The
 latter is visibly marked as `user@target $ ! command`; `@` remains ordinary

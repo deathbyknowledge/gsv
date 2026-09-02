@@ -72,11 +72,13 @@ direct command/output entries belong to the current client transcript and are
 not committed to the Ship conversation. In Ship mode the target remains a
 presentation choice for compatibility with deployed gateways;
 `conversation.send` receives no new target parameter. File selection uses the
-existing `fs.read` and `fs.transfer.stat` syscalls and sends revision-bound
-references through the existing `conversation.send.media` field—no gateway
-schema change is required. File completion is disabled in literal shell mode,
-where `@` is ordinary command text. `Ctrl+.` aborts an active Ship run; the
-current `shell.exec` contract has no general session-kill action.
+existing `fs.read`, `fs.transfer.stat`, and `fs.transfer.send` syscalls and sends
+revision-bound references through the existing `conversation.send.media`
+field—no gateway schema change is required. A routed target's transfer body is
+cancelled after its metadata is read, so selection does not copy the file to
+the client machine. File completion is disabled in literal shell mode, where
+`@` is ordinary command text. `Ctrl+.` aborts an active Ship run; the current
+`shell.exec` contract has no general session-kill action.
 
 `chat` resolves the Ship or selected Work conversation and sends with
 `conversation.send`. With `MESSAGE`, it waits for the canonical

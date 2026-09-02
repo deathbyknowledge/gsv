@@ -1,5 +1,6 @@
 use std::io::{self, IsTerminal};
 use std::sync::Arc;
+use std::time::Duration;
 
 use crossterm::cursor::{SetCursorStyle, Show};
 use crossterm::event::{
@@ -29,6 +30,14 @@ use super::chat::{implicit_personal_owner_uid, personal_process_id};
 mod media;
 
 use media::{ArtifactStore, ImageManager};
+
+const FILE_INSPECTION_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FileInspectionKind {
+    Stat,
+    Transfer,
+}
 
 enum RuntimeEvent {
     Signal {
@@ -778,30 +787,58 @@ async fn resolve_file(
     path: String,
     filename: String,
 ) -> RuntimeEvent {
-    let payload = match client
-        .request_ok(
-            "fs.transfer.stat",
-            Some(json!({
-                "target": target,
-                "path": path,
-            })),
-        )
-        .await
-    {
+    let (inspection, call, args) = file_inspection_request(&target, &path);
+    let payload = match inspection {
+        FileInspectionKind::Stat => client
+            .request_ok(call, Some(args))
+            .await
+            .map_err(|error| error.to_string()),
+        FileInspectionKind::Transfer => match client
+            .connection()
+            .request_response(call, Some(args), FILE_INSPECTION_TIMEOUT)
+            .await
+        {
+            Ok(response) => {
+                let payload = response.data;
+                if let Some(mut body) = response.body {
+                    body.cancel("Only file metadata was requested");
+                }
+                Ok(payload)
+            }
+            Err(error) => Err(error.to_string()),
+        },
+    };
+    let payload = match payload {
         Ok(payload) => payload,
         Err(error) => {
-            return RuntimeEvent::FileOperationFailed {
-                request_id,
-                error: error.to_string(),
-            };
+            return RuntimeEvent::FileOperationFailed { request_id, error };
         }
     };
-    match parse_file_reference(&payload, target, filename) {
+    match parse_file_reference(&payload, target, filename, inspection) {
         Ok(reference) => RuntimeEvent::FileResolved {
             request_id,
             reference,
         },
         Err(error) => RuntimeEvent::FileOperationFailed { request_id, error },
+    }
+}
+
+fn file_inspection_request(target: &str, path: &str) -> (FileInspectionKind, &'static str, Value) {
+    if target == "gsv" {
+        (
+            FileInspectionKind::Stat,
+            "fs.transfer.stat",
+            json!({ "path": path }),
+        )
+    } else {
+        (
+            FileInspectionKind::Transfer,
+            "fs.transfer.send",
+            json!({
+                "target": target,
+                "path": path,
+            }),
+        )
     }
 }
 
@@ -854,6 +891,7 @@ fn parse_file_reference(
     payload: &Value,
     target: String,
     filename: String,
+    inspection: FileInspectionKind,
 ) -> Result<FileReference, String> {
     if payload.get("ok").and_then(Value::as_bool) != Some(true) {
         return Err(payload
@@ -862,7 +900,9 @@ fn parse_file_reference(
             .unwrap_or("The target could not inspect this file")
             .to_string());
     }
-    if payload.get("isFile").and_then(Value::as_bool) != Some(true) {
+    if inspection == FileInspectionKind::Stat
+        && payload.get("isFile").and_then(Value::as_bool) != Some(true)
+    {
         return Err("The selected path is not a file".to_string());
     }
     let path = payload
@@ -1386,9 +1426,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        apply_signal, device_environments, history_moments, key_action, media_artifact,
-        parse_file_listing, parse_file_reference, parse_shell_response, truncate_chars,
-        ShellResponse,
+        apply_signal, device_environments, file_inspection_request, history_moments, key_action,
+        media_artifact, parse_file_listing, parse_file_reference, parse_shell_response,
+        truncate_chars, FileInspectionKind, ShellResponse,
     };
 
     #[test]
@@ -1678,19 +1718,69 @@ mod tests {
     }
 
     #[test]
+    fn gsv_file_inspection_uses_stat_without_target_metadata() {
+        let (inspection, call, args) = file_inspection_request("gsv", "/home/agent/context.md");
+
+        assert_eq!(inspection, FileInspectionKind::Stat);
+        assert_eq!(call, "fs.transfer.stat");
+        assert_eq!(args, json!({ "path": "/home/agent/context.md" }));
+    }
+
+    #[test]
+    fn routed_file_inspection_uses_transfer_metadata() {
+        let (inspection, call, args) =
+            file_inspection_request("macbook", "/Users/sam/Downloads/notes.md");
+
+        assert_eq!(inspection, FileInspectionKind::Transfer);
+        assert_eq!(call, "fs.transfer.send");
+        assert_eq!(
+            args,
+            json!({
+                "target": "macbook",
+                "path": "/Users/sam/Downloads/notes.md"
+            })
+        );
+    }
+
+    #[test]
     fn transfer_stat_becomes_a_revision_bound_file_reference() {
         let reference = parse_file_reference(
             &json!({
                 "ok": true,
-                "path": "/Users/sam/Downloads/notes.md",
+                "path": "/home/agent/context.md",
                 "size": 512,
                 "isFile": true,
                 "isDirectory": false,
                 "contentType": "text/markdown",
                 "revision": "mtime:42"
             }),
+            "gsv".to_string(),
+            "context.md".to_string(),
+            FileInspectionKind::Stat,
+        )
+        .expect("file reference");
+
+        assert_eq!(reference.target, "gsv");
+        assert_eq!(reference.path, "/home/agent/context.md");
+        assert_eq!(reference.revision, "mtime:42");
+        assert_eq!(reference.content_type, "text/markdown");
+        assert_eq!(reference.size, 512);
+        assert_eq!(reference.filename, "context.md");
+    }
+
+    #[test]
+    fn transfer_metadata_becomes_a_revision_bound_file_reference() {
+        let reference = parse_file_reference(
+            &json!({
+                "ok": true,
+                "path": "/Users/sam/Downloads/notes.md",
+                "size": 512,
+                "contentType": "text/markdown",
+                "revision": "mtime:42"
+            }),
             "macbook".to_string(),
             "notes.md".to_string(),
+            FileInspectionKind::Transfer,
         )
         .expect("file reference");
 
