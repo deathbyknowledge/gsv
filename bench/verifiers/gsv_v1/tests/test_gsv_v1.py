@@ -586,6 +586,9 @@ def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
     assert model["input_tokens"] == 4_500
     assert model["completion_tokens"] == 300
     assert model["cached_input_rate"] == 1 / 3
+    assert model["e2e_output_tokens_per_second"] == 5.0
+    assert model["aggregate_output_tokens_per_second"] == 10.0
+    assert model["request_output_tokens_per_second"] == 25.0
     assert model["listed_cost_usd"] == pytest.approx(0.0051)
     scenario_summary = model["scenarios"]["scenario-a"]
     assert scenario_summary["score_mean"] == pytest.approx(0.8)

@@ -69,9 +69,10 @@ login`. It copies the exact scenario and its digest into an ignored output
 directory, snapshots current model pricing, keeps a log and trace per model,
 and emits `summary.md` plus a machine-readable `summary.json`. The report includes
 strict Pass@1, unbiased Pass@3, Pass^3 reliability, per-scenario results,
-milestones, dimensions, latency, token throughput, and listed cost. Listed cost is
-an estimate from total input (cached plus uncached) and completion tokens at the
-snapshotted rates; it does not assume an unadvertised cache discount.
+milestones, dimensions, latency, per-Process end-to-end tok/s, aggregate tok/s at
+the configured concurrency, provider-request tok/s, and listed cost. Listed cost
+is an estimate from total input (cached plus uncached) and completion tokens at
+the snapshotted rates; it does not assume an unadvertised cache discount.
 
 `GSV_BENCH_SCENARIO`, `GSV_BENCH_OUTPUT_DIR`,
 `GSV_BENCH_NUM_TASKS`, `GSV_BENCH_MODEL_CONCURRENCY`, and

@@ -364,7 +364,14 @@ def summarize_matrix(
                 )
                 if usage_call_count
                 else None,
-                "observed_output_tokens_per_second": (
+                "e2e_output_tokens_per_second": (
+                    completion_tokens / total_agent_seconds
+                    if usage_call_count and total_agent_seconds
+                    else 0.0
+                )
+                if usage_call_count
+                else None,
+                "aggregate_output_tokens_per_second": (
                     completion_tokens / wall_seconds
                     if usage_call_count and wall_seconds
                     else 0.0
@@ -396,22 +403,23 @@ def render_markdown(summary: dict[str, Any]) -> str:
     if not models:
         return "No traces found."
     lines = [
-        "| Model | n | Reward | Raw | Median | Strict | Pass@1 | Pass@3 | Pass^3 | Errors | Calls/n | P50 s | Input tok | Output tok | E2E out tok/s | Request out tok/s | Cached | Listed cost |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Model | n | Reward | Raw | Median | Strict | Pass@1 | Pass@3 | Pass^3 | Errors | Calls/n | P50 s | Input tok | Output tok | E2E tok/s/process | Aggregate tok/s | Request tok/s | Cached | Listed cost |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for model in models:
         cost = model["listed_cost_usd"]
         cost_text = f"${cost:.4f}" if cost is not None else "n/a"
         input_tokens = model["input_tokens"]
         output_tokens = model["completion_tokens"]
-        e2e_rate = model["observed_output_tokens_per_second"]
+        e2e_rate = model["e2e_output_tokens_per_second"]
+        aggregate_rate = model["aggregate_output_tokens_per_second"]
         request_rate = model["request_output_tokens_per_second"]
         cached_rate = model["cached_input_rate"]
         lines.append(
             "| {model} | {rollouts} | {mean:.3f} | {raw:.3f} | {median:.3f} | "
             "{strict}/{rollouts} | {pass1:.1%} | {pass3} | {pass_power3} | "
             "{errors} | {calls:.1f} | {seconds:.1f} | "
-            "{prompt} | {output} | {rate} | {request_rate} | "
+            "{prompt} | {output} | {e2e_rate} | {aggregate_rate} | {request_rate} | "
             "{cached} | {cost} |".format(
                 model=model["model"],
                 rollouts=model["rollouts"],
@@ -435,7 +443,10 @@ def render_markdown(summary: dict[str, Any]) -> str:
                 seconds=model["agent_seconds_p50"],
                 prompt=f"{input_tokens:,}" if input_tokens is not None else "n/a",
                 output=(f"{output_tokens:,}" if output_tokens is not None else "n/a"),
-                rate=f"{e2e_rate:.1f}" if e2e_rate is not None else "n/a",
+                e2e_rate=f"{e2e_rate:.1f}" if e2e_rate is not None else "n/a",
+                aggregate_rate=(
+                    f"{aggregate_rate:.1f}" if aggregate_rate is not None else "n/a"
+                ),
                 request_rate=(
                     f"{request_rate:.1f}" if request_rate is not None else "n/a"
                 ),
