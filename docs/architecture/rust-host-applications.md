@@ -62,6 +62,12 @@ the interface without an account. The native backend owns terminal setup and
 restoration, maps Crossterm events into shared actions, and interprets shared
 effects through the existing gateway client. Conversation history and signals,
 Process run state, human-in-the-loop approvals, and abort remain gateway-owned.
+The native renderer inherits the terminal foreground, background, and ANSI
+palette instead of imposing a second terminal theme. The shared renderer owns
+semantic color roles, Markdown presentation, source-mode toggling, and the
+textual presentation of canonical media resources. Fetching or decoding media
+bytes remains with the client and gateway paths that own those bodies; a client
+may add an inline-image backend without changing the resource contract.
 The line-oriented `gsv chat` command remains available for scripts and basic
 terminal sessions.
 
@@ -89,10 +95,13 @@ machine runtime in the CLI process.
 `web/tui/` compiles the same `tui-core` crate to WebAssembly and renders its
 cell buffer through Ratzilla's WebGL2 backend. A hidden native textarea owns
 Unicode input, IME composition, and paste; browser key and wheel events map to
-the same shared actions as the native backend. The preview currently uses
-local example responses. Production browser authentication and transport stay
-with the existing web gateway service and will interpret the same shared
-effects rather than moving protocol ownership into the renderer.
+the same shared actions as the native backend. Because no host terminal owns
+its atmosphere, the browser backend uses the curated GSV palette. Markdown,
+prompt grammar, navigation, and media artifact fallback remain identical. The
+preview currently uses local example responses. Production browser
+authentication and transport stay with the existing web gateway service and
+will interpret the same shared effects rather than moving protocol ownership
+into the renderer.
 
 ## GSV Desktop
 

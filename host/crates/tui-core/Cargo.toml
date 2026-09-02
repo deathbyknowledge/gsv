@@ -5,9 +5,11 @@ edition = "2021"
 publish = false
 
 [dependencies]
+markdown = "=1.0.0"
 ratatui = { version = "0.30.2", default-features = false, features = [
     "all-widgets",
     "layout-cache",
+    "unstable-rendered-line-info",
 ] }
 unicode-segmentation = "1"
 unicode-width = "0.2"

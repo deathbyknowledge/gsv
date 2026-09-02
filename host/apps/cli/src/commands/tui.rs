@@ -15,7 +15,8 @@ use futures_util::StreamExt;
 use gsv::kernel_client::{cli_peer_identity, BinaryBodyLimits, GatewayAuth, KernelClient};
 use gsv::protocol::Frame;
 use gsv_tui_core::{
-    Action, App, Approval, ApprovalDecision, ConnectionState, Effect, Moment, Role,
+    Action, App, Approval, ApprovalDecision, Artifact, ConnectionState, Effect, MediaKind, Moment,
+    Role, Theme,
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
@@ -78,7 +79,9 @@ pub(crate) async fn run_tui(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (runtime_sender, runtime_receiver) = mpsc::unbounded_channel();
     if demo {
-        return run_interface(App::demo(), None, runtime_sender, runtime_receiver).await;
+        let mut app = App::demo();
+        app.set_principal(whoami::username());
+        return run_interface(app, None, runtime_sender, runtime_receiver).await;
     }
 
     let signal_sender = runtime_sender.clone();
@@ -98,12 +101,14 @@ pub(crate) async fn run_tui(
         },
     )
     .await?;
-    let owner_uid = client
+    let account = &client
         .connection()
         .connect_result
         .as_ref()
         .ok_or("GSV returned no current user")
-        .and_then(|result| implicit_personal_owner_uid(result.peer.principal.account.uid))?;
+        .map(|result| &result.peer.principal.account)?;
+    let owner_uid = implicit_personal_owner_uid(account.uid)?;
+    let principal = account.username.clone();
     let pid = match preferred_pid {
         Some(pid) => pid,
         None => {
@@ -126,6 +131,7 @@ pub(crate) async fn run_tui(
         .await?;
 
     let mut app = App::new(ConnectionState::Ready);
+    app.set_principal(principal);
     let moments = history_moments(&history);
     if moments.is_empty() {
         app.replace_history(vec![Moment::complete(
@@ -159,6 +165,7 @@ async fn run_interface(
     if !io::stdout().is_terminal() {
         return Err("The GSV interface needs an interactive terminal".into());
     }
+    app.set_theme(Theme::Terminal);
 
     enable_raw_mode()?;
     let _restore = TerminalRestore;
@@ -363,7 +370,16 @@ fn apply_signal(app: &mut App, pid: &str, conversation_id: &str, name: &str, pay
             }
         }
         "proc.run.tool.started" => {
-            app.set_activity(Some("WORKING".to_string()));
+            let syscall = payload
+                .get("syscall")
+                .and_then(Value::as_str)
+                .unwrap_or("working");
+            let target = payload
+                .get("target")
+                .or_else(|| payload.get("args").and_then(|args| args.get("target")))
+                .and_then(Value::as_str)
+                .unwrap_or("gsv");
+            app.set_activity(Some(format!("ship@{target} · {syscall}")));
         }
         "proc.run.retrying" => {
             app.set_activity(Some("TRYING ANOTHER PATH".to_string()));
@@ -441,6 +457,7 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
         KeyCode::Char('b' | 'B') if control => Some(Action::MoveCursorLeft),
         KeyCode::Char('f' | 'F') if control => Some(Action::MoveCursorRight),
         KeyCode::Char('w' | 'W') if control => Some(Action::DeleteWord),
+        KeyCode::Char('m' | 'M') if alt => Some(Action::ToggleMarkdown),
         KeyCode::Char('?') if !app.draft_visible() && !command_modifier => Some(Action::ToggleHelp),
         KeyCode::Char(character) if !command_modifier => {
             Some(Action::Insert(character.to_string()))
@@ -482,7 +499,8 @@ fn history_moments(payload: &Value) -> Vec<Moment> {
             let id = value_id(message.get("id"))
                 .unwrap_or_else(|| format!("history:{}", message_sequence(message)));
             let role = role_from_author(message.get("author"));
-            let mut moment = Moment::complete(id, role, text);
+            let mut moment = Moment::complete(id, role, text)
+                .with_artifacts(media_artifacts(message.get("media")));
             moment.run_id = message
                 .get("runId")
                 .and_then(Value::as_str)
@@ -502,7 +520,112 @@ fn commit_signal_message(app: &mut App, message: &Value) {
         .get("runId")
         .and_then(Value::as_str)
         .map(str::to_string);
-    app.commit_message(id, role_from_author(message.get("author")), text, run_id);
+    app.commit_message(
+        id,
+        role_from_author(message.get("author")),
+        text,
+        run_id,
+        media_artifacts(message.get("media")),
+    );
+}
+
+fn media_artifacts(value: Option<&Value>) -> Vec<Artifact> {
+    value
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(media_artifact)
+        .collect()
+}
+
+fn media_artifact(value: &Value) -> Option<Artifact> {
+    let object = value.as_object()?;
+    if object.get("type").and_then(Value::as_str) == Some("resource") {
+        let reference = object.get("ref")?.as_object()?;
+        let mime_type = reference.get("contentType")?.as_str()?.to_string();
+        let path = reference.get("path")?.as_str()?;
+        let target = reference.get("target")?.as_str()?;
+        let revision = reference.get("revision")?.as_str()?.to_string();
+        return Some(Artifact {
+            kind: media_kind(object.get("mediaType").and_then(Value::as_str), &mime_type),
+            mime_type,
+            filename: object
+                .get("filename")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| {
+                    path.rsplit('/')
+                        .find(|part| !part.is_empty())
+                        .map(str::to_string)
+                }),
+            size: reference.get("size").and_then(Value::as_u64),
+            duration_ms: duration_millis(object.get("duration")),
+            transcription: object
+                .get("transcription")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            source: Some(format!("{target}:{path}")),
+            revision: Some(revision),
+        });
+    }
+
+    let legacy_type = object.get("type")?.as_str()?;
+    let mime_type = object
+        .get("mimeType")
+        .and_then(Value::as_str)
+        .unwrap_or("application/octet-stream")
+        .to_string();
+    let source = object
+        .get("path")
+        .or_else(|| object.get("url"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| {
+            let key = object.get("key")?.as_str()?;
+            let conversation = object
+                .get("conversationId")
+                .and_then(Value::as_str)
+                .unwrap_or("process");
+            Some(format!("{conversation}:{key}"))
+        });
+    Some(Artifact {
+        kind: media_kind(Some(legacy_type), &mime_type),
+        mime_type,
+        filename: object
+            .get("filename")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        size: object.get("size").and_then(Value::as_u64),
+        duration_ms: duration_millis(object.get("duration")),
+        transcription: object
+            .get("transcription")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        source,
+        revision: None,
+    })
+}
+
+fn media_kind(kind: Option<&str>, mime_type: &str) -> MediaKind {
+    match kind {
+        Some("image") => MediaKind::Image,
+        Some("audio") => MediaKind::Audio,
+        Some("video") => MediaKind::Video,
+        Some("document") => MediaKind::Document,
+        _ if mime_type.starts_with("image/") => MediaKind::Image,
+        _ if mime_type.starts_with("audio/") => MediaKind::Audio,
+        _ if mime_type.starts_with("video/") => MediaKind::Video,
+        _ => MediaKind::Document,
+    }
+}
+
+fn duration_millis(value: Option<&Value>) -> Option<u64> {
+    let seconds = value?.as_f64()?;
+    std::time::Duration::try_from_secs_f64(seconds)
+        .ok()?
+        .as_millis()
+        .try_into()
+        .ok()
 }
 
 fn role_from_author(author: Option<&Value>) -> Role {
@@ -601,7 +724,7 @@ fn message_sequence(message: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use gsv_tui_core::{App, ConnectionState, Role};
+    use gsv_tui_core::{App, ConnectionState, MediaKind, Role};
     use serde_json::json;
 
     use super::{apply_signal, history_moments, truncate_chars};
@@ -619,7 +742,23 @@ mod tests {
                     "id": 2,
                     "author": { "kind": "process" },
                     "text": "hi",
-                    "runId": "run-one"
+                    "runId": "run-one",
+                    "media": [
+                        {
+                            "type": "resource",
+                            "ref": {
+                                "type": "file",
+                                "target": "gsv",
+                                "path": "/home/ship/chart.png",
+                                "revision": "sha256:one",
+                                "contentType": "image/png",
+                                "size": 2048
+                            },
+                            "mediaType": "image",
+                            "filename": "chart.png",
+                            "transcription": "a chart"
+                        }
+                    ]
                 }
             ]
         }));
@@ -627,6 +766,16 @@ mod tests {
         assert_eq!(moments[0].role, Role::Human);
         assert_eq!(moments[1].role, Role::Intelligence);
         assert_eq!(moments[1].run_id.as_deref(), Some("run-one"));
+        assert_eq!(moments[1].artifacts.len(), 1);
+        assert_eq!(moments[1].artifacts[0].kind, MediaKind::Image);
+        assert_eq!(
+            moments[1].artifacts[0].source.as_deref(),
+            Some("gsv:/home/ship/chart.png")
+        );
+        assert_eq!(
+            moments[1].artifacts[0].revision.as_deref(),
+            Some("sha256:one")
+        );
     }
 
     #[test]

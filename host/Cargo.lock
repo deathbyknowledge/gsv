@@ -3370,6 +3370,7 @@ name = "gsv-tui-core"
 version = "0.4.1"
 dependencies = [
  "critical-section",
+ "markdown",
  "ratatui",
  "unicode-segmentation",
  "unicode-width",

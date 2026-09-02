@@ -1,3 +1,6 @@
+mod markdown;
+mod theme;
+
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -6,14 +9,10 @@ use ratatui::Frame;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-const BACKGROUND: Color = Color::Rgb(8, 9, 11);
-const FOREGROUND: Color = Color::Rgb(232, 230, 222);
-const MUTED: Color = Color::Rgb(105, 108, 116);
-const QUIET: Color = Color::Rgb(61, 64, 70);
-const ACCENT: Color = Color::Rgb(151, 170, 255);
-const HUMAN: Color = Color::Rgb(190, 201, 255);
-const WARNING: Color = Color::Rgb(244, 190, 108);
-const ERROR: Color = Color::Rgb(241, 126, 126);
+use markdown::{render_artifacts, render_markdown, render_plain};
+use theme::Palette;
+
+pub use theme::Theme;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Role {
@@ -23,20 +22,51 @@ pub enum Role {
 }
 
 impl Role {
-    fn label(self) -> &'static str {
+    fn color(self, palette: Palette) -> Color {
         match self {
-            Self::Human => "YOU",
-            Self::Intelligence => "GSV",
-            Self::System => "SYSTEM",
+            Self::Human => palette.human,
+            Self::Intelligence => palette.foreground,
+            Self::System => palette.warning,
         }
     }
+}
 
-    fn color(self) -> Color {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MediaKind {
+    Image,
+    Audio,
+    Video,
+    Document,
+}
+
+impl MediaKind {
+    fn label(self) -> &'static str {
         match self {
-            Self::Human => HUMAN,
-            Self::Intelligence => FOREGROUND,
-            Self::System => WARNING,
+            Self::Image => "IMAGE",
+            Self::Audio => "AUDIO",
+            Self::Video => "VIDEO",
+            Self::Document => "FILE",
         }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Artifact {
+    pub kind: MediaKind,
+    pub mime_type: String,
+    pub filename: Option<String>,
+    pub size: Option<u64>,
+    pub duration_ms: Option<u64>,
+    pub transcription: Option<String>,
+    /// A user-visible reference such as `target:/path` or a legacy media key.
+    pub source: Option<String>,
+    /// The immutable revision paired with a canonical resource source.
+    pub revision: Option<String>,
+}
+
+impl Artifact {
+    fn display_name(&self) -> &str {
+        self.filename.as_deref().unwrap_or("untitled")
     }
 }
 
@@ -54,6 +84,7 @@ pub struct Moment {
     pub text: String,
     pub run_id: Option<String>,
     pub state: MomentState,
+    pub artifacts: Vec<Artifact>,
 }
 
 impl Moment {
@@ -64,7 +95,13 @@ impl Moment {
             text: text.into(),
             run_id: None,
             state: MomentState::Complete,
+            artifacts: Vec::new(),
         }
+    }
+
+    pub fn with_artifacts(mut self, artifacts: Vec<Artifact>) -> Self {
+        self.artifacts = artifacts;
+        self
     }
 }
 
@@ -88,12 +125,12 @@ impl ConnectionState {
         }
     }
 
-    fn color(self) -> Color {
+    fn color(self, palette: Palette) -> Color {
         match self {
-            Self::Demo => WARNING,
-            Self::Connecting | Self::Working => ACCENT,
-            Self::Ready => Color::Rgb(130, 207, 160),
-            Self::Offline => ERROR,
+            Self::Demo => palette.warning,
+            Self::Connecting | Self::Working => palette.accent,
+            Self::Ready => palette.success,
+            Self::Offline => palette.error,
         }
     }
 }
@@ -130,6 +167,7 @@ pub enum Action {
     ScrollUp,
     ScrollDown,
     ToggleHelp,
+    ToggleMarkdown,
     Abort,
     DecideApproval {
         decision: ApprovalDecision,
@@ -174,6 +212,9 @@ pub struct App {
     pending_submission: Option<PendingSubmission>,
     next_submission_id: u64,
     approval: Option<Approval>,
+    principal: String,
+    theme: Theme,
+    raw_markdown: bool,
 }
 
 impl App {
@@ -192,6 +233,9 @@ impl App {
             pending_submission: None,
             next_submission_id: 1,
             approval: None,
+            principal: "you".to_string(),
+            theme: Theme::Gsv,
+            raw_markdown: false,
         }
     }
 
@@ -200,7 +244,7 @@ impl App {
         app.moments.push(Moment::complete(
             "welcome",
             Role::Intelligence,
-            "Tell me what you want done.\n\nTry “show me what is taking up space on this computer” or simply start typing.",
+            "Tell me what you want done.\n\nTry **show me Markdown and media**, or simply start typing.",
         ));
         app
     }
@@ -225,12 +269,20 @@ impl App {
         self.approval.as_ref()
     }
 
+    pub fn set_principal(&mut self, principal: impl AsRef<str>) {
+        self.principal = prompt_token(principal.as_ref(), "you");
+    }
+
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.theme = theme;
+    }
+
     pub fn set_connection(&mut self, connection: ConnectionState) {
         self.connection = connection;
     }
 
     pub fn set_activity(&mut self, activity: Option<String>) {
-        self.activity = activity;
+        self.activity = activity.map(|activity| sanitize_status(&activity));
     }
 
     pub fn replace_history(&mut self, moments: Vec<Moment>) {
@@ -242,7 +294,10 @@ impl App {
         self.moment_scroll = 0;
     }
 
-    pub fn enter_approval(&mut self, approval: Approval) {
+    pub fn enter_approval(&mut self, mut approval: Approval) {
+        approval.syscall = sanitize_label(&approval.syscall, "unknown action", 96);
+        approval.target = sanitize_label(&approval.target, "unknown target", 96);
+        approval.preview = sanitize_multiline(&approval.preview, 4_000);
         self.approval = Some(approval);
         self.draft_visible = false;
     }
@@ -289,6 +344,10 @@ impl App {
 
         match action {
             Action::Insert(value) => {
+                let value = sanitize_draft_input(&value);
+                if value.is_empty() {
+                    return Vec::new();
+                }
                 self.draft_visible = true;
                 self.draft.insert_str(self.draft_cursor, &value);
                 self.draft_cursor += value.len();
@@ -383,6 +442,11 @@ impl App {
                 self.help_visible = true;
                 Vec::new()
             }
+            Action::ToggleMarkdown => {
+                self.raw_markdown = !self.raw_markdown;
+                self.moment_scroll = 0;
+                Vec::new()
+            }
             Action::Abort => vec![Effect::Abort],
             Action::DecideApproval { .. } => Vec::new(),
             Action::Quit => vec![Effect::Quit],
@@ -414,6 +478,7 @@ impl App {
             text: String::new(),
             run_id: None,
             state: MomentState::Streaming,
+            artifacts: Vec::new(),
         });
         self.selected = self.moments.len().saturating_sub(1);
         self.moment_scroll = 0;
@@ -491,6 +556,7 @@ impl App {
                     text: String::new(),
                     run_id: run_id.map(str::to_string),
                     state: MomentState::Streaming,
+                    artifacts: Vec::new(),
                 });
                 self.moments.len() - 1
             }
@@ -522,6 +588,7 @@ impl App {
                 text,
                 run_id: run_id.map(str::to_string),
                 state: MomentState::Streaming,
+                artifacts: Vec::new(),
             });
             self.selected = self.moments.len().saturating_sub(1);
         }
@@ -569,6 +636,7 @@ impl App {
         role: Role,
         text: impl Into<String>,
         run_id: Option<String>,
+        artifacts: Vec<Artifact>,
     ) {
         let id = id.into();
         let text = text.into();
@@ -595,6 +663,7 @@ impl App {
             {
                 moment.id = id;
                 moment.run_id = run_id;
+                moment.artifacts = artifacts;
                 return;
             }
         }
@@ -608,6 +677,7 @@ impl App {
                 moment.id = id;
                 moment.text = text;
                 moment.state = MomentState::Complete;
+                moment.artifacts = artifacts;
                 return;
             }
         }
@@ -617,6 +687,7 @@ impl App {
             text,
             run_id,
             state: MomentState::Complete,
+            artifacts,
         });
         self.selected = self.moments.len().saturating_sub(1);
         self.moment_scroll = 0;
@@ -626,6 +697,27 @@ impl App {
         let run_id = format!("demo:{id}");
         self.submission_accepted(id, run_id.clone(), false);
         self.append_delta(Some(&run_id), &demo_reply(request));
+        if request.to_ascii_lowercase().contains("media") {
+            if let Some(moment) = self
+                .moments
+                .iter_mut()
+                .rfind(|moment| moment.run_id.as_deref() == Some(&run_id))
+            {
+                moment.artifacts.push(Artifact {
+                    kind: MediaKind::Image,
+                    mime_type: "image/png".to_string(),
+                    filename: Some("gsv-preview.png".to_string()),
+                    size: Some(218 * 1024),
+                    duration_ms: None,
+                    transcription: Some(
+                        "A clean, full-screen GSV interface rendered as a terminal document."
+                            .to_string(),
+                    ),
+                    source: Some("gsv:~/artifacts/gsv-preview.png".to_string()),
+                    revision: Some("demo:1".to_string()),
+                });
+            }
+        }
         self.finish_run(Some(&run_id), None);
     }
 
@@ -664,13 +756,17 @@ impl App {
     }
 
     pub fn render(&mut self, frame: &mut Frame<'_>) {
+        let palette = self.theme.palette();
         let area = frame.area();
-        frame.render_widget(Block::new().style(Style::new().bg(BACKGROUND)), area);
+        frame.render_widget(
+            Block::new().style(Style::new().bg(palette.background)),
+            area,
+        );
         if area.width < 32 || area.height < 12 {
             frame.render_widget(
                 Paragraph::new("GSV needs a little more room")
                     .alignment(Alignment::Center)
-                    .style(Style::new().fg(FOREGROUND).bg(BACKGROUND)),
+                    .style(Style::new().fg(palette.foreground).bg(palette.background)),
                 area,
             );
             return;
@@ -691,23 +787,26 @@ impl App {
     }
 
     fn render_header(&self, frame: &mut Frame<'_>, area: Rect) {
+        let palette = self.theme.palette();
         let [brand, status] = Layout::horizontal([Constraint::Min(12), Constraint::Length(24)])
             .areas(area.inner(Margin::new(2, 0)));
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(
                     "GSV",
-                    Style::new().fg(FOREGROUND).add_modifier(Modifier::BOLD),
+                    Style::new()
+                        .fg(palette.foreground)
+                        .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled("  /  SHIP", Style::new().fg(MUTED)),
+                Span::styled("  /  SHIP", Style::new().fg(palette.muted)),
             ])),
             brand,
         );
         let activity = self.activity.as_deref().unwrap_or(self.connection.label());
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled("● ", Style::new().fg(self.connection.color())),
-                Span::styled(activity, Style::new().fg(MUTED)),
+                Span::styled("● ", Style::new().fg(self.connection.color(palette))),
+                Span::styled(activity, Style::new().fg(palette.muted)),
             ]))
             .alignment(Alignment::Right),
             status,
@@ -715,6 +814,7 @@ impl App {
     }
 
     fn render_body(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        let palette = self.theme.palette();
         let [rail, canvas, _breathing_room] = Layout::horizontal([
             Constraint::Length(5),
             Constraint::Min(20),
@@ -725,7 +825,7 @@ impl App {
 
         if let Some(approval) = &self.approval {
             self.last_max_scroll = 0;
-            render_approval(frame, canvas, approval);
+            render_approval(frame, canvas, approval, palette);
         } else if self.draft_visible {
             self.last_max_scroll = 0;
             self.render_draft(frame, canvas);
@@ -735,6 +835,7 @@ impl App {
     }
 
     fn render_rail(&self, frame: &mut Frame<'_>, area: Rect) {
+        let palette = self.theme.palette();
         if self.moments.is_empty() {
             return;
         }
@@ -750,7 +851,11 @@ impl App {
             let selected = index == self.selected;
             lines.push(Line::from(Span::styled(
                 if selected { "  ●" } else { "  ·" },
-                Style::new().fg(if selected { ACCENT } else { QUIET }),
+                Style::new().fg(if selected {
+                    palette.accent
+                } else {
+                    palette.quiet
+                }),
             )));
         }
         let height = u16::try_from(lines.len())
@@ -764,11 +869,12 @@ impl App {
     }
 
     fn render_moment(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        let palette = self.theme.palette();
         let Some(moment) = self.moments.get(self.selected) else {
             self.last_max_scroll = 0;
             frame.render_widget(
                 Paragraph::new("Start typing.")
-                    .style(Style::new().fg(MUTED))
+                    .style(Style::new().fg(palette.muted))
                     .alignment(Alignment::Center),
                 area,
             );
@@ -782,29 +888,35 @@ impl App {
         } else {
             moment.text.as_str()
         };
-        let body_style = Style::new().fg(if moment.state == MomentState::Error {
-            ERROR
+        let body_color = if moment.state == MomentState::Error {
+            palette.error
         } else {
-            moment.role.color()
-        });
+            moment.role.color(palette)
+        };
+        let body_lines = if moment.role == Role::Intelligence && !self.raw_markdown {
+            render_markdown(body, palette)
+        } else {
+            render_plain(body, Style::new().fg(body_color))
+        };
         let mut lines = vec![
             Line::from(Span::styled(
-                moment.role.label(),
+                self.moment_prompt(moment.role),
                 Style::new()
-                    .fg(moment.role.color())
+                    .fg(moment.role.color(palette))
                     .add_modifier(Modifier::BOLD),
             )),
             Line::default(),
         ];
-        lines.extend(
-            body.split('\n')
-                .map(|line| Line::from(Span::styled(line, body_style))),
-        );
+        lines.extend(body_lines);
+        if !moment.artifacts.is_empty() {
+            lines.push(Line::default());
+            lines.extend(render_artifacts(&moment.artifacts, palette));
+        }
         let text = Text::from(lines);
         let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
-        let line_count_u16 = text_metrics(body, body.len(), text_width)
-            .2
-            .saturating_add(2);
+        let line_count_u16 = u16::try_from(paragraph.line_count(text_width))
+            .unwrap_or(u16::MAX)
+            .max(1);
         self.last_max_scroll = line_count_u16.saturating_sub(content_area.height);
         self.moment_scroll = self.moment_scroll.min(self.last_max_scroll);
         let render_height = line_count_u16.min(content_area.height).max(1);
@@ -818,6 +930,7 @@ impl App {
     }
 
     fn render_draft(&self, frame: &mut Frame<'_>, area: Rect) {
+        let palette = self.theme.palette();
         let content_area = area.inner(Margin::new(2, 1));
         let label_height = 2;
         let available_text_height = content_area.height.saturating_sub(label_height).max(1);
@@ -830,15 +943,15 @@ impl App {
         let label_area = Rect::new(content_area.x, y, width, 1);
         let text_area = Rect::new(content_area.x, y + label_height, width, visible_rows);
         frame.render_widget(
-            Paragraph::new("YOU  /  DRAFT")
-                .style(Style::new().fg(HUMAN).add_modifier(Modifier::BOLD)),
+            Paragraph::new(format!("{}@ship $", self.principal))
+                .style(Style::new().fg(palette.human).add_modifier(Modifier::BOLD)),
             label_area,
         );
         let scroll = cursor_row.saturating_sub(visible_rows.saturating_sub(1));
         let draft_text = if self.draft.is_empty() {
-            Text::styled("What should happen?", Style::new().fg(QUIET))
+            Text::styled("What should happen?", Style::new().fg(palette.quiet))
         } else {
-            Text::styled(self.draft.as_str(), Style::new().fg(FOREGROUND))
+            Text::styled(self.draft.as_str(), Style::new().fg(palette.foreground))
         };
         frame.render_widget(
             Paragraph::new(draft_text)
@@ -854,23 +967,25 @@ impl App {
     }
 
     fn render_footer(&self, frame: &mut Frame<'_>, area: Rect) {
+        let palette = self.theme.palette();
         let hint = if self.approval.is_some() {
             "O  ALLOW ONCE     A  ALWAYS ALLOW     D  DENY"
         } else if self.draft_visible {
             "ENTER  SEND     SHIFT+ENTER  NEW LINE     ESC  KEEP FOR LATER"
         } else {
-            "TYPE  ASK ANYTHING     CTRL+P / CTRL+N  MOVE     ?  KEYS"
+            "TYPE  ASK ANYTHING     CTRL+P / CTRL+N  MOVE     ALT+M  SOURCE     ?  KEYS"
         };
         let inner = area.inner(Margin::new(2, 0));
         frame.render_widget(
             Paragraph::new(hint)
-                .style(Style::new().fg(MUTED))
+                .style(Style::new().fg(palette.muted))
                 .alignment(Alignment::Center),
             inner,
         );
     }
 
     fn render_help(&self, frame: &mut Frame<'_>, area: Rect) {
+        let palette = self.theme.palette();
         let width = area.width.saturating_sub(8).min(68);
         let height = area.height.saturating_sub(4).min(20);
         let popup = centered_rect(area, width, height);
@@ -878,22 +993,25 @@ impl App {
         let help = Text::from(vec![
             Line::from(Span::styled(
                 "THE GSV GRAMMAR",
-                Style::new().fg(FOREGROUND).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(palette.foreground)
+                    .add_modifier(Modifier::BOLD),
             )),
             Line::default(),
-            help_line("type anywhere", "write a request"),
-            help_line("enter", "send"),
-            help_line("shift+enter", "new line"),
-            help_line("escape", "hide the draft without losing it"),
-            help_line("ctrl+p / ctrl+n", "previous / next moment"),
-            help_line("alt+up / alt+down", "previous / next moment"),
-            help_line("page up / page down", "scroll a long moment"),
-            help_line("ctrl+.", "stop the active run"),
-            help_line("ctrl+q", "leave GSV"),
+            help_line("type anywhere", "write a request", palette),
+            help_line("enter", "send", palette),
+            help_line("shift+enter", "new line", palette),
+            help_line("escape", "hide the draft without losing it", palette),
+            help_line("ctrl+p / ctrl+n", "previous / next moment", palette),
+            help_line("alt+up / alt+down", "previous / next moment", palette),
+            help_line("page up / page down", "scroll a long moment", palette),
+            help_line("alt+m", "rendered / source Markdown", palette),
+            help_line("ctrl+.", "stop the active run", palette),
+            help_line("ctrl+q", "leave GSV", palette),
             Line::default(),
             Line::from(Span::styled(
                 "Press ? or escape to return",
-                Style::new().fg(MUTED),
+                Style::new().fg(palette.muted),
             )),
         ]);
         frame.render_widget(
@@ -902,28 +1020,38 @@ impl App {
                     Block::new()
                         .borders(Borders::ALL)
                         .border_type(BorderType::Rounded)
-                        .border_style(Style::new().fg(QUIET))
-                        .style(Style::new().bg(BACKGROUND))
+                        .border_style(Style::new().fg(palette.quiet))
+                        .style(Style::new().bg(palette.background))
                         .padding(Padding::new(3, 3, 2, 2)),
                 )
                 .wrap(Wrap { trim: false }),
             popup,
         );
     }
+
+    fn moment_prompt(&self, role: Role) -> String {
+        match role {
+            Role::Human => format!("{}@ship $", self.principal),
+            Role::Intelligence => "ship@gsv".to_string(),
+            Role::System => "system@gsv".to_string(),
+        }
+    }
 }
 
-fn render_approval(frame: &mut Frame<'_>, area: Rect, approval: &Approval) {
+fn render_approval(frame: &mut Frame<'_>, area: Rect, approval: &Approval, palette: Palette) {
     let content_area = area.inner(Margin::new(2, 1));
     let mut lines = vec![
         Line::from(Span::styled(
             "APPROVAL REQUIRED",
-            Style::new().fg(WARNING).add_modifier(Modifier::BOLD),
+            Style::new()
+                .fg(palette.warning)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::default(),
         Line::from(vec![
-            Span::styled(&approval.syscall, Style::new().fg(FOREGROUND)),
-            Span::styled("  ON  ", Style::new().fg(MUTED)),
-            Span::styled(&approval.target, Style::new().fg(ACCENT)),
+            Span::styled(&approval.syscall, Style::new().fg(palette.foreground)),
+            Span::styled("  ON  ", Style::new().fg(palette.muted)),
+            Span::styled(&approval.target, Style::new().fg(palette.accent)),
         ]),
         Line::default(),
     ];
@@ -931,16 +1059,13 @@ fn render_approval(frame: &mut Frame<'_>, area: Rect, approval: &Approval) {
         approval
             .preview
             .split('\n')
-            .map(|line| Line::from(Span::styled(line, Style::new().fg(MUTED)))),
+            .map(|line| Line::from(Span::styled(line, Style::new().fg(palette.muted)))),
     );
     let text = Text::from(lines);
     let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
     let width = content_area.width.max(1);
-    let action = format!("{}  ON  {}", approval.syscall, approval.target);
-    let line_count = text_metrics(&action, action.len(), width)
-        .2
-        .saturating_add(text_metrics(&approval.preview, approval.preview.len(), width).2)
-        .saturating_add(3)
+    let line_count = u16::try_from(paragraph.line_count(width))
+        .unwrap_or(u16::MAX)
         .min(content_area.height);
     let render_area = Rect::new(
         content_area.x,
@@ -951,10 +1076,10 @@ fn render_approval(frame: &mut Frame<'_>, area: Rect, approval: &Approval) {
     frame.render_widget(paragraph, render_area);
 }
 
-fn help_line(key: &'static str, meaning: &'static str) -> Line<'static> {
+fn help_line(key: &'static str, meaning: &'static str, palette: Palette) -> Line<'static> {
     Line::from(vec![
-        Span::styled(format!("{key:<22}"), Style::new().fg(ACCENT)),
-        Span::styled(meaning, Style::new().fg(MUTED)),
+        Span::styled(format!("{key:<22}"), Style::new().fg(palette.accent)),
+        Span::styled(meaning, Style::new().fg(palette.muted)),
     ])
 }
 
@@ -973,6 +1098,58 @@ fn previous_grapheme_boundary(value: &str, cursor: usize) -> Option<usize> {
         .grapheme_indices(true)
         .next_back()
         .map(|(index, _)| index)
+}
+
+fn prompt_token(value: &str, fallback: &str) -> String {
+    let token = value
+        .trim()
+        .chars()
+        .filter(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
+        .take(32)
+        .collect::<String>();
+    if token.is_empty() {
+        fallback.to_string()
+    } else {
+        token
+    }
+}
+
+fn sanitize_draft_input(value: &str) -> String {
+    value
+        .chars()
+        .flat_map(|character| match character {
+            '\n' => vec!['\n'],
+            '\t' => vec![' ', ' ', ' ', ' '],
+            character if character.is_control() => Vec::new(),
+            character => vec![character],
+        })
+        .collect()
+}
+
+fn sanitize_status(value: &str) -> String {
+    sanitize_label(value, "WORKING", 80)
+}
+
+fn sanitize_label(value: &str, fallback: &str, max_chars: usize) -> String {
+    let status = value
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(max_chars)
+        .collect::<String>();
+    if status.trim().is_empty() {
+        fallback.to_string()
+    } else {
+        status
+    }
+}
+
+fn sanitize_multiline(value: &str, max_chars: usize) -> String {
+    sanitize_draft_input(value)
+        .chars()
+        .take(max_chars)
+        .collect()
 }
 
 fn next_grapheme_boundary(value: &str, cursor: usize) -> Option<usize> {
@@ -1016,7 +1193,10 @@ fn text_metrics(value: &str, cursor: usize, width: u16) -> (u16, u16, u16) {
 
 fn demo_reply(request: &str) -> String {
     let normalized = request.to_ascii_lowercase();
-    if normalized.contains("download") && normalized.contains("open") {
+    if normalized.contains("markdown") || normalized.contains("media") {
+        "# A terminal document\n\nThis is **structured**, restrained, and still feels native to the shell.\n\n- Markdown becomes typography\n- Links remain inspectable\n- Media remains an addressable artifact\n\n```sh\nship@macbook $ du -sh ~/Downloads/*\n```\n\n> GSV owns the grammar. Your terminal owns the atmosphere."
+            .to_string()
+    } else if normalized.contains("download") && normalized.contains("open") {
         "I’d open ~/Downloads on this computer.\n\nThis preview is intentionally disconnected, so no local action was taken. The connected TUI sends the same request through GSV’s capability boundary."
             .to_string()
     } else if normalized.starts_with("ls") || normalized.contains("list the files") {
@@ -1036,7 +1216,8 @@ mod tests {
     use ratatui::Terminal;
 
     use super::{
-        text_metrics, Action, App, Approval, ConnectionState, Effect, Moment, MomentState, Role,
+        sanitize_status, text_metrics, Action, App, Approval, Artifact, ConnectionState, Effect,
+        MediaKind, Moment, MomentState, Role,
     };
 
     #[test]
@@ -1183,6 +1364,7 @@ mod tests {
             Role::Human,
             "repeat",
             Some("run:first".to_string()),
+            Vec::new(),
         );
 
         assert!(app
@@ -1201,5 +1383,82 @@ mod tests {
     fn cursor_metrics_treat_a_combining_sequence_as_one_cell() {
         let value = "e\u{301}x";
         assert_eq!(text_metrics(value, "e\u{301}".len(), 20), (0, 1, 1));
+    }
+
+    #[test]
+    fn external_labels_cannot_inject_terminal_controls() -> Result<(), Box<dyn std::error::Error>> {
+        let mut app = App::new(ConnectionState::Working);
+        app.set_principal("jo\u{1b}[31mhn");
+        app.set_activity(Some("ship@mac\u{1b}[2Jbook · shell.exec".to_string()));
+        app.replace_history(vec![Moment::complete("one", Role::Human, "hello")]);
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|frame| app.render(frame))?;
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("jo31mhn@ship $"));
+        assert!(!rendered.contains('\u{1b}'));
+        assert_eq!(
+            sanitize_status("ship@mac\u{1b}[2Jbook · shell.exec"),
+            "ship@mac[2Jbook · shell.exec"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_media_is_visible_as_an_addressable_artifact(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut app = App::new(ConnectionState::Ready);
+        app.replace_history(vec![Moment::complete(
+            "one",
+            Role::Intelligence,
+            "Here it is.",
+        )
+        .with_artifacts(vec![Artifact {
+            kind: MediaKind::Image,
+            mime_type: "image/png".to_string(),
+            filename: Some("chart.png".to_string()),
+            size: Some(2048),
+            duration_ms: None,
+            transcription: Some("a chart".to_string()),
+            source: Some("gsv:/home/ship/chart.png".to_string()),
+            revision: Some("sha256:one".to_string()),
+        }])]);
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|frame| app.render(frame))?;
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("IMAGE  chart.png"));
+        assert!(rendered.contains("image/png  ·  2.0 KB"));
+        assert!(rendered.contains("gsv:/home/ship/chart.png"));
+        assert!(rendered.contains("@  sha256:one"));
+        Ok(())
+    }
+
+    #[test]
+    fn approval_display_is_sanitized_without_changing_its_correlation_id() {
+        let mut app = App::new(ConnectionState::Ready);
+        app.enter_approval(Approval {
+            request_id: "request\u{1b}:exact".to_string(),
+            syscall: "shell\u{1b}[31m.exec".to_string(),
+            target: "mac\nbook".to_string(),
+            preview: "one\u{1b}[2J\ntwo".to_string(),
+        });
+        let approval = app.approval().expect("approval");
+        assert_eq!(approval.request_id, "request\u{1b}:exact");
+        assert_eq!(approval.syscall, "shell[31m.exec");
+        assert_eq!(approval.target, "macbook");
+        assert_eq!(approval.preview, "one[2J\ntwo");
     }
 }

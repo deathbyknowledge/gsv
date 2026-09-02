@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use gsv_tui_core::{Action, App, ApprovalDecision, Effect};
+use gsv_tui_core::{Action, App, ApprovalDecision, Effect, Theme};
 use ratzilla::backend::webgl2::WebGl2BackendOptions;
 use ratzilla::ratatui::Terminal;
 use ratzilla::{FontAtlasConfig, SelectionMode, WebGl2Backend, WebRenderer};
@@ -17,7 +17,9 @@ fn main() {
 }
 
 fn run() -> Result<(), JsValue> {
-    let app = Rc::new(RefCell::new(App::demo()));
+    let mut state = App::demo();
+    state.set_theme(Theme::Gsv);
+    let app = Rc::new(RefCell::new(state));
     let options = WebGl2BackendOptions::new()
         .grid_id("terminal")
         .font_atlas_config(FontAtlasConfig::dynamic(
@@ -174,6 +176,7 @@ fn keyboard_action(app: &App, event: &KeyboardEvent) -> Option<Action> {
         "b" if command => Some(Action::MoveCursorLeft),
         "f" if command => Some(Action::MoveCursorRight),
         "backspace" if command => Some(Action::DeleteWord),
+        "m" if event.alt_key() => Some(Action::ToggleMarkdown),
         "?" if !app.draft_visible() && !command => Some(Action::ToggleHelp),
         "enter" if event.shift_key() || command => Some(Action::Newline),
         "enter" => Some(Action::Submit),
