@@ -69,12 +69,13 @@ Typing is the default interaction; `--vim` or `Alt+V` enables an optional browse
 mode without changing the beginner key map.
 
 Typing `@` into an empty draft opens the capability-environment picker. The
-selected exact target and optional working directory are carried on that
-conversation interaction and its canonical origin. The Kernel validates that
-the target is visible before committing the message, and independently enforces
-the Process's syscall grant when work executes; a presentation choice never
-grants authority. Process context names the selected environment so Ship can
-interpret an English request relative to the prompt the user saw.
+selection currently owns the prompt identity, and the shared core includes it
+in local submission effects so an execution mode can use the established
+targeted syscall contracts. Ordinary Ship input remains an unchanged
+`conversation.send` request so this client stays compatible with an existing
+gateway deployment. The Kernel independently enforces target visibility and
+the caller's grant for any direct target operation; a presentation choice never
+grants authority.
 
 The native renderer inherits the terminal foreground, background, and ANSI
 palette instead of imposing a second terminal theme. The shared renderer owns

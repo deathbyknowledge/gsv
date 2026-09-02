@@ -250,12 +250,7 @@ fn apply_effects(
 ) -> bool {
     for effect in effects {
         match effect {
-            Effect::Submit {
-                id,
-                text,
-                target,
-                cwd,
-            } => {
+            Effect::Submit { id, text, .. } => {
                 let Some(session) = session else {
                     app.complete_demo_submission(id, &text);
                     continue;
@@ -265,12 +260,10 @@ fn apply_effects(
                 let sender = runtime_sender.clone();
                 let handle = tokio::spawn(async move {
                     let result = client
-                        .conversation_send_in_environment(
+                        .conversation_send(
                             &conversation_id,
                             &text,
                             &uuid::Uuid::new_v4().to_string(),
-                            &target,
-                            cwd.as_deref(),
                         )
                         .await;
                     let event = match result {
