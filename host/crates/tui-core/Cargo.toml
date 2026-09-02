@@ -1,0 +1,22 @@
+[package]
+name = "gsv-tui-core"
+version.workspace = true
+edition = "2021"
+publish = false
+
+[dependencies]
+ratatui = { version = "0.30.2", default-features = false, features = [
+    "all-widgets",
+    "layout-cache",
+] }
+unicode-segmentation = "1"
+unicode-width = "0.2"
+
+[dev-dependencies]
+critical-section = { version = "1.2", features = ["std"] }
+
+[lints.clippy]
+unwrap_used = "warn"
+panic = "warn"
+todo = "warn"
+dbg_macro = "warn"

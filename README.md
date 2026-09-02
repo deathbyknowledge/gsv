@@ -65,11 +65,14 @@ for platform details and service rollback behavior.
 
 ### 2. Start using it
 
-Chat from the web UI right away, or from the CLI:
+Open the full-screen interface from any terminal:
 
 ```bash
-gsv chat "Hello, what can you help me with?"
+gsv
 ```
+
+For a no-account preview, run `gsv tui --demo`. The line-oriented
+`gsv chat "..."` command remains available for scripts.
 
 To connect a messenger (Discord / Telegram / WhatsApp), add more devices, and see what to do next, follow the full guide at [docs.gsv.space/get-started](https://docs.gsv.space/get-started).
 

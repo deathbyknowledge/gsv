@@ -44,14 +44,14 @@ fn signal_run_id(payload: &Value) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-fn implicit_personal_owner_uid(owner_uid: u64) -> Result<u64, &'static str> {
+pub(super) fn implicit_personal_owner_uid(owner_uid: u64) -> Result<u64, &'static str> {
     if owner_uid == 0 {
         return Err("root has no implicit personal intelligence; pass --pid");
     }
     Ok(owner_uid)
 }
 
-fn personal_process_id(payload: &Value, owner_uid: u64) -> Option<String> {
+pub(super) fn personal_process_id(payload: &Value, owner_uid: u64) -> Option<String> {
     payload
         .get("processes")?
         .as_array()?

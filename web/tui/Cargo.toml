@@ -1,0 +1,32 @@
+[package]
+name = "gsv-tui-web"
+version.workspace = true
+edition = "2021"
+publish = false
+workspace = "../../host"
+
+[dependencies]
+console_error_panic_hook = "0.1.7"
+critical-section = { version = "1.2", features = ["std"] }
+gsv-tui-core = { path = "../../host/crates/tui-core" }
+ratzilla = "=0.3.1"
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3.81", features = [
+    "Document",
+    "Element",
+    "Event",
+    "EventTarget",
+    "HtmlElement",
+    "HtmlTextAreaElement",
+    "InputEvent",
+    "KeyboardEvent",
+    "MouseEvent",
+    "WheelEvent",
+    "Window",
+] }
+
+[lints.clippy]
+unwrap_used = "warn"
+panic = "warn"
+todo = "warn"
+dbg_macro = "warn"

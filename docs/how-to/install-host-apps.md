@@ -42,6 +42,10 @@ Every artifact is checked against the release's `checksums.txt` before an
 installed binary is changed. The installer preserves the existing config and
 keeps user, Desktop, and driver credentials separate.
 
+After installation, run `gsv` to open the full-screen interface. Use
+`gsv tui --demo` to try the interaction model without connecting an account;
+`gsv chat` remains the line-oriented interface for scripts.
+
 ## Existing device daemon
 
 When the `gsvd` user service already exists, the installer:

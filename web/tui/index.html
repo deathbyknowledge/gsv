@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#08090b" />
+    <title>GSV / Ship</title>
+    <link
+      data-trunk
+      rel="copy-dir"
+      href="../public/fonts"
+      data-target-path="fonts"
+    />
+    <link
+      data-trunk
+      rel="rust"
+      data-bin="gsv-tui-web"
+      data-wasm-opt="0"
+    />
+    <style>
+      @font-face {
+        font-family: "Departure Mono";
+        src: url("/fonts/DepartureMono-Regular.woff2") format("woff2");
+        font-style: normal;
+        font-weight: 400 700;
+        font-display: swap;
+      }
+
+      :root {
+        color-scheme: dark;
+        font-family: "Departure Mono", ui-monospace, monospace;
+        background: #08090b;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body,
+      #terminal {
+        width: 100%;
+        height: 100%;
+        min-height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #08090b;
+      }
+
+      body {
+        min-height: 100dvh;
+        overscroll-behavior: none;
+      }
+
+      #terminal {
+        padding:
+          max(12px, env(safe-area-inset-top))
+          max(12px, env(safe-area-inset-right))
+          max(12px, env(safe-area-inset-bottom))
+          max(12px, env(safe-area-inset-left));
+      }
+
+      #terminal canvas {
+        display: block;
+        width: 100% !important;
+        height: 100% !important;
+        outline: none;
+      }
+
+      #gsv-input {
+        position: fixed;
+        left: 50%;
+        bottom: max(2px, env(safe-area-inset-bottom));
+        width: 2px;
+        height: 2px;
+        padding: 0;
+        border: 0;
+        opacity: 0.01;
+        resize: none;
+        color: transparent;
+        background: transparent;
+        caret-color: transparent;
+      }
+    </style>
+  </head>
+  <body>
+    <main id="terminal" aria-label="GSV Ship interface"></main>
+    <textarea
+      id="gsv-input"
+      aria-label="Type a request for GSV"
+      autocomplete="off"
+      autocapitalize="sentences"
+      spellcheck="true"
+    ></textarea>
+  </body>
+</html>

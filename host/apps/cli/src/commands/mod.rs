@@ -3,12 +3,14 @@ mod auth;
 mod chat;
 mod config;
 mod proc;
+mod tui;
 
 pub(crate) use adapter::run_adapter;
 pub(crate) use auth::run_auth;
 pub(crate) use chat::run_client;
 pub(crate) use config::run_config;
 pub(crate) use proc::run_proc;
+pub(crate) use tui::run_tui;
 
 use chrono::{TimeZone, Utc};
 

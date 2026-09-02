@@ -87,12 +87,12 @@ Canonical user-facing conversations are not Process histories. Conversations ret
 - `workers/gateway/src/syscalls/` and `workers/gateway/src/protocol/`: public runtime contracts and frame transport.
 - `workers/gateway/src/inference/`: provider integration and model transport.
 - `packages/gsv/`: public client and protocol types.
-- `web/`: desktop shell, setup/login, system UI, and browser-side gateway integration.
+- `web/`: desktop shell, setup/login, system UI, browser-side gateway integration, and the browser TUI backend.
 - `host/apps/desktop/`: GPUI desktop client, text-first interaction model, and native presentation.
-- `host/apps/cli/`: user, deployment, administration, and OS service-control commands.
+- `host/apps/cli/`: the native TUI plus user, deployment, administration, and OS service-control commands.
 - `host/apps/machine/`: the `gsvd` machine driver, concrete tools, transfer ownership, reconnect, logging, and shutdown.
 - `host/helpers/`: separately supervised local transcription and gesture processes.
-- `host/crates/`: shared gateway transport, host configuration, Desktop IPC, and gesture protocol contracts. `host/` owns their Cargo workspace and build artifacts.
+- `host/crates/`: shared gateway transport, host configuration, cross-platform TUI state and rendering, Desktop IPC, and gesture protocol contracts. `host/` owns their Cargo workspace and build artifacts.
 - `workers/adapters/`: platform-specific messaging workers and identity normalization.
 - `extension/`: browser-backed target and browser integration.
 - `workers/ripgit/`: git-backed repositories and filesystem storage operations.
@@ -175,9 +175,9 @@ gsv/
 │   ├── adapters/  # External-platform Worker implementations and test channel
 │   └── ripgit/    # Git-backed repository Worker
 ├── packages/gsv/  # Public TypeScript client and protocol
-├── web/           # Desktop shell and embedded app host
+├── web/           # Desktop shell, embedded app host, and browser TUI backend
 ├── host/
-│   ├── apps/      # Rust CLI, Desktop, and machine applications
+│   ├── apps/      # Rust CLI/TUI, Desktop, and machine applications
 │   ├── helpers/   # Isolated transcription and gesture processes
 │   └── crates/    # Shared host transport, configuration, and IPC contracts
 ├── extension/     # Browser target
@@ -209,7 +209,8 @@ Validate only the surfaces affected by the change:
 - Desktop and transcription helper: `cd host && cargo fmt --package desktop --package transcriber --check && cargo test --package desktop --package transcriber && cargo clippy --package desktop --package transcriber --all-targets -- -D warnings`
 - Gesture helper and protocol: `cd host && cargo fmt --package gestures --package gesture-protocol --check && cargo test --package gestures --package gesture-protocol && cargo clippy --package gestures --package gesture-protocol --all-targets -- -D warnings`
 - Public SDK: `npm run gsv:check && npm test --workspace packages/gsv`
-- CLI: `cd host && cargo fmt --package gsv --check && cargo test --package gsv`
+- CLI and shared TUI: `cd host && cargo fmt --package gsv --package gsv-tui-core --check && cargo test --package gsv --package gsv-tui-core`
+- Browser TUI: `cd host && cargo check --package gsv-tui-web --target wasm32-unknown-unknown`, then `npm run tui:build --workspace web` from the repository root
 - Machine: `cd host && cargo fmt --package machine --check && cargo test --package machine`
 - ripgit: `cd workers/ripgit && npm test`
 - Browser extension: `cd extension && npm run check && npm run test:run && npm run build`

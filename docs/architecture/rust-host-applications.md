@@ -9,7 +9,7 @@ contracts, but they do not embed one another's runtime or state ownership.
                        |          |
                 +------+----+    gsvd
                 |           |
-              gsv CLI   GSV Desktop
+            gsv CLI/TUI  GSV Desktop
                             ^
                             |
                      same-user IPC
@@ -26,9 +26,14 @@ contracts, but they do not embed one another's runtime or state ownership.
   protocol.
 - `host/crates/gesture-protocol/` owns the private, versioned contract between
   Desktop and its gesture helper.
+- `host/crates/tui-core/` owns the transport-independent interaction state,
+  keyboard actions, effects, and Ratatui cell-buffer rendering shared by the
+  native CLI and browser TUI backends.
 
-These crates contain contracts and transport primitives. They do not own a
-machine lifecycle, a CLI interaction, or Desktop UI state.
+The protocol crates contain contracts and transport primitives. `tui-core`
+owns presentation state but no authentication, gateway connection, Process,
+conversation, or machine lifecycle. Its effects are interpreted by the client
+backend that owns those operations.
 
 The host applications, helpers, and shared crates form one Cargo workspace
 rooted at `host/`. Its lockfile and build output belong to that boundary;
@@ -51,6 +56,15 @@ credential and runs as an unprivileged OS user.
 chat and process commands, deployment, OS service installation/control for
 `gsvd`, and the client sides of local Desktop and daemon control.
 
+Bare `gsv` opens the full-screen TUI against the authenticated personal
+Process; `gsv tui` is the explicit equivalent and `gsv tui --demo` exercises
+the interface without an account. The native backend owns terminal setup and
+restoration, maps Crossterm events into shared actions, and interprets shared
+effects through the existing gateway client. Conversation history and signals,
+Process run state, human-in-the-loop approvals, and abort remain gateway-owned.
+The line-oriented `gsv chat` command remains available for scripts and basic
+terminal sessions.
+
 `gsv daemon install|start|restart|stop|uninstall` controls the per-user OS
 service. `gsv daemon status|reload|reconnect|diagnostics` talks to the running
 daemon over `daemon-protocol`; status also reports the OS service state. The
@@ -69,6 +83,16 @@ transcription helper and atomically persisted host configuration.
 The compatibility command `gsv device run` resolves the sibling `gsvd` binary
 and replaces itself with `gsvd --foreground`. It does not link or execute the
 machine runtime in the CLI process.
+
+## Browser TUI preview
+
+`web/tui/` compiles the same `tui-core` crate to WebAssembly and renders its
+cell buffer through Ratzilla's WebGL2 backend. A hidden native textarea owns
+Unicode input, IME composition, and paste; browser key and wheel events map to
+the same shared actions as the native backend. The preview currently uses
+local example responses. Production browser authentication and transport stay
+with the existing web gateway service and will interpret the same shared
+effects rather than moving protocol ownership into the renderer.
 
 ## GSV Desktop
 

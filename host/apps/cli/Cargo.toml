@@ -7,6 +7,7 @@ edition = "2021"
 daemon-protocol = { path = "../../crates/daemon-protocol" }
 desktop-protocol = { path = "../../crates/desktop-protocol" }
 gateway-client = { path = "../../crates/gateway-client", default-features = false }
+gsv-tui-core = { path = "../../crates/tui-core" }
 host-config = { path = "../../crates/config" }
 tokio = { version = "1", features = [
     "rt-multi-thread",
@@ -29,6 +30,12 @@ toml = "0.8"
 qrcode = "0.14"
 cliclack = "0.3.8"
 whoami = "1"
+crossterm = { version = "0.29", features = ["event-stream"] }
+critical-section = { version = "1.2", features = ["std"] }
+futures-util = "0.3"
+ratatui = { version = "0.30.2", default-features = false, features = [
+    "crossterm_0_29",
+] }
 
 # TLS backends - use native-tls by default (respects system certs)
 # CI builds for Linux use rustls feature to avoid OpenSSL dependency

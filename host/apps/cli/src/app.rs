@@ -1,5 +1,6 @@
 use clap::Parser;
 use gsv::config::CliConfig;
+use gsv::kernel_client::GatewayAuth;
 
 use crate::auth_flow::{
     resolve_device_gateway_auth, run_auth_login, run_auth_logout, run_auth_setup,
@@ -35,7 +36,26 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let url = cli_url_override
         .clone()
         .unwrap_or_else(|| cfg.gateway_url());
-    match cli.command {
+    let command = cli.command.unwrap_or(Commands::Tui {
+        demo: false,
+        pid: None,
+    });
+    match command {
+        Commands::Tui { demo: true, pid } => {
+            commands::run_tui(&url, GatewayAuth::default(), pid, true).await
+        }
+        Commands::Tui { demo: false, pid } => {
+            run_with_auto_setup_and_login_retry(
+                &url,
+                &cfg,
+                cli_token_override.clone(),
+                cli_user_override.clone(),
+                cli_password_override.clone(),
+                "tui",
+                |auth| async { commands::run_tui(&url, auth, pid.clone(), false).await },
+            )
+            .await
+        }
         Commands::Chat { message, pid } => {
             run_with_auto_setup_and_login_retry(
                 &url,

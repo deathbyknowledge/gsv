@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "tui:dev": "node scripts/trunk.mjs serve --port 8080 --open",
+    "tui:build": "node scripts/trunk.mjs build --release",
     "build": "vite build",
     "preview": "vite preview",
     "check": "tsc --noEmit",

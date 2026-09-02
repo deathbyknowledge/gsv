@@ -25,11 +25,22 @@ pub(crate) struct Cli {
     pub(crate) token: Option<String>,
 
     #[command(subcommand)]
-    pub(crate) command: Commands,
+    pub(crate) command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
 pub(crate) enum Commands {
+    /// Open the full-screen GSV interface
+    Tui {
+        /// Run the interface with local example responses and no account
+        #[arg(long)]
+        demo: bool,
+
+        /// Process ID to open (defaults to the personal intelligence)
+        #[arg(long)]
+        pid: Option<String>,
+    },
+
     /// Send a message to the agent (interactive or one-shot)
     Chat {
         /// Message to send (if omitted, enters interactive mode)
@@ -599,7 +610,25 @@ mod tests {
     #[test]
     fn desktop_without_a_subcommand_means_activate() {
         let cli = Cli::try_parse_from(["gsv", "desktop"]).expect("desktop command parses");
-        assert!(matches!(cli.command, Commands::Desktop { action: None }));
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Desktop { action: None })
+        ));
+    }
+
+    #[test]
+    fn bare_gsv_selects_the_tui_and_demo_is_explicit() {
+        let bare = Cli::try_parse_from(["gsv"]).expect("bare gsv parses");
+        assert!(bare.command.is_none());
+
+        let demo = Cli::try_parse_from(["gsv", "tui", "--demo"]).expect("demo tui parses");
+        assert!(matches!(
+            demo.command,
+            Some(Commands::Tui {
+                demo: true,
+                pid: None
+            })
+        ));
     }
 
     #[test]
@@ -608,37 +637,37 @@ mod tests {
             Cli::try_parse_from(["gsv", "desktop", "status", "--json"]).expect("status parses");
         assert!(matches!(
             status.command,
-            Commands::Desktop {
+            Some(Commands::Desktop {
                 action: Some(DesktopAction::Status { json: true })
-            }
+            })
         ));
 
         let new = Cli::try_parse_from(["gsv", "desktop", "new"]).expect("new parses");
         assert!(matches!(
             new.command,
-            Commands::Desktop {
+            Some(Commands::Desktop {
                 action: Some(DesktopAction::New)
-            }
+            })
         ));
 
         let use_process =
             Cli::try_parse_from(["gsv", "desktop", "use", "proc:1"]).expect("use parses");
         assert!(matches!(
             use_process.command,
-            Commands::Desktop {
+            Some(Commands::Desktop {
                 action: Some(DesktopAction::Use { pid })
-            } if pid == "proc:1"
+            }) if pid == "proc:1"
         ));
 
         let microphone_list = Cli::try_parse_from(["gsv", "desktop", "microphone", "list"])
             .expect("microphone list parses");
         assert!(matches!(
             microphone_list.command,
-            Commands::Desktop {
+            Some(Commands::Desktop {
                 action: Some(DesktopAction::Microphone {
                     action: MicrophoneAction::List
                 })
-            }
+            })
         ));
 
         let microphone_use =
@@ -646,22 +675,22 @@ mod tests {
                 .expect("microphone use parses");
         assert!(matches!(
             microphone_use.command,
-            Commands::Desktop {
+            Some(Commands::Desktop {
                 action: Some(DesktopAction::Microphone {
                     action: MicrophoneAction::Use { name }
                 })
-            } if name == "Shure MV6"
+            }) if name == "Shure MV6"
         ));
 
         let microphone_default = Cli::try_parse_from(["gsv", "desktop", "microphone", "default"])
             .expect("microphone default parses");
         assert!(matches!(
             microphone_default.command,
-            Commands::Desktop {
+            Some(Commands::Desktop {
                 action: Some(DesktopAction::Microphone {
                     action: MicrophoneAction::Default
                 })
-            }
+            })
         ));
 
         assert!(Cli::try_parse_from(["gsv", "desktop", "send", "secret"]).is_err());
@@ -678,18 +707,18 @@ mod tests {
             Cli::try_parse_from(["gsv", "daemon", "status"]).expect("daemon status parses");
         assert!(matches!(
             status.command,
-            Commands::Daemon {
+            Some(Commands::Daemon {
                 action: DaemonAction::Status
-            }
+            })
         ));
 
         let reload =
             Cli::try_parse_from(["gsv", "daemon", "reload"]).expect("daemon reload parses");
         assert!(matches!(
             reload.command,
-            Commands::Daemon {
+            Some(Commands::Daemon {
                 action: DaemonAction::Reload
-            }
+            })
         ));
         Cli::try_parse_from(["gsv", "daemon", "run"])
             .err()
