@@ -71,7 +71,7 @@ message history --with CONTACT_OR_CONVERSATION [--before SEQUENCE] [--limit N] [
 message delivery show DELIVERY_ID [--json]
 message send [--message TEXT]
 yield
-message send --to DESTINATION [--message TEXT] [--attach PATH [--mime TYPE]] [--delivery-id ID] [--also]
+message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--also]
 contact identity
 contact list [--all] [--json]
 contact alias CONTACT_ID NAME|--clear
@@ -150,14 +150,16 @@ Ship responsibility for each message; enabling it affects future completions.
 Other configurable sources cover federation ingress, new contacts, new machines,
 connected adapters, and adapter authentication loss.
 
-`message current` reports the current run's directed endpoint. For an adapter
-run, both text and JSON output include an opaque
-destination id suitable for a later `message send --to`; raw provider ids stay
-hidden. `message attach` adds one or more GSV filesystem files to the run's
-next current-conversation message; it does not create an extra message. Existing files
-in the current process's `/var/media` directory
-are reused, while other readable files are staged there. A direct Shell call using a literal block
-sends a message and leaves the run active:
+`message current` reports the current run's directed endpoint and exact reply
+commands. For an adapter run, text and JSON also include an opaque destination
+id suitable for a later or additional `message send --to`; raw provider ids
+stay hidden. `message attach` adds one or more GSV filesystem files to the run's
+next current-conversation message; it does not create an extra message. The
+Process retains each exact source revision in its immutable media archive before
+committing the message. `--mime` can classify a single attachment for
+presentation while its reference retains the source's authoritative stored
+content type. A direct Shell call using a literal block sends a message and
+leaves the run active:
 
 ```bash
 message send <<'GSV_MESSAGE'
@@ -215,9 +217,10 @@ The current-conversation form is transport-neutral: issue `message attach`
 and `message send` as separate direct Shell tool calls without `--to` or
 `--also`. It works whether the run came from a WebSocket client, Desktop, or an
 adapter. An explicit destination send during an active run requires `--also`,
-acknowledging that it is an additional delivery. Its `--attach` option streams
-one GSV filesystem file and `--mime` overrides the inferred MIME type. Copy a
-file from a connected target to GSV before attaching it:
+acknowledging that it is an additional delivery. Repeat its `--attach` option
+to stream multiple GSV filesystem files in one delivery. `--mime` supplies the
+delivery type only when exactly one attachment is present. Copy a file from a
+connected target to GSV before attaching it:
 
 ```bash
 cp laptop:/home/alice/report.pdf /tmp/report.pdf

@@ -416,6 +416,7 @@ function enableTelegramMessaging(ctx: KernelContext) {
     extra: null,
     updatedAt: 3,
   };
+  const deliveredBodies: Uint8Array[] = [];
   const adapterFrame: NonNullable<AdapterService["adapterFrame"]> = vi.fn(async (
     _installation,
     context,
@@ -425,6 +426,7 @@ function enableTelegramMessaging(ctx: KernelContext) {
       throw new Error("Expected an adapter.send request frame");
     }
     const bytes = frame.body ? await bodyToBytes(frame.body) : undefined;
+    if (bytes) deliveredBodies.push(bytes);
     return {
       type: "res",
       id: frame.id,
@@ -489,7 +491,7 @@ function enableTelegramMessaging(ctx: KernelContext) {
         }
       : null),
   });
-  return { adapterFrame, link, status };
+  return { adapterFrame, deliveredBodies, link, status };
 }
 
 async function currentAdapterDestinationId(ctx: KernelContext): Promise<string> {
@@ -4511,6 +4513,62 @@ describe("native administration shell commands", () => {
     );
   });
 
+  it("streams every repeated explicit attachment in order", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.send", "fs.write"],
+      processRunId: "run-telegram-files",
+    });
+    const { adapterFrame, deliveredBodies } = enableTelegramMessaging(ctx);
+    await handleFsWrite({ path: "/tmp/image.png", content: "PNG" }, ctx);
+    await handleFsWrite({ path: "/tmp/voice.mp3", content: "AUDIO" }, ctx);
+    const destinationId = await currentAdapterDestinationId(ctx);
+
+    const result = await handleShellExec({
+      input: `message send --to ${destinationId} --attach /tmp/image.png --attach /tmp/voice.mp3 --also`,
+    }, ctx);
+
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(adapterFrame).toHaveBeenCalledWith(
+      TEST_INSTALLATION_CONTEXT,
+      expect.anything(),
+      expect.objectContaining({
+        args: expect.objectContaining({
+          media: [
+            expect.objectContaining({
+              mimeType: "image/png",
+              filename: "image.png",
+              body: { offset: 0, length: 3 },
+            }),
+            expect.objectContaining({
+              mimeType: "audio/mpeg",
+              filename: "voice.mp3",
+              body: { offset: 3, length: 5 },
+            }),
+          ],
+        }),
+        body: expect.objectContaining({ length: 8 }),
+      }),
+    );
+    expect(deliveredBodies).toHaveLength(1);
+    expect(new TextDecoder().decode(deliveredBodies[0])).toBe("PNGAUDIO");
+  });
+
+  it("rejects one MIME override for multiple attachments", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.send"],
+      processRunId: "run-telegram-files-mime",
+    });
+    enableTelegramMessaging(ctx);
+    const destinationId = await currentAdapterDestinationId(ctx);
+
+    const result = await handleShellExec({
+      input: `message send --to ${destinationId} --attach /tmp/one --attach /tmp/two --mime image/png --also`,
+    }, ctx);
+
+    expect(result).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(result.stderr).toContain("omit --mime or send files separately");
+  });
+
   it("retries an explicit message with the same delivery id", async () => {
     const ctx = makeContext({
       capabilities: ["shell.exec", "adapter.send"],
@@ -4674,6 +4732,55 @@ describe("native administration shell commands", () => {
               contentType: "image/png",
               size: 3,
               revision: expect.any(String),
+            }),
+          })],
+        }),
+      }),
+    );
+  });
+
+  it("keeps immutable source metadata when a media hint differs", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "fs.read", "fs.write"],
+      processRunId: "run-native-mime",
+    });
+    const received = await handleFsTransferReceive({
+      path: "/tmp/voice.ogg",
+      contentType: "application/octet-stream",
+    }, ctx, bodyFromText("audio"));
+    expect(received).toMatchObject({
+      ok: true,
+      contentType: "application/octet-stream",
+    });
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
+      if (frame.type !== "req") return null;
+      if (frame.call === "proc.run.attach") {
+        return responseFixture({
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: { ok: true, runId: frame.args.runId, media: frame.args.media },
+        });
+      }
+      return null;
+    });
+
+    const result = await handleShellExec({
+      input: "message attach /tmp/voice.ogg --mime audio/ogg",
+    }, ctx);
+
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(sendFrameToProcessMock).toHaveBeenLastCalledWith(
+      TEST_INSTALLATION_ID,
+      "task:shell",
+      expect.objectContaining({
+        call: "proc.run.attach",
+        args: expect.objectContaining({
+          media: [expect.objectContaining({
+            mediaType: "audio",
+            ref: expect.objectContaining({
+              path: "/tmp/voice.ogg",
+              contentType: "application/octet-stream",
             }),
           })],
         }),
