@@ -26,7 +26,7 @@ pub enum Role {
 impl Role {
     fn color(self, palette: Palette) -> Color {
         match self {
-            Self::Human => palette.human,
+            Self::Human => palette.foreground,
             Self::Intelligence => palette.foreground,
             Self::System => palette.warning,
         }
@@ -1768,10 +1768,9 @@ impl App {
         let show_prompt = self.draft_visible || self.follow_latest;
         let mut prompt = show_prompt.then(|| {
             let mut prompt = prompted_text_lines(
-                &self.input_prompt(self.active_environment(), self.execution_mode),
+                self.input_prompt(self.active_environment(), self.execution_mode),
                 &self.draft,
                 area.width,
-                Style::new().fg(palette.human).add_modifier(Modifier::BOLD),
                 Style::new().fg(palette.foreground),
                 Some(self.draft_cursor),
             );
@@ -1841,10 +1840,9 @@ impl App {
                             .as_ref()
                             .unwrap_or_else(|| self.default_environment());
                         prompted_text_lines(
-                            &self.input_prompt(environment, moment.execution),
+                            self.input_prompt(environment, moment.execution),
                             body,
                             area.width,
-                            Style::new().fg(palette.human).add_modifier(Modifier::BOLD),
                             Style::new().fg(body_color),
                             None,
                         )
@@ -2046,10 +2044,9 @@ impl App {
         let palette = self.theme.palette();
         let query = format!("@{}", self.environment_query);
         let mut prompt = prompted_text_lines(
-            &self.input_prompt(self.active_environment(), self.execution_mode),
+            self.input_prompt(self.active_environment(), self.execution_mode),
             &query,
             area.width,
-            Style::new().fg(palette.human).add_modifier(Modifier::BOLD),
             Style::new().fg(palette.foreground),
             Some(query.len()),
         );
@@ -2139,8 +2136,7 @@ impl App {
             if focused == Some(usize::from(index)) {
                 frame.render_widget(
                     Block::new()
-                        .borders(Borders::ALL)
-                        .border_type(BorderType::Rounded)
+                        .borders(Borders::LEFT)
                         .border_style(Style::new().fg(palette.accent)),
                     slot_area,
                 );
@@ -2219,31 +2215,57 @@ impl App {
         &self.environments[0]
     }
 
-    fn shell_prompt(&self, environment: &CapabilityEnvironment) -> String {
+    fn shell_prompt(&self, environment: &CapabilityEnvironment) -> Vec<Span<'static>> {
+        let palette = self.theme.palette();
         let target = prompt_token(&environment.target, "gsv");
-        match environment
+        let mut prompt = vec![
+            Span::styled(self.principal.clone(), Style::new().fg(palette.muted)),
+            Span::styled("@", Style::new().fg(palette.accent)),
+            Span::styled(
+                target,
+                Style::new().fg(palette.accent).add_modifier(Modifier::BOLD),
+            ),
+        ];
+        if let Some(cwd) = environment
             .cwd
             .as_deref()
             .filter(|cwd| !cwd.trim().is_empty())
         {
-            Some(cwd) => format!(
-                "{}@{} {} $ ",
-                self.principal,
-                target,
-                sanitize_label(cwd, "~", 80)
-            ),
-            None => format!("{}@{} $ ", self.principal, target),
+            prompt.extend([
+                Span::raw(" "),
+                Span::styled(sanitize_label(cwd, "~", 80), Style::new().fg(palette.muted)),
+            ]);
         }
+        prompt.extend([
+            Span::raw(" "),
+            Span::styled(
+                "$",
+                Style::new()
+                    .fg(palette.foreground)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+        ]);
+        prompt
     }
 
     fn input_prompt(
         &self,
         environment: &CapabilityEnvironment,
         execution: ExecutionMode,
-    ) -> String {
+    ) -> Vec<Span<'static>> {
         let mut prompt = self.shell_prompt(environment);
         if execution == ExecutionMode::Shell {
-            prompt.push_str("! ");
+            let palette = self.theme.palette();
+            prompt.extend([
+                Span::styled(
+                    "!",
+                    Style::new()
+                        .fg(palette.foreground)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+            ]);
         }
         prompt
     }
@@ -2396,22 +2418,24 @@ struct PromptedText {
 }
 
 fn prompted_text_lines(
-    prompt: &str,
+    prompt: Vec<Span<'static>>,
     value: &str,
     width: u16,
-    prompt_style: Style,
     text_style: Style,
     cursor: Option<usize>,
 ) -> PromptedText {
     let width = width.max(1);
     let prompt = fit_prompt(prompt, width);
-    let prompt_width = u16::try_from(UnicodeWidthStr::width(prompt.as_str()))
+    let prompt_width = prompt
+        .iter()
+        .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+        .sum::<usize>();
+    let prompt_width = u16::try_from(prompt_width)
         .unwrap_or(width)
         .min(width.saturating_sub(1));
     // Only the first physical line owns the shell prompt. Subsequent explicit or soft-wrapped
     // lines continue at the terminal's left edge, exactly as one long terminal input stream.
     let continuation_width = 0;
-    let continuation = String::new();
     let mut text_lines = vec![String::new()];
     let mut row = 0_u16;
     let mut col = prompt_width;
@@ -2464,11 +2488,9 @@ fn prompted_text_lines(
         .into_iter()
         .enumerate()
         .map(|(index, text)| {
-            let mut spans = Vec::with_capacity(2);
+            let mut spans = Vec::with_capacity(prompt.len().saturating_add(1));
             if index == 0 {
-                spans.push(Span::styled(prompt.clone(), prompt_style));
-            } else {
-                spans.push(Span::raw(continuation.clone()));
+                spans.extend(prompt.clone());
             }
             if !text.is_empty() {
                 spans.push(Span::styled(text, text_style));
@@ -2484,13 +2506,51 @@ fn prompted_text_lines(
     }
 }
 
-fn fit_prompt(prompt: &str, width: u16) -> String {
-    if UnicodeWidthStr::width(prompt) < usize::from(width) {
-        return prompt.to_string();
+fn fit_prompt(prompt: Vec<Span<'static>>, width: u16) -> Vec<Span<'static>> {
+    let max_width = width.saturating_sub(1);
+    let prompt_width = prompt
+        .iter()
+        .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+        .sum::<usize>();
+    if prompt_width <= usize::from(max_width) {
+        return prompt;
     }
-    let available = usize::from(width.saturating_sub(4)).max(1);
-    let compact = prompt.chars().take(available).collect::<String>();
-    format!("{compact}… ")
+    if max_width == 0 {
+        return Vec::new();
+    }
+
+    let suffix = if max_width > 1 { "… " } else { "…" };
+    let suffix_width = u16::try_from(UnicodeWidthStr::width(suffix)).unwrap_or(max_width);
+    let mut remaining = usize::from(max_width.saturating_sub(suffix_width));
+    let mut compact = Vec::new();
+    let mut suffix_style = prompt.first().map(|span| span.style).unwrap_or_default();
+    let mut fitted = false;
+    for span in prompt {
+        let mut content = String::new();
+        for grapheme in span.content.graphemes(true) {
+            let grapheme_width = UnicodeWidthStr::width(grapheme);
+            if grapheme_width > remaining {
+                suffix_style = span.style;
+                fitted = true;
+                break;
+            }
+            content.push_str(grapheme);
+            remaining = remaining.saturating_sub(grapheme_width);
+            suffix_style = span.style;
+            if remaining == 0 {
+                fitted = true;
+                break;
+            }
+        }
+        if !content.is_empty() {
+            compact.push(Span::styled(content, span.style));
+        }
+        if fitted {
+            break;
+        }
+    }
+    compact.push(Span::styled(suffix, suffix_style));
+    compact
 }
 
 fn render_approval(frame: &mut Frame<'_>, area: Rect, approval: &Approval, palette: Palette) {
@@ -2676,12 +2736,13 @@ fn demo_reply(request: &str) -> String {
 #[cfg(test)]
 mod tests {
     use ratatui::backend::TestBackend;
+    use ratatui::style::Modifier;
     use ratatui::Terminal;
 
     use super::{
         atomic_media_scroll, image_is_partial, sanitize_status, text_metrics, Action, App,
         Approval, Artifact, CapabilityEnvironment, ConnectionState, Effect, ExecutionMode,
-        ImageRange, MediaKind, Moment, MomentState, Role, ScrollDirection,
+        ImageRange, MediaKind, Moment, MomentState, Role, ScrollDirection, Theme,
     };
 
     fn image_artifact(index: usize) -> Artifact {
@@ -2888,10 +2949,9 @@ mod tests {
     #[test]
     fn prompt_input_wraps_from_the_terminal_left_edge() {
         let prompted = super::prompted_text_lines(
-            "you@gsv $ ",
+            vec![ratatui::text::Span::raw("you@gsv $ ")],
             "abcdefghijkl",
             16,
-            ratatui::style::Style::new(),
             ratatui::style::Style::new(),
             Some(12),
         );
@@ -2907,6 +2967,49 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(rows, vec!["you@gsv $ abcdef", "ghijkl"]);
         assert_eq!((prompted.cursor_row, prompted.cursor_col), (1, 6));
+    }
+
+    #[test]
+    fn prompt_hierarchy_survives_terminal_and_curated_palettes(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        for theme in [Theme::Terminal, Theme::Gsv] {
+            let palette = theme.palette();
+            let mut app = App::new(ConnectionState::Ready);
+            app.set_theme(theme);
+            app.set_principal("john");
+            app.dispatch(Action::Insert("hello".to_string()));
+            let backend = TestBackend::new(40, 12);
+            let mut terminal = Terminal::new(backend)?;
+            terminal.draw(|frame| app.render(frame))?;
+            let buffer = terminal.backend().buffer();
+            let prompt_y = (0..12)
+                .find(|y| {
+                    (0..40)
+                        .filter_map(|x| buffer.cell((x, *y)))
+                        .map(|cell| cell.symbol())
+                        .collect::<String>()
+                        .contains("john@gsv $ hello")
+                })
+                .expect("prompt row");
+
+            let principal = buffer.cell((0, prompt_y)).expect("principal cell");
+            let at = buffer.cell((4, prompt_y)).expect("at cell");
+            let target = buffer.cell((5, prompt_y)).expect("target cell");
+            let shell = buffer.cell((9, prompt_y)).expect("shell marker cell");
+            let command = buffer.cell((11, prompt_y)).expect("command cell");
+            assert_eq!(principal.fg, palette.muted);
+            assert!(!principal.modifier.contains(Modifier::BOLD));
+            assert_eq!(at.fg, palette.accent);
+            assert!(!at.modifier.contains(Modifier::BOLD));
+            assert_eq!(target.fg, palette.accent);
+            assert!(target.modifier.contains(Modifier::BOLD));
+            assert_eq!(shell.fg, palette.foreground);
+            assert!(shell.modifier.contains(Modifier::BOLD));
+            assert_eq!(command.fg, palette.foreground);
+            assert!(!command.modifier.contains(Modifier::BOLD));
+            assert_eq!(command.bg, palette.background);
+        }
+        Ok(())
     }
 
     #[test]
@@ -3371,6 +3474,43 @@ mod tests {
         terminal.draw(|frame| app.render(frame))?;
         assert_eq!(app.media_slots()[0].area.width, 178);
         assert!(app.media_slots()[0].area.width > first_width);
+        Ok(())
+    }
+
+    #[test]
+    fn focused_image_uses_one_accent_rail_without_a_card() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut app = App::new(ConnectionState::Ready);
+        app.set_theme(Theme::Terminal);
+        app.set_inline_images(true);
+        app.replace_history(vec![Moment::complete(
+            "one",
+            Role::Intelligence,
+            "One image.",
+        )
+        .with_artifacts(vec![image_artifact(0)])]);
+        let backend = TestBackend::new(60, 18);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|frame| app.render(frame))?;
+
+        let content = app.media_slots()[0].area;
+        let rail = terminal
+            .backend()
+            .buffer()
+            .cell((content.x.saturating_sub(1), content.y))
+            .expect("focus rail cell");
+        assert_eq!(rail.symbol(), "│");
+        assert_eq!(rail.fg, Theme::Terminal.palette().accent);
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(['╭', '╮', '╰', '╯']
+            .into_iter()
+            .all(|symbol| !rendered.contains(symbol)));
         Ok(())
     }
 

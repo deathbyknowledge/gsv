@@ -78,6 +78,12 @@ the beginner key map. Escape changes editing mode without removing the prompt.
 The document consumes the live terminal width and recomputes wrapping and media
 geometry after every resize. Incremental scrolling treats each image as one
 atomic stop, while page scrolling snaps away from partially visible images.
+On native terminals, the renderer inherits the host background, foreground, and
+ANSI colors. Prompt hierarchy supplies the visual identity: the principal and
+cwd are muted, `@target` is the single accent, and `$` plus command text use the
+ordinary foreground. Content has no permanent framing; a focused image gains
+only one accent rail. The curated GSV palette remains available to surfaces that
+do not have a host terminal theme.
 
 Typing `@` into an empty draft opens the capability-environment picker. `Tab`
 switches the same draft between Ship mode and literal shell mode. The latter is
