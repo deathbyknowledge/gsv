@@ -1,5 +1,5 @@
-import type { ProcessResourcesRetainRequestFrame } from "../protocol/process-frames";
 import { bodyFromBytes } from "@humansandmachines/gsv/protocol";
+import type { InternalRequestFrame } from "../protocol/protocol/process-frames";
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
 import { deferred, runInProcess, ROOT_IDENTITY, initProcess } from "./do-test-harness";
@@ -39,7 +39,7 @@ describe("proc.send", () => {
           writeHttpMetadata() {},
         } as R2Object;
       });
-      const request: ProcessResourcesRetainRequestFrame = {
+      const request: InternalRequestFrame<"proc.resources.retain"> = {
         type: "req",
         id: "retain-large-reference",
         call: "proc.resources.retain",

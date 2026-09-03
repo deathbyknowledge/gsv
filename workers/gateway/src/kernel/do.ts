@@ -159,14 +159,11 @@ import {
   assertAdapterMessageDestinationAccess,
   identityLinkRouteGeneration,
 } from "./adapter-destinations";
+import type { InternalRequestFrame, InternalResponseFrame } from "../protocol/process-frames";
 import type {
   ProcessMessageCommitArgs,
-  ProcessMessageCommitResponseFrame,
   ProcessMessageStreamSignal,
   ProcessOutboundFrame,
-  ProcessRuntimeEventDeliverRequestFrame,
-  ProcessScheduleDeliverRequestFrame,
-  ProcessScheduleDeliverResponseFrame,
 } from "../protocol/process-frames";
 import { isRepoPublic } from "./repo-visibility";
 import { canReadRepo, canWriteRepo } from "./repo";
@@ -1221,7 +1218,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   async recvFrame(
     processId: string,
     frame: ProcessOutboundFrame,
-  ): Promise<Frame | ProcessMessageCommitResponseFrame | null> {
+  ): Promise<Frame | InternalResponseFrame<"proc.message.commit"> | null> {
     if (frame.type === "req") {
       if (frame.call === "proc.message.commit") {
         try {
@@ -5034,7 +5031,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
           ...(routeGeneration === undefined ? undefined : { routeGeneration }),
         });
       }
-      const request: ProcessScheduleDeliverRequestFrame = {
+      const request: InternalRequestFrame<"proc.schedule.deliver"> = {
         type: "req",
         id: crypto.randomUUID(),
         call: "proc.schedule.deliver",
@@ -5050,7 +5047,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         },
       };
       let admittedRunId = runId;
-      let response: ProcessScheduleDeliverResponseFrame | null;
+      let response: InternalResponseFrame<"proc.schedule.deliver"> | null;
       try {
         response = await sendFrameToProcess(this.installationId, target.pid, request);
       } catch (error) {
@@ -5530,7 +5527,7 @@ function errFrame(id: string, code: number, message: string): ResponseFrame {
 
 function responsibilityRuntimeEventFrame(
   batch: ResponsibilityWakeBatch,
-): ProcessRuntimeEventDeliverRequestFrame {
+): InternalRequestFrame<"proc.runtime.event.deliver"> {
   return {
     type: "req",
     id: crypto.randomUUID(),

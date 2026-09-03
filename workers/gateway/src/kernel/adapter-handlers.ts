@@ -12,6 +12,7 @@ import type {
   AdapterServiceDescriptor,
   AdapterSurface,
 } from "../adapter-interface";
+import type { InternalRequestFrame, InternalResponseFrame } from "../protocol/process-frames";
 import type {
   AdapterConnectArgs,
   AdapterConnectConfig,
@@ -71,13 +72,6 @@ import * as z from "zod/mini";
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
 import type { GatewayEnv } from "../runtime-env";
 import type { RequestFrame } from "../protocol/frames";
-import type {
-  ProcessAdapterDeliverRequestFrame,
-  ProcessAdapterDeliverResponseFrame,
-  ProcessRuntimeEventDeliverRequestFrame,
-  ProcessRuntimeEventDeliverResponseFrame,
-  ProcessResourceWriteRequestFrame,
-} from "../protocol/process-frames";
 import { getConversationById, sendFrameToProcess } from "../shared/utils";
 import type { ConversationAppendRequest } from "../conversation/do";
 import { stableOpaqueId } from "../shared/stable-id";
@@ -1852,7 +1846,7 @@ async function deliverAdapterInboundToProcess(input: {
   // Adapter ingress is itself an RPC from the adapter. Calling activity back
   // into a stateful adapter here would re-enter its Durable Object before this
   // request can return. Process lifecycle signals own typing activity.
-  const request: ProcessAdapterDeliverRequestFrame = {
+  const request: InternalRequestFrame<"proc.adapter.deliver"> = {
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.adapter.deliver",
@@ -1868,7 +1862,7 @@ async function deliverAdapterInboundToProcess(input: {
       },
     },
   };
-  const response: ProcessAdapterDeliverResponseFrame | null = await sendFrameToProcess(
+  const response: InternalResponseFrame<"proc.adapter.deliver"> | null = await sendFrameToProcess(
     ctx.installationId,
     pid,
     request,
@@ -2018,7 +2012,7 @@ async function storeAdapterInboundMedia(
       media: item,
       body: partBody,
     }) => {
-      const request: ProcessResourceWriteRequestFrame = {
+      const request: InternalRequestFrame<"proc.resource.write"> = {
         type: "req",
         id: crypto.randomUUID(),
         call: "proc.resource.write",
@@ -2677,7 +2671,7 @@ async function deliverAdapterWorkReturnedEvent(
     return null;
   }
   const eventId = `adapter-home:${receiptId}`;
-  const request: ProcessRuntimeEventDeliverRequestFrame = {
+  const request: InternalRequestFrame<"proc.runtime.event.deliver"> = {
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.runtime.event.deliver",
@@ -2689,7 +2683,7 @@ async function deliverAdapterWorkReturnedEvent(
       },
     },
   };
-  const response: ProcessRuntimeEventDeliverResponseFrame | null = await sendFrameToProcess(
+  const response: InternalResponseFrame<"proc.runtime.event.deliver"> | null = await sendFrameToProcess(
     ctx.installationId,
     personalPid,
     request,

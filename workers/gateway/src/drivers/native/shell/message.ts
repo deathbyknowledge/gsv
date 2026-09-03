@@ -39,8 +39,8 @@ import { resolveCallerOwnerUid } from "../../../kernel/context";
 import { findInteractiveProcess, type ProcessRecord } from "../../../kernel/processes";
 import type { RunRoute } from "../../../kernel/run-routes";
 import type { SurfaceRouteRecord } from "../../../kernel/surface-routes";
+import type { InternalRequestFrame } from "../../../protocol/process-frames";
 import type {
-  ProcessRunAttachRequestFrame,
   ProcessRunAttachResult,
 } from "../../../protocol/process-frames";
 import {
@@ -238,7 +238,7 @@ async function attachToReply(
 
   const resources = await referenceAttachments(paths, requestedMime, shellCtx, fs);
 
-  const request: ProcessRunAttachRequestFrame = {
+  const request: InternalRequestFrame<"proc.run.attach"> = {
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.run.attach",

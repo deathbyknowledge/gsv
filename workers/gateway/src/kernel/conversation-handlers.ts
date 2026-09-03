@@ -16,9 +16,9 @@ import type {
   ResourceBlock,
   BinaryBody,
 } from "@humansandmachines/gsv/protocol";
+import type { InternalRequestFrame } from "../protocol/process-frames";
 import { REQUEST_CANCEL_SIGNAL } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
-import type { ProcessResourcesRetainRequestFrame } from "../protocol/process-frames";
 import { raceWithAbort } from "../shared/abort";
 import { getConversationById, sendFrameToProcess } from "../shared/utils";
 import { stableOpaqueId } from "../shared/stable-id";
@@ -209,7 +209,7 @@ export async function retainConversationResources(
 ): Promise<ResourceBlock[] | undefined> {
   if (!resources?.length) return undefined;
   ctx.requestSignal?.throwIfAborted();
-  const request: ProcessResourcesRetainRequestFrame = {
+  const request: InternalRequestFrame<"proc.resources.retain"> = {
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.resources.retain",
