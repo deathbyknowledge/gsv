@@ -3,13 +3,12 @@
  *
  * ai.tools — returns available tool schemas, online devices, and ready MCP servers accessible to caller.
  * ai.context — returns the current prompt-relevant Kernel projection without model credentials.
- * ai.config — reads model/provider/apiKey from /sys/ (kernel SQLite via ConfigStore).
+ * ai.config — resolves the owner's ordered model stack from /sys/.
  *
  * Config resolution order:
- *   process overrides → /sys/users/{run-as uid}/ai/* → /sys/users/{owner uid}/ai/* → /sys/config/ai/*
- *   A users/{uid}/ai/model_profile selection expands into that account's step.
+ *   process preference → /sys/users/{owner uid}/ai/models → /sys/config/ai/models
+ *   Reasoning and runtime policy remain orthogonal account/system settings.
  *
- * Runtime reads are explicit SQLite overrides over code defaults.
  */
 
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
@@ -22,6 +21,9 @@ import {
   normalizeSpeechTextFormat,
 } from "@humansandmachines/gsv/protocol";
 import type {
+  AiModelConfig,
+  AiModelEntry,
+  AiModelStack,
   ProcessIdentity,
   AiContextArgs,
   AiContextResult,
@@ -46,8 +48,6 @@ import type {
   AiTranscriptionCreateArgs,
   AiTranscriptionCreateResult,
   ContextFile,
-  ProcAiConfigGetResult,
-  ProcAiConfigProfileRef,
 } from "@humansandmachines/gsv/protocol";
 import type { ToolDefinition, SyscallName } from "../syscalls";
 import { intoSyscallTool, isRoutableSyscall } from "../syscalls";
@@ -63,11 +63,7 @@ import { SHELL_EXEC_DEFINITION } from "../syscalls/shell";
 import { CODEMODE_EXEC_DEFINITION } from "../syscalls/codemode";
 import { isCodeModeAvailable } from "../codemode/availability";
 import { DEFAULT_TEXT_GENERATION_MAX_TOKENS } from "../inference/default-models";
-import {
-  DEFAULT_WORKERS_AI_MODEL,
-  isWorkersAiProvider,
-  resolveWorkersAiModelContextWindow,
-} from "../inference/workers-ai";
+import { isWorkersAiProvider, resolveWorkersAiModelContextWindow } from "../inference/workers-ai";
 import { resolveModelContextWindowFromRegistry } from "../inference/model-registry";
 import {
   createGenerationService,
@@ -82,7 +78,6 @@ import {
 } from "../inference/provider";
 import { createRoutedFetch, normalizeTarget, type NetFetchDeviceTransport } from "./net";
 import {
-  DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
   DEFAULT_AUDIO_TRANSCRIPTION_TIMEOUT_MS,
   DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES,
 } from "../inference/transcription";
@@ -96,16 +91,10 @@ import {
 } from "../inference/image-reading";
 import {
   DEFAULT_AUDIO_SPEECH_ENCODING,
-  DEFAULT_AUDIO_SPEECH_MODEL,
-  DEFAULT_AUDIO_SPEECH_SPEAKER,
   DEFAULT_AUDIO_SPEECH_TIMEOUT_MS,
   DEFAULT_MAX_AUDIO_SPEECH_CHARS,
 } from "../inference/speech";
 import {
-  DEFAULT_IMAGE_GENERATION_MODEL,
-  DEFAULT_OPENAI_SPEECH_MODEL,
-  DEFAULT_OPENAI_SPEECH_VOICE,
-  DEFAULT_OPENAI_TRANSCRIPTION_MODEL,
   generateImage,
   synthesizeSpeech,
   transcribeAudio,
@@ -116,15 +105,13 @@ import { collectPromptSkillIndex } from "./skills";
 import { seedBuiltinSkillsToHome } from "./sys/skills-seed";
 import { listAllVisibleTargets, targetToAiDevice } from "./targets";
 import {
-  findProcessAiModelProfile,
-  isProcessAiConfigKey,
-  omitProcessAiConfigSecrets,
-  parseProcessAiModelProfiles,
-  PROCESS_AI_CONFIG_SECRET_KEYS,
-  processAiModelProfileSecretConfigKey,
-} from "../process/ai-config";
-import { raceWithAbort } from "../shared/abort";
-import { sendFrameToProcess } from "../shared/utils";
+  aiModelApiKeyConfigKey,
+  isSameAiModelCredentialScope,
+  orderAiModelStack,
+  parseAiModelStack,
+  SYSTEM_AI_MODELS_CONFIG_KEY,
+  userAiModelsConfigKey,
+} from "./ai-model-stack";
 
 const SYSCALL_TOOLS: Array<{ syscall: SyscallName; definition: ToolDefinition }> = [
   { syscall: "fs.read", definition: FS_READ_DEFINITION },
@@ -139,10 +126,6 @@ const SYSCALL_TOOLS: Array<{ syscall: SyscallName; definition: ToolDefinition }>
 const DEFAULT_GENERATION_TIMEOUT_MS = 180_000;
 const DEFAULT_GENERATION_STREAMING = "auto";
 
-type AiAccountProfileOverrides = Map<number, Record<string, string>>;
-interface AiConfigValues {
-  [key: string]: string;
-}
 type AiFrameResult<T> = { data: T; body?: FrameBody };
 type AiModelStackConfig = Pick<
   AiConfigResult,
@@ -161,18 +144,23 @@ type AiModelStackConfig = Pick<
   | "generationStreaming"
 >;
 
-type AiTranscriptionStack = Pick<
-  NonNullable<AiConfigResult["media"]>,
-  "transcriptionProvider" | "transcriptionModel" | "transcriptionApiKey"
->;
+type StoredAiModelStack = {
+  configKey: string;
+  stack: AiModelStack;
+  systemOwned: boolean;
+};
 
-const ACCOUNT_MODEL_PROFILE_INFERENCE_BLOCKERS = [
-  "provider",
-  "base_url",
-  "provider_style",
-  "transport_target",
-  "api_key",
-] as const;
+type ResolvedAiTextModelStack = {
+  primary: AiModelStackConfig;
+  fallbacks: AiConfigFallback[];
+};
+
+type AiMediaModelConfig = {
+  provider: string;
+  model: string;
+  apiKey: string;
+  values: Readonly<Record<string, string>>;
+};
 
 export async function handleAiTools(
   ctx: KernelContext,
@@ -207,27 +195,14 @@ export async function handleAiTools(
 }
 
 export async function handleAiContext(
-  args: AiContextArgs,
+  _args: AiContextArgs,
   ctx: KernelContext,
 ): Promise<AiContextResult> {
   const config = ctx.config;
   const uid = ctx.identity?.process.uid ?? 0;
   const owner = resolveOwnerIdentity(ctx);
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
-  const processOverrides = resolveEffectiveAiProcessOverrides(
-    ctx,
-    uid,
-    owner,
-    args.processOverrides,
-    args.processProfile,
-  );
-  const accountProfileOverrides = resolveAiAccountProfileOverrides(config, accountConfigUids);
-  const resolveConfig = createAiConfigValueResolver(
-    config,
-    accountConfigUids,
-    accountProfileOverrides,
-    processOverrides,
-  );
+  const resolveConfig = createAiConfigValueResolver(config, accountConfigUids);
   const skillIndexMode = normalizeSkillIndexMode(resolveConfig("skills/index_mode"));
   const skillIndex = skillIndexMode === "off"
     ? []
@@ -264,72 +239,17 @@ export async function handleAiConfig(
   const builtinSkillsReady = ensureBuiltinSkillsForPrompt(ctx, owner);
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
   const input = args;
-  const processOverrides = resolveEffectiveAiProcessOverrides(
+  const resolveConfig = createAiConfigValueResolver(config, accountConfigUids);
+  const textModels = await resolveAiTextModelStack({
     ctx,
     uid,
     owner,
-    input.processOverrides,
-    input.processProfile,
-  );
-  const accountProfileOverrides = resolveAiAccountProfileOverrides(config, accountConfigUids);
-  const resolveConfig = createAiConfigValueResolver(
-    config,
-    accountConfigUids,
-    accountProfileOverrides,
-    processOverrides,
-  );
-  const processProvider = resolveAiProcessConfigValue(processOverrides, "provider");
-  const accountProvider = resolveAiConfigValue(config, accountConfigUids, accountProfileOverrides, "provider");
-  const systemProvider = config.get("config/ai/provider");
-
-  const provider =
-    processProvider ??
-    accountProvider ??
-    systemProvider ??
-    "workers-ai";
-
-  const model = resolveConfig("model") ?? DEFAULT_WORKERS_AI_MODEL;
-  const baseUrl = resolveConfig("base_url") ?? "";
-  const providerStyle = resolveConfig("provider_style") ?? "auto";
-  const transportTarget = resolveConfig("transport_target") ?? "gsv";
-  const apiKey = resolveConfig("api_key") ?? "";
-  const oauthAccountConfigUids = shouldResolveRootOpenAiCodexOAuth({
-    provider,
-    providerFromGlobalConfig: processProvider === null && accountProvider === null && systemProvider !== null,
-  })
-    ? withRootAiProfileScope(accountConfigUids)
-    : accountConfigUids;
-  const resolvedOAuth = await resolveAiProviderOAuthApiKey(
-    ctx,
-    oauthAccountConfigUids,
-    provider,
-    apiKey,
-  );
-  const resolvedApiKey = resolvedOAuth.apiKey;
-
-  const reasoning = resolveConfig("reasoning") ?? undefined;
-
-  const maxTokens = parseInt(
-    resolveConfig("max_tokens") ?? String(DEFAULT_TEXT_GENERATION_MAX_TOKENS),
-    10,
-  );
-  const contextWindowOverride = parsePositiveInt(
-    resolveAiProcessConfigValue(processOverrides, "context_window_tokens") ??
-    resolveAiConfigValue(config, accountConfigUids, accountProfileOverrides, "context_window_tokens"),
-  );
-  const modelContextWindow = await resolveModelContextWindow(provider, model);
-  const configuredContextWindow = parsePositiveInt(
-    config.get("config/ai/context_window_tokens"),
-  );
-  const contextWindowTokens =
-    contextWindowOverride ?? modelContextWindow ?? configuredContextWindow ?? null;
-  const contextWindowSource = contextWindowOverride !== null
-    ? "config"
-    : modelContextWindow !== null
-      ? "model"
-      : configuredContextWindow !== null
-        ? "config"
-        : "unknown";
+    accountUids: accountConfigUids,
+    modelConfig: input.modelConfig,
+    modelId: input.modelId,
+    reasoning: input.reasoning,
+  });
+  const primary = textModels.primary;
 
   const systemContextFiles = listConfigContextFiles(config, "config/ai/context.d");
 
@@ -343,47 +263,9 @@ export async function handleAiConfig(
     resolveConfig("max_context_bytes") ?? "32768",
     10,
   );
-  const generationTimeoutMs = resolveConfig("generation/timeout_ms", parsePositiveInt)
-    ?? DEFAULT_GENERATION_TIMEOUT_MS;
-  const generationStreaming = normalizeGenerationStreaming(
-    resolveConfig("generation/streaming"),
-  );
-  const fallbackSelection = resolveAiFallbackSelection(
-    ctx,
-    accountConfigUids,
-    accountProfileOverrides,
-    processOverrides,
-  );
-  const primary: AiModelStackConfig = {
-    provider,
-    model,
-    apiKey: resolvedApiKey,
-    providerStyle: providerStyle.trim().toLowerCase() || "auto",
-    transportTarget: normalizeTarget(transportTarget),
-    reasoning,
-    maxTokens,
-    contextWindowTokens,
-    contextWindowSource,
-    generationTimeoutMs,
-    generationStreaming,
-  };
-  const normalizedBaseUrl = baseUrl.trim();
-  if (normalizedBaseUrl) primary.baseUrl = normalizedBaseUrl;
-  if (resolvedOAuth.openAiCodexAccountId) {
-    primary.openAiCodex = { accountId: resolvedOAuth.openAiCodexAccountId };
-  }
-  const fallbacks = await resolveAiFallbackConfigs({
-    ctx,
-    accountUids: fallbackSelection?.accountUids ?? [],
-    selector: fallbackSelection?.selector ?? "",
-    primary,
-  });
   const media = resolveAiMediaConfig(
     config,
     accountConfigUids,
-    accountProfileOverrides,
-    apiKey,
-    processOverrides,
   );
   const timezone = config.get("config/server/timezone") ?? "UTC";
   await builtinSkillsReady;
@@ -400,15 +282,15 @@ export async function handleAiConfig(
   const result: AiConfigResult = {
     owner,
     executor: resolveAiTextExecutor(ctx),
-    provider,
-    model,
-    apiKey: resolvedApiKey,
-    providerStyle: providerStyle.trim().toLowerCase() || "auto",
-    transportTarget: normalizeTarget(transportTarget),
-    reasoning,
-    maxTokens,
-    contextWindowTokens,
-    contextWindowSource,
+    provider: primary.provider,
+    model: primary.model,
+    apiKey: primary.apiKey,
+    providerStyle: primary.providerStyle,
+    transportTarget: primary.transportTarget,
+    reasoning: primary.reasoning,
+    maxTokens: primary.maxTokens,
+    contextWindowTokens: primary.contextWindowTokens,
+    contextWindowSource: primary.contextWindowSource,
     systemContextFiles,
     system: {
       timezone,
@@ -418,15 +300,13 @@ export async function handleAiConfig(
     accountApprovalPolicy,
     capabilities: [...(ctx.identity?.capabilities ?? [])],
     maxContextBytes,
-    generationTimeoutMs,
-    generationStreaming,
+    generationTimeoutMs: primary.generationTimeoutMs,
+    generationStreaming: primary.generationStreaming,
     media,
   };
-  if (normalizedBaseUrl) result.baseUrl = normalizedBaseUrl;
-  if (resolvedOAuth.openAiCodexAccountId) {
-    result.openAiCodex = { accountId: resolvedOAuth.openAiCodexAccountId };
-  }
-  if (fallbacks.length > 0) result.fallbacks = fallbacks;
+  if (primary.baseUrl) result.baseUrl = primary.baseUrl;
+  if (primary.openAiCodex) result.openAiCodex = primary.openAiCodex;
+  if (textModels.fallbacks.length > 0) result.fallbacks = textModels.fallbacks;
   return result;
 }
 
@@ -517,24 +397,6 @@ async function inferenceAttribution(
   return attribution;
 }
 
-function normalizeAiProcessOverrideValues(
-  raw: AiConfigValues,
-  options: { preserveEmpty?: boolean } = {},
-): AiConfigValues {
-  const values: AiConfigValues = {};
-  for (const [key, value] of Object.entries(raw)) {
-    if (!isProcessAiConfigKey(key)) {
-      continue;
-    }
-    const normalized = value.trim();
-    if (!normalized && !options.preserveEmpty && !PROCESS_AI_CONFIG_SECRET_KEYS.has(key)) {
-      continue;
-    }
-    values[key] = normalized;
-  }
-  return values;
-}
-
 async function readAiInputBody(
   body: FrameBody | undefined,
   maxBytes: number,
@@ -559,52 +421,35 @@ export async function handleAiTranscriptionCreate(
 ): Promise<AiTranscriptionCreateResult> {
   const input = args;
   const configContext = resolveAiTranscriptionProcessContext(input.pid, ctx);
-  const { primary, fallback } = await resolveAiTranscriptionStacksForContext(configContext);
+  const media = resolveAiMediaConfigForContext(configContext);
   const audio = input.audio;
   if (!audio.mimeType.trim().toLowerCase().startsWith("audio/")) {
     throw new Error("audio.mimeType must be an audio MIME type");
   }
 
-  const bytes = await readAiInputBody(body, primary.transcriptionMaxBytes, "audio", ctx.requestSignal);
+  const bytes = await readAiInputBody(body, media.transcriptionMaxBytes, "audio", ctx.requestSignal);
   const base64 = encodeBase64Bytes(bytes);
 
   const mode = input.mode === "translate" ? "translate" : "transcribe";
-  let lastError: unknown;
-  for (const stack of [primary, ...(fallback ? [fallback] : [])]) {
-    if (ctx.requestSignal?.aborted) {
-      throw ctx.requestSignal.reason ?? new Error("Transcription cancelled");
-    }
-    try {
-      const result = await transcribeAudio({
-        workersAi: ctx.env.AI,
-      }, {
-        data: base64,
-        provider: stack.transcriptionProvider,
-        apiKey: stack.transcriptionApiKey,
-        model: stack.transcriptionModel,
-        mimeType: audio.mimeType,
-        filename: audio.filename,
-        timeoutMs: DEFAULT_AUDIO_TRANSCRIPTION_TIMEOUT_MS,
-        signal: ctx.requestSignal,
-        mode,
-        language: normalizeOptionalString(input.language),
-        prompt: normalizeOptionalString(input.prompt),
-        vadFilter: true,
-        conditionOnPreviousText: false,
-      });
-      if (result) {
-        return result;
-      }
-    } catch (error) {
-      if (ctx.requestSignal?.aborted) {
-        throw ctx.requestSignal.reason ?? error;
-      }
-      lastError = error;
-    }
-  }
-
-  if (lastError) {
-    throw lastError;
+  const result = await transcribeAudio({
+    workersAi: ctx.env.AI,
+  }, {
+    data: base64,
+    provider: media.transcriptionProvider,
+    apiKey: media.transcriptionApiKey,
+    model: media.transcriptionModel,
+    mimeType: audio.mimeType,
+    filename: audio.filename,
+    timeoutMs: DEFAULT_AUDIO_TRANSCRIPTION_TIMEOUT_MS,
+    signal: ctx.requestSignal,
+    mode,
+    language: normalizeOptionalString(input.language),
+    prompt: normalizeOptionalString(input.prompt),
+    vadFilter: true,
+    conditionOnPreviousText: false,
+  });
+  if (result) {
+    return result;
   }
   throw new Error("Transcription unavailable");
 }
@@ -615,7 +460,7 @@ export async function handleAiImageRead(
   body?: FrameBody,
 ): Promise<AiFrameResult<AiImageReadResult>> {
   const input = args;
-  const media = await resolveAiMediaConfigForContext(ctx);
+  const media = resolveAiMediaConfigForContext(ctx);
   const image = input.image;
   if (!image.mimeType.trim().toLowerCase().startsWith("image/")) {
     throw new Error("image.mimeType must be an image MIME type");
@@ -666,7 +511,7 @@ export async function handleAiImageGenerate(
   ctx: KernelContext,
 ): Promise<AiFrameResult<AiImageGenerateResult>> {
   const input = args;
-  const media = await resolveAiMediaConfigForContext(ctx);
+  const media = resolveAiMediaConfigForContext(ctx);
   const prompt = normalizeOptionalString(input.prompt);
   if (!prompt) {
     throw new Error("prompt is required");
@@ -708,7 +553,7 @@ export async function handleAiSpeechCreate(
   ctx: KernelContext,
 ): Promise<AiFrameResult<AiSpeechCreateResult>> {
   const input = args;
-  const media = await resolveAiMediaConfigForContext(ctx);
+  const media = resolveAiMediaConfigForContext(ctx);
   const rawText = normalizeOptionalString(input.text);
   if (!rawText) {
     throw new Error("text is required");
@@ -778,56 +623,14 @@ async function resolveAiTextGenerationConfig(
   input: AiTextGenerateConfig | undefined,
   ctx: KernelContext,
 ): Promise<AiConfigResult> {
-  const overrides = {
-    ...normalizeAiProcessOverrideValues(input?.processOverrides ?? {}),
-    ...normalizeAiProcessOverrideValues(input?.overrides ?? {}, { preserveEmpty: true }),
-  };
-  const processProfile = input?.processProfile;
-  const preset = input?.preset;
-  if (!preset) {
-    return withAiTextExecutor(
-      await handleAiConfig(
-        Object.keys(overrides).length > 0 || processProfile
-          ? {
-              processOverrides: overrides,
-              processProfile: processProfile ?? null,
-            }
-          : {},
-        ctx,
-      ),
-      { kind: "kernel" },
-    );
-  }
-
-  const selector = normalizeOptionalString(preset.id) ?? normalizeOptionalString(preset.name);
-  if (!selector) {
-    throw new Error("config.preset requires id or name");
-  }
-
-  const uid = ctx.identity?.process.uid ?? 0;
-  const owner = resolveOwnerIdentity(ctx);
-  const ownerUid = resolveAiProfileOwnerUid(ctx, uid, owner);
-  const profile = findProcessAiModelProfile(
-    ctx.config.get(`users/${ownerUid}/ai/model_profiles`),
-    ownerUid,
-    selector,
+  return withAiTextExecutor(
+    await handleAiConfig({
+      ...(input?.modelConfig ? { modelConfig: input.modelConfig } : undefined),
+      ...(input?.modelId ? { modelId: input.modelId } : undefined),
+      ...(input?.reasoning ? { reasoning: input.reasoning } : undefined),
+    }, ctx),
+    { kind: "kernel" },
   );
-  if (!profile) {
-    throw new Error(`AI model preset not found: ${selector}`);
-  }
-
-  const config = await handleAiConfig({
-    processOverrides: {
-      ...omitProcessAiConfigSecrets(profile.values),
-      ...overrides,
-    },
-    processProfile: {
-      id: profile.id,
-      name: profile.name,
-      appliedAt: Date.now(),
-    },
-  }, ctx);
-  return withAiTextExecutor(config, { kind: "kernel" });
 }
 
 function resolveAiTextExecutor(ctx: KernelContext): AiConfigResult["executor"] {
@@ -960,36 +763,17 @@ function resolveAiConfigAccountUids(uid: number, owner: ProcessIdentity | null):
   return [uid, owner.uid];
 }
 
-function withRootAiProfileScope(accountUids: number[]): number[] {
+function withRootAiCredentialScope(accountUids: number[]): number[] {
   return accountUids.includes(0) ? accountUids : [0, ...accountUids];
-}
-
-function shouldResolveRootOpenAiCodexOAuth({
-  provider,
-  providerFromGlobalConfig,
-}: {
-  provider: string;
-  providerFromGlobalConfig: boolean;
-}): boolean {
-  return providerFromGlobalConfig &&
-    provider.trim().toLowerCase() === "openai-codex";
 }
 
 function resolveAiConfigValue(
   config: KernelContext["config"],
-  accountUids: number[],
-  accountProfileOverrides: AiAccountProfileOverrides,
+  accountUids: readonly number[],
   key: string,
 ): string | null {
   for (const accountUid of accountUids) {
-    const profileValue = resolveAiProcessConfigValue(
-      accountProfileOverrides.get(accountUid) ?? {},
-      key,
-    );
-    if (profileValue !== null) {
-      return profileValue;
-    }
-    const value = config.get(`users/${accountUid}/ai/${key}`);
+    const value = config.getExplicit(`users/${accountUid}/ai/${key}`);
     if (value !== null) {
       return value;
     }
@@ -997,22 +781,9 @@ function resolveAiConfigValue(
   return null;
 }
 
-function resolveAiProcessConfigValue(
-  processOverrides: Record<string, string>,
-  key: string,
-): string | null {
-  const fullKey = `config/ai/${key}`;
-  return Object.prototype.hasOwnProperty.call(processOverrides, fullKey)
-    ? processOverrides[fullKey]
-    : null;
-}
-
 function createAiConfigValueResolver(
   config: KernelContext["config"],
-  accountUids: number[],
-  accountProfileOverrides: AiAccountProfileOverrides,
-  processOverrides: AiConfigValues,
-  explicitSystem = false,
+  accountUids: readonly number[],
 ) {
   function resolve(key: string): string | null;
   function resolve<T>(key: string, normalize: (value: string | null) => T | null): T | null;
@@ -1021,11 +792,8 @@ function createAiConfigValueResolver(
     normalize?: (value: string | null) => T | null,
   ): string | T | null {
     const candidates = [
-      resolveAiProcessConfigValue(processOverrides, key),
-      resolveAiConfigValue(config, accountUids, accountProfileOverrides, key),
-      explicitSystem
-        ? config.getExplicit(`config/ai/${key}`)
-        : config.get(`config/ai/${key}`),
+      resolveAiConfigValue(config, accountUids, key),
+      config.get(`config/ai/${key}`),
     ];
     if (!normalize) {
       return candidates.find((candidate) => candidate !== null) ?? null;
@@ -1039,132 +807,211 @@ function createAiConfigValueResolver(
   return resolve;
 }
 
-function resolveAiFallbackSelection(
-  ctx: KernelContext,
-  accountUids: number[],
-  accountProfileOverrides: AiAccountProfileOverrides,
-  processOverrides: Record<string, string>,
-): { accountUids: number[]; selector: string } | null {
-  const processSelector = resolveAiProcessConfigValue(processOverrides, "fallback_model_profile");
-  const accountSelector = resolveAiConfigValue(
-    ctx.config,
-    accountUids,
-    accountProfileOverrides,
-    "fallback_model_profile",
-  );
-  const systemSelector = ctx.config.get("config/ai/fallback_model_profile");
-  const selector = normalizeOptionalString(processSelector ?? accountSelector ?? systemSelector);
-  if (!selector) {
-    return null;
-  }
-  return {
-    selector,
-    accountUids: processSelector === null && accountSelector === null && systemSelector !== null
-      ? withRootAiProfileScope(accountUids)
-      : accountUids,
-  };
-}
-
-async function resolveAiFallbackConfigs(options: {
+async function resolveAiTextModelStack(options: {
   ctx: KernelContext;
+  uid: number;
+  owner: ProcessIdentity | null;
   accountUids: number[];
-  selector: string;
-  primary: AiModelStackConfig;
-}): Promise<AiConfigFallback[]> {
-  const selector = normalizeOptionalString(options.selector);
-  if (!selector || options.accountUids.length === 0) {
-    return [];
-  }
-  const profile = findAiAccountModelProfile(
-    options.ctx.config,
-    options.accountUids,
-    options.accountUids[0],
-    selector,
-  );
-  if (!profile) {
-    return [];
-  }
-  const fallback = await resolveAiFallbackModelStack(
+  modelConfig: AiConfigArgs["modelConfig"];
+  modelId: string | null | undefined;
+  reasoning: string | null | undefined;
+}): Promise<ResolvedAiTextModelStack> {
+  const stored = resolveStoredAiModelStack(
     options.ctx,
-    options.accountUids,
-    profile.values,
+    resolveAiModelOwnerUid(options.ctx, options.uid, options.owner),
   );
-  if (isSameAiModelStack(options.primary, fallback)) {
-    return [];
+  if (options.modelConfig) {
+    return await resolveRequestAiModelConfig({
+      ...options,
+      modelConfig: options.modelConfig,
+    }, stored);
   }
-  return [{
-    profileId: profile.id,
-    profileName: profile.name,
-    ...fallback,
-  }];
+  return await resolveStoredAiTextModelStack(options, stored);
 }
 
-async function resolveAiFallbackModelStack(
+function resolveStoredAiModelStack(
   ctx: KernelContext,
-  accountUids: number[],
-  profileOverrides: Record<string, string>,
-): Promise<AiModelStackConfig> {
-  const config = ctx.config;
-  const emptyProfileOverrides: AiAccountProfileOverrides = new Map();
-  const resolveConfig = createAiConfigValueResolver(
-    config,
-    accountUids,
-    emptyProfileOverrides,
-    profileOverrides,
-  );
-  const provider = resolveConfig("provider") ?? "workers-ai";
-  const model = resolveConfig("model") ?? DEFAULT_WORKERS_AI_MODEL;
-  const baseUrl = resolveConfig("base_url") ?? "";
-  const providerStyle = resolveConfig("provider_style") ?? "auto";
-  const transportTarget = resolveConfig("transport_target") ?? "gsv";
-  const apiKey = resolveConfig("api_key") ?? "";
-  const resolvedOAuth = await resolveAiProviderOAuthApiKey(ctx, accountUids, provider, apiKey);
-  const resolvedApiKey = resolvedOAuth.apiKey;
-  const reasoning = resolveConfig("reasoning") ?? undefined;
-  const maxTokens = parseInt(
-    resolveConfig("max_tokens") ?? String(DEFAULT_TEXT_GENERATION_MAX_TOKENS),
-    10,
-  );
-  const contextWindowOverride = parsePositiveInt(
-    resolveAiProcessConfigValue(profileOverrides, "context_window_tokens") ??
-    resolveAiConfigValue(config, accountUids, emptyProfileOverrides, "context_window_tokens"),
-  );
-  const modelContextWindow = await resolveModelContextWindow(provider, model);
-  const configuredContextWindow = parsePositiveInt(
-    config.get("config/ai/context_window_tokens"),
-  );
-  const contextWindowTokens =
-    contextWindowOverride ?? modelContextWindow ?? configuredContextWindow ?? null;
-  const contextWindowSource = contextWindowOverride !== null
-    ? "config"
-    : modelContextWindow !== null
-      ? "model"
-      : configuredContextWindow !== null
-        ? "config"
-        : "unknown";
+  ownerUid: number,
+): StoredAiModelStack {
+  const ownerKey = userAiModelsConfigKey(ownerUid);
+  const ownerRaw = ctx.config.getExplicit(ownerKey);
+  if (ownerRaw !== null) {
+    return parseStoredAiModelStack(ownerKey, ownerRaw, false);
+  }
+
+  const systemRaw = ctx.config.get(SYSTEM_AI_MODELS_CONFIG_KEY);
+  if (systemRaw === null) {
+    throw new Error("AI model stack is not configured");
+  }
+  return parseStoredAiModelStack(SYSTEM_AI_MODELS_CONFIG_KEY, systemRaw, true);
+}
+
+function parseStoredAiModelStack(
+  configKey: string,
+  raw: string,
+  systemOwned: boolean,
+): StoredAiModelStack {
+  const stack = parseAiModelStack(raw);
+  if (!stack) {
+    throw new Error(`Invalid AI model stack at /sys/${configKey}`);
+  }
+  return { configKey, stack, systemOwned };
+}
+
+async function resolveStoredAiTextModelStack(
+  options: {
+    ctx: KernelContext;
+    uid: number;
+    accountUids: number[];
+    modelId: string | null | undefined;
+    reasoning: string | null | undefined;
+  },
+  stored: StoredAiModelStack,
+): Promise<ResolvedAiTextModelStack> {
+  const resolveConfig = createAiConfigValueResolver(options.ctx.config, options.accountUids);
+  const requestedModelId = normalizeOptionalString(options.modelId);
+  if (
+    requestedModelId &&
+    !stored.stack.models.some((entry) => entry.id.toLowerCase() === requestedModelId.toLowerCase())
+  ) {
+    throw new Error(`AI model not found: ${requestedModelId}`);
+  }
+  const preferredModelId = requestedModelId
+    ?? normalizeOptionalString(options.ctx.config.getExplicit(`users/${options.uid}/ai/preferred_model`));
+  const models = orderAiModelStack(stored.stack, preferredModelId);
+  const reasoning = normalizeOptionalString(options.reasoning)
+    ?? normalizeOptionalString(resolveConfig("reasoning"));
   const generationTimeoutMs = resolveConfig("generation/timeout_ms", parsePositiveInt)
     ?? DEFAULT_GENERATION_TIMEOUT_MS;
   const generationStreaming = normalizeGenerationStreaming(
     resolveConfig("generation/streaming"),
   );
+  const resolved: Array<{ entry: AiModelEntry; config: AiModelStackConfig }> = [];
+  for (const entry of models) {
+    const config = await resolveCompleteAiModelConfig({
+      ctx: options.ctx,
+      accountUids: options.accountUids,
+      model: entry,
+      apiKey: options.ctx.config.get(aiModelApiKeyConfigKey(stored.configKey, entry.id)) ?? "",
+      systemOwned: stored.systemOwned,
+      reasoning,
+      generationTimeoutMs,
+      generationStreaming,
+    });
+    if (!resolved.some((candidate) => isSameAiModelStack(candidate.config, config))) {
+      resolved.push({ entry, config });
+    }
+  }
 
+  const [primary, ...fallbacks] = resolved;
+  if (!primary) {
+    throw new Error(`AI model stack at /sys/${stored.configKey} has no usable models`);
+  }
+  return {
+    primary: primary.config,
+    fallbacks: fallbacks.map(({ entry, config }) => ({
+      modelId: entry.id,
+      modelName: entry.name,
+      ...config,
+    })),
+  };
+}
+
+async function resolveRequestAiModelConfig(
+  options: {
+    ctx: KernelContext;
+    uid: number;
+    accountUids: number[];
+    modelConfig: NonNullable<AiConfigArgs["modelConfig"]>;
+    modelId: string | null | undefined;
+    reasoning: string | null | undefined;
+  },
+  stored: StoredAiModelStack,
+): Promise<ResolvedAiTextModelStack> {
+  const provider = normalizeOptionalString(options.modelConfig.provider);
+  const modelName = normalizeOptionalString(options.modelConfig.model);
+  if (!provider || !modelName) {
+    throw new Error("modelConfig.provider and modelConfig.model are required");
+  }
+  const modelId = normalizeOptionalString(options.modelId);
+  const storedEntry = modelId
+    ? stored.stack.models.find((entry) => entry.id.toLowerCase() === modelId.toLowerCase())
+    : undefined;
+  if (modelId && !storedEntry) {
+    throw new Error(`AI model not found: ${modelId}`);
+  }
+  const resolveConfig = createAiConfigValueResolver(options.ctx.config, options.accountUids);
+  const usesStoredCredential = options.modelConfig.apiKey === undefined &&
+    storedEntry !== undefined &&
+    isSameAiModelCredentialScope(storedEntry, options.modelConfig);
+  const apiKey = options.modelConfig.apiKey !== undefined
+    ? options.modelConfig.apiKey.trim()
+    : usesStoredCredential
+      ? options.ctx.config.get(aiModelApiKeyConfigKey(stored.configKey, storedEntry.id)) ?? ""
+      : "";
+  const config = await resolveCompleteAiModelConfig({
+    ctx: options.ctx,
+    accountUids: options.accountUids,
+    model: {
+      ...options.modelConfig,
+      provider,
+      model: modelName,
+    },
+    apiKey,
+    systemOwned: usesStoredCredential ? stored.systemOwned : false,
+    reasoning: normalizeOptionalString(options.reasoning)
+      ?? normalizeOptionalString(resolveConfig("reasoning")),
+    generationTimeoutMs: resolveConfig("generation/timeout_ms", parsePositiveInt)
+      ?? DEFAULT_GENERATION_TIMEOUT_MS,
+    generationStreaming: normalizeGenerationStreaming(resolveConfig("generation/streaming")),
+  });
+  return { primary: config, fallbacks: [] };
+}
+
+async function resolveCompleteAiModelConfig(options: {
+  ctx: KernelContext;
+  accountUids: number[];
+  model: Omit<AiModelConfig, "apiKey">;
+  apiKey: string;
+  systemOwned: boolean;
+  reasoning: string | undefined;
+  generationTimeoutMs: number;
+  generationStreaming: "auto" | "off";
+}): Promise<AiModelStackConfig> {
+  const provider = options.model.provider.trim();
+  const model = options.model.model.trim();
+  const oauth = await resolveAiProviderOAuthApiKey(
+    options.ctx,
+    options.systemOwned ? withRootAiCredentialScope(options.accountUids) : options.accountUids,
+    provider,
+    options.apiKey,
+  );
+  const modelContextWindow = await resolveModelContextWindow(provider, model);
+  const contextWindowTokens = options.model.contextWindowTokens
+    ?? modelContextWindow
+    ?? null;
+  const contextWindowSource = options.model.contextWindowTokens !== undefined
+    ? "config" as const
+    : modelContextWindow !== null
+      ? "model" as const
+      : "unknown" as const;
   const result: AiModelStackConfig = {
     provider,
     model,
-    apiKey: resolvedApiKey,
-    providerStyle: providerStyle.trim().toLowerCase() || "auto",
-    transportTarget: normalizeTarget(transportTarget),
-    reasoning,
-    maxTokens,
+    apiKey: oauth.apiKey,
+    providerStyle: options.model.providerStyle?.trim().toLowerCase() || "auto",
+    transportTarget: normalizeTarget(options.model.transportTarget ?? "gsv"),
+    reasoning: options.reasoning,
+    maxTokens: options.model.maxTokens ?? DEFAULT_TEXT_GENERATION_MAX_TOKENS,
     contextWindowTokens,
     contextWindowSource,
-    generationTimeoutMs,
-    generationStreaming,
+    generationTimeoutMs: options.generationTimeoutMs,
+    generationStreaming: options.generationStreaming,
   };
-  const normalizedBaseUrl = baseUrl.trim();
-  if (normalizedBaseUrl) result.baseUrl = normalizedBaseUrl;
-  if (resolvedOAuth.openAiCodexAccountId) {
-    result.openAiCodex = { accountId: resolvedOAuth.openAiCodexAccountId };
+  const baseUrl = options.model.baseUrl?.trim();
+  if (baseUrl) result.baseUrl = baseUrl;
+  if (oauth.openAiCodexAccountId) {
+    result.openAiCodex = { accountId: oauth.openAiCodexAccountId };
   }
   return result;
 }
@@ -1218,246 +1065,13 @@ function resolveAiTranscriptionProcessContext(
   };
 }
 
-async function resolveAiTranscriptionStacksForContext(ctx: KernelContext): Promise<{
-  primary: NonNullable<AiConfigResult["media"]>;
-  fallback?: AiTranscriptionStack;
-}> {
-  const resolution = await resolveAiMediaContext(ctx);
-  const primary = resolveAiMediaConfig(
-    ctx.config,
-    resolution.accountUids,
-    resolution.accountProfileOverrides,
-    resolution.defaultApiKey,
-    resolution.processOverrides,
-  );
-  const fallbackSelection = resolveAiFallbackSelection(
-    ctx,
-    resolution.accountUids,
-    resolution.accountProfileOverrides,
-    resolution.processOverrides,
-  );
-  if (!fallbackSelection) {
-    return { primary };
-  }
-  const profile = findAiAccountModelProfile(
-    ctx.config,
-    fallbackSelection.accountUids,
-    fallbackSelection.accountUids[0],
-    fallbackSelection.selector,
-  );
-  if (!profile) {
-    return { primary };
-  }
-  const fallbackProvider = normalizeProviderName(
-    resolveAiProcessConfigValue(profile.values, "transcription/provider"),
-  );
-  const fallbackModel = normalizeOptionalString(
-    resolveAiProcessConfigValue(profile.values, "transcription/model"),
-  );
-  if (!fallbackProvider || !fallbackModel) {
-    return { primary };
-  }
-  const fallbackMedia = resolveAiMediaConfig(
-    ctx.config,
-    fallbackSelection.accountUids,
-    new Map(),
-    resolveAiProcessConfigValue(profile.values, "api_key") ?? resolution.defaultApiKey,
-    profile.values,
-  );
-  const fallback: AiTranscriptionStack = {
-    transcriptionProvider: fallbackProvider,
-    transcriptionModel: fallbackModel,
-    transcriptionApiKey: fallbackMedia.transcriptionApiKey,
-  };
-  return isSameAiTranscriptionStack(primary, fallback)
-    ? { primary }
-    : { primary, fallback };
-}
-
-function isSameAiTranscriptionStack(
-  left: AiTranscriptionStack,
-  right: AiTranscriptionStack,
-): boolean {
-  return left.transcriptionProvider.trim().toLowerCase() ===
-      right.transcriptionProvider.trim().toLowerCase() &&
-    left.transcriptionModel.trim().toLowerCase() ===
-      right.transcriptionModel.trim().toLowerCase() &&
-    left.transcriptionApiKey === right.transcriptionApiKey;
-}
-
-async function resolveAiMediaConfigForContext(ctx: KernelContext): Promise<NonNullable<AiConfigResult["media"]>> {
-  const resolution = await resolveAiMediaContext(ctx);
-  return resolveAiMediaConfig(
-    ctx.config,
-    resolution.accountUids,
-    resolution.accountProfileOverrides,
-    resolution.defaultApiKey,
-    resolution.processOverrides,
-  );
-}
-
-async function resolveAiMediaContext(ctx: KernelContext): Promise<{
-  accountUids: number[];
-  accountProfileOverrides: AiAccountProfileOverrides;
-  processOverrides: Record<string, string>;
-  defaultApiKey: string;
-}> {
+function resolveAiMediaConfigForContext(ctx: KernelContext): NonNullable<AiConfigResult["media"]> {
   const uid = ctx.identity?.process.uid ?? 0;
   const owner = resolveOwnerIdentity(ctx);
-  const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
-  const processOverrides = await resolveAiProcessOverridesForContext(ctx, uid, owner);
-  const accountProfileOverrides = resolveAiAccountProfileOverrides(ctx.config, accountConfigUids);
-  const apiKey =
-    resolveAiProcessConfigValue(processOverrides, "api_key") ??
-    resolveAiConfigValue(ctx.config, accountConfigUids, accountProfileOverrides, "api_key") ??
-    ctx.config.get("config/ai/api_key") ??
-    "";
-  return {
-    accountUids: accountConfigUids,
-    accountProfileOverrides,
-    processOverrides,
-    defaultApiKey: apiKey,
-  };
+  return resolveAiMediaConfig(ctx.config, resolveAiConfigAccountUids(uid, owner));
 }
 
-async function resolveAiProcessOverridesForContext(
-  ctx: KernelContext,
-  uid: number,
-  owner: ProcessIdentity | null,
-): Promise<Record<string, string>> {
-  if (!ctx.processId) {
-    return {};
-  }
-
-  let frame: Awaited<ReturnType<typeof sendFrameToProcess>>;
-  try {
-    frame = await raceWithAbort(
-      sendFrameToProcess(ctx.installationId, ctx.processId, {
-        type: "req",
-        id: crypto.randomUUID(),
-        call: "proc.ai.config.get",
-        args: { redacted: false },
-      }),
-      ctx.requestSignal,
-    );
-  } catch (error) {
-    if (ctx.requestSignal?.aborted) {
-      throw ctx.requestSignal.reason ?? error;
-    }
-    return {};
-  }
-  if (!frame || frame.type !== "res" || !frame.ok) {
-    return {};
-  }
-
-  // SAFETY: proc.ai.config.get returns the typed result for this exact internal request.
-  const result = frame.data as ProcAiConfigGetResult;
-  if (!result.ok || !result.config) {
-    return {};
-  }
-  return resolveEffectiveAiProcessOverrides(
-    ctx,
-    uid,
-    owner,
-    result.config.values,
-    result.config.profile,
-  );
-}
-
-function resolveEffectiveAiProcessOverrides(
-  ctx: KernelContext,
-  uid: number,
-  owner: ProcessIdentity | null,
-  processOverrides: AiConfigValues | undefined,
-  processProfile: ProcAiConfigProfileRef | null | undefined,
-): AiConfigValues {
-  const profileSecretOverrides = resolveAiProfileSecretOverrides(
-    ctx.config,
-    resolveAiProfileOwnerUid(ctx, uid, owner),
-    processProfile,
-  );
-  const normalizedOverrides = normalizeAiProcessOverrideValues(processOverrides ?? {});
-  return {
-    ...profileSecretOverrides,
-    ...normalizedOverrides,
-  };
-}
-
-function resolveAiAccountProfileOverrides(
-  config: KernelContext["config"],
-  accountUids: number[],
-): AiAccountProfileOverrides {
-  const overrides: AiAccountProfileOverrides = new Map();
-  for (const accountUid of accountUids) {
-    const explicitSelector = normalizeOptionalString(config.get(`users/${accountUid}/ai/model_profile`));
-    const inferredSelector = explicitSelector
-      ? undefined
-      : inferAiAccountModelProfileSelector(config, accountUid);
-    const selector = explicitSelector ?? inferredSelector;
-    if (!selector) {
-      continue;
-    }
-    const profile = findAiAccountModelProfile(config, accountUids, accountUid, selector, {
-      matchModel: Boolean(inferredSelector),
-    });
-    if (profile) {
-      overrides.set(accountUid, profile.values);
-    }
-  }
-  return overrides;
-}
-
-function findAiAccountModelProfile(
-  config: KernelContext["config"],
-  accountUids: number[],
-  accountUid: number,
-  selector: string,
-  options: { matchModel?: boolean } = {},
-) {
-  const normalized = selector.trim().toLowerCase();
-  if (!normalized) {
-    return null;
-  }
-  const ownerCandidates = [
-    accountUid,
-    ...accountUids.filter((candidateUid) => candidateUid !== accountUid),
-  ];
-  for (const ownerUid of ownerCandidates) {
-    const profiles = parseProcessAiModelProfiles(
-      config.get(`users/${ownerUid}/ai/model_profiles`),
-      ownerUid,
-      (key) => config.get(key),
-    );
-    const profile = profiles.find((candidate) =>
-      candidate.id.toLowerCase() === normalized ||
-      candidate.name.toLowerCase() === normalized ||
-      (
-        options.matchModel === true &&
-        candidate.values["config/ai/model"]?.trim().toLowerCase() === normalized
-      )
-    );
-    if (profile) {
-      return profile;
-    }
-  }
-  return null;
-}
-
-function inferAiAccountModelProfileSelector(
-  config: KernelContext["config"],
-  accountUid: number,
-): string | undefined {
-  const model = normalizeOptionalString(config.get(`users/${accountUid}/ai/model`));
-  if (!model) {
-    return undefined;
-  }
-  const hasProviderStackOverride = ACCOUNT_MODEL_PROFILE_INFERENCE_BLOCKERS.some((key) =>
-    normalizeOptionalString(config.get(`users/${accountUid}/ai/${key}`)),
-  );
-  return hasProviderStackOverride ? undefined : model;
-}
-
-function resolveAiProfileOwnerUid(
+function resolveAiModelOwnerUid(
   ctx: KernelContext,
   uid: number,
   owner: ProcessIdentity | null,
@@ -1474,53 +1088,12 @@ function resolveAiProfileOwnerUid(
   return uid;
 }
 
-function resolveAiProfileSecretOverrides(
-  config: KernelContext["config"],
-  ownerUid: number,
-  profile: ProcAiConfigProfileRef | null | undefined,
-): AiConfigValues {
-  const profileId = normalizeOptionalString(profile?.id);
-  if (!profileId) {
-    return {};
-  }
-  const values: AiConfigValues = {};
-  for (const key of PROCESS_AI_CONFIG_SECRET_KEYS) {
-    const value = normalizeOptionalString(
-      config.get(processAiModelProfileSecretConfigKey(ownerUid, profileId, key)),
-    );
-    if (value) {
-      values[key] = value;
-    }
-  }
-  return values;
-}
-
 function resolveAiMediaConfig(
   config: KernelContext["config"],
-  accountUids: number[],
-  accountProfileOverrides: AiAccountProfileOverrides,
-  defaultApiKey: string,
-  processOverrides: Record<string, string>,
+  accountUids: readonly number[],
 ): NonNullable<AiConfigResult["media"]> {
-  const resolveConfig = createAiConfigValueResolver(
-    config,
-    accountUids,
-    accountProfileOverrides,
-    processOverrides,
-  );
-  const resolveExplicitConfig = createAiConfigValueResolver(
-    config,
-    accountUids,
-    accountProfileOverrides,
-    processOverrides,
-    true,
-  );
-  const transcriptionProvider = resolveExplicitConfig("transcription/provider", normalizeProviderName)
-    ?? "workers-ai";
-  const transcriptionModel = resolveExplicitConfig("transcription/model")
-    ?? defaultTranscriptionModelForProvider(transcriptionProvider);
-  const transcriptionApiKey = resolveExplicitConfig("transcription/api_key", normalizeOptionalString)
-    ?? defaultApiKey;
+  const resolveConfig = createAiConfigValueResolver(config, accountUids);
+  const transcription = resolveAiMediaModelConfig(config, accountUids, "transcription");
   const transcriptionMaxBytes = resolveConfig("transcription/max_bytes", parsePositiveInt)
     ?? DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES;
   const imageReadingMaxBytes = resolveConfig("image/read/max_bytes", parsePositiveInt)
@@ -1531,20 +1104,9 @@ function resolveAiMediaConfig(
     ?? DEFAULT_IMAGE_READING_MAX_OBJECTS;
   const imageReadingTimeoutMs = resolveConfig("image/read/timeout_ms", parsePositiveInt)
     ?? DEFAULT_IMAGE_READING_TIMEOUT_MS;
-  const imageGenerationProvider = resolveExplicitConfig("image/generation/provider", normalizeProviderName)
-    ?? "workers-ai";
-  const imageGenerationModel = resolveExplicitConfig("image/generation/model")
-    ?? defaultImageGenerationModelForProvider(imageGenerationProvider);
-  const imageGenerationApiKey = resolveExplicitConfig("image/generation/api_key", normalizeOptionalString)
-    ?? defaultApiKey;
-  const speechProvider = resolveExplicitConfig("speech/provider", normalizeProviderName)
-    ?? "workers-ai";
-  const speechModel = resolveExplicitConfig("speech/model")
-    ?? defaultSpeechModelForProvider(speechProvider);
-  const speechApiKey = resolveExplicitConfig("speech/api_key", normalizeOptionalString)
-    ?? defaultApiKey;
-  const speechSpeaker = resolveExplicitConfig("speech/speaker")
-    ?? defaultSpeechSpeakerForProvider(speechProvider);
+  const imageGeneration = resolveAiMediaModelConfig(config, accountUids, "image/generation");
+  const speech = resolveAiMediaModelConfig(config, accountUids, "speech", ["speaker"]);
+  const speechSpeaker = speech.values.speaker ?? "";
   const speechEncoding = resolveConfig("speech/encoding") ?? DEFAULT_AUDIO_SPEECH_ENCODING;
   const speechMaxChars = resolveConfig("speech/max_chars", parsePositiveInt)
     ?? DEFAULT_MAX_AUDIO_SPEECH_CHARS;
@@ -1552,20 +1114,20 @@ function resolveAiMediaConfig(
     ?? DEFAULT_AUDIO_SPEECH_TIMEOUT_MS;
 
   return {
-    transcriptionProvider,
-    transcriptionModel,
-    transcriptionApiKey,
+    transcriptionProvider: transcription.provider,
+    transcriptionModel: transcription.model,
+    transcriptionApiKey: transcription.apiKey,
     transcriptionMaxBytes,
     imageReadingMaxBytes,
     imageReadingMaxTokens,
     imageReadingMaxObjects,
     imageReadingTimeoutMs,
-    imageGenerationProvider,
-    imageGenerationModel,
-    imageGenerationApiKey,
-    speechProvider,
-    speechModel,
-    speechApiKey,
+    imageGenerationProvider: imageGeneration.provider,
+    imageGenerationModel: imageGeneration.model,
+    imageGenerationApiKey: imageGeneration.apiKey,
+    speechProvider: speech.provider,
+    speechModel: speech.model,
+    speechApiKey: speech.apiKey,
     speechSpeaker,
     speechEncoding,
     speechMaxChars,
@@ -1573,54 +1135,54 @@ function resolveAiMediaConfig(
   };
 }
 
-function normalizeProviderName(value: string | null | undefined): string | null {
-  const normalized = normalizeOptionalString(value)?.toLowerCase();
-  return normalized ?? null;
+function resolveAiMediaModelConfig(
+  config: KernelContext["config"],
+  accountUids: readonly number[],
+  key: "transcription" | "image/generation" | "speech",
+  extraKeys: readonly string[] = [],
+): AiMediaModelConfig {
+  const fieldNames = ["provider", "model", "api_key", ...extraKeys];
+  for (const uid of accountUids) {
+    const prefix = `users/${uid}/ai/${key}`;
+    const values = Object.fromEntries(fieldNames.flatMap((field) => {
+      const value = config.getExplicit(`${prefix}/${field}`);
+      return value === null ? [] : [[field, value]];
+    }));
+    if (Object.keys(values).length > 0) {
+      return requireCompleteAiMediaModelConfig(prefix, values);
+    }
+  }
+
+  const prefix = `config/ai/${key}`;
+  const explicitValues = Object.fromEntries(fieldNames.flatMap((field) => {
+    const value = config.getExplicit(`${prefix}/${field}`);
+    return value === null ? [] : [[field, value]];
+  }));
+  if (Object.keys(explicitValues).length > 0) {
+    return requireCompleteAiMediaModelConfig(prefix, explicitValues);
+  }
+  const values = Object.fromEntries(fieldNames.flatMap((field) => {
+    const value = config.get(`${prefix}/${field}`);
+    return value === null ? [] : [[field, value]];
+  }));
+  return requireCompleteAiMediaModelConfig(prefix, values);
 }
 
-function defaultImageGenerationModelForProvider(provider: string): string {
-  if (isWorkersAiProvider(provider)) {
-    return DEFAULT_IMAGE_GENERATION_MODEL;
+function requireCompleteAiMediaModelConfig(
+  prefix: string,
+  values: Readonly<Record<string, string>>,
+): AiMediaModelConfig {
+  const provider = values.provider?.trim().toLowerCase();
+  const model = values.model?.trim();
+  if (!provider || !model) {
+    throw new Error(`AI model configuration at /sys/${prefix} must include provider and model`);
   }
-  if (isOpenAiConfigProvider(provider)) {
-    return "gpt-image-1.5";
-  }
-  return "";
-}
-
-function defaultTranscriptionModelForProvider(provider: string): string {
-  if (isWorkersAiProvider(provider)) {
-    return DEFAULT_AUDIO_TRANSCRIPTION_MODEL;
-  }
-  if (isOpenAiConfigProvider(provider)) {
-    return DEFAULT_OPENAI_TRANSCRIPTION_MODEL;
-  }
-  return "";
-}
-
-function defaultSpeechModelForProvider(provider: string): string {
-  if (isWorkersAiProvider(provider)) {
-    return DEFAULT_AUDIO_SPEECH_MODEL;
-  }
-  if (isOpenAiConfigProvider(provider)) {
-    return DEFAULT_OPENAI_SPEECH_MODEL;
-  }
-  return "";
-}
-
-function defaultSpeechSpeakerForProvider(provider: string): string {
-  if (isWorkersAiProvider(provider)) {
-    return DEFAULT_AUDIO_SPEECH_SPEAKER;
-  }
-  if (isOpenAiConfigProvider(provider)) {
-    return DEFAULT_OPENAI_SPEECH_VOICE;
-  }
-  return "";
-}
-
-function isOpenAiConfigProvider(provider: string): boolean {
-  const normalized = provider.trim().toLowerCase();
-  return normalized === "openai";
+  return {
+    provider,
+    model,
+    apiKey: values.api_key?.trim() ?? "",
+    values,
+  };
 }
 
 /**

@@ -5,12 +5,14 @@ import { getProcessByPid } from "../shared/utils";
 import { normalizeUsageState } from "./store";
 
 it("includes cached tokens when reconstructing a missing usage total", () => {
-  expect(normalizeUsageState({
-    inputTokens: 100,
-    outputTokens: 20,
-    cacheReadTokens: 800,
-    cacheWriteTokens: 40,
-  })?.totalTokens).toBe(960);
+  expect(
+    normalizeUsageState({
+      inputTokens: 100,
+      outputTokens: 20,
+      cacheReadTokens: 800,
+      cacheWriteTokens: 40,
+    })?.totalTokens,
+  ).toBe(960);
 });
 
 describe("ProcessStore", () => {
@@ -32,7 +34,7 @@ describe("ProcessStore", () => {
           createdAtMs: 100,
           updatedAtMs: 100,
         };
-        const epoch = store.createContextEpoch({
+        const epoch = store.epochs.createContextEpoch({
           id: "epoch-1",
           generation: 1,
           systemPrompt: "exact prompt",
@@ -67,19 +69,23 @@ describe("ProcessStore", () => {
           r12yCount: 1,
           observedR12yRevision: 1,
         });
-        expect(store.appendContextEpochTransition(
-          epoch.id,
-          transition,
-          "Responsibility changed.",
-          "run-1",
-        )).toBe(2);
-        expect(store.appendContextEpochTransition(
-          epoch.id,
-          transition,
-          "must not duplicate",
-          "run-1",
-        )).toBe(2);
-        expect(store.listContextEpochTransitions(epoch.id)).toEqual([transition]);
+        expect(
+          store.epochs.appendContextEpochTransition(
+            epoch.id,
+            transition,
+            "Responsibility changed.",
+            "run-1",
+          ),
+        ).toBe(2);
+        expect(
+          store.epochs.appendContextEpochTransition(
+            epoch.id,
+            transition,
+            "must not duplicate",
+            "run-1",
+          ),
+        ).toBe(2);
+        expect(store.epochs.listContextEpochTransitions(epoch.id)).toEqual([transition]);
         const nextProjection = {
           version: 1,
           runtime: { date: "2026-08-29", timezone: "UTC" },
@@ -87,7 +93,7 @@ describe("ProcessStore", () => {
           mcpServers: [],
           skills: { mode: "off", entries: [] },
         };
-        store.appendContextEpochMessage({
+        store.epochs.appendContextEpochMessage({
           epochId: epoch.id,
           kind: "context.projection",
           observedProjection: nextProjection,
@@ -95,32 +101,39 @@ describe("ProcessStore", () => {
           runId: "run-1",
           createdAt: 225,
         });
-        expect(store.getLiveContextEpoch().observedProjection).toEqual(nextProjection);
-        store.recordContextEpochRun("run-1", {
-          runId: "run-1",
-          status: "ok",
-          delivery: { kind: "message", conversationId: "conv:ship", messageId: "msg:1" },
-        }, 250);
-        store.recordContextEpochRun("run-1", { runId: "run-1", status: "error" }, 251);
-        expect(store.listContextEpochRuns(epoch.id)).toEqual([{
-          runId: "run-1",
-          status: "ok",
-          delivery: { kind: "message", conversationId: "conv:ship", messageId: "msg:1" },
-        }]);
-        expect(store.getMessages().map((message: any) => message.content)).toEqual([
+        expect(store.epochs.getLiveContextEpoch().observedProjection).toEqual(nextProjection);
+        store.epochs.recordContextEpochRun(
+          "run-1",
+          {
+            runId: "run-1",
+            status: "ok",
+            delivery: { kind: "message", conversationId: "conv:ship", messageId: "msg:1" },
+          },
+          250,
+        );
+        store.epochs.recordContextEpochRun("run-1", { runId: "run-1", status: "error" }, 251);
+        expect(store.epochs.listContextEpochRuns(epoch.id)).toEqual([
+          {
+            runId: "run-1",
+            status: "ok",
+            delivery: { kind: "message", conversationId: "conv:ship", messageId: "msg:1" },
+          },
+        ]);
+        expect(store.messages.getMessages().map((message: any) => message.content)).toEqual([
           "Responsibility changed.",
           "Current date: 2026-08-29",
         ]);
 
-        store.deleteContextEpochOwnedMessages(epoch.id);
-        expect(store.getMessages()).toEqual([]);
-        expect(store.closeLiveContextEpoch("process.reset", 300, "/epoch.json.gz"))
-          .toMatchObject({
-            id: epoch.id,
-            state: "closed",
-            observedR12yRevision: 2,
-            archivePath: "/epoch.json.gz",
-          });
+        store.epochs.deleteContextEpochOwnedMessages(epoch.id);
+        expect(store.messages.getMessages()).toEqual([]);
+        expect(
+          store.epochs.closeLiveContextEpoch("process.reset", 300, "/epoch.json.gz"),
+        ).toMatchObject({
+          id: epoch.id,
+          state: "closed",
+          observedR12yRevision: 2,
+          archivePath: "/epoch.json.gz",
+        });
       });
     });
 
@@ -130,11 +143,11 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.appendMessage("user", "old message");
+        store.messages.appendMessage("user", "old message");
 
         expect(store.resetHistory()).toBe(2);
-        expect(store.messageCount()).toBe(0);
-        expect(store.getHistoryGeneration()).toBe(2);
+        expect(store.messages.messageCount()).toBe(0);
+        expect(store.state.getHistoryGeneration()).toBe(2);
       });
     });
 
@@ -144,20 +157,20 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        const firstId = store.appendMessage("user", "old one");
-        const secondId = store.appendMessage("assistant", "old two");
-        const thirdId = store.appendMessage("user", "keep me");
+        const firstId = store.messages.appendMessage("user", "old one");
+        const secondId = store.messages.appendMessage("assistant", "old two");
+        const thirdId = store.messages.appendMessage("user", "keep me");
 
-        const prefix = store.getHistoryPrefixMessages({ keepLast: 1 });
+        const prefix = store.history.getHistoryPrefixMessages({ keepLast: 1 });
         expect(prefix.map((message: any) => message.id)).toEqual([firstId, secondId]);
 
-        const summaryId = store.compactHistoryPrefix({
+        const summaryId = store.history.compactHistoryPrefix({
           generation: 1,
           fromMessageId: firstId,
           toMessageId: secondId,
           summary: "History compacted.\n\nSummary:\nOld work.",
         });
-        const segment = store.recordHistorySegment({
+        const segment = store.history.recordHistorySegment({
           id: "segment-1",
           generation: 1,
           kind: "compaction",
@@ -168,7 +181,7 @@ describe("ProcessStore", () => {
         });
 
         expect(segment.summaryMessageId).toBe(firstId);
-        expect(store.listHistorySegments()).toEqual([
+        expect(store.history.listHistorySegments()).toEqual([
           expect.objectContaining({
             id: "segment-1",
             kind: "compaction",
@@ -177,12 +190,14 @@ describe("ProcessStore", () => {
             summaryMessageId: firstId,
           }),
         ]);
-        expect(store.getHistorySegment("segment-1")).toMatchObject({ id: "segment-1" });
-        const messages = store.getMessages();
-        expect(messages.map((message: any) => [message.id, message.role, message.content])).toEqual([
-          [firstId, "system", "History compacted.\n\nSummary:\nOld work."],
-          [thirdId, "user", "keep me"],
-        ]);
+        expect(store.history.getHistorySegment("segment-1")).toMatchObject({ id: "segment-1" });
+        const messages = store.messages.getMessages();
+        expect(messages.map((message: any) => [message.id, message.role, message.content])).toEqual(
+          [
+            [firstId, "system", "History compacted.\n\nSummary:\nOld work."],
+            [thirdId, "user", "keep me"],
+          ],
+        );
       });
     });
 
@@ -192,32 +207,34 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        const oldUserId = store.appendMessage("user", "old");
-        const assistantId = store.appendMessage("assistant", "checking", {
+        const oldUserId = store.messages.appendMessage("user", "old");
+        const assistantId = store.messages.appendMessage("assistant", "checking", {
           toolCalls: JSON.stringify([
             { type: "toolCall", id: "call-1", name: "Read", arguments: {} },
             { type: "toolCall", id: "call-2", name: "Read", arguments: {} },
           ]),
         });
-        const eventId = store.appendMessage("system", "still working");
-        const secondResultId = store.appendToolResult("call-2", "fs.read", "two", false);
-        const firstResultId = store.appendToolResult("call-1", "fs.read", "one", false);
-        store.appendMessage("assistant", "done");
-        store.appendMessage("user", "new");
+        const eventId = store.messages.appendMessage("system", "still working");
+        const secondResultId = store.messages.appendToolResult("call-2", "fs.read", "two", false);
+        const firstResultId = store.messages.appendToolResult("call-1", "fs.read", "one", false);
+        store.messages.appendMessage("assistant", "done");
+        store.messages.appendMessage("user", "new");
 
-        expect(store.getHistoryPrefixMessages({
-          keepLast: 3,
-        }).map((message: any) => message.id)).toEqual([oldUserId]);
+        expect(
+          store.history
+            .getHistoryPrefixMessages({
+              keepLast: 3,
+            })
+            .map((message: any) => message.id),
+        ).toEqual([oldUserId]);
 
-        expect(store.getHistoryPrefixMessages({
-          throughMessageId: assistantId,
-        }).map((message: any) => message.id)).toEqual([
-          oldUserId,
-          assistantId,
-          eventId,
-          secondResultId,
-          firstResultId,
-        ]);
+        expect(
+          store.history
+            .getHistoryPrefixMessages({
+              throughMessageId: assistantId,
+            })
+            .map((message: any) => message.id),
+        ).toEqual([oldUserId, assistantId, eventId, secondResultId, firstResultId]);
       });
     });
 
@@ -227,31 +244,30 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        const summaryId = store.appendMessage("system", "Process history compacted.");
-        const assistantId = store.appendMessage("assistant", "", {
-          toolCalls: JSON.stringify([
-            { type: "toolCall", id: "", name: "", arguments: {} },
-          ]),
+        const summaryId = store.messages.appendMessage("system", "Process history compacted.");
+        const assistantId = store.messages.appendMessage("assistant", "", {
+          toolCalls: JSON.stringify([{ type: "toolCall", id: "", name: "", arguments: {} }]),
         });
-        const resultId = store.appendToolResult(
+        const resultId = store.messages.appendToolResult(
           "",
           "",
           'Tool "" was not offered for this generation',
           true,
         );
-        const completedUserId = store.appendMessage("user", "completed input");
-        const completedAssistantId = store.appendMessage("assistant", "completed response");
-        store.appendMessage("user", "active input", { runId: "active-run" });
+        const completedUserId = store.messages.appendMessage("user", "completed input");
+        const completedAssistantId = store.messages.appendMessage(
+          "assistant",
+          "completed response",
+        );
+        store.messages.appendMessage("user", "active input", { runId: "active-run" });
 
-        expect(store.getHistoryPrefixMessages({
-          throughMessageId: completedAssistantId,
-        }).map((message: any) => message.id)).toEqual([
-          summaryId,
-          assistantId,
-          resultId,
-          completedUserId,
-          completedAssistantId,
-        ]);
+        expect(
+          store.history
+            .getHistoryPrefixMessages({
+              throughMessageId: completedAssistantId,
+            })
+            .map((message: any) => message.id),
+        ).toEqual([summaryId, assistantId, resultId, completedUserId, completedAssistantId]);
       });
     });
   });
@@ -265,8 +281,8 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.appendMessage("user", "hello world");
-        const msgs = store.getMessages();
+        store.messages.appendMessage("user", "hello world");
+        const msgs = store.messages.getMessages();
         expect(msgs).toHaveLength(1);
         expect(msgs[0].role).toBe("user");
         expect(msgs[0].content).toBe("hello world");
@@ -281,7 +297,7 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.appendMessage("user", "look at this", {
+        store.messages.appendMessage("user", "look at this", {
           media: JSON.stringify([
             {
               type: "image",
@@ -290,7 +306,7 @@ describe("ProcessStore", () => {
             },
           ]),
         });
-        const msgs = store.getMessages();
+        const msgs = store.messages.getMessages();
         expect(msgs).toHaveLength(1);
         expect(msgs[0].media).toBeTruthy();
       });
@@ -302,8 +318,8 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.appendMessage("user", "hello from a run", { runId: "run-message-1" });
-        const msgs = store.getMessages();
+        store.messages.appendMessage("user", "hello from a run", { runId: "run-message-1" });
+        const msgs = store.messages.getMessages();
         expect(msgs).toHaveLength(1);
         expect(msgs[0].runId).toBe("run-message-1");
       });
@@ -315,7 +331,7 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        const id = store.appendMessage("assistant", "priced response", {
+        const id = store.messages.appendMessage("assistant", "priced response", {
           metadata: {
             provider: {
               api: "workers-ai-binding",
@@ -342,13 +358,13 @@ describe("ProcessStore", () => {
           },
         });
 
-        const message = store.getMessages()[0];
+        const message = store.messages.getMessages()[0];
         expect(id).toBe(message.id);
         expect(JSON.parse(message.metadata)).toMatchObject({
           provider: { provider: "workers-ai" },
           usage: { inputTokens: 1000, outputTokens: 250 },
         });
-        expect(store.getHistoryUsage()).toMatchObject({
+        expect(store.state.getHistoryUsage()).toMatchObject({
           inputTokens: 1000,
           outputTokens: 250,
           totalTokens: 1250,
@@ -357,7 +373,7 @@ describe("ProcessStore", () => {
         });
 
         // SAFETY: test fixture is constructed with the asserted domain shape.
-        const piMessage = store.toMessages()[0] as any;
+        const piMessage = store.messages.toMessages()[0] as any;
         expect(piMessage.provider).toBe("workers-ai");
         expect(piMessage.model).toBe("@cf/nvidia/nemotron-3-120b-a12b");
         expect(piMessage.usage.cost.total).toBe(0.000875);
@@ -369,7 +385,7 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test exercises ProcessStore's provider-accounting projection.
         const store = (instance as any).store;
-        store.appendMessage("assistant", "old epoch", {
+        store.messages.appendMessage("assistant", "old epoch", {
           metadata: {
             contextEpochId: "epoch-a",
             generationContextId: "generation-context:interactive",
@@ -386,21 +402,21 @@ describe("ProcessStore", () => {
         });
 
         // SAFETY: both fixtures are assistant records created immediately above.
-        const matching = store.toMessages({
+        const matching = store.messages.toMessages({
           contextEpochId: "epoch-a",
           generationContextId: "generation-context:interactive",
         })[0] as any;
         // SAFETY: both fixtures are assistant records created immediately above.
-        const different = store.toMessages({ contextEpochId: "epoch-b" })[0] as any;
+        const different = store.messages.toMessages({ contextEpochId: "epoch-b" })[0] as any;
         // SAFETY: both fixtures are assistant records created immediately above.
-        const delegated = store.toMessages({
+        const delegated = store.messages.toMessages({
           contextEpochId: "epoch-a",
           generationContextId: "generation-context:delegated",
         })[0] as any;
         expect(matching.usage.totalTokens).toBe(1000);
         expect(different.usage.totalTokens).toBe(0);
         expect(delegated.usage.totalTokens).toBe(0);
-        expect(JSON.parse(store.getMessages()[0].metadata)).toMatchObject({
+        expect(JSON.parse(store.messages.getMessages()[0].metadata)).toMatchObject({
           contextEpochId: "epoch-a",
           generationContextId: "generation-context:interactive",
         });
@@ -416,8 +432,8 @@ describe("ProcessStore", () => {
         const toolCalls = JSON.stringify([
           { type: "toolCall", id: "call_1", name: "Read", arguments: { path: "/etc/hostname" } },
         ]);
-        store.appendMessage("assistant", "Let me read that file.", { toolCalls });
-        const msgs = store.getMessages();
+        store.messages.appendMessage("assistant", "Let me read that file.", { toolCalls });
+        const msgs = store.messages.getMessages();
         expect(msgs).toHaveLength(1);
         expect(msgs[0].role).toBe("assistant");
         expect(msgs[0].content).toBe("Let me read that file.");
@@ -431,11 +447,11 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        expect(store.messageCount()).toBe(0);
-        store.appendMessage("user", "one");
-        store.appendMessage("assistant", "two");
-        store.appendMessage("user", "three");
-        expect(store.messageCount()).toBe(3);
+        expect(store.messages.messageCount()).toBe(0);
+        store.messages.appendMessage("user", "one");
+        store.messages.appendMessage("assistant", "two");
+        store.messages.appendMessage("user", "three");
+        expect(store.messages.messageCount()).toBe(3);
       });
     });
 
@@ -446,9 +462,9 @@ describe("ProcessStore", () => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         for (let i = 0; i < 5; i++) {
-          store.appendMessage("user", `msg-${i}`);
+          store.messages.appendMessage("user", `msg-${i}`);
         }
-        const page = store.getMessages({ limit: 2, offset: 1 });
+        const page = store.messages.getMessages({ limit: 2, offset: 1 });
         expect(page).toHaveLength(2);
         expect(page[0].content).toBe("msg-1");
         expect(page[1].content).toBe("msg-2");
@@ -462,13 +478,13 @@ describe("ProcessStore", () => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         for (let i = 0; i < 205; i++) {
-          store.appendMessage("user", `msg-${i}`);
+          store.messages.appendMessage("user", `msg-${i}`);
         }
-        const defaultMessages = store.getMessages();
+        const defaultMessages = store.messages.getMessages();
         expect(defaultMessages).toHaveLength(200);
         expect(defaultMessages[199].content).toBe("msg-199");
 
-        const allMessages = store.getMessages({ limit: null });
+        const allMessages = store.messages.getMessages({ limit: null });
         expect(allMessages).toHaveLength(205);
         expect(allMessages[204].content).toBe("msg-204");
       });
@@ -480,11 +496,19 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        expect(store.messageStats()).toEqual({ count: 0, firstMessageId: null, lastMessageId: null });
+        expect(store.messages.messageStats()).toEqual({
+          count: 0,
+          firstMessageId: null,
+          lastMessageId: null,
+        });
 
-        const firstId = store.appendMessage("user", "one");
-        const secondId = store.appendMessage("assistant", "two");
-        expect(store.messageStats()).toEqual({ count: 2, firstMessageId: firstId, lastMessageId: secondId });
+        const firstId = store.messages.appendMessage("user", "one");
+        const secondId = store.messages.appendMessage("assistant", "two");
+        expect(store.messages.messageStats()).toEqual({
+          count: 2,
+          firstMessageId: firstId,
+          lastMessageId: secondId,
+        });
         expect(firstId).toBeLessThan(secondId);
       });
     });
@@ -496,18 +520,18 @@ describe("ProcessStore", () => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         for (let i = 0; i < 10; i++) {
-          store.appendMessage("user", `msg-${i}`);
+          store.messages.appendMessage("user", `msg-${i}`);
         }
 
-        const tail = store.getMessages({ tail: true, limit: 3 });
+        const tail = store.messages.getMessages({ tail: true, limit: 3 });
         expect(tail.map((message: any) => message.content)).toEqual(["msg-7", "msg-8", "msg-9"]);
 
-        const older = store.getMessages({ beforeMessageId: tail[0].id, limit: 3 });
+        const older = store.messages.getMessages({ beforeMessageId: tail[0].id, limit: 3 });
         expect(older.map((message: any) => message.content)).toEqual(["msg-4", "msg-5", "msg-6"]);
-        expect(store.hasMessageBefore(older[0].id)).toBe(true);
-        expect(store.hasMessageAfter(older[2].id)).toBe(true);
+        expect(store.messages.hasMessageBefore(older[0].id)).toBe(true);
+        expect(store.messages.hasMessageAfter(older[2].id)).toBe(true);
 
-        const newer = store.getMessages({ afterMessageId: older[2].id, limit: 2 });
+        const newer = store.messages.getMessages({ afterMessageId: older[2].id, limit: 2 });
         expect(newer.map((message: any) => message.content)).toEqual(["msg-7", "msg-8"]);
       });
     });
@@ -518,11 +542,11 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.appendMessage("user", "a");
-        store.appendMessage("assistant", "b");
-        const cleared = store.clearMessages();
+        store.messages.appendMessage("user", "a");
+        store.messages.appendMessage("assistant", "b");
+        const cleared = store.messages.clearMessages();
         expect(cleared).toBe(2);
-        expect(store.messageCount()).toBe(0);
+        expect(store.messages.messageCount()).toBe(0);
       });
     });
 
@@ -532,8 +556,8 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        const firstId = store.appendMessage("user", "old one");
-        const secondId = store.appendMessage("assistant", "old two", {
+        const firstId = store.messages.appendMessage("user", "old one");
+        const secondId = store.messages.appendMessage("assistant", "old two", {
           metadata: {
             usage: {
               inputTokens: 100,
@@ -553,18 +577,18 @@ describe("ProcessStore", () => {
             },
           },
         });
-        store.appendMessage("user", "keep me");
+        store.messages.appendMessage("user", "keep me");
 
-        store.compactHistoryPrefix({
+        store.history.compactHistoryPrefix({
           generation: 1,
           fromMessageId: firstId,
           toMessageId: secondId,
           summary: "Summary.",
         });
-        expect(store.getHistoryUsage()?.cost?.total).toBe(0.00008);
+        expect(store.state.getHistoryUsage()?.cost?.total).toBe(0.00008);
 
         store.resetHistory();
-        expect(store.getHistoryUsage()).toBeNull();
+        expect(store.state.getHistoryUsage()).toBeNull();
       });
     });
   });
@@ -575,7 +599,7 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture exercises the internal ProcessStore contract.
         const store = (instance as any).store;
-        store.startTraceSpan({
+        store.traces.startTraceSpan({
           id: "run:trace-run",
           runId: "trace-run",
           kind: "run",
@@ -583,7 +607,7 @@ describe("ProcessStore", () => {
           startedAt: 100,
           reference: { kind: "run" },
         });
-        store.startTraceSpan({
+        store.traces.startTraceSpan({
           id: "context:trace-run",
           runId: "trace-run",
           parentId: "run:trace-run",
@@ -591,53 +615,55 @@ describe("ProcessStore", () => {
           name: "Build context",
           startedAt: 110,
         });
-        store.finishTraceSpan("context:trace-run", "ok", 140, {
+        store.traces.finishTraceSpan("context:trace-run", "ok", 140, {
           attributes: { messages: 3 },
         });
-        expect(store.getRunTraceStartedAt("trace-run")).toBe(100);
-        expect(store.getRunTraceStartedAt("missing-run")).toBeNull();
-        store.register("dispatch-1", "call-1", "trace-run", "fs.read", {
+        expect(store.traces.getRunTraceStartedAt("trace-run")).toBe(100);
+        expect(store.traces.getRunTraceStartedAt("missing-run")).toBeNull();
+        store.tools.register("dispatch-1", "call-1", "trace-run", "fs.read", {
           path: "/work/readme.md",
         });
-        store.markDispatched("dispatch-1");
-        store.resolve("dispatch-1", { ok: true });
-        store.finishRunTrace("trace-run", "ok", 200);
+        store.tools.markDispatched("dispatch-1");
+        store.tools.resolve("dispatch-1", { ok: true });
+        store.traces.finishRunTrace("trace-run", "ok", 200);
 
-        const trace = store.listTraceSpans({ runId: "trace-run", limit: 20 });
+        const trace = store.traces.listTraceSpans({ runId: "trace-run", limit: 20 });
         expect(trace.count).toBe(4);
-        expect(trace.spans).toEqual(expect.arrayContaining([
-          expect.objectContaining({
-            id: "run:trace-run",
-            kind: "run",
-            status: "ok",
-            startedAt: 100,
-            endedAt: 200,
-          }),
-          expect.objectContaining({
-            id: "context:trace-run",
-            parentId: "run:trace-run",
-            status: "ok",
-            attributes: { messages: 3 },
-          }),
-          expect.objectContaining({
-            id: "tool:dispatch-1",
-            parentId: "run:trace-run",
-            status: "ok",
-            reference: {
-              kind: "tool",
-              callId: "call-1",
-              executionId: "dispatch-1",
-            },
-          }),
-          expect.objectContaining({
-            id: "execution:dispatch-1",
-            parentId: "tool:dispatch-1",
-            status: "ok",
-          }),
-        ]));
+        expect(trace.spans).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              id: "run:trace-run",
+              kind: "run",
+              status: "ok",
+              startedAt: 100,
+              endedAt: 200,
+            }),
+            expect.objectContaining({
+              id: "context:trace-run",
+              parentId: "run:trace-run",
+              status: "ok",
+              attributes: { messages: 3 },
+            }),
+            expect.objectContaining({
+              id: "tool:dispatch-1",
+              parentId: "run:trace-run",
+              status: "ok",
+              reference: {
+                kind: "tool",
+                callId: "call-1",
+                executionId: "dispatch-1",
+              },
+            }),
+            expect.objectContaining({
+              id: "execution:dispatch-1",
+              parentId: "tool:dispatch-1",
+              status: "ok",
+            }),
+          ]),
+        );
 
         store.resetHistory();
-        expect(store.listTraceSpans({ limit: 20 })).toEqual({ count: 0, spans: [] });
+        expect(store.traces.listTraceSpans({ limit: 20 })).toEqual({ count: 0, spans: [] });
       });
     });
   });
@@ -651,7 +677,7 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.appendToolResult(
+        store.messages.appendToolResult(
           "call_1",
           "fs.read",
           "Error: User interrupted tool execution",
@@ -659,7 +685,7 @@ describe("ProcessStore", () => {
           "run-tool-1",
           "cancelled",
         );
-        const msgs = store.getMessages();
+        const msgs = store.messages.getMessages();
         expect(msgs).toHaveLength(1);
         expect(msgs[0].role).toBe("toolResult");
         expect(msgs[0].content).toBe("Error: User interrupted tool execution");
@@ -678,8 +704,8 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.appendToolResult("call_2", "shell.exec", "output", false);
-        const meta = JSON.parse(store.getMessages()[0].toolCalls!);
+        store.messages.appendToolResult("call_2", "shell.exec", "output", false);
+        const meta = JSON.parse(store.messages.getMessages()[0].toolCalls!);
         expect(meta.toolName).toBe("Shell");
       });
     });
@@ -690,8 +716,8 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.appendToolResult("call_3", "fs.write", "EPERM: permission denied", true);
-        const meta = JSON.parse(store.getMessages()[0].toolCalls!);
+        store.messages.appendToolResult("call_3", "fs.write", "EPERM: permission denied", true);
+        const meta = JSON.parse(store.messages.getMessages()[0].toolCalls!);
         expect(meta.isError).toBe(true);
       });
     });
@@ -703,12 +729,14 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        const media = JSON.stringify([{
-          type: "image",
-          mimeType: "image/png",
-          key: "var/media/0/tool-result-media/image",
-        }]);
-        store.appendToolResult(
+        const media = JSON.stringify([
+          {
+            type: "image",
+            mimeType: "image/png",
+            key: "var/media/0/tool-result-media/image",
+          },
+        ]);
+        store.messages.appendToolResult(
           "call_media",
           "fs.read",
           "image metadata",
@@ -718,8 +746,8 @@ describe("ProcessStore", () => {
           media,
         );
 
-        expect(store.getMessages()[0].media).toBe(media);
-        expect(store.toMessages()[0].content).toEqual([
+        expect(store.messages.getMessages()[0].media).toBe(media);
+        expect(store.messages.toMessages()[0].content).toEqual([
           { type: "text", text: "image metadata" },
           {
             type: "text",
@@ -736,7 +764,7 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.appendToolResult(
+        store.messages.appendToolResult(
           "call_legacy_image",
           "fs.read",
           JSON.stringify({
@@ -749,7 +777,7 @@ describe("ProcessStore", () => {
           false,
         );
 
-        const message = store.toMessages()[0];
+        const message = store.messages.toMessages()[0];
         expect(message.content).toEqual([
           {
             type: "text",
@@ -778,8 +806,8 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.appendMessage("user", "hello");
-        const msgs = store.toMessages();
+        store.messages.appendMessage("user", "hello");
+        const msgs = store.messages.toMessages();
         expect(msgs).toHaveLength(1);
         expect(msgs[0].role).toBe("user");
         expect(msgs[0].content).toBe("hello");
@@ -793,7 +821,7 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.appendMessage("user", "See attachment", {
+        store.messages.appendMessage("user", "See attachment", {
           media: JSON.stringify([
             {
               type: "image",
@@ -803,7 +831,7 @@ describe("ProcessStore", () => {
             },
           ]),
         });
-        const msgs = store.toMessages();
+        const msgs = store.messages.toMessages();
         expect(msgs).toHaveLength(1);
         expect(msgs[0].role).toBe("user");
         expect(Array.isArray(msgs[0].content)).toBe(true);
@@ -820,8 +848,8 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.appendMessage("assistant", "Hello there!");
-        const msgs = store.toMessages();
+        store.messages.appendMessage("assistant", "Hello there!");
+        const msgs = store.messages.toMessages();
         expect(msgs).toHaveLength(1);
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const msg = msgs[0] as any;
@@ -839,10 +867,10 @@ describe("ProcessStore", () => {
         const toolCalls = [
           { type: "toolCall", id: "call_1", name: "Read", arguments: { path: "/etc/hostname" } },
         ];
-        store.appendMessage("assistant", "Reading file...", {
+        store.messages.appendMessage("assistant", "Reading file...", {
           toolCalls: JSON.stringify(toolCalls),
         });
-        const msgs = store.toMessages();
+        const msgs = store.messages.toMessages();
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const msg = msgs[0] as any;
         expect(msg.content).toHaveLength(2);
@@ -858,18 +886,21 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.appendMessage("assistant", "Reading file...", {
+        store.messages.appendMessage("assistant", "Reading file...", {
           toolCalls: JSON.stringify({
-            thinking: [
-              { type: "thinking", thinking: "First inspect the workspace." },
-            ],
+            thinking: [{ type: "thinking", thinking: "First inspect the workspace." }],
             toolCalls: [
-              { type: "toolCall", id: "call_1", name: "Read", arguments: { path: "/etc/hostname" } },
+              {
+                type: "toolCall",
+                id: "call_1",
+                name: "Read",
+                arguments: { path: "/etc/hostname" },
+              },
             ],
           }),
         });
 
-        const msgs = store.toMessages();
+        const msgs = store.messages.toMessages();
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const msg = msgs[0] as any;
         expect(msg.content).toEqual([
@@ -886,8 +917,8 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.appendToolResult("call_1", "fs.read", "gsv", false);
-        const msgs = store.toMessages();
+        store.messages.appendToolResult("call_1", "fs.read", "gsv", false);
+        const msgs = store.messages.toMessages();
         expect(msgs).toHaveLength(1);
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const msg = msgs[0] as any;
@@ -905,16 +936,16 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.appendMessage("user", "What is my hostname?");
-        store.appendMessage("assistant", "Let me check.", {
+        store.messages.appendMessage("user", "What is my hostname?");
+        store.messages.appendMessage("assistant", "Let me check.", {
           toolCalls: JSON.stringify([
             { type: "toolCall", id: "c1", name: "Read", arguments: { path: "/etc/hostname" } },
           ]),
         });
-        store.appendToolResult("c1", "fs.read", "gsv-host", false);
-        store.appendMessage("assistant", "Your hostname is gsv-host.");
+        store.messages.appendToolResult("c1", "fs.read", "gsv-host", false);
+        store.messages.appendMessage("assistant", "Your hostname is gsv-host.");
 
-        const msgs = store.toMessages();
+        const msgs = store.messages.toMessages();
         expect(msgs).toHaveLength(4);
         expect(msgs[0].role).toBe("user");
         expect(msgs[1].role).toBe("assistant");
@@ -933,21 +964,21 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.enqueue("run-1", "first message");
-        store.enqueue("run-2", "second message");
-        store.enqueue("run-3", "third message");
+        store.queue.enqueue("run-1", "first message");
+        store.queue.enqueue("run-2", "second message");
+        store.queue.enqueue("run-3", "third message");
 
-        expect(store.queueSize()).toBe(3);
+        expect(store.queue.queueSize()).toBe(3);
 
-        const first = store.dequeue();
+        const first = store.queue.dequeue();
         expect(first).not.toBeNull();
         expect(first!.message).toBe("first message");
         expect(first!.runId).toBe("run-1");
 
-        const second = store.dequeue();
+        const second = store.queue.dequeue();
         expect(second!.message).toBe("second message");
 
-        expect(store.queueSize()).toBe(1);
+        expect(store.queue.queueSize()).toBe(1);
       });
     });
 
@@ -957,35 +988,7 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        expect(store.dequeue()).toBeNull();
-      });
-    });
-
-    it("drainQueue returns all and clears", async () => {
-      const stub = await getProcessByPid("queue-drain");
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      await runInDurableObject(stub, (instance: Process) => {
-        // SAFETY: test fixture is constructed with the asserted domain shape.
-        const store = (instance as any).store;
-        store.enqueue("r1", "msg-a");
-        store.enqueue("r2", "msg-b");
-        store.enqueue("r3", "msg-c");
-
-        const all = store.drainQueue();
-        expect(all).toHaveLength(3);
-        expect(all[0].message).toBe("msg-a");
-        expect(all[2].message).toBe("msg-c");
-        expect(store.queueSize()).toBe(0);
-      });
-    });
-
-    it("drainQueue returns empty array on empty queue", async () => {
-      const stub = await getProcessByPid("queue-drain-empty");
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      await runInDurableObject(stub, (instance: Process) => {
-        // SAFETY: test fixture is constructed with the asserted domain shape.
-        const store = (instance as any).store;
-        expect(store.drainQueue()).toEqual([]);
+        expect(store.queue.dequeue()).toBeNull();
       });
     });
 
@@ -995,8 +998,8 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.enqueue("r1", "hello", { media: '["img.png"]' });
-        const item = store.dequeue();
+        store.queue.enqueue("r1", "hello", { media: '["img.png"]' });
+        const item = store.queue.dequeue();
         expect(item!.media).toBe('["img.png"]');
       });
     });
@@ -1012,13 +1015,13 @@ describe("ProcessStore", () => {
           eventId: "work-return-1",
           eventType: "adapter.work.returned",
         });
-        store.enqueue("work-return-run-1", "the user returned from work", {
+        store.queue.enqueue("work-return-run-1", "the user returned from work", {
           role: "system",
           kind: "adapter.work.returned",
           provenance,
         });
 
-        expect(store.dequeue()).toMatchObject({
+        expect(store.queue.dequeue()).toMatchObject({
           runId: "work-return-run-1",
           role: "system",
           kind: "adapter.work.returned",
@@ -1026,7 +1029,6 @@ describe("ProcessStore", () => {
         });
       });
     });
-
   });
 
   // ---------- Tool calls ----------
@@ -1038,16 +1040,16 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.register("dispatch_1", "call_1", "run_1", "fs.read", { path: "/etc/hostname" });
-        expect(store.getPending("dispatch_1")).not.toBeNull();
-        expect(store.isRunResolved("run_1")).toBe(false);
+        store.tools.register("dispatch_1", "call_1", "run_1", "fs.read", { path: "/etc/hostname" });
+        expect(store.tools.getPending("dispatch_1")).not.toBeNull();
+        expect(store.tools.isRunResolved("run_1")).toBe(false);
 
-        expect(store.resolve("dispatch_1", { content: "gsv" })).toBe(true);
-        expect(store.resolve("dispatch_1", { content: "late" })).toBe(false);
-        expect(store.getPending("dispatch_1")).toBeNull();
-        expect(store.isRunResolved("run_1")).toBe(true);
+        expect(store.tools.resolve("dispatch_1", { content: "gsv" })).toBe(true);
+        expect(store.tools.resolve("dispatch_1", { content: "late" })).toBe(false);
+        expect(store.tools.getPending("dispatch_1")).toBeNull();
+        expect(store.tools.isRunResolved("run_1")).toBe(true);
 
-        const results = store.getResults("run_1");
+        const results = store.tools.getResults("run_1");
         expect(results).toHaveLength(1);
         expect(results[0].status).toBe("completed");
         expect(results[0].result).toEqual({ content: "gsv" });
@@ -1061,12 +1063,12 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.register("dispatch_1", "call_1", "run_1", "fs.read", { path: "/tmp/input" });
-        expect(store.getResults("run_1")[0].status).toBe("registered");
+        store.tools.register("dispatch_1", "call_1", "run_1", "fs.read", { path: "/tmp/input" });
+        expect(store.tools.getResults("run_1")[0].status).toBe("registered");
 
-        expect(store.markDispatched("dispatch_1")).toBe(true);
-        expect(store.markDispatched("dispatch_1")).toBe(false);
-        expect(store.getResults("run_1")[0].status).toBe("pending");
+        expect(store.tools.markDispatched("dispatch_1")).toBe(true);
+        expect(store.tools.markDispatched("dispatch_1")).toBe(false);
+        expect(store.tools.getResults("run_1")[0].status).toBe("pending");
       });
     });
 
@@ -1076,10 +1078,10 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.register("dispatch_2", "call_2", "run_2", "fs.write", { path: "/root/x" });
-        store.fail("dispatch_2", "EPERM");
-        expect(store.isRunResolved("run_2")).toBe(true);
-        const results = store.getResults("run_2");
+        store.tools.register("dispatch_2", "call_2", "run_2", "fs.write", { path: "/root/x" });
+        store.tools.fail("dispatch_2", "EPERM");
+        expect(store.tools.isRunResolved("run_2")).toBe(true);
+        const results = store.tools.getResults("run_2");
         expect(results[0].status).toBe("error");
         expect(results[0].error).toBe("EPERM");
         expect(results[0].outcome).toBe("failed");
@@ -1092,13 +1094,15 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.register("dispatch_denied", "call_denied", "run_denied", "fs.read", {});
-        store.fail("dispatch_denied", "Tool execution denied by user", "denied");
+        store.tools.register("dispatch_denied", "call_denied", "run_denied", "fs.read", {});
+        store.tools.fail("dispatch_denied", "Tool execution denied by user", "denied");
 
-        expect(store.getResults("run_denied")).toMatchObject([{
-          status: "error",
-          outcome: "denied",
-        }]);
+        expect(store.tools.getResults("run_denied")).toMatchObject([
+          {
+            status: "error",
+            outcome: "denied",
+          },
+        ]);
       });
     });
 
@@ -1109,22 +1113,24 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.register(
+        store.tools.register(
           "dispatch_resolved_failure",
           "call_resolved_failure",
           "run_resolved_failure",
           "shell.exec",
           {},
         );
-        store.resolve("dispatch_resolved_failure", {
+        store.tools.resolve("dispatch_resolved_failure", {
           status: "failed",
           error: "command could not start",
         });
 
-        expect(store.getResults("run_resolved_failure")).toMatchObject([{
-          status: "completed",
-          outcome: "failed",
-        }]);
+        expect(store.tools.getResults("run_resolved_failure")).toMatchObject([
+          {
+            status: "completed",
+            outcome: "failed",
+          },
+        ]);
       });
     });
 
@@ -1134,45 +1140,37 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.register(
-          "dispatch_old",
-          "call_reused",
-          "run_old",
-          "fs.read",
-          { path: "/old" },
-        );
-        expect(store.getPending("dispatch_old")).toMatchObject({
+        store.tools.register("dispatch_old", "call_reused", "run_old", "fs.read", { path: "/old" });
+        expect(store.tools.getPending("dispatch_old")).toMatchObject({
           runId: "run_old",
         });
 
-        store.register(
-          "dispatch_new",
-          "call_reused",
-          "run_new",
-          "fs.read",
-          { path: "/new" },
-        );
-        expect(store.getPending("dispatch_old")).not.toBeNull();
-        expect(store.getPending("dispatch_new")).toMatchObject({
+        store.tools.register("dispatch_new", "call_reused", "run_new", "fs.read", { path: "/new" });
+        expect(store.tools.getPending("dispatch_old")).not.toBeNull();
+        expect(store.tools.getPending("dispatch_new")).toMatchObject({
           runId: "run_new",
         });
 
-        store.resolve("dispatch_old", { content: "stale" });
-        store.fail("dispatch_old", "stale failure");
-        expect(store.getPending("dispatch_new")).not.toBeNull();
+        store.tools.resolve("dispatch_old", { content: "stale" });
+        store.tools.fail("dispatch_old", "stale failure");
+        expect(store.tools.getPending("dispatch_new")).not.toBeNull();
 
-        store.resolve("dispatch_new", { content: "fresh" });
-        expect(store.getResults("run_old")).toMatchObject([{
-          id: "call_reused",
-          dispatchId: "dispatch_old",
-          status: "completed",
-          result: { content: "stale" },
-        }]);
-        expect(store.getResults("run_new")).toMatchObject([{
-          id: "call_reused",
-          status: "completed",
-          result: { content: "fresh" },
-        }]);
+        store.tools.resolve("dispatch_new", { content: "fresh" });
+        expect(store.tools.getResults("run_old")).toMatchObject([
+          {
+            id: "call_reused",
+            dispatchId: "dispatch_old",
+            status: "completed",
+            result: { content: "stale" },
+          },
+        ]);
+        expect(store.tools.getResults("run_new")).toMatchObject([
+          {
+            id: "call_reused",
+            status: "completed",
+            result: { content: "fresh" },
+          },
+        ]);
       });
     });
 
@@ -1182,15 +1180,15 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.register("dispatch_c1", "c1", "run_3", "fs.read", {});
-        store.register("dispatch_c2", "c2", "run_3", "shell.exec", {});
-        expect(store.isRunResolved("run_3")).toBe(false);
+        store.tools.register("dispatch_c1", "c1", "run_3", "fs.read", {});
+        store.tools.register("dispatch_c2", "c2", "run_3", "shell.exec", {});
+        expect(store.tools.isRunResolved("run_3")).toBe(false);
 
-        store.resolve("dispatch_c1", "ok");
-        expect(store.isRunResolved("run_3")).toBe(false);
+        store.tools.resolve("dispatch_c1", "ok");
+        expect(store.tools.isRunResolved("run_3")).toBe(false);
 
-        store.resolve("dispatch_c2", "ok");
-        expect(store.isRunResolved("run_3")).toBe(true);
+        store.tools.resolve("dispatch_c2", "ok");
+        expect(store.tools.isRunResolved("run_3")).toBe(true);
       });
     });
 
@@ -1200,12 +1198,12 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.register("dispatch_c1", "c1", "run_4", "fs.read", {});
-        store.register("dispatch_c2", "c2", "run_4", "fs.write", {});
-        store.resolve("dispatch_c1", "ok");
-        store.resolve("dispatch_c2", "ok");
-        store.clearRun("run_4");
-        expect(store.getResults("run_4")).toHaveLength(0);
+        store.tools.register("dispatch_c1", "c1", "run_4", "fs.read", {});
+        store.tools.register("dispatch_c2", "c2", "run_4", "fs.write", {});
+        store.tools.resolve("dispatch_c1", "ok");
+        store.tools.resolve("dispatch_c2", "ok");
+        store.tools.clearRun("run_4");
+        expect(store.tools.getResults("run_4")).toHaveLength(0);
       });
     });
   });
@@ -1219,11 +1217,11 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        expect(store.getValue("foo")).toBeNull();
-        store.setValue("foo", "bar");
-        expect(store.getValue("foo")).toBe("bar");
-        store.deleteValue("foo");
-        expect(store.getValue("foo")).toBeNull();
+        expect(store.state.getValue("foo")).toBeNull();
+        store.state.setValue("foo", "bar");
+        expect(store.state.getValue("foo")).toBe("bar");
+        store.state.deleteValue("foo");
+        expect(store.state.getValue("foo")).toBeNull();
       });
     });
 
@@ -1233,9 +1231,9 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.setValue("key", "v1");
-        store.setValue("key", "v2");
-        expect(store.getValue("key")).toBe("v2");
+        store.state.setValue("key", "v1");
+        store.state.setValue("key", "v2");
+        expect(store.state.getValue("key")).toBe("v2");
       });
     });
 
@@ -1245,21 +1243,24 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        store.setValue("contextState", JSON.stringify({
-          provider: "openai",
-          model: "gpt-test",
-          contextWindowTokens: 1000,
-          maxOutputTokens: 100,
-          estimatedInputTokens: 400,
-          inputTokens: 400,
-          availableInputTokens: 900,
-          pressure: 400 / 900,
-          level: "ok",
-          source: "estimate",
-          updatedAt: 1,
-        }));
+        store.state.setValue(
+          "contextState",
+          JSON.stringify({
+            provider: "openai",
+            model: "gpt-test",
+            contextWindowTokens: 1000,
+            maxOutputTokens: 100,
+            estimatedInputTokens: 400,
+            inputTokens: 400,
+            availableInputTokens: 900,
+            pressure: 400 / 900,
+            level: "ok",
+            source: "estimate",
+            updatedAt: 1,
+          }),
+        );
 
-        expect(store.getContextState()).toMatchObject({
+        expect(store.state.getContextState()).toMatchObject({
           revision: 0,
           confirmedInputTokens: 0,
           estimatedTrailingInputTokens: 400,
@@ -1276,53 +1277,40 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture exercises the internal ProcessStore contract.
         const store = (instance as any).store;
-        expect(store.nextContextStateRevision()).toBe(1);
-        store.deleteContextState();
-        expect(store.getContextStateRevision()).toBe(1);
-        expect(store.nextContextStateRevision()).toBe(2);
+        expect(store.state.nextContextStateRevision()).toBe(1);
+        store.state.deleteContextState();
+        expect(store.state.getContextStateRevision()).toBe(1);
+        expect(store.state.nextContextStateRevision()).toBe(2);
         store.resetHistory();
-        expect(store.getContextStateRevision()).toBe(2);
-        expect(store.nextContextStateRevision()).toBe(3);
+        expect(store.state.getContextStateRevision()).toBe(2);
+        expect(store.state.nextContextStateRevision()).toBe(3);
       });
     });
 
-    it("persists process-local AI config snapshots", async () => {
+    it("persists Process model preferences", async () => {
       const stub = await getProcessByPid("kv-ai-config");
       // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        expect(store.getAiConfigSnapshot()).toBeNull();
+        expect(store.state.getAiConfig()).toBeNull();
 
-        store.setAiConfigSnapshot({
-          version: 1,
-          values: {
-            "config/ai/provider": "openai",
-            "config/ai/model": "gpt-4.1-mini",
-            "config/ai/api_key": "sk-test",
-          },
-          profile: {
-            id: "fast",
-            name: "Fast",
-            appliedAt: 1000,
-          },
+        store.state.setAiConfig({
+          version: 2,
+          modelId: "fast",
+          reasoning: "high",
           updatedAt: 1000,
         });
 
-        expect(store.getAiConfigSnapshot()).toMatchObject({
-          values: {
-            "config/ai/provider": "openai",
-            "config/ai/model": "gpt-4.1-mini",
-            "config/ai/api_key": "sk-test",
-          },
-          profile: {
-            id: "fast",
-            name: "Fast",
-          },
+        expect(store.state.getAiConfig()).toEqual({
+          version: 2,
+          modelId: "fast",
+          reasoning: "high",
+          updatedAt: 1000,
         });
 
-        store.clearAiConfigSnapshot();
-        expect(store.getAiConfigSnapshot()).toBeNull();
+        store.state.clearAiConfig();
+        expect(store.state.getAiConfig()).toBeNull();
       });
     });
   });

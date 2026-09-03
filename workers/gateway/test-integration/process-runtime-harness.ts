@@ -2,7 +2,6 @@ import { GSVClient } from "@humansandmachines/gsv";
 import { jsonObjectSchema } from "@humansandmachines/gsv/protocol";
 import type {
   JsonObject,
-  ProcAiConfigSetResult,
   ProcSpawnResult,
 } from "@humansandmachines/gsv/protocol";
 import type { TestHarness } from "wrangler";
@@ -11,6 +10,8 @@ import { startOpenAiFixture, type OpenAiFixture } from "./openai-fixture";
 
 const USERNAME = "process-runtime-user";
 const PASSWORD = "process-runtime-password";
+const USER_UID = 1000;
+const MODEL_ID = "integration-model";
 
 export type RunSignal = {
   signal: string;
@@ -100,23 +101,30 @@ export async function startProcessRuntimeHarness(): Promise<ProcessRuntimeHarnes
       return spawned;
     },
     configureAi: async (pid) => {
-      const result = await connectedClient.call<ProcAiConfigSetResult>(
-        "proc.ai.config.set",
-        {
-          pid,
-          values: {
-            "config/ai/provider": "custom",
-            "config/ai/model": "integration-model",
-            "config/ai/base_url": ai.baseUrl,
-            "config/ai/provider_style": "openai-chat-completions",
-            "config/ai/transport_target": "gsv",
-            "config/ai/api_key": "fixture-only",
-            "config/ai/reasoning": "off",
-            "config/ai/generation/timeout_ms": "5000",
-            "config/ai/fallback_model_profile": "integration-no-fallback",
-          },
-        },
-      );
+      await connectedClient.sys.config.set({
+        key: `users/${USER_UID}/ai/models`,
+        value: JSON.stringify({
+          version: 1,
+          models: [{
+            id: MODEL_ID,
+            name: "Integration model",
+            provider: "custom",
+            model: MODEL_ID,
+            baseUrl: ai.baseUrl,
+            providerStyle: "openai-chat-completions",
+            transportTarget: "gsv",
+          }],
+        }),
+      });
+      await connectedClient.sys.config.set({
+        key: `users/${USER_UID}/ai/models/${MODEL_ID}/api_key`,
+        value: "fixture-only",
+      });
+      const result = await connectedClient.proc.ai.config.set({
+        pid,
+        modelId: MODEL_ID,
+        reasoning: "off",
+      });
       if (!result.ok) throw new Error(result.error);
     },
     waitFor,

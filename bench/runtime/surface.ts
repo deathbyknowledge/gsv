@@ -23,13 +23,15 @@ import {
 import {
   formatResponsibilityBaseline,
   formatResponsibilityTransitionEvent,
-} from "../../workers/gateway/src/process/responsibility-context";
+} from "../../workers/gateway/src/process/context/responsibilities";
 import {
   missingRunControlCorrectionMessage,
-  runControlShellCall,
-  type RunControlShellCall,
   withRunControlInstructions,
-} from "../../workers/gateway/src/process/run-control-tool";
+} from "../../workers/gateway/src/process/run/helpers";
+import {
+  classifyAssistantTurn,
+  type RunControlShellCall,
+} from "../../workers/gateway/src/process/run-tick-policy";
 import { intoSyscallTool } from "../../workers/gateway/src/syscalls";
 import { FS_DELETE_DEFINITION } from "../../workers/gateway/src/syscalls/delete";
 import { FS_EDIT_DEFINITION } from "../../workers/gateway/src/syscalls/edit";
@@ -303,10 +305,8 @@ class SyntheticEpisode {
         });
       }
 
-      const runControlCalls = process.role === "ship"
-        ? toolCalls
-          .map(runControlShellCall)
-          .filter((call): call is RunControlShellCall => call !== null)
+      const runControlCalls: RunControlShellCall[] = process.role === "ship"
+        ? classifyAssistantTurn(assistant, [...workToolNames]).runControlCalls
         : [];
       const runControlIds = new Set(
         runControlCalls.map(({ toolCall }) => toolCall.id),

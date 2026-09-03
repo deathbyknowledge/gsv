@@ -32,12 +32,7 @@ describe("standalone Process upgrade compatibility", () => {
 
     await runInDurableObject(legacyProcess, (instance: Process, state) => {
       expect(state.id.name).toBe(pid);
-      const store = fixtureInternals<{
-        store: {
-          appendMessage(role: "user", content: string): number;
-        };
-      }>(instance).store;
-      store.appendMessage("user", "history persisted before the upgrade");
+      instance.store.messages.appendMessage("user", "history persisted before the upgrade");
     });
 
     const currentProcess = await getProcessByPid(pid);

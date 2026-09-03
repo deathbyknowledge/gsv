@@ -492,7 +492,7 @@ describe("proc handlers", () => {
     expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
-  it("forwards process AI profile selectors without materializing profile secrets", async () => {
+  it("validates and forwards only a stable Process model reference", async () => {
     sendFrameToProcessMock.mockResolvedValue({
       type: "res",
       id: "ai-profile-1",
@@ -501,33 +501,23 @@ describe("proc handlers", () => {
         ok: true,
         pid: "proc-1",
         config: {
-          version: 1,
-          profile: { id: "fast-stack", name: "Fast Stack", appliedAt: 1 },
-          values: {
-            "config/ai/provider": "openai",
-            "config/ai/model": "gpt-4.1-mini",
-            "config/ai/api_key": "redacted",
-          },
+          version: 2,
+          modelId: "fast-stack",
           updatedAt: 1,
         },
       },
     } satisfies ResponseFrame);
     const configEntries = new Map<string, string>([
-      ["users/1000/ai/model_profiles", JSON.stringify({
+      ["users/1000/ai/models", JSON.stringify({
         version: 1,
-        profiles: [{
+        models: [{
           id: "fast-stack",
           name: "Fast Stack",
-          values: {
-            "config/ai/provider": "openai",
-            "config/ai/model": "gpt-4.1-mini",
-            "config/ai/image/read/max_tokens": "4096",
-          },
-          createdAt: 10,
-          updatedAt: 20,
+          provider: "openai",
+          model: "gpt-4.1-mini",
         }],
       })],
-      ["users/1000/ai/model_profiles/fast-stack/api_key", "sk-chat"],
+      ["users/1000/ai/models/fast-stack/api_key", "sk-chat"],
     ]);
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
@@ -542,6 +532,7 @@ describe("proc handlers", () => {
       },
       config: {
         get: vi.fn((key: string) => configEntries.get(key) ?? null),
+        getExplicit: vi.fn((key: string) => configEntries.get(key) ?? null),
       },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
@@ -553,7 +544,7 @@ describe("proc handlers", () => {
       call: "proc.ai.config.set",
       args: {
         pid: "proc-1",
-        profileId: "fast-stack",
+        modelId: "fast-stack",
       },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame, ctx);
@@ -564,21 +555,14 @@ describe("proc handlers", () => {
       expect.objectContaining({
         call: "proc.ai.config.set",
         args: {
-          values: {
-            "config/ai/provider": "openai",
-            "config/ai/model": "gpt-4.1-mini",
-            "config/ai/image/read/max_tokens": "4096",
-          },
-          profile: {
-            id: "fast-stack",
-            name: "Fast Stack",
-          },
+          pid: "proc-1",
+          modelId: "fast-stack",
         },
       }),
     );
   });
 
-  it("forces forwarded process AI config reads to stay redacted", async () => {
+  it("forwards Process preference reads without a credential-bearing mode", async () => {
     sendFrameToProcessMock.mockResolvedValue({
       type: "res",
       id: "ai-config-get-1",
@@ -587,10 +571,8 @@ describe("proc handlers", () => {
         ok: true,
         pid: "proc-1",
         config: {
-          version: 1,
-          values: {
-            "config/ai/api_key": "redacted",
-          },
+          version: 2,
+          modelId: "fast-stack",
           updatedAt: 1,
         },
       },
@@ -616,7 +598,6 @@ describe("proc handlers", () => {
       call: "proc.ai.config.get",
       args: {
         pid: "proc-1",
-        redacted: false,
       },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame, ctx);
@@ -628,7 +609,6 @@ describe("proc handlers", () => {
         call: "proc.ai.config.get",
         args: {
           pid: "proc-1",
-          redacted: true,
         },
       }),
     );

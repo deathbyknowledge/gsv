@@ -101,8 +101,7 @@ async function writeMedia(
 ): Promise<{ key: string }> {
   const response = await runInDurableObject(process, (instance: Process) => {
     // SAFETY: this isolation test invokes the private resource-ingress boundary directly.
-    const processInstance = instance as any;
-    return processInstance.storeIncomingResource({
+    return instance.resources.storeIncomingResource({
       type: "document",
       mimeType: "application/octet-stream",
       mediaId: "shared-media",

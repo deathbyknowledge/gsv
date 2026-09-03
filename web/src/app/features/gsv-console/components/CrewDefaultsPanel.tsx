@@ -2,8 +2,6 @@ import { useMemo } from "preact/hooks";
 import { actionLabel } from "../../../components/ui/agentToolApprovalOptions";
 import {
   behaviorForAccount,
-  inheritedFallbackModelLabelForAccount,
-  inheritedModelLabelForAccount,
   inheritedReasoningForAccount,
   parseApprovalPolicy,
 } from "../domain/consoleAgentBehavior";
@@ -47,10 +45,6 @@ export function CrewDefaultsPanel({
   const behavior = behaviorForAccount(config, viewer.uid, viewer.uid);
   const savedPolicy = useMemo(() => parseApprovalPolicy(behavior.approval), [behavior.approval]);
 
-  const modelValue = behavior.modelLabel || inheritedModelLabelForAccount(config, viewer.uid, viewer.uid) || "—";
-  const fallbackValue = behavior.fallbackModelLabel
-    || inheritedFallbackModelLabelForAccount(config, viewer.uid, viewer.uid)
-    || "None";
   const reasoningValue = reasoningDisplayLabel(
     behavior.reasoning || inheritedReasoningForAccount(config, viewer.uid, viewer.uid),
   );
@@ -60,8 +54,6 @@ export function CrewDefaultsPanel({
 
   return (
     <DefaultsSummaryPanel
-      model={modelValue}
-      fallback={fallbackValue}
       reasoning={reasoningValue}
       permissionsAction={actionLabel(savedPolicy.default).toUpperCase()}
       overridesCount={savedPolicy.rules.length}

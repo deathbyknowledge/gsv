@@ -1,38 +1,18 @@
-import {
-  DynamicWorkerExecutor,
-  type ResolvedProvider,
-} from "@cloudflare/codemode";
+import { DynamicWorkerExecutor, type ResolvedProvider } from "@cloudflare/codemode";
 import { z } from "zod";
 import type { CodeModeMcpToolBinding } from "../codemode/mcp";
 import type { SyscallName } from "../syscalls";
 import type { CodeModeExecResult } from "../syscalls/codemode";
 import { raceWithAbort } from "../shared/abort";
 import {
-  NET_FETCH,
-  FS_DELETE,
-  FS_EDIT,
-  FS_READ,
-  FS_SEARCH,
-  FS_WRITE,
-  MAIL_SEND,
-  SHELL_EXEC,
-  SYS_MCP_CALL,
+  NET_FETCH, FS_DELETE, FS_EDIT, FS_READ, FS_SEARCH, FS_WRITE, MAIL_SEND, SHELL_EXEC, SYS_MCP_CALL,
 } from "../syscalls/constants";
-import {
-  CODE_MODE_UNAVAILABLE_ERROR,
-  type CodeModeEnvironment,
-} from "../codemode/availability";
-import {
-  jsonObjectSchema,
-  jsonValueSchema,
-  type JsonObject,
-  type JsonValue,
-} from "@humansandmachines/gsv/protocol";
+import { CODE_MODE_UNAVAILABLE_ERROR, type CodeModeEnvironment } from "../codemode/availability";
+import { jsonObjectSchema, jsonValueSchema, type JsonObject, type JsonValue } from "@humansandmachines/gsv/protocol";
 
 export { buildCodeModeMcpToolBindings } from "../codemode/mcp";
-export type { CodeModeMcpToolBinding } from "../codemode/mcp";
 
-export const CODE_MODE_EXECUTION_TIMEOUT_MS = 60_000;
+const CODE_MODE_EXECUTION_TIMEOUT_MS = 60_000;
 
 export type CodeModeExecutionOptions = {
   defaultTarget?: string;
@@ -55,7 +35,7 @@ const codeModeMailArgsSchema = z.intersection(
 );
 const optionalCodeModeArgsSchema = z.nullish(jsonObjectSchema).transform((value) => value ?? {});
 
-export function buildCodeModeSource(
+function buildCodeModeSource(
   code: string,
   options?: CodeModeExecutionOptions,
 ): string {

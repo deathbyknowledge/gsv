@@ -1,19 +1,9 @@
+import type { Context, Message, Usage } from "@earendil-works/pi-ai";
 import type {
-  Context,
-  Message,
-  Usage,
-} from "@earendil-works/pi-ai";
-import type {
-  ProcContextPressureLevel,
-  ProcContextState,
-  ProcContextUsageSource,
-  ProcUsageState,
+  ProcContextPressureLevel, ProcContextState, ProcContextUsageSource, ProcUsageState,
 } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
-import {
-  assistantContextEpochId,
-  assistantGenerationContextId,
-} from "./context-message-metadata";
+import { assistantContextEpochId, assistantGenerationContextId } from "./context-message-metadata";
 
 const TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4;
 const TOKEN_ESTIMATE_SAFETY_FACTOR = 1.15;

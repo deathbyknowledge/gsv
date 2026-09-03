@@ -1,12 +1,20 @@
 import { defineCommand } from "just-bash";
 import type { CommandContext, ExecResult } from "just-bash";
 import type {
+  AdapterMedia,
+  AdapterMediaBundle,
   AdapterMessageDestination,
   AdapterSendResult,
+  BinaryBody,
   ConversationMessage,
   ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
-import { contactDisplayName } from "@humansandmachines/gsv/protocol";
+import {
+  bundleAdapterMedia,
+  cancelBinaryBody,
+  contactDisplayName,
+  inferFsContentType,
+} from "@humansandmachines/gsv/protocol";
 import type { GsvFs } from "../../../fs/gsv-fs";
 import { hasCapability } from "../../../kernel/capabilities";
 import type { KernelContext } from "../../../kernel/context";
@@ -223,48 +231,12 @@ async function attachToReply(
     throw new Error(`message attach accepts at most ${MAX_MESSAGE_MEDIA_ITEMS} files`);
   }
   if (requestedMime && paths.length !== 1) {
-    throw new Error("--mime can only be used with one attachment");
+    throw new Error(
+      "--mime can only be used with one attachment; omit --mime or attach files separately",
+    );
   }
 
-  const resources: ResourceBlock[] = [];
-  let totalBytes = 0;
-  for (const requestedPath of paths) {
-    const path = shellCtx.fs.resolvePath(shellCtx.cwd, requestedPath);
-    const opened = await fs.openFile(path);
-    if (!opened.body) {
-      throw new Error(`cannot read attachment data for ${path}`);
-    }
-    await opened.body.cancel("Attachment will be resolved by immutable revision").catch(() => {});
-    if (!opened.etag) {
-      throw new Error(`cannot identify an immutable revision for ${path}`);
-    }
-    if (opened.size > MAX_MESSAGE_MEDIA_PART_BYTES) {
-      throw new Error(
-        `attachment exceeds per-file limit (${MAX_MESSAGE_MEDIA_PART_BYTES} bytes): ${path}`,
-      );
-    }
-    totalBytes += opened.size;
-    if (totalBytes > MAX_MESSAGE_MEDIA_TOTAL_BYTES) {
-      throw new Error(
-        `attachments exceed total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
-      );
-    }
-
-    const contentType = requestedMime?.trim() || opened.contentType || inferMimeType(path);
-    resources.push({
-      type: "resource",
-      ref: {
-        type: "file",
-        target: "gsv",
-        path,
-        revision: opened.etag,
-        contentType,
-        size: opened.size,
-      },
-      mediaType: mediaTypeForMime(contentType),
-      filename: path.split("/").pop() || "attachment",
-    });
-  }
+  const resources = await referenceAttachments(paths, requestedMime, shellCtx, fs);
 
   const request: ProcessRunAttachRequestFrame = {
     type: "req",
@@ -305,17 +277,28 @@ async function showCurrentReplyDestination(
     : undefined;
   if (json) {
     // SAFETY: The payload extends the trusted route description with an optional display identifier.
-    const payload = { ...current } as RouteDescription & { destinationId?: string };
-    if (destinationId) payload.destinationId = destinationId;
+    const payload: CurrentConversationDescription = {
+      ...current,
+      reply: currentConversationReplyInstructions(),
+    };
+    if (destinationId) {
+      payload.destinationId = destinationId;
+      payload.destinationUse = "additional-delivery-only";
+    }
     return completed(`${JSON.stringify(payload, null, 2)}\n`);
   }
   return completed([
-    `directed endpoint: ${current.label}`,
+    `current conversation: ${current.label}`,
     `transport: ${current.transport}`,
-    ...(destinationId ? [`destination: ${destinationId}`] : []),
-    "Use a literal `message send <<'GSV_MESSAGE'` block to send here without finishing the run.",
+    "reply command: message send",
+    "attachment command: message attach PATH...",
+    "Issue each as its own direct Shell tool call; omit --to and --also.",
+    "A reply commits to this conversation without finishing the run.",
     "Run `yield` when the work is complete, or compose the final send with `&& yield`.",
-    "Use `message send --to ... --also` for a cross-channel delivery.",
+    ...(destinationId
+      ? [`additional adapter destination: ${destinationId}`]
+      : []),
+    "Use `message send --to DESTINATION --also` only for an additional delivery.",
     "",
   ].join("\n"));
 }
@@ -564,7 +547,7 @@ async function sendMessage(
 ): Promise<ExecResult> {
   let to: string | undefined;
   let text: string | undefined;
-  let attachmentPath: string | undefined;
+  const attachmentPaths: string[] = [];
   let attachmentMime: string | undefined;
   let requestedDeliveryId: string | undefined;
   let also = false;
@@ -583,7 +566,7 @@ async function sendMessage(
     }
     if (current === "--attach") {
       index += 1;
-      attachmentPath = requireShellOptionValue(args[index], current);
+      attachmentPaths.push(requireShellOptionValue(args[index], current));
       continue;
     }
     if (current === "--mime") {
@@ -603,25 +586,43 @@ async function sendMessage(
     throw new Error(`unexpected argument: ${current}`);
   }
 
+  if (attachmentPaths.length > MAX_MESSAGE_MEDIA_ITEMS) {
+    throw new Error(`message send accepts at most ${MAX_MESSAGE_MEDIA_ITEMS} attachments`);
+  }
+  if (attachmentMime && attachmentPaths.length === 0) {
+    throw new Error("--mime requires --attach");
+  }
+  if (attachmentMime && attachmentPaths.length > 1) {
+    throw new Error(
+      "--mime can only be used with one attachment; omit --mime or send files separately",
+    );
+  }
+
   const activeRun = Boolean(ctx.processId && ctx.processRunId);
   if (activeRun && !also) {
     throw new Error(
-      "the current-conversation form of message send must be invoked as a direct Shell tool call; use --also for an explicit outbound destination",
+      "the current-conversation form of message send must be invoked as a direct Shell tool "
+      + "call: stage files first with `message attach PATH...`, then issue `message send ...` "
+      + "without --to or --also. Use --also only for an explicit additional destination",
     );
   }
   if (!to) throw new Error("message send requires --to outside its direct current-conversation form");
-  if (!text?.trim() && !attachmentPath) {
+  if (!text?.trim() && attachmentPaths.length === 0) {
     throw new Error("message send requires --message or --attach");
   }
-  if (attachmentMime && !attachmentPath) {
-    throw new Error("--mime requires --attach");
-  }
-
   const requestedDestination = to.trim();
+  if (requestedDestination.toLowerCase() === "here") {
+    throw new Error(
+      "--to here is not a message destination. To reply to the current conversation, "
+      + "stage files with `message attach PATH...`, then issue `message send ...` as its own "
+      + "direct Shell tool call without --to or --also. For an additional adapter delivery, "
+      + "copy an opaque destination from `message current --json` or `message destinations`",
+    );
+  }
   if (requestedDestination.startsWith("contact:")) {
     requireCommandCapability(ctx, "contact.send");
-    const media = attachmentPath
-      ? [await referenceAttachment(attachmentPath, attachmentMime, shellCtx, fs)]
+    const media = attachmentPaths.length > 0
+      ? await referenceAttachments(attachmentPaths, attachmentMime, shellCtx, fs)
       : undefined;
     const contactResult = await handleContactSend({
       contactId: requestedDestination,
@@ -644,9 +645,10 @@ async function sendMessage(
 
   requireCommandCapability(ctx, "adapter.send");
 
-  const destination = requestedDestination.toLowerCase() === "here"
-    ? destinationFromCurrentRoute(ctx)
-    : (await resolveVisibleAdapterMessageDestination(requestedDestination, ctx)).destination;
+  const destination = (await resolveVisibleAdapterMessageDestination(
+    requestedDestination,
+    ctx,
+  )).destination;
   const destinationId = await adapterMessageDestinationId(
     destination,
     resolveCallerOwnerUid(ctx),
@@ -654,10 +656,10 @@ async function sendMessage(
   const deliveryId = requestedDeliveryId?.trim() || crypto.randomUUID();
   let result: AdapterSendResult | undefined;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    let attachment: Awaited<ReturnType<typeof openAttachment>> | null;
+    let attachments: AdapterMediaBundle | null;
     try {
-      attachment = attachmentPath
-        ? await openAttachment(attachmentPath, attachmentMime, shellCtx, fs)
+      attachments = attachmentPaths.length > 0
+        ? await openAttachments(attachmentPaths, attachmentMime, shellCtx, fs)
         : null;
     } catch (error) {
       throw new Error(
@@ -669,13 +671,13 @@ async function sendMessage(
       deliveryId,
       text: text?.trim() ?? "",
     };
-    if (attachment) sendArgs.media = [attachment.media];
+    if (attachments) sendArgs.media = attachments.media;
     result = await deliverAdapterDestination(
       destination,
       resolveCallerOwnerUid(ctx),
       sendArgs,
       ctx,
-      attachment?.body,
+      attachments?.body,
     );
     if (result.ok || !result.retryable) break;
   }
@@ -701,6 +703,27 @@ async function sendMessage(
   ].join("\n"));
 }
 
+async function referenceAttachments(
+  requestedPaths: string[],
+  requestedMime: string | undefined,
+  shellCtx: CommandContext,
+  fs: GsvFs,
+): Promise<ResourceBlock[]> {
+  const resources: ResourceBlock[] = [];
+  let totalBytes = 0;
+  for (const requestedPath of requestedPaths) {
+    const resource = await referenceAttachment(requestedPath, requestedMime, shellCtx, fs);
+    totalBytes += resource.ref.size;
+    if (totalBytes > MAX_MESSAGE_MEDIA_TOTAL_BYTES) {
+      throw new Error(
+        `attachments exceed total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
+      );
+    }
+    resources.push(resource);
+  }
+  return resources;
+}
+
 async function referenceAttachment(
   requestedPath: string,
   requestedMime: string | undefined,
@@ -721,7 +744,8 @@ async function referenceAttachment(
       `attachment exceeds per-file limit (${MAX_MESSAGE_MEDIA_PART_BYTES} bytes): ${path}`,
     );
   }
-  const contentType = requestedMime?.trim() || opened.contentType || inferMimeType(path);
+  const contentType = opened.contentType ?? inferFsContentType(path);
+  const presentationContentType = requestedMime?.trim() || contentType;
   return {
     type: "resource",
     ref: {
@@ -732,9 +756,45 @@ async function referenceAttachment(
       contentType,
       size: opened.size,
     },
-    mediaType: mediaTypeForMime(contentType),
+    mediaType: mediaTypeForMime(presentationContentType),
     filename: path.split("/").pop() || "attachment",
   };
+}
+
+type OpenAttachment = {
+  media: Omit<AdapterMedia, "body">;
+  body: BinaryBody & { length: number };
+};
+
+async function openAttachments(
+  requestedPaths: string[],
+  requestedMime: string | undefined,
+  shellCtx: CommandContext,
+  fs: GsvFs,
+): Promise<AdapterMediaBundle> {
+  const parts: OpenAttachment[] = [];
+  let totalBytes = 0;
+  try {
+    for (const requestedPath of requestedPaths) {
+      const part = await openAttachment(requestedPath, requestedMime, shellCtx, fs);
+      parts.push(part);
+      if (part.body.length > MAX_MESSAGE_MEDIA_PART_BYTES) {
+        throw new Error(
+          `attachment exceeds per-file limit (${MAX_MESSAGE_MEDIA_PART_BYTES} bytes): ${requestedPath}`,
+        );
+      }
+      totalBytes += part.body.length;
+      if (totalBytes > MAX_MESSAGE_MEDIA_TOTAL_BYTES) {
+        throw new Error(
+          `attachments exceed total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
+        );
+      }
+    }
+    return await bundleAdapterMedia(parts);
+  } catch (error) {
+    await Promise.all(parts.map((part) => cancelBinaryBody(part.body, error)));
+    throw error;
+  }
 }
 
 async function openAttachment(
@@ -742,16 +802,7 @@ async function openAttachment(
   requestedMime: string | undefined,
   shellCtx: CommandContext,
   fs: GsvFs,
-): Promise<{
-  media: {
-    type: "image" | "audio" | "video" | "document";
-    mimeType: string;
-    filename: string;
-    size: number;
-    body: { offset: number; length: number };
-  };
-  body: { stream: ReadableStream<Uint8Array>; length: number };
-}> {
+): Promise<OpenAttachment> {
   const path = shellCtx.fs.resolvePath(shellCtx.cwd, requestedPath);
   const opened = await fs.openFile(path);
   if (!opened.body) {
@@ -765,7 +816,6 @@ async function openAttachment(
       mimeType,
       filename: path.split("/").pop() || "attachment",
       size: length,
-      body: { offset: 0, length },
     },
     body: { stream: opened.body, length },
   };
@@ -821,6 +871,21 @@ type RouteDescription = {
   label: string;
   transport: "directed";
 };
+
+type CurrentConversationDescription = RouteDescription & {
+  reply: ReturnType<typeof currentConversationReplyInstructions>;
+  destinationId?: string;
+  destinationUse?: "additional-delivery-only";
+};
+
+function currentConversationReplyInstructions() {
+  return {
+    command: "message send",
+    attachmentCommand: "message attach PATH...",
+    requiresStandaloneShellCall: true,
+    finishesRun: false,
+  } as const;
+}
 function describeCurrentRoute(route: RunRoute | null): RouteDescription {
   if (route?.kind === "adapter") {
     const { adapter, surface } = route.destination;
@@ -868,12 +933,14 @@ function messageUsage(): string {
     "  message history --with CONTACT_OR_CONVERSATION [--before SEQUENCE] [--limit N] [--json]",
     "  message delivery show DELIVERY_ID [--json]",
     "  message send [--message TEXT]",
-    "  message send --to DESTINATION [--message TEXT] [--attach PATH [--mime TYPE]] [--delivery-id ID] [--also]",
+    "  message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--also]",
     "",
     "A literal `message send <<'GSV_MESSAGE'` block sends to the current conversation and keeps the run active.",
     "Run `yield` when work is complete, or append `&& yield` to the message block header.",
     "`message attach` adds files to the next current-conversation message.",
-    "Inside an active run, --also is required for a separate or cross-channel send.",
+    "Do not use --to or --also for the current conversation. Issue current-conversation",
+    "attach and send commands as separate direct Shell tool calls.",
+    "Inside an active run, --also is required for an additional destination send.",
     "Use `message destinations` and copy its opaque GSV id; do not use provider ids.",
     "Use `message route` to inspect routing, open a private-DM work direct line from personal,",
     "or manage groups, channels, and threads.",

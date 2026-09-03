@@ -229,9 +229,22 @@ describe("handleSysSetup", () => {
       }),
     );
     expect(usersGroup.members).toContain("alice");
-    expect(config.set).toHaveBeenCalledWith("config/ai/provider", "openrouter");
-    expect(config.set).toHaveBeenCalledWith("config/ai/model", "qwen/qwen3.5-35b-a3b");
-    expect(config.set).toHaveBeenCalledWith("config/ai/api_key", "or-key");
+    expect(config.set).toHaveBeenCalledWith(
+      "users/1000/ai/models",
+      JSON.stringify({
+        version: 1,
+        models: [{
+          id: "setup-primary",
+          name: "qwen/qwen3.5-35b-a3b",
+          provider: "openrouter",
+          model: "qwen/qwen3.5-35b-a3b",
+        }],
+      }),
+    );
+    expect(config.set).toHaveBeenCalledWith(
+      "users/1000/ai/models/setup-primary/api_key",
+      "or-key",
+    );
     expect(config.set).toHaveBeenCalledWith("config/server/timezone", "Europe/Amsterdam");
     expect(storage.put).toHaveBeenCalledWith(
       "home/alice/.dir",
@@ -256,9 +269,18 @@ describe("handleSysSetup", () => {
       ctx,
     );
 
-    expect(config.set).toHaveBeenCalledWith("config/ai/provider", "gsv");
-    expect(config.set).toHaveBeenCalledWith("config/ai/model", "default");
-    expect(config.set).toHaveBeenCalledWith("config/ai/fallback_model_profile", "");
+    expect(config.set).toHaveBeenCalledWith(
+      "users/1000/ai/models",
+      JSON.stringify({
+        version: 1,
+        models: [{
+          id: "setup-primary",
+          name: "GSV Included",
+          provider: "gsv",
+          model: "default",
+        }],
+      }),
+    );
     expect(result.server.features).toEqual(["ai.provider.gsv"]);
   });
 
@@ -273,9 +295,7 @@ describe("handleSysSetup", () => {
       ctx,
     );
 
-    expect(config.set).not.toHaveBeenCalledWith("config/ai/provider", expect.anything());
-    expect(config.set).not.toHaveBeenCalledWith("config/ai/model", expect.anything());
-    expect(config.set).not.toHaveBeenCalledWith("config/ai/fallback_model_profile", expect.anything());
+    expect(config.set).not.toHaveBeenCalledWith("users/1000/ai/models", expect.anything());
   });
 
   it("normalizes an explicit GSV provider without accepting a model or credential", async () => {
@@ -292,9 +312,14 @@ describe("handleSysSetup", () => {
       ctx,
     );
 
-    expect(config.set).toHaveBeenCalledWith("config/ai/provider", "gsv");
-    expect(config.set).toHaveBeenCalledWith("config/ai/model", "default");
-    expect(config.set).not.toHaveBeenCalledWith("config/ai/api_key", expect.anything());
+    expect(config.set).toHaveBeenCalledWith(
+      "users/1000/ai/models",
+      expect.stringContaining('"provider":"gsv"'),
+    );
+    expect(config.set).not.toHaveBeenCalledWith(
+      "users/1000/ai/models/setup-primary/api_key",
+      expect.anything(),
+    );
   });
 
   it("preserves an explicit bring-your-own provider on managed setup", async () => {
@@ -313,9 +338,14 @@ describe("handleSysSetup", () => {
       ctx,
     );
 
-    expect(config.set).toHaveBeenCalledWith("config/ai/provider", "openrouter");
-    expect(config.set).toHaveBeenCalledWith("config/ai/model", "openai/gpt-5-mini");
-    expect(config.set).toHaveBeenCalledWith("config/ai/api_key", "provider-key");
+    expect(config.set).toHaveBeenCalledWith(
+      "users/1000/ai/models",
+      expect.stringContaining('"model":"openai/gpt-5-mini"'),
+    );
+    expect(config.set).toHaveBeenCalledWith(
+      "users/1000/ai/models/setup-primary/api_key",
+      "provider-key",
+    );
   });
 
   it("seeds shipped skills into root home after first setup bootstrap", async () => {

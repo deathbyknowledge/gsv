@@ -6,6 +6,7 @@ import {
   GSV_INFERENCE_FEATURE,
   GSV_INFERENCE_MODEL,
   GSV_INFERENCE_PROVIDER,
+  type AiModelStack,
   type ProcessIdentity,
   type SysSetupArgs,
   type SysSetupResult,
@@ -18,6 +19,10 @@ import { seedBuiltinSkillsToHome } from "./skills-seed";
 import { gsvInferenceFeaturesFromEnv } from "../../inference/gsv-provider";
 import { ensurePersonalController } from "../personal-controller";
 import { getConversationById } from "../../shared/utils";
+import {
+  aiModelApiKeyConfigKey,
+  userAiModelsConfigKey,
+} from "../ai-model-stack";
 
 const USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 
@@ -191,6 +196,24 @@ function resolveSetupAiConfig(
   return ai;
 }
 
+function setupAiModelStack(ai: SetupAiConfig): AiModelStack | null {
+  if (ai.provider === undefined && ai.model === undefined && ai.apiKey === undefined) {
+    return null;
+  }
+  if (!ai.provider || !ai.model) {
+    throw new Error("AI provider and model must be configured together");
+  }
+  return {
+    version: 1,
+    models: [{
+      id: "setup-primary",
+      name: ai.provider === GSV_INFERENCE_PROVIDER ? "GSV Included" : ai.model,
+      provider: ai.provider,
+      model: ai.model,
+    }],
+  };
+}
+
 function parseTimezone(args: SysSetupArgs): string | undefined {
   const timezone = readOptionalString(args.timezone);
   if (!timezone) {
@@ -252,6 +275,7 @@ export async function handleSysSetup(
     parseAiConfig(args),
     managedInferenceAvailable,
   );
+  const aiModels = setupAiModelStack(ai);
   const timezone = parseTimezone(args);
   const node = parseNodeConfig(args);
   const rootPassword = readOptionalString(args.rootPassword);
@@ -346,17 +370,15 @@ export async function handleSysSetup(
     });
 
     await timeSetupStep(timings, "write-ai-config", () => {
-      if (ai.provider !== undefined) {
-        config.set("config/ai/provider", ai.provider);
-      }
-      if (ai.model !== undefined) {
-        config.set("config/ai/model", ai.model);
-      }
-      if (ai.apiKey !== undefined) {
-        config.set("config/ai/api_key", ai.apiKey);
-      }
-      if (managedInferenceAvailable) {
-        config.set("config/ai/fallback_model_profile", "");
+      if (aiModels) {
+        const stackKey = userAiModelsConfigKey(uid);
+        config.set(stackKey, JSON.stringify(aiModels));
+        if (ai.apiKey !== undefined) {
+          config.set(
+            aiModelApiKeyConfigKey(stackKey, aiModels.models[0].id),
+            ai.apiKey,
+          );
+        }
       }
     });
 

@@ -39,9 +39,10 @@ import { ensurePersonalAgent } from "./agents";
 import { accountIdentity } from "./accounts";
 import { canOwnerDelegateRunAs } from "./account-access";
 import {
-  findProcessAiModelProfile,
-  omitProcessAiConfigSecrets,
-} from "../process/ai-config";
+  parseAiModelStack,
+  SYSTEM_AI_MODELS_CONFIG_KEY,
+  userAiModelsConfigKey,
+} from "./ai-model-stack";
 import { invalidatePersonalControllerReadiness } from "./personal-controller";
 
 const DEFAULT_IPC_CALL_TIMEOUT_MS = 60_000;
@@ -754,10 +755,8 @@ export async function forwardToProcess(
 
   const processFrame = frame.call === "proc.send"
     ? withProcSendOrigin(frame, ctx)
-    : frame.call === "proc.ai.config.get"
-      ? withRedactedProcAiConfigGet(frame)
     : frame.call === "proc.ai.config.set"
-      ? withProcAiConfigProfile(frame, ctx, proc.ownerUid)
+      ? withValidatedProcAiConfig(frame, ctx, proc.ownerUid)
       : frame;
   if (frame.call === "proc.kill" && proc.isPersonalController) {
     invalidatePersonalControllerReadiness(proc.ownerUid, pid, ctx.procs);
@@ -868,52 +867,36 @@ function reconcileKilledProcess(
   }
 }
 
-function withRedactedProcAiConfigGet(
-  frame: RequestFrame<"proc.ai.config.get">,
-): RequestFrame<"proc.ai.config.get"> {
-  return {
-    ...frame,
-    args: {
-      ...frame.args,
-      redacted: true,
-    },
-  };
-}
-
-function withProcAiConfigProfile(
+function withValidatedProcAiConfig(
   frame: RequestFrame<"proc.ai.config.set">,
   ctx: KernelContext,
   ownerUid: number,
 ): RequestFrame<"proc.ai.config.set"> {
   const args: ProcAiConfigSetArgs = frame.args;
-  if ("clear" in args || "values" in args || "key" in args) {
+  if ("clear" in args || args.modelId === undefined || args.modelId === null) {
     return frame;
   }
 
-  const profileId = normalizeText(args.profileId);
-  const profileName = normalizeText(args.profileName);
-  const selector = profileId || profileName;
-  if (!selector) {
+  const modelId = normalizeText(args.modelId).toLowerCase();
+  if (!modelId) {
     return frame;
   }
-
-  const profile = findProcessAiModelProfile(
-    ctx.config.get(`users/${ownerUid}/ai/model_profiles`),
-    ownerUid,
-    selector,
-  );
-  if (!profile) {
-    throw new Error(`AI model profile not found: ${selector}`);
+  const ownerModelsKey = userAiModelsConfigKey(ownerUid);
+  const modelsKey = ctx.config.getExplicit(ownerModelsKey) !== null
+    ? ownerModelsKey
+    : SYSTEM_AI_MODELS_CONFIG_KEY;
+  const modelsRaw = ctx.config.get(modelsKey);
+  const stack = parseAiModelStack(modelsRaw);
+  const storedModel = stack?.models.find((model) => model.id.toLowerCase() === modelId);
+  if (!storedModel) {
+    throw new Error(`AI model not found: ${modelId}`);
   }
 
   return {
     ...frame,
     args: {
-      values: omitProcessAiConfigSecrets(profile.values),
-      profile: {
-        id: profile.id,
-        name: profile.name,
-      },
+      ...args,
+      modelId: storedModel.id,
     },
   };
 }

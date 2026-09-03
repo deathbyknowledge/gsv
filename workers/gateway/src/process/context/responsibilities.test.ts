@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatResponsibilityBaseline,
   formatResponsibilityTransitionEvent,
-} from "./responsibility-context";
+} from "./responsibilities";
 
 const responsibility: ResponsibilityRecord = {
   id: "r12y:00000000-0000-4000-8000-000000000001",

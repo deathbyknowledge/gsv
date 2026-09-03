@@ -42,7 +42,7 @@ async function runLlm(
 ): Promise<ExecResult> {
   const parsed = parseArgs(args, {
     boolean: ["help", "json"],
-    value: ["system", "preset", "provider", "model", "max-tokens", "reasoning", "timeout-ms"],
+    value: ["system", "model-id", "max-tokens", "reasoning", "timeout-ms"],
     aliases: { h: "help" },
   });
   if (hasOption(parsed, "help")) {
@@ -84,23 +84,8 @@ function assertSuccessfulGeneration(result: AiTextGenerateResult): void {
 }
 
 function buildLlmConfig(parsed: ParsedArgs): AiTextGenerateConfig | undefined {
-  const overrides: Record<string, string> = {};
-  const provider = optionValue(parsed, "provider");
-  if (provider) {
-    overrides["config/ai/provider"] = provider;
-  }
-  const model = optionValue(parsed, "model");
-  if (model) {
-    overrides["config/ai/model"] = model;
-  }
-  const preset = optionValue(parsed, "preset");
-  if (!preset && Object.keys(overrides).length === 0) {
-    return undefined;
-  }
-  const config: AiTextGenerateConfig = {};
-  if (preset) config.preset = { id: preset };
-  if (Object.keys(overrides).length > 0) config.overrides = overrides;
-  return config;
+  const modelId = optionValue(parsed, "model-id");
+  return modelId ? { modelId } : undefined;
 }
 
 function buildLlmOptions(parsed: ParsedArgs): AiTextGenerateOptions | undefined {
@@ -241,9 +226,7 @@ function llmUsage(): string {
     "",
     "Options:",
     "  --system TEXT",
-    "  --preset NAME_OR_ID",
-    "  --provider PROVIDER",
-    "  --model MODEL",
+    "  --model-id ID",
     "  --max-tokens N",
     "  --reasoning inherit|off|minimal|low|medium|high|xhigh",
     "  --timeout-ms N",

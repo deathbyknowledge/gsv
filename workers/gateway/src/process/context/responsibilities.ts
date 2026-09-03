@@ -64,7 +64,7 @@ export function formatResponsibilityTransitionEvent(
   return lines.join("\n");
 }
 
-export function formatResponsibilityLine(
+function formatResponsibilityLine(
   responsibility: ResponsibilityRecord,
 ): string {
   const assignee = responsibility.assignee.kind === "ship"

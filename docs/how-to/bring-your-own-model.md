@@ -6,11 +6,11 @@ For everyday use, we recommend connecting your own provider key. You'll get bett
 
 ## Add a model
 
-1. Go to **GSV → Settings → Models → New model preset.**
+1. Go to **GSV → Settings → Models → New model.**
 2. Follow the instructions for your provider and paste your key.
-3. Set it as your **new default** so your agents use it.
+3. Make it **primary** so your agents try it first.
 
-You can keep several presets and switch the default whenever you like.
+You can keep several complete model configurations. Their order is their fallback order, and an agent or Process can prefer any entry by its stable ID.
 
 Cloudflare's available models are listed at [developers.cloudflare.com/workers-ai/models](https://developers.cloudflare.com/workers-ai/models).
 ## See also

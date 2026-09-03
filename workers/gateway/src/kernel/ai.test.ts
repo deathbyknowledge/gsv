@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "./context";
 import type { DeviceRecord } from "./devices";
 import type { OAuthAccountRecord } from "./oauth-store";
-import * as utils from "../shared/utils";
 import { bodyFromBytes, bodyToBytes } from "@humansandmachines/gsv/protocol";
 
 const generateMock = vi.fn();
@@ -42,13 +41,12 @@ import {
 import { DEFAULT_IMAGE_GENERATION_MODEL } from "../inference/capabilities";
 import { inferenceLogicalRequestId } from "../inference/provider";
 import { MAIL_SEND, MAIL_STATUS, syscallToolName } from "../syscalls/constants";
+import { SYSTEM_CONFIG_DEFAULTS } from "./config";
 
-const sendFrameToProcessMock = vi.spyOn(utils, "sendFrameToProcess");
 // SAFETY: test fixture is constructed with the asserted kernel domain shape.
 const TEST_INSTALLATION_ID = "singleton" as KernelContext["installationId"];
 
 beforeEach(() => {
-  sendFrameToProcessMock.mockReset();
   generateMock.mockReset();
   createGenerationServiceMock.mockClear();
   seedBuiltinSkillsToHomeMock.mockReset();
@@ -70,6 +68,16 @@ function makeDevice(partial: Partial<DeviceRecord> & { device_id: string }): Dev
     last_seen_at: partial.last_seen_at ?? now,
     connected_at: partial.connected_at ?? now,
     disconnected_at: partial.disconnected_at ?? null,
+  };
+}
+
+function makeTestConfig(config: Record<string, string> = {}) {
+  return {
+    get: vi.fn((key: string) => config[key] ?? SYSTEM_CONFIG_DEFAULTS[key] ?? null),
+    getExplicit: vi.fn((key: string) => config[key] ?? null),
+    list: vi.fn((prefix: string) => Object.entries(config)
+      .filter(([key]) => key.startsWith(`${prefix.replace(/\/$/, "")}/`))
+      .map(([key, value]) => ({ key, value }))),
   };
 }
 
@@ -168,36 +176,6 @@ function makeContext(
     },
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as KernelContext;
-}
-
-function attachProcessAiSnapshot(
-  ctx: KernelContext,
-  values: Record<string, string>,
-  pid = "proc:test",
-  profile?: { id?: string; name?: string; appliedAt: number },
-): KernelContext {
-  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-  (ctx as { processId?: string }).processId = pid;
-  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-  (ctx as { procs?: { getOwnerUid: ReturnType<typeof vi.fn> } }).procs = {
-    getOwnerUid: vi.fn(() => ctx.identity?.process.uid ?? 1000),
-  };
-  sendFrameToProcessMock.mockResolvedValueOnce({
-    type: "res",
-    id: "proc-ai-config",
-    ok: true,
-    data: {
-      ok: true,
-      pid,
-      config: {
-        version: 1,
-        values,
-        ...(profile ? { profile } : undefined),
-        updatedAt: 1,
-      },
-    },
-  });
-  return ctx;
 }
 
 describe("handleAiTools", () => {
@@ -360,13 +338,7 @@ describe("handleAiConfig", () => {
         },
         capabilities: options.capabilities ?? ["*"],
       },
-      config: {
-        get: vi.fn((key: string) => config[key] ?? null),
-        getExplicit: vi.fn((key: string) => config[key] ?? null),
-        list: vi.fn((prefix: string) => Object.entries(config)
-          .filter(([key]) => key.startsWith(`${prefix.replace(/\/$/, "")}/`))
-          .map(([key, value]) => ({ key, value }))),
-      },
+      config: makeTestConfig(config),
       auth: {
         getPasswdByUid: vi.fn((lookupUid: number) => lookupUid === ownerUid
           ? {
@@ -634,8 +606,10 @@ describe("handleAiConfig", () => {
 
   it("uses a stored OpenAI Codex OAuth account when the provider key is blank", async () => {
     const ctx = makeAiConfigContext({
-      "users/1000/ai/provider": "openai-codex",
-      "users/1000/ai/model": "gpt-5.5",
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "codex", name: "Codex", provider: "openai-codex", model: "gpt-5.5" }],
+      }),
     }, {
       oauthAccounts: [
         makeOAuthAccount({
@@ -665,8 +639,10 @@ describe("handleAiConfig", () => {
 
   it("uses a stored OpenAI Codex OAuth account when a stale provider key exists", async () => {
     const ctx = makeAiConfigContext({
-      "users/1000/ai/provider": "openai-codex",
-      "users/1000/ai/model": "gpt-5.5",
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "codex", name: "Codex", provider: "openai-codex", model: "gpt-5.5" }],
+      }),
       "users/1000/ai/api_key": "stale-codex-token",
     }, {
       oauthAccounts: [
@@ -707,8 +683,10 @@ describe("handleAiConfig", () => {
       headers: { "content-type": "application/json" },
     }));
     const ctx = makeAiConfigContext({
-      "users/1000/ai/provider": "openai-codex",
-      "users/1000/ai/model": "gpt-5.5",
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "codex", name: "Codex", provider: "openai-codex", model: "gpt-5.5" }],
+      }),
     }, {
       oauthAccounts: [
         makeOAuthAccount({
@@ -746,8 +724,10 @@ describe("handleAiConfig", () => {
 
   it("uses the root OpenAI Codex OAuth account for inherited global config", async () => {
     const ctx = makeAiConfigContext({
-      "config/ai/provider": "openai-codex",
-      "config/ai/model": "gpt-5.5",
+      "config/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "codex", name: "Codex", provider: "openai-codex", model: "gpt-5.5" }],
+      }),
     }, {
       uid: 2000,
       ownerUid: 1000,
@@ -787,8 +767,10 @@ describe("handleAiConfig", () => {
 
   it("uses the root OpenAI Codex OAuth account for global config even when a stale global key exists", async () => {
     const ctx = makeAiConfigContext({
-      "config/ai/provider": "openai-codex",
-      "config/ai/model": "gpt-5.5",
+      "config/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "codex", name: "Codex", provider: "openai-codex", model: "gpt-5.5" }],
+      }),
       "config/ai/api_key": "stale-root-codex-token",
     }, {
       uid: 2000,
@@ -820,14 +802,14 @@ describe("handleAiConfig", () => {
     );
   });
 
-  it("generates text with preset config and explicit generation options", async () => {
+  it("generates text with a selected model entry and explicit generation options", async () => {
     const requestSignal = new AbortController().signal;
     generateMock.mockImplementationOnce(async (request: any) => {
       expect(request.config).toMatchObject({
         executor: { kind: "kernel" },
         provider: "anthropic",
         model: "claude-test",
-        apiKey: "preset-secret",
+        apiKey: "entry-secret",
       });
       expect(request.context).toMatchObject({
         systemPrompt: "Be direct.",
@@ -860,26 +842,22 @@ describe("handleAiConfig", () => {
       };
     });
     const ctx = makeAiConfigContext({
-      "users/1000/ai/model_profiles": JSON.stringify({
-        profiles: [{
-          id: "preset-1",
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{
+          id: "entry-1",
           name: "Fast",
-          values: {
-            "config/ai/provider": "anthropic",
-            "config/ai/model": "claude-test",
-            "config/ai/api_key": "redacted",
-          },
-          createdAt: 1,
-          updatedAt: 2,
+          provider: "anthropic",
+          model: "claude-test",
         }],
       }),
-      "users/1000/ai/model_profiles/preset-1/api_key": "preset-secret",
+      "users/1000/ai/models/entry-1/api_key": "entry-secret",
     });
 
     const result = await handleAiTextGenerate({
       systemPrompt: "Be direct.",
       messages: [{ role: "user", content: "ping" }],
-      config: { preset: { name: "Fast" } },
+      config: { modelId: "entry-1" },
       options: { maxTokens: 64, reasoning: "off" },
     }, {
       ...ctx,
@@ -895,7 +873,7 @@ describe("handleAiConfig", () => {
     expect(createGenerationServiceMock).toHaveBeenCalledWith({});
   });
 
-  it("generates text with process snapshot config in the kernel", async () => {
+  it("generates text with a stable Process model preference in the kernel", async () => {
     generateMock.mockImplementationOnce(async (request: any) => {
       expect(request.config).toMatchObject({
         executor: { kind: "kernel" },
@@ -926,18 +904,19 @@ describe("handleAiConfig", () => {
       systemPrompt: "Be direct.",
       messages: [{ role: "user", content: "ping" }],
       config: {
-        processOverrides: {
-          "config/ai/provider": "anthropic",
-          "config/ai/model": "claude-process",
-        },
-        processProfile: {
-          id: "fast-stack",
-          name: "Fast Stack",
-          appliedAt: 1,
-        },
+        modelId: "fast-stack",
       },
     }, makeAiConfigContext({
-      "users/1000/ai/model_profiles/fast-stack/api_key": "profile-secret",
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{
+          id: "fast-stack",
+          name: "Fast Stack",
+          provider: "anthropic",
+          model: "claude-process",
+        }],
+      }),
+      "users/1000/ai/models/fast-stack/api_key": "profile-secret",
     }, {
       processId: "task-1",
     }));
@@ -991,8 +970,10 @@ describe("handleAiConfig", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       ...makeAiConfigContext({
-        "config/ai/provider": "gsv",
-        "config/ai/model": "default",
+        "config/ai/models": JSON.stringify({
+          version: 1,
+          models: [{ id: "managed", name: "Managed", provider: "gsv", model: "default" }],
+        }),
       }, {
         processId: "task-1",
       }),
@@ -1016,7 +997,7 @@ describe("handleAiConfig", () => {
     });
   });
 
-  it("preserves explicit blank API key overrides for text generation", async () => {
+  it("preserves an explicit blank credential in a complete request model", async () => {
     generateMock.mockImplementationOnce(async (request: any) => {
       expect(request.config).toMatchObject({
         executor: { kind: "kernel" },
@@ -1046,23 +1027,28 @@ describe("handleAiConfig", () => {
     await handleAiTextGenerate({
       messages: [{ role: "user", content: "ping" }],
       config: {
-        overrides: {
-          "config/ai/provider": "anthropic",
-          "config/ai/model": "claude-test",
-          "config/ai/api_key": "",
+        modelConfig: {
+          provider: "anthropic",
+          model: "claude-test",
+          apiKey: "",
         },
       },
     }, makeAiConfigContext({
-      "users/1000/ai/api_key": "saved-key",
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "saved", name: "Saved", provider: "anthropic", model: "saved-model" }],
+      }),
+      "users/1000/ai/models/saved/api_key": "saved-key",
     }));
   });
 
-  it("preserves explicit blank base URL overrides for preset text generation", async () => {
+  it("does not inherit stored connection fields into a complete request model", async () => {
     generateMock.mockImplementationOnce(async (request: any) => {
       expect(request.config).toMatchObject({
         executor: { kind: "kernel" },
         provider: "custom",
         model: "local-chat",
+        apiKey: "",
         providerStyle: "openai-chat-completions",
       });
       expect(request.config.baseUrl).toBeUndefined();
@@ -1088,27 +1074,93 @@ describe("handleAiConfig", () => {
     await handleAiTextGenerate({
       messages: [{ role: "user", content: "ping" }],
       config: {
-        preset: { id: "local" },
-        overrides: {
-          "config/ai/base_url": "",
+        modelId: "local",
+        modelConfig: {
+          provider: "custom",
+          model: "local-chat",
+          providerStyle: "openai-chat-completions",
         },
       },
     }, makeAiConfigContext({
-      "users/1000/ai/model_profiles": JSON.stringify({
-        profiles: [{
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{
           id: "local",
           name: "Local",
-          values: {
-            "config/ai/provider": "custom",
-            "config/ai/model": "local-chat",
-            "config/ai/base_url": "http://old.example/v1",
-            "config/ai/provider_style": "openai-chat-completions",
-          },
-          createdAt: 1,
-          updatedAt: 2,
+          provider: "custom",
+          model: "local-chat",
+          baseUrl: "http://old.example/v1",
+          providerStyle: "openai-chat-completions",
         }],
       }),
+      "users/1000/ai/models/local/api_key": "old-endpoint-key",
     }));
+  });
+
+  it("retains an entry credential only for the same request-local connection", async () => {
+    const result = await handleAiConfig({
+      modelId: "saved",
+      modelConfig: {
+        provider: "anthropic",
+        model: "claude-test",
+        maxTokens: 16_384,
+      },
+    }, makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "saved", name: "Saved", provider: "anthropic", model: "claude-test" }],
+      }),
+      "users/1000/ai/models/saved/api_key": "saved-key",
+    }));
+
+    expect(result.apiKey).toBe("saved-key");
+    expect(result.maxTokens).toBe(16_384);
+  });
+
+  it("does not expose system OAuth to a changed request-local connection", async () => {
+    const ctx = makeAiConfigContext({
+      "config/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "codex", name: "Codex", provider: "openai-codex", model: "gpt-5.5" }],
+      }),
+    }, {
+      oauthAccounts: [
+        makeOAuthAccount({
+          accountId: "acct-user-codex",
+          uid: 1000,
+          accessToken: "user-codex-access-token",
+          metadata: { chatgptAccountId: "chatgpt-user-account" },
+        }),
+        makeOAuthAccount({
+          accountId: "acct-root-codex",
+          uid: 0,
+          accessToken: "root-codex-access-token",
+          metadata: { chatgptAccountId: "chatgpt-root-account" },
+        }),
+      ],
+    });
+
+    const result = await handleAiConfig({
+      modelId: "codex",
+      modelConfig: {
+        provider: "openai-codex",
+        model: "gpt-5.4-mini",
+      },
+    }, ctx);
+
+    expect(result.apiKey).toBe("user-codex-access-token");
+    expect(ctx.oauth.findAccountByIdentity).toHaveBeenCalledWith(
+      1000,
+      "ai-provider",
+      "openai-codex",
+      "default",
+    );
+    expect(ctx.oauth.findAccountByIdentity).not.toHaveBeenCalledWith(
+      0,
+      "ai-provider",
+      "openai-codex",
+      "default",
+    );
   });
 
   it("builds a routed fetch for built-in text generation targets", async () => {
@@ -1156,10 +1208,10 @@ describe("handleAiConfig", () => {
     const result = await handleAiTextGenerate({
       messages: [{ role: "user", content: "ping" }],
       config: {
-        overrides: {
-          "config/ai/provider": "anthropic",
-          "config/ai/model": "claude-test",
-          "config/ai/transport_target": "linux-machine",
+        modelConfig: {
+          provider: "anthropic",
+          model: "claude-test",
+          transportTarget: "linux-machine",
         },
       },
     }, ctx, {
@@ -1215,11 +1267,11 @@ describe("handleAiConfig", () => {
     const result = await handleAiTextGenerate({
       messages: [{ role: "user", content: "ping" }],
       config: {
-        overrides: {
-          "config/ai/provider": "openai-codex",
-          "config/ai/model": "gpt-5.4-mini",
-          "config/ai/api_key": "",
-          "config/ai/transport_target": "linux-machine",
+        modelConfig: {
+          provider: "openai-codex",
+          model: "gpt-5.4-mini",
+          apiKey: "",
+          transportTarget: "linux-machine",
         },
       },
     }, ctx, {
@@ -1234,12 +1286,12 @@ describe("handleAiConfig", () => {
 
   it("falls back to the owning human's AI config for agent processes", async () => {
     const result = await handleAiConfig({}, makeAiConfigContext({
-      "users/1000/ai/provider": "owner-provider",
-      "users/1000/ai/model": "owner-model",
-      "users/1000/ai/api_key": "owner-key",
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "owner", name: "Owner", provider: "owner-provider", model: "owner-model", maxTokens: 1234, contextWindowTokens: 2222 }],
+      }),
+      "users/1000/ai/models/owner/api_key": "owner-key",
       "users/1000/ai/reasoning": "high",
-      "users/1000/ai/max_tokens": "1234",
-      "users/1000/ai/context_window_tokens": "2222",
       "users/1000/ai/max_context_bytes": "4321",
       "users/1000/ai/generation/timeout_ms": "90000",
       "users/1000/ai/tools/approval": '{"default":"deny","rules":[]}',
@@ -1266,272 +1318,174 @@ describe("handleAiConfig", () => {
     expect(result.accountApprovalPolicy).toBe('{"default":"deny","rules":[]}');
   });
 
-  it("resolves agent model profile references through the owning human", async () => {
+  it("resolves one owner-ordered model stack without field-level inheritance", async () => {
     const result = await handleAiConfig({}, makeAiConfigContext({
-      "config/ai/provider": "workers-ai",
-      "config/ai/model": "@cf/default/model",
-      "users/2000/ai/model_profile": "fast-stack",
-      "users/2000/ai/provider": "stale-provider",
-      "users/2000/ai/model": "stale-model",
-      "users/1000/ai/model_profiles": JSON.stringify({
-        profiles: [{
-          id: "fast-stack",
-          name: "Fast Stack",
-          values: {
-            "config/ai/provider": "custom",
-            "config/ai/model": "zai-glm-4.7",
-            "config/ai/base_url": "http://127.0.0.1:8080/v1",
-            "config/ai/provider_style": "openai-chat-completions",
-            "config/ai/transport_target": "linux-machine",
-            "config/ai/api_key": "redacted",
-          },
-          createdAt: 1,
-          updatedAt: 2,
-        }],
-      }),
-      "users/1000/ai/model_profiles/fast-stack/api_key": "profile-key",
-    }, {
-      uid: 2000,
-      ownerUid: 1000,
-      processId: "task-1",
-    }));
-
-    expect(result.provider).toBe("custom");
-    expect(result.model).toBe("zai-glm-4.7");
-    expect(result.baseUrl).toBe("http://127.0.0.1:8080/v1");
-    expect(result.providerStyle).toBe("openai-chat-completions");
-    expect(result.transportTarget).toBe("linux-machine");
-    expect(result.apiKey).toBe("profile-key");
-  });
-
-  it("resolves fallback model presets from account fallback config", async () => {
-    const result = await handleAiConfig({}, makeAiConfigContext({
-      "config/ai/provider": "workers-ai",
-      "config/ai/model": "@cf/default/model",
-      "users/2000/ai/model_profile": "fast-stack",
-      "users/2000/ai/fallback_model_profile": "safe-stack",
-      "users/1000/ai/model_profiles": JSON.stringify({
-        profiles: [
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [
           {
-            id: "fast-stack",
-            name: "Fast Stack",
-            values: {
-              "config/ai/provider": "custom",
-              "config/ai/model": "zai-glm-4.7",
-              "config/ai/base_url": "http://127.0.0.1:8080/v1",
-              "config/ai/provider_style": "openai-chat-completions",
-              "config/ai/api_key": "redacted",
-            },
-            createdAt: 1,
-            updatedAt: 2,
+            id: "primary",
+            name: "Primary",
+            provider: "openrouter",
+            model: "openai/gpt-5-mini",
+            baseUrl: "https://openrouter.ai/api/v1",
+            providerStyle: "openai-chat-completions",
+            maxTokens: 16_384,
+            contextWindowTokens: 128_000,
           },
           {
-            id: "safe-stack",
-            name: "Safe Stack",
-            values: {
-              "config/ai/provider": "openrouter",
-              "config/ai/model": "openai/gpt-5-mini",
-              "config/ai/base_url": "https://openrouter.ai/api/v1",
-              "config/ai/provider_style": "openai-chat-completions",
-              "config/ai/api_key": "redacted",
-              "config/ai/max_tokens": "4096",
-            },
-            createdAt: 1,
-            updatedAt: 3,
+            id: "local",
+            name: "Local",
+            provider: "custom",
+            model: "qwen",
+            baseUrl: "http://127.0.0.1:8080/v1",
+            transportTarget: "home-server",
+          },
+          {
+            id: "workers-backup",
+            name: "Workers backup",
+            provider: "workers-ai",
+            model: "@cf/backup/model",
           },
         ],
       }),
-      "users/1000/ai/model_profiles/fast-stack/api_key": "profile-key",
-      "users/1000/ai/model_profiles/safe-stack/api_key": "fallback-key",
-    }, {
-      uid: 2000,
-      ownerUid: 1000,
-      processId: "task-1",
+      "users/1000/ai/models/primary/api_key": "primary-key",
+      "users/1000/ai/models/local/api_key": "local-key",
+      // These legacy values must not leak into complete canonical entries.
+      "users/1000/ai/provider": "stale-provider",
+      "users/1000/ai/model": "stale-model",
+      "users/1000/ai/max_tokens": "8192",
     }));
 
-    expect(result.provider).toBe("custom");
-    expect(result.model).toBe("zai-glm-4.7");
+    expect(result).toMatchObject({
+      provider: "openrouter",
+      model: "openai/gpt-5-mini",
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKey: "primary-key",
+      maxTokens: 16_384,
+      contextWindowTokens: 128_000,
+    });
     expect(result.fallbacks).toEqual([
       expect.objectContaining({
-        profileId: "safe-stack",
-        profileName: "Safe Stack",
-        provider: "openrouter",
-        model: "openai/gpt-5-mini",
-        baseUrl: "https://openrouter.ai/api/v1",
-        providerStyle: "openai-chat-completions",
-        apiKey: "fallback-key",
-        maxTokens: 4096,
+        modelId: "local",
+        modelName: "Local",
+        provider: "custom",
+        model: "qwen",
+        apiKey: "local-key",
+        baseUrl: "http://127.0.0.1:8080/v1",
+        transportTarget: "home-server",
+        maxTokens: 32_768,
+      }),
+      expect.objectContaining({
+        modelId: "workers-backup",
+        modelName: "Workers backup",
+        provider: "workers-ai",
+        model: "@cf/backup/model",
+        apiKey: "",
+        maxTokens: 32_768,
       }),
     ]);
   });
 
-  it("keeps fallback presets that only change credentials", async () => {
-    const result = await handleAiConfig({}, makeAiConfigContext({
-      "users/1000/ai/provider": "openrouter",
-      "users/1000/ai/model": "openai/gpt-5-mini",
-      "users/1000/ai/base_url": "https://openrouter.ai/api/v1",
-      "users/1000/ai/provider_style": "openai-chat-completions",
-      "users/1000/ai/api_key": "primary-key",
-      "users/1000/ai/fallback_model_profile": "secondary-credential",
-      "users/1000/ai/model_profiles": JSON.stringify({
-        profiles: [{
-          id: "secondary-credential",
-          name: "Secondary Credential",
-          values: {
-            "config/ai/provider": "openrouter",
-            "config/ai/model": "openai/gpt-5-mini",
-            "config/ai/base_url": "https://openrouter.ai/api/v1",
-            "config/ai/provider_style": "openai-chat-completions",
-            "config/ai/api_key": "redacted",
-          },
-          createdAt: 1,
-          updatedAt: 2,
-        }],
-      }),
-      "users/1000/ai/model_profiles/secondary-credential/api_key": "secondary-key",
+  it("moves a Process model preference ahead of the owner's remaining stack", async () => {
+    const stack = JSON.stringify({
+      version: 1,
+      models: [
+        { id: "primary", name: "Primary", provider: "openai", model: "gpt-primary" },
+        { id: "preferred", name: "Preferred", provider: "anthropic", model: "claude-preferred" },
+        { id: "last", name: "Last", provider: "workers-ai", model: "@cf/last" },
+      ],
+    });
+    const result = await handleAiConfig({
+      modelId: "preferred",
+    }, makeAiConfigContext({
+      "users/1000/ai/models": stack,
     }));
 
+    expect([result.model, ...(result.fallbacks ?? []).map((fallback) => fallback.model)])
+      .toEqual(["claude-preferred", "gpt-primary", "@cf/last"]);
+  });
+
+  it("rejects a requested model id that is not in the owner's stack", async () => {
+    await expect(handleAiConfig({
+      modelId: "missing",
+    }, makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "primary", name: "Primary", provider: "workers-ai", model: "@cf/primary" }],
+      }),
+    }))).rejects.toThrow("AI model not found: missing");
+  });
+
+  it("uses the canonical system stack when the owner has no text-model config", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "config/ai/models": JSON.stringify({
+        version: 1,
+        models: [
+          { id: "system-primary", name: "System primary", provider: "workers-ai", model: "@cf/primary" },
+          { id: "system-fallback", name: "System fallback", provider: "workers-ai", model: "@cf/fallback" },
+        ],
+      }),
+    }));
+
+    expect(result.model).toBe("@cf/primary");
     expect(result.fallbacks).toEqual([
       expect.objectContaining({
-        profileId: "secondary-credential",
-        profileName: "Secondary Credential",
-        provider: "openrouter",
-        model: "openai/gpt-5-mini",
-        baseUrl: "https://openrouter.ai/api/v1",
-        providerStyle: "openai-chat-completions",
-        apiKey: "secondary-key",
+        modelId: "system-fallback",
+        model: "@cf/fallback",
       }),
     ]);
   });
 
-  it("resolves system fallback model presets from root profiles for non-root runs", async () => {
-    const result = await handleAiConfig({}, makeAiConfigContext({
-      "config/ai/provider": "workers-ai",
-      "config/ai/model": "@cf/default/model",
-      "config/ai/fallback_model_profile": "root-safe-stack",
-      "users/0/ai/model_profiles": JSON.stringify({
-        profiles: [{
-          id: "root-safe-stack",
-          name: "Root Safe Stack",
-          values: {
-            "config/ai/provider": "openrouter",
-            "config/ai/model": "openai/gpt-5-mini",
-            "config/ai/base_url": "https://openrouter.ai/api/v1",
-            "config/ai/provider_style": "openai-chat-completions",
-            "config/ai/api_key": "redacted",
-            "config/ai/max_tokens": "4096",
-          },
-          createdAt: 1,
-          updatedAt: 2,
-        }],
+  it("validates one complete request-local model without adding stored fallbacks", async () => {
+    const result = await handleAiConfig({
+      modelId: "primary",
+      modelConfig: {
+        provider: "custom",
+        model: "draft-model",
+        baseUrl: "https://draft.example/v1",
+        apiKey: "draft-key",
+        maxTokens: 12345,
+      },
+    }, makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [
+          { id: "primary", name: "Primary", provider: "openai", model: "stored-model" },
+          { id: "fallback", name: "Fallback", provider: "workers-ai", model: "@cf/fallback" },
+        ],
       }),
-      "users/0/ai/model_profiles/root-safe-stack/api_key": "root-fallback-key",
-    }, {
-      uid: 2000,
-      ownerUid: 1000,
-      processId: "task-1",
+      "users/1000/ai/models/primary/api_key": "stored-key",
     }));
 
-    expect(result.fallbacks).toEqual([
-      expect.objectContaining({
-        profileId: "root-safe-stack",
-        profileName: "Root Safe Stack",
-        provider: "openrouter",
-        model: "openai/gpt-5-mini",
-        baseUrl: "https://openrouter.ai/api/v1",
-        providerStyle: "openai-chat-completions",
-        apiKey: "root-fallback-key",
-        maxTokens: 4096,
-      }),
-    ]);
+    expect(result).toMatchObject({
+      provider: "custom",
+      model: "draft-model",
+      baseUrl: "https://draft.example/v1",
+      apiKey: "draft-key",
+      maxTokens: 12345,
+    });
+    expect(result.fallbacks).toBeUndefined();
   });
 
-  it("resolves legacy raw agent model overrides through matching owner profiles", async () => {
-    const result = await handleAiConfig({}, makeAiConfigContext({
-      "config/ai/provider": "workers-ai",
-      "config/ai/model": "@cf/default/model",
-      "users/2000/ai/model": "zai-glm-4.7",
-      "users/1000/ai/model_profiles": JSON.stringify({
-        profiles: [{
-          id: "fast-stack",
-          name: "Fast Stack",
-          values: {
-            "config/ai/provider": "custom",
-            "config/ai/model": "zai-glm-4.7",
-            "config/ai/base_url": "http://127.0.0.1:8080/v1",
-            "config/ai/provider_style": "openai-chat-completions",
-            "config/ai/api_key": "redacted",
-          },
-          createdAt: 1,
-          updatedAt: 2,
-        }],
-      }),
-      "users/1000/ai/model_profiles/fast-stack/api_key": "profile-key",
-    }, {
-      uid: 2000,
-      ownerUid: 1000,
-      processId: "task-1",
-    }));
-
-    expect(result.provider).toBe("custom");
-    expect(result.model).toBe("zai-glm-4.7");
-    expect(result.baseUrl).toBe("http://127.0.0.1:8080/v1");
-    expect(result.providerStyle).toBe("openai-chat-completions");
-    expect(result.apiKey).toBe("profile-key");
+  it("rejects an explicitly malformed owner model stack instead of silently changing models", async () => {
+    await expect(handleAiConfig({}, makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({ version: 1, models: [] }),
+    }))).rejects.toThrow("Invalid AI model stack at /sys/users/1000/ai/models");
   });
 
-  it("does not infer a profile when raw agent provider fields are configured", async () => {
+  it("uses the owner's complete stack for an agent process", async () => {
     const result = await handleAiConfig({}, makeAiConfigContext({
-      "config/ai/provider": "workers-ai",
-      "config/ai/model": "@cf/default/model",
-      "users/2000/ai/provider": "custom",
-      "users/2000/ai/model": "zai-glm-4.7",
-      "users/2000/ai/base_url": "http://raw.example/v1",
-      "users/1000/ai/model_profiles": JSON.stringify({
-        profiles: [{
-          id: "fast-stack",
-          name: "Fast Stack",
-          values: {
-            "config/ai/provider": "profile-provider",
-            "config/ai/model": "zai-glm-4.7",
-            "config/ai/base_url": "http://profile.example/v1",
-          },
-          createdAt: 1,
-          updatedAt: 2,
-        }],
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "owner", name: "Owner", provider: "owner-provider", model: "owner-model" }],
       }),
-    }, {
-      uid: 2000,
-      ownerUid: 1000,
-      processId: "task-1",
-    }));
-
-    expect(result.provider).toBe("custom");
-    expect(result.model).toBe("zai-glm-4.7");
-    expect(result.baseUrl).toBe("http://raw.example/v1");
-  });
-
-  it("prefers agent AI config over the owning human's config", async () => {
-    const result = await handleAiConfig({}, makeAiConfigContext({
-      "users/1000/ai/provider": "owner-provider",
-      "users/1000/ai/model": "owner-model",
-      "users/1000/ai/api_key": "owner-key",
-      "users/1000/ai/model_profile": "owner-stack",
-      "users/1000/ai/model_profiles": JSON.stringify({
-        profiles: [{
-          id: "owner-stack",
-          name: "Owner Stack",
-          values: {
-            "config/ai/provider": "owner-profile-provider",
-            "config/ai/model": "owner-profile-model",
-          },
-          createdAt: 1,
-          updatedAt: 2,
-        }],
+      "users/1000/ai/models/owner/api_key": "owner-key",
+      "users/2000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "agent", name: "Agent", provider: "agent-provider", model: "agent-model" }],
       }),
-      "users/2000/ai/provider": "agent-provider",
-      "users/2000/ai/model": "agent-model",
-      "users/2000/ai/api_key": "agent-key",
+      "users/2000/ai/models/agent/api_key": "agent-key",
       "users/1000/ai/tools/approval": '{"default":"deny","rules":[]}',
       "users/2000/ai/tools/approval": '{"default":"auto","rules":[]}',
     }, {
@@ -1540,45 +1494,32 @@ describe("handleAiConfig", () => {
       processId: "task-1",
     }));
 
-    expect(result.provider).toBe("agent-provider");
-    expect(result.model).toBe("agent-model");
-    expect(result.apiKey).toBe("agent-key");
+    expect(result.provider).toBe("owner-provider");
+    expect(result.model).toBe("owner-model");
+    expect(result.apiKey).toBe("owner-key");
     expect(result.accountApprovalPolicy).toBe('{"default":"auto","rules":[]}');
   });
 
-  it("prefers process AI config overrides over account and system config", async () => {
+  it("keeps a complete request-local model separate from persisted runtime and media settings", async () => {
     const result = await handleAiConfig({
-      processOverrides: {
-        "config/ai/provider": "openai",
-        "config/ai/model": "gpt-4.1-mini",
-        "config/ai/api_key": "process-chat-key",
-        "config/ai/reasoning": "low",
-        "config/ai/max_tokens": "2048",
-        "config/ai/context_window_tokens": "64000",
-        "config/ai/max_context_bytes": "12000",
-        "config/ai/generation/timeout_ms": "45000",
-        "config/ai/image/read/max_tokens": "777",
-        "config/ai/image/read/max_objects": "55",
-        "config/ai/image/generation/provider": "openai",
-        "config/ai/image/generation/model": "gpt-image-1",
-        "config/ai/transcription/provider": "openai",
-        "config/ai/transcription/model": "gpt-4o-transcribe",
-        "config/ai/speech/provider": "openai",
-        "config/ai/speech/model": "gpt-4o-mini-tts",
-        "config/ai/speech/speaker": "alloy",
+      modelConfig: {
+        provider: "openai",
+        model: "gpt-4.1-mini",
+        apiKey: "request-key",
+        maxTokens: 2048,
+        contextWindowTokens: 64000,
       },
+      reasoning: "low",
     }, makeAiConfigContext({
-      "users/1000/ai/provider": "owner-provider",
-      "users/1000/ai/model": "owner-model",
-      "users/1000/ai/api_key": "owner-key",
-      "config/ai/provider": "system-provider",
-      "config/ai/model": "system-model",
-      "config/ai/api_key": "system-key",
+      "users/1000/ai/max_context_bytes": "12000",
+      "users/1000/ai/generation/timeout_ms": "45000",
+      "users/1000/ai/image/read/max_tokens": "777",
+      "users/1000/ai/image/read/max_objects": "55",
     }));
 
     expect(result.provider).toBe("openai");
     expect(result.model).toBe("gpt-4.1-mini");
-    expect(result.apiKey).toBe("process-chat-key");
+    expect(result.apiKey).toBe("request-key");
     expect(result.reasoning).toBe("low");
     expect(result.maxTokens).toBe(2048);
     expect(result.contextWindowTokens).toBe(64000);
@@ -1588,61 +1529,20 @@ describe("handleAiConfig", () => {
     expect(result.media).toMatchObject({
       imageReadingMaxTokens: 777,
       imageReadingMaxObjects: 55,
-      imageGenerationProvider: "openai",
-      imageGenerationModel: "gpt-image-1",
-      imageGenerationApiKey: "process-chat-key",
-      transcriptionProvider: "openai",
-      transcriptionModel: "gpt-4o-transcribe",
-      transcriptionApiKey: "process-chat-key",
-      speechProvider: "openai",
-      speechModel: "gpt-4o-mini-tts",
-      speechApiKey: "process-chat-key",
-      speechSpeaker: "alloy",
+      imageGenerationProvider: "workers-ai",
+      imageGenerationApiKey: "",
+      transcriptionProvider: "workers-ai",
+      transcriptionApiKey: "",
+      speechProvider: "workers-ai",
+      speechApiKey: "",
     });
-  });
-
-  it("falls through invalid normalized process config values", async () => {
-    const result = await handleAiConfig({
-      processOverrides: {
-        "config/ai/generation/timeout_ms": "invalid",
-        "config/ai/image/read/max_tokens": "invalid",
-      },
-    }, makeAiConfigContext({
-      "users/1000/ai/generation/timeout_ms": "90000",
-      "users/1000/ai/image/read/max_tokens": "321",
-    }));
-
-    expect(result.generationTimeoutMs).toBe(90000);
-    expect(result.media).toMatchObject({
-      imageReadingMaxTokens: 321,
-    });
-  });
-
-  it("hydrates process profile secrets inside internal AI config resolution", async () => {
-    const result = await handleAiConfig({
-      processOverrides: {
-        "config/ai/provider": "openai",
-        "config/ai/model": "gpt-4.1-mini",
-      },
-      processProfile: {
-        id: "fast-stack",
-        name: "Fast Stack",
-        appliedAt: 1,
-      },
-    }, makeAiConfigContext({
-      "users/1000/ai/api_key": "owner-key",
-      "users/1000/ai/model_profiles/fast-stack/api_key": "sk-profile-chat",
-      "config/ai/api_key": "system-key",
-    }));
-
-    expect(result.apiKey).toBe("sk-profile-chat");
   });
 
   it("resolves the media model stack with owner fallback", async () => {
     const result = await handleAiConfig({}, makeAiConfigContext({
+      "users/1000/ai/transcription/provider": "workers-ai",
       "users/1000/ai/transcription/model": "@cf/openai/whisper-tiny-en",
       "users/1000/ai/transcription/api_key": "owner-transcription-key",
-      "users/1000/ai/api_key": "owner-chat-key",
       "users/1000/ai/image/read/max_bytes": "12345",
       "users/1000/ai/image/read/max_tokens": "321",
       "users/1000/ai/image/read/max_objects": "22",
@@ -1691,24 +1591,38 @@ describe("handleAiConfig", () => {
     expect(result.media?.transcriptionApiKey).toBe("");
   });
 
-  it("uses provider-specific media defaults when only the provider changes", async () => {
-    const result = await handleAiConfig({}, makeAiConfigContext({
-      "config/ai/api_key": "system-chat-key",
+  it("rejects partial media model overrides instead of mixing configurations", async () => {
+    await expect(handleAiConfig({}, makeAiConfigContext({
       "config/ai/transcription/provider": "openai",
-      "config/ai/speech/provider": "openai",
-      "config/ai/image/generation/provider": "openai",
-    }));
+    }))).rejects.toThrow(
+      "AI model configuration at /sys/config/ai/transcription must include provider and model",
+    );
+  });
 
+  it("keeps each media credential attached to its complete model configuration", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "config/ai/api_key": "detached-key-must-be-ignored",
+      "config/ai/transcription/provider": "openai",
+      "config/ai/transcription/model": "gpt-4o-transcribe",
+      "config/ai/transcription/api_key": "transcription-key",
+      "config/ai/image/generation/provider": "openai",
+      "config/ai/image/generation/model": "gpt-image-1.5",
+      "config/ai/image/generation/api_key": "image-key",
+      "config/ai/speech/provider": "openai",
+      "config/ai/speech/model": "gpt-4o-mini-tts",
+      "config/ai/speech/api_key": "speech-key",
+      "config/ai/speech/speaker": "alloy",
+    }));
     expect(result.media).toMatchObject({
       transcriptionProvider: "openai",
       transcriptionModel: "gpt-4o-transcribe",
-      transcriptionApiKey: "system-chat-key",
+      transcriptionApiKey: "transcription-key",
       imageGenerationProvider: "openai",
       imageGenerationModel: "gpt-image-1.5",
-      imageGenerationApiKey: "system-chat-key",
+      imageGenerationApiKey: "image-key",
       speechProvider: "openai",
       speechModel: "gpt-4o-mini-tts",
-      speechApiKey: "system-chat-key",
+      speechApiKey: "speech-key",
       speechSpeaker: "alloy",
     });
   });
@@ -1735,10 +1649,7 @@ describe("handleAiTranscriptionCreate", () => {
         },
         capabilities: ["*"],
       },
-      config: {
-        get: vi.fn((key: string) => config[key] ?? null),
-        getExplicit: vi.fn((key: string) => config[key] ?? null),
-      },
+      config: makeTestConfig(config),
       env: {
         AI: {
           run: vi.fn(async () => options.response ?? ({
@@ -1749,24 +1660,6 @@ describe("handleAiTranscriptionCreate", () => {
       },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
-  }
-
-  function transcriptionFallbackConfig(
-    id: string,
-    values: Record<string, string>,
-  ) {
-    return {
-      "users/1000/ai/fallback_model_profile": id,
-      "users/1000/ai/model_profiles": JSON.stringify({
-        profiles: [{
-          id,
-          name: id,
-          values,
-          createdAt: 1,
-          updatedAt: 1,
-        }],
-      }),
-    };
   }
 
   it("transcribes audio through the shared Workers AI path", async () => {
@@ -1796,39 +1689,15 @@ describe("handleAiTranscriptionCreate", () => {
     );
   });
 
-  it("honors process-local transcription media overrides", async () => {
-    const ctx = attachProcessAiSnapshot(makeTranscriptionContext(), {
-      "config/ai/transcription/model": "@cf/openai/whisper-large-v3-turbo",
-      "config/ai/transcription/max_bytes": "8",
-    });
-
-    const result = await handleAiTranscriptionCreate({
-      audio: {
-        mimeType: "audio/ogg",
-      },
-    }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])));
-
-    expect(result.model).toBe("@cf/openai/whisper-large-v3-turbo");
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      TEST_INSTALLATION_ID,
-      "proc:test",
-      expect.objectContaining({
-        call: "proc.ai.config.get",
-        args: { redacted: false },
-      }),
-    );
-    expect(ctx.env.AI.run).toHaveBeenCalledWith(
-      "@cf/openai/whisper-large-v3-turbo",
-      expect.any(Object),
-      { signal: expect.any(AbortSignal) },
-    );
-  });
-
-  it("uses the requested same-owner process AI configuration", async () => {
+  it("uses the requested process account's complete transcription configuration", async () => {
     const ctx = makeTranscriptionContext({
       config: {
+        "users/2000/ai/transcription/provider": "workers-ai",
         "users/2000/ai/transcription/model": "@cf/agent/transcriber",
+        "users/2000/ai/transcription/api_key": "agent-key",
+        "users/1000/ai/transcription/provider": "workers-ai",
         "users/1000/ai/transcription/model": "@cf/owner/transcriber",
+        "users/1000/ai/transcription/api_key": "owner-key",
       },
     });
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -1855,34 +1724,12 @@ describe("handleAiTranscriptionCreate", () => {
       })),
       resolveGids: vi.fn(() => [1000]),
     };
-    sendFrameToProcessMock.mockResolvedValueOnce({
-      type: "res",
-      id: "proc-ai-config",
-      ok: true,
-      data: {
-        ok: true,
-        pid: "proc:agent",
-        config: {
-          version: 1,
-          values: {
-            "config/ai/transcription/model": "@cf/process/transcriber",
-          },
-          updatedAt: 1,
-        },
-      },
-    });
-
     const result = await handleAiTranscriptionCreate({
       pid: "proc:agent",
       audio: { mimeType: "audio/webm" },
     }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])));
 
-    expect(result.model).toBe("@cf/process/transcriber");
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      TEST_INSTALLATION_ID,
-      "proc:agent",
-      expect.objectContaining({ call: "proc.ai.config.get" }),
-    );
+    expect(result.model).toBe("@cf/agent/transcriber");
   });
 
   it("rejects cross-owner process configuration access", async () => {
@@ -1899,11 +1746,16 @@ describe("handleAiTranscriptionCreate", () => {
     }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])))).rejects.toThrow(
       "Permission denied: cannot access process proc:other",
     );
-    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
-  it("allows root to use another owner's process configuration", async () => {
-    const ctx = makeTranscriptionContext();
+  it("allows root to use another process account's transcription configuration", async () => {
+    const ctx = makeTranscriptionContext({
+      config: {
+        "users/2000/ai/transcription/provider": "workers-ai",
+        "users/2000/ai/transcription/model": "@cf/root-selected/transcriber",
+        "users/2000/ai/transcription/api_key": "",
+      },
+    });
     ctx.identity!.process.uid = 0;
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     (ctx as { procs: KernelTestValue }).procs = {
@@ -1929,21 +1781,6 @@ describe("handleAiTranscriptionCreate", () => {
       })),
       resolveGids: vi.fn(() => [1000]),
     };
-    sendFrameToProcessMock.mockResolvedValueOnce({
-      type: "res",
-      id: "proc-ai-config",
-      ok: true,
-      data: {
-        ok: true,
-        pid: "proc:other",
-        config: {
-          version: 1,
-          values: { "config/ai/transcription/model": "@cf/root-selected/transcriber" },
-          updatedAt: 1,
-        },
-      },
-    });
-
     const result = await handleAiTranscriptionCreate({
       pid: "proc:other",
       audio: { mimeType: "audio/webm" },
@@ -1952,107 +1789,9 @@ describe("handleAiTranscriptionCreate", () => {
     expect(result.model).toBe("@cf/root-selected/transcriber");
   });
 
-  it("falls back through an explicitly configured transcription stack", async () => {
-    const primaryModel = "@cf/openai/whisper-large-v3-turbo";
-    const fallbackModel = "@cf/openai/whisper-tiny-en";
-    const ctx = makeTranscriptionContext({
-      config: {
-        "config/ai/transcription/model": primaryModel,
-        ...transcriptionFallbackConfig("safe-stack", {
-          "config/ai/provider": "openai",
-          "config/ai/model": "gpt-5-mini",
-          "config/ai/transcription/provider": "workers-ai",
-          "config/ai/transcription/model": fallbackModel,
-        }),
-      },
-    });
-    vi.mocked(ctx.env.AI.run)
-      .mockResolvedValueOnce({ text: "" })
-      .mockResolvedValueOnce({ text: "fallback transcript" });
-
-    const result = await handleAiTranscriptionCreate({
-      audio: { mimeType: "audio/webm" },
-    }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])));
-
-    expect(result).toMatchObject({
-      text: "fallback transcript",
-      provider: "workers-ai",
-      model: fallbackModel,
-    });
-    expect(vi.mocked(ctx.env.AI.run).mock.calls.map(([model]) => model)).toEqual([
-      primaryModel,
-      fallbackModel,
-    ]);
-  });
-
-  it("falls back after the primary transcription provider fails", async () => {
-    const fallbackModel = "@cf/openai/whisper-tiny-en";
-    const ctx = makeTranscriptionContext({
-      config: transcriptionFallbackConfig("safe-stack", {
-        "config/ai/transcription/provider": "workers-ai",
-        "config/ai/transcription/model": fallbackModel,
-      }),
-    });
-    vi.mocked(ctx.env.AI.run)
-      .mockRejectedValueOnce(new Error("primary unavailable"))
-      .mockResolvedValueOnce({ text: "fallback transcript" });
-
-    const result = await handleAiTranscriptionCreate({
-      audio: { mimeType: "audio/webm" },
-    }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])));
-
-    expect(result.model).toBe(fallbackModel);
-    expect(ctx.env.AI.run).toHaveBeenCalledTimes(2);
-  });
-
-  it("deduplicates an identical transcription fallback stack", async () => {
-    const model = "@cf/openai/whisper-large-v3-turbo";
-    const ctx = makeTranscriptionContext({
-      config: {
-        "config/ai/transcription/model": model,
-        ...transcriptionFallbackConfig("same-stack", {
-          "config/ai/transcription/provider": "workers-ai",
-          "config/ai/transcription/model": model,
-        }),
-      },
-      response: { text: "" },
-    });
-
-    await expect(handleAiTranscriptionCreate({
-      audio: { mimeType: "audio/webm" },
-    }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])))).rejects.toThrow("Transcription unavailable");
-    expect(ctx.env.AI.run).toHaveBeenCalledTimes(1);
-  });
-
-  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-  it("does not treat a fallback text model as a transcription model", async () => {
-    const ctx = makeTranscriptionContext({
-      config: transcriptionFallbackConfig("text-only", {
-        "config/ai/provider": "openai",
-        "config/ai/model": "gpt-5-mini",
-      }),
-      response: { text: "" },
-    });
-
-    await expect(handleAiTranscriptionCreate({
-      audio: { mimeType: "audio/webm" },
-    }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])))).rejects.toThrow("Transcription unavailable");
-    expect(ctx.env.AI.run).toHaveBeenCalledTimes(1);
-    expect(ctx.env.AI.run).toHaveBeenCalledWith(
-      DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
-      expect.any(Object),
-      expect.any(Object),
-    );
-  });
-
   it("does not start a fallback after caller cancellation", async () => {
     const controller = new AbortController();
-    const ctx = makeTranscriptionContext({
-      config: transcriptionFallbackConfig("safe-stack", {
-        "config/ai/transcription/provider": "workers-ai",
-        "config/ai/transcription/model": "@cf/openai/whisper-tiny-en",
-      }),
-    });
+    const ctx = makeTranscriptionContext();
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     (ctx as { requestSignal?: AbortSignal }).requestSignal = controller.signal;
     vi.mocked(ctx.env.AI.run).mockImplementation((_model, _input, options) =>
@@ -2074,6 +1813,7 @@ describe("handleAiTranscriptionCreate", () => {
   it("uses configured transcription model and byte limits", async () => {
     const ctx = makeTranscriptionContext({
       config: {
+        "config/ai/transcription/provider": "workers-ai",
         "config/ai/transcription/model": "@cf/openai/whisper-tiny-en",
         "config/ai/transcription/max_bytes": "2",
       },
@@ -2126,10 +1866,7 @@ describe("handleAiImageRead", () => {
         },
         capabilities: ["*"],
       },
-      config: {
-        get: vi.fn((key: string) => config[key] ?? null),
-        getExplicit: vi.fn((key: string) => config[key] ?? null),
-      },
+      config: makeTestConfig(config),
       env: {
         AI: {
           run: vi.fn(async () => options.response ?? ({
@@ -2167,14 +1904,14 @@ describe("handleAiImageRead", () => {
   });
 
   it("honors resource limits but ignores obsolete image-reader dialect config", async () => {
-    const ctx = attachProcessAiSnapshot(makeImageReadContext({
+    const ctx = makeImageReadContext({
+      config: {
+        "users/1000/ai/image/read/max_tokens": "77",
+        "users/1000/ai/image/read/max_objects": "12",
+      },
       response: {
         objects: [{ x_min: 0.1, y_min: 0.2, x_max: 0.3, y_max: 0.4 }],
       },
-    }), {
-      "config/ai/image/read/model": "@cf/obsolete/vision",
-      "config/ai/image/read/max_tokens": "77",
-      "config/ai/image/read/max_objects": "12",
     });
 
     const response = await handleAiImageRead({
@@ -2298,10 +2035,7 @@ describe("handleAiImageGenerate", () => {
         },
         capabilities: ["*"],
       },
-      config: {
-        get: vi.fn((key: string) => config[key] ?? null),
-        getExplicit: vi.fn((key: string) => config[key] ?? null),
-      },
+      config: makeTestConfig(config),
       env: {
         AI: {
           run: vi.fn(async () => options.response ?? ({ image: "AQID" })),
@@ -2328,9 +2062,13 @@ describe("handleAiImageGenerate", () => {
     );
   });
 
-  it("honors process-local image generation media overrides", async () => {
-    const ctx = attachProcessAiSnapshot(makeImageGenerateContext(), {
-      "config/ai/image/generation/model": "@cf/black-forest-labs/flux-1-schnell",
+  it("uses a complete account image-generation configuration", async () => {
+    const ctx = makeImageGenerateContext({
+      config: {
+        "users/1000/ai/image/generation/provider": "workers-ai",
+        "users/1000/ai/image/generation/model": "@cf/black-forest-labs/flux-1-schnell",
+        "users/1000/ai/image/generation/api_key": "",
+      },
     });
 
     const result = await handleAiImageGenerate({ prompt: "a blue terminal" }, ctx);
@@ -2342,23 +2080,18 @@ describe("handleAiImageGenerate", () => {
     );
   });
 
-  it("hydrates process profile secrets for media syscalls", async () => {
+  it("uses the credential attached to the account image configuration", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ data: [{ b64_json: "AQID" }] }), {
         headers: { "content-type": "application/json" },
       }),
     );
-    const ctx = attachProcessAiSnapshot(makeImageGenerateContext({
+    const ctx = makeImageGenerateContext({
       config: {
-        "users/1000/ai/model_profiles/fast-stack/image/generation/api_key": "sk-profile-image",
+        "users/1000/ai/image/generation/provider": "openai",
+        "users/1000/ai/image/generation/model": "gpt-image-1",
+        "users/1000/ai/image/generation/api_key": "sk-image",
       },
-    }), {
-      "config/ai/image/generation/provider": "openai",
-      "config/ai/image/generation/model": "gpt-image-1",
-    }, "proc:test", {
-      id: "fast-stack",
-      name: "Fast Stack",
-      appliedAt: 1,
     });
 
     try {
@@ -2369,43 +2102,13 @@ describe("handleAiImageGenerate", () => {
         expect.stringContaining("/images/generations"),
         expect.objectContaining({
           headers: expect.objectContaining({
-            Authorization: "Bearer sk-profile-image",
+            Authorization: "Bearer sk-image",
           }),
         }),
       );
     } finally {
       fetchSpy.mockRestore();
     }
-  });
-
-  it("falls back to configured media defaults when the process AI snapshot is unavailable", async () => {
-    const ctx = makeImageGenerateContext({
-      config: {
-        "config/ai/image/generation/model": "@cf/example/fallback-image",
-      },
-    });
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    (ctx as { processId?: string }).processId = "proc:missing";
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    (ctx as { procs?: Partial<KernelContext["procs"]> }).procs = {
-      getOwnerUid: vi.fn(() => 1000),
-    };
-    sendFrameToProcessMock.mockRejectedValueOnce(new Error("process unavailable"));
-
-    const result = await handleAiImageGenerate({ prompt: "a fallback terminal" }, ctx);
-
-    expect(result.data.model).toBe("@cf/example/fallback-image");
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      TEST_INSTALLATION_ID,
-      "proc:missing",
-      expect.objectContaining({
-        call: "proc.ai.config.get",
-      }),
-    );
-    expect(ctx.env.AI.run).toHaveBeenCalledWith(
-      "@cf/example/fallback-image",
-      { prompt: "a fallback terminal" },
-    );
   });
 
   it("requires a prompt", async () => {
@@ -2434,10 +2137,7 @@ describe("handleAiSpeechCreate", () => {
         },
         capabilities: ["*"],
       },
-      config: {
-        get: vi.fn((key: string) => config[key] ?? null),
-        getExplicit: vi.fn((key: string) => config[key] ?? null),
-      },
+      config: makeTestConfig(config),
       env: {
         AI: {
           run: vi.fn(async () => options.response ?? new ReadableStream({
@@ -2475,11 +2175,15 @@ describe("handleAiSpeechCreate", () => {
     );
   });
 
-  it("honors process-local speech media overrides", async () => {
-    const ctx = attachProcessAiSnapshot(makeSpeechContext(), {
-      "config/ai/speech/model": "@cf/deepgram/aura-1",
-      "config/ai/speech/speaker": "orpheus",
-      "config/ai/speech/encoding": "wav",
+  it("uses a complete account speech configuration", async () => {
+    const ctx = makeSpeechContext({
+      config: {
+        "users/1000/ai/speech/provider": "workers-ai",
+        "users/1000/ai/speech/model": "@cf/deepgram/aura-1",
+        "users/1000/ai/speech/api_key": "",
+        "users/1000/ai/speech/speaker": "orpheus",
+        "users/1000/ai/speech/encoding": "wav",
+      },
     });
 
     const result = await handleAiSpeechCreate({ text: "Hello GSV" }, ctx);
@@ -2569,6 +2273,7 @@ describe("handleAiSpeechCreate", () => {
   it("uses configured speech defaults and character limits", async () => {
     const ctx = makeSpeechContext({
       config: {
+        "config/ai/speech/provider": "workers-ai",
         "config/ai/speech/model": "@cf/deepgram/aura-2-en",
         "config/ai/speech/speaker": "asteria",
         "config/ai/speech/encoding": "mp3",

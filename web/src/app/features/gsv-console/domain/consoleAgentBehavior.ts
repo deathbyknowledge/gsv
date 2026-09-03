@@ -9,11 +9,9 @@ import {
 } from "../../../domain/agentApproval";
 import {
   defaultModelLabelForConfig,
-  modelProfileOptionValue,
-  modelProfileSummary,
+  modelEntryOptionValue,
   modelProfilesForConfig,
   modelOptionForValue,
-  type ConsoleModelProfile,
   type ConsoleModelOption,
 } from "./consoleAi";
 
@@ -28,12 +26,8 @@ export type ConsoleAgentBehavior = {
   approvalInherited: boolean;
   approvalOverride: string;
   model: string;
-  fallbackModel: string;
-  fallbackModelInherited: boolean;
-  fallbackModelLabel: string;
-  fallbackModelProfile: string;
   modelLabel: string;
-  modelProfile: string;
+  modelId: string;
   permission: AgentApprovalAction;
   reasoning: string;
 };
@@ -41,13 +35,6 @@ export type ConsoleAgentBehavior = {
 export const APPROVAL_ACTIONS: AgentApprovalAction[] = ["auto", "ask", "deny"];
 export const DEFAULT_REASONING_EFFORT = "medium";
 export const GLOBAL_APPROVAL_CONFIG_KEY = "config/ai/tools/approval";
-const MODEL_PROFILE_INFERENCE_BLOCKING_KEYS = [
-  "provider",
-  "base_url",
-  "provider_style",
-  "transport_target",
-  "api_key",
-] as const;
 
 const DEFAULT_APPROVAL_POLICY: ApprovalPolicy = {
   default: "auto",
@@ -80,20 +67,10 @@ export function behaviorForAccount(
   uid: number,
   ownerUid?: number | null,
 ): ConsoleAgentBehavior {
-  const explicitModelProfile = modelProfileOverrideForAccount(config, uid);
-  const modelOverride = modelOverrideForAccount(config, uid);
-  const inferredModelProfile = explicitModelProfile
-    ? null
-    : modelProfileForRawModelOverride(config, uid, ownerUid, modelOverride);
-  const modelProfile = explicitModelProfile || inferredModelProfile?.id || "";
-  const model = modelProfile ? modelProfileOptionValue(modelProfile) : modelOverride;
-  const modelLabel = explicitModelProfile
-    ? modelProfileLabelForAccount(config, uid, ownerUid, explicitModelProfile)
-    : inferredModelProfile?.name ?? modelOverride;
-  const fallbackModelProfile = fallbackModelProfileOverrideForAccount(config, uid);
-  const fallbackModel = fallbackModelProfile ? modelProfileOptionValue(fallbackModelProfile) : "";
-  const fallbackModelLabel = fallbackModelProfile
-    ? modelProfileLabelForAccount(config, uid, ownerUid, fallbackModelProfile)
+  const modelId = preferredModelOverrideForAccount(config, uid);
+  const model = modelId ? modelEntryOptionValue(modelId) : "";
+  const modelLabel = modelId
+    ? modelProfileLabelForAccount(config, uid, ownerUid, modelId)
     : "";
   const reasoning = reasoningOverrideForAccount(config, uid);
   const approvalOverride = approvalOverrideForAccount(config, uid);
@@ -104,12 +81,8 @@ export function behaviorForAccount(
     approvalInherited: !approvalOverride,
     approvalOverride,
     model,
-    fallbackModel,
-    fallbackModelInherited: !fallbackModelProfile,
-    fallbackModelLabel,
-    fallbackModelProfile,
     modelLabel,
-    modelProfile,
+    modelId,
     permission: parseApprovalPolicy(approval).default,
     reasoning,
   };
@@ -131,16 +104,8 @@ export function approvalOverrideForAccount(config: readonly ConsoleConfigEntry[]
   return configValue(config, `users/${uid}/ai/tools/approval`);
 }
 
-export function modelOverrideForAccount(config: readonly ConsoleConfigEntry[], uid: number): string {
-  return configValue(config, `users/${uid}/ai/model`);
-}
-
-export function modelProfileOverrideForAccount(config: readonly ConsoleConfigEntry[], uid: number): string {
-  return configValue(config, `users/${uid}/ai/model_profile`);
-}
-
-export function fallbackModelProfileOverrideForAccount(config: readonly ConsoleConfigEntry[], uid: number): string {
-  return configValue(config, `users/${uid}/ai/fallback_model_profile`);
+export function preferredModelOverrideForAccount(config: readonly ConsoleConfigEntry[], uid: number): string {
+  return configValue(config, `users/${uid}/ai/preferred_model`);
 }
 
 export function inheritedModelLabelForAccount(
@@ -149,23 +114,9 @@ export function inheritedModelLabelForAccount(
   ownerUid?: number | null,
 ): string {
   const parsedOwnerUid = ownerUidSchema.parse(ownerUid);
-  const ownerModel = parsedOwnerUid !== null && parsedOwnerUid !== uid
-    ? modelLabelOverrideForAccount(config, parsedOwnerUid)
-    : "";
-  return ownerModel || defaultModelLabelForConfig(config);
-}
-
-export function inheritedFallbackModelLabelForAccount(
-  config: readonly ConsoleConfigEntry[],
-  uid: number,
-  ownerUid?: number | null,
-): string {
-  const parsedOwnerUid = ownerUidSchema.parse(ownerUid);
-  const ownerFallback = parsedOwnerUid !== null && parsedOwnerUid !== uid
-    ? fallbackModelLabelOverrideForAccount(config, parsedOwnerUid, null)
-    : "";
-  const systemFallback = fallbackModelLabelForSelector(config, uid, ownerUid, configValue(config, "config/ai/fallback_model_profile"));
-  return ownerFallback || systemFallback;
+  const modelOwnerUid = parsedOwnerUid ?? uid;
+  return modelProfilesForConfig(config, modelOwnerUid)[0]?.name
+    || defaultModelLabelForConfig(config, modelOwnerUid);
 }
 
 export function reasoningOverrideForAccount(config: readonly ConsoleConfigEntry[], uid: number): string {
@@ -201,7 +152,7 @@ export function modelLabelsForAccount(
     return baseLabels;
   }
   const [primaryLabel, ...rest] = baseLabels;
-  return [primaryLabel ?? "GATEWAY DEFAULT", trimmedModel, ...rest];
+  return [primaryLabel ?? "NOT CONFIGURED", trimmedModel, ...rest];
 }
 
 export function modelOptionsForAccount(
@@ -209,56 +160,19 @@ export function modelOptionsForAccount(
   model: string,
   inheritedLabel?: string,
 ): ConsoleModelOption[] {
-  const defaultValue = inheritedLabel?.trim();
-  const baseOptions = defaultValue
-    ? [
-        inheritedModelOption(defaultValue, options.find((option) => option.value.trim().toLowerCase() === defaultValue.toLowerCase())),
-        ...options.filter((option) => option.value.trim().toLowerCase() !== defaultValue.toLowerCase()),
-      ]
-    : [...options];
+  const baseOptions = [inheritedModelOption(inheritedLabel?.trim() || "NOT CONFIGURED"), ...options];
   const trimmedModel = model.trim();
   if (!trimmedModel || baseOptions.some((option) => option.value.trim() === trimmedModel)) {
     return baseOptions;
   }
-  const [primaryOption, ...rest] = baseOptions;
-  return [
-    primaryOption ?? inheritedModelOption("GATEWAY DEFAULT"),
-    modelOptionForValue(trimmedModel),
-    ...rest,
-  ];
+  return [...baseOptions, modelOptionForValue(trimmedModel)];
 }
 
-function inheritedModelOption(value: string, option?: ConsoleModelOption): ConsoleModelOption {
-  const base = option ?? modelOptionForValue(value);
+function inheritedModelOption(label: string): ConsoleModelOption {
   return {
-    ...base,
-    label: `Inherit: ${base.label}`,
+    value: "",
+    label: `Inherit: ${label}`,
   };
-}
-
-function modelLabelOverrideForAccount(config: readonly ConsoleConfigEntry[], uid: number): string {
-  const profile = modelProfileOverrideForAccount(config, uid);
-  if (profile) {
-    return modelProfileLabelForAccount(config, uid, null, profile);
-  }
-  return modelOverrideForAccount(config, uid);
-}
-
-function fallbackModelLabelOverrideForAccount(
-  config: readonly ConsoleConfigEntry[],
-  uid: number,
-  ownerUid: number | null | undefined,
-): string {
-  return fallbackModelLabelForSelector(config, uid, ownerUid, fallbackModelProfileOverrideForAccount(config, uid));
-}
-
-function fallbackModelLabelForSelector(
-  config: readonly ConsoleConfigEntry[],
-  uid: number,
-  ownerUid: number | null | undefined,
-  selector: string,
-): string {
-  return selector.trim() ? modelProfileLabelForAccount(config, uid, ownerUid, selector) : "";
 }
 
 function modelProfileLabelForAccount(
@@ -267,52 +181,12 @@ function modelProfileLabelForAccount(
   ownerUid: number | null | undefined,
   selector: string,
 ): string {
-  return modelProfileForSelector(config, uid, ownerUid, selector)?.name || selector;
-}
-
-function modelProfileForRawModelOverride(
-  config: readonly ConsoleConfigEntry[],
-  uid: number,
-  ownerUid: number | null | undefined,
-  rawModel: string,
-): ConsoleModelProfile | null {
-  const model = rawModel.trim();
-  if (!model || hasAccountProviderStackOverride(config, uid)) {
-    return null;
-  }
-  return modelProfileForSelector(config, uid, ownerUid, model, { matchModel: true });
-}
-
-function modelProfileForSelector(
-  config: readonly ConsoleConfigEntry[],
-  uid: number,
-  ownerUid: number | null | undefined,
-  selector: string,
-  options: { matchModel?: boolean } = {},
-): ConsoleModelProfile | null {
-  const accountProfiles = modelProfilesForConfig(config, uid);
   const parsedOwnerUid = ownerUidSchema.parse(ownerUid);
-  const ownerProfiles = parsedOwnerUid !== null && parsedOwnerUid !== uid
-    ? modelProfilesForConfig(config, parsedOwnerUid)
-    : [];
+  const modelOwnerUid = parsedOwnerUid ?? uid;
   const normalized = selector.trim().toLowerCase();
-  return [...accountProfiles, ...ownerProfiles].find((candidate) =>
-    candidate.id.toLowerCase() === normalized ||
-    candidate.name.toLowerCase() === normalized ||
-    (
-      options.matchModel === true &&
-      candidate.values["config/ai/model"]?.trim().toLowerCase() === normalized
-    )
-  ) ?? null;
-}
-
-function hasAccountProviderStackOverride(config: readonly ConsoleConfigEntry[], uid: number): boolean {
-  return MODEL_PROFILE_INFERENCE_BLOCKING_KEYS.some((key) =>
-    config.some((entry) =>
-      entry.key === `users/${uid}/ai/${key}` &&
-      (entry.redacted || entry.value.trim().length > 0)
-    )
-  );
+  return modelProfilesForConfig(config, modelOwnerUid)
+    .find((candidate) => candidate.id.toLowerCase() === normalized)?.name
+    ?? selector;
 }
 
 export function approvalActionFromValue(value: ApprovalWireValue): AgentApprovalAction {
@@ -385,59 +259,6 @@ export function approvalForAgentSave(
   return behavior.approvalInherited
     ? approvalOverrideForInheritedPolicy(draftApproval, behavior.approval)
     : normalizedApprovalPolicy(draftApproval);
-}
-
-/** Fallback-model Select options for an account: "Inherit" first, then the
- *  account's + owner's model profiles, then a stored-but-unknown selection. */
-export function fallbackModelOptionsForAccount(
-  config: readonly ConsoleConfigEntry[],
-  uid: number | null,
-  ownerUid: number | null,
-  selectedValue: string,
-  inheritedLabel: string,
-): ConsoleModelOption[] {
-  const inherited = inheritedLabel.trim();
-  const options: ConsoleModelOption[] = [{
-    value: "",
-    label: inherited ? `Inherit: ${inherited}` : "Inherit fallback",
-    description: inherited ? "Uses the inherited fallback model." : "No fallback override.",
-  }];
-  const seen = new Set([""]);
-
-  const addProfileOptions = (profileUid: number | null) => {
-    if (profileUid === null || !Number.isFinite(profileUid)) {
-      return;
-    }
-    for (const profile of modelProfilesForConfig(config, profileUid)) {
-      const value = modelProfileOptionValue(profile.id);
-      const key = value.trim().toLowerCase();
-      if (!value || seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      options.push({
-        value,
-        label: profile.name,
-        description: modelProfileSummary(profile),
-      });
-    }
-  };
-
-  addProfileOptions(uid);
-  if (ownerUid !== uid) {
-    addProfileOptions(ownerUid);
-  }
-
-  const selected = selectedValue.trim();
-  if (selected && !seen.has(selected.toLowerCase())) {
-    options.push({
-      value: selected,
-      label: selected.replace(/^model-profile:/i, ""),
-      description: "Stored fallback model is not currently available.",
-    });
-  }
-
-  return options;
 }
 
 function configValue(config: readonly ConsoleConfigEntry[], key: string): string {

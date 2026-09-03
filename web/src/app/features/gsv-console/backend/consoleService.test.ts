@@ -401,7 +401,7 @@ describe("console agent service", () => {
       name: "Scout Agent",
       role: "SCOUT",
       description: "Tracks fleet signals.",
-      model: "NEMOTRON 3",
+      model: "model-entry:nemotron-3",
       reasoning: "high",
       approval,
       files: [
@@ -426,8 +426,8 @@ describe("console agent service", () => {
       contextFiles: [{ name: "operating-notes.md", text: "# Notes\n\nPrefer concise reports." }],
     });
     expect(setConfig).toHaveBeenNthCalledWith(1, {
-      key: "users/42/ai/model",
-      value: "NEMOTRON 3",
+      key: "users/42/ai/preferred_model",
+      value: "nemotron-3",
     });
     expect(setConfig).toHaveBeenNthCalledWith(2, {
       key: "users/42/ai/tools/approval",
@@ -461,112 +461,80 @@ describe("console agent service", () => {
     await saveConsoleAgentBehavior(client, {
       uid: 42,
       model: "",
-      fallbackModel: "",
       reasoning: "",
       approval: "",
     });
 
     expect(setConfig).toHaveBeenNthCalledWith(1, {
-      key: "users/42/ai/model_profile",
+      key: "users/42/ai/preferred_model",
       value: "",
     });
     expect(setConfig).toHaveBeenNthCalledWith(2, {
-      key: "users/42/ai/model",
-      value: "",
-    });
-    expect(setConfig).toHaveBeenNthCalledWith(3, {
-      key: "users/42/ai/fallback_model_profile",
-      value: "",
-    });
-    expect(setConfig).toHaveBeenNthCalledWith(4, {
       key: "users/42/ai/tools/approval",
       value: "",
     });
-    expect(setConfig).toHaveBeenNthCalledWith(5, {
+    expect(setConfig).toHaveBeenNthCalledWith(3, {
       key: "users/42/ai/reasoning",
       value: "",
     });
   });
 
-  it("can save model and reasoning without touching tool approval", async () => {
+  it("rejects raw model names that are not stable entry references", async () => {
     const { client, setConfig } = createMockClient(42);
 
-    await saveConsoleAgentBehavior(client, {
+    await expect(saveConsoleAgentBehavior(client, {
       uid: 42,
       model: "NEMOTRON 3",
       reasoning: "medium",
-    });
-
-    expect(setConfig).toHaveBeenNthCalledWith(1, {
-      key: "users/42/ai/model_profile",
-      value: "",
-    });
-    expect(setConfig).toHaveBeenNthCalledWith(2, {
-      key: "users/42/ai/model",
-      value: "NEMOTRON 3",
-    });
-    expect(setConfig).toHaveBeenNthCalledWith(3, {
-      key: "users/42/ai/reasoning",
-      value: "medium",
-    });
-    expect(setConfig).toHaveBeenCalledTimes(3);
+    })).rejects.toThrow("model selection must reference an available model entry");
+    expect(setConfig).not.toHaveBeenCalled();
   });
 
   // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
-  it("persists selected model presets as profile references", async () => {
+  it("persists selected models as stable entry references", async () => {
     const { client, setConfig } = createMockClient(42);
 
     await saveConsoleAgentBehavior(client, {
       uid: 42,
-      model: "model-profile:fast-stack",
+      model: "model-entry:fast-stack",
       reasoning: "medium",
     });
 
     expect(setConfig).toHaveBeenNthCalledWith(1, {
-      key: "users/42/ai/model_profile",
+      key: "users/42/ai/preferred_model",
       value: "fast-stack",
     });
     expect(setConfig).toHaveBeenNthCalledWith(2, {
-      key: "users/42/ai/model",
-      value: "",
-    });
-    expect(setConfig).toHaveBeenNthCalledWith(3, {
       key: "users/42/ai/reasoning",
       value: "medium",
     });
-    expect(setConfig).toHaveBeenCalledTimes(3);
+    expect(setConfig).toHaveBeenCalledTimes(2);
   });
 
   // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
-  it("persists selected fallback presets as account fallback references", async () => {
+  it("does not persist a second per-agent fallback selector", async () => {
     const { client, setConfig } = createMockClient(42);
 
     await saveConsoleAgentBehavior(client, {
       uid: 42,
-      model: "model-profile:fast-stack",
-      fallbackModel: "model-profile:safe-stack",
+      model: "model-entry:fast-stack",
       reasoning: "medium",
     });
 
     expect(setConfig).toHaveBeenNthCalledWith(1, {
-      key: "users/42/ai/model_profile",
+      key: "users/42/ai/preferred_model",
       value: "fast-stack",
     });
     expect(setConfig).toHaveBeenNthCalledWith(2, {
-      key: "users/42/ai/model",
-      value: "",
-    });
-    expect(setConfig).toHaveBeenNthCalledWith(3, {
-      key: "users/42/ai/fallback_model_profile",
-      value: "safe-stack",
-    });
-    expect(setConfig).toHaveBeenNthCalledWith(4, {
       key: "users/42/ai/reasoning",
       value: "medium",
     });
-    expect(setConfig).toHaveBeenCalledTimes(4);
+    expect(setConfig).toHaveBeenCalledTimes(2);
+    expect(setConfig).not.toHaveBeenCalledWith(expect.objectContaining({
+      key: expect.stringContaining("fallback"),
+    }));
   });
 
   it("reconciles renamed and deleted agent context files", async () => {
@@ -844,12 +812,12 @@ describe("console agent service", () => {
 
     expect(call).toHaveBeenCalledWith("ai.text.generate", expect.objectContaining({
       config: {
-        overrides: {
-          "config/ai/provider": "anthropic",
-          "config/ai/model": "claude-test",
-          "config/ai/api_key": "sk-live",
-          "config/ai/reasoning": "high",
+        modelConfig: {
+          provider: "anthropic",
+          model: "claude-test",
+          apiKey: "sk-live",
         },
+        reasoning: "high",
       },
       options: {
         maxTokens: 2_048,
@@ -897,9 +865,9 @@ describe("console agent service", () => {
 
     expect(call).toHaveBeenCalledWith("ai.text.generate", expect.objectContaining({
       config: {
-        overrides: {
-          "config/ai/provider": "openai-codex",
-          "config/ai/model": "gpt-5.5",
+        modelConfig: {
+          provider: "openai-codex",
+          model: "gpt-5.5",
         },
       },
       sessionAffinityKey: "gsv-console:model-validation",
@@ -930,7 +898,7 @@ describe("console agent service", () => {
     expect(caught?.message).not.toContain("Ray ID");
   });
 
-  it("validates saved presets by preset id", async () => {
+  it("validates saved models by stable entry id", async () => {
     const call = vi.fn(async () => ({
       provider: "workers-ai",
       model: "@cf/test/model",
@@ -956,7 +924,7 @@ describe("console agent service", () => {
     // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
     await validateConsoleModelConfig({ call } as any, {
-      presetId: "fast-stack",
+      modelId: "fast-stack",
       values: {
         "config/ai/provider": "workers-ai",
         "config/ai/model": "@cf/test/model",
@@ -965,10 +933,10 @@ describe("console agent service", () => {
 
     expect(call).toHaveBeenCalledWith("ai.text.generate", expect.objectContaining({
       config: {
-        preset: { id: "fast-stack" },
-        overrides: {
-          "config/ai/provider": "workers-ai",
-          "config/ai/model": "@cf/test/model",
+        modelId: "fast-stack",
+        modelConfig: {
+          provider: "workers-ai",
+          model: "@cf/test/model",
         },
       },
     }));
@@ -976,7 +944,7 @@ describe("console agent service", () => {
 
   // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
-  it("validates explicit API key clears as empty overrides", async () => {
+  it("validates an explicit API key clear in the complete model", async () => {
     const call = vi.fn(async () => ({
       provider: "workers-ai",
       model: "@cf/test/model",
@@ -1002,7 +970,7 @@ describe("console agent service", () => {
     // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
     await validateConsoleModelConfig({ call } as any, {
-      presetId: "fast-stack",
+      modelId: "fast-stack",
       values: {
         "config/ai/provider": "workers-ai",
         "config/ai/model": "@cf/test/model",
@@ -1012,11 +980,11 @@ describe("console agent service", () => {
 
     expect(call).toHaveBeenCalledWith("ai.text.generate", expect.objectContaining({
       config: {
-        preset: { id: "fast-stack" },
-        overrides: {
-          "config/ai/provider": "workers-ai",
-          "config/ai/model": "@cf/test/model",
-          "config/ai/api_key": "",
+        modelId: "fast-stack",
+        modelConfig: {
+          provider: "workers-ai",
+          model: "@cf/test/model",
+          apiKey: "",
         },
       },
     }));
@@ -1024,7 +992,7 @@ describe("console agent service", () => {
 
   // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
-  it("validates explicit base URL clears as empty overrides", async () => {
+  it("validates a complete model without inheriting a stored base URL", async () => {
     const call = vi.fn(async () => ({
       provider: "custom",
       model: "local-chat",
@@ -1050,7 +1018,7 @@ describe("console agent service", () => {
     // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
     await validateConsoleModelConfig({ call } as any, {
-      presetId: "local",
+      modelId: "local",
       values: {
         "config/ai/provider": "custom",
         "config/ai/model": "local-chat",
@@ -1060,11 +1028,10 @@ describe("console agent service", () => {
 
     expect(call).toHaveBeenCalledWith("ai.text.generate", expect.objectContaining({
       config: {
-        preset: { id: "local" },
-        overrides: {
-          "config/ai/provider": "custom",
-          "config/ai/model": "local-chat",
-          "config/ai/base_url": "",
+        modelId: "local",
+        modelConfig: {
+          provider: "custom",
+          model: "local-chat",
         },
       },
     }));
