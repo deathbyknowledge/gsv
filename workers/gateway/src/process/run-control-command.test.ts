@@ -44,6 +44,19 @@ GSV_MESSAGE`,
       ok: true,
       command: { action: "message", text: "Finished.", finish: true },
     });
+    expect(
+      parseRunControlCommand(
+        `message send <<'GSV_MESSAGE'
+Finished.
+
+GSV_MESSAGE
+
+`,
+      ),
+    ).toEqual({
+      ok: true,
+      command: { action: "message", text: "Finished.\n", finish: false },
+    });
   });
 
   it("parses standalone and one-line composed yield", () => {

@@ -116,10 +116,13 @@ function parseMessageHeredoc(
     };
   }
   const lines = input.replaceAll("\r\n", "\n").split("\n");
-  if (lines.at(-1) === "") lines.pop();
-  lines.pop();
+  const terminatorIndex = lines.findIndex((line, index) =>
+    index > 0 &&
+    (heredoc.stripTabs ? line.replace(/^\t+/, "") : line) === heredoc.delimiter
+  );
+  if (terminatorIndex < 0) return null;
   const text = lines
-    .slice(1)
+    .slice(1, terminatorIndex)
     .map((line) => (heredoc.stripTabs ? line.replace(/^\t+/, "") : line))
     .join("\n");
   return { ok: true, command: { action: "message", text, finish } };
