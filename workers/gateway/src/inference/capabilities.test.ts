@@ -1,10 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_IMAGE_GENERATION_MODEL,
-  DEFAULT_OPENAI_IMAGE_MODEL,
-  DEFAULT_OPENAI_SPEECH_MODEL,
-  DEFAULT_OPENAI_SPEECH_VOICE,
-  DEFAULT_OPENAI_TRANSCRIPTION_MODEL,
   generateImage,
   synthesizeSpeech,
   transcribeAudio,
@@ -28,7 +24,7 @@ describe("AI media capability adapters", () => {
     const result = await transcribeAudio({ fetch: fetchFn }, {
       provider: "openai",
       apiKey: "openai-key",
-      model: DEFAULT_OPENAI_TRANSCRIPTION_MODEL,
+      model: "gpt-4o-transcribe",
       data: "data:audio/webm;base64,AQID",
       mimeType: "audio/webm",
       filename: "note.webm",
@@ -36,7 +32,7 @@ describe("AI media capability adapters", () => {
 
     expect(result).toMatchObject({
       provider: "openai",
-      model: DEFAULT_OPENAI_TRANSCRIPTION_MODEL,
+      model: "gpt-4o-transcribe",
       text: "meeting notes",
       duration: 2.5,
       language: "en",
@@ -64,7 +60,7 @@ describe("AI media capability adapters", () => {
     const request = transcribeAudio({ fetch: fetchFn }, {
       provider: "openai",
       apiKey: "openai-key",
-      model: DEFAULT_OPENAI_TRANSCRIPTION_MODEL,
+      model: "gpt-4o-transcribe",
       data: "AQID",
       mimeType: "audio/webm",
       signal: controller.signal,
@@ -93,7 +89,7 @@ describe("AI media capability adapters", () => {
     const request = transcribeAudio({ fetch: fetchFn }, {
       provider: "openai",
       apiKey: "openai-key",
-      model: DEFAULT_OPENAI_TRANSCRIPTION_MODEL,
+      model: "gpt-4o-transcribe",
       data: "AQID",
       mimeType: "audio/webm",
       timeoutMs: 25,
@@ -116,15 +112,15 @@ describe("AI media capability adapters", () => {
     const result = await synthesizeSpeech({ fetch: fetchFn }, {
       provider: "openai",
       apiKey: "openai-key",
-      model: DEFAULT_OPENAI_SPEECH_MODEL,
-      voice: DEFAULT_OPENAI_SPEECH_VOICE,
+      model: "gpt-4o-mini-tts",
+      voice: "alloy",
       text: "Hello",
     });
 
     expect(result).toMatchObject({
       provider: "openai",
-      model: DEFAULT_OPENAI_SPEECH_MODEL,
-      voice: DEFAULT_OPENAI_SPEECH_VOICE,
+      model: "gpt-4o-mini-tts",
+      voice: "alloy",
       encoding: "mp3",
       mimeType: "audio/mpeg",
     });
@@ -141,9 +137,9 @@ describe("AI media capability adapters", () => {
       }),
     );
     expect(JSON.parse(String(init.body))).toMatchObject({
-      model: DEFAULT_OPENAI_SPEECH_MODEL,
+      model: "gpt-4o-mini-tts",
       input: "Hello",
-      voice: DEFAULT_OPENAI_SPEECH_VOICE,
+      voice: "alloy",
       response_format: "mp3",
     });
   });
@@ -273,14 +269,14 @@ describe("AI media capability adapters", () => {
     const result = await generateImage({ fetch: fetchFn }, {
       provider: "openai",
       apiKey: "openai-key",
-      model: DEFAULT_OPENAI_IMAGE_MODEL,
+      model: "gpt-image-1.5",
       prompt: "desktop tool",
       format: "webp",
     });
 
     expect(result).toMatchObject({
       provider: "openai",
-      model: DEFAULT_OPENAI_IMAGE_MODEL,
+      model: "gpt-image-1.5",
       mimeType: "image/webp",
       revisedPrompt: "a quiet desktop tool screenshot",
     });
@@ -297,7 +293,7 @@ describe("AI media capability adapters", () => {
       }),
     );
     expect(JSON.parse(String(init.body))).toMatchObject({
-      model: DEFAULT_OPENAI_IMAGE_MODEL,
+      model: "gpt-image-1.5",
       prompt: "desktop tool",
       n: 1,
       output_format: "webp",

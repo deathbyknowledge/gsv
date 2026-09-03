@@ -30,17 +30,13 @@ import {
 } from "./ai";
 import { DEFAULT_AUDIO_TRANSCRIPTION_MODEL } from "../inference/transcription";
 import {
-  DEFAULT_AUDIO_SPEECH_MODEL,
-  DEFAULT_AUDIO_SPEECH_SPEAKER,
-} from "../inference/speech";
-import {
   DEFAULT_IMAGE_READING_MAX_OBJECTS,
   DEFAULT_IMAGE_READING_MAX_TOKENS,
   DEFAULT_IMAGE_READING_MODEL,
 } from "../inference/image-reading";
 import { DEFAULT_IMAGE_GENERATION_MODEL } from "../inference/capabilities";
 import { inferenceLogicalRequestId } from "../inference/provider";
-import { MAIL_SEND, MAIL_STATUS, syscallToolName } from "../syscalls/constants";
+import { MAIL_SEND, syscallToolName } from "../syscalls/constants";
 import { SYSTEM_CONFIG_DEFAULTS } from "./config";
 
 // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -195,7 +191,7 @@ describe("handleAiTools", () => {
       "CodeMode",
     ]);
     expect(syscallToolName(MAIL_SEND)).toBeUndefined();
-    expect(syscallToolName(MAIL_STATUS)).toBeUndefined();
+    expect(syscallToolName("mail.status")).toBeUndefined();
     expect(
       result.tools.every((tool) =>
         !tool.name.startsWith("MCP_") &&
@@ -1584,7 +1580,7 @@ describe("handleAiConfig", () => {
     expect(result.media?.imageReadingMaxObjects).toBe(DEFAULT_IMAGE_READING_MAX_OBJECTS);
     expect(result.media?.imageReadingTimeoutMs).toBe(30_000);
     expect(result.media?.speechProvider).toBe("workers-ai");
-    expect(result.media?.speechModel).toBe(DEFAULT_AUDIO_SPEECH_MODEL);
+    expect(result.media?.speechModel).toBe("@cf/deepgram/aura-2-en");
     expect(result.media?.speechApiKey).toBe("");
     expect(result.media?.transcriptionProvider).toBe("workers-ai");
     expect(result.media?.transcriptionModel).toBe(DEFAULT_AUDIO_TRANSCRIPTION_MODEL);
@@ -2163,13 +2159,13 @@ describe("handleAiSpeechCreate", () => {
     });
     expect(result.body && [...await bodyToBytes(result.body)]).toEqual([1, 2, 3]);
     expect(result.data.provider).toBe("workers-ai");
-    expect(result.data.model).toBe(DEFAULT_AUDIO_SPEECH_MODEL);
-    expect(result.data.voice).toBe(DEFAULT_AUDIO_SPEECH_SPEAKER);
+    expect(result.data.model).toBe("@cf/deepgram/aura-2-en");
+    expect(result.data.voice).toBe("luna");
     expect(ctx.env.AI.run).toHaveBeenCalledWith(
-      DEFAULT_AUDIO_SPEECH_MODEL,
+      "@cf/deepgram/aura-2-en",
       expect.objectContaining({
         text: "Hello GSV",
-        speaker: DEFAULT_AUDIO_SPEECH_SPEAKER,
+        speaker: "luna",
         encoding: "mp3",
       }),
     );
@@ -2221,7 +2217,7 @@ describe("handleAiSpeechCreate", () => {
     }, ctx);
 
     expect(ctx.env.AI.run).toHaveBeenCalledWith(
-      DEFAULT_AUDIO_SPEECH_MODEL,
+      "@cf/deepgram/aura-2-en",
       expect.objectContaining({
         text: [
           "Result:",
@@ -2244,7 +2240,7 @@ describe("handleAiSpeechCreate", () => {
     await handleAiSpeechCreate({ text: "**literal**", textFormat: "plain" }, ctx);
 
     expect(ctx.env.AI.run).toHaveBeenCalledWith(
-      DEFAULT_AUDIO_SPEECH_MODEL,
+      "@cf/deepgram/aura-2-en",
       expect.objectContaining({
         text: "**literal**",
       }),

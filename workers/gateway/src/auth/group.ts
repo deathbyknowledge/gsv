@@ -43,20 +43,6 @@ export function serializeGroup(entries: GroupEntry[]): string {
     .join("\n") + "\n";
 }
 
-export function findByName(
-  entries: GroupEntry[],
-  name: string,
-): GroupEntry | undefined {
-  return entries.find((e) => e.name === name);
-}
-
-export function findByGid(
-  entries: GroupEntry[],
-  gid: number,
-): GroupEntry | undefined {
-  return entries.find((e) => e.gid === gid);
-}
-
 /** Returns all gids a user belongs to (primary gid from passwd + supplementary from group memberships). */
 export function resolveGids(
   groups: GroupEntry[],

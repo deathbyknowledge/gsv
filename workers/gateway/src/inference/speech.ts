@@ -37,8 +37,6 @@ export type AudioSpeechResult = {
   container?: string;
 };
 
-export const DEFAULT_AUDIO_SPEECH_MODEL = "@cf/deepgram/aura-2-en";
-export const DEFAULT_AUDIO_SPEECH_SPEAKER = "luna";
 export const DEFAULT_AUDIO_SPEECH_ENCODING = "mp3";
 export const DEFAULT_MAX_AUDIO_SPEECH_CHARS = 4000;
 export const DEFAULT_AUDIO_SPEECH_TIMEOUT_MS = 30_000;

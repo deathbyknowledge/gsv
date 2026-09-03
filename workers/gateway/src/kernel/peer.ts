@@ -44,14 +44,6 @@ export function peerAllowsCall(peer: PeerContext, call: string): boolean {
   return hasCapability(peer.peer.grant.calls, call);
 }
 
-export function peerAllowsSignal(peer: PeerContext, signal: string): boolean {
-  return peer.peer.grant.signals.includes(signal);
-}
-
-export function peerImplements(peer: PeerContext, call: string): boolean {
-  return hasCapability(peer.peer.grant.implements, call);
-}
-
 export function peerProvidesOperations(peer: ConnectedPeer): boolean {
   return peer.grant.implements.length > 0;
 }

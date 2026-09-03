@@ -5,11 +5,6 @@ export class TimeoutError extends Error {
   }
 }
 
-export function isTimeoutError<T>(error: T): error is T & TimeoutError {
-  return error instanceof TimeoutError
-    || (error instanceof Error && error.name === "TimeoutError");
-}
-
 export function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,

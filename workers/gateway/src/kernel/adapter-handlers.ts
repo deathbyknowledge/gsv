@@ -2845,36 +2845,6 @@ function describeProcessRoute(record: NonNullable<ReturnType<KernelContext["proc
   return `${shortProcessId(record.processId)} ${record.label || record.username}`;
 }
 
-export function prefixAdapterDmProcessReply(
-  text: string,
-  processId: string,
-  destination: AdapterMessageDestination,
-  ctx: KernelContext,
-): string {
-  if (destination.surface.kind !== "dm") {
-    return text;
-  }
-  const process = ctx.procs.get(processId);
-  if (process?.isPersonalController === false) {
-    return text ? `[WORK SESSION] ${text}` : "[WORK SESSION]";
-  }
-  if (process?.isPersonalController === true) {
-    const currentRoute = ctx.adapters.surfaceRoutes.resolveRoute({
-      adapter: destination.adapter,
-      accountId: destination.accountId,
-      actorId: destination.actorId,
-      surfaceKind: destination.surface.kind,
-      surfaceId: destination.surface.id,
-      threadId: destination.surface.threadId,
-      uid: process.ownerUid,
-    });
-    if (currentRoute?.mode === "work") {
-      return text ? `[PERSONAL INTELLIGENCE] ${text}` : "[PERSONAL INTELLIGENCE]";
-    }
-  }
-  return text;
-}
-
 function adapterPrivateActivityAt(timestamp: number | undefined): number {
   const now = Date.now();
   return timestamp !== undefined && Number.isSafeInteger(timestamp) && timestamp > 0
