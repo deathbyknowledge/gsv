@@ -34,18 +34,19 @@ gsv shell
 
 Bare `gsv` and `gsv tui` open the full-screen, typing-first Ship interface.
 `--demo` runs a local no-account preview, `--pid` opens an explicitly labeled
-Process work session, and `--vim` enables Vim browse controls; `Alt+V` toggles
-that mode at runtime. Commands and every committed Ship message render in one
-continuous scrollable document. The next `user@target $ ` prompt stays active
-while the matching Process run continues, including during streamed output.
+Process work session, and `--vim` enables Vim browse controls. Escape enters
+browse mode, where `v` toggles those controls at runtime. Commands and every
+committed Ship message render in one continuous scrollable document. The next
+`user@target $ ` prompt stays active while the matching Process run continues,
+including during streamed output.
 Only the directed stream of a user-visible Message is projected live; raw
 Process output and model reasoning stay out of conversation scrollback.
 Waiting and streamed states use a blinking in-document block cursor instead of
 a static ellipsis. Safe tool names and targets appear as a bounded live action
 trail under the matching command, then collapse to a single count when the run
-ends. Press `Alt+A` to expand or collapse the selected run. The trail is
-restored from `proc.trace` when the TUI opens and never displays tool arguments,
-results, or model reasoning.
+ends. Press `t` while browsing to expand or collapse the selected run. The
+trail is restored from `proc.trace` when the TUI opens and never displays tool
+arguments, results, or model reasoning.
 Type `@` into an empty draft to select a visible target. Inside a Ship request,
 type `@` at a token boundary or press `Ctrl+O` to browse files from that target's
 current directory. Completion appears directly above the prompt without moving
@@ -56,8 +57,9 @@ path text is never attached implicitly. A structured image, audio, or video
 reference keeps its inline `@filename` anchor and renders its media once beneath
 the command; document references stay inline-only. Use Up/Down or
 `Ctrl+P`/`Ctrl+N` to recall submitted input, `Page Up`/`Page Down` to scroll,
-`?` for all keys, and
-`Ctrl+Q` to leave. Escape enters browse mode without hiding the prompt. The
+`Ctrl+U`/`Ctrl+D` to page while browsing, `m` there to switch between rendered
+and raw Markdown, `?` for all keys, `Ctrl+C` to stop Ship, and `Ctrl+Q` to
+leave. Escape enters browse mode without hiding the prompt. The
 document uses every available terminal column and reflows on resize. The native
 interface adopts the host terminal palette, leaves mouse selection to the
 terminal, renders supported canonical images through the best graphics protocol

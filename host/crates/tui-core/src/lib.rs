@@ -1187,6 +1187,13 @@ impl App {
     }
 
     pub fn dispatch(&mut self, action: Action) -> Vec<Effect> {
+        if matches!(&action, Action::Abort) {
+            return self
+                .active_run
+                .as_ref()
+                .map_or_else(Vec::new, |_| vec![Effect::Abort]);
+        }
+
         if self.help_visible {
             return match action {
                 Action::Escape | Action::ToggleHelp => {
@@ -1515,12 +1522,6 @@ impl App {
             }
             Action::ToggleVim => {
                 self.vim_enabled = !self.vim_enabled;
-                self.draft_visible = !self.vim_enabled;
-                self.follow_latest = true;
-                if self.vim_enabled {
-                    self.document_scroll = self.last_max_scroll;
-                    self.sync_browse_focus(ScrollDirection::Newer);
-                }
                 Vec::new()
             }
             Action::ToggleShell => {
@@ -1542,10 +1543,7 @@ impl App {
                 Vec::new()
             }
             Action::ToggleMedia => self.activate_media(),
-            Action::Abort => self
-                .active_run
-                .as_ref()
-                .map_or_else(Vec::new, |_| vec![Effect::Abort]),
+            Action::Abort => unreachable!("abort actions are handled before modal dispatch"),
             Action::DecideApproval { .. } => Vec::new(),
             Action::Quit => vec![Effect::Quit],
         }
@@ -4724,14 +4722,18 @@ impl App {
             help_line("up/down  ·  ctrl+p/n", "command history", palette),
             help_line("ctrl+r", "fuzzy command search", palette),
             help_line("/  ·  n/N", "search transcript  ·  next/previous", palette),
-            help_line("browse: up/down  ·  page up/down", "step  ·  page", palette),
             help_line(
-                "left/right  ·  enter  ·  o",
+                "browse: up/down",
+                "step  ·  pgup/pgdn  ·  ctrl+u/d page",
+                palette,
+            ),
+            help_line(
+                "left/right  ·  enter/o",
                 "media  ·  open  ·  references",
                 palette,
             ),
-            help_line("alt+a/m/v", "actions  ·  Markdown  ·  Vim", palette),
-            help_line("ctrl+.  ·  ctrl+q", "stop Ship  ·  leave", palette),
+            help_line("browse: t/m/v", "actions  ·  Markdown  ·  Vim", palette),
+            help_line("ctrl+c  ·  ctrl+q", "stop Ship  ·  leave", palette),
         ];
         if self.vim_enabled {
             lines.extend([
@@ -5636,6 +5638,20 @@ mod tests {
         assert_eq!(app.draft(), "open downloads");
         app.dispatch(Action::Insert(" please".to_string()));
         assert_eq!(app.draft(), "open downloads please");
+    }
+
+    #[test]
+    fn toggling_vim_controls_preserves_browse_mode() {
+        let mut app = App::new(ConnectionState::Ready);
+        app.dispatch(Action::Escape);
+
+        app.dispatch(Action::ToggleVim);
+        assert!(app.vim_enabled());
+        assert!(!app.draft_visible());
+
+        app.dispatch(Action::ToggleVim);
+        assert!(!app.vim_enabled());
+        assert!(!app.draft_visible());
     }
 
     #[test]
@@ -6700,6 +6716,17 @@ mod tests {
         assert!(rendered.contains("Vim: j/k"));
         assert!(rendered.contains("Press ? or escape to return"));
         Ok(())
+    }
+
+    #[test]
+    fn abort_remains_available_while_a_modal_is_open() {
+        let mut app = App::new(ConnectionState::Ready);
+        app.dispatch(Action::Insert("stop this".to_string()));
+        app.dispatch(Action::Submit);
+        app.submission_accepted(1, "run:one".to_string(), false);
+        app.dispatch(Action::ToggleHelp);
+
+        assert_eq!(app.dispatch(Action::Abort), vec![Effect::Abort]);
     }
 
     #[test]

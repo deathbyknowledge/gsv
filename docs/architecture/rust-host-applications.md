@@ -73,18 +73,19 @@ scrollback. A silent finish never fabricates output. Routine connection, role,
 time, and run metadata stay out of the document. Submitted Ship and literal
 shell input share a bounded client-side recall history through Up/Down or
 `Ctrl+P`/`Ctrl+N`; Page Up/Down scrolls the transcript. Typing is the default
-interaction; `--vim` or `Alt+V` enables an optional browse mode without changing
-the beginner key map. Escape changes editing mode without removing the prompt.
+interaction; Escape enters browse mode without removing the prompt. In that
+mode, `v` toggles optional Vim controls, while `--vim` starts with them enabled,
+without changing the beginner key map.
 An in-document block cursor blinks while a request is being admitted, Ship is
 thinking, a file listing is loading, or output is streaming; streamed text owns
 the cursor until its run completes. The native backend schedules redraws only
 while one of those states is active. Tool start and finish signals project a
 bounded action trail directly under the matching command. Live actions are
-expanded, then fold into one quiet count when the run finishes; `Alt+A` toggles
-the selected run. Startup restores the same safe projection from the existing
-`proc.trace` syscall. It admits only the tool name, syscall, target, and outcome:
-tool arguments, results, raw Process output, and reasoning never enter this
-presentation state.
+expanded, then fold into one quiet count when the run finishes; browse-mode `t`
+toggles the selected run. Startup restores the same safe projection from the
+existing `proc.trace` syscall. It admits only the tool name, syscall, target,
+and outcome: tool arguments, results, raw Process output, and reasoning never
+enter this presentation state.
 The document consumes the live terminal width and recomputes wrapping and media
 geometry after every resize. In browse mode, Up/Down and Vim `j`/`k` advance one
 render-ordered focus through message bodies and individual media elements; a

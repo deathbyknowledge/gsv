@@ -1145,7 +1145,6 @@ fn terminal_action(app: &App, event: TerminalEvent) -> Option<Action> {
 
 fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
     let control = key.modifiers.contains(KeyModifiers::CONTROL);
-    let alt = key.modifiers.contains(KeyModifiers::ALT);
     let command_modifier = key.modifiers.intersects(
         KeyModifiers::CONTROL
             | KeyModifiers::ALT
@@ -1176,6 +1175,9 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
     if control && matches!(key.code, KeyCode::Char('r' | 'R')) {
         return Some(Action::BeginCommandSearch);
     }
+    if control && matches!(key.code, KeyCode::Char('c' | 'C')) {
+        return Some(Action::Abort);
+    }
 
     if app.completion_picker_visible() {
         return match key.code {
@@ -1194,12 +1196,6 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
         };
     }
 
-    if alt && matches!(key.code, KeyCode::Char('v' | 'V')) {
-        return Some(Action::ToggleVim);
-    }
-    if alt && matches!(key.code, KeyCode::Char('a' | 'A')) {
-        return Some(Action::ToggleActions);
-    }
     if control && matches!(key.code, KeyCode::Char('o' | 'O')) {
         return Some(Action::OpenFiles);
     }
@@ -1211,6 +1207,20 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
     }
     if key.code == KeyCode::PageDown {
         return Some(Action::ScrollPageDown);
+    }
+    if !app.draft_visible() && control && matches!(key.code, KeyCode::Char('u' | 'U')) {
+        return Some(Action::ScrollPageUp);
+    }
+    if !app.draft_visible() && control && matches!(key.code, KeyCode::Char('d' | 'D')) {
+        return Some(Action::ScrollPageDown);
+    }
+    if !app.draft_visible() && !command_modifier {
+        match key.code {
+            KeyCode::Char('t' | 'T') => return Some(Action::ToggleActions),
+            KeyCode::Char('m' | 'M') => return Some(Action::ToggleMarkdown),
+            KeyCode::Char('v' | 'V') => return Some(Action::ToggleVim),
+            _ => {}
+        }
     }
     if !app.draft_visible() && !command_modifier && key.code == KeyCode::Char('/') {
         return Some(Action::BeginTranscriptSearch);
@@ -1236,21 +1246,13 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
 
     match key.code {
         KeyCode::Char('q' | 'Q') if control => Some(Action::Quit),
-        KeyCode::Char('.') if control => Some(Action::Abort),
         KeyCode::Char('p' | 'P') if control => Some(Action::PreviousCommand),
         KeyCode::Char('n' | 'N') if control => Some(Action::NextCommand),
-        KeyCode::Char('u' | 'U') if control && app.vim_enabled() && !app.draft_visible() => {
-            Some(Action::ScrollUp)
-        }
-        KeyCode::Char('d' | 'D') if control && app.vim_enabled() && !app.draft_visible() => {
-            Some(Action::ScrollDown)
-        }
         KeyCode::Char('a' | 'A') if control => Some(Action::MoveCursorHome),
         KeyCode::Char('e' | 'E') if control => Some(Action::MoveCursorEnd),
         KeyCode::Char('b' | 'B') if control => Some(Action::MoveCursorLeft),
         KeyCode::Char('f' | 'F') if control => Some(Action::MoveCursorRight),
         KeyCode::Char('w' | 'W') if control => Some(Action::DeleteWord),
-        KeyCode::Char('m' | 'M') if alt => Some(Action::ToggleMarkdown),
         KeyCode::Char('?') if !app.draft_visible() && !command_modifier => Some(Action::ToggleHelp),
         KeyCode::Char('n') if !app.draft_visible() && !command_modifier => {
             Some(Action::NextTranscriptMatch)
@@ -1282,8 +1284,6 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
         KeyCode::Right => Some(Action::MoveCursorRight),
         KeyCode::Home => Some(Action::MoveCursorHome),
         KeyCode::End => Some(Action::MoveCursorEnd),
-        KeyCode::Up if alt => Some(Action::PreviousTurn),
-        KeyCode::Down if alt => Some(Action::NextTurn),
         KeyCode::Up if app.draft_visible() => Some(Action::PreviousCommand),
         KeyCode::Down if app.draft_visible() => Some(Action::NextCommand),
         KeyCode::Up if !app.draft_visible() => Some(Action::ScrollUp),
@@ -2337,15 +2337,20 @@ mod tests {
     }
 
     #[test]
-    fn tab_toggles_literal_shell_and_page_keys_scroll_the_document() {
+    fn shell_and_page_keys_follow_terminal_conventions() {
         let mut app = App::new(ConnectionState::Ready);
-        app.set_vim_enabled(true);
         let tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
         let page_up = KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE);
         let page_down = KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE);
         assert_eq!(key_action(&app, tab), Some(Action::ToggleShell));
         assert_eq!(key_action(&app, page_up), Some(Action::ScrollPageUp));
         assert_eq!(key_action(&app, page_down), Some(Action::ScrollPageDown));
+
+        app.dispatch(Action::Escape);
+        let control_u = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL);
+        let control_d = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL);
+        assert_eq!(key_action(&app, control_u), Some(Action::ScrollPageUp));
+        assert_eq!(key_action(&app, control_d), Some(Action::ScrollPageDown));
     }
 
     #[test]
@@ -2356,10 +2361,34 @@ mod tests {
     }
 
     #[test]
-    fn alt_a_toggles_the_selected_runs_actions() {
-        let app = App::new(ConnectionState::Ready);
-        let alt_a = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::ALT);
-        assert_eq!(key_action(&app, alt_a), Some(Action::ToggleActions));
+    fn browse_keys_toggle_presentation_without_stealing_typed_text() {
+        let mut app = App::new(ConnectionState::Ready);
+        for (key, expected) in [
+            ('t', Action::ToggleActions),
+            ('m', Action::ToggleMarkdown),
+            ('v', Action::ToggleVim),
+        ] {
+            let event = KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE);
+            assert_eq!(
+                key_action(&app, event),
+                Some(Action::Insert(key.to_string()))
+            );
+
+            app.dispatch(Action::Escape);
+            assert_eq!(key_action(&app, event), Some(expected));
+            app.dispatch(Action::BeginCompose);
+        }
+    }
+
+    #[test]
+    fn control_c_stops_ship() {
+        let mut app = App::new(ConnectionState::Ready);
+        let control_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(key_action(&app, control_c), Some(Action::Abort));
+
+        app.dispatch(Action::OpenFiles);
+        assert!(app.completion_picker_visible());
+        assert_eq!(key_action(&app, control_c), Some(Action::Abort));
     }
 
     #[test]
