@@ -28,9 +28,15 @@ import type {
   InferenceAttribution,
   InferenceProviderFactory,
 } from "./provider";
-import { DEFAULT_TEXT_GENERATION_MAX_TOKENS } from "./default-models";
+import {
+  DEFAULT_TEXT_GENERATION_MAX_TOKENS,
+  GSV_INCLUDED_CONTEXT_WINDOW_TOKENS,
+} from "./default-models";
 import { raceWithAbort } from "../shared/abort";
-import type { GatewayEnv } from "../runtime-env";
+import {
+  hasManagedInferenceBinding,
+  type GatewayEnv,
+} from "../runtime-env";
 
 const GSV_INFERENCE_API = "gsv-inference";
 
@@ -48,7 +54,7 @@ const GSV_INFERENCE_MODEL_METADATA: Model<typeof GSV_INFERENCE_API> = {
     cacheRead: 0,
     cacheWrite: 0,
   },
-  contextWindow: 1_048_576,
+  contextWindow: GSV_INCLUDED_CONTEXT_WINDOW_TOKENS,
   maxTokens: DEFAULT_TEXT_GENERATION_MAX_TOKENS,
 };
 
@@ -84,7 +90,7 @@ export function gsvInferenceProviderFactoryFromEnv(
 }
 
 export function gsvInferenceFeaturesFromEnv(env: GatewayEnv): string[] {
-  return managedInferenceAccessFromEnv(env)
+  return hasManagedInferenceBinding(env)
     ? [GSV_INFERENCE_FEATURE]
     : [];
 }

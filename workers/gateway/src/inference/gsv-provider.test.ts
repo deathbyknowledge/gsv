@@ -59,6 +59,8 @@ describe("GSV inference provider", () => {
 
     expect(models.getModel(GSV_INFERENCE_PROVIDER, GSV_INFERENCE_MODEL)?.maxTokens)
       .toBe(32_768);
+    expect(models.getModel(GSV_INFERENCE_PROVIDER, GSV_INFERENCE_MODEL)?.contextWindow)
+      .toBe(1_048_576);
   });
 
   it("registers when either managed inference binding is present", () => {

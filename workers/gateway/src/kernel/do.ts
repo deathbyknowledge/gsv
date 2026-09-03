@@ -218,7 +218,10 @@ import {
   type DurableTask,
   type DurableTaskOptions,
 } from "../shared/durable-tasks";
-import type { GatewayEnv } from "../runtime-env";
+import {
+  hasManagedInferenceBinding,
+  type GatewayEnv,
+} from "../runtime-env";
 import {
   acceptKernelWebSocket,
   KernelConnection,
@@ -751,7 +754,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.caps = new CapabilityStore(sql);
     this.caps.seed();
 
-    this.config = new ConfigStore(sql);
+    this.config = new ConfigStore(sql, {
+      managedInferenceAvailable: hasManagedInferenceBinding(env),
+    });
 
     this.devices = new DeviceRegistry(sql);
 

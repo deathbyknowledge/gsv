@@ -26,9 +26,14 @@ import {
   DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID,
   DEFAULT_WORKERS_AI_FALLBACK_PROFILE_NAME,
   DEFAULT_WORKERS_AI_MODEL,
+  GSV_INCLUDED_CONTEXT_WINDOW_TOKENS,
 } from "../inference/default-models";
 import { MAIL_SEND } from "../syscalls/constants";
-import { DEFAULT_SHELL_EXEC_TIMEOUT_MS } from "@humansandmachines/gsv/protocol";
+import {
+  DEFAULT_SHELL_EXEC_TIMEOUT_MS,
+  GSV_INFERENCE_MODEL,
+  GSV_INFERENCE_PROVIDER,
+} from "@humansandmachines/gsv/protocol";
 import {
   aiModelApiKeyConfigKey,
   isAiModelStackConfigKey,
@@ -81,6 +86,18 @@ const DEFAULT_AI_MODELS = JSON.stringify({
       maxTokens: DEFAULT_TEXT_GENERATION_MAX_TOKENS,
     },
   ],
+});
+
+const MANAGED_DEFAULT_AI_MODELS = JSON.stringify({
+  version: 1,
+  models: [{
+    id: "gsv-included",
+    name: "GSV Included",
+    provider: GSV_INFERENCE_PROVIDER,
+    model: GSV_INFERENCE_MODEL,
+    maxTokens: DEFAULT_TEXT_GENERATION_MAX_TOKENS,
+    contextWindowTokens: GSV_INCLUDED_CONTEXT_WINDOW_TOKENS,
+  }],
 });
 
 export const SYSTEM_CONFIG_DEFAULTS = defineSystemConfigDefaults({
@@ -157,11 +174,27 @@ export const SYSTEM_CONFIG_DEFAULTS = defineSystemConfigDefaults({
 // user-overridable; server/shell/process config is system-only.
 export const USER_OVERRIDABLE_PREFIXES = ["ai/", "ui/"] as const;
 
+type ConfigStoreOptions = {
+  managedInferenceAvailable?: boolean;
+};
+
 export class ConfigStore {
-  constructor(private readonly sql: SqlStorage) {}
+  private readonly defaults: SystemConfigDefaults;
+
+  constructor(
+    private readonly sql: SqlStorage,
+    options: ConfigStoreOptions = {},
+  ) {
+    this.defaults = options.managedInferenceAvailable
+      ? {
+        ...SYSTEM_CONFIG_DEFAULTS,
+        "config/ai/models": MANAGED_DEFAULT_AI_MODELS,
+      }
+      : SYSTEM_CONFIG_DEFAULTS;
+  }
 
   get(key: string): string | null {
-    return this.getExplicit(key) ?? SYSTEM_CONFIG_DEFAULTS[key] ?? null;
+    return this.getExplicit(key) ?? this.defaults[key] ?? null;
   }
 
   getExplicit(key: string): string | null {
@@ -216,7 +249,7 @@ export class ConfigStore {
    */
   list(prefix: string): { key: string; value: string }[] {
     const merged = new Map<string, string>();
-    for (const [key, value] of Object.entries(SYSTEM_CONFIG_DEFAULTS)) {
+    for (const [key, value] of Object.entries(this.defaults)) {
       if (matchesConfigPrefix(key, prefix)) {
         merged.set(key, value);
       }

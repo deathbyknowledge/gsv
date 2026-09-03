@@ -5,6 +5,7 @@ import {
   DEFAULT_WORKERS_AI_FALLBACK_MODEL,
   DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID,
   DEFAULT_WORKERS_AI_MODEL,
+  GSV_INCLUDED_CONTEXT_WINDOW_TOKENS,
 } from "../inference/default-models";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { MAIL_STATUS } from "../syscalls/constants";
@@ -19,6 +20,39 @@ describe("ConfigStore", () => {
     expect(SYSTEM_CONFIG_DEFAULTS["config/ai/image/read/max_tokens"])
       .toBe("28672");
   });
+
+  it("defaults managed deployments to GSV included inference", () =>
+    runWithRealKernelSql((sql) => {
+      const store = new ConfigStore(sql, { managedInferenceAvailable: true });
+      expect(store.getExplicit("config/ai/models")).toBeNull();
+      expect(parseAiModelStack(store.get("config/ai/models"))).toEqual({
+        version: 1,
+        models: [{
+          id: "gsv-included",
+          name: "GSV Included",
+          provider: "gsv",
+          model: "default",
+          maxTokens: DEFAULT_TEXT_GENERATION_MAX_TOKENS,
+          contextWindowTokens: GSV_INCLUDED_CONTEXT_WINDOW_TOKENS,
+        }],
+      });
+    }));
+
+  it("keeps an explicit system stack over the managed deployment default", () =>
+    runWithRealKernelSql((sql) => {
+      const store = new ConfigStore(sql, { managedInferenceAvailable: true });
+      const configured = JSON.stringify({
+        version: 1,
+        models: [{
+          id: "custom",
+          name: "Custom",
+          provider: "openai",
+          model: "gpt-5.4",
+        }],
+      });
+      store.set("config/ai/models", configured);
+      expect(store.get("config/ai/models")).toBe(configured);
+    }));
 
   it("defaults native shell execution to two minutes", () => {
     expect(SYSTEM_CONFIG_DEFAULTS["config/shell/timeout_ms"]).toBe("120000");

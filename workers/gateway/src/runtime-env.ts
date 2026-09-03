@@ -17,3 +17,7 @@ type GatewayDeploymentBindings = TelemetryEnvironment & {
 };
 
 export type GatewayEnv = Env & GatewayDeploymentBindings;
+
+export function hasManagedInferenceBinding(env: GatewayEnv): boolean {
+  return Boolean(env.MANAGED_INFERENCE_INSTALLATIONS || env.MANAGED_INFERENCE);
+}

@@ -66,7 +66,7 @@ An agent or Process may prefer an entry by its stable ID through `users/{uid}/ai
 
 | System Key | User Override | Default | Description |
 |---|---|---|---|
-| `config/ai/models` | `users/{ownerUid}/ai/models` | Workers AI primary plus fallback | Ordered complete text-model stack. |
+| `config/ai/models` | `users/{ownerUid}/ai/models` | GSV included inference when its managed binding is configured; otherwise Workers AI primary plus fallback | Ordered complete text-model stack. |
 | — | `users/{uid}/ai/preferred_model` | empty | Stable entry ID preferred by this agent account. |
 | `config/ai/reasoning` | `users/{uid}/ai/reasoning` | `medium` | Reasoning mode hint: `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`. Unsupported values are clamped to the nearest model-supported level at generation time. |
 | `config/ai/max_context_bytes` | `users/{uid}/ai/max_context_bytes` | `32768` | Prompt context budget before messages. |
