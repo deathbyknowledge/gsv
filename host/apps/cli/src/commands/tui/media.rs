@@ -436,6 +436,17 @@ pub(super) async fn open_artifact(
     .map_err(|error| format!("Opening the artifact stopped unexpectedly: {error}"))?
 }
 
+pub(super) async fn open_external_url(url: String) -> Result<(), String> {
+    if !(url.starts_with("https://") || url.starts_with("http://"))
+        || url.chars().any(char::is_control)
+    {
+        return Err("Only HTTP and HTTPS links can be opened".to_string());
+    }
+    tokio::task::spawn_blocking(move || open_url_with_system(&url))
+        .await
+        .map_err(|error| format!("Opening the link stopped unexpectedly: {error}"))?
+}
+
 fn materialize_artifact(
     directory: &Path,
     artifact: &Artifact,
@@ -552,6 +563,21 @@ fn open_with_system(path: &Path) -> Result<(), String> {
     spawn_opener(Command::new("cmd").args(["/C", "start", ""]).arg(path))
 }
 
+#[cfg(target_os = "macos")]
+fn open_url_with_system(url: &str) -> Result<(), String> {
+    spawn_opener(Command::new("open").arg(url))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn open_url_with_system(url: &str) -> Result<(), String> {
+    spawn_opener(Command::new("xdg-open").arg(url))
+}
+
+#[cfg(windows)]
+fn open_url_with_system(url: &str) -> Result<(), String> {
+    spawn_opener(Command::new("rundll32.exe").args(["url.dll,FileProtocolHandler", url]))
+}
+
 fn spawn_opener(command: &mut Command) -> Result<(), String> {
     command
         .stdin(Stdio::null())
@@ -559,7 +585,7 @@ fn spawn_opener(command: &mut Command) -> Result<(), String> {
         .stderr(Stdio::null())
         .spawn()
         .map(drop)
-        .map_err(|error| format!("Could not launch the system media viewer: {error}"))
+        .map_err(|error| format!("Could not launch the system opener: {error}"))
 }
 
 #[cfg(unix)]

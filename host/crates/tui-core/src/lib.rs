@@ -2,6 +2,7 @@ mod markdown;
 mod theme;
 
 use std::cmp::Ordering;
+use std::collections::HashSet;
 
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -11,7 +12,9 @@ use ratatui::Frame;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use markdown::{render_artifacts, render_markdown, render_plain};
+use markdown::{
+    extract_references, render_artifacts, render_markdown, render_plain, ExtractedReference,
+};
 use theme::Palette;
 
 const MAX_COMMAND_HISTORY: usize = 500;
@@ -112,7 +115,7 @@ pub struct FileReference {
 }
 
 impl FileReference {
-    fn artifact(&self) -> Artifact {
+    pub fn artifact(&self) -> Artifact {
         Artifact {
             kind: media_kind_from_content_type(&self.content_type),
             mime_type: self.content_type.clone(),
@@ -122,6 +125,35 @@ impl FileReference {
             transcription: None,
             source: Some(format!("{}:{}", self.target, self.path)),
             revision: Some(self.revision.clone()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OpenReference {
+    Url {
+        label: String,
+        url: String,
+    },
+    Path {
+        target: String,
+        path: String,
+        filename: String,
+    },
+}
+
+impl OpenReference {
+    fn label(&self) -> &str {
+        match self {
+            Self::Url { label, .. } => label,
+            Self::Path { filename, .. } => filename,
+        }
+    }
+
+    fn value(&self) -> &str {
+        match self {
+            Self::Url { url, .. } => url,
+            Self::Path { path, .. } => path,
         }
     }
 }
@@ -261,11 +293,16 @@ pub enum Action {
     MoveCursorEnd,
     Newline,
     OpenFiles,
+    OpenReferences,
     Submit,
     BeginCompose,
     Escape,
     PreviousCommand,
     NextCommand,
+    BeginCommandSearch,
+    BeginTranscriptSearch,
+    NextTranscriptMatch,
+    PreviousTranscriptMatch,
     PreviousTurn,
     NextTurn,
     FirstTurn,
@@ -309,6 +346,14 @@ pub enum Effect {
     },
     OpenArtifact {
         artifact: Artifact,
+    },
+    OpenUrl {
+        url: String,
+    },
+    OpenPath {
+        target: String,
+        path: String,
+        filename: String,
     },
     BrowseFiles {
         request_id: u64,
@@ -423,6 +468,30 @@ struct FilePicker {
     error: Option<String>,
 }
 
+#[derive(Debug)]
+struct CommandSearch {
+    query: String,
+    choice: usize,
+    original: DraftSnapshot,
+    original_draft_visible: bool,
+    original_follow_latest: bool,
+}
+
+#[derive(Debug)]
+struct TranscriptSearch {
+    query: String,
+    choice: usize,
+    original_selected: usize,
+    original_follow_latest: bool,
+}
+
+#[derive(Debug)]
+struct ReferencePicker {
+    query: String,
+    choice: usize,
+    references: Vec<OpenReference>,
+}
+
 #[derive(Clone, Copy, Debug)]
 enum ScrollAnchor {
     Moment(usize),
@@ -516,6 +585,10 @@ pub struct App {
     environment_query: String,
     environment_choice: usize,
     file_picker: Option<FilePicker>,
+    command_search: Option<CommandSearch>,
+    transcript_search: Option<TranscriptSearch>,
+    reference_picker: Option<ReferencePicker>,
+    last_transcript_query: String,
     next_file_request_id: u64,
     theme: Theme,
     raw_markdown: bool,
@@ -566,6 +639,10 @@ impl App {
             environment_query: String::new(),
             environment_choice: 0,
             file_picker: None,
+            command_search: None,
+            transcript_search: None,
+            reference_picker: None,
+            last_transcript_query: String::new(),
             next_file_request_id: 1,
             theme: Theme::Gsv,
             raw_markdown: false,
@@ -608,7 +685,12 @@ impl App {
         if self.approval.is_some() || self.help_visible || self.media_expanded {
             return false;
         }
-        if self.environment_picker || self.file_picker.is_some() {
+        if self.environment_picker
+            || self.file_picker.is_some()
+            || self.command_search.is_some()
+            || self.transcript_search.is_some()
+            || self.reference_picker.is_some()
+        {
             return true;
         }
         self.draft_visible
@@ -631,7 +713,11 @@ impl App {
     }
 
     pub fn completion_picker_visible(&self) -> bool {
-        self.environment_picker || self.file_picker.is_some()
+        self.environment_picker
+            || self.file_picker.is_some()
+            || self.command_search.is_some()
+            || self.transcript_search.is_some()
+            || self.reference_picker.is_some()
     }
 
     pub fn active_environment(&self) -> &CapabilityEnvironment {
@@ -1062,6 +1148,9 @@ impl App {
         self.approval_run_id = run_id.map(str::to_string);
         self.environment_picker = false;
         self.file_picker = None;
+        self.command_search = None;
+        self.transcript_search = None;
+        self.reference_picker = None;
         self.media_expanded = false;
     }
 
@@ -1086,6 +1175,18 @@ impl App {
                 Action::Quit => vec![Effect::Quit],
                 _ => Vec::new(),
             };
+        }
+
+        if self.command_search.is_some() {
+            return self.dispatch_command_search(action);
+        }
+
+        if self.transcript_search.is_some() {
+            return self.dispatch_transcript_search(action);
+        }
+
+        if self.reference_picker.is_some() {
+            return self.dispatch_reference_picker(action);
         }
 
         if self.file_picker.is_some() {
@@ -1273,6 +1374,7 @@ impl App {
                 Vec::new()
             }
             Action::OpenFiles => self.open_file_picker(),
+            Action::OpenReferences => self.open_reference_picker(),
             Action::Submit => {
                 if self.draft.is_empty() {
                     self.begin_submission()
@@ -1301,6 +1403,22 @@ impl App {
             }
             Action::NextCommand => {
                 self.recall_next_command();
+                Vec::new()
+            }
+            Action::BeginCommandSearch => {
+                self.begin_command_search();
+                Vec::new()
+            }
+            Action::BeginTranscriptSearch => {
+                self.begin_transcript_search();
+                Vec::new()
+            }
+            Action::NextTranscriptMatch => {
+                self.repeat_transcript_search(true);
+                Vec::new()
+            }
+            Action::PreviousTranscriptMatch => {
+                self.repeat_transcript_search(false);
                 Vec::new()
             }
             Action::PreviousTurn => {
@@ -1399,6 +1517,490 @@ impl App {
         }
     }
 
+    fn begin_command_search(&mut self) {
+        if self.command_search.is_some() {
+            let count = self.matching_command_indices().len();
+            if let Some(search) = self.command_search.as_mut() {
+                if count > 0 {
+                    search.choice = (search.choice + 1) % count;
+                }
+            }
+            return;
+        }
+        self.close_environment_picker();
+        self.file_picker = None;
+        self.transcript_search = None;
+        self.reference_picker = None;
+        self.command_search = Some(CommandSearch {
+            query: String::new(),
+            choice: 0,
+            original: DraftSnapshot {
+                text: self.draft.clone(),
+                cursor: self.draft_cursor,
+                execution: self.execution_mode,
+                references: self.draft_references.clone(),
+            },
+            original_draft_visible: self.draft_visible,
+            original_follow_latest: self.follow_latest,
+        });
+        self.draft_visible = true;
+        self.follow_latest = true;
+        self.media_expanded = false;
+    }
+
+    fn dispatch_command_search(&mut self, action: Action) -> Vec<Effect> {
+        match action {
+            Action::Insert(value) => {
+                let value = sanitize_draft_input(&value).replace('\n', "");
+                if !value.is_empty() {
+                    if let Some(search) = self.command_search.as_mut() {
+                        search.query.push_str(&value);
+                        search.choice = 0;
+                    }
+                }
+            }
+            Action::Backspace | Action::Delete => {
+                if let Some(search) = self.command_search.as_mut() {
+                    if let Some(previous) =
+                        previous_grapheme_boundary(&search.query, search.query.len())
+                    {
+                        search.query.truncate(previous);
+                        search.choice = 0;
+                    }
+                }
+            }
+            Action::BeginCommandSearch | Action::NextChoice | Action::NextCommand => {
+                let count = self.matching_command_indices().len();
+                if let Some(search) = self.command_search.as_mut() {
+                    if count > 0 {
+                        search.choice = (search.choice + 1) % count;
+                    }
+                }
+            }
+            Action::PreviousChoice | Action::PreviousCommand => {
+                let count = self.matching_command_indices().len();
+                if let Some(search) = self.command_search.as_mut() {
+                    if count > 0 {
+                        search.choice = search
+                            .choice
+                            .checked_sub(1)
+                            .unwrap_or(count.saturating_sub(1));
+                    }
+                }
+            }
+            Action::Submit => self.accept_command_search(),
+            Action::Escape => self.cancel_command_search(),
+            Action::Quit => return vec![Effect::Quit],
+            _ => {}
+        }
+        Vec::new()
+    }
+
+    fn matching_command_indices(&self) -> Vec<usize> {
+        let Some(search) = self.command_search.as_ref() else {
+            return Vec::new();
+        };
+        let query = search.query.trim();
+        let mut matches = self
+            .command_history
+            .iter()
+            .enumerate()
+            .rev()
+            .filter_map(|(index, entry)| {
+                if query.is_empty() {
+                    Some((index, 0_i64))
+                } else {
+                    fuzzy_score(query, &entry.text).map(|score| (index, score))
+                }
+            })
+            .collect::<Vec<_>>();
+        if !query.is_empty() {
+            matches.sort_by(|(left_index, left_score), (right_index, right_score)| {
+                right_score
+                    .cmp(left_score)
+                    .then_with(|| right_index.cmp(left_index))
+            });
+        }
+        matches.into_iter().map(|(index, _)| index).collect()
+    }
+
+    fn command_search_preview(&self) -> Option<&CommandHistoryEntry> {
+        let search = self.command_search.as_ref()?;
+        let matches = self.matching_command_indices();
+        self.command_history
+            .get(*matches.get(search.choice.min(matches.len().saturating_sub(1)))?)
+    }
+
+    fn accept_command_search(&mut self) {
+        let entry = self.command_search_preview().cloned();
+        self.command_search = None;
+        let Some(entry) = entry else {
+            return;
+        };
+        self.draft = entry.text;
+        self.draft_references = entry.references;
+        self.draft_cursor = self.draft.len();
+        self.execution_mode = entry.execution;
+        self.draft_visible = true;
+        self.follow_latest = true;
+        self.media_expanded = false;
+        self.reset_history_navigation();
+    }
+
+    fn cancel_command_search(&mut self) {
+        let Some(search) = self.command_search.take() else {
+            return;
+        };
+        self.draft = search.original.text;
+        self.draft_references = search.original.references;
+        self.draft_cursor = search.original.cursor.min(self.draft.len());
+        self.execution_mode = search.original.execution;
+        self.draft_visible = search.original_draft_visible;
+        self.follow_latest = search.original_follow_latest;
+    }
+
+    fn begin_transcript_search(&mut self) {
+        if self.moments.is_empty() {
+            return;
+        }
+        self.close_environment_picker();
+        self.file_picker = None;
+        self.command_search = None;
+        self.reference_picker = None;
+        self.transcript_search = Some(TranscriptSearch {
+            query: String::new(),
+            choice: 0,
+            original_selected: self.selected,
+            original_follow_latest: self.follow_latest,
+        });
+        self.draft_visible = true;
+        self.follow_latest = false;
+        self.media_expanded = false;
+        self.sync_transcript_search_selection();
+    }
+
+    fn dispatch_transcript_search(&mut self, action: Action) -> Vec<Effect> {
+        match action {
+            Action::Insert(value) => {
+                let value = sanitize_draft_input(&value).replace('\n', "");
+                if !value.is_empty() {
+                    if let Some(search) = self.transcript_search.as_mut() {
+                        search.query.push_str(&value);
+                        search.choice = 0;
+                    }
+                    self.sync_transcript_search_selection();
+                }
+            }
+            Action::Backspace | Action::Delete => {
+                if let Some(search) = self.transcript_search.as_mut() {
+                    if let Some(previous) =
+                        previous_grapheme_boundary(&search.query, search.query.len())
+                    {
+                        search.query.truncate(previous);
+                        search.choice = 0;
+                    }
+                }
+                self.sync_transcript_search_selection();
+            }
+            Action::NextChoice | Action::NextTranscriptMatch | Action::NextTurn => {
+                self.move_transcript_search_choice(true);
+            }
+            Action::PreviousChoice | Action::PreviousTranscriptMatch | Action::PreviousTurn => {
+                self.move_transcript_search_choice(false);
+            }
+            Action::Submit => self.accept_transcript_search(),
+            Action::Escape => self.cancel_transcript_search(),
+            Action::Quit => return vec![Effect::Quit],
+            _ => {}
+        }
+        Vec::new()
+    }
+
+    fn matching_transcript_indices(&self, query: &str) -> Vec<usize> {
+        let query = query.trim().to_lowercase();
+        self.moments
+            .iter()
+            .enumerate()
+            .rev()
+            .filter_map(|(index, moment)| {
+                if query.is_empty()
+                    || moment.text.to_lowercase().contains(&query)
+                    || moment.artifacts.iter().any(|artifact| {
+                        artifact.display_name().to_lowercase().contains(&query)
+                            || artifact
+                                .source
+                                .as_deref()
+                                .is_some_and(|source| source.to_lowercase().contains(&query))
+                    })
+                {
+                    Some(index)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn sync_transcript_search_selection(&mut self) {
+        let Some(search) = self.transcript_search.as_ref() else {
+            return;
+        };
+        let matches = self.matching_transcript_indices(&search.query);
+        let choice = search.choice.min(matches.len().saturating_sub(1));
+        if let Some(index) = matches.get(choice).copied() {
+            self.selected = index;
+            self.scroll_anchor = Some(ScrollAnchor::Moment(index));
+        }
+    }
+
+    fn move_transcript_search_choice(&mut self, forward: bool) {
+        let Some(search) = self.transcript_search.as_ref() else {
+            return;
+        };
+        let count = self.matching_transcript_indices(&search.query).len();
+        if count == 0 {
+            return;
+        }
+        if let Some(search) = self.transcript_search.as_mut() {
+            search.choice = if forward {
+                (search.choice + 1) % count
+            } else {
+                search.choice.checked_sub(1).unwrap_or(count - 1)
+            };
+        }
+        self.sync_transcript_search_selection();
+    }
+
+    fn accept_transcript_search(&mut self) {
+        let Some(search) = self.transcript_search.take() else {
+            return;
+        };
+        if search.query.trim().is_empty() {
+            self.selected = search.original_selected;
+            self.follow_latest = search.original_follow_latest;
+        } else {
+            self.last_transcript_query = search.query;
+            self.follow_latest = false;
+        }
+        self.draft_visible = false;
+        self.scroll_anchor = Some(ScrollAnchor::Moment(self.selected));
+    }
+
+    fn cancel_transcript_search(&mut self) {
+        let Some(search) = self.transcript_search.take() else {
+            return;
+        };
+        self.selected = search.original_selected;
+        self.follow_latest = search.original_follow_latest;
+        self.draft_visible = false;
+        self.scroll_anchor = Some(ScrollAnchor::Moment(self.turn_start(self.selected)));
+    }
+
+    fn repeat_transcript_search(&mut self, forward: bool) {
+        if self.draft_visible || self.last_transcript_query.is_empty() {
+            return;
+        }
+        let matches = self.matching_transcript_indices(&self.last_transcript_query);
+        if matches.is_empty() {
+            return;
+        }
+        let current = matches
+            .iter()
+            .position(|index| *index == self.selected)
+            .unwrap_or(0);
+        let choice = if forward {
+            (current + 1) % matches.len()
+        } else {
+            current.checked_sub(1).unwrap_or(matches.len() - 1)
+        };
+        self.selected = matches[choice];
+        self.follow_latest = false;
+        self.scroll_anchor = Some(ScrollAnchor::Moment(self.selected));
+        self.media_expanded = false;
+    }
+
+    fn open_reference_picker(&mut self) -> Vec<Effect> {
+        let references = self.selected_open_references();
+        if references.is_empty() {
+            return Vec::new();
+        }
+        self.close_environment_picker();
+        self.reference_picker = None;
+        self.file_picker = None;
+        self.command_search = None;
+        self.transcript_search = None;
+        self.reference_picker = Some(ReferencePicker {
+            query: String::new(),
+            choice: 0,
+            references,
+        });
+        self.draft_visible = true;
+        self.follow_latest = false;
+        self.media_expanded = false;
+        self.scroll_anchor = Some(ScrollAnchor::Moment(self.turn_start(self.selected)));
+        Vec::new()
+    }
+
+    fn dispatch_reference_picker(&mut self, action: Action) -> Vec<Effect> {
+        match action {
+            Action::Insert(value) => {
+                let value = sanitize_draft_input(&value).replace('\n', "");
+                if !value.is_empty() {
+                    if let Some(picker) = self.reference_picker.as_mut() {
+                        picker.query.push_str(&value);
+                        picker.choice = 0;
+                    }
+                }
+            }
+            Action::Backspace | Action::Delete => {
+                if let Some(picker) = self.reference_picker.as_mut() {
+                    if let Some(previous) =
+                        previous_grapheme_boundary(&picker.query, picker.query.len())
+                    {
+                        picker.query.truncate(previous);
+                        picker.choice = 0;
+                    }
+                }
+            }
+            Action::NextChoice | Action::NextTurn | Action::ScrollDown => {
+                self.move_reference_choice(true);
+            }
+            Action::PreviousChoice | Action::PreviousTurn | Action::ScrollUp => {
+                self.move_reference_choice(false);
+            }
+            Action::Submit => return self.accept_reference_choice(),
+            Action::Escape => self.close_reference_picker(),
+            Action::Quit => return vec![Effect::Quit],
+            _ => {}
+        }
+        Vec::new()
+    }
+
+    fn matching_reference_indices(&self) -> Vec<usize> {
+        let Some(picker) = self.reference_picker.as_ref() else {
+            return Vec::new();
+        };
+        let query = picker.query.trim();
+        let mut matches = picker
+            .references
+            .iter()
+            .enumerate()
+            .filter_map(|(index, reference)| {
+                if query.is_empty() {
+                    return Some((index, 0_i64));
+                }
+                fuzzy_score(query, reference.label())
+                    .into_iter()
+                    .chain(fuzzy_score(query, reference.value()))
+                    .max()
+                    .map(|score| (index, score))
+            })
+            .collect::<Vec<_>>();
+        if !query.is_empty() {
+            matches.sort_by(|(left_index, left_score), (right_index, right_score)| {
+                right_score
+                    .cmp(left_score)
+                    .then_with(|| left_index.cmp(right_index))
+            });
+        }
+        matches.into_iter().map(|(index, _)| index).collect()
+    }
+
+    fn move_reference_choice(&mut self, forward: bool) {
+        let count = self.matching_reference_indices().len();
+        if count == 0 {
+            return;
+        }
+        if let Some(picker) = self.reference_picker.as_mut() {
+            picker.choice = if forward {
+                (picker.choice + 1) % count
+            } else {
+                picker.choice.checked_sub(1).unwrap_or(count - 1)
+            };
+        }
+    }
+
+    fn accept_reference_choice(&mut self) -> Vec<Effect> {
+        let Some(picker) = self.reference_picker.as_ref() else {
+            return Vec::new();
+        };
+        let matches = self.matching_reference_indices();
+        let reference = matches
+            .get(picker.choice.min(matches.len().saturating_sub(1)))
+            .and_then(|index| picker.references.get(*index))
+            .cloned();
+        self.close_reference_picker();
+        match reference {
+            Some(OpenReference::Url { url, .. }) => vec![Effect::OpenUrl { url }],
+            Some(OpenReference::Path {
+                target,
+                path,
+                filename,
+            }) => vec![Effect::OpenPath {
+                target,
+                path,
+                filename,
+            }],
+            None => Vec::new(),
+        }
+    }
+
+    fn close_reference_picker(&mut self) {
+        self.reference_picker = None;
+        self.draft_visible = false;
+        self.follow_latest = false;
+        self.scroll_anchor = Some(ScrollAnchor::Moment(self.turn_start(self.selected)));
+    }
+
+    fn selected_open_references(&self) -> Vec<OpenReference> {
+        if self.moments.is_empty() {
+            return Vec::new();
+        }
+        let start = self.turn_start(self.selected);
+        let end = self.turn_end(start);
+        let environment = self.moments[start..=end]
+            .iter()
+            .find_map(|moment| moment.environment.as_ref())
+            .unwrap_or_else(|| self.active_environment());
+        let mut references = Vec::new();
+        let mut seen = HashSet::new();
+        for extracted in self.moments[start..=end]
+            .iter()
+            .flat_map(|moment| extract_references(&moment.text))
+        {
+            let reference = match extracted {
+                ExtractedReference::Url { label, url } => OpenReference::Url { label, url },
+                ExtractedReference::Path(path) => {
+                    let (target, path) = target_resource_path(&path).unwrap_or_else(|| {
+                        (
+                            environment.target.clone(),
+                            resolve_environment_path(&path, environment.cwd.as_deref()),
+                        )
+                    });
+                    let filename = path
+                        .trim_end_matches('/')
+                        .rsplit('/')
+                        .find(|part| !part.is_empty())
+                        .unwrap_or("file")
+                        .to_string();
+                    OpenReference::Path {
+                        target,
+                        path,
+                        filename,
+                    }
+                }
+            };
+            let key = match &reference {
+                OpenReference::Url { url, .. } => format!("url:{url}"),
+                OpenReference::Path { target, path, .. } => format!("path:{target}:{path}"),
+            };
+            if seen.insert(key) {
+                references.push(reference);
+            }
+        }
+        references
+    }
+
     fn dispatch_file_picker(&mut self, action: Action) -> Vec<Effect> {
         match action {
             Action::Insert(value) => {
@@ -1474,6 +2076,9 @@ impl App {
             return Vec::new();
         }
         self.close_environment_picker();
+        self.command_search = None;
+        self.transcript_search = None;
+        self.reference_picker = None;
         let request_id = self.next_file_request_id;
         self.next_file_request_id = self.next_file_request_id.saturating_add(1);
         let environment = self.active_environment().clone();
@@ -1612,29 +2217,43 @@ impl App {
         let Some(picker) = self.file_picker.as_ref() else {
             return Vec::new();
         };
-        let query = picker.query.trim().to_ascii_lowercase();
-        let parent = (query.is_empty())
-            .then(|| unix_parent(&picker.directory))
-            .flatten()
-            .map(|path| FileEntry {
-                name: "..".to_string(),
-                path,
-                is_directory: true,
-            });
-        parent
-            .into_iter()
-            .chain(
-                picker
-                    .entries
-                    .iter()
-                    .filter(|entry| {
-                        query.is_empty()
-                            || entry.name.to_ascii_lowercase().contains(&query)
-                            || entry.path.to_ascii_lowercase().contains(&query)
-                    })
-                    .cloned(),
-            )
-            .collect()
+        let query = picker.query.trim();
+        if query.is_empty() {
+            return unix_parent(&picker.directory)
+                .map(|path| FileEntry {
+                    name: "..".to_string(),
+                    path,
+                    is_directory: true,
+                })
+                .into_iter()
+                .chain(picker.entries.iter().cloned())
+                .collect();
+        }
+        let mut matches = picker
+            .entries
+            .iter()
+            .filter_map(|entry| {
+                let name_score = fuzzy_score(query, &entry.name);
+                let path_score = fuzzy_score(query, &entry.path).map(|score| score - 12);
+                name_score
+                    .into_iter()
+                    .chain(path_score)
+                    .max()
+                    .map(|score| (entry.clone(), score + i64::from(entry.is_directory) * 4))
+            })
+            .collect::<Vec<_>>();
+        matches.sort_by(|(left, left_score), (right, right_score)| {
+            right_score
+                .cmp(left_score)
+                .then_with(|| right.is_directory.cmp(&left.is_directory))
+                .then_with(|| {
+                    left.name
+                        .to_ascii_lowercase()
+                        .cmp(&right.name.to_ascii_lowercase())
+                })
+                .then_with(|| left.name.cmp(&right.name))
+        });
+        matches.into_iter().map(|(entry, _)| entry).collect()
     }
 
     fn insert_file_reference(&mut self, insertion: usize, reference: FileReference) {
@@ -2862,17 +3481,28 @@ impl App {
     }
 
     fn matching_environment_indices(&self) -> Vec<usize> {
-        let query = self.environment_query.trim().to_ascii_lowercase();
-        self.environments
+        let query = self.environment_query.trim();
+        if query.is_empty() {
+            return (0..self.environments.len()).collect();
+        }
+        let mut matches = self
+            .environments
             .iter()
             .enumerate()
             .filter_map(|(index, environment)| {
-                let matches = query.is_empty()
-                    || environment.target.to_ascii_lowercase().contains(&query)
-                    || environment.label.to_ascii_lowercase().contains(&query);
-                matches.then_some(index)
+                fuzzy_score(query, &environment.target)
+                    .into_iter()
+                    .chain(fuzzy_score(query, &environment.label))
+                    .max()
+                    .map(|score| (index, score))
             })
-            .collect()
+            .collect::<Vec<_>>();
+        matches.sort_by(|(left_index, left_score), (right_index, right_score)| {
+            right_score
+                .cmp(left_score)
+                .then_with(|| left_index.cmp(right_index))
+        });
+        matches.into_iter().map(|(index, _)| index).collect()
     }
 
     fn select_environment_choice(&mut self) {
@@ -3450,6 +4080,47 @@ impl App {
     }
 
     fn visible_draft(&self, palette: Palette) -> (String, usize, Vec<TextStyleRange>) {
+        if let Some(picker) = &self.reference_picker {
+            let value = if picker.query.is_empty() {
+                "open ".to_string()
+            } else {
+                format!("open {}", picker.query)
+            };
+            let end = value.len();
+            return (
+                value,
+                end,
+                vec![TextStyleRange {
+                    start: 0,
+                    end: 4,
+                    style: Style::new().fg(palette.accent).add_modifier(Modifier::BOLD),
+                }],
+            );
+        }
+
+        if let Some(search) = &self.transcript_search {
+            let value = format!("/{}", search.query);
+            let end = value.len();
+            return (
+                value,
+                end,
+                vec![TextStyleRange {
+                    start: 0,
+                    end: 1,
+                    style: Style::new().fg(palette.accent).add_modifier(Modifier::BOLD),
+                }],
+            );
+        }
+
+        if let Some(search) = &self.command_search {
+            let value = self
+                .command_search_preview()
+                .map(|entry| entry.text.clone())
+                .unwrap_or_else(|| search.original.text.clone());
+            let end = value.len();
+            return (value, end, Vec::new());
+        }
+
         if self.environment_picker {
             let value = format!("@{}", self.environment_query);
             let end = value.len();
@@ -3515,7 +4186,160 @@ impl App {
         }
         let palette = self.theme.palette();
         let mut lines = Vec::new();
-        if self.environment_picker {
+        if let Some(picker) = &self.reference_picker {
+            let matches = self.matching_reference_indices();
+            let selected = picker.choice.min(matches.len().saturating_sub(1));
+            for (choice, index) in matches
+                .iter()
+                .copied()
+                .enumerate()
+                .skip(selected.saturating_sub(MAX_ROWS.saturating_sub(1)))
+                .take(MAX_ROWS)
+            {
+                let reference = &picker.references[index];
+                let is_selected = choice == selected;
+                let marker = if is_selected { "› " } else { "  " };
+                let label = sanitize_label(reference.label(), "reference", 72);
+                let destination = match reference {
+                    OpenReference::Url { url, .. } if url != reference.label() => {
+                        Some(sanitize_label(url, "url", 96))
+                    }
+                    OpenReference::Path { target, path, .. } => Some(format!(
+                        "{}:{}",
+                        prompt_token(target, "target"),
+                        sanitize_label(path, "path", 96)
+                    )),
+                    OpenReference::Url { .. } => None,
+                };
+                let mut spans = vec![Span::styled(
+                    format!("{marker}{label}"),
+                    Style::new()
+                        .fg(if is_selected {
+                            palette.accent
+                        } else {
+                            palette.foreground
+                        })
+                        .add_modifier(if is_selected {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
+                )];
+                if let Some(destination) = destination {
+                    spans.push(Span::styled(
+                        format!("  {destination}"),
+                        Style::new().fg(palette.quiet),
+                    ));
+                }
+                lines.push(Line::from(spans));
+            }
+            if matches.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    "  no matching reference",
+                    Style::new().fg(palette.quiet),
+                )));
+            }
+        } else if let Some(search) = &self.command_search {
+            let matches = self.matching_command_indices();
+            let selected = search.choice.min(matches.len().saturating_sub(1));
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "  reverse history",
+                    Style::new().fg(palette.accent).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    if search.query.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" · {}", sanitize_label(&search.query, "", 80))
+                    },
+                    Style::new().fg(palette.quiet),
+                ),
+            ]));
+            let start = selected.saturating_sub(MAX_ROWS.saturating_sub(2));
+            for (choice, index) in matches
+                .iter()
+                .copied()
+                .enumerate()
+                .skip(start)
+                .take(MAX_ROWS.saturating_sub(1))
+            {
+                let is_selected = choice == selected;
+                let marker = if is_selected { "› " } else { "  " };
+                let command = sanitize_label(&self.command_history[index].text, "command", 120);
+                lines.push(Line::from(Span::styled(
+                    format!("{marker}{command}"),
+                    Style::new()
+                        .fg(if is_selected {
+                            palette.foreground
+                        } else {
+                            palette.quiet
+                        })
+                        .add_modifier(if is_selected {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
+                )));
+            }
+            if matches.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    "  no matching command",
+                    Style::new().fg(palette.quiet),
+                )));
+            }
+        } else if let Some(search) = &self.transcript_search {
+            let matches = self.matching_transcript_indices(&search.query);
+            let selected = search.choice.min(matches.len().saturating_sub(1));
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "  transcript",
+                    Style::new().fg(palette.accent).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(" · {} matches", matches.len()),
+                    Style::new().fg(palette.quiet),
+                ),
+            ]));
+            let start = selected.saturating_sub(MAX_ROWS.saturating_sub(2));
+            for (choice, index) in matches
+                .iter()
+                .copied()
+                .enumerate()
+                .skip(start)
+                .take(MAX_ROWS.saturating_sub(1))
+            {
+                let is_selected = choice == selected;
+                let moment = &self.moments[index];
+                let marker = if is_selected { "› " } else { "  " };
+                let role = match moment.role {
+                    Role::Human => "$",
+                    Role::Intelligence => "›",
+                    Role::System => "!",
+                };
+                let preview = sanitize_label(&moment.text, "media", 112);
+                lines.push(Line::from(Span::styled(
+                    format!("{marker}{role} {preview}"),
+                    Style::new()
+                        .fg(if is_selected {
+                            palette.foreground
+                        } else {
+                            palette.quiet
+                        })
+                        .add_modifier(if is_selected {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
+                )));
+            }
+            if matches.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    "  no matching message",
+                    Style::new().fg(palette.quiet),
+                )));
+            }
+        } else if self.environment_picker {
             let matches = self.matching_environment_indices();
             let selected = self.environment_choice.min(matches.len().saturating_sub(1));
             let start = selected.saturating_sub(MAX_ROWS.saturating_sub(1));
@@ -3675,7 +4499,7 @@ impl App {
     fn render_help(&self, frame: &mut Frame<'_>, area: Rect) {
         let palette = self.theme.palette();
         let width = area.width.saturating_sub(8).min(68);
-        let height = area.height.saturating_sub(2).min(24);
+        let height = area.height.min(26);
         let popup = centered_rect(area, width, height);
         frame.render_widget(Clear, popup);
         let mut lines = vec![
@@ -3692,8 +4516,14 @@ impl App {
             help_line("@  ·  ctrl+o", "target/file completion  ·  files", palette),
             help_line("escape", "browse without losing the draft", palette),
             help_line("up/down  ·  ctrl+p/n", "command history", palette),
+            help_line("ctrl+r", "fuzzy command search", palette),
+            help_line("/  ·  n/N", "search transcript  ·  next/previous", palette),
             help_line("page up / page down", "scroll the transcript", palette),
-            help_line("left/right  ·  enter", "choose  ·  open media", palette),
+            help_line(
+                "left/right  ·  enter  ·  o",
+                "media  ·  open  ·  references",
+                palette,
+            ),
             help_line("alt+a/m/v", "actions  ·  Markdown  ·  Vim", palette),
             help_line("ctrl+.  ·  ctrl+q", "stop Ship  ·  leave", palette),
         ];
@@ -3702,7 +4532,7 @@ impl App {
                 Line::default(),
                 help_line("Vim: i/a  ·  escape", "compose  ·  browse", palette),
                 help_line("Vim: h/l  ·  j/k", "media  ·  commands", palette),
-                help_line("Vim: g/G  ·  enter", "ends  ·  open media", palette),
+                help_line("Vim: g/G  ·  enter/o", "ends  ·  media/references", palette),
             ]);
         }
         lines.extend([
@@ -3802,6 +4632,61 @@ fn media_kind_from_content_type(content_type: &str) -> MediaKind {
 
 fn reference_token(reference: &FileReference) -> String {
     format!("@{}", sanitize_label(&reference.filename, "file", 200))
+}
+
+fn target_resource_path(value: &str) -> Option<(String, String)> {
+    if value.starts_with('/')
+        || value.starts_with("~/")
+        || value.starts_with("./")
+        || value.starts_with("../")
+    {
+        return None;
+    }
+    let (target, path) = value.split_once(':')?;
+    if target.is_empty()
+        || !path.starts_with('/')
+        || target.chars().any(|character| {
+            character.is_control() || character.is_whitespace() || character == '/'
+        })
+    {
+        return None;
+    }
+    Some((target.to_string(), path.to_string()))
+}
+
+fn resolve_environment_path(path: &str, cwd: Option<&str>) -> String {
+    if !(path.starts_with("./") || path.starts_with("../")) {
+        return path.to_string();
+    }
+    let Some(cwd) = cwd.filter(|cwd| !cwd.trim().is_empty()) else {
+        return path.to_string();
+    };
+    normalize_unix_path(&format!(
+        "{}/{}",
+        cwd.trim_end_matches('/'),
+        path.trim_start_matches("./")
+    ))
+}
+
+fn normalize_unix_path(path: &str) -> String {
+    let (prefix, remainder) = if let Some(remainder) = path.strip_prefix("~/") {
+        ("~/", remainder)
+    } else if let Some(remainder) = path.strip_prefix('/') {
+        ("/", remainder)
+    } else {
+        return path.to_string();
+    };
+    let mut components = Vec::new();
+    for component in remainder.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => {
+                components.pop();
+            }
+            component => components.push(component),
+        }
+    }
+    format!("{prefix}{}", components.join("/"))
 }
 
 fn file_reference_from_artifact(artifact: &Artifact) -> Option<FileReference> {
@@ -4424,6 +5309,52 @@ fn sanitize_status(value: &str) -> String {
     sanitize_label(value, "WORKING", 80)
 }
 
+fn fuzzy_score(query: &str, candidate: &str) -> Option<i64> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return Some(0);
+    }
+    let candidate = candidate.to_lowercase();
+    let query_chars = query.chars().collect::<Vec<_>>();
+    let candidate_chars = candidate.chars().collect::<Vec<_>>();
+    let mut positions = Vec::with_capacity(query_chars.len());
+    let mut cursor = 0_usize;
+    for needle in query_chars {
+        let offset = candidate_chars[cursor..]
+            .iter()
+            .position(|character| *character == needle)?;
+        let position = cursor + offset;
+        positions.push(position);
+        cursor = position.saturating_add(1);
+    }
+
+    let mut score = 0_i64;
+    for (index, position) in positions.iter().copied().enumerate() {
+        if position == 0
+            || candidate_chars
+                .get(position.saturating_sub(1))
+                .is_some_and(|character| {
+                    character.is_whitespace() || matches!(character, '/' | '\\' | '_' | '-' | '.')
+                })
+        {
+            score += 24;
+        }
+        if index > 0 && position == positions[index - 1].saturating_add(1) {
+            score += 18;
+        }
+        score -= i64::try_from(position).unwrap_or(i64::MAX) / 4;
+    }
+    if candidate.starts_with(&query) {
+        score += 120;
+    } else if candidate.contains(&query) {
+        score += 80;
+    }
+    score -= i64::try_from(candidate_chars.len().saturating_sub(positions.len()))
+        .unwrap_or(i64::MAX)
+        / 8;
+    Some(score)
+}
+
 fn sanitize_label(value: &str, fallback: &str, max_chars: usize) -> String {
     let status = value
         .chars()
@@ -4510,7 +5441,7 @@ mod tests {
     use ratatui::Terminal;
 
     use super::{
-        atomic_media_scroll, image_is_partial, sanitize_status, text_metrics, Action,
+        atomic_media_scroll, fuzzy_score, image_is_partial, sanitize_status, text_metrics, Action,
         AgentActionSnapshot, App, Approval, Artifact, CapabilityEnvironment, ConnectionState,
         Effect, ExecutionMode, FileEntry, FileReference, ImageRange, MediaKind,
         MessageDeliverySnapshot, Moment, MomentState, Role, ScrollDirection, Theme,
@@ -5640,7 +6571,7 @@ mod tests {
                 },
             ],
         );
-        app.dispatch(Action::Insert("notes".to_string()));
+        app.dispatch(Action::Insert("nts".to_string()));
         assert_eq!(
             app.dispatch(Action::Submit),
             vec![Effect::ResolveFile {
@@ -5926,5 +6857,110 @@ mod tests {
             .moments()
             .iter()
             .any(|moment| moment.id == "local:gsv:1"));
+    }
+
+    #[test]
+    fn reverse_search_accepts_a_fuzzy_command_and_escape_restores_the_draft() {
+        let mut app = App::new(ConnectionState::Ready);
+        app.replace_history(vec![
+            Moment::complete("one", Role::Human, "open downloads"),
+            Moment::complete("two", Role::Intelligence, "done"),
+            Moment::complete("three", Role::Human, "show calendar"),
+        ]);
+        app.dispatch(Action::Insert("unfinished".to_string()));
+        app.dispatch(Action::BeginCommandSearch);
+        app.dispatch(Action::Insert("dwn".to_string()));
+        app.dispatch(Action::Submit);
+        assert_eq!(app.draft(), "open downloads");
+
+        app.dispatch(Action::BeginCommandSearch);
+        app.dispatch(Action::Insert("cal".to_string()));
+        app.dispatch(Action::Escape);
+        assert_eq!(app.draft(), "open downloads");
+
+        app.dispatch(Action::Escape);
+        app.dispatch(Action::BeginCommandSearch);
+        app.dispatch(Action::Escape);
+        assert!(!app.draft_visible());
+    }
+
+    #[test]
+    fn transcript_search_jumps_between_matching_messages_without_touching_the_draft() {
+        let mut app = App::new(ConnectionState::Ready);
+        app.replace_history(vec![
+            Moment::complete("one", Role::Human, "first needle"),
+            Moment::complete("two", Role::Intelligence, "middle"),
+            Moment::complete("three", Role::Human, "newest needle"),
+            Moment::complete("four", Role::Intelligence, "done"),
+        ]);
+        app.dispatch(Action::Insert("kept draft".to_string()));
+        app.dispatch(Action::Escape);
+        app.dispatch(Action::BeginTranscriptSearch);
+        app.dispatch(Action::Insert("needle".to_string()));
+        assert_eq!(app.selected(), 2);
+        app.dispatch(Action::Submit);
+        assert!(!app.draft_visible());
+        app.dispatch(Action::NextTranscriptMatch);
+        assert_eq!(app.selected(), 0);
+        assert_eq!(app.draft(), "kept draft");
+    }
+
+    #[test]
+    fn fuzzy_scoring_rewards_boundaries_and_consecutive_matches() {
+        let exact = fuzzy_score("rep", "reports/final.png").expect("exact match");
+        let scattered =
+            fuzzy_score("rep", "really-expansive-picture.png").expect("scattered match");
+        assert!(exact > scattered);
+        assert!(fuzzy_score("rpn", "reports/final.png").is_some());
+        assert!(fuzzy_score("xyz", "reports/final.png").is_none());
+    }
+
+    #[test]
+    fn selected_turn_references_open_urls_and_resolve_paths_on_the_origin_target() {
+        let mut app = App::new(ConnectionState::Ready);
+        app.replace_history(vec![
+            Moment::complete("one", Role::Human, "inspect these")
+                .with_environment(
+                    CapabilityEnvironment::new("macbook", "MacBook")
+                        .with_cwd("/Users/sam/project"),
+                ),
+            Moment::complete(
+                "two",
+                Role::Intelligence,
+                "See [the guide](https://example.com/guide), `../report.png`, and `phone:/sdcard/voice.ogg`.",
+            ),
+        ]);
+        app.dispatch(Action::Escape);
+
+        assert!(app.dispatch(Action::OpenReferences).is_empty());
+        assert_eq!(
+            app.dispatch(Action::Submit),
+            vec![Effect::OpenUrl {
+                url: "https://example.com/guide".to_string(),
+            }]
+        );
+
+        app.dispatch(Action::OpenReferences);
+        app.dispatch(Action::NextChoice);
+        assert_eq!(
+            app.dispatch(Action::Submit),
+            vec![Effect::OpenPath {
+                target: "macbook".to_string(),
+                path: "/Users/sam/report.png".to_string(),
+                filename: "report.png".to_string(),
+            }]
+        );
+
+        app.dispatch(Action::OpenReferences);
+        app.dispatch(Action::NextChoice);
+        app.dispatch(Action::NextChoice);
+        assert_eq!(
+            app.dispatch(Action::Submit),
+            vec![Effect::OpenPath {
+                target: "phone".to_string(),
+                path: "/sdcard/voice.ogg".to_string(),
+                filename: "voice.ogg".to_string(),
+            }]
+        );
     }
 }

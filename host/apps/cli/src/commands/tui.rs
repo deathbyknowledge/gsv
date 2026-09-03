@@ -814,6 +814,62 @@ fn apply_effects(
                 });
                 drop(handle);
             }
+            Effect::OpenUrl { url } => {
+                let display = url.clone();
+                let sender = runtime_sender.clone();
+                let handle = tokio::spawn(async move {
+                    if let Err(error) = media::open_external_url(url).await {
+                        let _ =
+                            sender.send(RuntimeEvent::Local(SessionEvent::ArtifactOpenFailed {
+                                filename: display,
+                                error,
+                            }));
+                    }
+                });
+                drop(handle);
+            }
+            Effect::OpenPath {
+                target,
+                path,
+                filename,
+            } => {
+                let Some(session) = session else {
+                    app.append_local_output(format!(
+                        "Could not open {filename}.\n\nStored files need a connected GSV session."
+                    ));
+                    continue;
+                };
+                let directory = match artifact_store.directory() {
+                    Ok(directory) => directory,
+                    Err(error) => {
+                        app.append_local_output(format!("Could not open {filename}.\n\n{error}"));
+                        continue;
+                    }
+                };
+                let client = Arc::clone(&session.client);
+                let generation = session.generation;
+                let sender = runtime_sender.clone();
+                let handle = tokio::spawn(async move {
+                    let result =
+                        match resolve_file(Arc::clone(&client), 0, target, path, filename.clone())
+                            .await
+                        {
+                            SessionEvent::FileResolved { reference, .. } => {
+                                media::open_artifact(directory, Some(client), reference.artifact())
+                                    .await
+                            }
+                            SessionEvent::FileOperationFailed { error, .. } => Err(error),
+                            _ => Err("The selected path could not be resolved".to_string()),
+                        };
+                    if let Err(error) = result {
+                        let _ = sender.send(RuntimeEvent::Session {
+                            generation,
+                            event: SessionEvent::ArtifactOpenFailed { filename, error },
+                        });
+                    }
+                });
+                drop(handle);
+            }
             Effect::LoadOlderHistory { before_sequence } => {
                 let Some(session) = session else {
                     app.history_page_failed();
@@ -1117,6 +1173,10 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
         };
     }
 
+    if control && matches!(key.code, KeyCode::Char('r' | 'R')) {
+        return Some(Action::BeginCommandSearch);
+    }
+
     if app.completion_picker_visible() {
         return match key.code {
             KeyCode::Char('q' | 'Q') if control => Some(Action::Quit),
@@ -1152,6 +1212,9 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
     if key.code == KeyCode::PageDown {
         return Some(Action::ScrollPageDown);
     }
+    if !app.draft_visible() && !command_modifier && key.code == KeyCode::Char('/') {
+        return Some(Action::BeginTranscriptSearch);
+    }
 
     if app.vim_enabled() && !app.draft_visible() && !command_modifier {
         return match key.code {
@@ -1162,6 +1225,9 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
             KeyCode::Char('l') => Some(Action::NextMedia),
             KeyCode::Char('g') => Some(Action::FirstTurn),
             KeyCode::Char('G') => Some(Action::LastTurn),
+            KeyCode::Char('n') => Some(Action::NextTranscriptMatch),
+            KeyCode::Char('N') => Some(Action::PreviousTranscriptMatch),
+            KeyCode::Char('o') => Some(Action::OpenReferences),
             KeyCode::Enter => Some(Action::ToggleMedia),
             KeyCode::Char('?') => Some(Action::ToggleHelp),
             _ => None,
@@ -1186,6 +1252,15 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
         KeyCode::Char('w' | 'W') if control => Some(Action::DeleteWord),
         KeyCode::Char('m' | 'M') if alt => Some(Action::ToggleMarkdown),
         KeyCode::Char('?') if !app.draft_visible() && !command_modifier => Some(Action::ToggleHelp),
+        KeyCode::Char('n') if !app.draft_visible() && !command_modifier => {
+            Some(Action::NextTranscriptMatch)
+        }
+        KeyCode::Char('N') if !app.draft_visible() && !command_modifier => {
+            Some(Action::PreviousTranscriptMatch)
+        }
+        KeyCode::Char('o' | 'O') if !app.draft_visible() && !command_modifier => {
+            Some(Action::OpenReferences)
+        }
         KeyCode::Char(character) if !command_modifier => {
             Some(Action::Insert(character.to_string()))
         }
@@ -2540,6 +2615,31 @@ mod tests {
         assert_eq!(key_action(&app, down), Some(Action::NextCommand));
         assert_eq!(key_action(&app, control_p), Some(Action::PreviousCommand));
         assert_eq!(key_action(&app, control_n), Some(Action::NextCommand));
+    }
+
+    #[test]
+    fn shell_native_search_and_open_keys_are_available_while_browsing() {
+        let mut app = App::new(ConnectionState::Ready);
+        assert_eq!(
+            key_action(
+                &app,
+                KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)
+            ),
+            Some(Action::BeginCommandSearch)
+        );
+        app.dispatch(Action::Escape);
+        assert_eq!(
+            key_action(&app, KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE)),
+            Some(Action::BeginTranscriptSearch)
+        );
+        assert_eq!(
+            key_action(&app, KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE)),
+            Some(Action::NextTranscriptMatch)
+        );
+        assert_eq!(
+            key_action(&app, KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE)),
+            Some(Action::OpenReferences)
+        );
     }
 
     #[test]

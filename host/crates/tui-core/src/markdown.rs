@@ -1,9 +1,94 @@
+use std::collections::HashSet;
+
 use markdown::{mdast::Node, ParseOptions};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::theme::Palette;
 use crate::Artifact;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ExtractedReference {
+    Url { label: String, url: String },
+    Path(String),
+}
+
+pub(crate) fn extract_references(source: &str) -> Vec<ExtractedReference> {
+    let mut references = Vec::new();
+    if let Ok(root) = markdown::to_mdast(source, &ParseOptions::gfm()) {
+        collect_references(&root, &mut references);
+    }
+    for token in source.split_whitespace() {
+        let candidate = token
+            .trim_start_matches(['<', '(', '[', '{'])
+            .trim_end_matches(['>', ')', ']', '}', '.', ',', ';', ':', '!', '?']);
+        if is_web_url(candidate) {
+            references.push(ExtractedReference::Url {
+                label: candidate.to_string(),
+                url: candidate.to_string(),
+            });
+        }
+    }
+    let mut seen = HashSet::new();
+    references.retain(|reference| {
+        let key = match reference {
+            ExtractedReference::Url { url, .. } => format!("url:{url}"),
+            ExtractedReference::Path(path) => format!("path:{path}"),
+        };
+        seen.insert(key)
+    });
+    references
+}
+
+fn collect_references(node: &Node, output: &mut Vec<ExtractedReference>) {
+    match node {
+        Node::Link(link) if is_web_url(&link.url) => {
+            let label = link.children.iter().map(node_text).collect::<String>();
+            output.push(ExtractedReference::Url {
+                label: if label.trim().is_empty() {
+                    link.url.clone()
+                } else {
+                    label
+                },
+                url: link.url.clone(),
+            });
+        }
+        Node::Image(image) if is_web_url(&image.url) => {
+            output.push(ExtractedReference::Url {
+                label: if image.alt.trim().is_empty() {
+                    image.url.clone()
+                } else {
+                    image.alt.clone()
+                },
+                url: image.url.clone(),
+            });
+        }
+        Node::InlineCode(code) if is_path_reference(&code.value) => {
+            output.push(ExtractedReference::Path(code.value.trim().to_string()));
+        }
+        _ => {}
+    }
+    if let Some(children) = node.children() {
+        for child in children {
+            collect_references(child, output);
+        }
+    }
+}
+
+fn is_web_url(value: &str) -> bool {
+    value.starts_with("https://") || value.starts_with("http://")
+}
+
+fn is_path_reference(value: &str) -> bool {
+    let value = value.trim();
+    value.starts_with('/')
+        || value.starts_with("~/")
+        || value.starts_with("./")
+        || value.starts_with("../")
+        || value
+            .split_once(':')
+            .is_some_and(|(target, path)| !target.is_empty() && path.starts_with('/'))
+}
 
 pub(crate) fn render_plain(source: &str, style: Style) -> Vec<Line<'static>> {
     source
@@ -260,6 +345,9 @@ fn render_inline(node: &Node, palette: Palette, style: Style, lines: &mut Vec<Ve
         }
         Node::InlineCode(code) => {
             let mut code_style = style.fg(palette.accent);
+            if is_path_reference(&code.value) {
+                code_style = code_style.add_modifier(Modifier::UNDERLINED);
+            }
             if let Some(background) = palette.code_background {
                 code_style = code_style.bg(background);
             }
@@ -479,5 +567,22 @@ mod tests {
     fn plain_output_normalizes_windows_line_endings() {
         let rendered = rendered_text(&render_plain("one\r\ntwo\r\n", Style::new()));
         assert_eq!(rendered, "one\ntwo\n");
+    }
+
+    #[test]
+    fn references_extract_links_and_unix_shaped_inline_paths_once() {
+        assert_eq!(
+            extract_references(
+                "Read [the guide](https://example.com/guide), then open `./report.png` or `phone:/sdcard/voice.ogg`. https://example.com/guide"
+            ),
+            vec![
+                ExtractedReference::Url {
+                    label: "the guide".to_string(),
+                    url: "https://example.com/guide".to_string(),
+                },
+                ExtractedReference::Path("./report.png".to_string()),
+                ExtractedReference::Path("phone:/sdcard/voice.ogg".to_string()),
+            ]
+        );
     }
 }
