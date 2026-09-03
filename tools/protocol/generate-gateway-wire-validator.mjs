@@ -28,16 +28,9 @@ const schema = createGenerator({
   additionalProperties: false,
 }).createSchema("WireValidationRoots");
 schema.$id = schemaId;
-const requestSchema = schema.definitions.WireRequestFrame;
-const routedResponseSchema = schema.definitions.WireRoutedResponse;
-const requestSchemaRefs = schemaReferences(
-  requestSchema.anyOf,
-  "WireRequestFrame",
-);
-const responseSchemaRefs = schemaReferences(
-  routedResponseSchema.anyOf,
-  "WireRoutedResponse",
-);
+sanitizeDefinitionNames(schema);
+const requestSchemaRefs = schemaReferences("WireRequestFrame");
+const responseSchemaRefs = schemaReferences("WireRoutedResponse");
 
 const ajv = new Ajv({
   allErrors: false,
@@ -64,18 +57,72 @@ if (process.argv.includes("--check")) {
   writeFileSync(outputPath, generated);
 }
 
-function schemaReferences(branches, definitionName) {
-  if (!Array.isArray(branches)) {
+/**
+ * Map each routed call to the JSON pointer of its union branch. Generic
+ * envelope aliases make the named definition a reference to the union, so the
+ * pointer targets the resolved definition.
+ */
+function schemaReferences(definitionName) {
+  let pointer = `#/definitions/${definitionName}`;
+  let definition = schema.definitions[definitionName];
+  while ("$ref" in definition) {
+    pointer = definition.$ref;
+    definition = schema.definitions[decodeURIComponent(pointer.replace(/^#\/definitions\//, ""))];
+    if (!definition) throw new Error(`Unresolved schema reference: ${pointer}`);
+  }
+  if (!Array.isArray(definition.anyOf)) {
     throw new Error(`${definitionName} must be a union`);
   }
-  return branches.map((branch, index) => {
-    const call = branch.properties?.call?.const;
+  return definition.anyOf.map((branch, index) => {
+    const call = resolveBranch(branch).properties?.call?.const;
     if (!call) {
       throw new Error(`${definitionName} branch ${index} has no literal call`);
     }
-    return [
-      call,
-      `${schemaId}#/definitions/${definitionName}/anyOf/${index}`,
-    ];
+    return [call, `${schemaId}${pointer}/anyOf/${index}`];
   });
+}
+
+function resolveBranch(branch) {
+  let resolved = branch;
+  while ("$ref" in resolved) {
+    const name = decodeURIComponent(resolved.$ref.replace(/^#\/definitions\//, ""));
+    resolved = schema.definitions[name];
+    if (!resolved) throw new Error(`Unresolved schema reference: ${branch.$ref}`);
+  }
+  return resolved;
+}
+
+
+/**
+ * Generic envelope aliases produce definition names such as
+ * `TypedRequest<SyscallDomains,"fs.read",BinaryFrameDescriptor>`. Rename them to
+ * plain identifiers so JSON pointers need no percent-encoding at runtime.
+ */
+function sanitizeDefinitionNames(target) {
+  const renames = new Map();
+  for (const name of Object.keys(target.definitions)) {
+    const safe = name.replace(/[^A-Za-z0-9_.]+/g, "_").replace(/^_+|_+$/g, "");
+    if (safe !== name) renames.set(name, safe);
+  }
+  if (renames.size === 0) return;
+  for (const [name, safe] of renames) {
+    if (safe in target.definitions) throw new Error(`Definition name collision: ${safe}`);
+    target.definitions[safe] = target.definitions[name];
+    delete target.definitions[name];
+  }
+  const prefix = "#/definitions/";
+  const rewrite = (node) => {
+    if (Array.isArray(node)) {
+      for (const item of node) rewrite(item);
+      return;
+    }
+    if (node === null || Object(node) !== node) return;
+    if ("$ref" in node && node.$ref.startsWith(prefix)) {
+      const name = decodeURIComponent(node.$ref.slice(prefix.length));
+      const safe = renames.get(name);
+      if (safe) node.$ref = `${prefix}${safe}`;
+    }
+    for (const value of Object.values(node)) rewrite(value);
+  };
+  rewrite(target);
 }

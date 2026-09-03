@@ -1,50 +1,31 @@
-import type { BinaryBody } from "@humansandmachines/gsv/protocol";
-import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
+import type {
+  BinaryBody,
+  FrameError,
+  ResponseErrEnvelope,
+  SignalEnvelope,
+  SyscallDomains,
+  TypedRequest,
+  TypedResponse,
+  TypedResponseOk,
+} from "@humansandmachines/gsv/protocol";
+import type { SyscallName } from "../syscalls";
 
-export type FrameError = {
-  code: number;
-  message: string;
-  details?: unknown;
-  retryable?: boolean;
-};
+export type { FrameError };
 
+/** Gateway-side frames carry bodies as byte streams. */
 export type FrameBody = BinaryBody;
 
-export type RequestFrame<S extends SyscallName = SyscallName> = {
-  [K in S]: {
-    type: "req";
-    id: string;
-    call: K;
-    args: ArgsOf<K>;
-    runId?: string;
-    body?: FrameBody;
-  };
-}[S];
+export type RequestFrame<S extends SyscallName = SyscallName> =
+  TypedRequest<SyscallDomains, S, BinaryBody>;
 
-export type ResponseOkFrame<S extends SyscallName = SyscallName> = {
-  type: "res";
-  id: string;
-  ok: true;
-  data?: ResultOf<S>;
-  body?: FrameBody;
-};
+export type ResponseOkFrame<S extends SyscallName = SyscallName> =
+  TypedResponseOk<SyscallDomains, S, BinaryBody>;
 
-export type ResponseErrFrame = {
-  type: "res";
-  id: string;
-  ok: false;
-  error: FrameError;
-};
+export type ResponseErrFrame = ResponseErrEnvelope;
 
 export type ResponseFrame<S extends SyscallName = SyscallName> =
-  | ResponseOkFrame<S>
-  | ResponseErrFrame;
+  TypedResponse<SyscallDomains, S, BinaryBody>;
 
-export type SignalFrame<Payload = unknown> = {
-  type: "sig";
-  signal: string;
-  payload?: Payload;
-  seq?: number;
-};
+export type SignalFrame<Payload = unknown> = SignalEnvelope<Payload>;
 
 export type Frame = RequestFrame | ResponseFrame | SignalFrame;

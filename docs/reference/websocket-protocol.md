@@ -12,6 +12,7 @@ Protocol version 3 is peer- and syscall-based:
 
 The source of truth is:
 
+- `packages/gsv/src/protocol/frame.ts`
 - `packages/gsv/src/protocol/wire-frame.ts`
 - `workers/gateway/src/protocol/frames.ts`
 - `workers/gateway/src/protocol/decode-wire-frame.ts`
