@@ -18,7 +18,8 @@ use gsv::kernel_client::{
 use gsv::protocol::Frame;
 use gsv_tui_core::{
     Action, AgentActionSnapshot, App, Approval, ApprovalDecision, Artifact, CapabilityEnvironment,
-    ConnectionState, Effect, FileEntry, FileReference, MediaKind, Moment, Role, Theme,
+    ConnectionState, Effect, FileEntry, FileReference, MediaKind, MessageDeliverySnapshot, Moment,
+    MomentTimeline, Role, Theme,
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
@@ -88,8 +89,9 @@ enum RuntimeEvent {
         request_id: u64,
         error: String,
     },
-    ActionHistoryLoaded {
+    TraceHistoryLoaded {
         actions: Vec<AgentActionSnapshot>,
+        deliveries: Vec<MessageDeliverySnapshot>,
     },
 }
 
@@ -230,8 +232,12 @@ async fn run_interface(
                 .await
             {
                 let actions = trace_actions(&payload);
-                if !actions.is_empty() {
-                    let _ = sender.send(RuntimeEvent::ActionHistoryLoaded { actions });
+                let deliveries = trace_deliveries(&payload);
+                if !actions.is_empty() || !deliveries.is_empty() {
+                    let _ = sender.send(RuntimeEvent::TraceHistoryLoaded {
+                        actions,
+                        deliveries,
+                    });
                 }
             }
         });
@@ -569,9 +575,15 @@ fn apply_runtime_event(app: &mut App, event: RuntimeEvent, session: Option<&Conn
         RuntimeEvent::FileOperationFailed { request_id, error } => {
             app.file_picker_failed(request_id, error);
         }
-        RuntimeEvent::ActionHistoryLoaded { actions } => {
+        RuntimeEvent::TraceHistoryLoaded {
+            actions,
+            deliveries,
+        } => {
             for action in actions {
                 app.restore_agent_action(action);
+            }
+            for delivery in deliveries {
+                app.restore_message_delivery(delivery);
             }
         }
     }
@@ -587,14 +599,18 @@ fn apply_signal(app: &mut App, pid: &str, conversation_id: &str, name: &str, pay
     match name {
         "proc.run.started" => {
             if let Some(run_id) = run_id {
-                app.start_run(run_id);
+                app.start_run_at(run_id, payload.get("timestamp").and_then(Value::as_u64));
             }
         }
         "message.started" => {
             if let (Some(run_id), Some(message_id)) =
                 (run_id, payload.get("messageId").and_then(Value::as_str))
             {
-                app.start_message_stream(run_id, message_id);
+                app.start_message_stream_at(
+                    run_id,
+                    message_id,
+                    payload.get("timestamp").and_then(Value::as_u64),
+                );
             }
         }
         "message.delta" => {
@@ -634,7 +650,14 @@ fn apply_signal(app: &mut App, pid: &str, conversation_id: &str, name: &str, pay
                 .get("target")
                 .or_else(|| payload.get("args").and_then(|args| args.get("target")))
                 .and_then(Value::as_str);
-            app.start_agent_action(run_id, execution_id, name, syscall, target);
+            app.start_agent_action_at(
+                run_id,
+                execution_id,
+                name,
+                syscall,
+                target,
+                payload.get("timestamp").and_then(Value::as_u64),
+            );
         }
         "proc.run.tool.finished" => {
             if let (Some(run_id), Some(execution_id), Some(outcome)) = (
@@ -650,7 +673,7 @@ fn apply_signal(app: &mut App, pid: &str, conversation_id: &str, name: &str, pay
         }
         "proc.run.hil.requested" => {
             if let Some(approval) = approval_from_signal(payload) {
-                app.enter_approval(approval);
+                app.enter_approval_for(run_id, approval);
             }
         }
         "proc.run.finished" => {
@@ -1242,7 +1265,11 @@ fn history_moments(payload: &Value) -> Vec<Moment> {
                 .unwrap_or_else(|| format!("history:{}", message_sequence(message)));
             let role = role_from_author(message.get("author"));
             let mut moment = Moment::complete(id, role, text)
-                .with_artifacts(media_artifacts(message.get("media")));
+                .with_artifacts(media_artifacts(message.get("media")))
+                .with_timeline(
+                    message.get("sequence").and_then(Value::as_u64),
+                    message.get("createdAt").and_then(Value::as_u64),
+                );
             moment.environment = message_environment(message);
             moment.run_id = message
                 .get("runId")
@@ -1263,13 +1290,17 @@ fn commit_signal_message(app: &mut App, message: &Value) {
         .get("runId")
         .and_then(Value::as_str)
         .map(str::to_string);
-    app.commit_message(
+    app.commit_message_ordered(
         id,
         role_from_author(message.get("author")),
         text,
         run_id,
         media_artifacts(message.get("media")),
         message_environment(message),
+        MomentTimeline {
+            sequence: message.get("sequence").and_then(Value::as_u64),
+            timestamp: message.get("createdAt").and_then(Value::as_u64),
+        },
     );
 }
 
@@ -1481,6 +1512,36 @@ fn trace_actions(payload: &Value) -> Vec<AgentActionSnapshot> {
                 target,
                 status: status.to_string(),
                 live: active_run_id == Some(run_id) && status == "running",
+                started_at: span.get("startedAt").and_then(Value::as_u64),
+            })
+        })
+        .collect()
+}
+
+fn trace_deliveries(payload: &Value) -> Vec<MessageDeliverySnapshot> {
+    if payload.get("ok").and_then(Value::as_bool) != Some(true) {
+        return Vec::new();
+    }
+    payload
+        .get("spans")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|span| {
+            if span.get("kind").and_then(Value::as_str) != Some("delivery") {
+                return None;
+            }
+            let reference = span.get("reference")?;
+            if reference.get("kind").and_then(Value::as_str) != Some("delivery") {
+                return None;
+            }
+            Some(MessageDeliverySnapshot {
+                run_id: span.get("runId").and_then(Value::as_str)?.to_string(),
+                message_id: reference
+                    .get("messageId")
+                    .and_then(Value::as_str)?
+                    .to_string(),
+                started_at: span.get("startedAt").and_then(Value::as_u64)?,
             })
         })
         .collect()
@@ -1537,13 +1598,15 @@ fn message_sequence(message: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use gsv_tui_core::{Action, App, ConnectionState, FileEntry, MediaKind, Role};
+    use gsv_tui_core::{
+        Action, App, ConnectionState, FileEntry, MediaKind, MessageDeliverySnapshot, Role,
+    };
     use serde_json::json;
 
     use super::{
         apply_signal, device_environments, file_inspection_request, history_moments, key_action,
         media_artifact, parse_file_listing, parse_file_reference, parse_shell_response,
-        trace_actions, truncate_chars, FileInspectionKind, ShellResponse,
+        trace_actions, trace_deliveries, truncate_chars, FileInspectionKind, ShellResponse,
     };
 
     #[test]
@@ -1823,6 +1886,7 @@ mod tests {
                     "kind": "tool",
                     "name": "Read",
                     "status": "running",
+                    "startedAt": 42,
                     "reference": {
                         "kind": "tool",
                         "callId": "call-one",
@@ -1859,6 +1923,43 @@ mod tests {
         assert_eq!(actions[0].target.as_deref(), Some("macbook"));
         assert_eq!(actions[0].status, "running");
         assert!(actions[0].live);
+        assert_eq!(actions[0].started_at, Some(42));
+    }
+
+    #[test]
+    fn process_trace_correlates_deliveries_with_canonical_messages() {
+        let deliveries = trace_deliveries(&json!({
+            "ok": true,
+            "spans": [
+                {
+                    "id": "delivery:one",
+                    "runId": "run-one",
+                    "kind": "delivery",
+                    "startedAt": 123,
+                    "reference": {
+                        "kind": "delivery",
+                        "conversationId": "ship:one",
+                        "messageId": "message:one"
+                    }
+                },
+                {
+                    "id": "delivery:pending",
+                    "runId": "run-one",
+                    "kind": "delivery",
+                    "startedAt": 124,
+                    "reference": { "kind": "delivery", "callId": "call:two" }
+                }
+            ]
+        }));
+
+        assert_eq!(
+            deliveries,
+            vec![MessageDeliverySnapshot {
+                run_id: "run-one".to_string(),
+                message_id: "message:one".to_string(),
+                started_at: 123,
+            }]
+        );
     }
 
     #[test]

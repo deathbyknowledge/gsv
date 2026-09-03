@@ -1,6 +1,8 @@
 mod markdown;
 mod theme;
 
+use std::cmp::Ordering;
+
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -157,6 +159,12 @@ pub enum MomentState {
     Error,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MomentTimeline {
+    pub sequence: Option<u64>,
+    pub timestamp: Option<u64>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Moment {
     pub id: String,
@@ -164,6 +172,10 @@ pub struct Moment {
     pub execution: ExecutionMode,
     pub text: String,
     pub run_id: Option<String>,
+    /// Durable conversation ordering when this moment came from canonical history.
+    pub sequence: Option<u64>,
+    /// The best persisted timeline position for merging messages with run activity.
+    pub timestamp: Option<u64>,
     pub state: MomentState,
     pub artifacts: Vec<Artifact>,
     pub environment: Option<CapabilityEnvironment>,
@@ -177,6 +189,8 @@ impl Moment {
             execution: ExecutionMode::Ship,
             text: text.into(),
             run_id: None,
+            sequence: None,
+            timestamp: None,
             state: MomentState::Complete,
             artifacts: Vec::new(),
             environment: None,
@@ -195,6 +209,12 @@ impl Moment {
 
     pub fn with_execution(mut self, execution: ExecutionMode) -> Self {
         self.execution = execution;
+        self
+    }
+
+    pub fn with_timeline(mut self, sequence: Option<u64>, timestamp: Option<u64>) -> Self {
+        self.sequence = sequence;
+        self.timestamp = timestamp;
         self
     }
 }
@@ -319,6 +339,14 @@ pub struct AgentActionSnapshot {
     pub target: Option<String>,
     pub status: String,
     pub live: bool,
+    pub started_at: Option<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageDeliverySnapshot {
+    pub run_id: String,
+    pub message_id: String,
+    pub started_at: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -366,6 +394,8 @@ struct AgentAction {
     label: String,
     target: Option<String>,
     state: AgentActionState,
+    started_at: Option<u64>,
+    after_moment_id: Option<String>,
 }
 
 #[derive(Debug)]
@@ -463,6 +493,7 @@ pub struct App {
     active_shell: Option<u64>,
     next_submission_id: u64,
     approval: Option<Approval>,
+    approval_run_id: Option<String>,
     principal: String,
     environments: Vec<CapabilityEnvironment>,
     active_environment: usize,
@@ -509,6 +540,7 @@ impl App {
             active_shell: None,
             next_submission_id: 1,
             approval: None,
+            approval_run_id: None,
             principal: "you".to_string(),
             environments: vec![CapabilityEnvironment::gsv()],
             active_environment: 0,
@@ -687,6 +719,18 @@ impl App {
         syscall: &str,
         target: Option<&str>,
     ) {
+        self.start_agent_action_at(run_id, execution_id, name, syscall, target, None);
+    }
+
+    pub fn start_agent_action_at(
+        &mut self,
+        run_id: &str,
+        execution_id: &str,
+        name: &str,
+        syscall: &str,
+        target: Option<&str>,
+        started_at: Option<u64>,
+    ) {
         if run_id.is_empty()
             || execution_id.is_empty()
             || self
@@ -696,8 +740,20 @@ impl App {
         {
             return;
         }
-        self.start_run(run_id);
+        self.start_run_at(run_id, started_at);
 
+        let after_moment_id = started_at
+            .is_none()
+            .then(|| {
+                self.moments
+                    .iter()
+                    .rfind(|moment| {
+                        moment.run_id.as_deref() == Some(run_id)
+                            && moment.state != MomentState::Streaming
+                    })
+                    .map(|moment| moment.id.clone())
+            })
+            .flatten();
         let label = agent_action_label(name, syscall);
         let target = target
             .map(|target| sanitize_label(target, "target", 64))
@@ -713,6 +769,12 @@ impl App {
         {
             action.label = label;
             action.target = target;
+            if started_at.is_some() {
+                action.started_at = started_at;
+            }
+            if action.after_moment_id.is_none() {
+                action.after_moment_id = after_moment_id;
+            }
             if action.state == AgentActionState::Running {
                 self.set_activity_from_latest_action(run_id);
             }
@@ -727,7 +789,10 @@ impl App {
             label,
             target,
             state: AgentActionState::Running,
+            started_at,
+            after_moment_id,
         });
+        run.actions.sort_by(action_timeline_order);
         self.set_activity_from_latest_action(run_id);
     }
 
@@ -755,6 +820,7 @@ impl App {
             target,
             status,
             live,
+            started_at,
         } = snapshot;
         if run_id.is_empty() || execution_id.is_empty() {
             return;
@@ -787,6 +853,9 @@ impl App {
         {
             action.label = label;
             action.target = target;
+            if started_at.is_some() {
+                action.started_at = started_at;
+            }
             if action.state == AgentActionState::Running || state != AgentActionState::Running {
                 action.state = state;
             }
@@ -800,10 +869,22 @@ impl App {
                 label,
                 target,
                 state,
+                started_at,
+                after_moment_id: None,
             });
         }
+        run.actions.sort_by(action_timeline_order);
         if live {
             self.set_activity_from_latest_action(&run_id);
+        }
+    }
+
+    pub fn restore_message_delivery(&mut self, delivery: MessageDeliverySnapshot) {
+        if let Some(moment) = self.moments.iter_mut().find(|moment| {
+            moment.id == delivery.message_id
+                && moment.run_id.as_deref() == Some(delivery.run_id.as_str())
+        }) {
+            moment.timestamp = Some(delivery.started_at);
         }
     }
 
@@ -834,11 +915,19 @@ impl App {
         self.media_focus = 0;
     }
 
-    pub fn enter_approval(&mut self, mut approval: Approval) {
+    pub fn enter_approval(&mut self, approval: Approval) {
+        let run_id = self.active_run.clone();
+        self.enter_approval_for(run_id.as_deref(), approval);
+    }
+
+    pub fn enter_approval_for(&mut self, run_id: Option<&str>, mut approval: Approval) {
         approval.syscall = sanitize_label(&approval.syscall, "unknown action", 96);
         approval.target = sanitize_label(&approval.target, "unknown target", 96);
         approval.preview = sanitize_multiline(&approval.preview, 4_000);
         self.approval = Some(approval);
+        self.approval_run_id = run_id.map(str::to_string);
+        self.environment_picker = false;
+        self.file_picker = None;
         self.media_expanded = false;
     }
 
@@ -849,6 +938,7 @@ impl App {
             .is_some_and(|approval| approval.request_id == request_id)
         {
             self.approval = None;
+            self.approval_run_id = None;
         }
     }
 
@@ -1559,6 +1649,8 @@ impl App {
             execution,
             text: String::new(),
             run_id: None,
+            sequence: None,
+            timestamp: None,
             state: MomentState::Streaming,
             artifacts: Vec::new(),
             environment: None,
@@ -1624,9 +1716,21 @@ impl App {
             return;
         }
         self.pending_submission = None;
-        for local_id in [format!("local:user:{id}"), format!("local:gsv:{id}")] {
+        let local_user_id = format!("local:user:{id}");
+        for local_id in [local_user_id.clone(), format!("local:gsv:{id}")] {
             if let Some(moment) = self.moments.iter_mut().find(|moment| moment.id == local_id) {
                 moment.run_id = Some(run_id.clone());
+            }
+        }
+        if let Some(run) = self
+            .action_runs
+            .iter_mut()
+            .find(|actions| actions.run_id == run_id)
+        {
+            for action in &mut run.actions {
+                if action.started_at.is_none() && action.after_moment_id.is_none() {
+                    action.after_moment_id = Some(local_user_id.clone());
+                }
             }
         }
         if self.moments.iter().any(|moment| {
@@ -1663,11 +1767,18 @@ impl App {
     }
 
     pub fn start_run(&mut self, run_id: &str) {
+        self.start_run_at(run_id, None);
+    }
+
+    pub fn start_run_at(&mut self, run_id: &str, timestamp: Option<u64>) {
         if run_id.is_empty() {
             return;
         }
         if let Some(index) = self.streaming_moment_for(Some(run_id)) {
             self.moments[index].run_id = Some(run_id.to_string());
+            if timestamp.is_some() && self.moments[index].timestamp.is_none() {
+                self.moments[index].timestamp = timestamp;
+            }
         } else {
             self.moments.push(Moment {
                 id: format!("activity:{run_id}"),
@@ -1675,6 +1786,8 @@ impl App {
                 execution: ExecutionMode::Ship,
                 text: String::new(),
                 run_id: Some(run_id.to_string()),
+                sequence: None,
+                timestamp,
                 state: MomentState::Streaming,
                 artifacts: Vec::new(),
                 environment: None,
@@ -1693,7 +1806,16 @@ impl App {
     }
 
     pub fn start_message_stream(&mut self, run_id: &str, message_id: &str) {
-        self.start_run(run_id);
+        self.start_message_stream_at(run_id, message_id, None);
+    }
+
+    pub fn start_message_stream_at(
+        &mut self,
+        run_id: &str,
+        message_id: &str,
+        timestamp: Option<u64>,
+    ) {
+        self.start_run_at(run_id, timestamp);
         if self.moments.iter().any(|moment| moment.id == message_id) {
             return;
         }
@@ -1701,6 +1823,7 @@ impl App {
             if self.moments[index].text.is_empty() && self.moments[index].artifacts.is_empty() {
                 self.moments[index].id = message_id.to_string();
                 self.moments[index].run_id = Some(run_id.to_string());
+                self.moments[index].timestamp = timestamp;
                 return;
             }
         }
@@ -1710,6 +1833,8 @@ impl App {
             execution: ExecutionMode::Ship,
             text: String::new(),
             run_id: Some(run_id.to_string()),
+            sequence: None,
+            timestamp,
             state: MomentState::Streaming,
             artifacts: Vec::new(),
             environment: None,
@@ -1737,6 +1862,8 @@ impl App {
                     execution: ExecutionMode::Ship,
                     text: String::new(),
                     run_id: None,
+                    sequence: None,
+                    timestamp: None,
                     state: MomentState::Streaming,
                     artifacts: Vec::new(),
                     environment: None,
@@ -1815,6 +1942,8 @@ impl App {
                     execution: ExecutionMode::Ship,
                     text: error.to_string(),
                     run_id: effective_run.clone(),
+                    sequence: None,
+                    timestamp: None,
                     state: MomentState::Error,
                     artifacts: Vec::new(),
                     environment: None,
@@ -1843,6 +1972,7 @@ impl App {
             };
             self.activity = None;
             self.approval = None;
+            self.approval_run_id = None;
             if self.follow_latest {
                 self.selected = self.moments.len().saturating_sub(1);
             }
@@ -1858,6 +1988,31 @@ impl App {
         artifacts: Vec<Artifact>,
         environment: Option<CapabilityEnvironment>,
     ) {
+        self.commit_message_ordered(
+            id,
+            role,
+            text,
+            run_id,
+            artifacts,
+            environment,
+            MomentTimeline::default(),
+        );
+    }
+
+    pub fn commit_message_ordered(
+        &mut self,
+        id: impl Into<String>,
+        role: Role,
+        text: impl Into<String>,
+        run_id: Option<String>,
+        artifacts: Vec<Artifact>,
+        environment: Option<CapabilityEnvironment>,
+        timeline: MomentTimeline,
+    ) {
+        let MomentTimeline {
+            sequence,
+            timestamp,
+        } = timeline;
         let id = id.into();
         let text = text.into();
         if self.moments.iter().any(|moment| moment.id == id) {
@@ -1879,15 +2034,21 @@ impl App {
                     && moment.run_id.is_none()
                     && moment.text == text
             });
-            if let Some(moment) = exact_run
-                .or(unbound)
-                .and_then(|index| self.moments.get_mut(index))
-            {
-                moment.id = id;
-                moment.run_id = run_id;
+            if let Some(index) = exact_run.or(unbound) {
+                let old_id = self.moments[index].id.clone();
+                let moment = &mut self.moments[index];
+                moment.id = id.clone();
+                moment.run_id = run_id.clone();
                 moment.artifacts = artifacts;
+                moment.sequence = sequence;
+                moment.timestamp = timestamp;
                 if environment.is_some() {
                     moment.environment = environment;
+                }
+                for action in self.action_runs.iter_mut().flat_map(|run| &mut run.actions) {
+                    if action.after_moment_id.as_deref() == Some(old_id.as_str()) {
+                        action.after_moment_id = Some(id.clone());
+                    }
                 }
                 return;
             }
@@ -1914,6 +2075,8 @@ impl App {
                         moment.text = text;
                         moment.state = MomentState::Complete;
                         moment.artifacts = artifacts;
+                        moment.sequence = sequence;
+                        moment.timestamp = timestamp;
                     }
                     if let Some(run_id) = run_id
                         .as_deref()
@@ -1939,6 +2102,8 @@ impl App {
             execution: ExecutionMode::Ship,
             text,
             run_id,
+            sequence,
+            timestamp,
             state: MomentState::Complete,
             artifacts,
             environment,
@@ -2072,6 +2237,8 @@ impl App {
             execution: self.execution_mode,
             text,
             run_id: None,
+            sequence: None,
+            timestamp: None,
             state: MomentState::Error,
             artifacts: Vec::new(),
             environment: None,
@@ -2364,18 +2531,18 @@ impl App {
             })
     }
 
-    fn push_action_run_block(
+    fn push_action_run_segment(
         &self,
         run_id: &str,
-        rendered: &mut Vec<String>,
+        rendered: &mut Vec<(String, usize)>,
         blocks: &mut Vec<TranscriptBlock>,
         document_height: &mut u16,
         width: u16,
         activity_phase: bool,
+        cutoff: Option<u64>,
+        after_moment_id: Option<&str>,
+        flush: bool,
     ) {
-        if rendered.iter().any(|rendered| rendered == run_id) {
-            return;
-        }
         let Some(run) = self
             .action_runs
             .iter()
@@ -2383,13 +2550,73 @@ impl App {
         else {
             return;
         };
-        push_transcript_text(
-            blocks,
-            document_height,
-            render_agent_actions(run, self.theme.palette(), activity_phase),
-            width,
-        );
-        rendered.push(run_id.to_string());
+        let cursor_index = rendered
+            .iter()
+            .position(|(rendered_run_id, _)| rendered_run_id == run_id)
+            .unwrap_or_else(|| {
+                rendered.push((run_id.to_string(), 0));
+                rendered.len() - 1
+            });
+        let cursor = rendered[cursor_index].1;
+        if cursor >= run.actions.len() {
+            return;
+        }
+        if !run.expanded {
+            push_transcript_text(
+                blocks,
+                document_height,
+                render_agent_action_summary(run, self.theme.palette(), activity_phase),
+                width,
+            );
+            rendered[cursor_index].1 = run.actions.len();
+            return;
+        }
+
+        let end = if flush {
+            run.actions.len()
+        } else if let Some(after_moment_id) = after_moment_id {
+            run.actions[cursor..]
+                .iter()
+                .position(|action| action.after_moment_id.as_deref() != Some(after_moment_id))
+                .map_or(run.actions.len(), |offset| cursor + offset)
+        } else if let Some(cutoff) = cutoff {
+            run.actions[cursor..]
+                .iter()
+                .position(|action| {
+                    action
+                        .started_at
+                        .is_none_or(|started_at| started_at > cutoff)
+                })
+                .map_or(run.actions.len(), |offset| cursor + offset)
+        } else {
+            cursor
+        };
+        if end <= cursor {
+            return;
+        }
+        let visible_start = if run.live {
+            run.actions.len().saturating_sub(MAX_VISIBLE_LIVE_ACTIONS)
+        } else {
+            0
+        };
+        let start = cursor.max(visible_start);
+        if end > start {
+            let hidden = (cursor < visible_start)
+                .then_some(run.omitted.saturating_add(visible_start))
+                .unwrap_or(0);
+            push_transcript_text(
+                blocks,
+                document_height,
+                render_agent_action_segment(
+                    &run.actions[start..end],
+                    hidden,
+                    self.theme.palette(),
+                    activity_phase,
+                ),
+                width,
+            );
+        }
+        rendered[cursor_index].1 = end;
     }
 
     fn turn_artifact_count(&self) -> usize {
@@ -2534,12 +2761,7 @@ impl App {
 
         let vertical_margin = if area.height > 18 { 2 } else { 1 };
         let canvas = area.inner(Margin::new(0, vertical_margin));
-        if let Some(approval) = &self.approval {
-            self.last_max_scroll = 0;
-            render_approval(frame, canvas, approval, palette);
-        } else {
-            self.render_transcript(frame, canvas, cursor_phase, activity_phase);
-        }
+        self.render_transcript(frame, canvas, cursor_phase, activity_phase);
         if self.help_visible {
             self.media_slots.clear();
             self.render_help(frame, area);
@@ -2658,7 +2880,8 @@ impl App {
         let mut selected_artifact_index = 0_usize;
         let mut focused_media_range = None;
         let mut image_ranges = Vec::new();
-        let mut rendered_action_runs = Vec::new();
+        let mut rendered_action_counts = Vec::new();
+        let mut rendered_approval = false;
 
         for (index, moment) in self.moments.iter().enumerate() {
             if moment.role == Role::Human && document_height > 0 {
@@ -2672,13 +2895,16 @@ impl App {
             moment_starts[index] = document_height;
             if moment.role != Role::Human {
                 if let Some(run_id) = moment.run_id.as_deref() {
-                    self.push_action_run_block(
+                    self.push_action_run_segment(
                         run_id,
-                        &mut rendered_action_runs,
+                        &mut rendered_action_counts,
                         &mut blocks,
                         &mut document_height,
                         area.width,
                         activity_phase,
+                        moment.timestamp,
+                        None,
+                        false,
                     );
                 }
             }
@@ -2828,17 +3054,57 @@ impl App {
                 }
                 has_content = true;
             }
-            if moment.role == Role::Human {
-                if let Some(run_id) = moment.run_id.as_deref() {
-                    self.push_action_run_block(
+            if let Some(run_id) = moment.run_id.as_deref() {
+                self.push_action_run_segment(
+                    run_id,
+                    &mut rendered_action_counts,
+                    &mut blocks,
+                    &mut document_height,
+                    area.width,
+                    activity_phase,
+                    None,
+                    Some(&moment.id),
+                    false,
+                );
+            }
+            if let Some(run_id) = moment.run_id.as_deref() {
+                let run_continues = self.moments.get(index + 1).is_some_and(|next| {
+                    next.role != Role::Human && next.run_id.as_deref() == Some(run_id)
+                });
+                if !run_continues {
+                    self.push_action_run_segment(
                         run_id,
-                        &mut rendered_action_runs,
+                        &mut rendered_action_counts,
                         &mut blocks,
                         &mut document_height,
                         area.width,
                         activity_phase,
+                        None,
+                        None,
+                        true,
                     );
+                    if !rendered_approval && self.approval_run_id.as_deref() == Some(run_id) {
+                        if let Some(approval) = &self.approval {
+                            push_transcript_text(
+                                &mut blocks,
+                                &mut document_height,
+                                render_approval_lines(approval, palette),
+                                area.width,
+                            );
+                            rendered_approval = true;
+                        }
+                    }
                 }
+            }
+        }
+        if !rendered_approval {
+            if let Some(approval) = &self.approval {
+                push_transcript_text(
+                    &mut blocks,
+                    &mut document_height,
+                    render_approval_lines(approval, palette),
+                    area.width,
+                );
             }
         }
         self.last_image_ranges = image_ranges;
@@ -3712,29 +3978,31 @@ fn fit_prompt(prompt: Vec<Span<'static>>, width: u16) -> Vec<Span<'static>> {
     compact
 }
 
-fn render_approval(frame: &mut Frame<'_>, area: Rect, approval: &Approval, palette: Palette) {
-    let content_area = area.inner(Margin::new(2, 1));
+fn render_approval_lines(approval: &Approval, palette: Palette) -> Vec<Line<'static>> {
     let mut lines = vec![
+        Line::default(),
         Line::from(Span::styled(
-            "APPROVAL REQUIRED",
+            "approval required",
             Style::new()
                 .fg(palette.warning)
                 .add_modifier(Modifier::BOLD),
         )),
-        Line::default(),
         Line::from(vec![
-            Span::styled(&approval.syscall, Style::new().fg(palette.foreground)),
-            Span::styled("  ON  ", Style::new().fg(palette.muted)),
-            Span::styled(&approval.target, Style::new().fg(palette.accent)),
+            Span::styled(
+                approval.syscall.clone(),
+                Style::new().fg(palette.foreground),
+            ),
+            Span::styled("  on  ", Style::new().fg(palette.quiet)),
+            Span::styled(approval.target.clone(), Style::new().fg(palette.accent)),
         ]),
         Line::default(),
     ];
-    lines.extend(
-        approval
-            .preview
-            .split('\n')
-            .map(|line| Line::from(Span::styled(line, Style::new().fg(palette.muted)))),
-    );
+    lines.extend(approval.preview.split('\n').map(|line| {
+        Line::from(Span::styled(
+            line.to_string(),
+            Style::new().fg(palette.muted),
+        ))
+    }));
     lines.extend([
         Line::default(),
         Line::from(Span::styled(
@@ -3742,19 +4010,7 @@ fn render_approval(frame: &mut Frame<'_>, area: Rect, approval: &Approval, palet
             Style::new().fg(palette.muted),
         )),
     ]);
-    let text = Text::from(lines);
-    let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
-    let width = content_area.width.max(1);
-    let line_count = u16::try_from(paragraph.line_count(width))
-        .unwrap_or(u16::MAX)
-        .min(content_area.height);
-    let render_area = Rect::new(
-        content_area.x,
-        content_area.y + content_area.height.saturating_sub(line_count) / 2,
-        content_area.width,
-        line_count.max(1),
-    );
-    frame.render_widget(paragraph, render_area);
+    lines
 }
 
 fn help_line(key: &'static str, meaning: &'static str, palette: Palette) -> Line<'static> {
@@ -3791,6 +4047,15 @@ fn agent_action_status(action: &AgentAction) -> String {
     )
 }
 
+fn action_timeline_order(left: &AgentAction, right: &AgentAction) -> Ordering {
+    match (left.started_at, right.started_at) {
+        (Some(left), Some(right)) => left.cmp(&right),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
+}
+
 fn activity_cursor(palette: Palette, phase: bool) -> Span<'static> {
     Span::styled(
         if phase { "▌" } else { " " },
@@ -3816,7 +4081,7 @@ fn append_activity_cursor(lines: &mut Vec<Line<'static>>, palette: Palette, phas
     }
 }
 
-fn render_agent_actions(
+fn render_agent_action_summary(
     run: &RunActions,
     palette: Palette,
     activity_phase: bool,
@@ -3831,51 +4096,50 @@ fn render_agent_actions(
             AgentActionState::Failed | AgentActionState::Denied
         )
     });
-    if !run.expanded {
-        let glyph = if running {
-            if activity_phase {
-                "▌"
-            } else {
-                " "
-            }
-        } else if failed {
-            "×"
+    let glyph = if running {
+        if activity_phase {
+            "▌"
         } else {
-            "↳"
-        };
-        let glyph_color = if failed {
-            palette.error
-        } else if running {
-            palette.accent
-        } else {
-            palette.quiet
-        };
-        let count = run.omitted.saturating_add(run.actions.len());
-        let suffix = if count == 1 { "" } else { "s" };
-        return vec![Line::from(vec![
-            Span::raw("  "),
-            Span::styled(glyph, Style::new().fg(glyph_color)),
-            Span::styled(
-                format!(" {count} action{suffix}"),
-                Style::new().fg(palette.quiet),
-            ),
-        ])];
-    }
-
-    let visible_start = if run.live {
-        run.actions.len().saturating_sub(MAX_VISIBLE_LIVE_ACTIONS)
+            " "
+        }
+    } else if failed {
+        "×"
     } else {
-        0
+        "↳"
     };
+    let glyph_color = if failed {
+        palette.error
+    } else if running {
+        palette.accent
+    } else {
+        palette.quiet
+    };
+    let count = run.omitted.saturating_add(run.actions.len());
+    let suffix = if count == 1 { "" } else { "s" };
+    vec![Line::from(vec![
+        Span::raw("  "),
+        Span::styled(glyph, Style::new().fg(glyph_color)),
+        Span::styled(
+            format!(" {count} action{suffix}"),
+            Style::new().fg(palette.quiet),
+        ),
+    ])]
+}
+
+fn render_agent_action_segment(
+    actions: &[AgentAction],
+    hidden: usize,
+    palette: Palette,
+    activity_phase: bool,
+) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    let hidden = run.omitted.saturating_add(visible_start);
     if hidden > 0 {
         lines.push(Line::from(Span::styled(
             format!("    … {hidden} earlier"),
             Style::new().fg(palette.quiet),
         )));
     }
-    for action in &run.actions[visible_start..] {
+    for action in actions {
         let (glyph, color) = match action.state {
             AgentActionState::Running => (if activity_phase { "▌" } else { " " }, palette.accent),
             AgentActionState::Completed => ("✓", palette.principal),
@@ -4037,10 +4301,10 @@ mod tests {
     use ratatui::Terminal;
 
     use super::{
-        atomic_media_scroll, image_is_partial, sanitize_status, text_metrics, Action, App,
-        Approval, Artifact, CapabilityEnvironment, ConnectionState, Effect, ExecutionMode,
-        FileEntry, FileReference, ImageRange, MediaKind, Moment, MomentState, Role,
-        ScrollDirection, Theme,
+        atomic_media_scroll, image_is_partial, sanitize_status, text_metrics, Action,
+        AgentActionSnapshot, App, Approval, Artifact, CapabilityEnvironment, ConnectionState,
+        Effect, ExecutionMode, FileEntry, FileReference, ImageRange, MediaKind,
+        MessageDeliverySnapshot, Moment, MomentState, Role, ScrollDirection, Theme,
     };
 
     fn image_artifact(index: usize) -> Artifact {
@@ -4336,6 +4600,97 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(expanded.contains("✓ read · macbook"));
+        Ok(())
+    }
+
+    #[test]
+    fn expanded_actions_follow_message_delivery_order_after_recovery(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut command =
+            Moment::complete("command", Role::Human, "do it").with_timeline(Some(1), Some(100));
+        command.run_id = Some("run:one".to_string());
+        let mut first = Moment::complete("message:one", Role::Intelligence, "first reply")
+            .with_timeline(Some(2), Some(300));
+        first.run_id = Some("run:one".to_string());
+        let mut second = Moment::complete("message:two", Role::Intelligence, "second reply")
+            .with_timeline(Some(3), Some(500));
+        second.run_id = Some("run:one".to_string());
+        let mut app = App::new(ConnectionState::Ready);
+        app.replace_history(vec![command, first, second]);
+        for (execution_id, name, started_at) in [("read", "Read", 200), ("write", "Write", 400)] {
+            app.restore_agent_action(AgentActionSnapshot {
+                run_id: "run:one".to_string(),
+                execution_id: execution_id.to_string(),
+                name: name.to_string(),
+                syscall: format!("fs.{}", name.to_ascii_lowercase()),
+                target: Some("macbook".to_string()),
+                status: "ok".to_string(),
+                live: false,
+                started_at: Some(started_at),
+            });
+        }
+        app.restore_message_delivery(MessageDeliverySnapshot {
+            run_id: "run:one".to_string(),
+            message_id: "message:one".to_string(),
+            started_at: 300,
+        });
+        app.dispatch(Action::ToggleActions);
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|frame| app.render(frame))?;
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(80)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>();
+        let row = |needle: &str| {
+            rendered
+                .iter()
+                .position(|line| line.contains(needle))
+                .expect("timeline item")
+        };
+        assert!(row("read · macbook") < row("first reply"));
+        assert!(row("first reply") < row("write · macbook"));
+        assert!(row("write · macbook") < row("second reply"));
+        Ok(())
+    }
+
+    #[test]
+    fn approval_stays_inline_with_the_transcript() -> Result<(), Box<dyn std::error::Error>> {
+        let mut app = App::new(ConnectionState::Ready);
+        app.replace_history(vec![Moment::complete(
+            "answer",
+            Role::Intelligence,
+            "still visible",
+        )]);
+        app.start_run("run:one");
+        app.enter_approval_for(
+            Some("run:one"),
+            Approval {
+                request_id: "approval:one".to_string(),
+                syscall: "shell.exec".to_string(),
+                target: "macbook".to_string(),
+                preview: "rm draft.txt".to_string(),
+            },
+        );
+
+        let backend = TestBackend::new(80, 20);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|frame| app.render(frame))?;
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("still visible"));
+        assert!(rendered.contains("approval required"));
+        assert!(rendered.contains("rm draft.txt"));
+        assert!(rendered.contains("type a request"));
         Ok(())
     }
 
