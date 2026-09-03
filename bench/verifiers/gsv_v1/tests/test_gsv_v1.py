@@ -720,7 +720,15 @@ def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
                         "agent": {"config": {"model": "legacy/example"}},
                         "rewards": {"scenario_outcome": {"score": 0.8}},
                         "timing": {"agent": {"start": 1.0, "end": 3.0}},
-                        "calls": [{"time": {"start": 1.0, "end": 2.0}}],
+                        "calls": [
+                            {
+                                "time": {"start": 1.0, "end": 2.0},
+                                "error": {
+                                    "type": "ProviderError",
+                                    "status_code": 429,
+                                },
+                            }
+                        ],
                         "info": {
                             "gsv": {"scenarioId": "scenario-a"},
                             "gsv_evaluation": {
@@ -781,6 +789,9 @@ def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
     assert model["agent_seconds"] == 60.0
     assert model["wall_seconds"] == 30.0
     assert model["usage_coverage"] == 1.0
+    assert model["request_errors"] == 0
+    assert model["request_error_statuses"] == {}
+    assert model["request_error_types"] == {}
     assert model["input_tokens"] == 4_500
     assert model["completion_tokens"] == 300
     assert model["cached_input_rate"] == 1 / 3
@@ -820,12 +831,16 @@ def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
         "score_mean": 2 / 3,
     }
     assert legacy["usage_coverage"] == 0.0
+    assert legacy["request_errors"] == 1
+    assert legacy["request_error_statuses"] == {"429": 1}
+    assert legacy["request_error_types"] == {"ProviderError": 1}
     assert legacy["input_tokens"] is None
     assert legacy["completion_tokens"] is None
     assert legacy["listed_cost_usd"] is None
     assert legacy["listed_cost_complete"] is None
     assert "qwen/example" in render_markdown(summary)
     assert "legacy/example" in render_markdown(summary)
+    assert "Failed model requests" in render_markdown(summary)
     assert "n/a" in render_markdown(summary)
 
     regraded = summarize_matrix(

@@ -224,6 +224,9 @@ def summarize_matrix(
         reasoning_tokens = 0
         call_count = 0
         usage_call_count = 0
+        request_error_count = 0
+        request_error_statuses: dict[str, int] = defaultdict(int)
+        request_error_types: dict[str, int] = defaultdict(int)
         error_count = 0
         milestones: dict[str, dict[str, Any]] = {}
         dimensions: dict[str, dict[str, Any]] = {}
@@ -263,6 +266,23 @@ def summarize_matrix(
                         continue
                     call_count += 1
                     request_seconds += _duration(call.get("time"))
+                    call_error = call.get("error")
+                    if call_error is not None:
+                        request_error_count += 1
+                        if isinstance(call_error, dict):
+                            status = call_error.get("status_code")
+                            error_type = call_error.get("type")
+                            request_error_statuses[
+                                str(status) if status is not None else "unknown"
+                            ] += 1
+                            request_error_types[
+                                error_type
+                                if isinstance(error_type, str)
+                                else "unknown"
+                            ] += 1
+                        else:
+                            request_error_statuses["unknown"] += 1
+                            request_error_types["unknown"] += 1
                     usage = call.get("usage")
                     if not isinstance(usage, dict):
                         continue
@@ -501,6 +521,9 @@ def summarize_matrix(
                 "agent_seconds_p50": _percentile(agent_seconds, 0.5),
                 "agent_seconds_p95": _percentile(agent_seconds, 0.95),
                 "request_seconds": request_seconds,
+                "request_errors": request_error_count,
+                "request_error_statuses": dict(sorted(request_error_statuses.items())),
+                "request_error_types": dict(sorted(request_error_types.items())),
                 "usage_calls": usage_call_count,
                 "usage_coverage": (
                     usage_call_count / call_count if call_count else 0.0
@@ -657,6 +680,27 @@ def render_markdown(summary: dict[str, Any]) -> str:
                 for status, count in model["terminal_outcomes"].items()
             )
             lines.append(f"| {model['model']} | {outcomes or 'n/a'} |")
+    if any(model["request_errors"] for model in models):
+        lines.extend(
+            [
+                "",
+                "| Model | Failed model requests | Statuses | Types |",
+                "| --- | ---: | --- | --- |",
+            ]
+        )
+        for model in models:
+            statuses = ", ".join(
+                f"{status}: {count}"
+                for status, count in model["request_error_statuses"].items()
+            )
+            error_types = ", ".join(
+                f"{error_type}: {count}"
+                for error_type, count in model["request_error_types"].items()
+            )
+            lines.append(
+                f"| {model['model']} | {model['request_errors']} | "
+                f"{statuses or 'n/a'} | {error_types or 'n/a'} |"
+            )
     if any(model["families"] for model in models):
         lines.extend(
             [
