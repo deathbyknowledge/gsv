@@ -35,6 +35,9 @@ one was observed; network, timeout, policy, admission, protocol, and settlement
 failures remain distinguishable when no response existed. Workload classes let
 operators separate interactive, background, delegated IPC, compaction, Kernel,
 and mail-intake reliability without exposing a process or request identifier.
+Retryable provider attempts that fail before a fallback route takes over are
+reported separately, so a recovered outage or rate limit remains observable
+without turning the logical request into a failure.
 
 Operational telemetry and product analytics are separate purposes. A managed
 consumer derives unrelated pseudonyms for the two streams with different HMAC
