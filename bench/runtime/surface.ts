@@ -49,11 +49,15 @@ import type {
   GsvSemanticLogEntry,
   GsvSurfaceArtifact,
   GsvSurfaceObservation,
+  GsvSurfacePartialArtifact,
   GsvSurfaceScenario,
   SyntheticRunSnapshot,
 } from "./schema";
 
 export type GsvSurfaceModel = (context: Context) => Promise<AssistantMessage>;
+export type GsvSurfaceCheckpointWriter = (
+  artifact: GsvSurfacePartialArtifact,
+) => Promise<void>;
 
 const SURFACE_DEFINITIONS: ToolDefinition[] = [
   FS_READ_DEFINITION,
@@ -83,6 +87,7 @@ type SyntheticProcessEpochState = {
 export async function runGsvSurfaceScenario(
   scenario: GsvSurfaceScenario,
   generate: GsvSurfaceModel,
+  writeCheckpoint?: GsvSurfaceCheckpointWriter,
 ): Promise<GsvSurfaceArtifact> {
   const kernel = SyntheticKernel.fromSpec(
     scenario.world,
@@ -98,6 +103,7 @@ export async function runGsvSurfaceScenario(
     scenario.family,
     scenario.entryProcessId,
     generate,
+    writeCheckpoint,
   );
   let outcome: SyntheticProcessRunOutcome = {
     status: "invalid_action",
@@ -169,6 +175,7 @@ class SyntheticEpisode {
     private readonly scenarioFamily: string,
     private readonly entryProcessId: string,
     private readonly generate: GsvSurfaceModel,
+    private readonly writeCheckpoint?: GsvSurfaceCheckpointWriter,
   ) {
     this.kernel.setRecorder((entry) => this.log.push(structuredClone(entry)));
     this.kernel.setDelegateRunner(async (request) => this.runProcess(request));
@@ -267,9 +274,11 @@ class SyntheticEpisode {
         lastProjection,
         context,
       ));
+      await this.checkpoint("model.request", request.processId, run, turn);
       const assistant = await this.generate(context);
       messages.push({ ...assistant, timestamp });
       timestamp += 1;
+      await this.checkpoint("model.response", request.processId, run, turn);
       const toolCalls = assistant.content.filter(
         (block): block is ToolCall => block.type === "toolCall",
       );
@@ -562,6 +571,35 @@ class SyntheticEpisode {
       artifact.resultText = outcome.resultText;
     }
     return artifact;
+  }
+
+  private async checkpoint(
+    phase: GsvSurfacePartialArtifact["phase"],
+    activeProcessId: string,
+    run: number,
+    turn: number,
+  ): Promise<void> {
+    if (!this.writeCheckpoint) return;
+    const lastObservation = this.observations.at(-1);
+    if (!lastObservation) {
+      throw new Error("Synthetic checkpoint requires a Process observation");
+    }
+    await this.writeCheckpoint({
+      schemaVersion: 1,
+      scenarioId: this.scenarioId,
+      scenarioSeed: this.scenarioSeed,
+      scenarioFamily: this.scenarioFamily,
+      entryProcessId: this.entryProcessId,
+      phase,
+      activeProcessId,
+      run,
+      turn,
+      committedMessages: [...this.committedMessages],
+      completedRuns: structuredClone(this.runs),
+      lastObservation: structuredClone(lastObservation),
+      log: structuredClone(this.log),
+      world: this.kernel.snapshot(),
+    });
   }
 
   private processEpoch(

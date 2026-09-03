@@ -1,9 +1,37 @@
+import asyncio
+import json
 from pathlib import Path
 
 import verifiers.v1 as vf
 
 SCENARIO_PATH = "gsv-scenario.json"
 ARTIFACT_PATH = "gsv-artifact.json"
+PARTIAL_ARTIFACT_PATH = "gsv-partial-artifact.json"
+MAX_PARTIAL_ARTIFACT_BYTES = 32 * 1024 * 1024
+
+
+async def capture_partial_artifact(
+    trace: vf.Trace,
+    runtime: vf.Runtime,
+    expected_scenario_id: str | None = None,
+) -> None:
+    try:
+        raw = await runtime.read(
+            PARTIAL_ARTIFACT_PATH,
+            max_bytes=MAX_PARTIAL_ARTIFACT_BYTES,
+        )
+        artifact = json.loads(raw)
+    # Diagnostics must never replace the original launch/finalization failure.
+    except (Exception, asyncio.CancelledError):  # noqa: BLE001
+        return
+    if not isinstance(artifact, dict) or artifact.get("schemaVersion") != 1:
+        return
+    if (
+        expected_scenario_id is not None
+        and artifact.get("scenarioId") != expected_scenario_id
+    ):
+        return
+    trace.info["gsv_partial"] = artifact
 
 
 def default_repo_root() -> Path:
@@ -29,7 +57,6 @@ class GsvHarness(vf.Harness[GsvHarnessConfig]):
         mcp_urls: dict[str, str],
         data: vf.TaskData,
     ) -> vf.ProgramResult:
-        del trace, data
         if mcp_urls:
             raise ValueError("The GSV surface harness does not expose MCP servers")
 
@@ -46,14 +73,24 @@ class GsvHarness(vf.Harness[GsvHarnessConfig]):
             "GSV_BENCH_MODEL_SECRET": secret,
             "GSV_BENCH_MODEL": ctx.model,
         }
-        return await runtime.run_program(
-            [
-                str(tsx),
-                str(runner),
-                "--scenario",
-                SCENARIO_PATH,
-                "--artifact",
-                ARTIFACT_PATH,
-            ],
-            env,
-        )
+        try:
+            return await runtime.run_program(
+                [
+                    str(tsx),
+                    str(runner),
+                    "--scenario",
+                    SCENARIO_PATH,
+                    "--artifact",
+                    ARTIFACT_PATH,
+                    "--partial-artifact",
+                    PARTIAL_ARTIFACT_PATH,
+                ],
+                env,
+            )
+        except (Exception, asyncio.CancelledError):
+            await capture_partial_artifact(
+                trace,
+                runtime,
+                getattr(data, "scenario_id", None),
+            )
+            raise

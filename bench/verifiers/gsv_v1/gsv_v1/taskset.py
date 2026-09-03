@@ -7,7 +7,11 @@ import verifiers.v1 as vf
 
 from gsv_v1.evaluation import evaluate_scenario, validate_evaluation
 from gsv_v1.families import load_scenarios
-from gsv_v1.harness import ARTIFACT_PATH, SCENARIO_PATH
+from gsv_v1.harness import (
+    ARTIFACT_PATH,
+    SCENARIO_PATH,
+    capture_partial_artifact,
+)
 from gsv_v1.terminal_bench import (
     grade_terminal_bench,
     load_terminal_bench_scenarios,
@@ -80,6 +84,11 @@ class GsvTask(vf.Task[GsvData]):
         # Preserve any runtime/decoding failure while still owning target cleanup.
         except (Exception, asyncio.CancelledError) as error:  # noqa: BLE001
             artifact_error = error
+            await capture_partial_artifact(
+                trace,
+                runtime,
+                self.data.scenario_id,
+            )
         if self.data.source == "terminal-bench":
             if self.data.terminal_task_dir is None:
                 raise ValueError("Terminal-Bench task has no source directory")

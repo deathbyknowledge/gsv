@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import { formatContextProjectionEvent } from "../../workers/gateway/src/prompts/context-events";
 import { SyntheticKernel } from "./kernel";
 import { parseGsvSurfaceScenario } from "./scenario";
+import type { GsvSurfacePartialArtifact } from "./schema";
 import {
   runGsvSurfaceScenario,
   runSyntheticProcess,
@@ -33,13 +34,20 @@ describe("GSV Process surface", () => {
       })),
     ];
     const seen: Context[] = [];
+    const checkpoints: GsvSurfacePartialArtifact[] = [];
 
-    const artifact = await runGsvSurfaceScenario(scenario, async (context) => {
-      seen.push(context);
-      const next = scripted.shift();
-      if (!next) throw new Error("Unexpected model turn");
-      return next;
-    });
+    const artifact = await runGsvSurfaceScenario(
+      scenario,
+      async (context) => {
+        seen.push(context);
+        const next = scripted.shift();
+        if (!next) throw new Error("Unexpected model turn");
+        return next;
+      },
+      async (checkpoint) => {
+        checkpoints.push(checkpoint);
+      },
+    );
 
     expect(artifact.status).toBe("yielded");
     expect(artifact.committedMessages).toEqual(["gpu-lab ready"]);
@@ -76,6 +84,28 @@ describe("GSV Process surface", () => {
       role: "user",
       content: delta?.type === "context.delta" ? delta.content : undefined,
     });
+    expect(checkpoints.map(({ phase }) => phase)).toEqual([
+      "model.request",
+      "model.response",
+      "model.request",
+      "model.response",
+    ]);
+    expect(checkpoints[0]).toMatchObject({
+      schemaVersion: 1,
+      scenarioId: "target-appears-after-inspection",
+      activeProcessId: "ship",
+      run: 1,
+      turn: 1,
+      log: [{ type: "run.started", processId: "ship", run: 1 }],
+      world: { processes: { ship: { state: "running" } } },
+    });
+    expect(checkpoints[2]?.log.map(({ type }) => type)).toEqual([
+      "run.started",
+      "tool.call",
+      "tool.result",
+      "world.transition",
+      "context.delta",
+    ]);
   });
 
   it("rejects yield until the current responsibility batch is handled", async () => {

@@ -20,6 +20,24 @@ timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 run_prefix="${GSV_BENCH_RUN_PREFIX:-matrix-$timestamp}"
 matrix_dir="${GSV_BENCH_OUTPUT_DIR:-$package_dir/outputs/$run_prefix}"
 models=("$@")
+gsv_git_commit="$(git -C "$repo_root" rev-parse HEAD)"
+gsv_git_dirty=false
+if [[ -n "$(git -C "$repo_root" status --short)" ]]; then
+  gsv_git_dirty=true
+fi
+harness_source_sha256="$(
+  cd "$repo_root"
+  {
+    find bench/runtime -type f -name '*.ts' -print0
+    find bench/verifiers/gsv_v1/gsv_v1 -type f \
+      \( -name '*.py' -o -name '*.json' \) -print0
+    printf '%s\0' bench/scripts/run-verifiers-v1-matrix.sh
+  } \
+    | sort -z \
+    | xargs -0 sha256sum \
+    | sha256sum \
+    | cut -d ' ' -f 1
+)"
 
 if [[ ! -e "$scenario" ]]; then
   echo "scenario does not exist: $scenario" >&2
@@ -65,10 +83,43 @@ fi
   printf 'parallel_models=%q\n' "$parallel_models"
   printf 'timeout_seconds=%q\n' "$timeout_seconds"
   printf 'max_tokens=%q\n' "$max_tokens"
+  printf 'gsv_git_commit=%q\n' "$gsv_git_commit"
+  printf 'gsv_git_dirty=%q\n' "$gsv_git_dirty"
+  printf 'harness_source_sha256=%q\n' "$harness_source_sha256"
   printf 'models='
   printf '%q ' "${models[@]}"
   printf '\n'
 } >"$matrix_dir/run.env"
+models_json="$(printf '%s\n' "${models[@]}" | jq -R . | jq -s .)"
+jq -n \
+  --arg started_at "$timestamp" \
+  --arg scenario "$scenario" \
+  --arg scenario_sha256 "$scenario_sha256" \
+  --arg max_tokens "$max_tokens" \
+  --arg gsv_git_commit "$gsv_git_commit" \
+  --argjson gsv_git_dirty "$gsv_git_dirty" \
+  --arg harness_source_sha256 "$harness_source_sha256" \
+  --argjson num_tasks "$num_tasks" \
+  --argjson rollouts "$rollouts" \
+  --argjson model_concurrency "$model_concurrency" \
+  --argjson parallel_models "$parallel_models" \
+  --argjson timeout_seconds "$timeout_seconds" \
+  --argjson models "$models_json" \
+  '{
+    started_at: $started_at,
+    scenario: $scenario,
+    scenario_sha256: $scenario_sha256,
+    num_tasks: $num_tasks,
+    rollouts: $rollouts,
+    model_concurrency: $model_concurrency,
+    parallel_models: $parallel_models,
+    timeout_seconds: $timeout_seconds,
+    max_tokens: (if $max_tokens == "" then null else ($max_tokens | tonumber) end),
+    models: $models,
+    gsv_git_commit: $gsv_git_commit,
+    gsv_git_dirty: $gsv_git_dirty,
+    harness_source_sha256: $harness_source_sha256
+  }' >"$matrix_dir/run.json"
 
 pricing_tmp="$(mktemp "$matrix_dir/.pricing.XXXXXX")"
 if prime --plain inference models --output json >"$pricing_tmp"; then

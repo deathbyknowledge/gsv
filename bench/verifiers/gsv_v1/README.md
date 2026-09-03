@@ -93,7 +93,10 @@ assignment per rollout trajectory. Each assignment contains a concise benchmark
 orientation, the complete rubric and deterministic score diagnostics, an exact
 JSONL line/trace selector, a destination for the review, and a prompt that asks a
 fresh reviewer for a readable timeline, score audit, root-cause classification,
-and debugging implications. An orchestrator can therefore spawn one dedicated
+and debugging implications. It also records frozen run provenance, timing, token
+usage, provider failures, and the last semantic checkpoint for an interrupted
+rollout. An interrupted trajectory is explicitly marked `not_scored` instead of
+being presented as a zero. An orchestrator can therefore spawn one dedicated
 agent per line without embedding or truncating the often-large raw trajectory;
 the reviewer reads the selected source trace itself. Reviews are qualitative
 debugging artifacts and never replace or mutate deterministic scores.

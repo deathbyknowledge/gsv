@@ -10,6 +10,7 @@ import verifiers.v1 as vf
 from gsv_v1 import GsvHarness, GsvTaskset, terminal_bench
 from gsv_v1.evaluation import evaluate_predicate, evaluate_scenario, matches_subset
 from gsv_v1.families import expand_family, load_scenarios
+from gsv_v1.harness import PARTIAL_ARTIFACT_PATH, capture_partial_artifact
 from gsv_v1.report import (
     load_evaluations,
     load_pricing,
@@ -136,6 +137,43 @@ async def test_finalize_accepts_artifacts_larger_than_one_command_output() -> No
     await task.finalize(trace, Runtime())
 
     assert trace.info["gsv"]["capturedOutput"] == artifact["capturedOutput"]
+
+
+async def test_captures_valid_partial_artifact_for_timeout_diagnostics() -> None:
+    partial = {
+        "schemaVersion": 1,
+        "scenarioId": "stateful-timeout",
+        "phase": "model.request",
+        "activeProcessId": "ship",
+        "run": 2,
+        "turn": 7,
+        "log": [{"type": "run.started", "processId": "ship", "run": 2}],
+    }
+
+    class Runtime:
+        async def read(self, path, *, max_bytes):
+            assert path == PARTIAL_ARTIFACT_PATH
+            assert max_bytes == 32 * 1024 * 1024
+            return json.dumps(partial).encode()
+
+    trace = SimpleNamespace(info={})
+    await capture_partial_artifact(trace, Runtime(), "stateful-timeout")
+
+    assert trace.info["gsv_partial"] == partial
+
+
+async def test_ignores_partial_artifact_from_another_scenario() -> None:
+    class Runtime:
+        async def read(self, path, *, max_bytes):
+            del path, max_bytes
+            return json.dumps(
+                {"schemaVersion": 1, "scenarioId": "another-scenario"}
+            ).encode()
+
+    trace = SimpleNamespace(info={})
+    await capture_partial_artifact(trace, Runtime(), "expected-scenario")
+
+    assert trace.info == {}
 
 
 def test_evaluation_predicates_count_and_order_semantic_events() -> None:

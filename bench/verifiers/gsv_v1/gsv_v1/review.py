@@ -4,17 +4,29 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
+from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-REVIEW_SCHEMA_VERSION = 1
+REVIEW_SCHEMA_VERSION = 2
 
 
-def _number(value: object) -> float:
+def _optional_number(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, int | float):
-        return 0.0
+        return None
     return float(value)
+
+
+def _duration(value: object) -> float | None:
+    if not isinstance(value, dict):
+        return None
+    start = _optional_number(value.get("start"))
+    end = _optional_number(value.get("end"))
+    if start is None or end is None or end < start:
+        return None
+    return end - start
 
 
 def _model_id(trace: dict[str, Any], run_name: str) -> str:
@@ -102,7 +114,15 @@ def _benchmark_summary(trace: dict[str, Any]) -> dict[str, object]:
         "scheduled_events": [
             {
                 key: event[key]
-                for key in ("id", "at", "description")
+                for key in (
+                    "id",
+                    "at",
+                    "delayMs",
+                    "when",
+                    "content",
+                    "description",
+                    "evictProcess",
+                )
                 if key in event
             }
             for event in events
@@ -113,11 +133,47 @@ def _benchmark_summary(trace: dict[str, Any]) -> dict[str, object]:
     }
 
 
-def _outcome_summary(trace: dict[str, Any]) -> dict[str, object]:
+def _run_metadata(matrix_dir: Path) -> dict[str, object]:
+    json_path = matrix_dir / "run.json"
+    if json_path.is_file():
+        document = json.loads(json_path.read_text())
+        return document if isinstance(document, dict) else {}
+    env_path = matrix_dir / "run.env"
+    if not env_path.is_file():
+        return {}
+    result: dict[str, object] = {}
+    for line in env_path.read_text().splitlines():
+        key, separator, raw_value = line.partition("=")
+        if not separator or not key:
+            continue
+        try:
+            values = shlex.split(raw_value)
+        except ValueError:
+            result[key] = raw_value
+            continue
+        result[key] = values[0] if len(values) == 1 else values
+    return result
+
+
+def _nested_number(value: object, *path: str) -> float | None:
+    current = value
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return _optional_number(current)
+
+
+def _outcome_summary(
+    trace: dict[str, Any],
+    envelope: dict[str, Any],
+) -> dict[str, object]:
     info = trace.get("info")
     info = info if isinstance(info, dict) else {}
     artifact = info.get("gsv")
     artifact = artifact if isinstance(artifact, dict) else {}
+    partial = info.get("gsv_partial")
+    partial = partial if isinstance(partial, dict) else {}
     evaluation = info.get("gsv_evaluation")
     evaluation = evaluation if isinstance(evaluation, dict) else {}
     rewards = trace.get("rewards")
@@ -126,34 +182,116 @@ def _outcome_summary(trace: dict[str, Any]) -> dict[str, object]:
     scenario_reward = scenario_reward if isinstance(scenario_reward, dict) else {}
 
     request_errors = []
+    request_seconds = 0.0
+    prompt_tokens = 0
+    cached_input_tokens = 0
+    completion_tokens = 0
+    reasoning_tokens = 0
+    usage_calls = 0
+    finish_reasons: Counter[str] = Counter()
     calls = trace.get("calls")
     if isinstance(calls, list):
         for index, call in enumerate(calls):
-            if not isinstance(call, dict) or call.get("error") is None:
+            if not isinstance(call, dict):
                 continue
-            request_errors.append(
-                {"call_index": index, **_error_summary(call["error"])}
-            )
+            duration = _duration(call.get("time"))
+            if duration is not None:
+                request_seconds += duration
+            finish_reason = call.get("finish_reason")
+            if isinstance(finish_reason, str):
+                finish_reasons[finish_reason] += 1
+            usage = call.get("usage")
+            if isinstance(usage, dict):
+                usage_calls += 1
+                prompt_tokens += int(_optional_number(usage.get("prompt_tokens")) or 0)
+                cached_input_tokens += int(
+                    _optional_number(usage.get("cached_input_tokens")) or 0
+                )
+                completion_tokens += int(
+                    _optional_number(usage.get("completion_tokens")) or 0
+                )
+                reasoning_tokens += int(
+                    _optional_number(usage.get("reasoning_tokens")) or 0
+                )
+            if call.get("error") is not None:
+                request_errors.append(
+                    {"call_index": index, **_error_summary(call["error"])}
+                )
 
-    episode_errors = trace.get("errors")
+    trace_errors = trace.get("errors")
+    envelope_errors = envelope.get("errors")
+    reward_score = _optional_number(scenario_reward.get("score"))
+    raw_score = _optional_number(evaluation.get("raw_score"))
+    strict_pass = evaluation.get("strict_pass")
+    if not isinstance(strict_pass, bool):
+        strict_pass = None
+    agent_timing = trace.get("timing")
+    agent_timing = (
+        agent_timing.get("agent") if isinstance(agent_timing, dict) else None
+    )
+    config = trace.get("agent")
+    config = config.get("config") if isinstance(config, dict) else None
     return {
-        "reward_score": _number(scenario_reward.get("score")),
-        "raw_score": _number(evaluation.get("raw_score")),
-        "strict_pass": evaluation.get("strict_pass") is True,
+        "evaluation_status": "scored"
+        if reward_score is not None and bool(evaluation)
+        else "not_scored",
+        "reward_score": reward_score,
+        "raw_score": raw_score,
+        "strict_pass": strict_pass,
         "hard_constraints_passed": evaluation.get("hard_constraints_passed"),
+        "artifact_present": bool(artifact),
+        "partial_diagnostic_present": bool(partial),
+        "partial_diagnostic": {
+            key: partial[key]
+            for key in ("phase", "activeProcessId", "run", "turn")
+            if key in partial
+        },
         "artifact_status": artifact.get("status"),
         "artifact_error": artifact.get("error"),
         "process_runs": artifact.get("runs", []),
         "stop_condition": trace.get("stop_condition"),
-        "episode_errors": [
+        "trace_ok": trace.get("ok"),
+        "envelope_ok": envelope.get("ok"),
+        "trace_errors": [
             _error_summary(error)
-            for error in episode_errors
+            for error in trace_errors
         ]
-        if isinstance(episode_errors, list)
+        if isinstance(trace_errors, list)
+        else [],
+        "envelope_errors": [
+            _error_summary(error)
+            for error in envelope_errors
+        ]
+        if isinstance(envelope_errors, list)
         else [],
         "request_errors": request_errors,
         "calls": len(calls) if isinstance(calls, list) else 0,
+        "finish_reasons": dict(sorted(finish_reasons.items())),
+        "timing": {
+            "rollout_budget_seconds": _nested_number(
+                config, "timeout", "rollout"
+            ),
+            "rollout_elapsed_seconds": _duration(agent_timing),
+            "model_seconds": _nested_number(agent_timing, "model", "duration"),
+            "harness_seconds": _nested_number(
+                agent_timing, "harness", "duration"
+            ),
+            "request_seconds": request_seconds,
+        },
+        "usage": {
+            "usage_calls": usage_calls,
+            "prompt_tokens": prompt_tokens,
+            "cached_input_tokens": cached_input_tokens,
+            "input_tokens": prompt_tokens + cached_input_tokens,
+            "completion_tokens": completion_tokens,
+            "reasoning_tokens": reasoning_tokens,
+        },
     }
+
+
+def _score_label(value: object) -> str:
+    number = _optional_number(value)
+    return "not scored" if number is None else f"{number:.6f}"
 
 
 def _review_prompt(assignment: dict[str, Any]) -> str:
@@ -167,9 +305,9 @@ Episode id: {source['episode_id']}
 Trace: {source['trace_file']} JSONL line {source['line']}, trace index {source['trace_index']} (trace id {source['trace_id']})
 Model: {assignment['model']}
 Scenario: {assignment['scenario_id']}
-Recorded reward/raw/strict: {outcome['reward_score']:.6f} / {outcome['raw_score']:.6f} / {outcome['strict_pass']}
+Recorded reward/raw/strict: {_score_label(outcome['reward_score'])} / {_score_label(outcome['raw_score'])} / {outcome['strict_pass'] if outcome['strict_pass'] is not None else 'not scored'}
 
-Read only the complete selected trace from that JSONL envelope, including its embedded frozen scenario, model nodes, calls, normalized GSV artifact, and gsv_evaluation. Use the assignment's benchmark and rubric fields as a concise orientation, but treat the selected raw trace as the evidence. The benchmark simulates a real GSV Kernel and Process surface: targets are capability environments, delegated agents are separate Processes, responsibilities are durable r12y records, scheduled facts arrive as ordered GSV events across yields, and adapter deliveries are committed user-visible messages. The weighted reward gives partial credit only for scenario-defined outcome milestones. Milestone prerequisites still apply. A strict pass requires every required milestone and every hard constraint. Any hard-constraint violation zeros reward but does not erase raw progress. Provider errors and harness timeouts are reliability outcomes, not evidence that an unobserved task step succeeded.
+Read only the complete selected trace from that JSONL envelope, including its embedded frozen scenario, model nodes, calls, normalized GSV artifact or partial diagnostic when present, and gsv_evaluation. Use the assignment's benchmark, rubric, outcome, and provenance fields as a concise orientation, but treat the selected raw trace as the evidence. "Not scored" means no final artifact/evaluation exists; it is not a measured zero. The benchmark simulates a real GSV Kernel and Process surface: targets are capability environments, delegated agents are separate Processes, responsibilities are durable r12y records, scheduled facts arrive as ordered GSV events across yields, and adapter deliveries are committed user-visible messages. The weighted reward gives partial credit only for scenario-defined outcome milestones. Milestone prerequisites still apply. A strict pass requires every required milestone and every hard constraint. Any hard-constraint violation zeros reward but does not erase raw progress. Provider errors and harness timeouts are reliability outcomes, not evidence that an unobserved task step succeeded.
 
 Produce readable Markdown with these exact sections:
 1. Verdict — one paragraph stating what happened and the primary failure or success.
@@ -192,6 +330,7 @@ def _safe_component(value: str) -> str:
 def build_review_assignments(matrix_dir: Path) -> list[dict[str, Any]]:
     """Build a stable one-reviewer assignment for every stored trajectory."""
     matrix_dir = matrix_dir.resolve()
+    run_metadata = _run_metadata(matrix_dir)
     assignments: list[dict[str, Any]] = []
     for trace_file in sorted(matrix_dir.glob("*/traces.jsonl")):
         with trace_file.open() as lines:
@@ -245,9 +384,13 @@ def build_review_assignments(matrix_dir: Path) -> list[dict[str, Any]]:
                             "trace_id": trace_id,
                         },
                         "review_output": review_output,
+                        "provenance": {
+                            "matrix": run_metadata,
+                            "verifiers": trace.get("verifiers", {}),
+                        },
                         "benchmark": _benchmark_summary(trace),
                         "rubric": _task_data(trace).get("evaluation", {}),
-                        "outcome": _outcome_summary(trace),
+                        "outcome": _outcome_summary(trace, envelope),
                         "scoring": evaluation
                         if isinstance(evaluation, dict)
                         else {},

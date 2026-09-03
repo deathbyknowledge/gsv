@@ -377,3 +377,20 @@ export type GsvSurfaceArtifact = {
   world: SyntheticWorldSnapshot;
   error?: string;
 };
+
+export type GsvSurfacePartialArtifact = {
+  schemaVersion: 1;
+  scenarioId: string;
+  scenarioSeed: string;
+  scenarioFamily: string;
+  entryProcessId: string;
+  phase: "model.request" | "model.response";
+  activeProcessId: string;
+  run: number;
+  turn: number;
+  committedMessages: string[];
+  completedRuns: SyntheticRunSnapshot[];
+  lastObservation: GsvSurfaceObservation;
+  log: GsvSemanticLogEntry[];
+  world: SyntheticWorldSnapshot;
+};
