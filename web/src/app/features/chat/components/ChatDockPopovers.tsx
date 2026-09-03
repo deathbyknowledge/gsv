@@ -15,7 +15,7 @@ type ChatDockPopoversProps = {
   activeProcessId: string;
   archiveOpen: boolean;
   canFreeContext: boolean;
-  compactKeepLast: number;
+  compactTargetPercent: number;
   compactPending: boolean;
   hasArchivedMessages: boolean;
   onFreeContext: () => void;
@@ -68,7 +68,7 @@ function modelProfileIsActive(
   if (!config) {
     return false;
   }
-  return config.profile?.id === profile.id || config.profile?.name === profile.name;
+  return config.modelId === profile.id;
 }
 
 export function ChatDockPopovers({
@@ -76,7 +76,7 @@ export function ChatDockPopovers({
   activeProcessId,
   archiveOpen,
   canFreeContext,
-  compactKeepLast,
+  compactTargetPercent,
   compactPending,
   hasArchivedMessages,
   onFreeContext,
@@ -99,13 +99,13 @@ export function ChatDockPopovers({
   canStartNewTask,
   taskCount,
 }: ChatDockPopoversProps) {
-  const processReasoning = processAiConfig?.values["config/ai/reasoning"]?.trim() ?? "";
+  const processReasoning = processAiConfig?.reasoning?.trim() ?? "";
   const currentReasoning = (processReasoning || context?.reasoning || "").trim().toLowerCase();
 
   const contextActions: PopoverActionProps[] = hasActiveProcess
     ? [
         {
-          label: compactPending ? "FREEING CONTEXT" : `FREE CONTEXT · KEEP ${compactKeepLast}`,
+          label: compactPending ? "FREEING CONTEXT" : `FREE CONTEXT · TARGET ${compactTargetPercent}%`,
           onClick: onFreeContext,
           glyph: <FreeContextGlyph size={13} />,
           disabled: !canFreeContext,

@@ -13,7 +13,7 @@ import type { SyscallName } from "../syscalls";
 import type {
   JsonObject,
   JsonValue,
-  ProcAiConfigSnapshot,
+  ProcAiConfig,
   ProcContextState,
   ProcMessageMetadata,
   ProcMessageModelMetadata,
@@ -54,7 +54,7 @@ import {
 } from "./history";
 import {
   PROCESS_AI_CONFIG_STORE_KEY,
-  parseProcessAiConfigSnapshot,
+  parseProcessAiConfig,
 } from "./ai-config";
 import { materializeLegacyToolResultImages } from "./tool-result-media";
 import { z } from "zod";
@@ -1434,23 +1434,23 @@ export class ProcessStore {
     this.sql.exec("DELETE FROM process_kv WHERE key = ?", key);
   }
 
-  getAiConfigSnapshot(): ProcAiConfigSnapshot | null {
+  getAiConfig(): ProcAiConfig | null {
     const raw = this.getValue(PROCESS_AI_CONFIG_STORE_KEY);
     if (!raw) {
       return null;
     }
     try {
-      return parseProcessAiConfigSnapshot(raw);
+      return parseProcessAiConfig(raw);
     } catch {
       return null;
     }
   }
 
-  setAiConfigSnapshot(snapshot: ProcAiConfigSnapshot): void {
-    this.setValue(PROCESS_AI_CONFIG_STORE_KEY, JSON.stringify(snapshot));
+  setAiConfig(config: ProcAiConfig): void {
+    this.setValue(PROCESS_AI_CONFIG_STORE_KEY, JSON.stringify(config));
   }
 
-  clearAiConfigSnapshot(): void {
+  clearAiConfig(): void {
     this.deleteValue(PROCESS_AI_CONFIG_STORE_KEY);
   }
 

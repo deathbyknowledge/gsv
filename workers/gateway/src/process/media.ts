@@ -143,9 +143,9 @@ export async function storeIncomingProcessMedia(
 
     if (shouldTranscribeAudio(item, next, bytes, options)) {
       const result = await transcribeIncomingAudio(options.ai, base64!, {
-        provider: options.audioTranscriptionProvider,
+        provider: options.audioTranscriptionProvider!,
         apiKey: options.audioTranscriptionApiKey,
-        model: options.audioTranscriptionModel,
+        model: options.audioTranscriptionModel!,
         mimeType: item.mimeType,
         filename: item.filename,
         signal: options.signal,
@@ -306,7 +306,10 @@ function shouldTranscribeAudio(
   if (stored.transcription && stored.transcription.trim().length > 0) {
     return false;
   }
-  const provider = options.audioTranscriptionProvider?.trim() || "workers-ai";
+  const provider = options.audioTranscriptionProvider?.trim();
+  if (!provider || !options.audioTranscriptionModel?.trim()) {
+    return false;
+  }
   if (isWorkersAiProvider(provider) && !options.ai) {
     return false;
   }
@@ -346,9 +349,9 @@ async function transcribeIncomingAudio(
   ai: AudioTranscriptionBinding | undefined,
   base64: string,
   options: {
-    provider?: string;
+    provider: string;
     apiKey?: string;
-    model?: string;
+    model: string;
     mimeType?: string;
     filename?: string;
     signal?: AbortSignal;

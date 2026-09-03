@@ -223,10 +223,11 @@ linked-human peer. The adapter service account never receives ambient
 
 The `message` shell command exposes delivery context and the explicit path for a
 separate or cross-channel message. `message current` describes the directed endpoint
-and includes its opaque destination id when it is an adapter surface,
+and the transport-neutral current-conversation commands. It includes an opaque
+destination id when it is an adapter surface only for a later or additional delivery;
 `message destinations` lists authorized observed surfaces, and `message attach`
 registers files for the next current-conversation message. A literal `message send <<'GSV_MESSAGE'` block sends without finishing the run
-on its directed endpoint. `message send --to ... --also` sends a separate message. `--also` is
+on its directed endpoint, including native clients. `message send --to ... --also` sends a separate message. `--also` is
 required for every separate send during an active run,
 preventing an accidental duplicate.
 

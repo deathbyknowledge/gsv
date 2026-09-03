@@ -7,26 +7,21 @@ import { canReadConfigKey } from "../../kernel/config-access";
 import type { KernelRefs, ProcessViewCall } from "../refs";
 import type { ArgsOf, ResultOf } from "../../syscalls";
 import type {
+  AiModelEntry,
   ProcessIdentity,
-  ProcAiConfigSnapshot,
+  ProcAiConfig,
   ProcHistorySegment,
   ScheduleRecord,
 } from "@humansandmachines/gsv/protocol";
 import type { ProcessRecord } from "../../kernel/processes";
 import {
-  PROCESS_AI_CONFIG_KEYS,
-  PROCESS_AI_CONFIG_SECRET_KEYS,
-  omitProcessAiConfigSecrets,
-  parseProcessAiModelProfiles,
-  processAiModelProfileSecretConfigKey,
   processAiConfigDirEntries,
-  processAiConfigSuffix,
-  processAiPathToConfigKey,
-  redactProcessAiConfigSnapshot,
-  redactProcessAiConfigValue,
-  redactProcessAiConfigValues,
-  type ProcessAiModelProfile,
 } from "../../process/ai-config";
+import {
+  parseAiModelStack,
+  SYSTEM_AI_MODELS_CONFIG_KEY,
+  userAiModelsConfigKey,
+} from "../../kernel/ai-model-stack";
 import type { MountBackend, ExtendedMountStat } from "../mount";
 import { normalizePath } from "../utils";
 
@@ -34,10 +29,6 @@ const TEXT_ENCODER = new TextEncoder();
 const PROC_HISTORY_PAGE_SIZE = 500;
 const SCHEDULER_VIEW_PAGE_SIZE = 500;
 const SCHEDULER_LOG_HISTORY_LIMIT = 50;
-const PROCESS_AI_CONFIG_KEY_SET = new Set<string>(PROCESS_AI_CONFIG_KEYS);
-
-type ProcessAiConfigValues = Record<string, string>;
-
 export class KernelMountBackend implements MountBackend {
   constructor(
     private readonly identity: ProcessIdentity,
@@ -289,41 +280,31 @@ export class KernelMountBackend implements MountBackend {
     if (parts.length === 0) return undefined;
 
     const attr = parts.join("/");
-    const local = await this.getProcessAiConfig(pid, false);
+    const local = await this.getProcessAiConfig(pid);
 
-    if (attr === "profile") {
-      return `${local?.profile?.name ?? local?.profile?.id ?? ""}\n`;
+    if (attr === "model") {
+      return `${local?.modelId ?? ""}\n`;
     }
 
-    if (attr === "profiles") {
-      return jsonText(this.listProcAiProfiles(proc.ownerUid).map((profile) => ({
-        ...profile,
-        values: redactProcessAiConfigValues(profile.values),
-      })));
+    if (attr === "models") {
+      return jsonText(this.listProcAiModels(proc.ownerUid));
     }
 
     if (attr === "local.json") {
-      return jsonText(redactProcessAiConfigSnapshot(local));
+      return jsonText(local);
     }
 
     if (attr === "effective.json") {
-      const effective = this.buildProcAiEffectiveValues(proc, local?.values ?? {}, local?.profile);
       return jsonText({
-        profile: local?.profile ?? null,
-        values: redactProcessAiConfigValues(effective),
+        modelId: this.effectiveProcAiModelId(proc, local),
+        reasoning: this.effectiveProcAiReasoning(proc, local),
       });
     }
 
-    const key = processAiPathToConfigKey(parts);
-    if (!key) {
-      return undefined;
+    if (attr === "reasoning") {
+      return `${this.effectiveProcAiReasoning(proc, local) ?? ""}\n`;
     }
-
-    const effective = this.buildProcAiEffectiveValues(proc, local?.values ?? {}, local?.profile);
-    if (!Object.prototype.hasOwnProperty.call(effective, key)) {
-      return undefined;
-    }
-    return `${redactProcessAiConfigValue(key, effective[key])}\n`;
+    return undefined;
   }
 
   private async writeProc(path: string, content: string): Promise<void> {
@@ -342,20 +323,30 @@ export class KernelMountBackend implements MountBackend {
     }
 
     const aiParts = parts.slice(2);
-    if (aiParts.length === 1 && aiParts[0] === "profile") {
-      await this.writeProcAiProfile(proc, content);
-      return;
-    }
-
-    const key = processAiPathToConfigKey(aiParts);
-    if (key) {
+    if (aiParts.length === 1 && aiParts[0] === "model") {
+      const modelId = content.trim().toLowerCase();
+      if (modelId && !this.listProcAiModels(proc.ownerUid).some((model) => model.id === modelId)) {
+        throw new Error(`ENOENT: AI model not found: ${modelId}`);
+      }
       const result = await this.processRequest(
         proc.processId,
         "proc.ai.config.set",
-        { key, value: content.trim() },
+        { modelId: modelId || null },
       );
       if (!result?.ok) {
-        throw new Error(`EIO: failed to update process AI config`);
+        throw new Error(`EIO: failed to update process AI model`);
+      }
+      return;
+    }
+
+    if (aiParts.length === 1 && aiParts[0] === "reasoning") {
+      const result = await this.processRequest(
+        proc.processId,
+        "proc.ai.config.set",
+        { reasoning: content.trim() || null },
+      );
+      if (!result?.ok) {
+        throw new Error(`EIO: failed to update process AI reasoning`);
       }
       return;
     }
@@ -363,108 +354,42 @@ export class KernelMountBackend implements MountBackend {
     throw new Error(`ENOENT: no such file or directory, open '${path}'`);
   }
 
-  private async writeProcAiProfile(proc: ProcessRecord, content: string): Promise<void> {
-    const selector = content.trim();
-    if (!selector) {
-      const result = await this.processRequest(
-        proc.processId,
-        "proc.ai.config.set",
-        { clear: true },
-      );
-      if (!result?.ok) {
-        throw new Error(`EIO: failed to clear process AI config`);
-      }
-      return;
-    }
-
-    const profile = this.findProcAiProfile(proc.ownerUid, selector);
-    if (!profile) {
-      throw new Error(`ENOENT: AI model profile not found: ${selector}`);
-    }
-
-    const result = await this.processRequest(
-      proc.processId,
-      "proc.ai.config.set",
-      {
-        values: omitProcessAiConfigSecrets(profile.values),
-        profile: {
-          id: profile.id,
-          name: profile.name,
-        },
-      },
-    );
-    if (!result?.ok) {
-      throw new Error(`EIO: failed to apply process AI profile`);
-    }
-  }
-
   private async getProcessAiConfig(
     pid: string,
-    redacted: boolean,
-  ): Promise<ProcAiConfigSnapshot | null> {
+  ): Promise<ProcAiConfig | null> {
     const result = await this.processRequest(
       pid,
       "proc.ai.config.get",
-      { redacted },
+      {},
     );
     return result?.ok ? result.config : null;
   }
 
-  private buildProcAiEffectiveValues(
+  private effectiveProcAiModelId(
     proc: ProcessRecord,
-    localValues: ProcessAiConfigValues,
-    profile: ProcAiConfigSnapshot["profile"] | null | undefined,
-  ) {
-    const values: ProcessAiConfigValues = {};
-    const accountUids = proc.ownerUid === proc.uid ? [proc.uid] : [proc.uid, proc.ownerUid];
-
-    for (const key of PROCESS_AI_CONFIG_KEYS) {
-      const suffix = processAiConfigSuffix(key);
-      let value: string | null = null;
-      for (const uid of accountUids) {
-        value = this.kernel?.config?.get(`users/${uid}/ai/${suffix}`) ?? null;
-        if (value !== null) break;
-      }
-      value ??= this.kernel?.config?.get(key) ?? null;
-      if (value !== null) {
-        values[key] = value;
-      }
-    }
-
-    if (profile?.id) {
-      for (const key of PROCESS_AI_CONFIG_SECRET_KEYS) {
-        const value = this.kernel?.config?.get(
-          processAiModelProfileSecretConfigKey(proc.ownerUid, profile.id, key),
-        ) ?? null;
-        if (value !== null) {
-          values[key] = value;
-        }
-      }
-    }
-
-    for (const [key, value] of Object.entries(localValues)) {
-      if (PROCESS_AI_CONFIG_KEY_SET.has(key)) {
-        values[key] = value;
-      }
-    }
-
-    return values;
+    local: ProcAiConfig | null,
+  ): string | null {
+    return local?.modelId
+      ?? this.kernel?.config?.get(`users/${proc.uid}/ai/preferred_model`)
+      ?? this.listProcAiModels(proc.ownerUid)[0]?.id
+      ?? null;
   }
 
-  private listProcAiProfiles(ownerUid: number): ProcessAiModelProfile[] {
-    return parseProcessAiModelProfiles(
-      this.kernel?.config?.get(`users/${ownerUid}/ai/model_profiles`),
-      ownerUid,
-      this.kernel ? (key) => this.kernel!.config.get(key) : undefined,
-    );
+  private effectiveProcAiReasoning(proc: ProcessRecord, local: ProcAiConfig | null): string | null {
+    return local?.reasoning
+      ?? this.kernel?.config?.get(`users/${proc.uid}/ai/reasoning`)
+      ?? this.kernel?.config?.get(`users/${proc.ownerUid}/ai/reasoning`)
+      ?? this.kernel?.config?.get("config/ai/reasoning")
+      ?? null;
   }
 
-  private findProcAiProfile(ownerUid: number, selector: string): ProcessAiModelProfile | null {
-    const normalized = selector.trim().toLowerCase();
-    return this.listProcAiProfiles(ownerUid).find((profile) =>
-      profile.id.toLowerCase() === normalized ||
-      profile.name.toLowerCase() === normalized
-    ) ?? null;
+  private listProcAiModels(ownerUid: number): AiModelEntry[] {
+    const ownerKey = userAiModelsConfigKey(ownerUid);
+    const key = this.kernel?.config?.getExplicit(ownerKey) != null
+      ? ownerKey
+      : SYSTEM_AI_MODELS_CONFIG_KEY;
+    const stack = parseAiModelStack(this.kernel?.config?.get(key));
+    return stack?.models ?? [];
   }
 
   private readDev(path: string): string | undefined {

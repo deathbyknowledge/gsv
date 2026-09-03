@@ -247,8 +247,14 @@ const MOCK_CONFIG: ConsoleConfigEntry[] = [
   { key: "config/server/name", value: "gsv-prime", redacted: false },
   { key: "config/server/timezone", value: "UTC", redacted: false },
   { key: "config/shell/network_enabled", value: "true", redacted: false },
-  { key: "config/ai/model", value: "claude-opus-4-8", redacted: false },
-  { key: "config/ai/provider", value: "anthropic", redacted: false },
+  {
+    key: "config/ai/models",
+    value: JSON.stringify({
+      version: 1,
+      models: [{ id: "claude", name: "Claude Opus", provider: "anthropic", model: "claude-opus-4-8" }],
+    }),
+    redacted: false,
+  },
 ];
 
 const MOCK_OVERVIEW_DATA: ConsoleOverviewData = {

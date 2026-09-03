@@ -71,6 +71,7 @@ import {
   REQUEST_CANCEL_SIGNAL,
   bundleAdapterMedia,
   cancelBinaryBody,
+  adapterSurfaceSchema,
   procHilRequestSchema,
   resourceBlockSchema,
   type BinaryFrameDescriptor,
@@ -258,7 +259,9 @@ type AdapterRouteDeliveryOutcome =
   | { state: "skipped" }
   | { state: "retryable" | "permanent" | "ambiguous"; error: string };
 
-function adapterTypingActivity(route: AdapterRunRoute, active: boolean): AdapterActivity {
+type AdapterDeliveryRoute = Omit<AdapterRunRoute, "createdAt" | "expiresAt">;
+
+function adapterTypingActivity(route: AdapterDeliveryRoute, active: boolean): AdapterActivity {
   return {
     kind: "typing",
     active,
@@ -271,6 +274,8 @@ function adapterTypingActivity(route: AdapterRunRoute, active: boolean): Adapter
 type AdapterRouteDeliveryRetry = {
   runId: string;
   processId: string;
+  /** Owned destination snapshot; absent only on tasks created before this field shipped. */
+  route?: AdapterDeliveryRoute;
   event: string;
   payload?: JsonValue;
   attempt: number;
@@ -280,16 +285,21 @@ type ProcessDeliveryNoticeRetry = {
   noticeId: string;
   runId: string;
   processId: string;
-  deliveryKind: "hil" | "final";
+  /** `final` is accepted only for durable tasks created by older gateways. */
+  deliveryKind: "hil" | "message" | "final";
+  deliveryId?: string;
   requestId?: string;
   state: "permanent" | "ambiguous" | "exhausted";
   message: string;
-  cleanupRunRoute: boolean;
+  /** Owned destination snapshot; absent only on tasks created before this field shipped. */
+  route?: AdapterDeliveryRoute;
+  /** Legacy field ignored because terminal run handling owns route cleanup. */
+  cleanupRunRoute?: boolean;
 };
 
 type ProcessDeliveryNoticePayload = Omit<
   ProcessDeliveryNoticeRetry,
-  "processId" | "cleanupRunRoute"
+  "processId" | "deliveryId" | "route" | "cleanupRunRoute"
 >;
 
 class ScheduleTargetDispatchError extends Error {
@@ -473,6 +483,21 @@ const execStatusPayloadSchema = z.object({
   exitCode: z.number().optional(),
   signal: z.string().optional(),
 });
+const adapterDeliveryRouteSchema = z.object({
+  kind: z.literal("adapter"),
+  runId: z.string(),
+  processId: z.string(),
+  uid: z.number().int().nonnegative(),
+  destination: z.object({
+    kind: z.literal("adapter"),
+    adapter: z.string(),
+    accountId: z.string(),
+    actorId: z.string(),
+    surface: adapterSurfaceSchema,
+  }),
+  replyToId: z.string().optional(),
+  routeGeneration: z.string().optional(),
+});
 
 const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
   z.object({
@@ -480,6 +505,7 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
     payload: z.object({
       runId: z.string(),
       processId: z.string(),
+      route: adapterDeliveryRouteSchema.optional(),
       event: z.string(),
       payload: z.json().optional(),
       attempt: z.number().int().positive(),
@@ -506,11 +532,13 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
       noticeId: z.string(),
       runId: z.string(),
       processId: z.string(),
-      deliveryKind: z.enum(["hil", "final"]),
+      deliveryKind: z.enum(["hil", "message", "final"]),
+      deliveryId: z.string().optional(),
       requestId: z.string().optional(),
       state: z.enum(["permanent", "ambiguous", "exhausted"]),
       message: z.string(),
-      cleanupRunRoute: z.boolean(),
+      route: adapterDeliveryRouteSchema.optional(),
+      cleanupRunRoute: z.boolean().optional(),
     }),
   }),
   z.object({ callback: z.literal("onRouteExpired"), payload: z.string() }),
@@ -1906,18 +1934,15 @@ export class Kernel extends DurableObject<GatewayEnv> {
       return;
     }
     if (frame.signal === "proc.run.finished") {
-      const payload = userFrame.payload;
-      if (payload?.delivery?.kind !== "message") {
-        this.runRoutes.delete(runId);
-        await setAdapterActivityForKernel(
-          this.bindings,
-          this.installationId,
-          route.destination.adapter,
-          route.destination.accountId,
-          route.destination.surface,
-          adapterTypingActivity(route, false),
-        ).catch(() => undefined);
-      }
+      this.runRoutes.delete(runId);
+      await setAdapterActivityForKernel(
+        this.bindings,
+        this.installationId,
+        route.destination.adapter,
+        route.destination.accountId,
+        route.destination.surface,
+        adapterTypingActivity(route, false),
+      ).catch(() => undefined);
       return;
     }
     await this.deliverAdapterRouteEvent(route, userFrame);
@@ -1964,7 +1989,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   }
 
   private async attemptAdapterRouteDelivery(
-    route: AdapterRunRoute,
+    route: AdapterDeliveryRoute,
     frame: SignalFrame,
     attempt: number,
   ): Promise<void> {
@@ -2000,18 +2025,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
       return;
     }
 
-    if (outcome.state === "delivered" || outcome.state === "skipped") {
-      if (frame.signal === "message.committed") {
-        this.runRoutes.delete(route.runId);
-      }
-      return;
-    }
+    if (outcome.state === "delivered" || outcome.state === "skipped") return;
 
     const terminalState = outcome.state === "retryable" ? "exhausted" : outcome.state;
     const deliveryError = outcome.error;
-    const label = frame.signal === "proc.run.hil.requested"
-      ? "approval notification"
-      : "message";
+    const approval = frame.signal === "proc.run.hil.requested";
+    const label = approval ? "approval notification" : "message";
     await this.queueProcessDeliveryNotice(route, frame, {
       state: terminalState,
       message: terminalState === "ambiguous"
@@ -2020,10 +2039,26 @@ export class Kernel extends DurableObject<GatewayEnv> {
           ? `The ${label} could not be delivered: ${deliveryError}`
           : `The ${label} stopped after ${attempt} retry-safe delivery attempts: ${deliveryError}`,
     });
+    emitTelemetry(this.bindings, {
+      installationId: this.installationId,
+      component: "gateway",
+      event: {
+        stream: "operational",
+        name: "adapter.route_delivery.failed",
+        properties: {
+          adapter: route.destination.adapter.trim().toLowerCase(),
+          deliveryKind: approval ? "approval" : "message",
+          surface: route.destination.surface.kind,
+          outcome: "failed",
+          failureKind: terminalState,
+          attempts: attempt,
+        },
+      },
+    });
   }
 
   private async queueAdapterRouteDelivery(
-    route: AdapterRunRoute,
+    route: AdapterDeliveryRoute,
     frame: SignalFrame,
     attempt: number,
   ): Promise<void> {
@@ -2031,6 +2066,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     const retry: AdapterRouteDeliveryRetry = {
       runId: route.runId,
       processId: route.processId,
+      route,
       event: frame.signal,
       attempt,
     };
@@ -2047,7 +2083,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   }
 
   async onAdapterRouteDelivery(input: AdapterRouteDeliveryRetry): Promise<void> {
-    const route = this.runRoutes.get(input.runId);
+    const route = input.route ?? this.runRoutes.get(input.runId);
     if (!route || route.kind !== "adapter" || route.processId !== input.processId) {
       return;
     }
@@ -2081,11 +2117,11 @@ export class Kernel extends DurableObject<GatewayEnv> {
   }
 
   private async queueProcessDeliveryNotice(
-    route: AdapterRunRoute,
+    route: AdapterDeliveryRoute,
     frame: SignalFrame,
     outcome: { state: "permanent" | "ambiguous" | "exhausted"; message: string },
   ): Promise<void> {
-    const deliveryKind = frame.signal === "proc.run.hil.requested" ? "hil" : "final";
+    const deliveryKind = frame.signal === "proc.run.hil.requested" ? "hil" : "message";
     const parsedHilRequest = deliveryKind === "hil"
       ? procHilRequestSchema.safeParse(frame.payload)
       : null;
@@ -2095,17 +2131,23 @@ export class Kernel extends DurableObject<GatewayEnv> {
     if (deliveryKind === "hil" && !requestId) {
       return;
     }
+    const parsedMessage = deliveryKind === "message"
+      ? z.object({ message: z.object({ id: z.string().min(1) }) }).safeParse(frame.payload)
+      : null;
+    const deliveryId = parsedMessage?.success ? parsedMessage.data.message.id : undefined;
     await this.queueProcessDeliveryNoticeRecord(route, {
       deliveryKind,
+      deliveryId,
       requestId,
       ...outcome,
     });
   }
 
   private async queueProcessDeliveryNoticeRecord(
-    route: AdapterRunRoute,
+    route: AdapterDeliveryRoute,
     input: {
-      deliveryKind: "hil" | "final";
+      deliveryKind: "hil" | "message";
+      deliveryId?: string;
       requestId?: string;
       state: "permanent" | "ambiguous" | "exhausted";
       message: string;
@@ -2115,7 +2157,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     const noticeId = await stableOpaqueId("process-delivery-notice", [
       route.runId,
       deliveryKind,
-      requestId ?? "",
+      input.deliveryId ?? requestId ?? "",
       input.state,
     ]);
     const notice: ProcessDeliveryNoticeRetry = {
@@ -2123,10 +2165,11 @@ export class Kernel extends DurableObject<GatewayEnv> {
       runId: route.runId,
       processId: route.processId,
       deliveryKind,
+      route,
       state: input.state,
       message: input.message,
-      cleanupRunRoute: deliveryKind === "final",
     };
+    if (input.deliveryId) notice.deliveryId = input.deliveryId;
     if (requestId) notice.requestId = requestId;
     await this.schedule(
       new Date(Date.now() + 10),
@@ -2140,7 +2183,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   }
 
   async onProcessDeliveryNotice(input: ProcessDeliveryNoticeRetry): Promise<void> {
-    const route = this.runRoutes.get(input.runId);
+    const route = input.route ?? this.runRoutes.get(input.runId);
     if (!route || route.kind !== "adapter" || route.processId !== input.processId) {
       return;
     }
@@ -2167,9 +2210,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
       signal: "proc.delivery.notice",
       payload,
     });
-    if (input.cleanupRunRoute) {
-      this.runRoutes.delete(input.runId);
-    }
   }
 
   private updateProcessRuntimeFromSignal(
@@ -2397,7 +2437,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   }
 
   private async deliverAdapterRouteEvent(
-    route: AdapterRunRoute,
+    route: AdapterDeliveryRoute,
     frame: SignalFrame,
   ): Promise<AdapterRouteDeliveryOutcome> {
     const { adapter, accountId, surface } = route.destination;
@@ -2486,7 +2526,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   }
 
   private async deliverAdapterRouteReply(
-    route: AdapterRunRoute,
+    route: AdapterDeliveryRoute,
     message: {
       deliveryId: string;
       text: string;

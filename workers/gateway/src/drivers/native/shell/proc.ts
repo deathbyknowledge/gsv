@@ -82,6 +82,7 @@ type ParsedProcCompact = {
   pid: string;
   summary?: string;
   generateSummary?: boolean;
+  targetPressure?: number;
   keepLast?: number;
   throughMessageId?: number;
 };
@@ -919,6 +920,7 @@ function parseProcCompactCommand(args: string[], ctx: KernelContext): ParsedProc
   let pid: string | undefined;
   let summary: string | undefined;
   let generateSummary = false;
+  let targetPressure: number | undefined;
   let keepLast: number | undefined;
   let throughMessageId: number | undefined;
 
@@ -938,6 +940,17 @@ function parseProcCompactCommand(args: string[], ctx: KernelContext): ParsedProc
       generateSummary = true;
       continue;
     }
+    if (current === "--target-pressure") {
+      index += 1;
+      targetPressure = parsePressureShellNumber(
+        requireShellOptionValue(args[index], current),
+        current,
+      );
+      if (targetPressure >= 1) {
+        throw new Error("--target-pressure must be > 0 and < 1");
+      }
+      continue;
+    }
     if (current === "--keep-last") {
       index += 1;
       keepLast = parseNonNegativeShellInteger(requireShellOptionValue(args[index], current), current);
@@ -954,8 +967,15 @@ function parseProcCompactCommand(args: string[], ctx: KernelContext): ParsedProc
   if (summary && generateSummary) {
     throw new Error("use either --summary or --generate-summary, not both");
   }
-  if ((keepLast === undefined) === (throughMessageId === undefined)) {
-    throw new Error("provide exactly one of --keep-last or --through-message-id");
+  if (
+    Number(targetPressure !== undefined)
+      + Number(keepLast !== undefined)
+      + Number(throughMessageId !== undefined)
+    !== 1
+  ) {
+    throw new Error(
+      "provide exactly one of --target-pressure, --keep-last, or --through-message-id",
+    );
   }
 
   const parsed: ParsedProcCompact = {
@@ -968,6 +988,7 @@ function parseProcCompactCommand(args: string[], ctx: KernelContext): ParsedProc
   }
   if (keepLast !== undefined) parsed.keepLast = keepLast;
   if (throughMessageId !== undefined) parsed.throughMessageId = throughMessageId;
+  if (targetPressure !== undefined) parsed.targetPressure = targetPressure;
   return parsed;
 }
 
@@ -1304,12 +1325,13 @@ function procUsage(): string {
     "  proc policy [--pid PID] [--overflow auto-compact|fail] [--compact-at N] [--compact-to N]",
     "  proc history [--pid PID] [--tail] [--limit N] [--offset N] [--json] [--full]",
     "  proc segment <segment-id> [--pid PID] [--limit N] [--offset N] [--json]",
-    "  proc compact [--pid PID] (--keep-last N | --through-message-id ID) [--summary TEXT | --generate-summary]",
+    "  proc compact [--pid PID] (--target-pressure N | --keep-last N | --through-message-id ID) [--summary TEXT | --generate-summary]",
     "  proc fork (<segment-id> | --message-id ID) [--pid PID] [--label LABEL] [--segment-only]",
     "  proc send <pid> [--metadata-json json] <message>",
     "  proc call <pid> [--metadata-json json] [--timeout 60s] <message>",
     "",
-    "proc compact archives a history prefix and records a segment. Without",
+    "proc compact archives a history prefix and records a segment. A target",
+    "pressure retains that fraction of the model input budget. Without",
     "--summary, it asks the process model to generate the visible summary.",
     "proc fork branches a new process from a message or restores a compacted segment.",
     "proc history reads the live transcript for this process or another visible process.",

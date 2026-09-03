@@ -89,7 +89,11 @@ describe("process media", () => {
           filename: "voice.ogg",
         }),
       ],
-      { ai },
+      {
+        ai,
+        audioTranscriptionProvider: "workers-ai",
+        audioTranscriptionModel: DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
+      },
     );
 
     const media = parseStoredProcessMedia(raw);
@@ -128,7 +132,11 @@ describe("process media", () => {
           filename: "voice.ogg",
         }),
       ],
-      { ai },
+      {
+        ai,
+        audioTranscriptionProvider: "workers-ai",
+        audioTranscriptionModel: DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
+      },
     );
 
     const media = parseStoredProcessMedia(raw);
@@ -155,7 +163,12 @@ describe("process media", () => {
       0,
       pid,
       [await storedMedia(pid, { type: "audio", mimeType: "audio/ogg" })],
-      { ai, signal: controller.signal },
+      {
+        ai,
+        signal: controller.signal,
+        audioTranscriptionProvider: "workers-ai",
+        audioTranscriptionModel: DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
+      },
     );
     await vi.waitFor(() => expect(ai.run).toHaveBeenCalledOnce());
 

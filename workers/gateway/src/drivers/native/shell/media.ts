@@ -221,8 +221,12 @@ async function runTxt2Img(
   }
   requireCommandCapability(ctx, "ai.image.generate");
   const out = requireOption(parsed, "out", "-o/--out");
+  const outputPath = resolvePath(shellCtx, out);
   const prompt = readTextArgument(parsed.positionals, shellCtx, "prompt");
   const timeoutMs = parsePositiveIntOption(optionValue(parsed, "timeout-ms"), "--timeout-ms");
+  const format = normalizeImageGenerationFormat(
+    optionValue(parsed, "format") ?? inferImageGenerationFormat(outputPath),
+  );
 
   const requestCtx = withShellSignal(ctx, shellCtx);
   const request: AiImageGenerateArgs = {
@@ -230,7 +234,7 @@ async function runTxt2Img(
     model: optionValue(parsed, "model"),
     size: optionValue(parsed, "size"),
     quality: optionValue(parsed, "quality"),
-    format: optionValue(parsed, "format"),
+    format,
   };
   if (timeoutMs !== undefined) request.timeoutMs = timeoutMs;
   const response = await handlers.imageGenerate(request, requestCtx);
@@ -242,14 +246,13 @@ async function runTxt2Img(
       ? `image generation returned a URL instead of inline image data: ${result.url}`
       : "image generation returned no image data");
   }
-  const outputPath = await usingStream(body.stream, async () => {
-    const path = resolvePath(shellCtx, out);
-    await fs.writeFileStream(path, body.stream, {
+  await usingStream(body.stream, async () => {
+    assertGeneratedMediaMatchesPath(outputPath, result.image.mimeType, "image");
+    await fs.writeFileStream(outputPath, body.stream, {
       expectedSize: result.image.size,
       contentType: result.image.mimeType,
       signal: requestCtx.requestSignal,
     });
-    return path;
   });
 
   if (hasOption(parsed, "json")) {
@@ -334,10 +337,15 @@ async function runTts(
   }
   requireCommandCapability(ctx, "ai.speech.create");
   const out = requireOption(parsed, "out", "-o/--out");
+  const outputPath = resolvePath(shellCtx, out);
   const text = readTextArgument(parsed.positionals, shellCtx, "text");
   const sampleRate = parsePositiveIntOption(optionValue(parsed, "sample-rate"), "--sample-rate");
   const bitRate = parsePositiveIntOption(optionValue(parsed, "bit-rate"), "--bit-rate");
-  const encoding = optionValue(parsed, "encoding") ?? optionValue(parsed, "format");
+  const outputOptions = inferSpeechOutputOptions(outputPath);
+  const encoding = optionValue(parsed, "encoding")
+    ?? optionValue(parsed, "format")
+    ?? outputOptions?.encoding;
+  const container = optionValue(parsed, "container") ?? outputOptions?.container;
 
   const requestCtx = withShellSignal(ctx, shellCtx);
   const request: AiSpeechCreateArgs = {
@@ -347,7 +355,7 @@ async function runTts(
     voice: optionValue(parsed, "voice"),
     language: optionValue(parsed, "language"),
     encoding,
-    container: optionValue(parsed, "container"),
+    container,
   };
   if (sampleRate !== undefined) request.sampleRate = sampleRate;
   if (bitRate !== undefined) request.bitRate = bitRate;
@@ -363,14 +371,13 @@ async function runTts(
     await body?.stream.cancel().catch(() => {});
     throw new Error("speech synthesis returned no audio data");
   }
-  const outputPath = await usingStream(body.stream, async () => {
-    const path = resolvePath(shellCtx, out);
-    await fs.writeFileStream(path, body.stream, {
+  await usingStream(body.stream, async () => {
+    assertGeneratedMediaMatchesPath(outputPath, result.audio.mimeType, "audio");
+    await fs.writeFileStream(outputPath, body.stream, {
       expectedSize: result.audio.size,
       contentType: result.audio.mimeType,
       signal: requestCtx.requestSignal,
     });
-    return path;
   });
 
   if (hasOption(parsed, "json")) {
@@ -668,6 +675,75 @@ function inferImageMimeType(path: string): string | undefined {
   return undefined;
 }
 
+function normalizeImageGenerationFormat(
+  value: string | undefined,
+): "png" | "jpeg" | "webp" | undefined {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === undefined) return undefined;
+  if (normalized === "jpg") return "jpeg";
+  if (normalized === "png" || normalized === "jpeg" || normalized === "webp") {
+    return normalized;
+  }
+  throw new Error("--format must be png, jpeg, or webp");
+}
+
+function inferImageGenerationFormat(path: string): string | undefined {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".png")) return "png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "jpeg";
+  if (lower.endsWith(".webp")) return "webp";
+  return undefined;
+}
+
+function inferSpeechOutputOptions(
+  path: string,
+): { encoding: string; container?: string } | undefined {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".mp3")) return { encoding: "mp3" };
+  if (lower.endsWith(".wav")) return { encoding: "linear16", container: "wav" };
+  if (lower.endsWith(".ogg")) return { encoding: "opus", container: "ogg" };
+  if (lower.endsWith(".opus")) return { encoding: "opus" };
+  if (lower.endsWith(".flac")) return { encoding: "flac" };
+  if (lower.endsWith(".aac")) return { encoding: "aac" };
+  return undefined;
+}
+
+function assertGeneratedMediaMatchesPath(
+  path: string,
+  mimeType: string,
+  kind: "image" | "audio",
+): void {
+  const expected = kind === "image"
+    ? expectedImageMimeTypes(path)
+    : expectedAudioMimeTypes(path);
+  if (!expected) return;
+  const actual = mimeType.split(";", 1)[0].trim().toLowerCase();
+  if (expected.includes(actual)) return;
+  throw new Error(
+    `${kind} provider returned ${mimeType} for ${path}; expected ${expected.join(" or ")} `
+    + "for that filename. Choose a matching output extension or request a supported format",
+  );
+}
+
+function expectedImageMimeTypes(path: string): readonly string[] | undefined {
+  const format = inferImageGenerationFormat(path);
+  if (format === "png") return ["image/png"];
+  if (format === "jpeg") return ["image/jpeg"];
+  if (format === "webp") return ["image/webp"];
+  return undefined;
+}
+
+function expectedAudioMimeTypes(path: string): readonly string[] | undefined {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".mp3")) return ["audio/mpeg", "audio/mp3"];
+  if (lower.endsWith(".wav")) return ["audio/wav", "audio/x-wav"];
+  if (lower.endsWith(".ogg")) return ["audio/ogg", "audio/opus", "application/ogg"];
+  if (lower.endsWith(".opus")) return ["audio/opus", "audio/ogg"];
+  if (lower.endsWith(".flac")) return ["audio/flac", "audio/x-flac"];
+  if (lower.endsWith(".aac")) return ["audio/aac"];
+  return undefined;
+}
+
 function inferAudioMimeType(path: string): string | undefined {
   const lower = path.toLowerCase();
   if (lower.endsWith(".mp3")) return "audio/mpeg";
@@ -749,6 +825,8 @@ function txt2imgUsage(): string {
     "txt2img [OPTIONS] PROMPT...",
     "",
     "Generate an image with the configured image-generation model.",
+    "A .png, .jpg/.jpeg, or .webp output name selects that format. The command",
+    "refuses provider bytes whose MIME type does not match the output filename.",
     "",
     "Options:",
     "  -o, --out PATH",
@@ -783,6 +861,8 @@ function ttsUsage(): string {
     "tts [OPTIONS] TEXT...",
     "",
     "Synthesize speech with the configured text-to-speech model.",
+    "Known output extensions select encoding/container defaults. The command",
+    "refuses provider bytes whose MIME type does not match the output filename.",
     "",
     "Options:",
     "  -o, --out PATH",

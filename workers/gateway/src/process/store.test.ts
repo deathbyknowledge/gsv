@@ -1286,43 +1286,30 @@ describe("ProcessStore", () => {
       });
     });
 
-    it("persists process-local AI config snapshots", async () => {
+    it("persists Process model preferences", async () => {
       const stub = await getProcessByPid("kv-ai-config");
       // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
-        expect(store.getAiConfigSnapshot()).toBeNull();
+        expect(store.getAiConfig()).toBeNull();
 
-        store.setAiConfigSnapshot({
-          version: 1,
-          values: {
-            "config/ai/provider": "openai",
-            "config/ai/model": "gpt-4.1-mini",
-            "config/ai/api_key": "sk-test",
-          },
-          profile: {
-            id: "fast",
-            name: "Fast",
-            appliedAt: 1000,
-          },
+        store.setAiConfig({
+          version: 2,
+          modelId: "fast",
+          reasoning: "high",
           updatedAt: 1000,
         });
 
-        expect(store.getAiConfigSnapshot()).toMatchObject({
-          values: {
-            "config/ai/provider": "openai",
-            "config/ai/model": "gpt-4.1-mini",
-            "config/ai/api_key": "sk-test",
-          },
-          profile: {
-            id: "fast",
-            name: "Fast",
-          },
+        expect(store.getAiConfig()).toEqual({
+          version: 2,
+          modelId: "fast",
+          reasoning: "high",
+          updatedAt: 1000,
         });
 
-        store.clearAiConfigSnapshot();
-        expect(store.getAiConfigSnapshot()).toBeNull();
+        store.clearAiConfig();
+        expect(store.getAiConfig()).toBeNull();
       });
     });
   });

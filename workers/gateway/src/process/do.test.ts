@@ -38,7 +38,7 @@ import { getProcessByPid, getKernelPtr } from "../shared/utils";
 import { stableOpaqueId } from "../shared/stable-id";
 import { TOOL_TO_SYSCALL } from "../syscalls/constants";
 import { DEFAULT_TOOL_APPROVAL_POLICY } from "./approval";
-import { estimateContextInputTokens } from "./context-pressure";
+import { buildProcContextState, estimateContextInputTokens } from "./context-pressure";
 import { PROCESS_V001_INITIAL_SCHEMA } from "./schema/v001_initial";
 import { PROCESS_V004_PENDING_TOOL_DISPATCH_ID } from "./schema/v004_pending_tool_dispatch_id";
 import { PROCESS_V005_TOOL_RESULT_OUTCOME } from "./schema/v005_tool_result_outcome";
@@ -309,8 +309,8 @@ function kimiWorkersConfigWithFallback(pid: string, contextWindowTokens = 1_000_
     contextWindowSource: "config" as const,
     maxContextBytes: 32768,
     fallbacks: [{
-      profileId: "overflow-backup",
-      profileName: "Overflow Backup",
+      modelId: "overflow-backup",
+      modelName: "Overflow Backup",
       provider: "openrouter",
       model: "fallback-model",
       apiKey: "fallback-key",
@@ -1187,128 +1187,71 @@ describe("Process DO — mechanical", () => {
   });
 
   describe("proc.ai.config", () => {
-    it("stores snapshots, redacts reads by default, patches fields, and clears", async () => {
+    it("stores stable model and reasoning preferences, patches them, and clears", async () => {
       const pid = "mech-ai-config";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
-// SAFETY: test fixture is constructed with the asserted domain shape.
-
+      // SAFETY: the typed Process test fixture returns a successful syscall response here.
       const setResponse = await stub.recvFrame(makeReq("proc.ai.config.set", {
-        values: {
-          "config/ai/provider": "openai",
-          "config/ai/model": "gpt-4.1-mini",
-          "config/ai/api_key": "sk-process",
-          "config/ai/max_tokens": "",
-          "config/ai/max_context_bytes": "   ",
-        },
-        profile: {
-          id: "fast",
-          name: "Fast",
-        },
-      // SAFETY: test fixture is constructed with the asserted domain shape.
+        modelId: "fast",
+        reasoning: "low",
       })) as ResponseOkFrame;
       expect(setResponse.ok).toBe(true);
-      // SAFETY: test fixture is constructed with the asserted domain shape.
+      // SAFETY: the successful response carries the proc.ai.config.set result under test.
       expect((setResponse.data as any).config).toMatchObject({
-        profile: { id: "fast", name: "Fast" },
-        values: {
-          "config/ai/provider": "openai",
-          "config/ai/model": "gpt-4.1-mini",
-          "config/ai/api_key": "redacted",
-        },
+        version: 2,
+        modelId: "fast",
+        reasoning: "low",
       });
 
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      const redactedGet = await stub.recvFrame(makeReq("proc.ai.config.get", {})) as ResponseOkFrame;
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      expect((redactedGet.data as any).config.values["config/ai/api_key"]).toBe("redacted");
+      // SAFETY: the typed Process test fixture returns a successful syscall response here.
+      const rawGet = await stub.recvFrame(makeReq("proc.ai.config.get", {})) as ResponseOkFrame;
+      // SAFETY: the successful response carries the proc.ai.config.get result under test.
+      expect((rawGet.data as any).config).toMatchObject({ modelId: "fast", reasoning: "low" });
 
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      const rawGet = await stub.recvFrame(makeReq("proc.ai.config.get", { redacted: false })) as ResponseOkFrame;
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      expect((rawGet.data as any).config.values["config/ai/api_key"]).toBe("sk-process");
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      expect((rawGet.data as any).config.values).not.toHaveProperty("config/ai/max_tokens");
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      expect((rawGet.data as any).config.values).not.toHaveProperty("config/ai/max_context_bytes");
-
-      // SAFETY: test fixture is constructed with the asserted domain shape.
+      // SAFETY: the typed Process test fixture returns a successful syscall response here.
       const patchResponse = await stub.recvFrame(makeReq("proc.ai.config.set", {
-        key: "config/ai/model",
-        value: "gpt-4.2",
-      // SAFETY: test fixture is constructed with the asserted domain shape.
+        reasoning: "high",
       })) as ResponseOkFrame;
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      expect((patchResponse.data as any).config.profile).toMatchObject({ id: "fast", name: "Fast" });
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      expect((patchResponse.data as any).config.values["config/ai/model"]).toBe("gpt-4.2");
+      // SAFETY: the successful response carries the proc.ai.config.set result under test.
+      expect((patchResponse.data as any).config).toMatchObject({
+        modelId: "fast",
+        reasoning: "high",
+      });
 
-      // SAFETY: test fixture is constructed with the asserted domain shape.
+      // SAFETY: the typed Process test fixture returns a successful syscall response here.
       const clearResponse = await stub.recvFrame(makeReq("proc.ai.config.set", { clear: true })) as ResponseOkFrame;
-      // SAFETY: test fixture is constructed with the asserted domain shape.
+      // SAFETY: the successful response carries the proc.ai.config.set result under test.
       expect((clearResponse.data as any).config).toBeNull();
-      // SAFETY: test fixture is constructed with the asserted domain shape.
+      // SAFETY: the typed Process test fixture returns a successful syscall response here.
       const afterClear = await stub.recvFrame(makeReq("proc.ai.config.get", {})) as ResponseOkFrame;
-      // SAFETY: test fixture is constructed with the asserted domain shape.
+      // SAFETY: the successful response carries the proc.ai.config.get result under test.
       expect((afterClear.data as any).config).toBeNull();
     });
 
-    it("keeps profile-only snapshots for server-side secret resolution", async () => {
-      const pid = "mech-ai-config-profile-only";
+    it("rejects invalid preferences without replacing the existing config", async () => {
+      const pid = "mech-ai-config-invalid";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
-// SAFETY: test fixture is constructed with the asserted domain shape.
-
+      // SAFETY: the typed Process test fixture returns a successful syscall response here.
       const setResponse = await stub.recvFrame(makeReq("proc.ai.config.set", {
-        values: {},
-        profile: {
-          id: "fast",
-          name: "Fast",
-        },
-      // SAFETY: test fixture is constructed with the asserted domain shape.
+        modelId: "fast",
       })) as ResponseOkFrame;
 
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      expect((setResponse.data as any).config).toMatchObject({
-        profile: { id: "fast", name: "Fast" },
-        values: {},
-      });
+      // SAFETY: the successful response carries the proc.ai.config.set result under test.
+      expect((setResponse.data as any).config).toMatchObject({ modelId: "fast" });
 
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      const getResponse = await stub.recvFrame(makeReq("proc.ai.config.get", { redacted: false })) as ResponseOkFrame;
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      expect((getResponse.data as any).config).toMatchObject({
-        profile: { id: "fast", name: "Fast" },
-        values: {},
-      });
-
-// SAFETY: test fixture is constructed with the asserted domain shape.
-
-      const patchResponse = await stub.recvFrame(makeReq("proc.ai.config.set", {
-        key: "config/ai/reasoning",
-        value: "high",
-      // SAFETY: test fixture is constructed with the asserted domain shape.
+      // SAFETY: invalid domain input is returned in the successful transport response under test.
+      const invalid = await stub.recvFrame(makeReq("proc.ai.config.set", {
+        reasoning: "impossibly-deep",
       })) as ResponseOkFrame;
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      expect((patchResponse.data as any).config).toMatchObject({
-        profile: { id: "fast", name: "Fast" },
-        values: {
-          "config/ai/reasoning": "high",
-        },
-      });
+      // SAFETY: the successful transport response carries the rejected domain result under test.
+      expect((invalid.data as any)).toMatchObject({ ok: false });
 
-// SAFETY: test fixture is constructed with the asserted domain shape.
-
-      const clearFieldResponse = await stub.recvFrame(makeReq("proc.ai.config.set", {
-        key: "config/ai/reasoning",
-        value: "",
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      })) as ResponseOkFrame;
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      expect((clearFieldResponse.data as any).config).toMatchObject({
-        profile: { id: "fast", name: "Fast" },
-        values: {},
-      });
+      // SAFETY: the typed Process test fixture returns a successful syscall response here.
+      const getResponse = await stub.recvFrame(makeReq("proc.ai.config.get", {})) as ResponseOkFrame;
+      // SAFETY: the successful response carries the proc.ai.config.get result under test.
+      expect((getResponse.data as any).config).toMatchObject({ modelId: "fast" });
     });
   });
 
@@ -2820,7 +2763,9 @@ describe("Process DO — mechanical", () => {
           .toMatchObject({
             status: "error",
             reason: "message.command.failed",
-            error: "message send does not accept --to for the current conversation",
+            error: expect.stringContaining(
+              "message send does not accept --to for the current conversation",
+            ),
           });
       });
     });
@@ -4889,8 +4834,8 @@ describe("Process DO — mechanical", () => {
             contextWindowSource: "config",
             maxContextBytes: 32768,
             fallbacks: [{
-              profileId: "safe-stack",
-              profileName: "Safe Stack",
+              modelId: "safe-stack",
+              modelName: "Safe Stack",
               provider: "openrouter",
               model: "openai/gpt-5-mini",
               apiKey: "fallback-key",
@@ -5037,8 +4982,8 @@ describe("Process DO — mechanical", () => {
             contextWindowSource: "config",
             maxContextBytes: 32768,
             fallbacks: [{
-              profileId: "small-fallback",
-              profileName: "Small Fallback",
+              modelId: "small-fallback",
+              modelName: "Small Fallback",
               provider: "openrouter",
               model: "small-fallback",
               apiKey: "fallback-key",
@@ -5167,8 +5112,8 @@ describe("Process DO — mechanical", () => {
             contextWindowSource: "config",
             maxContextBytes: 32768,
             fallbacks: [{
-              profileId: "secondary-account",
-              profileName: "Secondary Account",
+              modelId: "secondary-account",
+              modelName: "Secondary Account",
               provider: "openai-codex",
               model: "gpt-5.2-codex",
               apiKey: "shared-token",
@@ -6063,8 +6008,8 @@ describe("Process DO — mechanical", () => {
             contextWindowSource: "config",
             maxContextBytes: 32768,
             fallbacks: [{
-              profileId: "backup-stack",
-              profileName: "Backup Stack",
+              modelId: "backup-stack",
+              modelName: "Backup Stack",
               provider: "workers-ai",
               model: "@cf/moonshotai/kimi-k2.6",
               apiKey: "",
@@ -6709,17 +6654,9 @@ describe("Process DO — mechanical", () => {
           },
         };
 
-        process.store.setAiConfigSnapshot({
-          version: 1,
-          values: {
-            "config/ai/provider": "anthropic",
-            "config/ai/model": "claude-process",
-          },
-          profile: {
-            id: "fast-stack",
-            name: "Fast Stack",
-            appliedAt: 1,
-          },
+        process.store.setAiConfig({
+          version: 2,
+          modelId: "fast-stack",
           updatedAt: 1,
         });
         process.store.appendMessage("user", "use kernel");
@@ -6773,15 +6710,7 @@ describe("Process DO — mechanical", () => {
             expect.objectContaining({ name: "Shell" }),
           ]),
           config: {
-            processOverrides: {
-              "config/ai/provider": "anthropic",
-              "config/ai/model": "claude-process",
-            },
-            processProfile: {
-              id: "fast-stack",
-              name: "Fast Stack",
-              appliedAt: 1,
-            },
+            modelId: "fast-stack",
           },
         },
       });
@@ -10137,6 +10066,62 @@ describe("Process DO — mechanical", () => {
         }),
       ]);
 
+    });
+
+    it("selects manual compaction history by token pressure instead of message count", async () => {
+      const pid = "mech-conversation-compact-pressure-target";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: the Durable Object test fixture exposes Process internals for state setup.
+        const store = (instance as any).store;
+        store.appendMessage("user", `large old turn ${"x".repeat(20_000)}`);
+        for (let index = 0; index < 5; index += 1) {
+          store.appendMessage(index % 2 === 0 ? "assistant" : "user", `small recent turn ${index}`);
+        }
+        const stats = store.messageStats();
+        store.setContextState(buildProcContextState({
+          revision: store.nextContextStateRevision(),
+          messageCount: stats.count,
+          lastMessageId: stats.lastMessageId,
+          provider: "workers-ai",
+          model: "@cf/test/model",
+          contextWindowTokens: 11_000,
+          maxOutputTokens: 1_000,
+          measurement: {
+            estimatedInputTokens: 8_000,
+            inputTokens: 8_000,
+            confirmedInputTokens: 8_000,
+            estimatedTrailingInputTokens: 0,
+            source: "provider",
+          },
+        }));
+      });
+
+      // SAFETY: the typed Process test fixture returns a successful syscall response here.
+      const response = await stub.recvFrame(makeReq("proc.history.compact", {
+        targetPressure: 0.4,
+        summary: "The large old turn was archived.",
+      })) as ResponseOkFrame;
+
+      expect(response.data).toMatchObject({
+        ok: true,
+        pid,
+        archivedMessages: 1,
+      });
+      await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: the Durable Object test fixture exposes Process internals for verification.
+        const messages = (instance as any).store.getMessages();
+        expect(messages).toHaveLength(6);
+        expect(messages[0].content).toContain("The large old turn was archived.");
+        expect(messages.slice(1).map((message: any) => message.content)).toEqual([
+          "small recent turn 0",
+          "small recent turn 1",
+          "small recent turn 2",
+          "small recent turn 3",
+          "small recent turn 4",
+        ]);
+      });
     });
 
     it("builds bounded compaction input from complete JSON records", async () => {

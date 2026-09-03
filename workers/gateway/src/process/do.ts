@@ -271,9 +271,9 @@ import {
   wrapStoredToolResult,
 } from "./tool-result-media";
 import {
-  createProcessAiConfigSnapshot,
-  isProcessAiConfigKey,
-  redactProcessAiConfigSnapshot,
+  createProcessAiConfig,
+  normalizeProcessAiModelId,
+  normalizeProcessAiReasoning,
 } from "./ai-config";
 import { runProcessSqlMigrations } from "./schema/migrations";
 import {
@@ -651,21 +651,21 @@ const processIdentitySchema = z.object({
   home: z.string(),
   cwd: z.string(),
 });
-const stringRecordSchema = z.record(z.string(), z.string());
-const processAiConfigProfileRefSchema = z.object({
-  id: z.string().optional(),
-  name: z.string().optional(),
-  appliedAt: z.number(),
-});
+const aiModelConfigSchema = z.object({
+  provider: z.string(),
+  model: z.string(),
+  apiKey: z.string().optional(),
+  baseUrl: z.string().optional(),
+  providerStyle: z.string().optional(),
+  transportTarget: z.string().optional(),
+  maxTokens: z.number().int().positive().optional(),
+  contextWindowTokens: z.number().int().positive().optional(),
+}).strict();
 const aiTextGenerateConfigSchema = z.object({
-  preset: z.object({
-    id: z.string().optional(),
-    name: z.string().optional(),
-  }).optional(),
-  overrides: stringRecordSchema.optional(),
-  processOverrides: stringRecordSchema.optional(),
-  processProfile: processAiConfigProfileRefSchema.nullable().optional(),
-});
+  modelConfig: aiModelConfigSchema.optional(),
+  modelId: z.string().optional(),
+  reasoning: z.string().optional(),
+}).strict();
 const toolDefinitionSchema = z.object({
   name: z.string(),
   description: z.string(),
@@ -708,8 +708,8 @@ const aiTextExecutorSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("device"), target: z.string() }),
 ]);
 const aiConfigFallbackSchema = z.object({
-  profileId: z.string().optional(),
-  profileName: z.string().optional(),
+  modelId: z.string().optional(),
+  modelName: z.string().optional(),
   provider: z.string(),
   model: z.string(),
   apiKey: z.string(),
@@ -2994,47 +2994,51 @@ export class Process extends DurableObject<GatewayEnv> {
     };
   }
 
-  private handleProcAiConfigGet(args: ProcAiConfigGetArgs): ProcAiConfigGetResult {
-    const snapshot = this.store.getAiConfigSnapshot();
+  private handleProcAiConfigGet(_args: ProcAiConfigGetArgs): ProcAiConfigGetResult {
     return {
       ok: true,
       pid: this.pid,
-      config: args.redacted === false ? snapshot : redactProcessAiConfigSnapshot(snapshot),
+      config: this.store.getAiConfig(),
     };
   }
 
   private async handleProcAiConfigSet(args: ProcAiConfigSetArgs): Promise<ProcAiConfigSetResult> {
-    let snapshot: ReturnType<typeof createProcessAiConfigSnapshot> | null;
+    let config;
     if ("clear" in args) {
-      snapshot = null;
-    } else if ("values" in args) {
-      snapshot = createProcessAiConfigSnapshot(args.values, args.profile);
-    } else if ("key" in args) {
-      if (!isProcessAiConfigKey(args.key)) {
-        return { ok: false, error: `Unsupported AI config key: ${args.key}` };
-      }
-      const current = this.store.getAiConfigSnapshot();
-      const values = { ...current?.values };
-      const value = args.value.trim();
-      if (value) {
-        values[args.key] = value;
-      } else {
-        delete values[args.key];
-      }
-
-      snapshot = createProcessAiConfigSnapshot(values, current?.profile);
+      config = null;
     } else {
-      return { ok: false, error: "proc.ai.config.set requires clear, values, or key/value" };
+      if (
+        args.modelId !== undefined &&
+        args.modelId !== null &&
+        args.modelId.trim() &&
+        !normalizeProcessAiModelId(args.modelId)
+      ) {
+        return { ok: false, error: "modelId must be a stable model id" };
+      }
+      if (
+        args.reasoning !== undefined &&
+        args.reasoning !== null &&
+        args.reasoning.trim() &&
+        !normalizeProcessAiReasoning(args.reasoning)
+      ) {
+        return {
+          ok: false,
+          error: "reasoning must be off, minimal, low, medium, high, or xhigh",
+        };
+      }
+      const current = this.store.getAiConfig();
+      config = createProcessAiConfig({
+        modelId: args.modelId === undefined ? current?.modelId : args.modelId,
+        reasoning: args.reasoning === undefined ? current?.reasoning : args.reasoning,
+      });
     }
 
-    if (snapshot && (Object.keys(snapshot.values).length > 0 || snapshot.profile)) {
-      this.store.setAiConfigSnapshot(snapshot);
+    if (config) {
+      this.store.setAiConfig(config);
     } else {
-      snapshot = null;
-      this.store.clearAiConfigSnapshot();
+      this.store.clearAiConfig();
     }
 
-    const config = redactProcessAiConfigSnapshot(snapshot);
     await this.emitProcChanged(["ai.config"], { aiConfig: config });
     return { ok: true, pid: this.pid, config };
   }
@@ -3529,6 +3533,7 @@ export class Process extends DurableObject<GatewayEnv> {
       pendingHil: this.toProcHilRequest(this.store.getPendingHil()),
       context: this.getContextStateForHistory(),
       contextRevision: this.store.getContextStateRevision(),
+      historyPolicy: this.getHistoryContextPolicy(),
     };
   }
 
@@ -4180,8 +4185,18 @@ export class Process extends DurableObject<GatewayEnv> {
 
     const hasKeepLast = args.keepLast !== undefined;
     const hasThroughMessageId = args.throughMessageId !== undefined;
-    if (hasKeepLast === hasThroughMessageId) {
-      return { ok: false, error: "proc.history.compact requires exactly one of keepLast or throughMessageId" };
+    const targetPressure = args.targetPressure;
+    const hasTargetPressure = targetPressure !== undefined;
+    if (
+      Number(hasKeepLast)
+        + Number(hasThroughMessageId)
+        + Number(hasTargetPressure)
+      !== 1
+    ) {
+      return {
+        ok: false,
+        error: "proc.history.compact requires exactly one of targetPressure, keepLast, or throughMessageId",
+      };
     }
     if (hasKeepLast && !isNonNegativeInteger(args.keepLast)) {
       return { ok: false, error: "proc.history.compact keepLast must be a non-negative integer" };
@@ -4189,12 +4204,23 @@ export class Process extends DurableObject<GatewayEnv> {
     if (hasThroughMessageId && !isPositiveInteger(args.throughMessageId)) {
       return { ok: false, error: "proc.history.compact throughMessageId must be a positive integer" };
     }
+    if (
+      hasTargetPressure
+      && (
+        !Number.isFinite(targetPressure)
+        || targetPressure <= 0
+        || targetPressure >= 1
+      )
+    ) {
+      return { ok: false, error: "proc.history.compact targetPressure must be > 0 and < 1" };
+    }
 
     let generation = 0;
     let selected: MessageRecord[] = [];
     let selectedMediaKeys: string[] = [];
     let contextEpoch: ContextEpochRecord | null = null;
     let lifecycleEpoch = 0;
+    let measuredContextPressure: number | undefined;
     const releaseSnapshot = await this.acquireLifecycleTransition();
     try {
       if (stopped()) {
@@ -4205,10 +4231,48 @@ export class Process extends DurableObject<GatewayEnv> {
       }
       lifecycleEpoch = this.lifecycleEpoch;
       generation = this.store.getHistoryGeneration();
-      selected = this.store.getHistoryPrefixMessages({
-        keepLast: hasKeepLast ? args.keepLast : undefined,
-        throughMessageId: hasThroughMessageId ? args.throughMessageId : undefined,
-      });
+      if (targetPressure !== undefined) {
+        const state = this.store.getContextState();
+        const stats = this.store.messageStats();
+        if (
+          !state
+          || state.messageCount !== stats.count
+          || state.lastMessageId !== stats.lastMessageId
+        ) {
+          return {
+            ok: false,
+            error: "Context token usage is not current; run the Process once or select an explicit history boundary",
+          };
+        }
+        if (state.inputBudgetTokens === null || state.pressure === null) {
+          return {
+            ok: false,
+            error: "The active model does not expose a context budget; select an explicit history boundary",
+          };
+        }
+        if (state.pressure <= targetPressure) {
+          return {
+            ok: false,
+            error: `Context pressure is already at or below the ${Math.round(targetPressure * 100)}% target`,
+          };
+        }
+        const records = this.store.getMessagesForGeneration();
+        selected = this.selectCompactionPrefixToPressure({
+          records,
+          allMessages: this.store.toMessages({ limit: null }),
+          protectedIndex: records.length - 1,
+          estimatedContextTokens: state.estimatedInputTokens,
+          effectiveInputTokens: state.inputTokens,
+          inputBudgetTokens: state.inputBudgetTokens,
+          targetPressure,
+        });
+        measuredContextPressure = state.pressure;
+      } else {
+        selected = this.store.getHistoryPrefixMessages({
+          keepLast: hasKeepLast ? args.keepLast : undefined,
+          throughMessageId: hasThroughMessageId ? args.throughMessageId : undefined,
+        });
+      }
       if (selected.length === 0) {
         return { ok: false, error: "No history messages selected for compaction" };
       }
@@ -4402,8 +4466,9 @@ export class Process extends DurableObject<GatewayEnv> {
       durationMs: Math.max(0, Date.now() - telemetryStartedAt),
       archivedMessages: selected.length,
     };
-    if (options.contextPressure !== undefined) {
-      telemetryProperties.contextPressure = options.contextPressure;
+    const contextPressure = options.contextPressure ?? measuredContextPressure;
+    if (contextPressure !== undefined) {
+      telemetryProperties.contextPressure = contextPressure;
     }
     emitTelemetry(this.env, {
       installationId: this.installationId,
@@ -6998,7 +7063,7 @@ export class Process extends DurableObject<GatewayEnv> {
               : "Message committed; run remains active"
             : "Run yielded"
           : runControlResult.failureKind === "command"
-            ? `Run-control command rejected (attempt ${runControlFailureAttempt?.count ?? 1} of ${runControlFailureAttempt?.limit ?? MAX_TERMINAL_COMMAND_FAILURES}): ${runControlResult.error}\nSend with a literal message block, and run \`yield\` only when the work is complete.`
+            ? `Run-control command rejected (attempt ${runControlFailureAttempt?.count ?? 1} of ${runControlFailureAttempt?.limit ?? MAX_TERMINAL_COMMAND_FAILURES}): ${runControlResult.error}\nTo reply here, stage files first with \`message attach PATH...\`. Then issue \`message send ...\` as its own direct Shell tool call with no other tool calls or shell commands. Omit --to and --also. Run \`yield\` only when the work is complete.`
             : `Message delivery failed (attempt ${runControlFailureAttempt?.count ?? 1} of ${runControlFailureAttempt?.limit ?? MAX_TERMINAL_DELIVERY_FAILURES}): ${runControlResult.error}\nRetry the exact same message command unchanged.`,
         !runControlResult.ok,
         runId,
@@ -7517,18 +7582,14 @@ export class Process extends DurableObject<GatewayEnv> {
   }
 
   private buildAiTextGenerateConfig(): AiTextGenerateConfig | undefined {
-    const snapshot = this.store.getAiConfigSnapshot();
-    if (!snapshot) {
+    const processConfig = this.store.getAiConfig();
+    if (!processConfig) {
       return undefined;
     }
     const config: AiTextGenerateConfig = {};
-    if (Object.keys(snapshot.values).length > 0) {
-      config.processOverrides = { ...snapshot.values };
-    }
-    if (snapshot.profile) {
-      config.processProfile = snapshot.profile;
-    }
-    return config.processOverrides || config.processProfile ? config : undefined;
+    if (processConfig.modelId) config.modelId = processConfig.modelId;
+    if (processConfig.reasoning) config.reasoning = processConfig.reasoning;
+    return config;
   }
 
   private recordUnpersistedAssistantUsage(
@@ -7929,9 +7990,52 @@ export class Process extends DurableObject<GatewayEnv> {
     const effectiveInputTokens = trigger === "provider-overflow" && inputBudgetTokens !== null
       ? Math.max(measuredInputTokens, inputBudgetTokens)
       : measuredInputTokens;
+    return this.selectCompactionPrefixToPressure({
+      records,
+      allMessages,
+      protectedIndex,
+      estimatedContextTokens,
+      effectiveInputTokens,
+      inputBudgetTokens,
+      targetPressure: policy.compactToPressure,
+    });
+  }
+
+  private selectCompactionPrefixToPressure(input: {
+    records: MessageRecord[];
+    allMessages: Message[];
+    protectedIndex: number;
+    estimatedContextTokens: number;
+    effectiveInputTokens: number;
+    inputBudgetTokens: number | null;
+    targetPressure: number;
+  }): MessageRecord[] {
+    const {
+      records,
+      allMessages,
+      protectedIndex,
+      targetPressure,
+      inputBudgetTokens,
+    } = input;
+    if (
+      records.length <= 1
+      || protectedIndex <= 0
+      || allMessages.length !== records.length
+    ) {
+      return [];
+    }
+
+    const estimatedContextTokens = Math.max(1, input.estimatedContextTokens);
+    const effectiveInputTokens = Math.max(1, input.effectiveInputTokens);
     const targetInputTokens = inputBudgetTokens !== null
-      ? inputBudgetTokens * policy.compactToPressure
-      : effectiveInputTokens * policy.compactToPressure;
+      ? inputBudgetTokens * targetPressure
+      : effectiveInputTokens * targetPressure;
+    if (
+      estimatedContextTokens <= targetInputTokens
+      && effectiveInputTokens <= targetInputTokens
+    ) {
+      return [];
+    }
     const estimateScale = effectiveInputTokens / estimatedContextTokens;
     const summaryTokens = estimateContextMessagesTokens([{
       role: "user",
@@ -7943,8 +8047,8 @@ export class Process extends DurableObject<GatewayEnv> {
       timestamp: Date.now(),
     }]);
     const estimateTargetTokens = inputBudgetTokens !== null
-      ? inputBudgetTokens * policy.compactToPressure
-      : estimatedContextTokens * policy.compactToPressure;
+      ? inputBudgetTokens * targetPressure
+      : estimatedContextTokens * targetPressure;
     const requiredEstimatedRemoval = Math.max(
       estimatedContextTokens - estimateTargetTokens + summaryTokens,
       (effectiveInputTokens - targetInputTokens) / estimateScale + summaryTokens,
@@ -8201,23 +8305,17 @@ export class Process extends DurableObject<GatewayEnv> {
   }
 
   private async resolveAiConfig(signal?: AbortSignal): Promise<AiConfigResult> {
-    const snapshot = this.store.getAiConfigSnapshot();
-    return await this.kernelRpc("ai.config", snapshot
+    const processConfig = this.store.getAiConfig();
+    return await this.kernelRpc("ai.config", processConfig
       ? {
-          processOverrides: snapshot.values,
-          processProfile: snapshot.profile ?? null,
+          modelId: processConfig.modelId,
+          reasoning: processConfig.reasoning,
         }
       : {}, signal);
   }
 
   private async resolveAiContext(signal?: AbortSignal): Promise<AiContextResult> {
-    const snapshot = this.store.getAiConfigSnapshot();
-    return await this.kernelRpc("ai.context", snapshot
-      ? {
-          processOverrides: snapshot.values,
-          processProfile: snapshot.profile ?? null,
-        }
-      : {}, signal);
+    return await this.kernelRpc("ai.context", {}, signal);
   }
 
   /**

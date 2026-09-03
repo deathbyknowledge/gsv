@@ -77,17 +77,19 @@ function makeContext(uid: number, entries: EntryMap, ownerUid?: number): KernelC
 
 describe("sys.config.get", () => {
   const baseEntries = {
-    "config/ai/provider": "openrouter",
-    "config/ai/model": "qwen",
-    "config/ai/api_key": "sk-live",
-    "users/1000/ai/model": "qwen-user",
-    "users/1001/ai/model": "other",
+    "config/ai/models": JSON.stringify({
+      version: 1,
+      models: [{ id: "system", name: "System", provider: "openrouter", model: "qwen" }],
+    }),
+    "config/ai/models/system/api_key": "sk-live",
+    "users/1000/ai/preferred_model": "system",
+    "users/1001/ai/preferred_model": "other",
   } satisfies EntryMap;
 
   it("blocks non-root exact reads of sensitive system config", () => {
     const ctx = makeContext(1000, baseEntries);
-    expect(() => handleSysConfigGet({ key: "config/ai/api_key" }, ctx)).toThrow(
-      "Permission denied: cannot read config/ai/api_key",
+    expect(() => handleSysConfigGet({ key: "config/ai/models/system/api_key" }, ctx)).toThrow(
+      "Permission denied: cannot read config/ai/models/system/api_key",
     );
   });
 
@@ -95,31 +97,32 @@ describe("sys.config.get", () => {
     const ctx = makeContext(1000, baseEntries);
     const result = handleSysConfigGet({ key: "config/ai" }, ctx);
     expect(result.entries.map((entry) => entry.key)).toEqual([
-      "config/ai/model",
-      "config/ai/provider",
+      "config/ai/models",
     ]);
   });
 
   it("allows root reads of sensitive system config", () => {
     const ctx = makeContext(0, baseEntries);
-    const result = handleSysConfigGet({ key: "config/ai/api_key" }, ctx);
-    expect(result.entries).toEqual([{ key: "config/ai/api_key", value: "sk-live" }]);
+    const result = handleSysConfigGet({ key: "config/ai/models/system/api_key" }, ctx);
+    expect(result.entries).toEqual([{
+      key: "config/ai/models/system/api_key",
+      value: "sk-live",
+    }]);
   });
 
   it("allows non-root users to read delegated agent AI config", () => {
     const ctx = makeContext(1000, {
       ...baseEntries,
-      "users/2000/ai/model": "agent-model",
+      "users/2000/ai/preferred_model": "agent-model",
       "users/2000/secret/token": "hidden",
       "users/2001/ai/tools/approval": '{"default":"ask"}',
     });
 
     const result = handleSysConfigGet({}, ctx);
     expect(result.entries.map((entry) => entry.key)).toEqual([
-      "config/ai/model",
-      "config/ai/provider",
-      "users/1000/ai/model",
-      "users/2000/ai/model",
+      "config/ai/models",
+      "users/1000/ai/preferred_model",
+      "users/2000/ai/preferred_model",
       "users/2001/ai/tools/approval",
     ]);
   });
@@ -128,41 +131,48 @@ describe("sys.config.get", () => {
     const ctx = makeContext(2000, baseEntries, 1000);
 
     expect(handleSysConfigSet({
-      key: "users/2001/ai/model",
+      key: "users/2001/ai/preferred_model",
       value: "helper-model",
     }, ctx)).toEqual({ ok: true });
-    expect(handleSysConfigGet({ key: "users/2001/ai/model" }, ctx)).toEqual({
-      entries: [{ key: "users/2001/ai/model", value: "helper-model" }],
+    expect(handleSysConfigGet({ key: "users/2001/ai/preferred_model" }, ctx)).toEqual({
+      entries: [{ key: "users/2001/ai/preferred_model", value: "helper-model" }],
     });
   });
 
   it("deletes blank user AI overrides so they inherit defaults", () => {
     const ctx = makeContext(1000, {
       ...baseEntries,
-      "users/2000/ai/model": "agent-model",
+      "users/2000/ai/preferred_model": "agent-model",
     });
 
     expect(handleSysConfigSet({
-      key: "users/2000/ai/model",
+      key: "users/2000/ai/preferred_model",
       value: "   ",
     }, ctx)).toEqual({ ok: true });
-    expect(handleSysConfigGet({ key: "users/2000/ai/model" }, ctx)).toEqual({
+    expect(handleSysConfigGet({ key: "users/2000/ai/preferred_model" }, ctx)).toEqual({
       entries: [],
     });
   });
 
-  it("copies readable config values without exposing model profile secrets to the caller", () => {
+  it("copies a readable model credential to another model entry", () => {
     const ctx = makeContext(1000, {
       ...baseEntries,
-      "users/1000/ai/model_profiles/fast/api_key": "sk-profile",
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [
+          { id: "fast", name: "Fast", provider: "openai", model: "gpt-5" },
+          { id: "backup", name: "Backup", provider: "openai", model: "gpt-5-mini" },
+        ],
+      }),
+      "users/1000/ai/models/fast/api_key": "sk-model",
     });
 
     expect(handleSysConfigSet({
-      key: "users/1000/ai/api_key",
-      copyFromKey: "users/1000/ai/model_profiles/fast/api_key",
+      key: "users/1000/ai/models/backup/api_key",
+      copyFromKey: "users/1000/ai/models/fast/api_key",
     }, ctx)).toEqual({ ok: true });
-    expect(handleSysConfigGet({ key: "users/1000/ai/api_key" }, ctx)).toEqual({
-      entries: [{ key: "users/1000/ai/api_key", value: "sk-profile" }],
+    expect(handleSysConfigGet({ key: "users/1000/ai/models/backup/api_key" }, ctx)).toEqual({
+      entries: [{ key: "users/1000/ai/models/backup/api_key", value: "sk-model" }],
     });
   });
 
@@ -170,9 +180,9 @@ describe("sys.config.get", () => {
     const ctx = makeContext(1000, baseEntries);
 
     expect(() => handleSysConfigSet({
-      key: "users/1000/ai/api_key",
-      copyFromKey: "config/ai/api_key",
-    }, ctx)).toThrow("Permission denied: cannot read config/ai/api_key");
+      key: "users/1000/ai/models/backup/api_key",
+      copyFromKey: "config/ai/models/system/api_key",
+    }, ctx)).toThrow("Permission denied: cannot read config/ai/models/system/api_key");
   });
 
   it("rejects delegated writes outside user-overridable config", () => {
@@ -200,7 +210,7 @@ describe("sys.config.get", () => {
     const ctx = makeContext(1000, baseEntries);
 
     expect(() => handleSysConfigSet({
-      key: "users/1001/ai/model",
+      key: "users/1001/ai/preferred_model",
       value: "foreign-model",
     }, ctx)).toThrow("cannot write another user's config");
   });
