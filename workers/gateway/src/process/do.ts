@@ -1,4 +1,17 @@
-/** Process composition root. Capability owners implement its operations. */
+/**
+ * Process DO — the composition root for the "smart process" agent loop.
+ *
+ * Mutable state (messages, tool calls, metadata) is managed by ProcessStore's
+ * SQLite-backed repositories. The Process communicates with the Kernel through
+ * recvFrame RPC in both directions.
+ *
+ * Agent loop: user message → LLM call → tool dispatch → collect results →
+ * LLM call → ... → proc.run.finished signal.
+ * ProcessController, ProcessRun, ProcessHistory, ProcessResources, and
+ * ProcessTools own the runtime operations; Process composes them. Durable turn
+ * scheduling across request boundaries belongs to ProcessRun and
+ * DurableTaskScheduler.
+ */
 
 import { DurableObject } from "cloudflare:workers";
 import type { SignalFrame } from "../protocol/frames";
