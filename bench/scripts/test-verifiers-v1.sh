@@ -53,6 +53,22 @@ GSV_BENCH_FAKE_KEY=local-test uv run eval gsv-v1 \
   --run.name gsv-family-smoke --run.dir gsv-family-smoke --clean \
   >"$smoke_dir/family-eval.stdout"
 
+for family_spec in "competing-incidents:10" "service-account-operation:10"; do
+  family="${family_spec%%:*}"
+  task_count="${family_spec##*:}"
+  GSV_BENCH_FAKE_KEY=local-test uv run eval gsv-v1 \
+    --model gsv-bench-model \
+    --client.base-url "http://127.0.0.1:$fake_port/v1" \
+    --client.api-key-var GSV_BENCH_FAKE_KEY \
+    --env.agent.runtime.type subprocess \
+    --env.taskset.scenario-path "$package_dir/gsv_v1/families/$family.json" \
+    --no-serve --no-push --no-rich \
+    --num-tasks "$task_count" --num-rollouts 1 --max-concurrent "$task_count" \
+    --output-dir "$smoke_dir/$family-output" \
+    --run.name "$family-smoke" --run.dir "$family-smoke" --clean \
+    >"$smoke_dir/$family-eval.stdout"
+done
+
 trace="$smoke_dir/output/gsv-local-smoke/traces.jsonl"
 jq -s -e '
   length == 4 and
@@ -97,4 +113,24 @@ jq -s -e '
   (.[0].traces[0].info.gsv.world.externalEvents | map(.state) | unique) == ["applied"]
 ' "$family_trace" >/dev/null
 
-echo "gsv Verifiers smoke passed: fixtures=4 family=1 rewards=1"
+for family_spec in "competing-incidents:10" "service-account-operation:10"; do
+  family="${family_spec%%:*}"
+  task_count="${family_spec##*:}"
+  family_trace="$smoke_dir/$family-output/$family-smoke/traces.jsonl"
+  jq -s -e \
+    --arg family "$family" \
+    --argjson task_count "$task_count" '
+      length == $task_count and
+      all(.[].traces[0];
+        .rewards.scenario_outcome.score == 1 and
+        .info.gsv.status == "yielded" and
+        .info.gsv.scenarioFamily == $family and
+        .info.gsv_evaluation.strict_pass == true and
+        all(.info.gsv_evaluation.milestones[]; .passed == true) and
+        all(.info.gsv_evaluation.constraints[]; .passed == true) and
+        (.info.gsv.world.externalEvents | map(.state) | unique) == ["applied"]
+      )
+    ' "$family_trace" >/dev/null
+done
+
+echo "gsv Verifiers smoke passed: fixtures=4 release=1 competing=10 service-account=10 rewards=1"

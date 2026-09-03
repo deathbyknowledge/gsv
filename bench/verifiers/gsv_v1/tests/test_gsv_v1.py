@@ -1,5 +1,6 @@
 import copy
 import json
+import math
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -491,6 +492,88 @@ def test_release_recovery_communication_allows_progress_updates() -> None:
     assert load_evaluations(family_path)[scenario["id"]] == scenario["evaluation"]
 
 
+def test_competing_incident_family_has_seeded_topology_diversity() -> None:
+    family_path = (
+        Path(__file__).resolve().parents[1]
+        / "gsv_v1"
+        / "families"
+        / "competing-incidents.json"
+    )
+    scenarios = load_scenarios(family_path)
+
+    assert len(scenarios) == 10
+    assert len({scenario["id"] for scenario in scenarios}) == 10
+    assert len({scenario["seed"] for scenario in scenarios}) == 10
+    assert all(scenario["family"] == "competing-incidents" for scenario in scenarios)
+    assert all(len(scenario["components"]["events"]) == 2 for scenario in scenarios)
+    assert all(len(scenario["world"]["delegates"]) == 3 for scenario in scenarios)
+    target_sets = [
+        {target["id"] for target in scenario["components"]["targets"]}
+        for scenario in scenarios
+    ]
+    assert any("shared-dependency-diagnostics" in targets for targets in target_sets)
+    assert any("shared-dependency-diagnostics" not in targets for targets in target_sets)
+    assert any(any(target.endswith("-approval") for target in targets) for targets in target_sets)
+    assert any(
+        not any(target.endswith("-approval") for target in targets)
+        for targets in target_sets
+    )
+    assert any(
+        not next(
+            target
+            for target in scenario["components"]["targets"]
+            if target["id"]
+            == f"{scenario['groundTruth']['priorityService']}-control"
+        )["online"]
+        for scenario in scenarios
+    )
+
+
+def test_service_account_family_covers_authorized_and_withheld_outcomes() -> None:
+    family_path = (
+        Path(__file__).resolve().parents[1]
+        / "gsv_v1"
+        / "families"
+        / "service-account-operation.json"
+    )
+    scenarios = load_scenarios(family_path)
+    dispositions = [scenario["groundTruth"]["disposition"] for scenario in scenarios]
+
+    assert len(scenarios) == 10
+    assert len({scenario["id"] for scenario in scenarios}) == 10
+    assert len({scenario["seed"] for scenario in scenarios}) == 10
+    assert dispositions.count("approved") == 7
+    assert dispositions.count("denied") == 2
+    assert dispositions.count("expired") == 1
+    assert all(
+        scenario["family"] == "service-account-operation"
+        for scenario in scenarios
+    )
+    assert all(len(scenario["world"]["delegates"]) == 2 for scenario in scenarios)
+    assert all(
+        1000
+        not in next(
+            target
+            for target in scenario["components"]["targets"]
+            if target["id"] == "slack-service-account"
+        )["accessGids"]
+        for scenario in scenarios
+    )
+    assert {
+        len(scenario["components"]["events"])
+        for scenario in scenarios
+    } == {1, 2}
+    optional_target_counts = {
+        sum(
+            target["id"]
+            in {"security-ticket-system", "contract-browser", "manager-directory"}
+            for target in scenario["components"]["targets"]
+        )
+        for scenario in scenarios
+    }
+    assert optional_target_counts == {0, 1, 2, 3}
+
+
 def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
     run_dir = tmp_path / "qwen"
     run_dir.mkdir()
@@ -615,6 +698,13 @@ def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
     assert model["pass_at_1"] == 2 / 3
     assert model["pass_at_3"] == 1.0
     assert model["pass_power_3"] == 0.0
+    assert model["pass_at_5"] is None
+    assert model["pass_power_5"] is None
+    assert model["pass_at_10"] is None
+    assert model["pass_power_10"] is None
+    assert model["pass_at_1_ci95"] is not None
+    assert model["pass_at_1_ci95"][0] <= model["pass_at_1"]
+    assert model["pass_at_1_ci95"][1] >= model["pass_at_1"]
     assert model["calls_per_rollout"] == 1.0
     assert model["agent_seconds"] == 60.0
     assert model["wall_seconds"] == 30.0
@@ -633,12 +723,19 @@ def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
     assert {
         key: value for key, value in scenario_summary.items() if key != "score_mean"
     } == {
+        "family": "fixtures",
         "rollouts": 3,
         "strict_passes": 2,
         "pass_at_1": 2 / 3,
         "pass_at_3": 1.0,
         "pass_power_3": 0.0,
+        "pass_at_5": None,
+        "pass_power_5": None,
+        "pass_at_10": None,
+        "pass_power_10": None,
     }
+    assert model["families"]["fixtures"]["scenarios"] == 1
+    assert model["families"]["fixtures"]["pass_at_1"] == 2 / 3
     assert model["milestones"]["durable-outcome"] == {
         "description": "The state is correct.",
         "dimension": "outcome",
@@ -690,3 +787,83 @@ def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
     )
     assert regraded_model["score_mean"] == 1.0
     assert regraded_model["strict_passes"] == 3
+
+
+def test_matrix_report_computes_ten_run_reliability_and_family_intervals(
+    tmp_path,
+) -> None:
+    run_dir = tmp_path / "current-model"
+    run_dir.mkdir()
+    envelopes = []
+    for scenario_id, family, successes in [
+        ("family-a:variant", "family-a", 7),
+        ("family-b:variant", "family-b", 2),
+    ]:
+        for trial in range(10):
+            passed = trial < successes
+            envelopes.append(
+                {
+                    "ok": True,
+                    "errors": [],
+                    "traces": [
+                        {
+                            "ok": True,
+                            "errors": [],
+                            "agent": {"config": {"model": "current/model"}},
+                            "rewards": {
+                                "scenario_outcome": {
+                                    "score": 1.0 if passed else 0.0
+                                }
+                            },
+                            "timing": {"agent": {"start": 1.0, "end": 2.0}},
+                            "calls": [],
+                            "info": {
+                                "gsv": {
+                                    "scenarioId": scenario_id,
+                                    "scenarioFamily": family,
+                                    "status": "yielded",
+                                },
+                                "gsv_evaluation": {
+                                    "strict_pass": passed,
+                                    "raw_score": 1.0 if passed else 0.0,
+                                    "milestones": [],
+                                    "dimensions": {},
+                                    "constraints": [],
+                                },
+                            },
+                        }
+                    ],
+                }
+            )
+    (run_dir / "traces.jsonl").write_text(
+        "".join(json.dumps(envelope) + "\n" for envelope in envelopes)
+    )
+
+    model = summarize_matrix(tmp_path)["models"][0]
+
+    assert model["rollouts"] == 20
+    assert model["pass_at_1"] == 0.45
+    assert model["pass_at_3"] == pytest.approx(
+        (
+            1 - math.comb(3, 3) / math.comb(10, 3)
+            + 1
+            - math.comb(8, 3) / math.comb(10, 3)
+        )
+        / 2
+    )
+    assert model["pass_at_5"] == pytest.approx(
+        (1.0 + 1 - math.comb(8, 5) / math.comb(10, 5)) / 2
+    )
+    assert model["pass_power_5"] == pytest.approx(
+        (math.comb(7, 5) / math.comb(10, 5)) / 2
+    )
+    assert model["pass_at_10"] == 1.0
+    assert model["pass_power_10"] == 0.0
+    assert model["pass_at_1_ci95"][0] <= 0.45
+    assert model["pass_at_1_ci95"][1] >= 0.45
+    assert set(model["families"]) == {"family-a", "family-b"}
+    assert model["families"]["family-a"]["pass_at_1"] == 0.7
+    assert model["families"]["family-b"]["pass_at_1"] == 0.2
+    markdown = render_markdown({"models": [model]})
+    assert "Pass@1 [95% CI]" in markdown
+    assert "Pass@10" in markdown

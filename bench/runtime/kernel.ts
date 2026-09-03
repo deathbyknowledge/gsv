@@ -110,6 +110,28 @@ const routingArgsSchema = z.object({
 const nativeShellArgsSchema = z.object({
   input: z.string(),
 }).passthrough();
+const responsibilityPatchSchema = z.object({
+  title: z.optional(z.string()),
+  details: z.optional(z.nullable(jsonObjectSchema)),
+  parentId: z.optional(z.nullable(z.string())),
+  audience: z.optional(z.nullable(z.object({
+    conversationIds: z.array(z.string()),
+  }).strict())),
+  assignee: z.optional(z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("ship") }).strict(),
+    z.object({
+      kind: z.literal("process"),
+      processId: z.string(),
+    }).strict(),
+  ])),
+  state: z.optional(z.enum(["open", "active", "waiting", "resolved", "cancelled"])),
+  priority: z.optional(z.enum(["low", "normal", "high", "critical"])),
+  dueAtMs: z.optional(z.nullable(z.number())),
+  nextCheckAtMs: z.optional(z.nullable(z.number())),
+  blocker: z.optional(z.nullable(z.string())),
+  leaseExpiresAtMs: z.optional(z.nullable(z.number())),
+  resolution: z.optional(z.nullable(jsonObjectSchema)),
+}).strict();
 
 export type SyntheticDispatchResult = SyntheticInvocationResult & {
   transitionsApplied: string[];
@@ -655,6 +677,22 @@ export class SyntheticKernel {
         const input = parseResponsibilityCreate(rest);
         const created = this.responsibilities.create({ process, ...input }, this.now.valueOf());
         return commandResult(JSON.stringify(created) + "\n");
+      }
+      if (subcommand === "update") {
+        this.requireCapability(processId, "r12y.update");
+        const id = requireValue(rest[0], "update responsibility id");
+        if (rest.length !== 3 || rest[1] !== "--json") {
+          throw new Error("update requires: r12y update ID --json PATCH");
+        }
+        const patch: ResponsibilityPatch = responsibilityPatchSchema.parse(
+          JSON.parse(rest[2] ?? ""),
+        );
+        const responsibility = this.responsibilities.update({
+          process,
+          id,
+          patch,
+        }, this.now.valueOf());
+        return this.responsibilityUpdateResult(process, responsibility);
       }
       if (subcommand === "start") {
         this.requireCapability(processId, "r12y.update");
@@ -1331,6 +1369,7 @@ function r12yUsage(): string {
     "  r12y list [--all] [--json]",
     "  r12y show ID",
     "  r12y create --title TITLE [--details JSON] [--priority PRIORITY] [--dedupe KEY]",
+    "  r12y update ID --json PATCH",
     "  r12y start ID",
     "  r12y wait ID [--until ISO] [--blocker TEXT]",
     "  r12y resolve ID [--json RESOLUTION]",

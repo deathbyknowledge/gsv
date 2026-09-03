@@ -100,6 +100,20 @@ durable episode state.
    simulated Process evictions, an exact Slack route, and optional browser
    evidence. Three variants change service, releases, timing, and evidence while
    reusing the same composable contract.
+6. competing-incidents is a 10-variant family where Ship investigates and
+   prepares one incident, yields, then receives a higher-priority incident that
+   owns the only privileged change slot. It must downgrade and cancel the stale
+   work, delegate the winning containment, survive two evictions, reject a late
+   automation recommendation, and verify both services before closing the exact
+   Slack thread. Optional customer, dependency, and signed-approval evidence and
+   initially offline priority targets vary independently.
+7. service-account-operation is a 10-variant family that separates Slack
+   messaging from a privileged Slack account target. A read-only Process
+   correlates identity and optional security, contract, and sponsor evidence;
+   Ship waits for an external decision; and a distinct administrator either
+   makes the exact approved grant once or withholds mutation for denied and
+   expired requests. Approved variants require a later independent membership
+   audit, including ambiguous callbacks that must not trigger a retry.
 
 The normalized artifact records scenario family and seed, observations, semantic
 events, committed messages, target state, Process projections, responsibilities,

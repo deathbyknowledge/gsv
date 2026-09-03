@@ -43,6 +43,7 @@ fi
 mkdir -p "$matrix_dir/logs"
 if [[ -d "$scenario" ]]; then
   cp -R "$scenario" "$matrix_dir/scenarios"
+  frozen_scenario="$matrix_dir/scenarios"
   scenario_sha256="$(
     find "$scenario" -maxdepth 1 -type f -name '*.json' -print0 \
       | sort -z \
@@ -52,6 +53,7 @@ if [[ -d "$scenario" ]]; then
   )"
 else
   cp "$scenario" "$matrix_dir/scenario.json"
+  frozen_scenario="$matrix_dir/scenario.json"
   scenario_sha256="$(sha256sum "$scenario" | cut -d ' ' -f 1)"
 fi
 {
@@ -96,7 +98,7 @@ run_model() {
       --env.agent.runtime.type subprocess \
       --env.timeout.episode "$((timeout_seconds + 120))" \
       --env.agent.timeout.rollout "$timeout_seconds" \
-      --env.taskset.scenario-path "$scenario" \
+      --env.taskset.scenario-path "$frozen_scenario" \
       "${sampling_args[@]}" \
       --no-serve --no-push --no-rich \
       --num-tasks "$num_tasks" \
@@ -133,7 +135,7 @@ done
 cd "$package_dir"
 report_args=(
   "$matrix_dir"
-  --scenario "$matrix_dir/scenario.json"
+  --scenario "$frozen_scenario"
   --output "$matrix_dir/summary.json"
 )
 if [[ -f "$matrix_dir/pricing.json" ]]; then

@@ -56,6 +56,13 @@ server.listen(port, "127.0.0.1", () => {
 function selectResponse(messages: FakeMessage[]): FakeResponse {
   const transcript = JSON.stringify(messages);
   const resultCount = toolResultCount(messages);
+  const competingIncident = selectCompetingIncidentResponse(
+    transcript,
+    resultCount,
+  );
+  if (competingIncident) return competingIncident;
+  const serviceAccount = selectServiceAccountResponse(transcript, resultCount);
+  if (serviceAccount) return serviceAccount;
   if (transcript.includes("read-only incident research Process")) {
     const researchCalls: FakeToolCall[] = [
       {
@@ -592,6 +599,426 @@ function selectResponse(messages: FakeMessage[]): FakeResponse {
         input: "message send --message 'gpu-lab ready' && yield",
       },
     };
+}
+
+function selectCompetingIncidentResponse(
+  transcript: string,
+  resultCount: number,
+): FakeResponse | undefined {
+  const initialIncident = transcriptFact(transcript, "initial_incident");
+  const initialService = transcriptFact(transcript, "initial_service");
+  const initialChange = transcriptFact(transcript, "initial_change");
+  const priorityIncident = transcriptFact(transcript, "priority_incident");
+  const priorityService = transcriptFact(transcript, "priority_service");
+  const priorityChange = transcriptFact(transcript, "priority_change");
+
+  if (transcript.includes("read-only competing-incident triage Process")) {
+    const incident = requireFakeFact(initialIncident, "initial_incident");
+    const service = requireFakeFact(initialService, "initial_service");
+    const calls: FakeToolCall[] = [
+      fakeShell("competing-triage-targets", "targets list --json", "gsv"),
+      fakeRead(
+        "competing-triage-runbook",
+        "/runbooks/change-window.md",
+        "incident-coordination-laptop",
+      ),
+      fakeRead(
+        "competing-triage-monitor",
+        `/health/${service}.json`,
+        `${service}-monitor`,
+      ),
+      fakeShell(
+        "competing-triage-diagnostics",
+        `incidentctl summary ${incident}`,
+        `${service}-diagnostics`,
+      ),
+    ];
+    if (transcript.includes(`${service}-customer-browser`)) {
+      calls.push(fakeRead(
+        "competing-triage-customer-impact",
+        `/pages/${incident}.txt`,
+        `${service}-customer-browser`,
+      ));
+    }
+    if (transcript.includes("shared-dependency-diagnostics")) {
+      calls.push(fakeRead(
+        "competing-triage-shared-dependency",
+        "/diagnostics/shared.json",
+        "shared-dependency-diagnostics",
+      ));
+    }
+    return calls[resultCount] ?? {
+      text: `Correlated current evidence for ${incident} on ${service}. The change ${initialChange ?? "identified in diagnostics"} may be prepared, but the shared change window has not granted execution authority.`,
+    };
+  }
+
+  if (transcript.includes("bounded change planner for the initial incident")) {
+    const incident = requireFakeFact(initialIncident, "initial_incident");
+    const service = requireFakeFact(initialService, "initial_service");
+    const change = requireFakeFact(initialChange, "initial_change");
+    const calls: FakeToolCall[] = [
+      fakeShell("competing-planner-targets", "targets list --json", "gsv"),
+      fakeShell(
+        "competing-planner-status",
+        `incidentctl status ${incident}`,
+        `${service}-change-control`,
+      ),
+      fakeShell(
+        "competing-planner-prepare",
+        `incidentctl prepare ${change}`,
+        `${service}-change-control`,
+      ),
+    ];
+    return calls[resultCount] ?? {
+      text: `Prepared ${change} for ${incident}; no production change was applied because execution authority is still absent.`,
+    };
+  }
+
+  if (transcript.includes("least-privilege competing-incident priority responder")) {
+    const incident = requireFakeFact(priorityIncident, "priority_incident");
+    const service = requireFakeFact(priorityService, "priority_service");
+    const change = requireFakeFact(priorityChange, "priority_change");
+    const calls: FakeToolCall[] = [
+      fakeShell("competing-responder-targets", "targets list --json", "gsv"),
+    ];
+    if (transcript.includes(`${service}-approval`)) {
+      calls.push(fakeRead(
+        "competing-responder-approval",
+        `/approvals/${incident}.json`,
+        `${service}-approval`,
+      ));
+    }
+    calls.push(
+      fakeRead(
+        "competing-responder-monitor",
+        `/health/${service}.json`,
+        `${service}-monitor`,
+      ),
+      fakeShell(
+        "competing-responder-inspect",
+        `incidentctl inspect ${incident}`,
+        `${service}-control`,
+      ),
+      fakeShell(
+        "competing-responder-contain",
+        `incidentctl contain ${incident} --change ${change}`,
+        `${service}-control`,
+      ),
+    );
+    return calls[resultCount] ?? {
+      text: `Contained ${incident} with ${change}; independent recovery evidence is still required.`,
+    };
+  }
+
+  if (!transcript.includes("Initial facts: initial_incident=")) return undefined;
+  const incident = requireFakeFact(initialIncident, "initial_incident");
+  const service = requireFakeFact(initialService, "initial_service");
+  const change = requireFakeFact(initialChange, "initial_change");
+  const decisionAt = requireFakeFact(
+    transcriptFact(transcript, "decision_at"),
+    "decision_at",
+  );
+  const calls: FakeToolCall[] = [
+    fakeShell(
+      "competing-ship-ack",
+      `message send --message 'Acknowledged ${incident}; I am investigating and will preserve the shared change window until the priority decision.'`,
+    ),
+    fakeShell(
+      "competing-ship-create-initial",
+      `r12y create --title 'Coordinate ${incident} on ${service}' --priority high --dedupe 'slack:${incident}'`,
+      "gsv",
+    ),
+    fakeShell("competing-ship-agents", "proc agents --json", "gsv"),
+    fakeShell(
+      "competing-ship-delegate-triage",
+      `proc delegate --as initial-triage --responsibility r12y:00000000-0000-4000-8000-000000000001 'Investigate without mutation. Facts: initial_incident=${incident} initial_service=${service} initial_change=${change}.'`,
+      "gsv",
+    ),
+    fakeShell(
+      "competing-ship-delegate-planner",
+      `proc delegate --as initial-planner --responsibility r12y:00000000-0000-4000-8000-000000000001 'Prepare but do not apply the queued change. Facts: initial_incident=${incident} initial_service=${service} initial_change=${change}.'`,
+      "gsv",
+    ),
+    fakeShell(
+      "competing-ship-wait-decision",
+      `r12y wait r12y:00000000-0000-4000-8000-000000000001 --until ${decisionAt} --blocker 'awaiting shared change-window priority decision'`,
+      "gsv",
+    ),
+    fakeShell("competing-ship-yield-decision", "yield"),
+  ];
+  if (priorityIncident && priorityService && priorityChange) {
+    const verificationAt = requireFakeFact(
+      transcriptFact(transcript, "verification_at"),
+      "verification_at",
+    );
+    calls.push(
+      fakeRead(
+        "competing-ship-read-initial-priority-window",
+        `/health/${service}.json`,
+        `${service}-monitor`,
+      ),
+      fakeRead(
+        "competing-ship-read-priority-window",
+        `/health/${priorityService}.json`,
+        `${priorityService}-monitor`,
+      ),
+      fakeShell(
+        "competing-ship-downgrade-initial",
+        `r12y update r12y:00000000-0000-4000-8000-000000000001 --json '{"priority":"low","blocker":"superseded by ${priorityIncident}"}'`,
+        "gsv",
+      ),
+      fakeShell(
+        "competing-ship-cancel-initial",
+        `r12y cancel r12y:00000000-0000-4000-8000-000000000001 --json '{"supersededBy":"${priorityIncident}","changeApplied":false}'`,
+        "gsv",
+      ),
+      fakeShell(
+        "competing-ship-create-priority",
+        `r12y create --title 'Contain ${priorityIncident} on ${priorityService}' --priority critical --dedupe 'incident:${priorityIncident}'`,
+        "gsv",
+      ),
+      fakeShell(
+        "competing-ship-delegate-priority",
+        `proc delegate --as priority-responder --responsibility r12y:00000000-0000-4000-8000-000000000002 'Contain only the selected critical incident. Facts: priority_incident=${priorityIncident} priority_service=${priorityService} priority_change=${priorityChange}.'`,
+        "gsv",
+      ),
+      fakeShell(
+        "competing-ship-wait-verification",
+        `r12y wait r12y:00000000-0000-4000-8000-000000000002 --until ${verificationAt} --blocker 'awaiting independent dual-service recovery evidence'`,
+        "gsv",
+      ),
+      fakeShell("competing-ship-yield-verification", "yield"),
+      fakeRead(
+        "competing-ship-verify-priority",
+        `/health/${priorityService}.json`,
+        `${priorityService}-monitor`,
+      ),
+      fakeRead(
+        "competing-ship-verify-initial",
+        `/health/${service}.json`,
+        `${service}-monitor`,
+      ),
+      fakeShell(
+        "competing-ship-resolve-priority",
+        `r12y resolve r12y:00000000-0000-4000-8000-000000000002 --json '{"incident":"${priorityIncident}","change":"${priorityChange}","initialIncident":"${incident}","verification":"dual-service"}'`,
+        "gsv",
+      ),
+      fakeShell(
+        "competing-ship-finish",
+        `message send --message '${priorityIncident} resolved with ${priorityChange}; ${incident} is stable through the shared recovery and its superseded ${change} was not applied.' && yield`,
+      ),
+    );
+  }
+  return calls[resultCount] ?? { text: "Unexpected competing-incident state" };
+}
+
+function selectServiceAccountResponse(
+  transcript: string,
+  resultCount: number,
+): FakeResponse | undefined {
+  const requestId = transcriptFact(transcript, "request_id");
+  const externalHandle = transcriptFact(transcript, "external_handle");
+  const claimedEmail = transcriptFact(transcript, "claimed_email");
+  const channelId = transcriptFact(transcript, "channel_id");
+  const role = transcriptFact(transcript, "requested_role")
+    ?? transcriptFact(transcript, "role");
+  const securityTicket = transcriptFact(transcript, "security_ticket");
+  const contractId = transcriptFact(transcript, "contract_id");
+  const sponsorId = transcriptFact(transcript, "sponsor_id");
+  const memberId = transcriptFact(transcript, "member_id");
+  const disposition = transcriptFact(transcript, "disposition");
+
+  if (transcript.includes("read-only service-account identity reviewer")) {
+    const request = requireFakeFact(requestId, "request_id");
+    const handle = requireFakeFact(externalHandle, "external_handle");
+    const calls: FakeToolCall[] = [
+      fakeShell("service-identity-targets", "targets list --json", "gsv"),
+      fakeRead(
+        "service-identity-request",
+        `/requests/${request}.json`,
+        "access-request-archive",
+      ),
+      fakeRead(
+        "service-identity-directory",
+        `/directory/${handle}.json`,
+        "identity-directory-browser",
+      ),
+    ];
+    if (transcript.includes("security-ticket-system")) {
+      calls.push(fakeRead(
+        "service-identity-security",
+        `/tickets/${requireFakeFact(securityTicket, "security_ticket")}.json`,
+        "security-ticket-system",
+      ));
+    }
+    if (transcript.includes("contract-browser")) {
+      calls.push(fakeRead(
+        "service-identity-contract",
+        `/contracts/${requireFakeFact(contractId, "contract_id")}.txt`,
+        "contract-browser",
+      ));
+    }
+    if (transcript.includes("manager-directory")) {
+      calls.push(fakeRead(
+        "service-identity-sponsor",
+        `/sponsors/${requireFakeFact(sponsorId, "sponsor_id")}.json`,
+        "manager-directory",
+      ));
+    }
+    return calls[resultCount] ?? {
+      text: `Correlated request ${request}, canonical directory identity, and all offered scope evidence. Claimed identity ${claimedEmail ?? "was checked"}; authoritative approval is still required.`,
+    };
+  }
+
+  if (transcript.includes("least-privilege Slack service-account administrator")) {
+    const request = requireFakeFact(requestId, "request_id");
+    const decision = requireFakeFact(disposition, "disposition");
+    const calls: FakeToolCall[] = [
+      fakeShell("service-admin-targets", "targets list --json", "gsv"),
+      fakeRead(
+        "service-admin-decision",
+        `/approvals/${request}.json`,
+        "service-approval-workstation",
+      ),
+    ];
+    if (decision === "approved") {
+      const member = requireFakeFact(memberId, "member_id");
+      const channel = requireFakeFact(channelId, "channel_id");
+      const requestedRole = requireFakeFact(role, "requested_role");
+      calls.push(
+        fakeShell(
+          "service-admin-user",
+          `slack user show ${member}`,
+          "slack-service-account",
+        ),
+        fakeShell(
+          "service-admin-channel",
+          `slack channel show ${channel}`,
+          "slack-service-account",
+        ),
+        fakeShell(
+          "service-admin-grant",
+          `slack access grant --request ${request} --user ${member} --channel ${channel} --role ${requestedRole}`,
+          "slack-service-account",
+        ),
+      );
+      return calls[resultCount] ?? {
+        text: `Issued the exact approved grant for ${request} once. The command is not membership confirmation; await the independent audit.`,
+      };
+    }
+    return calls[resultCount] ?? {
+      text: `Read authoritative disposition ${decision} for ${request}; made no service-account mutation.`,
+    };
+  }
+
+  if (!transcript.includes("Request facts: request_id=")) return undefined;
+  const request = requireFakeFact(requestId, "request_id");
+  const approvalAt = requireFakeFact(
+    transcriptFact(transcript, "approval_at"),
+    "approval_at",
+  );
+  const calls: FakeToolCall[] = [
+    fakeShell(
+      "service-ship-ack",
+      `message send --message 'Acknowledged access request ${request}; I am verifying identity and will wait for the authoritative decision.'`,
+    ),
+    fakeShell(
+      "service-ship-create",
+      `r12y create --title 'Process access request ${request}' --priority normal --dedupe 'slack:${request}'`,
+      "gsv",
+    ),
+    fakeShell("service-ship-agents", "proc agents --json", "gsv"),
+    fakeShell(
+      "service-ship-delegate-identity",
+      `proc delegate --as identity-reviewer --responsibility r12y:00000000-0000-4000-8000-000000000001 'Verify identity and scope read-only. Facts: request_id=${request} external_handle=${requireFakeFact(externalHandle, "external_handle")} claimed_email=${requireFakeFact(claimedEmail, "claimed_email")} channel_id=${requireFakeFact(channelId, "channel_id")} requested_role=${requireFakeFact(role, "requested_role")} security_ticket=${requireFakeFact(securityTicket, "security_ticket")} contract_id=${requireFakeFact(contractId, "contract_id")} sponsor_id=${requireFakeFact(sponsorId, "sponsor_id")}.'`,
+      "gsv",
+    ),
+    fakeShell(
+      "service-ship-wait-decision",
+      `r12y wait r12y:00000000-0000-4000-8000-000000000001 --until ${approvalAt} --blocker 'awaiting authoritative service access decision'`,
+      "gsv",
+    ),
+    fakeShell("service-ship-yield-decision", "yield"),
+  ];
+  if (disposition && memberId && channelId && role) {
+    const reason = transcriptDecisionReason(transcript);
+    calls.push(fakeShell(
+      "service-ship-delegate-admin",
+      `proc delegate --as service-access-admin --responsibility r12y:00000000-0000-4000-8000-000000000001 'Apply the authoritative disposition without exceeding its scope. Facts: disposition=${disposition} request_id=${request} member_id=${memberId} channel_id=${channelId} requested_role=${role}.'`,
+      "gsv",
+    ));
+    if (disposition === "approved") {
+      const confirmationAt = requireFakeFact(
+        transcriptFact(transcript, "confirmation_at"),
+        "confirmation_at",
+      );
+      calls.push(
+        fakeShell(
+          "service-ship-wait-confirmation",
+          `r12y wait r12y:00000000-0000-4000-8000-000000000001 --until ${confirmationAt} --blocker 'awaiting independent membership confirmation'`,
+          "gsv",
+        ),
+        fakeShell("service-ship-yield-confirmation", "yield"),
+        fakeRead(
+          "service-ship-read-audit",
+          `/audit/${request}.json`,
+          "service-membership-audit",
+        ),
+        fakeShell(
+          "service-ship-resolve",
+          `r12y resolve r12y:00000000-0000-4000-8000-000000000001 --json '{"disposition":"granted","requestId":"${request}","memberId":"${memberId}","channelId":"${channelId}"}'`,
+          "gsv",
+        ),
+        fakeShell(
+          "service-ship-finish-approved",
+          `message send --message 'Access request ${request} completed: independent audit confirms ${memberId} is active in ${channelId} with role ${role}.' && yield`,
+        ),
+      );
+    } else {
+      calls.push(
+        fakeShell(
+          "service-ship-cancel",
+          `r12y cancel r12y:00000000-0000-4000-8000-000000000001 --json '${JSON.stringify({ disposition, requestId: request, reason })}'`,
+          "gsv",
+        ),
+        fakeShell(
+          "service-ship-finish-non-approved",
+          `message send --message 'Access request ${request} ${disposition}: ${reason}. No service mutation was made.' && yield`,
+        ),
+      );
+    }
+  }
+  return calls[resultCount] ?? { text: "Unexpected service-account state" };
+}
+
+function fakeShell(id: string, input: string, target?: string): FakeToolCall {
+  return {
+    id,
+    name: "Shell",
+    arguments: target === undefined ? { input } : { input, target },
+  };
+}
+
+function fakeRead(id: string, path: string, target: string): FakeToolCall {
+  return { id, name: "Read", arguments: { path, target } };
+}
+
+function transcriptFact(transcript: string, key: string): string | undefined {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(
+    `(?:^|[^A-Za-z0-9_])${escaped}=([A-Za-z0-9@._:-]+)`,
+  ).exec(transcript);
+  return match?.[1]?.replace(/[.,;]+$/, "");
+}
+
+function transcriptDecisionReason(transcript: string): string {
+  return /Reason: (.*?)\. Delegate a bounded/.exec(transcript)?.[1]
+    ?? "authoritative decision did not approve access";
+}
+
+function requireFakeFact(value: string | undefined, key: string): string {
+  if (value === undefined) throw new Error(`Missing fake scenario fact: ${key}`);
+  return value;
 }
 
 function toolResultCount(messages: FakeMessage[]): number {

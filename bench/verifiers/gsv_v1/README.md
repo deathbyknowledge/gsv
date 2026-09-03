@@ -43,6 +43,15 @@ long-horizon release family:
       --no-serve --no-push \
       --num-tasks 3 --num-rollouts 3 --max-concurrent 1
 
+For the complete stateful family suite, run every seeded scenario 10 times from
+the repository root:
+
+    GSV_BENCH_SCENARIO="$PWD/bench/verifiers/gsv_v1/gsv_v1/families" \
+    GSV_BENCH_NUM_TASKS=23 \
+    GSV_BENCH_ROLLOUTS=10 \
+    GSV_BENCH_MODEL_CONCURRENCY=4 \
+    ./bench/scripts/run-verifiers-v1-matrix.sh MODEL [MODEL ...]
+
 To run an unchanged upstream Terminal-Bench verifier through a GSV target, use
 the pinned wrapper from the repository root. It selects Docker when available
 and Prime Sandbox otherwise:
@@ -68,11 +77,14 @@ per model, and the Prime Inference credentials already configured by `prime
 login`. It copies the exact scenario and its digest into an ignored output
 directory, snapshots current model pricing, keeps a log and trace per model,
 and emits `summary.md` plus a machine-readable `summary.json`. The report includes
-strict Pass@1, unbiased Pass@3, Pass^3 reliability, per-scenario results,
+strict Pass@1 with a deterministic scenario-stratified bootstrap 95% interval,
+unbiased Pass@3/5/10, Pass^3/5/10 reliability, family and per-scenario results,
 milestones, dimensions, latency, per-Process end-to-end tok/s, aggregate tok/s at
-the configured concurrency, provider-request tok/s, and listed cost. Listed cost
-is an estimate from total input (cached plus uncached) and completion tokens at
-the snapshotted rates; it does not assume an unadvertised cache discount. A
+the configured concurrency, provider-request tok/s, and listed cost. Ten trials
+per scenario are the comparison protocol for the stateful suite; fewer trials
+remain useful for calibration but do not produce all reliability metrics. Listed
+cost is an estimate from total input (cached plus uncached) and completion tokens
+at the snapshotted rates; it does not assume an unadvertised cache discount. A
 leading `≥` marks known usage from a trace with an interrupted request and is a
 lower bound rather than silently dropping the cost estimate.
 

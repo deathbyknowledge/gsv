@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
+import random
 import statistics
 from collections import defaultdict
 from pathlib import Path
@@ -56,6 +58,55 @@ def _pass_power_k(trials: list[bool], k: int) -> float | None:
     )
 
 
+def _macro_pass_metric(
+    scenario_trials: dict[str, list[bool]],
+    k: int,
+    metric,
+) -> float | None:
+    values = [
+        value
+        for trials in scenario_trials.values()
+        if (value := metric(trials, k)) is not None
+    ]
+    return statistics.fmean(values) if values else None
+
+
+def _quantile(values: list[float], fraction: float) -> float:
+    ordered = sorted(values)
+    if not ordered:
+        return 0.0
+    position = fraction * (len(ordered) - 1)
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return ordered[lower]
+    weight = position - lower
+    return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
+
+
+def _stratified_pass_at_1_ci(
+    scenario_trials: dict[str, list[bool]],
+    seed: str,
+    replicates: int = 10_000,
+) -> list[float] | None:
+    """Bootstrap scenario selection and within-scenario trial variation."""
+    scenarios = sorted(
+        scenario_id for scenario_id, trials in scenario_trials.items() if trials
+    )
+    if not scenarios:
+        return None
+    seed_bytes = hashlib.sha256(seed.encode()).digest()[:8]
+    rng = random.Random(int.from_bytes(seed_bytes, "big"))
+    estimates: list[float] = []
+    for _ in range(replicates):
+        outcomes: list[bool] = []
+        for _ in scenarios:
+            trials = scenario_trials[rng.choice(scenarios)]
+            outcomes.extend(rng.choice(trials) for _ in trials)
+        estimates.append(sum(outcomes) / len(outcomes))
+    return [_quantile(estimates, 0.025), _quantile(estimates, 0.975)]
+
+
 def _model_id(trace: dict[str, Any], run_name: str) -> str:
     agent = trace.get("agent")
     if isinstance(agent, dict):
@@ -82,6 +133,16 @@ def _scenario_id(trace: dict[str, Any]) -> str:
             if isinstance(data.get(key), str):
                 return data[key]
     return "unknown"
+
+
+def _scenario_family(trace: dict[str, Any], scenario_id: str) -> str:
+    info = trace.get("info")
+    artifact = info.get("gsv") if isinstance(info, dict) else None
+    if isinstance(artifact, dict) and isinstance(
+        artifact.get("scenarioFamily"), str
+    ):
+        return artifact["scenarioFamily"]
+    return scenario_id.split(":", 1)[0] if ":" in scenario_id else "fixtures"
 
 
 def _terminal_outcome(trace: dict[str, Any]) -> str | None:
@@ -170,6 +231,7 @@ def summarize_matrix(
         terminal_outcomes: dict[str, int] = defaultdict(int)
         scenario_trials: dict[str, list[bool]] = defaultdict(list)
         scenario_scores: dict[str, list[float]] = defaultdict(list)
+        scenario_families: dict[str, str] = {}
         strict_passes = 0
 
         for entry in entries:
@@ -253,6 +315,7 @@ def summarize_matrix(
             strict_passes += int(strict_pass)
             scenario_trials[scenario_id].append(strict_pass)
             scenario_scores[scenario_id].append(score)
+            scenario_families[scenario_id] = _scenario_family(trace, scenario_id)
 
             evaluated_milestones = (
                 evaluation.get("milestones", []) if isinstance(evaluation, dict) else []
@@ -339,27 +402,65 @@ def summarize_matrix(
             dimension["score_mean"] = (
                 dimension.pop("score_total") / rollouts if rollouts else 0.0
             )
-        pass_at_3_values = [
-            value
-            for trials in scenario_trials.values()
-            if (value := _pass_at_k(trials, 3)) is not None
-        ]
-        pass_power_3_values = [
-            value
-            for trials in scenario_trials.values()
-            if (value := _pass_power_k(trials, 3)) is not None
-        ]
         scenarios = {}
         for scenario_id, trials in sorted(scenario_trials.items()):
             per_scenario_scores = scenario_scores[scenario_id]
             scenario_strict_passes = sum(trials)
             scenarios[scenario_id] = {
+                "family": scenario_families[scenario_id],
                 "rollouts": len(trials),
                 "score_mean": statistics.fmean(per_scenario_scores),
                 "strict_passes": scenario_strict_passes,
                 "pass_at_1": scenario_strict_passes / len(trials),
                 "pass_at_3": _pass_at_k(trials, 3),
                 "pass_power_3": _pass_power_k(trials, 3),
+                "pass_at_5": _pass_at_k(trials, 5),
+                "pass_power_5": _pass_power_k(trials, 5),
+                "pass_at_10": _pass_at_k(trials, 10),
+                "pass_power_10": _pass_power_k(trials, 10),
+            }
+
+        families: dict[str, dict[str, Any]] = {}
+        for family in sorted(set(scenario_families.values())):
+            family_trial_map = {
+                scenario_id: trials
+                for scenario_id, trials in scenario_trials.items()
+                if scenario_families[scenario_id] == family
+            }
+            family_score_values = [
+                score
+                for scenario_id in family_trial_map
+                for score in scenario_scores[scenario_id]
+            ]
+            family_trials = sum(map(len, family_trial_map.values()))
+            family_passes = sum(sum(trials) for trials in family_trial_map.values())
+            families[family] = {
+                "scenarios": len(family_trial_map),
+                "rollouts": family_trials,
+                "score_mean": statistics.fmean(family_score_values),
+                "strict_passes": family_passes,
+                "pass_at_1": family_passes / family_trials,
+                "pass_at_1_ci95": _stratified_pass_at_1_ci(
+                    family_trial_map, f"{model_id}:{family}"
+                ),
+                "pass_at_3": _macro_pass_metric(
+                    family_trial_map, 3, _pass_at_k
+                ),
+                "pass_power_3": _macro_pass_metric(
+                    family_trial_map, 3, _pass_power_k
+                ),
+                "pass_at_5": _macro_pass_metric(
+                    family_trial_map, 5, _pass_at_k
+                ),
+                "pass_power_5": _macro_pass_metric(
+                    family_trial_map, 5, _pass_power_k
+                ),
+                "pass_at_10": _macro_pass_metric(
+                    family_trial_map, 10, _pass_at_k
+                ),
+                "pass_power_10": _macro_pass_metric(
+                    family_trial_map, 10, _pass_power_k
+                ),
             }
 
         models.append(
@@ -371,13 +472,26 @@ def summarize_matrix(
                 "score_median": statistics.median(scores) if scores else 0.0,
                 "strict_passes": strict_passes,
                 "pass_at_1": strict_passes / count if count else 0.0,
-                "pass_at_3": (
-                    statistics.fmean(pass_at_3_values) if pass_at_3_values else None
+                "pass_at_1_ci95": _stratified_pass_at_1_ci(
+                    scenario_trials, model_id
                 ),
-                "pass_power_3": (
-                    statistics.fmean(pass_power_3_values)
-                    if pass_power_3_values
-                    else None
+                "pass_at_3": _macro_pass_metric(
+                    scenario_trials, 3, _pass_at_k
+                ),
+                "pass_power_3": _macro_pass_metric(
+                    scenario_trials, 3, _pass_power_k
+                ),
+                "pass_at_5": _macro_pass_metric(
+                    scenario_trials, 5, _pass_at_k
+                ),
+                "pass_power_5": _macro_pass_metric(
+                    scenario_trials, 5, _pass_power_k
+                ),
+                "pass_at_10": _macro_pass_metric(
+                    scenario_trials, 10, _pass_at_k
+                ),
+                "pass_power_10": _macro_pass_metric(
+                    scenario_trials, 10, _pass_power_k
                 ),
                 "errors": error_count,
                 "calls": call_count,
@@ -430,6 +544,7 @@ def summarize_matrix(
                 "dimensions": dimensions,
                 "constraints": constraints,
                 "scenarios": scenarios,
+                "families": families,
                 "terminal_outcomes": dict(sorted(terminal_outcomes.items())),
             }
         )
@@ -446,8 +561,8 @@ def render_markdown(summary: dict[str, Any]) -> str:
     if not models:
         return "No traces found."
     lines = [
-        "| Model | n | Reward | Raw | Median | Strict | Pass@1 | Pass@3 | Pass^3 | Errors | Calls/n | P50 s | Input tok | Output tok | E2E tok/s/process | Aggregate tok/s | Request tok/s | Cached | Listed cost |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Model | n | Reward | Raw | Median | Strict | Pass@1 [95% CI] | Pass@3 | Pass^3 | Pass@5 | Pass^5 | Pass@10 | Pass^10 | Errors | Calls/n | P50 s | Input tok | Output tok | E2E tok/s/process | Aggregate tok/s | Request tok/s | Cached | Listed cost |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for model in models:
         cost = model["listed_cost_usd"]
@@ -462,9 +577,16 @@ def render_markdown(summary: dict[str, Any]) -> str:
         aggregate_rate = model["aggregate_output_tokens_per_second"]
         request_rate = model["request_output_tokens_per_second"]
         cached_rate = model["cached_input_rate"]
+        pass_at_1_ci95 = model["pass_at_1_ci95"]
+        pass_at_1_text = f"{model['pass_at_1']:.1%}"
+        if pass_at_1_ci95 is not None:
+            pass_at_1_text += (
+                f" [{pass_at_1_ci95[0]:.1%}, {pass_at_1_ci95[1]:.1%}]"
+            )
         lines.append(
             "| {model} | {rollouts} | {mean:.3f} | {raw:.3f} | {median:.3f} | "
-            "{strict}/{rollouts} | {pass1:.1%} | {pass3} | {pass_power3} | "
+            "{strict}/{rollouts} | {pass1} | {pass3} | {pass_power3} | "
+            "{pass5} | {pass_power5} | {pass10} | {pass_power10} | "
             "{errors} | {calls:.1f} | {seconds:.1f} | "
             "{prompt} | {output} | {e2e_rate} | {aggregate_rate} | {request_rate} | "
             "{cached} | {cost} |".format(
@@ -474,7 +596,7 @@ def render_markdown(summary: dict[str, Any]) -> str:
                 raw=model["raw_score_mean"],
                 median=model["score_median"],
                 strict=model["strict_passes"],
-                pass1=model["pass_at_1"],
+                pass1=pass_at_1_text,
                 pass3=(
                     f"{model['pass_at_3']:.1%}"
                     if model["pass_at_3"] is not None
@@ -483,6 +605,26 @@ def render_markdown(summary: dict[str, Any]) -> str:
                 pass_power3=(
                     f"{model['pass_power_3']:.1%}"
                     if model["pass_power_3"] is not None
+                    else "n/a"
+                ),
+                pass5=(
+                    f"{model['pass_at_5']:.1%}"
+                    if model["pass_at_5"] is not None
+                    else "n/a"
+                ),
+                pass_power5=(
+                    f"{model['pass_power_5']:.1%}"
+                    if model["pass_power_5"] is not None
+                    else "n/a"
+                ),
+                pass10=(
+                    f"{model['pass_at_10']:.1%}"
+                    if model["pass_at_10"] is not None
+                    else "n/a"
+                ),
+                pass_power10=(
+                    f"{model['pass_power_10']:.1%}"
+                    if model["pass_power_10"] is not None
                     else "n/a"
                 ),
                 errors=model["errors"],
@@ -515,6 +657,39 @@ def render_markdown(summary: dict[str, Any]) -> str:
                 for status, count in model["terminal_outcomes"].items()
             )
             lines.append(f"| {model['model']} | {outcomes or 'n/a'} |")
+    if any(model["families"] for model in models):
+        lines.extend(
+            [
+                "",
+                "| Model | Family | Scenarios | n | Mean | Strict | Pass@1 [95% CI] | Pass@3 | Pass^3 | Pass@5 | Pass^5 | Pass@10 | Pass^10 |",
+                "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            ]
+        )
+        for model in models:
+            for family_id, family in model["families"].items():
+                ci95 = family["pass_at_1_ci95"]
+                pass_at_1 = f"{family['pass_at_1']:.1%}"
+                if ci95 is not None:
+                    pass_at_1 += f" [{ci95[0]:.1%}, {ci95[1]:.1%}]"
+                lines.append(
+                    "| {model} | {family} | {scenarios} | {rollouts} | "
+                    "{mean:.3f} | {strict}/{rollouts} | {pass1} | {pass3} | "
+                    "{power3} | {pass5} | {power5} | {pass10} | {power10} |".format(
+                        model=model["model"],
+                        family=family_id,
+                        scenarios=family["scenarios"],
+                        rollouts=family["rollouts"],
+                        mean=family["score_mean"],
+                        strict=family["strict_passes"],
+                        pass1=pass_at_1,
+                        pass3=_format_optional_rate(family["pass_at_3"]),
+                        power3=_format_optional_rate(family["pass_power_3"]),
+                        pass5=_format_optional_rate(family["pass_at_5"]),
+                        power5=_format_optional_rate(family["pass_power_5"]),
+                        pass10=_format_optional_rate(family["pass_at_10"]),
+                        power10=_format_optional_rate(family["pass_power_10"]),
+                    )
+                )
     milestone_ids = sorted(
         {milestone_id for model in models for milestone_id in model["milestones"]}
     )
@@ -540,27 +715,34 @@ def render_markdown(summary: dict[str, Any]) -> str:
         lines.extend(
             [
                 "",
-                "| Model | Scenario | n | Mean | Strict | Pass@3 | Pass^3 |",
-                "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
+                "| Model | Family | Scenario | n | Mean | Strict | Pass@3 | Pass^3 | Pass@5 | Pass^5 | Pass@10 | Pass^10 |",
+                "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
             ]
         )
         for model in models:
             for scenario_id, scenario in model["scenarios"].items():
-                pass_at_3 = scenario["pass_at_3"]
-                pass_power_3 = scenario["pass_power_3"]
                 lines.append(
-                    "| {model} | {scenario_id} | {rollouts} | {mean:.3f} | "
-                    "{strict}/{rollouts} | {pass_at_3} | {pass_power_3} |".format(
+                    "| {model} | {family} | {scenario_id} | {rollouts} | "
+                    "{mean:.3f} | {strict}/{rollouts} | {pass_at_3} | "
+                    "{pass_power_3} | {pass_at_5} | {pass_power_5} | "
+                    "{pass_at_10} | {pass_power_10} |".format(
                         model=model["model"],
+                        family=scenario["family"],
                         scenario_id=scenario_id,
                         rollouts=scenario["rollouts"],
                         mean=scenario["score_mean"],
                         strict=scenario["strict_passes"],
-                        pass_at_3=(
-                            f"{pass_at_3:.1%}" if pass_at_3 is not None else "n/a"
+                        pass_at_3=_format_optional_rate(scenario["pass_at_3"]),
+                        pass_power_3=_format_optional_rate(
+                            scenario["pass_power_3"]
                         ),
-                        pass_power_3=(
-                            f"{pass_power_3:.1%}" if pass_power_3 is not None else "n/a"
+                        pass_at_5=_format_optional_rate(scenario["pass_at_5"]),
+                        pass_power_5=_format_optional_rate(
+                            scenario["pass_power_5"]
+                        ),
+                        pass_at_10=_format_optional_rate(scenario["pass_at_10"]),
+                        pass_power_10=_format_optional_rate(
+                            scenario["pass_power_10"]
                         ),
                     )
                 )
@@ -599,6 +781,10 @@ def render_markdown(summary: dict[str, Any]) -> str:
                     f"{constraint['total']} |"
                 )
     return "\n".join(lines)
+
+
+def _format_optional_rate(value: float | None) -> str:
+    return f"{value:.1%}" if value is not None else "n/a"
 
 
 def main() -> None:

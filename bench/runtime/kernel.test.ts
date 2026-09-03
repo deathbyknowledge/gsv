@@ -197,4 +197,46 @@ describe("SyntheticKernel", () => {
       },
     });
   });
+
+  it("supports the production-shaped responsibility update command", async () => {
+    const kernel = SyntheticKernel.fromSpec({
+      runtime: {
+        now: "2026-09-01T12:00:00.000Z",
+        timezone: "UTC",
+      },
+      processes: [{
+        id: "ship",
+        role: "ship",
+        uid: 1000,
+        gids: [1000],
+        capabilities: ["shell.exec", "r12y.create", "r12y.update"],
+      }],
+    }, { targets: [], transitions: [], events: [] });
+
+    const created = await kernel.dispatch("ship", "Shell", {
+      input: "r12y create --title incident --priority high",
+      target: "gsv",
+    });
+    expect(created.isError).toBe(false);
+
+    const updated = await kernel.dispatch("ship", "Shell", {
+      input: "r12y update r12y:00000000-0000-4000-8000-000000000001 --json '{\"priority\":\"low\",\"state\":\"waiting\",\"blocker\":\"superseded\"}'",
+      target: "gsv",
+    });
+
+    expect(updated).toMatchObject({
+      isError: false,
+      value: {
+        status: "completed",
+        exitCode: 0,
+      },
+    });
+    expect(kernel.snapshot().responsibilities.records[
+      "r12y:00000000-0000-4000-8000-000000000001"
+    ]).toMatchObject({
+      priority: "low",
+      state: "waiting",
+      blocker: "superseded",
+    });
+  });
 });
