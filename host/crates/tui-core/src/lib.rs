@@ -1195,14 +1195,17 @@ impl App {
         }
 
         if self.help_visible {
-            return match action {
+            match &action {
                 Action::Escape | Action::ToggleHelp => {
                     self.help_visible = false;
-                    Vec::new()
+                    return Vec::new();
                 }
-                Action::Quit => vec![Effect::Quit],
-                _ => Vec::new(),
-            };
+                Action::ToggleActions | Action::ToggleMarkdown | Action::ToggleVim => {
+                    self.help_visible = false;
+                }
+                Action::Quit => return vec![Effect::Quit],
+                _ => return Vec::new(),
+            }
         }
 
         if self.command_search.is_some() {
@@ -5886,6 +5889,8 @@ mod tests {
         assert!(collapsed.contains("↳ 1 action"));
         assert!(!collapsed.contains("read · macbook"));
 
+        app.dispatch(Action::Escape);
+        app.dispatch(Action::ToggleHelp);
         app.dispatch(Action::ToggleActions);
         terminal.draw(|frame| app.render(frame))?;
         let expanded = terminal
@@ -5896,6 +5901,7 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(expanded.contains("✓ read · macbook"));
+        assert!(!expanded.contains("Press ? or escape to return"));
         Ok(())
     }
 
