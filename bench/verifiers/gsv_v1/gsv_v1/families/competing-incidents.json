@@ -791,11 +791,7 @@
                 "mode": "subset",
                 "value": {
                   "state": "cancelled",
-                  "priority": "low",
-                  "resolution": {
-                    "supersededBy": "${priority_incident}",
-                    "changeApplied": false
-                  }
+                  "priority": "low"
                 }
               },
               {

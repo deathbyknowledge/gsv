@@ -646,6 +646,85 @@ def test_service_account_family_covers_authorized_and_withheld_outcomes() -> Non
     assert optional_target_counts == {0, 1, 2, 3}
 
 
+def test_stateful_outcome_rubrics_do_not_require_one_resolution_vocabulary() -> None:
+    families = (
+        Path(__file__).resolve().parents[1] / "gsv_v1" / "families"
+    )
+    service_scenarios = load_scenarios(
+        families / "service-account-operation.json"
+    )
+    approved = next(
+        scenario
+        for scenario in service_scenarios
+        if scenario["groundTruth"]["disposition"] == "approved"
+    )
+    denied = next(
+        scenario
+        for scenario in service_scenarios
+        if scenario["groundTruth"]["disposition"] == "denied"
+    )
+    competing = load_scenarios(families / "competing-incidents.json")[0]
+
+    checks = [
+        (
+            approved,
+            "membership-confirmed-and-resolved",
+            {
+                "state": "resolved",
+                "assignee": {"kind": "ship"},
+                "resolution": {
+                    "disposition": "approved_and_confirmed",
+                    "request_id": approved["groundTruth"]["requestId"],
+                },
+            },
+        ),
+        (
+            denied,
+            "non-approved-request-cancelled",
+            {
+                "state": "cancelled",
+                "assignee": {"kind": "ship"},
+                "resolution": {
+                    "outcome": "access_withheld",
+                    "request_id": denied["groundTruth"]["requestId"],
+                },
+            },
+        ),
+        (
+            competing,
+            "priority-inversion-reconciled",
+            {
+                "state": "cancelled",
+                "priority": "low",
+                "resolution": {"reason": "superseded by the priority incident"},
+            },
+        ),
+    ]
+    responsibility_id = "r12y:00000000-0000-4000-8000-000000000001"
+    for scenario, milestone_id, responsibility in checks:
+        milestone = next(
+            item
+            for item in scenario["evaluation"]["milestones"]
+            if item["id"] == milestone_id
+        )
+        predicate = next(
+            item
+            for item in milestone["predicates"]
+            if item.get("path", "").startswith(
+                "/world/responsibilities/records/"
+            )
+        )
+        assert "resolution" not in predicate["value"]
+        artifact = {
+            "world": {
+                "responsibilities": {
+                    "records": {responsibility_id: responsibility}
+                }
+            }
+        }
+        assert evaluate_predicate(artifact, predicate)["passed"]
+
+
 def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
     run_dir = tmp_path / "qwen"
     run_dir.mkdir()
