@@ -321,6 +321,9 @@ pub enum Effect {
         path: String,
         filename: String,
     },
+    LoadOlderHistory {
+        before_sequence: u64,
+    },
     Abort,
     DecideApproval {
         request_id: String,
@@ -452,6 +455,15 @@ enum TranscriptBlock {
     },
 }
 
+struct ActionSegmentRequest<'a> {
+    run_id: &'a str,
+    width: u16,
+    activity_phase: bool,
+    cutoff: Option<u64>,
+    after_moment_id: Option<&'a str>,
+    flush: bool,
+}
+
 impl TranscriptBlock {
     fn top(&self) -> u16 {
         match self {
@@ -485,10 +497,13 @@ pub struct App {
     action_runs: Vec<RunActions>,
     history_position: Option<usize>,
     history_draft: Option<DraftSnapshot>,
+    history_has_more: bool,
+    history_loading: bool,
     help_visible: bool,
     connection: ConnectionState,
     activity: Option<String>,
     pending_submission: Option<PendingSubmission>,
+    uncertain_submission: Option<DraftSnapshot>,
     active_run: Option<String>,
     active_shell: Option<u64>,
     next_submission_id: u64,
@@ -532,10 +547,13 @@ impl App {
             action_runs: Vec::new(),
             history_position: None,
             history_draft: None,
+            history_has_more: false,
+            history_loading: false,
             help_visible: false,
             connection,
             activity: None,
             pending_submission: None,
+            uncertain_submission: None,
             active_run: None,
             active_shell: None,
             next_submission_id: 1,
@@ -629,9 +647,13 @@ impl App {
     }
 
     pub fn animation_active(&self) -> bool {
-        self.pending_submission.is_some()
+        matches!(
+            self.connection,
+            ConnectionState::Connecting | ConnectionState::Offline
+        ) || self.pending_submission.is_some()
             || self.active_run.is_some()
             || self.active_shell.is_some()
+            || self.history_loading
             || self
                 .moments
                 .iter()
@@ -705,6 +727,66 @@ impl App {
 
     pub fn set_connection(&mut self, connection: ConnectionState) {
         self.connection = connection;
+    }
+
+    pub fn connection_lost(&mut self) {
+        if self.connection == ConnectionState::Demo {
+            return;
+        }
+        if let Some(pending) = self.pending_submission.take() {
+            if self.draft.is_empty() {
+                self.draft.clone_from(&pending.text);
+                self.draft_references.clone_from(&pending.references);
+                self.draft_cursor = self.draft.len();
+                self.draft_visible = true;
+                self.uncertain_submission = Some(DraftSnapshot {
+                    text: pending.text.clone(),
+                    cursor: pending.text.len(),
+                    execution: pending.execution,
+                    references: pending.references.clone(),
+                });
+            }
+            let response_id = match pending.execution {
+                ExecutionMode::Ship => format!("local:gsv:{}", pending.id),
+                ExecutionMode::Shell => format!("local:shell:{}", pending.id),
+            };
+            if let Some(moment) = self
+                .moments
+                .iter_mut()
+                .find(|moment| moment.id == response_id)
+            {
+                if !moment.text.is_empty() && !moment.text.ends_with('\n') {
+                    moment.text.push('\n');
+                }
+                moment
+                    .text
+                    .push_str("Connection changed before GSV confirmed this request.");
+                moment.state = MomentState::Error;
+            }
+        }
+        self.active_shell = None;
+        self.approval = None;
+        self.approval_run_id = None;
+        self.history_loading = false;
+        if let Some(picker) = self.file_picker.as_mut().filter(|picker| picker.loading) {
+            picker.loading = false;
+            picker.error = Some("connection changed; press ctrl+o to retry".to_string());
+        }
+        self.connection = ConnectionState::Offline;
+        self.activity = Some("RECONNECTING".to_string());
+    }
+
+    pub fn connection_restored(&mut self, active_run_id: Option<&str>) {
+        if let Some(run_id) = active_run_id {
+            self.start_run(run_id);
+        } else {
+            if let Some(stale_run_id) = self.active_run.clone() {
+                self.finish_run(Some(&stale_run_id), None);
+            }
+            self.active_run = None;
+            self.connection = ConnectionState::Ready;
+            self.activity = None;
+        }
     }
 
     pub fn set_activity(&mut self, activity: Option<String>) {
@@ -892,7 +974,66 @@ impl App {
         if moments.is_empty() {
             return;
         }
-        self.command_history = moments
+        self.moments = moments;
+        self.rebuild_command_history();
+        self.selected = self.moments.len().saturating_sub(1);
+        self.document_scroll = 0;
+        self.follow_latest = true;
+        self.scroll_anchor = None;
+        self.media_expanded = false;
+        self.media_focus = 0;
+    }
+
+    pub fn set_history_has_more(&mut self, has_more: bool) {
+        self.history_has_more = has_more;
+        self.history_loading = false;
+    }
+
+    pub fn reconcile_history(&mut self, moments: Vec<Moment>, has_more: bool) {
+        for moment in moments {
+            if self.moments.iter().any(|existing| existing.id == moment.id) {
+                continue;
+            }
+            self.commit_moment(moment);
+        }
+        self.history_has_more = has_more;
+        self.history_loading = false;
+        self.rebuild_command_history();
+    }
+
+    pub fn prepend_history(&mut self, moments: Vec<Moment>, has_more: bool) {
+        let anchor_id = self.moments.first().map(|moment| moment.id.clone());
+        let mut older = moments
+            .into_iter()
+            .filter(|moment| !self.moments.iter().any(|existing| existing.id == moment.id))
+            .collect::<Vec<_>>();
+        if !older.is_empty() {
+            older.append(&mut self.moments);
+            self.moments = older;
+            if let Some(anchor_id) = anchor_id {
+                if let Some(index) = self
+                    .moments
+                    .iter()
+                    .position(|moment| moment.id == anchor_id)
+                {
+                    self.selected = self.selected.saturating_add(index);
+                    self.scroll_anchor = Some(ScrollAnchor::Moment(index));
+                }
+            }
+            self.follow_latest = false;
+            self.rebuild_command_history();
+        }
+        self.history_has_more = has_more;
+        self.history_loading = false;
+    }
+
+    pub fn history_page_failed(&mut self) {
+        self.history_loading = false;
+    }
+
+    fn rebuild_command_history(&mut self) {
+        self.command_history = self
+            .moments
             .iter()
             .filter(|moment| moment.role == Role::Human && !moment.text.trim().is_empty())
             .map(|moment| CommandHistoryEntry {
@@ -906,13 +1047,6 @@ impl App {
                 .drain(..self.command_history.len() - MAX_COMMAND_HISTORY);
         }
         self.reset_history_navigation();
-        self.moments = moments;
-        self.selected = self.moments.len().saturating_sub(1);
-        self.document_scroll = 0;
-        self.follow_latest = true;
-        self.scroll_anchor = None;
-        self.media_expanded = false;
-        self.media_focus = 0;
     }
 
     pub fn enter_approval(&mut self, approval: Approval) {
@@ -1199,7 +1333,7 @@ impl App {
             }
             Action::ScrollUp => {
                 self.scroll_older(3, true);
-                Vec::new()
+                self.load_older_history_if_needed()
             }
             Action::ScrollDown => {
                 self.scroll_newer(3, true);
@@ -1207,7 +1341,7 @@ impl App {
             }
             Action::ScrollPageUp => {
                 self.scroll_older(self.last_viewport_height.saturating_sub(2).max(1), false);
-                Vec::new()
+                self.load_older_history_if_needed()
             }
             Action::ScrollPageDown => {
                 self.scroll_newer(self.last_viewport_height.saturating_sub(2).max(1), false);
@@ -1629,6 +1763,7 @@ impl App {
             execution,
             references: references.clone(),
         });
+        self.uncertain_submission = None;
         self.moments.push(
             Moment::complete(format!("local:user:{id}"), Role::Human, text.clone())
                 .with_environment(self.active_environment().clone())
@@ -1762,7 +1897,16 @@ impl App {
             moment.text = error.into();
             moment.state = MomentState::Error;
         }
-        self.connection = ConnectionState::Offline;
+        if !matches!(
+            self.connection,
+            ConnectionState::Offline | ConnectionState::Connecting
+        ) {
+            self.connection = if self.active_run.is_some() || self.active_shell.is_some() {
+                ConnectionState::Working
+            } else {
+                ConnectionState::Ready
+            };
+        }
         self.activity = None;
     }
 
@@ -1988,33 +2132,33 @@ impl App {
         artifacts: Vec<Artifact>,
         environment: Option<CapabilityEnvironment>,
     ) {
-        self.commit_message_ordered(
-            id,
+        self.commit_moment(Moment {
+            id: id.into(),
             role,
-            text,
+            execution: ExecutionMode::Ship,
+            text: text.into(),
             run_id,
+            sequence: None,
+            timestamp: None,
+            state: MomentState::Complete,
             artifacts,
             environment,
-            MomentTimeline::default(),
-        );
+        });
     }
 
-    pub fn commit_message_ordered(
-        &mut self,
-        id: impl Into<String>,
-        role: Role,
-        text: impl Into<String>,
-        run_id: Option<String>,
-        artifacts: Vec<Artifact>,
-        environment: Option<CapabilityEnvironment>,
-        timeline: MomentTimeline,
-    ) {
-        let MomentTimeline {
+    pub fn commit_moment(&mut self, moment: Moment) {
+        let Moment {
+            id,
+            role,
+            execution: _,
+            text,
+            run_id,
             sequence,
             timestamp,
-        } = timeline;
-        let id = id.into();
-        let text = text.into();
+            state: _,
+            artifacts,
+            environment,
+        } = moment;
         if self.moments.iter().any(|moment| moment.id == id) {
             return;
         }
@@ -2036,20 +2180,45 @@ impl App {
             });
             if let Some(index) = exact_run.or(unbound) {
                 let old_id = self.moments[index].id.clone();
-                let moment = &mut self.moments[index];
-                moment.id = id.clone();
-                moment.run_id = run_id.clone();
-                moment.artifacts = artifacts;
-                moment.sequence = sequence;
-                moment.timestamp = timestamp;
-                if environment.is_some() {
-                    moment.environment = environment;
+                {
+                    let moment = &mut self.moments[index];
+                    moment.id = id.clone();
+                    moment.run_id = run_id.clone();
+                    moment.artifacts = artifacts;
+                    moment.sequence = sequence;
+                    moment.timestamp = timestamp;
+                    if environment.is_some() {
+                        moment.environment = environment;
+                    }
                 }
                 for action in self.action_runs.iter_mut().flat_map(|run| &mut run.actions) {
                     if action.after_moment_id.as_deref() == Some(old_id.as_str()) {
                         action.after_moment_id = Some(id.clone());
                     }
                 }
+                if let Some(submission_id) = old_id.strip_prefix("local:user:") {
+                    let response_id = format!("local:gsv:{submission_id}");
+                    if let Some(response_index) = self.moments.iter().position(|moment| {
+                        moment.id == response_id && moment.state == MomentState::Error
+                    }) {
+                        self.moments.remove(response_index);
+                        self.selected = self.selected.min(self.moments.len().saturating_sub(1));
+                    }
+                }
+                if self
+                    .uncertain_submission
+                    .as_ref()
+                    .is_some_and(|submission| {
+                        submission.execution == ExecutionMode::Ship
+                            && submission.text == text
+                            && self.draft == submission.text
+                    })
+                {
+                    self.draft.clear();
+                    self.draft_references.clear();
+                    self.draft_cursor = 0;
+                }
+                self.uncertain_submission = None;
                 return;
             }
         }
@@ -2418,6 +2587,22 @@ impl App {
         self.media_expanded = false;
     }
 
+    fn load_older_history_if_needed(&mut self) -> Vec<Effect> {
+        if self.document_scroll != 0 || !self.history_has_more || self.history_loading {
+            return Vec::new();
+        }
+        let Some(before_sequence) = self
+            .moments
+            .iter()
+            .filter_map(|moment| moment.sequence)
+            .min()
+        else {
+            return Vec::new();
+        };
+        self.history_loading = true;
+        vec![Effect::LoadOlderHistory { before_sequence }]
+    }
+
     fn turn_start(&self, index: usize) -> usize {
         let index = index.min(self.moments.len().saturating_sub(1));
         if self
@@ -2533,16 +2718,19 @@ impl App {
 
     fn push_action_run_segment(
         &self,
-        run_id: &str,
         rendered: &mut Vec<(String, usize)>,
         blocks: &mut Vec<TranscriptBlock>,
         document_height: &mut u16,
-        width: u16,
-        activity_phase: bool,
-        cutoff: Option<u64>,
-        after_moment_id: Option<&str>,
-        flush: bool,
+        request: ActionSegmentRequest<'_>,
     ) {
+        let ActionSegmentRequest {
+            run_id,
+            width,
+            activity_phase,
+            cutoff,
+            after_moment_id,
+            flush,
+        } = request;
         let Some(run) = self
             .action_runs
             .iter()
@@ -2601,9 +2789,11 @@ impl App {
         };
         let start = cursor.max(visible_start);
         if end > start {
-            let hidden = (cursor < visible_start)
-                .then_some(run.omitted.saturating_add(visible_start))
-                .unwrap_or(0);
+            let hidden = if cursor < visible_start {
+                run.omitted.saturating_add(visible_start)
+            } else {
+                0
+            };
             push_transcript_text(
                 blocks,
                 document_height,
@@ -2883,6 +3073,19 @@ impl App {
         let mut rendered_action_counts = Vec::new();
         let mut rendered_approval = false;
 
+        if self.history_loading {
+            push_transcript_text(
+                &mut blocks,
+                &mut document_height,
+                vec![activity_line(
+                    Some("loading earlier history"),
+                    palette,
+                    activity_phase,
+                )],
+                area.width,
+            );
+        }
+
         for (index, moment) in self.moments.iter().enumerate() {
             if moment.role == Role::Human && document_height > 0 {
                 push_transcript_text(
@@ -2896,15 +3099,17 @@ impl App {
             if moment.role != Role::Human {
                 if let Some(run_id) = moment.run_id.as_deref() {
                     self.push_action_run_segment(
-                        run_id,
                         &mut rendered_action_counts,
                         &mut blocks,
                         &mut document_height,
-                        area.width,
-                        activity_phase,
-                        moment.timestamp,
-                        None,
-                        false,
+                        ActionSegmentRequest {
+                            run_id,
+                            width: area.width,
+                            activity_phase,
+                            cutoff: moment.timestamp,
+                            after_moment_id: None,
+                            flush: false,
+                        },
                     );
                 }
             }
@@ -3056,15 +3261,17 @@ impl App {
             }
             if let Some(run_id) = moment.run_id.as_deref() {
                 self.push_action_run_segment(
-                    run_id,
                     &mut rendered_action_counts,
                     &mut blocks,
                     &mut document_height,
-                    area.width,
-                    activity_phase,
-                    None,
-                    Some(&moment.id),
-                    false,
+                    ActionSegmentRequest {
+                        run_id,
+                        width: area.width,
+                        activity_phase,
+                        cutoff: None,
+                        after_moment_id: Some(&moment.id),
+                        flush: false,
+                    },
                 );
             }
             if let Some(run_id) = moment.run_id.as_deref() {
@@ -3073,15 +3280,17 @@ impl App {
                 });
                 if !run_continues {
                     self.push_action_run_segment(
-                        run_id,
                         &mut rendered_action_counts,
                         &mut blocks,
                         &mut document_height,
-                        area.width,
-                        activity_phase,
-                        None,
-                        None,
-                        true,
+                        ActionSegmentRequest {
+                            run_id,
+                            width: area.width,
+                            activity_phase,
+                            cutoff: None,
+                            after_moment_id: None,
+                            flush: true,
+                        },
                     );
                     if !rendered_approval && self.approval_run_id.as_deref() == Some(run_id) {
                         if let Some(approval) = &self.approval {
@@ -5637,5 +5846,85 @@ mod tests {
         assert_eq!(approval.syscall, "shell[31m.exec");
         assert_eq!(approval.target, "macbook");
         assert_eq!(approval.preview, "one[2J\ntwo");
+    }
+
+    #[test]
+    fn reaching_the_top_requests_each_history_page_once() {
+        let mut app = App::new(ConnectionState::Ready);
+        app.replace_history(vec![
+            Moment::complete("three", Role::Human, "three").with_timeline(Some(3), Some(30)),
+            Moment::complete("four", Role::Intelligence, "four").with_timeline(Some(4), Some(40)),
+        ]);
+        app.set_history_has_more(true);
+        app.follow_latest = false;
+        app.document_scroll = 0;
+
+        assert_eq!(
+            app.dispatch(Action::ScrollUp),
+            vec![Effect::LoadOlderHistory { before_sequence: 3 }]
+        );
+        assert!(app.dispatch(Action::ScrollUp).is_empty());
+    }
+
+    #[test]
+    fn prepending_history_deduplicates_and_preserves_the_draft() {
+        let mut app = App::new(ConnectionState::Ready);
+        app.replace_history(vec![
+            Moment::complete("three", Role::Human, "three").with_timeline(Some(3), Some(30)),
+            Moment::complete("four", Role::Intelligence, "four").with_timeline(Some(4), Some(40)),
+        ]);
+        app.dispatch(Action::Insert("unfinished thought".to_string()));
+        app.prepend_history(
+            vec![
+                Moment::complete("one", Role::Human, "one").with_timeline(Some(1), Some(10)),
+                Moment::complete("two", Role::Intelligence, "two").with_timeline(Some(2), Some(20)),
+                Moment::complete("three", Role::Human, "three").with_timeline(Some(3), Some(30)),
+            ],
+            false,
+        );
+
+        assert_eq!(
+            app.moments()
+                .iter()
+                .map(|moment| moment.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["one", "two", "three", "four"]
+        );
+        assert_eq!(app.draft(), "unfinished thought");
+    }
+
+    #[test]
+    fn reconnect_restores_an_unconfirmed_request_until_history_confirms_it() {
+        let mut app = App::new(ConnectionState::Ready);
+        app.dispatch(Action::Insert("do the thing".to_string()));
+        app.dispatch(Action::Submit);
+
+        app.connection_lost();
+        assert_eq!(app.draft(), "do the thing");
+        assert!(app
+            .moments()
+            .iter()
+            .any(|moment| { moment.id == "local:gsv:1" && moment.state == MomentState::Error }));
+
+        app.reconcile_history(
+            vec![
+                Moment::complete("canonical-user", Role::Human, "do the thing")
+                    .with_timeline(Some(12), Some(120)),
+            ],
+            false,
+        );
+
+        assert!(app.draft().is_empty());
+        assert_eq!(
+            app.moments()
+                .iter()
+                .filter(|moment| moment.role == Role::Human)
+                .count(),
+            1
+        );
+        assert!(!app
+            .moments()
+            .iter()
+            .any(|moment| moment.id == "local:gsv:1"));
     }
 }

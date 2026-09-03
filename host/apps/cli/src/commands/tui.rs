@@ -1,5 +1,5 @@
 use std::io::{self, IsTerminal};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crossterm::cursor::{SetCursorStyle, Show};
@@ -19,13 +19,13 @@ use gsv::protocol::Frame;
 use gsv_tui_core::{
     Action, AgentActionSnapshot, App, Approval, ApprovalDecision, Artifact, CapabilityEnvironment,
     ConnectionState, Effect, FileEntry, FileReference, MediaKind, MessageDeliverySnapshot, Moment,
-    MomentTimeline, Role, Theme,
+    Role, Theme,
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
-use tokio::time::MissedTickBehavior;
+use tokio::time::{Instant, MissedTickBehavior};
 
 use super::chat::{implicit_personal_owner_uid, personal_process_id};
 
@@ -34,6 +34,11 @@ mod media;
 use media::{ArtifactStore, ImageManager};
 
 const FILE_INSPECTION_TIMEOUT: Duration = Duration::from_secs(30);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+const CONNECTION_CHECK_INTERVAL: Duration = Duration::from_millis(250);
+const INITIAL_RECONNECT_DELAY: Duration = Duration::from_millis(250);
+const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(8);
+const HISTORY_PAGE_SIZE: u64 = 200;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FileInspectionKind {
@@ -42,6 +47,19 @@ enum FileInspectionKind {
 }
 
 enum RuntimeEvent {
+    Connected(ConnectionBootstrap),
+    ConnectionFailed {
+        generation: u64,
+        error: String,
+    },
+    Session {
+        generation: u64,
+        event: SessionEvent,
+    },
+    Local(SessionEvent),
+}
+
+enum SessionEvent {
     Signal {
         name: String,
         payload: Value,
@@ -89,16 +107,88 @@ enum RuntimeEvent {
         request_id: u64,
         error: String,
     },
-    TraceHistoryLoaded {
-        actions: Vec<AgentActionSnapshot>,
-        deliveries: Vec<MessageDeliverySnapshot>,
+    HistoryPageLoaded {
+        moments: Vec<Moment>,
+        has_more: bool,
     },
+    HistoryPageFailed,
 }
 
 struct ConnectedSession {
+    generation: u64,
     client: Arc<KernelClient>,
     pid: String,
     conversation_id: String,
+}
+
+#[derive(Clone)]
+struct ConnectionConfig {
+    url: String,
+    auth: GatewayAuth,
+    preferred_pid: Option<String>,
+    strict_pid: bool,
+}
+
+struct ConnectionBootstrap {
+    generation: u64,
+    session: ConnectedSession,
+    principal: String,
+    environments: Vec<CapabilityEnvironment>,
+    moments: Vec<Moment>,
+    history_has_more: bool,
+    actions: Vec<AgentActionSnapshot>,
+    deliveries: Vec<MessageDeliverySnapshot>,
+    active_run_id: Option<String>,
+    pending_approval: Option<(Option<String>, Approval)>,
+}
+
+struct SignalGate {
+    generation: u64,
+    sender: mpsc::UnboundedSender<RuntimeEvent>,
+    state: Mutex<SignalGateState>,
+}
+
+#[derive(Default)]
+struct SignalGateState {
+    active: bool,
+    buffered: Vec<(String, Value)>,
+}
+
+impl SignalGate {
+    fn new(generation: u64, sender: mpsc::UnboundedSender<RuntimeEvent>) -> Self {
+        Self {
+            generation,
+            sender,
+            state: Mutex::new(SignalGateState::default()),
+        }
+    }
+
+    fn push(&self, name: String, payload: Value) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        if state.active {
+            let _ = self.sender.send(RuntimeEvent::Session {
+                generation: self.generation,
+                event: SessionEvent::Signal { name, payload },
+            });
+        } else {
+            state.buffered.push((name, payload));
+        }
+    }
+
+    fn activate(&self) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        for (name, payload) in state.buffered.drain(..) {
+            let _ = self.sender.send(RuntimeEvent::Session {
+                generation: self.generation,
+                event: SessionEvent::Signal { name, payload },
+            });
+        }
+        state.active = true;
+    }
 }
 
 struct TerminalRestore;
@@ -136,75 +226,16 @@ pub(crate) async fn run_tui(
         return run_interface(app, None, runtime_sender, runtime_receiver).await;
     }
 
-    let signal_sender = runtime_sender.clone();
-    let client = KernelClient::connect_with_peer(
-        url,
-        cli_peer_identity(),
-        Vec::new(),
-        auth,
-        BinaryBodyLimits::default(),
-        move |frame| {
-            if let Frame::Sig(signal) = frame {
-                let _ = signal_sender.send(RuntimeEvent::Signal {
-                    name: signal.signal,
-                    payload: signal.payload.unwrap_or_else(|| json!({})),
-                });
-            }
-        },
-    )
-    .await?;
-    let account = &client
-        .connection()
-        .connect_result
-        .as_ref()
-        .ok_or("GSV returned no current user")
-        .map(|result| &result.peer.principal.account)?;
-    let owner_uid = implicit_personal_owner_uid(account.uid)?;
-    let principal = account.username.clone();
-    let pid = match preferred_pid {
-        Some(pid) => pid,
-        None => {
-            let processes = client
-                .request_ok("proc.list", Some(json!({ "uid": owner_uid })))
-                .await?;
-            personal_process_id(&processes, owner_uid)
-                .ok_or("GSV returned no personal intelligence process")?
-        }
-    };
-    let conversation_id = client.conversation_for_process(&pid).await?;
-    let (history, environments) = tokio::join!(
-        client.request_ok(
-            "conversation.history",
-            Some(json!({
-                "conversationId": conversation_id,
-                "limit": 200,
-            })),
-        ),
-        available_environments(&client),
-    );
-    let history = history?;
-
-    let mut app = App::new(ConnectionState::Ready);
-    app.set_principal(principal);
+    let mut app = App::new(ConnectionState::Connecting);
+    app.set_principal(whoami::username());
     app.set_vim_enabled(vim);
-    app.set_environments(environments);
-    let moments = history_moments(&history);
-    if moments.is_empty() {
-        app.replace_history(vec![Moment::complete(
-            "local:ready",
-            Role::Intelligence,
-            "Ship is ready. Tell me what should happen.",
-        )]);
-    } else {
-        app.replace_history(moments);
-    }
-
     run_interface(
         app,
-        Some(ConnectedSession {
-            client: Arc::new(client),
-            pid,
-            conversation_id,
+        Some(ConnectionConfig {
+            url: url.to_string(),
+            auth,
+            preferred_pid: preferred_pid.clone(),
+            strict_pid: preferred_pid.is_some(),
         }),
         runtime_sender,
         runtime_receiver,
@@ -214,7 +245,7 @@ pub(crate) async fn run_tui(
 
 async fn run_interface(
     mut app: App,
-    session: Option<ConnectedSession>,
+    mut connection_config: Option<ConnectionConfig>,
     runtime_sender: mpsc::UnboundedSender<RuntimeEvent>,
     mut runtime_receiver: mpsc::UnboundedReceiver<RuntimeEvent>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -222,26 +253,17 @@ async fn run_interface(
         return Err("The GSV interface needs an interactive terminal".into());
     }
     app.set_theme(Theme::Terminal);
-    if let Some(session) = session.as_ref() {
-        let client = Arc::clone(&session.client);
-        let pid = session.pid.clone();
-        let sender = runtime_sender.clone();
-        let handle = tokio::spawn(async move {
-            if let Ok(payload) = client
-                .request_ok("proc.trace", Some(json!({ "pid": pid, "limit": 1_000 })))
-                .await
-            {
-                let actions = trace_actions(&payload);
-                let deliveries = trace_deliveries(&payload);
-                if !actions.is_empty() || !deliveries.is_empty() {
-                    let _ = sender.send(RuntimeEvent::TraceHistoryLoaded {
-                        actions,
-                        deliveries,
-                    });
-                }
-            }
-        });
-        drop(handle);
+    let demo = connection_config.is_none();
+    let mut session: Option<ConnectedSession> = None;
+    let mut connection_generation = 0_u64;
+    let mut connecting = false;
+    let mut reconnect_attempt = 0_u32;
+    let mut next_reconnect_at = Instant::now();
+    let mut bootstrapped = false;
+    if let Some(config) = connection_config.as_ref().cloned() {
+        connection_generation = 1;
+        connecting = true;
+        spawn_connection_attempt(config, connection_generation, runtime_sender.clone());
     }
 
     enable_raw_mode()?;
@@ -260,6 +282,9 @@ async fn run_interface(
     let mut animation_tick = tokio::time::interval(Duration::from_millis(480));
     animation_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
     animation_tick.reset();
+    let mut connection_tick = tokio::time::interval(CONNECTION_CHECK_INTERVAL);
+    connection_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    connection_tick.tick().await;
 
     loop {
         let next_animation_active = app.animation_active();
@@ -299,6 +324,7 @@ async fn run_interface(
                         &mut app,
                         effects,
                         session.as_ref(),
+                        demo,
                         &artifact_store,
                         &runtime_sender,
                     ) {
@@ -307,11 +333,114 @@ async fn run_interface(
                 }
             }
             Some(event) = runtime_receiver.recv() => {
-                apply_runtime_event(&mut app, event, session.as_ref());
+                match event {
+                    RuntimeEvent::Connected(bootstrap)
+                        if bootstrap.generation == connection_generation =>
+                    {
+                        connecting = false;
+                        reconnect_attempt = 0;
+                        let ConnectionBootstrap {
+                            session: next_session,
+                            principal,
+                            environments,
+                            moments,
+                            history_has_more,
+                            actions,
+                            deliveries,
+                            active_run_id,
+                            pending_approval,
+                            ..
+                        } = bootstrap;
+                        if let Some(previous) = session.take() {
+                            previous.client.connection().close();
+                        }
+                        if let Some(config) = connection_config.as_mut() {
+                            if !config.strict_pid {
+                                config.preferred_pid = Some(next_session.pid.clone());
+                            }
+                        }
+                        app.set_principal(principal);
+                        app.set_environments(environments);
+                        if bootstrapped {
+                            app.reconcile_history(moments, history_has_more);
+                        } else {
+                            if !moments.is_empty() {
+                                app.replace_history(moments);
+                            }
+                            app.set_history_has_more(history_has_more);
+                        }
+                        for action in actions {
+                            app.restore_agent_action(action);
+                        }
+                        for delivery in deliveries {
+                            app.restore_message_delivery(delivery);
+                        }
+                        app.connection_restored(active_run_id.as_deref());
+                        if let Some((run_id, approval)) = pending_approval {
+                            app.enter_approval_for(run_id.as_deref(), approval);
+                        }
+                        session = Some(next_session);
+                        bootstrapped = true;
+                    }
+                    RuntimeEvent::Connected(bootstrap) => {
+                        bootstrap.session.client.connection().close();
+                    }
+                    RuntimeEvent::ConnectionFailed { generation, error }
+                        if generation == connection_generation =>
+                    {
+                        connecting = false;
+                        reconnect_attempt = reconnect_attempt.saturating_add(1);
+                        next_reconnect_at = Instant::now() + reconnect_delay(reconnect_attempt);
+                        app.connection_lost();
+                        app.set_activity(Some(format!(
+                            "RECONNECTING · {}",
+                            truncate_chars(&error, 120)
+                        )));
+                    }
+                    RuntimeEvent::ConnectionFailed { .. } => {}
+                    RuntimeEvent::Session { generation, event }
+                        if session
+                            .as_ref()
+                            .is_some_and(|session| session.generation == generation) =>
+                    {
+                        if let Some(session) = session.as_ref() {
+                            apply_session_event(&mut app, event, Some(session));
+                        }
+                    }
+                    RuntimeEvent::Session { .. } => {}
+                    RuntimeEvent::Local(event) => {
+                        apply_session_event(&mut app, event, session.as_ref());
+                    }
+                }
             }
             () = image_manager.next_event() => {}
             _ = animation_tick.tick(), if animation_active => {
                 activity_phase = !activity_phase;
+            }
+            _ = connection_tick.tick(), if !demo => {
+                let disconnected = session
+                    .as_ref()
+                    .is_some_and(|session| session.client.connection().is_disconnected());
+                if disconnected {
+                    if let Some(disconnected) = session.take() {
+                        disconnected.client.connection().close();
+                    }
+                    app.connection_lost();
+                    connecting = false;
+                    reconnect_attempt = reconnect_attempt.saturating_add(1).max(1);
+                    next_reconnect_at = Instant::now() + reconnect_delay(reconnect_attempt);
+                }
+                if session.is_none() && !connecting && Instant::now() >= next_reconnect_at {
+                    if let Some(config) = connection_config.as_ref().cloned() {
+                        connection_generation = connection_generation.saturating_add(1);
+                        connecting = true;
+                        spawn_connection_attempt(
+                            config,
+                            connection_generation,
+                            runtime_sender.clone(),
+                        );
+                    }
+                }
             }
         }
     }
@@ -319,10 +448,202 @@ async fn run_interface(
     Ok(())
 }
 
+fn spawn_connection_attempt(
+    config: ConnectionConfig,
+    generation: u64,
+    runtime_sender: mpsc::UnboundedSender<RuntimeEvent>,
+) {
+    let handle = tokio::spawn(async move {
+        match establish_connection(config, generation, runtime_sender.clone()).await {
+            Ok((bootstrap, signal_gate)) => {
+                if runtime_sender
+                    .send(RuntimeEvent::Connected(bootstrap))
+                    .is_ok()
+                {
+                    signal_gate.activate();
+                }
+            }
+            Err(error) => {
+                let _ = runtime_sender.send(RuntimeEvent::ConnectionFailed { generation, error });
+            }
+        }
+    });
+    drop(handle);
+}
+
+async fn establish_connection(
+    config: ConnectionConfig,
+    generation: u64,
+    runtime_sender: mpsc::UnboundedSender<RuntimeEvent>,
+) -> Result<(ConnectionBootstrap, Arc<SignalGate>), String> {
+    let signal_gate = Arc::new(SignalGate::new(generation, runtime_sender));
+    let callback_gate = Arc::clone(&signal_gate);
+    let connect = KernelClient::connect_with_peer(
+        &config.url,
+        cli_peer_identity(),
+        Vec::new(),
+        config.auth,
+        BinaryBodyLimits::default(),
+        move |frame| {
+            if let Frame::Sig(signal) = frame {
+                callback_gate.push(signal.signal, signal.payload.unwrap_or_else(|| json!({})));
+            }
+        },
+    );
+    let client = tokio::time::timeout(CONNECT_TIMEOUT, connect)
+        .await
+        .map_err(|_elapsed| format!("Connecting to {} timed out", config.url))?
+        .map_err(|error| error.to_string())?;
+    let client = Arc::new(client);
+    let account = client
+        .connection()
+        .connect_result
+        .as_ref()
+        .ok_or_else(|| "GSV returned no current user".to_string())?
+        .peer
+        .principal
+        .account
+        .clone();
+    let owner_uid = implicit_personal_owner_uid(account.uid).map_err(|error| error.to_string())?;
+    let pid = observe_tui_process(
+        &client,
+        owner_uid,
+        config.preferred_pid.as_deref(),
+        config.strict_pid,
+    )
+    .await?;
+    let conversation_id = client
+        .conversation_for_process(&pid)
+        .await
+        .map_err(|error| error.to_string())?;
+    let history_request = async {
+        client
+            .request_ok(
+                "conversation.history",
+                Some(json!({
+                    "conversationId": conversation_id,
+                    "limit": HISTORY_PAGE_SIZE,
+                })),
+            )
+            .await
+            .map_err(|error| error.to_string())
+    };
+    let environments_request = available_environments(&client);
+    let trace_request = async {
+        client
+            .request_ok("proc.trace", Some(json!({ "pid": pid, "limit": 1_000 })))
+            .await
+            .map_err(|error| error.to_string())
+    };
+    let process_request = async {
+        client
+            .request_ok(
+                "proc.history",
+                Some(json!({
+                    "pid": pid,
+                    "tail": true,
+                    "limit": 1,
+                })),
+            )
+            .await
+            .map_err(|error| error.to_string())
+    };
+    let (history, environments, trace, process) = tokio::join!(
+        history_request,
+        environments_request,
+        trace_request,
+        process_request,
+    );
+    let history = history?;
+    let trace = trace.ok();
+    let process = process.ok();
+    let active_run_id = process
+        .as_ref()
+        .and_then(|payload| payload.get("activeRunId"))
+        .or_else(|| {
+            trace
+                .as_ref()
+                .and_then(|payload| payload.get("activeRunId"))
+        })
+        .and_then(Value::as_str)
+        .filter(|run_id| !run_id.is_empty())
+        .map(str::to_string);
+    let pending_approval = process
+        .as_ref()
+        .and_then(|payload| payload.get("pendingHil"))
+        .filter(|payload| !payload.is_null())
+        .and_then(|payload| {
+            let run_id = payload
+                .get("runId")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            approval_from_signal(payload).map(|approval| (run_id, approval))
+        });
+    let actions = trace.as_ref().map_or_else(Vec::new, trace_actions);
+    let deliveries = trace.as_ref().map_or_else(Vec::new, trace_deliveries);
+    Ok((
+        ConnectionBootstrap {
+            generation,
+            session: ConnectedSession {
+                generation,
+                client,
+                pid,
+                conversation_id,
+            },
+            principal: account.username,
+            environments,
+            moments: history_moments(&history),
+            history_has_more: history_has_more(&history),
+            actions,
+            deliveries,
+            active_run_id,
+            pending_approval,
+        },
+        signal_gate,
+    ))
+}
+
+async fn observe_tui_process(
+    client: &KernelClient,
+    owner_uid: u64,
+    preferred_pid: Option<&str>,
+    strict_pid: bool,
+) -> Result<String, String> {
+    if let Some(pid) = preferred_pid {
+        match client
+            .request_ok("proc.observe", Some(json!({ "pid": pid })))
+            .await
+        {
+            Ok(_) => return Ok(pid.to_string()),
+            Err(error) if strict_pid => return Err(error.to_string()),
+            Err(_) => {}
+        }
+    }
+    let processes = client
+        .request_ok("proc.list", Some(json!({ "uid": owner_uid })))
+        .await
+        .map_err(|error| error.to_string())?;
+    let pid = personal_process_id(&processes, owner_uid)
+        .ok_or_else(|| "GSV returned no personal intelligence process".to_string())?;
+    client
+        .request_ok("proc.observe", Some(json!({ "pid": pid })))
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(pid)
+}
+
+fn reconnect_delay(attempt: u32) -> Duration {
+    let exponent = attempt.saturating_sub(1).min(16);
+    INITIAL_RECONNECT_DELAY
+        .saturating_mul(1_u32 << exponent)
+        .min(MAX_RECONNECT_DELAY)
+}
+
 fn apply_effects(
     app: &mut App,
     effects: Vec<Effect>,
     session: Option<&ConnectedSession>,
+    demo: bool,
     artifact_store: &ArtifactStore,
     runtime_sender: &mpsc::UnboundedSender<RuntimeEvent>,
 ) -> bool {
@@ -335,11 +656,19 @@ fn apply_effects(
                 ..
             } => {
                 let Some(session) = session else {
-                    app.complete_demo_submission(id, &text);
+                    if demo {
+                        app.complete_demo_submission(id, &text);
+                    } else {
+                        app.submission_failed(
+                            id,
+                            "GSV is reconnecting; the request remains in your prompt.",
+                        );
+                    }
                     continue;
                 };
                 let client = Arc::clone(&session.client);
                 let conversation_id = session.conversation_id.clone();
+                let generation = session.generation;
                 let sender = runtime_sender.clone();
                 let resources = references
                     .into_iter()
@@ -362,17 +691,17 @@ fn apply_effects(
                         )
                         .await;
                     let event = match result {
-                        Ok(result) => RuntimeEvent::SubmissionAccepted {
+                        Ok(result) => SessionEvent::SubmissionAccepted {
                             id,
                             run_id: result.run_id,
                             queued: result.queued,
                         },
-                        Err(error) => RuntimeEvent::SubmissionFailed {
+                        Err(error) => SessionEvent::SubmissionFailed {
                             id,
                             error: error.to_string(),
                         },
                     };
-                    let _ = sender.send(event);
+                    let _ = sender.send(RuntimeEvent::Session { generation, event });
                 });
                 drop(handle);
             }
@@ -382,15 +711,23 @@ fn apply_effects(
                 directory,
             } => {
                 let Some(session) = session else {
-                    let entries = demo_file_entries(&directory);
-                    app.file_listing_loaded(request_id, directory, entries);
+                    if demo {
+                        let entries = demo_file_entries(&directory);
+                        app.file_listing_loaded(request_id, directory, entries);
+                    } else {
+                        app.file_picker_failed(
+                            request_id,
+                            "GSV is reconnecting; press ctrl+o to retry.",
+                        );
+                    }
                     continue;
                 };
                 let client = Arc::clone(&session.client);
+                let generation = session.generation;
                 let sender = runtime_sender.clone();
                 let handle = tokio::spawn(async move {
                     let event = browse_files(client, request_id, target, directory).await;
-                    let _ = sender.send(event);
+                    let _ = sender.send(RuntimeEvent::Session { generation, event });
                 });
                 drop(handle);
             }
@@ -401,24 +738,32 @@ fn apply_effects(
                 filename,
             } => {
                 let Some(session) = session else {
-                    app.file_reference_resolved(
-                        request_id,
-                        FileReference {
-                            target,
-                            path: path.clone(),
-                            revision: "demo:1".to_string(),
-                            content_type: content_type_from_path(&path).to_string(),
-                            size: 0,
-                            filename,
-                        },
-                    );
+                    if demo {
+                        app.file_reference_resolved(
+                            request_id,
+                            FileReference {
+                                target,
+                                path: path.clone(),
+                                revision: "demo:1".to_string(),
+                                content_type: content_type_from_path(&path).to_string(),
+                                size: 0,
+                                filename,
+                            },
+                        );
+                    } else {
+                        app.file_picker_failed(
+                            request_id,
+                            "GSV is reconnecting; press ctrl+o to retry.",
+                        );
+                    }
                     continue;
                 };
                 let client = Arc::clone(&session.client);
+                let generation = session.generation;
                 let sender = runtime_sender.clone();
                 let handle = tokio::spawn(async move {
                     let event = resolve_file(client, request_id, target, path, filename).await;
-                    let _ = sender.send(event);
+                    let _ = sender.send(RuntimeEvent::Session { generation, event });
                 });
                 drop(handle);
             }
@@ -429,13 +774,18 @@ fn apply_effects(
                 cwd,
             } => {
                 let Some(session) = session else {
-                    app.complete_demo_shell(id, &input);
+                    if demo {
+                        app.complete_demo_shell(id, &input);
+                    } else {
+                        app.finish_shell(id, Some("GSV is reconnecting; the command was not run."));
+                    }
                     continue;
                 };
                 let client = Arc::clone(&session.client);
+                let generation = session.generation;
                 let sender = runtime_sender.clone();
                 let handle = tokio::spawn(async move {
-                    run_shell_command(client, sender, id, input, target, cwd).await;
+                    run_shell_command(client, sender, generation, id, input, target, cwd).await;
                 });
                 drop(handle);
             }
@@ -455,18 +805,56 @@ fn apply_effects(
                 let sender = runtime_sender.clone();
                 let handle = tokio::spawn(async move {
                     if let Err(error) = media::open_artifact(directory, client, artifact).await {
-                        let _ = sender.send(RuntimeEvent::ArtifactOpenFailed { filename, error });
+                        let _ =
+                            sender.send(RuntimeEvent::Local(SessionEvent::ArtifactOpenFailed {
+                                filename,
+                                error,
+                            }));
                     }
+                });
+                drop(handle);
+            }
+            Effect::LoadOlderHistory { before_sequence } => {
+                let Some(session) = session else {
+                    app.history_page_failed();
+                    continue;
+                };
+                let client = Arc::clone(&session.client);
+                let conversation_id = session.conversation_id.clone();
+                let generation = session.generation;
+                let sender = runtime_sender.clone();
+                let handle = tokio::spawn(async move {
+                    let event = match client
+                        .request_ok(
+                            "conversation.history",
+                            Some(json!({
+                                "conversationId": conversation_id,
+                                "beforeSequence": before_sequence,
+                                "limit": HISTORY_PAGE_SIZE,
+                            })),
+                        )
+                        .await
+                    {
+                        Ok(history) => SessionEvent::HistoryPageLoaded {
+                            moments: history_moments(&history),
+                            has_more: history_has_more(&history),
+                        },
+                        Err(_) => SessionEvent::HistoryPageFailed,
+                    };
+                    let _ = sender.send(RuntimeEvent::Session { generation, event });
                 });
                 drop(handle);
             }
             Effect::Abort => {
                 let Some(session) = session else {
-                    app.set_activity(None);
+                    if !demo {
+                        app.set_activity(Some("RECONNECTING".to_string()));
+                    }
                     continue;
                 };
                 let client = Arc::clone(&session.client);
                 let pid = session.pid.clone();
+                let generation = session.generation;
                 let sender = runtime_sender.clone();
                 let handle = tokio::spawn(async move {
                     let error = client
@@ -474,7 +862,10 @@ fn apply_effects(
                         .await
                         .err()
                         .map(|error| error.to_string());
-                    let _ = sender.send(RuntimeEvent::AbortFinished { error });
+                    let _ = sender.send(RuntimeEvent::Session {
+                        generation,
+                        event: SessionEvent::AbortFinished { error },
+                    });
                 });
                 drop(handle);
             }
@@ -488,6 +879,7 @@ fn apply_effects(
                 };
                 let client = Arc::clone(&session.client);
                 let pid = session.pid.clone();
+                let generation = session.generation;
                 let sender = runtime_sender.clone();
                 let request_id_for_result = request_id.clone();
                 let handle = tokio::spawn(async move {
@@ -507,14 +899,14 @@ fn apply_effects(
                         )
                         .await;
                     let event = match result {
-                        Ok(_) => RuntimeEvent::ApprovalDecided {
+                        Ok(_) => SessionEvent::ApprovalDecided {
                             request_id: request_id_for_result,
                         },
-                        Err(error) => RuntimeEvent::ApprovalFailed {
+                        Err(error) => SessionEvent::ApprovalFailed {
                             error: error.to_string(),
                         },
                     };
-                    let _ = sender.send(event);
+                    let _ = sender.send(RuntimeEvent::Session { generation, event });
                 });
                 drop(handle);
             }
@@ -524,67 +916,62 @@ fn apply_effects(
     false
 }
 
-fn apply_runtime_event(app: &mut App, event: RuntimeEvent, session: Option<&ConnectedSession>) {
+fn apply_session_event(app: &mut App, event: SessionEvent, session: Option<&ConnectedSession>) {
     match event {
-        RuntimeEvent::Signal { name, payload } => {
+        SessionEvent::Signal { name, payload } => {
             if let Some(session) = session {
                 apply_signal(app, &session.pid, &session.conversation_id, &name, &payload);
             }
         }
-        RuntimeEvent::SubmissionAccepted { id, run_id, queued } => {
+        SessionEvent::SubmissionAccepted { id, run_id, queued } => {
             app.submission_accepted(id, run_id, queued);
         }
-        RuntimeEvent::SubmissionFailed { id, error } => {
+        SessionEvent::SubmissionFailed { id, error } => {
             app.submission_failed(id, format!("That request was not sent.\n\n{error}"));
         }
-        RuntimeEvent::ShellOutput { id, output } => {
+        SessionEvent::ShellOutput { id, output } => {
             app.append_shell_output(id, &output);
         }
-        RuntimeEvent::ShellFinished { id, error } => {
+        SessionEvent::ShellFinished { id, error } => {
             app.finish_shell(id, error.as_deref());
         }
-        RuntimeEvent::ApprovalDecided { request_id } => {
+        SessionEvent::ApprovalDecided { request_id } => {
             app.leave_approval(&request_id);
             app.set_activity(Some("APPROVED".to_string()));
         }
-        RuntimeEvent::ApprovalFailed { error } => {
+        SessionEvent::ApprovalFailed { error } => {
             app.set_activity(Some(format!("APPROVAL FAILED · {error}")));
         }
-        RuntimeEvent::AbortFinished { error } => {
+        SessionEvent::AbortFinished { error } => {
             app.set_activity(Some(match error {
                 Some(error) => format!("STOP FAILED · {error}"),
                 None => "STOPPING".to_string(),
             }));
         }
-        RuntimeEvent::ArtifactOpenFailed { filename, error } => {
+        SessionEvent::ArtifactOpenFailed { filename, error } => {
             app.append_local_output(format!("Could not open {filename}.\n\n{error}"));
         }
-        RuntimeEvent::FilesListed {
+        SessionEvent::FilesListed {
             request_id,
             directory,
             entries,
         } => {
             app.file_listing_loaded(request_id, directory, entries);
         }
-        RuntimeEvent::FileResolved {
+        SessionEvent::FileResolved {
             request_id,
             reference,
         } => {
             app.file_reference_resolved(request_id, reference);
         }
-        RuntimeEvent::FileOperationFailed { request_id, error } => {
+        SessionEvent::FileOperationFailed { request_id, error } => {
             app.file_picker_failed(request_id, error);
         }
-        RuntimeEvent::TraceHistoryLoaded {
-            actions,
-            deliveries,
-        } => {
-            for action in actions {
-                app.restore_agent_action(action);
-            }
-            for delivery in deliveries {
-                app.restore_message_delivery(delivery);
-            }
+        SessionEvent::HistoryPageLoaded { moments, has_more } => {
+            app.prepend_history(moments, has_more);
+        }
+        SessionEvent::HistoryPageFailed => {
+            app.history_page_failed();
         }
     }
 }
@@ -835,7 +1222,7 @@ async fn browse_files(
     request_id: u64,
     target: String,
     directory: String,
-) -> RuntimeEvent {
+) -> SessionEvent {
     let payload = match client
         .request_ok(
             "fs.read",
@@ -848,19 +1235,19 @@ async fn browse_files(
     {
         Ok(payload) => payload,
         Err(error) => {
-            return RuntimeEvent::FileOperationFailed {
+            return SessionEvent::FileOperationFailed {
                 request_id,
                 error: error.to_string(),
             };
         }
     };
     match parse_file_listing(&payload) {
-        Ok((directory, entries)) => RuntimeEvent::FilesListed {
+        Ok((directory, entries)) => SessionEvent::FilesListed {
             request_id,
             directory,
             entries,
         },
-        Err(error) => RuntimeEvent::FileOperationFailed { request_id, error },
+        Err(error) => SessionEvent::FileOperationFailed { request_id, error },
     }
 }
 
@@ -870,7 +1257,7 @@ async fn resolve_file(
     target: String,
     path: String,
     filename: String,
-) -> RuntimeEvent {
+) -> SessionEvent {
     let (inspection, call, args) = file_inspection_request(&target, &path);
     let payload = match inspection {
         FileInspectionKind::Stat => client
@@ -895,15 +1282,15 @@ async fn resolve_file(
     let payload = match payload {
         Ok(payload) => payload,
         Err(error) => {
-            return RuntimeEvent::FileOperationFailed { request_id, error };
+            return SessionEvent::FileOperationFailed { request_id, error };
         }
     };
     match parse_file_reference(&payload, target, filename, inspection) {
-        Ok(reference) => RuntimeEvent::FileResolved {
+        Ok(reference) => SessionEvent::FileResolved {
             request_id,
             reference,
         },
-        Err(error) => RuntimeEvent::FileOperationFailed { request_id, error },
+        Err(error) => SessionEvent::FileOperationFailed { request_id, error },
     }
 }
 
@@ -1082,6 +1469,7 @@ enum ShellResponse {
 async fn run_shell_command(
     client: Arc<KernelClient>,
     sender: mpsc::UnboundedSender<RuntimeEvent>,
+    generation: u64,
     id: u64,
     input: String,
     target: String,
@@ -1099,9 +1487,12 @@ async fn run_shell_command(
         let payload = match client.request_ok("shell.exec", Some(args)).await {
             Ok(payload) => payload,
             Err(error) => {
-                let _ = sender.send(RuntimeEvent::ShellFinished {
-                    id,
-                    error: Some(error.to_string()),
+                let _ = sender.send(RuntimeEvent::Session {
+                    generation,
+                    event: SessionEvent::ShellFinished {
+                        id,
+                        error: Some(error.to_string()),
+                    },
                 });
                 return;
             }
@@ -1109,9 +1500,12 @@ async fn run_shell_command(
         let response = match parse_shell_response(&payload) {
             Ok(response) => response,
             Err(error) => {
-                let _ = sender.send(RuntimeEvent::ShellFinished {
-                    id,
-                    error: Some(error),
+                let _ = sender.send(RuntimeEvent::Session {
+                    generation,
+                    event: SessionEvent::ShellFinished {
+                        id,
+                        error: Some(error),
+                    },
                 });
                 return;
             }
@@ -1120,7 +1514,10 @@ async fn run_shell_command(
             ShellResponse::Running { output, session_id } => {
                 if !output.is_empty()
                     && sender
-                        .send(RuntimeEvent::ShellOutput { id, output })
+                        .send(RuntimeEvent::Session {
+                            generation,
+                            event: SessionEvent::ShellOutput { id, output },
+                        })
                         .is_err()
                 {
                     return;
@@ -1134,25 +1531,37 @@ async fn run_shell_command(
             ShellResponse::Completed { output } => {
                 if !output.is_empty()
                     && sender
-                        .send(RuntimeEvent::ShellOutput { id, output })
+                        .send(RuntimeEvent::Session {
+                            generation,
+                            event: SessionEvent::ShellOutput { id, output },
+                        })
                         .is_err()
                 {
                     return;
                 }
-                let _ = sender.send(RuntimeEvent::ShellFinished { id, error: None });
+                let _ = sender.send(RuntimeEvent::Session {
+                    generation,
+                    event: SessionEvent::ShellFinished { id, error: None },
+                });
                 return;
             }
             ShellResponse::Failed { output, error } => {
                 if !output.is_empty()
                     && sender
-                        .send(RuntimeEvent::ShellOutput { id, output })
+                        .send(RuntimeEvent::Session {
+                            generation,
+                            event: SessionEvent::ShellOutput { id, output },
+                        })
                         .is_err()
                 {
                     return;
                 }
-                let _ = sender.send(RuntimeEvent::ShellFinished {
-                    id,
-                    error: Some(error),
+                let _ = sender.send(RuntimeEvent::Session {
+                    generation,
+                    event: SessionEvent::ShellFinished {
+                        id,
+                        error: Some(error),
+                    },
                 });
                 return;
             }
@@ -1280,6 +1689,10 @@ fn history_moments(payload: &Value) -> Vec<Moment> {
         .collect()
 }
 
+fn history_has_more(payload: &Value) -> bool {
+    payload.get("hasMore").and_then(Value::as_bool) == Some(true)
+}
+
 fn commit_signal_message(app: &mut App, message: &Value) {
     let Some(text) = message.get("text").and_then(Value::as_str) else {
         return;
@@ -1290,18 +1703,15 @@ fn commit_signal_message(app: &mut App, message: &Value) {
         .get("runId")
         .and_then(Value::as_str)
         .map(str::to_string);
-    app.commit_message_ordered(
-        id,
-        role_from_author(message.get("author")),
-        text,
-        run_id,
-        media_artifacts(message.get("media")),
-        message_environment(message),
-        MomentTimeline {
-            sequence: message.get("sequence").and_then(Value::as_u64),
-            timestamp: message.get("createdAt").and_then(Value::as_u64),
-        },
-    );
+    let mut moment = Moment::complete(id, role_from_author(message.get("author")), text)
+        .with_artifacts(media_artifacts(message.get("media")))
+        .with_timeline(
+            message.get("sequence").and_then(Value::as_u64),
+            message.get("createdAt").and_then(Value::as_u64),
+        );
+    moment.run_id = run_id;
+    moment.environment = message_environment(message);
+    app.commit_moment(moment);
 }
 
 fn message_environment(message: &Value) -> Option<CapabilityEnvironment> {
@@ -1604,9 +2014,10 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        apply_signal, device_environments, file_inspection_request, history_moments, key_action,
-        media_artifact, parse_file_listing, parse_file_reference, parse_shell_response,
-        trace_actions, trace_deliveries, truncate_chars, FileInspectionKind, ShellResponse,
+        apply_signal, device_environments, file_inspection_request, history_has_more,
+        history_moments, key_action, media_artifact, parse_file_listing, parse_file_reference,
+        parse_shell_response, reconnect_delay, trace_actions, trace_deliveries, truncate_chars,
+        FileInspectionKind, RuntimeEvent, SessionEvent, ShellResponse, SignalGate,
     };
 
     #[test]
@@ -2144,5 +2555,49 @@ mod tests {
         assert_eq!(environments[0].label, "Sam's MacBook");
         assert_eq!(environments[1].target, "studio");
         assert_eq!(environments[1].label, "studio");
+    }
+
+    #[test]
+    fn conversation_history_exposes_older_pages() {
+        assert!(history_has_more(&json!({ "hasMore": true })));
+        assert!(!history_has_more(&json!({ "hasMore": false })));
+        assert!(!history_has_more(&json!({})));
+    }
+
+    #[test]
+    fn reconnect_backoff_is_exponential_and_capped() {
+        assert_eq!(reconnect_delay(1), std::time::Duration::from_millis(250));
+        assert_eq!(reconnect_delay(2), std::time::Duration::from_millis(500));
+        assert_eq!(reconnect_delay(6), std::time::Duration::from_secs(8));
+        assert_eq!(reconnect_delay(u32::MAX), std::time::Duration::from_secs(8));
+    }
+
+    #[test]
+    fn signals_wait_behind_the_connection_snapshot() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let gate = SignalGate::new(7, sender);
+        gate.push("first".to_string(), json!({ "value": 1 }));
+        gate.push("second".to_string(), json!({ "value": 2 }));
+        assert!(receiver.try_recv().is_err());
+
+        gate.activate();
+        for expected in ["first", "second"] {
+            match receiver.try_recv().expect("buffered signal") {
+                RuntimeEvent::Session {
+                    generation: 7,
+                    event: SessionEvent::Signal { name, .. },
+                } => assert_eq!(name, expected),
+                _ => panic!("unexpected runtime event"),
+            }
+        }
+
+        gate.push("third".to_string(), json!({ "value": 3 }));
+        assert!(matches!(
+            receiver.try_recv(),
+            Ok(RuntimeEvent::Session {
+                generation: 7,
+                event: SessionEvent::Signal { name, .. },
+            }) if name == "third"
+        ));
     }
 }
