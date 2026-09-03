@@ -190,6 +190,23 @@ const inferenceRequestFinishedSchema = z.strictObject({
   }),
 });
 
+const inferenceProviderAttemptFailedSchema = z.strictObject({
+  stream: z.literal("operational"),
+  name: z.literal("inference.provider_attempt.failed"),
+  properties: z.strictObject({
+    purpose: z.enum(["agent", "mail-intake"]),
+    workload: inferenceWorkloadSchema,
+    provider: z.literal("workers-ai"),
+    model: modelNameSchema,
+    attempt: positiveIntegerSchema,
+    durationMs: nonNegativeIntegerSchema,
+    failureKind: inferenceFailureKindSchema,
+    failureStage: inferenceFailureStageSchema,
+    retryable: z.boolean(),
+    providerStatusCode: z.optional(httpStatusCodeSchema),
+  }),
+});
+
 const installationActivatedSchema = z.strictObject({
   stream: z.literal("product"),
   name: z.literal("installation.activated"),
@@ -237,6 +254,7 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
   adapterRouteDeliveryFailedSchema,
   delegationFinishedSchema,
   inferenceRequestFinishedSchema,
+  inferenceProviderAttemptFailedSchema,
   installationActivatedSchema,
   shipMessageCommittedSchema,
   targetConnectedSchema,

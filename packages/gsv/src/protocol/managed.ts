@@ -97,8 +97,7 @@ export interface ManagedInferenceUsageService {
   ): Promise<void>;
 }
 
-export type ManagedInferenceRouting = {
-  version: 1;
+export type ManagedInferenceModelRouting = {
   modelId: string;
   displayName: string;
   contextWindow: number;
@@ -108,6 +107,11 @@ export type ManagedInferenceRouting = {
   outputNanoUsdPerToken: number;
   cacheReadNanoUsdPerToken: number;
   cacheWriteNanoUsdPerToken: number;
+};
+
+export type ManagedInferenceRouting = {
+  version: 2;
+  models: ManagedInferenceModelRouting[];
   updatedAt: number;
 };
 
