@@ -88,6 +88,29 @@ at the snapshotted rates; it does not assume an unadvertised cache discount. A
 leading `≥` marks known usage from a trace with an interrupted request and is a
 lower bound rather than silently dropping the cost estimate.
 
+The runner also emits `review-assignments.jsonl`, with one independent-review
+assignment per rollout trajectory. Each assignment contains a concise benchmark
+orientation, the complete rubric and deterministic score diagnostics, an exact
+JSONL line/trace selector, a destination for the review, and a prompt that asks a
+fresh reviewer for a readable timeline, score audit, root-cause classification,
+and debugging implications. An orchestrator can therefore spawn one dedicated
+agent per line without embedding or truncating the often-large raw trajectory;
+the reviewer reads the selected source trace itself. Reviews are qualitative
+debugging artifacts and never replace or mutate deterministic scores.
+
+Assignments can also be generated or filtered after a run:
+
+    uv run python -m gsv_v1.review MATRIX_DIR \
+      --output MATRIX_DIR/review-assignments.jsonl
+    uv run python -m gsv_v1.review MATRIX_DIR \
+      --trajectory-id EPISODE_ID
+
+Pass each selected assignment's `review_prompt` to a fresh agent. If it has
+workspace access, it writes the Markdown review to `review_output` beneath the
+matrix root; otherwise persist its returned Markdown there. Keeping one reviewer
+context per rollout prevents one model's behavior or an earlier diagnosis from
+biasing the explanation of another trajectory.
+
 `GSV_BENCH_SCENARIO`, `GSV_BENCH_OUTPUT_DIR`,
 `GSV_BENCH_NUM_TASKS`, `GSV_BENCH_MODEL_CONCURRENCY`, and
 `GSV_BENCH_TIMEOUT_SECONDS` override the corresponding defaults.

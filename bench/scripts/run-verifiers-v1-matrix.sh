@@ -143,5 +143,7 @@ if [[ -f "$matrix_dir/pricing.json" ]]; then
 fi
 uv run python -m gsv_v1.report "${report_args[@]}" \
   | tee "$matrix_dir/summary.md"
+uv run python -m gsv_v1.review "$matrix_dir" \
+  --output "$matrix_dir/review-assignments.jsonl"
 echo "matrix artifacts: $matrix_dir"
 exit "$failed"
