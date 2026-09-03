@@ -368,6 +368,45 @@ describe("SyntheticKernel", () => {
     });
   });
 
+  it("enforces the requested native shell timeout", async () => {
+    const kernel = SyntheticKernel.fromSpec({
+      runtime: {
+        now: "2026-09-01T12:00:00.000Z",
+        timezone: "UTC",
+      },
+      processes: [{
+        id: "ship",
+        role: "ship",
+        uid: 1000,
+        gids: [1000],
+        capabilities: ["shell.exec"],
+      }],
+    }, { targets: [], transitions: [], events: [] });
+    const startedAt = Date.now();
+
+    const result = await kernel.dispatch("ship", "Shell", {
+      input: [
+        "while true; do sleep 5; done &",
+        "pid=$!",
+        "sleep 15",
+        "kill $pid 2>/dev/null",
+        "wait $pid 2>/dev/null",
+      ].join("; "),
+      timeout: 25,
+      target: "gsv",
+    });
+
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+    expect(result).toMatchObject({
+      isError: true,
+      value: {
+        status: "failed",
+        output: "",
+        error: "Command timed out after 25ms",
+      },
+    });
+  });
+
   it("supports the production-shaped responsibility update command", async () => {
     const kernel = SyntheticKernel.fromSpec({
       runtime: {

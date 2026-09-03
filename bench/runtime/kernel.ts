@@ -4,6 +4,7 @@ import {
   type ExecResult,
 } from "just-bash";
 import {
+  DEFAULT_SHELL_EXEC_TIMEOUT_MS,
   jsonObjectSchema,
   jsonValueSchema,
   type AiToolsDevice,
@@ -112,6 +113,7 @@ const routingArgsSchema = z.object({
 }).passthrough();
 const nativeShellArgsSchema = z.object({
   input: z.string(),
+  timeout: z.number().optional(),
 }).passthrough();
 const responsibilityPatchSchema = z.object({
   title: z.optional(z.string()),
@@ -567,6 +569,11 @@ export class SyntheticKernel {
     if (!parsedArgs.success) {
       return shellFailure("input must be a string");
     }
+    const timeout = parsedArgs.data.timeout ?? DEFAULT_SHELL_EXEC_TIMEOUT_MS;
+    if (!Number.isFinite(timeout) || timeout <= 0) {
+      return shellFailure("timeout must be a positive number");
+    }
+    const controller = new AbortController();
     const bash = new Bash({
       fs: this.nativeFilesystem.fs,
       cwd: "/",
@@ -595,9 +602,21 @@ export class SyntheticKernel {
           this.runProcCommand(processId, commandArgs)
         )),
       ],
+      executionLimits: {
+        maxExecutionTimeMs: timeout + 1_000,
+      },
     });
+    const timer = setTimeout(() => {
+      controller.abort(new Error(`Command timed out after ${timeout}ms`));
+    }, timeout);
     try {
-      const result = await bash.exec(parsedArgs.data.input, { cwd: "/" });
+      const result = await bash.exec(parsedArgs.data.input, {
+        cwd: "/",
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) {
+        return shellFailure(`Command timed out after ${timeout}ms`);
+      }
       const output = result.stdout + result.stderr;
       return result.exitCode === 0
         ? {
@@ -620,7 +639,12 @@ export class SyntheticKernel {
           isError: true,
         };
     } catch (error) {
+      if (controller.signal.aborted) {
+        return shellFailure(`Command timed out after ${timeout}ms`);
+      }
       return shellFailure(error instanceof Error ? error.message : String(error));
+    } finally {
+      clearTimeout(timer);
     }
   }
 
