@@ -868,7 +868,6 @@ export class ProcessController {
           runId,
           origin: origin ?? undefined,
         });
-        this.host.maybeStartTaskTitleGeneration(message);
         const nextRun: RunState = { runId };
         if (args.call) {
           nextRun.returnToCaller = true;

@@ -63,6 +63,42 @@ describe("automatic task titles", () => {
     expect(kernelCalls).toHaveLength(1);
   });
 
+  it("starts title generation after admitting the first IPC message", async () => {
+    const pid = "mech-auto-task-title-ipc";
+    await registerInKernel(pid, ROOT_IDENTITY);
+    const stub = await getProcessByPid(pid);
+    await stub.recvFrame(
+      makeReq("proc.setidentity", {
+        identity: ROOT_IDENTITY,
+        autoTitle: true,
+      }),
+    );
+
+    await runInProcess(stub, (process) => {
+      process.run.scheduleTick = async () => {};
+      process.kernel.kernelRpc = async (call: string) => {
+        if (call !== "ai.text.generate") {
+          throw new Error(`unexpected kernel syscall: ${call}`);
+        }
+        return { text: "Review delegated build" };
+      };
+    });
+
+    const response = await okProcessResponse(
+      stub,
+      makeReq("proc.ipc.deliver", {
+        runId: "run-auto-task-title-ipc",
+        sourcePid: "source-process",
+        source: ROOT_IDENTITY,
+        message: "Review the delegated build.",
+        sentAt: Date.now(),
+      }),
+    );
+
+    expect(response.data).toMatchObject({ ok: true, status: "started", pid });
+    await waitForTaskTitle(stub, "Review delegated build");
+  });
+
   it("keeps the bounded first-message fallback when generation fails", async () => {
     const pid = "mech-auto-task-title-fallback";
     await registerInKernel(pid, ROOT_IDENTITY);
