@@ -58,7 +58,7 @@ fn typing_replaces_the_moment_and_escape_preserves_the_draft() {
     assert!(app.draft_visible());
     app.dispatch(Action::Escape);
     assert!(!app.draft_visible());
-    assert!(!app.cursor_visible());
+    assert!(app.cursor_visible());
     assert_eq!(app.draft(), "open downloads");
     app.dispatch(Action::Insert(" please".to_string()));
     assert_eq!(app.draft(), "open downloads please");
@@ -938,6 +938,53 @@ fn vertical_browse_follows_human_and_ship_media_in_document_order(
             source
         );
     }
+    Ok(())
+}
+
+#[test]
+fn browse_cursor_tracks_the_focused_message() -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = App::new(ConnectionState::Ready);
+    app.replace_history(vec![
+        Moment::complete("older-human", Role::Human, "older request"),
+        Moment::complete("older-ship", Role::Intelligence, "older answer"),
+        Moment::complete("newer-human", Role::Human, "newer request"),
+        Moment::complete("newer-ship", Role::Intelligence, "newer answer"),
+    ]);
+    let backend = TestBackend::new(60, 14);
+    let mut terminal = Terminal::new(backend)?;
+    terminal.draw(|frame| app.render(frame))?;
+
+    app.dispatch(Action::Escape);
+    terminal.draw(|frame| app.render(frame))?;
+    assert!(terminal.backend().cursor_visible());
+    let focused_row = usize::from(terminal.backend().cursor_position().y);
+    let rendered_row = terminal
+        .backend()
+        .buffer()
+        .content()
+        .chunks(60)
+        .nth(focused_row)
+        .expect("focused row")
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    assert!(rendered_row.contains("newer answer"));
+
+    app.dispatch(Action::ScrollUp);
+    terminal.draw(|frame| app.render(frame))?;
+    let focused_row = usize::from(terminal.backend().cursor_position().y);
+    let rendered_row = terminal
+        .backend()
+        .buffer()
+        .content()
+        .chunks(60)
+        .nth(focused_row)
+        .expect("focused row")
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    assert!(rendered_row.contains("newer request"));
+    assert_eq!(app.moments[app.selected].id, "newer-human");
     Ok(())
 }
 

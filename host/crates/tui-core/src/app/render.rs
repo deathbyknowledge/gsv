@@ -469,6 +469,25 @@ impl App {
             self.sync_browse_focus(ScrollDirection::Newer);
         }
 
+        let browse_cursor_position =
+            if self.browse_cursor_visible() && cursor_phase && viewport_height > 0 {
+                let viewport_top = self.document_scroll;
+                let viewport_bottom = viewport_top.saturating_add(viewport_height);
+                let bottom_alignment = viewport_height.saturating_sub(document_height);
+                self.current_browse_range_index()
+                    .and_then(|index| self.last_browse_ranges.get(index))
+                    .filter(|range| range.top < viewport_bottom && range.bottom > viewport_top)
+                    .map(|range| {
+                        let visible_top = range.top.max(viewport_top);
+                        Position::new(
+                            area.x,
+                            area.y + bottom_alignment + visible_top.saturating_sub(viewport_top),
+                        )
+                    })
+            } else {
+                None
+            };
+
         if viewport_height > 0 && document_height > 0 {
             let viewport_top = self.document_scroll;
             let viewport_bottom = viewport_top.saturating_add(viewport_height);
@@ -547,7 +566,7 @@ impl App {
                 Paragraph::new(prompt.lines).scroll((scroll, 0)),
                 prompt_area,
             );
-            if self.cursor_visible() && cursor_phase {
+            if self.input_cursor_visible() && cursor_phase {
                 let cursor_y = prompt_area.y + cursor_row.saturating_sub(scroll);
                 let cursor_x = prompt_area.x + cursor_col.min(prompt_area.width.saturating_sub(1));
                 if cursor_y < prompt_area.bottom() {
@@ -555,6 +574,9 @@ impl App {
                 }
             }
             self.render_completion_picker(frame, area, prompt_area, activity_phase);
+        }
+        if let Some(position) = browse_cursor_position {
+            frame.set_cursor_position(position);
         }
     }
 

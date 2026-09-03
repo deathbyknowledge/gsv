@@ -151,6 +151,10 @@ impl App {
     }
 
     pub fn cursor_visible(&self) -> bool {
+        self.input_cursor_visible() || self.browse_cursor_visible()
+    }
+
+    fn input_cursor_visible(&self) -> bool {
         if self.approval.is_some() || self.help_visible || self.media_expanded {
             return false;
         }
@@ -163,6 +167,14 @@ impl App {
             return true;
         }
         self.draft_visible
+    }
+
+    fn browse_cursor_visible(&self) -> bool {
+        !self.input_cursor_visible()
+            && self.approval.is_none()
+            && !self.help_visible
+            && !self.media_expanded
+            && !self.moments.is_empty()
     }
 
     pub fn approval(&self) -> Option<&Approval> {

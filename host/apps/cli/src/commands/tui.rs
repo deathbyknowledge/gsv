@@ -276,7 +276,7 @@ async fn run_interface(
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
     let mut terminal_events = EventStream::new();
-    let mut insert_cursor = false;
+    let mut hardware_cursor_visible = false;
     let mut activity_phase = true;
     let mut animation_active = app.animation_active();
     let mut animation_tick = tokio::time::interval(Duration::from_millis(480));
@@ -293,15 +293,15 @@ async fn run_interface(
             animation_tick.reset();
         }
         animation_active = next_animation_active;
-        let next_insert_cursor = app.cursor_visible();
-        if insert_cursor != next_insert_cursor {
-            let style = if next_insert_cursor {
+        let next_cursor_visible = app.cursor_visible();
+        if hardware_cursor_visible != next_cursor_visible {
+            let style = if next_cursor_visible {
                 SetCursorStyle::BlinkingBlock
             } else {
                 SetCursorStyle::DefaultUserShape
             };
             execute!(terminal.backend_mut(), style)?;
-            insert_cursor = next_insert_cursor;
+            hardware_cursor_visible = next_cursor_visible;
         }
         terminal.draw(|frame| {
             app.render_with_animation(frame, activity_phase);
