@@ -1725,6 +1725,22 @@ export class ProcessController {
       await this.handleSig(frame);
       return null;
     }
+    if (frame.type === "sig" && frame.signal === "identity.changed") {
+      while (!this.host.killed && this.host.lifecyclePhase !== "ready") {
+        const transition =
+          this.host.lifecyclePhase === "resetting"
+            ? this.host.resetTransition
+            : this.host.killTransition;
+        if (!transition) {
+          throw new Error(`Process lifecycle ${this.host.lifecyclePhase} has no active transition`);
+        }
+        await transition.catch(() => undefined);
+      }
+      if (!this.host.killed && this.host.lifecyclePhase === "ready") {
+        await this.handleSig(frame);
+      }
+      return null;
+    }
     if (frame.type === "req") {
       await frame.body?.stream.cancel("Process lifecycle transition in progress").catch(() => {});
       return errorResponse(frame.id, 409, `Process lifecycle is ${this.host.lifecyclePhase}`);
