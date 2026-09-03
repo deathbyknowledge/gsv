@@ -149,6 +149,13 @@ struct IncomingState {
     received: u64,
 }
 
+struct IncomingDelivery {
+    sender: mpsc::Sender<BodyEvent>,
+    data: Option<BodyEvent>,
+    terminal: Option<BodyEvent>,
+    reject_peer: bool,
+}
+
 #[derive(Debug, Clone)]
 struct OrphanFrame {
     flags: u8,
@@ -275,7 +282,7 @@ impl BinaryBodyChannel {
             terminal: false,
         };
         for frame in orphans {
-            self.dispatch_frame(descriptor.stream_id, frame.flags, frame.payload);
+            self.dispatch_buffered_frame(descriptor.stream_id, frame.flags, frame.payload);
         }
         if self
             .state
@@ -368,13 +375,7 @@ impl BinaryBodyChannel {
             .map(|state| state.incoming.contains_key(&stream_id))
             .unwrap_or(false);
         if registered {
-            self.dispatch_frame(stream_id, flags, payload);
-            // A WebSocket can surface an already-buffered burst without yielding
-            // between frames. Give the body owner a chance to drain its bounded
-            // queue before the connection reads the next ready data frame.
-            if flags & BINARY_FRAME_DATA != 0 {
-                tokio::task::yield_now().await;
-            }
+            self.dispatch_frame(stream_id, flags, payload).await;
         } else {
             self.buffer_orphan(stream_id, flags, payload);
         }
@@ -440,82 +441,140 @@ impl BinaryBodyChannel {
         ))
     }
 
-    fn dispatch_frame(&self, stream_id: u32, flags: u8, payload: Vec<u8>) {
+    fn prepare_incoming_delivery(
+        &self,
+        stream_id: u32,
+        flags: u8,
+        payload: Vec<u8>,
+    ) -> Option<IncomingDelivery> {
         let mut terminal = None;
         let mut frame = None;
         let mut reject_peer = false;
-        {
-            let Ok(mut state) = self.state.lock() else {
-                return;
-            };
-            let Some(incoming) = state.incoming.get_mut(&stream_id) else {
-                return;
-            };
-            if flags & (BINARY_FRAME_ERROR | BINARY_FRAME_CANCEL) != 0 {
-                let message = String::from_utf8_lossy(&payload).to_string();
-                terminal = Some(BodyEvent::Error(BodyError::Cancelled(
-                    if message.is_empty() {
-                        "Binary transfer was cancelled by its sender".to_string()
-                    } else {
-                        message
-                    },
-                )));
-            } else if flags & BINARY_FRAME_DATA != 0 && !payload.is_empty() {
-                let next = incoming.received.saturating_add(payload.len() as u64);
-                let invalid = payload.len() > self.limits.max_frame_bytes
-                    || next > self.limits.max_body_bytes
-                    || incoming.expected.is_some_and(|expected| next > expected);
-                if invalid {
-                    reject_peer = true;
-                    terminal = Some(BodyEvent::Error(BodyError::LimitExceeded(
-                        "Binary body exceeded its declared or configured size".to_string(),
-                    )));
+        let Ok(mut state) = self.state.lock() else {
+            return None;
+        };
+        let incoming = state.incoming.get_mut(&stream_id)?;
+        if flags & (BINARY_FRAME_ERROR | BINARY_FRAME_CANCEL) != 0 {
+            let message = String::from_utf8_lossy(&payload).to_string();
+            terminal = Some(BodyEvent::Error(BodyError::Cancelled(
+                if message.is_empty() {
+                    "Binary transfer was cancelled by its sender".to_string()
                 } else {
-                    incoming.received = next;
-                    frame = Some(BodyEvent::Data(payload));
-                }
+                    message
+                },
+            )));
+        } else if flags & BINARY_FRAME_DATA != 0 && !payload.is_empty() {
+            let next = incoming.received.saturating_add(payload.len() as u64);
+            let invalid = payload.len() > self.limits.max_frame_bytes
+                || next > self.limits.max_body_bytes
+                || incoming.expected.is_some_and(|expected| next > expected);
+            if invalid {
+                reject_peer = true;
+                terminal = Some(BodyEvent::Error(BodyError::LimitExceeded(
+                    "Binary body exceeded its declared or configured size".to_string(),
+                )));
+            } else {
+                incoming.received = next;
+                frame = Some(BodyEvent::Data(payload));
             }
-            if terminal.is_none() && flags & BINARY_FRAME_END != 0 {
-                terminal = Some(
-                    if incoming
-                        .expected
-                        .is_some_and(|expected| expected != incoming.received)
-                    {
-                        BodyEvent::Error(BodyError::Protocol(format!(
-                            "Body length {} did not match {:?}",
-                            incoming.received, incoming.expected
-                        )))
-                    } else {
-                        BodyEvent::End
-                    },
-                );
+        }
+        if terminal.is_none() && flags & BINARY_FRAME_END != 0 {
+            terminal = Some(
+                if incoming
+                    .expected
+                    .is_some_and(|expected| expected != incoming.received)
+                {
+                    BodyEvent::Error(BodyError::Protocol(format!(
+                        "Body length {} did not match {:?}",
+                        incoming.received, incoming.expected
+                    )))
+                } else {
+                    BodyEvent::End
+                },
+            );
+        }
+        let sender = incoming.sender.clone();
+        if terminal.is_some() {
+            state.incoming.remove(&stream_id);
+            if reject_peer {
+                mark_ignored(&mut state, stream_id, self.limits.max_ignored_streams);
             }
-            let sender = incoming.sender.clone();
-            if let Some(frame) = frame {
-                if sender.try_send(frame).is_err() {
-                    reject_peer = true;
-                    terminal = Some(BodyEvent::Error(BodyError::LimitExceeded(
-                        "Binary body receiver exceeded its bounded buffer".to_string(),
-                    )));
-                }
+        }
+        Some(IncomingDelivery {
+            sender,
+            data: frame,
+            terminal,
+            reject_peer,
+        })
+    }
+
+    async fn dispatch_frame(&self, stream_id: u32, flags: u8, payload: Vec<u8>) {
+        let Some(delivery) = self.prepare_incoming_delivery(stream_id, flags, payload) else {
+            return;
+        };
+        let IncomingDelivery {
+            sender,
+            data,
+            terminal,
+            reject_peer,
+        } = delivery;
+        // A full registered queue is ordinary receiver backpressure, not a
+        // protocol violation. Waiting here keeps memory bounded and lets the
+        // WebSocket transport slow its sender instead of discarding body bytes.
+        for event in data.into_iter().chain(terminal) {
+            let sent = tokio::select! {
+                biased;
+                _ = self.control_shutdown.cancelled() => return,
+                result = sender.send(event) => result,
+            };
+            if sent.is_err() {
+                self.cancel_incoming(stream_id, "Binary body receiver closed");
+                break;
             }
-            if let Some(event) = terminal {
-                state.incoming.remove(&stream_id);
-                if reject_peer {
+        }
+        if reject_peer {
+            self.send_control(
+                stream_id,
+                BINARY_FRAME_CANCEL | BINARY_FRAME_END,
+                "Binary body receiver rejected the transfer",
+            );
+        }
+    }
+
+    fn dispatch_buffered_frame(&self, stream_id: u32, flags: u8, payload: Vec<u8>) {
+        let Some(delivery) = self.prepare_incoming_delivery(stream_id, flags, payload) else {
+            return;
+        };
+        let IncomingDelivery {
+            sender,
+            data,
+            mut terminal,
+            mut reject_peer,
+        } = delivery;
+        if let Some(frame) = data {
+            if sender.try_send(frame).is_err() {
+                reject_peer = true;
+                terminal = Some(BodyEvent::Error(BodyError::LimitExceeded(
+                    "Binary body receiver exceeded its bounded buffer".to_string(),
+                )));
+                if let Ok(mut state) = self.state.lock() {
+                    state.incoming.remove(&stream_id);
                     mark_ignored(&mut state, stream_id, self.limits.max_ignored_streams);
                 }
-                match sender.try_send(event) {
-                    Ok(()) => {}
-                    Err(mpsc::error::TrySendError::Full(event)) => {
-                        let sender = sender.clone();
-                        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-                            runtime.spawn(async move {
-                                let _ = sender.send(event).await;
-                            });
-                        }
+            }
+        }
+        if let Some(event) = terminal {
+            match sender.try_send(event) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(event)) => {
+                    let sender = sender.clone();
+                    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+                        runtime.spawn(async move {
+                            let _ = sender.send(event).await;
+                        });
                     }
-                    Err(mpsc::error::TrySendError::Closed(_)) => {}
                 }
+                Err(mpsc::error::TrySendError::Closed(_)) => {}
             }
         }
         if reject_peer {
@@ -652,6 +711,7 @@ impl IncomingBody {
             .map_err(|_| {
                 self.channel
                     .cancel_incoming(self.stream_id, "Binary body transfer timed out");
+                self.receiver.close();
                 self.terminal = true;
                 BodyError::TimedOut(self.stream_id)
             })?;
@@ -700,6 +760,7 @@ impl IncomingBody {
     pub fn cancel(&mut self, reason: &str) {
         if !self.terminal {
             self.channel.cancel_incoming(self.stream_id, reason);
+            self.receiver.close();
             self.terminal = true;
         }
     }
@@ -1034,14 +1095,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bounded_receiver_cancels_a_flooded_body() {
+    async fn bounded_receiver_backpressures_until_the_body_owner_drains() {
         let sent = Arc::new(StdMutex::new(Vec::new()));
         let limits = BinaryBodyLimits {
             max_buffered_frames_per_stream: 1,
             ..BinaryBodyLimits::default()
         };
+        let recorded = sent.clone();
         let channel = BinaryBodyChannel::new(limits, move |frame| {
-            let sent = sent.clone();
+            let sent = recorded.clone();
             async move {
                 sent.lock().expect("sent frames").push(frame);
                 Ok(())
@@ -1057,14 +1119,39 @@ mod tests {
         channel
             .handle_frame(&build_binary_frame(11, BINARY_FRAME_DATA, b"one"))
             .await;
-        channel
-            .handle_frame(&build_binary_frame(11, BINARY_FRAME_DATA, b"two"))
-            .await;
+        let waiting_channel = channel.clone();
+        let mut waiting = tokio::spawn(async move {
+            waiting_channel
+                .handle_frame(&build_binary_frame(11, BINARY_FRAME_DATA, b"two"))
+                .await
+        });
+
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), &mut waiting)
+                .await
+                .is_err(),
+            "a full receiver queue must backpressure the frame reader"
+        );
+        assert!(sent.lock().expect("sent frames").is_empty());
         assert_eq!(
             body.recv().await.expect("first chunk"),
             Some(b"one".to_vec())
         );
-        assert!(body.recv().await.is_err());
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), waiting)
+                .await
+                .expect("queued frame resumed")
+                .expect("frame task")
+        );
+        assert_eq!(
+            body.recv().await.expect("second chunk"),
+            Some(b"two".to_vec())
+        );
+        channel
+            .handle_frame(&build_binary_frame(11, BINARY_FRAME_END, &[]))
+            .await;
+        assert_eq!(body.recv().await.expect("body end"), None);
+        assert!(sent.lock().expect("sent frames").is_empty());
     }
 
     #[tokio::test]

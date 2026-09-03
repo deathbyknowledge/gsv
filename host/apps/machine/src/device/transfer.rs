@@ -342,6 +342,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn receive_starts_after_body_queue_pressure_without_losing_bytes() {
+        let workspace = test_workspace("receive-backpressure");
+        tokio::fs::create_dir_all(&workspace).await.unwrap();
+        let channel = BinaryBodyChannel::new(
+            BinaryBodyLimits {
+                max_buffered_frames_per_stream: 1,
+                ..BinaryBodyLimits::default()
+            },
+            |_frame| async { Ok(()) },
+        )
+        .unwrap();
+        let body = channel
+            .receive(FrameBodyDescriptor {
+                stream_id: 24,
+                length: Some(6),
+            })
+            .unwrap();
+
+        channel
+            .handle_frame(&build_binary_frame(24, BINARY_FRAME_DATA, b"one"))
+            .await;
+        let waiting_channel = channel.clone();
+        let waiting = tokio::spawn(async move {
+            waiting_channel
+                .handle_frame(&build_binary_frame(24, BINARY_FRAME_DATA, b"two"))
+                .await
+        });
+        tokio::task::yield_now().await;
+
+        let receive_workspace = workspace.clone();
+        let receiving = tokio::spawn(async move {
+            handle_receive(
+                json!({ "path": "destination.bin" }),
+                Some(body),
+                &receive_workspace,
+            )
+            .await
+        });
+        assert!(waiting.await.unwrap());
+        channel
+            .handle_frame(&build_binary_frame(24, BINARY_FRAME_END, &[]))
+            .await;
+
+        let output = receiving.await.unwrap().unwrap();
+        assert_eq!(output.data["bytesWritten"], 6);
+        assert_eq!(
+            tokio::fs::read(workspace.join("destination.bin"))
+                .await
+                .unwrap(),
+            b"onetwo"
+        );
+
+        tokio::fs::remove_dir_all(workspace).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn cancelled_receive_removes_its_temp_file() {
         let workspace = test_workspace("cancelled");
         tokio::fs::create_dir_all(&workspace).await.unwrap();

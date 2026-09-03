@@ -478,11 +478,13 @@ a request may have no body, and a completed request may leave a response body
 that its consumer can still cancel.
 
 A WebSocket may expose several already-buffered data frames without an I/O
-wait between them. Receiver pumps must give the registered body owner a chance
-to drain its bounded queue between those frames; transport scheduling alone
-must not turn a valid body into a buffer-overflow failure. That cooperation
-must not suspend the connection-wide reader on one body consumer: cancellation,
-unrelated frames, and peer closure must remain readable.
+wait between them. Once a body owner is registered, a full bounded receiver
+queue applies backpressure to the connection reader; it is not a protocol or
+size violation and must not discard bytes or cancel the stream. Body owners
+must promptly consume or cancel accepted streams. Because WebSocket frames are
+ordered, a persistently stalled body can delay later frames on that connection;
+avoiding that head-of-line blocking while retaining bounded memory would
+require explicit per-stream credit in the wire protocol.
 
 The current body-bearing syscalls are:
 
