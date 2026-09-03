@@ -198,6 +198,176 @@ describe("SyntheticKernel", () => {
     });
   });
 
+  it("persists the native filesystem across shell calls", async () => {
+    const kernel = SyntheticKernel.fromSpec({
+      runtime: {
+        now: "2026-09-01T12:00:00.000Z",
+        timezone: "UTC",
+      },
+      processes: [{
+        id: "ship",
+        role: "ship",
+        uid: 1000,
+        gids: [1000],
+        capabilities: ["shell.exec"],
+      }],
+    }, { targets: [], transitions: [], events: [] });
+
+    const write = await kernel.dispatch("ship", "Shell", {
+      input: "mkdir -p /workspace && printf 'durable\\n' > /workspace/note.txt",
+      target: "gsv",
+    });
+    expect(write.isError).toBe(false);
+
+    const read = await kernel.dispatch("ship", "Shell", {
+      input: "cat /workspace/note.txt",
+      target: "gsv",
+    });
+    expect(read).toMatchObject({
+      isError: false,
+      value: {
+        status: "completed",
+        output: "durable\n",
+        exitCode: 0,
+      },
+    });
+  });
+
+  it("shares one native filesystem between direct tools and shell", async () => {
+    const kernel = SyntheticKernel.fromSpec({
+      runtime: {
+        now: "2026-09-01T12:00:00.000Z",
+        timezone: "UTC",
+      },
+      processes: [{
+        id: "ship",
+        role: "ship",
+        uid: 1000,
+        gids: [1000],
+        capabilities: ["fs.*", "shell.exec"],
+      }],
+    }, { targets: [], transitions: [], events: [] });
+
+    expect(await kernel.dispatch("ship", "Write", {
+      target: "gsv",
+      path: "/workspace/state.txt",
+      content: "alpha\nbeta\n",
+    })).toMatchObject({
+      isError: false,
+      value: { ok: true, path: "/workspace/state.txt", size: 11 },
+    });
+    expect(await kernel.dispatch("ship", "Shell", {
+      input: "cat /workspace/state.txt",
+      target: "gsv",
+    })).toMatchObject({
+      isError: false,
+      value: { output: "alpha\nbeta\n" },
+    });
+
+    expect(await kernel.dispatch("ship", "Edit", {
+      target: "gsv",
+      path: "/workspace/state.txt",
+      oldString: "beta",
+      newString: "gamma",
+    })).toMatchObject({
+      isError: false,
+      value: { ok: true, replacements: 1 },
+    });
+    expect(await kernel.dispatch("ship", "Search", {
+      target: "gsv",
+      path: "/workspace",
+      query: "gamma",
+      include: "*.txt",
+    })).toMatchObject({
+      isError: false,
+      value: {
+        ok: true,
+        count: 1,
+        matches: [{
+          path: "/workspace/state.txt",
+          line: 2,
+          content: "gamma",
+        }],
+      },
+    });
+
+    await kernel.dispatch("ship", "Shell", {
+      input: "printf 'from-shell\\n' > /workspace/shell.txt",
+      target: "gsv",
+    });
+    const directRead = await kernel.dispatch("ship", "Read", {
+      target: "gsv",
+      path: "/workspace/shell.txt",
+    });
+    expect(directRead.isError).toBe(false);
+    expect(JSON.stringify(directRead.value)).toContain("from-shell");
+
+    expect(await kernel.dispatch("ship", "Delete", {
+      target: "gsv",
+      path: "/workspace/state.txt",
+    })).toMatchObject({ isError: false, value: { ok: true } });
+    expect(await kernel.dispatch("ship", "Read", {
+      target: "gsv",
+      path: "/workspace/state.txt",
+    })).toMatchObject({ isError: true });
+  });
+
+  it("reports and advances the scenario clock through native date", async () => {
+    const kernel = SyntheticKernel.fromSpec({
+      runtime: {
+        now: "2026-09-01T12:00:00.000Z",
+        timezone: "Europe/Amsterdam",
+      },
+      processes: [{
+        id: "ship",
+        role: "ship",
+        uid: 1000,
+        gids: [1000],
+        capabilities: ["shell.exec"],
+      }],
+    }, {
+      targets: [],
+      transitions: [],
+      events: [{
+        id: "one-hour-later",
+        processId: "ship",
+        delayMs: 60 * 60 * 1_000,
+        content: "One logical hour elapsed.",
+      }],
+    });
+
+    expect(await kernel.dispatch("ship", "Shell", {
+      input: "date -u '+%Y-%m-%dT%H:%M:%SZ'",
+      target: "gsv",
+    })).toMatchObject({
+      isError: false,
+      value: { output: "2026-09-01T12:00:00Z\n" },
+    });
+
+    kernel.advanceAfterYield("ship");
+    expect(await kernel.dispatch("ship", "Shell", {
+      input: "date -u '+%FT%TZ'",
+      target: "gsv",
+    })).toMatchObject({
+      isError: false,
+      value: { output: "2026-09-01T13:00:00Z\n" },
+    });
+    expect(await kernel.dispatch("ship", "Shell", {
+      input: "date '+%Y-%m-%dT%H:%M:%S%:z'",
+      target: "gsv",
+    })).toMatchObject({
+      isError: false,
+      value: { output: "2026-09-01T15:00:00+02:00\n" },
+    });
+    expect(await kernel.dispatch("ship", "Shell", {
+      input: "date -u '+%Y-%m-%dT%H:%M:%S.%3NZ'",
+      target: "gsv",
+    })).toMatchObject({
+      isError: false,
+      value: { output: "2026-09-01T13:00:00.000Z\n" },
+    });
+  });
+
   it("supports the production-shaped responsibility update command", async () => {
     const kernel = SyntheticKernel.fromSpec({
       runtime: {

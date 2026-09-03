@@ -1,6 +1,5 @@
 import {
   Bash,
-  InMemoryFs,
   defineCommand,
   type ExecResult,
 } from "just-bash";
@@ -18,9 +17,6 @@ import {
 import { z } from "zod";
 import { hasCapability } from "../../workers/gateway/src/kernel/capabilities";
 import {
-  GSV_TARGET_IMPLEMENTATIONS,
-} from "../../workers/gateway/src/kernel/target-constants";
-import {
   createContextProjection,
   type ContextProjection,
 } from "../../workers/gateway/src/process/context/projection";
@@ -30,10 +26,15 @@ import {
   type SyntheticInvocationResult,
   type SyntheticTargetEnvironment,
 } from "./environment";
+import { renderSyntheticDate } from "./native-date";
 import {
   processOwnerUid,
   SyntheticResponsibilityLedger,
 } from "./responsibilities";
+import {
+  isSyntheticFilesystemCall,
+  SyntheticNativeFilesystem,
+} from "./native-filesystem";
 import type {
   GsvSemanticLogEntry,
   SyntheticAdapterDeliverySnapshot,
@@ -100,6 +101,8 @@ type ExternalEventState = {
   appliedAtMs?: number;
 };
 
+const SYNTHETIC_GSV_IMPLEMENTATIONS = ["fs.*", "shell.exec"] as const;
+
 export type SyntheticAppliedExternalEvent = SyntheticExternalEventSnapshot & {
   evictProcess: boolean;
 };
@@ -144,6 +147,7 @@ export class SyntheticKernel {
   private readonly delegations: SyntheticDelegationSnapshot[] = [];
   private readonly environments = new Map<string, SyntheticTargetEnvironment>();
   private readonly externalEvents = new Map<string, ExternalEventState>();
+  private readonly nativeFilesystem = new SyntheticNativeFilesystem();
   private readonly processes = new Map<string, SyntheticProcessSpec>();
   private readonly processEvents = new Map<string, SyntheticProcessEvent[]>();
   private readonly processParents = new Map<string, string>();
@@ -445,10 +449,12 @@ export class SyntheticKernel {
     if (targetId === "gsv" || targetId === "gateway") {
       const result = syscall === "shell.exec"
         ? await this.dispatchNativeShell(processId, args)
-        : {
-          value: "Synthetic native gsv does not implement " + syscall,
-          isError: true,
-        };
+        : isSyntheticFilesystemCall(syscall)
+          ? await this.nativeFilesystem.invoke(syscall, args)
+          : {
+            value: "Synthetic native gsv does not implement " + syscall,
+            isError: true,
+          };
       return this.finishDispatch(processId, toolName, args, result);
     }
 
@@ -562,7 +568,7 @@ export class SyntheticKernel {
       return shellFailure("input must be a string");
     }
     const bash = new Bash({
-      fs: new InMemoryFs(),
+      fs: this.nativeFilesystem.fs,
       cwd: "/",
       env: {
         HOME: "/home/synthetic",
@@ -570,6 +576,12 @@ export class SyntheticKernel {
         GSV_PID: processId,
       },
       customCommands: [
+        defineCommand("date", async (commandArgs, context) => (
+          this.runDateCommand(
+            commandArgs,
+            context.env.get("TZ") ?? this.timezone,
+          )
+        )),
         defineCommand("man", async (commandArgs) => (
           this.runManCommand(commandArgs)
         )),
@@ -609,6 +621,17 @@ export class SyntheticKernel {
         };
     } catch (error) {
       return shellFailure(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  private runDateCommand(args: string[], timezone: string): ExecResult {
+    try {
+      return commandResult(renderSyntheticDate(this.now, args, timezone));
+    } catch (error) {
+      return commandError(
+        "date",
+        error instanceof Error ? error : new Error(String(error)),
+      );
     }
   }
 
@@ -957,7 +980,7 @@ export class SyntheticKernel {
       platform: "cloudflare",
       version: "",
       online: true,
-      implements: [...GSV_TARGET_IMPLEMENTATIONS],
+      implements: [...SYNTHETIC_GSV_IMPLEMENTATIONS],
     };
     const external = this.visibleEnvironments(processId)
       .filter((target) => includeOffline || target.isOnline())

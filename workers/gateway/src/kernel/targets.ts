@@ -10,10 +10,9 @@ import {
   listVisibleAdapterTargets,
   type AdapterTargetRoute,
 } from "./adapter-targets";
-export {
-  GSV_TARGET_ID,
-  GSV_TARGET_IMPLEMENTATIONS,
-} from "./target-constants";
+
+export const GSV_TARGET_ID = "gsv";
+export const GSV_TARGET_IMPLEMENTATIONS = ["fs.*", "shell.exec", "net.fetch"] as const;
 
 export type TargetDescriptor = {
   targetId: string;
