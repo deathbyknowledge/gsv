@@ -47,7 +47,7 @@
       "constraints": []
     },
     "maxTurns": 40,
-    "maxRuns": 4
+    "maxRuns": 8
   },
   "modules": {
     "ship-process": {

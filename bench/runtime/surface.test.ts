@@ -573,6 +573,93 @@ describe("GSV Process surface", () => {
     }
   });
 
+  it("wakes an idle Ship when an asynchronous delegated result arrives", async () => {
+    const scenario = {
+      ...await fixture("delegate-incident-from-slack.json"),
+      maxRuns: 2,
+    };
+    const shipResponses = [
+      assistant(toolCall("create-responsibility", "Shell", {
+        input: "r12y create --title 'Investigate checkout deployment' --dedupe 'slack:incident-42'",
+        target: "gsv",
+      })),
+      assistant(toolCall("delegate", "Shell", {
+        input: "proc delegate --as ops --responsibility r12y:00000000-0000-4000-8000-000000000001 'Inspect the checkout deployment.'",
+        target: "gsv",
+      })),
+      assistant(toolCall("wait-for-worker", "Shell", { input: "yield" })),
+      assistant(toolCall("resolve", "Shell", {
+        input: "r12y resolve r12y:00000000-0000-4000-8000-000000000001 --json '{\"cause\":\"database migration checksum mismatch\"}'",
+        target: "gsv",
+      })),
+      assistant(toolCall("reply", "Shell", {
+        input: "message send --message 'checkout blocked: database migration checksum mismatch' && yield",
+      })),
+    ];
+    let releaseWorker!: () => void;
+    const workerMayFinish = new Promise<void>((resolve) => {
+      releaseWorker = resolve;
+    });
+    let checkpointInFlight = false;
+    let checkpointsOverlapped = false;
+    let sawHandleBeforeResult = false;
+
+    const artifact = await runGsvSurfaceScenario(
+      scenario,
+      async (context) => {
+        const delegated = String(context.messages[0]?.content)
+          .includes("Delegated task from ship (ship).");
+        if (delegated) {
+          await workerMayFinish;
+          return textAssistant("database migration checksum mismatch");
+        }
+        const next = shipResponses.shift();
+        if (!next) throw new Error("Unexpected Ship turn");
+        if (next.content.some((block) => (
+          block.type === "toolCall" && block.id === "wait-for-worker"
+        ))) {
+          const transcript = JSON.stringify(context.messages);
+          sawHandleBeforeResult = transcript.includes("status=in_progress")
+            && !transcript.includes("Delegated task from process");
+          setImmediate(releaseWorker);
+        }
+        return next;
+      },
+      async () => {
+        if (checkpointInFlight) checkpointsOverlapped = true;
+        checkpointInFlight = true;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        checkpointInFlight = false;
+      },
+    );
+
+    const handleIndex = artifact.log.findIndex((entry) => (
+      entry.type === "tool.result" && entry.content.includes("status=in_progress")
+    ));
+    const completionIndex = artifact.log.findIndex((entry) => (
+      entry.type === "ipc.completed"
+    ));
+    expect(sawHandleBeforeResult).toBe(true);
+    expect(checkpointsOverlapped).toBe(false);
+    expect(handleIndex).toBeGreaterThanOrEqual(0);
+    expect(completionIndex).toBeGreaterThan(handleIndex);
+    expect(artifact.runs.filter(({ processId }) => processId === "ship"))
+      .toEqual([
+        { run: 1, processId: "ship", status: "yielded" },
+        { run: 2, processId: "ship", status: "yielded" },
+      ]);
+    expect(artifact.world.delegations[0]).toMatchObject({
+      state: "completed",
+      resultText: "database migration checksum mismatch",
+    });
+    expect(artifact.world.responsibilities.records[
+      "r12y:00000000-0000-4000-8000-000000000001"
+    ]).toMatchObject({
+      state: "resolved",
+      assignee: { kind: "ship" },
+    });
+  });
+
   it("recovers checkout across delegated mitigation and three durable runs", async () => {
     const scenario = await fixture("recover-checkout-incident.json");
     const seen: Context[] = [];

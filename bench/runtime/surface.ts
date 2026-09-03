@@ -118,8 +118,11 @@ export async function runGsvSurfaceScenario(
     });
     if (outcome.status !== "yielded") break;
     const event = kernel.advanceAfterYield(scenario.entryProcessId);
-    if (!event) break;
-    if (event.evictProcess) {
+    const hasProcessEvent = event
+      ? false
+      : await kernel.waitForProcessEvent(scenario.entryProcessId);
+    if (!event && !hasProcessEvent) break;
+    if (event?.evictProcess) {
       episode.evictProcess(scenario.entryProcessId, run);
     }
     if (run === scenario.maxRuns) {
@@ -132,6 +135,7 @@ export async function runGsvSurfaceScenario(
       };
     }
   }
+  await kernel.settleDelegations();
   return episode.artifact(outcome);
 }
 
@@ -158,6 +162,7 @@ export async function runSyntheticProcess(
     prompt,
     maxTurns,
   });
+  await kernel.settleDelegations();
   return episode.artifact(outcome);
 }
 
@@ -167,6 +172,7 @@ class SyntheticEpisode {
   private readonly log: GsvSemanticLogEntry[] = [];
   private readonly observations: GsvSurfaceObservation[] = [];
   private readonly runs: SyntheticRunSnapshot[] = [];
+  private checkpointQueue: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly kernel: SyntheticKernel,
@@ -584,7 +590,7 @@ class SyntheticEpisode {
     if (!lastObservation) {
       throw new Error("Synthetic checkpoint requires a Process observation");
     }
-    await this.writeCheckpoint({
+    const checkpoint: GsvSurfacePartialArtifact = {
       schemaVersion: 1,
       scenarioId: this.scenarioId,
       scenarioSeed: this.scenarioSeed,
@@ -599,7 +605,12 @@ class SyntheticEpisode {
       lastObservation: structuredClone(lastObservation),
       log: structuredClone(this.log),
       world: this.kernel.snapshot(),
-    });
+    };
+    const write = this.checkpointQueue.then(
+      async () => this.writeCheckpoint!(checkpoint),
+    );
+    this.checkpointQueue = write.catch(() => undefined);
+    await write;
   }
 
   private processEpoch(

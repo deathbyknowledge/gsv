@@ -96,7 +96,9 @@ back to creation order.
 3. delegate-incident-from-slack admits an exact Slack DM route, has Ship retain
    promised work in `r12y`, delegates diagnostics to a worker that alone can read
    the incident server, returns the result over supervised IPC, resolves the
-   responsibility, and sends one correlated Slack reply.
+   responsibility, and sends one correlated Slack reply. The worker runs
+   independently: delegation returns a handle immediately, and a result that
+   arrives after Ship yields starts a second Ship run.
 4. recover-checkout-incident gives Ship only a read-only monitor, leaves
    production authority with a discoverable operations account, and asks for an
    outcome rather than a tool sequence. The Process acknowledges the incident,
@@ -104,11 +106,12 @@ back to creation order.
    windows and two simulated evictions, verifies independent state, rejects
    older contradictory evidence, resolves the record, and closes the exact
    Slack thread.
-5. release-recovery is a seeded family spanning four Ship runs, four distinct
-   delegated Processes, three scheduled health and approval events, three
-   simulated Process evictions, an exact Slack route, and optional browser
-   evidence. Three variants change service, releases, timing, and evidence while
-   reusing the same composable contract.
+5. release-recovery is a seeded family spanning four scheduled phases, four
+   distinct delegated Processes, three scheduled health and approval events,
+   three simulated Process evictions, an exact Slack route, and optional browser
+   evidence. A delegated result may start an additional Ship run when it arrives
+   between phases. Three variants change service, releases, timing, and evidence
+   while reusing the same composable contract.
 6. competing-incidents is a 10-variant family where Ship investigates and
    prepares one incident, yields, then receives a higher-priority incident that
    owns the only privileged change slot. It must downgrade and cancel the stale
@@ -123,6 +126,10 @@ back to creation order.
    makes the exact approved grant once or withholds mutation for denied and
    expired requests. Approved variants require a later independent membership
    audit, including ambiguous callbacks that must not trigger a retry.
+
+Scenario run ceilings include room for each configured helper result to wake
+Ship after it has yielded. When a result arrives before Ship's current run ends,
+the event joins the next model turn instead and no extra run is consumed.
 
 The normalized artifact records scenario family and seed, observations, semantic
 events, committed messages, target state, Process projections, responsibilities,

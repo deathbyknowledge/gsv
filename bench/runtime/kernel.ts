@@ -91,6 +91,12 @@ type SyntheticDelegateRunner = (
   request: SyntheticDelegateRunRequest,
 ) => Promise<SyntheticProcessRunOutcome>;
 
+type SyntheticDelegateTask = {
+  sourceProcessId: string;
+  completion: Promise<void>;
+  settled: boolean;
+};
+
 type EntryRoute = {
   route: SyntheticAdapterRouteSpec;
   sentCount: number;
@@ -146,6 +152,7 @@ export class SyntheticKernel {
   private readonly adapters = new Map<string, SyntheticMessagingAdapter>();
   private readonly adapterRoutes = new Map<string, EntryRoute>();
   private readonly delegateSpecs = new Map<string, SyntheticDelegateSpec>();
+  private readonly delegateTasks = new Map<string, SyntheticDelegateTask>();
   private readonly delegations: SyntheticDelegationSnapshot[] = [];
   private readonly environments = new Map<string, SyntheticTargetEnvironment>();
   private readonly externalEvents = new Map<string, ExternalEventState>();
@@ -417,6 +424,27 @@ export class SyntheticKernel {
     const events = this.processEvents.get(processId) ?? [];
     this.processEvents.delete(processId);
     return events.map((event) => structuredClone(event));
+  }
+
+  async waitForProcessEvent(processId: string): Promise<boolean> {
+    this.requireProcess(processId);
+    if ((this.processEvents.get(processId)?.length ?? 0) > 0) return true;
+    const pending = [...this.delegateTasks.values()].filter((task) => (
+      task.sourceProcessId === processId && !task.settled
+    ));
+    if (pending.length === 0) return false;
+    await Promise.race(pending.map(({ completion }) => completion));
+    return (this.processEvents.get(processId)?.length ?? 0) > 0;
+  }
+
+  async settleDelegations(): Promise<void> {
+    while (true) {
+      const pending = [...this.delegateTasks.values()].filter(
+        ({ settled }) => !settled,
+      );
+      if (pending.length === 0) return;
+      await Promise.all(pending.map(({ completion }) => completion));
+    }
   }
 
   async dispatch(
@@ -856,7 +884,7 @@ export class SyntheticKernel {
         this.requireCapability(processId, "r12y.get");
         this.requireCapability(processId, "r12y.update");
       }
-      return await this.delegate(processId, input);
+      return this.delegate(processId, input);
     } catch (error) {
       return commandError(
         "proc",
@@ -865,10 +893,10 @@ export class SyntheticKernel {
     }
   }
 
-  private async delegate(
+  private delegate(
     sourceProcessId: string,
     input: ParsedProcDelegate,
-  ): Promise<ExecResult> {
+  ): ExecResult {
     if (!this.delegateRunner) {
       throw new Error("synthetic Process runner is not attached");
     }
@@ -922,65 +950,33 @@ export class SyntheticKernel {
       this.now,
       deadlineAt,
     );
-    let outcome: SyntheticProcessRunOutcome;
-    try {
-      outcome = await this.delegateRunner({
+    const completion = this.completeDelegation({
+      source,
+      sourceProcessId,
+      targetProcessId: target.id,
+      delegation,
+      responsibilityId: input.responsibilityId,
+      request: {
         processId: target.id,
         systemPrompt: template.systemPrompt,
         prompt,
         maxTurns: template.maxTurns,
-      });
-    } catch (error) {
-      outcome = {
-        status: "invalid_action",
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-
-    const resultText = outcome.resultText;
-    const completed = outcome.status === "returned" && resultText !== undefined;
-    delegation.state = completed ? "completed" : "failed";
-    if (completed) {
-      delegation.resultText = resultText;
-      delegation.normalizedResultText = resultText.trim();
-    }
-    else delegation.error = outcome.error ?? "Delegated process did not return a result";
-    if (input.responsibilityId) {
-      const current = this.responsibilities.get(source, input.responsibilityId);
-      if (
-        current.assignee.kind === "process"
-        && current.assignee.processId === target.id
-        && current.state !== "resolved"
-        && current.state !== "cancelled"
-      ) {
-        this.responsibilities.update({
-          process: source,
-          id: current.id,
-          patch: {
-            assignee: { kind: "ship" },
-            leaseExpiresAtMs: null,
-          },
-        }, this.now.valueOf());
-      }
-    }
-    const event = formatIpcReply(
-      target.id,
-      callId,
-      delegation.resultText,
-      delegation.error,
-    );
-    this.queueProcessEvent(sourceProcessId, event);
-    const completedEvent: GsvSemanticLogEntry = {
-      type: "ipc.completed",
-      callId,
+      },
+    });
+    const task: SyntheticDelegateTask = {
       sourceProcessId,
-      targetProcessId: target.id,
+      completion,
+      settled: false,
     };
-    if (delegation.resultText !== undefined) {
-      completedEvent.resultText = delegation.resultText;
-    }
-    if (delegation.error !== undefined) completedEvent.error = delegation.error;
-    this.recordSemanticEvent?.(completedEvent);
+    this.delegateTasks.set(callId, task);
+    void completion.then(
+      () => {
+        task.settled = true;
+      },
+      () => {
+        task.settled = true;
+      },
+    );
 
     const label = input.label ?? summarizeDelegateLabel(input.message);
     return commandResult([
@@ -995,6 +991,74 @@ export class SyntheticKernel {
         ? "responsibility=" + input.responsibilityId
         : "",
     ].filter(Boolean).join(" ") + "\n");
+  }
+
+  private async completeDelegation(input: {
+    source: SyntheticProcessSpec;
+    sourceProcessId: string;
+    targetProcessId: string;
+    delegation: SyntheticDelegationSnapshot;
+    responsibilityId?: string;
+    request: SyntheticDelegateRunRequest;
+  }): Promise<void> {
+    let outcome: SyntheticProcessRunOutcome;
+    try {
+      outcome = await this.delegateRunner!(input.request);
+    } catch (error) {
+      outcome = {
+        status: "invalid_action",
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    const resultText = outcome.resultText;
+    const completed = outcome.status === "returned" && resultText !== undefined;
+    input.delegation.state = completed ? "completed" : "failed";
+    if (completed) {
+      input.delegation.resultText = resultText;
+      input.delegation.normalizedResultText = resultText.trim();
+    } else {
+      input.delegation.error = outcome.error
+        ?? "Delegated process did not return a result";
+    }
+    if (input.responsibilityId) {
+      const current = this.responsibilities.get(input.source, input.responsibilityId);
+      if (
+        current.assignee.kind === "process"
+        && current.assignee.processId === input.targetProcessId
+        && current.state !== "resolved"
+        && current.state !== "cancelled"
+      ) {
+        this.responsibilities.update({
+          process: input.source,
+          id: current.id,
+          patch: {
+            assignee: { kind: "ship" },
+            leaseExpiresAtMs: null,
+          },
+        }, this.now.valueOf());
+      }
+    }
+    const event = formatIpcReply(
+      input.targetProcessId,
+      input.delegation.callId,
+      input.delegation.resultText,
+      input.delegation.error,
+    );
+    this.queueProcessEvent(input.sourceProcessId, event);
+    const completedEvent: GsvSemanticLogEntry = {
+      type: "ipc.completed",
+      callId: input.delegation.callId,
+      sourceProcessId: input.sourceProcessId,
+      targetProcessId: input.targetProcessId,
+    };
+    if (input.delegation.resultText !== undefined) {
+      completedEvent.resultText = input.delegation.resultText;
+    }
+    if (input.delegation.error !== undefined) {
+      completedEvent.error = input.delegation.error;
+    }
+    this.recordSemanticEvent?.(completedEvent);
   }
 
   private responsibilityUpdateResult(

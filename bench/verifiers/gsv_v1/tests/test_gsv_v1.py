@@ -59,7 +59,7 @@ def test_plugin_exports_and_loads_deterministic_tasks() -> None:
         sum(milestone["weight"] for milestone in tasks[0].data.evaluation["milestones"])
         == 1.0
     )
-    assert tasks[2].data.scenario["maxRuns"] == 3
+    assert tasks[2].data.scenario["maxRuns"] == 4
     assert [
         event["id"] for event in tasks[2].data.scenario["components"]["events"]
     ] == ["checkout-health-window-1", "checkout-health-window-2"]

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { serverEnvironment } from "./environment";
-import { SyntheticKernel } from "./kernel";
+import {
+  SyntheticKernel,
+  type SyntheticProcessRunOutcome,
+} from "./kernel";
 import type { GsvSemanticLogEntry } from "./schema";
 
 describe("SyntheticKernel", () => {
@@ -534,5 +537,97 @@ describe("SyntheticKernel", () => {
         responsibilityId: "r12y:00000000-0000-4000-8000-000000000002",
       }),
     }));
+  });
+
+  it("returns a delegation handle before the delegated Process finishes", async () => {
+    const entries: GsvSemanticLogEntry[] = [];
+    const kernel = SyntheticKernel.fromSpec({
+      runtime: {
+        now: "2026-09-01T12:00:00.000Z",
+        timezone: "UTC",
+      },
+      processes: [{
+        id: "ship",
+        role: "ship",
+        uid: 1000,
+        gids: [1000],
+        capabilities: ["shell.exec", "proc.spawn", "proc.ipc.call"],
+      }],
+      delegates: [{
+        account: "researcher",
+        process: {
+          id: "proc:researcher",
+          role: "worker",
+          uid: 2000,
+          ownerUid: 1000,
+          gids: [2000],
+          capabilities: [],
+        },
+        systemPrompt: "Return the delegated result.",
+        maxTurns: 1,
+      }],
+    }, { targets: [], transitions: [], events: [] });
+    kernel.setRecorder((entry) => entries.push(entry));
+
+    let signalStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      signalStarted = resolve;
+    });
+    let finishWorker!: (outcome: SyntheticProcessRunOutcome) => void;
+    const workerOutcome = new Promise<SyntheticProcessRunOutcome>((resolve) => {
+      finishWorker = resolve;
+    });
+    kernel.setDelegateRunner(async () => {
+      signalStarted();
+      return workerOutcome;
+    });
+
+    const dispatch = kernel.dispatch("ship", "Shell", {
+      input: "proc delegate --as researcher 'inspect the release'",
+      target: "gsv",
+    });
+    await started;
+    const early = await Promise.race([
+      dispatch.then((result) => ({ state: "accepted" as const, result })),
+      new Promise<{ state: "blocked" }>((resolve) => {
+        setImmediate(() => resolve({ state: "blocked" }));
+      }),
+    ]);
+    const whileRunning = kernel.snapshot().delegations[0];
+
+    finishWorker({ status: "returned", resultText: "release is healthy" });
+    const result = await dispatch;
+    await kernel.settleDelegations();
+
+    expect(early).toMatchObject({
+      state: "accepted",
+      result: {
+        isError: false,
+        value: {
+          status: "completed",
+          output: expect.stringContaining("status=in_progress"),
+        },
+      },
+    });
+    expect(result).toMatchObject({
+      isError: false,
+      value: { status: "completed" },
+    });
+    expect(whileRunning).toMatchObject({
+      targetProcessId: "proc:researcher",
+      state: "in_progress",
+    });
+    expect(kernel.snapshot().delegations[0]).toMatchObject({
+      state: "completed",
+      resultText: "release is healthy",
+    });
+    expect(kernel.drainProcessEvents("ship")[0]?.content).toContain(
+      "release is healthy",
+    );
+    expect(entries.at(-1)).toMatchObject({
+      type: "ipc.completed",
+      targetProcessId: "proc:researcher",
+      resultText: "release is healthy",
+    });
   });
 });
