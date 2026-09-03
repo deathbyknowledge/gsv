@@ -78,6 +78,208 @@ describe("GSV Process surface", () => {
     });
   });
 
+  it("rejects yield until the current responsibility batch is handled", async () => {
+    const scenario = parseGsvSurfaceScenario({
+      schemaVersion: 3,
+      id: "responsibility-yield-gate",
+      seed: "responsibility-yield-gate-001",
+      description: "Match the production responsibility admission gate.",
+      systemPrompt: "Keep durable work handled before yielding.",
+      prompt: "Record this work and wait for the scheduled review.",
+      entryProcessId: "ship",
+      world: {
+        runtime: { now: "2026-09-01T12:00:00.000Z", timezone: "UTC" },
+        processes: [{
+          id: "ship",
+          role: "ship",
+          uid: 1000,
+          gids: [1000],
+          capabilities: ["shell.exec", "r12y.create", "r12y.update"],
+        }],
+      },
+      components: { targets: [], transitions: [], events: [] },
+      evaluation: {
+        milestones: [{
+          id: "yielded",
+          description: "The Process explicitly defers before yielding.",
+          dimension: "lifecycle",
+          weight: 1,
+          requires: [],
+          requiredForStrict: true,
+          predicates: [{ type: "match", path: "/status", value: "yielded" }],
+        }],
+        constraints: [],
+      },
+      maxTurns: 6,
+      maxRuns: 1,
+    });
+    const scripted = [
+      assistant(toolCall("create", "Shell", {
+        input: "r12y create --title 'Review access request'",
+        target: "gsv",
+      })),
+      assistant(toolCall("premature-yield", "Shell", { input: "yield" })),
+      assistant(toolCall("defer", "Shell", {
+        input: "r12y wait r12y:00000000-0000-4000-8000-000000000001 --until 2026-09-01T12:05:00.000Z --blocker 'awaiting scheduled review'",
+        target: "gsv",
+      })),
+      assistant(toolCall("accepted-yield", "Shell", { input: "yield" })),
+    ];
+    const seen: Context[] = [];
+
+    const artifact = await runGsvSurfaceScenario(scenario, async (context) => {
+      seen.push(context);
+      const next = scripted.shift();
+      if (!next) throw new Error("Unexpected model turn");
+      return next;
+    });
+
+    expect(artifact.status).toBe("yielded");
+    expect(artifact.log.filter(({ type }) => type === "run.yielded"))
+      .toHaveLength(1);
+    expect(JSON.stringify(seen[2]?.messages)).toContain(
+      "The responsibility batch still contains unhandled work.",
+    );
+    expect(artifact.world.responsibilities.records[
+      "r12y:00000000-0000-4000-8000-000000000001"
+    ]).toMatchObject({
+      state: "waiting",
+      blocker: "awaiting scheduled review",
+    });
+  });
+
+  it("rejects an empty user-visible message", async () => {
+    const scenario = parseGsvSurfaceScenario({
+      schemaVersion: 3,
+      id: "empty-message",
+      seed: "empty-message-001",
+      description: "Match production message validation.",
+      systemPrompt: "Send a non-empty response and yield.",
+      prompt: "Respond.",
+      entryProcessId: "ship",
+      world: {
+        runtime: { now: "2026-09-01T12:00:00.000Z", timezone: "UTC" },
+        processes: [{
+          id: "ship",
+          role: "ship",
+          uid: 1000,
+          gids: [1000],
+          capabilities: ["shell.exec"],
+        }],
+      },
+      components: { targets: [], transitions: [], events: [] },
+      evaluation: {
+        milestones: [{
+          id: "message",
+          description: "A non-empty message is committed.",
+          dimension: "communication",
+          weight: 1,
+          requires: [],
+          requiredForStrict: true,
+          predicates: [{ type: "count", path: "/committedMessages", min: 1 }],
+        }],
+        constraints: [],
+      },
+      maxTurns: 3,
+      maxRuns: 1,
+    });
+    const scripted = [
+      assistant(toolCall("empty", "Shell", {
+        input: "message send --message '' && yield",
+      })),
+      assistant(toolCall("valid", "Shell", {
+        input: "message send --message 'done' && yield",
+      })),
+    ];
+    const seen: Context[] = [];
+
+    const artifact = await runGsvSurfaceScenario(scenario, async (context) => {
+      seen.push(context);
+      const next = scripted.shift();
+      if (!next) throw new Error("Unexpected model turn");
+      return next;
+    });
+
+    expect(artifact.committedMessages).toEqual(["done"]);
+    expect(JSON.stringify(seen[1]?.messages)).toContain(
+      "Message requires non-empty text or attached media",
+    );
+  });
+
+  it("bounds captured command output in the normalized artifact", async () => {
+    const fullOutput = "x".repeat(128 * 1024);
+    const scenario = parseGsvSurfaceScenario({
+      schemaVersion: 3,
+      id: "bounded-artifact-output",
+      seed: "bounded-artifact-output-001",
+      description: "Keep verbose command output within the artifact contract.",
+      systemPrompt: "Inspect the target, then yield.",
+      prompt: "Run the diagnostic.",
+      entryProcessId: "ship",
+      world: {
+        runtime: { now: "2026-09-01T12:00:00.000Z", timezone: "UTC" },
+        processes: [{
+          id: "ship",
+          role: "ship",
+          uid: 1000,
+          gids: [1000],
+          capabilities: ["shell.exec"],
+        }],
+      },
+      components: {
+        targets: [{
+          id: "diagnostic-server",
+          kind: "server",
+          ownerUid: 1000,
+          accessGids: [1000],
+          online: true,
+          implements: ["shell.exec"],
+          commands: { verbose: { output: fullOutput } },
+        }],
+        transitions: [],
+        events: [],
+      },
+      evaluation: {
+        milestones: [{
+          id: "yielded",
+          description: "The Process finishes after the diagnostic.",
+          dimension: "lifecycle",
+          weight: 1,
+          requires: [],
+          requiredForStrict: true,
+          predicates: [{ type: "match", path: "/status", value: "yielded" }],
+        }],
+        constraints: [],
+      },
+      maxTurns: 3,
+      maxRuns: 1,
+    });
+    const scripted = [
+      assistant(toolCall("verbose", "Shell", {
+        input: "verbose",
+        target: "diagnostic-server",
+      })),
+      assistant(toolCall("yield", "Shell", { input: "yield" })),
+    ];
+    const seen: Context[] = [];
+
+    const artifact = await runGsvSurfaceScenario(scenario, async (context) => {
+      seen.push(context);
+      const next = scripted.shift();
+      if (!next) throw new Error("Unexpected model turn");
+      return next;
+    });
+
+    expect(JSON.stringify(seen[1]?.messages)).toContain(fullOutput);
+    const result = artifact.log.find((entry) => (
+      entry.type === "tool.result" && entry.name === "Shell"
+    ));
+    expect(result?.type === "tool.result" ? result.content : "")
+      .toMatch(/\[GSV artifact log truncated from \d+ bytes\]/u);
+    expect(Buffer.byteLength(JSON.stringify(artifact), "utf8"))
+      .toBeLessThan(64 * 1024);
+  });
+
   it("preserves one Process epoch across a logical-time wake and eviction", async () => {
     const scenario = parseGsvSurfaceScenario({
       schemaVersion: 3,

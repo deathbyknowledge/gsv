@@ -355,11 +355,7 @@ def validate_compose_compatibility(task_dir: Path) -> None:
         raise TypeError(f"Invalid Terminal-Bench compose service: {task_dir.name}")
     supported = {
         "build",
-        "command",
         "container_name",
-        "environment",
-        "image",
-        "volumes",
         "working_dir",
     }
     unsupported = sorted(set(service) - supported)
@@ -373,6 +369,12 @@ def validate_compose_compatibility(task_dir: Path) -> None:
         context = build
         dockerfile = "Dockerfile"
     elif isinstance(build, dict):
+        unsupported_build = sorted(set(build) - {"context", "dockerfile"})
+        if unsupported_build:
+            raise ValueError(
+                f"Terminal-Bench task {task_dir.name} requires unsupported compose "
+                f"build options: {', '.join(unsupported_build)}"
+            )
         context = build.get("context", ".")
         dockerfile = build.get("dockerfile", "Dockerfile")
     else:

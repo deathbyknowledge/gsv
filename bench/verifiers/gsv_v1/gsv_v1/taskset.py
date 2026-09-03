@@ -15,7 +15,7 @@ from gsv_v1.terminal_bench import (
     stop_terminal_bench,
 )
 
-MAX_ARTIFACT_BYTES = 2 * 1024 * 1024
+MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
 
 
 class GsvData(vf.TaskData):

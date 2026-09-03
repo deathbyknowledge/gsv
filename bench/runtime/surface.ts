@@ -61,6 +61,7 @@ const SURFACE_DEFINITIONS: ToolDefinition[] = [
   FS_SEARCH_DEFINITION,
   SHELL_EXEC_DEFINITION,
 ];
+const MAX_ARTIFACT_LOG_CONTENT_BYTES = 16 * 1024;
 
 type SurfaceTools = {
   modelTools: Tool[];
@@ -187,6 +188,10 @@ class SyntheticEpisode {
     let correctionRounds = 0;
     let timestamp = epoch.timestamp;
     const run = epoch.nextRun;
+    const responsibilityBatchIds = new Set(
+      this.kernel.responsibilityBaseline(request.processId).responsibilities
+        .map(({ id }) => id),
+    );
     epoch.nextRun += 1;
     this.log.push({ type: "run.started", processId: request.processId, run });
     this.kernel.setProcessState(request.processId, "running");
@@ -221,6 +226,7 @@ class SyntheticEpisode {
         observedResponsibilityRevision,
       );
       for (const transition of responsibilityChanges) {
+        responsibilityBatchIds.add(transition.responsibilityId);
         const content = "[GSV EVENT]\n"
           + formatResponsibilityTransitionEvent(transition);
         messages.push({ role: "user", content, timestamp });
@@ -364,6 +370,40 @@ class SyntheticEpisode {
           });
           continue;
         }
+        const unhandled = result.command.action === "yield" || result.command.finish
+          ? this.kernel.unhandledResponsibilityIds(
+            request.processId,
+            [...responsibilityBatchIds],
+          )
+          : [];
+        const terminalError = result.command.action === "message"
+            && !result.command.text.trim()
+          ? "Message requires non-empty text or attached media"
+          : unhandled.length > 0
+            ? [
+              "The responsibility batch still contains unhandled work.",
+              "Before yielding, resolve, cancel, actively delegate, or explicitly defer: "
+                + unhandled.join(", ") + ".",
+            ].join(" ")
+            : null;
+        if (terminalError) {
+          appendToolResult(
+            messages,
+            runControl.toolCall,
+            terminalError,
+            true,
+            timestamp,
+          );
+          timestamp += 1;
+          this.log.push({
+            type: "tool.result",
+            processId: request.processId,
+            name: "Shell",
+            content: terminalError,
+            isError: true,
+          });
+          continue;
+        }
         if (result.command.action === "message") {
           let deliveryError: string | null = null;
           try {
@@ -480,7 +520,7 @@ class SyntheticEpisode {
           type: "tool.result",
           processId: request.processId,
           name: call.name,
-          content,
+          content: artifactLogContent(content),
           isError: result.isError,
         });
         for (const id of result.transitionsApplied) {
@@ -673,6 +713,16 @@ function observation(
 function parsedArguments(value: ToolCall["arguments"]): JsonObject {
   const parsed = jsonObjectSchema.safeParse(value);
   return parsed.success ? parsed.data : {};
+}
+
+function artifactLogContent(content: string): string {
+  const encoded = Buffer.from(content, "utf8");
+  if (encoded.byteLength <= MAX_ARTIFACT_LOG_CONTENT_BYTES) return content;
+  const suffix = "\n[GSV artifact log truncated from "
+    + encoded.byteLength + " bytes]";
+  const prefixBytes = MAX_ARTIFACT_LOG_CONTENT_BYTES
+    - Buffer.byteLength(suffix, "utf8");
+  return encoded.subarray(0, prefixBytes).toString("utf8") + suffix;
 }
 
 function stringifyToolResult(value: JsonValue): string {

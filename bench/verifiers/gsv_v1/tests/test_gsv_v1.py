@@ -16,7 +16,7 @@ from gsv_v1.report import (
     render_markdown,
     summarize_matrix,
 )
-from gsv_v1.taskset import GsvConfig
+from gsv_v1.taskset import MAX_ARTIFACT_BYTES, GsvConfig
 from gsv_v1.terminal_bench import scenario_from_task
 
 
@@ -110,6 +110,32 @@ async def test_state_reward_is_offline_and_checks_nested_outcomes() -> None:
     assert {
         milestone["id"]: milestone["passed"] for milestone in evaluation["milestones"]
     } == {"human-completion": True, "cross-target-outcome": False}
+
+
+async def test_finalize_accepts_artifacts_larger_than_one_command_output() -> None:
+    task = next(
+        task
+        for task in GsvTaskset(GsvConfig(id="gsv-v1"))
+        if task.key == "deploy-release-across-targets"
+    )
+    artifact = {
+        "schemaVersion": 3,
+        "scenarioId": task.data.scenario_id,
+        "committedMessages": [],
+        "capturedOutput": "x" * (4 * 1024 * 1024),
+    }
+    payload = json.dumps(artifact).encode()
+
+    class Runtime:
+        async def read(self, path, *, max_bytes):
+            assert path == "gsv-artifact.json"
+            assert len(payload) < max_bytes == MAX_ARTIFACT_BYTES
+            return payload
+
+    trace = make_trace(task)
+    await task.finalize(trace, Runtime())
+
+    assert trace.info["gsv"]["capturedOutput"] == artifact["capturedOutput"]
 
 
 def test_evaluation_predicates_count_and_order_semantic_events() -> None:
@@ -287,6 +313,52 @@ def test_terminal_bench_rejects_compose_semantics_it_cannot_preserve(tmp_path) -
     )
 
     with pytest.raises(ValueError, match="requires 2 compose services"):
+        scenario_from_task(task_dir)
+
+
+@pytest.mark.parametrize(
+    ("option", "name"),
+    [
+        ("    command: ['sleep', 'infinity']\n", "command"),
+        ("    environment:\n      MODE: test\n", "environment"),
+        ("    image: example/service:latest\n", "image"),
+        ("    volumes:\n      - ./data:/data\n", "volumes"),
+    ],
+)
+def test_terminal_bench_rejects_ignored_service_options(
+    tmp_path, option, name
+) -> None:
+    task_dir = tmp_path / name
+    task_dir.mkdir()
+    (task_dir / "task.yaml").write_text(
+        "instruction: Repair the service\nparser_name: pytest\n"
+    )
+    (task_dir / "Dockerfile").write_text("FROM alpine:3.20\nWORKDIR /app\n")
+    (task_dir / "run-tests.sh").write_text("#!/bin/sh\nexit 0\n")
+    (task_dir / "tests").mkdir()
+    (task_dir / "docker-compose.yaml").write_text(
+        "services:\n  client:\n    build: .\n" + option
+    )
+
+    with pytest.raises(ValueError, match=f"unsupported compose options: {name}"):
+        scenario_from_task(task_dir)
+
+
+def test_terminal_bench_rejects_ignored_build_options(tmp_path) -> None:
+    task_dir = tmp_path / "build-args"
+    task_dir.mkdir()
+    (task_dir / "task.yaml").write_text(
+        "instruction: Repair the service\nparser_name: pytest\n"
+    )
+    (task_dir / "Dockerfile").write_text("FROM alpine:3.20\nWORKDIR /app\n")
+    (task_dir / "run-tests.sh").write_text("#!/bin/sh\nexit 0\n")
+    (task_dir / "tests").mkdir()
+    (task_dir / "docker-compose.yaml").write_text(
+        "services:\n  client:\n    build:\n      context: .\n"
+        "      args:\n        MODE: test\n"
+    )
+
+    with pytest.raises(ValueError, match="unsupported compose build options: args"):
         scenario_from_task(task_dir)
 
 

@@ -385,6 +385,17 @@ export class SyntheticKernel {
     );
   }
 
+  unhandledResponsibilityIds(
+    processId: string,
+    ids: readonly string[],
+  ): string[] {
+    return this.responsibilities.unhandled(
+      this.requireProcess(processId),
+      ids,
+      this.now.valueOf(),
+    );
+  }
+
   drainProcessEvents(processId: string): SyntheticProcessEvent[] {
     this.requireProcess(processId);
     const events = this.processEvents.get(processId) ?? [];

@@ -7,6 +7,7 @@ import type {
   ResponsibilityRecord,
   ResponsibilityTransition,
 } from "@humansandmachines/gsv/protocol";
+import { responsibilityRequiresAction } from "@humansandmachines/gsv/protocol";
 import type {
   SyntheticProcessSpec,
   SyntheticResponsibilityLedgerSnapshot,
@@ -175,6 +176,20 @@ export class SyntheticResponsibilityLedger {
         || this.isVisibleToProcess(transition.record, process)
       ))
       .map((transition) => structuredClone(transition));
+  }
+
+  unhandled(
+    process: SyntheticProcessSpec,
+    ids: readonly string[],
+    now: number,
+  ): string[] {
+    const visible = new Map(
+      this.list(process, true).responsibilities.map((record) => [record.id, record]),
+    );
+    return [...new Set(ids)].filter((id) => {
+      const responsibility = visible.get(id);
+      return !responsibility || responsibilityRequiresAction(responsibility, now);
+    });
   }
 
   revision(ownerUid: number): number {
