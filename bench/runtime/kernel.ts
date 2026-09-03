@@ -602,6 +602,9 @@ export class SyntheticKernel {
         defineCommand("man", async (commandArgs) => (
           this.runManCommand(commandArgs)
         )),
+        defineCommand("message", async (commandArgs) => (
+          runSyntheticMessageCommand(commandArgs)
+        )),
         defineCommand("targets", async (commandArgs) => (
           this.runTargetsCommand(processId, commandArgs)
         )),
@@ -610,6 +613,9 @@ export class SyntheticKernel {
         )),
         defineCommand("proc", async (commandArgs) => (
           this.runProcCommand(processId, commandArgs)
+        )),
+        defineCommand("yield", async (commandArgs) => (
+          runSyntheticYieldCommand(commandArgs)
         )),
       ],
       executionLimits: {
@@ -680,7 +686,7 @@ export class SyntheticKernel {
         "Usage: man TOPIC",
         "       man --search -- QUERY",
         "",
-        "Synthetic GSV topics: targets, r12y, proc",
+        "Synthetic GSV topics: targets, r12y, proc, message, yield, process-events",
         "",
       ].join("\n"));
     }
@@ -1431,6 +1437,55 @@ function procUsage(): string {
   ].join("\n");
 }
 
+function runSyntheticMessageCommand(args: string[]): ExecResult {
+  if (
+    args.length === 0
+    || args.includes("--help")
+    || args.includes("-h")
+  ) {
+    return commandResult(messageUsage());
+  }
+  return commandError(
+    "message",
+    new Error(
+      "current-conversation message send must be issued as its own direct Shell tool call",
+    ),
+  );
+}
+
+function runSyntheticYieldCommand(args: string[]): ExecResult {
+  if (args.includes("--help") || args.includes("-h")) {
+    return commandResult(yieldUsage());
+  }
+  return commandError(
+    "yield",
+    new Error("yield must be issued as its own direct Shell tool call"),
+  );
+}
+
+function messageUsage(): string {
+  return [
+    "Usage:",
+    "  message send [--message TEXT]",
+    "  message send <<'GSV_MESSAGE' [&& yield]",
+    "",
+    "message send commits a user-visible message without finishing the run.",
+    "Issue it as its own direct Shell tool call. Run yield when work is complete.",
+    "",
+  ].join("\n");
+}
+
+function yieldUsage(): string {
+  return [
+    "Usage:",
+    "  yield",
+    "",
+    "yield finishes the active run without ending its durable Process.",
+    "Issue it as its own direct Shell tool call.",
+    "",
+  ].join("\n");
+}
+
 function r12yUsage(): string {
   return [
     "Usage:",
@@ -1500,6 +1555,38 @@ function renderSyntheticManualPage(topic: string): string | null {
       ].join("\n");
     case "proc":
       return procUsage();
+    case "message":
+      return [
+        "MESSAGE(1)",
+        "",
+        "NAME",
+        "  message - commit a user-visible message on the active route",
+        "",
+        "SYNOPSIS",
+        ...messageUsage().trimEnd().split("\n").slice(1),
+      ].join("\n");
+    case "yield":
+      return [
+        "YIELD(1)",
+        "",
+        "NAME",
+        "  yield - finish the active run without ending its Process",
+        "",
+        "SYNOPSIS",
+        ...yieldUsage().trimEnd().split("\n").slice(1),
+      ].join("\n");
+    case "process-events":
+      return [
+        "PROCESS-EVENTS(7)",
+        "",
+        "NAME",
+        "  process-events - ordered GSV events delivered directly in Process context",
+        "",
+        "DESCRIPTION",
+        "  There is no event-log shell command. Reconcile each delivered [GSV EVENT]",
+        "  with current durable responsibilities and target state before acting.",
+        "",
+      ].join("\n");
     default:
       return null;
   }

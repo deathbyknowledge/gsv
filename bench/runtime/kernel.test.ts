@@ -185,6 +185,25 @@ describe("SyntheticKernel", () => {
       "ordered [GSV EVENT] entries are delivered directly",
     );
 
+    const runControlHelp = await kernel.dispatch("ship", "Shell", {
+      input: "man process-events; message send --help; yield --help",
+      target: "gsv",
+    });
+    expect(runControlHelp).toMatchObject({
+      isError: false,
+      value: {
+        status: "completed",
+        exitCode: 0,
+      },
+    });
+    expect(JSON.stringify(runControlHelp.value)).toContain("PROCESS-EVENTS(7)");
+    expect(JSON.stringify(runControlHelp.value)).toContain(
+      "message send commits a user-visible message",
+    );
+    expect(JSON.stringify(runControlHelp.value)).toContain(
+      "yield finishes the active run",
+    );
+
     const composed = await kernel.dispatch("ship", "Shell", {
       input: "r12y --help | head -1; echo ready",
       target: "gsv",
