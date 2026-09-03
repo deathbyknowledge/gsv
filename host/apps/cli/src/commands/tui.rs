@@ -1220,8 +1220,8 @@ fn key_action(app: &App, key: KeyEvent) -> Option<Action> {
         return match key.code {
             KeyCode::Char('i' | 'a') => Some(Action::BeginCompose),
             KeyCode::Char('h') => Some(Action::PreviousMedia),
-            KeyCode::Char('j') => Some(Action::NextTurn),
-            KeyCode::Char('k') => Some(Action::PreviousTurn),
+            KeyCode::Char('j') => Some(Action::ScrollDown),
+            KeyCode::Char('k') => Some(Action::ScrollUp),
             KeyCode::Char('l') => Some(Action::NextMedia),
             KeyCode::Char('g') => Some(Action::FirstTurn),
             KeyCode::Char('G') => Some(Action::LastTurn),
@@ -2324,7 +2324,9 @@ mod tests {
         assert_eq!(key_action(&app, j), Some(Action::Insert("j".to_string())));
 
         app.set_vim_enabled(true);
-        assert_eq!(key_action(&app, j), Some(Action::NextTurn));
+        assert_eq!(key_action(&app, j), Some(Action::ScrollDown));
+        let k = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE);
+        assert_eq!(key_action(&app, k), Some(Action::ScrollUp));
 
         let i = KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE);
         assert_eq!(key_action(&app, i), Some(Action::BeginCompose));

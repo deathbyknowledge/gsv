@@ -86,8 +86,10 @@ the selected run. Startup restores the same safe projection from the existing
 tool arguments, results, raw Process output, and reasoning never enter this
 presentation state.
 The document consumes the live terminal width and recomputes wrapping and media
-geometry after every resize. Incremental scrolling treats each image as one
-atomic stop, while page scrolling snaps away from partially visible images.
+geometry after every resize. In browse mode, Up/Down and Vim `j`/`k` advance one
+render-ordered focus through message bodies and individual media elements; a
+body taller than the viewport scrolls internally before focus moves on. Page
+scrolling keeps its larger stride and snaps away from partially visible media.
 On native terminals, the renderer inherits the host background, foreground, and
 ANSI colors. Prompt hierarchy supplies the visual identity: the principal and
 cwd use the terminal's green and blue, `@target` uses cyan, and `$` plus command

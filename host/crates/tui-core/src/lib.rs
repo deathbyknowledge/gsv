@@ -482,6 +482,7 @@ struct TranscriptSearch {
     query: String,
     choice: usize,
     original_selected: usize,
+    original_media_focus: Option<usize>,
     original_follow_latest: bool,
 }
 
@@ -505,9 +506,25 @@ enum ScrollDirection {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ImageRange {
+enum BrowseTarget {
+    Moment(usize),
+    Media {
+        moment_index: usize,
+        media_focus: usize,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BrowseRange {
     top: u16,
     bottom: u16,
+    target: BrowseTarget,
+}
+
+impl BrowseRange {
+    fn is_media(self) -> bool {
+        matches!(self.target, BrowseTarget::Media { .. })
+    }
 }
 
 enum TranscriptBlock {
@@ -554,7 +571,7 @@ pub struct App {
     document_scroll: u16,
     last_max_scroll: u16,
     last_viewport_height: u16,
-    last_image_ranges: Vec<ImageRange>,
+    last_browse_ranges: Vec<BrowseRange>,
     follow_latest: bool,
     scroll_anchor: Option<ScrollAnchor>,
     pending_scroll_direction: Option<ScrollDirection>,
@@ -596,7 +613,7 @@ pub struct App {
     execution_mode: ExecutionMode,
     inline_images: bool,
     media_expanded: bool,
-    media_focus: usize,
+    media_focus: Option<usize>,
     media_slots: Vec<MediaSlot>,
 }
 
@@ -608,7 +625,7 @@ impl App {
             document_scroll: 0,
             last_max_scroll: 0,
             last_viewport_height: 1,
-            last_image_ranges: Vec::new(),
+            last_browse_ranges: Vec::new(),
             follow_latest: true,
             scroll_anchor: None,
             pending_scroll_direction: None,
@@ -650,7 +667,7 @@ impl App {
             execution_mode: ExecutionMode::Ship,
             inline_images: false,
             media_expanded: false,
-            media_focus: 0,
+            media_focus: None,
             media_slots: Vec::new(),
         }
     }
@@ -798,6 +815,10 @@ impl App {
         self.vim_enabled = enabled;
         self.draft_visible = !enabled;
         self.follow_latest = true;
+        if enabled {
+            self.document_scroll = self.last_max_scroll;
+            self.sync_browse_focus(ScrollDirection::Newer);
+        }
     }
 
     pub fn set_inline_images(&mut self, enabled: bool) {
@@ -1067,7 +1088,7 @@ impl App {
         self.follow_latest = true;
         self.scroll_anchor = None;
         self.media_expanded = false;
-        self.media_focus = 0;
+        self.media_focus = None;
     }
 
     pub fn set_history_has_more(&mut self, has_more: bool) {
@@ -1394,6 +1415,7 @@ impl App {
                     self.media_expanded = false;
                 } else {
                     self.draft_visible = false;
+                    self.sync_browse_focus(ScrollDirection::Newer);
                 }
                 Vec::new()
             }
@@ -1435,7 +1457,7 @@ impl App {
                     self.scroll_anchor = Some(ScrollAnchor::Moment(0));
                     self.follow_latest = false;
                     self.media_expanded = false;
-                    self.media_focus = 0;
+                    self.media_focus = None;
                 }
                 Vec::new()
             }
@@ -1445,15 +1467,23 @@ impl App {
                     self.scroll_anchor = Some(ScrollAnchor::Moment(self.turn_start(self.selected)));
                     self.follow_latest = true;
                     self.media_expanded = false;
-                    self.media_focus = 0;
+                    self.media_focus = None;
                 }
                 Vec::new()
             }
             Action::ScrollUp => {
+                if self.media_expanded {
+                    self.move_media_focus(false);
+                    return Vec::new();
+                }
                 self.scroll_older(3, true);
                 self.load_older_history_if_needed()
             }
             Action::ScrollDown => {
+                if self.media_expanded {
+                    self.move_media_focus(true);
+                    return Vec::new();
+                }
                 self.scroll_newer(3, true);
                 Vec::new()
             }
@@ -1487,6 +1517,10 @@ impl App {
                 self.vim_enabled = !self.vim_enabled;
                 self.draft_visible = !self.vim_enabled;
                 self.follow_latest = true;
+                if self.vim_enabled {
+                    self.document_scroll = self.last_max_scroll;
+                    self.sync_browse_focus(ScrollDirection::Newer);
+                }
                 Vec::new()
             }
             Action::ToggleShell => {
@@ -1671,6 +1705,7 @@ impl App {
             query: String::new(),
             choice: 0,
             original_selected: self.selected,
+            original_media_focus: self.media_focus,
             original_follow_latest: self.follow_latest,
         });
         self.draft_visible = true;
@@ -1749,6 +1784,7 @@ impl App {
         let choice = search.choice.min(matches.len().saturating_sub(1));
         if let Some(index) = matches.get(choice).copied() {
             self.selected = index;
+            self.media_focus = None;
             self.scroll_anchor = Some(ScrollAnchor::Moment(index));
         }
     }
@@ -1777,6 +1813,7 @@ impl App {
         };
         if search.query.trim().is_empty() {
             self.selected = search.original_selected;
+            self.media_focus = search.original_media_focus;
             self.follow_latest = search.original_follow_latest;
         } else {
             self.last_transcript_query = search.query;
@@ -1791,6 +1828,7 @@ impl App {
             return;
         };
         self.selected = search.original_selected;
+        self.media_focus = search.original_media_focus;
         self.follow_latest = search.original_follow_latest;
         self.draft_visible = false;
         self.scroll_anchor = Some(ScrollAnchor::Moment(self.turn_start(self.selected)));
@@ -1814,6 +1852,7 @@ impl App {
             current.checked_sub(1).unwrap_or(matches.len() - 1)
         };
         self.selected = matches[choice];
+        self.media_focus = None;
         self.follow_latest = false;
         self.scroll_anchor = Some(ScrollAnchor::Moment(self.selected));
         self.media_expanded = false;
@@ -2414,7 +2453,7 @@ impl App {
         self.follow_latest = true;
         self.scroll_anchor = None;
         self.media_expanded = false;
-        self.media_focus = 0;
+        self.media_focus = None;
         self.connection = if self.connection == ConnectionState::Demo {
             ConnectionState::Demo
         } else {
@@ -2557,6 +2596,7 @@ impl App {
             });
             if self.follow_latest {
                 self.selected = self.moments.len().saturating_sub(1);
+                self.media_focus = None;
             }
         }
         self.active_run = Some(run_id.to_string());
@@ -2604,6 +2644,7 @@ impl App {
         });
         if self.follow_latest {
             self.selected = self.moments.len().saturating_sub(1);
+            self.media_focus = None;
         }
     }
 
@@ -2649,6 +2690,7 @@ impl App {
         self.activity = Some("RESPONDING".to_string());
         if followed_latest {
             self.selected = index;
+            self.media_focus = None;
         }
     }
 
@@ -2663,6 +2705,7 @@ impl App {
         };
         self.moments.remove(index);
         self.selected = self.selected.min(self.moments.len().saturating_sub(1));
+        self.media_focus = None;
     }
 
     pub fn finish_run(&mut self, run_id: Option<&str>, error: Option<&str>) {
@@ -2738,6 +2781,7 @@ impl App {
             self.approval_run_id = None;
             if self.follow_latest {
                 self.selected = self.moments.len().saturating_sub(1);
+                self.media_focus = None;
             }
         }
     }
@@ -2822,6 +2866,7 @@ impl App {
                     }) {
                         self.moments.remove(response_index);
                         self.selected = self.selected.min(self.moments.len().saturating_sub(1));
+                        self.media_focus = None;
                     }
                 }
                 if self
@@ -2898,6 +2943,7 @@ impl App {
         });
         if self.follow_latest {
             self.selected = self.moments.len().saturating_sub(1);
+            self.media_focus = None;
         }
         if let Some(run_id) = continuing_run {
             self.start_run(&run_id);
@@ -2949,6 +2995,7 @@ impl App {
         self.activity = Some("RUNNING".to_string());
         if self.follow_latest {
             self.selected = self.moments.len().saturating_sub(1);
+            self.media_focus = None;
         }
     }
 
@@ -2992,6 +3039,7 @@ impl App {
         self.activity = self.active_run.as_ref().map(|_| "THINKING".to_string());
         if self.follow_latest {
             self.selected = self.moments.len().saturating_sub(1);
+            self.media_focus = None;
         }
     }
 
@@ -3033,6 +3081,7 @@ impl App {
         });
         if self.follow_latest {
             self.selected = self.moments.len().saturating_sub(1);
+            self.media_focus = None;
         }
     }
 
@@ -3129,7 +3178,7 @@ impl App {
             self.scroll_anchor = Some(ScrollAnchor::Moment(self.turn_start(self.selected)));
             self.follow_latest = false;
             self.media_expanded = false;
-            self.media_focus = 0;
+            self.media_focus = None;
         }
     }
 
@@ -3143,7 +3192,7 @@ impl App {
             self.scroll_anchor = Some(ScrollAnchor::Moment(end + 1));
             self.follow_latest = self.selected + 1 >= self.moments.len();
             self.media_expanded = false;
-            self.media_focus = 0;
+            self.media_focus = None;
         }
     }
 
@@ -3153,57 +3202,193 @@ impl App {
         } else {
             self.document_scroll
         };
+        self.document_scroll = current;
+        if atomic_media && self.step_browse(ScrollDirection::Older, rows) {
+            self.follow_latest = false;
+            self.scroll_anchor = None;
+            self.pending_scroll_direction = None;
+            self.media_expanded = false;
+            self.draft_visible = false;
+            return;
+        }
         let desired = current.saturating_sub(rows);
-        self.document_scroll = if atomic_media {
-            atomic_media_scroll(
-                current,
-                desired,
-                ScrollDirection::Older,
-                self.last_viewport_height,
-                self.last_max_scroll,
-                &self.last_image_ranges,
-            )
-        } else {
-            snap_partial_media_scroll(
-                desired,
-                ScrollDirection::Older,
-                self.last_viewport_height,
-                self.last_max_scroll,
-                &self.last_image_ranges,
-            )
-        };
+        self.document_scroll = snap_partial_media_scroll(
+            desired,
+            ScrollDirection::Older,
+            self.last_viewport_height,
+            self.last_max_scroll,
+            &self.last_browse_ranges,
+        );
         self.follow_latest = false;
         self.scroll_anchor = None;
         self.pending_scroll_direction = Some(ScrollDirection::Older);
         self.media_expanded = false;
         self.draft_visible = false;
+        self.sync_browse_focus(ScrollDirection::Older);
     }
 
     fn scroll_newer(&mut self, rows: u16, atomic_media: bool) {
         let current = self.document_scroll.min(self.last_max_scroll);
+        self.document_scroll = current;
+        if atomic_media && self.step_browse(ScrollDirection::Newer, rows) {
+            self.follow_latest = self.document_scroll >= self.last_max_scroll
+                && self.current_browse_range_index()
+                    == self.last_browse_ranges.len().checked_sub(1);
+            self.scroll_anchor = None;
+            self.pending_scroll_direction = None;
+            self.media_expanded = false;
+            self.draft_visible = false;
+            return;
+        }
         let desired = current.saturating_add(rows).min(self.last_max_scroll);
-        self.document_scroll = if atomic_media {
-            atomic_media_scroll(
-                current,
-                desired,
-                ScrollDirection::Newer,
-                self.last_viewport_height,
-                self.last_max_scroll,
-                &self.last_image_ranges,
-            )
-        } else {
-            snap_partial_media_scroll(
-                desired,
-                ScrollDirection::Newer,
-                self.last_viewport_height,
-                self.last_max_scroll,
-                &self.last_image_ranges,
-            )
-        };
+        self.document_scroll = snap_partial_media_scroll(
+            desired,
+            ScrollDirection::Newer,
+            self.last_viewport_height,
+            self.last_max_scroll,
+            &self.last_browse_ranges,
+        );
         self.follow_latest = self.document_scroll >= self.last_max_scroll;
         self.scroll_anchor = None;
         self.pending_scroll_direction = Some(ScrollDirection::Newer);
         self.media_expanded = false;
+        self.draft_visible = false;
+        self.sync_browse_focus(ScrollDirection::Newer);
+    }
+
+    fn step_browse(&mut self, direction: ScrollDirection, rows: u16) -> bool {
+        if self.last_browse_ranges.is_empty() {
+            return false;
+        }
+        let mut current_index = self.current_browse_range_index();
+        if current_index.is_none() {
+            self.sync_browse_focus(direction);
+            current_index = self.current_browse_range_index();
+        }
+        let Some(current_index) = current_index else {
+            return false;
+        };
+        let current = self.last_browse_ranges[current_index];
+        let viewport_height = self.last_viewport_height.max(1);
+        let viewport_top = self.document_scroll.min(self.last_max_scroll);
+        let viewport_bottom = viewport_top.saturating_add(viewport_height);
+        match direction {
+            ScrollDirection::Older if current.top < viewport_top => {
+                self.document_scroll = viewport_top.saturating_sub(rows).max(current.top);
+                return true;
+            }
+            ScrollDirection::Newer if current.bottom > viewport_bottom => {
+                let furthest = current
+                    .bottom
+                    .saturating_sub(viewport_height)
+                    .min(self.last_max_scroll);
+                self.document_scroll = viewport_top.saturating_add(rows).min(furthest);
+                return true;
+            }
+            _ => {}
+        }
+        let next_index = match direction {
+            ScrollDirection::Older => current_index.checked_sub(1),
+            ScrollDirection::Newer => {
+                (current_index + 1 < self.last_browse_ranges.len()).then_some(current_index + 1)
+            }
+        };
+        let Some(next_index) = next_index else {
+            return false;
+        };
+        let next = self.last_browse_ranges[next_index];
+        self.focus_browse_target(next.target);
+        let fully_visible = next.top >= viewport_top && next.bottom <= viewport_bottom;
+        let desired = match (direction, fully_visible) {
+            (ScrollDirection::Older, true) => viewport_top
+                .saturating_sub(rows)
+                .max(next.bottom.saturating_sub(viewport_height)),
+            (ScrollDirection::Older, false) => next.bottom.saturating_sub(viewport_height),
+            (ScrollDirection::Newer, true) => viewport_top.saturating_add(rows).min(next.top),
+            (ScrollDirection::Newer, false) => next.top,
+        }
+        .min(self.last_max_scroll);
+        self.document_scroll = snap_partial_media_scroll(
+            desired,
+            direction,
+            viewport_height,
+            self.last_max_scroll,
+            &self.last_browse_ranges,
+        );
+        true
+    }
+
+    fn current_browse_range_index(&self) -> Option<usize> {
+        let selected_turn = self.turn_start(self.selected);
+        self.last_browse_ranges
+            .iter()
+            .position(|range| match range.target {
+                BrowseTarget::Moment(moment_index) => {
+                    self.media_focus.is_none() && moment_index == self.selected
+                }
+                BrowseTarget::Media {
+                    moment_index,
+                    media_focus,
+                } => {
+                    self.media_focus == Some(media_focus)
+                        && self.turn_start(moment_index) == selected_turn
+                }
+            })
+    }
+
+    fn sync_browse_focus(&mut self, direction: ScrollDirection) {
+        let document_height = self
+            .last_browse_ranges
+            .iter()
+            .map(|range| range.bottom)
+            .max()
+            .unwrap_or_default();
+        if document_height == 0 {
+            return;
+        }
+        let focus_row = match direction {
+            ScrollDirection::Older => self.document_scroll,
+            ScrollDirection::Newer => self
+                .document_scroll
+                .saturating_add(self.last_viewport_height.saturating_sub(1))
+                .min(document_height.saturating_sub(1)),
+        };
+        let containing = self
+            .last_browse_ranges
+            .iter()
+            .find(|range| range.top <= focus_row && focus_row < range.bottom);
+        let nearest = match direction {
+            ScrollDirection::Older => self
+                .last_browse_ranges
+                .iter()
+                .rev()
+                .find(|range| range.bottom <= focus_row)
+                .or_else(|| self.last_browse_ranges.first()),
+            ScrollDirection::Newer => self
+                .last_browse_ranges
+                .iter()
+                .find(|range| range.top > focus_row)
+                .or_else(|| self.last_browse_ranges.last()),
+        };
+        if let Some(range) = containing.or(nearest) {
+            self.focus_browse_target(range.target);
+        }
+    }
+
+    fn focus_browse_target(&mut self, target: BrowseTarget) {
+        match target {
+            BrowseTarget::Moment(moment_index) => {
+                self.selected = moment_index.min(self.moments.len().saturating_sub(1));
+                self.media_focus = None;
+            }
+            BrowseTarget::Media {
+                moment_index,
+                media_focus,
+            } => {
+                self.selected = moment_index.min(self.moments.len().saturating_sub(1));
+                self.media_focus = Some(media_focus);
+            }
+        }
     }
 
     fn load_older_history_if_needed(&mut self) -> Vec<Effect> {
@@ -3444,32 +3629,36 @@ impl App {
         if self.moments.is_empty() {
             return None;
         }
+        let media_focus = self.media_focus?;
         let start = self.turn_start(self.selected);
         let end = self.turn_end(start);
         self.moments[start..=end]
             .iter()
             .flat_map(|moment| &moment.artifacts)
-            .nth(self.media_focus)
+            .nth(media_focus)
     }
 
     fn clamp_media_focus(&mut self) {
+        let count = self.turn_artifact_count();
         self.media_focus = self
             .media_focus
-            .min(self.turn_artifact_count().saturating_sub(1));
+            .map(|focus| focus.min(count.saturating_sub(1)))
+            .filter(|_| count > 0);
     }
 
     fn move_media_focus(&mut self, forward: bool) {
         let count = self.turn_artifact_count();
         if count == 0 {
-            self.media_focus = 0;
+            self.media_focus = None;
             self.media_expanded = false;
             return;
         }
-        self.media_focus = if forward {
-            (self.media_focus + 1) % count
-        } else {
-            self.media_focus.checked_sub(1).unwrap_or(count - 1)
-        };
+        self.media_focus = Some(match (self.media_focus, forward) {
+            (Some(focus), true) => (focus + 1) % count,
+            (Some(focus), false) => focus.checked_sub(1).unwrap_or(count - 1),
+            (None, true) => 0,
+            (None, false) => count - 1,
+        });
         if self
             .selected_artifact()
             .is_none_or(|artifact| artifact.kind != MediaKind::Image)
@@ -3564,7 +3753,7 @@ impl App {
         let palette = self.theme.palette();
         let area = frame.area();
         self.media_slots.clear();
-        self.last_image_ranges.clear();
+        self.last_browse_ranges.clear();
         frame.render_widget(
             Block::new().style(Style::new().bg(palette.background)),
             area,
@@ -3616,9 +3805,11 @@ impl App {
             .filter(|(_, artifact)| artifact.kind == MediaKind::Image)
             .map(|(artifact_index, artifact)| (artifact_index, artifact.clone()))
             .collect::<Vec<_>>();
-        let focused_image = image_artifacts
-            .iter()
-            .position(|(artifact_index, _)| *artifact_index == self.media_focus);
+        let focused_image = self.media_focus.and_then(|media_focus| {
+            image_artifacts
+                .iter()
+                .position(|(artifact_index, _)| *artifact_index == media_focus)
+        });
         let has_inline_images = self.inline_images && !image_artifacts.is_empty();
 
         if self.media_expanded && has_inline_images && focused_image.is_some() {
@@ -3697,9 +3888,9 @@ impl App {
         let mut blocks = Vec::new();
         let mut document_height = 0_u16;
         let mut moment_starts = vec![0_u16; self.moments.len()];
-        let mut selected_artifact_index = 0_usize;
+        let mut turn_artifact_index = 0_usize;
         let mut focused_media_range = None;
-        let mut image_ranges = Vec::new();
+        let mut browse_ranges = Vec::new();
         let mut rendered_action_counts = Vec::new();
         let mut rendered_approval = false;
 
@@ -3724,6 +3915,9 @@ impl App {
                     vec![Line::default()],
                     area.width,
                 );
+            }
+            if index == self.turn_start(index) {
+                turn_artifact_index = 0;
             }
             moment_starts[index] = document_height;
             if moment.role != Role::Human {
@@ -3755,18 +3949,13 @@ impl App {
                 moment.role.color(palette)
             };
             let in_selected_turn = (turn_start..=turn_end).contains(&index);
-            let artifact_focus = moment
-                .artifacts
+            let artifact_indices = (turn_artifact_index
+                ..turn_artifact_index.saturating_add(moment.artifacts.len()))
+                .collect::<Vec<_>>();
+            turn_artifact_index = turn_artifact_index.saturating_add(moment.artifacts.len());
+            let artifact_focus = artifact_indices
                 .iter()
-                .map(|_| {
-                    if in_selected_turn {
-                        let focused = selected_artifact_index == self.media_focus;
-                        selected_artifact_index = selected_artifact_index.saturating_add(1);
-                        focused
-                    } else {
-                        false
-                    }
-                })
+                .map(|artifact_index| in_selected_turn && self.media_focus == Some(*artifact_index))
                 .collect::<Vec<_>>();
             let inline_artifacts = if moment.role == Role::Human {
                 inline_artifact_occurrences(body, &moment.artifacts)
@@ -3845,12 +4034,20 @@ impl App {
             {
                 focused_media_range = Some((body_top, document_height));
             }
+            if document_height > moment_starts[index] {
+                browse_ranges.push(BrowseRange {
+                    top: moment_starts[index],
+                    bottom: document_height,
+                    target: BrowseTarget::Moment(index),
+                });
+            }
 
-            for ((artifact, inline), focused) in moment
+            for (((artifact, inline), focused), media_focus) in moment
                 .artifacts
                 .iter()
                 .zip(inline_artifacts)
                 .zip(artifact_focus)
+                .zip(artifact_indices)
             {
                 if inline.is_some() && artifact.kind == MediaKind::Document {
                     continue;
@@ -3872,10 +4069,6 @@ impl App {
                         focused,
                     });
                     document_height = document_height.saturating_add(image_height);
-                    image_ranges.push(ImageRange {
-                        top,
-                        bottom: document_height,
-                    });
                 } else {
                     push_transcript_text(
                         &mut blocks,
@@ -3887,6 +4080,14 @@ impl App {
                 if focused {
                     focused_media_range = Some((top, document_height));
                 }
+                browse_ranges.push(BrowseRange {
+                    top,
+                    bottom: document_height,
+                    target: BrowseTarget::Media {
+                        moment_index: index,
+                        media_focus,
+                    },
+                });
                 has_content = true;
             }
             if let Some(run_id) = moment.run_id.as_deref() {
@@ -3946,7 +4147,7 @@ impl App {
                 );
             }
         }
-        self.last_image_ranges = image_ranges;
+        self.last_browse_ranges = browse_ranges;
 
         self.last_viewport_height = viewport_height.max(1);
         self.last_max_scroll = document_height.saturating_sub(viewport_height);
@@ -3983,11 +4184,16 @@ impl App {
                             direction,
                             self.last_viewport_height,
                             self.last_max_scroll,
-                            &self.last_image_ranges,
+                            &self.last_browse_ranges,
                         );
                     }
                 }
             }
+        }
+        if let Some(direction) = scroll_direction {
+            self.sync_browse_focus(direction);
+        } else if !self.draft_visible && self.follow_latest {
+            self.sync_browse_focus(ScrollDirection::Newer);
         }
 
         if viewport_height > 0 && document_height > 0 {
@@ -4518,7 +4724,7 @@ impl App {
             help_line("up/down  ·  ctrl+p/n", "command history", palette),
             help_line("ctrl+r", "fuzzy command search", palette),
             help_line("/  ·  n/N", "search transcript  ·  next/previous", palette),
-            help_line("page up / page down", "scroll the transcript", palette),
+            help_line("browse: up/down  ·  page up/down", "step  ·  page", palette),
             help_line(
                 "left/right  ·  enter  ·  o",
                 "media  ·  open  ·  references",
@@ -4531,8 +4737,8 @@ impl App {
             lines.extend([
                 Line::default(),
                 help_line("Vim: i/a  ·  escape", "compose  ·  browse", palette),
-                help_line("Vim: h/l  ·  j/k", "media  ·  commands", palette),
-                help_line("Vim: g/G  ·  enter/o", "ends  ·  media/references", palette),
+                help_line("Vim: j/k  ·  g/G", "browse  ·  ends", palette),
+                help_line("Vim: h/l  ·  enter/o", "media  ·  open/references", palette),
             ]);
         }
         lines.extend([
@@ -4776,89 +4982,23 @@ fn rectangles_intersect(left: Rect, right: Rect) -> bool {
         && left.bottom() > right.y
 }
 
-fn atomic_media_scroll(
-    current: u16,
-    desired: u16,
-    direction: ScrollDirection,
-    viewport_height: u16,
-    max_scroll: u16,
-    image_ranges: &[ImageRange],
-) -> u16 {
-    let viewport_height = viewport_height.max(1);
-    let current = current.min(max_scroll);
-    let desired = desired.min(max_scroll);
-    let visible = match direction {
-        ScrollDirection::Older => image_ranges
-            .iter()
-            .rev()
-            .find(|range| image_intersects(**range, current, viewport_height)),
-        ScrollDirection::Newer => image_ranges
-            .iter()
-            .find(|range| image_intersects(**range, current, viewport_height)),
-    }
-    .copied();
-
-    let target = if let Some(range) = visible {
-        let partial = image_is_partial(range, current, viewport_height);
-        match direction {
-            ScrollDirection::Older if partial && range.top < current => range.top,
-            ScrollDirection::Older => range.top.saturating_sub(viewport_height),
-            ScrollDirection::Newer
-                if partial && range.bottom > current.saturating_add(viewport_height) =>
-            {
-                range.bottom.saturating_sub(viewport_height)
-            }
-            ScrollDirection::Newer => range.bottom,
-        }
-    } else {
-        let crossed = match direction {
-            ScrollDirection::Older => image_ranges
-                .iter()
-                .rev()
-                .find(|range| range.bottom <= current && range.bottom > desired),
-            ScrollDirection::Newer => {
-                let current_bottom = current.saturating_add(viewport_height);
-                let desired_bottom = desired.saturating_add(viewport_height);
-                image_ranges
-                    .iter()
-                    .find(|range| range.top >= current_bottom && range.top < desired_bottom)
-            }
-        }
-        .copied();
-        match (direction, crossed) {
-            (ScrollDirection::Older, Some(range)) => range.top,
-            (ScrollDirection::Newer, Some(range)) => range.bottom.saturating_sub(viewport_height),
-            (_, None) => desired,
-        }
-    };
-
-    snap_partial_media_scroll(
-        target.min(max_scroll),
-        direction,
-        viewport_height,
-        max_scroll,
-        image_ranges,
-    )
-}
-
 fn snap_partial_media_scroll(
     desired: u16,
     direction: ScrollDirection,
     viewport_height: u16,
     max_scroll: u16,
-    image_ranges: &[ImageRange],
+    browse_ranges: &[BrowseRange],
 ) -> u16 {
     let viewport_height = viewport_height.max(1);
     let mut snapped = desired.min(max_scroll);
-    for _ in 0..image_ranges.len().saturating_mul(2).saturating_add(1) {
+    for _ in 0..browse_ranges.len().saturating_mul(2).saturating_add(1) {
         let partial = match direction {
-            ScrollDirection::Older => image_ranges
-                .iter()
-                .rev()
-                .find(|range| image_is_partial(**range, snapped, viewport_height)),
-            ScrollDirection::Newer => image_ranges
-                .iter()
-                .find(|range| image_is_partial(**range, snapped, viewport_height)),
+            ScrollDirection::Older => browse_ranges.iter().rev().find(|range| {
+                range.is_media() && media_is_partial(**range, snapped, viewport_height)
+            }),
+            ScrollDirection::Newer => browse_ranges.iter().find(|range| {
+                range.is_media() && media_is_partial(**range, snapped, viewport_height)
+            }),
         }
         .copied();
         let Some(range) = partial else {
@@ -4881,12 +5021,12 @@ fn snap_partial_media_scroll(
     snapped
 }
 
-fn image_intersects(range: ImageRange, scroll: u16, viewport_height: u16) -> bool {
+fn media_intersects(range: BrowseRange, scroll: u16, viewport_height: u16) -> bool {
     range.top < scroll.saturating_add(viewport_height) && range.bottom > scroll
 }
 
-fn image_is_partial(range: ImageRange, scroll: u16, viewport_height: u16) -> bool {
-    image_intersects(range, scroll, viewport_height)
+fn media_is_partial(range: BrowseRange, scroll: u16, viewport_height: u16) -> bool {
+    media_intersects(range, scroll, viewport_height)
         && !(range.top >= scroll && range.bottom <= scroll.saturating_add(viewport_height))
 }
 
@@ -5441,10 +5581,10 @@ mod tests {
     use ratatui::Terminal;
 
     use super::{
-        atomic_media_scroll, fuzzy_score, image_is_partial, sanitize_status, text_metrics, Action,
-        AgentActionSnapshot, App, Approval, Artifact, CapabilityEnvironment, ConnectionState,
-        Effect, ExecutionMode, FileEntry, FileReference, ImageRange, MediaKind,
-        MessageDeliverySnapshot, Moment, MomentState, Role, ScrollDirection, Theme,
+        fuzzy_score, media_is_partial, sanitize_status, text_metrics, Action, AgentActionSnapshot,
+        App, Approval, Artifact, CapabilityEnvironment, ConnectionState, Effect, ExecutionMode,
+        FileEntry, FileReference, MediaKind, MessageDeliverySnapshot, Moment, MomentState, Role,
+        Theme,
     };
 
     fn image_artifact(index: usize) -> Artifact {
@@ -6205,6 +6345,7 @@ mod tests {
 
         app.dispatch(Action::NextMedia);
         app.dispatch(Action::NextMedia);
+        app.dispatch(Action::NextMedia);
         app.dispatch(Action::ToggleMedia);
         terminal.draw(|frame| app.render(frame))?;
         assert!(app.media_expanded());
@@ -6236,6 +6377,7 @@ mod tests {
         )
         .with_artifacts(vec![audio_artifact(0), audio_artifact(1)])]);
 
+        app.dispatch(Action::NextMedia);
         app.dispatch(Action::NextMedia);
         assert_eq!(
             app.dispatch(Action::ToggleMedia),
@@ -6295,6 +6437,108 @@ mod tests {
     }
 
     #[test]
+    fn vertical_browse_follows_human_and_ship_media_in_document_order(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut app = App::new(ConnectionState::Ready);
+        app.set_inline_images(true);
+        app.set_vim_enabled(true);
+        app.replace_history(vec![
+            Moment::complete("human", Role::Human, "inspect @image-0.png")
+                .with_artifacts(vec![image_artifact(0)]),
+            Moment::complete("ship-one", Role::Intelligence, "First result.")
+                .with_artifacts(vec![audio_artifact(0)]),
+            Moment::complete("ship-two", Role::Intelligence, "Second result.")
+                .with_artifacts(vec![image_artifact(1), audio_artifact(1)]),
+        ]);
+        let backend = TestBackend::new(60, 16);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|frame| app.render(frame))?;
+
+        let expected = [
+            ("ship-two", Some("gsv:/home/ship/image-1.png")),
+            ("ship-two", None),
+            ("ship-one", Some("gsv:/home/ship/voice-0.ogg")),
+            ("ship-one", None),
+            ("human", Some("gsv:/home/ship/image-0.png")),
+            ("human", None),
+        ];
+        assert_eq!(
+            app.selected_artifact()
+                .and_then(|artifact| artifact.source.as_deref()),
+            Some("gsv:/home/ship/voice-1.ogg")
+        );
+        assert_eq!(
+            app.dispatch(Action::ToggleMedia),
+            vec![Effect::OpenArtifact {
+                artifact: audio_artifact(1),
+            }]
+        );
+        for (moment_id, source) in expected {
+            app.dispatch(Action::ScrollUp);
+            terminal.draw(|frame| app.render(frame))?;
+            assert_eq!(app.moments[app.selected].id, moment_id);
+            assert_eq!(
+                app.selected_artifact()
+                    .and_then(|artifact| artifact.source.as_deref()),
+                source
+            );
+        }
+        let expected = [
+            ("human", Some("gsv:/home/ship/image-0.png")),
+            ("ship-one", None),
+            ("ship-one", Some("gsv:/home/ship/voice-0.ogg")),
+            ("ship-two", None),
+            ("ship-two", Some("gsv:/home/ship/image-1.png")),
+            ("ship-two", Some("gsv:/home/ship/voice-1.ogg")),
+        ];
+        for (moment_id, source) in expected {
+            app.dispatch(Action::ScrollDown);
+            terminal.draw(|frame| app.render(frame))?;
+            assert_eq!(app.moments[app.selected].id, moment_id);
+            assert_eq!(
+                app.selected_artifact()
+                    .and_then(|artifact| artifact.source.as_deref()),
+                source
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn scrolling_focuses_the_visible_turn_for_reference_actions(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut app = App::new(ConnectionState::Ready);
+        app.replace_history(vec![
+            Moment::complete("older-human", Role::Human, "older request"),
+            Moment::complete(
+                "older-ship",
+                Role::Intelligence,
+                "Read [the old guide](https://old.example/guide).",
+            ),
+            Moment::complete("newer-human", Role::Human, "newer request"),
+            Moment::complete("newer-ship", Role::Intelligence, "newer\nanswer"),
+        ]);
+        let backend = TestBackend::new(50, 8);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|frame| app.render(frame))?;
+        app.dispatch(Action::Escape);
+        app.dispatch(Action::ScrollUp);
+        terminal.draw(|frame| app.render(frame))?;
+        app.dispatch(Action::ScrollUp);
+        terminal.draw(|frame| app.render(frame))?;
+
+        assert_eq!(app.moments[app.selected].id, "older-ship");
+        assert!(app.dispatch(Action::OpenReferences).is_empty());
+        assert_eq!(
+            app.dispatch(Action::Submit),
+            vec![Effect::OpenUrl {
+                url: "https://old.example/guide".to_string(),
+            }]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn media_focus_scrolls_to_the_corresponding_document_block(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut app = App::new(ConnectionState::Ready);
@@ -6311,6 +6555,7 @@ mod tests {
             audio_artifact(1),
         ])]);
         app.dispatch(Action::Escape);
+        app.dispatch(Action::NextMedia);
         app.dispatch(Action::NextMedia);
         app.dispatch(Action::NextMedia);
         let backend = TestBackend::new(60, 18);
@@ -6348,46 +6593,18 @@ mod tests {
         assert!(inline.last_max_scroll > fallback_max_scroll);
         assert_eq!(inline.media_slots().len(), 1);
 
+        inline.dispatch(Action::Escape);
         inline.dispatch(Action::ScrollUp);
         terminal.draw(|frame| inline.render(frame))?;
         assert!(inline.media_slots().is_empty());
-        assert!(!inline.last_image_ranges.iter().any(|range| {
-            image_is_partial(*range, inline.document_scroll, inline.last_viewport_height)
-        }));
+        assert!(!inline
+            .last_browse_ranges
+            .iter()
+            .filter(|range| range.is_media())
+            .any(|range| {
+                media_is_partial(*range, inline.document_scroll, inline.last_viewport_height)
+            }));
         Ok(())
-    }
-
-    #[test]
-    fn one_scroll_step_reveals_then_passes_an_image_as_a_whole() {
-        let image = [ImageRange {
-            top: 20,
-            bottom: 28,
-        }];
-
-        assert_eq!(
-            atomic_media_scroll(23, 20, ScrollDirection::Older, 12, 80, &image),
-            20
-        );
-        assert_eq!(
-            atomic_media_scroll(28, 25, ScrollDirection::Older, 12, 80, &image),
-            20
-        );
-        assert_eq!(
-            atomic_media_scroll(20, 17, ScrollDirection::Older, 12, 80, &image),
-            8
-        );
-        assert_eq!(
-            atomic_media_scroll(8, 11, ScrollDirection::Newer, 12, 80, &image),
-            16
-        );
-        assert_eq!(
-            atomic_media_scroll(14, 17, ScrollDirection::Newer, 12, 80, &image),
-            16
-        );
-        assert_eq!(
-            atomic_media_scroll(16, 19, ScrollDirection::Newer, 12, 80, &image),
-            28
-        );
     }
 
     #[test]
@@ -6429,6 +6646,8 @@ mod tests {
         .with_artifacts(vec![image_artifact(0)])]);
         let backend = TestBackend::new(60, 18);
         let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|frame| app.render(frame))?;
+        app.dispatch(Action::Escape);
         terminal.draw(|frame| app.render(frame))?;
 
         let content = app.media_slots()[0].area;
@@ -6478,7 +6697,7 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>();
-        assert!(rendered.contains("Vim: g/G"));
+        assert!(rendered.contains("Vim: j/k"));
         assert!(rendered.contains("Press ? or escape to return"));
         Ok(())
     }
