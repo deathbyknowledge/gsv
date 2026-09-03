@@ -763,6 +763,38 @@ def test_stateful_outcome_rubrics_do_not_require_one_resolution_vocabulary() -> 
         assert evaluate_predicate(artifact, predicate)["passed"]
 
 
+def test_competing_incident_acknowledgement_scores_before_priority_event() -> None:
+    family = (
+        Path(__file__).resolve().parents[1]
+        / "gsv_v1"
+        / "families"
+        / "competing-incidents.json"
+    )
+    scenario = load_scenarios(family)[0]
+    milestone = next(
+        item
+        for item in scenario["evaluation"]["milestones"]
+        if item["id"] == "initial-acknowledgement-and-ownership"
+    )
+    sequence = next(
+        predicate
+        for predicate in milestone["predicates"]
+        if predicate["type"] == "sequence"
+    )
+
+    assert [item["type"] for item in sequence["items"]] == [
+        "responsibility.transition",
+        "responsibility.transition",
+    ]
+    priority_event = next(
+        event
+        for event in scenario["components"]["events"]
+        if event["id"].endswith("-priority-inversion")
+    )
+    assert "to low priority" in priority_event["content"]
+    assert "as its blocker" in priority_event["content"]
+
+
 def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
     run_dir = tmp_path / "qwen"
     run_dir.mkdir()

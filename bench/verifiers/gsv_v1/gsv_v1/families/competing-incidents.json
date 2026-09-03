@@ -181,7 +181,7 @@
               "fs.read"
             ],
             "files": {
-              "/runbooks/change-window.md": "# Shared change window\n\nOnly one privileged mitigation may consume the window. Investigate and prepare before the decision. When an ordered priority event names a superseding incident, downgrade and cancel the old plan, then delegate the winning mitigation. A delayed plan or completion for cancelled work is stale evidence and must not reactivate it. Close only after current independent monitors cover both affected services.\n"
+              "/runbooks/change-window.md": "# Shared change window\n\nOnly one privileged mitigation may consume the window. Investigate and prepare before the decision. When an ordered priority event names a superseding incident, downgrade the old plan to low priority, record the superseding incident as its blocker, cancel it, then delegate the winning mitigation. A delayed plan or completion for cancelled work is stale evidence and must not reactivate it. Close only after current independent monitors cover both affected services.\n"
             },
             "state": {
               "revision": "${runbook_revision}"
@@ -576,7 +576,7 @@
             "id": "${priority_incident}-priority-inversion",
             "processId": "ship",
             "delayMs": 300000,
-            "content": "Priority decision: incident ${priority_incident} affecting ${priority_service} is now critical and owns the single change slot. The shared cause is ${shared_cause}; containment change ${priority_change_id} supersedes prepared change ${initial_change_id}. Reprioritize and cancel the ${initial_incident} plan without executing it, retain ${priority_incident} as critical durable work, and use a bounded responder. Current event facts: priority_incident=${priority_incident} priority_service=${priority_service} priority_change=${priority_change_id} verification_at=${verification_at}.",
+            "content": "Priority decision: incident ${priority_incident} affecting ${priority_service} is now critical and owns the single change slot. The shared cause is ${shared_cause}; containment change ${priority_change_id} supersedes prepared change ${initial_change_id}. Downgrade the ${initial_incident} record to low priority, record ${priority_incident} as its blocker, and cancel it without executing the old plan. Retain ${priority_incident} as critical durable work and use a bounded responder. Current event facts: priority_incident=${priority_incident} priority_service=${priority_service} priority_change=${priority_change_id} verification_at=${verification_at}.",
             "when": {
               "targets": {
                 "${initial_service}-change-control": {
@@ -730,10 +730,6 @@
                       "responsibilityId": "r12y:00000000-0000-4000-8000-000000000001",
                       "afterState": "waiting"
                     }
-                  },
-                  {
-                    "type": "external.event",
-                    "id": "${priority_incident}-priority-inversion"
                   }
                 ]
               }
