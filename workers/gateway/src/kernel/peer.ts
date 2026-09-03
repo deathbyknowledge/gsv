@@ -24,7 +24,7 @@ export type PeerProvenance =
       actorId: string;
       surface: AdapterSurface;
     }
-  | { kind: "process-registry"; processId: string; ownerUid: number }
+  | { kind: "process-registry"; processId: string }
   | { kind: "kernel" };
 
 export type PeerContext = {
@@ -117,6 +117,49 @@ export function servicePeerContext(input: {
     identity: input.identity,
     transport: { kind: "service-binding", serviceId: input.profile.id },
     provenance: { kind: "service-binding", serviceId: input.profile.id },
+  };
+}
+
+/** A Process DO acting as its run-as account; internal-only syscalls key off this provenance. */
+export function processPeerContext(input: {
+  installationId: string;
+  processId: string;
+  identity: ProcessIdentity;
+  calls: readonly string[];
+}): PeerContext {
+  const calls = [...input.calls];
+  return {
+    installationId: input.installationId,
+    peer: {
+      id: `process:${input.processId}`,
+      sessionId: `process:${input.processId}`,
+      principal: { kind: "human", account: input.identity },
+      grant: { calls, signals: [], implements: [] },
+    },
+    identity: { role: "user", process: input.identity, capabilities: calls },
+    transport: { kind: "process-rpc", processId: input.processId },
+    provenance: { kind: "process-registry", processId: input.processId },
+  };
+}
+
+/** Kernel-originated work, such as a schedule, acting as a resolved account. */
+export function kernelPeerContext(input: {
+  installationId: string;
+  identity: ProcessIdentity;
+  calls: readonly string[];
+}): PeerContext {
+  const calls = [...input.calls];
+  return {
+    installationId: input.installationId,
+    peer: {
+      id: "kernel",
+      sessionId: "kernel",
+      principal: { kind: "human", account: input.identity },
+      grant: { calls, signals: [], implements: [] },
+    },
+    identity: { role: "user", process: input.identity, capabilities: calls },
+    transport: { kind: "kernel" },
+    provenance: { kind: "kernel" },
   };
 }
 

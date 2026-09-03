@@ -39,6 +39,7 @@ import {
   handleProcIpcCall,
   handleProcIpcSend,
   handleProcFork,
+  handleProcObserve,
   handleProcSpawn,
   forwardToProcess,
 } from "./proc-handlers";
@@ -381,6 +382,9 @@ async function dispatchKernel(
       case "proc.list":
         data = handleProcList(frame.args, ctx);
         break;
+      case "proc.observe":
+      case "proc.unobserve":
+        return handleProcObserve(frame, ctx);
       case "proc.spawn":
         data = await handleProcSpawn(frame.args, ctx);
         break;

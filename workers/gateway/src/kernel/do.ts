@@ -121,10 +121,11 @@ import type { KernelContext } from "./context";
 import {
   connectedPeerContext,
   delegatedAdapterPeerContext,
+  kernelPeerContext,
   peerAllowsCall,
-  peerConnectionIdentity,
-  peerProvidesOperations,
   type PeerContext,
+  peerProvidesOperations,
+  processPeerContext,
   servicePeerContext,
   type ServicePeerProfile,
 } from "./peer";
@@ -298,6 +299,13 @@ type ProcessDeliveryNoticePayload = Omit<
   ProcessDeliveryNoticeRetry,
   "processId" | "deliveryId" | "route" | "cleanupRunRoute"
 >;
+
+class RequestCancelledError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RequestCancelledError";
+  }
+}
 
 class ScheduleTargetDispatchError extends Error {
   constructor(message: string, readonly retryable: boolean) {
@@ -2719,39 +2727,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
       return errFrame(frame.id, 404, "Unknown process");
     }
 
-    if (
-      !isInternalOnlySyscall(frame.call) &&
-      !hasCapability(ctx.identity!.capabilities, frame.call)
-    ) {
-      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
-    }
-
-    const origin: RouteOrigin = { type: "process", id: processId };
-    let controller: AbortController;
-    try {
-      controller = this.registerActiveRequest(origin, frame.id);
-    } catch (error) {
-      return errFrame(frame.id, 499, error instanceof Error ? error.message : String(error));
-    }
-    let result;
-    try {
-      frame = this.bindRequestBodyCancellation(frame, controller.signal);
-      result = await dispatch(
-        frame,
-        origin,
-        { ...ctx, requestSignal: controller.signal },
-        this.buildDispatchDeps(),
-      );
-    } finally {
-      this.finishActiveRequest(frame.id, controller);
-    }
-
-    if (result.handled) {
-      this.applyPostDispatchEffects(frame, result.response);
-      return result.response;
-    }
-
-    return null;
+    return await this.dispatchPeerRequest(
+      frame,
+      { type: "process", id: processId },
+      ctx,
+      { awaitRouted: false },
+    );
   }
 
   private buildProcessContext(processId: string, processRunId?: string): KernelContext | null {
@@ -2760,14 +2741,13 @@ export class Kernel extends DurableObject<GatewayEnv> {
       return null;
     }
 
-    const connIdentity: ConnectionIdentity = {
-      role: "user",
-      process: identity,
-      capabilities: this.caps.resolve(identity.gids),
-    };
-
     return this.buildKernelContext({
-      identity: connIdentity,
+      peer: processPeerContext({
+        installationId: this.installationId,
+        processId,
+        identity,
+        calls: this.caps.resolve(identity.gids),
+      }),
       processId,
       processRunId,
     });
@@ -2779,10 +2759,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
   ): Promise<ResponseFrame> {
     if (frame.call === "sys.connect" || frame.call === "sys.setup" || frame.call === "sys.setup.assist") {
       return errFrame(frame.id, 400, `${frame.call} is not supported via serviceFrame`);
-    }
-
-    if (isInternalOnlySyscall(frame.call)) {
-      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
     }
 
     const identity = this.buildServiceBindingIdentity(profile);
@@ -2799,11 +2775,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       sessionId: `service:${profile.id}`,
       identity,
     });
-    if (!peerAllowsCall(peer, frame.call)) {
-      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
-    }
-
-    const ctx = this.buildKernelContext({ identity, peer });
+    const ctx = this.buildKernelContext({ peer });
     return await this.dispatchPeerRequest(
       frame,
       { type: "kernel", id: frame.id },
@@ -2822,11 +2794,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
           credential: state.credentialMethod ?? "token",
         })
       : undefined;
-    return this.buildKernelContext({
-      connection,
-      peer,
-      identity: state.peer ? peerConnectionIdentity(state.peer) : undefined,
-    });
+    return this.buildKernelContext({ connection, peer });
   }
 
   private buildKernelContext(options: {
@@ -2865,7 +2833,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       federationIdentity: this.federationIdentity,
       connection: options.connection ?? null,
       peer: options.peer,
-      identity: options.identity,
+      identity: options.identity ?? options.peer?.identity,
       processId: options.processId,
       processRunId: options.processRunId,
       requestSignal: options.requestSignal,
@@ -2955,12 +2923,15 @@ export class Kernel extends DurableObject<GatewayEnv> {
       throwOnCancel?: boolean;
     },
   ): Promise<ResponseFrame | null> {
-    if (isInternalOnlySyscall(inputFrame.call)) {
-      return errFrame(inputFrame.id, 403, `Permission denied: ${inputFrame.call}`);
+    const peer = ctx.peer;
+    if (!peer) {
+      return errFrame(inputFrame.id, 403, "Request has no authenticated peer");
     }
-    const allowed = ctx.peer
-      ? peerAllowsCall(ctx.peer, inputFrame.call)
-      : hasCapability(ctx.identity?.capabilities ?? [], inputFrame.call);
+    // Internal-only syscalls are reachable solely through Process provenance;
+    // every other call is gated by the peer's grant.
+    const allowed = isInternalOnlySyscall(inputFrame.call)
+      ? peer.provenance.kind === "process-registry"
+      : peerAllowsCall(peer, inputFrame.call);
     if (!allowed) {
       return errFrame(inputFrame.id, 403, `Permission denied: ${inputFrame.call}`);
     }
@@ -2979,7 +2950,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     } catch (error) {
       return errFrame(
         inputFrame.id,
-        409,
+        error instanceof RequestCancelledError ? 499 : 409,
         error instanceof Error ? error.message : String(error),
       );
     }
@@ -3095,7 +3066,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       const cancellation = this.cancelledProcessRequests.get(key);
       this.cancelledProcessRequests.delete(key);
       if (cancellation && cancellation.expiresAt > Date.now()) {
-        throw new Error(cancellation.reason);
+        throw new RequestCancelledError(cancellation.reason);
       }
     }
     const controller = new AbortController();
@@ -3781,40 +3752,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
           return;
         }
         this.sendError(connection, frame.id, 403, "Must call sys.connect first");
-        return;
-      }
-
-      if (isInternalOnlySyscall(frame.call)) {
-        this.sendError(connection, frame.id, 403, `Permission denied: ${frame.call}`);
-        return;
-      }
-
-      const peer = connectedPeerContext({
-        installationId: this.installationId,
-        peer: state.peer,
-        credential: state.credentialMethod ?? "token",
-      });
-      if (!peerAllowsCall(peer, frame.call)) {
-        this.sendError(connection, frame.id, 403, `Permission denied: ${frame.call}`);
-        return;
-      }
-
-      if (frame.call === "proc.observe" || frame.call === "proc.unobserve") {
-        const pid = frame.args.pid.trim();
-        const process = pid ? this.procs.get(pid) : null;
-        if (!process || process.ownerUid !== state.peer.principal.account.uid) {
-          this.sendError(connection, frame.id, 404, `Process not found: ${pid || "(missing)"}`);
-          return;
-        }
-        const observed = new Set(state.observedProcessIds ?? []);
-        if (frame.call === "proc.observe") observed.add(pid);
-        else observed.delete(pid);
-        connection.setState({ ...state, observedProcessIds: [...observed] });
-        this.sendOk(connection, frame.id, {
-          ok: true,
-          pid,
-          observing: frame.call === "proc.observe",
-        });
         return;
       }
 
@@ -5125,15 +5062,13 @@ export class Kernel extends DurableObject<GatewayEnv> {
   }
 
   private buildScheduleContext(record: ScheduleRecord): KernelContext {
-    const process = this.resolveScheduleIdentity(record);
-    const identity: ConnectionIdentity = {
-      role: "user",
-      process,
-      capabilities: this.caps.resolve(process.gids),
-    };
-
+    const identity = this.resolveScheduleIdentity(record);
     return this.buildKernelContext({
-      identity,
+      peer: kernelPeerContext({
+        installationId: this.installationId,
+        identity,
+        calls: this.caps.resolve(identity.gids),
+      }),
       callerOwnerUid: record.ownerUid,
     });
   }

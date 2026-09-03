@@ -881,7 +881,15 @@ describe("Kernel nested dispatch", () => {
           length: 1,
         },
       },
-      { identity: { capabilities: [] } },
+      {
+        peer: {
+          peer: {
+            ...connectedPeer("human", "client"),
+            grant: { calls: [], signals: [], implements: [] },
+          },
+          provenance: { kind: "credential", method: "token" },
+        },
+      },
     );
 
     expect(response).toMatchObject({
@@ -936,6 +944,13 @@ describe("Kernel nested dispatch", () => {
     kernel.sendWebSocketFrame = vi.fn(() => null);
     kernel.requestDevice = vi.fn();
     const ctx = {
+      peer: {
+        peer: {
+          ...connectedPeer("human", "client"),
+          grant: { calls: ["shell.exec"], signals: [], implements: [] },
+        },
+        provenance: { kind: "credential", method: "token" },
+      },
       identity: {
         role: "user",
         process: {

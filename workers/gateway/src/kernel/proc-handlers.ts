@@ -6,7 +6,7 @@
  * proc.send/kill/history/reset — forwarded to the Process DO via recvFrame.
  */
 
-import type { FrameBody, RequestFrame } from "../protocol/frames";
+import type { FrameBody, RequestFrame, ResponseFrame } from "../protocol/frames";
 import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid } from "./context";
@@ -1013,4 +1013,37 @@ function resolveSpawnCwd(
     return resolveUserPath(normalized, baseIdentity.home, baseIdentity.cwd);
   }
   return baseIdentity.cwd;
+}
+
+/** Toggles raw Process observation for the connected peer that admitted the request. */
+export function handleProcObserve(
+  frame: RequestFrame<"proc.observe" | "proc.unobserve">,
+  ctx: KernelContext,
+): ResponseFrame<"proc.observe" | "proc.unobserve"> {
+  const connection = ctx.connection;
+  const state = connection?.state;
+  if (!connection || state?.step !== "connected" || !state.peer) {
+    return {
+      type: "res",
+      id: frame.id,
+      ok: false,
+      error: { code: 400, message: "Process observation requires a connected peer" },
+    };
+  }
+  const pid = frame.args.pid.trim();
+  const process = pid ? ctx.procs.get(pid) : null;
+  if (!process || process.ownerUid !== state.peer.principal.account.uid) {
+    return {
+      type: "res",
+      id: frame.id,
+      ok: false,
+      error: { code: 404, message: `Process not found: ${pid || "(missing)"}` },
+    };
+  }
+  const observing = frame.call === "proc.observe";
+  const observed = new Set(state.observedProcessIds ?? []);
+  if (observing) observed.add(pid);
+  else observed.delete(pid);
+  connection.setState({ ...state, observedProcessIds: [...observed] });
+  return { type: "res", id: frame.id, ok: true, data: { ok: true, pid, observing } };
 }
