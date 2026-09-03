@@ -23,6 +23,16 @@
       "adapters": []
     },
     "components": {
+      "responsibilityRefs": [
+        {
+          "id": "initial",
+          "identity": "${initial_incident}"
+        },
+        {
+          "id": "priority",
+          "identity": "${priority_incident}"
+        }
+      ],
       "targets": [],
       "transitions": [],
       "events": []
@@ -587,8 +597,8 @@
                 }
               },
               "responsibilities": {
-                "records": {
-                  "r12y:00000000-0000-4000-8000-000000000001": {
+                "references": {
+                  "initial": {
                     "state": "waiting"
                   }
                 }
@@ -635,12 +645,12 @@
                 }
               },
               "responsibilities": {
-                "records": {
-                  "r12y:00000000-0000-4000-8000-000000000001": {
+                "references": {
+                  "initial": {
                     "state": "cancelled",
                     "priority": "low"
                   },
-                  "r12y:00000000-0000-4000-8000-000000000002": {
+                  "priority": {
                     "state": "waiting",
                     "priority": "critical"
                   }
@@ -719,15 +729,19 @@
                 "items": [
                   {
                     "type": "responsibility.transition",
+                    "responsibilityRefs": [
+                      "initial"
+                    ],
                     "transition": {
-                      "responsibilityId": "r12y:00000000-0000-4000-8000-000000000001",
                       "kind": "created"
                     }
                   },
                   {
                     "type": "responsibility.transition",
+                    "responsibilityRefs": [
+                      "initial"
+                    ],
                     "transition": {
-                      "responsibilityId": "r12y:00000000-0000-4000-8000-000000000001",
                       "afterState": "waiting"
                     }
                   }
@@ -783,7 +797,7 @@
             "predicates": [
               {
                 "type": "match",
-                "path": "/world/responsibilities/records/r12y:00000000-0000-4000-8000-000000000001",
+                "path": "/world/responsibilities/references/initial",
                 "mode": "subset",
                 "value": {
                   "state": "cancelled",
@@ -792,10 +806,9 @@
               },
               {
                 "type": "match",
-                "path": "/world/responsibilities/records/r12y:00000000-0000-4000-8000-000000000002",
+                "path": "/world/responsibilities/references/priority",
                 "mode": "subset",
                 "value": {
-                  "state": "resolved",
                   "priority": "critical",
                   "assignee": {
                     "kind": "ship"
@@ -812,25 +825,31 @@
                   },
                   {
                     "type": "responsibility.transition",
+                    "responsibilityRefs": [
+                      "initial"
+                    ],
                     "transition": {
-                      "responsibilityId": "r12y:00000000-0000-4000-8000-000000000001",
-                  "changedFields": [
-                    "priority",
-                    "blocker"
-                  ]
+                      "changedFields": [
+                        "priority",
+                        "blocker"
+                      ]
                     }
                   },
                   {
                     "type": "responsibility.transition",
+                    "responsibilityRefs": [
+                      "initial"
+                    ],
                     "transition": {
-                      "responsibilityId": "r12y:00000000-0000-4000-8000-000000000001",
                       "kind": "cancelled"
                     }
                   },
                   {
                     "type": "responsibility.transition",
+                    "responsibilityRefs": [
+                      "priority"
+                    ],
                     "transition": {
-                      "responsibilityId": "r12y:00000000-0000-4000-8000-000000000002",
                       "kind": "created"
                     }
                   }
@@ -970,8 +989,10 @@
                   },
                   {
                     "type": "responsibility.transition",
+                    "responsibilityRefs": [
+                      "priority"
+                    ],
                     "transition": {
-                      "responsibilityId": "r12y:00000000-0000-4000-8000-000000000002",
                       "kind": "resolved"
                     }
                   }
@@ -1160,8 +1181,10 @@
                   "path": "/log",
                   "where": {
                     "type": "responsibility.transition",
+                    "responsibilityRefs": [
+                      "priority"
+                    ],
                     "transition": {
-                      "responsibilityId": "r12y:00000000-0000-4000-8000-000000000002",
                       "kind": "resolved"
                     }
                   },
@@ -1177,8 +1200,10 @@
                     },
                     {
                       "type": "responsibility.transition",
+                      "responsibilityRefs": [
+                        "priority"
+                      ],
                       "transition": {
-                        "responsibilityId": "r12y:00000000-0000-4000-8000-000000000002",
                         "kind": "resolved"
                       }
                     }

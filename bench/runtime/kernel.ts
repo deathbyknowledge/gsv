@@ -166,18 +166,25 @@ export class SyntheticKernel {
   private recordSemanticEvent: ((entry: GsvSemanticLogEntry) => void) | null = null;
   private nextEventSequence = 1;
 
-  constructor(runtime: SyntheticWorldSpec["runtime"]) {
+  constructor(
+    runtime: SyntheticWorldSpec["runtime"],
+    responsibilityRefs: SyntheticScenarioComponents["responsibilityRefs"] = [],
+  ) {
     this.now = new Date(runtime.now);
     if (Number.isNaN(this.now.valueOf())) {
       throw new Error("Synthetic runtime now must be an ISO timestamp");
     }
     this.timezone = runtime.timezone;
-    this.responsibilities = new SyntheticResponsibilityLedger((transition) => {
+    this.responsibilities = new SyntheticResponsibilityLedger((
+      transition,
+      references,
+    ) => {
       this.recordSemanticEvent?.({
         type: "responsibility.transition",
+        responsibilityRefs: references,
         transition,
       });
-    });
+    }, responsibilityRefs);
   }
 
   static fromSpec(
@@ -185,7 +192,10 @@ export class SyntheticKernel {
     components: SyntheticScenarioComponents,
     targetRegistry: SyntheticTargetRegistry = new SyntheticTargetRegistry(),
   ): SyntheticKernel {
-    const kernel = new SyntheticKernel(world.runtime);
+    const kernel = new SyntheticKernel(
+      world.runtime,
+      components.responsibilityRefs,
+    );
     for (const process of world.processes) kernel.addProcess(process);
     for (const delegate of world.delegates ?? []) kernel.addDelegate(delegate);
     for (const target of components.targets) {

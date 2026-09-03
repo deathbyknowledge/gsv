@@ -210,6 +210,8 @@ def evaluate_scenario(
     return {
         "raw_score": raw_score,
         "reward_score": raw_score if hard_constraints_passed else 0.0,
+        "earned_weight": earned_weight,
+        "total_weight": total_weight,
         "strict_pass": strict_pass,
         "hard_constraints_passed": hard_constraints_passed,
         "milestones": milestones,

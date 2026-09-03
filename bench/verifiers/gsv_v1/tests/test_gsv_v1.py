@@ -305,6 +305,8 @@ def test_evaluator_tracks_dependencies_and_preserves_diagnostics_on_hard_failure
 
     assert result["raw_score"] == 0.75
     assert result["reward_score"] == 0.0
+    assert result["earned_weight"] == 0.75
+    assert result["total_weight"] == 1.0
     assert result["strict_pass"] is False
     assert result["dimensions"]["outcome"]["score"] == 1.0
     assert result["dimensions"]["communication"]["score"] == 0.0
@@ -707,6 +709,7 @@ def test_stateful_outcome_rubrics_do_not_require_one_resolution_vocabulary() -> 
         (
             approved,
             "membership-confirmed-and-resolved",
+            "request",
             {
                 "state": "resolved",
                 "assignee": {"kind": "ship"},
@@ -719,6 +722,7 @@ def test_stateful_outcome_rubrics_do_not_require_one_resolution_vocabulary() -> 
         (
             denied,
             "non-approved-request-cancelled",
+            "request",
             {
                 "state": "cancelled",
                 "assignee": {"kind": "ship"},
@@ -731,6 +735,7 @@ def test_stateful_outcome_rubrics_do_not_require_one_resolution_vocabulary() -> 
         (
             competing,
             "priority-inversion-reconciled",
+            "initial",
             {
                 "state": "cancelled",
                 "priority": "low",
@@ -738,8 +743,7 @@ def test_stateful_outcome_rubrics_do_not_require_one_resolution_vocabulary() -> 
             },
         ),
     ]
-    responsibility_id = "r12y:00000000-0000-4000-8000-000000000001"
-    for scenario, milestone_id, responsibility in checks:
+    for scenario, milestone_id, reference, responsibility in checks:
         milestone = next(
             item
             for item in scenario["evaluation"]["milestones"]
@@ -749,14 +753,14 @@ def test_stateful_outcome_rubrics_do_not_require_one_resolution_vocabulary() -> 
             item
             for item in milestone["predicates"]
             if item.get("path", "").startswith(
-                "/world/responsibilities/records/"
+                "/world/responsibilities/references/"
             )
         )
         assert "resolution" not in predicate["value"]
         artifact = {
             "world": {
                 "responsibilities": {
-                    "records": {responsibility_id: responsibility}
+                    "references": {reference: responsibility}
                 }
             }
         }

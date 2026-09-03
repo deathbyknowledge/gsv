@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { serverEnvironment } from "./environment";
 import { SyntheticKernel } from "./kernel";
+import type { GsvSemanticLogEntry } from "./schema";
 
 describe("SyntheticKernel", () => {
   it("keeps target ACLs, process capabilities, implementations, and liveness separate", async () => {
@@ -447,5 +448,72 @@ describe("SyntheticKernel", () => {
       state: "waiting",
       blocker: "superseded",
     });
+  });
+
+  it("resolves scenario responsibilities by semantic identity instead of creation order", async () => {
+    const entries: GsvSemanticLogEntry[] = [];
+    const kernel = SyntheticKernel.fromSpec({
+      runtime: {
+        now: "2026-09-01T12:00:00.000Z",
+        timezone: "UTC",
+      },
+      processes: [{
+        id: "ship",
+        role: "ship",
+        uid: 1000,
+        gids: [1000],
+        capabilities: ["shell.exec", "r12y.create", "r12y.update"],
+      }],
+    }, {
+      responsibilityRefs: [
+        { id: "initial", identity: "INC-42" },
+        { id: "priority", identity: "INC-43" },
+      ],
+      targets: [],
+      transitions: [],
+      events: [{
+        id: "priority-arrived",
+        processId: "ship",
+        delayMs: 1_000,
+        content: "INC-43 is now the priority incident.",
+        when: {
+          responsibilities: {
+            references: {
+              initial: { state: "waiting" },
+            },
+          },
+        },
+      }],
+    });
+    kernel.setRecorder((entry) => entries.push(entry));
+
+    await kernel.dispatch("ship", "Shell", {
+      input: "r12y create --title 'Unrelated housekeeping'",
+      target: "gsv",
+    });
+    await kernel.dispatch("ship", "Shell", {
+      input: "r12y create --title 'Coordinate incident INC-42'",
+      target: "gsv",
+    });
+    await kernel.dispatch("ship", "Shell", {
+      input: "r12y wait r12y:00000000-0000-4000-8000-000000000002",
+      target: "gsv",
+    });
+
+    expect(kernel.advanceAfterYield("ship")).toMatchObject({
+      id: "priority-arrived",
+      state: "applied",
+    });
+    expect(kernel.snapshot().responsibilities.references.initial).toMatchObject({
+      id: "r12y:00000000-0000-4000-8000-000000000002",
+      state: "waiting",
+    });
+    expect(entries).toContainEqual(expect.objectContaining({
+      type: "responsibility.transition",
+      responsibilityRefs: ["initial"],
+      transition: expect.objectContaining({
+        responsibilityId: "r12y:00000000-0000-4000-8000-000000000002",
+      }),
+    }));
   });
 });

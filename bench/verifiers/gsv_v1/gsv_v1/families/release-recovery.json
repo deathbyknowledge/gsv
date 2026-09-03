@@ -22,6 +22,12 @@
       "adapters": []
     },
     "components": {
+      "responsibilityRefs": [
+        {
+          "id": "incident",
+          "identity": "${incident_id}"
+        }
+      ],
       "targets": [],
       "transitions": [],
       "events": []
@@ -546,8 +552,8 @@
                 }
               },
               "responsibilities": {
-                "records": {
-                  "r12y:00000000-0000-4000-8000-000000000001": {
+                "references": {
+                  "incident": {
                     "state": "waiting"
                   }
                 }
@@ -620,8 +626,8 @@
                 }
               },
               "responsibilities": {
-                "records": {
-                  "r12y:00000000-0000-4000-8000-000000000001": {
+                "references": {
+                  "incident": {
                     "state": "waiting"
                   }
                 }
@@ -675,8 +681,8 @@
                 }
               },
               "responsibilities": {
-                "records": {
-                  "r12y:00000000-0000-4000-8000-000000000001": {
+                "references": {
+                  "incident": {
                     "state": "waiting"
                   }
                 }
@@ -801,7 +807,7 @@
             "predicates": [
               {
                 "type": "match",
-                "path": "/world/responsibilities/records/r12y:00000000-0000-4000-8000-000000000001",
+                "path": "/world/responsibilities/references/incident",
                 "mode": "subset",
                 "value": {
                   "state": "resolved",

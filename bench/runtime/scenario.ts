@@ -137,6 +137,11 @@ const transitionSchema = z.object({
   effects: z.array(transitionEffectSchema).min(1),
 }).strict();
 
+const responsibilityRefSchema = z.object({
+  id: z.string().min(1),
+  identity: z.string().min(1),
+}).strict();
+
 const externalEventSchema = z.object({
   id: z.string().min(1),
   processId: z.string().min(1),
@@ -211,6 +216,7 @@ const scenarioSchema = z.object({
     adapters: z.array(adapterSchema).default([]),
   }).strict(),
   components: z.object({
+    responsibilityRefs: z.array(responsibilityRefSchema).default([]),
     targets: z.array(targetSchema).default([]),
     transitions: z.array(transitionSchema).default([]),
     events: z.array(externalEventSchema).default([]),
@@ -246,6 +252,10 @@ export function parseGsvSurfaceScenario(value: JsonValue): GsvSurfaceScenario {
   requireUnique(scenario.world.delegates.map(({ account }) => account), "delegate account");
   requireUnique(scenario.components.targets.map(({ id }) => id), "target");
   requireUnique(scenario.world.adapters.map(({ id }) => id), "adapter");
+  requireUnique(
+    scenario.components.responsibilityRefs.map(({ id }) => id),
+    "responsibility reference",
+  );
   requireUnique(scenario.components.transitions.map(({ id }) => id), "transition");
   requireUnique(scenario.components.events.map(({ id }) => id), "external event");
   requireUnique(scenario.evaluation.milestones.map(({ id }) => id), "milestone");

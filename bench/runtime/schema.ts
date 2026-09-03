@@ -107,6 +107,11 @@ export type SyntheticTransitionSpec = {
   effects: SyntheticTransitionEffect[];
 };
 
+export type SyntheticResponsibilityRefSpec = {
+  id: string;
+  identity: string;
+};
+
 export type SyntheticExternalEventSpec = {
   id: string;
   processId: string;
@@ -128,6 +133,7 @@ export type SyntheticWorldSpec = {
 };
 
 export type SyntheticScenarioComponents = {
+  responsibilityRefs?: SyntheticResponsibilityRefSpec[];
   targets: SyntheticTargetSpec[];
   transitions: SyntheticTransitionSpec[];
   events: SyntheticExternalEventSpec[];
@@ -207,6 +213,7 @@ export type GsvSemanticLogEntry =
   | { type: "context.delta"; processId: string; content: string }
   | {
     type: "responsibility.transition";
+    responsibilityRefs: string[];
     transition: ResponsibilityTransition;
   }
   | {
@@ -333,6 +340,7 @@ export type SyntheticDelegationSnapshot = {
 export type SyntheticResponsibilityLedgerSnapshot = {
   revision: number;
   records: Record<string, ResponsibilityRecord>;
+  references: Record<string, ResponsibilityRecord>;
 };
 
 export type SyntheticExternalEventSnapshot = {

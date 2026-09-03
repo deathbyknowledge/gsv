@@ -74,6 +74,14 @@ its in-memory runtime projection before the next run. The frozen prompt,
 history, responsibility cursor, and target projection are reconstructed from
 durable episode state.
 
+Scenario-defined `responsibilityRefs` give durable work semantic names for
+event preconditions and evaluation. The synthetic ledger resolves each name
+from a stable identity token in the record title, dedupe key, or structured
+details, and records that name on responsibility transitions. Runtime ids remain
+opaque and models may create unrelated responsibilities without shifting the
+scenario's intended record. Ambiguous matches fail closed instead of falling
+back to creation order.
+
 ## Implemented tasks
 
 1. target-appears-after-inspection starts with an authorized server offline.

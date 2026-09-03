@@ -71,6 +71,12 @@
     ]
   },
   "components": {
+    "responsibilityRefs": [
+      {
+        "id": "incident",
+        "identity": "checkout"
+      }
+    ],
     "targets": [
       {
         "id": "checkout-monitor",
@@ -169,8 +175,8 @@
             }
           },
           "responsibilities": {
-            "records": {
-              "r12y:00000000-0000-4000-8000-000000000001": {
+            "references": {
+              "incident": {
                 "state": "waiting"
               }
             }
@@ -224,8 +230,8 @@
             }
           },
           "responsibilities": {
-            "records": {
-              "r12y:00000000-0000-4000-8000-000000000001": {
+            "references": {
+              "incident": {
                 "state": "waiting"
               }
             }
@@ -358,8 +364,8 @@
             "value": {
               "world": {
                 "responsibilities": {
-                  "records": {
-                    "r12y:00000000-0000-4000-8000-000000000001": {
+                  "references": {
+                    "incident": {
                       "state": "resolved",
                       "assignee": {
                         "kind": "ship"

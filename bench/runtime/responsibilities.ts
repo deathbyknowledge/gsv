@@ -11,9 +11,13 @@ import { responsibilityRequiresAction } from "@humansandmachines/gsv/protocol";
 import type {
   SyntheticProcessSpec,
   SyntheticResponsibilityLedgerSnapshot,
+  SyntheticResponsibilityRefSpec,
 } from "./schema";
 
-type TransitionRecorder = (transition: ResponsibilityTransition) => void;
+type TransitionRecorder = (
+  transition: ResponsibilityTransition,
+  responsibilityRefs: string[],
+) => void;
 type ComparableResponsibilityValue =
   | ResponsibilityRecord["details"]
   | ResponsibilityRecord["audience"]
@@ -25,10 +29,15 @@ export class SyntheticResponsibilityLedger {
   private readonly transitions: ResponsibilityTransition[] = [];
   private readonly revisions = new Map<number, number>();
   private readonly recordTransition: TransitionRecorder;
+  private readonly referenceSpecs: SyntheticResponsibilityRefSpec[];
   private nextId = 1;
 
-  constructor(recordTransition: TransitionRecorder) {
+  constructor(
+    recordTransition: TransitionRecorder,
+    referenceSpecs: readonly SyntheticResponsibilityRefSpec[] = [],
+  ) {
     this.recordTransition = recordTransition;
+    this.referenceSpecs = structuredClone([...referenceSpecs]);
   }
 
   create(input: {
@@ -202,9 +211,24 @@ export class SyntheticResponsibilityLedger {
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([id, record]) => [id, structuredClone(record)]),
     );
+    const references: Record<string, ResponsibilityRecord> = {};
+    for (const reference of this.referenceSpecs) {
+      const candidates = [...this.records.values()]
+        .map((record) => ({
+          record,
+          match: bestResponsibilityReference(record, this.referenceSpecs),
+        }))
+        .filter(({ match }) => match?.id === reference.id);
+      const bestScore = Math.max(0, ...candidates.map(({ match }) => match?.score ?? 0));
+      const best = candidates.filter(({ match }) => match?.score === bestScore);
+      if (bestScore > 0 && best.length === 1 && best[0]) {
+        references[reference.id] = structuredClone(best[0].record);
+      }
+    }
     return {
       revision: Math.max(0, ...this.revisions.values()),
       records,
+      references,
     };
   }
 
@@ -240,7 +264,14 @@ export class SyntheticResponsibilityLedger {
 
   private appendTransition(transition: ResponsibilityTransition): void {
     this.transitions.push(transition);
-    this.recordTransition(structuredClone(transition));
+    const reference = bestResponsibilityReference(
+      transition.record,
+      this.referenceSpecs,
+    );
+    this.recordTransition(
+      structuredClone(transition),
+      reference ? [reference.id] : [],
+    );
   }
 }
 
@@ -250,6 +281,33 @@ export function processOwnerUid(process: SyntheticProcessSpec): number {
 
 function responsibilityId(index: number): string {
   return "r12y:00000000-0000-4000-8000-" + index.toString(16).padStart(12, "0");
+}
+
+function bestResponsibilityReference(
+  record: ResponsibilityRecord,
+  references: readonly SyntheticResponsibilityRefSpec[],
+): { id: string; score: number } | null {
+  const candidates = references
+    .map(({ id, identity }) => ({ id, score: responsibilityIdentityScore(record, identity) }))
+    .filter(({ score }) => score > 0);
+  const bestScore = Math.max(0, ...candidates.map(({ score }) => score));
+  const best = candidates.filter(({ score }) => score === bestScore);
+  return best.length === 1 && best[0] ? best[0] : null;
+}
+
+function responsibilityIdentityScore(
+  record: ResponsibilityRecord,
+  identity: string,
+): number {
+  const expected = identity.toLowerCase();
+  const dedupeKey = record.dedupeKey?.toLowerCase();
+  if (dedupeKey === expected) return 100;
+  const title = record.title.toLowerCase();
+  if (title === expected) return 90;
+  if (title.includes(expected)) return 80;
+  if (dedupeKey?.includes(expected)) return 70;
+  const details = JSON.stringify(record.details ?? {}).toLowerCase();
+  return details.includes(expected) ? 40 : 0;
 }
 
 function applyPatch(

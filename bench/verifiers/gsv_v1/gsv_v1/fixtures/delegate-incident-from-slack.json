@@ -68,6 +68,12 @@
     ]
   },
   "components": {
+    "responsibilityRefs": [
+      {
+        "id": "incident",
+        "identity": "slack:incident-42"
+      }
+    ],
     "targets": [
       {
         "id": "incident-server",
@@ -127,8 +133,8 @@
             "value": {
               "world": {
                 "responsibilities": {
-                  "records": {
-                    "r12y:00000000-0000-4000-8000-000000000001": {
+                  "references": {
+                    "incident": {
                       "title": "Investigate checkout deployment",
                       "state": "resolved",
                       "assignee": {
