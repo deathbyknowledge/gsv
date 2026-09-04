@@ -22,6 +22,9 @@ client_api_key_var="${GSV_BENCH_CLIENT_API_KEY_VAR:-OPENAI_API_KEY}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 run_prefix="${GSV_BENCH_RUN_PREFIX:-matrix-$timestamp}"
 matrix_dir="${GSV_BENCH_OUTPUT_DIR:-$package_dir/outputs/$run_prefix}"
+if [[ "$matrix_dir" != /* ]]; then
+  matrix_dir="$PWD/$matrix_dir"
+fi
 models=("$@")
 gsv_git_commit="$(git -C "$repo_root" rev-parse HEAD)"
 gsv_git_dirty=false
