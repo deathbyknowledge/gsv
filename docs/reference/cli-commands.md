@@ -482,13 +482,14 @@ to an agent, so send another message after the command succeeds.
 
 ```bash
 gsv auth token create [--kind machine|service|human] [--uid UID] [--label LABEL] \
-  [--role driver|service|user] [--device DEVICE] [--expires-at UNIX_MS]
+  [--peer PEER_ID] [--expires-at UNIX_MS]
 gsv auth token list [--uid UID]
 gsv auth token revoke TOKEN_ID [--reason TEXT] [--uid UID]
 ```
 
-`machine` is the default token kind. Use `--peer` to bind a machine token to one
-device ID. `--uid` is for root-managed token operations.
+`machine` is the default token kind. `--peer` (alias `--device`) binds a machine
+token to the one peer id that may connect with it, and is required for machine
+tokens. `--uid` is for root-managed token operations.
 
 ## Config Commands
 
