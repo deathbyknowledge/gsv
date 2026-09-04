@@ -1707,27 +1707,27 @@ fn parse_shell_response(payload: &Value) -> Result<ShellResponse, String> {
 async fn available_environments(client: &KernelClient) -> Vec<CapabilityEnvironment> {
     let mut environments = vec![CapabilityEnvironment::gsv()];
     let Ok(payload) = client
-        .request_ok("sys.device.list", Some(json!({ "includeOffline": false })))
+        .request_ok("sys.target.list", Some(json!({ "includeOffline": false })))
         .await
     else {
         return environments;
     };
-    environments.extend(device_environments(&payload));
+    environments.extend(target_environments(&payload));
     environments
 }
 
-fn device_environments(payload: &Value) -> Vec<CapabilityEnvironment> {
+fn target_environments(payload: &Value) -> Vec<CapabilityEnvironment> {
     payload
-        .get("devices")
+        .get("targets")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|device| {
-            let target = device.get("deviceId").and_then(Value::as_str)?;
+        .filter_map(|target_record| {
+            let target = target_record.get("targetId").and_then(Value::as_str)?;
             if target.trim().is_empty() {
                 return None;
             }
-            let label = device
+            let label = target_record
                 .get("label")
                 .and_then(Value::as_str)
                 .filter(|label| !label.trim().is_empty())
@@ -2089,7 +2089,7 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        apply_signal, device_environments, file_inspection_request, history_has_more,
+        apply_signal, target_environments, file_inspection_request, history_has_more,
         history_moments, key_action, media_artifact, parse_file_listing, parse_file_reference,
         parse_shell_response, reconnect_delay, trace_actions, trace_deliveries, truncate_chars,
         FileInspectionKind, RuntimeEvent, SessionEvent, ShellResponse, SignalGate,
@@ -2675,10 +2675,10 @@ mod tests {
 
     #[test]
     fn target_discovery_preserves_exact_ids_and_human_labels() {
-        let environments = device_environments(&json!({
-            "devices": [
-                { "deviceId": "macbook.local", "label": "Sam's MacBook" },
-                { "deviceId": "studio", "label": "" }
+        let environments = target_environments(&json!({
+            "targets": [
+                { "targetId": "macbook.local", "label": "Sam's MacBook" },
+                { "targetId": "studio", "label": "" }
             ]
         }));
         assert_eq!(environments.len(), 2);
