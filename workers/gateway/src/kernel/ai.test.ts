@@ -1532,6 +1532,27 @@ describe("handleAiConfig", () => {
     ]);
   });
 
+  it("counts a connected OAuth account as a credential through ai.models", () => {
+    const stack = JSON.stringify({
+      version: 1,
+      models: [{ id: "codex", name: "Codex", provider: "openai-codex", model: "gpt-5.5" }],
+    });
+
+    const personal = handleAiModels(makeAiConfigContext({ "users/1000/ai/models": stack }, {
+      oauthAccounts: [makeOAuthAccount({ uid: 1000 })],
+    }));
+    expect(personal.models[0]).toMatchObject({ id: "codex", source: "personal", hasCredential: true });
+
+    const shared = handleAiModels(makeAiConfigContext({ "config/ai/models": stack }, {
+      oauthAccounts: [makeOAuthAccount({ uid: 0, accountId: "acct-root" })],
+    }));
+    expect(shared.models[0]).toMatchObject({ id: "codex", source: "system", hasCredential: true });
+
+    const disconnected = handleAiModels(makeAiConfigContext({ "users/1000/ai/models": stack }));
+    expect(disconnected.models[0]).toMatchObject({ id: "codex", hasCredential: false });
+    expect(JSON.stringify(personal)).not.toContain("codex-access-token");
+  });
+
   it("lists the effective stack with its layers through ai.models", () => {
     const ctx = makeAiConfigContext({
       "users/1000/ai/models": JSON.stringify({

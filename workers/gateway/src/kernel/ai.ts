@@ -55,7 +55,7 @@ import type {
 import type { ToolDefinition, SyscallName } from "../syscalls";
 import { intoSyscallTool, isRoutableSyscall } from "../syscalls";
 import { hasCapability } from "./capabilities";
-import { resolveAiProviderOAuthApiKey } from "./ai-oauth";
+import { hasStoredAiProviderOAuthAccount, resolveAiProviderOAuthApiKey } from "./ai-oauth";
 
 import { FS_READ_DEFINITION } from "../syscalls/read";
 import { FS_WRITE_DEFINITION } from "../syscalls/write";
@@ -892,13 +892,20 @@ export function handleAiModels(ctx: KernelContext): AiModelsResult {
   const uid = principal.account.uid;
   const owner = resolveOwnerIdentity(ctx);
   const effective = resolveEffectiveAiModelStack(ctx, resolveAiModelOwnerUid(ctx, uid, owner));
-  const preferredModelId = resolvePreferredAiModelId(ctx, resolveAiConfigAccountUids(uid, owner), effective);
+  const accountUids = resolveAiConfigAccountUids(uid, owner);
+  const preferredModelId = resolvePreferredAiModelId(ctx, accountUids, effective);
   const ordered = orderEffectiveAiModels(effective, preferredModelId);
   return {
     models: ordered.map((item) => ({
       ...item.entry,
       source: item.source,
-      hasCredential: storedCredential(ctx, item).length > 0,
+      // A stored key or a saved OAuth account in the entry's credential scope both count.
+      hasCredential: storedCredential(ctx, item).length > 0
+        || hasStoredAiProviderOAuthAccount(
+          ctx,
+          item.source === "personal" ? accountUids : withRootAiCredentialScope(accountUids),
+          item.entry.provider,
+        ),
     })),
     preferredModelId,
   };

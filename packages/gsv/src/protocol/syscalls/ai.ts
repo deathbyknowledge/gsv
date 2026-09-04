@@ -94,7 +94,11 @@ export type AiModelListEntry = AiModelEntry & {
    * implicit stack that every list extends.
    */
   source: AiModelSource;
-  /** Whether a stored credential exists for this entry; base entries never need one. */
+  /**
+   * Whether this entry can authenticate from stored state: a saved key at
+   * its credential path or a connected OAuth account in its scope. Base
+   * entries never need one.
+   */
   hasCredential: boolean;
 };
 
