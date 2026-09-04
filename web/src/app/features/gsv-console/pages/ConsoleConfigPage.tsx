@@ -1,4 +1,5 @@
 import type { ComponentChildren } from "preact";
+import { combineResourceStates } from "../domain/consoleModels";
 import { z } from "zod";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import {
@@ -246,8 +247,8 @@ export function ConsoleConfigPage({ kind, select, onClearSelect, onDetailChange,
   // listing, so it must not render as editable until that listing has loaded:
   // an empty draft would otherwise overwrite the stored list on first save.
   const resource = kind === "models"
-    ? combineResources(config.resource, models.resource)
-    : combineResources(config.resource, null);
+    ? combineResourceStates(config.resource, models.resource)
+    : withoutListing(config.resource);
 
   return (
     <ConsolePage flush>
@@ -273,22 +274,11 @@ export function ConsoleConfigPage({ kind, select, onClearSelect, onDetailChange,
   );
 }
 
-/** Loads, errors, or goes offline when either resource does; data only when both are ready. */
-function combineResources(
+/** The runtime page needs no listing; keep the boundary's tuple shape without waiting on one. */
+function withoutListing(
   config: ConsoleResourceState<ConsoleConfigEntry[]>,
-  models: ConsoleResourceState<ConsoleModelListing> | null,
 ): ConsoleResourceState<[ConsoleConfigEntry[], ConsoleModelListing | null]> {
-  const listing = models?.data ?? null;
-  const ready = config.data !== null && (models === null || listing !== null);
-  return {
-    data: ready ? [config.data!, listing] : null,
-    isUnavailable: config.isUnavailable || models?.isUnavailable === true,
-    isLoading: config.isLoading || models?.isLoading === true,
-    isRefreshing: config.isRefreshing || models?.isRefreshing === true,
-    isError: config.isError || models?.isError === true,
-    errorText: config.errorText || models?.errorText || "",
-    isEmpty: false,
-  };
+  return { ...config, data: config.data === null ? null : [config.data, null] };
 }
 
 function ConsoleSettingsPanel({

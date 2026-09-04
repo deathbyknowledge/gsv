@@ -1,4 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import { combineResourceStates } from "../domain/consoleModels";
 import { z } from "zod";
 import {
   AgentEditor,
@@ -90,14 +91,22 @@ export function ConsoleAgentPage({
     // loading — an empty pool snapshot reads as "everything unused" and can
     // duplicate an existing portrait. Empty-but-loaded data is a valid state
     // (first agent ever), so this gates on loading only, never emptiness.
-    if (accounts.resource.isUnavailable || config.resource.isUnavailable) {
+    if (accounts.resource.isUnavailable || config.resource.isUnavailable || models.resource.isUnavailable) {
       return (
         <ConsolePage flush>
           <ConsolePageState kind="offline" label="AGENT" />
         </ConsolePage>
       );
     }
-    if (accounts.resource.isLoading || config.resource.isLoading) {
+    if (models.resource.isError) {
+      // Without the effective model listing the selector would silently offer nothing.
+      return (
+        <ConsolePage flush>
+          <ConsolePageState kind="error" detail={models.resource.errorText || "MODELS"} />
+        </ConsolePage>
+      );
+    }
+    if (accounts.resource.isLoading || config.resource.isLoading || models.resource.isLoading) {
       return (
         <ConsolePage flush>
           <ConsolePageState kind="loading" label="AGENT" />
@@ -123,10 +132,11 @@ export function ConsoleAgentPage({
   return (
     <ConsolePage flush>
       <ConsoleResourceBoundary
-        resource={accounts.resource}
+        // The editor's model selector needs the effective listing as much as the account list.
+        resource={combineResourceStates(accounts.resource, models.resource)}
         emptyLabel="NO AGENT ACCOUNT"
         errorLabel="AGENT"
-        render={(data) => {
+        render={([data]) => {
           const account = selectAccount(data, accountUid);
           if (!account) {
             return <ConsolePageState kind="empty" label="NO AGENT ACCOUNT" />;
