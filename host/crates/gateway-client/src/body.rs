@@ -66,7 +66,6 @@ pub struct BinaryBodyLimits {
     pub max_frame_bytes: usize,
     pub max_body_bytes: u64,
     pub max_active_streams: usize,
-    pub max_buffered_frames_per_stream: usize,
     pub max_orphan_frames: usize,
     pub max_orphan_bytes: usize,
     pub max_ignored_streams: usize,
@@ -83,7 +82,6 @@ impl Default for BinaryBodyLimits {
             max_frame_bytes: 1024 * 1024,
             max_body_bytes: 256 * 1024 * 1024,
             max_active_streams: 64,
-            max_buffered_frames_per_stream: 8,
             max_orphan_frames: 64,
             max_orphan_bytes: 8 * 1024 * 1024,
             max_ignored_streams: 256,
@@ -111,7 +109,6 @@ impl BinaryBodyLimits {
         if self.max_frame_bytes == 0
             || self.max_body_bytes == 0
             || self.max_active_streams == 0
-            || self.max_buffered_frames_per_stream == 0
             || self.max_orphan_frames == 0
             || self.max_orphan_bytes == 0
             || self.max_ignored_streams == 0
@@ -172,7 +169,10 @@ enum BodyEvent {
 
 #[derive(Debug)]
 struct IncomingState {
-    sender: mpsc::Sender<BodyEvent>,
+    /// Unbounded in frames on purpose: the peer may only send what the
+    /// receive window allows, so buffered bytes are bounded by that window
+    /// however small the frames are.
+    sender: mpsc::UnboundedSender<BodyEvent>,
     expected: Option<u64>,
     received: u64,
     /// Credit granted to the sender so far, including the initial window.
@@ -301,7 +301,7 @@ impl BinaryBodyChannel {
 
     pub fn receive(&self, descriptor: FrameBodyDescriptor) -> Result<IncomingBody, BodyError> {
         validate_descriptor(descriptor, &self.limits)?;
-        let (sender, receiver) = mpsc::channel(self.limits.max_buffered_frames_per_stream);
+        let (sender, receiver) = mpsc::unbounded_channel();
         let orphans = {
             let mut state = self.state.lock().map_err(|_| {
                 BodyError::Closed("Binary body registry is unavailable".to_string())
@@ -517,11 +517,7 @@ impl BinaryBodyChannel {
             (incoming, outgoing)
         };
         for sender in incoming {
-            let event = BodyEvent::Error(BodyError::Closed(reason.clone()));
-            // If a receiver queue is full, dropping the final sender is enough:
-            // after consuming buffered data, the receiver reports the channel's
-            // stored close reason rather than treating disappearance as EOF.
-            let _ = sender.try_send(event);
+            let _ = sender.send(BodyEvent::Error(BodyError::Closed(reason.clone())));
         }
         for token in outgoing {
             token.cancel();
@@ -606,30 +602,14 @@ impl BinaryBodyChannel {
             }
             let sender = incoming.sender.clone();
             if let Some(frame) = frame {
-                if sender.try_send(frame).is_err() {
-                    reject_peer = true;
-                    terminal = Some(BodyEvent::Error(BodyError::LimitExceeded(
-                        "Binary body receiver exceeded its bounded buffer".to_string(),
-                    )));
-                }
+                let _ = sender.send(frame);
             }
             if let Some(event) = terminal {
                 state.incoming.remove(&stream_id);
                 if reject_peer {
                     mark_ignored(&mut state, stream_id, self.limits.max_ignored_streams);
                 }
-                match sender.try_send(event) {
-                    Ok(()) => {}
-                    Err(mpsc::error::TrySendError::Full(event)) => {
-                        let sender = sender.clone();
-                        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-                            runtime.spawn(async move {
-                                let _ = sender.send(event).await;
-                            });
-                        }
-                    }
-                    Err(mpsc::error::TrySendError::Closed(_)) => {}
-                }
+                let _ = sender.send(event);
             }
         }
         if reject_peer {
@@ -767,7 +747,7 @@ fn mark_ignored(state: &mut BodyState, stream_id: u32, limit: usize) {
 pub struct IncomingBody {
     stream_id: u32,
     length: Option<u64>,
-    receiver: mpsc::Receiver<BodyEvent>,
+    receiver: mpsc::UnboundedReceiver<BodyEvent>,
     channel: BinaryBodyChannel,
     terminal: bool,
     consumed: u64,
@@ -1135,20 +1115,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn closing_channel_reports_error_after_a_full_data_queue() {
+    async fn closing_channel_reports_error_after_buffered_data() {
         let sent = Arc::new(StdMutex::new(Vec::new()));
-        let limits = BinaryBodyLimits {
-            max_buffered_frames_per_stream: 1,
-            ..BinaryBodyLimits::default()
-        };
-        let channel = BinaryBodyChannel::new(limits, move |frame| {
-            let sent = sent.clone();
-            async move {
-                sent.lock().expect("sent frames").push(frame);
-                Ok(())
-            }
-        })
-        .expect("body channel");
+        let channel = channel(sent);
         let body = channel
             .receive(FrameBodyDescriptor {
                 stream_id: 19,
@@ -1198,47 +1167,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bounded_receiver_cancels_a_flooded_body() {
+    async fn small_frames_within_the_window_are_all_buffered() {
         let sent = Arc::new(StdMutex::new(Vec::new()));
-        let limits = BinaryBodyLimits {
-            max_buffered_frames_per_stream: 1,
-            ..BinaryBodyLimits::default()
-        };
-        let channel = BinaryBodyChannel::new(limits, move |frame| {
-            let sent = sent.clone();
-            async move {
-                sent.lock().expect("sent frames").push(frame);
-                Ok(())
-            }
-        })
-        .expect("body channel");
-        let mut body = channel
+        let channel = channel(sent.clone());
+        let body = channel
             .receive(FrameBodyDescriptor {
                 stream_id: 11,
-                length: None,
+                length: Some(64 * 1024),
             })
             .expect("incoming body");
+        // A 4 MiB window of 1 KiB frames used to overflow the fixed frame queue.
+        for _ in 0..64 {
+            channel
+                .handle_frame(&build_binary_frame(11, BINARY_FRAME_DATA, &[7_u8; 1024]))
+                .await;
+        }
         channel
-            .handle_frame(&build_binary_frame(11, BINARY_FRAME_DATA, b"one"))
-            .await;
-        channel
-            .handle_frame(&build_binary_frame(11, BINARY_FRAME_DATA, b"two"))
+            .handle_frame(&build_binary_frame(11, BINARY_FRAME_END, &[]))
             .await;
         assert_eq!(
-            body.recv().await.expect("first chunk"),
-            Some(b"one".to_vec())
+            body.read_all(64 * 1024).await.expect("body bytes").len(),
+            64 * 1024
         );
-        assert!(body.recv().await.is_err());
+        assert!(sent.lock().expect("sent frames").is_empty());
     }
 
     #[tokio::test]
     async fn registered_body_drains_between_ready_frames() {
         let sent = Arc::new(StdMutex::new(Vec::new()));
-        let limits = BinaryBodyLimits {
-            max_buffered_frames_per_stream: 1,
-            ..BinaryBodyLimits::default()
-        };
-        let channel = BinaryBodyChannel::new(limits, {
+        let channel = BinaryBodyChannel::new(BinaryBodyLimits::default(), {
             let sent = sent.clone();
             move |frame| {
                 let sent = sent.clone();

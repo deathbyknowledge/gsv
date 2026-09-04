@@ -499,6 +499,12 @@ answers with `CANCEL | END`; a sender waiting for credit that receives none
 within the same period fails its own stream with `ERROR | END`. A sender that
 exceeds its window is a protocol violation and is cancelled by the receiver.
 
+The window is the only receive-side bound. A receiver must accept any number
+of frames that fit its granted window, however small they are, so
+implementations must not cap buffered frames separately. Senders should
+coalesce small source reads into full chunks (1 MiB by default) so a window
+carries few frames.
+
 Flow control governs only body bytes. Cancellation, unrelated frames, and
 peer closure must remain readable while a body consumer is idle; a receiver
 must not suspend the connection-wide reader on one stream.

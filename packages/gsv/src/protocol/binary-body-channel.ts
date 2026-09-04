@@ -338,24 +338,39 @@ export class BinaryBodyChannel {
         await this.cancelOutgoing(state, signal.reason, true);
         return;
       }
+      // Source reads can be tiny (an R2 stream yields tens of KiB at a time);
+      // coalesce them so the wire carries full chunks and the peer queues few frames.
+      const pending: Uint8Array[] = [];
+      let pendingBytes = 0;
       sendLoop: while (true) {
         const { done, value } = await state.reader.read();
-        if (done || cancelled()) {
+        if (cancelled()) {
           break;
         }
-        for (let offset = 0; offset < value.byteLength;) {
-          const credit = await this.awaitCredit(state);
-          if (cancelled() || signal?.aborted) {
-            break sendLoop;
+        if (!done && value.byteLength > 0) {
+          pending.push(value);
+          pendingBytes += value.byteLength;
+        }
+        while (pendingBytes > 0 && (done || pendingBytes >= this.chunkBytes)) {
+          const chunk = takeBytes(pending, Math.min(this.chunkBytes, pendingBytes));
+          pendingBytes -= chunk.byteLength;
+          for (let offset = 0; offset < chunk.byteLength;) {
+            const credit = await this.awaitCredit(state);
+            if (cancelled() || signal?.aborted) {
+              break sendLoop;
+            }
+            const size = Math.min(credit, chunk.byteLength - offset);
+            state.creditBytes -= size;
+            await this.sendFrame(buildBinaryFrame(
+              state.streamId,
+              BINARY_FRAME_DATA,
+              chunk.subarray(offset, offset + size),
+            ));
+            offset += size;
           }
-          const size = Math.min(this.chunkBytes, credit, value.byteLength - offset);
-          state.creditBytes -= size;
-          await this.sendFrame(buildBinaryFrame(
-            state.streamId,
-            BINARY_FRAME_DATA,
-            value.subarray(offset, offset + size),
-          ));
-          offset += size;
+        }
+        if (done) {
+          break;
         }
       }
       if (cancelled() || signal?.aborted) {
@@ -530,6 +545,36 @@ export class BinaryBodyChannel {
       void this.sendCancel(streamId, error);
     }
   }
+}
+
+/**
+ * Removes `count` bytes from the front of `queue`. Returns a view when the
+ * first piece already holds enough bytes and copies only when it must join pieces.
+ */
+function takeBytes(queue: Uint8Array[], count: number): Uint8Array {
+  const head = queue[0];
+  if (head.byteLength >= count) {
+    if (head.byteLength === count) {
+      queue.shift();
+    } else {
+      queue[0] = head.subarray(count);
+    }
+    return head.subarray(0, count);
+  }
+  const out = new Uint8Array(count);
+  let filled = 0;
+  while (filled < count) {
+    const piece = queue[0];
+    const take = Math.min(piece.byteLength, count - filled);
+    out.set(piece.subarray(0, take), filled);
+    filled += take;
+    if (take === piece.byteLength) {
+      queue.shift();
+    } else {
+      queue[0] = piece.subarray(take);
+    }
+  }
+  return out;
 }
 
 function assertBodyLength(length: number | undefined): void {

@@ -1251,3 +1251,41 @@ test("stream ids keep the parity of the channel's role", () => {
   assert.deepEqual(ids(new BinaryBodyChannel({ sendFrame: () => {} })), [1, 3]);
   assert.deepEqual(ids(new BinaryBodyChannel({ role: "acceptor", sendFrame: () => {} })), [2, 4]);
 });
+
+test("coalesces small source reads into chunk-sized frames", async () => {
+  const frames = [];
+  const sender = new BinaryBodyChannel({
+    chunkBytes: 4096,
+    sendFrame: (frame) => {
+      frames.push(frame);
+    },
+  });
+  let piece = 0;
+  const outgoing = sender.prepare({
+    length: 10_000,
+    stream: new ReadableStream({
+      pull(controller) {
+        // 100 reads of 100 bytes, the way an object store stream trickles.
+        if (piece === 100) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(new Uint8Array(100).fill(piece));
+        piece += 1;
+      },
+    }),
+  });
+  await outgoing.send();
+
+  const sizes = parsedFrames(frames).map((frame) => [frame.flags, frame.payload.byteLength]);
+  assert.deepEqual(sizes, [
+    [BINARY_FRAME_DATA, 4096],
+    [BINARY_FRAME_DATA, 4096],
+    [BINARY_FRAME_DATA, 1808],
+    [BINARY_FRAME_END, 0],
+  ]);
+  const joined = parsedFrames(frames).flatMap((frame) => [...frame.payload]);
+  assert.equal(joined[4095], 40);
+  assert.equal(joined[4096], 40);
+  assert.equal(joined[9999], 99);
+});
