@@ -1479,3 +1479,28 @@ describe("GsvFs search", () => {
     expect(cancelled).toBe(true);
   });
 });
+
+describe("GsvFs stat identity", () => {
+  it("reports a stable identity that survives repeated stats and follows links", async () => {
+    const fs = new GsvFs(env.STORAGE, {
+      uid: 1000,
+      gid: 1000,
+      gids: [1000],
+      username: "sam",
+      home: "/home/sam",
+      cwd: "/home/sam",
+    });
+    await fs.mkdir("/home/sam/identity", { recursive: true });
+    await fs.writeFile("/home/sam/identity/a.txt", "a");
+    await fs.writeFile("/home/sam/identity/b.txt", "b");
+
+    const first = await fs.stat("/home/sam/identity/a.txt");
+    const again = await fs.stat("/home/sam/identity/a.txt");
+    const other = await fs.stat("/home/sam/identity/b.txt");
+
+    expect(first.identity).toBeDefined();
+    expect(again.identity).toBe(first.identity);
+    expect(other.identity).not.toBe(first.identity);
+    expect((await fs.stat("/")).identity).toBeDefined();
+  });
+});

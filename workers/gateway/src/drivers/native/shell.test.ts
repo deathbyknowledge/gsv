@@ -934,10 +934,68 @@ describe("native shell capability discovery", () => {
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("MAIL(1)");
+    expect(result.stdout).toContain("mail list [--limit N]");
+    expect(result.stdout).toContain("mail show MESSAGE_ID");
+    expect(result.stdout).toContain("how to read a received email");
     expect(result.stdout).toContain("mail send --to ADDRESS");
     expect(result.stdout).toContain("mail reply MESSAGE_ID");
     expect(result.stdout).toContain("mail status DELIVERY_ID");
     expect(result.stdout).toContain("queued");
+  });
+
+  it("splits a file into byte-sized parts", async () => {
+    const result = await handleShellExec(
+      { input: "cd \"$HOME\" && printf 'abcdef' > in.bin && split -b 2 in.bin part. && cat part.ab && echo && cat part.aa part.ab part.ac && echo && printf '%s\\n' part.* | wc -l" },
+      makeContext({ capabilities: ["shell.exec"] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toBe("cd\nabcdef\n3\n");
+  });
+
+  it("slices and rejoins bytes with dd", async () => {
+    const result = await handleShellExec(
+      {
+        input: [
+          "cd \"$HOME\"",
+          "printf 'abcdefgh' > whole.bin",
+          "dd if=whole.bin of=part.0 bs=3 count=1 status=none",
+          "dd if=whole.bin of=part.1 bs=3 skip=1 status=none",
+          "dd if=part.0 of=rejoined.bin bs=3 status=none",
+          "dd if=part.1 of=rejoined.bin bs=3 seek=1",
+          "cat part.0 && echo && cat part.1 && echo && cat rejoined.bin && echo",
+          "dd if=whole.bin bs=2 skip=1 count=1 status=none",
+        ].join(" && "),
+      },
+      makeContext({ capabilities: ["shell.exec"] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toBe("abc\ndefgh\nabcdefgh\ncd");
+    expect(result.stderr).toBe("1+1 records in\n1+1 records out\n5 bytes copied\n");
+  });
+
+  it("rejects dd operands it does not understand", async () => {
+    const result = await handleShellExec(
+      { input: "dd if=missing.bin of=out.bin; dd bs=zero" },
+      makeContext({ capabilities: ["shell.exec"] }),
+    );
+
+    expect(result.stderr).toContain("dd: failed to open 'missing.bin'");
+    expect(result.stderr).toContain("dd: invalid number: 'zero'");
+  });
+
+  it("renders the cp manual with the bracketed target form", async () => {
+    const result = await handleShellExec(
+      { input: "man cp" },
+      makeContext({ capabilities: ["shell.exec"] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("CP(1)");
+    expect(result.stdout).toContain("cp SOURCE DEST");
+    expect(result.stdout).toContain("[target:with:colons]:/path");
+    expect(result.stdout).toContain("wrap it in brackets");
   });
 
   it("reports the caller's current media capability availability", async () => {
