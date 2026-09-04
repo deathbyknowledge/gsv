@@ -189,7 +189,7 @@ derived from the password or token used to authenticate.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `protocol` | `number` | Yes | Must currently be `4`. A mismatch returns error `102` with `requestedProtocol`, `supportedProtocol`, `serverVersion`, and `installer` details so an outdated client can explain the upgrade. |
+| `protocol` | `number` | Yes | Must currently be `4`. A mismatch returns error `102` with `requestedProtocol`, `supportedProtocol`, `serverVersion`, and `installer` details so an outdated client can explain the upgrade. The negotiated version is stored with the hibernating socket; a socket restored after a deploy that negotiated another version is closed with code `1008` so the client reconnects and receives the same error. |
 | `peer.id` | `string` | Yes | Stable application, machine, or service identity |
 | `peer.version` | `string` | Yes | Peer version |
 | `peer.platform` | `string` | Yes | Platform string |

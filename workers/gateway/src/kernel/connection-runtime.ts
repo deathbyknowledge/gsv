@@ -15,6 +15,7 @@ import {
 } from "./routing";
 import {
   handleConnect,
+  PROTOCOL_VERSION,
 } from "./connect";
 import {
   peerProvidesOperations,
@@ -87,6 +88,13 @@ onClose(connection: KernelConnection<ConnectionState>): void {
         continue;
       }
       const state = connection.state;
+      // A socket that negotiated another protocol before a deploy must not
+      // resume as if it spoke this one; closing it sends the client back
+      // through sys.connect, where it receives the structured upgrade error.
+      if (state?.step === "connected" && state.protocol !== PROTOCOL_VERSION) {
+        socket.close(1008, `Protocol ${PROTOCOL_VERSION} required; reconnect with an updated client`);
+        continue;
+      }
       this.host.connections.set(connection.id, connection);
       if (!state || state.step !== "connected" || !state.peer) continue;
       if (peerProvidesOperations(state.peer)) {
@@ -171,6 +179,7 @@ async handleSysConnect(
     const clientPlatform = frame.args.peer.platform.trim();
     const newState = {
       step: "connected",
+      protocol: PROTOCOL_VERSION,
       peer: outcome.peer,
       clientId: clientId || undefined,
       clientPlatform: clientPlatform || undefined,

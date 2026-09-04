@@ -40,7 +40,7 @@ export type ConnectOutcome =
 export const SETUP_REQUIRED_ERROR_CODE = 425;
 type SetupRequiredDetails = { setupMode: true; next: "sys.setup" };
 
-const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 4;
 const INSTALLER_URL = "https://install.gsv.space";
 const MACHINE_CONNECTION_CAPABILITIES: string[] = [];
 const SERVICE_CAPABILITY_GIDS = [102];
