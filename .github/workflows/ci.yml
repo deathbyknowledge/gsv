@@ -476,21 +476,21 @@ jobs:
         run: >-
           cargo fmt --package gateway-client --package host-config
           --package daemon-protocol --package desktop-protocol
-          --package gesture-protocol --check
+          --package gesture-protocol --package gsv-tui-core --check
 
       - name: Test shared crates
         working-directory: host
         run: >-
           cargo test --locked --package gateway-client --package host-config
           --package daemon-protocol --package desktop-protocol
-          --package gesture-protocol
+          --package gesture-protocol --package gsv-tui-core
 
       - name: Lint shared crates
         working-directory: host
         run: >-
           cargo clippy --locked --package gateway-client --package host-config
           --package daemon-protocol --package desktop-protocol
-          --package gesture-protocol --all-targets -- -D warnings
+          --package gesture-protocol --package gsv-tui-core --all-targets -- -D warnings
 
   machine-build:
     name: Machine (${{ matrix.os }})
