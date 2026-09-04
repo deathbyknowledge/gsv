@@ -107,7 +107,7 @@ export const FINAL_MESSAGE_BLOCK_EXAMPLE =
   "message send <<'GSV_MESSAGE' && yield\nyour user-visible response\nGSV_MESSAGE";
 
 export const RUN_CONTROL_INSTRUCTION =
-  `Use a direct \`message send\` Shell call whenever the user should receive a message; sending does not finish the run. After all work is complete, run \`yield\`, or compose the final message as:\n${FINAL_MESSAGE_BLOCK_EXAMPLE}\nOrdinary assistant text is Process activity and is not sent to the user.`;
+  `Use a direct \`message send\` Shell call whenever the user should receive a message; sending does not finish the run. After all work is complete, run \`yield\`, or compose the final message as:\n${FINAL_MESSAGE_BLOCK_EXAMPLE}\nOrdinary assistant text is Process activity and is not sent to the user. In a human-facing run, do not combine meaningful assistant text with a bare \`yield\`; send that text with \`message send\` instead.`;
 
 export const PENDING_RUN_CONTROL_CALL = "Shell";
 
