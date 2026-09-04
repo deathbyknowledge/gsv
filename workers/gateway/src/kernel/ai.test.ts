@@ -1,6 +1,8 @@
 type KernelTestValue<T = string | number | boolean | null | undefined> = T;
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { principalOf } from "./context";
+import { testPeer } from "../test-support/peers";
 import type { KernelContext } from "./context";
 import type { TargetRecord } from "./target-registry";
 import type { OAuthAccountRecord } from "./oauth-store";
@@ -98,18 +100,14 @@ function makeContext(
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     installationId: TEST_INSTALLATION_ID,
-    identity: {
-      role: "user",
-      process: {
+    peer: testPeer({ kind: "human", account: {
         uid,
         gid: uid,
         gids: [uid],
         username: uid === 2000 ? "friday" : "sam",
         home: uid === 2000 ? "/home/friday" : "/home/sam",
         cwd: uid === 2000 ? "/home/friday" : "/home/sam",
-      },
-      capabilities: options.capabilities ?? ["*"],
-    },
+      }, calls: options.capabilities ?? ["*"] }),
     processId: options.processId,
     procs: {
       getOwnerUid: vi.fn((processId: string) =>
@@ -322,18 +320,14 @@ describe("handleAiConfig", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {
       installationId: TEST_INSTALLATION_ID,
-      identity: {
-        role: "user",
-        process: {
+      peer: testPeer({ kind: "human", account: {
           uid,
           gid: uid,
           gids: [uid],
           username: uid === 2000 ? "friday" : "sam",
           home: uid === 2000 ? "/home/friday" : "/home/sam",
           cwd: uid === 2000 ? "/home/friday" : "/home/sam",
-        },
-        capabilities: options.capabilities ?? ["*"],
-      },
+        }, calls: options.capabilities ?? ["*"] }),
       config: makeTestConfig(config),
       auth: {
         getPasswdByUid: vi.fn((lookupUid: number) => lookupUid === ownerUid
@@ -593,7 +587,7 @@ describe("handleAiConfig", () => {
 
   it("returns no capabilities for the pre-auth setup assistant", async () => {
     const ctx = makeAiConfigContext();
-    delete ctx.identity;
+    delete ctx.peer;
 
     const result = await handleAiConfig({}, ctx);
 
@@ -1633,18 +1627,14 @@ describe("handleAiTranscriptionCreate", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {
       installationId: TEST_INSTALLATION_ID,
-      identity: {
-        role: "user",
-        process: {
+      peer: testPeer({ kind: "human", account: {
           uid: 1000,
           gid: 1000,
           gids: [1000],
           username: "sam",
           home: "/home/sam",
           cwd: "/home/sam",
-        },
-        capabilities: ["*"],
-      },
+        }, calls: ["*"] }),
       config: makeTestConfig(config),
       env: {
         AI: {
@@ -1752,7 +1742,7 @@ describe("handleAiTranscriptionCreate", () => {
         "users/2000/ai/transcription/api_key": "",
       },
     });
-    ctx.identity!.process.uid = 0;
+    principalOf(ctx)!.account.uid = 0;
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     (ctx as { procs: KernelTestValue }).procs = {
       get: vi.fn(() => ({
@@ -1850,18 +1840,14 @@ describe("handleAiImageRead", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {
       installationId: TEST_INSTALLATION_ID,
-      identity: {
-        role: "user",
-        process: {
+      peer: testPeer({ kind: "human", account: {
           uid: 1000,
           gid: 1000,
           gids: [1000],
           username: "sam",
           home: "/home/sam",
           cwd: "/home/sam",
-        },
-        capabilities: ["*"],
-      },
+        }, calls: ["*"] }),
       config: makeTestConfig(config),
       env: {
         AI: {
@@ -2019,18 +2005,14 @@ describe("handleAiImageGenerate", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {
       installationId: TEST_INSTALLATION_ID,
-      identity: {
-        role: "user",
-        process: {
+      peer: testPeer({ kind: "human", account: {
           uid: 1000,
           gid: 1000,
           gids: [1000],
           username: "sam",
           home: "/home/sam",
           cwd: "/home/sam",
-        },
-        capabilities: ["*"],
-      },
+        }, calls: ["*"] }),
       config: makeTestConfig(config),
       env: {
         AI: {
@@ -2121,18 +2103,14 @@ describe("handleAiSpeechCreate", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {
       installationId: TEST_INSTALLATION_ID,
-      identity: {
-        role: "user",
-        process: {
+      peer: testPeer({ kind: "human", account: {
           uid: 1000,
           gid: 1000,
           gids: [1000],
           username: "sam",
           home: "/home/sam",
           cwd: "/home/sam",
-        },
-        capabilities: ["*"],
-      },
+        }, calls: ["*"] }),
       config: makeTestConfig(config),
       env: {
         AI: {

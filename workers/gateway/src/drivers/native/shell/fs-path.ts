@@ -1,6 +1,7 @@
 import type { FsCopyEndpoint } from "@humansandmachines/gsv/protocol";
 import type { CommandContext } from "just-bash";
 import type { KernelContext } from "../../../kernel/context";
+import { principalOf } from "../../../kernel/context";
 
 export function parseShellFsEndpoint(
   spec: string,
@@ -39,7 +40,7 @@ function resolveEndpoint(
 }
 
 function knownFsTargets(kernelCtx: KernelContext): string[] {
-  const identity = kernelCtx.identity?.process;
+  const identity = principalOf(kernelCtx)?.account;
   const targets = new Set(["gsv"]);
   if (!identity) {
     return [...targets];

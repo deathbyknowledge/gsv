@@ -26,6 +26,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import { isLocked } from "../auth/shadow";
 import type { KernelContext } from "./context";
+import { principalOf } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import type { AuthStore } from "./auth-store";
 import {
@@ -213,7 +214,7 @@ export async function handleAccountCreate(
   ctx: KernelContext,
 ): Promise<AccountCreateResult> {
   const { auth } = ctx;
-  const caller = ctx.identity;
+  const caller = principalOf(ctx);
   if (!caller) {
     throw new Error("account.create requires an authenticated identity");
   }
@@ -225,7 +226,7 @@ export async function handleAccountCreate(
   }
   if (kind === "human") {
     // Creating human accounts is an administrative action.
-    if (!caller.capabilities.includes("*")) {
+    if (!caller.calls.includes("*")) {
       throw new Error("Creating human accounts requires root");
     }
     const { identity } = await createAccount(ctx, {
@@ -272,12 +273,12 @@ export function handleAccountList(
   ctx: KernelContext,
 ): AccountListResult {
   const { auth } = ctx;
-  const caller = ctx.identity!;
-  const isRoot = caller.process.uid === 0;
+  const caller = principalOf(ctx)!;
+  const isRoot = caller.account.uid === 0;
   const ownerUid = isRoot && args.uid !== undefined
     ? args.uid
     : resolveCallerOwnerUid(ctx);
-  const useRootRunAsBypass = isRoot && ownerUid === caller.process.uid;
+  const useRootRunAsBypass = isRoot && ownerUid === caller.account.uid;
 
   const personalAgentUid = auth.getPersonalAgentUid(ownerUid);
 

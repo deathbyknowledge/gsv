@@ -1,6 +1,7 @@
 type KernelTestValue<T = string | number | boolean | null | undefined> = T;
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { testPeer } from "../../test-support/peers";
 import type { KernelContext } from "../context";
 import { BUILTIN_SKILL_FILES } from "./builtin-skills";
 import { handleSysBootstrap } from "./bootstrap";
@@ -22,18 +23,14 @@ function makeContext(): KernelContext {
       STORAGE: {} as R2Bucket,
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as Env,
-    identity: {
-      role: "user",
-      process: {
+    peer: testPeer({ kind: "human", account: {
         uid: 0,
         gid: 0,
         gids: [0],
         username: "root",
         home: "/root",
         cwd: "/root",
-      },
-      capabilities: ["*"],
-    },
+      }, calls: ["*"] }),
     config: {
       get: vi.fn((key: string) => configValues.get(key) ?? null),
       set: vi.fn((key: string, value: string) => {

@@ -3,6 +3,7 @@ import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { GsvFs } from "../../../fs/gsv-fs";
 import { hasCapability } from "../../../kernel/capabilities";
 import type { KernelContext } from "../../../kernel/context";
+import { principalOf } from "../../../kernel/context";
 import {
   collectFilesystemSkillDocuments,
   collectKernelSkillDocuments,
@@ -161,7 +162,7 @@ export class ShellDiscoveryCatalog {
         );
       const requirements = metadata.requirements ?? [];
       const missing = requirements.filter((capability) =>
-        !hasCapability(this.ctx.identity?.capabilities ?? [], capability)
+        !hasCapability(principalOf(this.ctx)?.calls ?? [], capability)
       );
       const entry: ShellDiscoveryEntry = {
         kind: "command",
@@ -253,7 +254,7 @@ export class ShellDiscoveryCatalog {
   }
 
   private async targetEntries(): Promise<ShellDiscoveryEntry[]> {
-    if (!hasCapability(this.ctx.identity?.capabilities ?? [], "sys.target.list")) {
+    if (!hasCapability(principalOf(this.ctx)?.calls ?? [], "sys.target.list")) {
       return [];
     }
     try {
@@ -276,7 +277,7 @@ export class ShellDiscoveryCatalog {
   }
 
   private integrationEntries(): ShellDiscoveryEntry[] {
-    if (!hasCapability(this.ctx.identity?.capabilities ?? [], "sys.mcp.list")) {
+    if (!hasCapability(principalOf(this.ctx)?.calls ?? [], "sys.mcp.list")) {
       return [];
     }
     try {

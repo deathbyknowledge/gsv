@@ -16,6 +16,7 @@ import type {
 } from "just-bash";
 import { resolveUserPath } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
+import { requirePrincipal } from "../../kernel/context";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
 import {
   DEFAULT_SHELL_EXEC_TIMEOUT_MS,
@@ -45,7 +46,7 @@ export async function handleShellExec(
   ctx: KernelContext,
   options?: NativeShellCommandOptions,
 ): Promise<ShellExecResult> {
-  const identity = ctx.identity!.process;
+  const identity = requirePrincipal(ctx).account;
   if (args.sessionId) {
     return {
       status: "failed",

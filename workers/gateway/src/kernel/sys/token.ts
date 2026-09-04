@@ -1,4 +1,5 @@
 import type { KernelContext } from "../context";
+import { principalOf } from "../context";
 import type { AuthTokenKind } from "../auth-store";
 import type {
   SysTokenCreateArgs,
@@ -17,7 +18,7 @@ const tokenListSchema = z.object({ uid: z.number().optional() });
 const tokenRevokeSchema = z.object({ uid: z.number().optional(), tokenId: z.string().optional(), reason: z.string().optional() });
 
 function requireUid(ctx: KernelContext): number {
-  const uid = ctx.identity?.process.uid;
+  const uid = principalOf(ctx)?.account.uid;
   if (uid === undefined) {
     throw new Error("Authentication required");
   }

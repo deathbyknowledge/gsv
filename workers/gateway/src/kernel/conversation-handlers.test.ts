@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { testPeer } from "../test-support/peers";
 import {
   REQUEST_CANCEL_SIGNAL,
   type ConversationMessage,
@@ -47,18 +48,14 @@ function context(ownerUid = 1000): KernelContext {
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     installationId: "singleton",
-    identity: {
-      role: "user",
-      process: {
+    peer: testPeer({ kind: "human", account: {
         uid: ownerUid,
         gid: ownerUid,
         gids: [ownerUid],
         username: `user-${ownerUid}`,
         home: `/home/user-${ownerUid}`,
         cwd: `/home/user-${ownerUid}`,
-      },
-      capabilities: ["conversation.*"],
-    },
+      }, calls: ["conversation.*"] }),
     connection: {
       id: "connection-1",
       state: { clientId: "desktop-1", clientPlatform: "macos" },

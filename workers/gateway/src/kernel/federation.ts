@@ -67,8 +67,9 @@ import {
   type FsOpenedSource,
 } from "../drivers/native/fs";
 import { isLocked } from "../auth/shadow";
-import type { ConnectionIdentity } from "./identity";
 import type { KernelContext } from "./context";
+import { kernelPeerContext } from "./peer";
+import { principalOf } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import { ensurePersonalController } from "./personal-controller";
 import {
@@ -2025,17 +2026,17 @@ async function openGrantedResource(
     home: account.home,
     cwd: account.home,
   };
-  const identity: ConnectionIdentity = {
-    role: "user",
-    process,
-    capabilities: ctx.caps.resolve(process.gids),
-  };
+  const peer = kernelPeerContext({
+    installationId: ctx.installationId,
+    identity: process,
+    calls: ctx.caps.resolve(process.gids),
+  });
   return await handleFsTransferSend({
     path: grant.source.ref.path,
     revision: grant.source.ref.revision,
   }, {
     ...ctx,
-    identity,
+    peer,
     callerOwnerUid: grant.sourceUid,
   }, crypto.randomUUID());
 }
@@ -2248,7 +2249,7 @@ function ensureLocalSubject(ownerUid: number, ctx: KernelContext): FederationSub
 }
 
 function requireContactCaller(ctx: KernelContext, directHuman: boolean): number {
-  if (ctx.identity?.role !== "user") throw new Error("Contact operations require a user");
+  if (principalOf(ctx)?.kind !== "human") throw new Error("Contact operations require a user");
   const ownerUid = resolveCallerOwnerUid(ctx);
   if (directHuman) {
     const process = ctx.processId ? ctx.procs.get(ctx.processId) : null;

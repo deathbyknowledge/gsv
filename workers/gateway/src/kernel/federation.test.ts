@@ -7,6 +7,7 @@ import {
   jsonValueSchema,
 } from "@humansandmachines/gsv/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { testPeer } from "../test-support/peers";
 import * as conversationHandlers from "./conversation-handlers";
 import type { KernelContext } from "./context";
 import {
@@ -516,7 +517,7 @@ function focusedContext(overrides: Partial<KernelContext>): KernelContext {
       handle: "test",
       canonicalOrigin: "https://local.example",
     },
-    identity: { role: "user", process: OWNER, capabilities: [] },
+    peer: testPeer({ kind: "human", account: OWNER, calls: [] }),
     callerOwnerUid: OWNER.uid,
     connection: {},
     auth: {

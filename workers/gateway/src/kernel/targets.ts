@@ -5,6 +5,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import { hasCapability } from "./capabilities";
 import type { KernelContext } from "./context";
+import { principalOf } from "./context";
 import type { TargetRecord } from "./target-registry";
 import {
   listVisibleAdapterTargets,
@@ -44,7 +45,7 @@ export function listVisibleTargets(
   ctx: KernelContext,
   options: TargetListOptions = {},
 ): TargetDescriptor[] {
-  const identity = ctx.identity?.process;
+  const identity = principalOf(ctx)?.account;
   if (!identity) {
     return [];
   }
@@ -68,7 +69,7 @@ export function getVisibleTarget(
   targetId: string,
   options: TargetListOptions = {},
 ): TargetDescriptor | null {
-  const identity = ctx.identity?.process;
+  const identity = principalOf(ctx)?.account;
   if (!identity || !ctx.targets.canAccess(targetId, identity.uid, identity.gids)) {
     return null;
   }
@@ -98,7 +99,7 @@ export function updateTargetMetadata(
   targetId: string,
   patch: TargetMetadataPatch,
 ): TargetDescriptor | null {
-  const identity = ctx.identity?.process;
+  const identity = principalOf(ctx)?.account;
   if (!identity) {
     throw new Error("Authentication required");
   }

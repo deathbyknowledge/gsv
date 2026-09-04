@@ -5,6 +5,7 @@ import type {
   RepoReadResult,
 } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../../../kernel/context";
+import { principalOf } from "../../../kernel/context";
 import { z } from "zod";
 import { resolveCallerOwnerUid } from "../../../kernel/context";
 import {
@@ -722,7 +723,7 @@ function formatSourceBullet(source: WikiSourceRef): string {
 }
 
 function ownerUsername(ctx: KernelContext): string {
-  const identity = ctx.identity?.process;
+  const identity = principalOf(ctx)?.account;
   if (!identity) {
     throw new Error("identity is required");
   }

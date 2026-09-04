@@ -11,7 +11,8 @@
  *
  */
 
-import { resolveCallerOwnerUid, type KernelContext } from "./context";
+import { principalOf, requirePrincipal, resolveCallerOwnerUid, type KernelContext } from "./context";
+import { peerActingAs } from "./peer";
 import type { FrameBody } from "../protocol/frames";
 import type { Context, Message, Tool } from "@earendil-works/pi-ai";
 import {
@@ -165,8 +166,8 @@ type AiMediaModelConfig = {
 export async function handleAiTools(
   ctx: KernelContext,
 ): Promise<AiToolsResult> {
-  const identity = ctx.identity!;
-  const capabilities = identity.capabilities;
+  const identity = principalOf(ctx)!;
+  const capabilities = identity.calls;
   const canUseMcpTools = hasCapability(capabilities, "sys.mcp.list")
     && hasCapability(capabilities, "sys.mcp.call");
   const mcpUid = resolveCallerOwnerUid(ctx);
@@ -199,7 +200,7 @@ export async function handleAiContext(
   ctx: KernelContext,
 ): Promise<AiContextResult> {
   const config = ctx.config;
-  const uid = ctx.identity?.process.uid ?? 0;
+  const uid = principalOf(ctx)?.account.uid ?? 0;
   const owner = resolveOwnerIdentity(ctx);
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
   const resolveConfig = createAiConfigValueResolver(config, accountConfigUids);
@@ -212,8 +213,8 @@ export async function handleAiContext(
         );
         return undefined;
       });
-  const canUseMcpTools = hasCapability(ctx.identity?.capabilities ?? [], "sys.mcp.list")
-    && hasCapability(ctx.identity?.capabilities ?? [], "sys.mcp.call");
+  const canUseMcpTools = hasCapability(principalOf(ctx)?.calls ?? [], "sys.mcp.list")
+    && hasCapability(principalOf(ctx)?.calls ?? [], "sys.mcp.call");
   const mcpUid = resolveCallerOwnerUid(ctx);
 
   const result: AiContextResult = {
@@ -234,7 +235,7 @@ export async function handleAiConfig(
   ctx: KernelContext,
 ): Promise<AiConfigResult> {
   const config = ctx.config;
-  const uid = ctx.identity?.process.uid ?? 0;
+  const uid = principalOf(ctx)?.account.uid ?? 0;
   const owner = resolveOwnerIdentity(ctx);
   const builtinSkillsReady = ensureBuiltinSkillsForPrompt(ctx, owner);
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
@@ -298,7 +299,7 @@ export async function handleAiConfig(
     skillIndex,
     skillIndexMode,
     accountApprovalPolicy,
-    capabilities: [...(ctx.identity?.capabilities ?? [])],
+    capabilities: [...(principalOf(ctx)?.calls ?? [])],
     maxContextBytes,
     generationTimeoutMs: primary.generationTimeoutMs,
     generationStreaming: primary.generationStreaming,
@@ -314,7 +315,7 @@ async function ensureBuiltinSkillsForPrompt(
   ctx: KernelContext,
   owner: ProcessIdentity | null,
 ): Promise<void> {
-  const identity = owner ?? ctx.identity?.process;
+  const identity = owner ?? principalOf(ctx)?.account;
   if (!ctx.env.RIPGIT || !identity) {
     return;
   }
@@ -376,7 +377,7 @@ export async function handleAiTextGenerate(
 async function inferenceAttribution(
   ctx: KernelContext,
 ): Promise<InferenceAttribution> {
-  const process = ctx.identity?.process;
+  const process = principalOf(ctx)?.account;
   const attribution: InferenceAttribution = {
     installationId: ctx.installationId,
     logicalRequestId: await inferenceLogicalRequestId([
@@ -741,7 +742,7 @@ function resolveOwnerIdentity(ctx: KernelContext): ProcessIdentity | null {
   if (!ctx.processId) return null;
   const ownerUid = ctx.procs.getOwnerUid(ctx.processId);
   if (ownerUid === null) return null;
-  const runAsUid = ctx.identity?.process.uid;
+  const runAsUid = principalOf(ctx)?.account.uid;
   if (ownerUid === runAsUid) return null;
 
   const entry = ctx.auth.getPasswdByUid(ownerUid);
@@ -1045,28 +1046,25 @@ function resolveAiTranscriptionProcessContext(
     throw new Error(`Process not found: ${pid}`);
   }
   const callerOwnerUid = resolveCallerOwnerUid(ctx);
-  if (process.ownerUid !== callerOwnerUid && ctx.identity!.process.uid !== 0) {
+  if (process.ownerUid !== callerOwnerUid && requirePrincipal(ctx).account.uid !== 0) {
     throw new Error(`Permission denied: cannot access process ${pid}`);
   }
   return {
     ...ctx,
     processId: pid,
-    identity: {
-      ...ctx.identity!,
-      process: {
-        uid: process.uid,
-        gid: process.gid,
-        gids: process.gids,
-        username: process.username,
-        home: process.home,
-        cwd: process.cwd,
-      },
-    },
+    peer: peerActingAs(ctx.peer!, {
+      uid: process.uid,
+      gid: process.gid,
+      gids: process.gids,
+      username: process.username,
+      home: process.home,
+      cwd: process.cwd,
+    }),
   };
 }
 
 function resolveAiMediaConfigForContext(ctx: KernelContext): NonNullable<AiConfigResult["media"]> {
-  const uid = ctx.identity?.process.uid ?? 0;
+  const uid = principalOf(ctx)?.account.uid ?? 0;
   const owner = resolveOwnerIdentity(ctx);
   return resolveAiMediaConfig(ctx.config, resolveAiConfigAccountUids(uid, owner));
 }

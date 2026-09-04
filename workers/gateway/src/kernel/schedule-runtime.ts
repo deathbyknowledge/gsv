@@ -6,9 +6,6 @@ import type {
   SchedulerRunArgs,
   SchedulerRunResult,
 } from "@humansandmachines/gsv/protocol";
-import type {
-  ConnectionIdentity,
-} from "./identity";
 import {
   hasCapability,
 } from "./capabilities";
@@ -20,6 +17,7 @@ import {
 import type {
   KernelContext,
 } from "./context";
+import { principalOf, type PrincipalView } from "./context";
 import {
   kernelPeerContext,
 } from "./peer";
@@ -153,8 +151,8 @@ async onScheduleDue(scheduleId: string, wake?: { id?: string }): Promise<void> {
 
 async runSchedules(
     args: SchedulerRunArgs,
-    identity?: ConnectionIdentity,
-    callerOwnerUid = identity?.process.uid,
+    identity?: PrincipalView,
+    callerOwnerUid = identity?.account.uid,
   ): Promise<SchedulerRunResult> {
     const mode = args.mode ?? "due";
     if (mode === "force" && !args.id) {
@@ -304,7 +302,7 @@ async dispatchScheduleTarget(
         : occurrenceKey,
     };
     if (target.kind === "command.exec") {
-      if (!hasCapability(ctx.identity?.capabilities ?? [], "shell.exec")) {
+      if (!hasCapability(principalOf(ctx)?.calls ?? [], "shell.exec")) {
         throw new Error("Permission denied: shell.exec");
       }
       const deps = this.host.buildDispatchDeps();
@@ -335,7 +333,7 @@ async dispatchScheduleTarget(
     }
 
     if (target.kind === "process.spawn") {
-      if (!hasCapability(ctx.identity?.capabilities ?? [], "proc.spawn")) {
+      if (!hasCapability(principalOf(ctx)?.calls ?? [], "proc.spawn")) {
         throw new Error("Permission denied: proc.spawn");
       }
       const runAs = this.resolveScheduledSpawnRunAs(record, target.runAs);
@@ -358,7 +356,7 @@ async dispatchScheduleTarget(
     }
 
     if (target.kind === "adapter.send") {
-      if (!hasCapability(ctx.identity?.capabilities ?? [], "adapter.send")) {
+      if (!hasCapability(principalOf(ctx)?.calls ?? [], "adapter.send")) {
         throw new Error("Permission denied: adapter.send");
       }
       const delivery = await deliverAdapterDestination(
@@ -388,7 +386,7 @@ async dispatchScheduleTarget(
     }
 
     if (target.kind === "responsibility") {
-      if (!hasCapability(ctx.identity?.capabilities ?? [], "r12y.create")) {
+      if (!hasCapability(principalOf(ctx)?.calls ?? [], "r12y.create")) {
         throw new Error("Permission denied: r12y.create");
       }
       const responsibilityId = this.createScheduleResponsibility(
@@ -405,12 +403,12 @@ async dispatchScheduleTarget(
     }
 
     if (target.kind === "process.event") {
-      if (!hasCapability(ctx.identity?.capabilities ?? [], "proc.send")) {
+      if (!hasCapability(principalOf(ctx)?.calls ?? [], "proc.send")) {
         throw new Error("Permission denied: proc.send");
       }
       if (
         target.replyTo
-        && !hasCapability(ctx.identity?.capabilities ?? [], "adapter.send")
+        && !hasCapability(principalOf(ctx)?.calls ?? [], "adapter.send")
       ) {
         throw new Error("Permission denied: adapter.send");
       }
@@ -422,7 +420,7 @@ async dispatchScheduleTarget(
         throw new Error(`Permission denied: schedule ${record.id} cannot access process ${target.pid}`);
       }
       if (proc.isPersonalController) {
-        if (!hasCapability(ctx.identity?.capabilities ?? [], "r12y.create")) {
+        if (!hasCapability(principalOf(ctx)?.calls ?? [], "r12y.create")) {
           throw new Error("Permission denied: r12y.create");
         }
         return {

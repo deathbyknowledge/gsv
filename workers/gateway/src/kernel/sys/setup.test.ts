@@ -375,8 +375,12 @@ describe("handleSysSetup", () => {
     expect(handleSysBootstrapMock).toHaveBeenCalledWith(
       undefined,
       expect.objectContaining({
-        identity: expect.objectContaining({
-          process: expect.objectContaining({ username: "alice" }),
+        peer: expect.objectContaining({
+          peer: expect.objectContaining({
+            principal: expect.objectContaining({
+              account: expect.objectContaining({ username: "alice" }),
+            }),
+          }),
         }),
       }),
     );

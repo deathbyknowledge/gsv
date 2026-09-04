@@ -25,7 +25,7 @@ import {
   emitTelemetry,
 } from "@humansandmachines/gsv/telemetry";
 import * as z from "zod/mini";
-import {
+import { principalOf,
   type KernelContext,
 } from "./context";
 import type {
@@ -239,8 +239,8 @@ async function handleAdapterInboundOwned(
   ctx: KernelContext,
   body: BinaryBody | undefined,
 ): Promise<AdapterInboundSyscallResult> {
-  const identity = ctx.identity;
-  if (!identity || identity.role !== "service") {
+  const identity = principalOf(ctx);
+  if (!identity || identity.kind !== "service") {
     throw new Error("adapter.inbound requires a service identity");
   }
 
@@ -972,7 +972,6 @@ async function handleAdapterCommand(args: {
       {
         ...ctx,
         peer,
-        identity: peer.identity,
         callerOwnerUid: uid,
       },
       ctx.requestSignal,

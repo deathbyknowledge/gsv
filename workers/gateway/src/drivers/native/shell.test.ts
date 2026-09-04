@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { testPeer } from "../../test-support/peers";
 import { env } from "cloudflare:workers";
 import { Bash } from "just-bash";
 import {
@@ -347,11 +348,7 @@ function makeContext(options?: {
       options?.conversations ?? {},
     ),
     connection: null,
-    identity: {
-      role: "user",
-      process: identity,
-      capabilities: options?.capabilities ?? ["repo.refs", "repo.log"],
-    },
+    peer: testPeer({ kind: "human", account: identity, calls: options?.capabilities ?? ["repo.refs", "repo.log"] }),
     processId: options?.processId === null ? undefined : options?.processId ?? "task:shell",
     processRunId: options?.processRunId,
     requestSignal: options?.requestSignal,

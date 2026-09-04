@@ -1,6 +1,7 @@
 type KernelTestValue<T = string | number | boolean | null | undefined> = T;
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { testPeer } from "../test-support/peers";
 
 import * as utils from "../shared/utils";
 import * as personalController from "./personal-controller";
@@ -959,18 +960,6 @@ describe("Kernel nested dispatch", () => {
           grant: { calls: ["shell.exec"], signals: [], implements: [] },
         },
         provenance: { kind: "credential", method: "token" },
-      },
-      identity: {
-        role: "user",
-        process: {
-          uid: 1000,
-          gid: 1000,
-          gids: [1000],
-          username: "sam",
-          home: "/home/sam",
-          cwd: "/home/sam",
-        },
-        capabilities: ["shell.exec"],
       },
       targets: {
         canAccess: vi.fn(() => true),
@@ -2737,10 +2726,7 @@ describe("Kernel scheduled process reply routes", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = bareKernel();
     kernel.scheduleRuntime.buildScheduleContext = vi.fn(() => ({
-      identity: {
-        role: "user",
-        capabilities: ["proc.send", "adapter.send"],
-      },
+      peer: testPeer({ kind: "human", account: { uid: 0, gid: 0, gids: [0], username: "root", home: "/root", cwd: "/root" }, calls: ["proc.send", "adapter.send"] }),
       adapters: {
         identityLinks: {
           get: vi.fn(() => ({
@@ -2787,7 +2773,7 @@ describe("Kernel scheduled process reply routes", () => {
     // SAFETY: test fixture is constructed with the asserted Kernel internals.
     const kernel = bareKernel();
     kernel.ctx = { waitUntil };
-    kernel.scheduleRuntime.buildScheduleContext = vi.fn(() => ({ identity: { capabilities: ["r12y.create"] } }));
+    kernel.scheduleRuntime.buildScheduleContext = vi.fn(() => ({ peer: testPeer({ kind: "human", account: { uid: 0, gid: 0, gids: [0], username: "root", home: "/root", cwd: "/root" }, calls: ["r12y.create"] }) }));
     kernel.responsibilities = { create };
     kernel.responsibilityRuntime.reconcileResponsibilityWake = vi.fn(async () => {});
     const record = {
@@ -2846,7 +2832,7 @@ describe("Kernel scheduled process reply routes", () => {
     const kernel = bareKernel();
     kernel.ctx = { waitUntil: vi.fn() };
     kernel.scheduleRuntime.buildScheduleContext = vi.fn(() => ({
-      identity: { capabilities: ["adapter.send", "proc.send", "r12y.create"] },
+      peer: testPeer({ kind: "human", account: { uid: 0, gid: 0, gids: [0], username: "root", home: "/root", cwd: "/root" }, calls: ["adapter.send", "proc.send", "r12y.create"] }),
     }));
     kernel.procs = { get: vi.fn(() => ({ ownerUid: 1000, isPersonalController: true })) };
     kernel.responsibilities = { create };

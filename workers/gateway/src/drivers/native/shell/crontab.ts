@@ -3,6 +3,7 @@ import type { ExecResult } from "just-bash";
 import { GsvFs } from "../../../fs/gsv-fs";
 import { createCronFileService } from "../../../kernel/crontab";
 import type { KernelContext } from "../../../kernel/context";
+import { requirePrincipal } from "../../../kernel/context";
 import { requireCommandCapability } from "./common";
 
 export function buildCrontabCommand(fs: GsvFs, ctx: KernelContext) {
@@ -75,7 +76,7 @@ type ParsedCrontabArgs = {
 };
 
 function parseCrontabArgs(args: string[], ctx: KernelContext): ParsedCrontabArgs {
-  let username = ctx.identity!.process.username;
+  let username = requirePrincipal(ctx).account.username;
   let action: "install" | "list" | "remove" | "edit" | null = null;
   let file = "";
 

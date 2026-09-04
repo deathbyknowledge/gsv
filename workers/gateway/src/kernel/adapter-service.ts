@@ -30,7 +30,7 @@ import type {
   AdapterTargetResponseFrame,
 } from "@humansandmachines/gsv/services/adapters";
 import * as z from "zod/mini";
-import {
+import { principalOf,
   resolveCallerOwnerUid,
   type KernelContext,
 } from "./context";
@@ -238,8 +238,8 @@ function visibleAdapterAccounts(
   adapter: string | undefined,
   accountId: string | undefined,
 ): Array<{ adapter: string; accountId: string }> {
-  const identity = ctx.identity;
-  if (!identity || identity.role !== "user") {
+  const identity = principalOf(ctx);
+  if (!identity || identity.kind !== "human") {
     return [];
   }
 
@@ -272,22 +272,22 @@ function visibleAdapterAccounts(
 }
 
 function canSeeAllAdapterStatuses(ctx: KernelContext): boolean {
-  const identity = ctx.identity;
+  const identity = principalOf(ctx);
   if (!identity) {
     return false;
   }
-  if (identity.role === "service") {
+  if (identity.kind === "service") {
     return true;
   }
-  return identity.role === "user" && resolveCallerOwnerUid(ctx) === 0;
+  return identity.kind === "human" && resolveCallerOwnerUid(ctx) === 0;
 }
 
 export function handleAdapterStateUpdate(
   args: AdapterStateUpdateArgs,
   ctx: KernelContext,
 ): AdapterStateUpdateResult {
-  const identity = ctx.identity;
-  if (!identity || identity.role !== "service") {
+  const identity = principalOf(ctx);
+  if (!identity || identity.kind !== "service") {
     throw new Error("adapter.state.update requires a service identity");
   }
 

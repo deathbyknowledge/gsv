@@ -18,6 +18,7 @@ import {
 import type { GsvFs } from "../../../fs/gsv-fs";
 import { hasCapability } from "../../../kernel/capabilities";
 import type { KernelContext } from "../../../kernel/context";
+import { principalOf } from "../../../kernel/context";
 import {
   deliverAdapterDestination,
 } from "../../../kernel/adapter-send";
@@ -307,7 +308,7 @@ async function showCurrentReplyDestination(
 
 async function listDestinations(args: string[], ctx: KernelContext): Promise<ExecResult> {
   const flags = parseOnlyFlags(args, new Set(["--json", "--all"]));
-  const capabilities = ctx.identity?.capabilities ?? [];
+  const capabilities = principalOf(ctx)?.calls ?? [];
   const canListAdapters = hasCapability(capabilities, "adapter.send");
   const canListContacts = hasCapability(capabilities, "contact.list");
   if (!canListAdapters && !canListContacts) {

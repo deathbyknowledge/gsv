@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { testPeer } from "../test-support/peers";
+import type { PeerContext } from "./peer";
+import { principalOf } from "./context";
 import type { KernelContext } from "./context";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
-import type { ConnectionIdentity } from "./identity";
 import {
   ensurePersonalAgent,
   handleAccountCreate,
@@ -140,7 +142,7 @@ function createCtx() {
     }),
   };
 
-  function ctxFor(identity: ConnectionIdentity, options: { ripgit?: boolean } = {}): KernelContext {
+  function ctxFor(peer: PeerContext, options: { ripgit?: boolean } = {}): KernelContext {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -160,7 +162,7 @@ function createCtx() {
       responsibilities: {
         create: createResponsibility,
       } as KernelContext["responsibilities"],
-      identity,
+      peer,
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
   }
@@ -195,7 +197,7 @@ function provisionExistingPersonalAgent(
   state.personalAgents.set(1000, 2000);
 }
 
-function userIdentity(uid: number, username: string, capabilities: string[]): ConnectionIdentity {
+function userIdentity(uid: number, username: string, capabilities: string[]): PeerContext {
   const process: ProcessIdentity = {
     uid,
     gid: uid,
@@ -204,7 +206,7 @@ function userIdentity(uid: number, username: string, capabilities: string[]): Co
     home: `/home/${username}`,
     cwd: `/home/${username}`,
   };
-  return { role: "user", process, capabilities };
+  return testPeer({ account: process, calls: capabilities });
 }
 
 describe("handleAccountCreate", () => {
@@ -467,7 +469,7 @@ describe("handleAccountCreate", () => {
     );
     const ctx = state.ctxFor(userIdentity(1000, "alice", ["account.create"]), { ripgit: true });
 
-    const result = await ensurePersonalAgent(ctx, ctx.identity!.process);
+    const result = await ensurePersonalAgent(ctx, principalOf(ctx)!.account);
 
     expect(result.created).toBe(false);
     expect(state.auth.updateUser).toHaveBeenCalledWith("friday", { gecos: "Friday" });
@@ -497,7 +499,7 @@ describe("handleAccountCreate", () => {
     );
     const ctx = state.ctxFor(userIdentity(1000, "alice", ["account.create"]), { ripgit: true });
 
-    const result = await ensurePersonalAgent(ctx, ctx.identity!.process);
+    const result = await ensurePersonalAgent(ctx, principalOf(ctx)!.account);
 
     expect(result.created).toBe(false);
     expect(state.ripgitApplyBodies.flatMap((body) => body.ops)).toContainEqual({
@@ -522,7 +524,7 @@ describe("handleAccountCreate", () => {
     });
     const ctx = state.ctxFor(userIdentity(1000, "alice", ["account.create"]), { ripgit: true });
 
-    await expect(ensurePersonalAgent(ctx, ctx.identity!.process))
+    await expect(ensurePersonalAgent(ctx, principalOf(ctx)!.account))
       .rejects.toThrow("responsibility write failed");
 
     expect(state.ripgitApplyBodies.flatMap((body) => body.ops)).not.toContainEqual({

@@ -39,7 +39,6 @@ import type {
   ProcessIdentity,
   SysTargetDeleteResult,
 } from "@humansandmachines/gsv/protocol";
-import type { ConnectionIdentity } from "./identity";
 import {
   adapterSurfaceSchema,
 } from "@humansandmachines/gsv/protocol";
@@ -70,8 +69,10 @@ import {
 import { dispatch, type DispatchDeps } from "./dispatch";
 import { raceWithAbort } from "../shared/abort";
 import type { KernelContext } from "./context";
+import { requirePrincipal } from "./context";
 import {
   connectedPeerContext,
+  httpPeerContext,
   delegatedAdapterPeerContext,
   peerAllowsCall,
   type PeerContext,
@@ -811,7 +812,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       }
       if (
         options.internalPurpose !== "model-transport" &&
-        !hasCapability(ctx.identity!.capabilities, "net.fetch")
+        !hasCapability(requirePrincipal(ctx).calls, "net.fetch")
       ) {
         throw new Error("Permission denied: net.fetch");
       }
@@ -941,7 +942,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
         calls,
       });
       const ctx = this.buildKernelContext({
-        identity: peer.identity,
         peer,
         callerOwnerUid: link.uid,
       });
@@ -1134,16 +1134,13 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
       if (auth.ok) {
         const capabilities = this.caps.resolve(auth.identity.gids);
-        const identity: ConnectionIdentity = {
-          role: "user",
-          process: {
-            ...auth.identity,
-            cwd: auth.identity.home,
-          },
-          capabilities,
-        };
+        const peer = httpPeerContext({
+          installationId: this.installationId,
+          identity: { ...auth.identity, cwd: auth.identity.home },
+          calls: capabilities,
+        });
         const repoRef = `${owner}/${repo}`;
-        const repoCtx = this.buildKernelContext({ identity });
+        const repoCtx = this.buildKernelContext({ peer });
 
         if (input.write) {
           if (!canWriteRepo(repoRef, repoCtx)) {
@@ -1213,7 +1210,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       return errFrame(frame.id, 400, `${frame.call} is not supported via serviceFrame`);
     }
 
-    const identity = this.buildServiceBindingIdentity(profile);
+    const identity = this.buildServiceBindingIdentity();
     if (!identity) {
       return errFrame(frame.id, 503, "Service identity is not configured");
     }
@@ -1225,7 +1222,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       installationId: this.installationId,
       profile,
       sessionId: `service:${profile.id}`,
-      identity,
+      account: identity,
     });
     const ctx = this.buildKernelContext({ peer });
     return await this.dispatchPeerRequest(
@@ -1252,7 +1249,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
   buildKernelContext(options: {
     connection?: KernelConnection<ConnectionState> | null;
     peer?: PeerContext;
-    identity?: ConnectionIdentity;
     processId?: string;
     processRunId?: string;
     requestSignal?: AbortSignal;
@@ -1285,7 +1281,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
       federationIdentity: this.federationIdentity,
       connection: options.connection ?? null,
       peer: options.peer,
-      identity: options.identity ?? options.peer?.identity,
       processId: options.processId,
       processRunId: options.processRunId,
       requestSignal: options.requestSignal,
@@ -1483,24 +1478,19 @@ export class Kernel extends DurableObject<GatewayEnv> {
     );
   }
 
-            buildServiceBindingIdentity(profile: ServicePeerProfile): ConnectionIdentity | null {
+            buildServiceBindingIdentity(): ProcessIdentity | null {
     const root = this.auth.getPasswdByUid(0);
     if (!root) {
       return null;
     }
 
     return {
-      role: "service",
-      process: {
-        uid: root.uid,
-        gid: root.gid,
-        gids: this.auth.resolveGids(root.username, root.gid),
-        username: root.username,
-        home: root.home,
-        cwd: root.home,
-      },
-      capabilities: this.caps.resolve([102]),
-      channel: profile.id,
+      uid: root.uid,
+      gid: root.gid,
+      gids: this.auth.resolveGids(root.username, root.gid),
+      username: root.username,
+      home: root.home,
+      cwd: root.home,
     };
   }
 

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { testPeer } from "../../../test-support/peers";
 import { InMemoryFs } from "just-bash";
 import {
   bodyFromBytes,
@@ -29,11 +30,7 @@ const IDENTITY: ProcessIdentity = {
 
 // SAFETY: media command tests exercise only identity and capability reads from this minimal context.
 const CTX = {
-  identity: {
-    role: "user",
-    process: IDENTITY,
-    capabilities: ["*"],
-  },
+  peer: testPeer({ kind: "human", account: IDENTITY, calls: ["*"] }),
 // SAFETY: The media command only reads the process identity and capabilities from this fixture.
 } as KernelContext;
 

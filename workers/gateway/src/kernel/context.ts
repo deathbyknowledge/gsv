@@ -10,6 +10,8 @@ import type {
   FederationDeliveryReceipt,
   JsonObject,
   JsonValue,
+  PeerPrincipalKind,
+  ProcessIdentity,
   SchedulerRunArgs,
   SchedulerRunResult,
 } from "@humansandmachines/gsv/protocol";
@@ -37,7 +39,6 @@ import type { InstallationIdentity } from "../installation/identity";
 import type { KernelConnection, KernelConnectionState } from "./connection";
 import type { PeerContext } from "./peer";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
-import type { ConnectionIdentity } from "./identity";
 import type { GatewayEnv } from "../runtime-env";
 
 export type KernelContext = {
@@ -66,7 +67,6 @@ export type KernelContext = {
   federationIdentity: FederationIdentity;
   connection: KernelConnection<KernelConnectionState> | null;
   peer?: PeerContext;
-  identity?: ConnectionIdentity;
   processId?: string;
   processRunId?: string;
   requestId?: string;
@@ -114,7 +114,7 @@ export type KernelContext = {
   ) => Promise<Value>;
   runSchedules: (
     args: SchedulerRunArgs,
-    identity?: ConnectionIdentity,
+    principal?: PrincipalView,
     callerOwnerUid?: number,
   ) => Promise<SchedulerRunResult>;
   addMcpServerConnection: (input: McpAddConnectionInput) => Promise<McpAddConnectionResult>;
@@ -137,8 +137,36 @@ export type CallerOwnerContext = {
   callerOwnerUid?: number;
   processId?: string;
   procs: Pick<ProcessRegistry, "getOwnerUid">;
-  identity?: ConnectionIdentity;
+  peer?: PeerContext;
 };
+
+/**
+ * The acting principal as syscall handlers see it: who is acting, as which
+ * account, with which calls, and which peer id carries the session.
+ */
+export type PrincipalView = {
+  kind: PeerPrincipalKind;
+  account: ProcessIdentity;
+  calls: string[];
+  peerId: string;
+};
+
+export function principalOf(ctx: Pick<KernelContext, "peer">): PrincipalView | undefined {
+  const peer = ctx.peer;
+  if (!peer) return undefined;
+  return {
+    kind: peer.peer.principal.kind,
+    account: peer.peer.principal.account,
+    calls: peer.peer.grant.calls,
+    peerId: peer.peer.id,
+  };
+}
+
+export function requirePrincipal(ctx: Pick<KernelContext, "peer">): PrincipalView {
+  const principal = principalOf(ctx);
+  if (!principal) throw new Error("Authentication required");
+  return principal;
+}
 
 /**
  * The human owner uid for the caller: the owning human of the calling process
@@ -156,5 +184,5 @@ export function resolveCallerOwnerUid(ctx: CallerOwnerContext): number {
     const ownerUid = ctx.procs.getOwnerUid(ctx.processId);
     if (ownerUid != null) return ownerUid;
   }
-  return ctx.identity!.process.uid;
+  return requirePrincipal(ctx).account.uid;
 }

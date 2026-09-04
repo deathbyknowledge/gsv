@@ -19,7 +19,7 @@ import {
   emitTelemetry,
 } from "@humansandmachines/gsv/telemetry";
 import * as z from "zod/mini";
-import {
+import { principalOf,
   resolveCallerOwnerUid,
   type KernelContext,
 } from "./context";
@@ -416,17 +416,17 @@ function canSendToAdapterSurface(
   accountId: string,
   surface: AdapterSurface,
 ): boolean {
-  const identity = ctx.identity;
+  const identity = principalOf(ctx);
   if (!identity) {
     return false;
   }
-  if (identity.role === "service") {
+  if (identity.kind === "service") {
     return true;
   }
-  if (identity.role !== "user") {
+  if (identity.kind !== "human") {
     return false;
   }
-  if (identity.process.uid === 0) {
+  if (identity.account.uid === 0) {
     return true;
   }
   const ownerUid = resolveCallerOwnerUid(ctx);

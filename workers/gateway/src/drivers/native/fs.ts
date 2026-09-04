@@ -15,6 +15,7 @@ import {
   inferContentType,
 } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
+import { requirePrincipal } from "../../kernel/context";
 import type { FrameBody, ResponseOkFrame } from "../../protocol/frames";
 import type { FsReadArgs, FsReadResult } from "../../syscalls/read";
 import type { FsWriteArgs, FsWriteResult } from "../../syscalls/write";
@@ -122,7 +123,7 @@ export async function openFsSource(
 }
 
 function resolve(path: string, ctx: KernelContext): string {
-  const identity = ctx.identity!.process;
+  const identity = requirePrincipal(ctx).account;
   return resolveUserPath(path, identity.home, identity.cwd);
 }
 
@@ -999,7 +1000,7 @@ function assertCanAccessCopyEndpoint(
     if (access === "destination") throw new Error("Contact resources are read-only");
     return;
   }
-  const identity = ctx.identity!.process;
+  const identity = requirePrincipal(ctx).account;
   if (!ctx.targets.canAccess(endpoint.target, identity.uid, identity.gids)) {
     throw new Error(`Access denied to device: ${endpoint.target}`);
   }
@@ -1064,7 +1065,7 @@ export async function handleFsSearch(
     return { ok: false, error: "Search query is required." };
   }
 
-  const identity = ctx.identity!.process;
+  const identity = requirePrincipal(ctx).account;
   const prefix = args.path
     ? resolveUserPath(args.path, identity.home, identity.cwd)
     : identity.cwd;

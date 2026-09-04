@@ -1,6 +1,7 @@
 type KernelTestValue<T = string | number | boolean | null | undefined> = T;
 
 import { describe, expect, it, vi } from "vitest";
+import { testPeer } from "../test-support/peers";
 import { dispatch, routedFrameTtlMs, type DispatchDeps } from "./dispatch";
 import type { KernelContext } from "./context";
 import type { RequestFrame } from "../protocol/frames";
@@ -54,15 +55,13 @@ function operationPeer(
 function makeContext(): KernelContext {
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
-    identity: {
-      process: {
+    peer: testPeer({ kind: "human", account: {
         uid: 1000,
         gid: 1000,
         gids: [1000],
         username: "sam",
         home: "/home/sam",
-      },
-    },
+      } }),
     targets: {
       canAccess: vi.fn(() => true),
       get: vi.fn(() => deviceRecord("macbook", false)),
@@ -651,6 +650,7 @@ describe("dispatch", () => {
         canAccess: vi.fn(() => false),
         get: vi.fn(() => null),
       },
+      adapters: { identityLinks: { list: vi.fn(() => []) } },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
 

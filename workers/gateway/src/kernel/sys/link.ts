@@ -1,4 +1,5 @@
-import type { KernelContext } from "../context";
+import type { KernelContext, PrincipalView } from "../context";
+import { principalOf } from "../context";
 import type {
   SysLinkArgs,
   SysLinkConsumeArgs,
@@ -9,20 +10,19 @@ import type {
   SysUnlinkArgs,
   SysUnlinkResult,
 } from "@humansandmachines/gsv/protocol";
-import type { UserIdentity } from "../identity";
 
 export function handleSysLinkConsume(
   args: SysLinkConsumeArgs,
   ctx: KernelContext,
 ): SysLinkConsumeResult {
-  const identity = requireUserIdentity(ctx);
+  const identity = requirePrincipalView(ctx);
 
   const code = args.code.trim().toUpperCase();
   if (!code) {
     throw new Error("code is required");
   }
 
-  const challenge = ctx.adapters.linkChallenges.consume(code, identity.process.uid);
+  const challenge = ctx.adapters.linkChallenges.consume(code, identity.account.uid);
   if (!challenge) {
     throw new Error("Invalid or expired link code");
   }
@@ -31,8 +31,8 @@ export function handleSysLinkConsume(
     challenge.adapter,
     challenge.accountId,
     challenge.actorId,
-    identity.process.uid,
-    identity.process.uid,
+    identity.account.uid,
+    identity.account.uid,
     { code: challenge.code, surfaceKind: challenge.surfaceKind, surfaceId: challenge.surfaceId },
   );
 
@@ -52,8 +52,8 @@ export function handleSysLink(
   args: SysLinkArgs,
   ctx: KernelContext,
 ): SysLinkResult {
-  const identity = requireUserIdentity(ctx);
-  if (identity.process.uid !== 0) {
+  const identity = requirePrincipalView(ctx);
+  if (identity.account.uid !== 0) {
     throw new Error("Permission denied: manual links require root");
   }
 
@@ -67,7 +67,7 @@ export function handleSysLink(
     accountId,
     actorId,
     targetUid,
-    identity.process.uid,
+    identity.account.uid,
   );
 
   return {
@@ -86,7 +86,7 @@ export function handleSysUnlink(
   args: SysUnlinkArgs,
   ctx: KernelContext,
 ): SysUnlinkResult {
-  const identity = requireUserIdentity(ctx);
+  const identity = requirePrincipalView(ctx);
 
   const adapter = normalizeRequired(args.adapter, "adapter");
   const accountId = normalizeRequired(args.accountId, "accountId");
@@ -101,7 +101,7 @@ export function handleSysUnlink(
     throw new Error("Managed adapter identities must be disconnected through adapter pairing");
   }
 
-  if (identity.process.uid !== 0 && existing.uid !== identity.process.uid) {
+  if (identity.account.uid !== 0 && existing.uid !== identity.account.uid) {
     throw new Error("Permission denied");
   }
 
@@ -114,16 +114,16 @@ export function handleSysLinkList(
   args: SysLinkListArgs,
   ctx: KernelContext,
 ): SysLinkListResult {
-  const identity = requireUserIdentity(ctx);
+  const identity = requirePrincipalView(ctx);
 
   let uidFilter: number | undefined;
   if (args.uid !== undefined) {
-    if (identity.process.uid !== 0 && args.uid !== identity.process.uid) {
+    if (identity.account.uid !== 0 && args.uid !== identity.account.uid) {
       throw new Error("Permission denied");
     }
     uidFilter = args.uid;
-  } else if (identity.process.uid !== 0) {
-    uidFilter = identity.process.uid;
+  } else if (identity.account.uid !== 0) {
+    uidFilter = identity.account.uid;
   }
 
   const links = ctx.adapters.identityLinks.list(uidFilter).map((link) => ({
@@ -138,22 +138,22 @@ export function handleSysLinkList(
   return { links };
 }
 
-function requireUserIdentity(ctx: KernelContext): UserIdentity {
-  const identity = ctx.identity;
-  if (!identity || identity.role !== "user") {
+function requirePrincipalView(ctx: KernelContext): PrincipalView {
+  const identity = principalOf(ctx);
+  if (!identity || identity.kind !== "human") {
     throw new Error("Authentication required");
   }
   return identity;
 }
 
-function resolveTargetUid(identity: UserIdentity, requestedUid: number | undefined): number {
+function resolveTargetUid(identity: PrincipalView, requestedUid: number | undefined): number {
   if (requestedUid === undefined) {
-    return identity.process.uid;
+    return identity.account.uid;
   }
-  if (requestedUid === identity.process.uid) {
+  if (requestedUid === identity.account.uid) {
     return requestedUid;
   }
-  if (identity.process.uid === 0) {
+  if (identity.account.uid === 0) {
     return requestedUid;
   }
   throw new Error("Permission denied");

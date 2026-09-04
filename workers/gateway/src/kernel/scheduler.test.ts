@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { principalOf } from "./context";
+import { testPeer } from "../test-support/peers";
 import { env } from "cloudflare:workers";
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { getDurableObjectByName } from "../shared/durable-object";
@@ -142,11 +144,7 @@ function makeScheduleRecord(partial: Partial<ScheduleRecord> = {}): ScheduleReco
 function makeSchedulerContext(overrides: Partial<KernelContext> = {}): KernelContext {
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
-    identity: {
-      role: "user",
-      process: USER_IDENTITY,
-      capabilities: ["*"],
-    },
+    peer: testPeer({ kind: "human", account: USER_IDENTITY, calls: ["*"] }),
     config: {
       get: vi.fn(() => "UTC"),
     },
@@ -700,11 +698,7 @@ describe("scheduler", () => {
     };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
-      identity: {
-        role: "user",
-        process: USER_IDENTITY,
-        capabilities: ["*"],
-      },
+      peer: testPeer({ kind: "human", account: USER_IDENTITY, calls: ["*"] }),
       config: {
         get: vi.fn(() => "Europe/Amsterdam"),
       },
@@ -831,11 +825,7 @@ describe("scheduler", () => {
   it("requires shell.exec access for command schedules", async () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = makeSchedulerContext({
-      identity: {
-        role: "user",
-        process: USER_IDENTITY,
-        capabilities: ["sched.add"],
-      },
+      peer: testPeer({ kind: "human", account: USER_IDENTITY, calls: ["sched.add"] }),
       schedules: {
         create: vi.fn(),
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -852,11 +842,7 @@ describe("scheduler", () => {
   it("requires proc.spawn access for process spawn schedules", async () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = makeSchedulerContext({
-      identity: {
-        role: "user",
-        process: USER_IDENTITY,
-        capabilities: ["sched.add"],
-      },
+      peer: testPeer({ kind: "human", account: USER_IDENTITY, calls: ["sched.add"] }),
       schedules: {
         create: vi.fn(),
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -873,11 +859,7 @@ describe("scheduler", () => {
   it("requires proc.send access for process event schedules", async () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = makeSchedulerContext({
-      identity: {
-        role: "user",
-        process: USER_IDENTITY,
-        capabilities: ["sched.add"],
-      },
+      peer: testPeer({ kind: "human", account: USER_IDENTITY, calls: ["sched.add"] }),
       procs: {
         get: vi.fn(() => ({
           processId: "proc:target",
@@ -915,11 +897,7 @@ describe("scheduler", () => {
       updatedAtMs: input.now,
     }));
     const ctx = makeSchedulerContext({
-      identity: {
-        role: "user",
-        process: USER_IDENTITY,
-        capabilities: ["sched.add", "r12y.create"],
-      },
+      peer: testPeer({ kind: "human", account: USER_IDENTITY, calls: ["sched.add", "r12y.create"] }),
       // SAFETY: this focused process-registry double implements the only lookup the handler uses.
       procs: {
         get: vi.fn(() => ({
@@ -958,11 +936,7 @@ describe("scheduler", () => {
   it("requires r12y.create access for responsibility schedules", async () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = makeSchedulerContext({
-      identity: {
-        role: "user",
-        process: USER_IDENTITY,
-        capabilities: ["sched.add"],
-      },
+      peer: testPeer({ kind: "human", account: USER_IDENTITY, calls: ["sched.add"] }),
       schedules: {
         create: vi.fn(),
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -1001,11 +975,7 @@ describe("scheduler", () => {
     const list = vi.fn(() => ({ records: [], count: 0 }));
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = makeSchedulerContext({
-      identity: {
-        role: "user",
-        process: PERSONAL_AGENT_IDENTITY,
-        capabilities: ["*"],
-      },
+      peer: testPeer({ kind: "human", account: PERSONAL_AGENT_IDENTITY, calls: ["*"] }),
       processId: "proc:agent",
       procs: {
         getOwnerUid: vi.fn(() => USER_IDENTITY.uid),
@@ -1028,9 +998,7 @@ describe("scheduler", () => {
   it("lets root list another owner's schedules", () => {
     const list = vi.fn(() => ({ records: [], count: 0 }));
     const ctx = makeSchedulerContext({
-      identity: {
-        role: "user",
-        process: {
+      peer: testPeer({ kind: "human", account: {
           ...USER_IDENTITY,
           uid: 0,
           gid: 0,
@@ -1038,9 +1006,7 @@ describe("scheduler", () => {
           username: "root",
           home: "/root",
           cwd: "/root",
-        },
-        capabilities: ["*"],
-      },
+        }, calls: ["*"] }),
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       schedules: { list } as ScheduleStore,
     });
@@ -1067,11 +1033,7 @@ describe("scheduler", () => {
     const setWakeScheduleId = vi.fn();
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = makeSchedulerContext({
-      identity: {
-        role: "user",
-        process: PERSONAL_AGENT_IDENTITY,
-        capabilities: ["*"],
-      },
+      peer: testPeer({ kind: "human", account: PERSONAL_AGENT_IDENTITY, calls: ["*"] }),
       processId: "proc:agent",
       procs: {
         getOwnerUid: vi.fn(() => USER_IDENTITY.uid),
@@ -1116,11 +1078,7 @@ describe("scheduler", () => {
     const runSchedules = vi.fn(async () => ({ ran: 0, results: [] }));
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = makeSchedulerContext({
-      identity: {
-        role: "user",
-        process: PERSONAL_AGENT_IDENTITY,
-        capabilities: ["*"],
-      },
+      peer: testPeer({ kind: "human", account: PERSONAL_AGENT_IDENTITY, calls: ["*"] }),
       processId: "proc:agent",
       procs: {
         getOwnerUid: vi.fn(() => USER_IDENTITY.uid),
@@ -1133,7 +1091,7 @@ describe("scheduler", () => {
 
     await handleSchedulerRun(args, ctx);
 
-    expect(runSchedules).toHaveBeenCalledWith(args, ctx.identity, USER_IDENTITY.uid);
+    expect(runSchedules).toHaveBeenCalledWith(args, principalOf(ctx), USER_IDENTITY.uid);
   });
 
   it("rejects update and remove of another owner's schedule", async () => {

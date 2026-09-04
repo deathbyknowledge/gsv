@@ -23,6 +23,7 @@ import { raceWithAbort } from "../shared/abort";
 import { getConversationById, sendFrameToProcess } from "../shared/utils";
 import { stableOpaqueId } from "../shared/stable-id";
 import type { KernelContext } from "./context";
+import { principalOf } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import { ensurePersonalController } from "./personal-controller";
 import * as z from "zod/mini";
@@ -297,21 +298,21 @@ function ownedConversation(id: string | undefined, ctx: KernelContext): Conversa
   const conversationId = normalizeId(id, "conversationId");
   const conversation = ctx.conversations.get(conversationId);
   const ownerUid = resolveCallerOwnerUid(ctx);
-  if (!conversation || (conversation.ownerUid !== ownerUid && ctx.identity?.process.uid !== 0)) {
+  if (!conversation || (conversation.ownerUid !== ownerUid && principalOf(ctx)?.account.uid !== 0)) {
     throw new Error(`Conversation not found: ${conversationId}`);
   }
   return conversation;
 }
 
 function requireConversationClient(ctx: KernelContext): number {
-  if (ctx.identity?.role !== "user" || ctx.processId) {
+  if (principalOf(ctx)?.kind !== "human" || ctx.processId) {
     throw new Error("Conversation operations require a direct user client");
   }
   return resolveCallerOwnerUid(ctx);
 }
 
 function requireConversationReader(ctx: KernelContext): number {
-  if (ctx.identity?.role !== "user") {
+  if (principalOf(ctx)?.kind !== "human") {
     throw new Error("Conversation history requires a signed-in human or their Ship");
   }
   const ownerUid = resolveCallerOwnerUid(ctx);
@@ -324,9 +325,9 @@ function requireConversationReader(ctx: KernelContext): number {
 }
 
 function conversationOrigin(ctx: KernelContext): ConversationMessageOrigin {
-  const identity = ctx.identity!;
-  if (identity.role === "driver") {
-    return { kind: "device", deviceId: identity.device };
+  const identity = principalOf(ctx)!;
+  if (identity.kind === "machine") {
+    return { kind: "device", deviceId: identity.peerId };
   }
   const state = conversationClientStateSchema.parse(ctx.connection?.state ?? {});
   return {
@@ -337,12 +338,12 @@ function conversationOrigin(ctx: KernelContext): ConversationMessageOrigin {
 }
 
 function processInteractionOrigin(ctx: KernelContext): InteractionOrigin | undefined {
-  const identity = ctx.identity;
+  const identity = principalOf(ctx);
   if (!identity) return undefined;
-  if (identity.role === "driver") {
-    return { kind: "device", deviceId: identity.device };
+  if (identity.kind === "machine") {
+    return { kind: "device", deviceId: identity.peerId };
   }
-  if (identity.role !== "user" || !ctx.connection) return undefined;
+  if (identity.kind !== "human" || !ctx.connection) return undefined;
   const state = conversationClientStateSchema.parse(ctx.connection.state ?? {});
   return {
     kind: "client",

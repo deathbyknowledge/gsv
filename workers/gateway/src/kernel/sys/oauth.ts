@@ -15,6 +15,7 @@ import type {
 import { jsonObjectSchema, type JsonObject } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import type { KernelContext } from "../context";
+import { principalOf } from "../context";
 import type {
   OAuthAccountRecord,
   OAuthConnectionKind,
@@ -81,7 +82,7 @@ export type OAuthCallbackResult =
   | { ok: false; status: number; message: string };
 
 function requireUid(ctx: KernelContext): number {
-  const uid = ctx.identity?.process.uid;
+  const uid = principalOf(ctx)?.account.uid;
   const parsed = z.number().safeParse(uid);
   if (!parsed.success) {
     throw new Error("Authentication required");

@@ -1,6 +1,7 @@
 type KernelTestValue<T = string | number | boolean | null | undefined> = T;
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { testPeer } from "../test-support/peers";
 import { bodyFromText, bodyToText } from "@humansandmachines/gsv/protocol";
 import {
   createRoutedFetch,
@@ -316,16 +317,14 @@ describe("createRoutedFetch", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const routedFetch = createRoutedFetch({
       requestSignal: controller.signal,
-      identity: {
-        process: {
+      peer: testPeer({ kind: "human", account: {
           uid: 1000,
           gid: 1000,
           gids: [1000],
           username: "sam",
           home: "/home/sam",
           cwd: "/home/sam",
-        },
-      },
+        } }),
       auth: {
         getPasswdByUid: () => ({ username: "sam" }),
       },

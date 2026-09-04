@@ -10,7 +10,7 @@ import {
   adapterWorkerConnectResultSchema,
   adapterWorkerDisconnectResultSchema,
 } from "@humansandmachines/gsv/protocol";
-import {
+import { principalOf,
   resolveCallerOwnerUid,
   type KernelContext,
 } from "./context";
@@ -210,8 +210,8 @@ function adapterAccountNeedsOwnerClaim(
 }
 
 function requireAdapterControlOwnerUid(ctx: KernelContext, syscall: string): number {
-  const identity = ctx.identity;
-  if (!identity || identity.role !== "user") {
+  const identity = principalOf(ctx);
+  if (!identity || identity.kind !== "human") {
     throw new Error(`${syscall} requires a user identity`);
   }
   return resolveCallerOwnerUid(ctx);

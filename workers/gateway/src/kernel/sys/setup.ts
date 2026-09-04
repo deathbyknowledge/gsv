@@ -1,5 +1,6 @@
 import { hashPassword, isLocked, makeShadowEntry } from "../../auth/shadow";
 import type { KernelContext } from "../context";
+import { kernelPeerContext } from "../peer";
 import { SERVER_RELEASE } from "../../version";
 import type { PasswdEntry } from "../../auth/passwd";
 import {
@@ -11,7 +12,6 @@ import {
   type SysSetupArgs,
   type SysSetupResult,
 } from "@humansandmachines/gsv/protocol";
-import type { UserIdentity } from "../identity";
 import { handleSysBootstrap } from "./bootstrap";
 import { ensureAccountHomeLayout } from "../account-home";
 import { RipgitClient } from "../../fs";
@@ -311,11 +311,11 @@ export async function handleSysSetup(
     home: "/root",
     cwd: "/root",
   };
-  const bootstrapIdentity: UserIdentity = {
-    role: "user",
-    process: bootstrapProcessIdentity,
-    capabilities: ["*"],
-  };
+  const bootstrapPeer = kernelPeerContext({
+    installationId: ctx.installationId,
+    identity: bootstrapProcessIdentity,
+    calls: ["*"],
+  });
   let bootstrap: SysSetupResult["bootstrap"];
   let machineToken: SysSetupResult["machineToken"];
 
@@ -326,7 +326,7 @@ export async function handleSysSetup(
         "bootstrap-system",
         () => handleSysBootstrap(undefined, {
           ...ctx,
-          identity: bootstrapIdentity,
+          peer: bootstrapPeer,
         }),
       );
     }

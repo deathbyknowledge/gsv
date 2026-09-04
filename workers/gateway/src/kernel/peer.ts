@@ -6,12 +6,12 @@ import type {
   ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
 import { hasCapability } from "./capabilities";
-import type { ConnectionIdentity } from "./identity";
 
 export type PeerTransport =
   | { kind: "websocket"; connectionId: string }
   | { kind: "service-binding"; serviceId: string }
   | { kind: "process-rpc"; processId: string }
+  | { kind: "http" }
   | { kind: "kernel" };
 
 export type PeerProvenance =
@@ -30,7 +30,6 @@ export type PeerProvenance =
 export type PeerContext = {
   installationId: string;
   peer: ConnectedPeer;
-  identity: ConnectionIdentity;
   transport: PeerTransport;
   provenance: PeerProvenance;
 };
@@ -48,32 +47,6 @@ export function peerProvidesOperations(peer: ConnectedPeer): boolean {
   return peer.grant.implements.length > 0;
 }
 
-export function peerConnectionIdentity(peer: ConnectedPeer): ConnectionIdentity {
-  switch (peer.principal.kind) {
-    case "human":
-      return {
-        role: "user",
-        process: peer.principal.account,
-        capabilities: peer.grant.calls,
-      };
-    case "machine":
-      return {
-        role: "driver",
-        process: peer.principal.account,
-        capabilities: peer.grant.calls,
-        device: peer.id,
-        implements: peer.grant.implements,
-      };
-    case "service":
-      return {
-        role: "service",
-        process: peer.principal.account,
-        capabilities: peer.grant.calls,
-        channel: peer.id,
-      };
-  }
-}
-
 export function connectedPeerContext(input: {
   installationId: string;
   peer: ConnectedPeer;
@@ -82,7 +55,6 @@ export function connectedPeerContext(input: {
   return {
     installationId: input.installationId,
     peer: input.peer,
-    identity: peerConnectionIdentity(input.peer),
     transport: {
       kind: "websocket",
       connectionId: input.peer.sessionId,
@@ -95,11 +67,11 @@ export function servicePeerContext(input: {
   installationId: string;
   profile: ServicePeerProfile;
   sessionId: string;
-  identity: ConnectionIdentity;
+  account: ProcessIdentity;
 }): PeerContext {
   const principal: PeerPrincipal = {
     kind: "service",
-    account: input.identity.process,
+    account: input.account,
   };
   const grant: PeerGrant = {
     calls: [...input.profile.calls],
@@ -114,7 +86,6 @@ export function servicePeerContext(input: {
       principal,
       grant,
     },
-    identity: input.identity,
     transport: { kind: "service-binding", serviceId: input.profile.id },
     provenance: { kind: "service-binding", serviceId: input.profile.id },
   };
@@ -136,7 +107,6 @@ export function processPeerContext(input: {
       principal: { kind: "human", account: input.identity },
       grant: { calls, signals: [], implements: [] },
     },
-    identity: { role: "user", process: input.identity, capabilities: calls },
     transport: { kind: "process-rpc", processId: input.processId },
     provenance: { kind: "process-registry", processId: input.processId },
   };
@@ -157,7 +127,6 @@ export function kernelPeerContext(input: {
       principal: { kind: "human", account: input.identity },
       grant: { calls, signals: [], implements: [] },
     },
-    identity: { role: "user", process: input.identity, capabilities: calls },
     transport: { kind: "kernel" },
     provenance: { kind: "kernel" },
   };
@@ -190,11 +159,6 @@ export function delegatedAdapterPeerContext(input: {
   return {
     installationId: input.installationId,
     peer,
-    identity: {
-      role: "user",
-      process: input.identity,
-      capabilities: calls,
-    },
     transport: {
       kind: "service-binding",
       serviceId: input.serviceId,
@@ -206,5 +170,33 @@ export function delegatedAdapterPeerContext(input: {
       actorId: input.actorId,
       surface: input.surface,
     },
+  };
+}
+
+/** A credential-authenticated human on a plain HTTP request, such as git over HTTP. */
+export function httpPeerContext(input: {
+  installationId: string;
+  identity: ProcessIdentity;
+  calls: readonly string[];
+}): PeerContext {
+  const calls = [...input.calls];
+  return {
+    installationId: input.installationId,
+    peer: {
+      id: `http:${input.identity.username}`,
+      sessionId: `http:${input.identity.username}`,
+      principal: { kind: "human", account: input.identity },
+      grant: { calls, signals: [], implements: [] },
+    },
+    transport: { kind: "http" },
+    provenance: { kind: "credential", method: "token" },
+  };
+}
+
+/** The same peer acting as another account, for Kernel-owned work that runs under a process identity. */
+export function peerActingAs(peer: PeerContext, account: ProcessIdentity): PeerContext {
+  return {
+    ...peer,
+    peer: { ...peer.peer, principal: { ...peer.peer.principal, account } },
   };
 }

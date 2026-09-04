@@ -3,6 +3,7 @@ import type {
   ManagedOutboundMailCompletion,
 } from "@humansandmachines/gsv/protocol";
 import { describe, expect, it } from "vitest";
+import { testPeer } from "../test-support/peers";
 import type { RequestFrame } from "../protocol/frames";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { dispatch, type DispatchDeps } from "./dispatch";
@@ -172,18 +173,14 @@ function statusContext(
   process?: { processId: string; ownerUid: number },
 ): MailStatusContext {
   const context: MailStatusContext = {
-    identity: {
-      role: "user",
-      process: {
+    peer: testPeer({ kind: "human", account: {
         uid,
         gid: uid,
         gids: [uid, 100],
         username: `user-${uid}`,
         home: `/home/user-${uid}`,
         cwd: `/home/user-${uid}`,
-      },
-      capabilities: ["mail.status"],
-    },
+      }, calls: ["mail.status"] }),
     mailboxes,
     procs: {
       getOwnerUid: (processId: string) => (

@@ -6,12 +6,13 @@ import {
 } from "../../fs";
 import { GsvFs } from "../../fs/gsv-fs";
 import type { KernelContext } from "../../kernel/context";
+import { requirePrincipal } from "../../kernel/context";
 import { resolveCallerOwnerUid } from "../../kernel/context";
 import { createCronFileService } from "../../kernel/crontab";
 import { handleRepoList } from "../../kernel/repo";
 
 export function createNativeFileSystem(ctx: KernelContext): GsvFs {
-  const identity = ctx.identity!.process;
+  const identity = requirePrincipal(ctx).account;
   const ownerUid = resolveCallerOwnerUid(ctx);
   const sourceBackend = createProcessSourceBackend({
     identity,

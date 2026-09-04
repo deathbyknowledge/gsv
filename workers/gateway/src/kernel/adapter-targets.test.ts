@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { testPeer } from "../test-support/peers";
 import { bodyFromBytes, bodyToBytes } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
 import type {
@@ -73,18 +74,14 @@ function makeContext(
   };
   const context: Partial<KernelContext> = {
     installationId: "installation-1",
-    identity: {
-      role: "user",
-      process: {
+    peer: testPeer({ kind: "human", account: {
         uid: 2000,
         gid: 2000,
         gids: [2000],
         username: "ship",
         home: "/home/ship",
         cwd: "/home/ship",
-      },
-      capabilities: ["*"],
-    },
+      }, calls: ["*"] }),
     callerOwnerUid: 1000,
     procs: { getOwnerUid: vi.fn(() => 1000) },
     adapters: {

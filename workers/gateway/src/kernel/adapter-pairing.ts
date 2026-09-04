@@ -14,7 +14,7 @@ import type {
   AdapterPairInspectResult,
 } from "@humansandmachines/gsv/protocol";
 import * as z from "zod/mini";
-import {
+import { principalOf,
   type KernelContext,
 } from "./context";
 import {
@@ -76,16 +76,16 @@ const managedIdentityLinkMetadataSchema = z.looseObject({
 });
 
 function requireInteractivePairingOwner(ctx: KernelContext, syscall: string): number {
-  const identity = ctx.identity;
+  const identity = principalOf(ctx);
   if (
     !identity
-    || identity.role !== "user"
+    || identity.kind !== "human"
     || !ctx.connection
     || ctx.processId
   ) {
     throw new Error(`${syscall} requires a direct signed-in user`);
   }
-  const uid = identity.process.uid;
+  const uid = identity.account.uid;
   const user = ctx.auth.getPasswdByUid(uid);
   const shadow = user ? ctx.auth.getShadowByUsername(user.username) : null;
   if (

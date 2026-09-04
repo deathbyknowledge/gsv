@@ -1,4 +1,5 @@
 import type { KernelContext } from "../context";
+import { principalOf } from "../context";
 import type {
   SysTargetListArgs,
   SysTargetListResult,
@@ -30,7 +31,7 @@ export function handleSysTargetList(
   args: SysTargetListArgs,
   ctx: KernelContext,
 ): SysTargetListResult {
-  if (!ctx.identity?.process) {
+  if (!principalOf(ctx)?.account) {
     throw new Error("Authentication required");
   }
 
@@ -46,7 +47,7 @@ export function handleSysTargetGet(
   args: SysTargetGetArgs,
   ctx: KernelContext,
 ): SysTargetGetResult {
-  if (!ctx.identity?.process) {
+  if (!principalOf(ctx)?.account) {
     throw new Error("Authentication required");
   }
 
@@ -67,7 +68,7 @@ export function handleSysTargetUpdate(
   args: SysTargetUpdateArgs,
   ctx: KernelContext,
 ): SysTargetUpdateResult {
-  if (!ctx.identity?.process) {
+  if (!principalOf(ctx)?.account) {
     throw new Error("Authentication required");
   }
 
@@ -98,7 +99,7 @@ export function handleSysTargetDelete(
   args: SysTargetDeleteArgs,
   ctx: KernelContext,
 ): SysTargetDeleteResult {
-  const identity = ctx.identity?.process;
+  const identity = principalOf(ctx)?.account;
   if (!identity) {
     throw new Error("Authentication required");
   }
