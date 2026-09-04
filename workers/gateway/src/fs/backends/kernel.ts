@@ -366,14 +366,24 @@ export class KernelMountBackend implements MountBackend {
     return result?.ok ? result.config : null;
   }
 
+  /**
+   * Mirrors the Kernel resolver: the process-local choice, then the agent's
+   * own preference, then the owner's, each only when it names a listed
+   * model, and otherwise the first entry of the layered list.
+   */
   private effectiveProcAiModelId(
     proc: ProcessRecord,
     local: ProcAiConfig | null,
   ): string | null {
-    return local?.modelId
-      ?? this.kernel?.config?.get(`users/${proc.uid}/ai/preferred_model`)
-      ?? this.listProcAiModels(proc.ownerUid)[0]?.id
-      ?? null;
+    if (local?.modelId) return local.modelId;
+    const models = this.listProcAiModels(proc.ownerUid);
+    for (const uid of proc.uid === proc.ownerUid ? [proc.uid] : [proc.uid, proc.ownerUid]) {
+      const preferred = this.kernel?.config?.getExplicit(`users/${uid}/ai/preferred_model`)?.trim();
+      if (preferred && models.some((model) => model.id.toLowerCase() === preferred.toLowerCase())) {
+        return preferred;
+      }
+    }
+    return models[0]?.id ?? null;
   }
 
   private effectiveProcAiReasoning(proc: ProcessRecord, local: ProcAiConfig | null): string | null {

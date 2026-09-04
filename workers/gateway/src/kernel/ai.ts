@@ -862,7 +862,14 @@ function readConfiguredAiModelStack(ctx: KernelContext, configKey: string): AiMo
  * applies, so a human promoting a model also steers the agents they run.
  */
 function resolvePreferredAiModelId(ctx: KernelContext, accountUids: readonly number[]): string | null {
-  return normalizeOptionalString(resolveAiConfigValue(ctx.config, accountUids, "preferred_model")) ?? null;
+  // A cleared preference is stored as an empty string; it must not shadow the owner's.
+  for (const accountUid of accountUids) {
+    const preferred = normalizeOptionalString(
+      ctx.config.getExplicit(`users/${accountUid}/ai/preferred_model`),
+    );
+    if (preferred) return preferred;
+  }
+  return null;
 }
 
 function storedCredential(ctx: KernelContext, item: EffectiveAiModelEntry): string {

@@ -294,7 +294,7 @@ export function GsvShell({
       ownerUid: chatOwnerUid,
       statusLabel: chatStatusLabel,
     });
-  }, [activeChatProcess, chatProcessList, chatStatusLabel, consoleConfig.config, consoleOverview.data, sessionUsername]);
+  }, [activeChatProcess, chatProcessList, chatStatusLabel, consoleConfig.config, consoleModels.listing, consoleOverview.data, sessionUsername]);
   const openWorkSession = (processId: string, process: ChatProcessSummary | null): void => {
     const listedProcess = selectWorkSessionProcess(
       chatProcessList,

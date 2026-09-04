@@ -1637,6 +1637,20 @@ describe("handleAiConfig", () => {
     expect(result.fallbacks?.map((fallback) => fallback.modelId)).toEqual(["mine"]);
   });
 
+  it("treats an agent's cleared preference as inheriting the owner's", async () => {
+    const context = makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "mine", name: "Mine", provider: "openai", model: "gpt-5.4" }],
+      }),
+      "users/1000/ai/preferred_model": "gsv-included",
+      "users/2000/ai/preferred_model": "",
+    }, { uid: 2000, ownerUid: 1000, processId: "task-1", managedInference: true });
+
+    expect(await handleAiConfig({}, context)).toMatchObject({ provider: "gsv", model: "default" });
+    expect(handleAiModels(context).preferredModelId).toBe("gsv-included");
+  });
+
   it("lets an agent's own preferred model override the owner's", async () => {
     const context = makeAiConfigContext({
       "users/1000/ai/models": JSON.stringify({

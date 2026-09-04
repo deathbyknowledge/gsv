@@ -140,7 +140,11 @@ function makeConfigBackedFs(
   });
 }
 
-function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
+function makeRuntimeViewFs(
+  identity: ProcessIdentity,
+  selfPid?: string,
+  configOverrides: Record<string, string> = {},
+): GsvFs {
   const processRecord = {
     processId: "task-alpha",
     parentPid: "init:1000",
@@ -263,6 +267,9 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     })],
     ["users/1000/ai/models/fast-stack/api_key", "sk-model"],
   ]);
+  for (const [key, value] of Object.entries(configOverrides)) {
+    configEntries.set(key, value);
+  }
   let processAiConfig: any = null;
   const passwdEntries = [ROOT, SAM, ALICE, SAM_AGENT].map((user) => ({
     username: user.username,
@@ -1273,6 +1280,25 @@ describe("GsvFs Linux-like runtime views", () => {
     const fs = makeRuntimeViewFs(SAM);
 
     await expect(fs.readdir("/proc/task-foreign")).rejects.toThrow("ENOENT");
+  });
+
+  it("mirrors the owner's preferred model in the process view", async () => {
+    const owner = makeRuntimeViewFs(SAM, "task-alpha", { "users/1000/ai/preferred_model": "system" });
+    expect(JSON.parse(await owner.readFile("/proc/task-alpha/ai/effective.json")))
+      .toMatchObject({ modelId: "system" });
+
+    // A cleared agent preference inherits the owner's choice.
+    const agent = makeRuntimeViewFs(SAM_AGENT, "task-personal", {
+      "users/1000/ai/preferred_model": "system",
+      "users/2000/ai/preferred_model": "",
+    });
+    expect(JSON.parse(await agent.readFile("/proc/task-personal/ai/effective.json")))
+      .toMatchObject({ modelId: "system" });
+
+    // A preference naming no listed model falls back to the layered order.
+    const unknown = makeRuntimeViewFs(SAM, "task-alpha", { "users/1000/ai/preferred_model": "missing" });
+    expect(JSON.parse(await unknown.readFile("/proc/task-alpha/ai/effective.json")))
+      .toMatchObject({ modelId: "fast-stack" });
   });
 
   it("applies Process model and reasoning preferences through /proc", async () => {
