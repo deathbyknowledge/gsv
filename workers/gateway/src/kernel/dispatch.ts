@@ -91,16 +91,24 @@ import {
 import {
   handleAdapterConnect,
   handleAdapterDisconnect,
+} from "./adapter-accounts";
+import {
   handleAdapterInbound,
+} from "./adapter-ingress";
+import {
   handleAdapterList,
+  handleAdapterStateUpdate,
+  handleAdapterStatus,
+} from "./adapter-service";
+import {
   handleAdapterPairConfirm,
   handleAdapterPairDisconnect,
   handleAdapterPairInfo,
   handleAdapterPairInspect,
+} from "./adapter-pairing";
+import {
   handleAdapterSend,
-  handleAdapterStateUpdate,
-  handleAdapterStatus,
-} from "./adapter-handlers";
+} from "./adapter-send";
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
 import {
   handleSchedulerAdd,

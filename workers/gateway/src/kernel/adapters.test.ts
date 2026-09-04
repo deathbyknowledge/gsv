@@ -5,19 +5,26 @@ import type { KernelContext } from "./context";
 import {
   handleAdapterConnect,
   handleAdapterDisconnect,
+} from "./adapter-accounts";
+import {
   deliverAdapterDestination,
-  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  handleAdapterSend,
+} from "./adapter-send";
+import {
   handleAdapterInbound as handleAdapterInboundImpl,
+} from "./adapter-ingress";
+import {
   handleAdapterList,
+  handleAdapterStateUpdate,
+  handleAdapterStatus,
+  setAdapterActivityForKernel,
+} from "./adapter-service";
+import {
   handleAdapterPairConfirm,
   handleAdapterPairDisconnect,
   handleAdapterPairInfo,
   handleAdapterPairInspect,
-  handleAdapterSend,
-  handleAdapterStateUpdate,
-  handleAdapterStatus,
-  setAdapterActivityForKernel,
-} from "./adapter-handlers";
+} from "./adapter-pairing";
 import * as sharedUtils from "../shared/utils";
 import * as personalController from "./personal-controller";
 import {

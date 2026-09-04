@@ -41,9 +41,13 @@ import {
 } from "../shared/process-media-path";
 import {
   deliverAdapterDestination,
+} from "./adapter-send";
+import {
   setAdapterActivityForKernel,
-  type AdapterDeliveryPresentation,
-} from "./adapter-handlers";
+} from "./adapter-service";
+import type {
+  AdapterDeliveryPresentation,
+} from "./adapter-send";
 import {
   assertAdapterMessageDestinationAccess,
   identityLinkRouteGeneration,

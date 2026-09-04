@@ -31,7 +31,7 @@ import {
 } from "../shared/stable-id";
 import {
   setAdapterActivityForKernel,
-} from "./adapter-handlers";
+} from "./adapter-service";
 import type {
   ProcessMessageCommitArgs,
   ProcessMessageStreamSignal,

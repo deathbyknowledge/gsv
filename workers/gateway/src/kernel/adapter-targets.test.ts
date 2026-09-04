@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { bodyFromBytes, bodyToBytes } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
-import type { AdapterServiceBinding } from "./adapter-handlers";
+import type {
+  AdapterServiceBinding,
+} from "./adapter-service";
 import {
   listVisibleAdapterTargets,
   requestAdapterTarget,

@@ -14,7 +14,9 @@ import {
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import { stableOpaqueId } from "../shared/stable-id";
 import { withByteStreamFinalizer } from "../shared/streams";
-import { resolveAdapterService } from "./adapter-handlers";
+import {
+  resolveAdapterService,
+} from "./adapter-service";
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
 import type { IdentityLinkRecord } from "./identity-links";
 import type { TargetDescriptor, TargetListOptions } from "./targets";

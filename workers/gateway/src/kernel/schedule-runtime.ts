@@ -31,7 +31,7 @@ import {
 } from "../shared/stable-id";
 import {
   deliverAdapterDestination,
-} from "./adapter-handlers";
+} from "./adapter-send";
 import {
   assertAdapterMessageDestinationAccess,
   identityLinkRouteGeneration,
