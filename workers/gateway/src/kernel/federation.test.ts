@@ -324,6 +324,136 @@ describe("federation outbound boundary", () => {
     expect(markOutboxFailed).toHaveBeenCalledOnce();
   });
 
+  it("rejects contact media from a process outside the handler's lineage at send time", async () => {
+    const contact = activeContact();
+    vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
+    const prepareMessage = vi.fn();
+    const isDescendant = vi.fn(() => false);
+    const ctx = focusedContext({
+      processId: "proc:stranger",
+      procs: focusedFixture({
+        get: vi.fn(() => ({ ownerUid: OWNER.uid, uid: OWNER.uid, gid: OWNER.gid, home: OWNER.home })),
+        isDescendant,
+      }),
+      federation: focusedFixture({
+        prune: vi.fn(),
+        get: vi.fn(() => contact),
+        outboxByIdempotency: vi.fn(() => null),
+        pendingOutboxCount: vi.fn(() => 0),
+        retainedOutboxCount: vi.fn(() => 0),
+        activeGrantCount: vi.fn(() => 0),
+        preparingResourceCount: vi.fn(() => 0),
+        consumeRateLimits: vi.fn(() => null),
+        ensureSubject: vi.fn(() => ({ id: "subject:local", displayName: OWNER.username })),
+        transaction: runTransaction,
+        prepareMessage,
+      }),
+      scheduleFederationDelivery: vi.fn(async () => {}),
+    });
+
+    await expect(handleContactSend({
+      contactId: contact.id,
+      text: "bill attached",
+      media: [{
+        type: "resource",
+        ref: {
+          type: "file",
+          target: "gsv",
+          path: "/home/hank/archive/bill.pdf",
+          revision: "revision:bill",
+          contentType: "application/pdf",
+          size: 10,
+        },
+      }],
+      idempotencyKey: "stranger-media",
+    }, ctx)).rejects.toThrow(/handler process or one of its subprocesses/);
+
+    expect(isDescendant).toHaveBeenCalledWith("proc:stranger", "proc:ship");
+    expect(prepareMessage).not.toHaveBeenCalled();
+  });
+
+  it("admits contact media from a subprocess of the handler", async () => {
+    const contact = activeContact();
+    const media = [{
+      type: "resource" as const,
+      ref: {
+        type: "file" as const,
+        target: "gsv",
+        path: "/home/hank/archive/bill.pdf",
+        revision: "revision:bill",
+        contentType: "application/pdf",
+        size: 10,
+      },
+    }];
+    vi.spyOn(conversationHandlers, "retainConversationResources").mockResolvedValue(media);
+    vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
+    let outbox: FederationOutboxRecord | null = null;
+    const prepareMessage = vi.fn((input: {
+      deliveryId: string;
+      ownerUid: number;
+      contactId: string;
+      contactGeneration: string;
+      idempotencyKey: string;
+      fingerprint: string;
+      preparation: FederationMessagePreparation;
+      now: number;
+    }) => {
+      outbox = {
+        deliveryId: input.deliveryId,
+        ownerUid: input.ownerUid,
+        contactId: input.contactId,
+        contactGeneration: input.contactGeneration,
+        idempotencyKey: input.idempotencyKey,
+        fingerprint: input.fingerprint,
+        state: "preparing",
+        preparation: input.preparation,
+        attemptCount: 0,
+        nextAttemptAtMs: input.now,
+        createdAtMs: input.now,
+        updatedAtMs: input.now,
+      };
+      return { record: outbox, created: true };
+    });
+    const isDescendant = vi.fn(() => true);
+    const ctx = focusedContext({
+      processId: "proc:child",
+      procs: focusedFixture({
+        get: vi.fn(() => ({ ownerUid: OWNER.uid, uid: OWNER.uid, gid: OWNER.gid, home: OWNER.home })),
+        isDescendant,
+      }),
+      federation: focusedFixture({
+        prune: vi.fn(),
+        get: vi.fn(() => contact),
+        outboxByIdempotency: vi.fn(() => null),
+        outbox: vi.fn(() => outbox),
+        pendingOutboxCount: vi.fn(() => 0),
+        retainedOutboxCount: vi.fn(() => 0),
+        activeGrantCount: vi.fn(() => 0),
+        preparingResourceCount: vi.fn(() => 0),
+        consumeRateLimits: vi.fn(() => null),
+        ensureSubject: vi.fn(() => ({ id: "subject:local", displayName: OWNER.username })),
+        transaction: runTransaction,
+        createGrant: vi.fn(),
+        prepareMessage,
+        markOutboxFailed: vi.fn(() => false),
+      }),
+      scheduleFederationDelivery: vi.fn(async () => {}),
+    });
+
+    await handleContactSend({
+      contactId: contact.id,
+      text: "bill attached",
+      media,
+      idempotencyKey: "child-media",
+    }, ctx);
+
+    expect(isDescendant).toHaveBeenCalledWith("proc:child", "proc:ship");
+    expect(prepareMessage).toHaveBeenCalledOnce();
+    expect(prepareMessage.mock.calls[0][0].preparation).toMatchObject({
+      localMessage: { processId: "proc:child", author: { kind: "process", pid: "proc:child" } },
+    });
+  });
+
   it("does not create a request across a contact generation change", async () => {
     const contact = activeContact();
     let current = contact;

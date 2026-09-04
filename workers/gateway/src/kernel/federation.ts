@@ -603,6 +603,19 @@ export async function handleContactSend(
   const processId = await ensurePersonalController(ownerUid, ctx);
   const process = ctx.procs.get(processId);
   if (!process) throw new Error("Personal intelligence is unavailable");
+  // Media is persisted under the handler's archive, so only the handler and
+  // the work it delegated may attach it. Reject here so a delegated child
+  // learns at send time instead of after every background retry fails.
+  if (
+    requestedMedia?.length
+    && ctx.processId
+    && ctx.processId !== processId
+    && !ctx.procs.isDescendant(ctx.processId, processId)
+  ) {
+    throw new Error(
+      "Contact media can only be attached by the conversation handler process or one of its subprocesses",
+    );
+  }
   ctx.requestSignal?.throwIfAborted();
   ensureLocalSubject(ownerUid, ctx);
   const deliveryId = `delivery:${crypto.randomUUID()}`;
@@ -2057,8 +2070,15 @@ async function commitLocalOutboxMessage(
     author: local.author,
     text: local.text,
     media: local.media,
+    // The handler's archive owns the bytes; the pid names the sender that the
+    // send-time lineage check admitted, which may be a delegated subprocess.
     ...(local.media?.length
-      ? { mediaOwner: processMediaOwner(conversation.handlerPid, process) }
+      ? {
+        mediaOwner: {
+          ...processMediaOwner(conversation.handlerPid, process),
+          pid: local.processId ?? conversation.handlerPid,
+        },
+      }
       : undefined),
     origin: local.origin,
     processId: local.processId,
