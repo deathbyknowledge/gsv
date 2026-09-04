@@ -25,7 +25,8 @@ import type {
   RepoVisibilitySetResult,
   RepoSummary,
 } from "@humansandmachines/gsv/protocol";
-import type { KernelContext } from "./context";
+import type { KernelContext, PrincipalView } from "./context";
+import { principalOf, requirePrincipal } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import { RipgitClient, type RipgitApplyOp, type RipgitRepoRef } from "../fs/ripgit/client";
 import { accountHomeRepoRef } from "../fs/ripgit/repos";
@@ -78,7 +79,7 @@ export function handleRepoList(
     });
   };
 
-  add(toSummary(accountHomeRepoRef(identity.process.username), "home", ctx));
+  add(toSummary(accountHomeRepoRef(identity.account.username), "home", ctx));
 
   for (const row of ctx.config.list("repos")) {
     const parsed = parseRegisteredRepoKey(row.key);
@@ -114,7 +115,7 @@ export async function handleRepoCreate(
     return { repo: repoSlug(repo), ref, head: currentHead, created: false };
   }
 
-  const actor = requireIdentity(ctx).process;
+  const actor = requireIdentity(ctx).account;
   const result = await ripgit.apply(
     { ...repo, branch: ref },
     actor.username,
@@ -302,7 +303,7 @@ export async function handleRepoApply(
     throw new Error("message is required");
   }
   const ops = normalizeApplyOps(args.ops);
-  const actor = requireIdentity(ctx).process;
+  const actor = requireIdentity(ctx).account;
   const result = await requireRipgitClient(ctx).apply(
     { ...repo, branch: ref },
     actor.username,
@@ -336,7 +337,7 @@ export async function handleRepoImport(
     : remoteUrl
       ? ref
       : undefined;
-  const actor = requireIdentity(ctx).process;
+  const actor = requireIdentity(ctx).account;
   const imported = await requireRipgitClient(ctx).importFromUpstream(
     { ...repo, branch: ref },
     actor.username,
@@ -370,7 +371,7 @@ export async function handleRepoDelete(
 ): Promise<RepoDeleteResult> {
   const repo = parseRepoSlug(args.repo);
   assertCanWriteRepo(repo, ctx);
-  const actor = requireIdentity(ctx).process;
+  const actor = requireIdentity(ctx).account;
   await requireRipgitClient(ctx).deleteRepository(repo, actor.username);
   unregisterRepo(ctx, repo);
   return {
@@ -396,11 +397,11 @@ export function handleRepoVisibilitySet(
   };
 }
 
-function requireIdentity(ctx: KernelContext): NonNullable<KernelContext["identity"]> {
-  if (!ctx.identity) {
+function requireIdentity(ctx: KernelContext): PrincipalView {
+  if (!principalOf(ctx)) {
     throw new Error("Authenticated identity required");
   }
-  return ctx.identity;
+  return requirePrincipal(ctx);
 }
 
 function requireRipgitClient(ctx: KernelContext): RipgitClient {
@@ -436,10 +437,10 @@ export function canReadRepo(rawRepo: string, ctx: KernelContext): boolean {
 export function canWriteRepo(rawRepo: string, ctx: KernelContext): boolean {
   const repo = parseRepoSlug(rawRepo);
   const identity = requireIdentity(ctx);
-  if (identity.process.uid === 0 || identity.capabilities.includes("*")) {
+  if (identity.account.uid === 0 || identity.calls.includes("*")) {
     return true;
   }
-  if (repo.owner === identity.process.username) {
+  if (repo.owner === identity.account.username) {
     return true;
   }
   const ownerUid = resolveCallerOwnerUid(ctx);
@@ -447,12 +448,12 @@ export function canWriteRepo(rawRepo: string, ctx: KernelContext): boolean {
   if (
     owner &&
     owner.username === repo.owner &&
-    ownerUid !== identity.process.uid &&
-    canOwnerDelegateRunAs(ctx.auth, ownerUid, identity.process)
+    ownerUid !== identity.account.uid &&
+    canOwnerDelegateRunAs(ctx.auth, ownerUid, identity.account)
   ) {
     return true;
   }
-  if (ownerUid !== identity.process.uid) {
+  if (ownerUid !== identity.account.uid) {
     return false;
   }
   const target = ctx.auth.getPasswdByUsername(repo.owner);

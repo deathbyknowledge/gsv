@@ -62,7 +62,7 @@ describe("gateway integration", () => {
     const wsUrl = webSocketUrl(baseUrl);
     const oneShot = new GSVClient();
     const connectArgs = {
-      protocol: 3 as const,
+      protocol: 4 as const,
       peer: {
         id: "gateway-integration",
         version: "1.0.0",
@@ -130,9 +130,16 @@ describe("gateway integration", () => {
       });
       expect(connected.peer.grant.calls).toContain("proc.*");
 
-      await expect(client.sys.config.get({ key: "config/ai/provider" })).resolves.toEqual({
-        entries: [{ key: "config/ai/provider", value: "workers-ai" }],
+      const aiModels = await client.call("ai.models", {});
+      expect(aiModels).toMatchObject({
+        preferredModelId: null,
+        models: [
+          { provider: "workers-ai", model: expect.any(String), source: "base", hasCredential: false },
+          { provider: "workers-ai", model: expect.any(String), source: "base", hasCredential: false },
+        ],
       });
+      const configured = await client.sys.config.get({ key: "config/ai/models" });
+      expect(configured.entries).toHaveLength(0);
 
       expect((await client.account.list()).accounts).toEqual(expect.arrayContaining([
         expect.objectContaining({

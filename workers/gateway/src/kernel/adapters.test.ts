@@ -1,23 +1,32 @@
 function isString<T>(value: T): value is T & string { return String(value) === value; }
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { PeerContext } from "./peer";
+import { testPeer } from "../test-support/peers";
 import type { KernelContext } from "./context";
 import {
   handleAdapterConnect,
   handleAdapterDisconnect,
+} from "./adapter-accounts";
+import {
   deliverAdapterDestination,
-  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  handleAdapterSend,
+} from "./adapter-send";
+import {
   handleAdapterInbound as handleAdapterInboundImpl,
+} from "./adapter-ingress";
+import {
   handleAdapterList,
+  handleAdapterStateUpdate,
+  handleAdapterStatus,
+  setAdapterActivityForKernel,
+} from "./adapter-service";
+import {
   handleAdapterPairConfirm,
   handleAdapterPairDisconnect,
   handleAdapterPairInfo,
   handleAdapterPairInspect,
-  handleAdapterSend,
-  handleAdapterStateUpdate,
-  handleAdapterStatus,
-  setAdapterActivityForKernel,
-} from "./adapter-handlers";
+} from "./adapter-pairing";
 import * as sharedUtils from "../shared/utils";
 import * as personalController from "./personal-controller";
 import {
@@ -48,7 +57,7 @@ type FakeAdapterStatusStore = {
   listAll?: ReturnType<typeof vi.fn>;
 };
 type MakeContextOptions = {
-  identity?: KernelContext["identity"];
+  peer?: PeerContext;
   identityLinks?: { get?: (adapter: string, accountId: string, actorId: string) => IdentityLinkRecord | null };
   routePid?: string | null;
   surfaceRoute?: Partial<SurfaceRouteRecord> | null;
@@ -99,10 +108,9 @@ function makeStorageBucket() {
   };
 }
 
-function userIdentity(uid = 1000): KernelContext["identity"] {
-  return {
-    role: "user",
-    process: {
+function userIdentity(uid = 1000): PeerContext {
+  return testPeer({
+    account: {
       uid,
       gid: uid,
       gids: [uid],
@@ -110,8 +118,8 @@ function userIdentity(uid = 1000): KernelContext["identity"] {
       home: uid === 0 ? "/root" : "/home/sam",
       cwd: uid === 0 ? "/root" : "/home/sam",
     },
-    capabilities: ["adapter.*"],
-  };
+    calls: ["adapter.*"],
+  });
 }
 
 function makeConversationRegistry() {
@@ -606,11 +614,7 @@ function makeContext(
         },
       };
     }),
-    identity: options.identity ?? {
-      role: "service",
-      service: "test",
-      capabilities: [],
-    },
+    peer: options.peer ?? testPeer({ kind: "service", account: { uid: 0, gid: 0, gids: [0], username: "root", home: "/root", cwd: "/root" }, calls: [], peerId: "test" }),
     callerOwnerUid: options.callerOwnerUid,
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as KernelContext;
@@ -950,18 +954,14 @@ describe("adapter lifecycle handlers", () => {
       },
       status,
       {
-        identity: {
-          role: "user",
-          process: {
+        peer: testPeer({ kind: "human", account: {
             uid: 1000,
             gid: 1000,
             gids: [100],
             username: "sam",
             home: "/home/sam",
             cwd: "/home/sam",
-          },
-          capabilities: ["adapter.list"],
-        },
+          }, calls: ["adapter.list"] }),
         identityLinks: {
           list: vi.fn(() => [
             {
@@ -1046,18 +1046,14 @@ describe("adapter lifecycle handlers", () => {
       status,
       {
         processId: "pid-1",
-        identity: {
-          role: "user",
-          process: {
+        peer: testPeer({ kind: "human", account: {
             uid: 1001,
             gid: 1001,
             gids: [1000],
             username: "sam-agent",
             home: "/home/sam-agent",
             cwd: "/home/sam-agent",
-          },
-          capabilities: ["adapter.list"],
-        },
+          }, calls: ["adapter.list"] }),
         identityLinks: {
           list: listLinks,
         },
@@ -1135,18 +1131,14 @@ describe("adapter lifecycle handlers", () => {
       },
       status,
       {
-        identity: {
-          role: "user",
-          process: {
+        peer: testPeer({ kind: "human", account: {
             uid: 1000,
             gid: 1000,
             gids: [100],
             username: "sam",
             home: "/home/sam",
             cwd: "/home/sam",
-          },
-          capabilities: ["adapter.status"],
-        },
+          }, calls: ["adapter.status"] }),
         identityLinks: {
           list: vi.fn(() => [
             {
@@ -1212,7 +1204,7 @@ describe("adapter lifecycle handlers", () => {
           privatePayload,
         }]),
       },
-    }, status, { identity: userIdentity(0) });
+    }, status, { peer: userIdentity(0) });
 
     const result = await handleAdapterStatus(
       { adapter: "whatsapp", accountId: "primary" },
@@ -1255,7 +1247,7 @@ describe("adapter lifecycle handlers", () => {
           throw new Error("temporary account RPC failure");
         }),
       },
-    }, status, { identity: userIdentity(0) });
+    }, status, { peer: userIdentity(0) });
 
     const result = await handleAdapterStatus(
       { adapter: "telegram", accountId: "primary" },
@@ -1322,18 +1314,14 @@ describe("adapter lifecycle handlers", () => {
       status,
       {
         processId: "pid-1",
-        identity: {
-          role: "user",
-          process: {
+        peer: testPeer({ kind: "human", account: {
             uid: 1001,
             gid: 1001,
             gids: [1000],
             username: "sam-agent",
             home: "/home/sam-agent",
             cwd: "/home/sam-agent",
-          },
-          capabilities: ["adapter.status"],
-        },
+          }, calls: ["adapter.status"] }),
         identityLinks: {
           list: listLinks,
         },
@@ -1397,7 +1385,7 @@ describe("adapter lifecycle handlers", () => {
         CHANNEL_WHATSAPP: service,
       },
       status,
-      { identity: userIdentity() },
+      { peer: userIdentity() },
     );
 
     const result = await handleAdapterConnect(
@@ -1454,7 +1442,7 @@ describe("adapter lifecycle handlers", () => {
         upsert: vi.fn(),
       },
       {
-        identity: userIdentity(0),
+        peer: userIdentity(0),
         installationId,
       },
     );
@@ -1524,7 +1512,7 @@ describe("adapter lifecycle handlers", () => {
           { accountId: "other", connected: true, authenticated: true },
         ]),
       },
-    }, status, { identity: userIdentity() });
+    }, status, { peer: userIdentity() });
 
     await expect(handleAdapterConnect(
       { adapter: "whatsapp", accountId: "primary" },
@@ -1553,7 +1541,7 @@ describe("adapter lifecycle handlers", () => {
         CHANNEL_DISCORD: service,
       },
       status,
-      { identity: userIdentity() },
+      { peer: userIdentity() },
     );
 
     const result = await handleAdapterConnect(
@@ -1585,7 +1573,7 @@ describe("adapter lifecycle handlers", () => {
         get: vi.fn(() => ({ ownerUid: 1000 })),
         upsert: vi.fn(),
       },
-      { identity: userIdentity() },
+      { peer: userIdentity() },
     );
 
     const result = await handleAdapterConnect(
@@ -1624,7 +1612,7 @@ describe("adapter lifecycle handlers", () => {
         get: vi.fn(() => exists ? { ownerUid } : null),
       },
       {
-        identity: userIdentity(),
+        peer: userIdentity(),
         identityLinks: {
           listByAccount: vi.fn(() => linkedUids.map((uid) => ({ uid }))),
         },
@@ -1655,7 +1643,7 @@ describe("adapter lifecycle handlers", () => {
         setOwner,
       },
       {
-        identity: userIdentity(),
+        peer: userIdentity(),
         identityLinks: { listByAccount: vi.fn(() => [{ uid: 1000 }]) },
       },
     );
@@ -1689,7 +1677,7 @@ describe("adapter lifecycle handlers", () => {
         beginLifecycle,
         endLifecycle,
       },
-      { identity: userIdentity() },
+      { peer: userIdentity() },
     );
 
     await expect(handleAdapterConnect({ adapter: "discord", accountId: "default" }, ctx))
@@ -1716,7 +1704,7 @@ describe("adapter lifecycle handlers", () => {
         get: vi.fn(() => null),
         setOwner,
       },
-      { identity: userIdentity() },
+      { peer: userIdentity() },
     );
 
     await expect(handleAdapterConnect({ adapter: "discord", accountId: "default" }, ctx))
@@ -1743,13 +1731,13 @@ describe("adapter lifecycle handlers", () => {
 
     await expect(handleAdapterDisconnect(
       { adapter: "whatsapp", accountId: "default" },
-      makeContext(env, status, { identity: userIdentity(1000) }),
+      makeContext(env, status, { peer: userIdentity(1000) }),
     )).rejects.toThrow("Permission denied");
     expect(adapterDisconnect).not.toHaveBeenCalled();
 
     await expect(handleAdapterDisconnect(
       { adapter: "whatsapp", accountId: "default" },
-      makeContext(env, status, { identity: userIdentity(0) }),
+      makeContext(env, status, { peer: userIdentity(0) }),
     )).resolves.toMatchObject({ ok: true });
     expect(adapterDisconnect).toHaveBeenCalledTimes(1);
     expect(beginLifecycle).toHaveBeenCalledTimes(1);
@@ -1786,7 +1774,7 @@ describe("adapter lifecycle handlers", () => {
       CHANNEL_WHATSAPP: {
         adapterDisconnect: vi.fn(async () => ({ ok: true as const })),
       },
-    }, status, { identity: userIdentity() });
+    }, status, { peer: userIdentity() });
     vi.mocked(ctx.responsibilities.listActiveByDedupeKeyPrefix).mockReturnValue([
       // SAFETY: the lifecycle helper reads only the responsibility identity from this fixture.
       { id: "r12y:authentication" } as ReturnType<
@@ -1831,7 +1819,7 @@ describe("adapter lifecycle handlers", () => {
           privatePayload,
         })),
       },
-    }, status, { identity: userIdentity() });
+    }, status, { peer: userIdentity() });
 
     const result = await handleAdapterDisconnect(
       { adapter: "whatsapp", accountId: "default" },
@@ -1852,7 +1840,7 @@ describe("adapter lifecycle handlers", () => {
 
   it("returns an error when adapter binding is missing", async () => {
     const status = { upsert: vi.fn() };
-    const ctx = makeContext({}, status, { identity: userIdentity() });
+    const ctx = makeContext({}, status, { peer: userIdentity() });
 
     const result = await handleAdapterConnect(
       { adapter: "unknown", accountId: "default" },
@@ -2743,10 +2731,9 @@ describe("adapter lifecycle handlers", () => {
         actorId: "wa:+123",
       },
     });
-    expect(delegated.identity).toMatchObject({
-      role: "user",
-      process: { uid: 1000 },
-      capabilities: ["proc.list"],
+    expect(delegated.peer.peer).toMatchObject({
+      principal: { kind: "human", account: { uid: 1000 } },
+      grant: { calls: ["proc.list"] },
     });
   });
 
@@ -3997,18 +3984,14 @@ describe("adapter lifecycle handlers", () => {
       list: vi.fn(() => []),
     };
     const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterFrame } }, status, {
-      identity: {
-        role: "user",
-        process: {
+      peer: testPeer({ kind: "human", account: {
           uid: 1000,
           gid: 1000,
           gids: [1000],
           username: "sam",
           home: "/home/sam",
           cwd: "/home/sam",
-        },
-        capabilities: ["adapter.send"],
-      },
+        }, calls: ["adapter.send"] }),
       identityLinks: {
         list: vi.fn(() => []),
       },
@@ -4032,18 +4015,14 @@ describe("adapter lifecycle handlers", () => {
       list: vi.fn(() => []),
     };
     const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterFrame } }, status, {
-      identity: {
-        role: "user",
-        process: {
+      peer: testPeer({ kind: "human", account: {
           uid: 1000,
           gid: 1000,
           gids: [1000],
           username: "sam",
           home: "/home/sam",
           cwd: "/home/sam",
-        },
-        capabilities: ["adapter.send"],
-      },
+        }, calls: ["adapter.send"] }),
       identityLinks: {
         list: vi.fn(() => [{
           adapter: "whatsapp",
@@ -4096,18 +4075,14 @@ describe("adapter lifecycle handlers", () => {
       list: vi.fn(() => []),
     };
     const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterFrame } }, status, {
-      identity: {
-        role: "user",
-        process: {
+      peer: testPeer({ kind: "human", account: {
           uid: 1000,
           gid: 1000,
           gids: [1000],
           username: "sam",
           home: "/home/sam",
           cwd: "/home/sam",
-        },
-        capabilities: ["adapter.send"],
-      },
+        }, calls: ["adapter.send"] }),
       identityLinks: {
         list: vi.fn(() => [{
           adapter: "whatsapp",
@@ -4139,18 +4114,14 @@ describe("adapter lifecycle handlers", () => {
       list: vi.fn(() => []),
     };
     const ctx = makeContext({ CHANNEL_DISCORD: { adapterFrame } }, status, {
-      identity: {
-        role: "user",
-        process: {
+      peer: testPeer({ kind: "human", account: {
           uid: 1000,
           gid: 1000,
           gids: [1000],
           username: "sam",
           home: "/home/sam",
           cwd: "/home/sam",
-        },
-        capabilities: ["adapter.send"],
-      },
+        }, calls: ["adapter.send"] }),
       identityLinks: {
         list: vi.fn(() => [{
           adapter: "discord",
@@ -4200,18 +4171,14 @@ describe("adapter lifecycle handlers", () => {
         updatedAt: 1,
         updatedByUid: 1000,
       },
-      identity: {
-        role: "user",
-        process: {
+      peer: testPeer({ kind: "human", account: {
           uid: 1000,
           gid: 1000,
           gids: [1000],
           username: "sam",
           home: "/home/sam",
           cwd: "/home/sam",
-        },
-        capabilities: ["adapter.send"],
-      },
+        }, calls: ["adapter.send"] }),
       identityLinks: {
         list: vi.fn(() => [{
           adapter: "discord",
@@ -4261,18 +4228,14 @@ describe("adapter lifecycle handlers", () => {
     };
     const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterFrame } }, status, {
       callerOwnerUid: 1000,
-      identity: {
-        role: "user",
-        process: {
+      peer: testPeer({ kind: "human", account: {
           uid: 1001,
           gid: 1001,
           gids: [1000],
           username: "sam-agent",
           home: "/home/sam-agent",
           cwd: "/home/sam-agent",
-        },
-        capabilities: ["adapter.send"],
-      },
+        }, calls: ["adapter.send"] }),
       identityLinks: {
         list: listLinks,
       },
@@ -4327,7 +4290,7 @@ describe("adapter lifecycle handlers", () => {
         createdAt: 1,
         expiresAt: 2,
       },
-      identity: userIdentity(),
+      peer: userIdentity(),
       identityLinks: {
         list: vi.fn(() => [link]),
         get: vi.fn(() => link),
@@ -4443,7 +4406,7 @@ describe("adapter lifecycle handlers", () => {
       list: vi.fn(() => []),
     }, {
       processId: "pid-1",
-      identity: userIdentity(),
+      peer: userIdentity(),
       identityLinks: { get: getLink },
     });
     const destination = {
@@ -4495,7 +4458,7 @@ describe("managed adapter pairing", () => {
       } as KernelContext["installationIdentity"],
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       connection: {} as KernelContext["connection"],
-      identity: userIdentity(),
+      peer: userIdentity(),
       ...overrides,
     };
   }
@@ -4820,7 +4783,7 @@ describe("managed adapter pairing", () => {
     const root = makeContext(
       { CHANNEL_TELEGRAM: service },
       status,
-      directUserOptions({ identity: userIdentity(0) }),
+      directUserOptions({ peer: userIdentity(0) }),
     );
     const standalone = makeContext(
       { CHANNEL_TELEGRAM: service },
@@ -4828,7 +4791,7 @@ describe("managed adapter pairing", () => {
       {
         // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         connection: {} as KernelContext["connection"],
-        identity: userIdentity(),
+        peer: userIdentity(),
       },
     );
 

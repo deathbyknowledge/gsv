@@ -7,6 +7,7 @@ const installationIdSchema = z.string().check(
   z.regex(/^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?$/),
 );
 const nonNegativeIntegerSchema = z.number().check(z.int(), z.nonnegative());
+const positiveIntegerSchema = z.number().check(z.int(), z.positive());
 const nonNegativeNumberSchema = z.number().check(z.nonnegative());
 const adapterNameSchema = z.string().check(
   z.minLength(1),
@@ -134,6 +135,19 @@ const adapterDeliveryFinishedSchema = z.strictObject({
   }),
 });
 
+const adapterRouteDeliveryFailedSchema = z.strictObject({
+  stream: z.literal("operational"),
+  name: z.literal("adapter.route_delivery.failed"),
+  properties: z.strictObject({
+    adapter: adapterNameSchema,
+    deliveryKind: z.enum(["message", "approval"]),
+    surface: z.enum(["dm", "group", "channel", "thread"]),
+    outcome: z.literal("failed"),
+    failureKind: z.enum(["permanent", "ambiguous", "exhausted"]),
+    attempts: positiveIntegerSchema,
+  }),
+});
+
 const delegationFinishedSchema = z.strictObject({
   stream: z.literal("operational"),
   name: z.literal("delegation.finished"),
@@ -172,6 +186,23 @@ const inferenceRequestFinishedSchema = z.strictObject({
     failureKind: z.optional(inferenceFailureKindSchema),
     failureStage: z.optional(inferenceFailureStageSchema),
     retryable: z.optional(z.boolean()),
+    providerStatusCode: z.optional(httpStatusCodeSchema),
+  }),
+});
+
+const inferenceProviderAttemptFailedSchema = z.strictObject({
+  stream: z.literal("operational"),
+  name: z.literal("inference.provider_attempt.failed"),
+  properties: z.strictObject({
+    purpose: z.enum(["agent", "mail-intake"]),
+    workload: inferenceWorkloadSchema,
+    provider: z.literal("workers-ai"),
+    model: modelNameSchema,
+    attempt: positiveIntegerSchema,
+    durationMs: nonNegativeIntegerSchema,
+    failureKind: inferenceFailureKindSchema,
+    failureStage: inferenceFailureStageSchema,
+    retryable: z.boolean(),
     providerStatusCode: z.optional(httpStatusCodeSchema),
   }),
 });
@@ -220,8 +251,10 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
   processCompactionCompletedSchema,
   adapterIngressFinishedSchema,
   adapterDeliveryFinishedSchema,
+  adapterRouteDeliveryFailedSchema,
   delegationFinishedSchema,
   inferenceRequestFinishedSchema,
+  inferenceProviderAttemptFailedSchema,
   installationActivatedSchema,
   shipMessageCommittedSchema,
   targetConnectedSchema,

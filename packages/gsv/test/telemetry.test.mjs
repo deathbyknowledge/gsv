@@ -95,4 +95,70 @@ describe("telemetry contract", () => {
       },
     }).success, false);
   });
+
+  it("accepts content-free failed provider attempts", () => {
+    const failure = createTelemetryRecord({
+      installationId: "inst_telemetry",
+      component: "inference",
+      event: {
+        stream: "operational",
+        name: "inference.provider_attempt.failed",
+        properties: {
+          purpose: "agent",
+          workload: "interactive",
+          provider: "workers-ai",
+          model: "@cf/example/primary",
+          attempt: 1,
+          durationMs: 87,
+          failureKind: "rate_limited",
+          failureStage: "provider",
+          retryable: true,
+          providerStatusCode: 429,
+        },
+      },
+    });
+
+    assert.equal(telemetryRecordSchema.safeParse(failure).success, true);
+    assert.equal(telemetryRecordSchema.safeParse({
+      ...failure,
+      event: {
+        ...failure.event,
+        properties: {
+          ...failure.event.properties,
+          errorMessage: "private provider response",
+        },
+      },
+    }).success, false);
+  });
+
+  it("accepts terminal adapter route diagnostics without delivery content", () => {
+    const failure = createTelemetryRecord({
+      installationId: "inst_telemetry",
+      component: "gateway",
+      event: {
+        stream: "operational",
+        name: "adapter.route_delivery.failed",
+        properties: {
+          adapter: "telegram",
+          deliveryKind: "message",
+          surface: "dm",
+          outcome: "failed",
+          failureKind: "exhausted",
+          attempts: 3,
+        },
+      },
+    });
+
+    assert.equal(telemetryRecordSchema.safeParse(failure).success, true);
+    assert.equal(telemetryRecordSchema.safeParse({
+      ...failure,
+      event: {
+        ...failure.event,
+        properties: {
+          ...failure.event.properties,
+          errorMessage: "private adapter response",
+        },
+      },
+    }).success, false);
+  });
 });

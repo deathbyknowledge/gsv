@@ -1,4 +1,6 @@
 import { env } from "cloudflare:workers";
+import type { PeerContext } from "./peer";
+import { testPeer } from "../test-support/peers";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { handleFsWrite } from "../drivers/native/fs";
@@ -142,20 +144,16 @@ function buildKernelContext(kernel: Kernel): KernelContext {
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return (kernel as {
     buildKernelContext(options: {
-      identity: NonNullable<KernelContext["identity"]>;
+      peer: PeerContext;
     }): KernelContext;
   }).buildKernelContext({
-    identity: {
-      role: "user",
-      process: {
+    peer: testPeer({ kind: "human", account: {
         uid: 0,
         gid: 0,
         gids: [0],
         username: "root",
         home: "/root",
         cwd: "/root",
-      },
-      capabilities: ["fs.write", "shell.exec"],
-    },
+      }, calls: ["fs.write", "shell.exec"] }),
   });
 }

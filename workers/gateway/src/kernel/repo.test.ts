@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { testPeer } from "../test-support/peers";
 import type { KernelContext } from "./context";
 import {
   canReadRepo,
@@ -68,18 +69,14 @@ function makeContext(
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as Env,
     config,
-    identity: {
-      role: "user",
-      capabilities: ["repo.apply", "repo.compare", "repo.create", "repo.read"],
-      process: {
+    peer: testPeer({ kind: "human", account: {
         uid: 1000,
         gid: 100,
         gids: [100],
         username: "alice",
         home: "/home/alice",
         cwd: "/home/alice",
-      },
-    },
+      }, calls: ["repo.apply", "repo.compare", "repo.create", "repo.read"] }),
     auth: {
       getPasswdByUid: (uid: number) => {
         if (uid === 1000) return { uid: 1000, gid: 1000, username: "alice", home: "/home/alice" };
@@ -404,18 +401,14 @@ describe("repo syscalls", () => {
     });
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = makeContext(fetcher);
-    ctx.identity = {
-      role: "user",
-      capabilities: ["repo.apply"],
-      process: {
+    ctx.peer = testPeer({ kind: "human", account: {
         uid: 2000,
         gid: 2000,
         gids: [2000, 1000],
         username: "scout",
         home: "/home/scout",
         cwd: "/home/scout",
-      },
-    };
+      }, calls: ["repo.apply"] });
     ctx.processId = "proc:scout";
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     ctx.procs = {

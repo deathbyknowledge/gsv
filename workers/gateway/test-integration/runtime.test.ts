@@ -1,11 +1,9 @@
 import { GSVClient } from "@humansandmachines/gsv";
 import {
-  adapterGatewayResponseFrameSchema,
+  wireFrameSchemas,
   isAdapterInboundResult,
   type AdapterGatewayRequestFrame,
-  type AdapterGatewayResponseFrame,
   type AdapterInboundResult,
-  type ProcAiConfigSetResult,
   type ProcHilRequest,
 } from "@humansandmachines/gsv/protocol";
 import type { TestHarness } from "wrangler";
@@ -24,6 +22,8 @@ const CLIENT_ID = "runtime-integration";
 const ACCOUNT_ID = "integration-inbound";
 const ACTOR_ID = "discord:user-42";
 const SURFACE = { kind: "dm" as const, id: "discord:dm-42" };
+const USER_UID = 1000;
+const MODEL_ID = "integration-model";
 
 type RunSignal = {
   signal: string;
@@ -701,36 +701,37 @@ async function configureDeterministicAi(
   pid: string,
   baseUrl: string,
 ): Promise<void> {
-  // SAFETY: The client command name is a stable protocol literal accepted by the test client.
-  const result = await client.call<ProcAiConfigSetResult>("proc.ai.config.set" as string, {
+  await client.sys.config.set({
+    key: `users/${USER_UID}/ai/models`,
+    value: JSON.stringify({
+      version: 1,
+      models: [{
+        id: MODEL_ID,
+        name: "Integration model",
+        provider: "custom",
+        model: MODEL_ID,
+        baseUrl,
+        providerStyle: "openai-chat-completions",
+        transportTarget: "gsv",
+      }],
+    }),
+  });
+  await client.sys.config.set({
+    key: `users/${USER_UID}/ai/models/${MODEL_ID}/api_key`,
+    value: "fixture-only",
+  });
+  const result = await client.proc.ai.config.set({
     pid,
-    values: {
-      "config/ai/provider": "custom",
-      "config/ai/model": "integration-model",
-      "config/ai/base_url": baseUrl,
-      "config/ai/provider_style": "openai-chat-completions",
-      "config/ai/transport_target": "gsv",
-      "config/ai/api_key": "fixture-only",
-      "config/ai/reasoning": "off",
-      "config/ai/generation/timeout_ms": "5000",
-      "config/ai/fallback_model_profile": "integration-no-fallback",
-    },
+    modelId: MODEL_ID,
+    reasoning: "off",
   });
   expect(result).toMatchObject({
     ok: true,
     pid,
     config: {
-      values: {
-        "config/ai/provider": "custom",
-        "config/ai/model": "integration-model",
-        "config/ai/base_url": baseUrl,
-        "config/ai/provider_style": "openai-chat-completions",
-        "config/ai/transport_target": "gsv",
-        "config/ai/api_key": "redacted",
-        "config/ai/reasoning": "off",
-        "config/ai/generation/timeout_ms": "5000",
-        "config/ai/fallback_model_profile": "integration-no-fallback",
-      },
+      version: 2,
+      modelId: MODEL_ID,
+      reasoning: "off",
     },
   });
 }
@@ -795,10 +796,12 @@ function inboundFrame(options: {
   };
 }
 
+type ServiceFrameResponse = ReturnType<typeof wireFrameSchemas.response.parse>;
+
 async function sendServiceFrame(
   harness: TestHarness,
   frame: AdapterGatewayRequestFrame,
-): Promise<AdapterGatewayResponseFrame> {
+): Promise<ServiceFrameResponse> {
   const response = await harness.getWorker("gsv-test-dependencies").fetch(
     "http://gsv-test-dependencies/__test/service-frame/discord",
     {
@@ -815,10 +818,10 @@ async function sendServiceFrame(
   if (!response.ok) {
     throw new Error(`Test dependency service-frame endpoint returned ${response.status}`);
   }
-  return adapterGatewayResponseFrameSchema.parse(await response.json());
+  return wireFrameSchemas.response.parse(await response.json());
 }
 
-function inboundResult(response: AdapterGatewayResponseFrame): AdapterInboundResult {
+function inboundResult(response: ServiceFrameResponse): AdapterInboundResult {
   if (!response.ok) {
     throw new Error(response.error?.message ?? "Gateway rejected adapter ingress");
   }

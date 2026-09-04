@@ -235,7 +235,7 @@ describe("federation inbound boundary", () => {
       const replacementGate = new Promise<void>((resolve) => {
         releaseReplacement = resolve;
       });
-      const replacement = internal.coordinateFederationContact(contact.id, async () => {
+      const replacement = internal.federationRuntime.coordinateFederationContact(contact.id, async () => {
         await replacementGate;
         internal.federation.transaction(() => internal.federation.activateContact({
           ownerUid: OWNER.uid,
@@ -258,7 +258,7 @@ describe("federation inbound boundary", () => {
         },
       ));
       await vi.waitFor(() => {
-        expect(internal.pendingFederationInbound.size).toBe(1);
+        expect(internal.federationRuntime.pendingFederationInbound.size).toBe(1);
       });
       releaseReplacement();
       await replacement;
@@ -437,7 +437,7 @@ describe("federation inbound boundary", () => {
           }),
         }),
       ]);
-      await instance.onFederationInbox({
+      await instance.federationRuntime.onFederationInbox({
         contactId: contact.id,
         contactGeneration: contact.generation,
         deliveryId: envelope.deliveryId,

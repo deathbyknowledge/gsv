@@ -1,5 +1,6 @@
 import type { KernelContext } from "../context";
-import type { AuthTokenKind, AuthTokenRole } from "../auth-store";
+import { principalOf } from "../context";
+import type { AuthTokenKind } from "../auth-store";
 import type {
   SysTokenCreateArgs,
   SysTokenCreateResult,
@@ -10,19 +11,14 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 
-const ROLE_BY_KIND = {
-  node: "driver",
-  service: "service",
-  user: "user",
-} satisfies Record<AuthTokenKind, AuthTokenRole>;
 const tokenWireSchema = z.unknown();
 type TokenWireValue = z.input<typeof tokenWireSchema>;
-const tokenCreateSchema = z.object({ uid: z.number().optional(), kind: z.string(), allowedRole: z.string().optional(), allowedDeviceId: z.string().optional(), label: z.string().optional(), expiresAt: z.number().optional() });
+const tokenCreateSchema = z.object({ uid: z.number().optional(), kind: z.string(), peerId: z.string().optional(), label: z.string().optional(), expiresAt: z.number().optional() });
 const tokenListSchema = z.object({ uid: z.number().optional() });
 const tokenRevokeSchema = z.object({ uid: z.number().optional(), tokenId: z.string().optional(), reason: z.string().optional() });
 
 function requireUid(ctx: KernelContext): number {
-  const uid = ctx.identity?.process.uid;
+  const uid = principalOf(ctx)?.account.uid;
   if (uid === undefined) {
     throw new Error("Authentication required");
   }
@@ -39,17 +35,9 @@ function parseOptionalUid(input: TokenWireValue): number | undefined {
 }
 
 function parseTokenKind(input: TokenWireValue): AuthTokenKind {
-  const parsed = z.enum(["node", "service", "user"]).safeParse(input);
+  const parsed = z.enum(["human", "machine", "service"]).safeParse(input);
   if (!parsed.success) {
-    throw new Error("kind must be one of: node, service, user");
-  }
-  return parsed.data;
-}
-
-function parseTokenRole(input: TokenWireValue): AuthTokenRole {
-  const parsed = z.enum(["driver", "service", "user"]).safeParse(input);
-  if (!parsed.success) {
-    throw new Error("allowedRole must be one of: driver, service, user");
+    throw new Error("kind must be one of: human, machine, service");
   }
   return parsed.data;
 }
@@ -91,28 +79,19 @@ export async function handleSysTokenCreate(
   if (kind === "service" && !isRoot) {
     throw new Error("Permission denied: only root may create service tokens");
   }
-  const defaultRole = ROLE_BY_KIND[kind];
-  const allowedRole = raw.allowedRole === undefined
-    ? defaultRole
-    : parseTokenRole(raw.allowedRole);
-  if (allowedRole !== defaultRole) {
-    throw new Error(`Invalid allowedRole for kind=${kind}: expected ${defaultRole}`);
+  const peerId = parseOptionalString(raw.peerId);
+  if (peerId && kind !== "machine") {
+    throw new Error("peerId is only valid for machine tokens");
   }
-
-  const allowedDeviceId = parseOptionalString(raw.allowedDeviceId);
-  if (allowedDeviceId && allowedRole !== "driver") {
-    throw new Error("allowedDeviceId is only valid for driver-bound tokens");
-  }
-  if (allowedRole === "driver" && !allowedDeviceId) {
-    throw new Error("allowedDeviceId is required for driver-bound tokens");
+  if (kind === "machine" && !peerId) {
+    throw new Error("peerId is required for machine tokens");
   }
 
   const issued = await ctx.auth.issueToken({
     uid: targetUid,
     kind,
     label: parseOptionalString(raw.label),
-    allowedRole,
-    allowedDeviceId,
+    peerId,
     expiresAt: parseOptionalFutureTimestamp(raw.expiresAt),
   });
 

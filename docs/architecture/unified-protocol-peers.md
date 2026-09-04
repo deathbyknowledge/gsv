@@ -1,6 +1,6 @@
 # Unified Protocol Peers
 
-Status: **implemented in protocol version 3**.
+Status: **implemented in protocol version 4**.
 
 GSV has one request, response, signal, body, and cancellation model. A browser,
 native application, CLI, machine daemon, or adapter service is a protocol peer.
@@ -56,7 +56,7 @@ These fields are deliberately different axes.
 never claimed in the connect request.
 
 - Password and user-token authentication produce a human principal.
-- A node token produces a machine principal and is bound to its machine id.
+- A machine token produces a machine principal and is bound to its peer id.
 - A service token or a fixed first-party service binding produces a service
   principal.
 - Linked adapter ingress produces a short-lived delegated human context only
@@ -228,10 +228,10 @@ late responses remove routes and release owned bodies.
 `peer.ping` and `peer.pong` are generic endpoint liveness signals. They replace
 the old device-specific heartbeat names.
 
-The Kernel currently retains `device` names in its persisted target registry
-and machine-management syscalls for upgrade compatibility. That storage detail
-does not define the public target model: any authorized peer with coherent
-implementations may back a route target.
+Any authorized peer with coherent implementations may back a route target. The
+Kernel's target registry, routes, and `sys.target.*` syscalls use that
+vocabulary end to end; a machine is one kind of target provider, not the
+definition of target-ness.
 
 ## Adapters and delegated humans
 

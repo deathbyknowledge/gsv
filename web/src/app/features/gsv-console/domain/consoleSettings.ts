@@ -1,3 +1,4 @@
+import type { AiModelListEntry, AiModelSource, AiModelsResult } from "@humansandmachines/gsv/protocol";
 import type { ConsoleAccount, ConsoleConfigEntry } from "./consoleModels";
 import {
   AI_OPENAI_WORKERS_PROVIDER_OPTIONS,
@@ -9,7 +10,7 @@ import { z } from "zod";
 
 const settingsValueSchema = z.unknown();
 type SettingsValue = z.input<typeof settingsValueSchema>;
-const settingsRecordSchema = z.record(z.string(), z.unknown());
+const settingsRecordSchema = z.record(z.string(), settingsValueSchema);
 type SettingsRecord = z.infer<typeof settingsRecordSchema>;
 interface ProfileValues { [key: string]: string }
 
@@ -44,9 +45,23 @@ export type ConsoleModelProfile = {
   id: string;
   name: string;
   values: Record<string, string>;
+  /** Which stack layer holds the entry; only the viewer's own layer is editable. */
+  source: AiModelSource;
   createdAt: number;
   updatedAt: number;
 };
+
+/** The effective ordered stack as the Kernel reports it through `ai.models`. */
+export type ConsoleModelListing = AiModelsResult;
+
+/** Root edits the installation-wide list; everyone else edits their own. */
+export function editableModelSource(uid: number | null | undefined): AiModelSource {
+  return uid === 0 ? "system" : "personal";
+}
+
+export function preferredModelSaveEntry(uid: number, modelId: string | null): ConsoleConfigWrite {
+  return { key: `users/${uid}/ai/preferred_model`, value: modelId ?? "" };
+}
 
 export type ConsoleConfigWrite = {
   key: string;
@@ -56,17 +71,9 @@ export type ConsoleConfigWrite = {
 
 export type ClearedModelProfileSecretKeys = ReadonlyMap<string, ReadonlySet<string>>;
 
-const MODEL_PROFILES_VERSION = 1;
-const MODEL_PROFILE_KEY = "model_profiles";
+const MODEL_STACK_VERSION = 1;
+const MODEL_PROFILE_KEY = "models";
 const MAX_PROFILE_NAME_LENGTH = 80;
-const MODEL_FALLBACK_PROFILE_KEY = "config/ai/fallback_model_profile";
-const ACCOUNT_MODEL_PROFILE_INFERENCE_BLOCKERS = [
-  "provider",
-  "base_url",
-  "provider_style",
-  "transport_target",
-  "api_key",
-] as const;
 
 export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
   {
@@ -96,15 +103,6 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     requirement: "optional",
     placeholder: "https://gateway.example.com/v1",
     size: "large",
-  },
-  {
-    key: "config/ai/fallback_model_profile",
-    label: "Fallback model",
-    description: "Saved model to try if the selected model fails.",
-    kind: "select",
-    requirement: "optional",
-    size: "large",
-    options: [{ value: "", label: "None" }],
   },
   {
     key: "config/ai/provider_style",
@@ -138,22 +136,6 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     size: "large",
   },
   {
-    key: "config/ai/reasoning",
-    label: "Reasoning",
-    description: "Reasoning effort hint for models that support extended thinking.",
-    kind: "select",
-    requirement: "optional",
-    size: "small",
-    options: [
-      { value: "off", label: "Off" },
-      { value: "minimal", label: "Minimal" },
-      { value: "low", label: "Low" },
-      { value: "medium", label: "Medium" },
-      { value: "high", label: "High" },
-      { value: "xhigh", label: "Extra High" },
-    ],
-  },
-  {
     key: "config/ai/max_tokens",
     label: "Max tokens",
     description: "Upper bound for generated response size.",
@@ -163,9 +145,9 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     half: true,
   },
   {
-    key: "config/ai/max_context_bytes",
-    label: "Max bytes",
-    description: "Maximum bytes of home context injected into prompts.",
+    key: "config/ai/context_window_tokens",
+    label: "Context window",
+    description: "Provider context-window size when GSV cannot discover it from the model registry.",
     kind: "number",
     requirement: "optional",
     size: "small",
@@ -173,8 +155,7 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
   },
 ];
 
-export const MODEL_PROFILE_FIELDS: readonly ConsoleSettingField[] = AGENT_MODEL_FIELDS
-  .filter((field) => field.key !== MODEL_FALLBACK_PROFILE_KEY);
+export const MODEL_PROFILE_FIELDS: readonly ConsoleSettingField[] = AGENT_MODEL_FIELDS;
 export const MODEL_PROFILE_SECRET_FIELDS: readonly ConsoleSettingField[] = MODEL_PROFILE_FIELDS
   .filter((field) => isSensitiveSettingKey(field.key));
 
@@ -239,7 +220,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
       {
         key: "config/ai/image/generation/api_key",
         label: "API key",
-        description: "Some providers require an API key, while others do not. Falls back to the agent API key when empty.",
+        description: "Credential owned by this image-generation configuration. Some providers do not require one.",
         kind: "password",
         placeholder: "sk-...",
       },
@@ -270,7 +251,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
       {
         key: "config/ai/transcription/api_key",
         label: "API key",
-        description: "Some providers require an API key, while others do not. Falls back to the agent API key when empty.",
+        description: "Credential owned by this transcription configuration. Some providers do not require one.",
         kind: "password",
         placeholder: "sk-...",
       },
@@ -308,7 +289,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
       {
         key: "config/ai/speech/api_key",
         label: "API key",
-        description: "Some providers require an API key, while others do not. Falls back to the agent API key when empty.",
+        description: "Credential owned by this speech configuration. Some providers do not require one.",
         kind: "password",
         placeholder: "sk-...",
       },
@@ -414,22 +395,18 @@ export function buildUserAiOverrideKey(uid: number, systemKey: string): string {
 }
 
 export function modelProfilesConfigKey(uid: number): string {
-  return `users/${uid}/ai/${MODEL_PROFILE_KEY}`;
-}
-
-export function isModelProfilesConfigKey(key: string): boolean {
-  return /^users\/\d+\/ai\/model_profiles$/.test(key);
+  return uid === 0 ? "config/ai/models" : `users/${uid}/ai/${MODEL_PROFILE_KEY}`;
 }
 
 export function modelProfileSecretConfigKey(uid: number, profileId: string, fieldKey: string): string {
   if (!fieldKey.startsWith("config/ai/")) {
-    throw new Error(`Cannot build model profile secret key for non-AI key: ${fieldKey}`);
+    throw new Error(`Cannot build model credential key for non-AI key: ${fieldKey}`);
   }
   const normalizedProfileId = normalizeProfileId(profileId);
   if (!normalizedProfileId) {
-    throw new Error("Profile id is required");
+    throw new Error("Model id is required");
   }
-  return `users/${uid}/ai/${MODEL_PROFILE_KEY}/${normalizedProfileId}/${fieldKey.slice("config/ai/".length)}`;
+  return `${modelProfilesConfigKey(uid)}/${normalizedProfileId}/${fieldKey.slice("config/ai/".length)}`;
 }
 
 export function configEntryForKey(
@@ -460,6 +437,7 @@ export function configValueMap(config: readonly ConsoleConfigEntry[]) {
 export function effectiveAiValuesForViewer(
   config: readonly ConsoleConfigEntry[],
   uid: number | null | undefined,
+  primaryModel: ConsoleModelProfile | null = null,
 ) {
   const values: Record<string, string> = {};
   for (const field of allAiSettingFields()) {
@@ -469,126 +447,125 @@ export function effectiveAiValuesForViewer(
   if (!validUid.success) {
     return values;
   }
-  const profileValues = effectiveAiProfileValuesForViewer(config, validUid.data);
-  for (const field of allAiSettingFields()) {
-    const profileValue = cleanValue(profileValues[field.key]);
-    const overrideValue = cleanValue(configValueForKey(config, buildUserAiOverrideKey(validUid.data, field.key)));
-    if (profileValue !== "") {
-      values[field.key] = profileValue;
-    } else if (overrideValue !== "") {
-      values[field.key] = overrideValue;
+  if (validUid.data !== 0) {
+    for (const group of TOOL_MODEL_GROUPS) {
+      const connectionFields = group.fields.filter((field) =>
+        isMediaConnectionField(field.key)
+      );
+      const connectionIsPersonal = connectionFields.some((field) =>
+        configEntryForKey(config, buildUserAiOverrideKey(validUid.data, field.key)) !== null
+      );
+      for (const field of group.fields) {
+        const overrideKey = buildUserAiOverrideKey(validUid.data, field.key);
+        const overrideValue = cleanValue(configValueForKey(config, overrideKey));
+        if (connectionIsPersonal && isMediaConnectionField(field.key)) {
+          values[field.key] = overrideValue;
+        } else if (overrideValue !== "") {
+          values[field.key] = overrideValue;
+        }
+      }
     }
+  }
+  if (primaryModel) {
+    Object.assign(values, primaryModel.values);
   }
   return values;
 }
 
-function effectiveAiProfileValuesForViewer(
-  config: readonly ConsoleConfigEntry[],
-  uid: number,
-) {
-  const explicitSelector = cleanValue(configValueForKey(config, `users/${uid}/ai/model_profile`));
-  const inferredSelector = explicitSelector
-    ? ""
-    : inferAiProfileSelectorForViewer(config, uid);
-  const selector = explicitSelector || inferredSelector;
-  if (!selector) {
-    return {};
-  }
-  const profile = findAiProfileForViewer(config, uid, selector, {
-    matchModel: Boolean(inferredSelector),
-  });
-  return profile?.values ?? {};
+function isMediaConnectionField(key: string): boolean {
+  return key.endsWith("/provider") ||
+    key.endsWith("/model") ||
+    key.endsWith("/api_key") ||
+    key === "config/ai/speech/speaker";
 }
 
-function inferAiProfileSelectorForViewer(
+/**
+ * Projects the Kernel's effective stack into console profiles. Entries from
+ * the viewer's own layer get their stored credential hydrated for editing;
+ * every other layer is shown as it is.
+ */
+export function modelProfilesFromListing(
+  listing: ConsoleModelListing | null,
   config: readonly ConsoleConfigEntry[],
-  uid: number,
-): string {
-  const model = cleanValue(configValueForKey(config, buildUserAiOverrideKey(uid, "config/ai/model")));
-  if (!model) {
-    return "";
+  uid: number | null | undefined,
+): ConsoleModelProfile[] {
+  if (!listing) {
+    return [];
   }
-  const hasProviderStackOverride = ACCOUNT_MODEL_PROFILE_INFERENCE_BLOCKERS.some((key) => {
-    const overrideKey = `users/${uid}/ai/${key}`;
-    const entry = configEntryForKey(config, overrideKey);
-    return entry?.redacted === true || cleanValue(entry?.value) !== "";
-  });
-  return hasProviderStackOverride ? "" : model;
+  // Display order: the preferred entry first, as generation will run it.
+  return promotePreferred(storedModelProfiles(listing, config, uid), listing.preferredModelId);
 }
 
-function findAiProfileForViewer(
-  config: readonly ConsoleConfigEntry[],
-  uid: number,
-  selector: string,
-  options: { matchModel?: boolean } = {},
-): ConsoleModelProfile | null {
-  const normalized = selector.trim().toLowerCase();
-  if (!normalized) {
-    return null;
-  }
-  return modelProfilesForConfig(config, uid).find((candidate) =>
-    candidate.id.toLowerCase() === normalized ||
-    candidate.name.toLowerCase() === normalized ||
-    (
-      options.matchModel === true &&
-      cleanValue(candidate.values["config/ai/model"]).toLowerCase() === normalized
-    )
-  ) ?? null;
-}
-
-export function modelProfilesForConfig(
+/**
+ * The viewer's editable layer in its stored order, which is what a save
+ * must re-serialize. Never derived from the promoted display order, or an
+ * unrelated edit would rewrite the durable fallback order.
+ */
+export function writableModelProfiles(
+  listing: ConsoleModelListing | null,
   config: readonly ConsoleConfigEntry[],
   uid: number | null | undefined,
 ): ConsoleModelProfile[] {
   const validUid = z.number().finite().safeParse(uid);
-  if (!validUid.success) {
+  if (!listing || !validUid.success) {
     return [];
   }
-  const raw = configValueForKey(config, modelProfilesConfigKey(validUid.data));
-  if (!raw.trim()) {
-    return [];
-  }
+  const editable = editableModelSource(validUid.data);
+  return storedModelProfiles(listing, config, uid).filter((profile) => profile.source === editable);
+}
 
-  try {
-    const payload = z.object({ profiles: z.array(settingsValueSchema) }).safeParse(JSON.parse(raw));
-    if (!payload.success) return [];
-    const profiles = payload.data.profiles;
-    return profiles
-      .map(normalizeModelProfile)
-      .filter((profile): profile is ConsoleModelProfile => profile !== null)
-      .map((profile) => hydrateModelProfileSecrets(config, validUid.data, profile))
-      .sort((left, right) => right.updatedAt - left.updatedAt || left.name.localeCompare(right.name));
-  } catch {
-    return [];
+function storedModelProfiles(
+  listing: ConsoleModelListing,
+  config: readonly ConsoleConfigEntry[],
+  uid: number | null | undefined,
+): ConsoleModelProfile[] {
+  const validUid = z.number().finite().safeParse(uid);
+  const editable = validUid.success ? editableModelSource(validUid.data) : null;
+  const profiles: ConsoleModelProfile[] = [];
+  for (const entry of listing.models) {
+    const profile = normalizeCanonicalModel(entry, entry.source);
+    if (!profile) continue;
+    profiles.push(
+      validUid.success && entry.source === editable
+        ? hydrateModelProfileSecrets(config, modelProfilesConfigKey(validUid.data), profile)
+        : profile,
+    );
   }
+  return profiles;
+}
+
+function promotePreferred(
+  profiles: readonly ConsoleModelProfile[],
+  preferredModelId: string | null,
+): ConsoleModelProfile[] {
+  const preferred = preferredModelId?.toLowerCase();
+  const index = preferred ? profiles.findIndex((profile) => profile.id.toLowerCase() === preferred) : -1;
+  if (index <= 0) return [...profiles];
+  return [profiles[index], ...profiles.slice(0, index), ...profiles.slice(index + 1)];
 }
 
 export function serializeModelProfiles(profiles: readonly ConsoleModelProfile[]): string {
   return JSON.stringify({
-    version: MODEL_PROFILES_VERSION,
-    profiles: profiles.map((profile) => ({
+    version: MODEL_STACK_VERSION,
+    models: profiles.map((profile) => ({
       id: profile.id,
       name: normalizeProfileName(profile.name),
-      values: normalizeProfileStorageValues(profile.values),
-      createdAt: profile.createdAt,
-      updatedAt: profile.updatedAt,
+      ...canonicalModelValues(profile.values),
     })),
   });
 }
 
 export function modelProfileSaveEntries(
   uid: number | null,
-  currentProfiles: readonly ConsoleModelProfile[],
   nextProfiles: readonly ConsoleModelProfile[],
   clearedSecretKeys: ClearedModelProfileSecretKeys = new Map(),
 ): ConsoleConfigWrite[] {
   if (uid === null) {
     throw new Error("A signed-in account is required to save models.");
   }
-  const nextIds = new Set(nextProfiles.map((profile) => profile.id));
   const entries: ConsoleConfigWrite[] = [{
     key: modelProfilesConfigKey(uid),
-    value: serializeModelProfiles(nextProfiles),
+    value: nextProfiles.length > 0 ? serializeModelProfiles(nextProfiles) : "",
   }];
   for (const profile of nextProfiles) {
     const clearedForProfile = clearedSecretKeys.get(profile.id);
@@ -607,88 +584,52 @@ export function modelProfileSaveEntries(
       }
     }
   }
-  for (const profile of currentProfiles) {
-    if (nextIds.has(profile.id)) {
-      continue;
-    }
-    for (const field of MODEL_PROFILE_SECRET_FIELDS) {
-      entries.push({
-        key: modelProfileSecretConfigKey(uid, profile.id, field.key),
-        value: "",
-      });
-    }
-  }
   return entries;
 }
 
-export function modelProfileDefaultEntries(
-  config: readonly ConsoleConfigEntry[],
-  uid: number | null,
-  isRoot: boolean,
-  profile: ConsoleModelProfile,
-  clearedSecretKeys: ClearedModelProfileSecretKeys = new Map(),
-): ConsoleConfigWrite[] {
-  if (uid === null) {
-    throw new Error("A signed-in account is required to update the default model.");
-  }
-  const clearedForProfile = clearedSecretKeys.get(profile.id);
-  return MODEL_PROFILE_FIELDS.flatMap((field): ConsoleConfigWrite[] => {
-    const key = isRoot ? field.key : buildUserAiOverrideKey(uid, field.key);
-    const value = profile.values[field.key] ?? "";
-    if (isSensitiveSettingKey(field.key) && value.length === 0) {
-      if (clearedForProfile?.has(field.key)) {
-        return [{ key, value: "" }];
-      }
-      const copyFromKey = modelProfileSecretConfigKey(uid, profile.id, field.key);
-      if (configEntryForKey(config, copyFromKey)?.redacted === true) {
-        return [{ key, copyFromKey }];
-      }
-      return [];
-    }
-    return [{ key, value }];
-  });
-}
-
-export function redactModelProfilesConfigValue(raw: string): string {
-  if (!raw.trim()) {
-    return raw;
-  }
-  try {
-    const payload = z.object({ profiles: z.array(settingsValueSchema) }).passthrough().safeParse(JSON.parse(raw));
-    if (!payload.success) {
-      return raw;
-    }
-    return JSON.stringify({
-      ...payload.data,
-      profiles: payload.data.profiles.map(redactModelProfileSecrets),
-    });
-  } catch {
-    return raw;
-  }
-}
-
+/**
+ * Appends a profile to the writable layer. Ids and names are reserved against
+ * `visibleProfiles`, every layer the viewer can see, so a new personal model
+ * cannot take an included or shared model's id and hide it from the stack.
+ */
 export function createModelProfile(
   profiles: readonly ConsoleModelProfile[],
   name: string,
   values: Record<string, string>,
   now = Date.now(),
+  source: AiModelSource = "personal",
+  visibleProfiles: readonly ConsoleModelProfile[] = profiles,
 ): ConsoleModelProfile[] {
   const normalizedName = normalizeProfileName(name);
   if (!normalizedName) {
-    throw new Error("Profile name is required");
+    throw new Error("Model name is required");
   }
-  if (profiles.some((profile) => profile.name.toLowerCase() === normalizedName.toLowerCase())) {
-    throw new Error("Profile name already exists");
+  if (visibleProfiles.some((profile) => profile.name.toLowerCase() === normalizedName.toLowerCase())) {
+    throw new Error("Model name already exists");
   }
   return [
+    ...profiles,
     {
-      id: uniqueProfileId(profiles, normalizedName),
+      id: uniqueProfileId(visibleProfiles, normalizedName),
       name: normalizedName,
       values: normalizeProfileValues(values),
+      source,
       createdAt: now,
       updatedAt: now,
     },
-    ...profiles,
+  ];
+}
+
+export function makeModelPrimary(
+  profiles: readonly ConsoleModelProfile[],
+  profileId: string,
+): ConsoleModelProfile[] {
+  const index = profiles.findIndex((profile) => profile.id === profileId);
+  if (index <= 0) return [...profiles];
+  return [
+    profiles[index],
+    ...profiles.slice(0, index),
+    ...profiles.slice(index + 1),
   ];
 }
 
@@ -701,7 +642,7 @@ export function updateModelProfile(
 ): ConsoleModelProfile[] {
   const normalizedName = normalizeProfileName(name);
   if (!normalizedName) {
-    throw new Error("Profile name is required");
+    throw new Error("Model name is required");
   }
   return profiles.map((profile) => profile.id === profileId
     ? {
@@ -740,11 +681,10 @@ export function modelValidationValuesFromProfileDrafts(
 export function modelProfileSummary(values: Record<string, string>): string {
   const provider = cleanValue(values["config/ai/provider"]) || "provider";
   const model = cleanValue(values["config/ai/model"]) || "model";
-  const reasoning = cleanValue(values["config/ai/reasoning"]) || "default";
   if (fixedAiProviderModel(provider)) {
-    return `${aiProviderDisplayLabel(provider)} / reasoning ${reasoning}`;
+    return aiProviderDisplayLabel(provider);
   }
-  return `${provider} / ${modelDisplayName(model)} / reasoning ${reasoning}`;
+  return `${provider} / ${modelDisplayName(model)}`;
 }
 
 export function modelStackDisplayName(values: Record<string, string>): string {
@@ -809,23 +749,43 @@ export function allModeledSettingKeys(): Set<string> {
   ].map((field) => field.key));
 }
 
-function normalizeModelProfile(raw: SettingsValue): ConsoleModelProfile | null {
-  const recordResult = settingsRecordSchema.safeParse(raw);
-  if (!recordResult.success) return null;
-  const record = recordResult.data;
-  const id = normalizeProfileId(record.id);
-  const name = normalizeProfileName(record.name);
-  if (!id || !name) {
-    return null;
-  }
+function normalizeCanonicalModel(
+  raw: SettingsValue | AiModelListEntry,
+  source: AiModelSource,
+): ConsoleModelProfile | null {
+  const parsed = z.object({
+    id: z.string(),
+    name: z.string(),
+    provider: z.string(),
+    model: z.string(),
+    baseUrl: z.string().optional(),
+    providerStyle: z.string().optional(),
+    transportTarget: z.string().optional(),
+    maxTokens: z.number().int().positive().optional(),
+    contextWindowTokens: z.number().int().positive().optional(),
+  }).safeParse(raw);
+  if (!parsed.success) return null;
+  const id = normalizeProfileId(parsed.data.id);
+  const name = normalizeProfileName(parsed.data.name);
+  const provider = parsed.data.provider.trim();
+  const model = parsed.data.model.trim();
+  if (!id || !name || !provider || !model) return null;
   return {
     id,
     name,
-    values: normalizeProfileValues(settingsRecordSchema.safeParse(record.values).success
-      ? settingsRecordSchema.parse(record.values)
-      : {}),
-    createdAt: normalizeTimestamp(record.createdAt),
-    updatedAt: normalizeTimestamp(record.updatedAt),
+    values: normalizeProfileValues({
+      "config/ai/provider": provider,
+      "config/ai/model": model,
+      "config/ai/base_url": parsed.data.baseUrl ?? "",
+      "config/ai/provider_style": parsed.data.providerStyle ?? "",
+      "config/ai/transport_target": parsed.data.transportTarget ?? "",
+      "config/ai/max_tokens": parsed.data.maxTokens ?? "",
+      "config/ai/context_window_tokens": parsed.data.contextWindowTokens ?? "",
+      "config/ai/api_key": "",
+    }),
+    source,
+    createdAt: 0,
+    updatedAt: 0,
   };
 }
 
@@ -837,27 +797,17 @@ function normalizeProfileValues(values: SettingsRecord): ProfileValues {
   return normalized;
 }
 
-function normalizeProfileStorageValues(values: SettingsRecord): Record<string, string> {
-  const normalized = normalizeProfileValues(values);
-  for (const [key, value] of Object.entries(normalized)) {
-    if (!value.trim()) {
-      delete normalized[key];
-    }
-  }
-  for (const field of MODEL_PROFILE_SECRET_FIELDS) {
-    delete normalized[field.key];
-  }
-  return normalized;
-}
-
 function hydrateModelProfileSecrets(
   config: readonly ConsoleConfigEntry[],
-  uid: number,
+  stackKey: string,
   profile: ConsoleModelProfile,
 ): ConsoleModelProfile {
   const values = { ...profile.values };
   for (const field of MODEL_PROFILE_SECRET_FIELDS) {
-    const secret = configValueForKey(config, modelProfileSecretConfigKey(uid, profile.id, field.key));
+    const secret = configValueForKey(
+      config,
+      `${stackKey}/${profile.id}/${field.key.slice("config/ai/".length)}`,
+    );
     if (secret) {
       values[field.key] = secret;
     }
@@ -865,19 +815,43 @@ function hydrateModelProfileSecrets(
   return { ...profile, values };
 }
 
-function redactModelProfileSecrets(profile: SettingsValue): SettingsValue {
-  const profileResult = settingsRecordSchema.safeParse(profile);
-  if (!profileResult.success) return profile;
-  const record = profileResult.data;
-  const valuesResult = settingsRecordSchema.safeParse(record.values);
-  if (!valuesResult.success) return record;
-  const values = { ...valuesResult.data };
-  for (const key of Object.keys(values)) {
-    if (isSensitiveSettingKey(key)) {
-      values[key] = "";
-    }
-  }
-  return { ...record, values };
+interface CanonicalModelValues {
+  provider: string;
+  model: string;
+  baseUrl?: string;
+  providerStyle?: string;
+  transportTarget?: string;
+  maxTokens?: number;
+  contextWindowTokens?: number;
+}
+
+function canonicalModelValues(values: SettingsRecord): CanonicalModelValues {
+  const baseUrl = cleanValue(values["config/ai/base_url"]);
+  const providerStyle = cleanValue(values["config/ai/provider_style"]);
+  const transportTarget = cleanValue(values["config/ai/transport_target"]);
+  const maxTokens = optionalPositiveInt(values["config/ai/max_tokens"]);
+  const contextWindowTokens = optionalPositiveInt(
+    values["config/ai/context_window_tokens"],
+  );
+  const result: CanonicalModelValues = {
+    provider: cleanValue(values["config/ai/provider"]),
+    model: cleanValue(values["config/ai/model"]),
+  };
+  if (baseUrl) result.baseUrl = baseUrl;
+  if (providerStyle) result.providerStyle = providerStyle;
+  if (transportTarget) result.transportTarget = transportTarget;
+  if (maxTokens) result.maxTokens = maxTokens;
+  if (contextWindowTokens) result.contextWindowTokens = contextWindowTokens;
+  return result;
+}
+
+function optionalPositiveInt(
+  value: SettingsValue,
+): number | undefined {
+  const normalized = cleanValue(value);
+  if (!normalized) return undefined;
+  const parsed = Number(normalized);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 export function normalizeProfileName(value: SettingsValue): string {
@@ -886,11 +860,6 @@ export function normalizeProfileName(value: SettingsValue): string {
 
 function normalizeProfileId(value: SettingsValue): string {
   return String(value ?? "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
-}
-
-function normalizeTimestamp(value: SettingsValue): number {
-  const parsed = z.number().finite().safeParse(value);
-  return parsed.success && parsed.data > 0 ? parsed.data : Date.now();
 }
 
 function uniqueProfileId(profiles: readonly ConsoleModelProfile[], name: string): string {

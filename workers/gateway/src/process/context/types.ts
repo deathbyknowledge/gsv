@@ -1,19 +1,15 @@
-import type {
-  AiConfigResult,
-  AiToolsDevice,
-  ProcessIdentity,
-} from "@humansandmachines/gsv/protocol";
+import type { AiConfigResult, AiToolsTarget, ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { RipgitClient } from "../../fs/ripgit/client";
 
-export type PromptStorage = Pick<R2Bucket, "get" | "list">;
-export type PromptRipgitClient = Pick<RipgitClient, "readPath">;
+type PromptStorage = Pick<R2Bucket, "get" | "list">;
+type PromptRipgitClient = Pick<RipgitClient, "readPath">;
 
 export type PromptAssemblyInput = {
   config: AiConfigResult;
   identity: ProcessIdentity;
   /** Owning human's identity, when the process runs as a distinct agent account. */
   ownerIdentity?: ProcessIdentity;
-  devices: AiToolsDevice[];
+  targets: AiToolsTarget[];
   mcpServers: string[];
   /** Frozen runtime facts rendered into this exact epoch baseline. */
   runtime: {

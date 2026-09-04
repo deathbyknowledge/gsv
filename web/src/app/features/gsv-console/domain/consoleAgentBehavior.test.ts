@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { listingFromConfig } from "./consoleModelListing.testSupport";
 import type { ConsoleConfigEntry } from "./consoleModels";
 import {
   behaviorForAccount,
   defaultApprovalPolicyForConfig,
   GLOBAL_APPROVAL_CONFIG_KEY,
-  inheritedFallbackModelLabelForAccount,
+  inheritedModelLabelForAccount,
   parseApprovalPolicy,
   serializeApprovalPolicy,
 } from "./consoleAgentBehavior";
@@ -24,7 +25,7 @@ describe("console agent behavior", () => {
       { key: GLOBAL_APPROVAL_CONFIG_KEY, value: systemApproval, redacted: false },
     ];
 
-    const behavior = behaviorForAccount(config, 2000, 1000);
+    const behavior = behaviorForAccount(listingFromConfig(config, 1000), config, 2000, 1000);
 
     expect(behavior.approval).toBe(ownerApproval);
     expect(behavior.approvalInherited).toBe(true);
@@ -32,61 +33,50 @@ describe("console agent behavior", () => {
     expect(behavior.permission).toBe("deny");
   });
 
-  it("resolves agent model profile overrides through the owning user", () => {
+  it("resolves an agent's preferred model through the owning user's stack", () => {
     const config: ConsoleConfigEntry[] = [
-      { key: "users/2000/ai/model_profile", value: "fast-stack", redacted: false },
+      { key: "users/2000/ai/preferred_model", value: "fast-stack", redacted: false },
       {
-        key: "users/1000/ai/model_profiles",
+        key: "users/1000/ai/models",
         value: JSON.stringify({
-          profiles: [{
+          version: 1,
+          models: [{
             id: "fast-stack",
             name: "Fast Stack",
-            values: {
-              "config/ai/provider": "custom",
-              "config/ai/model": "zai-glm-4.7",
-            },
-            createdAt: 1,
-            updatedAt: 2,
+            provider: "custom",
+            model: "zai-glm-4.7",
           }],
         }),
         redacted: false,
       },
     ];
 
-    const behavior = behaviorForAccount(config, 2000, 1000);
+    const behavior = behaviorForAccount(listingFromConfig(config, 1000), config, 2000, 1000);
 
-    expect(behavior.modelProfile).toBe("fast-stack");
-    expect(behavior.model).toBe("model-profile:fast-stack");
+    expect(behavior.modelId).toBe("fast-stack");
+    expect(behavior.model).toBe("model-entry:fast-stack");
     expect(behavior.modelLabel).toBe("Fast Stack");
   });
 
-  it("resolves agent fallback preset overrides through the owning user", () => {
+  it("resolves a stable preferred model id through the owner's ordered stack", () => {
     const config: ConsoleConfigEntry[] = [
-      { key: "users/2000/ai/fallback_model_profile", value: "safe-stack", redacted: false },
-      { key: "users/1000/ai/fallback_model_profile", value: "owner-stack", redacted: false },
+      { key: "users/2000/ai/preferred_model", value: "safe-stack", redacted: false },
       {
-        key: "users/1000/ai/model_profiles",
+        key: "users/1000/ai/models",
         value: JSON.stringify({
-          profiles: [
-            {
-              id: "safe-stack",
-              name: "Safe Stack",
-              values: {
-                "config/ai/provider": "openrouter",
-                "config/ai/model": "openai/gpt-5-mini",
-              },
-              createdAt: 1,
-              updatedAt: 2,
-            },
+          version: 1,
+          models: [
             {
               id: "owner-stack",
               name: "Owner Stack",
-              values: {
-                "config/ai/provider": "workers-ai",
-                "config/ai/model": "@cf/owner/model",
-              },
-              createdAt: 1,
-              updatedAt: 3,
+              provider: "workers-ai",
+              model: "@cf/owner/model",
+            },
+            {
+              id: "safe-stack",
+              name: "Safe Stack",
+              provider: "openrouter",
+              model: "openai/gpt-5-mini",
             },
           ],
         }),
@@ -94,70 +84,39 @@ describe("console agent behavior", () => {
       },
     ];
 
-    const behavior = behaviorForAccount(config, 2000, 1000);
+    const behavior = behaviorForAccount(listingFromConfig(config, 1000), config, 2000, 1000);
 
-    expect(behavior.fallbackModelProfile).toBe("safe-stack");
-    expect(behavior.fallbackModel).toBe("model-profile:safe-stack");
-    expect(behavior.fallbackModelLabel).toBe("Safe Stack");
-    expect(behavior.fallbackModelInherited).toBe(false);
-    expect(inheritedFallbackModelLabelForAccount(config, 2000, 1000)).toBe("Owner Stack");
+    expect(behavior.modelId).toBe("safe-stack");
+    expect(behavior.model).toBe("model-entry:safe-stack");
+    expect(behavior.modelLabel).toBe("Safe Stack");
+    expect(inheritedModelLabelForAccount(listingFromConfig(config, 1000), config, 2000, 1000)).toBe("Owner Stack");
   });
 
-  it("treats legacy raw model overrides as a matching owner profile", () => {
+  it("ignores obsolete raw model and profile selectors", () => {
     const config: ConsoleConfigEntry[] = [
       { key: "users/2000/ai/model", value: "zai-glm-4.7", redacted: false },
+      { key: "users/2000/ai/model_profile", value: "fast-stack", redacted: false },
       {
-        key: "users/1000/ai/model_profiles",
+        key: "users/1000/ai/models",
         value: JSON.stringify({
-          profiles: [{
+          version: 1,
+          models: [{
             id: "fast-stack",
             name: "Fast Stack",
-            values: {
-              "config/ai/provider": "custom",
-              "config/ai/model": "zai-glm-4.7",
-            },
-            createdAt: 1,
-            updatedAt: 2,
+            provider: "custom",
+            model: "zai-glm-4.7",
           }],
         }),
         redacted: false,
       },
     ];
 
-    const behavior = behaviorForAccount(config, 2000, 1000);
+    const behavior = behaviorForAccount(listingFromConfig(config, 1000), config, 2000, 1000);
 
-    expect(behavior.modelProfile).toBe("fast-stack");
-    expect(behavior.model).toBe("model-profile:fast-stack");
-    expect(behavior.modelLabel).toBe("Fast Stack");
-  });
-
-  it("keeps raw model overrides when provider stack fields are configured", () => {
-    const config: ConsoleConfigEntry[] = [
-      { key: "users/2000/ai/model", value: "zai-glm-4.7", redacted: false },
-      { key: "users/2000/ai/provider", value: "custom", redacted: false },
-      {
-        key: "users/1000/ai/model_profiles",
-        value: JSON.stringify({
-          profiles: [{
-            id: "fast-stack",
-            name: "Fast Stack",
-            values: {
-              "config/ai/provider": "custom",
-              "config/ai/model": "zai-glm-4.7",
-            },
-            createdAt: 1,
-            updatedAt: 2,
-          }],
-        }),
-        redacted: false,
-      },
-    ];
-
-    const behavior = behaviorForAccount(config, 2000, 1000);
-
-    expect(behavior.modelProfile).toBe("");
-    expect(behavior.model).toBe("zai-glm-4.7");
-    expect(behavior.modelLabel).toBe("zai-glm-4.7");
+    expect(behavior.modelId).toBe("");
+    expect(behavior.model).toBe("");
+    expect(behavior.modelLabel).toBe("");
+    expect(inheritedModelLabelForAccount(listingFromConfig(config, 1000), config, 2000, 1000)).toBe("Fast Stack");
   });
 
   it("uses the configured system approval policy when account defaults are missing", () => {
@@ -169,7 +128,7 @@ describe("console agent behavior", () => {
       { key: GLOBAL_APPROVAL_CONFIG_KEY, value: approval, redacted: false },
     ];
 
-    const behavior = behaviorForAccount(config, 42);
+    const behavior = behaviorForAccount(listingFromConfig(config, 42), config, 42);
 
     expect(behavior.approval).toBe(approval);
     expect(behavior.approvalInherited).toBe(true);

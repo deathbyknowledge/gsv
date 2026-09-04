@@ -117,14 +117,14 @@ import type {
   SysConfigGetResult,
   SysConfigSetArgs,
   SysConfigSetResult,
-  SysDeviceDeleteArgs,
-  SysDeviceDeleteResult,
-  SysDeviceGetArgs,
-  SysDeviceGetResult,
-  SysDeviceListArgs,
-  SysDeviceListResult,
-  SysDeviceUpdateArgs,
-  SysDeviceUpdateResult,
+  SysTargetDeleteArgs,
+  SysTargetDeleteResult,
+  SysTargetGetArgs,
+  SysTargetGetResult,
+  SysTargetListArgs,
+  SysTargetListResult,
+  SysTargetUpdateArgs,
+  SysTargetUpdateResult,
   SysLinkArgs,
   SysLinkConsumeArgs,
   SysLinkConsumeResult,
@@ -196,6 +196,8 @@ import type {
   AiContextArgs,
   AiContextResult,
   AiConfigArgs,
+  AiModelsArgs,
+  AiModelsResult,
   AiConfigResult,
   AiImageGenerateArgs,
   AiImageGenerateResult,
@@ -376,10 +378,10 @@ export type SyscallDomains = {
   "sys.bootstrap": { args: SysBootstrapArgs; result: SysBootstrapResult };
   "sys.config.get": { args: SysConfigGetArgs; result: SysConfigGetResult };
   "sys.config.set": { args: SysConfigSetArgs; result: SysConfigSetResult };
-  "sys.device.list": { args: SysDeviceListArgs; result: SysDeviceListResult };
-  "sys.device.get": { args: SysDeviceGetArgs; result: SysDeviceGetResult };
-  "sys.device.update": { args: SysDeviceUpdateArgs; result: SysDeviceUpdateResult };
-  "sys.device.delete": { args: SysDeviceDeleteArgs; result: SysDeviceDeleteResult };
+  "sys.target.list": { args: SysTargetListArgs; result: SysTargetListResult };
+  "sys.target.get": { args: SysTargetGetArgs; result: SysTargetGetResult };
+  "sys.target.update": { args: SysTargetUpdateArgs; result: SysTargetUpdateResult };
+  "sys.target.delete": { args: SysTargetDeleteArgs; result: SysTargetDeleteResult };
   "sys.oauth.start": { args: SysOAuthStartArgs; result: SysOAuthStartResult };
   "sys.oauth.device.start": { args: SysOAuthDeviceStartArgs; result: SysOAuthDeviceStartResult };
   "sys.oauth.device.poll": { args: SysOAuthDevicePollArgs; result: SysOAuthDevicePollResult };
@@ -418,6 +420,7 @@ export type SyscallDomains = {
   "ai.tools": { args: AiToolsArgs; result: AiToolsResult };
   "ai.context": { args: AiContextArgs; result: AiContextResult };
   "ai.config": { args: AiConfigArgs; result: AiConfigResult };
+  "ai.models": { args: AiModelsArgs; result: AiModelsResult };
   "ai.text.generate": { args: AiTextGenerateArgs; result: AiTextGenerateResult };
   "ai.transcription.create": { args: AiTranscriptionCreateArgs; result: AiTranscriptionCreateResult };
   "ai.image.read": { args: AiImageReadArgs; result: AiImageReadResult };

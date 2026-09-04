@@ -4,16 +4,11 @@ import type { ProcContextState, ProcMediaInput, ProcUsageState } from "@humansan
 import { AgentImage } from "../../../components/ui/AgentImage";
 import { Alert } from "../../../components/ui/Alert";
 import { ConfirmModal } from "../../../components/ui/ConfirmModal";
-import { Counter } from "../../../components/ui/Counter";
 import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
 import { MessageInput, type MessageInputAttachment } from "../../../components/ui/MessageInput";
 import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
 import { Hint, closeAllTooltips } from "../../../components/ui/Tooltip";
-import {
-  aiProviderDisplayLabel,
-  fixedAiProviderModel,
-} from "../../../domain/aiProviders";
 import type { JSX } from "preact";
 import {
   buildChatAgentViewModel,
@@ -305,7 +300,6 @@ export function ChatDock({
   const [selectedArchiveSegmentId, setSelectedArchiveSegmentId] = useState("");
   const [openPopover, setOpenPopover] = useState<ChatPopoverId | null>(null);
   const [contextConfirmOpen, setContextConfirmOpen] = useState(false);
-  const [compactKeepLastDraft, setCompactKeepLastDraft] = useState(1);
   const [newTaskFocusKey, setNewTaskFocusKey] = useState(0);
   const [composerDraft, setComposerDraft] = useState("");
   const minimizedChat = useDraggableMinimizedChat({ open, onActivate: onToggleOpen });
@@ -688,28 +682,24 @@ export function ChatDock({
   }, [controlError]);
   const taskCount = activeAgent.tasksTotal > 0 ? activeAgent.tasksTotal : activeAgent.tasks.length;
   const contextLevel = context?.level ? context.level.toUpperCase() : contextPercent === null ? "UNKNOWN" : "ESTIMATED";
-  const processModel = processAiConfig.data?.values["config/ai/model"]?.trim() ?? "";
-  const processProvider = processAiConfig.data?.values["config/ai/provider"]?.trim() ?? "";
-  const currentModelLabel = fixedAiProviderModel(processProvider) === processModel
-    ? aiProviderDisplayLabel(processProvider)
-    : processModel || activeAgent.modelLabel;
-  const processReasoning = processAiConfig.data?.values["config/ai/reasoning"]?.trim() ?? "";
+  const processModel = activeAgent.modelProfiles.find((profile) =>
+    profile.id === processAiConfig.data?.modelId
+  );
+  const currentModelLabel = processModel?.name || activeAgent.modelLabel;
+  const processReasoning = processAiConfig.data?.reasoning?.trim() ?? "";
   const contextReasoning = context?.reasoning?.trim() ?? "";
   const currentReasoningLabel = formatChatReasoningLabel(processReasoning || contextReasoning || activeAgent.reasoningLabel);
-  const compactKeepLast = Math.max(1, Math.min(48, Math.floor(runtime.messageCount / 2)));
   const compactMessageTotal = runtime.messageCount;
-  const compactKeepMax = Math.max(1, Math.min(96, compactMessageTotal - 1));
+  const compactTargetPressure = processHistory.data?.historyPolicy?.compactToPressure ?? 0.4;
+  const compactTargetPercent = Math.round(compactTargetPressure * 100);
   const canFreeContext = hasActiveProcess
     && !canAbortRun
     && !compactHistory.isPending
-    && compactMessageTotal > compactKeepLast;
+    && compactMessageTotal > 1
+    && context?.pressure !== null
+    && context?.pressure !== undefined
+    && context.pressure > compactTargetPressure;
   const canStartNewTask = canStartProcess && !spawnProcess.isPending;
-
-  useEffect(() => {
-    if (!contextConfirmOpen) {
-      setCompactKeepLastDraft(compactKeepLast);
-    }
-  }, [compactKeepLast, contextConfirmOpen]);
 
   const startProcess = () => {
     if (!canStartNewTask) {
@@ -878,22 +868,20 @@ export function ChatDock({
     if (!canFreeContext) {
       return;
     }
-    setCompactKeepLastDraft(compactKeepLast);
     setContextConfirmOpen(true);
   };
 
-  const freeContext = (keepLast: number) => {
+  const freeContext = () => {
     if (!canFreeContext) {
       return;
     }
-    const normalizedKeepLast = Math.max(1, Math.min(compactKeepMax, Math.floor(keepLast)));
     setContextConfirmOpen(false);
     const target = displayedTargetRef.current;
     const stillDisplayed = () => displayedTargetRef.current.pid === target.pid;
     feedback.begin("compact", "Freeing context");
     compactHistory.mutate({
       pid: activeProcessId,
-      keepLast: normalizedKeepLast,
+      targetPressure: compactTargetPressure,
       generateSummary: true,
     }, {
       onSuccess: (result) => {
@@ -915,14 +903,13 @@ export function ChatDock({
     });
   };
 
-  const setProcessAiKey = (key: string, value: string) => {
+  const setProcessReasoning = (reasoning: string) => {
     if (!hasActiveProcess || setProcessAiConfig.isPending) {
       return;
     }
     setProcessAiConfig.mutate({
       pid: activeProcessId,
-      key,
-      value,
+      reasoning,
     });
   };
 
@@ -932,8 +919,7 @@ export function ChatDock({
     }
     setProcessAiConfig.mutate({
       pid: activeProcessId,
-      profileId: profile.id,
-      profileName: profile.name,
+      modelId: profile.id,
     });
   };
 
@@ -1090,23 +1076,12 @@ export function ChatDock({
           <div class="gsv-chat-modal-wrap" onClick={(event) => event.stopPropagation()}>
             <ConfirmModal
               title="FREE CONTEXT"
-              message={`Archive older messages, generate a summary, and keep the latest ${compactKeepLastDraft} messages active.`}
+              message={`Archive enough older history to target ${compactTargetPercent}% of this model's input budget, then generate a summary.`}
               note="Older messages remain available in the archive after compaction."
               confirmLabel="FREE CONTEXT"
               onCancel={() => setContextConfirmOpen(false)}
-              onConfirm={() => freeContext(compactKeepLastDraft)}
-            >
-              <Counter
-                label="KEEP MESSAGES"
-                description={`Choose how many recent messages stay live. Current work has ${compactMessageTotal}.`}
-                min={1}
-                max={compactKeepMax}
-                step={1}
-                size="small"
-                value={compactKeepLastDraft}
-                onChange={setCompactKeepLastDraft}
-              />
-            </ConfirmModal>
+              onConfirm={freeContext}
+            />
           </div>
         </div>
       ) : null}
@@ -1153,7 +1128,7 @@ export function ChatDock({
         activeProcessId={activeProcessId}
         archiveOpen={archiveOpen}
         canFreeContext={canFreeContext}
-        compactKeepLast={compactKeepLast}
+        compactTargetPercent={compactTargetPercent}
         compactPending={compactHistory.isPending}
         hasArchivedMessages={hasArchivedMessages}
         onFreeContext={() => {
@@ -1186,7 +1161,7 @@ export function ChatDock({
         }}
         onOpenTaskProcess={openTaskProcess}
         onStartNewTask={prepareNewTask}
-        onSetReasoning={(reasoning) => setProcessAiKey("config/ai/reasoning", reasoning)}
+        onSetReasoning={setProcessReasoning}
       />
 
       {bodyState === "agent" ? (

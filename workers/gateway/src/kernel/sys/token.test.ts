@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { testPeer } from "../../test-support/peers";
 import type { KernelContext } from "../context";
 import {
   handleSysTokenCreate,
@@ -15,18 +16,14 @@ type FakeAuth = {
 function makeContext(uid: number, auth: FakeAuth): KernelContext {
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
-    identity: {
-      role: "user",
-      process: {
+    peer: testPeer({ kind: "human", account: {
         uid,
         gid: uid,
         gids: [uid],
         username: uid === 0 ? "root" : `user${uid}`,
         home: uid === 0 ? "/root" : `/home/user${uid}`,
         cwd: uid === 0 ? "/root" : `/home/user${uid}`,
-      },
-      capabilities: ["*"],
-    },
+      }, calls: ["*"] }),
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     auth: auth as KernelContext["auth"],
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -45,13 +42,11 @@ describe("sys.token handlers", () => {
         // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         uid: input.uid as number,
         // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-        kind: input.kind as "node" | "service" | "user",
+        kind: input.kind as "human" | "machine" | "service",
         // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         label: (input.label as string | undefined) ?? null,
         // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-        allowedRole: (input.allowedRole as "driver" | "service" | "user") ?? null,
-        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-        allowedDeviceId: (input.allowedDeviceId as string | undefined) ?? null,
+        peerId: (input.peerId as string | undefined) ?? null,
         createdAt: 1_700_000_000_000,
         // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         expiresAt: (input.expiresAt as number | undefined) ?? null,
@@ -67,35 +62,34 @@ describe("sys.token handlers", () => {
     const result = await handleSysTokenCreate(
       {
         uid: 1001,
-        kind: "node",
-        allowedDeviceId: "node-alpha",
+        kind: "machine",
+        peerId: "node-alpha",
       },
       ctx,
     );
 
     expect(auth.issueToken).toHaveBeenCalledWith({
       uid: 1001,
-      kind: "node",
+      kind: "machine",
       label: undefined,
-      allowedRole: "driver",
-      allowedDeviceId: "node-alpha",
+      peerId: "node-alpha",
       expiresAt: undefined,
     });
     expect(result.token.uid).toBe(1001);
-    expect(result.token.allowedRole).toBe("driver");
+    expect(result.token.peerId).toBe("node-alpha");
   });
 
-  it("requires driver tokens to be bound to a device id", async () => {
+  it("requires machine tokens to be bound to a peer id", async () => {
     const ctx = makeContext(0, auth);
 
     await expect(
       handleSysTokenCreate(
         {
-          kind: "node",
+          kind: "machine",
         },
         ctx,
       ),
-    ).rejects.toThrow("allowedDeviceId is required for driver-bound tokens");
+    ).rejects.toThrow("peerId is required for machine tokens");
     expect(auth.issueToken).not.toHaveBeenCalled();
   });
 
@@ -106,7 +100,7 @@ describe("sys.token handlers", () => {
       handleSysTokenCreate(
         {
           uid: 1001,
-          kind: "node",
+          kind: "machine",
         },
         ctx,
       ),
@@ -128,18 +122,18 @@ describe("sys.token handlers", () => {
     expect(auth.issueToken).not.toHaveBeenCalled();
   });
 
-  it("rejects kind/role mismatch", async () => {
+  it("rejects a peer binding on non-machine tokens", async () => {
     const ctx = makeContext(0, auth);
 
     await expect(
       handleSysTokenCreate(
         {
-          kind: "node",
-          allowedRole: "service",
+          kind: "human",
+          peerId: "node-alpha",
         },
         ctx,
       ),
-    ).rejects.toThrow("Invalid allowedRole for kind=node: expected driver");
+    ).rejects.toThrow("peerId is only valid for machine tokens");
     expect(auth.issueToken).not.toHaveBeenCalled();
   });
 
@@ -149,7 +143,7 @@ describe("sys.token handlers", () => {
     await expect(
       handleSysTokenCreate(
         {
-          kind: "user",
+          kind: "human",
           expiresAt: Date.now() - 1,
         },
         ctx,

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/preact-query";
 import { useEffect, useMemo } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
+import type { ConsoleModelListing } from "../domain/consoleSettings";
 import {
   addConsoleMcpServer,
   checkConsoleOpenAiCodexOAuth,
@@ -19,6 +20,7 @@ import {
   loadConsoleAccounts,
   loadConsoleAdapterAccounts,
   loadConsoleConfig,
+  loadConsoleModels,
   loadConsoleIdentityLinks,
   loadConsoleMcpServers,
   loadConsoleOverview,
@@ -94,6 +96,7 @@ export const consoleAdaptersQueryKey = ["adapters", "gsv-console"] as const;
 export const consoleAdapterInventoryQueryKey = ["adapter-inventory", "gsv-console"] as const;
 export const consoleMcpServersQueryKey = ["mcp-servers", "gsv-console"] as const;
 export const consoleConfigQueryKey = ["gsv-console", "config"] as const;
+export const consoleModelsQueryKey = ["gsv-console", "models"] as const;
 export const consoleIdentityLinksQueryKey = ["gsv-console", "identity-links"] as const;
 export const consoleAgentContextQueryKey = ["gsv-console", "agent-context"] as const;
 
@@ -106,7 +109,7 @@ type ConsoleOverviewHookOptions = ConsoleQueryOptions & LoadConsoleOverviewOptio
 
 const CONSOLE_OVERVIEW_SIGNALS = new Set([
   "proc.changed",
-  "device.status",
+  "target.status",
   "mcp.changed",
 ]);
 
@@ -166,7 +169,7 @@ export function useConsoleTargets(options: ConsoleQueryOptions = {}) {
 
   useEffect(() => {
     return client.onSignal((signal) => {
-      if (signal === "device.status") {
+      if (signal === "target.status") {
         void queryClient.invalidateQueries({ queryKey: consoleTargetsQueryKey });
       }
     });
@@ -276,6 +279,22 @@ export function useConsoleConfig(options: ConsoleQueryOptions = {}) {
   };
 }
 
+export function useConsoleModels(options: ConsoleQueryOptions = {}) {
+  const { client, connected } = useGateway();
+  const enabled = connected && (options.enabled ?? true);
+  const query = useQuery<ConsoleModelListing>({
+    queryKey: consoleModelsQueryKey,
+    enabled,
+    queryFn: () => loadConsoleModels(client),
+  });
+
+  return {
+    ...query,
+    listing: query.data ?? null,
+    resource: toResourceState(query, enabled, () => false),
+  };
+}
+
 export function useConsoleIdentityLinks(options: ConsoleQueryOptions = {}) {
   const { client, connected } = useGateway();
   const enabled = connected && (options.enabled ?? true);
@@ -319,6 +338,7 @@ export function useCreateConsoleAgent() {
         queryClient.invalidateQueries({ queryKey: consoleAccountsQueryKey }),
         queryClient.invalidateQueries({ queryKey: consoleAgentContextQueryKey }),
         queryClient.invalidateQueries({ queryKey: consoleConfigQueryKey }),
+        queryClient.invalidateQueries({ queryKey: consoleModelsQueryKey }),
         queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
       ]);
     },
@@ -487,6 +507,7 @@ export function useSaveConsoleAgentBehavior() {
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: consoleConfigQueryKey }),
+        queryClient.invalidateQueries({ queryKey: consoleModelsQueryKey }),
         queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
       ]);
     },
@@ -502,6 +523,7 @@ export function useSaveConsoleConfig() {
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: consoleConfigQueryKey }),
+        queryClient.invalidateQueries({ queryKey: consoleModelsQueryKey }),
         queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
       ]);
     },
@@ -517,6 +539,7 @@ export function useSaveConsoleConfigEntries() {
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: consoleConfigQueryKey }),
+        queryClient.invalidateQueries({ queryKey: consoleModelsQueryKey }),
         queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
       ]);
     },

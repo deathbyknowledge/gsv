@@ -205,7 +205,7 @@ as a transport timeout.
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env and built-in commands such as `codemode`, `mail`, `mcp`, and `wiki`. Device targets run a real local shell through the CLI. Device start calls return within a runtime-owned wait budget. If the command is still running, the result includes a `sessionId`; later calls with that `sessionId` poll or write stdin. |
+| `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env and built-in commands such as `codemode`, `cp`, `dd`, `mail`, `mcp`, and `wiki`. Device targets run a real local shell through the CLI. Device start calls return within a runtime-owned wait budget. If the command is still running, the result includes a `sessionId`; later calls with that `sessionId` poll or write stdin. |
 
 ```ts
 type ShellSyscalls = {
@@ -1236,14 +1236,14 @@ Runtime behavior:
 |---|---|---|
 | `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates the credential, derives the principal kind, returns independent call/signal/implementation grants, registers peers that implement syscalls as route targets, closes older sessions for the same logical peer, and ensures a human user's personal intelligence exists. Setup mode rejects with `425` and `next: "sys.setup"`. |
 | `sys.setup.assist` | `handleSysSetupAssist` | Pre-connect setup helper. Uses app AI config to guide onboarding, redacts secrets from drafts, and only accepts whitelisted non-secret patches from model output. Rejected if already connected or initialized. |
-| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, optional timezone, optional AI config, optional node token, home layout, imports the manual, and seeds built-in skills. Username, password, and timezone are validated. |
+| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, optional timezone, optional AI config, optional machine token, home layout, imports the manual, and seeds built-in skills. Username, password, and timezone are validated. |
 | `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv-manual`, registers it as a public system repository, and seeds the gateway's bundled skills into the caller's home without replacing existing files. `GSV_MANUAL_BOOTSTRAP_UPSTREAM` accepts `owner/repo`, a git URL, or either form with `#ref`; `GSV_MANUAL_BOOTSTRAP_REF` overrides its ref. The default is `deathbyknowledge/gsv-manual#main`. Requires `RIPGIT`. |
 | `sys.config.get` | `handleSysConfigGet` | Reads exact config key or visible prefix. Root sees all; non-root sees own `users/<uid>/` keys and non-sensitive `config/` keys. Sensitive names such as password, token, secret, and api key are hidden from non-root. |
 | `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write only own user-overridable keys, currently under `users/<uid>/ai/`. Values are coerced with `String(value)`. |
-| `sys.device.list` | `handleSysDeviceList` | Lists devices accessible by owner uid or group ACL. Root sees all. Defaults to online devices only unless `includeOffline` is true. |
-| `sys.device.get` | `handleSysDeviceGet` | Reads one device descriptor. Missing or inaccessible devices return `device: null` rather than a permission error. |
-| `sys.device.update` | `handleSysDeviceUpdate` | Updates owner-managed device metadata. Root or the device owner may update the process-visible `description`; group-only device access can use the device but cannot edit its metadata. Missing or inaccessible devices return `device: null`. |
-| `sys.device.delete` | `handleSysDeviceDelete` | Forgets an owned physical device, disconnects any live device socket, and revokes active node tokens bound to that device. Group-only access cannot forget. Missing or inaccessible devices return `deleted: false`. |
+| `sys.target.list` | `handleSysTargetList` | Lists targets accessible by owner uid or group ACL. Root sees all. Defaults to online devices only unless `includeOffline` is true. |
+| `sys.target.get` | `handleSysTargetGet` | Reads one target descriptor. Missing or inaccessible targets return `target: null` rather than a permission error. |
+| `sys.target.update` | `handleSysTargetUpdate` | Updates owner-managed target metadata. Root or the device owner may update the process-visible `description`; group-only device access can use the device but cannot edit its metadata. Missing or inaccessible targets return `target: null`. |
+| `sys.target.delete` | `handleSysTargetDelete` | Forgets an owned physical target, disconnects any live socket for it, and revokes active machine tokens bound to that peer id. Group-only access cannot forget. Missing or inaccessible devices return `deleted: false`. |
 | `sys.workspace.list` | `handleSysWorkspaceList` | Lists workspaces for caller uid by default. Root may request any uid; non-root may only request self. Adds active process summary and process count. |
 | `sys.oauth.start` | `handleSysOAuthStart` | Starts an OAuth authorization-code + PKCE flow for an AI provider, MCP server, or generic integration. Returns an authorization URL and pending flow summary. Redirects must target `/oauth/callback` on the deployed GSV origin. Non-root is scoped to self. |
 | `sys.oauth.list` | `handleSysOAuthList` | Lists OAuth account summaries without access or refresh tokens. Non-root is scoped to self; root can list all or one uid. `includePending: true` also returns unexpired pending flows. |
@@ -1253,7 +1253,7 @@ Runtime behavior:
 | `sys.mcp.remove` | `handleSysMcpRemove` | Removes a caller-owned MCP server from GSV ownership metadata and the underlying MCP client manager. Missing or inaccessible servers return `removed: false`. |
 | `sys.mcp.refresh` | `handleSysMcpRefresh` | Reconnects and rediscovers a caller-owned MCP server when possible. Returns the latest summary or `server: null` when inaccessible. |
 | `sys.mcp.call` | `handleSysMcpCall` | Calls a tool on a caller-owned MCP server. Generated CodeMode MCP functions and the native shell `mcp call` command use this path. Native `mcp status/tools/describe/search/codemode` provide discovery around the same summaries returned by `sys.mcp.list`. |
-| `sys.token.create` | `handleSysTokenCreate` | Creates a hashed node, service, or user token. Root may target any uid. Role defaults must match token kind; driver/node tokens may bind to `allowedDeviceId`. Raw token is returned only once. |
+| `sys.token.create` | `handleSysTokenCreate` | Creates a hashed human, machine, or service token; the kind is the principal kind the token authenticates as. Root may target any uid. Machine tokens must bind to one `peerId`. Raw token is returned only once. |
 | `sys.token.list` | `handleSysTokenList` | Lists token metadata, including revoked tokens, never raw token values. Non-root is scoped to self; root can list all or one uid. |
 | `sys.token.revoke` | `handleSysTokenRevoke` | Revokes a token by id with optional reason. Non-root can revoke only own tokens. Missing or inaccessible token returns `revoked: false`. |
 | `sys.link` | `handleSysLink` | User-role only. Links an adapter/account/actor to a uid. Adapter is lowercased; root may link to any uid, non-root only self. |
@@ -1277,12 +1277,12 @@ metadata document advertises the same URL as its `client_id`.
 type SystemSyscalls = {
   "sys.connect": {
     args: {
-      protocol: 3;
+      protocol: 4;
       peer: { id: string; version: string; platform: string; implements?: string[] };
       auth?: { username: string; password?: string; token?: string };
     };
     result: {
-      protocol: 3;
+      protocol: 4;
       server: { version: string; release: string; features?: string[]; connectionId: string };
       peer: {
         id: string;
@@ -1299,8 +1299,8 @@ type SystemSyscalls = {
   };
 
   "sys.setup": {
-    args: { username: string; password: string; rootPassword?: string; timezone?: string; ai?: { provider?: string; model?: string; apiKey?: string }; node?: { deviceId: string; label?: string; expiresAt?: number } };
-    result: { server: { version: string; release: string; features?: string[] }; user: ProcessIdentity; rootLocked: boolean; bootstrap?: SystemSyscalls["sys.bootstrap"]["result"]; nodeToken?: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "node"; label: string | null; allowedRole: "driver" | null; allowedDeviceId: string | null; createdAt: number; expiresAt: number | null } };
+    args: { username: string; password: string; rootPassword?: string; timezone?: string; ai?: { provider?: string; model?: string; apiKey?: string }; machine?: { peerId: string; label?: string; expiresAt?: number } };
+    result: { server: { version: string; release: string; features?: string[] }; user: ProcessIdentity; rootLocked: boolean; bootstrap?: SystemSyscalls["sys.bootstrap"]["result"]; machineToken?: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "machine"; label: string | null; peerId: string; createdAt: number; expiresAt: number | null } };
   };
 
   "sys.bootstrap": {
@@ -1318,24 +1318,24 @@ type SystemSyscalls = {
     result: { ok: true };
   };
 
-  "sys.device.list": {
+  "sys.target.list": {
     args: { includeOffline?: boolean };
-    result: { devices: Array<{ deviceId: string; ownerUid: number; description: string; platform: string; version: string; online: boolean; lastSeenAt: number }> };
+    result: { targets: Array<{ targetId: string; ownerUid: number; description: string; platform: string; version: string; online: boolean; lastSeenAt: number }> };
   };
 
-  "sys.device.get": {
-    args: { deviceId: string };
-    result: { device: ({ deviceId: string; ownerUid: number; description: string; platform: string; version: string; online: boolean; lastSeenAt: number; implements: string[]; firstSeenAt: number; connectedAt: number | null; disconnectedAt: number | null }) | null };
+  "sys.target.get": {
+    args: { targetId: string };
+    result: { target: ({ targetId: string; ownerUid: number; description: string; platform: string; version: string; online: boolean; lastSeenAt: number; implements: string[]; firstSeenAt: number; connectedAt: number | null; disconnectedAt: number | null }) | null };
   };
 
-  "sys.device.update": {
-    args: { deviceId: string; description: string };
-    result: { device: ({ deviceId: string; ownerUid: number; description: string; platform: string; version: string; online: boolean; lastSeenAt: number; implements: string[]; firstSeenAt: number; connectedAt: number | null; disconnectedAt: number | null }) | null };
+  "sys.target.update": {
+    args: { targetId: string; description: string };
+    result: { target: ({ targetId: string; ownerUid: number; description: string; platform: string; version: string; online: boolean; lastSeenAt: number; implements: string[]; firstSeenAt: number; connectedAt: number | null; disconnectedAt: number | null }) | null };
   };
 
-  "sys.device.delete": {
-    args: { deviceId: string };
-    result: { deleted: boolean; deviceId: string; revokedTokens: number };
+  "sys.target.delete": {
+    args: { targetId: string };
+    result: { deleted: boolean; targetId: string; revokedTokens: number };
   };
 
   "sys.workspace.list": {
@@ -1384,13 +1384,13 @@ type SystemSyscalls = {
   };
 
   "sys.token.create": {
-    args: { uid?: number; kind: "node" | "service" | "user"; label?: string; allowedRole?: "driver" | "service" | "user"; allowedDeviceId?: string; expiresAt?: number };
-    result: { token: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "node" | "service" | "user"; label: string | null; allowedRole: "driver" | "service" | "user" | null; allowedDeviceId: string | null; createdAt: number; expiresAt: number | null } };
+    args: { uid?: number; kind: "human" | "machine" | "service"; label?: string; peerId?: string; expiresAt?: number };
+    result: { token: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "human" | "machine" | "service"; label: string | null; peerId: string | null; createdAt: number; expiresAt: number | null } };
   };
 
   "sys.token.list": {
     args: { uid?: number };
-    result: { tokens: Array<{ tokenId: string; uid: number; kind: "node" | "service" | "user"; label: string | null; tokenPrefix: string; allowedRole: "driver" | "service" | "user" | null; allowedDeviceId: string | null; createdAt: number; lastUsedAt: number | null; expiresAt: number | null; revokedAt: number | null; revokedReason: string | null }> };
+    result: { tokens: Array<{ tokenId: string; uid: number; kind: "human" | "machine" | "service"; label: string | null; tokenPrefix: string; peerId: string | null; createdAt: number; lastUsedAt: number | null; expiresAt: number | null; revokedAt: number | null; revokedReason: string | null }> };
   };
 
   "sys.token.revoke": {
@@ -1422,8 +1422,8 @@ type SystemSyscalls = {
 
 ## AI: `ai.*`
 
-`ai.tools` and `ai.config` are internal Process bootstrap calls. The media
-syscalls below are public, capability-gated operations. Their binary media uses
+`ai.tools` and `ai.config` are internal Process bootstrap calls. `ai.models`
+and the media syscalls below are public, capability-gated operations. Their binary media uses
 top-level frame bodies rather than JSON/base64 fields.
 
 Runtime behavior:
@@ -1431,8 +1431,9 @@ Runtime behavior:
 | Syscall | Handler | Behavior |
 |---|---|---|
 | `ai.tools` | `handleAiTools` | Process-internal. Lists online accessible devices and filters built-in tool definitions by caller capabilities. Routable filesystem and shell tools are wrapped with required `target`; CodeMode is exposed as a process-local programmable tool. MCP tools are used through CodeMode or shell, not expanded into this direct tool list. |
-| `ai.config` | `handleAiConfig` | Process-internal. Resolves user override then system AI config. Defaults profile to `task`, provider to `workers-ai`, model to `@cf/zai-org/glm-5.2`, fallback profile to `workers-ai-kimi-k2-6`, max tokens to 32768, context window to provider/model metadata or configured fallback, and context budget to 32768 bytes. |
-| `ai.transcription.create` | `handleAiTranscriptionCreate` | Requires audio metadata plus an audio request body. An optional `pid` resolves model configuration for an accessible process. On failure or empty text, an explicitly configured transcription stack in the fallback profile is tried once. Returns transcription text and model metadata in JSON. |
+| `ai.config` | `handleAiConfig` | Process-internal. Resolves one ordered owner model stack, optionally moves one stable model ID to the front, and hydrates each entry's own credential. A request-local validation model is a complete replacement rather than a field overlay. Reasoning and runtime limits remain orthogonal settings. |
+| `ai.models` | `handleAiModels` | Lists the caller's effective text-model stack in layered order: the owner's own entries, then the system list, then the deployment base, each in its stored order. `preferredModelId` names the entry generation runs first; the listing keeps the stored order so clients can edit a layer without baking the preference into it. Each entry carries its `source` layer and `hasCredential`; credentials are never returned. |
+| `ai.transcription.create` | `handleAiTranscriptionCreate` | Requires audio metadata plus an audio request body. An optional `pid` selects an accessible Process account for capability configuration and authorization. Transcription uses that account's complete provider/model/credential configuration or the complete system configuration; it does not borrow text-model fields. Returns transcription text and model metadata in JSON. |
 | `ai.image.read` | `handleAiImageRead` | Requires image metadata plus an image request body. Uses Moondream 3.1 exclusively for caption, query, OCR, point, and detect modes. Query reasoning may include normalized grounding coordinates. Query and OCR can request prompt-driven JSON, XML, Markdown, or CSV; JSON is parsed and optionally checked against the supplied schema. Caption, query, and OCR may stream decoded UTF-8 output in the response body. The shell `img2txt` command may acquire that body from a target-qualified filesystem path, but the AI syscall remains byte-oriented and does not route or resolve paths. |
 | `ai.image.generate` | `handleAiImageGenerate` | Accepts a text prompt. Inline generated image bytes use a response body; `data.image` contains MIME type and size, and providers may instead return `url`. |
 | `ai.speech.create` | `handleAiSpeechCreate` | Accepts text and voice options. Synthesized audio uses a response body with MIME type and size in `data.audio`; skipped or empty results have no body. |
@@ -1441,12 +1442,17 @@ Runtime behavior:
 type AiSyscalls = {
   "ai.tools": {
     args: Empty;
-    result: { tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>; devices: Array<{ id: string; implements: string[]; description?: string; platform?: string }> };
+    result: { tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>; targets: Array<{ id: string; implements: string[]; label?: string; description?: string; platform?: string; }> };
+  };
+
+  "ai.models": {
+    args: Empty;
+    result: { models: Array<{ id: string; name: string; provider: string; model: string; baseUrl?: string; providerStyle?: string; transportTarget?: string; maxTokens?: number; contextWindowTokens?: number; source: "personal" | "system" | "base"; hasCredential: boolean }>; preferredModelId: string | null };
   };
 
   "ai.config": {
-    args: { profile?: AiContextProfile };
-    result: { profile?: AiContextProfile; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; systemContextFiles?: Array<{ name: string; text: string }>; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home"; label: string; writable: boolean } }>; maxContextBytes: number };
+    args: { modelConfig?: { provider: string; model: string; apiKey?: string; baseUrl?: string; providerStyle?: string; transportTarget?: string; maxTokens?: number; contextWindowTokens?: number }; modelId?: string; reasoning?: string };
+    result: { provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; fallbacks?: Array<{ modelId: string; modelName: string; provider: string; model: string; apiKey: string }>; systemContextFiles?: Array<{ name: string; text: string }>; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home"; label: string; writable: boolean } }>; maxContextBytes: number };
   };
 
   "ai.transcription.create": {

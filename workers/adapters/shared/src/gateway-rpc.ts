@@ -125,16 +125,16 @@ export async function callAdapterGateway(
     throw new Error(message);
   }
 
-  const errorMessage = response.ok
-    ? null
-    : response.error?.message || `Gateway error on ${call}`;
-  await cancelBinaryBody(
-    response.body,
-    errorMessage ?? "Gateway response body is not consumed by adapters",
-  );
-  if (errorMessage) {
-    throw new Error(errorMessage);
+  // Adapters never consume a response body, so every one is cancelled; an
+  // error response cancels it with the error itself. The error envelope is
+  // read defensively because it crosses a service binding.
+  const responseBody = "body" in response ? response.body : undefined;
+  if (!response.ok) {
+    const message = response.error?.message || `Gateway error on ${call}`;
+    await cancelBinaryBody(responseBody, message);
+    throw new Error(message);
   }
+  await cancelBinaryBody(responseBody, "Gateway response body is not consumed by adapters");
 
   const decoded = call === "adapter.inbound"
     ? adapterInboundResultSchema.safeParse(response.data)

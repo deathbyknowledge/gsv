@@ -30,7 +30,7 @@ describe("console normalization", () => {
           },
         ],
       },
-      targets: { devices: [] },
+      targets: { targets: [] },
       accounts: { accounts: [] },
       adapters: [],
       mcpServers: { servers: [] },
@@ -58,43 +58,29 @@ describe("console normalization", () => {
     })[0]?.state).toBe("waiting_hil");
   });
 
-  it("redacts secrets nested inside model profile config values", () => {
-    const [entry] = normalizeConfigPayload({
-      entries: [{
-        key: "users/42/ai/model_profiles",
-        value: JSON.stringify({
-          version: 1,
-          profiles: [{
-            id: "deep-research",
-            name: "Deep Research",
-            values: {
-              "config/ai/provider": "openai",
-              "config/ai/model": "gpt-5",
-              "config/ai/api_key": "sk-secret",
-            },
-          }],
-        }),
-      }],
+  it("keeps model metadata readable while redacting its separate credential", () => {
+    const stack = JSON.stringify({
+      version: 1,
+      models: [{ id: "deep-research", name: "Deep Research", provider: "openai", model: "gpt-5" }],
+    });
+    const entries = normalizeConfigPayload({
+      entries: [
+        { key: "users/42/ai/models", value: stack },
+        { key: "users/42/ai/models/deep-research/api_key", value: "sk-secret" },
+      ],
     });
 
-    expect(entry.redacted).toBe(false);
-    expect(entry.value).not.toContain("sk-secret");
-    expect(JSON.parse(entry.value)).toMatchObject({
-      profiles: [{
-        values: {
-          "config/ai/provider": "openai",
-          "config/ai/model": "gpt-5",
-          "config/ai/api_key": "",
-        },
-      }],
-    });
+    expect(entries).toEqual([
+      { key: "users/42/ai/models", value: stack, redacted: false },
+      { key: "users/42/ai/models/deep-research/api_key", value: "", redacted: true },
+    ]);
   });
 
   it("classifies browser and native device targets", () => {
     expect(normalizeTargetsPayload({
-      devices: [
-        { deviceId: "browser:brave", label: "Brave", platform: "browser-extension", online: true },
-        { deviceId: "macbook", label: "MacBook", platform: "darwin", online: true, implements: ["net.fetch", "fs.*"] },
+      targets: [
+        { targetId: "browser:brave", label: "Brave", platform: "browser-extension", online: true },
+        { targetId: "macbook", label: "MacBook", platform: "darwin", online: true, implements: ["net.fetch", "fs.*"] },
       ],
     })).toMatchObject([
       { deviceId: "browser:brave", kind: "browser" },

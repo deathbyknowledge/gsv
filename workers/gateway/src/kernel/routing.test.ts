@@ -23,8 +23,8 @@ describe("RoutingTable", () => {
         id: "request-1",
         call: "fs.read",
         origin: { type: "process", id: "process-1" },
-        deviceId: "browser",
-        driverConnectionId: "driver-1",
+        targetId: "browser",
+        peerConnectionId: "driver-1",
         createdAt: 1_000,
         expiresAt: 6_000,
         scheduleId: "schedule-1",
@@ -53,12 +53,12 @@ describe("RoutingTable", () => {
       expect(routes.failForDriverConnection("old-connection")).toEqual([
         expect.objectContaining({
           id: "old-request",
-          deviceId: "browser",
+          targetId: "browser",
           origin: { type: "process", id: "process-1" },
         }),
       ]);
       expect(routes.get("old-request")).toBeNull();
-      expect(routes.get("new-request")?.driverConnectionId).toBe(
+      expect(routes.get("new-request")?.peerConnectionId).toBe(
         "new-connection",
       );
     });

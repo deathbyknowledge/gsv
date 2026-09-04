@@ -182,6 +182,7 @@ export class GsvFs implements IFileSystem {
       mode: ext.mode,
       size: ext.size,
       mtime: ext.mtime,
+      identity: ext.identity,
     };
   }
 
@@ -198,6 +199,7 @@ export class GsvFs implements IFileSystem {
         mtime: new Date(),
         uid: 0,
         gid: 0,
+        identity: "path:/",
       };
     }
 
@@ -211,11 +213,16 @@ export class GsvFs implements IFileSystem {
         mtime: new Date(),
         uid: 0,
         gid: 0,
+        identity: "path:/etc",
       };
     }
 
     const p = await this.resolveFinalPath(normalized);
-    return this.backendForPath(p).stat(p);
+    const stat = await this.backendForPath(p).stat(p);
+    // There are no inodes behind this filesystem, so the resolved path is the
+    // stable identity. Commands that stage and rename output (split, sort -o)
+    // refuse to write when a file has no identity at all.
+    return stat.identity === undefined ? { ...stat, identity: `path:${p}` } : stat;
   }
 
   async lstat(path: string): Promise<FsStat> {
@@ -230,6 +237,7 @@ export class GsvFs implements IFileSystem {
       mode: ext.mode,
       size: ext.size,
       mtime: ext.mtime,
+      identity: ext.identity,
     };
   }
 

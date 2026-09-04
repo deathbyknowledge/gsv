@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
+import { testPeer } from "../test-support/peers";
 import { bodyFromBytes, bodyToBytes } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
-import type { AdapterServiceBinding } from "./adapter-handlers";
+import type {
+  AdapterServiceBinding,
+} from "./adapter-service";
 import {
   listVisibleAdapterTargets,
   requestAdapterTarget,
@@ -71,18 +74,14 @@ function makeContext(
   };
   const context: Partial<KernelContext> = {
     installationId: "installation-1",
-    identity: {
-      role: "user",
-      process: {
+    peer: testPeer({ kind: "human", account: {
         uid: 2000,
         gid: 2000,
         gids: [2000],
         username: "ship",
         home: "/home/ship",
         cwd: "/home/ship",
-      },
-      capabilities: ["*"],
-    },
+      }, calls: ["*"] }),
     callerOwnerUid: 1000,
     procs: { getOwnerUid: vi.fn(() => 1000) },
     adapters: {
@@ -197,7 +196,7 @@ describe("adapter-backed targets", () => {
     const deferred: Promise<unknown>[] = [];
     const ctx = makeContext(service, { deferred });
     const localTarget = {
-      device_id: "laptop",
+      target_id: "laptop",
       owner_uid: 1000,
       label: "Laptop",
       description: "Local machine",
@@ -212,9 +211,9 @@ describe("adapter-backed targets", () => {
     };
     // SAFETY: the focused test supplies the device-store method consulted by
     // target projection; no other device-store operation is reachable here.
-    ctx.devices = {
+    ctx.targets = {
       listForUser: vi.fn(() => [localTarget]),
-    } as KernelContext["devices"];
+    } as KernelContext["targets"];
 
     try {
       const discovery = listAllVisibleTargets(ctx);

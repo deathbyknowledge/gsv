@@ -10,16 +10,12 @@ import type {
   ConsoleAccount,
   ConsoleConfigEntry,
 } from "../../gsv-console/domain/consoleModels";
-import {
-  aiProviderDisplayLabel,
-  fixedAiProviderModel,
-} from "../../../domain/aiProviders";
+import type { ConsoleModelListing } from "../../gsv-console/domain/consoleSettings";
 import {
   defaultModelLabelForConfig,
   modelLabelsForConfig,
   modelProfilesForConfig,
 } from "../../gsv-console/domain/consoleAi";
-import { effectiveAiValuesForViewer } from "../../gsv-console/domain/consoleSettings";
 import {
   behaviorForAccount,
   inheritedModelLabelForAccount,
@@ -37,6 +33,7 @@ type BuildShellChatAgentArgs = {
   accounts: readonly ConsoleAccount[];
   chatProcesses: readonly ChatProcessSummary[];
   config: readonly ConsoleConfigEntry[];
+  models: ConsoleModelListing | null;
   ownerUid: number | null;
   statusLabel: string;
 };
@@ -108,28 +105,21 @@ function visibleProcesses(
 
 function behaviorViewForAccount(
   account: ConsoleAccount,
+  models: ConsoleModelListing | null,
   config: readonly ConsoleConfigEntry[],
   modelLabels: readonly string[],
   ownerUid?: number | null,
 ): AgentBehaviorView {
-  const behavior = behaviorForAccount(config, account.uid, ownerUid);
+  const behavior = behaviorForAccount(models, config, account.uid, ownerUid);
   const modelValue = behavior.model.trim();
-  const inheritedModelLabel = inheritedModelLabelForAccount(config, account.uid, ownerUid);
-  const effectiveValues = effectiveAiValuesForViewer(config, account.uid);
-  const fixedModel = fixedAiProviderModel(effectiveValues["config/ai/provider"] ?? "");
-  const includedLabel = !modelValue && fixedModel === effectiveValues["config/ai/model"]
-    ? aiProviderDisplayLabel(effectiveValues["config/ai/provider"] ?? "")
-    : "";
-  const visibleModelLabels = includedLabel
-    ? modelLabels.map((label) => label === fixedModel ? includedLabel : label)
-    : modelLabels;
+  const inheritedModelLabel = inheritedModelLabelForAccount(models, config, account.uid, ownerUid);
   const reasoning = behavior.reasoning.trim() || inheritedReasoningForAccount(config, account.uid, ownerUid);
   return {
-    modelLabel: includedLabel || behavior.modelLabel || inheritedModelLabel,
+    modelLabel: behavior.modelLabel || inheritedModelLabel,
     modelOptions: modelLabelsForAccount(
-      visibleModelLabels,
+      modelLabels,
       behavior.modelLabel || modelValue,
-      includedLabel || inheritedModelLabel,
+      inheritedModelLabel,
     ),
     modelValue,
     modelIsDefault: modelValue.length === 0,
@@ -139,20 +129,14 @@ function behaviorViewForAccount(
 }
 
 function defaultBehaviorView(
+  models: ConsoleModelListing | null,
   config: readonly ConsoleConfigEntry[],
   modelLabels: readonly string[],
 ): AgentBehaviorView {
-  const values = effectiveAiValuesForViewer(config, null);
-  const fixedModel = fixedAiProviderModel(values["config/ai/provider"] ?? "");
-  const modelLabel = fixedModel === values["config/ai/model"]
-    ? aiProviderDisplayLabel(values["config/ai/provider"] ?? "")
-    : defaultModelLabelForConfig(config);
-  const visibleModelLabels = fixedModel
-    ? modelLabels.map((label) => label === fixedModel ? modelLabel : label)
-    : modelLabels;
+  const modelLabel = defaultModelLabelForConfig(models, config);
   return {
     modelLabel,
-    modelOptions: visibleModelLabels.length > 0 ? [...visibleModelLabels] : [modelLabel],
+    modelOptions: modelLabels.length > 0 ? [...modelLabels] : [modelLabel],
     modelValue: "",
     modelIsDefault: true,
     reasoningLabel: formatChatReasoningLabel(inheritedReasoningForAccount(config, -1, null)),
@@ -175,6 +159,7 @@ export function buildShellChatAgent({
   accounts,
   chatProcesses,
   config,
+  models,
   ownerUid,
   statusLabel,
 }: BuildShellChatAgentArgs): ChatAgentData {
@@ -183,9 +168,9 @@ export function buildShellChatAgent({
     ? null
     : accounts.find((account) => account.relation === "personal-agent") ?? null;
   const viewer = viewerAccount(accounts, ownerUid);
-  const modelLabels = modelLabelsForConfig(config);
+  const modelLabels = modelLabelsForConfig(models, config, viewer?.uid);
   if (!personalAccount) {
-    const behavior = defaultBehaviorView(config, modelLabels);
+    const behavior = defaultBehaviorView(models, config, modelLabels);
     return {
       id: "administration",
       ...(ownedActiveProcess ? { processId: ownedActiveProcess.pid } : undefined),
@@ -198,7 +183,7 @@ export function buildShellChatAgent({
       activity: ownedActiveProcess ? statusLabel : "Personal intelligence unavailable",
       modelLabel: behavior.modelLabel,
       modelOptions: behavior.modelOptions,
-      modelProfiles: modelProfilesForConfig(config, viewer?.uid),
+      modelProfiles: modelProfilesForConfig(models, config, viewer?.uid),
       modelValue: behavior.modelValue,
       modelIsDefault: behavior.modelIsDefault,
       reasoningLabel: behavior.reasoningLabel,
@@ -214,8 +199,8 @@ export function buildShellChatAgent({
     : null;
   const behaviorAccount = activeRunAsAccount ?? personalAccount;
   const behavior = behaviorAccount
-    ? behaviorViewForAccount(behaviorAccount, config, modelLabels, viewer?.uid)
-    : defaultBehaviorView(config, modelLabels);
+    ? behaviorViewForAccount(behaviorAccount, models, config, modelLabels, viewer?.uid)
+    : defaultBehaviorView(models, config, modelLabels);
   const processes = visibleProcesses(
     chatProcesses,
     ownedActiveProcess,
@@ -240,7 +225,7 @@ export function buildShellChatAgent({
     activity: statusLabel,
     modelLabel: behavior.modelLabel,
     modelOptions: behavior.modelOptions,
-    modelProfiles: modelProfilesForConfig(config, viewer?.uid),
+    modelProfiles: modelProfilesForConfig(models, config, viewer?.uid),
     modelValue: behavior.modelValue,
     modelIsDefault: behavior.modelIsDefault,
     reasoningLabel: behavior.reasoningLabel,

@@ -17,7 +17,7 @@ type AudioSpeechResponse =
 
 export type AudioSpeechRequest = {
   text: string;
-  model?: string;
+  model: string;
   voice?: string;
   language?: string;
   encoding?: string;
@@ -37,8 +37,6 @@ export type AudioSpeechResult = {
   container?: string;
 };
 
-export const DEFAULT_AUDIO_SPEECH_MODEL = "@cf/deepgram/aura-2-en";
-export const DEFAULT_AUDIO_SPEECH_SPEAKER = "luna";
 export const DEFAULT_AUDIO_SPEECH_ENCODING = "mp3";
 export const DEFAULT_MAX_AUDIO_SPEECH_CHARS = 4000;
 export const DEFAULT_AUDIO_SPEECH_TIMEOUT_MS = 30_000;
@@ -51,12 +49,15 @@ export async function synthesizeSpeechWithWorkersAi(
     return null;
   }
 
-  const model = request.model || DEFAULT_AUDIO_SPEECH_MODEL;
+  const model = request.model.trim();
+  if (!model) {
+    throw new Error("Speech model is required");
+  }
   const encoding = normalizeEncoding(request.encoding) || DEFAULT_AUDIO_SPEECH_ENCODING;
   const container = normalizeOptionalText(request.container);
   const voice = model.includes("/melotts")
     ? undefined
-    : normalizeOptionalText(request.voice) || defaultVoiceForModel(model);
+    : normalizeOptionalText(request.voice);
   const input = buildWorkersAiSpeechInput({
     ...request,
     model,
@@ -145,10 +146,6 @@ async function normalizeSpeechResponse(
   return null;
 }
 
-
-function defaultVoiceForModel(model: string): string | undefined {
-  return model.includes("/aura-") ? DEFAULT_AUDIO_SPEECH_SPEAKER : undefined;
-}
 
 function normalizeEncoding(value: JsonValue | undefined): string | undefined {
   return normalizeOptionalText(value)?.toLowerCase();

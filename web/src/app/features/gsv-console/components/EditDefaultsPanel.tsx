@@ -3,8 +3,6 @@ import { Button } from "../../../components/ui/Button";
 import { IconButton } from "../../../components/ui/IconButton";
 import { Select } from "../../../components/ui/Select";
 import {
-  FALLBACK_SETTING_INFO,
-  MODEL_SETTING_INFO,
   REASONING_SETTING_INFO,
   REASONING_VALUES,
   reasoningIndexForValue,
@@ -17,21 +15,16 @@ import {
   type ContextSection,
 } from "../../../components/ui/ContextSectionsEditor";
 import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
-import { modelOptionsForConfig, type ConsoleModelOption } from "../domain/consoleAi";
 import {
   approvalForAgentSave,
   behaviorForAccount,
-  fallbackModelOptionsForAccount,
-  inheritedFallbackModelLabelForAccount,
-  inheritedModelLabelForAccount,
   inheritedReasoningForAccount,
-  modelOptionsForAccount,
   parseApprovalPolicy,
   serializeApprovalPolicy,
   type ApprovalPolicy,
 } from "../domain/consoleAgentBehavior";
 import type { ConsoleAccount, ConsoleConfigEntry } from "../domain/consoleModels";
-import { useConsoleAgentContext, useSaveConsoleAgentBehavior, useSaveConsoleAgentContext } from "../hooks/useConsoleData";
+import { useConsoleAgentContext, useSaveConsoleAgentBehavior, useSaveConsoleAgentContext, useConsoleModels } from "../hooks/useConsoleData";
 import "./EditDefaultsPanel.css";
 
 export type EditDefaultsSection = "defaults" | "permissions" | "context";
@@ -39,13 +32,13 @@ export type EditDefaultsSection = "defaults" | "permissions" | "context";
 /** Per-section surface copy. Each CREW default now opens its own titled
  *  surface (model defaults / permissions / global instructions). */
 const SECTION_TITLE = {
-  defaults: "MODEL DEFAULTS",
+  defaults: "REASONING DEFAULT",
   permissions: "DEFAULT PERMISSIONS",
   context: "GLOBAL INSTRUCTIONS",
 } satisfies Record<EditDefaultsSection, string>;
 
 const SECTION_DESC = {
-  defaults: "These are your preferences, applied to all your agents.",
+  defaults: "This reasoning preference applies to agents that do not choose their own.",
   permissions:
     "When there are no overrides configured, all your agents will follow the default permission when using any tool. Overrides are machine or tool specific rules that take priority over the default action.",
   context: "Instructions all your agents follow. These do not take precedence over agent definitions.",
@@ -72,19 +65,6 @@ export interface EditDefaultsPanelProps {
   targets: readonly AgentToolTarget[];
 }
 
-function modelIndexForValue(options: readonly ConsoleModelOption[], value: string): number {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return 0;
-  }
-  const index = options.findIndex((option) => option.value.trim() === trimmed);
-  return index >= 0 ? index : 0;
-}
-
-function optionsKey(options: readonly ConsoleModelOption[]): string {
-  return options.map((option) => `${option.value}:${option.label}`).join(" ");
-}
-
 /** EditDefaultsPanel — the in-body editing surface behind the CREW "DEFAULTS"
  *  card, rendered in the list column with an ✕ back to the roster. The form is
  *  the create-agent behavior template verbatim (same field widths, spacings,
@@ -105,25 +85,12 @@ export function EditDefaultsPanel({
     && !context.resource.isUnavailable
     && !context.resource.isError;
 
-  const behavior = behaviorForAccount(config, viewer.uid, viewer.uid);
+  const models = useConsoleModels();
+  const behavior = behaviorForAccount(models.listing, config, viewer.uid, viewer.uid);
   const savedPolicy = useMemo(() => parseApprovalPolicy(behavior.approval), [behavior.approval]);
   const savedSignature = serializeApprovalPolicy(savedPolicy);
-  const modelSelectOptions = modelOptionsForAccount(
-    modelOptionsForConfig(config),
-    behavior.model,
-    inheritedModelLabelForAccount(config, viewer.uid, viewer.uid),
-  );
-  const fallbackSelectOptions = fallbackModelOptionsForAccount(
-    config,
-    viewer.uid,
-    viewer.uid,
-    behavior.fallbackModel,
-    inheritedFallbackModelLabelForAccount(config, viewer.uid, viewer.uid),
-  );
   const reasoningSelectOptions = reasoningOptions(inheritedReasoningForAccount(config, viewer.uid, viewer.uid));
 
-  const initialModelIndex = modelIndexForValue(modelSelectOptions, behavior.model);
-  const initialFallbackIndex = modelIndexForValue(fallbackSelectOptions, behavior.fallbackModel);
   const initialReasoningIndex = reasoningIndexForValue(behavior.reasoning);
   const baselineFiles = contextSectionsFromFiles(context.files);
   const baselineFilesSignature = contextSignature(baselineFiles);
@@ -131,16 +98,10 @@ export function EditDefaultsPanel({
   // behavior save (which invalidates the config query) can't re-baseline the
   // context draft out from under a still-unsaved / failed context edit.
   const behaviorBaselineKey = [
-    initialModelIndex,
-    initialFallbackIndex,
     initialReasoningIndex,
     savedSignature,
-    optionsKey(modelSelectOptions),
-    optionsKey(fallbackSelectOptions),
   ].join("|");
 
-  const [modelIndex, setModelIndex] = useState(initialModelIndex);
-  const [fallbackIndex, setFallbackIndex] = useState(initialFallbackIndex);
   const [reasoningIndex, setReasoningIndex] = useState(initialReasoningIndex);
   const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy>(savedPolicy);
   const [filesDraft, setFilesDraft] = useState<ContextSection[]>(baselineFiles);
@@ -163,8 +124,6 @@ export function EditDefaultsPanel({
   // behavior save that lands mid-combined-save (before the awaited context
   // write) would re-enable the controls while that write is still in flight.
   useEffect(() => {
-    setModelIndex(initialModelIndex);
-    setFallbackIndex(initialFallbackIndex);
     setReasoningIndex(initialReasoningIndex);
     setApprovalPolicy(savedPolicy);
     setConfirmDiscard(false);
@@ -204,8 +163,6 @@ export function EditDefaultsPanel({
 
   const draftPolicySignature = serializeApprovalPolicy(approvalPolicy);
   const behaviorDirty =
-    modelIndex !== initialModelIndex ||
-    fallbackIndex !== initialFallbackIndex ||
     reasoningIndex !== initialReasoningIndex ||
     draftPolicySignature !== savedSignature;
   const contextDirty = contextEditable && contextSignature(filesDraft) !== baselineFilesSignature;
@@ -222,8 +179,6 @@ export function EditDefaultsPanel({
   };
 
   const resetDrafts = () => {
-    setModelIndex(initialModelIndex);
-    setFallbackIndex(initialFallbackIndex);
     setReasoningIndex(initialReasoningIndex);
     setApprovalPolicy(savedPolicy);
     setFilesDraft(contextSectionsFromFiles(context.files));
@@ -242,8 +197,6 @@ export function EditDefaultsPanel({
       if (behaviorDirty) {
         await saveBehavior.mutateAsync({
           uid: viewer.uid,
-          model: modelIndex === 0 ? "" : modelSelectOptions[modelIndex]?.value ?? "",
-          fallbackModel: fallbackIndex === 0 ? "" : fallbackSelectOptions[fallbackIndex]?.value ?? "",
           reasoning: reasoningIndex === 0 ? "" : REASONING_VALUES[reasoningIndex] ?? "",
           approval: approvalForAgentSave(draftPolicySignature, behavior),
         });
@@ -415,40 +368,6 @@ export function EditDefaultsPanel({
         </div>
       ) : (
         <>
-          {/* Behavior fields — the create-agent form template verbatim
-              (AgentEditor GENERAL column: 420/300 widths, 30px rhythm, info tips). */}
-          <div style="max-width:420px;margin-bottom:30px;">
-            <Select
-              label="MODEL"
-              info={MODEL_SETTING_INFO}
-              requirement="optional"
-              options={modelSelectOptions}
-              value={modelIndex}
-              onChange={disabled ? undefined : (index) => {
-                touch();
-                setModelIndex(index);
-              }}
-              width={420}
-              disabled={disabled}
-            />
-          </div>
-
-          <div style="max-width:420px;margin-bottom:30px;">
-            <Select
-              label="FALLBACK"
-              info={FALLBACK_SETTING_INFO}
-              requirement="optional"
-              options={fallbackSelectOptions}
-              value={fallbackIndex}
-              onChange={disabled ? undefined : (index) => {
-                touch();
-                setFallbackIndex(index);
-              }}
-              width={420}
-              disabled={disabled}
-            />
-          </div>
-
           <div style="max-width:300px;margin-bottom:30px;">
             <Select
               label="REASONING"

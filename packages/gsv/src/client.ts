@@ -14,6 +14,16 @@ import {
 } from "./protocol/request-cancel";
 import type { BinaryFrameDescriptor } from "./protocol/binary-frame";
 import {
+  wireFrameSchemas,
+  type FrameEnvelope,
+  type FrameError,
+  type RequestEnvelope,
+  type ResponseEnvelope,
+  type ResponseErrEnvelope,
+  type ResponseOkEnvelope,
+  type SignalEnvelope,
+} from "./protocol/frame";
+import {
   BinaryBodyChannel,
   type OutgoingBinaryBody,
 } from "./protocol/binary-body-channel";
@@ -28,46 +38,6 @@ function serializeOutgoingArguments(args: GsvOutgoingArguments): JsonValue {
   }
   return jsonValueSchema.parse(JSON.parse(serialized));
 }
-
-export type GsvError = {
-  code: number;
-  message: string;
-  details?: JsonValue;
-  retryable?: boolean;
-};
-
-export type GsvRequestFrame<S extends string = string> = {
-  type: "req";
-  id: string;
-  call: S;
-  args?: JsonValue;
-  runId?: string;
-  body?: BinaryFrameDescriptor;
-};
-
-export type GsvResponseFrame<T = JsonValue> =
-  | {
-      type: "res";
-      id: string;
-      ok: true;
-      data?: T;
-      body?: BinaryFrameDescriptor;
-    }
-  | {
-      type: "res";
-      id: string;
-      ok: false;
-      error: GsvError;
-    };
-
-export type GsvSignalFrame = {
-  type: "sig";
-  signal: string;
-  payload?: JsonValue;
-  seq?: number;
-};
-
-export type GsvFrame = GsvRequestFrame | GsvResponseFrame | GsvSignalFrame;
 
 type PendingRequest = {
   resolve: (value: GsvResponse<JsonValue>) => void;
@@ -135,7 +105,7 @@ export type GsvBodyOptions = {
 };
 
 export type GsvInboundRequestHandler = (
-  frame: GsvRequestFrame,
+  frame: RequestEnvelope<BinaryFrameDescriptor>,
   body?: GsvBody,
   abortSignal?: AbortSignal,
 ) => Promise<GsvResponse> | GsvResponse;
@@ -147,7 +117,7 @@ export type GsvEndpointRequest<S extends string = string> = {
   call: S;
   args: S extends SyscallName ? ArgsOf<S> : JsonValue;
   body?: GsvBody;
-  raw: GsvRequestFrame<S>;
+  raw: RequestEnvelope<BinaryFrameDescriptor, S>;
 };
 
 export type GsvEndpointContext = {
@@ -224,10 +194,6 @@ type GsvMergedConnectOptions = Omit<GsvConnectOptions, "peer"> & {
   peer: GsvPeerInfo;
 };
 
-const binaryFrameDescriptorSchema = z.strictObject({
-  streamId: z.int().check(z.positive()),
-  length: z.optional(z.int().check(z.nonnegative())),
-});
 const shellExecTimeoutArgumentsSchema = z.looseObject({
   timeout: z.optional(z.number().check(z.positive())),
 });
@@ -237,46 +203,6 @@ const shellExecSessionArgumentsSchema = z.looseObject({
 const shellExecPollingArgumentsSchema = z.looseObject({
   yieldMs: z.optional(z.number().check(z.positive())),
 });
-const gsvErrorSchema = z.strictObject({
-  code: z.number(),
-  message: z.string(),
-  details: z.optional(jsonValueSchema),
-  retryable: z.optional(z.boolean()),
-});
-const gsvRequestFrameSchema = z.strictObject({
-  type: z.literal("req"),
-  id: z.string(),
-  call: z.string(),
-  args: z.optional(jsonValueSchema),
-  runId: z.optional(z.string()),
-  body: z.optional(binaryFrameDescriptorSchema),
-});
-const gsvResponseFrameSchema = z.union([
-  z.strictObject({
-    type: z.literal("res"),
-    id: z.string(),
-    ok: z.literal(true),
-    data: z.optional(jsonValueSchema),
-    body: z.optional(binaryFrameDescriptorSchema),
-  }),
-  z.strictObject({
-    type: z.literal("res"),
-    id: z.string(),
-    ok: z.literal(false),
-    error: gsvErrorSchema,
-  }),
-]);
-const gsvSignalFrameSchema = z.strictObject({
-  type: z.literal("sig"),
-  signal: z.string(),
-  payload: z.optional(jsonValueSchema),
-  seq: z.optional(z.number()),
-});
-const gsvFrameSchema = z.union([
-  gsvRequestFrameSchema,
-  gsvResponseFrameSchema,
-  gsvSignalFrameSchema,
-]);
 const requestCancelPayloadSchema = z.strictObject({
   id: z.string(),
   reason: z.optional(z.string()),
@@ -301,7 +227,7 @@ export type GsvSignalNamespace = GsvClientNamespaces["signal"];
 export type GsvSysNamespace = GsvClientNamespaces["sys"];
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 8_000;
-const PROTOCOL_VERSION = 3;
+const PROTOCOL_VERSION = 4;
 const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
 const LONG_RUNNING_REQUEST_TIMEOUT_MS = 120_000;
 const AI_TEXT_GENERATION_REQUEST_TIMEOUT_MS = 180_000;
@@ -406,10 +332,10 @@ const SYSCALL_NAMES = [
   "sys.bootstrap",
   "sys.config.get",
   "sys.config.set",
-  "sys.device.list",
-  "sys.device.get",
-  "sys.device.update",
-  "sys.device.delete",
+  "sys.target.list",
+  "sys.target.get",
+  "sys.target.update",
+  "sys.target.delete",
   "sys.oauth.start",
   "sys.oauth.device.start",
   "sys.oauth.device.poll",
@@ -444,6 +370,7 @@ const SYSCALL_NAMES = [
   "ai.tools",
   "ai.context",
   "ai.config",
+  "ai.models",
   "ai.text.generate",
   "adapter.connect",
   "adapter.disconnect",
@@ -467,7 +394,7 @@ export class GsvClientError extends Error {
   readonly details?: JsonValue;
   readonly retryable?: boolean;
 
-  constructor(error: GsvError) {
+  constructor(error: FrameError) {
     super(error.message);
     this.name = "GsvClientError";
     this.code = error.code;
@@ -612,7 +539,7 @@ export class GSVClient {
   }
 
   sendSignal(signal: string, payload?: JsonValue, seq?: number): void {
-    const frame: GsvSignalFrame = {
+    const frame: SignalEnvelope = {
       type: "sig",
       signal,
     };
@@ -946,7 +873,7 @@ export class GSVClient {
     const signal = options.signal;
     const wireArgs = serializeOutgoingArguments(args);
     const outgoing = body ? this.bodyChannel.prepare(body) : undefined;
-    const frame: GsvRequestFrame = {
+    const frame: RequestEnvelope<BinaryFrameDescriptor> = {
       type: "req",
       id,
       call,
@@ -967,7 +894,7 @@ export class GSVClient {
             type: "sig",
             signal: REQUEST_CANCEL_SIGNAL,
             payload: { id, reason: error.message },
-          } satisfies GsvSignalFrame));
+          } satisfies SignalEnvelope));
         } catch {}
         pending.bodyAbort?.abort(error);
         void outgoing?.cancel(error);
@@ -1030,7 +957,7 @@ export class GSVClient {
   ): Promise<T> {
     const id = makeId();
     const wireArgs = serializeOutgoingArguments(args);
-    const frame: GsvRequestFrame = {
+    const frame: RequestEnvelope<BinaryFrameDescriptor> = {
       type: "req",
       id,
       call,
@@ -1173,7 +1100,7 @@ export class GSVClient {
     pending.reject(new GsvClientError(parsed.error));
   }
 
-  private async handleInboundRequest(frame: GsvRequestFrame): Promise<void> {
+  private async handleInboundRequest(frame: RequestEnvelope<BinaryFrameDescriptor>): Promise<void> {
     const handler = this.inboundRequestHandler;
     const abortController = new AbortController();
     this.inboundRequests.set(frame.id, abortController);
@@ -1199,7 +1126,7 @@ export class GSVClient {
         const response = await handler(frame, body, abortController.signal);
         abortController.signal.throwIfAborted();
         outgoing = response.body ? this.bodyChannel.prepare(response.body) : undefined;
-        const responseFrame: GsvResponseFrame = {
+        const responseFrame: ResponseOkEnvelope<BinaryFrameDescriptor> = {
           type: "res",
           id: frame.id,
           ok: true,
@@ -1234,7 +1161,7 @@ export class GSVClient {
     }
   }
 
-  private sendJson(frame: GsvResponseFrame | GsvSignalFrame): void {
+  private sendJson(frame: ResponseEnvelope<BinaryFrameDescriptor> | SignalEnvelope): void {
     const socket = this.socket;
     if (!socket || socket.readyState !== WEBSOCKET_OPEN) {
       throw new Error("Not connected");
@@ -1429,7 +1356,7 @@ export class GSVEndpoint {
   }
 
   private async handleRequest(
-    frame: GsvRequestFrame,
+    frame: RequestEnvelope<BinaryFrameDescriptor>,
     body?: GsvBody,
     signal?: AbortSignal,
   ): Promise<GsvResponse> {
@@ -1454,7 +1381,7 @@ export class GSVEndpoint {
     return await handler({
       id: frame.id,
       call: frame.call,
-      args: frame.args ?? {},
+      args: frame.args,
       body,
       raw: frame,
     }, context);
@@ -1600,9 +1527,9 @@ function acknowledgementNonce(payload: JsonValue | undefined): string | null {
   return parsed.success ? parsed.data.nonce : null;
 }
 
-function parseFrame(raw: string): GsvFrame | null {
+function parseFrame(raw: string): FrameEnvelope<BinaryFrameDescriptor> | null {
   try {
-    const parsed = gsvFrameSchema.safeParse(JSON.parse(raw));
+    const parsed = wireFrameSchemas.frame.safeParse(JSON.parse(raw));
     return parsed.success ? parsed.data : null;
   } catch {
     return null;
@@ -1660,8 +1587,8 @@ function errorFrame(
   message: string,
   details?: JsonValue,
   retryable?: boolean,
-): GsvResponseFrame {
-  const frame: GsvResponseFrame = {
+): ResponseErrEnvelope {
+  const frame: ResponseErrEnvelope = {
     type: "res",
     id,
     ok: false,

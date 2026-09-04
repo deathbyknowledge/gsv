@@ -154,8 +154,7 @@ pub(crate) async fn run_auth(
                 kind,
                 uid,
                 label,
-                role,
-                device,
+                peer,
                 expires_at,
             } => {
                 let mut args = json!({
@@ -167,11 +166,8 @@ pub(crate) async fn run_auth(
                 if let Some(label) = label {
                     args["label"] = json!(label);
                 }
-                if let Some(role) = role {
-                    args["allowedRole"] = json!(role.as_str());
-                }
-                if let Some(device) = device {
-                    args["allowedDeviceId"] = json!(device);
+                if let Some(peer) = peer {
+                    args["peerId"] = json!(peer);
                 }
                 if let Some(expires_at) = expires_at {
                     args["expiresAt"] = json!(expires_at);
@@ -248,8 +244,7 @@ struct SysTokenIssuedPayload {
     uid: u32,
     kind: String,
     label: Option<String>,
-    allowed_role: Option<String>,
-    allowed_device_id: Option<String>,
+    peer_id: Option<String>,
     created_at: i64,
     expires_at: Option<i64>,
 }
@@ -267,8 +262,7 @@ struct SysTokenRecordPayload {
     kind: String,
     label: Option<String>,
     token_prefix: String,
-    allowed_role: Option<String>,
-    allowed_device_id: Option<String>,
+    peer_id: Option<String>,
     created_at: i64,
     last_used_at: Option<i64>,
     expires_at: Option<i64>,
@@ -311,15 +305,8 @@ fn print_token_create(token: &SysTokenIssuedPayload) {
     println!("id: {}", token.token_id);
     println!("prefix: {}", token.token_prefix);
     println!("uid: {}", token.uid);
-    println!("kind: {}", display_token_kind(&token.kind));
-    println!(
-        "role: {}",
-        token.allowed_role.as_deref().unwrap_or("<none>")
-    );
-    println!(
-        "device: {}",
-        token.allowed_device_id.as_deref().unwrap_or("<none>")
-    );
+    println!("kind: {}", token.kind);
+    println!("peer: {}", token.peer_id.as_deref().unwrap_or("<none>"));
     println!("label: {}", token.label.as_deref().unwrap_or("<none>"));
     println!("created: {}", format_unix_ms(token.created_at));
     println!(
@@ -353,13 +340,12 @@ fn print_token_list(tokens: &[SysTokenRecordPayload]) {
         };
 
         println!(
-            "{} {} uid={} kind={} role={} device={} status={}",
+            "{} {} uid={} kind={} peer={} status={}",
             token.token_id,
             token.token_prefix,
             token.uid,
-            display_token_kind(&token.kind),
-            token.allowed_role.as_deref().unwrap_or("-"),
-            token.allowed_device_id.as_deref().unwrap_or("-"),
+            token.kind,
+            token.peer_id.as_deref().unwrap_or("-"),
             status
         );
         println!(
@@ -378,13 +364,6 @@ fn print_token_list(tokens: &[SysTokenRecordPayload]) {
         if let Some(reason) = token.revoked_reason.as_deref() {
             println!("  revoked_reason={}", reason);
         }
-    }
-}
-
-fn display_token_kind(kind: &str) -> &str {
-    match kind {
-        "node" => "device",
-        other => other,
     }
 }
 

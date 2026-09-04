@@ -4,10 +4,10 @@ import type {
   ScheduleExpression,
   SchedulePrincipal,
 } from "@humansandmachines/gsv/protocol";
-import type { ConnectionIdentity } from "./identity";
 import { canOwnerDelegateRunAs } from "./account-access";
 import { hasCapability } from "./capabilities";
-import type { KernelContext } from "./context";
+import type { KernelContext, PrincipalView } from "./context";
+import { principalOf, requirePrincipal } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import {
   armSchedule,
@@ -66,7 +66,7 @@ export function createCronFileService(ctx: KernelContext): CronFileService {
 
 function listUserCrontabs(ctx: KernelContext): string[] {
   const store = ctx.schedules;
-  const actorUid = requireActor(ctx).process.uid;
+  const actorUid = requireActor(ctx).account.uid;
   if (actorUid !== 0) {
     const user = ctx.auth.getPasswdByUid(actorUid);
     if (!user) return [];
@@ -335,11 +335,11 @@ function cronPathSegment(value: string): string {
   return segment;
 }
 
-function requireActor(ctx: KernelContext): ConnectionIdentity {
-  if (!ctx.identity) {
+function requireActor(ctx: KernelContext): PrincipalView {
+  if (!principalOf(ctx)) {
     throw new Error("identity is required");
   }
-  return ctx.identity;
+  return requirePrincipal(ctx);
 }
 
 function requireUser(ctx: KernelContext, username: string): PasswdEntry {
@@ -351,14 +351,14 @@ function requireUser(ctx: KernelContext, username: string): PasswdEntry {
 }
 
 function assertCanManageUserCrontab(ctx: KernelContext, user: PasswdEntry): void {
-  const actorUid = requireActor(ctx).process.uid;
+  const actorUid = requireActor(ctx).account.uid;
   if (actorUid === 0 || actorUid === user.uid) return;
   if (canOwnerDelegateRunAs(ctx.auth, resolveCallerOwnerUid(ctx), user)) return;
   throw new Error(`Permission denied: cannot access crontab for ${user.username}`);
 }
 
 function assertRoot(ctx: KernelContext, action: string): void {
-  if (requireActor(ctx).process.uid !== 0) {
+  if (requireActor(ctx).account.uid !== 0) {
     throw new Error(`Permission denied: cannot ${action}`);
   }
 }
@@ -375,7 +375,7 @@ function processIdentityForUser(ctx: KernelContext, user: PasswdEntry): ProcessI
 }
 
 function scheduleOwnerUidForUserCrontab(ctx: KernelContext, user: PasswdEntry): number {
-  const actorUid = requireActor(ctx).process.uid;
+  const actorUid = requireActor(ctx).account.uid;
   if (actorUid === 0) {
     return user.uid;
   }
@@ -385,27 +385,27 @@ function scheduleOwnerUidForUserCrontab(ctx: KernelContext, user: PasswdEntry): 
   return user.uid;
 }
 
-function principalFromIdentity(identity: ConnectionIdentity, processId?: string): SchedulePrincipal {
+function principalFromIdentity(identity: PrincipalView, processId?: string): SchedulePrincipal {
   if (processId) {
     return {
       kind: "process",
-      uid: identity.process.uid,
-      username: identity.process.username,
+      uid: identity.account.uid,
+      username: identity.account.username,
       pid: processId,
     };
   }
-  if (identity.role === "service") {
+  if (identity.kind === "service") {
     return {
       kind: "service",
-      uid: identity.process.uid,
-      username: identity.process.username,
-      channel: identity.channel,
+      uid: identity.account.uid,
+      username: identity.account.username,
+      channel: identity.peerId,
     };
   }
   return {
     kind: "user",
-    uid: identity.process.uid,
-    username: identity.process.username,
+    uid: identity.account.uid,
+    username: identity.account.username,
   };
 }
 

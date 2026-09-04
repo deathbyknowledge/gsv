@@ -10,6 +10,7 @@ import { buildCodeModeCommand } from "./codemode";
 import { buildContactCommand } from "./contact";
 import { buildCoreCommands } from "./core";
 import { buildCpCommand } from "./cp";
+import { buildDdCommand } from "./dd";
 import { buildCrontabCommand } from "./crontab";
 import { buildLsCommand } from "./ls";
 import { buildLlmCommand } from "./llm";
@@ -51,6 +52,7 @@ export function buildCustomCommands(
   const mail = buildMailCommand(fs, ctx);
   const stat = buildStatCommand(fs, identity, ctx);
   const cp = buildCpCommand(ctx, options?.fsTransport);
+  const dd = buildDdCommand(fs);
   const crontab = buildCrontabCommand(fs, ctx);
   const codemode = buildCodeModeCommand(fs, identity, ctx, options?.request);
   const contact = buildContactCommand(ctx);
@@ -82,6 +84,7 @@ export function buildCustomCommands(
     ls,
     stat,
     cp,
+    dd,
     crontab,
     codemode,
     contact,

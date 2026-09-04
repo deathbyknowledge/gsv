@@ -1,6 +1,7 @@
 import type { SysBootstrapArgs, SysBootstrapResult } from "@humansandmachines/gsv/protocol";
 import { RipgitClient, type RipgitRepoRef } from "../../fs/ripgit/client";
 import type { KernelContext } from "../context";
+import { principalOf, requirePrincipal } from "../context";
 import { registerRepo } from "../repo";
 import { setRepoVisibility } from "../repo-visibility";
 import { seedBuiltinSkillsToHome } from "./skills-seed";
@@ -53,13 +54,13 @@ export async function handleSysBootstrap(
   if (!ctx.env.RIPGIT) {
     throw new Error("RIPGIT binding is required for system bootstrap");
   }
-  if (!ctx.identity) {
+  if (!principalOf(ctx)) {
     throw new Error("Authenticated identity required");
   }
 
   const { remoteUrl, ref } = resolveManualBootstrapUpstream(ctx.env);
   const ripgit = new RipgitClient(ctx.env.RIPGIT);
-  const actorName = ctx.identity.process.username;
+  const actorName = requirePrincipal(ctx).account.username;
   const startedAt = Date.now();
   const timings: BootstrapTiming[] = [];
 
@@ -76,7 +77,7 @@ export async function handleSysBootstrap(
     setPublicRepo(ctx, ROOT_GSV_MANUAL_REPO);
     await timeBootstrapStep(timings, "seed-skills", () => seedBuiltinSkillsToHome(
       ripgit,
-      ctx.identity!.process,
+      requirePrincipal(ctx).account,
     ));
 
     console.info(

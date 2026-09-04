@@ -137,8 +137,8 @@ export type SysSetupArgs = {
     apiKey?: string;
   };
   timezone?: string;
-  node?: {
-    deviceId: string;
+  machine?: {
+    peerId: string;
     label?: string;
     expiresAt?: number;
   };
@@ -223,18 +223,7 @@ export type SysSetupResult = {
   user: ProcessIdentity;
   rootLocked: boolean;
   bootstrap?: SysBootstrapResult;
-  nodeToken?: {
-    tokenId: string;
-    token: string;
-    tokenPrefix: string;
-    uid: number;
-    kind: "node";
-    label: string | null;
-    allowedRole: "driver" | null;
-    allowedDeviceId: string | null;
-    createdAt: number;
-    expiresAt: number | null;
-  };
+  machineToken?: SysIssuedToken & { kind: "machine"; peerId: string };
 };
 
 export type SysBootstrapArgs = Record<string, never>;
@@ -271,12 +260,12 @@ export type SysConfigSetResult = {
   ok: true;
 };
 
-export type SysDeviceListArgs = {
+export type SysTargetListArgs = {
   includeOffline?: boolean;
 };
 
-export type SysDeviceSummary = {
-  deviceId: string;
+export type SysTargetSummary = {
+  targetId: string;
   ownerUid: number;
   ownerUsername: string | null;
   label: string;
@@ -288,41 +277,41 @@ export type SysDeviceSummary = {
   lastSeenAt: number;
 };
 
-export type SysDeviceListResult = {
-  devices: SysDeviceSummary[];
+export type SysTargetListResult = {
+  targets: SysTargetSummary[];
 };
 
-export type SysDeviceGetArgs = {
-  deviceId: string;
+export type SysTargetGetArgs = {
+  targetId: string;
 };
 
-export type SysDeviceDetail = SysDeviceSummary & {
+export type SysTargetDetail = SysTargetSummary & {
   firstSeenAt: number;
   connectedAt: number | null;
   disconnectedAt: number | null;
 };
 
-export type SysDeviceGetResult = {
-  device: SysDeviceDetail | null;
+export type SysTargetGetResult = {
+  target: SysTargetDetail | null;
 };
 
-export type SysDeviceUpdateArgs = {
-  deviceId: string;
+export type SysTargetUpdateArgs = {
+  targetId: string;
   label?: string;
   description?: string;
 };
 
-export type SysDeviceUpdateResult = {
-  device: SysDeviceDetail | null;
+export type SysTargetUpdateResult = {
+  target: SysTargetDetail | null;
 };
 
-export type SysDeviceDeleteArgs = {
-  deviceId: string;
+export type SysTargetDeleteArgs = {
+  targetId: string;
 };
 
-export type SysDeviceDeleteResult = {
+export type SysTargetDeleteResult = {
   deleted: boolean;
-  deviceId: string;
+  targetId: string;
   revokedTokens: number;
 };
 
@@ -526,31 +515,32 @@ export type SysMcpCallResult = {
   isError?: boolean;
 };
 
-export type SysTokenKind = "node" | "service" | "user";
-export type SysTokenRole = "driver" | "service" | "user";
+/** A token's kind is the principal kind it authenticates as; machine tokens bind to one peer id. */
+export type SysTokenKind = "human" | "machine" | "service";
 
 export type SysTokenCreateArgs = {
   uid?: number;
   kind: SysTokenKind;
   label?: string;
-  allowedRole?: SysTokenRole;
-  allowedDeviceId?: string;
+  /** Required for machine tokens: the exact peer id the token may connect as. */
+  peerId?: string;
   expiresAt?: number;
 };
 
+export type SysIssuedToken = {
+  tokenId: string;
+  token: string;
+  tokenPrefix: string;
+  uid: number;
+  kind: SysTokenKind;
+  label: string | null;
+  peerId: string | null;
+  createdAt: number;
+  expiresAt: number | null;
+};
+
 export type SysTokenCreateResult = {
-  token: {
-    tokenId: string;
-    token: string;
-    tokenPrefix: string;
-    uid: number;
-    kind: SysTokenKind;
-    label: string | null;
-    allowedRole: SysTokenRole | null;
-    allowedDeviceId: string | null;
-    createdAt: number;
-    expiresAt: number | null;
-  };
+  token: SysIssuedToken;
 };
 
 export type SysTokenRecord = {
@@ -559,8 +549,7 @@ export type SysTokenRecord = {
   kind: SysTokenKind;
   label: string | null;
   tokenPrefix: string;
-  allowedRole: SysTokenRole | null;
-  allowedDeviceId: string | null;
+  peerId: string | null;
   createdAt: number;
   lastUsedAt: number | null;
   expiresAt: number | null;

@@ -8,7 +8,7 @@ import {
 describe("context epoch projection", () => {
   it("normalizes prompt-relevant Kernel state into a deterministic snapshot", () => {
     const projection = createContextProjection({
-      devices: [
+      targets: [
         {
           id: " node-b ",
           label: "Work\nLaptop",
@@ -62,7 +62,7 @@ describe("context epoch projection", () => {
 
   it("falls back to UTC and compares normalized snapshots exactly", () => {
     const input = {
-      devices: [],
+      targets: [],
       mcpServers: [],
       system: { timezone: "not/a-timezone" },
       skillIndex: [],
@@ -83,7 +83,7 @@ describe("context epoch projection", () => {
       entries: [{ id: "research", description: "Gather sources" }],
     };
     const projection = createContextProjection({
-      devices: [],
+      targets: [],
       mcpServers: ["Calendar"],
       system: { timezone: "UTC" },
       skillIndexMode: "summary",

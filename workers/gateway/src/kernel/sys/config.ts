@@ -4,9 +4,9 @@
  * Thin wrappers around ConfigStore with key-level permission checks.
  *
  * Key format mirrors ConfigStore internals:
- *   "config/ai/provider"     → system-wide AI provider
+ *   "config/ai/models"       → system-wide ordered AI model stack
  *   "config/shell/timeout_ms" → system-wide shell timeout
- *   "users/1000/ai/model"    → per-user AI model override
+ *   "users/1000/ai/models"   → owner AI model stack
  *
  * Permission model:
  *   Read:  root reads all; non-root reads own users/{uid}/*, delegated agent
@@ -16,6 +16,7 @@
  */
 
 import type { KernelContext } from "../context";
+import { requirePrincipal } from "../context";
 import { resolveCallerOwnerUid } from "../context";
 import type {
   SysConfigGetArgs,
@@ -41,7 +42,7 @@ function isUserOverridableConfigSubkey(sub: string): boolean {
 }
 
 function canManageUserConfig(ctx: KernelContext, targetUid: number): boolean {
-  const identity = ctx.identity!.process;
+  const identity = requirePrincipal(ctx).account;
   if (identity.uid === 0) return true;
   const target = ctx.auth.getPasswdByUid(targetUid);
   if (!target) return false;
@@ -49,7 +50,7 @@ function canManageUserConfig(ctx: KernelContext, targetUid: number): boolean {
 }
 
 function canRead(ctx: KernelContext, key: string): boolean {
-  const uid = ctx.identity!.process.uid;
+  const uid = requirePrincipal(ctx).account.uid;
   if (uid === 0) return true;
   if (key.startsWith("config/")) return canReadConfigKey(uid, key);
   if (canReadConfigKey(uid, key)) return true;
@@ -60,7 +61,7 @@ function canRead(ctx: KernelContext, key: string): boolean {
 }
 
 function canWrite(ctx: KernelContext, key: string): boolean {
-  const uid = ctx.identity!.process.uid;
+  const uid = requirePrincipal(ctx).account.uid;
   if (uid === 0) return true;
   const parsed = parseUserConfigKey(key);
   if (!parsed || !isUserOverridableConfigSubkey(parsed.sub)) return false;
@@ -78,7 +79,7 @@ export function handleSysConfigGet(
   args: SysConfigGetArgs,
   ctx: KernelContext,
 ): SysConfigGetResult {
-  const uid = ctx.identity!.process.uid;
+  const uid = requirePrincipal(ctx).account.uid;
   const config = ctx.config;
   const key = args.key;
 
@@ -126,7 +127,7 @@ export function handleSysConfigSet(
   args: SysConfigSetArgs,
   ctx: KernelContext,
 ): SysConfigSetResult {
-  const uid = ctx.identity!.process.uid;
+  const uid = requirePrincipal(ctx).account.uid;
 
   if (!args.key) {
     throw new Error("sys.config.set requires a key");

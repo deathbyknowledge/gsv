@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { testPeer } from "../../../test-support/peers";
 import { InMemoryFs } from "just-bash";
 import {
   bodyFromBytes,
@@ -29,11 +30,7 @@ const IDENTITY: ProcessIdentity = {
 
 // SAFETY: media command tests exercise only identity and capability reads from this minimal context.
 const CTX = {
-  identity: {
-    role: "user",
-    process: IDENTITY,
-    capabilities: ["*"],
-  },
+  peer: testPeer({ kind: "human", account: IDENTITY, calls: ["*"] }),
 // SAFETY: The media command only reads the process identity and capabilities from this fixture.
 } as KernelContext;
 
@@ -92,22 +89,22 @@ describe("native media streams", () => {
     expect(cancelled).toBe(true);
   });
 
-  it("streams generated image and speech with their actual MIME types", async () => {
+  it("infers generated formats from output filenames", async () => {
     ai.imageGenerate.mockResolvedValue({
       data: {
-        image: { mimeType: "image/jpeg", size: 4 },
+        image: { mimeType: "image/png", size: 4 },
         provider: "workers-ai",
         model: "image-model",
       },
-      body: bodyFromBytes(new Uint8Array([0xff, 0xd8, 0xff, 0xe0])),
+      body: bodyFromBytes(new Uint8Array([0x89, 0x50, 0x4e, 0x47])),
     });
     ai.speechCreate.mockResolvedValue({
       data: {
-        audio: { mimeType: "audio/wav", size: 4 },
+        audio: { mimeType: "audio/ogg", size: 4 },
         provider: "workers-ai",
         model: "speech-model",
       },
-      body: bodyFromBytes(new Uint8Array([0x52, 0x49, 0x46, 0x46])),
+      body: bodyFromBytes(new Uint8Array([0x4f, 0x67, 0x67, 0x53])),
     });
     const writes: Array<{ path: string; mimeType?: string; bytes: Uint8Array }> = [];
     const fs = makeFs({
@@ -122,20 +119,56 @@ describe("native media streams", () => {
     });
 
     await run("txt2img", ["-o", "picture.png", "green", "square"], fs);
-    await run("tts", ["-o", "speech.mp3", "hello"], fs);
+    await run("tts", ["-o", "speech.ogg", "hello"], fs);
 
+    expect(ai.imageGenerate.mock.calls[0][0].format).toBe("png");
+    expect(ai.speechCreate.mock.calls[0][0]).toEqual(expect.objectContaining({
+      encoding: "opus",
+      container: "ogg",
+    }));
     expect(writes).toEqual([
       {
         path: "/home/sam/picture.png",
-        mimeType: "image/jpeg",
-        bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xe0]),
+        mimeType: "image/png",
+        bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
       },
       {
-        path: "/home/sam/speech.mp3",
-        mimeType: "audio/wav",
-        bytes: new Uint8Array([0x52, 0x49, 0x46, 0x46]),
+        path: "/home/sam/speech.ogg",
+        mimeType: "audio/ogg",
+        bytes: new Uint8Array([0x4f, 0x67, 0x67, 0x53]),
       },
     ]);
+  });
+
+  it.each([
+    ["txt2img", "imageGenerate", "picture.png", "image/jpeg"],
+    ["tts", "speechCreate", "speech.ogg", "audio/mpeg"],
+  ] as const)("rejects mismatched %s output without writing it", async (
+    command,
+    handler,
+    path,
+    mimeType,
+  ) => {
+    let cancelled = false;
+    const body = cancellableBody(new Uint8Array([1]), () => {
+      cancelled = true;
+    });
+    const media = command === "txt2img"
+      ? { image: { mimeType, size: body.length } }
+      : { audio: { mimeType, size: body.length } };
+    ai[handler].mockResolvedValue({
+      data: { ...media, provider: "workers-ai", model: "model" },
+      body,
+    });
+    const writeFileStream = vi.fn();
+
+    const result = await run(command, ["-o", path, "input"], makeFs({ writeFileStream }));
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(`provider returned ${mimeType}`);
+    expect(result.stderr).toContain("Choose a matching output extension");
+    expect(writeFileStream).not.toHaveBeenCalled();
+    expect(cancelled).toBe(true);
   });
 
   it.each([
@@ -147,8 +180,8 @@ describe("native media streams", () => {
       cancelled = true;
     });
     const media = command === "txt2img"
-      ? { image: { mimeType: "image/jpeg", size: body.length } }
-      : { audio: { mimeType: "audio/wav", size: body.length } };
+      ? { image: { mimeType: "image/png", size: body.length } }
+      : { audio: { mimeType: "audio/mpeg", size: body.length } };
     ai[handler].mockResolvedValue({
       data: { ...media, provider: "workers-ai", model: "model" },
       body,
@@ -351,14 +384,14 @@ describe("img2txt", () => {
     expect(result).toEqual({ stdout: "a remote image\n", stderr: "", exitCode: 0 });
     expect(fs.openFile).not.toHaveBeenCalled();
     expect(imageBytes).toEqual(new Uint8Array([4, 5, 6]));
-    expect(transport.requestDevice).toHaveBeenNthCalledWith(
+    expect(transport.requestTarget).toHaveBeenNthCalledWith(
       1,
       target,
       "fs.transfer.stat",
       { path: targetPath },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
-    expect(transport.requestDevice).toHaveBeenNthCalledWith(
+    expect(transport.requestTarget).toHaveBeenNthCalledWith(
       2,
       target,
       "fs.transfer.send",
@@ -373,7 +406,7 @@ describe("img2txt", () => {
 
   it("rejects inaccessible target-qualified images before transfer", async () => {
     const ctx = targetContext(["laptop"]);
-    ctx.devices.canAccess = vi.fn(() => false);
+    ctx.targets.canAccess = vi.fn(() => false);
     const transport = remoteImageTransport(
       "laptop",
       "/photos/picture.png",
@@ -389,7 +422,7 @@ describe("img2txt", () => {
     );
 
     expect(result.stderr).toContain("Access denied to device: laptop");
-    expect(transport.requestDevice).not.toHaveBeenCalled();
+    expect(transport.requestTarget).not.toHaveBeenCalled();
     expect(ai.imageRead).not.toHaveBeenCalled();
   });
 
@@ -523,10 +556,10 @@ async function run(
 function targetContext(targets: string[]): KernelContext {
   return Object.assign({}, CTX, {
     ...CTX,
-    devices: {
+    targets: {
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
-      listForUser: vi.fn(() => targets.map((device_id) => ({ device_id }))),
+      listForUser: vi.fn(() => targets.map((target_id) => ({ target_id }))),
     },
   });
 }
@@ -536,8 +569,8 @@ function remoteImageTransport(
   path: string,
   bytes: Uint8Array,
   cancel?: () => void,
-): FsDeviceTransport & { requestDevice: ReturnType<typeof vi.fn> } {
-  const requestDevice = vi.fn(async (deviceId: string, call: string, args: Record<string, string>) => {
+): FsDeviceTransport & { requestTarget: ReturnType<typeof vi.fn> } {
+  const requestTarget = vi.fn(async (deviceId: string, call: string, args: Record<string, string>) => {
     expect(deviceId).toBe(target);
     expect(args).toEqual({ path });
     if (call === "fs.transfer.stat") {
@@ -569,5 +602,5 @@ function remoteImageTransport(
     }
     throw new Error(`unexpected device call: ${call}`);
   });
-  return { requestDevice };
+  return { requestTarget };
 }

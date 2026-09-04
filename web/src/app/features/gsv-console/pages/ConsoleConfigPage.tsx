@@ -1,4 +1,5 @@
 import type { ComponentChildren } from "preact";
+import { combineResourceStates } from "../domain/consoleModels";
 import { z } from "zod";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import {
@@ -7,6 +8,7 @@ import {
   type AgentToolTarget,
 } from "../../../components/ui/AgentToolsPanel";
 import { Button } from "../../../components/ui/Button";
+import type { AiModelSource } from "@humansandmachines/gsv/protocol";
 import { Checkbox } from "../../../components/ui/Checkbox";
 import { ConfirmModal } from "../../../components/ui/ConfirmModal";
 import { InfoTip } from "../../../components/ui/InfoTip";
@@ -40,6 +42,7 @@ import type {
   ConsoleAccount,
   ConsoleConfigEntry,
   ConsoleTarget,
+  ConsoleResourceState,
 } from "../domain/consoleModels";
 import {
   GLOBAL_APPROVAL_CONFIG_KEY,
@@ -47,7 +50,6 @@ import {
   serializeApprovalPolicy,
 } from "../domain/consoleAgentBehavior";
 import {
-  AGENT_MODEL_FIELDS,
   MODEL_PROFILE_FIELDS,
   RUNTIME_SETTING_GROUPS,
   TOOL_MODEL_GROUPS,
@@ -57,18 +59,21 @@ import {
   createModelProfile,
   deleteModelProfile,
   effectiveAiValuesForViewer,
+  editableModelSource,
   isSensitiveSettingKey,
-  modelProfileDefaultEntries,
+  makeModelPrimary,
   modelProfileSaveEntries,
   modelValidationValuesFromProfileDrafts,
   modelProfileSecretConfigKey,
-  modelProfileSummary,
-  modelProfilesForConfig,
+  modelProfilesFromListing,
+  writableModelProfiles,
+  preferredModelSaveEntry,
   modelStackDisplayName,
   normalizeProfileName,
   profileValuesFromDrafts,
   updateModelProfile,
   viewerAccountForSettings,
+  type ConsoleModelListing,
   type ConsoleModelProfile,
   type ConsoleSettingField,
   type ConsoleSettingGroup,
@@ -77,6 +82,7 @@ import {
   useCheckConsoleOpenAiCodexOAuth,
   useConsoleAccounts,
   useConsoleConfig,
+  useConsoleModels,
   usePollConsoleOpenAiCodexOAuth,
   useConsoleTargets,
   useSaveConsoleConfigEntries,
@@ -131,7 +137,7 @@ type RuntimeSelection = {
 
 type ValidateModelSettingsInput = {
   values: Record<string, string>;
-  presetId?: string;
+  modelId?: string;
 };
 
 type OpenAiCodexOAuthStart = {
@@ -169,7 +175,6 @@ type SettingsFieldGroupProps = {
   fields: readonly ConsoleSettingField[];
   initialValues?: Record<string, string>;
   meta?: string;
-  modelProfiles?: readonly ConsoleModelProfile[];
   onCheckOpenAiCodexOAuth?: () => Promise<boolean>;
   onPollOpenAiCodexOAuth?: (flowId: string) => Promise<OpenAiCodexOAuthPoll>;
   onSave: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>;
@@ -183,12 +188,10 @@ type SettingsFieldGroupProps = {
 const TOOL_APPROVAL_RUNTIME_ID = "tool-approval";
 const MODEL_ADVANCED_FIELD_KEYS = new Set([
   "config/ai/base_url",
-  "config/ai/fallback_model_profile",
   "config/ai/provider_style",
   "config/ai/transport_target",
-  "config/ai/reasoning",
   "config/ai/max_tokens",
-  "config/ai/max_context_bytes",
+  "config/ai/context_window_tokens",
 ]);
 const MODEL_PROVIDER_FIELD_KEY = "config/ai/provider";
 const MODEL_BASE_URL_FIELD_KEY = "config/ai/base_url";
@@ -240,18 +243,26 @@ export function ConsoleConfigPage({ kind, select, onClearSelect, onDetailChange,
   const config = useConsoleConfig();
   const accounts = useConsoleAccounts();
   const targets = useConsoleTargets();
+  const models = useConsoleModels();
+  // The models page edits the personal list against the Kernel's effective
+  // listing, so it must not render as editable until that listing has loaded:
+  // an empty draft would otherwise overwrite the stored list on first save.
+  const resource = kind === "models"
+    ? combineResourceStates(config.resource, models.resource)
+    : withoutListing(config.resource);
 
   return (
     <ConsolePage flush>
       <ConsoleResourceBoundary
-        resource={{ ...config.resource, isEmpty: false }}
+        resource={{ ...resource, isEmpty: false }}
         emptyLabel={kind === "models" ? "NO MODEL SETTINGS" : "NO RUNTIME SETTINGS"}
         errorLabel={kind === "models" ? "MODELS" : "RUNTIME"}
-        render={(data) => (
+        render={([data, listing]) => (
           <ConsoleSettingsPanel
             accounts={accounts.accounts}
             config={data}
             kind={kind}
+            models={listing}
             targets={toolTargetsForConsoleTargets(targets.targets)}
             select={select}
             embedded={embedded}
@@ -264,10 +275,18 @@ export function ConsoleConfigPage({ kind, select, onClearSelect, onDetailChange,
   );
 }
 
+/** The runtime page needs no listing; keep the boundary's tuple shape without waiting on one. */
+function withoutListing(
+  config: ConsoleResourceState<ConsoleConfigEntry[]>,
+): ConsoleResourceState<[ConsoleConfigEntry[], ConsoleModelListing | null]> {
+  return { ...config, data: config.data === null ? null : [config.data, null] };
+}
+
 function ConsoleSettingsPanel({
   accounts,
   config,
   kind,
+  models,
   targets,
   select,
   embedded,
@@ -277,6 +296,7 @@ function ConsoleSettingsPanel({
   accounts: readonly ConsoleAccount[];
   config: readonly ConsoleConfigEntry[];
   kind: ConsoleConfigKind;
+  models: ConsoleModelListing | null;
   targets: readonly AgentToolTarget[];
   select?: string;
   embedded?: boolean;
@@ -291,13 +311,14 @@ function ConsoleSettingsPanel({
   };
 
   if (kind === "models") {
-    return <ModelSettingsPage config={config} targets={targets} viewer={viewer} select={select} embedded={embedded} onClearSelect={onClearSelect} onDetailChange={onDetailChange} />;
+    return <ModelSettingsPage config={config} models={models} targets={targets} viewer={viewer} select={select} embedded={embedded} onClearSelect={onClearSelect} onDetailChange={onDetailChange} />;
   }
   return <RuntimeSettingsPage config={config} targets={targets} viewer={viewer} embedded={embedded} onDetailChange={onDetailChange} />;
 }
 
 function ModelSettingsPage({
   config,
+  models,
   targets,
   viewer,
   select,
@@ -306,6 +327,7 @@ function ModelSettingsPage({
   onDetailChange,
 }: {
   config: readonly ConsoleConfigEntry[];
+  models: ConsoleModelListing | null;
   targets: readonly AgentToolTarget[];
   viewer: SettingsViewer;
   select?: string;
@@ -329,14 +351,16 @@ function ModelSettingsPage({
   useEffect(() => {
     setSelection(modelSelectionFromParam(select));
   }, [select]);
-  const effectiveValues = useMemo(
-    () => effectiveAiValuesForViewer(config, viewer.uid),
-    [config, viewer.uid],
-  );
   const profiles = useMemo(
-    () => modelProfilesForConfig(config, viewer.uid),
-    [config, viewer.uid],
+    () => modelProfilesFromListing(models, config, viewer.uid),
+    [models, config, viewer.uid],
   );
+  const effectiveValues = useMemo(
+    () => effectiveAiValuesForViewer(config, viewer.uid, profiles[0] ?? null),
+    [config, viewer.uid, profiles],
+  );
+  const editableSource = editableModelSource(viewer.uid);
+  const preferredModelId = models?.preferredModelId ?? null;
   const canEditAi = viewer.uid !== null;
   const scopeLabel = viewer.isRoot ? "GLOBAL" : viewer.account ? "PERSONAL" : "READ ONLY";
 
@@ -392,7 +416,7 @@ function ModelSettingsPage({
   const detailLabel = !selection
     ? null
     : selection.kind === "default"
-    ? "DEFAULT AGENT MODEL"
+    ? "PRIMARY MODEL"
     : selection.kind === "new-profile"
     ? "NEW MODEL"
     : selection.kind === "tool"
@@ -411,6 +435,9 @@ function ModelSettingsPage({
         effectiveValues={effectiveValues}
         embedded={embedded}
         profiles={profiles}
+        models={models}
+        editableSource={editableSource}
+        preferredModelId={preferredModelId}
         scopeLabel={scopeLabel}
         selection={selection}
         targets={targets}
@@ -433,21 +460,18 @@ function ModelSettingsPage({
     <section class="gsv-console-settings-index">
       {embedded ? null : <SectionHeader title="MODELS" headingLevel={2} divider />}
       <SettingsListPanel
-        title="DEFAULT AGENT MODEL"
-        meta={scopeLabel}
-        emptyLabel="NO DEFAULT MODEL"
-        fitContent
-        headingLevel={3}
-        rows={[defaultModelRow(effectiveValues, () => setSelection({ kind: "default" }))]}
-      />
-      <SettingsListPanel
-        title="SAVED MODELS"
+        title="AGENT MODEL ORDER"
         meta={`${profiles.length} MODEL${profiles.length === 1 ? "" : "S"}`}
-        emptyLabel="NO SAVED MODELS"
+        emptyLabel="NO MODELS CONFIGURED"
         fitContent
         headingLevel={3}
         action={{ label: "NEW MODEL", onClick: canEditAi ? () => setSelection({ kind: "new-profile" }) : undefined }}
-        rows={profiles.map((profile) => profileRow(profile, () => setSelection({ kind: "profile", id: profile.id })))}
+        rows={profiles.map((profile, index) => profileRow(
+          profile,
+          index,
+          editableSource,
+          () => setSelection({ kind: "profile", id: profile.id }),
+        ))}
       />
     </section>
   );
@@ -459,6 +483,9 @@ function ModelSettingsDetail({
   effectiveValues,
   embedded,
   profiles,
+  models,
+  editableSource,
+  preferredModelId,
   scopeLabel,
   selection,
   targets,
@@ -476,6 +503,9 @@ function ModelSettingsDetail({
   effectiveValues: Record<string, string>;
   embedded?: boolean;
   profiles: readonly ConsoleModelProfile[];
+  models: ConsoleModelListing | null;
+  editableSource: AiModelSource;
+  preferredModelId: string | null;
   scopeLabel: string;
   selection: ModelSelection;
   targets: readonly AgentToolTarget[];
@@ -495,44 +525,6 @@ function ModelSettingsDetail({
   useEffect(() => {
     setNewProfileStep(0);
   }, [selection.kind, selection.kind === "profile" ? selection.id : ""]);
-
-  if (selection.kind === "default") {
-    return (
-      <ConsoleDetailPage
-        embedded={embedded}
-        icon="stars"
-        title="DEFAULT AGENT MODEL"
-        typeLabel="GSV · MODELS"
-        statusLabel={scopeLabel}
-        tone={editable ? "online" : "idle"}
-        blurb="Fallback model stack used when an agent inherits model behavior."
-        parentLabel="MODELS"
-        onBack={onBack}
-      >
-        <SettingsFieldGroup
-          config={config}
-          description={viewer.isRoot
-            ? "Global fallback used by agents without personal model overrides."
-            : "Your personal fallback used when your agents inherit model behavior."}
-          editable={editable}
-          fields={AGENT_MODEL_FIELDS}
-          initialValues={effectiveValues}
-          meta={scopeLabel}
-          modelProfiles={profiles}
-          targets={targets}
-          title="Default Agent Model"
-          validateBeforeSave={(values) => onValidateModelConfig({ values })}
-          writeKeyForField={(field) => viewer.isRoot || viewer.uid === null
-            ? field.key
-            : buildUserAiOverrideKey(viewer.uid, field.key)}
-          onCheckOpenAiCodexOAuth={onCheckOpenAiCodexOAuth}
-          onPollOpenAiCodexOAuth={onPollOpenAiCodexOAuth}
-          onSave={onSaveEntries}
-          onStartOpenAiCodexOAuth={onStartOpenAiCodexOAuth}
-        />
-      </ConsoleDetailPage>
-    );
-  }
 
   if (selection.kind === "tool") {
     const group = TOOL_MODEL_GROUPS.find((candidate) => candidate.id === selection.id) ?? TOOL_MODEL_GROUPS[0];
@@ -570,13 +562,32 @@ function ModelSettingsDetail({
 
   const profile = selection.kind === "profile"
     ? profiles.find((candidate) => candidate.id === selection.id) ?? null
+    : selection.kind === "default"
+    ? profiles[0] ?? null
     : null;
-  const isNewProfile = selection.kind === "new-profile";
-  const title = profile?.name.toUpperCase() ?? "NEW MODEL";
+  const isNewProfile = selection.kind === "new-profile" || !profile;
+  // Saves re-serialize the stored order, never the promoted display order.
+  const writableProfiles = writableModelProfiles(models, config, viewer.uid);
+  const profileOwned = profile !== null && profile.source === editableSource;
+  const profileEditable = editable && (isNewProfile || profileOwned);
+  const isPreferred = profile !== null && preferredModelId === profile.id;
+  const isPrimary = profile !== null && profiles[0]?.id === profile.id;
+  const title = selection.kind === "default"
+    ? "PRIMARY MODEL"
+    : profile?.name.toUpperCase() ?? "NEW MODEL";
 
   return (
     <ConsoleDetailPage
-      actions={isNewProfile ? (
+      actions={profile && !profileOwned && editable && viewer.uid !== null ? (
+        <Button
+          variant="secondary"
+          label={isPreferred ? "USE CONFIGURED ORDER" : isPrimary ? "PRIMARY" : "SET AS PRIMARY"}
+          disabled={!isPreferred && isPrimary}
+          onClick={() => {
+            void onSaveEntries([preferredModelSaveEntry(viewer.uid!, isPreferred ? null : profile.id)]);
+          }}
+        />
+      ) : isNewProfile ? (
         <Stepper
           size="small"
           width={520}
@@ -593,28 +604,31 @@ function ModelSettingsDetail({
       icon="stars"
       title={title}
       typeLabel="GSV · MODEL"
-      statusLabel={profile ? "SAVED" : "DRAFT"}
+      statusLabel={profile ? profileOwned ? "SAVED" : profile.source === "base" ? "INCLUDED" : "SHARED" : "DRAFT"}
       tone={profile ? "online" : "idle"}
-      blurb="Reusable model configuration for agents, including provider credentials when this model needs its own key."
+      blurb={profile && !profileOwned
+        ? profile.source === "base"
+          ? "Included with this GSV. It is always available and needs no key; set it as primary to use it before your own models."
+          : "Shared by the installation. Set it as primary to use it before your own models."
+        : "Reusable model configuration for agents, including provider credentials when this model needs its own key."}
       parentLabel="MODELS"
       onBack={onBack}
     >
       <ModelProfileForm
         config={config}
         defaultValues={effectiveValues}
-        editable={editable}
+        editable={profileEditable}
         profile={profile}
-        profiles={profiles}
+        profiles={isNewProfile ? writableProfiles : profiles}
         step={newProfileStep}
         targets={targets}
         viewer={viewer}
         onStepChange={setNewProfileStep}
         onCancel={onBack}
-        onDelete={profile ? async () => {
+        onDelete={profile && profileOwned ? async () => {
           await onSaveEntries(modelProfileSaveEntries(
             viewer.uid,
-            profiles,
-            deleteModelProfile(profiles, profile.id),
+            deleteModelProfile(writableProfiles, profile.id),
           ));
           onCompleted();
         } : undefined}
@@ -623,22 +637,20 @@ function ModelSettingsDetail({
         onStartOpenAiCodexOAuth={onStartOpenAiCodexOAuth}
         onValidate={onValidateModelConfig}
         onSave={async (name, values, clearedSecretKeys, makeDefault) => {
-          const nextProfiles = profile
-            ? updateModelProfile(profiles, profile.id, name, values)
-            : createModelProfile(profiles, name, values);
+          let nextProfiles = profile
+            ? updateModelProfile(writableProfiles, profile.id, name, values)
+            : createModelProfile(writableProfiles, name, values, Date.now(), editableSource, profiles);
           const savedProfile = profile
             ? nextProfiles.find((candidate) => candidate.id === profile.id)!
-            : nextProfiles[0];
+            : nextProfiles[nextProfiles.length - 1];
+          if (makeDefault || selection.kind === "default") {
+            nextProfiles = makeModelPrimary(nextProfiles, savedProfile.id);
+          }
           const clearedByProfile = new Map([[savedProfile.id, clearedSecretKeys]]);
-          const entries = modelProfileSaveEntries(viewer.uid, profiles, nextProfiles, clearedByProfile);
-          if (makeDefault) {
-            entries.push(...modelProfileDefaultEntries(
-              config,
-              viewer.uid,
-              viewer.isRoot,
-              savedProfile,
-              clearedByProfile,
-            ));
+          const entries = modelProfileSaveEntries(viewer.uid, nextProfiles, clearedByProfile);
+          if ((makeDefault || selection.kind === "default") && viewer.uid !== null) {
+            // The owner's order now decides; a promoted included model would override it.
+            entries.push(preferredModelSaveEntry(viewer.uid, null));
           }
           await onSaveEntries(entries);
           if (!profile) {
@@ -769,32 +781,24 @@ function runtimeSelectionTitle(selectionId: string): string {
   return (RUNTIME_SETTING_GROUPS.find((group) => group.id === selectionId)?.title ?? "RUNTIME").toUpperCase();
 }
 
-function defaultModelRow(values: Record<string, string>, onOpen: () => void): SettingsListRow {
-  const model = values["config/ai/model"] ?? "";
-  const label = modelStackDisplayName(values) || "Not configured";
-  const fixedModel = fixedAiProviderModel(values["config/ai/provider"] ?? "");
-  return {
-    id: "default-agent-model",
-    icon: "stars",
-    label,
-    sub: fixedModel ? "Model selection managed by GSV" : model || "Default agent model stack",
-    statusLabel: model ? "DEFAULT" : "EMPTY",
-    tone: model ? "online" : "idle",
-    onOpen,
-  };
-}
-
-function profileRow(profile: ConsoleModelProfile, onOpen: () => void): SettingsListRow {
+function profileRow(
+  profile: ConsoleModelProfile,
+  index: number,
+  editableSource: AiModelSource,
+  onOpen: () => void,
+): SettingsListRow {
   const model = profile.values["config/ai/model"] ?? "";
   const label = modelStackDisplayName(profile.values);
+  const owned = profile.source === editableSource;
+  const layerLabel = profile.source === "base" ? "INCLUDED" : "SHARED";
   return {
     id: profile.id,
     icon: "stars",
     label: profile.name,
     sub: label || model || "Saved model configuration",
-    statusLabel: model ? "MODEL" : "INCOMPLETE",
-    tone: model ? "online" : "warn",
-    tag: { label: label || "MODEL", tone: "info" },
+    statusLabel: index === 0 ? "PRIMARY" : !owned ? layerLabel : model ? `FALLBACK ${index}` : "INCOMPLETE",
+    tone: index === 0 ? "online" : !owned ? "idle" : model ? "online" : "warn",
+    tag: { label: owned ? label || "MODEL" : layerLabel, tone: "info" },
     onOpen,
   };
 }
@@ -1115,7 +1119,7 @@ function ModelProfileForm({
       : "Testing model...");
     await onValidate({
       values: validationValues,
-      ...(profile && !effectiveClearedSecretKeys.has(MODEL_API_KEY_FIELD_KEY) ? { presetId: profile.id } : undefined),
+      ...(profile && !effectiveClearedSecretKeys.has(MODEL_API_KEY_FIELD_KEY) ? { modelId: profile.id } : undefined),
     });
   };
   const validateDraftsWithOpenAiCodexLogin = async () => {
@@ -1210,8 +1214,6 @@ function ModelProfileForm({
       <SettingFieldInput
         field={field}
         disabled={!editable || pending}
-        modelProfiles={profiles}
-        excludeModelProfileId={profile?.id}
         targets={targets}
         cleared={clearedSecretKeys.has(field.key)}
         redacted={isModelProfileFieldRedacted(config, viewer, profile, field)}
@@ -1276,8 +1278,8 @@ function ModelProfileForm({
   ) : null;
   const renderMakeDefaultOption = () => (
     <Checkbox
-      label="MAKE DEFAULT MODEL"
-      info="Use this model as the default for agent runs after saving."
+      label="MAKE PRIMARY MODEL"
+      info="Move this model to the front of the fallback order after saving."
       checked={makeDefault}
       disabled={!editable || pending}
       onChange={(checked) => {
@@ -1573,7 +1575,6 @@ function SettingsFieldGroup({
   editable,
   fields,
   initialValues,
-  modelProfiles = [],
   onCheckOpenAiCodexOAuth,
   onPollOpenAiCodexOAuth,
   onSave,
@@ -1771,7 +1772,6 @@ function SettingsFieldGroup({
       <SettingFieldInput
         disabled={!editable || pending || field.kind === "readonly"}
         field={openAiCodexSettingsField(field, isOpenAiCodexSettings)}
-        modelProfiles={modelProfiles}
         targets={targets}
         cleared={clearedSensitiveKeys.has(field.key)}
         redacted={isFieldRedacted(config, field, writeKeyForField(field))}
@@ -2091,11 +2091,9 @@ function defaultBuiltInProvider(
 
 function shouldOpenModelAdvancedFields(values: Record<string, string>): boolean {
   const baseUrl = values["config/ai/base_url"]?.trim() ?? "";
-  const fallbackModelProfile = values["config/ai/fallback_model_profile"]?.trim() ?? "";
   const providerStyle = values["config/ai/provider_style"]?.trim() ?? "";
   const transportTarget = values[MODEL_TRANSPORT_TARGET_KEY]?.trim() ?? "";
   return baseUrl.length > 0 ||
-    fallbackModelProfile.length > 0 ||
     (providerStyle.length > 0 && providerStyle !== "auto") ||
     (transportTarget.length > 0 && transportTarget !== "gsv");
 }
@@ -2115,9 +2113,7 @@ function SettingsStatus({
 function SettingFieldInput({
   cleared = false,
   disabled,
-  excludeModelProfileId,
   field,
-  modelProfiles = [],
   redacted = false,
   targets = [],
   value,
@@ -2126,9 +2122,7 @@ function SettingFieldInput({
 }: {
   cleared?: boolean;
   disabled: boolean;
-  excludeModelProfileId?: string;
   field: ConsoleSettingField;
-  modelProfiles?: readonly ConsoleModelProfile[];
   redacted?: boolean;
   targets?: readonly AgentToolTarget[];
   value: string;
@@ -2163,25 +2157,6 @@ function SettingFieldInput({
         size={field.size}
         block
         onChange={(index) => onChange(selectOptionValue(options[index]) || "gsv")}
-      />
-    );
-  }
-
-  if (field.key === "config/ai/fallback_model_profile") {
-    const options = fallbackModelProfileOptionsForValue(value, modelProfiles, excludeModelProfileId);
-    const selectedValue = value.trim();
-    const selectedIndex = Math.max(0, options.findIndex((option) => selectOptionValue(option) === selectedValue));
-    return (
-      <Select
-        label={field.label}
-        info={description}
-        requirement={field.requirement}
-        options={options}
-        value={selectedIndex}
-        disabled={disabled}
-        size={field.size}
-        block
-        onChange={(index) => onChange(selectOptionValue(options[index]) || "")}
       />
     );
   }
@@ -2301,36 +2276,6 @@ function SettingFieldInput({
       onChange={onChange}
     />
   );
-}
-
-function fallbackModelProfileOptionsForValue(
-  value: string,
-  profiles: readonly ConsoleModelProfile[],
-  excludeProfileId?: string,
-): SelectOption[] {
-  const profileOptions = profiles
-    .filter((profile) => profile.id !== excludeProfileId)
-    .map((profile) => ({
-      label: profile.name,
-      value: profile.id,
-      description: modelProfileSummary(profile.values),
-    }));
-  const options: SelectOption[] = [
-    { label: "None", value: "" },
-    ...profileOptions,
-  ];
-  const selectedValue = value.trim();
-  if (!selectedValue || options.some((option) => selectOptionValue(option) === selectedValue)) {
-    return options;
-  }
-  return [
-    ...options,
-    {
-      label: selectedValue,
-      value: selectedValue,
-      description: "Stored fallback model is not currently available.",
-    },
-  ];
 }
 
 function transportTargetOptionsForValue(

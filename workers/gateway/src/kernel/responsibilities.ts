@@ -21,7 +21,7 @@ import type {
   ResponsibilityUpdateResult,
 } from "@humansandmachines/gsv/protocol";
 import type { JsonObject } from "@humansandmachines/gsv/protocol";
-import { resolveCallerOwnerUid, type KernelContext } from "./context";
+import { principalOf, resolveCallerOwnerUid, type KernelContext } from "./context";
 
 const MAX_TITLE_BYTES = 240;
 const MAX_TEXT_BYTES = 2_000;
@@ -335,11 +335,11 @@ function responsibilityActor(ctx: KernelContext): ResponsibilitySource {
     if (ctx.processRunId) source.runId = ctx.processRunId;
     return source;
   }
-  const identity = ctx.identity!;
+  const identity = principalOf(ctx)!;
   return {
     kind: "account",
-    uid: identity.process.uid,
-    username: identity.process.username,
+    uid: identity.account.uid,
+    username: identity.account.username,
   };
 }
 

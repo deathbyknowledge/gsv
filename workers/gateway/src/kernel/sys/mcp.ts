@@ -17,7 +17,7 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import { ToolSchema, type Tool } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { resolveCallerOwnerUid, type KernelContext } from "../context";
+import { requirePrincipal, resolveCallerOwnerUid, type KernelContext } from "../context";
 import type { McpServerRecord } from "../mcp-store";
 
 export type McpAddConnectionInput = {
@@ -246,7 +246,7 @@ function summarizeTool(tool: Tool): SysMcpToolSummary {
 }
 
 function parseEffectiveUid(input: number | undefined, ctx: KernelContext, action: string): number {
-  const callerUid = ctx.identity!.process.uid;
+  const callerUid = requirePrincipal(ctx).account.uid;
   const ownerUid = resolveCallerOwnerUid(ctx);
   if (input !== undefined) {
     if (!Number.isInteger(input) || input < 0) {

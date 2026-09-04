@@ -140,7 +140,11 @@ function makeConfigBackedFs(
   });
 }
 
-function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
+function makeRuntimeViewFs(
+  identity: ProcessIdentity,
+  selfPid?: string,
+  configOverrides: Record<string, string> = {},
+): GsvFs {
   const processRecord = {
     processId: "task-alpha",
     parentPid: "init:1000",
@@ -198,8 +202,8 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     {
       id: "sched-1",
       ownerUid: 1000,
-      creator: { kind: "user", uid: 1000, username: "sam" },
-      runAs: { kind: "user", uid: 1000, username: "sam" },
+      creator: { kind: "human", uid: 1000, username: "sam" },
+      runAs: { kind: "human", uid: 1000, username: "sam" },
       name: "daily pulse",
       enabled: true,
       expression: { kind: "every", everyMs: 60_000 },
@@ -220,8 +224,8 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     {
       id: "sched-foreign",
       ownerUid: 1001,
-      creator: { kind: "user", uid: 1001, username: "alice" },
-      runAs: { kind: "user", uid: 1001, username: "alice" },
+      creator: { kind: "human", uid: 1001, username: "alice" },
+      runAs: { kind: "human", uid: 1001, username: "alice" },
       name: "foreign",
       enabled: true,
       expression: { kind: "every", everyMs: 60_000 },
@@ -245,32 +249,27 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     ["daily", "0 5 * * * proc compact init:1000 --keep-last 80\n"],
   ]);
   const configEntries = new Map<string, string>([
-    ["config/ai/provider", "workers-ai"],
-    ["config/ai/model", "@cf/system/model"],
-    ["config/ai/api_key", "sk-system"],
+    ["config/ai/models", JSON.stringify({
+      version: 1,
+      models: [{ id: "system", name: "System", provider: "workers-ai", model: "@cf/system/model" }],
+    })],
+    ["config/ai/models/system/api_key", "sk-system"],
     ["config/ai/image/read/max_objects", "150"],
     ["config/ai/speech/provider", "workers-ai"],
-    ["users/1000/ai/model_profiles", JSON.stringify({
+    ["users/1000/ai/models", JSON.stringify({
       version: 1,
-      profiles: [
-        {
-          id: "fast-stack",
-          name: "Fast Stack",
-          values: {
-            "config/ai/provider": "openai",
-            "config/ai/model": "gpt-4.1-mini",
-            "config/ai/image/read/max_tokens": "4096",
-            "config/ai/speech/provider": "openai",
-            "config/ai/speech/model": "gpt-4o-mini-tts",
-          },
-          createdAt: 1000,
-          updatedAt: 2000,
-        },
-      ],
+      models: [{
+        id: "fast-stack",
+        name: "Fast Stack",
+        provider: "openai",
+        model: "gpt-4.1-mini",
+      }],
     })],
-    ["users/1000/ai/model_profiles/fast-stack/api_key", "sk-profile"],
-    ["users/1000/ai/model_profiles/fast-stack/speech/api_key", "sk-speech"],
+    ["users/1000/ai/models/fast-stack/api_key", "sk-model"],
   ]);
+  for (const [key, value] of Object.entries(configOverrides)) {
+    configEntries.set(key, value);
+  }
   let processAiConfig: any = null;
   const passwdEntries = [ROOT, SAM, ALICE, SAM_AGENT].map((user) => ({
     username: user.username,
@@ -326,6 +325,9 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     caps: null /* SAFETY: unused fixture store. */ as never,
     config: {
       get(key: string) {
+        return configEntries.get(key) ?? null;
+      },
+      getExplicit(key: string) {
         return configEntries.get(key) ?? null;
       },
       set(key: string, value: string) {
@@ -406,30 +408,16 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
           processAiConfig = null;
           return { ok: true, pid, config: null };
         }
-        if ("values" in args && args.values) {
-          processAiConfig = {
-            version: 1,
-            values: { ...args.values },
-            updatedAt: now,
-          };
-          if (args.profile) {
-            processAiConfig.profile = { ...args.profile, appliedAt: now };
-          }
-          return { ok: true, pid, config: processAiConfig };
-        }
-        if ("key" in args && args.key) {
-          const values = { ...processAiConfig?.values };
-          const value = String(args.value ?? "").trim();
-          if (value) {
-            values[args.key] = value;
-          } else {
-            delete values[args.key];
-          }
-          processAiConfig = Object.keys(values).length > 0
-            ? { version: 1, values, updatedAt: now }
-            : null;
-          return { ok: true, pid, config: processAiConfig };
-        }
+        const modelId = args.modelId === undefined
+          ? processAiConfig?.modelId
+          : args.modelId || undefined;
+        const reasoning = args.reasoning === undefined
+          ? processAiConfig?.reasoning
+          : args.reasoning || undefined;
+        processAiConfig = modelId || reasoning
+          ? { version: 2, modelId, reasoning, updatedAt: now }
+          : null;
+        return { ok: true, pid, config: processAiConfig };
       }
       if (call === "proc.history") {
         const offset = Number(args?.offset ?? 0);
@@ -1080,11 +1068,20 @@ describe("GsvFs virtual /dev", () => {
 });
 
 describe("GsvFs virtual /sys config tree", () => {
+  it("lists the kernel views under /sys by their current names", async () => {
+    const fs = makeConfigBackedFs(ROOT, {});
+
+    expect(await fs.readdir("/sys")).toEqual(["capabilities", "config", "targets", "users"]);
+  });
+
   it("lists nested /sys/config directories based on config key prefixes", async () => {
+    const models = JSON.stringify({
+      version: 1,
+      models: [{ id: "claude", name: "Claude", provider: "anthropic", model: "claude-sonnet-4-6" }],
+    });
     const fs = makeConfigBackedFs(ROOT, {
-      "config/ai/provider": "anthropic",
-      "config/ai/model": "claude-sonnet-4-6",
-      "config/ai/api_key": "sk-test",
+      "config/ai/models": models,
+      "config/ai/models/claude/api_key": "sk-test",
       "config/server/name": "gsv",
     });
 
@@ -1092,20 +1089,18 @@ describe("GsvFs virtual /sys config tree", () => {
     expect(top).toEqual(["ai", "server"]);
 
     const ai = await fs.readdir("/sys/config/ai");
-    expect(ai).toEqual(["api_key", "model", "provider"]);
+    expect(ai).toEqual(["models"]);
 
     const stat = await fs.stat("/sys/config/ai");
     expect(stat.isDirectory).toBe(true);
 
-    const provider = await fs.readFile("/sys/config/ai/provider");
-    expect(provider).toBe("anthropic\n");
+    await expect(fs.readFile("/sys/config/ai/models")).resolves.toBe(`${models}\n`);
   });
 
   it("lists nested /sys/users/{uid} directories based on user config key prefixes", async () => {
     const fs = makeConfigBackedFs(ROOT, {
-      "users/0/ai/provider": "openai",
-      "users/0/ai/model": "gpt-4.1",
-      "users/1000/ai/model": "gpt-4.1-mini",
+      "users/0/ai/preferred_model": "gpt-4.1",
+      "users/1000/ai/preferred_model": "gpt-4.1-mini",
     });
 
     const users = await fs.readdir("/sys/users");
@@ -1115,33 +1110,36 @@ describe("GsvFs virtual /sys config tree", () => {
     expect(user0).toEqual(["ai"]);
 
     const user0Ai = await fs.readdir("/sys/users/0/ai");
-    expect(user0Ai).toEqual(["model", "provider"]);
+    expect(user0Ai).toEqual(["preferred_model"]);
   });
 
   it("returns ENOENT for unknown config subtree", async () => {
     const fs = makeConfigBackedFs(ROOT, {
-      "config/ai/provider": "anthropic",
+      "config/ai/models": "{}",
     });
     await expect(fs.readdir("/sys/config/missing")).rejects.toThrow("ENOENT");
   });
 
   it("hides sensitive system config keys for non-root users", async () => {
+    const models = JSON.stringify({
+      version: 1,
+      models: [{ id: "claude", name: "Claude", provider: "anthropic", model: "claude-sonnet-4-6" }],
+    });
     const fs = makeConfigBackedFs(SAM, {
-      "config/ai/provider": "anthropic",
-      "config/ai/model": "claude-sonnet-4-6",
-      "config/ai/api_key": "sk-test",
+      "config/ai/models": models,
+      "config/ai/models/claude/api_key": "sk-test",
     });
 
     const entries = await fs.readdir("/sys/config/ai");
-    expect(entries).toEqual(["model", "provider"]);
+    expect(entries).toEqual(["models"]);
 
-    await expect(fs.readFile("/sys/config/ai/api_key")).rejects.toThrow("ENOENT");
+    await expect(fs.readFile("/sys/config/ai/models/claude/api_key")).rejects.toThrow("ENOENT");
   });
 
   it("shows only own user namespace under /sys/users for non-root users", async () => {
     const fs = makeConfigBackedFs(SAM, {
-      "users/1000/ai/model": "gpt-4.1-mini",
-      "users/1001/ai/model": "gpt-4.1",
+      "users/1000/ai/preferred_model": "gpt-4.1-mini",
+      "users/1001/ai/preferred_model": "gpt-4.1",
     });
 
     const users = await fs.readdir("/sys/users");
@@ -1284,78 +1282,65 @@ describe("GsvFs Linux-like runtime views", () => {
     await expect(fs.readdir("/proc/task-foreign")).rejects.toThrow("ENOENT");
   });
 
-  it("applies process-local AI profiles through /proc with redacted reads", async () => {
+  it("mirrors the owner's preferred model in the process view", async () => {
+    const owner = makeRuntimeViewFs(SAM, "task-alpha", { "users/1000/ai/preferred_model": "system" });
+    expect(JSON.parse(await owner.readFile("/proc/task-alpha/ai/effective.json")))
+      .toMatchObject({ modelId: "system" });
+
+    // A cleared agent preference inherits the owner's choice.
+    const agent = makeRuntimeViewFs(SAM_AGENT, "task-personal", {
+      "users/1000/ai/preferred_model": "system",
+      "users/2000/ai/preferred_model": "",
+    });
+    expect(JSON.parse(await agent.readFile("/proc/task-personal/ai/effective.json")))
+      .toMatchObject({ modelId: "system" });
+
+    // A preference naming no listed model falls back to the layered order.
+    const unknown = makeRuntimeViewFs(SAM, "task-alpha", { "users/1000/ai/preferred_model": "missing" });
+    expect(JSON.parse(await unknown.readFile("/proc/task-alpha/ai/effective.json")))
+      .toMatchObject({ modelId: "fast-stack" });
+  });
+
+  it("applies Process model and reasoning preferences through /proc", async () => {
     const fs = makeRuntimeViewFs(SAM, "task-alpha");
 
     await expect(fs.readdir("/proc/task-alpha/ai")).resolves.toEqual([
-      "api_key",
-      "base_url",
-      "context_window_tokens",
       "effective.json",
-      "fallback_model_profile",
-      "generation",
-      "image",
       "local.json",
-      "max_context_bytes",
-      "max_tokens",
       "model",
-      "profile",
-      "profiles",
-      "provider",
-      "provider_style",
+      "models",
       "reasoning",
-      "speech",
-      "transcription",
-      "transport_target",
-    ]);
-    await expect(fs.readdir("/proc/task-alpha/ai/image/read")).resolves.toEqual([
-      "max_bytes",
-      "max_objects",
-      "max_tokens",
-      "timeout_ms",
     ]);
 
-    const profiles = JSON.parse(await fs.readFile("/proc/task-alpha/ai/profiles"));
-    expect(profiles).toHaveLength(1);
-    expect(profiles[0]).toMatchObject({
+    const models = JSON.parse(await fs.readFile("/proc/task-alpha/ai/models"));
+    expect(models[0]).toMatchObject({
       id: "fast-stack",
       name: "Fast Stack",
-      values: {
-        "config/ai/api_key": "redacted",
-        "config/ai/model": "gpt-4.1-mini",
-      },
+      provider: "openai",
+      model: "gpt-4.1-mini",
     });
 
-    await fs.writeFile("/proc/task-alpha/ai/profile", "fast-stack");
+    await fs.writeFile("/proc/task-alpha/ai/model", "fast-stack");
+    await fs.writeFile("/proc/task-alpha/ai/reasoning", "high");
 
-    await expect(fs.readFile("/proc/task-alpha/ai/profile")).resolves.toBe("Fast Stack\n");
-    await expect(fs.readFile("/proc/task-alpha/ai/provider")).resolves.toBe("openai\n");
-    await expect(fs.readFile("/proc/task-alpha/ai/model")).resolves.toBe("gpt-4.1-mini\n");
-    await expect(fs.readFile("/proc/task-alpha/ai/api_key")).resolves.toBe("redacted\n");
+    await expect(fs.readFile("/proc/task-alpha/ai/model")).resolves.toBe("fast-stack\n");
+    await expect(fs.readFile("/proc/task-alpha/ai/reasoning")).resolves.toBe("high\n");
 
     const local = JSON.parse(await fs.readFile("/proc/task-alpha/ai/local.json"));
     expect(local).toMatchObject({
-      profile: { id: "fast-stack", name: "Fast Stack" },
-      values: {
-        "config/ai/provider": "openai",
-        "config/ai/model": "gpt-4.1-mini",
-      },
+      version: 2,
+      modelId: "fast-stack",
+      reasoning: "high",
     });
-    expect(local.values).not.toHaveProperty("config/ai/api_key");
 
     const effective = JSON.parse(await fs.readFile("/proc/task-alpha/ai/effective.json"));
-    expect(effective.values).toMatchObject({
-      "config/ai/provider": "openai",
-      "config/ai/model": "gpt-4.1-mini",
-      "config/ai/api_key": "redacted",
+    expect(effective).toEqual({
+      modelId: "fast-stack",
+      reasoning: "high",
     });
 
-    await fs.writeFile("/proc/task-alpha/ai/model", "gpt-4.2");
-    await expect(fs.readFile("/proc/task-alpha/ai/model")).resolves.toBe("gpt-4.2\n");
-    await expect(fs.readFile("/proc/task-alpha/ai/profile")).resolves.toBe("\n");
-
     await fs.writeFile("/proc/task-alpha/ai/model", "");
-    await expect(fs.readFile("/proc/task-alpha/ai/model")).resolves.toBe("@cf/system/model\n");
+    await expect(fs.readFile("/proc/task-alpha/ai/model")).resolves.toBe("\n");
   });
 
   it("exposes crontabs and scheduler run history under /var", async () => {
@@ -1523,5 +1508,30 @@ describe("GsvFs search", () => {
 
     await expect(search).rejects.toBe(reason);
     expect(cancelled).toBe(true);
+  });
+});
+
+describe("GsvFs stat identity", () => {
+  it("reports a stable identity that survives repeated stats and follows links", async () => {
+    const fs = new GsvFs(env.STORAGE, {
+      uid: 1000,
+      gid: 1000,
+      gids: [1000],
+      username: "sam",
+      home: "/home/sam",
+      cwd: "/home/sam",
+    });
+    await fs.mkdir("/home/sam/identity", { recursive: true });
+    await fs.writeFile("/home/sam/identity/a.txt", "a");
+    await fs.writeFile("/home/sam/identity/b.txt", "b");
+
+    const first = await fs.stat("/home/sam/identity/a.txt");
+    const again = await fs.stat("/home/sam/identity/a.txt");
+    const other = await fs.stat("/home/sam/identity/b.txt");
+
+    expect(first.identity).toBeDefined();
+    expect(again.identity).toBe(first.identity);
+    expect(other.identity).not.toBe(first.identity);
+    expect((await fs.stat("/")).identity).toBeDefined();
   });
 });

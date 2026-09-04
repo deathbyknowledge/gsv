@@ -7,26 +7,22 @@ import { canReadConfigKey } from "../../kernel/config-access";
 import type { KernelRefs, ProcessViewCall } from "../refs";
 import type { ArgsOf, ResultOf } from "../../syscalls";
 import type {
+  AiModelEntry,
   ProcessIdentity,
-  ProcAiConfigSnapshot,
+  ProcAiConfig,
   ProcHistorySegment,
   ScheduleRecord,
 } from "@humansandmachines/gsv/protocol";
 import type { ProcessRecord } from "../../kernel/processes";
 import {
-  PROCESS_AI_CONFIG_KEYS,
-  PROCESS_AI_CONFIG_SECRET_KEYS,
-  omitProcessAiConfigSecrets,
-  parseProcessAiModelProfiles,
-  processAiModelProfileSecretConfigKey,
   processAiConfigDirEntries,
-  processAiConfigSuffix,
-  processAiPathToConfigKey,
-  redactProcessAiConfigSnapshot,
-  redactProcessAiConfigValue,
-  redactProcessAiConfigValues,
-  type ProcessAiModelProfile,
 } from "../../process/ai-config";
+import {
+  layerAiModelStacks,
+  parseAiModelStack,
+  SYSTEM_AI_MODELS_CONFIG_KEY,
+  userAiModelsConfigKey,
+} from "../../kernel/ai-model-stack";
 import type { MountBackend, ExtendedMountStat } from "../mount";
 import { normalizePath } from "../utils";
 
@@ -34,10 +30,6 @@ const TEXT_ENCODER = new TextEncoder();
 const PROC_HISTORY_PAGE_SIZE = 500;
 const SCHEDULER_VIEW_PAGE_SIZE = 500;
 const SCHEDULER_LOG_HISTORY_LIMIT = 50;
-const PROCESS_AI_CONFIG_KEY_SET = new Set<string>(PROCESS_AI_CONFIG_KEYS);
-
-type ProcessAiConfigValues = Record<string, string>;
-
 export class KernelMountBackend implements MountBackend {
   constructor(
     private readonly identity: ProcessIdentity,
@@ -289,41 +281,31 @@ export class KernelMountBackend implements MountBackend {
     if (parts.length === 0) return undefined;
 
     const attr = parts.join("/");
-    const local = await this.getProcessAiConfig(pid, false);
+    const local = await this.getProcessAiConfig(pid);
 
-    if (attr === "profile") {
-      return `${local?.profile?.name ?? local?.profile?.id ?? ""}\n`;
+    if (attr === "model") {
+      return `${local?.modelId ?? ""}\n`;
     }
 
-    if (attr === "profiles") {
-      return jsonText(this.listProcAiProfiles(proc.ownerUid).map((profile) => ({
-        ...profile,
-        values: redactProcessAiConfigValues(profile.values),
-      })));
+    if (attr === "models") {
+      return jsonText(this.listProcAiModels(proc.ownerUid));
     }
 
     if (attr === "local.json") {
-      return jsonText(redactProcessAiConfigSnapshot(local));
+      return jsonText(local);
     }
 
     if (attr === "effective.json") {
-      const effective = this.buildProcAiEffectiveValues(proc, local?.values ?? {}, local?.profile);
       return jsonText({
-        profile: local?.profile ?? null,
-        values: redactProcessAiConfigValues(effective),
+        modelId: this.effectiveProcAiModelId(proc, local),
+        reasoning: this.effectiveProcAiReasoning(proc, local),
       });
     }
 
-    const key = processAiPathToConfigKey(parts);
-    if (!key) {
-      return undefined;
+    if (attr === "reasoning") {
+      return `${this.effectiveProcAiReasoning(proc, local) ?? ""}\n`;
     }
-
-    const effective = this.buildProcAiEffectiveValues(proc, local?.values ?? {}, local?.profile);
-    if (!Object.prototype.hasOwnProperty.call(effective, key)) {
-      return undefined;
-    }
-    return `${redactProcessAiConfigValue(key, effective[key])}\n`;
+    return undefined;
   }
 
   private async writeProc(path: string, content: string): Promise<void> {
@@ -342,20 +324,30 @@ export class KernelMountBackend implements MountBackend {
     }
 
     const aiParts = parts.slice(2);
-    if (aiParts.length === 1 && aiParts[0] === "profile") {
-      await this.writeProcAiProfile(proc, content);
-      return;
-    }
-
-    const key = processAiPathToConfigKey(aiParts);
-    if (key) {
+    if (aiParts.length === 1 && aiParts[0] === "model") {
+      const modelId = content.trim().toLowerCase();
+      if (modelId && !this.listProcAiModels(proc.ownerUid).some((model) => model.id === modelId)) {
+        throw new Error(`ENOENT: AI model not found: ${modelId}`);
+      }
       const result = await this.processRequest(
         proc.processId,
         "proc.ai.config.set",
-        { key, value: content.trim() },
+        { modelId: modelId || null },
       );
       if (!result?.ok) {
-        throw new Error(`EIO: failed to update process AI config`);
+        throw new Error(`EIO: failed to update process AI model`);
+      }
+      return;
+    }
+
+    if (aiParts.length === 1 && aiParts[0] === "reasoning") {
+      const result = await this.processRequest(
+        proc.processId,
+        "proc.ai.config.set",
+        { reasoning: content.trim() || null },
+      );
+      if (!result?.ok) {
+        throw new Error(`EIO: failed to update process AI reasoning`);
       }
       return;
     }
@@ -363,108 +355,55 @@ export class KernelMountBackend implements MountBackend {
     throw new Error(`ENOENT: no such file or directory, open '${path}'`);
   }
 
-  private async writeProcAiProfile(proc: ProcessRecord, content: string): Promise<void> {
-    const selector = content.trim();
-    if (!selector) {
-      const result = await this.processRequest(
-        proc.processId,
-        "proc.ai.config.set",
-        { clear: true },
-      );
-      if (!result?.ok) {
-        throw new Error(`EIO: failed to clear process AI config`);
-      }
-      return;
-    }
-
-    const profile = this.findProcAiProfile(proc.ownerUid, selector);
-    if (!profile) {
-      throw new Error(`ENOENT: AI model profile not found: ${selector}`);
-    }
-
-    const result = await this.processRequest(
-      proc.processId,
-      "proc.ai.config.set",
-      {
-        values: omitProcessAiConfigSecrets(profile.values),
-        profile: {
-          id: profile.id,
-          name: profile.name,
-        },
-      },
-    );
-    if (!result?.ok) {
-      throw new Error(`EIO: failed to apply process AI profile`);
-    }
-  }
-
   private async getProcessAiConfig(
     pid: string,
-    redacted: boolean,
-  ): Promise<ProcAiConfigSnapshot | null> {
+  ): Promise<ProcAiConfig | null> {
     const result = await this.processRequest(
       pid,
       "proc.ai.config.get",
-      { redacted },
+      {},
     );
     return result?.ok ? result.config : null;
   }
 
-  private buildProcAiEffectiveValues(
+  /**
+   * Mirrors the Kernel resolver: the process-local choice, then the agent's
+   * own preference, then the owner's, each only when it names a listed
+   * model, and otherwise the first entry of the layered list.
+   */
+  private effectiveProcAiModelId(
     proc: ProcessRecord,
-    localValues: ProcessAiConfigValues,
-    profile: ProcAiConfigSnapshot["profile"] | null | undefined,
-  ) {
-    const values: ProcessAiConfigValues = {};
-    const accountUids = proc.ownerUid === proc.uid ? [proc.uid] : [proc.uid, proc.ownerUid];
-
-    for (const key of PROCESS_AI_CONFIG_KEYS) {
-      const suffix = processAiConfigSuffix(key);
-      let value: string | null = null;
-      for (const uid of accountUids) {
-        value = this.kernel?.config?.get(`users/${uid}/ai/${suffix}`) ?? null;
-        if (value !== null) break;
-      }
-      value ??= this.kernel?.config?.get(key) ?? null;
-      if (value !== null) {
-        values[key] = value;
+    local: ProcAiConfig | null,
+  ): string | null {
+    if (local?.modelId) return local.modelId;
+    const models = this.listProcAiModels(proc.ownerUid);
+    for (const uid of proc.uid === proc.ownerUid ? [proc.uid] : [proc.uid, proc.ownerUid]) {
+      const preferred = this.kernel?.config?.getExplicit(`users/${uid}/ai/preferred_model`)?.trim();
+      if (preferred && models.some((model) => model.id.toLowerCase() === preferred.toLowerCase())) {
+        return preferred;
       }
     }
-
-    if (profile?.id) {
-      for (const key of PROCESS_AI_CONFIG_SECRET_KEYS) {
-        const value = this.kernel?.config?.get(
-          processAiModelProfileSecretConfigKey(proc.ownerUid, profile.id, key),
-        ) ?? null;
-        if (value !== null) {
-          values[key] = value;
-        }
-      }
-    }
-
-    for (const [key, value] of Object.entries(localValues)) {
-      if (PROCESS_AI_CONFIG_KEY_SET.has(key)) {
-        values[key] = value;
-      }
-    }
-
-    return values;
+    return models[0]?.id ?? null;
   }
 
-  private listProcAiProfiles(ownerUid: number): ProcessAiModelProfile[] {
-    return parseProcessAiModelProfiles(
-      this.kernel?.config?.get(`users/${ownerUid}/ai/model_profiles`),
-      ownerUid,
-      this.kernel ? (key) => this.kernel!.config.get(key) : undefined,
-    );
+  private effectiveProcAiReasoning(proc: ProcessRecord, local: ProcAiConfig | null): string | null {
+    return local?.reasoning
+      ?? this.kernel?.config?.get(`users/${proc.uid}/ai/reasoning`)
+      ?? this.kernel?.config?.get(`users/${proc.ownerUid}/ai/reasoning`)
+      ?? this.kernel?.config?.get("config/ai/reasoning")
+      ?? null;
   }
 
-  private findProcAiProfile(ownerUid: number, selector: string): ProcessAiModelProfile | null {
-    const normalized = selector.trim().toLowerCase();
-    return this.listProcAiProfiles(ownerUid).find((profile) =>
-      profile.id.toLowerCase() === normalized ||
-      profile.name.toLowerCase() === normalized
-    ) ?? null;
+  private listProcAiModels(ownerUid: number): AiModelEntry[] {
+    const config = this.kernel?.config;
+    if (!config) return [];
+    const personalKey = userAiModelsConfigKey(ownerUid);
+    return layerAiModelStacks({
+      personal: parseAiModelStack(config.getExplicit(personalKey)),
+      personalKey,
+      system: parseAiModelStack(config.getExplicit(SYSTEM_AI_MODELS_CONFIG_KEY)),
+      base: this.kernel?.baseAiModels?.() ?? [],
+    }).map((item) => item.entry);
   }
 
   private readDev(path: string): string | undefined {
@@ -515,8 +454,8 @@ export class KernelMountBackend implements MountBackend {
       return undefined;
     }
 
-    if (rel.startsWith("devices/")) {
-      return this.readSysDevice(rel.slice("devices/".length));
+    if (rel.startsWith("targets/")) {
+      return this.readSysTarget(rel.slice("targets/".length));
     }
 
     if (rel.startsWith("capabilities/")) {
@@ -526,24 +465,24 @@ export class KernelMountBackend implements MountBackend {
     return undefined;
   }
 
-  private readSysDevice(rel: string): string | undefined {
+  private readSysTarget(rel: string): string | undefined {
     if (!this.kernel) return undefined;
     const parts = rel.split("/");
-    const deviceId = parts[0];
+    const targetId = parts[0];
     const attr = parts.slice(1).join("/");
 
-    if (!deviceId) return undefined;
+    if (!targetId) return undefined;
 
-    const device = this.kernel.devices.get(deviceId);
+    const device = this.kernel.targets.get(targetId);
     if (!device) return undefined;
 
-    if (!this.kernel.devices.canAccess(deviceId, this.identity.uid, this.identity.gids)) {
+    if (!this.kernel.targets.canAccess(targetId, this.identity.uid, this.identity.gids)) {
       return undefined;
     }
 
     if (!attr) {
       return [
-        `device_id=${device.device_id}`,
+        `target_id=${device.target_id}`,
         `owner_uid=${device.owner_uid}`,
         `description=${device.description}`,
         `platform=${device.platform}`,
@@ -855,7 +794,7 @@ export class KernelMountBackend implements MountBackend {
   private async isVirtualDir(path: string): Promise<boolean> {
     const virtualDirs = [
       "/proc", "/dev", "/sys",
-      "/sys/config", "/sys/users", "/sys/devices", "/sys/capabilities",
+      "/sys/config", "/sys/users", "/sys/targets", "/sys/capabilities",
       "/var", "/var/spool", "/var/spool/cron", "/var/log", "/var/log/gsv",
       "/var/lib", "/var/lib/gsv",
       "/etc/cron.d",
@@ -884,9 +823,9 @@ export class KernelMountBackend implements MountBackend {
       }
     }
 
-    if (path.startsWith("/sys/devices/") && !path.slice("/sys/devices/".length).includes("/")) {
-      const deviceId = path.slice("/sys/devices/".length);
-      return this.kernel.devices.get(deviceId) !== null;
+    if (path.startsWith("/sys/targets/") && !path.slice("/sys/targets/".length).includes("/")) {
+      const targetId = path.slice("/sys/targets/".length);
+      return this.kernel.targets.get(targetId) !== null;
     }
 
     if (path.startsWith("/sys/users/") && !path.slice("/sys/users/".length).includes("/")) {
@@ -941,7 +880,7 @@ export class KernelMountBackend implements MountBackend {
     }
 
     if (path === "/sys") {
-      return ["capabilities", "config", "devices", "users"];
+      return ["capabilities", "config", "targets", "users"];
     }
 
     if (path === "/sys/config") {
@@ -986,9 +925,9 @@ export class KernelMountBackend implements MountBackend {
       }
     }
 
-    if (path === "/sys/devices") {
-      const devices = this.kernel.devices.listForUser(this.identity.uid, this.identity.gids);
-      return devices.map((d) => d.device_id).sort();
+    if (path === "/sys/targets") {
+      const targets = this.kernel.targets.listForUser(this.identity.uid, this.identity.gids);
+      return targets.map((target) => target.target_id).sort();
     }
 
     if (path === "/sys/capabilities") {
@@ -1039,10 +978,10 @@ export class KernelMountBackend implements MountBackend {
       return this.kernel?.cron?.listSystemCrontabs().map(encodePathSegment).sort() ?? [];
     }
 
-    if (path.startsWith("/sys/devices/")) {
-      const parts = path.slice("/sys/devices/".length).split("/");
+    if (path.startsWith("/sys/targets/")) {
+      const parts = path.slice("/sys/targets/".length).split("/");
       if (parts.length === 1 && parts[0]) {
-        const device = this.kernel.devices.get(parts[0]);
+        const device = this.kernel.targets.get(parts[0]);
         if (device) return ["description", "implements", "owner", "platform", "status", "version"];
       }
     }

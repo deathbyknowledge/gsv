@@ -6,9 +6,11 @@
  * proc.send/kill/history/reset — forwarded to the Process DO via recvFrame.
  */
 
-import type { FrameBody, RequestFrame } from "../protocol/frames";
+import type { FrameBody, RequestFrame, ResponseFrame } from "../protocol/frames";
+import { resolveEffectiveAiModelStack } from "./ai";
 import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
+import { principalOf, requirePrincipal } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import type {
   InteractionOrigin,
@@ -38,10 +40,6 @@ import { resolveUserPath } from "../fs";
 import { ensurePersonalAgent } from "./agents";
 import { accountIdentity } from "./accounts";
 import { canOwnerDelegateRunAs } from "./account-access";
-import {
-  findProcessAiModelProfile,
-  omitProcessAiConfigSecrets,
-} from "../process/ai-config";
 import { invalidatePersonalControllerReadiness } from "./personal-controller";
 
 const DEFAULT_IPC_CALL_TIMEOUT_MS = 60_000;
@@ -92,7 +90,7 @@ export async function handleProcSpawn(
   args: ProcSpawnArgs,
   ctx: KernelContext,
 ): Promise<ProcSpawnResult> {
-  const identity = ctx.identity!;
+  const identity = principalOf(ctx)!;
   const pid = `proc:${crypto.randomUUID()}`;
   const runAs = args.runAs?.trim();
   const explicitRunAs = Boolean(runAs);
@@ -103,11 +101,11 @@ export async function handleProcSpawn(
   const parentPid = args.parentPid ?? ctx.processId;
   const parent = parentPid ? ctx.procs.get(parentPid) : null;
   const parentIsCurrentCaller = !!parentPid && parentPid === ctx.processId;
-  const parentRunsAsCaller = !!parent && parent.uid === identity.process.uid;
+  const parentRunsAsCaller = !!parent && parent.uid === identity.account.uid;
 
   if (parentPid) {
     if (!parent || parent.ownerUid !== callerOwnerUid) {
-      if (identity.process.uid !== 0) {
+      if (identity.account.uid !== 0) {
         return { ok: false, error: `Cannot spawn under foreign process: ${parentPid}` };
       }
     }
@@ -117,7 +115,7 @@ export async function handleProcSpawn(
       !parentIsCurrentCaller &&
       !parentRunsAsCaller &&
       !explicitRunAs &&
-      identity.process.uid !== 0
+      identity.account.uid !== 0
     ) {
       return { ok: false, error: `Cannot inherit run-as identity from unrelated parent process: ${parentPid}` };
     }
@@ -133,7 +131,7 @@ export async function handleProcSpawn(
     parentIsCurrentCaller ||
     parentRunsAsCaller ||
     !args.parentPid ||
-    identity.process.uid === 0
+    identity.account.uid === 0
   );
   let baseIdentity: ProcessIdentity = inheritParentIdentity
     ? {
@@ -144,7 +142,7 @@ export async function handleProcSpawn(
         home: parent.home,
         cwd: parent.cwd,
       }
-    : identity.process;
+    : identity.account;
 
   if (runAs) {
     const resolved = resolveRunAsIdentity(ctx, runAs, ownerUid);
@@ -210,7 +208,7 @@ export async function handleProcSpawn(
         ...(ctx.processRunId ? { sourceRunId: ctx.processRunId } : undefined),
         ...(!ctx.processId
           && ctx.connection
-          && ctx.identity?.role === "user"
+          && principalOf(ctx)?.kind === "human"
           && callerOwnerUid === ownerUid
           ? { connectionId: ctx.connection.id }
           : undefined),
@@ -265,7 +263,7 @@ export async function handleProcFork(
   args: ProcForkArgs,
   ctx: KernelContext,
 ): Promise<ProcForkResult> {
-  const identity = ctx.identity!;
+  const identity = principalOf(ctx)!;
   const sourcePid = args.pid ?? ctx.processId;
   if (!sourcePid) {
     return { ok: false, error: "proc.fork requires pid outside a process" };
@@ -275,7 +273,7 @@ export async function handleProcFork(
     return { ok: false, error: `Process not found: ${sourcePid}` };
   }
   const callerOwnerUid = resolveCallerOwnerUid(ctx);
-  if (source.ownerUid !== callerOwnerUid && identity.process.uid !== 0) {
+  if (source.ownerUid !== callerOwnerUid && identity.account.uid !== 0) {
     return { ok: false, error: `Permission denied: cannot access process ${sourcePid}` };
   }
 
@@ -465,7 +463,7 @@ export function resolveRunAsIdentity(
 ): { ok: true; identity: ProcessIdentity } | { ok: false; error: string } {
   const auth = ctx.auth;
   const trimmed = runAs.trim();
-  const isRoot = ctx.identity!.process.uid === 0;
+  const isRoot = requirePrincipal(ctx).account.uid === 0;
 
   const entry = /^\d+$/.test(trimmed)
     ? auth.getPasswdByUid(Number(trimmed))
@@ -479,7 +477,7 @@ export function resolveRunAsIdentity(
   // the human's identity (and its `users` capabilities), escalating past the
   // agent's least-privilege isolation. The owner's delegated run-as rights
   // (personal agent, group-member agents) are still honored below.
-  const isSelf = entry.uid === ctx.identity!.process.uid;
+  const isSelf = entry.uid === requirePrincipal(ctx).account.uid;
   const canDelegate = canOwnerDelegateRunAs(auth, ownerUid, entry);
 
   if (!isRoot && !isSelf && !canDelegate) {
@@ -514,22 +512,22 @@ function withProcSendOrigin(
 
 function interactionOriginForContext(ctx: KernelContext): InteractionOrigin | undefined {
   if (ctx.processId) {
-    return processInteractionOrigin(ctx.processId, ctx.identity?.process.uid);
+    return processInteractionOrigin(ctx.processId, principalOf(ctx)?.account.uid);
   }
 
-  const identity = ctx.identity;
+  const identity = principalOf(ctx);
   if (!identity) return undefined;
 
-  if (identity.role === "driver") {
+  if (identity.kind === "machine") {
     const origin: Extract<InteractionOrigin, { kind: "device" }> = {
       kind: "device",
-      deviceId: identity.device,
+      deviceId: identity.peerId,
     };
-    if (identity.process.cwd) origin.cwd = identity.process.cwd;
+    if (identity.account.cwd) origin.cwd = identity.account.cwd;
     return origin;
   }
 
-  if (identity.role === "user") {
+  if (identity.kind === "human") {
     const connection = ctx.connection;
     if (!connection) return undefined;
     const clientId = connection.state.clientId?.trim() || undefined;
@@ -570,7 +568,7 @@ export async function handleProcIpcSend(
     args: {
       runId,
       sourcePid: resolved.sourcePid,
-      source: ctx.identity!.process,
+      source: requirePrincipal(ctx).account,
       message: resolved.args.message,
       metadata: resolved.args.metadata,
       origin: processInteractionOrigin(resolved.sourcePid, resolved.source.uid),
@@ -658,7 +656,7 @@ export async function handleProcIpcCall(
       args: {
         runId,
         sourcePid: resolved.sourcePid,
-        source: ctx.identity!.process,
+        source: requirePrincipal(ctx).account,
         message: resolved.args.message,
         metadata: resolved.args.metadata,
         origin: processInteractionOrigin(resolved.sourcePid, resolved.source.uid),
@@ -732,7 +730,7 @@ export async function forwardToProcess(
   frame: RequestFrame,
   ctx: KernelContext,
 ): Promise<ForwardedProcessResult> {
-  const identity = ctx.identity!;
+  const identity = principalOf(ctx)!;
   const callerOwnerUid = resolveCallerOwnerUid(ctx);
   // SAFETY: dispatch routes only Process-targeting calls here, whose syscall
   // arguments all use the shared optional `pid` target field.
@@ -748,16 +746,14 @@ export async function forwardToProcess(
     throw new Error(`Process not found: ${pid}`);
   }
 
-  if (proc.ownerUid !== callerOwnerUid && identity.process.uid !== 0) {
+  if (proc.ownerUid !== callerOwnerUid && identity.account.uid !== 0) {
     throw new Error(`Permission denied: cannot access process ${pid}`);
   }
 
   const processFrame = frame.call === "proc.send"
     ? withProcSendOrigin(frame, ctx)
-    : frame.call === "proc.ai.config.get"
-      ? withRedactedProcAiConfigGet(frame)
     : frame.call === "proc.ai.config.set"
-      ? withProcAiConfigProfile(frame, ctx, proc.ownerUid)
+      ? withValidatedProcAiConfig(frame, ctx, proc.ownerUid)
       : frame;
   if (frame.call === "proc.kill" && proc.isPersonalController) {
     invalidatePersonalControllerReadiness(proc.ownerUid, pid, ctx.procs);
@@ -813,7 +809,7 @@ export async function forwardToProcess(
       const runData = responseData as ResultOf<"proc.send"> | undefined;
       if (
         frame.call === "proc.send"
-        && identity.role === "user"
+        && identity.kind === "human"
         && ctx.connection
         && runData?.ok
       ) {
@@ -868,52 +864,33 @@ function reconcileKilledProcess(
   }
 }
 
-function withRedactedProcAiConfigGet(
-  frame: RequestFrame<"proc.ai.config.get">,
-): RequestFrame<"proc.ai.config.get"> {
-  return {
-    ...frame,
-    args: {
-      ...frame.args,
-      redacted: true,
-    },
-  };
-}
-
-function withProcAiConfigProfile(
+function withValidatedProcAiConfig(
   frame: RequestFrame<"proc.ai.config.set">,
   ctx: KernelContext,
   ownerUid: number,
 ): RequestFrame<"proc.ai.config.set"> {
   const args: ProcAiConfigSetArgs = frame.args;
-  if ("clear" in args || "values" in args || "key" in args) {
+  if ("clear" in args || args.modelId === undefined || args.modelId === null) {
     return frame;
   }
 
-  const profileId = normalizeText(args.profileId);
-  const profileName = normalizeText(args.profileName);
-  const selector = profileId || profileName;
-  if (!selector) {
+  const modelId = normalizeText(args.modelId).toLowerCase();
+  if (!modelId) {
     return frame;
   }
-
-  const profile = findProcessAiModelProfile(
-    ctx.config.get(`users/${ownerUid}/ai/model_profiles`),
-    ownerUid,
-    selector,
-  );
-  if (!profile) {
-    throw new Error(`AI model profile not found: ${selector}`);
+  // Validate against the same layered stack generation and ai.models use, so
+  // shared and base models are as selectable for a process as personal ones.
+  const storedModel = resolveEffectiveAiModelStack(ctx, ownerUid)
+    .find((item) => item.entry.id.toLowerCase() === modelId)?.entry;
+  if (!storedModel) {
+    throw new Error(`AI model not found: ${modelId}`);
   }
 
   return {
     ...frame,
     args: {
-      values: omitProcessAiConfigSecrets(profile.values),
-      profile: {
-        id: profile.id,
-        name: profile.name,
-      },
+      ...args,
+      modelId: storedModel.id,
     },
   };
 }
@@ -966,7 +943,7 @@ function resolveSameOwnerIpc(
     return { ok: false, error: `Process not found: ${validated.pid}` };
   }
 
-  if (source.uid !== ctx.identity!.process.uid) {
+  if (source.uid !== requirePrincipal(ctx).account.uid) {
     return { ok: false, error: `Source process identity mismatch: ${sourcePid}` };
   }
 
@@ -1030,4 +1007,37 @@ function resolveSpawnCwd(
     return resolveUserPath(normalized, baseIdentity.home, baseIdentity.cwd);
   }
   return baseIdentity.cwd;
+}
+
+/** Toggles raw Process observation for the connected peer that admitted the request. */
+export function handleProcObserve(
+  frame: RequestFrame<"proc.observe" | "proc.unobserve">,
+  ctx: KernelContext,
+): ResponseFrame<"proc.observe" | "proc.unobserve"> {
+  const connection = ctx.connection;
+  const state = connection?.state;
+  if (!connection || state?.step !== "connected" || !state.peer) {
+    return {
+      type: "res",
+      id: frame.id,
+      ok: false,
+      error: { code: 400, message: "Process observation requires a connected peer" },
+    };
+  }
+  const pid = frame.args.pid.trim();
+  const process = pid ? ctx.procs.get(pid) : null;
+  if (!process || process.ownerUid !== state.peer.principal.account.uid) {
+    return {
+      type: "res",
+      id: frame.id,
+      ok: false,
+      error: { code: 404, message: `Process not found: ${pid || "(missing)"}` },
+    };
+  }
+  const observing = frame.call === "proc.observe";
+  const observed = new Set(state.observedProcessIds ?? []);
+  if (observing) observed.add(pid);
+  else observed.delete(pid);
+  connection.setState({ ...state, observedProcessIds: [...observed] });
+  return { type: "res", id: frame.id, ok: true, data: { ok: true, pid, observing } };
 }

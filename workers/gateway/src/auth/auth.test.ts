@@ -3,7 +3,6 @@ import {
   parsePasswd,
   serializePasswd,
   findByUsername as findPasswdUser,
-  findByUid,
   nextUid,
 } from "./passwd";
 import {
@@ -18,8 +17,6 @@ import {
 import {
   parseGroup,
   serializeGroup,
-  findByName,
-  findByGid,
   resolveGids,
   nextGid,
 } from "./group";
@@ -82,11 +79,6 @@ describe("passwd", () => {
     expect(findPasswdUser(entries, "nonexistent")).toBeUndefined();
   });
 
-  it("findByUid returns the correct entry", () => {
-    const entries = parsePasswd(SAMPLE);
-    expect(findByUid(entries, 0)?.username).toBe("root");
-    expect(findByUid(entries, 9999)).toBeUndefined();
-  });
 
   it("nextUid returns 1000 when max uid < 1000", () => {
     const entries = parsePasswd("root:x:0:0:root:/root:/bin/sh\n");
@@ -282,17 +274,7 @@ describe("group", () => {
     expect(reparsed).toEqual(entries);
   });
 
-  it("findByName returns the correct entry", () => {
-    const entries = parseGroup(SAMPLE);
-    expect(findByName(entries, "users")?.gid).toBe(100);
-    expect(findByName(entries, "nonexistent")).toBeUndefined();
-  });
 
-  it("findByGid returns the correct entry", () => {
-    const entries = parseGroup(SAMPLE);
-    expect(findByGid(entries, 0)?.name).toBe("root");
-    expect(findByGid(entries, 9999)).toBeUndefined();
-  });
 
   it("resolveGids includes primary gid and supplementary groups", () => {
     const entries = parseGroup(SAMPLE);

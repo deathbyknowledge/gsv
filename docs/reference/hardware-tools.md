@@ -16,7 +16,7 @@ resource, or hardware dependency lives in that environment.
 | `gsv` | Native Gateway target running in the Cloudflare Worker sandbox. |
 | `<targetId>` | A registered target, such as a computer, browser profile, or authorized service environment; routable while online. |
 
-The Gateway includes accessible online devices in `ai.tools` context and, by default, in `sys.device.list`. Those inventories advertise devices that can accept work immediately. The agent-facing `targets list` command includes every visible registered device by default and labels each one `online` or `offline`; use `targets list --online` to restrict it to reachable targets. Device notes are included too, so processes can identify machines using the user's own descriptions. Registered devices also appear in the native filesystem under `/sys/devices`.
+The Gateway includes accessible online devices in `ai.tools` context and, by default, in `sys.target.list`. Those inventories advertise devices that can accept work immediately. The agent-facing `targets list` command includes every visible registered device by default and labels each one `online` or `offline`; use `targets list --online` to restrict it to reachable targets. Device notes are included too, so processes can identify machines using the user's own descriptions. Registered targets also appear in the native filesystem under `/sys/targets`.
 
 Most bundled messaging adapters are transport-only. Use `message destinations`
 to discover authorized external chat surfaces; use adapter APIs or the
@@ -46,7 +46,7 @@ Each tool receives the same public argument shape regardless of target. For exam
 ```json
 {
   "target": "gsv",
-  "path": "/sys/devices"
+  "path": "/sys/targets"
 }
 ```
 
@@ -95,7 +95,7 @@ implemented syscall patterns.
 
 ```json
 {
-  "deviceId": "macbook",
+  "targetId": "macbook",
   "description": "Personal MacBook I use for everything",
   "platform": "darwin",
   "version": "0.1.0",
@@ -111,11 +111,11 @@ driver connection.
 
 Inspect descriptors with:
 
-- `sys.device.list`
-- `sys.device.get`
-- `sys.device.update` to change the owner-managed `description`
-- `sys.device.delete` to forget an owned physical device, disconnect any live device socket, and revoke device-bound node tokens
-- `Read` with `target: "gsv"` and `path: "/sys/devices"`
+- `sys.target.list`
+- `sys.target.get`
+- `sys.target.update` to change the owner-managed `description`
+- `sys.target.delete` to forget an owned physical device, disconnect any live device socket, and revoke its machine tokens
+- `Read` with `target: "gsv"` and `path: "/sys/targets"`
 
 ## Native `gsv` Target
 
@@ -239,7 +239,7 @@ Use a device target for local source trees, private networks, machine-local cred
 For `fs.*` and `shell.exec`, the Gateway reads `target` at dispatch time.
 
 - `target: "gsv"` runs the native handler.
-- `target: "<deviceId>"` verifies access, online state, and `implements`, then forwards the same syscall to the device.
+- `target: "<targetId>"` verifies access, online state, and `implements`, then forwards the same syscall to the device.
 - `shell.exec` with `sessionId` routes through the persisted shell session owner; `target` is not required for continuation.
 - `target` is removed before native execution or device forwarding, so implementations receive the same syscall-specific arguments.
 

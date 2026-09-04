@@ -34,7 +34,7 @@ describe("user-facing signal policy", () => {
       "message.delta",
       "message.committed",
       "message.aborted",
-      "device.status",
+      "target.status",
       "adapter.status",
       "mcp.changed",
     ]));

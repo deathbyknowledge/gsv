@@ -1,4 +1,5 @@
-import type { KernelContext } from "./context";
+import type { KernelContext, PrincipalView } from "./context";
+import { principalOf } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import { hasCapability } from "./capabilities";
 import type {
@@ -19,7 +20,6 @@ import type {
   ScheduleRunResult,
   ScheduleTarget,
 } from "@humansandmachines/gsv/protocol";
-import type { ConnectionIdentity } from "./identity";
 import {
   assertAdapterMessageDestinationAccess,
   normalizeAdapterMessageDestination,
@@ -607,7 +607,7 @@ export async function handleSchedulerUpdate(
   if (!existing) {
     throw new Error(`Schedule not found: ${args.id}`);
   }
-  assertCanManageSchedule(ctx.identity!, existing, resolveCallerOwnerUid(ctx));
+  assertCanManageSchedule(principalOf(ctx)!, existing, resolveCallerOwnerUid(ctx));
 
   const nextTarget = args.patch.target === undefined
     ? existing.target
@@ -657,7 +657,7 @@ export async function handleSchedulerRemove(
   if (!existing) {
     return { removed: false };
   }
-  assertCanManageSchedule(ctx.identity!, existing, resolveCallerOwnerUid(ctx));
+  assertCanManageSchedule(principalOf(ctx)!, existing, resolveCallerOwnerUid(ctx));
   const removed = store.remove(existing.id);
   if (removed?.wakeScheduleId) {
     await ctx.cancelScheduleWake(removed.wakeScheduleId);
@@ -669,7 +669,7 @@ export async function handleSchedulerRun(
   args: SchedulerRunArgs,
   ctx: KernelContext,
 ): Promise<SchedulerRunResult> {
-  return ctx.runSchedules(args, ctx.identity!, resolveCallerOwnerUid(ctx));
+  return ctx.runSchedules(args, principalOf(ctx)!, resolveCallerOwnerUid(ctx));
 }
 
 export function normalizeScheduleExpression(
@@ -754,9 +754,9 @@ export function computeNextRunAfterFinish(
 }
 
 export function assertCanManageSchedule(
-  identity: ConnectionIdentity,
+  identity: PrincipalView,
   record: ScheduleRecord,
-  callerOwnerUid = identity.process.uid,
+  callerOwnerUid = identity.account.uid,
 ): void {
   if (callerOwnerUid === 0 || callerOwnerUid === record.ownerUid) {
     return;
@@ -775,27 +775,27 @@ export async function armSchedule(ctx: KernelContext, record: ScheduleRecord): P
 }
 
 function principalFromContext(ctx: KernelContext): SchedulePrincipal {
-  const identity = ctx.identity!;
+  const identity = principalOf(ctx)!;
   if (ctx.processId) {
     return {
       kind: "process",
-      uid: identity.process.uid,
-      username: identity.process.username,
+      uid: identity.account.uid,
+      username: identity.account.username,
       pid: ctx.processId,
     };
   }
-  if (identity.role === "service") {
+  if (identity.kind === "service") {
     return {
       kind: "service",
-      uid: identity.process.uid,
-      username: identity.process.username,
-      channel: identity.channel,
+      uid: identity.account.uid,
+      username: identity.account.username,
+      channel: identity.peerId,
     };
   }
   return {
     kind: "user",
-    uid: identity.process.uid,
-    username: identity.process.username,
+    uid: identity.account.uid,
+    username: identity.account.username,
   };
 }
 
@@ -860,14 +860,14 @@ function normalizeScheduleTarget(target: ScheduleTarget): ScheduleTarget {
 
 function validateScheduleTargetAccess(target: ScheduleTarget, ctx: KernelContext): void {
   const ownerUid = resolveCallerOwnerUid(ctx);
-  if (target.kind === "command.exec" && !hasCapability(ctx.identity?.capabilities ?? [], "shell.exec")) {
+  if (target.kind === "command.exec" && !hasCapability(principalOf(ctx)?.calls ?? [], "shell.exec")) {
     throw new Error("Permission denied: shell.exec");
   }
-  if (target.kind === "process.spawn" && !hasCapability(ctx.identity?.capabilities ?? [], "proc.spawn")) {
+  if (target.kind === "process.spawn" && !hasCapability(principalOf(ctx)?.calls ?? [], "proc.spawn")) {
     throw new Error("Permission denied: proc.spawn");
   }
   if (target.kind === "process.event") {
-    if (!hasCapability(ctx.identity?.capabilities ?? [], "proc.send")) {
+    if (!hasCapability(principalOf(ctx)?.calls ?? [], "proc.send")) {
       throw new Error("Permission denied: proc.send");
     }
     const proc = ctx.procs.get(target.pid);
@@ -878,19 +878,19 @@ function validateScheduleTargetAccess(target: ScheduleTarget, ctx: KernelContext
       throw new Error(`Permission denied: cannot schedule process ${target.pid}`);
     }
     if (target.replyTo) {
-      if (!hasCapability(ctx.identity?.capabilities ?? [], "adapter.send")) {
+      if (!hasCapability(principalOf(ctx)?.calls ?? [], "adapter.send")) {
         throw new Error("Permission denied: adapter.send");
       }
       assertAdapterMessageDestinationAccess(target.replyTo, ownerUid, ctx);
     }
   }
   if (target.kind === "responsibility") {
-    if (!hasCapability(ctx.identity?.capabilities ?? [], "r12y.create")) {
+    if (!hasCapability(principalOf(ctx)?.calls ?? [], "r12y.create")) {
       throw new Error("Permission denied: r12y.create");
     }
   }
   if (target.kind === "adapter.send") {
-    if (!hasCapability(ctx.identity?.capabilities ?? [], "adapter.send")) {
+    if (!hasCapability(principalOf(ctx)?.calls ?? [], "adapter.send")) {
       throw new Error("Permission denied: adapter.send");
     }
     assertAdapterMessageDestinationAccess(target.destination, ownerUid, ctx);

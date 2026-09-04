@@ -53,7 +53,7 @@ function renderContextTemplate(
       home: string;
       cwd: string;
     };
-    devices: Array<{ id: string; label?: string; implements: string[]; description?: string; platform?: string }>;
+    targets: Array<{ id: string; label?: string; implements: string[]; description?: string; platform?: string }>;
     mcpServers: string[];
     r12y: string;
     runtime: {
@@ -86,8 +86,8 @@ function renderContextTemplate(
     ["user.username", user.username],
     ["user.home", user.home],
     ["user.cwd", user.cwd],
-    ["targets", formatTargets(input.devices)],
-    ["devices", formatTargets(input.devices)],
+    ["targets", formatTargets(input.targets)],
+    ["devices", formatTargets(input.targets)],
     ["mcpServers", formatMcpServers(input.mcpServers)],
     ["r12y", input.r12y],
   ]);

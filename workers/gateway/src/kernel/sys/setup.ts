@@ -1,16 +1,17 @@
 import { hashPassword, isLocked, makeShadowEntry } from "../../auth/shadow";
 import type { KernelContext } from "../context";
+import { kernelPeerContext } from "../peer";
 import { SERVER_RELEASE } from "../../version";
 import type { PasswdEntry } from "../../auth/passwd";
 import {
   GSV_INFERENCE_FEATURE,
   GSV_INFERENCE_MODEL,
   GSV_INFERENCE_PROVIDER,
+  type AiModelStack,
   type ProcessIdentity,
   type SysSetupArgs,
   type SysSetupResult,
 } from "@humansandmachines/gsv/protocol";
-import type { UserIdentity } from "../identity";
 import { handleSysBootstrap } from "./bootstrap";
 import { ensureAccountHomeLayout } from "../account-home";
 import { RipgitClient } from "../../fs";
@@ -18,6 +19,10 @@ import { seedBuiltinSkillsToHome } from "./skills-seed";
 import { gsvInferenceFeaturesFromEnv } from "../../inference/gsv-provider";
 import { ensurePersonalController } from "../personal-controller";
 import { getConversationById } from "../../shared/utils";
+import {
+  aiModelApiKeyConfigKey,
+  userAiModelsConfigKey,
+} from "../ai-model-stack";
 
 const USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 
@@ -31,8 +36,8 @@ type SetupIdentity = {
   password: string;
 };
 
-type SetupNodeConfig = {
-  deviceId: string;
+type SetupMachineConfig = {
+  peerId: string;
   label?: string;
   expiresAt?: number;
 };
@@ -87,11 +92,11 @@ function readOptionalString(value: string | undefined): string | undefined {
 function parseOptionalFutureTimestamp(value: number | undefined): number | undefined {
   if (value === undefined) return undefined;
   if (!Number.isFinite(value)) {
-    throw new Error("node.expiresAt must be a unix timestamp in milliseconds");
+    throw new Error("machine.expiresAt must be a unix timestamp in milliseconds");
   }
   const ts = Math.floor(value);
   if (ts <= Date.now()) {
-    throw new Error("node.expiresAt must be in the future");
+    throw new Error("machine.expiresAt must be in the future");
   }
   return ts;
 }
@@ -177,18 +182,29 @@ function resolveSetupAiConfig(
       model: GSV_INFERENCE_MODEL,
     };
   }
-  if (
-    managedInferenceAvailable
-    && ai.provider === undefined
-    && ai.model === undefined
-    && ai.apiKey === undefined
-  ) {
-    return {
-      provider: GSV_INFERENCE_PROVIDER,
-      model: GSV_INFERENCE_MODEL,
-    };
-  }
   return ai;
+}
+
+function setupAiModelStack(ai: SetupAiConfig): AiModelStack | null {
+  if (ai.provider === undefined && ai.model === undefined && ai.apiKey === undefined) {
+    return null;
+  }
+  if (!ai.provider || !ai.model) {
+    throw new Error("AI provider and model must be configured together");
+  }
+  // GSV Included is the managed deployment's base stack; choosing it writes nothing.
+  if (ai.provider === GSV_INFERENCE_PROVIDER) {
+    return null;
+  }
+  return {
+    version: 1,
+    models: [{
+      id: "setup-primary",
+      name: ai.model,
+      provider: ai.provider,
+      model: ai.model,
+    }],
+  };
 }
 
 function parseTimezone(args: SysSetupArgs): string | undefined {
@@ -204,15 +220,15 @@ function parseTimezone(args: SysSetupArgs): string | undefined {
   return timezone;
 }
 
-function parseNodeConfig(args: SysSetupArgs): SetupNodeConfig | null {
-  if (!args.node) {
+function parseMachineConfig(args: SysSetupArgs): SetupMachineConfig | null {
+  if (!args.machine) {
     return null;
   }
-  const deviceId = readRequiredString(args.node.deviceId, "node.deviceId");
+  const peerId = readRequiredString(args.machine.peerId, "machine.peerId");
   return {
-    deviceId,
-    label: readOptionalString(args.node.label),
-    expiresAt: parseOptionalFutureTimestamp(args.node.expiresAt),
+    peerId,
+    label: readOptionalString(args.machine.label),
+    expiresAt: parseOptionalFutureTimestamp(args.machine.expiresAt),
   };
 }
 
@@ -252,8 +268,9 @@ export async function handleSysSetup(
     parseAiConfig(args),
     managedInferenceAvailable,
   );
+  const aiModels = setupAiModelStack(ai);
   const timezone = parseTimezone(args);
-  const node = parseNodeConfig(args);
+  const machine = parseMachineConfig(args);
   const rootPassword = readOptionalString(args.rootPassword);
   if (rootPassword && rootPassword.length < 8) {
     throw new Error("rootPassword must be at least 8 characters");
@@ -287,13 +304,13 @@ export async function handleSysSetup(
     home: "/root",
     cwd: "/root",
   };
-  const bootstrapIdentity: UserIdentity = {
-    role: "user",
-    process: bootstrapProcessIdentity,
-    capabilities: ["*"],
-  };
+  const bootstrapPeer = kernelPeerContext({
+    installationId: ctx.installationId,
+    identity: bootstrapProcessIdentity,
+    calls: ["*"],
+  });
   let bootstrap: SysSetupResult["bootstrap"];
-  let nodeToken: SysSetupResult["nodeToken"];
+  let machineToken: SysSetupResult["machineToken"];
 
   try {
     if (ctx.env.RIPGIT) {
@@ -302,7 +319,7 @@ export async function handleSysSetup(
         "bootstrap-system",
         () => handleSysBootstrap(undefined, {
           ...ctx,
-          identity: bootstrapIdentity,
+          peer: bootstrapPeer,
         }),
       );
     }
@@ -346,39 +363,35 @@ export async function handleSysSetup(
     });
 
     await timeSetupStep(timings, "write-ai-config", () => {
-      if (ai.provider !== undefined) {
-        config.set("config/ai/provider", ai.provider);
-      }
-      if (ai.model !== undefined) {
-        config.set("config/ai/model", ai.model);
-      }
-      if (ai.apiKey !== undefined) {
-        config.set("config/ai/api_key", ai.apiKey);
-      }
-      if (managedInferenceAvailable) {
-        config.set("config/ai/fallback_model_profile", "");
+      if (aiModels) {
+        const stackKey = userAiModelsConfigKey(uid);
+        config.set(stackKey, JSON.stringify(aiModels));
+        if (ai.apiKey !== undefined) {
+          config.set(
+            aiModelApiKeyConfigKey(stackKey, aiModels.models[0].id),
+            ai.apiKey,
+          );
+        }
       }
     });
 
-    if (node) {
-      nodeToken = await timeSetupStep(timings, "issue-node-token", async () => {
+    if (machine) {
+      machineToken = await timeSetupStep(timings, "issue-machine-token", async () => {
         const issued = await auth.issueToken({
           uid,
-          kind: "node",
-          label: node.label ?? `node:${node.deviceId}`,
-          allowedRole: "driver",
-          allowedDeviceId: node.deviceId,
-          expiresAt: node.expiresAt,
+          kind: "machine",
+          label: machine.label ?? `machine:${machine.peerId}`,
+          peerId: machine.peerId,
+          expiresAt: machine.expiresAt,
         });
         return {
           tokenId: issued.tokenId,
           token: issued.token,
           tokenPrefix: issued.tokenPrefix,
           uid: issued.uid,
-          kind: "node",
+          kind: "machine",
           label: issued.label,
-          allowedRole: "driver",
-          allowedDeviceId: issued.allowedDeviceId,
+          peerId: machine.peerId,
           createdAt: issued.createdAt,
           expiresAt: issued.expiresAt,
         };
@@ -433,7 +446,7 @@ export async function handleSysSetup(
       user: processIdentity,
       rootLocked,
       bootstrap,
-      nodeToken,
+      machineToken,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -466,13 +479,13 @@ export async function recoverCompletedSysSetup(
     : undefined;
   await ensurePersonalConversation(user.uid, ctx, preferredAgentName);
 
-  const node = parseNodeConfig(args);
-  let nodeToken: SysSetupResult["nodeToken"];
-  if (node) {
+  const machine = parseMachineConfig(args);
+  let machineToken: SysSetupResult["machineToken"];
+  if (machine) {
     for (const token of ctx.auth.listTokens(user.uid)) {
       if (
-        token.kind === "node"
-        && token.allowedDeviceId === node.deviceId
+        token.kind === "machine"
+        && token.peerId === machine.peerId
         && token.revokedAt === null
       ) {
         ctx.auth.revokeToken(token.tokenId, "setup retry", user.uid);
@@ -480,21 +493,19 @@ export async function recoverCompletedSysSetup(
     }
     const issued = await ctx.auth.issueToken({
       uid: user.uid,
-      kind: "node",
-      label: node.label ?? `node:${node.deviceId}`,
-      allowedRole: "driver",
-      allowedDeviceId: node.deviceId,
-      expiresAt: node.expiresAt,
+      kind: "machine",
+      label: machine.label ?? `machine:${machine.peerId}`,
+      peerId: machine.peerId,
+      expiresAt: machine.expiresAt,
     });
-    nodeToken = {
+    machineToken = {
       tokenId: issued.tokenId,
       token: issued.token,
       tokenPrefix: issued.tokenPrefix,
       uid: issued.uid,
-      kind: "node",
+      kind: "machine",
       label: issued.label,
-      allowedRole: "driver",
-      allowedDeviceId: issued.allowedDeviceId,
+      peerId: machine.peerId,
       createdAt: issued.createdAt,
       expiresAt: issued.expiresAt,
     };
@@ -509,6 +520,6 @@ export async function recoverCompletedSysSetup(
       cwd: authenticated.identity.home,
     },
     rootLocked: rootShadow ? isLocked(rootShadow) : true,
-    nodeToken,
+    machineToken,
   };
 }

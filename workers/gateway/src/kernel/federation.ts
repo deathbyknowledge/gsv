@@ -67,8 +67,9 @@ import {
   type FsOpenedSource,
 } from "../drivers/native/fs";
 import { isLocked } from "../auth/shadow";
-import type { ConnectionIdentity } from "./identity";
 import type { KernelContext } from "./context";
+import { kernelPeerContext } from "./peer";
+import { principalOf } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import { ensurePersonalController } from "./personal-controller";
 import {
@@ -602,6 +603,19 @@ export async function handleContactSend(
   const processId = await ensurePersonalController(ownerUid, ctx);
   const process = ctx.procs.get(processId);
   if (!process) throw new Error("Personal intelligence is unavailable");
+  // Media is persisted under the handler's archive, so only the handler and
+  // the work it delegated may attach it. Reject here so a delegated child
+  // learns at send time instead of after every background retry fails.
+  if (
+    requestedMedia?.length
+    && ctx.processId
+    && ctx.processId !== processId
+    && !ctx.procs.isDescendant(ctx.processId, processId)
+  ) {
+    throw new Error(
+      "Contact media can only be attached by the conversation handler process or one of its subprocesses",
+    );
+  }
   ctx.requestSignal?.throwIfAborted();
   ensureLocalSubject(ownerUid, ctx);
   const deliveryId = `delivery:${crypto.randomUUID()}`;
@@ -2025,17 +2039,17 @@ async function openGrantedResource(
     home: account.home,
     cwd: account.home,
   };
-  const identity: ConnectionIdentity = {
-    role: "user",
-    process,
-    capabilities: ctx.caps.resolve(process.gids),
-  };
+  const peer = kernelPeerContext({
+    installationId: ctx.installationId,
+    identity: process,
+    calls: ctx.caps.resolve(process.gids),
+  });
   return await handleFsTransferSend({
     path: grant.source.ref.path,
     revision: grant.source.ref.revision,
   }, {
     ...ctx,
-    identity,
+    peer,
     callerOwnerUid: grant.sourceUid,
   }, crypto.randomUUID());
 }
@@ -2056,8 +2070,15 @@ async function commitLocalOutboxMessage(
     author: local.author,
     text: local.text,
     media: local.media,
+    // The handler's archive owns the bytes; the pid names the sender that the
+    // send-time lineage check admitted, which may be a delegated subprocess.
     ...(local.media?.length
-      ? { mediaOwner: processMediaOwner(conversation.handlerPid, process) }
+      ? {
+        mediaOwner: {
+          ...processMediaOwner(conversation.handlerPid, process),
+          pid: local.processId ?? conversation.handlerPid,
+        },
+      }
       : undefined),
     origin: local.origin,
     processId: local.processId,
@@ -2248,7 +2269,7 @@ function ensureLocalSubject(ownerUid: number, ctx: KernelContext): FederationSub
 }
 
 function requireContactCaller(ctx: KernelContext, directHuman: boolean): number {
-  if (ctx.identity?.role !== "user") throw new Error("Contact operations require a user");
+  if (principalOf(ctx)?.kind !== "human") throw new Error("Contact operations require a user");
   const ownerUid = resolveCallerOwnerUid(ctx);
   if (directHuman) {
     const process = ctx.processId ? ctx.procs.get(ctx.processId) : null;
@@ -2535,7 +2556,9 @@ function publicFederationFailure(cause: unknown): PublicFederationFailure {
       ...(cause.retryAfterMs === undefined ? undefined : { retryAfterMs: cause.retryAfterMs }),
     };
   }
-  if (cause instanceof z.ZodError) {
+  // The federation schemas come from the SDK's zod/mini build, whose errors
+  // share the core trait with classic zod errors but not the classic class.
+  if (cause instanceof z.core.$ZodError) {
     return { status: 400, message: "Federation request is invalid" };
   }
   console.warn(

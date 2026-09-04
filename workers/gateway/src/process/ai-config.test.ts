@@ -1,37 +1,46 @@
 import { describe, expect, it } from "vitest";
 import {
-  createProcessAiConfigSnapshot,
-  parseProcessAiModelProfiles,
+  createProcessAiConfig,
+  parseProcessAiConfig,
 } from "./ai-config";
 
 describe("process ai config", () => {
-  it("keeps fallback model profile in process snapshots", () => {
-    const snapshot = createProcessAiConfigSnapshot({
-      "config/ai/model": "primary-model",
-      "config/ai/fallback_model_profile": "backup-stack",
-    });
+  it("stores only a stable model reference and reasoning preference", () => {
+    const config = createProcessAiConfig({ modelId: "fast", reasoning: "high" }, 123);
 
-    expect(snapshot.values["config/ai/fallback_model_profile"]).toBe("backup-stack");
+    expect(config).toEqual({
+      version: 2,
+      modelId: "fast",
+      reasoning: "high",
+      updatedAt: 123,
+    });
   });
 
-  it("drops fallback model profile from stored model presets", () => {
-    const profiles = parseProcessAiModelProfiles(JSON.stringify({
+  it("rejects obsolete copied model snapshots", () => {
+    const config = parseProcessAiConfig(JSON.stringify({
       version: 1,
-      profiles: [{
-        id: "fast",
-        name: "Fast",
-        values: {
-          "config/ai/provider": "custom",
-          "config/ai/model": "fast-model",
-          "config/ai/fallback_model_profile": "backup-stack",
-        },
-      }],
-    }), 1000);
+      values: {
+        "config/ai/provider": "openai",
+        "config/ai/model": "gpt-old",
+        "config/ai/api_key": "secret",
+        "config/ai/max_tokens": "8192",
+        "config/ai/reasoning": "low",
+      },
+      profile: { id: "fast", name: "Fast", appliedAt: 100 },
+      updatedAt: 123,
+    }));
 
-    expect(profiles).toHaveLength(1);
-    expect(profiles[0].values).toEqual({
-      "config/ai/provider": "custom",
-      "config/ai/model": "fast-model",
-    });
+    expect(config).toBeNull();
+    expect(parseProcessAiConfig(JSON.stringify({
+      version: 2,
+      modelId: "fast",
+      overrides: { "config/ai/model": "gpt-old" },
+      updatedAt: 123,
+    }))).toBeNull();
+    expect(parseProcessAiConfig(JSON.stringify({
+      version: 2,
+      modelId: 42,
+      updatedAt: 123,
+    }))).toBeNull();
   });
 });

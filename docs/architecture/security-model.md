@@ -31,7 +31,7 @@ program and any syscalls it implements, but never claims an authority role. The
 Kernel derives a human, machine, or service principal from the credential:
 
 - passwords and user tokens produce human principals;
-- node tokens produce machine principals and are bound to one peer id; and
+- machine tokens produce machine principals and are bound to one peer id; and
 - service tokens produce service principals.
 
 The resulting grant independently lists syscalls the peer may call, signals it

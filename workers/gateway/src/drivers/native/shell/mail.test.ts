@@ -5,6 +5,7 @@ import type {
   ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
 import { env } from "cloudflare:test";
+import { testPeer } from "../../../test-support/peers";
 import { createCommandContext, InMemoryFs, type CommandContext } from "just-bash";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createAccountHomeBackend } from "../../../fs/backends/account-home";
@@ -128,11 +129,7 @@ describe("mail shell command", () => {
       // SAFETY: this fixture supplies the KernelContext fields used by the command.
       const ctx = {
         env: { STORAGE: env.STORAGE },
-        identity: {
-          role: "user",
-          process: personalAgent,
-          capabilities: [],
-        },
+        peer: testPeer({ kind: "human", account: personalAgent, calls: [] }),
         processId: "proc:hank-agent",
         auth,
         mailboxes,
@@ -465,18 +462,14 @@ function commandContext(
 ): KernelContext {
   // SAFETY: this fixture supplies the KernelContext fields used by mail commands.
   return {
-    identity: {
-      role: "user",
-      process: {
+    peer: testPeer({ kind: "human", account: {
         uid: 1000,
         gid: 1000,
         gids: [1000, 100],
         username: "hank",
         home: "/home/hank",
         cwd: "/home/hank",
-      },
-      capabilities,
-    },
+      }, calls: capabilities }),
     requestId,
     procs: { getOwnerUid: () => null },
   } as KernelContext;

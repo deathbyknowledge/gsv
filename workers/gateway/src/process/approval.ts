@@ -2,7 +2,7 @@ import { MAIL_SEND, NET_FETCH } from "../syscalls/constants";
 import { isRoutableSyscall, type SyscallName } from "../syscalls";
 import { z } from "zod";
 
-export type ToolApprovalAction = "auto" | "ask" | "deny";
+type ToolApprovalAction = "auto" | "ask" | "deny";
 
 export type ToolApprovalRule = {
   match: string;

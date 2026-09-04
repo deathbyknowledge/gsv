@@ -1,5 +1,4 @@
 import {
-  DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
   normalizeTranscriptionResponse,
   transcribeAudioWithWorkersAi,
   type AudioTranscriptionBinding,
@@ -8,7 +7,6 @@ import {
 } from "./transcription";
 import {
   DEFAULT_AUDIO_SPEECH_ENCODING,
-  DEFAULT_AUDIO_SPEECH_MODEL,
   DEFAULT_AUDIO_SPEECH_TIMEOUT_MS,
   synthesizeSpeechWithWorkersAi,
   type AudioSpeechBinding,
@@ -51,9 +49,9 @@ type ImageGenerationResponse =
   | JsonValue;
 
 export type ImageGenerationRequest = {
-  provider?: string;
+  provider: string;
   apiKey?: string;
-  model?: string;
+  model: string;
   prompt: string;
   size?: string;
   quality?: string;
@@ -71,10 +69,6 @@ export type ImageGenerationResult = {
 };
 
 export const OPENAI_PROVIDER = "openai";
-export const DEFAULT_OPENAI_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
-export const DEFAULT_OPENAI_SPEECH_MODEL = "gpt-4o-mini-tts";
-export const DEFAULT_OPENAI_SPEECH_VOICE = "alloy";
-export const DEFAULT_OPENAI_IMAGE_MODEL = "gpt-image-1.5";
 export const DEFAULT_IMAGE_GENERATION_MODEL = "@cf/black-forest-labs/flux-1-schnell";
 export const DEFAULT_IMAGE_GENERATION_TIMEOUT_MS = 60_000;
 
@@ -92,7 +86,7 @@ export async function transcribeAudio(
   if (isWorkersAiProvider(provider)) {
     return transcribeAudioWithWorkersAi(runtime.workersAi, {
       ...request,
-      model: normalizeOptionalText(request.model) || DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
+      model: requireConfiguredValue(request.model, "Audio transcription model"),
       timeoutMs,
     });
   }
@@ -100,7 +94,7 @@ export async function transcribeAudio(
     return transcribeAudioWithOpenAi(getFetch(runtime.fetch), {
       ...request,
       provider,
-      model: normalizeOptionalText(request.model) || DEFAULT_OPENAI_TRANSCRIPTION_MODEL,
+      model: requireConfiguredValue(request.model, "Audio transcription model"),
       timeoutMs,
     });
   }
@@ -115,15 +109,15 @@ export async function synthesizeSpeech(
   if (isWorkersAiProvider(provider)) {
     return synthesizeSpeechWithWorkersAi(runtime.workersAi, {
       ...request,
-      model: normalizeOptionalText(request.model) || DEFAULT_AUDIO_SPEECH_MODEL,
+      model: requireConfiguredValue(request.model, "Speech synthesis model"),
     });
   }
   if (isOpenAiProvider(provider)) {
     return synthesizeSpeechWithOpenAi(getFetch(runtime.fetch), {
       ...request,
       provider,
-      model: normalizeOptionalText(request.model) || DEFAULT_OPENAI_SPEECH_MODEL,
-      voice: normalizeOptionalText(request.voice) || DEFAULT_OPENAI_SPEECH_VOICE,
+      model: requireConfiguredValue(request.model, "Speech synthesis model"),
+      voice: requireConfiguredValue(request.voice, "OpenAI speech voice"),
     });
   }
   throw new Error(`Unsupported speech provider: ${provider}`);
@@ -135,13 +129,13 @@ export async function generateImage(
 ): Promise<ImageGenerationResult | null> {
   const provider = normalizeProvider(request.provider);
   if (isWorkersAiProvider(provider)) {
-    return generateImageWithWorkersAi(runtime.workersAi, request);
+    return await generateImageWithWorkersAi(runtime.workersAi, request);
   }
   if (isOpenAiProvider(provider)) {
-    return generateImageWithOpenAi(getFetch(runtime.fetch), {
+    return await generateImageWithOpenAi(getFetch(runtime.fetch), {
       ...request,
       provider,
-      model: normalizeOptionalText(request.model) || DEFAULT_OPENAI_IMAGE_MODEL,
+      model: requireConfiguredValue(request.model, "Image generation model"),
     });
   }
   throw new Error(`Unsupported image generation provider: ${provider}`);
@@ -210,8 +204,8 @@ async function synthesizeSpeechWithOpenAi(
   request: AudioSpeechRequest & { provider: string; apiKey?: string },
 ): Promise<AudioSpeechResult | null> {
   const apiKey = requireApiKey(request.apiKey, "OpenAI speech synthesis");
-  const model = normalizeOptionalText(request.model) || DEFAULT_OPENAI_SPEECH_MODEL;
-  const voice = normalizeOptionalText(request.voice) || DEFAULT_OPENAI_SPEECH_VOICE;
+  const model = requireConfiguredValue(request.model, "OpenAI speech synthesis model");
+  const voice = requireConfiguredValue(request.voice, "OpenAI speech voice");
   const format = normalizeOpenAiSpeechFormat(request.encoding, request.container);
   const timeoutMs = normalizePositiveNumber(request.timeoutMs) ?? DEFAULT_AUDIO_SPEECH_TIMEOUT_MS;
   const body: JsonObject = {
@@ -263,10 +257,16 @@ async function generateImageWithWorkersAi(
   if (!ai) {
     return null;
   }
-  const model = normalizeOptionalText(request.model) || DEFAULT_IMAGE_GENERATION_MODEL;
+  const model = requireConfiguredValue(request.model, "Workers AI image generation model");
   const prompt = normalizeOptionalText(request.prompt);
   if (!prompt) {
     return null;
+  }
+  const requestedFormat = normalizeImageOutputFormat(request.format);
+  if (model === DEFAULT_IMAGE_GENERATION_MODEL && requestedFormat && requestedFormat !== "jpeg") {
+    throw new Error(
+      `${DEFAULT_IMAGE_GENERATION_MODEL} returns JPEG and does not support ${requestedFormat} output`,
+    );
   }
   const timeoutMs = normalizePositiveNumber(request.timeoutMs) ?? DEFAULT_IMAGE_GENERATION_TIMEOUT_MS;
   const response = await withTimeout(
@@ -286,7 +286,7 @@ async function generateImageWithOpenAi(
   request: ImageGenerationRequest & { provider: string; model: string },
 ): Promise<ImageGenerationResult | null> {
   const apiKey = requireApiKey(request.apiKey, "OpenAI image generation");
-  const model = normalizeOptionalText(request.model) || DEFAULT_OPENAI_IMAGE_MODEL;
+  const model = requireConfiguredValue(request.model, "OpenAI image generation model");
   const prompt = normalizeOptionalText(request.prompt);
   if (!prompt) {
     return null;
@@ -534,7 +534,19 @@ function requireApiKey(value: string | undefined, label: string): string {
 }
 
 function normalizeProvider(value: string | undefined): string {
-  return normalizeOptionalText(value)?.toLowerCase() || "workers-ai";
+  const provider = normalizeOptionalText(value)?.toLowerCase();
+  if (!provider) {
+    throw new Error("AI provider is required");
+  }
+  return provider;
+}
+
+function requireConfiguredValue(value: string | undefined, label: string): string {
+  const configuredValue = normalizeOptionalText(value);
+  if (!configuredValue) {
+    throw new Error(`${label} configuration is required`);
+  }
+  return configuredValue;
 }
 
 function isOpenAiProvider(provider: string): boolean {

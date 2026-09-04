@@ -87,7 +87,7 @@ To connect a messenger (Discord / Telegram / WhatsApp), add more devices, and se
 Connected devices are reachable by your agents from anywhere — outbound-only, so no open ports, no inbound connections, no VPN. Add one via **GSV > Devices** in the Web UI, or the CLI:
 
 ```bash
-gsv auth token create --kind device --device macbook --label Macbook  # note the token
+gsv auth token create --kind machine --peer macbook --label Macbook  # note the token
 gsv config --local set device.token <token>
 gsv daemon install --id macbook --workspace ~/  # background service
 gsv daemon status

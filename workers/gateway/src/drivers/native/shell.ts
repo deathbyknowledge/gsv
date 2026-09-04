@@ -16,6 +16,7 @@ import type {
 } from "just-bash";
 import { resolveUserPath } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
+import { requirePrincipal } from "../../kernel/context";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
 import {
   DEFAULT_SHELL_EXEC_TIMEOUT_MS,
@@ -45,7 +46,7 @@ export async function handleShellExec(
   ctx: KernelContext,
   options?: NativeShellCommandOptions,
 ): Promise<ShellExecResult> {
-  const identity = ctx.identity!.process;
+  const identity = requirePrincipal(ctx).account;
   if (args.sessionId) {
     return {
       status: "failed",
@@ -170,10 +171,6 @@ function createBash(
   const serverName = ctx.config.get("config/server/name") ?? "gsv";
   const serverVersion = ctx.config.get("config/server/version") ?? ctx.serverVersion;
   const networkEnabled = ctx.config.get("config/shell/network_enabled") !== "false";
-  const maxOutput = parseInt(
-    ctx.config.get("config/shell/max_output_bytes") ?? "524288",
-    10,
-  );
 
   return new Bash({
     fs,
@@ -207,7 +204,9 @@ function createBash(
       maxCommandCount: 1000,
       maxCallDepth: 64,
       maxLoopIterations: 10_000,
-      maxOutputSize: maxOutput,
+      // The returned stdout/stderr are truncated to config/shell/max_output_bytes
+      // separately. Pipe traffic inside one invocation, including bytes that
+      // only ever flow into files, keeps just-bash's own 256 MiB ceiling.
       maxExecutionTimeMs: timeoutMs + JUST_BASH_EXECUTION_BACKSTOP_GRACE_MS,
       maxExtensionCleanupTimeMs: JUST_BASH_EXTENSION_CLEANUP_TIME_MS,
     },

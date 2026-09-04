@@ -103,11 +103,11 @@ function createCtx(overrides?: {
       tokenPrefix: "gsv_node_abc",
       uid: 1000,
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      kind: "node" as const,
+      kind: "machine" as const,
       label: "node:macbook",
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       allowedRole: "driver" as const,
-      allowedDeviceId: "macbook",
+      peerId: "macbook",
       createdAt: 1_700_000_000_000,
       expiresAt: null,
     })),
@@ -213,8 +213,8 @@ describe("handleSysSetup", () => {
           apiKey: "or-key",
         },
         timezone: "Europe/Amsterdam",
-        node: {
-          deviceId: "macbook",
+        machine: {
+          peerId: "macbook",
         },
       },
       ctx,
@@ -229,9 +229,22 @@ describe("handleSysSetup", () => {
       }),
     );
     expect(usersGroup.members).toContain("alice");
-    expect(config.set).toHaveBeenCalledWith("config/ai/provider", "openrouter");
-    expect(config.set).toHaveBeenCalledWith("config/ai/model", "qwen/qwen3.5-35b-a3b");
-    expect(config.set).toHaveBeenCalledWith("config/ai/api_key", "or-key");
+    expect(config.set).toHaveBeenCalledWith(
+      "users/1000/ai/models",
+      JSON.stringify({
+        version: 1,
+        models: [{
+          id: "setup-primary",
+          name: "qwen/qwen3.5-35b-a3b",
+          provider: "openrouter",
+          model: "qwen/qwen3.5-35b-a3b",
+        }],
+      }),
+    );
+    expect(config.set).toHaveBeenCalledWith(
+      "users/1000/ai/models/setup-primary/api_key",
+      "or-key",
+    );
     expect(config.set).toHaveBeenCalledWith("config/server/timezone", "Europe/Amsterdam");
     expect(storage.put).toHaveBeenCalledWith(
       "home/alice/.dir",
@@ -240,12 +253,12 @@ describe("handleSysSetup", () => {
     );
     expect(result.user.username).toBe("alice");
     expect(result.server).toEqual({ version: "0.0.1-test", release: "dev" });
-    expect(result.nodeToken?.allowedDeviceId).toBe("macbook");
+    expect(result.machineToken?.peerId).toBe("macbook");
     expect(ensurePersonalControllerMock).toHaveBeenCalledWith(1000, ctx, undefined);
   });
 
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-  it("uses GSV included inference as the managed first-boot default", async () => {
+  it("leaves the managed base implicit when setup has no AI selection", async () => {
     const { ctx, config } = createCtx({ managedInference: true });
 
     const result = await handleSysSetup(
@@ -256,9 +269,7 @@ describe("handleSysSetup", () => {
       ctx,
     );
 
-    expect(config.set).toHaveBeenCalledWith("config/ai/provider", "gsv");
-    expect(config.set).toHaveBeenCalledWith("config/ai/model", "default");
-    expect(config.set).toHaveBeenCalledWith("config/ai/fallback_model_profile", "");
+    expect(config.set).not.toHaveBeenCalledWith("users/1000/ai/models", expect.anything());
     expect(result.server.features).toEqual(["ai.provider.gsv"]);
   });
 
@@ -273,12 +284,10 @@ describe("handleSysSetup", () => {
       ctx,
     );
 
-    expect(config.set).not.toHaveBeenCalledWith("config/ai/provider", expect.anything());
-    expect(config.set).not.toHaveBeenCalledWith("config/ai/model", expect.anything());
-    expect(config.set).not.toHaveBeenCalledWith("config/ai/fallback_model_profile", expect.anything());
+    expect(config.set).not.toHaveBeenCalledWith("users/1000/ai/models", expect.anything());
   });
 
-  it("normalizes an explicit GSV provider without accepting a model or credential", async () => {
+  it("writes nothing for an explicit GSV Included choice, which is the base", async () => {
     const { ctx, config } = createCtx({ managedInference: true });
 
     await handleSysSetup(
@@ -292,9 +301,11 @@ describe("handleSysSetup", () => {
       ctx,
     );
 
-    expect(config.set).toHaveBeenCalledWith("config/ai/provider", "gsv");
-    expect(config.set).toHaveBeenCalledWith("config/ai/model", "default");
-    expect(config.set).not.toHaveBeenCalledWith("config/ai/api_key", expect.anything());
+    expect(config.set).not.toHaveBeenCalledWith("users/1000/ai/models", expect.anything());
+    expect(config.set).not.toHaveBeenCalledWith(
+      "users/1000/ai/models/setup-primary/api_key",
+      expect.anything(),
+    );
   });
 
   it("preserves an explicit bring-your-own provider on managed setup", async () => {
@@ -313,9 +324,14 @@ describe("handleSysSetup", () => {
       ctx,
     );
 
-    expect(config.set).toHaveBeenCalledWith("config/ai/provider", "openrouter");
-    expect(config.set).toHaveBeenCalledWith("config/ai/model", "openai/gpt-5-mini");
-    expect(config.set).toHaveBeenCalledWith("config/ai/api_key", "provider-key");
+    expect(config.set).toHaveBeenCalledWith(
+      "users/1000/ai/models",
+      expect.stringContaining('"model":"openai/gpt-5-mini"'),
+    );
+    expect(config.set).toHaveBeenCalledWith(
+      "users/1000/ai/models/setup-primary/api_key",
+      "provider-key",
+    );
   });
 
   it("seeds shipped skills into root home after first setup bootstrap", async () => {
@@ -345,8 +361,12 @@ describe("handleSysSetup", () => {
     expect(handleSysBootstrapMock).toHaveBeenCalledWith(
       undefined,
       expect.objectContaining({
-        identity: expect.objectContaining({
-          process: expect.objectContaining({ username: "alice" }),
+        peer: expect.objectContaining({
+          peer: expect.objectContaining({
+            principal: expect.objectContaining({
+              account: expect.objectContaining({ username: "alice" }),
+            }),
+          }),
         }),
       }),
     );

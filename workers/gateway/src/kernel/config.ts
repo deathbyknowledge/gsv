@@ -5,8 +5,8 @@
  * and /sys/users/{uid}/* (per-user, owner or root writes).
  *
  * Keys are virtual path segments stripped of the /sys/ prefix:
- *   "config/ai/provider"   → /sys/config/ai/provider
- *   "users/0/ai/model"     → /sys/users/0/ai/model
+ *   "config/ai/models"       → /sys/config/ai/models
+ *   "users/1000/ai/models"   → /sys/users/1000/ai/models
  *
  * SQLite stores explicit overrides. SYSTEM_CONFIG_DEFAULTS is overlaid at
  * read time so code defaults remain live unless a key is explicitly set.
@@ -20,15 +20,15 @@ import {
   GSV_RUNTIME_FACTS,
   GSV_TARGET_CONTEXT,
 } from "../prompts/system";
-import {
-  DEFAULT_TEXT_GENERATION_MAX_TOKENS,
-  DEFAULT_WORKERS_AI_FALLBACK_MODEL,
-  DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID,
-  DEFAULT_WORKERS_AI_FALLBACK_PROFILE_NAME,
-  DEFAULT_WORKERS_AI_MODEL,
-} from "../inference/default-models";
 import { MAIL_SEND } from "../syscalls/constants";
 import { DEFAULT_SHELL_EXEC_TIMEOUT_MS } from "@humansandmachines/gsv/protocol";
+import {
+  aiModelApiKeyConfigKey,
+  isAiModelStackConfigKey,
+  isSameAiModelCredentialScope,
+  parseAiModelApiKeyConfigKey,
+  parseAiModelStack,
+} from "./ai-model-stack";
 
 // =============================================================================
 // System config defaults — every field documented.
@@ -56,46 +56,15 @@ function defineSystemConfigDefaults<T extends SystemConfigDefaults>(
   return defaults;
 }
 
-const DEFAULT_ROOT_MODEL_PROFILES = JSON.stringify({
-  version: 1,
-  profiles: [{
-    id: DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID,
-    name: DEFAULT_WORKERS_AI_FALLBACK_PROFILE_NAME,
-    values: {
-      "config/ai/provider": "workers-ai",
-      "config/ai/model": DEFAULT_WORKERS_AI_FALLBACK_MODEL,
-      "config/ai/provider_style": "auto",
-      "config/ai/transport_target": "gsv",
-      "config/ai/reasoning": "medium",
-      "config/ai/max_tokens": String(DEFAULT_TEXT_GENERATION_MAX_TOKENS),
-      "config/ai/max_context_bytes": "32768",
-    },
-    createdAt: 1,
-    updatedAt: 1,
-  }],
-});
 
 export const SYSTEM_CONFIG_DEFAULTS = defineSystemConfigDefaults({
   // -- AI / LLM ---------------------------------------------------------------
-  // The LLM provider to use (workers-ai, anthropic, openai, google, mistral, etc.)
-  "config/ai/provider": "workers-ai",
-  // The model identifier for the LLM provider
-  "config/ai/model": DEFAULT_WORKERS_AI_MODEL,
-  // Optional custom provider base URL. Leave empty to use the built-in provider endpoint.
-  "config/ai/base_url": "",
-  // Optional custom provider API style: auto, openai-chat-completions, openai-responses, or anthropic-messages.
-  "config/ai/provider_style": "auto",
-  // Where custom provider HTTP requests exit: gsv/worker or a connected device id.
-  "config/ai/transport_target": "gsv",
-  // API key for the LLM provider. Empty is valid for local providers such as Workers AI.
-  "config/ai/api_key": "",
+  // config/ai/models has no static default: the deployment supplies a base
+  // stack (see inference/base-model-stack.ts) that the system list at
+  // config/ai/models and each owner's users/{uid}/ai/models extend in order.
   // Reasoning effort/mode hint passed to the model (off, minimal, low, medium, high, xhigh).
   // Only applies to models that support extended thinking.
   "config/ai/reasoning": "medium",
-  // Max tokens for LLM responses (model-dependent upper bound).
-  "config/ai/max_tokens": String(DEFAULT_TEXT_GENERATION_MAX_TOKENS),
-  // Fallback context window for providers that are not in the local model registry.
-  "config/ai/context_window_tokens": "256000",
   // System prompt context, assembled in lexical order, applied to every
   // process. Per-agent persona/context lives in each account's home
   // (/home/<account>/context.d), seeded at account creation.
@@ -114,10 +83,6 @@ export const SYSTEM_CONFIG_DEFAULTS = defineSystemConfigDefaults({
   "config/ai/generation/timeout_ms": "180000",
   // Generation streaming transport: auto streams when supported, off forces final-output only.
   "config/ai/generation/streaming": "auto",
-  // Saved model profile id used when the primary text model fails.
-  "config/ai/fallback_model_profile": DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID,
-  // Root-owned shipped model profiles referenced by global defaults.
-  "users/0/ai/model_profiles": DEFAULT_ROOT_MODEL_PROFILES,
   // Moondream image-reading resource limits used by process attachments and AI syscalls.
   "config/ai/image/read/max_bytes": "10485760",
   "config/ai/image/read/max_tokens": "28672",
@@ -161,7 +126,8 @@ export const SYSTEM_CONFIG_DEFAULTS = defineSystemConfigDefaults({
 });
 
 // Per-user config keys follow the same structure under "users/{uid}/ai/*".
-// e.g. "users/1000/ai/provider" overrides "config/ai/provider" for uid 1000.
+// e.g. "users/1000/ai/models" is uid 1000's own model list, layered ahead of
+// "config/ai/models" and the deployment base.
 // Only AI config and UI presentation prefs (e.g. "users/{uid}/ui/avatar") are
 // user-overridable; server/shell/process config is system-only.
 export const USER_OVERRIDABLE_PREFIXES = ["ai/", "ui/"] as const;
@@ -182,6 +148,26 @@ export class ConfigStore {
   }
 
   set(key: string, value: string): void {
+    const credential = parseAiModelApiKeyConfigKey(key);
+    if (credential) {
+      const stack = parseAiModelStack(this.get(credential.stackKey));
+      if (!stack?.models.some((model) => model.id === credential.modelId)) {
+        throw new Error(
+          `AI model ${credential.modelId} is not configured at /sys/${credential.stackKey}`,
+        );
+      }
+    }
+    if (isAiModelStackConfigKey(key)) {
+      if (value.trim().length === 0) {
+        this.delete(key);
+        return;
+      }
+      const nextStack = parseAiModelStack(value);
+      if (!nextStack) {
+        throw new Error(`Invalid AI model stack at /sys/${key}`);
+      }
+      this.clearDetachedAiModelCredentials(key, nextStack);
+    }
     this.sql.exec(
       "INSERT OR REPLACE INTO config_kv (key, value) VALUES (?, ?)",
       key,
@@ -191,6 +177,9 @@ export class ConfigStore {
 
   delete(key: string): boolean {
     const existing = this.getExplicit(key);
+    if (isAiModelStackConfigKey(key) && (existing !== null || key.startsWith("users/"))) {
+      this.clearDetachedAiModelCredentials(key, null);
+    }
     if (existing === null) return false;
     this.sql.exec("DELETE FROM config_kv WHERE key = ?", key);
     return true;
@@ -229,6 +218,31 @@ export class ConfigStore {
       "SELECT key, value FROM config_kv WHERE key LIKE ? ORDER BY key",
       pattern + "%",
     ).toArray();
+  }
+
+  private clearDetachedAiModelCredentials(
+    stackKey: string,
+    nextStack: ReturnType<typeof parseAiModelStack>,
+  ): void {
+    const currentStack = parseAiModelStack(this.get(stackKey));
+    const currentById = new Map((currentStack?.models ?? []).map((model) => [model.id, model]));
+    const nextById = new Map((nextStack?.models ?? []).map((model) => [model.id, model]));
+    for (const entry of this.listExplicit(stackKey)) {
+      const relative = entry.key.slice(`${stackKey}/`.length);
+      const match = /^([^/]+)\/api_key$/.exec(relative);
+      if (!match) {
+        continue;
+      }
+      const modelId = match[1];
+      const current = currentById.get(modelId);
+      const next = nextById.get(modelId);
+      if (!current || !next || !isSameAiModelCredentialScope(current, next)) {
+        this.sql.exec(
+          "DELETE FROM config_kv WHERE key = ?",
+          aiModelApiKeyConfigKey(stackKey, modelId),
+        );
+      }
+    }
   }
 }
 

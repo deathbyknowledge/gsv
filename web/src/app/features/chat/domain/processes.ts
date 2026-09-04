@@ -70,6 +70,7 @@ export type ChatHistory = {
   pendingHil: ProcHilRequest | null;
   context: Extract<ProcHistoryResult, { ok: true }>["context"];
   contextRevision: number;
+  historyPolicy?: Extract<ProcHistoryResult, { ok: true }>["historyPolicy"];
 };
 
 export type ChatProcessTraceArgs = ProcTraceArgs;
@@ -297,6 +298,7 @@ export function normalizeHistory(result: Extract<ProcHistoryResult, { ok: true }
     pendingHil,
     context: result.context ?? null,
     contextRevision,
+    historyPolicy: result.historyPolicy,
   };
 }
 

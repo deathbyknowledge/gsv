@@ -4,6 +4,7 @@ import type {
   AdapterSurfaceKind,
 } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
+import { principalOf, requirePrincipal } from "./context";
 import type { IdentityLinkRecord } from "./identity-links";
 import type { SurfaceRouteRecord } from "./surface-routes";
 import { resolveCallerOwnerUid } from "./context";
@@ -105,7 +106,7 @@ export async function listVisibleAdapterMessageDestinations(
   ctx: KernelContext,
   options: { includeOffline?: boolean; includeUnavailable?: boolean } = {},
 ): Promise<VisibleAdapterMessageDestination[]> {
-  if (!ctx.identity || ctx.identity.role !== "user") {
+  if (!principalOf(ctx) || requirePrincipal(ctx).kind !== "human") {
     return [];
   }
   const ownerUid = resolveCallerOwnerUid(ctx);
@@ -237,7 +238,7 @@ export function updateAdapterMessageDestinationRoute(
     uid: ownerUid,
     pid: process.processId,
     mode: "surface",
-    updatedByUid: ctx.identity!.process.uid,
+    updatedByUid: requirePrincipal(ctx).account.uid,
   });
 }
 
@@ -297,7 +298,7 @@ function setPrivateDmWorkRoute(
     uid: ownerUid,
     pid: target.processId,
     mode: "work",
-    updatedByUid: ctx.identity!.process.uid,
+    updatedByUid: requirePrincipal(ctx).account.uid,
   });
 }
 

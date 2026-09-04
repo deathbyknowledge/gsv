@@ -1,6 +1,7 @@
 type KernelTestValue<T = string | number | boolean | null | undefined> = T;
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { testPeer } from "../../test-support/peers";
 import type { KernelContext } from "../context";
 import type { OAuthAccountRecord, OAuthFlowRecord } from "../oauth-store";
 import {
@@ -30,18 +31,14 @@ type FakeOAuth = {
 function makeContext(uid: number, oauth: FakeOAuth): KernelContext {
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
-    identity: {
-      role: "user",
-      process: {
+    peer: testPeer({ kind: "human", account: {
         uid,
         gid: uid,
         gids: [uid],
         username: uid === 0 ? "root" : `user${uid}`,
         home: uid === 0 ? "/root" : `/home/user${uid}`,
         cwd: uid === 0 ? "/root" : `/home/user${uid}`,
-      },
-      capabilities: ["*"],
-    },
+      }, calls: ["*"] }),
     oauth,
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as KernelContext;
@@ -408,6 +405,80 @@ describe("sys.oauth handlers", () => {
         refreshedAt: 1_700_000_000_000,
       },
     }));
+  });
+
+  it("describes an incomplete token response without echoing its tokens", async () => {
+    const account: OAuthAccountRecord = {
+      accountId: "acct-codex",
+      uid: 1000,
+      kind: "ai-provider",
+      provider: "openai-codex",
+      accountKey: "default",
+      label: "OpenAI Codex",
+      scope: "openid profile email offline_access",
+      resource: null,
+      clientId: "openai-codex-device",
+      tokenType: "Bearer",
+      accessToken: "stale-access-token",
+      refreshToken: "stored-refresh-token",
+      expiresAt: 1_600_000_000_000,
+      createdAt: 1_600_000_000_000,
+      updatedAt: 1_600_000_000_000,
+      lastUsedAt: null,
+      metadata: {},
+    };
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      access_token: "leaked-access-token",
+      id_token: "leaked-id-token",
+      token_type: "Bearer",
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+    const oauth = { upsertAccount: vi.fn() };
+
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    await expect(refreshOpenAICodexAccount(oauth as any, account, fetcher)).rejects.toThrow(
+      // Names the missing and received fields, never the token values themselves.
+      /^(?!.*leaked-)(?=.*missing expires_in)(?=.*received access_token, id_token, token_type)/s,
+    );
+    expect(oauth.upsertAccount).not.toHaveBeenCalled();
+  });
+
+  it("reduces a failed token exchange to its error code without the response body", async () => {
+    const account: OAuthAccountRecord = {
+      accountId: "acct-codex",
+      uid: 1000,
+      kind: "ai-provider",
+      provider: "openai-codex",
+      accountKey: "default",
+      label: "OpenAI Codex",
+      scope: "openid profile email offline_access",
+      resource: null,
+      clientId: "openai-codex-device",
+      tokenType: "Bearer",
+      accessToken: "stale-access-token",
+      refreshToken: "stored-refresh-token",
+      expiresAt: 1_600_000_000_000,
+      createdAt: 1_600_000_000_000,
+      updatedAt: 1_600_000_000_000,
+      lastUsedAt: null,
+      metadata: {},
+    };
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      error: "invalid_grant",
+      error_description: "Refresh token expired",
+      access_token: "leaked-access-token",
+    }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    }));
+    const oauth = { upsertAccount: vi.fn() };
+
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    await expect(refreshOpenAICodexAccount(oauth as any, account, fetcher)).rejects.toThrow(
+      /^(?!.*leaked-)(?=.*status 400: invalid_grant: Refresh token expired)/s,
+    );
   });
 
   it("lists only caller accounts for non-root users", () => {

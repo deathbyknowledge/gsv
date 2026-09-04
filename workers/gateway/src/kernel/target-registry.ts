@@ -5,19 +5,19 @@
  * and implement syscall interfaces. Think /dev/ in Linux.
  *
  * Tables:
- *   devices        — device catalog (survives disconnects)
- *   device_access  — ACL: which groups can use which devices
+ *   targets        — device catalog (survives disconnects)
+ *   target_access  — ACL: which groups can use which targets
  */
 
 import { hasCapability, isValidCapability } from "./capabilities";
 
-export type DeviceRegisterOptions = {
+export type TargetRegisterOptions = {
   label?: string;
   description?: string;
 };
 
-export type DeviceRecord = {
-  device_id: string;
+export type TargetRecord = {
+  target_id: string;
   owner_uid: number;
   label: string;
   description: string;
@@ -31,28 +31,28 @@ export type DeviceRecord = {
   disconnected_at: number | null;
 };
 
-type RawDeviceRow = Omit<DeviceRecord, "implements" | "online" | "label" | "description"> & {
+type RawTargetRow = Omit<TargetRecord, "implements" | "online" | "label" | "description"> & {
   implements: string;
   online: number;
   label?: string | null;
   description?: string | null;
 };
-type DeviceMutationResult =
-  | { ok: true; created: boolean; device: DeviceRecord }
+type TargetMutationResult =
+  | { ok: true; created: boolean; device: TargetRecord }
   | { ok: false; error: string };
 
-export class DeviceRegistry {
+export class TargetRegistry {
   constructor(private sql: SqlStorage) { }
 
   register(
-    deviceId: string,
+    targetId: string,
     ownerUid: number,
     ownerGid: number,
     impl: string[],
     platform: string,
     version: string,
-    options: DeviceRegisterOptions = {},
-  ): DeviceMutationResult {
+    options: TargetRegisterOptions = {},
+  ): TargetMutationResult {
     for (const pattern of impl) {
       if (!isValidCapability(pattern)) {
         return { ok: false, error: `Invalid implements pattern: ${pattern}` };
@@ -60,24 +60,24 @@ export class DeviceRegistry {
     }
 
     const now = Date.now();
-    const existing = this.get(deviceId);
+    const existing = this.get(targetId);
     const sameOwner = existing?.owner_uid === ownerUid;
     if (existing && !sameOwner) {
-      return { ok: false, error: `Device id already belongs to another user: ${deviceId}` };
+      return { ok: false, error: `Device id already belongs to another user: ${targetId}` };
     }
     const label = normalizeDeviceLabel(
       options.label ?? (sameOwner ? existing?.label : undefined),
-      deviceId,
+      targetId,
     );
     const description = normalizeDeviceDescription(
       options.description ?? (sameOwner ? existing?.description : undefined) ?? "",
     );
     if (existing) {
       this.sql.exec(
-        `UPDATE devices SET
+        `UPDATE targets SET
           owner_uid = ?, label = ?, description = ?, implements = ?, platform = ?, version = ?,
           online = 1, last_seen_at = ?, connected_at = ?, disconnected_at = NULL
-        WHERE device_id = ?`,
+        WHERE target_id = ?`,
         ownerUid,
         label,
         description,
@@ -86,14 +86,14 @@ export class DeviceRegistry {
         version,
         now,
         now,
-        deviceId,
+        targetId,
       );
     } else {
       this.sql.exec(
-        `INSERT INTO devices
-          (device_id, owner_uid, label, description, implements, platform, version, online, first_seen_at, last_seen_at, connected_at)
+        `INSERT INTO targets
+          (target_id, owner_uid, label, description, implements, platform, version, online, first_seen_at, last_seen_at, connected_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
-        deviceId,
+        targetId,
         ownerUid,
         label,
         description,
@@ -106,51 +106,51 @@ export class DeviceRegistry {
       );
 
       this.sql.exec(
-        `INSERT OR IGNORE INTO device_access (device_id, gid) VALUES (?, ?)`,
-        deviceId,
+        `INSERT OR IGNORE INTO target_access (target_id, gid) VALUES (?, ?)`,
+        targetId,
         ownerGid,
       );
     }
 
-    const device = this.get(deviceId);
-    if (!device) throw new Error(`Device registration disappeared: ${deviceId}`);
+    const device = this.get(targetId);
+    if (!device) throw new Error(`Device registration disappeared: ${targetId}`);
     return { ok: true, created: existing === null, device };
   }
 
-  setOnline(deviceId: string, online: boolean): void {
+  setOnline(targetId: string, online: boolean): void {
     const now = Date.now();
     if (online) {
       this.sql.exec(
-        `UPDATE devices SET online = 1, connected_at = ?, disconnected_at = NULL, last_seen_at = ? WHERE device_id = ?`,
+        `UPDATE targets SET online = 1, connected_at = ?, disconnected_at = NULL, last_seen_at = ? WHERE target_id = ?`,
         now,
         now,
-        deviceId,
+        targetId,
       );
     } else {
       this.sql.exec(
-        `UPDATE devices SET online = 0, disconnected_at = ?, last_seen_at = ? WHERE device_id = ?`,
+        `UPDATE targets SET online = 0, disconnected_at = ?, last_seen_at = ? WHERE target_id = ?`,
         now,
         now,
-        deviceId,
+        targetId,
       );
     }
   }
 
-  remove(deviceId: string): boolean {
-    const existing = this.get(deviceId);
+  remove(targetId: string): boolean {
+    const existing = this.get(targetId);
     if (!existing) {
       return false;
     }
 
-    this.sql.exec(`DELETE FROM device_access WHERE device_id = ?`, deviceId);
-    this.sql.exec(`DELETE FROM devices WHERE device_id = ?`, deviceId);
+    this.sql.exec(`DELETE FROM target_access WHERE target_id = ?`, targetId);
+    this.sql.exec(`DELETE FROM targets WHERE target_id = ?`, targetId);
     return true;
   }
 
-  get(deviceId: string): DeviceRecord | null {
-    const rows = this.sql.exec<RawDeviceRow>(
-      `SELECT * FROM devices WHERE device_id = ?`,
-      deviceId,
+  get(targetId: string): TargetRecord | null {
+    const rows = this.sql.exec<RawTargetRow>(
+      `SELECT * FROM targets WHERE target_id = ?`,
+      targetId,
     ).toArray();
 
     if (rows.length === 0) return null;
@@ -158,38 +158,38 @@ export class DeviceRegistry {
     return toDeviceRecord(rows[0]);
   }
 
-  listOnline(): DeviceRecord[] {
-    const rows = this.sql.exec<RawDeviceRow>(
-      `SELECT * FROM devices WHERE online = 1 ORDER BY device_id`,
+  listOnline(): TargetRecord[] {
+    const rows = this.sql.exec<RawTargetRow>(
+      `SELECT * FROM targets WHERE online = 1 ORDER BY target_id`,
     ).toArray();
 
     return rows.map(toDeviceRecord);
   }
 
   /**
-   * List all devices accessible to a user.
-   * uid 0 sees everything. Others see devices they own or have group access to.
+   * List all targets accessible to a user.
+   * uid 0 sees everything. Others see targets they own or have group access to.
    */
-  listForUser(uid: number, gids: number[]): DeviceRecord[] {
-    let rows: RawDeviceRow[];
+  listForUser(uid: number, gids: number[]): TargetRecord[] {
+    let rows: RawTargetRow[];
 
     if (uid === 0) {
-      rows = this.sql.exec<RawDeviceRow>(
-        `SELECT * FROM devices ORDER BY device_id`,
+      rows = this.sql.exec<RawTargetRow>(
+        `SELECT * FROM targets ORDER BY target_id`,
       ).toArray();
     } else if (gids.length > 0) {
       const placeholders = gids.map(() => "?").join(", ");
-      rows = this.sql.exec<RawDeviceRow>(
-        `SELECT DISTINCT d.* FROM devices d
-         LEFT JOIN device_access da ON d.device_id = da.device_id
+      rows = this.sql.exec<RawTargetRow>(
+        `SELECT DISTINCT d.* FROM targets d
+         LEFT JOIN target_access da ON d.target_id = da.target_id
          WHERE d.owner_uid = ? OR da.gid IN (${placeholders})
-         ORDER BY d.device_id`,
+         ORDER BY d.target_id`,
         uid,
         ...gids,
       ).toArray();
     } else {
-      rows = this.sql.exec<RawDeviceRow>(
-        `SELECT * FROM devices WHERE owner_uid = ? ORDER BY device_id`,
+      rows = this.sql.exec<RawTargetRow>(
+        `SELECT * FROM targets WHERE owner_uid = ? ORDER BY target_id`,
         uid,
       ).toArray();
     }
@@ -197,30 +197,30 @@ export class DeviceRegistry {
     return rows.map(toDeviceRecord);
   }
 
-  setDescription(deviceId: string, description: string): boolean {
-    return this.setMetadata(deviceId, { description });
+  setDescription(targetId: string, description: string): boolean {
+    return this.setMetadata(targetId, { description });
   }
 
   setMetadata(
-    deviceId: string,
+    targetId: string,
     patch: { label?: string; description?: string },
   ): boolean {
-    const existing = this.get(deviceId);
+    const existing = this.get(targetId);
     if (!existing) {
       return false;
     }
     const label = patch.label === undefined
       ? existing.label
-      : normalizeDeviceLabel(patch.label, existing.device_id);
+      : normalizeDeviceLabel(patch.label, existing.target_id);
     const description = patch.description === undefined
       ? existing.description
       : normalizeDeviceDescription(patch.description);
     this.sql.exec(
-      `UPDATE devices SET label = ?, description = ?, last_seen_at = ? WHERE device_id = ?`,
+      `UPDATE targets SET label = ?, description = ?, last_seen_at = ? WHERE target_id = ?`,
       label,
       description,
       Date.now(),
-      deviceId,
+      targetId,
     );
     return true;
   }
@@ -229,10 +229,10 @@ export class DeviceRegistry {
    * Check whether a user (by gids) is allowed to use a device.
    * uid 0 always has access.
    */
-  canAccess(deviceId: string, uid: number, gids: number[]): boolean {
+  canAccess(targetId: string, uid: number, gids: number[]): boolean {
     if (uid === 0) return true;
 
-    const device = this.get(deviceId);
+    const device = this.get(targetId);
     if (!device) return false;
 
     if (device.owner_uid === uid) return true;
@@ -241,8 +241,8 @@ export class DeviceRegistry {
 
     const placeholders = gids.map(() => "?").join(", ");
     const rows = this.sql.exec<{ gid: number }>(
-      `SELECT gid FROM device_access WHERE device_id = ? AND gid IN (${placeholders})`,
-      deviceId,
+      `SELECT gid FROM target_access WHERE target_id = ? AND gid IN (${placeholders})`,
+      targetId,
       ...gids,
     ).toArray();
 
@@ -253,8 +253,8 @@ export class DeviceRegistry {
    * Check whether a device implements a given syscall.
    * Reuses the same matching logic as capabilities.
    */
-  canHandle(deviceId: string, syscall: string): boolean {
-    const device = this.get(deviceId);
+  canHandle(targetId: string, syscall: string): boolean {
+    const device = this.get(targetId);
     if (!device) return false;
     return hasCapability(device.implements, syscall);
   }
@@ -263,16 +263,16 @@ export class DeviceRegistry {
    * Find an online device that implements a syscall and is accessible to the user.
    * Returns null if no suitable device is found.
    */
-  findDevice(
+  findTarget(
     syscall: string,
     uid: number,
     gids: number[],
-  ): DeviceRecord | null {
+  ): TargetRecord | null {
     const online = this.listOnline();
     for (const device of online) {
       if (
         hasCapability(device.implements, syscall) &&
-        this.canAccess(device.device_id, uid, gids)
+        this.canAccess(device.target_id, uid, gids)
       ) {
         return device;
       }
@@ -280,35 +280,35 @@ export class DeviceRegistry {
     return null;
   }
 
-  grantAccess(deviceId: string, gid: number): void {
+  grantAccess(targetId: string, gid: number): void {
     this.sql.exec(
-      `INSERT OR IGNORE INTO device_access (device_id, gid) VALUES (?, ?)`,
-      deviceId,
+      `INSERT OR IGNORE INTO target_access (target_id, gid) VALUES (?, ?)`,
+      targetId,
       gid,
     );
   }
 
-  revokeAccess(deviceId: string, gid: number): void {
+  revokeAccess(targetId: string, gid: number): void {
     this.sql.exec(
-      `DELETE FROM device_access WHERE device_id = ? AND gid = ?`,
-      deviceId,
+      `DELETE FROM target_access WHERE target_id = ? AND gid = ?`,
+      targetId,
       gid,
     );
   }
 
-  listAccess(deviceId: string): number[] {
+  listAccess(targetId: string): number[] {
     const rows = this.sql.exec<{ gid: number }>(
-      `SELECT gid FROM device_access WHERE device_id = ? ORDER BY gid`,
-      deviceId,
+      `SELECT gid FROM target_access WHERE target_id = ? ORDER BY gid`,
+      targetId,
     ).toArray();
     return rows.map((r) => r.gid);
   }
 }
 
-function toDeviceRecord(row: RawDeviceRow): DeviceRecord {
+function toDeviceRecord(row: RawTargetRow): TargetRecord {
   return {
     ...row,
-    label: normalizeDeviceLabel(row.label ?? "", row.device_id),
+    label: normalizeDeviceLabel(row.label ?? "", row.target_id),
     description: row.description ?? "",
     implements: JSON.parse(row.implements),
     online: row.online === 1,

@@ -33,22 +33,13 @@ import type {
   ConsoleProcess,
   ConsoleTarget,
 } from "../domain/consoleModels";
-import { modelProfileIdFromOptionValue } from "../domain/consoleAi";
-import { isSensitiveSettingKey } from "../domain/consoleSettings";
+import { modelEntryIdFromOptionValue } from "../domain/consoleAi";
+import { isSensitiveSettingKey, type ConsoleModelListing } from "../domain/consoleSettings";
 import { requestFsRead } from "../../../services/gateway/fsRead";
 import { z } from "zod";
 export type { AgentApprovalAction } from "../domain/consoleAgentBehavior";
 
 export const DEFAULT_CONSOLE_ADAPTERS = ["whatsapp", "discord", "telegram", "slack"] as const;
-const TEXT_MODEL_VALIDATION_KEYS = [
-  "config/ai/provider",
-  "config/ai/model",
-  "config/ai/base_url",
-  "config/ai/provider_style",
-  "config/ai/transport_target",
-  "config/ai/api_key",
-  "config/ai/reasoning",
-] as const;
 const MODEL_VALIDATION_SYSTEM_PROMPT = "You are validating a text-generation model configuration. Reply with exactly: ok";
 const MODEL_VALIDATION_USER_MESSAGE = "Reply with ok.";
 const OPENAI_CODEX_PROVIDER = "openai-codex";
@@ -98,7 +89,6 @@ export type CreateConsoleAgentInput = {
   role: string;
   description: string;
   model?: string;
-  fallbackModel?: string;
   reasoning?: string;
   approval?: string;
   /** Fixed portrait assigned at creation (see agentPresentation.pickAgentImage). */
@@ -125,8 +115,7 @@ export type SaveConsoleAgentContextResult = {
 
 export type SaveConsoleAgentBehaviorInput = {
   uid: number;
-  model: string;
-  fallbackModel?: string;
+  model?: string;
   reasoning: string;
   approval?: string;
 };
@@ -158,7 +147,7 @@ export type SaveConsoleConfigEntriesResult = {
 
 export type ValidateConsoleModelConfigInput = {
   values: Record<string, string>;
-  presetId?: string;
+  modelId?: string;
 };
 
 export type ValidateConsoleModelConfigResult = {
@@ -254,10 +243,9 @@ export type IssuedMachineNodeToken = {
   token: string;
   tokenPrefix: string;
   uid: number;
-  kind: "node";
+  kind: "machine";
   label: string | null;
-  allowedRole: "driver" | null;
-  allowedDeviceId: string | null;
+  peerId: string | null;
   createdAt: number;
   expiresAt: number | null;
 };
@@ -272,7 +260,7 @@ export async function loadConsoleProcesses(client: Pick<GSVClient, "proc">): Pro
 }
 
 export async function loadConsoleTargets(client: ConsoleClient): Promise<ConsoleTarget[]> {
-  return normalizeTargetsPayload(await client.call("sys.device.list", { includeOffline: true }));
+  return normalizeTargetsPayload(await client.call("sys.target.list", { includeOffline: true }));
 }
 
 export async function loadConsoleAccounts(client: Pick<GSVClient, "account">): Promise<ConsoleAccount[]> {
@@ -281,6 +269,11 @@ export async function loadConsoleAccounts(client: Pick<GSVClient, "account">): P
 
 export async function loadConsoleConfig(client: ConsoleClient): Promise<ConsoleConfigEntry[]> {
   return normalizeConfigPayload(await client.sys.config.get({}));
+}
+
+/** The viewer's effective model stack, layered and ordered by the Kernel. */
+export async function loadConsoleModels(client: Pick<GSVClient, "call">): Promise<ConsoleModelListing> {
+  return await client.call("ai.models", {});
 }
 
 export async function loadConsoleIdentityLinks(client: Pick<GSVClient, "call">): Promise<ConsoleIdentityLink[]> {
@@ -346,20 +339,18 @@ export async function validateConsoleModelConfig(
   client: Pick<GSVClient, "call">,
   input: ValidateConsoleModelConfigInput,
 ): Promise<ValidateConsoleModelConfigResult> {
-  const presetId = input.presetId?.trim();
-  const overrides = modelValidationOverrides(input.values);
-  const model = overrides["config/ai/model"] || input.values["config/ai/model"]?.trim();
-  if (!presetId && !model) {
-    throw new Error("model is required");
-  }
+  const modelId = input.modelId?.trim();
+  const modelConfig = modelValidationConfig(input.values);
+  const reasoning = input.values["config/ai/reasoning"]?.trim();
 
   const config: AiTextGenerateConfig = {
-    ...(presetId ? { preset: { id: presetId } } : undefined),
-    ...(Object.keys(overrides).length > 0 ? { overrides } : undefined),
+    modelConfig,
+    ...(modelId ? { modelId } : undefined),
+    ...(reasoning ? { reasoning } : undefined),
   };
-  const secretValues = Object.entries(overrides)
+  const secretValues = Object.entries(input.values)
     .filter(([key, value]) => isSensitiveSettingKey(key) && value.length > 0)
-    .map(([, value]) => value);
+    .map(([, value]) => value.trim());
 
   try {
     const result = await client.call("ai.text.generate", {
@@ -609,9 +600,8 @@ export async function createMachineNodeToken(
   const label = input.label?.trim();
   const expiresAt = z.number().finite().safeParse(input.expiresAt);
   const result = await client.sys.token.create({
-    kind: "node",
-    allowedRole: "driver",
-    allowedDeviceId: deviceId,
+    kind: "machine",
+    peerId: deviceId,
     ...(label ? { label } : undefined),
     ...(expiresAt.success ? { expiresAt: expiresAt.data } : undefined),
   });
@@ -621,10 +611,9 @@ export async function createMachineNodeToken(
     token: result.token.token,
     tokenPrefix: result.token.tokenPrefix,
     uid: result.token.uid,
-    kind: "node",
+    kind: "machine",
     label: result.token.label,
-    allowedRole: result.token.allowedRole === "driver" ? "driver" : null,
-    allowedDeviceId: result.token.allowedDeviceId,
+    peerId: result.token.peerId,
     createdAt: result.token.createdAt,
     expiresAt: result.token.expiresAt,
   };
@@ -639,10 +628,10 @@ export async function deleteConsoleMachine(
     throw new Error("device id is required");
   }
 
-  const result = parseGatewayRecord(await client.call("sys.device.delete", { deviceId }));
+  const result = parseGatewayRecord(await client.call("sys.target.delete", { targetId: deviceId }));
   return {
     deleted: result.deleted === true,
-    deviceId: stringOr(deviceId, result.deviceId),
+    deviceId: stringOr(deviceId, result.targetId),
     revokedTokens: (() => {
       const count = z.number().finite().safeParse(result.revokedTokens);
       return count.success ? Math.max(0, Math.floor(count.data)) : 0;
@@ -831,7 +820,7 @@ export async function loadConsoleOverview(
     config,
   ] = await Promise.all([
     client.proc.list({}),
-    client.call("sys.device.list", { includeOffline: true }),
+    client.call("sys.target.list", { includeOffline: true }),
     client.account.list({}),
     loadAdapterPayloads(client, options.adapters),
     loadOptionalPayload(() => client.call("sys.mcp.list", {})),
@@ -865,14 +854,37 @@ function normalizeIdentityLinkField(value: string, field: string): string {
   return normalized;
 }
 
-function modelValidationOverrides(values: Record<string, string>) {
-  const overrides: Record<string, string> = {};
-  for (const key of TEXT_MODEL_VALIDATION_KEYS) {
-    if (Object.prototype.hasOwnProperty.call(values, key)) {
-      overrides[key] = (values[key] ?? "").trim();
-    }
+function modelValidationConfig(
+  values: Record<string, string>,
+): NonNullable<AiTextGenerateConfig["modelConfig"]> {
+  const provider = values["config/ai/provider"]?.trim();
+  const model = values["config/ai/model"]?.trim();
+  if (!provider || !model) {
+    throw new Error("provider and model are required");
   }
-  return overrides;
+  const config: NonNullable<AiTextGenerateConfig["modelConfig"]> = {
+    provider,
+    model,
+  };
+  if (Object.prototype.hasOwnProperty.call(values, "config/ai/api_key")) {
+    config.apiKey = values["config/ai/api_key"]?.trim() ?? "";
+  }
+  const baseUrl = values["config/ai/base_url"]?.trim();
+  if (baseUrl) config.baseUrl = baseUrl;
+  const providerStyle = values["config/ai/provider_style"]?.trim();
+  if (providerStyle) config.providerStyle = providerStyle;
+  const transportTarget = values["config/ai/transport_target"]?.trim();
+  if (transportTarget) config.transportTarget = transportTarget;
+  const maxTokens = positiveInteger(values["config/ai/max_tokens"]);
+  if (maxTokens) config.maxTokens = maxTokens;
+  const contextWindowTokens = positiveInteger(values["config/ai/context_window_tokens"]);
+  if (contextWindowTokens) config.contextWindowTokens = contextWindowTokens;
+  return config;
+}
+
+function positiveInteger(value: string | undefined): number | undefined {
+  const parsed = Number(value?.trim());
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function hasOpenAiCodexAccountId(metadata: GatewayPayload): boolean {
@@ -963,7 +975,6 @@ async function loadOptionalPayload(load: () => Promise<GatewayPayload>): Promise
 
 type AgentBehaviorConfigDraft = {
   model?: string;
-  fallbackModel?: string;
   reasoning?: string;
   approval?: string;
 };
@@ -975,28 +986,18 @@ async function saveAgentBehaviorConfig(
   options: { includeEmpty?: boolean } = {},
 ): Promise<void> {
   const model = input.model?.trim() ?? "";
-  const fallbackModel = input.fallbackModel?.trim() ?? "";
   const reasoning = input.reasoning?.trim() ?? "";
   const approval = input.approval?.trim() ?? "";
   const writes: Promise<unknown>[] = [];
 
   if (input.model !== undefined && (options.includeEmpty || model)) {
-    const modelProfile = modelProfileIdFromOptionValue(model);
-    if (options.includeEmpty || modelProfile) {
-      writes.push(client.sys.config.set({
-        key: `users/${uid}/ai/model_profile`,
-        value: modelProfile ?? "",
-      }));
+    const modelId = modelEntryIdFromOptionValue(model);
+    if (model && !modelId) {
+      throw new Error("model selection must reference an available model entry");
     }
     writes.push(client.sys.config.set({
-      key: `users/${uid}/ai/model`,
-      value: modelProfile ? "" : model,
-    }));
-  }
-  if (input.fallbackModel !== undefined && (options.includeEmpty || fallbackModel)) {
-    writes.push(client.sys.config.set({
-      key: `users/${uid}/ai/fallback_model_profile`,
-      value: modelProfileIdFromOptionValue(fallbackModel) ?? fallbackModel,
+      key: `users/${uid}/ai/preferred_model`,
+      value: modelId ?? "",
     }));
   }
   if (input.approval !== undefined && (options.includeEmpty || approval)) {

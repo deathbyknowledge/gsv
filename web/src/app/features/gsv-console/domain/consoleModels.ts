@@ -158,4 +158,25 @@ export type ConsoleResourceState<T> = {
   errorText: string;
   isEmpty: boolean;
 };
+
+/**
+ * Joins two resources for one boundary: offline, loading, or failed when
+ * either is, with data only once both have loaded. Emptiness is left to the
+ * first resource, which is the one a page lists.
+ */
+export function combineResourceStates<A, B>(
+  first: ConsoleResourceState<A>,
+  second: ConsoleResourceState<B>,
+): ConsoleResourceState<[A, B]> {
+  const ready = first.data !== null && second.data !== null;
+  return {
+    data: ready ? [first.data!, second.data!] : null,
+    isUnavailable: first.isUnavailable || second.isUnavailable,
+    isLoading: first.isLoading || second.isLoading,
+    isRefreshing: first.isRefreshing || second.isRefreshing,
+    isError: first.isError || second.isError,
+    errorText: first.errorText || second.errorText,
+    isEmpty: first.isEmpty,
+  };
+}
 import type { JsonObject } from "@humansandmachines/gsv/protocol";

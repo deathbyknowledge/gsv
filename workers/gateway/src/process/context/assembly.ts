@@ -1,9 +1,5 @@
 import type {
-  PromptAssemblyInput,
-  PromptAssemblySnapshot,
-  PromptContextProvider,
-  PromptSection,
-  PromptSourceRecord,
+  PromptAssemblyInput, PromptAssemblySnapshot, PromptContextProvider, PromptSection, PromptSourceRecord,
 } from "./types";
 import { resolvePromptProviders } from "./selection";
 

@@ -17,7 +17,6 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.18.0",
     "@cloudflare/workers-types": "^5.20260814.1",
-    "alchemy": "^0.83.1",
     "tsx": "^4.19.0",
     "typescript": "^5.5.2",
     "vitest": "^4.1.9",
@@ -31,7 +30,6 @@
     "agents": "^0.16.0",
     "just-bash": "^3.4.2",
     "marked": "^16.4.2",
-    "openai": "6.40.0",
     "zod": "4.3.6"
   }
 }

@@ -1,6 +1,7 @@
 type KernelTestValue<T = string | number | boolean | null | undefined> = T;
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { testPeer } from "../test-support/peers";
 import { bodyFromText, bodyToText } from "@humansandmachines/gsv/protocol";
 import {
   createRoutedFetch,
@@ -301,7 +302,7 @@ describe("handleNetFetch", () => {
 describe("createRoutedFetch", () => {
   it("passes request cancellation to the device transport", async () => {
     const controller = new AbortController();
-    const requestDevice = vi.fn(async (
+    const requestTarget = vi.fn(async (
       _deviceId: string,
       _call: string,
       _args: KernelTestValue,
@@ -316,23 +317,21 @@ describe("createRoutedFetch", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const routedFetch = createRoutedFetch({
       requestSignal: controller.signal,
-      identity: {
-        process: {
+      peer: testPeer({ kind: "human", account: {
           uid: 1000,
           gid: 1000,
           gids: [1000],
           username: "sam",
           home: "/home/sam",
           cwd: "/home/sam",
-        },
-      },
+        } }),
       auth: {
         getPasswdByUid: () => ({ username: "sam" }),
       },
-      devices: {
+      targets: {
         canAccess: () => true,
         get: () => ({
-          device_id: "workstation",
+          target_id: "workstation",
           owner_uid: 1000,
           label: "Workstation",
           description: "",
@@ -347,15 +346,15 @@ describe("createRoutedFetch", () => {
         }),
       },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    } as never, { requestDevice }, "workstation");
+    } as never, { requestTarget }, "workstation");
     const request = routedFetch("https://example.test/slow");
-    await vi.waitFor(() => expect(requestDevice).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(requestTarget).toHaveBeenCalledOnce());
     const reason = new Error("User interrupted generation");
 
     controller.abort(reason);
 
     await expect(request).rejects.toBe(reason);
-    expect(requestDevice.mock.calls[0][3]?.signal?.aborted).toBe(true);
+    expect(requestTarget.mock.calls[0][3]?.signal?.aborted).toBe(true);
   });
 });
 

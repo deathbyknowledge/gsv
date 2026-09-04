@@ -49,7 +49,7 @@ export type FilesDeleteArgs = {
 };
 
 export async function listFilesTargets(client: FilesClient): Promise<FilesTarget[]> {
-  const payload = await client.call<unknown>("sys.device.list", { includeOffline: true });
+  const payload = await client.call<unknown>("sys.target.list", { includeOffline: true });
   return normalizeFilesTargets(payload);
 }
 

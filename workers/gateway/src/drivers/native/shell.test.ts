@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { testPeer } from "../../test-support/peers";
 import { env } from "cloudflare:workers";
 import { Bash } from "just-bash";
 import {
@@ -17,7 +18,7 @@ import {
 import * as inferenceService from "../../inference/service";
 import * as sharedUtils from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
-import type { DeviceRecord } from "../../kernel/devices";
+import type { TargetRecord } from "../../kernel/target-registry";
 import type { ProcessRecord } from "../../kernel/processes";
 import type { FederationContactRecord } from "../../kernel/federation-store";
 import type { SurfaceRouteRecord } from "../../kernel/surface-routes";
@@ -34,6 +35,7 @@ import {
 import type { ResponsibilityUpdateInput } from "../../kernel/responsibility-store";
 import type { RequestFrame, ResponseFrame } from "../../protocol/frames";
 import type { InstallationIdentity } from "../../installation/identity";
+import { SYSTEM_CONFIG_DEFAULTS } from "../../kernel/config";
 import { stableOpaqueId } from "../../shared/stable-id";
 import * as z from "zod/mini";
 
@@ -93,7 +95,15 @@ function responseFixture(frame: ResponseFrame): ResponseFrame {
 }
 
 const currentDestinationOutputSchema = z.object({
-  destinationId: z.string(),
+  kind: z.enum(["adapter", "client", "process"]),
+  reply: z.object({
+    command: z.literal("message send"),
+    attachmentCommand: z.literal("message attach PATH..."),
+    requiresStandaloneShellCall: z.literal(true),
+    finishesRun: z.literal(false),
+  }),
+  destinationId: z.optional(z.string()),
+  destinationUse: z.optional(z.literal("additional-delivery-only")),
 });
 const destinationListOutputSchema = z.object({
   destinations: z.array(z.object({ id: z.string() })),
@@ -107,12 +117,12 @@ const wikiApplyBodySchema = z.object({
   }))),
 });
 
-function makeDevice(partial: Partial<DeviceRecord> & { device_id: string }): DeviceRecord {
+function makeDevice(partial: Partial<TargetRecord> & { target_id: string }): TargetRecord {
   const now = 1_800_000_000_000;
   return {
-    device_id: partial.device_id,
+    target_id: partial.target_id,
     owner_uid: partial.owner_uid ?? IDENTITY.uid,
-    label: partial.label ?? partial.device_id,
+    label: partial.label ?? partial.target_id,
     description: partial.description ?? "",
     implements: partial.implements ?? ["shell.exec"],
     platform: partial.platform ?? "linux",
@@ -193,7 +203,7 @@ function makeContext(options?: {
   capabilities?: string[];
   config?: Record<string, string>;
   procs?: Partial<KernelContext["procs"]>;
-  devices?: Partial<KernelContext["devices"]>;
+  targets?: Partial<KernelContext["targets"]>;
   auth?: Partial<KernelContext["auth"]>;
   caps?: Partial<KernelContext["caps"]>;
   schedules?: Partial<KernelContext["schedules"]>;
@@ -268,7 +278,7 @@ function makeContext(options?: {
       get(key: string) {
         if (key === "config/server/name") return "gsv";
         if (key === "config/server/version") return "0.4.1";
-        return configValues.get(key) ?? null;
+        return configValues.get(key) ?? SYSTEM_CONFIG_DEFAULTS[key] ?? null;
       },
       getExplicit(key: string) {
         return configValues.get(key) ?? null;
@@ -287,7 +297,7 @@ function makeContext(options?: {
           .sort((left, right) => left.key.localeCompare(right.key));
       },
     }),
-    devices: focusedFixture<KernelContext["devices"]>(options?.devices ?? {}),
+    targets: focusedFixture<KernelContext["targets"]>(options?.targets ?? {}),
     procs: focusedFixture<KernelContext["procs"]>({
       get() {
         return {
@@ -338,11 +348,7 @@ function makeContext(options?: {
       options?.conversations ?? {},
     ),
     connection: null,
-    identity: {
-      role: "user",
-      process: identity,
-      capabilities: options?.capabilities ?? ["repo.refs", "repo.log"],
-    },
+    peer: testPeer({ kind: "human", account: identity, calls: options?.capabilities ?? ["repo.refs", "repo.log"] }),
     processId: options?.processId === null ? undefined : options?.processId ?? "task:shell",
     processRunId: options?.processRunId,
     requestSignal: options?.requestSignal,
@@ -408,6 +414,7 @@ function enableTelegramMessaging(ctx: KernelContext) {
     extra: null,
     updatedAt: 3,
   };
+  const deliveredBodies: Uint8Array[] = [];
   const adapterFrame: NonNullable<AdapterService["adapterFrame"]> = vi.fn(async (
     _installation,
     context,
@@ -417,6 +424,7 @@ function enableTelegramMessaging(ctx: KernelContext) {
       throw new Error("Expected an adapter.send request frame");
     }
     const bytes = frame.body ? await bodyToBytes(frame.body) : undefined;
+    if (bytes) deliveredBodies.push(bytes);
     return {
       type: "res",
       id: frame.id,
@@ -481,7 +489,16 @@ function enableTelegramMessaging(ctx: KernelContext) {
         }
       : null),
   });
-  return { adapterFrame, link, status };
+  return { adapterFrame, deliveredBodies, link, status };
+}
+
+async function currentAdapterDestinationId(ctx: KernelContext): Promise<string> {
+  const current = await handleShellExec({ input: "message current --json" }, ctx);
+  const parsed = currentDestinationOutputSchema.safeParse(JSON.parse(current.stdout));
+  if (!parsed.success || !parsed.data.destinationId) {
+    throw new Error("Current run does not expose an adapter destination");
+  }
+  return parsed.data.destinationId;
 }
 
 function enableMessageRouteStore(
@@ -917,10 +934,90 @@ describe("native shell capability discovery", () => {
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("MAIL(1)");
+    expect(result.stdout).toContain("mail list [--limit N]");
+    expect(result.stdout).toContain("mail show MESSAGE_ID");
+    expect(result.stdout).toContain("how to read a received email");
     expect(result.stdout).toContain("mail send --to ADDRESS");
     expect(result.stdout).toContain("mail reply MESSAGE_ID");
     expect(result.stdout).toContain("mail status DELIVERY_ID");
     expect(result.stdout).toContain("queued");
+  });
+
+  it("splits a file into byte-sized parts", async () => {
+    const result = await handleShellExec(
+      { input: "cd \"$HOME\" && printf 'abcdef' > in.bin && split -b 2 in.bin part. && cat part.ab && echo && cat part.aa part.ab part.ac && echo && printf '%s\\n' part.* | wc -l" },
+      makeContext({ capabilities: ["shell.exec"] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toBe("cd\nabcdef\n3\n");
+  });
+
+  it("slices and rejoins bytes with dd", async () => {
+    const result = await handleShellExec(
+      {
+        input: [
+          "cd \"$HOME\"",
+          "printf 'abcdefgh' > whole.bin",
+          "dd if=whole.bin of=part.0 bs=3 count=1 status=none",
+          "dd if=whole.bin of=part.1 bs=3 skip=1 status=none",
+          "dd if=part.0 of=rejoined.bin bs=3 status=none",
+          "dd if=part.1 of=rejoined.bin bs=3 seek=1",
+          "cat part.0 && echo && cat part.1 && echo && cat rejoined.bin && echo",
+          "dd if=whole.bin bs=2 skip=1 count=1 status=none",
+        ].join(" && "),
+      },
+      makeContext({ capabilities: ["shell.exec"] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toBe("abc\ndefgh\nabcdefgh\ncd");
+    expect(result.stderr).toBe("1+1 records in\n1+1 records out\n5 bytes copied\n");
+  });
+
+  it("truncates the destination unless dd is told conv=notrunc", async () => {
+    const result = await handleShellExec(
+      {
+        input: [
+          "cd \"$HOME\"",
+          "printf 'abcdefgh' > long.bin && printf 'ZZ' > patch.bin",
+          "dd if=patch.bin of=long.bin bs=2 status=none && cat long.bin && echo",
+          "printf 'abcdefgh' > long.bin",
+          "dd if=patch.bin of=long.bin bs=2 conv=notrunc status=none && cat long.bin && echo",
+          "printf 'abcdefgh' > long.bin",
+          "dd if=patch.bin of=long.bin bs=2 seek=1 status=none && cat long.bin && echo",
+          "printf 'abcdefgh' > long.bin",
+          "dd if=patch.bin of=long.bin bs=2 seek=1 conv=notrunc status=none && cat long.bin",
+        ].join(" && "),
+      },
+      makeContext({ capabilities: ["shell.exec"] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toBe("ZZ\nZZcdefgh\nabZZ\nabZZefgh");
+  });
+
+  it("rejects dd operands it does not understand", async () => {
+    const result = await handleShellExec(
+      { input: "dd if=missing.bin of=out.bin; dd bs=zero" },
+      makeContext({ capabilities: ["shell.exec"] }),
+    );
+
+    expect(result.stderr).toContain("dd: failed to open 'missing.bin'");
+    expect(result.stderr).toContain("dd: invalid number: 'zero'");
+  });
+
+  it("renders the cp manual with the bracketed target form", async () => {
+    const result = await handleShellExec(
+      { input: "man cp" },
+      makeContext({ capabilities: ["shell.exec"] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("CP(1)");
+    expect(result.stdout).toContain("cp SOURCE DEST");
+    expect(result.stdout).toContain("[target:with:colons]:/path");
+    expect(result.stdout).toContain("wrap it in brackets");
   });
 
   it("reports the caller's current media capability availability", async () => {
@@ -1040,7 +1137,7 @@ describe("native shell capability discovery", () => {
   it("discovers only caller-visible connected targets", async () => {
     const devices = {
       listForUser: vi.fn(() => [makeDevice({
-        device_id: "studio-mac",
+        target_id: "studio-mac",
         label: "Studio MacBook",
         description: "Laptop used for design work.",
         platform: "darwin",
@@ -1049,11 +1146,11 @@ describe("native shell capability discovery", () => {
     };
     const visible = await handleShellExec(
       { input: "man --search -- 'work on studio macbook'" },
-      makeContext({ capabilities: ["shell.exec", "sys.device.list"], devices }),
+      makeContext({ capabilities: ["shell.exec", "sys.target.list"], targets: devices }),
     );
     const hidden = await handleShellExec(
       { input: "man --search -- 'work on studio macbook'" },
-      makeContext({ capabilities: ["shell.exec"], devices }),
+      makeContext({ capabilities: ["shell.exec"], targets: devices }),
     );
 
     expect(visible.ok).toBe(true);
@@ -1227,7 +1324,7 @@ describe("media native commands", () => {
     expect(result.stderr).toContain("llm: billing required");
   });
 
-  it("uses the native net.fetch transport for llm presets with an origin machine", async () => {
+  it("uses the native net.fetch transport for model entries with an origin machine", async () => {
     generateMock.mockImplementationOnce(async (request: any) => {
       expect(request.config).toMatchObject({
         provider: "custom",
@@ -1256,7 +1353,7 @@ describe("media native commands", () => {
     });
 
     const device = makeDevice({
-      device_id: "linux-machine",
+      target_id: "linux-machine",
       implements: ["net.fetch"],
     });
     const devices = {
@@ -1264,36 +1361,32 @@ describe("media native commands", () => {
       get: vi.fn(() => device),
       listForUser: vi.fn(() => [device]),
     };
-    const requestDevice = vi.fn();
+    const requestTarget = vi.fn();
 
     const result = await handleShellExec(
-      { input: "llm --preset local hello" },
+      { input: "llm --model-id local hello" },
       makeContext({
         capabilities: ["ai.text.generate"],
-        devices,
+        targets: devices,
         config: {
-          "users/1000/ai/model_profiles": JSON.stringify({
-            profiles: [{
+          "users/1000/ai/models": JSON.stringify({
+            version: 1,
+            models: [{
               id: "local",
               name: "Local",
-              values: {
-                "config/ai/provider": "custom",
-                "config/ai/model": "local-model",
-                "config/ai/base_url": "http://127.0.0.1:18081/v1",
-                "config/ai/provider_style": "openai-chat-completions",
-                "config/ai/transport_target": "linux-machine",
-                "config/ai/api_key": "redacted",
-              },
-              createdAt: 1,
-              updatedAt: 1,
+              provider: "custom",
+              model: "local-model",
+              baseUrl: "http://127.0.0.1:18081/v1",
+              providerStyle: "openai-chat-completions",
+              transportTarget: "linux-machine",
             }],
           }),
-          "users/1000/ai/model_profiles/local/api_key": "local-key",
+          "users/1000/ai/models/local/api_key": "local-key",
         },
       }),
       {
         netFetchTransport: {
-          requestDevice,
+          requestTarget,
         },
       },
     );
@@ -1314,9 +1407,9 @@ describe("media native commands", () => {
           "printf 'audio-bytes' > sample.mp3",
           "img2txt media.png",
           "stt sample.mp3",
-          "printf 'green square' | txt2img -o out.png",
+          "printf 'green square' | txt2img -o out.jpg",
           "printf 'hello voice' | tts -o speech.mp3",
-          "ls out.png speech.mp3",
+          "ls out.jpg speech.mp3",
         ].join("; "),
       },
       makeContext({
@@ -1350,23 +1443,24 @@ describe("media native commands", () => {
     );
 
     expect(result.ok).toBe(true);
+    expect(result.stderr).toBe("");
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("terminal screenshot");
     expect(result.stdout).toContain("hello audio");
-    expect(result.stdout).toContain("/home/sam/out.png");
+    expect(result.stdout).toContain("/home/sam/out.jpg");
     expect(result.stdout).toContain("/home/sam/speech.mp3");
-    expect(result.stdout).toContain("out.png");
+    expect(result.stdout).toContain("out.jpg");
     expect(result.stdout).toContain("speech.mp3");
   });
 
-  it("preserves generated image MIME when the output extension differs", async () => {
-    const key = "home/sam/generated-jpeg.png";
+  it("preserves generated image MIME through a subsequent read", async () => {
+    const key = "home/sam/generated-jpeg.jpg";
     let imageReadInput: ShellAiInput | undefined;
     await env.STORAGE.delete(key);
 
     const result = await handleShellExec(
       {
-        input: "txt2img -o generated-jpeg.png green-square; img2txt generated-jpeg.png",
+        input: "txt2img -o generated-jpeg.jpg green-square; img2txt generated-jpeg.jpg",
       },
       makeContext({
         capabilities: ["ai.image.read", "ai.image.generate"],
@@ -1397,14 +1491,14 @@ describe("targets native command", () => {
   it("lists targets with pagination and keeps devices as an alias", async () => {
     const records = [
       makeDevice({
-        device_id: "macbook",
+        target_id: "macbook",
         label: "Work MacBook",
         description: "Laptop",
         platform: "darwin",
         implements: ["shell.exec", "fs.read"],
       }),
       makeDevice({
-        device_id: "rearden:brave",
+        target_id: "rearden:brave",
         label: "Browser",
         platform: "browser-extension",
         implements: ["shell.exec", "fs.*"],
@@ -1416,7 +1510,7 @@ describe("targets native command", () => {
 
     const result = await handleShellExec(
       { input: "targets list --limit 2" },
-      makeContext({ capabilities: ["sys.device.list"], devices }),
+      makeContext({ capabilities: ["sys.target.list"], targets: devices }),
     );
 
     expect(result.ok).toBe(true);
@@ -1426,24 +1520,24 @@ describe("targets native command", () => {
 
     const browserSearch = await handleShellExec(
       { input: "targets search browser-extension" },
-      makeContext({ capabilities: ["sys.device.list"], devices }),
+      makeContext({ capabilities: ["sys.target.list"], targets: devices }),
     );
     expect(browserSearch.ok).toBe(true);
-    expect(browserSearch.stdout).toContain("rearden:brave\tdevice\tonline\tbrowser-extension");
+    expect(browserSearch.stdout).toContain("rearden:brave\tmachine\tonline\tbrowser-extension");
 
     const alias = await handleShellExec(
       { input: "devices search macbook" },
-      makeContext({ capabilities: ["sys.device.list"], devices }),
+      makeContext({ capabilities: ["sys.target.list"], targets: devices }),
     );
     expect(alias.ok).toBe(true);
-    expect(alias.stdout).toContain("macbook\tdevice\tonline\tdarwin");
+    expect(alias.stdout).toContain("macbook\tmachine\tonline\tdarwin");
   });
 
   it("keeps registered offline targets visible by default", async () => {
     const devices = {
       listForUser: vi.fn(() => [
         makeDevice({
-          device_id: "macbook",
+          target_id: "macbook",
           label: "Work MacBook",
           platform: "darwin",
           online: false,
@@ -1452,12 +1546,12 @@ describe("targets native command", () => {
         }),
       ]),
     };
-    const ctx = makeContext({ capabilities: ["sys.device.list"], devices });
+    const ctx = makeContext({ capabilities: ["sys.target.list"], targets: devices });
 
     const result = await handleShellExec({ input: "targets list" }, ctx);
 
     expect(result.ok).toBe(true);
-    expect(result.stdout).toContain("macbook\tdevice\toffline\tdarwin");
+    expect(result.stdout).toContain("macbook\tmachine\toffline\tdarwin");
 
     const onlineOnly = await handleShellExec({ input: "targets list --online" }, ctx);
     expect(onlineOnly.ok).toBe(true);
@@ -1466,7 +1560,7 @@ describe("targets native command", () => {
 
   it("shows target details", async () => {
     const record = makeDevice({
-      device_id: "macbook",
+      target_id: "macbook",
       label: "Work MacBook",
       description: "Laptop",
       platform: "darwin",
@@ -1482,19 +1576,19 @@ describe("targets native command", () => {
 
     const result = await handleShellExec(
       { input: "targets show macbook" },
-      makeContext({ capabilities: ["sys.device.get"], devices, auth }),
+      makeContext({ capabilities: ["sys.target.get"], targets: devices, auth }),
     );
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("target: macbook");
-    expect(result.stdout).toContain("provider: device");
+    expect(result.stdout).toContain("provider: machine");
     expect(result.stdout).toContain("owner: sam (uid 1000)");
     expect(result.stdout).toContain("- shell.exec");
     expect(result.stdout).toContain("- fs.read");
 
     const native = await handleShellExec(
       { input: "targets show gsv" },
-      makeContext({ capabilities: ["sys.device.get"] }),
+      makeContext({ capabilities: ["sys.target.get"] }),
     );
     expect(native.stdout).toContain("description: Native GSV capability environment.");
     expect(native.stdout).toContain("- net.fetch");
@@ -2391,6 +2485,56 @@ describe("proc native command", () => {
     );
   });
 
+  it("requests manual compaction by model input pressure", async () => {
+    sendFrameToProcessMock.mockResolvedValueOnce({
+      type: "res",
+      id: "compact-1",
+      ok: true,
+      data: {
+        ok: true,
+        pid: "task:shell",
+        segment: {
+          id: "segment-1",
+          generation: 1,
+          kind: "compaction",
+          fromMessageId: 1,
+          toMessageId: 3,
+          archivePath: "/root/processes/task/history/segment-1.jsonl.gz",
+          summaryMessageId: 1,
+          createdAt: 1,
+        },
+        archivedMessages: 3,
+        archivedTo: "/root/processes/task/history/segment-1.jsonl.gz",
+        summaryMessageId: 1,
+      },
+    });
+
+    const result = await handleShellExec(
+      { input: "proc compact --target-pressure 0.4 --summary done" },
+      makeContext({
+        capabilities: ["proc.history.compact"],
+        procs: {
+          get: vi.fn((pid: string) => makeProcess({ processId: pid })),
+          getOwnerUid: vi.fn(() => IDENTITY.uid),
+        },
+      }),
+    );
+
+    expect(result.status).toBe("completed");
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
+      "task:shell",
+      expect.objectContaining({
+        call: "proc.history.compact",
+        args: {
+          pid: "task:shell",
+          summary: "done",
+          targetPressure: 0.4,
+        },
+      }),
+    );
+  });
+
   it("reads live process history from the native proc command surface", async () => {
     sendFrameToProcessMock.mockResolvedValueOnce({
       type: "res",
@@ -2596,7 +2740,7 @@ describe("fs copy", () => {
       input: `cp ${contact.id}:/resources/resource:shared /home/sam/copy-test/contact-source.txt`,
     }, ctx, {
       fsTransport: {
-        requestDevice: vi.fn(),
+        requestTarget: vi.fn(),
         openContactSource,
       },
     });
@@ -2617,7 +2761,7 @@ describe("fs copy", () => {
       customMetadata: { uid: "1000", gid: "1000", mode: "644" },
     });
     const ctx = makeContext();
-    ctx.devices = focusedFixture<KernelContext["devices"]>({
+    ctx.targets = focusedFixture<KernelContext["targets"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
     });
@@ -2627,7 +2771,7 @@ describe("fs copy", () => {
       source: { target: "gsv", path: "/home/sam/copy-test/device-source.txt" },
       destination: { target: "rearden", path: "/tmp/device-destination.txt" },
     }, ctx, {
-      async requestDevice(deviceId, call, args, options) {
+      async requestTarget(deviceId, call, args, options) {
         expect(deviceId).toBe("rearden");
         if (call === "fs.transfer.stat") {
           throw new Error("No such file or directory: /tmp/device-destination.txt");
@@ -2663,7 +2807,7 @@ describe("fs copy", () => {
     const controller = new AbortController();
     const ctx = makeContext();
     ctx.requestSignal = controller.signal;
-    ctx.devices = focusedFixture<KernelContext["devices"]>({
+    ctx.targets = focusedFixture<KernelContext["targets"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
     });
@@ -2672,7 +2816,7 @@ describe("fs copy", () => {
       source: { target: "gsv", path: "/tmp/source.txt" },
       destination: { target: "rearden", path: "/tmp/destination.txt" },
     }, ctx, {
-      async requestDevice(_deviceId, _call, _args, options) {
+      async requestTarget(_deviceId, _call, _args, options) {
         requestSignal = options?.signal;
         return await new Promise((_resolve, reject) => {
           requestSignal?.addEventListener(
@@ -2699,7 +2843,7 @@ describe("fs copy", () => {
       customMetadata: { uid: "1000", gid: "1000", mode: "644" },
     });
     const ctx = makeContext();
-    ctx.devices = focusedFixture<KernelContext["devices"]>({
+    ctx.targets = focusedFixture<KernelContext["targets"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
     });
@@ -2707,7 +2851,7 @@ describe("fs copy", () => {
       source: { target: "gsv", path: "/home/sam/copy-test/device-send-fail.txt" },
       destination: { target: "rearden", path: "/tmp/device-destination.txt" },
     }, ctx, {
-      async requestDevice(deviceId, call) {
+      async requestTarget(deviceId, call) {
         expect(deviceId).toBe("rearden");
         if (call === "fs.transfer.stat") {
           return {
@@ -2731,7 +2875,7 @@ describe("fs copy", () => {
     const destinationKey = "home/sam/copy-test/from-device.txt";
     await env.STORAGE.delete(destinationKey);
     const ctx = makeContext();
-    ctx.devices = focusedFixture<KernelContext["devices"]>({
+    ctx.targets = focusedFixture<KernelContext["targets"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
     });
@@ -2740,7 +2884,7 @@ describe("fs copy", () => {
       source: { target: "rearden", path: "/tmp/source.txt" },
       destination: { target: "gsv", path: "/home/sam/copy-test/from-device.txt" },
     }, ctx, {
-      async requestDevice(deviceId, call, args) {
+      async requestTarget(deviceId, call, args) {
         expect(deviceId).toBe("rearden");
         if (call === "fs.transfer.stat") {
           return {
@@ -2782,7 +2926,7 @@ describe("fs copy", () => {
 
   it("returns device send failures when copying to gsv", async () => {
     const ctx = makeContext();
-    ctx.devices = focusedFixture<KernelContext["devices"]>({
+    ctx.targets = focusedFixture<KernelContext["targets"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
     });
@@ -2790,7 +2934,7 @@ describe("fs copy", () => {
       source: { target: "rearden", path: "/tmp/source.txt" },
       destination: { target: "gsv", path: "/home/sam/copy-test/from-device-fail.txt" },
     }, ctx, {
-      async requestDevice(deviceId, call) {
+      async requestTarget(deviceId, call) {
         expect(deviceId).toBe("rearden");
         if (call === "fs.transfer.stat") {
           return {
@@ -2812,7 +2956,7 @@ describe("fs copy", () => {
 
   it("streams device files directly to another device", async () => {
     const ctx = makeContext();
-    ctx.devices = focusedFixture<KernelContext["devices"]>({
+    ctx.targets = focusedFixture<KernelContext["targets"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
     });
@@ -2822,7 +2966,7 @@ describe("fs copy", () => {
       source: { target: "rearden", path: "/tmp/source.txt" },
       destination: { target: "browser", path: "/tmp/destination.txt" },
     }, ctx, {
-      async requestDevice(deviceId, call, _args, options) {
+      async requestTarget(deviceId, call, _args, options) {
         if (call === "fs.transfer.stat" && deviceId === "browser") {
           return {
             type: "res",
@@ -3733,30 +3877,44 @@ describe("native administration shell commands", () => {
     const duplicate = await handleShellExec({
       input: 'message send --to here --message "duplicate reply"',
     }, ctx);
-    const intentional = await handleShellExec({
-      input: 'message send --to here --message "extra update" --also',
-    }, ctx);
 
     expect(current).toMatchObject({ status: "completed", exitCode: 0 });
-    expect(current.stdout).toContain("directed endpoint: Telegram direct message");
-    expect(current.stdout).toContain("cross-channel delivery");
+    expect(current.stdout).toContain("current conversation: Telegram direct message");
+    expect(current.stdout).toContain("reply command: message send");
+    expect(current.stdout).toContain("omit --to and --also");
     const currentOutput = currentDestinationOutputSchema.safeParse(
       JSON.parse(currentJson.stdout),
     );
     expect(currentOutput.success).toBe(true);
     if (!currentOutput.success) throw new Error("invalid message current output");
-    const { destinationId } = currentOutput.data;
+    expect(currentOutput.data.reply).toEqual({
+      command: "message send",
+      attachmentCommand: "message attach PATH...",
+      requiresStandaloneShellCall: true,
+      finishesRun: false,
+    });
+    const destinationId = currentOutput.data.destinationId;
+    if (!destinationId) throw new Error("missing additional adapter destination");
+    expect(currentOutput.data.destinationUse).toBe("additional-delivery-only");
     expect(destinationId).toMatch(/^message-destination:[0-9a-f]{64}$/);
-    expect(current.stdout).toContain(`destination: ${destinationId}`);
+    expect(current.stdout).toContain(`additional adapter destination: ${destinationId}`);
     expect(current.stdout).not.toContain("chat-42");
     expect(currentJson.stdout).not.toContain("chat-42");
     expect(duplicate.status).toBe("failed");
-    expect(duplicate.stderr).toContain("current-conversation form");
-    expect(duplicate.stderr).toContain("--also");
+    expect(duplicate.stderr).toContain("stage files first with `message attach PATH...`");
+    expect(duplicate.stderr).toContain("without --to or --also");
     expect(terminalFallback).toMatchObject({ status: "failed", exitCode: 1 });
     expect(terminalFallback.stderr).toContain("direct Shell tool call");
     expect(yieldFallback).toMatchObject({ status: "failed", exitCode: 1 });
     expect(yieldFallback.stderr).toContain("direct Shell tool call");
+    const ambiguousHere = await handleShellExec({
+      input: 'message send --to here --message "extra update" --also',
+    }, ctx);
+    expect(ambiguousHere).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(ambiguousHere.stderr).toContain("--to here is not a message destination");
+    const intentional = await handleShellExec({
+      input: `message send --to ${destinationId} --message "extra update" --also`,
+    }, ctx);
     expect(intentional).toMatchObject({ status: "completed", exitCode: 0 });
     expect(intentional.stdout).toContain("sent=true");
     expect(intentional.stdout).toMatch(/destination=message-destination:[0-9a-f]{64}/);
@@ -3776,6 +3934,39 @@ describe("native administration shell commands", () => {
         args: expect.objectContaining({ text: "extra update" }),
       }),
     );
+  });
+
+  it("describes the same current-conversation reply path for native clients", async () => {
+    const ctx = makeContext({ processRunId: "run-client" });
+    ctx.runRoutes = focusedFixture<KernelContext["runRoutes"]>({
+      get: vi.fn(() => ({
+        kind: "connection",
+        runId: "run-client",
+        processId: ctx.processId!,
+        uid: IDENTITY.uid,
+        connectionId: "private-connection-id",
+        createdAt: 1,
+        expiresAt: Date.now() + 60_000,
+      })),
+    });
+
+    const current = await handleShellExec({ input: "message current --json" }, ctx);
+    const parsed = currentDestinationOutputSchema.safeParse(JSON.parse(current.stdout));
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error("invalid message current output");
+    expect(parsed.data).toMatchObject({
+      kind: "client",
+      reply: {
+        command: "message send",
+        attachmentCommand: "message attach PATH...",
+        requiresStandaloneShellCall: true,
+        finishesRun: false,
+      },
+    });
+    expect(parsed.data.destinationId).toBeUndefined();
+    expect(parsed.data.destinationUse).toBeUndefined();
+    expect(current.stdout).not.toContain("private-connection-id");
   });
 
   it("lists and resolves opaque destinations without provider identifiers", async () => {
@@ -4415,9 +4606,10 @@ describe("native administration shell commands", () => {
     });
     const { adapterFrame } = enableTelegramMessaging(ctx);
     await handleFsWrite({ path: "/tmp/share.png", content: "PNG" }, ctx);
+    const destinationId = await currentAdapterDestinationId(ctx);
 
     const result = await handleShellExec({
-      input: "message send --to here --attach /tmp/share.png --also",
+      input: `message send --to ${destinationId} --attach /tmp/share.png --also`,
     }, ctx);
 
     expect(result).toMatchObject({ status: "completed", exitCode: 0 });
@@ -4446,6 +4638,62 @@ describe("native administration shell commands", () => {
     );
   });
 
+  it("streams every repeated explicit attachment in order", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.send", "fs.write"],
+      processRunId: "run-telegram-files",
+    });
+    const { adapterFrame, deliveredBodies } = enableTelegramMessaging(ctx);
+    await handleFsWrite({ path: "/tmp/image.png", content: "PNG" }, ctx);
+    await handleFsWrite({ path: "/tmp/voice.mp3", content: "AUDIO" }, ctx);
+    const destinationId = await currentAdapterDestinationId(ctx);
+
+    const result = await handleShellExec({
+      input: `message send --to ${destinationId} --attach /tmp/image.png --attach /tmp/voice.mp3 --also`,
+    }, ctx);
+
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(adapterFrame).toHaveBeenCalledWith(
+      TEST_INSTALLATION_CONTEXT,
+      expect.anything(),
+      expect.objectContaining({
+        args: expect.objectContaining({
+          media: [
+            expect.objectContaining({
+              mimeType: "image/png",
+              filename: "image.png",
+              body: { offset: 0, length: 3 },
+            }),
+            expect.objectContaining({
+              mimeType: "audio/mpeg",
+              filename: "voice.mp3",
+              body: { offset: 3, length: 5 },
+            }),
+          ],
+        }),
+        body: expect.objectContaining({ length: 8 }),
+      }),
+    );
+    expect(deliveredBodies).toHaveLength(1);
+    expect(new TextDecoder().decode(deliveredBodies[0])).toBe("PNGAUDIO");
+  });
+
+  it("rejects one MIME override for multiple attachments", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.send"],
+      processRunId: "run-telegram-files-mime",
+    });
+    enableTelegramMessaging(ctx);
+    const destinationId = await currentAdapterDestinationId(ctx);
+
+    const result = await handleShellExec({
+      input: `message send --to ${destinationId} --attach /tmp/one --attach /tmp/two --mime image/png --also`,
+    }, ctx);
+
+    expect(result).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(result.stderr).toContain("omit --mime or send files separately");
+  });
+
   it("retries an explicit message with the same delivery id", async () => {
     const ctx = makeContext({
       capabilities: ["shell.exec", "adapter.send"],
@@ -4471,9 +4719,10 @@ describe("native administration shell commands", () => {
     Object.assign(ctx.env, {
       CHANNEL_TELEGRAM: { adapterFrame },
     });
+    const destinationId = await currentAdapterDestinationId(ctx);
 
     const result = await handleShellExec({
-      input: "message send --to here --message retry --delivery-id logical-send-1 --also",
+      input: `message send --to ${destinationId} --message retry --delivery-id logical-send-1 --also`,
     }, ctx);
 
     expect(result).toMatchObject({ status: "completed", exitCode: 0 });
@@ -4514,9 +4763,10 @@ describe("native administration shell commands", () => {
     Object.assign(ctx.env, {
       CHANNEL_TELEGRAM: { adapterFrame },
     });
+    const destinationId = await currentAdapterDestinationId(ctx);
 
     const result = await handleShellExec({
-      input: "message send --to here --message uncertain --delivery-id logical-send-ambiguous --also",
+      input: `message send --to ${destinationId} --message uncertain --delivery-id logical-send-ambiguous --also`,
     }, ctx);
 
     expect(result).toMatchObject({ status: "completed", exitCode: 0 });
@@ -4556,9 +4806,10 @@ describe("native administration shell commands", () => {
     Object.assign(ctx.env, {
       CHANNEL_TELEGRAM: { adapterFrame },
     });
+    const destinationId = await currentAdapterDestinationId(ctx);
 
     const result = await handleShellExec({
-      input: "message send --to here --attach /tmp/retry-share.png --delivery-id logical-send-file --also",
+      input: `message send --to ${destinationId} --attach /tmp/retry-share.png --delivery-id logical-send-file --also`,
     }, ctx);
 
     expect(result).toMatchObject({ status: "failed", exitCode: 1 });
@@ -4606,6 +4857,55 @@ describe("native administration shell commands", () => {
               contentType: "image/png",
               size: 3,
               revision: expect.any(String),
+            }),
+          })],
+        }),
+      }),
+    );
+  });
+
+  it("keeps immutable source metadata when a media hint differs", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "fs.read", "fs.write"],
+      processRunId: "run-native-mime",
+    });
+    const received = await handleFsTransferReceive({
+      path: "/tmp/voice.ogg",
+      contentType: "application/octet-stream",
+    }, ctx, bodyFromText("audio"));
+    expect(received).toMatchObject({
+      ok: true,
+      contentType: "application/octet-stream",
+    });
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
+      if (frame.type !== "req") return null;
+      if (frame.call === "proc.run.attach") {
+        return responseFixture({
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: { ok: true, runId: frame.args.runId, media: frame.args.media },
+        });
+      }
+      return null;
+    });
+
+    const result = await handleShellExec({
+      input: "message attach /tmp/voice.ogg --mime audio/ogg",
+    }, ctx);
+
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(sendFrameToProcessMock).toHaveBeenLastCalledWith(
+      TEST_INSTALLATION_ID,
+      "task:shell",
+      expect.objectContaining({
+        call: "proc.run.attach",
+        args: expect.objectContaining({
+          media: [expect.objectContaining({
+            mediaType: "audio",
+            ref: expect.objectContaining({
+              path: "/tmp/voice.ogg",
+              contentType: "application/octet-stream",
             }),
           })],
         }),

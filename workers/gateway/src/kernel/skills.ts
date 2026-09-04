@@ -8,6 +8,7 @@ import {
   type RipgitRepoRef,
 } from "../fs";
 import type { KernelContext } from "./context";
+import { principalOf } from "./context";
 
 const TEXT_DECODER = new TextDecoder();
 const MAX_SKILL_WALK_DEPTH = 4;
@@ -98,7 +99,7 @@ export async function collectKernelSkillDocuments(
   const files: ParsedSkillFile[] = [];
 
   const ripgit = ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null;
-  const runAsIdentity = ctx.identity?.process;
+  const runAsIdentity = principalOf(ctx)?.account;
   if (ripgit && runAsIdentity) {
     files.push(...await collectRipgitRuntimeSkillFiles(
       ripgit,

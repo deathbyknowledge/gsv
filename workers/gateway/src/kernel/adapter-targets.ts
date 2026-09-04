@@ -14,8 +14,10 @@ import {
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import { stableOpaqueId } from "../shared/stable-id";
 import { withByteStreamFinalizer } from "../shared/streams";
-import { resolveAdapterService } from "./adapter-handlers";
-import { resolveCallerOwnerUid, type KernelContext } from "./context";
+import {
+  resolveAdapterService,
+} from "./adapter-service";
+import { principalOf, requirePrincipal, resolveCallerOwnerUid, type KernelContext } from "./context";
 import type { IdentityLinkRecord } from "./identity-links";
 import type { TargetDescriptor, TargetListOptions } from "./targets";
 import { z } from "zod";
@@ -39,7 +41,7 @@ export async function listVisibleAdapterTargets(
   ctx: KernelContext,
   options: TargetListOptions = {},
 ): Promise<TargetDescriptor[]> {
-  if (!ctx.identity || ctx.identity.role !== "user") return [];
+  if (!principalOf(ctx) || requirePrincipal(ctx).kind !== "human") return [];
 
   const ownerUid = resolveCallerOwnerUid(ctx);
   const links = ctx.adapters.identityLinks.list(ownerUid);

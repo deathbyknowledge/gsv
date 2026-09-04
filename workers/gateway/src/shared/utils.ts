@@ -1,6 +1,6 @@
-import { Kernel } from "../kernel/do";
 import { env } from "cloudflare:workers";
-import { Process } from "../process/do";
+import type { Kernel } from "../kernel/do";
+import type { Process } from "../process/do";
 import type {
   Frame,
   FrameBody,
@@ -10,22 +10,10 @@ import type {
 } from "../protocol/frames";
 import type { SyscallName } from "../syscalls";
 import type {
-  ProcessAdapterDeliverRequestFrame,
-  ProcessAdapterDeliverResponseFrame,
+  InternalResponseFrame,
+  InternalSyscallName,
   ProcessInboundFrame,
-  ProcessRunAttachRequestFrame,
-  ProcessRunAttachResponseFrame,
-  ProcessRuntimeEventDeliverRequestFrame,
-  ProcessRuntimeEventDeliverResponseFrame,
-  ProcessScheduleDeliverRequestFrame,
-  ProcessScheduleDeliverResponseFrame,
-  ProcessMessageCommitRequestFrame,
-  ProcessMessageCommitResponseFrame,
-  ProcessMessageStreamSignal,
-  ProcessResourceResponseFrame,
-  ProcessResourcesRetainRequestFrame,
-  ProcessResourcesRetainResponseFrame,
-  ProcessResourceWriteRequestFrame,
+  ProcessOutboundFrame,
 } from "../protocol/process-frames";
 import type { NetFetchArgs } from "@humansandmachines/gsv/protocol";
 import { SINGLETON_INSTALLATION_ID } from "../installation/identity";
@@ -74,33 +62,32 @@ export async function getProcessByPid(
   return stub as ProcessPtr;
 }
 
-export function sendFrameToKernel(
-  installationId: string,
-  processId: string,
-  frame: ProcessMessageCommitRequestFrame,
-): Promise<ProcessMessageCommitResponseFrame | null>;
+/** The response correlated with one request frame, or any frame for non-requests. */
+export type ResponseTo<F> = F extends { type: "req"; call: infer C }
+  ? C extends SyscallName
+    ? ResponseFrame<C>
+    : C extends InternalSyscallName
+      ? InternalResponseFrame<C>
+      : never
+  : Frame;
+
 export function sendFrameToKernel<S extends SyscallName>(
   installationId: string,
   processId: string,
   frame: RequestFrame<S>,
 ): Promise<ResponseFrame<S> | null>;
-export function sendFrameToKernel(
+export function sendFrameToKernel<F extends ProcessOutboundFrame>(
   installationId: string,
   processId: string,
-  frame: ProcessMessageStreamSignal,
-): Promise<Frame | null>;
-export function sendFrameToKernel(
-  installationId: string,
-  processId: string,
-  frame: Frame,
-): Promise<Frame | null>;
+  frame: F,
+): Promise<ResponseTo<F> | null>;
 export async function sendFrameToKernel(
   installationId: string,
   processId: string,
-  frame: Frame | ProcessMessageCommitRequestFrame | ProcessMessageStreamSignal,
-): Promise<Frame | ProcessMessageCommitResponseFrame | null> {
+  frame: ProcessOutboundFrame,
+): Promise<Frame | InternalResponseFrame | null> {
   const kernel = await getKernelPtr(installationId);
-  return kernel.recvFrame(processId, frame);
+  return await kernel.recvFrame(processId, frame);
 }
 
 export async function attachProcessRunStream(
@@ -133,62 +120,23 @@ export async function cancelProcessRequests(
   return kernel.cancelProcessRequests(processId, requestIds, reason);
 }
 
-export function sendFrameToProcess(
-  installationId: string,
-  pid: string,
-  frame: ProcessRuntimeEventDeliverRequestFrame,
-): Promise<ProcessRuntimeEventDeliverResponseFrame | null>;
-export function sendFrameToProcess(
-  installationId: string,
-  pid: string,
-  frame: ProcessAdapterDeliverRequestFrame,
-): Promise<ProcessAdapterDeliverResponseFrame | null>;
-export function sendFrameToProcess(
-  installationId: string,
-  pid: string,
-  frame: ProcessScheduleDeliverRequestFrame,
-): Promise<ProcessScheduleDeliverResponseFrame | null>;
-export function sendFrameToProcess(
-  installationId: string,
-  pid: string,
-  frame: ProcessRunAttachRequestFrame,
-): Promise<ProcessRunAttachResponseFrame | null>;
-export function sendFrameToProcess(
-  installationId: string,
-  pid: string,
-  frame: ProcessResourcesRetainRequestFrame,
-): Promise<ProcessResourcesRetainResponseFrame | null>;
-export function sendFrameToProcess(
-  installationId: string,
-  pid: string,
-  frame: ProcessResourceWriteRequestFrame,
-): Promise<ProcessResourceResponseFrame | null>;
 export function sendFrameToProcess<S extends SyscallName>(
   installationId: string,
   pid: string,
   frame: RequestFrame<S>,
 ): Promise<ResponseFrame<S> | null>;
-export function sendFrameToProcess(
+export function sendFrameToProcess<F extends ProcessInboundFrame>(
   installationId: string,
   pid: string,
-  frame: Frame,
-): Promise<Frame | null>;
+  frame: F,
+): Promise<ResponseTo<F> | null>;
 export async function sendFrameToProcess(
   installationId: string,
   pid: string,
   frame: ProcessInboundFrame,
-): Promise<
-  | Frame
-  | ProcessRuntimeEventDeliverResponseFrame
-  | ProcessScheduleDeliverResponseFrame
-  | ProcessAdapterDeliverResponseFrame
-  | ProcessRunAttachResponseFrame
-  | ProcessResourcesRetainResponseFrame
-  | ProcessResourceResponseFrame
-  | null
-> {
+): Promise<Frame | InternalResponseFrame | null> {
   const proc = await getProcessByPid(pid, installationId);
-  return proc.recvFrame(frame);
+  return await proc.recvFrame(frame);
 }
 
 export function getConversationById(

@@ -4,7 +4,7 @@ import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { stableOpaqueId } from "../shared/stable-id";
 import { AdapterStore } from "./adapter-store";
 import type { KernelContext } from "./context";
-import type { DeviceRecord } from "./devices";
+import type { TargetRecord } from "./target-registry";
 import type { FederationContactRecord } from "./federation-store";
 import {
   recordAdapterStatusTransition,
@@ -18,8 +18,8 @@ describe("Kernel lifecycle responsibilities", () => {
   it("creates one confirmation for a newly added physical machine", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       const ctx = lifecycleContext(sql, storage);
-      const machine: DeviceRecord = {
-        device_id: "workstation",
+      const machine: TargetRecord = {
+        target_id: "workstation",
         owner_uid: 1000,
         label: "Workstation",
         description: "",
@@ -38,11 +38,11 @@ describe("Kernel lifecycle responsibilities", () => {
       ctx.responsibilitySources.set(1000, "machine.added", false);
       await recordMachineAddedResponsibility({
         ...machine,
-        device_id: "disabled-machine",
+        target_id: "disabled-machine",
         first_seen_at: machine.first_seen_at + 1,
       }, ctx);
       const eventId = await stableOpaqueId("machine-added", [
-        machine.device_id,
+        machine.target_id,
         machine.first_seen_at,
       ]);
 

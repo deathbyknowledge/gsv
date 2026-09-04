@@ -6,57 +6,12 @@ import type {
   WireResponseEnvelope,
   WireResponseFrame,
 } from "@humansandmachines/gsv/protocol";
-import { z } from "zod";
+import { wireFrameSchemas } from "@humansandmachines/gsv/protocol";
 import {
   wireProtocolSchema,
   wireRequestSchemaRefs,
   wireResponseSchemaRefs,
 } from "./generated/wire-frame-schema.js";
-
-const jsonValueSchema = z.json();
-const binaryBodySchema = z.object({
-  streamId: z.number(),
-  length: z.number().optional(),
-}).strict();
-const requestEnvelopeSchema = z.object({
-  type: z.literal("req"),
-  id: z.string(),
-  call: z.string(),
-  args: jsonValueSchema,
-  runId: z.string().optional(),
-  body: binaryBodySchema.optional(),
-}).strict();
-const responseEnvelopeSchema = z.discriminatedUnion("ok", [
-  z.object({
-    type: z.literal("res"),
-    id: z.string(),
-    ok: z.literal(true),
-    data: jsonValueSchema.optional(),
-    body: binaryBodySchema.optional(),
-  }).strict(),
-  z.object({
-    type: z.literal("res"),
-    id: z.string(),
-    ok: z.literal(false),
-    error: z.object({
-      code: z.number(),
-      message: z.string(),
-      details: jsonValueSchema.optional(),
-      retryable: z.boolean().optional(),
-    }).strict(),
-  }).strict(),
-]);
-const signalEnvelopeSchema = z.object({
-  type: z.literal("sig"),
-  signal: z.string(),
-  payload: jsonValueSchema.optional(),
-  seq: z.number().optional(),
-}).strict();
-const frameEnvelopeSchema = z.union([
-  requestEnvelopeSchema,
-  responseEnvelopeSchema,
-  signalEnvelopeSchema,
-]);
 const validators = new Map<string, Validator>();
 
 export class InvalidWireFrameError extends Error {
@@ -73,7 +28,7 @@ export function decodeWireFrameJson(source: string): WireFrame {
   } catch {
     throw new InvalidWireFrameError("Malformed JSON");
   }
-  const decoded = frameEnvelopeSchema.safeParse(value);
+  const decoded = wireFrameSchemas.frame.safeParse(value);
   if (!decoded.success) {
     throw new InvalidWireFrameError("Invalid frame");
   }

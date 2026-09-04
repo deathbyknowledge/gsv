@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { testPeer } from "../test-support/peers";
 import type {
   ProcessIdentity,
   ProcIpcSendResult,
@@ -349,11 +350,7 @@ describe("proc handlers", () => {
     const ctx = {
       installationId: TEST_INSTALLATION_ID,
       callerOwnerUid: IDENTITY.uid,
-      identity: {
-        role: "user",
-        process: IDENTITY,
-        capabilities: ["codemode.run"],
-      },
+      peer: testPeer({ kind: "human", account: IDENTITY, calls: ["codemode.run"] }),
       requestSignal: controller.signal,
       procs: {
         get: vi.fn(() => ({ uid: IDENTITY.uid, ownerUid: IDENTITY.uid })),
@@ -396,11 +393,7 @@ describe("proc handlers", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       installationId: TEST_INSTALLATION_ID,
-      identity: {
-        role: "user",
-        process: { ...IDENTITY, uid: 0 },
-        capabilities: ["proc.send"],
-      },
+      peer: testPeer({ kind: "human", account: { ...IDENTITY, uid: 0 }, calls: ["proc.send"] }),
       connection: { id: "conn-root", state: {} },
       procs: {
         get: vi.fn(() => ({ uid: 2000, ownerUid: 1000 })),
@@ -439,11 +432,7 @@ describe("proc handlers", () => {
       installationId: TEST_INSTALLATION_ID,
       processId: "proc-self",
       callerOwnerUid: IDENTITY.uid,
-      identity: {
-        role: "user",
-        process: IDENTITY,
-        capabilities: ["proc.history"],
-      },
+      peer: testPeer({ kind: "human", account: IDENTITY, calls: ["proc.history"] }),
       procs: {
         get: vi.fn((pid: string) => pid === "proc-self"
           ? { processId: pid, uid: IDENTITY.uid, ownerUid: IDENTITY.uid }
@@ -473,11 +462,7 @@ describe("proc handlers", () => {
     const ctx = {
       installationId: TEST_INSTALLATION_ID,
       callerOwnerUid: IDENTITY.uid,
-      identity: {
-        role: "user",
-        process: IDENTITY,
-        capabilities: ["proc.history"],
-      },
+      peer: testPeer({ kind: "human", account: IDENTITY, calls: ["proc.history"] }),
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
 
@@ -492,7 +477,7 @@ describe("proc handlers", () => {
     expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
-  it("forwards process AI profile selectors without materializing profile secrets", async () => {
+  it("validates and forwards only a stable Process model reference", async () => {
     sendFrameToProcessMock.mockResolvedValue({
       type: "res",
       id: "ai-profile-1",
@@ -501,48 +486,36 @@ describe("proc handlers", () => {
         ok: true,
         pid: "proc-1",
         config: {
-          version: 1,
-          profile: { id: "fast-stack", name: "Fast Stack", appliedAt: 1 },
-          values: {
-            "config/ai/provider": "openai",
-            "config/ai/model": "gpt-4.1-mini",
-            "config/ai/api_key": "redacted",
-          },
+          version: 2,
+          modelId: "fast-stack",
           updatedAt: 1,
         },
       },
     } satisfies ResponseFrame);
     const configEntries = new Map<string, string>([
-      ["users/1000/ai/model_profiles", JSON.stringify({
+      ["users/1000/ai/models", JSON.stringify({
         version: 1,
-        profiles: [{
+        models: [{
           id: "fast-stack",
           name: "Fast Stack",
-          values: {
-            "config/ai/provider": "openai",
-            "config/ai/model": "gpt-4.1-mini",
-            "config/ai/image/read/max_tokens": "4096",
-          },
-          createdAt: 10,
-          updatedAt: 20,
+          provider: "openai",
+          model: "gpt-4.1-mini",
         }],
       })],
-      ["users/1000/ai/model_profiles/fast-stack/api_key", "sk-chat"],
+      ["users/1000/ai/models/fast-stack/api_key", "sk-chat"],
     ]);
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       installationId: TEST_INSTALLATION_ID,
-      identity: {
-        role: "user",
-        process: IDENTITY,
-        capabilities: ["proc.ai.config.set"],
-      },
+      peer: testPeer({ kind: "human", account: IDENTITY, calls: ["proc.ai.config.set"] }),
       procs: {
         get: vi.fn(() => ({ uid: 2000, ownerUid: IDENTITY.uid })),
       },
       config: {
         get: vi.fn((key: string) => configEntries.get(key) ?? null),
+        getExplicit: vi.fn((key: string) => configEntries.get(key) ?? null),
       },
+      env: {},
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
 
@@ -553,7 +526,7 @@ describe("proc handlers", () => {
       call: "proc.ai.config.set",
       args: {
         pid: "proc-1",
-        profileId: "fast-stack",
+        modelId: "fast-stack",
       },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame, ctx);
@@ -564,21 +537,71 @@ describe("proc handlers", () => {
       expect.objectContaining({
         call: "proc.ai.config.set",
         args: {
-          values: {
-            "config/ai/provider": "openai",
-            "config/ai/model": "gpt-4.1-mini",
-            "config/ai/image/read/max_tokens": "4096",
-          },
-          profile: {
-            id: "fast-stack",
-            name: "Fast Stack",
-          },
+          pid: "proc-1",
+          modelId: "fast-stack",
         },
       }),
     );
   });
 
-  it("forces forwarded process AI config reads to stay redacted", async () => {
+  it("accepts base and shared model ids for a Process, not only the owner's own list", async () => {
+    sendFrameToProcessMock.mockResolvedValue({ type: "res", id: "ai-profile-2", ok: true, data: {} });
+    const configEntries = new Map<string, string>([
+      ["users/1000/ai/models", JSON.stringify({
+        version: 1,
+        models: [{ id: "fast-stack", name: "Fast Stack", provider: "openai", model: "gpt-4.1-mini" }],
+      })],
+      ["config/ai/models", JSON.stringify({
+        version: 1,
+        models: [{ id: "shared", name: "Shared", provider: "anthropic", model: "claude-sonnet-5" }],
+      })],
+    ]);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const contextFor = (entries: Map<string, string>) => ({
+      installationId: TEST_INSTALLATION_ID,
+      peer: testPeer({ kind: "human", account: IDENTITY, calls: ["proc.ai.config.set"] }),
+      procs: {
+        get: vi.fn(() => ({ uid: 2000, ownerUid: IDENTITY.uid })),
+      },
+      config: {
+        get: vi.fn((key: string) => entries.get(key) ?? null),
+        getExplicit: vi.fn((key: string) => entries.get(key) ?? null),
+      },
+      env: {},
+    }) as KernelContext;
+
+    const cases: Array<[Map<string, string>, string]> = [
+      [configEntries, "shared"],
+      [configEntries, "WORKERS-AI-GLM-5-3-FLASH"],
+      [new Map<string, string>(), "workers-ai-kimi-k2-6"],
+    ];
+    for (const [entries, modelId] of cases) {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      await forwardToProcess({
+        type: "req",
+        id: "ai-profile-2",
+        call: "proc.ai.config.set",
+        args: { pid: "proc-1", modelId },
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as RequestFrame, contextFor(entries));
+    }
+
+    expect(sendFrameToProcessMock.mock.calls.map(([, , frame]) => frame.args.modelId)).toEqual([
+      "shared",
+      "workers-ai-glm-5-3-flash",
+      "workers-ai-kimi-k2-6",
+    ]);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    await expect(forwardToProcess({
+      type: "req",
+      id: "ai-profile-3",
+      call: "proc.ai.config.set",
+      args: { pid: "proc-1", modelId: "missing" },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as RequestFrame, contextFor(configEntries))).rejects.toThrow("AI model not found: missing");
+  });
+
+  it("forwards Process preference reads without a credential-bearing mode", async () => {
     sendFrameToProcessMock.mockResolvedValue({
       type: "res",
       id: "ai-config-get-1",
@@ -587,10 +610,8 @@ describe("proc handlers", () => {
         ok: true,
         pid: "proc-1",
         config: {
-          version: 1,
-          values: {
-            "config/ai/api_key": "redacted",
-          },
+          version: 2,
+          modelId: "fast-stack",
           updatedAt: 1,
         },
       },
@@ -598,11 +619,7 @@ describe("proc handlers", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       installationId: TEST_INSTALLATION_ID,
-      identity: {
-        role: "user",
-        process: IDENTITY,
-        capabilities: ["proc.ai.config.get"],
-      },
+      peer: testPeer({ kind: "human", account: IDENTITY, calls: ["proc.ai.config.get"] }),
       procs: {
         get: vi.fn(() => ({ uid: 2000, ownerUid: IDENTITY.uid })),
       },
@@ -616,7 +633,6 @@ describe("proc handlers", () => {
       call: "proc.ai.config.get",
       args: {
         pid: "proc-1",
-        redacted: false,
       },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame, ctx);
@@ -628,7 +644,6 @@ describe("proc handlers", () => {
         call: "proc.ai.config.get",
         args: {
           pid: "proc-1",
-          redacted: true,
         },
       }),
     );
@@ -856,10 +871,7 @@ describe("proc handlers", () => {
       env: {
         STORAGE: makeStorageBucket(),
       },
-      identity: {
-        process: IDENTITY,
-        capabilities: ["*"],
-      },
+      peer: testPeer({ kind: "human", account: IDENTITY, calls: ["*"] }),
       auth: makePersonalAgentAuth(),
       procs: {
         get: vi.fn(() => null),
@@ -925,10 +937,7 @@ describe("proc handlers", () => {
       env: {
         STORAGE: makeStorageBucket(),
       },
-      identity: {
-        process: IDENTITY,
-        capabilities: ["*"],
-      },
+      peer: testPeer({ kind: "human", account: IDENTITY, calls: ["*"] }),
       auth: makePersonalAgentAuth(),
       procs: {
         get: vi.fn(() => null),
@@ -1003,10 +1012,7 @@ describe("proc handlers", () => {
         installationId: TEST_INSTALLATION_ID,
         processId: SPAWN_PARENT.processId,
         callerOwnerUid: IDENTITY.uid,
-        identity: {
-          process: IDENTITY,
-          capabilities: ["proc.spawn"],
-        },
+        peer: testPeer({ kind: "human", account: IDENTITY, calls: ["proc.spawn"] }),
         procs,
         ...cleanup,
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -1058,10 +1064,7 @@ describe("proc handlers", () => {
       installationId: TEST_INSTALLATION_ID,
       processId: SPAWN_PARENT.processId,
       callerOwnerUid: IDENTITY.uid,
-      identity: {
-        process: IDENTITY,
-        capabilities: ["proc.spawn"],
-      },
+      peer: testPeer({ kind: "human", account: IDENTITY, calls: ["proc.spawn"] }),
       procs,
       ...cleanup,
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -1097,10 +1100,7 @@ describe("proc handlers", () => {
       installationId: TEST_INSTALLATION_ID,
       processId: SPAWN_PARENT.processId,
       callerOwnerUid: IDENTITY.uid,
-      identity: {
-        process: IDENTITY,
-        capabilities: ["proc.spawn"],
-      },
+      peer: testPeer({ kind: "human", account: IDENTITY, calls: ["proc.spawn"] }),
       procs,
       ...cleanup,
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -1129,10 +1129,7 @@ describe("proc handlers", () => {
       installationId: TEST_INSTALLATION_ID,
       processId: SPAWN_PARENT.processId,
       callerOwnerUid: IDENTITY.uid,
-      identity: {
-        process: IDENTITY,
-        capabilities: ["proc.spawn"],
-      },
+      peer: testPeer({ kind: "human", account: IDENTITY, calls: ["proc.spawn"] }),
       procs,
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
@@ -1155,10 +1152,7 @@ describe("proc handlers", () => {
       processRunId: "run-parent",
       callerOwnerUid: IDENTITY.uid,
       env: {},
-      identity: {
-        process: IDENTITY,
-        capabilities: ["*"],
-      },
+      peer: testPeer({ kind: "human", account: IDENTITY, calls: ["*"] }),
       procs: {
         get: vi.fn(() => SPAWN_PARENT),
         spawn: vi.fn(),
@@ -1208,10 +1202,7 @@ describe("proc handlers", () => {
       processId: sourcePid,
       callerOwnerUid: IDENTITY.uid,
       env: { STORAGE: { delete: removeTemporaryHistory } },
-      identity: {
-        process: IDENTITY,
-        capabilities: ["proc.fork", "proc.spawn"],
-      },
+      peer: testPeer({ kind: "human", account: IDENTITY, calls: ["proc.fork", "proc.spawn"] }),
       auth: {
         getPasswdByUsername: vi.fn(() => ({
           username: IDENTITY.username,
@@ -1322,10 +1313,7 @@ describe("proc handlers", () => {
       processId: "proc:delegated-agent",
       callerOwnerUid: IDENTITY.uid,
       env: {},
-      identity: {
-        process: delegatedAgent,
-        capabilities: ["proc.spawn"],
-      },
+      peer: testPeer({ kind: "human", account: delegatedAgent, calls: ["proc.spawn"] }),
       procs: {
         get: vi.fn((pid: string) => {
           if (pid === "proc:delegated-agent") {
@@ -1395,7 +1383,7 @@ function makeIpcCallContext(options: {
     installationId: TEST_INSTALLATION_ID,
     processId: "source-process",
     processRunId: "source-run",
-    identity: { process: identity },
+    peer: testPeer({ kind: "human", account: identity }),
     procs: {
       get: vi.fn((pid: string) => {
         if (pid === "source-process") return source;
@@ -1417,11 +1405,7 @@ function makeForwardContext(overrides?: {
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     installationId: TEST_INSTALLATION_ID,
-    identity: {
-      role: "user",
-      process: IDENTITY,
-      capabilities: ["proc.reset", "proc.kill"],
-    },
+    peer: testPeer({ kind: "human", account: IDENTITY, calls: ["proc.reset", "proc.kill"] }),
     procs: {
       get: vi.fn(() => ({
         uid: IDENTITY.uid,
@@ -1453,7 +1437,7 @@ describe("resolveCallerOwnerUid", () => {
     const ctx = {
       installationId: TEST_INSTALLATION_ID,
       callerOwnerUid: 1000,
-      identity: { role: "user", process: { ...IDENTITY, uid: 2000 }, capabilities: [] },
+      peer: testPeer({ kind: "human", account: { ...IDENTITY, uid: 2000 }, calls: [] }),
       procs: { get: vi.fn(() => null) },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
@@ -1465,7 +1449,7 @@ describe("resolveCallerOwnerUid", () => {
     const ctx = {
       installationId: TEST_INSTALLATION_ID,
       processId: "proc:abc",
-      identity: { role: "user", process: { ...IDENTITY, uid: 2000 }, capabilities: [] },
+      peer: testPeer({ kind: "human", account: { ...IDENTITY, uid: 2000 }, calls: [] }),
       procs: { getOwnerUid: vi.fn(() => 1000) },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
@@ -1476,7 +1460,7 @@ describe("resolveCallerOwnerUid", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       installationId: TEST_INSTALLATION_ID,
-      identity: { role: "user", process: { ...IDENTITY, uid: 1000 }, capabilities: [] },
+      peer: testPeer({ kind: "human", account: { ...IDENTITY, uid: 1000 }, calls: [] }),
       procs: { get: vi.fn(() => null) },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
@@ -1511,7 +1495,7 @@ describe("resolveRunAsIdentity", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {
       processId,
-      identity: { role: "user", process: { ...IDENTITY, uid: runAsUid }, capabilities: ["proc.spawn"] },
+      peer: testPeer({ kind: "human", account: { ...IDENTITY, uid: runAsUid }, calls: ["proc.spawn"] }),
       auth: authMock(),
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
@@ -1552,7 +1536,7 @@ describe("resolveRunAsIdentity", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       installationId: TEST_INSTALLATION_ID,
-      identity: { role: "user", process: { ...IDENTITY, uid: 1000 }, capabilities: ["proc.spawn"] },
+      peer: testPeer({ kind: "human", account: { ...IDENTITY, uid: 1000 }, calls: ["proc.spawn"] }),
       auth,
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
@@ -1567,11 +1551,7 @@ describe("handleProcList", () => {
   it("exposes the personal controller marker", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
-      identity: {
-        role: "user",
-        process: IDENTITY,
-        capabilities: ["proc.list"],
-      },
+      peer: testPeer({ kind: "human", account: IDENTITY, calls: ["proc.list"] }),
       procs: {
         list: vi.fn(() => [{
           processId: "proc:personal",
@@ -1611,7 +1591,7 @@ describe("handleProcList", () => {
       processId: "proc:abc",
       // The process runs as the personal agent (uid 2000) but is owned by the
       // human (uid 1000); listing must resolve to the human owner.
-      identity: { role: "user", process: { ...IDENTITY, uid: 2000 }, capabilities: ["proc.list"] },
+      peer: testPeer({ kind: "human", account: { ...IDENTITY, uid: 2000 }, calls: ["proc.list"] }),
       procs: { getOwnerUid: vi.fn(() => 1000), list },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
@@ -1625,7 +1605,7 @@ describe("handleProcList", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       installationId: TEST_INSTALLATION_ID,
-      identity: { role: "user", process: { ...IDENTITY, uid: 1000 }, capabilities: ["proc.list"] },
+      peer: testPeer({ kind: "human", account: { ...IDENTITY, uid: 1000 }, calls: ["proc.list"] }),
       procs: { get: vi.fn(() => null), list },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
@@ -1647,7 +1627,7 @@ describe("handleProcList", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       installationId: TEST_INSTALLATION_ID,
-      identity: { role: "user", process: { ...IDENTITY, uid: 0, username: "root" }, capabilities: ["proc.list"] },
+      peer: testPeer({ kind: "human", account: { ...IDENTITY, uid: 0, username: "root" }, calls: ["proc.list"] }),
       procs: { get: vi.fn(() => null), list },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;

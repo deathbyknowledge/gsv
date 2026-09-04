@@ -2,13 +2,11 @@ import { useMemo } from "preact/hooks";
 import { actionLabel } from "../../../components/ui/agentToolApprovalOptions";
 import {
   behaviorForAccount,
-  inheritedFallbackModelLabelForAccount,
-  inheritedModelLabelForAccount,
   inheritedReasoningForAccount,
   parseApprovalPolicy,
 } from "../domain/consoleAgentBehavior";
 import type { ConsoleAccount, ConsoleConfigEntry } from "../domain/consoleModels";
-import { useConsoleAgentContext } from "../hooks/useConsoleData";
+import { useConsoleAgentContext, useConsoleModels } from "../hooks/useConsoleData";
 import { DefaultsSummaryPanel } from "./DefaultsSummaryPanel";
 
 export interface CrewDefaultsPanelProps {
@@ -44,13 +42,10 @@ export function CrewDefaultsPanel({
 }: CrewDefaultsPanelProps) {
   const context = useConsoleAgentContext(viewer.username);
 
-  const behavior = behaviorForAccount(config, viewer.uid, viewer.uid);
+  const models = useConsoleModels();
+  const behavior = behaviorForAccount(models.listing, config, viewer.uid, viewer.uid);
   const savedPolicy = useMemo(() => parseApprovalPolicy(behavior.approval), [behavior.approval]);
 
-  const modelValue = behavior.modelLabel || inheritedModelLabelForAccount(config, viewer.uid, viewer.uid) || "—";
-  const fallbackValue = behavior.fallbackModelLabel
-    || inheritedFallbackModelLabelForAccount(config, viewer.uid, viewer.uid)
-    || "None";
   const reasoningValue = reasoningDisplayLabel(
     behavior.reasoning || inheritedReasoningForAccount(config, viewer.uid, viewer.uid),
   );
@@ -60,8 +55,6 @@ export function CrewDefaultsPanel({
 
   return (
     <DefaultsSummaryPanel
-      model={modelValue}
-      fallback={fallbackValue}
       reasoning={reasoningValue}
       permissionsAction={actionLabel(savedPolicy.default).toUpperCase()}
       overridesCount={savedPolicy.rules.length}

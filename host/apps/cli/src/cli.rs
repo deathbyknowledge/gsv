@@ -394,7 +394,7 @@ pub(crate) enum AuthTokenAction {
     /// Create a new auth token
     Create {
         /// Token kind
-        #[arg(long, value_enum, default_value = "device")]
+        #[arg(long, value_enum, default_value = "machine")]
         kind: TokenKindArg,
 
         /// Optional owner uid (root only)
@@ -405,13 +405,9 @@ pub(crate) enum AuthTokenAction {
         #[arg(long)]
         label: Option<String>,
 
-        /// Optional explicit role binding (defaults from kind)
-        #[arg(long, value_enum)]
-        role: Option<TokenRoleArg>,
-
-        /// Optional device binding (device tokens only)
-        #[arg(long)]
-        device: Option<String>,
+        /// Peer id the token may connect as (machine tokens only)
+        #[arg(long, alias = "device")]
+        peer: Option<String>,
 
         /// Optional expiry timestamp (unix ms)
         #[arg(long)]
@@ -442,35 +438,19 @@ pub(crate) enum AuthTokenAction {
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub(crate) enum TokenKindArg {
-    #[value(alias = "node")]
-    Device,
+    #[value(alias = "device", alias = "node")]
+    Machine,
     Service,
-    User,
+    #[value(alias = "user")]
+    Human,
 }
 
 impl TokenKindArg {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
-            Self::Device => "node",
+            Self::Machine => "machine",
             Self::Service => "service",
-            Self::User => "user",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, ValueEnum)]
-pub(crate) enum TokenRoleArg {
-    Driver,
-    Service,
-    User,
-}
-
-impl TokenRoleArg {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Driver => "driver",
-            Self::Service => "service",
-            Self::User => "user",
+            Self::Human => "human",
         }
     }
 }

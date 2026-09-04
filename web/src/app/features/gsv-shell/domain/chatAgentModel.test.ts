@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { listingFromConfig } from "../../gsv-console/domain/consoleModelListing.testSupport";
 import {
   buildChatAgentViewModel,
   canStartChatWork,
@@ -6,7 +7,7 @@ import {
   type ChatAgentTaskData,
 } from "../../chat/domain/agent";
 import type { ChatProcessSummary } from "../../chat/domain/processes";
-import type { ConsoleAccount } from "../../gsv-console/domain/consoleModels";
+import type { ConsoleAccount, ConsoleConfigEntry } from "../../gsv-console/domain/consoleModels";
 import { buildShellChatAgent } from "./chatAgentModel";
 
 function account(
@@ -50,6 +51,23 @@ function taskSummary(tasks: readonly ChatAgentTaskData[]) {
   }));
 }
 
+function modelStack(
+  key: string,
+  models: Array<Record<string, string>>,
+): ConsoleConfigEntry {
+  return {
+    key,
+    value: JSON.stringify({ version: 1, models }),
+    redacted: false,
+  };
+}
+
+type ChatAgentInput = Omit<Parameters<typeof buildShellChatAgent>[0], "models">;
+
+function buildChatAgent(input: ChatAgentInput) {
+  return buildShellChatAgent({ ...input, models: listingFromConfig(input.config, input.ownerUid) });
+}
+
 describe("shell chat agent model", () => {
   it("keeps the personal intelligence identity during a specialist work session", () => {
     const ship = process({
@@ -68,7 +86,7 @@ describe("shell chat agent model", () => {
       runState: "running",
       createdAt: 20,
     });
-    const agent = buildShellChatAgent({
+    const agent = buildChatAgent({
       activeProcess: work,
       accounts: [
         account({ uid: 1001, username: "aria", relation: "personal-agent", displayName: "Xanadu" }),
@@ -101,7 +119,7 @@ describe("shell chat agent model", () => {
   });
 
   it("presents the included GSV provider without its internal model alias", () => {
-    const agent = buildShellChatAgent({
+    const agent = buildChatAgent({
       activeProcess: null,
       accounts: [
         account({ uid: 1000, username: "sam", relation: "self", displayName: "Sam" }),
@@ -109,8 +127,9 @@ describe("shell chat agent model", () => {
       ],
       chatProcesses: [],
       config: [
-        { key: "config/ai/provider", value: "gsv", redacted: false },
-        { key: "config/ai/model", value: "default", redacted: false },
+        modelStack("config/ai/models", [
+          { id: "managed", name: "GSV included", provider: "gsv", model: "default" },
+        ]),
         { key: "config/ai/reasoning", value: "medium", redacted: false },
       ],
       ownerUid: 1000,
@@ -125,7 +144,7 @@ describe("shell chat agent model", () => {
 
   it("shows an owner model profile selected for specialist work", () => {
     const work = process({ pid: "proc:scout", uid: 1000, username: "scout" });
-    const agent = buildShellChatAgent({
+    const agent = buildChatAgent({
       activeProcess: work,
       accounts: [
         account({ uid: 1000, username: "sam", relation: "self", displayName: "Sam" }),
@@ -134,24 +153,13 @@ describe("shell chat agent model", () => {
       ],
       chatProcesses: [work],
       config: [
-        { key: "config/ai/model", value: "system-model", redacted: false },
-        { key: "users/1002/ai/model_profile", value: "fast-stack", redacted: false },
-        {
-          key: "users/1000/ai/model_profiles",
-          value: JSON.stringify({
-            profiles: [{
-              id: "fast-stack",
-              name: "Fast Stack",
-              values: {
-                "config/ai/provider": "custom",
-                "config/ai/model": "zai-glm-4.7",
-              },
-              createdAt: 1,
-              updatedAt: 2,
-            }],
-          }),
-          redacted: false,
-        },
+        { key: "users/1002/ai/preferred_model", value: "fast-stack", redacted: false },
+        modelStack("users/1000/ai/models", [{
+          id: "fast-stack",
+          name: "Fast Stack",
+          provider: "custom",
+          model: "zai-glm-4.7",
+        }]),
       ],
       ownerUid: 1000,
       statusLabel: "idle",
@@ -159,13 +167,13 @@ describe("shell chat agent model", () => {
 
     expect(agent.name).toBe("Xanadu");
     expect(agent.modelLabel).toBe("Fast Stack");
-    expect(agent.modelValue).toBe("model-profile:fast-stack");
+    expect(agent.modelValue).toBe("model-entry:fast-stack");
     expect(agent.modelOptions).toContain("Fast Stack");
-    expect(agent.modelOptions).not.toContain("model-profile:fast-stack");
+    expect(agent.modelOptions).not.toContain("model-entry:fast-stack");
   });
 
   it("exposes viewer model profiles instead of raw model config fields", () => {
-    const agent = buildShellChatAgent({
+    const agent = buildChatAgent({
       activeProcess: null,
       accounts: [
         account({ uid: 1000, username: "sam", relation: "self", displayName: "Sam" }),
@@ -178,23 +186,12 @@ describe("shell chat agent model", () => {
           value: "image-model",
           redacted: false,
         },
-        {
-          key: "users/1000/ai/model_profiles",
-          value: JSON.stringify({
-            profiles: [{
-              id: "fast-stack",
-              name: "Fast Stack",
-              values: {
-                "config/ai/provider": "openai",
-                "config/ai/model": "gpt-4.1-mini",
-                "config/ai/api_key": "secret",
-              },
-              createdAt: 10,
-              updatedAt: 20,
-            }],
-          }),
-          redacted: false,
-        },
+        modelStack("users/1000/ai/models", [{
+          id: "fast-stack",
+          name: "Fast Stack",
+          provider: "openai",
+          model: "gpt-4.1-mini",
+        }]),
       ],
       ownerUid: 1000,
       statusLabel: "no process",
@@ -210,7 +207,7 @@ describe("shell chat agent model", () => {
         }),
       }),
     ]);
-    expect(agent.modelOptions).toContain("gpt-4.1-mini");
+    expect(agent.modelOptions).toContain("Fast Stack");
     expect(agent.modelOptions).not.toContain("image-model");
   });
 
@@ -221,7 +218,7 @@ describe("shell chat agent model", () => {
       username: "root",
       title: "Root maintenance",
     });
-    const agent = buildShellChatAgent({
+    const agent = buildChatAgent({
       activeProcess: rootWork,
       accounts: [
         account({ uid: 0, username: "root", relation: "self", displayName: "Root" }),
@@ -250,7 +247,7 @@ describe("shell chat agent model", () => {
   });
 
   it("fails closed into administration when no personal intelligence or work exists", () => {
-    const agent = buildShellChatAgent({
+    const agent = buildChatAgent({
       activeProcess: null,
       accounts: [
         account({ uid: 0, username: "root", relation: "self", displayName: "Root" }),
@@ -272,7 +269,7 @@ describe("shell chat agent model", () => {
   });
 
   it("does not reuse a cached personal account after the viewer becomes unknown", () => {
-    const agent = buildShellChatAgent({
+    const agent = buildChatAgent({
       activeProcess: null,
       accounts: [
         account({ uid: 1000, username: "sam", relation: "self" }),
@@ -290,7 +287,7 @@ describe("shell chat agent model", () => {
   });
 
   it("shows all owner-visible processes as work without grouping by run-as account", () => {
-    const agent = buildShellChatAgent({
+    const agent = buildChatAgent({
       activeProcess: null,
       accounts: [account({ uid: 1001, username: "aria", relation: "personal-agent" })],
       chatProcesses: [
@@ -328,7 +325,7 @@ describe("shell chat agent model", () => {
       username: "aria",
       personal: true,
     });
-    const agent = buildShellChatAgent({
+    const agent = buildChatAgent({
       activeProcess: ship,
       accounts: [
         account({ uid: 1000, username: "sam", relation: "self" }),
@@ -336,15 +333,19 @@ describe("shell chat agent model", () => {
       ],
       chatProcesses: [ship],
       config: [
-        { key: "config/ai/model", value: "system-model", redacted: false },
-        { key: "users/1000/ai/model", value: "owner-model", redacted: false },
+        modelStack("users/1000/ai/models", [{
+          id: "owner-model",
+          name: "Owner model",
+          provider: "openai",
+          model: "gpt-5.4",
+        }]),
         { key: "users/1000/ai/reasoning", value: "high", redacted: false },
       ],
       ownerUid: 1000,
       statusLabel: "idle",
     });
 
-    expect(agent.modelLabel).toBe("owner-model");
+    expect(agent.modelLabel).toBe("Owner model");
     expect(agent.modelIsDefault).toBe(true);
     expect(agent.reasoningLabel).toBe("HIGH");
     expect(agent.runAs).toBeUndefined();
@@ -352,7 +353,7 @@ describe("shell chat agent model", () => {
 
   it("shows the active work process behavior without replacing the personal identity", () => {
     const work = process({ pid: "proc:scout", uid: 1000, username: "scout" });
-    const agent = buildShellChatAgent({
+    const agent = buildChatAgent({
       activeProcess: work,
       accounts: [
         account({ uid: 1000, username: "sam", relation: "self" }),
@@ -361,8 +362,21 @@ describe("shell chat agent model", () => {
       ],
       chatProcesses: [work],
       config: [
-        { key: "config/ai/model", value: "system-model", redacted: false },
-        { key: "users/1002/ai/model", value: "specialist-model", redacted: false },
+        { key: "users/1002/ai/preferred_model", value: "specialist-model", redacted: false },
+        modelStack("users/1000/ai/models", [
+          {
+            id: "owner-model",
+            name: "Owner model",
+            provider: "openai",
+            model: "gpt-5.4",
+          },
+          {
+            id: "specialist-model",
+            name: "Specialist model",
+            provider: "workers-ai",
+            model: "@cf/specialist",
+          },
+        ]),
         { key: "users/1002/ai/reasoning", value: "low", redacted: false },
       ],
       ownerUid: 1000,
@@ -370,7 +384,7 @@ describe("shell chat agent model", () => {
     });
 
     expect(agent.name).toBe("Xanadu");
-    expect(agent.modelLabel).toBe("specialist-model");
+    expect(agent.modelLabel).toBe("Specialist model");
     expect(agent.reasoningLabel).toBe("LOW");
     expect(agent.runAs).toBeUndefined();
   });
