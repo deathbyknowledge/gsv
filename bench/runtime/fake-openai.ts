@@ -749,7 +749,7 @@ function selectCompetingIncidentResponse(
   );
   const delegateSynchronizationId = "competing-ship-yield-initial-results";
   const synchronizedInitialDelegates = transcript.includes(
-    `\"id\":\"${delegateSynchronizationId}\"`,
+    `"id":"${delegateSynchronizationId}"`,
   );
   const decisionDeferred = transcript.includes(
     '"id":"competing-ship-wait-decision"',
