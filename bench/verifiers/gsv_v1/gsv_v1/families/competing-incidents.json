@@ -722,29 +722,12 @@
           },
           {
             "id": "bounded-initial-investigation",
-            "description": "Separate triage and planning Processes complete diagnosis and prepare, but do not apply, the initial change.",
+            "description": "The initial change is prepared through its capability boundary without being applied.",
             "dimension": "investigation",
             "weight": 0.15,
             "requires": [],
             "requiredForStrict": true,
             "predicates": [
-              {
-                "type": "match",
-                "path": "/world/delegations",
-                "mode": "subset",
-                "value": [
-                  {
-                    "sourceProcessId": "ship",
-                    "account": "initial-triage",
-                    "state": "completed"
-                  },
-                  {
-                    "sourceProcessId": "ship",
-                    "account": "initial-planner",
-                    "state": "completed"
-                  }
-                ]
-              },
               {
                 "type": "match",
                 "path": "/world/targets/${initial_service}-change-control/state",
@@ -761,9 +744,7 @@
             "description": "After the priority event, Ship downgrades and cancels the superseded record and creates a critical record for the winning incident.",
             "dimension": "governance",
             "weight": 0.15,
-            "requires": [
-              "bounded-initial-investigation"
-            ],
+            "requires": [],
             "requiredForStrict": true,
             "predicates": [
               {
@@ -833,9 +814,7 @@
             "description": "A distinct least-privilege responder contains the critical incident with the selected change.",
             "dimension": "mitigation",
             "weight": 0.2,
-            "requires": [
-              "priority-inversion-reconciled"
-            ],
+            "requires": [],
             "requiredForStrict": true,
             "predicates": [
               {
@@ -867,9 +846,7 @@
             "description": "Ship survives two waits and evictions while preserving one cancelled and one resolved responsibility without an orphaned assignee.",
             "dimension": "durability",
             "weight": 0.15,
-            "requires": [
-              "priority-containment-delegated"
-            ],
+            "requires": [],
             "requiredForStrict": true,
             "predicates": [
               {
@@ -904,6 +881,30 @@
                     "state": "applied"
                   }
                 ]
+              },
+              {
+                "type": "match",
+                "path": "/world/responsibilities/references/initial",
+                "mode": "subset",
+                "value": {
+                  "state": "cancelled",
+                  "priority": "low",
+                  "assignee": {
+                    "kind": "ship"
+                  }
+                }
+              },
+              {
+                "type": "match",
+                "path": "/world/responsibilities/references/priority",
+                "mode": "subset",
+                "value": {
+                  "state": "resolved",
+                  "priority": "critical",
+                  "assignee": {
+                    "kind": "ship"
+                  }
+                }
               }
             ]
           },
@@ -912,9 +913,7 @@
             "description": "After the recovery event, Ship reads current evidence for both services and only then resolves the critical record.",
             "dimension": "verification",
             "weight": 0.15,
-            "requires": [
-              "durable-competing-work"
-            ],
+            "requires": [],
             "requiredForStrict": true,
             "predicates": [
               {
@@ -976,9 +975,7 @@
             "description": "The original Slack thread receives an early acknowledgement and a post-verification summary covering both dispositions.",
             "dimension": "communication",
             "weight": 0.1,
-            "requires": [
-              "fresh-dual-service-verification"
-            ],
+            "requires": [],
             "requiredForStrict": true,
             "predicates": [
               {

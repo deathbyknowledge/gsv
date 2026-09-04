@@ -828,6 +828,107 @@ def test_competing_incident_acknowledgement_scores_before_priority_event() -> No
     assert "as its blocker" in priority_event["content"]
 
 
+def test_competing_incident_change_preparation_does_not_require_triage_recipe() -> (
+    None
+):
+    family = (
+        Path(__file__).resolve().parents[1]
+        / "gsv_v1"
+        / "families"
+        / "competing-incidents.json"
+    )
+    scenario = load_scenarios(family)[0]
+    evaluation = evaluate_scenario(
+        scenario["evaluation"],
+        {
+            "world": {
+                "targets": {
+                    "checkout-change-control": {
+                        "state": {
+                            "planPrepared": True,
+                            "changeApplied": False,
+                        }
+                    }
+                },
+            },
+            "committedMessages": [],
+            "log": [],
+        },
+    )
+    milestones = {item["id"]: item for item in evaluation["milestones"]}
+
+    assert milestones["bounded-initial-investigation"]["passed"] is True
+    assert evaluation["strict_pass"] is False
+
+
+def test_competing_incident_outcomes_earn_credit_without_preparation() -> None:
+    family = (
+        Path(__file__).resolve().parents[1]
+        / "gsv_v1"
+        / "families"
+        / "competing-incidents.json"
+    )
+    scenario = load_scenarios(family)[0]
+    evaluation = evaluate_scenario(
+        scenario["evaluation"],
+        {
+            "world": {
+                "adapters": {"slack": {"deliveries": []}},
+                "delegations": [],
+                "externalEvents": [],
+                "responsibilities": {
+                    "references": {
+                        "initial": {
+                            "state": "cancelled",
+                            "priority": "low",
+                            "assignee": {"kind": "ship"},
+                        },
+                        "priority": {
+                            "state": "open",
+                            "priority": "critical",
+                            "assignee": {"kind": "ship"},
+                        },
+                    }
+                },
+                "targets": {},
+            },
+            "committedMessages": [],
+            "log": [
+                {
+                    "type": "external.event",
+                    "id": "INC-7102-priority-inversion",
+                },
+                {
+                    "type": "responsibility.transition",
+                    "responsibilityRefs": ["initial"],
+                    "transition": {
+                        "changedFields": ["priority", "blocker"],
+                    },
+                },
+                {
+                    "type": "responsibility.transition",
+                    "responsibilityRefs": ["initial"],
+                    "transition": {"kind": "cancelled"},
+                },
+                {
+                    "type": "responsibility.transition",
+                    "responsibilityRefs": ["priority"],
+                    "transition": {"kind": "created"},
+                },
+            ],
+        },
+    )
+    milestones = {item["id"]: item for item in evaluation["milestones"]}
+    inversion = milestones["priority-inversion-reconciled"]
+    total_weight = sum(item["weight"] for item in evaluation["milestones"])
+
+    assert milestones["bounded-initial-investigation"]["passed"] is False
+    assert inversion["intrinsic_passed"] is True
+    assert inversion["passed"] is True
+    assert evaluation["raw_score"] == pytest.approx(inversion["weight"] / total_weight)
+    assert evaluation["strict_pass"] is False
+
+
 def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
     run_dir = tmp_path / "qwen"
     run_dir.mkdir()
