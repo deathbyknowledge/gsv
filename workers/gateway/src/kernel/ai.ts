@@ -861,13 +861,20 @@ function readConfiguredAiModelStack(ctx: KernelContext, configKey: string): AiMo
  * The running account's own preference wins; otherwise the owner's preference
  * applies, so a human promoting a model also steers the agents they run.
  */
-function resolvePreferredAiModelId(ctx: KernelContext, accountUids: readonly number[]): string | null {
-  // A cleared preference is stored as an empty string; it must not shadow the owner's.
+function resolvePreferredAiModelId(
+  ctx: KernelContext,
+  accountUids: readonly number[],
+  effective: readonly EffectiveAiModelEntry[],
+): string | null {
+  // A cleared preference is stored as an empty string, and a stale one names
+  // an entry that no longer exists; neither may shadow the owner's choice.
   for (const accountUid of accountUids) {
     const preferred = normalizeOptionalString(
       ctx.config.getExplicit(`users/${accountUid}/ai/preferred_model`),
     );
-    if (preferred) return preferred;
+    if (!preferred) continue;
+    const match = effective.find((item) => item.entry.id.toLowerCase() === preferred.toLowerCase());
+    if (match) return match.entry.id;
   }
   return null;
 }
@@ -885,18 +892,15 @@ export function handleAiModels(ctx: KernelContext): AiModelsResult {
   const uid = principal.account.uid;
   const owner = resolveOwnerIdentity(ctx);
   const effective = resolveEffectiveAiModelStack(ctx, resolveAiModelOwnerUid(ctx, uid, owner));
-  const preferredModelId = resolvePreferredAiModelId(ctx, resolveAiConfigAccountUids(uid, owner));
+  const preferredModelId = resolvePreferredAiModelId(ctx, resolveAiConfigAccountUids(uid, owner), effective);
   const ordered = orderEffectiveAiModels(effective, preferredModelId);
-  const preferred = preferredModelId
-    ? ordered.find((item) => item.entry.id.toLowerCase() === preferredModelId.toLowerCase())
-    : undefined;
   return {
     models: ordered.map((item) => ({
       ...item.entry,
       source: item.source,
       hasCredential: storedCredential(ctx, item).length > 0,
     })),
-    preferredModelId: preferred?.entry.id ?? null,
+    preferredModelId,
   };
 }
 
@@ -919,7 +923,7 @@ async function resolveStoredAiTextModelStack(
     throw new Error(`AI model not found: ${requestedModelId}`);
   }
   const preferredModelId = requestedModelId
-    ?? resolvePreferredAiModelId(options.ctx, options.accountUids);
+    ?? resolvePreferredAiModelId(options.ctx, options.accountUids, effective);
   const models = orderEffectiveAiModels(effective, preferredModelId);
   const reasoning = normalizeOptionalString(options.reasoning)
     ?? normalizeOptionalString(resolveConfig("reasoning"));
