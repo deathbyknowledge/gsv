@@ -24,7 +24,7 @@ import {
   type ApprovalPolicy,
 } from "../domain/consoleAgentBehavior";
 import type { ConsoleAccount, ConsoleConfigEntry } from "../domain/consoleModels";
-import { useConsoleAgentContext, useSaveConsoleAgentBehavior, useSaveConsoleAgentContext } from "../hooks/useConsoleData";
+import { useConsoleAgentContext, useSaveConsoleAgentBehavior, useSaveConsoleAgentContext, useConsoleModels } from "../hooks/useConsoleData";
 import "./EditDefaultsPanel.css";
 
 export type EditDefaultsSection = "defaults" | "permissions" | "context";
@@ -85,7 +85,8 @@ export function EditDefaultsPanel({
     && !context.resource.isUnavailable
     && !context.resource.isError;
 
-  const behavior = behaviorForAccount(config, viewer.uid, viewer.uid);
+  const models = useConsoleModels();
+  const behavior = behaviorForAccount(models.listing, config, viewer.uid, viewer.uid);
   const savedPolicy = useMemo(() => parseApprovalPolicy(behavior.approval), [behavior.approval]);
   const savedSignature = serializeApprovalPolicy(savedPolicy);
   const reasoningSelectOptions = reasoningOptions(inheritedReasoningForAccount(config, viewer.uid, viewer.uid));

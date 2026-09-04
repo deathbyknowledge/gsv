@@ -11,7 +11,6 @@ import {
   configValueForKey,
   effectiveAiValuesForViewer,
   modelDisplayName,
-  modelProfilesForConfig,
   modelStackDisplayName,
   viewerAccountForSettings,
 } from "../domain/consoleSettings";
@@ -20,8 +19,8 @@ import {
   behaviorForAccount,
   parseApprovalPolicy,
 } from "../domain/consoleAgentBehavior";
-import { overrideConfigCount } from "../domain/consoleAi";
-import { useConsoleAgentContext } from "../hooks/useConsoleData";
+import { modelProfilesForConfig, overrideConfigCount } from "../domain/consoleAi";
+import { useConsoleAgentContext, useConsoleModels } from "../hooks/useConsoleData";
 import type { ConsoleListKind } from "../domain/consoleListTypes";
 import {
   avatarForAccount,
@@ -306,15 +305,16 @@ function SettingsCard({
   onOpenSurface?: OpenSurface;
 }) {
   const viewer = viewerAccountForSettings(accounts);
-  const modelValues = effectiveAiValuesForViewer(config, viewer?.uid);
-  const profiles = modelProfilesForConfig(config, viewer?.uid);
+  const models = useConsoleModels();
+  const profiles = modelProfilesForConfig(models.listing, config, viewer?.uid);
+  const modelValues = effectiveAiValuesForViewer(config, viewer?.uid, profiles[0] ?? null);
   const chatModel = (
     fixedAiProviderModel(modelValues["config/ai/provider"] ?? "")
       ? modelStackDisplayName(modelValues)
       : modelCoreName(modelValues["config/ai/model"] ?? "")
   ) || "Not configured";
   const savedModels = `${profiles.length} saved model${profiles.length === 1 ? "" : "s"}`;
-  const behavior = viewer ? behaviorForAccount(config, viewer.uid, viewer.uid) : null;
+  const behavior = viewer ? behaviorForAccount(models.listing, config, viewer.uid, viewer.uid) : null;
   const permission = behavior?.permission ?? "ask";
   // AGENT PERMISSIONS counts the saved approval-policy rules (owned by the CREW
   // permissions editor); RUNTIME counts the config-level overrides (owned by the

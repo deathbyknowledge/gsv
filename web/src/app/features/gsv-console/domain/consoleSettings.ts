@@ -1,3 +1,4 @@
+import type { AiModelListEntry, AiModelSource, AiModelsResult } from "@humansandmachines/gsv/protocol";
 import type { ConsoleAccount, ConsoleConfigEntry } from "./consoleModels";
 import {
   AI_OPENAI_WORKERS_PROVIDER_OPTIONS,
@@ -44,9 +45,23 @@ export type ConsoleModelProfile = {
   id: string;
   name: string;
   values: Record<string, string>;
+  /** Which stack layer holds the entry; only the viewer's own layer is editable. */
+  source: AiModelSource;
   createdAt: number;
   updatedAt: number;
 };
+
+/** The effective ordered stack as the Kernel reports it through `ai.models`. */
+export type ConsoleModelListing = AiModelsResult;
+
+/** Root edits the installation-wide list; everyone else edits their own. */
+export function editableModelSource(uid: number | null | undefined): AiModelSource {
+  return uid === 0 ? "system" : "personal";
+}
+
+export function preferredModelSaveEntry(uid: number, modelId: string | null): ConsoleConfigWrite {
+  return { key: `users/${uid}/ai/preferred_model`, value: modelId ?? "" };
+}
 
 export type ConsoleConfigWrite = {
   key: string;
@@ -422,6 +437,7 @@ export function configValueMap(config: readonly ConsoleConfigEntry[]) {
 export function effectiveAiValuesForViewer(
   config: readonly ConsoleConfigEntry[],
   uid: number | null | undefined,
+  primaryModel: ConsoleModelProfile | null = null,
 ) {
   const values: Record<string, string> = {};
   for (const field of allAiSettingFields()) {
@@ -450,9 +466,6 @@ export function effectiveAiValuesForViewer(
       }
     }
   }
-  const [primaryModel] = modelProfilesForConfig(config, validUid.data, {
-    inheritSystem: true,
-  });
   if (primaryModel) {
     Object.assign(values, primaryModel.values);
   }
@@ -466,37 +479,32 @@ function isMediaConnectionField(key: string): boolean {
     key === "config/ai/speech/speaker";
 }
 
-export function inheritsSystemModelStack(
+/**
+ * Projects the Kernel's effective stack into console profiles. Entries from
+ * the viewer's own layer get their stored credential hydrated for editing;
+ * every other layer is shown as it is.
+ */
+export function modelProfilesFromListing(
+  listing: ConsoleModelListing | null,
   config: readonly ConsoleConfigEntry[],
   uid: number | null | undefined,
-): boolean {
-  const validUid = z.number().finite().safeParse(uid);
-  return validUid.success && validUid.data !== 0 &&
-    configEntryForKey(config, modelProfilesConfigKey(validUid.data)) === null;
-}
-
-export function modelProfilesForConfig(
-  config: readonly ConsoleConfigEntry[],
-  uid: number | null | undefined,
-  options: { inheritSystem?: boolean } = {},
 ): ConsoleModelProfile[] {
-  const validUid = z.number().finite().safeParse(uid);
-  if (!validUid.success) {
+  if (!listing) {
     return [];
   }
-  const accountKey = modelProfilesConfigKey(validUid.data);
-  const canonicalEntry = configEntryForKey(config, accountKey)
-    ?? (options.inheritSystem ? configEntryForKey(config, "config/ai/models") : null);
-  if (canonicalEntry && !canonicalEntry.redacted && canonicalEntry.value.trim()) {
-    return parseCanonicalModelStack(canonicalEntry.value)
-      .map((profile) => hydrateModelProfileSecrets(
-        config,
-        canonicalEntry.key,
-        profile,
-      ));
+  const validUid = z.number().finite().safeParse(uid);
+  const editable = validUid.success ? editableModelSource(validUid.data) : null;
+  const profiles: ConsoleModelProfile[] = [];
+  for (const entry of listing.models) {
+    const profile = normalizeCanonicalModel(entry, entry.source);
+    if (!profile) continue;
+    profiles.push(
+      validUid.success && entry.source === editable
+        ? hydrateModelProfileSecrets(config, modelProfilesConfigKey(validUid.data), profile)
+        : profile,
+    );
   }
-
-  return [];
+  return profiles;
 }
 
 export function serializeModelProfiles(profiles: readonly ConsoleModelProfile[]): string {
@@ -517,9 +525,6 @@ export function modelProfileSaveEntries(
 ): ConsoleConfigWrite[] {
   if (uid === null) {
     throw new Error("A signed-in account is required to save models.");
-  }
-  if (uid === 0 && nextProfiles.length === 0) {
-    throw new Error("The system model stack must contain at least one model.");
   }
   const entries: ConsoleConfigWrite[] = [{
     key: modelProfilesConfigKey(uid),
@@ -550,6 +555,7 @@ export function createModelProfile(
   name: string,
   values: Record<string, string>,
   now = Date.now(),
+  source: AiModelSource = "personal",
 ): ConsoleModelProfile[] {
   const normalizedName = normalizeProfileName(name);
   if (!normalizedName) {
@@ -564,6 +570,7 @@ export function createModelProfile(
       id: uniqueProfileId(profiles, normalizedName),
       name: normalizedName,
       values: normalizeProfileValues(values),
+      source,
       createdAt: now,
       updatedAt: now,
     },
@@ -699,24 +706,10 @@ export function allModeledSettingKeys(): Set<string> {
   ].map((field) => field.key));
 }
 
-function parseCanonicalModelStack(raw: string): ConsoleModelProfile[] {
-  let decoded: unknown;
-  try {
-    decoded = JSON.parse(raw);
-  } catch {
-    return [];
-  }
-  const payload = z.object({
-    version: z.literal(1),
-    models: z.array(settingsValueSchema),
-  }).strict().safeParse(decoded);
-  if (!payload.success) return [];
-  return payload.data.models
-    .map(normalizeCanonicalModel)
-    .filter((profile): profile is ConsoleModelProfile => profile !== null);
-}
-
-function normalizeCanonicalModel(raw: SettingsValue): ConsoleModelProfile | null {
+function normalizeCanonicalModel(
+  raw: SettingsValue | AiModelListEntry,
+  source: AiModelSource,
+): ConsoleModelProfile | null {
   const parsed = z.object({
     id: z.string(),
     name: z.string(),
@@ -727,7 +720,7 @@ function normalizeCanonicalModel(raw: SettingsValue): ConsoleModelProfile | null
     transportTarget: z.string().optional(),
     maxTokens: z.number().int().positive().optional(),
     contextWindowTokens: z.number().int().positive().optional(),
-  }).strict().safeParse(raw);
+  }).safeParse(raw);
   if (!parsed.success) return null;
   const id = normalizeProfileId(parsed.data.id);
   const name = normalizeProfileName(parsed.data.name);
@@ -747,6 +740,7 @@ function normalizeCanonicalModel(raw: SettingsValue): ConsoleModelProfile | null
       "config/ai/context_window_tokens": parsed.data.contextWindowTokens ?? "",
       "config/ai/api_key": "",
     }),
+    source,
     createdAt: 0,
     updatedAt: 0,
   };

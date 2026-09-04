@@ -1,8 +1,10 @@
+import { z } from "zod";
 import type { ConsoleConfigEntry } from "./consoleModels";
 import {
   modelDisplayName,
-  modelProfilesForConfig as modelStackForConfig,
+  modelProfilesFromListing,
   modelStackDisplayName,
+  type ConsoleModelListing,
   type ConsoleModelProfile,
 } from "./consoleSettings";
 
@@ -22,37 +24,43 @@ const MODEL_STACK_KEY_RE = /^(?:config\/ai\/models|users\/\d+\/ai\/models)$/;
 const MODEL_STACK_PATH_RE = /^(?:config\/ai\/models|users\/\d+\/ai\/models)(?:\/|$)/;
 const AGENT_BEHAVIOR_CONFIG_KEY_RE = /^users\/[^/]+\/ai\//i;
 
+/**
+ * The effective stack comes from the Kernel's `ai.models` listing; config only
+ * supplies the viewer's own credentials for editing.
+ */
 function effectiveModelProfiles(
+  models: ConsoleModelListing | null,
   config: readonly ConsoleConfigEntry[],
   uid?: number | null,
 ): ConsoleModelProfile[] {
   const modelOwnerUid = uid !== null && uid !== undefined && Number.isFinite(uid)
     ? uid
     : 0;
-  return modelStackForConfig(config, modelOwnerUid, {
-    inheritSystem: modelOwnerUid !== 0,
-  });
+  return modelProfilesFromListing(models, config, modelOwnerUid);
 }
 
 export function defaultModelLabelForConfig(
+  models: ConsoleModelListing | null,
   config: readonly ConsoleConfigEntry[],
   uid?: number | null,
 ): string {
-  return effectiveModelProfiles(config, uid)[0]?.name ?? DEFAULT_MODEL_LABEL;
+  return effectiveModelProfiles(models, config, uid)[0]?.name ?? DEFAULT_MODEL_LABEL;
 }
 
 export function modelLabelsForConfig(
+  models: ConsoleModelListing | null,
   config: readonly ConsoleConfigEntry[],
   uid?: number | null,
 ): string[] {
-  return effectiveModelProfiles(config, uid).map((profile) => profile.name);
+  return effectiveModelProfiles(models, config, uid).map((profile) => profile.name);
 }
 
 export function modelOptionsForConfig(
+  models: ConsoleModelListing | null,
   config: readonly ConsoleConfigEntry[],
   uid?: number | null,
 ): ConsoleModelOption[] {
-  return effectiveModelProfiles(config, uid).map((profile) => ({
+  return effectiveModelProfiles(models, config, uid).map((profile) => ({
     value: modelEntryOptionValue(profile.id),
     label: profile.name,
     description: modelProfileSummary(profile),
@@ -60,10 +68,11 @@ export function modelOptionsForConfig(
 }
 
 export function modelProfilesForConfig(
+  models: ConsoleModelListing | null,
   config: readonly ConsoleConfigEntry[],
   uid: number | null | undefined,
 ): ConsoleModelProfile[] {
-  return effectiveModelProfiles(config, uid);
+  return effectiveModelProfiles(models, config, uid);
 }
 
 export function modelProfileSummary(profile: ConsoleModelProfile): string {
@@ -94,10 +103,21 @@ export function modelConfigEntries(config: readonly ConsoleConfigEntry[]): Conso
 
 export function modelConfigCount(config: readonly ConsoleConfigEntry[]): number {
   return modelConfigEntries(config).reduce((count, entry) => {
-    const uidMatch = /^users\/(\d+)\/ai\/models$/.exec(entry.key);
-    const uid = uidMatch ? Number(uidMatch[1]) : 0;
-    return count + modelStackForConfig([entry], uid).length;
+    return count + configuredModelCount(entry);
   }, 0);
+}
+
+/** Entries written to one stack key; configuration only, not the effective stack. */
+function configuredModelCount(entry: ConsoleConfigEntry): number {
+  if (entry.redacted || !entry.value.trim()) return 0;
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(entry.value);
+  } catch {
+    return 0;
+  }
+  const parsed = z.object({ version: z.literal(1), models: z.array(z.unknown()) }).safeParse(decoded);
+  return parsed.success ? parsed.data.models.length : 0;
 }
 
 export function overrideConfigEntries(config: readonly ConsoleConfigEntry[]): ConsoleConfigEntry[] {

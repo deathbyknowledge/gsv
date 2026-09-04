@@ -54,6 +54,7 @@ import {
   useCreateConsoleAgent,
   useSaveConsoleAgentBehavior,
   useSaveConsoleAgentContext,
+  useConsoleModels,
 } from "../hooks/useConsoleData";
 import "./ConsoleAgentPage.css";
 
@@ -74,10 +75,11 @@ export function ConsoleAgentPage({
   const config = useConsoleConfig();
   const processes = useConsoleProcesses();
   const targets = useConsoleTargets();
+  const models = useConsoleModels();
   const ownerUid = viewerAccountForAgents(accounts.resource.data ?? [])?.uid ?? null;
-  const modelOptions = modelOptionsForConfig(config.config, ownerUid);
+  const modelOptions = modelOptionsForConfig(models.listing, config.config, ownerUid);
   const toolTargets = agentToolTargetsForConsoleTargets(targets.targets);
-  const inheritedNewAgentModel = inheritedModelLabelForAccount(config.config, -1, ownerUid);
+  const inheritedNewAgentModel = inheritedModelLabelForAccount(models.listing, config.config, -1, ownerUid);
   const inheritedNewAgentReasoning = inheritedReasoningForAccount(config.config, -1, ownerUid);
   const defaultApprovalPolicy = defaultApprovalPolicyForConfig(config.config, ownerUid);
   const newAgentModelOptions = modelOptionsForAccount(modelOptions, "", inheritedNewAgentModel);
@@ -169,15 +171,16 @@ function AgentEditorSurface({
   const processes = consoleWorkProcesses(processResource.data ?? [])
     .filter((process) => ownsProcess(account, process));
   const context = useConsoleAgentContext(account.username);
+  const models = useConsoleModels().listing;
   const saveBehavior = useSaveConsoleAgentBehavior();
   const saveContext = useSaveConsoleAgentContext();
   const contextEditable = !context.resource.isLoading
     && !context.resource.isUnavailable
     && !context.resource.isError;
-  const behavior = behaviorForAccount(config, account.uid, ownerUid);
+  const behavior = behaviorForAccount(models, config, account.uid, ownerUid);
   const editsUserDefaults = isHumanCrewAccount(account);
   const behaviorEditable = account.runnable;
-  const inheritedModelLabel = inheritedModelLabelForAccount(config, account.uid, ownerUid);
+  const inheritedModelLabel = inheritedModelLabelForAccount(models, config, account.uid, ownerUid);
   const inheritedReasoning = inheritedReasoningForAccount(config, account.uid, ownerUid);
   const resolvedModelOptions = modelOptionsForAccount(modelOptions, behavior.model, inheritedModelLabel);
   const files = editorFilesForAccount({

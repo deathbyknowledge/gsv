@@ -34,7 +34,7 @@ import type {
   ConsoleTarget,
 } from "../domain/consoleModels";
 import { modelEntryIdFromOptionValue } from "../domain/consoleAi";
-import { isSensitiveSettingKey } from "../domain/consoleSettings";
+import { isSensitiveSettingKey, type ConsoleModelListing } from "../domain/consoleSettings";
 import { requestFsRead } from "../../../services/gateway/fsRead";
 import { z } from "zod";
 export type { AgentApprovalAction } from "../domain/consoleAgentBehavior";
@@ -269,6 +269,11 @@ export async function loadConsoleAccounts(client: Pick<GSVClient, "account">): P
 
 export async function loadConsoleConfig(client: ConsoleClient): Promise<ConsoleConfigEntry[]> {
   return normalizeConfigPayload(await client.sys.config.get({}));
+}
+
+/** The viewer's effective model stack, layered and ordered by the Kernel. */
+export async function loadConsoleModels(client: Pick<GSVClient, "call">): Promise<ConsoleModelListing> {
+  return await client.call("ai.models", {});
 }
 
 export async function loadConsoleIdentityLinks(client: Pick<GSVClient, "call">): Promise<ConsoleIdentityLink[]> {

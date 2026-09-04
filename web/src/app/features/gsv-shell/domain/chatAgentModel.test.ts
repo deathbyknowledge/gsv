@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { listingFromConfig } from "../../gsv-console/domain/consoleModelListing.testSupport";
 import {
   buildChatAgentViewModel,
   canStartChatWork,
@@ -61,6 +62,12 @@ function modelStack(
   };
 }
 
+type ChatAgentInput = Omit<Parameters<typeof buildShellChatAgent>[0], "models">;
+
+function buildChatAgent(input: ChatAgentInput) {
+  return buildShellChatAgent({ ...input, models: listingFromConfig(input.config, input.ownerUid) });
+}
+
 describe("shell chat agent model", () => {
   it("keeps the personal intelligence identity during a specialist work session", () => {
     const ship = process({
@@ -79,7 +86,7 @@ describe("shell chat agent model", () => {
       runState: "running",
       createdAt: 20,
     });
-    const agent = buildShellChatAgent({
+    const agent = buildChatAgent({
       activeProcess: work,
       accounts: [
         account({ uid: 1001, username: "aria", relation: "personal-agent", displayName: "Xanadu" }),
@@ -112,7 +119,7 @@ describe("shell chat agent model", () => {
   });
 
   it("presents the included GSV provider without its internal model alias", () => {
-    const agent = buildShellChatAgent({
+    const agent = buildChatAgent({
       activeProcess: null,
       accounts: [
         account({ uid: 1000, username: "sam", relation: "self", displayName: "Sam" }),
@@ -137,7 +144,7 @@ describe("shell chat agent model", () => {
 
   it("shows an owner model profile selected for specialist work", () => {
     const work = process({ pid: "proc:scout", uid: 1000, username: "scout" });
-    const agent = buildShellChatAgent({
+    const agent = buildChatAgent({
       activeProcess: work,
       accounts: [
         account({ uid: 1000, username: "sam", relation: "self", displayName: "Sam" }),
@@ -166,7 +173,7 @@ describe("shell chat agent model", () => {
   });
 
   it("exposes viewer model profiles instead of raw model config fields", () => {
-    const agent = buildShellChatAgent({
+    const agent = buildChatAgent({
       activeProcess: null,
       accounts: [
         account({ uid: 1000, username: "sam", relation: "self", displayName: "Sam" }),
@@ -211,7 +218,7 @@ describe("shell chat agent model", () => {
       username: "root",
       title: "Root maintenance",
     });
-    const agent = buildShellChatAgent({
+    const agent = buildChatAgent({
       activeProcess: rootWork,
       accounts: [
         account({ uid: 0, username: "root", relation: "self", displayName: "Root" }),
@@ -240,7 +247,7 @@ describe("shell chat agent model", () => {
   });
 
   it("fails closed into administration when no personal intelligence or work exists", () => {
-    const agent = buildShellChatAgent({
+    const agent = buildChatAgent({
       activeProcess: null,
       accounts: [
         account({ uid: 0, username: "root", relation: "self", displayName: "Root" }),
@@ -262,7 +269,7 @@ describe("shell chat agent model", () => {
   });
 
   it("does not reuse a cached personal account after the viewer becomes unknown", () => {
-    const agent = buildShellChatAgent({
+    const agent = buildChatAgent({
       activeProcess: null,
       accounts: [
         account({ uid: 1000, username: "sam", relation: "self" }),
@@ -280,7 +287,7 @@ describe("shell chat agent model", () => {
   });
 
   it("shows all owner-visible processes as work without grouping by run-as account", () => {
-    const agent = buildShellChatAgent({
+    const agent = buildChatAgent({
       activeProcess: null,
       accounts: [account({ uid: 1001, username: "aria", relation: "personal-agent" })],
       chatProcesses: [
@@ -318,7 +325,7 @@ describe("shell chat agent model", () => {
       username: "aria",
       personal: true,
     });
-    const agent = buildShellChatAgent({
+    const agent = buildChatAgent({
       activeProcess: ship,
       accounts: [
         account({ uid: 1000, username: "sam", relation: "self" }),
@@ -346,7 +353,7 @@ describe("shell chat agent model", () => {
 
   it("shows the active work process behavior without replacing the personal identity", () => {
     const work = process({ pid: "proc:scout", uid: 1000, username: "scout" });
-    const agent = buildShellChatAgent({
+    const agent = buildChatAgent({
       activeProcess: work,
       accounts: [
         account({ uid: 1000, username: "sam", relation: "self" }),

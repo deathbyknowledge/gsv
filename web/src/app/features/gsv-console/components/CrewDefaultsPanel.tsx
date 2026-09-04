@@ -6,7 +6,7 @@ import {
   parseApprovalPolicy,
 } from "../domain/consoleAgentBehavior";
 import type { ConsoleAccount, ConsoleConfigEntry } from "../domain/consoleModels";
-import { useConsoleAgentContext } from "../hooks/useConsoleData";
+import { useConsoleAgentContext, useConsoleModels } from "../hooks/useConsoleData";
 import { DefaultsSummaryPanel } from "./DefaultsSummaryPanel";
 
 export interface CrewDefaultsPanelProps {
@@ -42,7 +42,8 @@ export function CrewDefaultsPanel({
 }: CrewDefaultsPanelProps) {
   const context = useConsoleAgentContext(viewer.username);
 
-  const behavior = behaviorForAccount(config, viewer.uid, viewer.uid);
+  const models = useConsoleModels();
+  const behavior = behaviorForAccount(models.listing, config, viewer.uid, viewer.uid);
   const savedPolicy = useMemo(() => parseApprovalPolicy(behavior.approval), [behavior.approval]);
 
   const reasoningValue = reasoningDisplayLabel(

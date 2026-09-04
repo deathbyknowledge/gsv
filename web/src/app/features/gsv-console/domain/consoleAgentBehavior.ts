@@ -1,3 +1,4 @@
+import type { ConsoleModelListing } from "./consoleSettings";
 import type { ConsoleConfigEntry } from "./consoleModels";
 import { z } from "zod";
 import {
@@ -63,6 +64,7 @@ const approvalPolicyWireSchema = z.object({
 });
 
 export function behaviorForAccount(
+  models: ConsoleModelListing | null,
   config: readonly ConsoleConfigEntry[],
   uid: number,
   ownerUid?: number | null,
@@ -70,7 +72,7 @@ export function behaviorForAccount(
   const modelId = preferredModelOverrideForAccount(config, uid);
   const model = modelId ? modelEntryOptionValue(modelId) : "";
   const modelLabel = modelId
-    ? modelProfileLabelForAccount(config, uid, ownerUid, modelId)
+    ? modelProfileLabelForAccount(models, config, uid, ownerUid, modelId)
     : "";
   const reasoning = reasoningOverrideForAccount(config, uid);
   const approvalOverride = approvalOverrideForAccount(config, uid);
@@ -109,14 +111,15 @@ export function preferredModelOverrideForAccount(config: readonly ConsoleConfigE
 }
 
 export function inheritedModelLabelForAccount(
+  models: ConsoleModelListing | null,
   config: readonly ConsoleConfigEntry[],
   uid: number,
   ownerUid?: number | null,
 ): string {
   const parsedOwnerUid = ownerUidSchema.parse(ownerUid);
   const modelOwnerUid = parsedOwnerUid ?? uid;
-  return modelProfilesForConfig(config, modelOwnerUid)[0]?.name
-    || defaultModelLabelForConfig(config, modelOwnerUid);
+  return modelProfilesForConfig(models, config, modelOwnerUid)[0]?.name
+    || defaultModelLabelForConfig(models, config, modelOwnerUid);
 }
 
 export function reasoningOverrideForAccount(config: readonly ConsoleConfigEntry[], uid: number): string {
@@ -176,6 +179,7 @@ function inheritedModelOption(label: string): ConsoleModelOption {
 }
 
 function modelProfileLabelForAccount(
+  models: ConsoleModelListing | null,
   config: readonly ConsoleConfigEntry[],
   uid: number,
   ownerUid: number | null | undefined,
@@ -184,7 +188,7 @@ function modelProfileLabelForAccount(
   const parsedOwnerUid = ownerUidSchema.parse(ownerUid);
   const modelOwnerUid = parsedOwnerUid ?? uid;
   const normalized = selector.trim().toLowerCase();
-  return modelProfilesForConfig(config, modelOwnerUid)
+  return modelProfilesForConfig(models, config, modelOwnerUid)
     .find((candidate) => candidate.id.toLowerCase() === normalized)?.name
     ?? selector;
 }

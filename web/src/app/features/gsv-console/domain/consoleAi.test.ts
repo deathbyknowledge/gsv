@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { listingFromConfig } from "./consoleModelListing.testSupport";
 import type { ConsoleConfigEntry } from "./consoleModels";
 import {
   defaultModelLabelForConfig,
@@ -32,10 +33,10 @@ describe("console AI config classification", () => {
       ]),
     ];
 
-    expect(modelProfilesForConfig(config, 1).map((profile) => profile.id))
+    expect(modelProfilesForConfig(listingFromConfig(config, 1), config, 1).map((profile) => profile.id))
       .toEqual(["primary", "backup"]);
-    expect(modelLabelsForConfig(config, 1)).toEqual(["Primary", "Backup"]);
-    expect(modelOptionsForConfig(config, 1)).toEqual([
+    expect(modelLabelsForConfig(listingFromConfig(config, 1), config, 1)).toEqual(["Primary", "Backup"]);
+    expect(modelOptionsForConfig(listingFromConfig(config, 1), config, 1)).toEqual([
       {
         value: "model-entry:primary",
         label: "Primary",
@@ -47,7 +48,7 @@ describe("console AI config classification", () => {
         description: "Backup",
       },
     ]);
-    expect(defaultModelLabelForConfig(config, 1)).toBe("Primary");
+    expect(defaultModelLabelForConfig(listingFromConfig(config, 1), config, 1)).toBe("Primary");
     expect(modelConfigCount(config)).toBe(3);
   });
 
@@ -59,9 +60,9 @@ describe("console AI config classification", () => {
       { id: "owner", name: "Owner Primary", provider: "openai", model: "gpt-5.4" },
     ]);
 
-    expect(defaultModelLabelForConfig([system], 2)).toBe("System Primary");
-    expect(defaultModelLabelForConfig([system, owner], 2)).toBe("Owner Primary");
-    expect(defaultModelLabelForConfig([], 2)).toBe("NOT CONFIGURED");
+    expect(defaultModelLabelForConfig(listingFromConfig([system], 2), [system], 2)).toBe("System Primary");
+    expect(defaultModelLabelForConfig(listingFromConfig([system, owner], 2), [system, owner], 2)).toBe("Owner Primary");
+    expect(defaultModelLabelForConfig(listingFromConfig([], 2), [], 2)).toBe("NOT CONFIGURED");
   });
 
   it("hydrates only the credential attached to the selected stack entry", () => {
@@ -81,7 +82,7 @@ describe("console AI config classification", () => {
       },
     ];
 
-    expect(modelProfilesForConfig(config, 1)[0]?.values["config/ai/api_key"])
+    expect(modelProfilesForConfig(listingFromConfig(config, 1), config, 1)[0]?.values["config/ai/api_key"])
       .toBe("sk-fast");
   });
 
@@ -98,7 +99,7 @@ describe("console AI config classification", () => {
       { key: "gateway/theme", value: "gsv-live", redacted: false },
     ];
 
-    expect(modelProfilesForConfig(config, 1)).toEqual([]);
+    expect(modelProfilesForConfig(listingFromConfig(config, 1), config, 1)).toEqual([]);
     expect(modelConfigCount(config)).toBe(0);
     expect(overrideConfigEntries(config).map((entry) => entry.key)).toEqual([
       "config/ai/model",

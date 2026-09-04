@@ -10,6 +10,7 @@ import type {
   ConsoleAccount,
   ConsoleConfigEntry,
 } from "../../gsv-console/domain/consoleModels";
+import type { ConsoleModelListing } from "../../gsv-console/domain/consoleSettings";
 import {
   defaultModelLabelForConfig,
   modelLabelsForConfig,
@@ -32,6 +33,7 @@ type BuildShellChatAgentArgs = {
   accounts: readonly ConsoleAccount[];
   chatProcesses: readonly ChatProcessSummary[];
   config: readonly ConsoleConfigEntry[];
+  models: ConsoleModelListing | null;
   ownerUid: number | null;
   statusLabel: string;
 };
@@ -103,13 +105,14 @@ function visibleProcesses(
 
 function behaviorViewForAccount(
   account: ConsoleAccount,
+  models: ConsoleModelListing | null,
   config: readonly ConsoleConfigEntry[],
   modelLabels: readonly string[],
   ownerUid?: number | null,
 ): AgentBehaviorView {
-  const behavior = behaviorForAccount(config, account.uid, ownerUid);
+  const behavior = behaviorForAccount(models, config, account.uid, ownerUid);
   const modelValue = behavior.model.trim();
-  const inheritedModelLabel = inheritedModelLabelForAccount(config, account.uid, ownerUid);
+  const inheritedModelLabel = inheritedModelLabelForAccount(models, config, account.uid, ownerUid);
   const reasoning = behavior.reasoning.trim() || inheritedReasoningForAccount(config, account.uid, ownerUid);
   return {
     modelLabel: behavior.modelLabel || inheritedModelLabel,
@@ -126,10 +129,11 @@ function behaviorViewForAccount(
 }
 
 function defaultBehaviorView(
+  models: ConsoleModelListing | null,
   config: readonly ConsoleConfigEntry[],
   modelLabels: readonly string[],
 ): AgentBehaviorView {
-  const modelLabel = defaultModelLabelForConfig(config);
+  const modelLabel = defaultModelLabelForConfig(models, config);
   return {
     modelLabel,
     modelOptions: modelLabels.length > 0 ? [...modelLabels] : [modelLabel],
@@ -155,6 +159,7 @@ export function buildShellChatAgent({
   accounts,
   chatProcesses,
   config,
+  models,
   ownerUid,
   statusLabel,
 }: BuildShellChatAgentArgs): ChatAgentData {
@@ -163,9 +168,9 @@ export function buildShellChatAgent({
     ? null
     : accounts.find((account) => account.relation === "personal-agent") ?? null;
   const viewer = viewerAccount(accounts, ownerUid);
-  const modelLabels = modelLabelsForConfig(config, viewer?.uid);
+  const modelLabels = modelLabelsForConfig(models, config, viewer?.uid);
   if (!personalAccount) {
-    const behavior = defaultBehaviorView(config, modelLabels);
+    const behavior = defaultBehaviorView(models, config, modelLabels);
     return {
       id: "administration",
       ...(ownedActiveProcess ? { processId: ownedActiveProcess.pid } : undefined),
@@ -178,7 +183,7 @@ export function buildShellChatAgent({
       activity: ownedActiveProcess ? statusLabel : "Personal intelligence unavailable",
       modelLabel: behavior.modelLabel,
       modelOptions: behavior.modelOptions,
-      modelProfiles: modelProfilesForConfig(config, viewer?.uid),
+      modelProfiles: modelProfilesForConfig(models, config, viewer?.uid),
       modelValue: behavior.modelValue,
       modelIsDefault: behavior.modelIsDefault,
       reasoningLabel: behavior.reasoningLabel,
@@ -194,8 +199,8 @@ export function buildShellChatAgent({
     : null;
   const behaviorAccount = activeRunAsAccount ?? personalAccount;
   const behavior = behaviorAccount
-    ? behaviorViewForAccount(behaviorAccount, config, modelLabels, viewer?.uid)
-    : defaultBehaviorView(config, modelLabels);
+    ? behaviorViewForAccount(behaviorAccount, models, config, modelLabels, viewer?.uid)
+    : defaultBehaviorView(models, config, modelLabels);
   const processes = visibleProcesses(
     chatProcesses,
     ownedActiveProcess,
@@ -220,7 +225,7 @@ export function buildShellChatAgent({
     activity: statusLabel,
     modelLabel: behavior.modelLabel,
     modelOptions: behavior.modelOptions,
-    modelProfiles: modelProfilesForConfig(config, viewer?.uid),
+    modelProfiles: modelProfilesForConfig(models, config, viewer?.uid),
     modelValue: behavior.modelValue,
     modelIsDefault: behavior.modelIsDefault,
     reasoningLabel: behavior.reasoningLabel,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ConsoleConfigEntry } from "./consoleModels";
+import { listingFromConfig } from "./consoleModelListing.testSupport";
 import {
   AI_OPENAI_WORKERS_PROVIDER_OPTIONS,
   AI_PROVIDER_OPTIONS,
@@ -11,18 +12,23 @@ import {
   TOOL_MODEL_GROUPS,
   createModelProfile,
   effectiveAiValuesForViewer,
-  inheritsSystemModelStack,
+  editableModelSource,
   modelDisplayName,
   makeModelPrimary,
   modelProfileSaveEntries,
   modelProfileSecretConfigKey,
   modelProfilesConfigKey,
-  modelProfilesForConfig,
+  modelProfilesFromListing,
+  preferredModelSaveEntry,
   modelStackDisplayName,
   modelValidationValuesFromProfileDrafts,
   serializeModelProfiles,
   updateModelProfile,
 } from "./consoleSettings";
+
+function primaryProfile(config: readonly ConsoleConfigEntry[], uid: number) {
+  return modelProfilesFromListing(listingFromConfig(config, uid), config, uid)[0] ?? null;
+}
 
 describe("console settings domain", () => {
   it("uses readable provider choices for all model provider fields", () => {
@@ -127,10 +133,10 @@ describe("console settings domain", () => {
     expect(AGENT_MODEL_FIELDS.some((field) => field.key === "config/ai/context_window_tokens")).toBe(true);
   });
 
-  it("reads viewer model profiles and hydrates separate credential config", () => {
+  it("projects the effective stack and hydrates only the viewer's own credentials", () => {
     const profiles = createModelProfile([], "Fast", {
-      "config/ai/provider": "workers-ai",
-      "config/ai/model": "@cf/fast/model",
+      "config/ai/provider": "openai",
+      "config/ai/model": "gpt-5.4",
       "config/ai/api_key": "sk-fast",
     }, 1000);
     const config: ConsoleConfigEntry[] = [
@@ -141,37 +147,42 @@ describe("console settings domain", () => {
         redacted: false,
       },
     ];
+    const listing = {
+      preferredModelId: null,
+      models: [
+        { id: profiles[0].id, name: "Fast", provider: "openai", model: "gpt-5.4", source: "personal" as const, hasCredential: true },
+        { id: "shared", name: "Shared", provider: "anthropic", model: "claude-sonnet-5", source: "system" as const, hasCredential: true },
+        { id: "gsv-included", name: "GSV Included", provider: "gsv", model: "default", source: "base" as const, hasCredential: false },
+      ],
+    };
 
-    expect(modelProfilesForConfig(config, 42).map((profile) => profile.name)).toEqual(["Fast"]);
-    expect(modelProfilesForConfig(config, 42)[0].values["config/ai/api_key"]).toBe("sk-fast");
-    expect(modelProfilesForConfig(config, 7)).toEqual([]);
+    const projected = modelProfilesFromListing(listing, config, 42);
+    expect(projected.map((profile) => [profile.id, profile.source])).toEqual([
+      [profiles[0].id, "personal"],
+      ["shared", "system"],
+      ["gsv-included", "base"],
+    ]);
+    expect(projected[0].values["config/ai/api_key"]).toBe("sk-fast");
+    expect(projected[1].values["config/ai/api_key"]).toBe("");
+    expect(modelProfilesFromListing(null, config, 42)).toEqual([]);
   });
 
-  it("shows the inherited system order until the owner writes a stack", () => {
-    const config: ConsoleConfigEntry[] = [{
-      key: "config/ai/models",
-      value: JSON.stringify({
-        version: 1,
-        models: [
-          { id: "primary", name: "Primary", provider: "workers-ai", model: "@cf/primary" },
-          { id: "backup", name: "Backup", provider: "workers-ai", model: "@cf/backup" },
-        ],
-      }),
-      redacted: false,
-    }];
-
-    expect(modelProfilesForConfig(config, 42)).toEqual([]);
-    expect(modelProfilesForConfig(config, 42, { inheritSystem: true }).map((profile) => profile.id))
-      .toEqual(["primary", "backup"]);
-    expect(inheritsSystemModelStack(config, 42)).toBe(true);
-    expect(inheritsSystemModelStack(config, 0)).toBe(false);
+  it("edits the installation list as root and a personal list otherwise", () => {
+    expect(editableModelSource(0)).toBe("system");
+    expect(editableModelSource(42)).toBe("personal");
+    expect(preferredModelSaveEntry(42, "gsv-included")).toEqual({
+      key: "users/42/ai/preferred_model",
+      value: "gsv-included",
+    });
+    expect(preferredModelSaveEntry(42, null)).toEqual({ key: "users/42/ai/preferred_model", value: "" });
     expect(modelProfileSaveEntries(42, [])[0]).toEqual({
       key: "users/42/ai/models",
       value: "",
     });
-    expect(() => modelProfileSaveEntries(0, [])).toThrow(
-      "The system model stack must contain at least one model.",
-    );
+    expect(modelProfileSaveEntries(0, [])[0]).toEqual({
+      key: "config/ai/models",
+      value: "",
+    });
   });
 
   it("omits blank profile secrets from validation unless explicitly cleared", () => {
@@ -210,7 +221,7 @@ describe("console settings domain", () => {
       },
     ];
 
-    expect(effectiveAiValuesForViewer(config, 42)).toMatchObject({
+    expect(effectiveAiValuesForViewer(config, 42, primaryProfile(config, 42))).toMatchObject({
       "config/ai/provider": "workers-ai",
       "config/ai/model": "@cf/default/model",
       "config/ai/image/read/max_tokens": "1234",
@@ -236,7 +247,7 @@ describe("console settings domain", () => {
       },
     ];
 
-    expect(effectiveAiValuesForViewer(config, 42)).toMatchObject({
+    expect(effectiveAiValuesForViewer(config, 42, primaryProfile(config, 42))).toMatchObject({
       "config/ai/transcription/provider": "openai",
       "config/ai/transcription/model": "",
       "config/ai/transcription/api_key": "",
@@ -261,7 +272,7 @@ describe("console settings domain", () => {
       },
     ];
 
-    expect(effectiveAiValuesForViewer(config, 42)).toMatchObject({
+    expect(effectiveAiValuesForViewer(config, 42, primaryProfile(config, 42))).toMatchObject({
       "config/ai/provider": "custom",
       "config/ai/model": "zai-glm-4.7",
       "config/ai/base_url": "https://provider.example/v1",
@@ -283,7 +294,7 @@ describe("console settings domain", () => {
       { key: modelProfilesConfigKey(42), value: serializeModelProfiles(profiles), redacted: false },
     ];
 
-    expect(effectiveAiValuesForViewer(config, 42)).toMatchObject({
+    expect(effectiveAiValuesForViewer(config, 42, primaryProfile(config, 42))).toMatchObject({
       "config/ai/provider": "custom",
       "config/ai/model": "zai-glm-4.7",
       "config/ai/base_url": "https://provider.example/v1",
