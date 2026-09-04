@@ -78,6 +78,7 @@ export class ProcessRun {
     actionId: string,
     parsed: RunControlCommandParseResult,
     media: RunOutputMedia[],
+    assistantText = "",
   ): Promise<RunControlResult> {
     if (!parsed.ok) {
       return {
@@ -87,6 +88,16 @@ export class ProcessRun {
         delivery: { kind: "none" },
         failureKind: "command",
         error: parsed.error,
+      };
+    }
+    if (parsed.command.action === "yield" && assistantText.trim()) {
+      return {
+        ok: false,
+        action: "yield",
+        text: "",
+        delivery: { kind: "none" },
+        failureKind: "command",
+        error: "yield cannot accompany non-empty assistant text",
       };
     }
     if (parsed.command.action === "message" && !parsed.command.text.trim() && media.length === 0) {
@@ -1163,6 +1174,7 @@ export class ProcessRun {
         call.toolCall.id,
         call.parsed,
         outputMedia,
+        turn.text,
       );
     } catch (error) {
       this.persistRunControlExecutionError(

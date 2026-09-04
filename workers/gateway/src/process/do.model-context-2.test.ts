@@ -844,20 +844,29 @@ describe("model context", () => {
     });
   });
 
-  it("finishes silently without committing a canonical message", async () => {
+  it("rejects assistant text before finishing silently without a canonical message", async () => {
     const pid = "mech-terminal-silence";
     const runId = "run-terminal-silence";
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
     const result = await runInProcess(stub, async (process) => {
       const emitted = captureSignals(process);
+      let generationCalls = 0;
       process.streams.emitProjection = vi.fn(async () => {});
+      process.run.scheduleTick = vi.fn(async () => {});
       process.kernel.dispatchSyscall = vi.fn(async () => {});
       mockGeneration(process, async () => {
-        return terminalTestResponse([
-          { type: "thinking", thinking: "No interruption is useful." },
-          yieldAction("yield-action"),
-        ]);
+        generationCalls += 1;
+        return terminalTestResponse(generationCalls === 1
+          ? [
+              { type: "text", text: "This reply should be delivered." },
+              yieldAction("text-yield-action"),
+            ]
+          : [
+              { type: "text", text: "" },
+              { type: "thinking", thinking: "No interruption is useful." },
+              yieldAction("yield-action"),
+            ]);
       }, async () => {
         return "unused";
       });
@@ -870,6 +879,21 @@ describe("model context", () => {
           rules: [{ match: "shell.exec", action: "ask" }],
         }
       });
+
+      await process.run.runTick(runId);
+      expect(process.runs.active).toMatchObject({
+        runId,
+        terminalCommandFailures: 1,
+      });
+      expect(process.run.scheduleTick).toHaveBeenCalledOnce();
+      const rejectedYield = process.store.messages
+        .getMessages()
+        .find((message: any) => message.toolCallId === "text-yield-action");
+      expect(rejectedYield).toMatchObject({
+        content: expect.stringContaining("yield cannot accompany non-empty assistant text"),
+      });
+      expect(JSON.parse(rejectedYield.toolCalls)).toMatchObject({ isError: true });
+      expect(emitted.some((entry) => entry.signal === "proc.run.finished")).toBe(false);
 
       await process.run.runTick(runId);
       return {
