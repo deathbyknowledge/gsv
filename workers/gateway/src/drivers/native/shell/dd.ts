@@ -1,4 +1,4 @@
-import { defineCommand, latin1FromBytes, type ExecResult } from "just-bash";
+import { defineCommand, type ByteString, type ExecResult } from "just-bash";
 import type { GsvFs } from "../../../fs/gsv-fs";
 
 const DD_USAGE = [
@@ -114,8 +114,7 @@ export function buildDdCommand(fs: GsvFs) {
 
     let source: Uint8Array;
     if (options.input === undefined) {
-      // Shell pipes carry bytes packed one per char; unpack them unchanged.
-      source = Uint8Array.from(latin1FromBytes(ctx.stdin), (char) => char.charCodeAt(0));
+      source = bytesFromPipe(ctx.stdin);
     } else {
       try {
         source = await fs.readFileBuffer(fs.resolvePath(ctx.cwd, options.input));
@@ -163,6 +162,16 @@ export function buildDdCommand(fs: GsvFs) {
       : `${fullBlocks}+${partialBlocks} records in\n${fullBlocks}+${partialBlocks} records out\n${copied.byteLength} bytes copied\n`;
     return { stdout, stderr, exitCode: 0 };
   });
+}
+
+/**
+ * Shell pipes carry bytes packed one per char in a string branded as
+ * ByteString. just-bash's accessor for that view is missing from its browser
+ * bundle, which is what the Worker build resolves, so read the string directly.
+ */
+function bytesFromPipe(stdin: ByteString): Uint8Array {
+  // ByteString is a branded latin1 string at runtime; String() returns it unchanged.
+  return Uint8Array.from(String(stdin), (char) => char.charCodeAt(0));
 }
 
 function latin1FromUint8Array(bytes: Uint8Array): string {
