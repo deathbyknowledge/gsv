@@ -2,14 +2,12 @@
 
 import { Kernel } from "../kernel/do";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
+import type { InternalRequestFrame } from "../protocol/process-frames";
 import type {
   ProcessAdapterDeliverArgs,
-  ProcessAdapterDeliverRequestFrame,
   ProcessRuntimeEventDeliverArgs,
-  ProcessRuntimeEventDeliverRequestFrame,
   ProcessInboundFrame,
   ProcessScheduleDeliverArgs,
-  ProcessScheduleDeliverRequestFrame,
 } from "../protocol/process-frames";
 import { getKernelPtr, getProcessByPid } from "../shared/utils";
 import { TOOL_TO_SYSCALL } from "../syscalls/constants";
@@ -86,7 +84,7 @@ export function makeScheduleDeliverReq(
     runId?: string;
     firedAtMs?: number;
   },
-): ProcessScheduleDeliverRequestFrame {
+): InternalRequestFrame<"proc.schedule.deliver"> {
   return {
     type: "req",
     id: crypto.randomUUID(),
@@ -101,7 +99,7 @@ export function makeScheduleDeliverReq(
 
 export function makeAdapterDeliverReq(
   args: ProcessAdapterDeliverArgs,
-): ProcessAdapterDeliverRequestFrame {
+): InternalRequestFrame<"proc.adapter.deliver"> {
   return {
     type: "req",
     id: crypto.randomUUID(),
@@ -112,7 +110,7 @@ export function makeAdapterDeliverReq(
 
 export function makeRuntimeEventDeliverReq(
   args: ProcessRuntimeEventDeliverArgs,
-): ProcessRuntimeEventDeliverRequestFrame {
+): InternalRequestFrame<"proc.runtime.event.deliver"> {
   return {
     type: "req",
     id: crypto.randomUUID(),
@@ -124,7 +122,7 @@ export function makeRuntimeEventDeliverReq(
 export function makeRuntimeEventReq(
   eventId: string,
   workPid: string,
-): ProcessRuntimeEventDeliverRequestFrame {
+): InternalRequestFrame<"proc.runtime.event.deliver"> {
   return {
     type: "req",
     id: crypto.randomUUID(),
@@ -267,7 +265,7 @@ export function generationRun(
     runId,
     config,
     tools: [],
-    devices: [],
+    targets: [],
     systemPrompt: "Test system prompt.",
     approvalPolicy: { default: "auto", rules: [] },
     ...overrides,

@@ -1,6 +1,7 @@
 /** Owns the Process run state machine from admission through terminal delivery. */
 
 import type { AssistantMessage, Context, ToolCall, Tool } from "@earendil-works/pi-ai";
+import type { InternalRequestFrame } from "../../protocol/process-frames";
 import type {
   CommittedRunControlMessage, RunControlResult, TerminalResponsibilityCheck, CompletedRunTransition,
   RunFinishEffects, RunFinishedTelemetryProperties, PreparedRunTickContext, RunTickGenerationAttemptOutcome,
@@ -12,7 +13,6 @@ import {
   MAX_RETRYABLE_GENERATION_ATTEMPTS, PENDING_RUN_CONTROL_CALL, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE,
   MEDIA_PREPARATION_TIMEOUT_MS, TOOL_DISPATCH_TIMEOUT_MS,
 } from "../internal/lifecycle";
-import type { ProcessMessageCommitRequestFrame } from "../../protocol/process-frames";
 import {
   type ResponsibilityRecord, jsonObjectSchema, type AiConfigResult, type AiTextGenerateConfig,
   type AiTextGenerateOptions, type ProcUsageState, jsonValueSchema, type JsonObject, type ProcTraceSpanStatus,
@@ -255,8 +255,8 @@ export class ProcessRun {
       text: string;
       media: RunOutputMedia[];
     },
-  ): ProcessMessageCommitRequestFrame {
-    const args: ProcessMessageCommitRequestFrame["args"] = {
+  ): InternalRequestFrame<"proc.message.commit"> {
+    const args: InternalRequestFrame<"proc.message.commit">["args"] = {
       runId: options.runId,
       actionId: options.actionId,
       text: options.text,
@@ -276,7 +276,7 @@ export class ProcessRun {
   async commitRunControlMessage(
     runId: string,
     actionId: string,
-    request: ProcessMessageCommitRequestFrame,
+    request: InternalRequestFrame<"proc.message.commit">,
   ): Promise<CommittedRunControlMessage> {
     const deliverySpanId = this.host.trace.start({
       runId,
@@ -1801,7 +1801,7 @@ export class ProcessRun {
       const updated = this.host.mutateActiveRun(runId, (current) => ({
         ...current,
         tools: toolsResult.tools,
-        devices: toolsResult.devices,
+        targets: toolsResult.targets,
         mcpServers: toolsResult.mcpServers,
       }));
       if (!updated) return null;
@@ -1917,7 +1917,7 @@ export class ProcessRun {
     const contextSnapshot = await this.host.settings.resolveAiContext(this.runAbortSignal(runId));
     const projectedRun = this.host.mutateActiveRun(runId, (current) => ({
       ...current,
-      devices: contextSnapshot.devices,
+      devices: contextSnapshot.targets,
       mcpServers: contextSnapshot.mcpServers,
     }));
     if (!projectedRun) return null;

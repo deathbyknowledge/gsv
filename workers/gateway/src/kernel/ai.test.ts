@@ -1,8 +1,10 @@
 type KernelTestValue<T = string | number | boolean | null | undefined> = T;
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { principalOf } from "./context";
+import { testPeer } from "../test-support/peers";
 import type { KernelContext } from "./context";
-import type { DeviceRecord } from "./devices";
+import type { TargetRecord } from "./target-registry";
 import type { OAuthAccountRecord } from "./oauth-store";
 import { bodyFromBytes, bodyToBytes } from "@humansandmachines/gsv/protocol";
 
@@ -30,17 +32,13 @@ import {
 } from "./ai";
 import { DEFAULT_AUDIO_TRANSCRIPTION_MODEL } from "../inference/transcription";
 import {
-  DEFAULT_AUDIO_SPEECH_MODEL,
-  DEFAULT_AUDIO_SPEECH_SPEAKER,
-} from "../inference/speech";
-import {
   DEFAULT_IMAGE_READING_MAX_OBJECTS,
   DEFAULT_IMAGE_READING_MAX_TOKENS,
   DEFAULT_IMAGE_READING_MODEL,
 } from "../inference/image-reading";
 import { DEFAULT_IMAGE_GENERATION_MODEL } from "../inference/capabilities";
 import { inferenceLogicalRequestId } from "../inference/provider";
-import { MAIL_SEND, MAIL_STATUS, syscallToolName } from "../syscalls/constants";
+import { MAIL_SEND, syscallToolName } from "../syscalls/constants";
 import { SYSTEM_CONFIG_DEFAULTS } from "./config";
 
 // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -53,12 +51,12 @@ beforeEach(() => {
   seedBuiltinSkillsToHomeMock.mockResolvedValue({ username: "sam", copied: 0, skipped: 0 });
 });
 
-function makeDevice(partial: Partial<DeviceRecord> & { device_id: string }): DeviceRecord {
+function makeDevice(partial: Partial<TargetRecord> & { target_id: string }): TargetRecord {
   const now = 1_800_000_000_000;
   return {
-    device_id: partial.device_id,
+    target_id: partial.target_id,
     owner_uid: partial.owner_uid ?? 1000,
-    label: partial.label ?? partial.device_id,
+    label: partial.label ?? partial.target_id,
     description: partial.description ?? "",
     implements: partial.implements ?? ["shell.exec"],
     platform: partial.platform ?? "linux",
@@ -102,25 +100,21 @@ function makeContext(
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     installationId: TEST_INSTALLATION_ID,
-    identity: {
-      role: "user",
-      process: {
+    peer: testPeer({ kind: "human", account: {
         uid,
         gid: uid,
         gids: [uid],
         username: uid === 2000 ? "friday" : "sam",
         home: uid === 2000 ? "/home/friday" : "/home/sam",
         cwd: uid === 2000 ? "/home/friday" : "/home/sam",
-      },
-      capabilities: options.capabilities ?? ["*"],
-    },
+      }, calls: options.capabilities ?? ["*"] }),
     processId: options.processId,
     procs: {
       getOwnerUid: vi.fn((processId: string) =>
         processId === options.processId ? ownerUid : null
       ),
     },
-    devices: {
+    targets: {
       listForUser: vi.fn(() => []),
     },
     auth: {
@@ -195,7 +189,7 @@ describe("handleAiTools", () => {
       "CodeMode",
     ]);
     expect(syscallToolName(MAIL_SEND)).toBeUndefined();
-    expect(syscallToolName(MAIL_STATUS)).toBeUndefined();
+    expect(syscallToolName("mail.status")).toBeUndefined();
     expect(
       result.tools.every((tool) =>
         !tool.name.startsWith("MCP_") &&
@@ -273,12 +267,12 @@ describe("handleAiTools", () => {
 
   it("keeps routable tool schemas stable as online targets change", async () => {
     const records = Array.from({ length: 12 }, (_value, index) =>
-      makeDevice({ device_id: `node-${String(index + 1).padStart(2, "0")}` })
+      makeDevice({ target_id: `node-${String(index + 1).padStart(2, "0")}` })
     );
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       ...makeContext("ready"),
-      devices: {
+      targets: {
         listForUser: vi.fn(() => records),
       },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -294,12 +288,12 @@ describe("handleAiTools", () => {
     expect(description).not.toContain("node-01");
     expect(description).not.toContain("node-11");
     expect(description).not.toContain("node-12");
-    expect(result.devices).toHaveLength(12);
+    expect(result.targets).toHaveLength(12);
 
     // SAFETY: fixture replaces only the typed device-store method used by handleAiTools.
     const withoutTargets = await handleAiTools({
       ...ctx,
-      devices: {
+      targets: {
         listForUser: vi.fn(() => []),
       },
     } as KernelContext);
@@ -326,18 +320,14 @@ describe("handleAiConfig", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {
       installationId: TEST_INSTALLATION_ID,
-      identity: {
-        role: "user",
-        process: {
+      peer: testPeer({ kind: "human", account: {
           uid,
           gid: uid,
           gids: [uid],
           username: uid === 2000 ? "friday" : "sam",
           home: uid === 2000 ? "/home/friday" : "/home/sam",
           cwd: uid === 2000 ? "/home/friday" : "/home/sam",
-        },
-        capabilities: options.capabilities ?? ["*"],
-      },
+        }, calls: options.capabilities ?? ["*"] }),
       config: makeTestConfig(config),
       auth: {
         getPasswdByUid: vi.fn((lookupUid: number) => lookupUid === ownerUid
@@ -355,7 +345,7 @@ describe("handleAiConfig", () => {
       procs: {
         getOwnerUid: vi.fn(() => ownerUid),
       },
-      devices: {
+      targets: {
         listForUser: vi.fn(() => []),
       },
       adapters: {
@@ -454,9 +444,9 @@ describe("handleAiConfig", () => {
       "config/ai/context.d/00-runtime.md": "Date: {{current.date}}",
     });
     // SAFETY: fixture implements the device-store method exercised by handleAiContext.
-    ctx.devices = {
-      listForUser: vi.fn(() => [makeDevice({ device_id: "desktop" })]),
-    } as KernelContext["devices"];
+    ctx.targets = {
+      listForUser: vi.fn(() => [makeDevice({ target_id: "desktop" })]),
+    } as KernelContext["targets"];
     // SAFETY: fixture implements the MCP store method exercised by handleAiContext.
     ctx.mcpServers = {
       list: vi.fn(() => [{
@@ -477,7 +467,7 @@ describe("handleAiConfig", () => {
     const result = await handleAiContext({}, ctx);
 
     expect(result).toMatchObject({
-      devices: [expect.objectContaining({ id: "desktop" })],
+      targets: [expect.objectContaining({ id: "desktop" })],
       mcpServers: ["Search"],
       system: { timezone: "Europe/Amsterdam" },
       systemContextFiles: [{ name: "00-runtime.md", text: "Date: {{current.date}}" }],
@@ -500,7 +490,7 @@ describe("handleAiConfig", () => {
       const result = await handleAiContext({}, makeAiConfigContext({}, { ripgit }));
 
       expect(result).toMatchObject({
-        devices: [],
+        targets: [],
         mcpServers: [],
         skillIndexMode: "summary",
       });
@@ -597,7 +587,7 @@ describe("handleAiConfig", () => {
 
   it("returns no capabilities for the pre-auth setup assistant", async () => {
     const ctx = makeAiConfigContext();
-    delete ctx.identity;
+    delete ctx.peer;
 
     const result = await handleAiConfig({}, ctx);
 
@@ -1191,13 +1181,13 @@ describe("handleAiConfig", () => {
     });
 
     const device = makeDevice({
-      device_id: "linux-machine",
+      target_id: "linux-machine",
       implements: ["net.fetch"],
     });
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       ...makeAiConfigContext(),
-      devices: {
+      targets: {
         canAccess: vi.fn(() => true),
         get: vi.fn(() => device),
         listForUser: vi.fn(() => [device]),
@@ -1215,7 +1205,7 @@ describe("handleAiConfig", () => {
         },
       },
     }, ctx, {
-      requestDevice: vi.fn(),
+      requestTarget: vi.fn(),
     });
 
     expect(result.text).toBe("pong");
@@ -1243,7 +1233,7 @@ describe("handleAiConfig", () => {
       timestamp: 1,
     }));
     const device = makeDevice({
-      device_id: "linux-machine",
+      target_id: "linux-machine",
       implements: ["net.fetch"],
     });
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -1256,7 +1246,7 @@ describe("handleAiConfig", () => {
           }),
         ],
       }),
-      devices: {
+      targets: {
         canAccess: vi.fn(() => true),
         get: vi.fn(() => device),
         listForUser: vi.fn(() => [device]),
@@ -1275,7 +1265,7 @@ describe("handleAiConfig", () => {
         },
       },
     }, ctx, {
-      requestDevice: vi.fn(),
+      requestTarget: vi.fn(),
     });
 
     expect(result.text).toBe("pong");
@@ -1584,7 +1574,7 @@ describe("handleAiConfig", () => {
     expect(result.media?.imageReadingMaxObjects).toBe(DEFAULT_IMAGE_READING_MAX_OBJECTS);
     expect(result.media?.imageReadingTimeoutMs).toBe(30_000);
     expect(result.media?.speechProvider).toBe("workers-ai");
-    expect(result.media?.speechModel).toBe(DEFAULT_AUDIO_SPEECH_MODEL);
+    expect(result.media?.speechModel).toBe("@cf/deepgram/aura-2-en");
     expect(result.media?.speechApiKey).toBe("");
     expect(result.media?.transcriptionProvider).toBe("workers-ai");
     expect(result.media?.transcriptionModel).toBe(DEFAULT_AUDIO_TRANSCRIPTION_MODEL);
@@ -1637,18 +1627,14 @@ describe("handleAiTranscriptionCreate", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {
       installationId: TEST_INSTALLATION_ID,
-      identity: {
-        role: "user",
-        process: {
+      peer: testPeer({ kind: "human", account: {
           uid: 1000,
           gid: 1000,
           gids: [1000],
           username: "sam",
           home: "/home/sam",
           cwd: "/home/sam",
-        },
-        capabilities: ["*"],
-      },
+        }, calls: ["*"] }),
       config: makeTestConfig(config),
       env: {
         AI: {
@@ -1756,7 +1742,7 @@ describe("handleAiTranscriptionCreate", () => {
         "users/2000/ai/transcription/api_key": "",
       },
     });
-    ctx.identity!.process.uid = 0;
+    principalOf(ctx)!.account.uid = 0;
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     (ctx as { procs: KernelTestValue }).procs = {
       get: vi.fn(() => ({
@@ -1854,18 +1840,14 @@ describe("handleAiImageRead", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {
       installationId: TEST_INSTALLATION_ID,
-      identity: {
-        role: "user",
-        process: {
+      peer: testPeer({ kind: "human", account: {
           uid: 1000,
           gid: 1000,
           gids: [1000],
           username: "sam",
           home: "/home/sam",
           cwd: "/home/sam",
-        },
-        capabilities: ["*"],
-      },
+        }, calls: ["*"] }),
       config: makeTestConfig(config),
       env: {
         AI: {
@@ -2023,18 +2005,14 @@ describe("handleAiImageGenerate", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {
       installationId: TEST_INSTALLATION_ID,
-      identity: {
-        role: "user",
-        process: {
+      peer: testPeer({ kind: "human", account: {
           uid: 1000,
           gid: 1000,
           gids: [1000],
           username: "sam",
           home: "/home/sam",
           cwd: "/home/sam",
-        },
-        capabilities: ["*"],
-      },
+        }, calls: ["*"] }),
       config: makeTestConfig(config),
       env: {
         AI: {
@@ -2125,18 +2103,14 @@ describe("handleAiSpeechCreate", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {
       installationId: TEST_INSTALLATION_ID,
-      identity: {
-        role: "user",
-        process: {
+      peer: testPeer({ kind: "human", account: {
           uid: 1000,
           gid: 1000,
           gids: [1000],
           username: "sam",
           home: "/home/sam",
           cwd: "/home/sam",
-        },
-        capabilities: ["*"],
-      },
+        }, calls: ["*"] }),
       config: makeTestConfig(config),
       env: {
         AI: {
@@ -2163,13 +2137,13 @@ describe("handleAiSpeechCreate", () => {
     });
     expect(result.body && [...await bodyToBytes(result.body)]).toEqual([1, 2, 3]);
     expect(result.data.provider).toBe("workers-ai");
-    expect(result.data.model).toBe(DEFAULT_AUDIO_SPEECH_MODEL);
-    expect(result.data.voice).toBe(DEFAULT_AUDIO_SPEECH_SPEAKER);
+    expect(result.data.model).toBe("@cf/deepgram/aura-2-en");
+    expect(result.data.voice).toBe("luna");
     expect(ctx.env.AI.run).toHaveBeenCalledWith(
-      DEFAULT_AUDIO_SPEECH_MODEL,
+      "@cf/deepgram/aura-2-en",
       expect.objectContaining({
         text: "Hello GSV",
-        speaker: DEFAULT_AUDIO_SPEECH_SPEAKER,
+        speaker: "luna",
         encoding: "mp3",
       }),
     );
@@ -2221,7 +2195,7 @@ describe("handleAiSpeechCreate", () => {
     }, ctx);
 
     expect(ctx.env.AI.run).toHaveBeenCalledWith(
-      DEFAULT_AUDIO_SPEECH_MODEL,
+      "@cf/deepgram/aura-2-en",
       expect.objectContaining({
         text: [
           "Result:",
@@ -2244,7 +2218,7 @@ describe("handleAiSpeechCreate", () => {
     await handleAiSpeechCreate({ text: "**literal**", textFormat: "plain" }, ctx);
 
     expect(ctx.env.AI.run).toHaveBeenCalledWith(
-      DEFAULT_AUDIO_SPEECH_MODEL,
+      "@cf/deepgram/aura-2-en",
       expect.objectContaining({
         text: "**literal**",
       }),

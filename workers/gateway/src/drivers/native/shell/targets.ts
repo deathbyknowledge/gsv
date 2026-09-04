@@ -87,7 +87,7 @@ async function runTargetsCommand(
 }
 
 async function listTargets(options: ListOptions, ctx: KernelContext): Promise<ExecResult> {
-  requireCommandCapability(ctx, "sys.device.list");
+  requireCommandCapability(ctx, "sys.target.list");
 
   const entries = [
     gsvTarget(ctx),
@@ -145,7 +145,7 @@ async function showTarget(
   ctx: KernelContext,
   commandName: "targets" | "devices",
 ): Promise<ExecResult> {
-  requireCommandCapability(ctx, "sys.device.get");
+  requireCommandCapability(ctx, "sys.target.get");
 
   const { targetId, json } = parseTargetShowOptions(args, commandName);
   const entry = targetId === GSV_TARGET_ID
@@ -285,7 +285,7 @@ function targetToEntryOrNull(target: TargetDescriptor | null): TargetListEntry |
 }
 
 function targetToEntry(target: TargetDescriptor): TargetListEntry {
-  const provider = target.route.kind === "adapter" ? target.route.adapter : "device";
+  const provider = target.route.kind === "adapter" ? target.route.adapter : "machine";
   return {
     id: target.targetId,
     provider,
@@ -302,7 +302,7 @@ function targetToEntry(target: TargetDescriptor): TargetListEntry {
     lastSeenAt: target.lastSeenAt,
     connectedAt: target.connectedAt,
     disconnectedAt: target.disconnectedAt,
-    metadataWritable: target.route.kind === "device",
+    metadataWritable: target.route.kind === "machine",
     route: target.route.kind === "adapter" ? "service-binding" : "connection",
   };
 }

@@ -1,6 +1,13 @@
-import { binaryBodySchema, type BinaryBody } from "./body";
+import type { BinaryBody } from "./body";
+import {
+  bodyFrameSchemas,
+  type FrameEnvelope,
+  type RequestEnvelope,
+  type ResponseEnvelope,
+  type SignalEnvelope,
+} from "./frame";
 import type { JsonPrimitive, JsonValue } from "./json";
-import { jsonPrimitiveSchema, jsonValueSchema } from "./json";
+import { jsonPrimitiveSchema } from "./json";
 import { procHilRequestSchema, type ProcHilRequest } from "./syscalls/proc";
 import * as z from "zod/mini";
 
@@ -539,76 +546,12 @@ export function isAdapterWorkerStatusResult(
   return z.array(adapterAccountStatusSchema).safeParse(value).success;
 }
 
-/** Request frame sent from an adapter worker to the Gateway service binding. */
-export const adapterGatewayRequestFrameSchema = z.strictObject({
-  type: z.literal("req"),
-  id: z.string(),
-  call: z.string(),
-  args: jsonValueSchema,
-  body: z.optional(binaryBodySchema),
-});
-
-export type AdapterGatewayRequestFrame = {
-  type: "req";
-  id: string;
-  call: string;
-  args: JsonValue;
-  body?: BinaryBody;
-};
-
-/** Response frame returned by the Gateway service binding to an adapter worker. */
-export const adapterGatewayResponseFrameSchema = z.strictObject({
-  type: z.literal("res"),
-  id: z.string(),
-  ok: z.boolean(),
-  data: z.optional(jsonValueSchema),
-  body: z.optional(binaryBodySchema),
-  error: z.optional(z.strictObject({
-    code: z.optional(z.union([z.number(), z.string()])),
-    message: z.string(),
-    details: z.optional(jsonValueSchema),
-    retryable: z.optional(z.boolean()),
-  })),
-});
-
-export type AdapterGatewayResponseFrame = {
-  type: "res";
-  id: string;
-  ok: boolean;
-  data?: JsonValue;
-  body?: BinaryBody;
-  error?: {
-    code?: number | string;
-    message: string;
-    details?: JsonValue;
-    retryable?: boolean;
-  };
-};
-
-export const adapterGatewaySignalFrameSchema = z.strictObject({
-  type: z.literal("sig"),
-  signal: z.string(),
-  payload: z.optional(jsonValueSchema),
-  seq: z.optional(z.number()),
-});
-
-export type AdapterGatewaySignalFrame = {
-  type: "sig";
-  signal: string;
-  payload?: JsonValue;
-  seq?: number;
-};
-
-export type AdapterGatewayFrame =
-  | AdapterGatewayRequestFrame
-  | AdapterGatewayResponseFrame
-  | AdapterGatewaySignalFrame;
-
-export const adapterGatewayFrameSchema = z.union([
-  adapterGatewayRequestFrameSchema,
-  adapterGatewayResponseFrameSchema,
-  adapterGatewaySignalFrameSchema,
-]);
+/** Frames exchanged with adapter workers over Workers RPC carry byte-stream bodies. */
+export type AdapterGatewayRequestFrame = RequestEnvelope<BinaryBody>;
+export type AdapterGatewayResponseFrame = ResponseEnvelope<BinaryBody>;
+export type AdapterGatewaySignalFrame = SignalEnvelope;
+export type AdapterGatewayFrame = FrameEnvelope<BinaryBody>;
+export const adapterGatewayFrameSchema = bodyFrameSchemas.frame;
 
 /** Gateway RPC surface consumed by adapter workers through a service binding. */
 export interface AdapterGatewayInterface<Frame = AdapterGatewayFrame> {

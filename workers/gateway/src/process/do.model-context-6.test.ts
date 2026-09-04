@@ -427,7 +427,7 @@ describe("model context", () => {
         if (responsibilityResult) return responsibilityResult;
         if (call === "ai.context") {
           return {
-            devices: [],
+            targets: [],
             mcpServers: [],
             system: { timezone: "UTC" },
             skillIndex: [],
@@ -630,7 +630,7 @@ describe("model context", () => {
         if (responsibilityResult) return responsibilityResult;
         if (call === "ai.context") {
           return {
-            devices: [],
+            targets: [],
             mcpServers: [],
             system: { timezone: "UTC" },
             skillIndex: [],
@@ -708,7 +708,7 @@ describe("model context", () => {
           capabilities: [],
         },
         tools: [],
-        devices: [],
+        targets: [],
         systemPrompt: "Test system prompt.",
         approvalPolicy: { default: "auto", rules: [] },
       };

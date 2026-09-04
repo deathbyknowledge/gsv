@@ -3,6 +3,7 @@ import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { GsvFs } from "../../../fs/gsv-fs";
 import { hasCapability } from "../../../kernel/capabilities";
 import type { KernelContext } from "../../../kernel/context";
+import { principalOf } from "../../../kernel/context";
 import {
   collectFilesystemSkillDocuments,
   collectKernelSkillDocuments,
@@ -47,7 +48,14 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
   man: command("Read or search the live GSV capability manual.", "Discover how to accomplish an unfamiliar task before guessing syntax or saying it is unsupported.", ["help", "discover", "search", "capabilities", "commands", "workflows"], [], ["man --search -- 'plain-language goal'", "man <topic>"]),
   ls: command("List GSV files and virtual directories.", "Inspect files in GSV, including home, process, system, and repository paths.", ["files", "folders", "directories"]),
   stat: command("Inspect GSV file metadata.", "Check whether a path exists and inspect its type, size, ownership, permissions, or content type.", ["files", "metadata", "size", "mime"]),
-  cp: command("Copy files locally or between GSV targets.", "Move or copy a file between GSV, a connected machine, or a browser target, including photos and documents.", ["copy", "transfer", "file", "photo", "image", "document", "laptop", "machine", "device", "target"]),
+  cp: command("Copy files locally or between GSV targets.", "Move or copy a file between GSV, a connected machine, or a browser target, including photos and documents.", ["copy", "transfer", "file", "photo", "image", "document", "laptop", "machine", "device", "target"], [], [
+    "cp SOURCE DEST",
+    "cp TARGET:/path /local/path",
+    "cp /local/path [target:with:colons]:/path",
+  ]),
+  dd: command("Copy and slice raw bytes between files.", "Cut a byte range out of a file, rejoin binary parts, or copy bytes by block size on the gsv target.", ["bytes", "slice", "binary", "block", "range", "chunk", "copy"], [], [
+    "dd [if=SOURCE] [of=DEST] [bs=BYTES] [count=N] [skip=N] [seek=N] [conv=notrunc] [status=none]",
+  ]),
   crontab: command("Manage recurring native shell jobs.", "Run a shell command repeatedly on a cron schedule such as every morning or each weekday.", ["schedule", "recurring", "automation", "cron", "daily", "weekly"], ["sched"]),
   codemode: command("Run a reusable JavaScript GSV tool workflow.", "Combine several shell, filesystem, or connected integration operations in one scripted workflow.", ["script", "workflow", "automation", "tools", "javascript"]),
   contact: command("Manage trusted contacts with other GSV Ships.", "Pair with another Ship, inspect contacts, exchange structured requests, revoke access, or discover a contact destination for messaging.", ["contact", "ship", "federation", "pair", "invite", "request", "revoke"], [], [
@@ -88,7 +96,11 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
     "message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--also]",
   ]),
   yield: command("Finish the active agent run.", "Yield control after the current work is complete while keeping the durable Process available for future input.", ["finish", "complete", "done", "stop", "silent"], [], ["yield"]),
-  mail: command("Read, send, reply to, and inspect managed email.", "Send email, reply to an inbox message, or check whether a queued email was accepted.", ["email", "inbox", "send", "reply", "status", "delivery"], [], [
+  mail: command("Read, send, reply to, and inspect managed email.", "Read an inbox message, search received email, send email, reply to a message, or check whether a queued email was accepted.", ["email", "inbox", "read", "message", "search", "send", "reply", "status", "delivery"], [], [
+    "mail address",
+    "mail list [--limit N] [--offset N]",
+    "mail search QUERY [--limit N] [--offset N]",
+    "mail show MESSAGE_ID [--raw]",
     "mail send --to ADDRESS --subject SUBJECT (--message TEXT | --body PATH) [--delivery-id ID]",
     "mail reply MESSAGE_ID [--subject SUBJECT] (--message TEXT | --body PATH) [--delivery-id ID]",
     "mail status DELIVERY_ID",
@@ -161,7 +173,7 @@ export class ShellDiscoveryCatalog {
         );
       const requirements = metadata.requirements ?? [];
       const missing = requirements.filter((capability) =>
-        !hasCapability(this.ctx.identity?.capabilities ?? [], capability)
+        !hasCapability(principalOf(this.ctx)?.calls ?? [], capability)
       );
       const entry: ShellDiscoveryEntry = {
         kind: "command",
@@ -253,7 +265,7 @@ export class ShellDiscoveryCatalog {
   }
 
   private async targetEntries(): Promise<ShellDiscoveryEntry[]> {
-    if (!hasCapability(this.ctx.identity?.capabilities ?? [], "sys.device.list")) {
+    if (!hasCapability(principalOf(this.ctx)?.calls ?? [], "sys.target.list")) {
       return [];
     }
     try {
@@ -276,7 +288,7 @@ export class ShellDiscoveryCatalog {
   }
 
   private integrationEntries(): ShellDiscoveryEntry[] {
-    if (!hasCapability(this.ctx.identity?.capabilities ?? [], "sys.mcp.list")) {
+    if (!hasCapability(principalOf(this.ctx)?.calls ?? [], "sys.mcp.list")) {
       return [];
     }
     try {

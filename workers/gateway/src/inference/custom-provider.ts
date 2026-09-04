@@ -21,8 +21,7 @@ import {
   type JsonObject,
   type JsonValue,
 } from "@humansandmachines/gsv/protocol";
-import { Stream } from "openai/core/streaming.js";
-import type { ResponseStreamEvent } from "openai/resources/responses/responses.js";
+import { openAiResponseEvents, parseSse } from "./sse";
 import { z } from "zod";
 import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
 import { convertMessages } from "@earendil-works/pi-ai/api/openai-completions";
@@ -299,10 +298,7 @@ function streamOpenAIResponsesWithFetch(
       }
       const response = await postJsonSse(fetchImpl, `${model.baseUrl}/responses`, payload, request);
       stream.push({ type: "start", partial: output });
-      const providerStream = Stream.fromSSEResponse<ResponseStreamEvent>(
-        response,
-        new AbortController(),
-      );
+      const providerStream = openAiResponseEvents(parseSse(response, request.options?.signal));
       await processResponsesStream(
         providerStream,
         output,

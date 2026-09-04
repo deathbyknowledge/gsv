@@ -2,7 +2,7 @@ export type ShellSessionStatus = "running" | "completed" | "failed";
 
 export type ShellSessionRecord = {
   sessionId: string;
-  deviceId: string;
+  targetId: string;
   status: ShellSessionStatus;
   exitCode: number | null;
   error: string | null;
@@ -18,7 +18,7 @@ export class ShellSessionStore {
 
   rememberDeviceSession(
     sessionId: string,
-    deviceId: string,
+    targetId: string,
     status: ShellSessionStatus = "running",
     options?: { exitCode?: number | null; error?: string | null; ttlMs?: number },
   ): void {
@@ -28,10 +28,10 @@ export class ShellSessionStore {
     const expiresAt = now + (options?.ttlMs ?? DEFAULT_TTL_MS);
     this.sql.exec(
       `INSERT OR REPLACE INTO shell_sessions
-        (session_id, device_id, status, exit_code, error, created_at, updated_at, expires_at)
+        (session_id, target_id, status, exit_code, error, created_at, updated_at, expires_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       sessionId,
-      deviceId,
+      targetId,
       status,
       options?.exitCode ?? existing?.exitCode ?? null,
       options?.error ?? existing?.error ?? null,
@@ -44,7 +44,7 @@ export class ShellSessionStore {
   get(sessionId: string): ShellSessionRecord | null {
     const rows = this.sql.exec<{
       session_id: string;
-      device_id: string;
+      target_id: string;
       status: string;
       exit_code: number | null;
       error: string | null;
@@ -68,7 +68,7 @@ export class ShellSessionStore {
 
     return {
       sessionId: row.session_id,
-      deviceId: row.device_id,
+      targetId: row.target_id,
       status: normalizeStatus(row.status),
       exitCode: row.exit_code,
       error: row.error,
@@ -96,15 +96,15 @@ export class ShellSessionStore {
     );
   }
 
-  failForDevice(deviceId: string, error: string): void {
+  failForDevice(targetId: string, error: string): void {
     const now = Date.now();
     this.sql.exec(
       `UPDATE shell_sessions
        SET status = 'failed', error = ?, updated_at = ?
-       WHERE device_id = ? AND status = 'running'`,
+       WHERE target_id = ? AND status = 'running'`,
       error,
       now,
-      deviceId,
+      targetId,
     );
   }
 

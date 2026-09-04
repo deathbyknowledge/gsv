@@ -69,10 +69,6 @@ export type ImageGenerationResult = {
 };
 
 export const OPENAI_PROVIDER = "openai";
-export const DEFAULT_OPENAI_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
-export const DEFAULT_OPENAI_SPEECH_MODEL = "gpt-4o-mini-tts";
-export const DEFAULT_OPENAI_SPEECH_VOICE = "alloy";
-export const DEFAULT_OPENAI_IMAGE_MODEL = "gpt-image-1.5";
 export const DEFAULT_IMAGE_GENERATION_MODEL = "@cf/black-forest-labs/flux-1-schnell";
 export const DEFAULT_IMAGE_GENERATION_TIMEOUT_MS = 60_000;
 

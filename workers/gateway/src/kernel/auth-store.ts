@@ -31,15 +31,15 @@ export type AuthResult =
   | { ok: true; identity: AuthIdentity }
   | { ok: false; error: string };
 
-export type AuthTokenKind = "node" | "service" | "user";
-export type AuthTokenRole = "driver" | "service" | "user";
+/** A token authenticates as exactly the principal kind it was issued for. */
+export type AuthTokenKind = "human" | "machine" | "service";
 
 export type PeerTokenAuthResult =
   | {
       ok: true;
       identity: AuthIdentity;
-      role: AuthTokenRole;
-      allowedDeviceId: string | null;
+      kind: AuthTokenKind;
+      peerId: string | null;
     }
   | { ok: false; error: string };
 
@@ -47,8 +47,8 @@ export type AuthTokenIssueInput = {
   uid: number;
   kind: AuthTokenKind;
   label?: string;
-  allowedRole?: AuthTokenRole;
-  allowedDeviceId?: string;
+  /** Required for machine tokens: the only peer id the token may connect as. */
+  peerId?: string;
   expiresAt?: number;
 };
 
@@ -59,8 +59,7 @@ export type IssuedAuthToken = {
   uid: number;
   kind: AuthTokenKind;
   label: string | null;
-  allowedRole: AuthTokenRole | null;
-  allowedDeviceId: string | null;
+  peerId: string | null;
   createdAt: number;
   expiresAt: number | null;
 };
@@ -71,8 +70,7 @@ export type AuthTokenRecord = {
   kind: AuthTokenKind;
   label: string | null;
   tokenPrefix: string;
-  allowedRole: AuthTokenRole | null;
-  allowedDeviceId: string | null;
+  peerId: string | null;
   createdAt: number;
   lastUsedAt: number | null;
   expiresAt: number | null;
@@ -81,8 +79,8 @@ export type AuthTokenRecord = {
 };
 
 type TokenAuthOptions = {
-  role?: AuthTokenRole;
-  deviceId?: string;
+  kind?: AuthTokenKind;
+  peerId?: string;
 };
 
 export class AuthStore {
@@ -363,8 +361,8 @@ export class AuthStore {
   }
 
   /**
-   * Verify an opaque machine/user token issued by this kernel.
-   * Optional role/device constraints are enforced against token bindings.
+   * Verify an opaque token issued by this kernel. Optional kind and peer
+   * constraints are enforced against the token's bindings.
    */
   async authenticateToken(
     username: string,
@@ -373,21 +371,10 @@ export class AuthStore {
   ): Promise<AuthResult> {
     const result = await this.authenticatePeerToken(username, token);
     if (!result.ok) return result;
-    if (options.role && result.role !== options.role) {
+    if (options.kind && result.kind !== options.kind) {
       return { ok: false, error: "Authentication failed" };
     }
-    if (options.role === "driver") {
-      if (!options.deviceId || !result.allowedDeviceId) {
-        return { ok: false, error: "Authentication failed" };
-      }
-      if (result.allowedDeviceId !== options.deviceId) {
-        return { ok: false, error: "Authentication failed" };
-      }
-    } else if (
-      options.deviceId
-      && result.allowedDeviceId
-      && result.allowedDeviceId !== options.deviceId
-    ) {
+    if (result.peerId !== null && result.peerId !== options.peerId) {
       return { ok: false, error: "Authentication failed" };
     }
     return { ok: true, identity: result.identity };
@@ -405,12 +392,11 @@ export class AuthStore {
     const rows = this.sql.exec<{
       token_id: string;
       kind: AuthTokenKind;
-      allowed_role: AuthTokenRole | null;
-      allowed_device_id: string | null;
+      peer_id: string | null;
       expires_at: number | null;
       revoked_at: number | null;
     }>(
-      `SELECT token_id, kind, allowed_role, allowed_device_id, expires_at, revoked_at
+      `SELECT token_id, kind, peer_id, expires_at, revoked_at
        FROM auth_tokens
        WHERE uid = ? AND token_hash = ?
        LIMIT 1`,
@@ -446,8 +432,8 @@ export class AuthStore {
         username: user.username,
         home: user.home,
       },
-      role: tokenRow.allowed_role ?? defaultRoleForKind(tokenRow.kind),
-      allowedDeviceId: tokenRow.allowed_device_id,
+      kind: tokenRow.kind,
+      peerId: tokenRow.peer_id,
     };
   }
 
@@ -462,23 +448,24 @@ export class AuthStore {
     const rawToken = this.generateTokenValue(input.kind);
     const tokenPrefix = rawToken.slice(0, 16);
     const tokenHash = await hashToken(rawToken);
-    const allowedRole = input.allowedRole ?? defaultRoleForKind(input.kind);
-    if (allowedRole === "driver" && !input.allowedDeviceId) {
-      throw new Error("allowedDeviceId is required for driver-bound tokens");
+    if (input.kind === "machine" && !input.peerId) {
+      throw new Error("peerId is required for machine tokens");
+    }
+    if (input.kind !== "machine" && input.peerId) {
+      throw new Error("peerId is only valid for machine tokens");
     }
 
     this.sql.exec(
       `INSERT INTO auth_tokens
-        (token_id, uid, kind, label, token_hash, token_prefix, allowed_role, allowed_device_id, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (token_id, uid, kind, label, token_hash, token_prefix, peer_id, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       tokenId,
       input.uid,
       input.kind,
       input.label ?? null,
       tokenHash,
       tokenPrefix,
-      allowedRole,
-      input.allowedDeviceId ?? null,
+      input.peerId ?? null,
       now,
       input.expiresAt ?? null,
     );
@@ -490,8 +477,7 @@ export class AuthStore {
       uid: input.uid,
       kind: input.kind,
       label: input.label ?? null,
-      allowedRole,
-      allowedDeviceId: input.allowedDeviceId ?? null,
+      peerId: input.peerId ?? null,
       createdAt: now,
       expiresAt: input.expiresAt ?? null,
     };
@@ -505,15 +491,14 @@ export class AuthStore {
         kind: AuthTokenKind;
         label: string | null;
         token_prefix: string;
-        allowed_role: AuthTokenRole | null;
-        allowed_device_id: string | null;
+        peer_id: string | null;
         created_at: number;
         last_used_at: number | null;
         expires_at: number | null;
         revoked_at: number | null;
         revoked_reason: string | null;
       }>(
-        `SELECT token_id, uid, kind, label, token_prefix, allowed_role, allowed_device_id,
+        `SELECT token_id, uid, kind, label, token_prefix, peer_id,
                 created_at, last_used_at, expires_at, revoked_at, revoked_reason
          FROM auth_tokens
          WHERE uid = ?
@@ -528,15 +513,14 @@ export class AuthStore {
       kind: AuthTokenKind;
       label: string | null;
       token_prefix: string;
-      allowed_role: AuthTokenRole | null;
-      allowed_device_id: string | null;
+      peer_id: string | null;
       created_at: number;
       last_used_at: number | null;
       expires_at: number | null;
       revoked_at: number | null;
       revoked_reason: string | null;
     }>(
-      `SELECT token_id, uid, kind, label, token_prefix, allowed_role, allowed_device_id,
+      `SELECT token_id, uid, kind, label, token_prefix, peer_id,
               created_at, last_used_at, expires_at, revoked_at, revoked_reason
        FROM auth_tokens
        ORDER BY created_at DESC`,
@@ -639,25 +623,13 @@ export class AuthStore {
   }
 }
 
-function defaultRoleForKind(kind: AuthTokenKind): AuthTokenRole {
-  switch (kind) {
-    case "node":
-      return "driver";
-    case "service":
-      return "service";
-    case "user":
-      return "user";
-  }
-}
-
 function mapTokenRow(row: {
   token_id: string;
   uid: number;
   kind: AuthTokenKind;
   label: string | null;
   token_prefix: string;
-  allowed_role: AuthTokenRole | null;
-  allowed_device_id: string | null;
+  peer_id: string | null;
   created_at: number;
   last_used_at: number | null;
   expires_at: number | null;
@@ -670,8 +642,7 @@ function mapTokenRow(row: {
     kind: row.kind,
     label: row.label,
     tokenPrefix: row.token_prefix,
-    allowedRole: row.allowed_role,
-    allowedDeviceId: row.allowed_device_id,
+    peerId: row.peer_id,
     createdAt: row.created_at,
     lastUsedAt: row.last_used_at,
     expiresAt: row.expires_at,

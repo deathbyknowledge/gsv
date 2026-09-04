@@ -18,7 +18,10 @@ import {
 import type { GsvFs } from "../../../fs/gsv-fs";
 import { hasCapability } from "../../../kernel/capabilities";
 import type { KernelContext } from "../../../kernel/context";
-import { deliverAdapterDestination } from "../../../kernel/adapter-handlers";
+import { principalOf } from "../../../kernel/context";
+import {
+  deliverAdapterDestination,
+} from "../../../kernel/adapter-send";
 import {
   handleContactDeliveryGet,
   handleContactList,
@@ -39,8 +42,8 @@ import { resolveCallerOwnerUid } from "../../../kernel/context";
 import { findInteractiveProcess, type ProcessRecord } from "../../../kernel/processes";
 import type { RunRoute } from "../../../kernel/run-routes";
 import type { SurfaceRouteRecord } from "../../../kernel/surface-routes";
+import type { InternalRequestFrame } from "../../../protocol/process-frames";
 import type {
-  ProcessRunAttachRequestFrame,
   ProcessRunAttachResult,
 } from "../../../protocol/process-frames";
 import {
@@ -238,7 +241,7 @@ async function attachToReply(
 
   const resources = await referenceAttachments(paths, requestedMime, shellCtx, fs);
 
-  const request: ProcessRunAttachRequestFrame = {
+  const request: InternalRequestFrame<"proc.run.attach"> = {
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.run.attach",
@@ -305,7 +308,7 @@ async function showCurrentReplyDestination(
 
 async function listDestinations(args: string[], ctx: KernelContext): Promise<ExecResult> {
   const flags = parseOnlyFlags(args, new Set(["--json", "--all"]));
-  const capabilities = ctx.identity?.capabilities ?? [];
+  const capabilities = principalOf(ctx)?.calls ?? [];
   const canListAdapters = hasCapability(capabilities, "adapter.send");
   const canListContacts = hasCapability(capabilities, "contact.list");
   if (!canListAdapters && !canListContacts) {

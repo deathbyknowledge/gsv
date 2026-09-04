@@ -7,7 +7,6 @@ import {
   DEFAULT_WORKERS_AI_MODEL,
 } from "../inference/default-models";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
-import { MAIL_STATUS } from "../syscalls/constants";
 import { parseAiModelStack } from "./ai-model-stack";
 
 describe("ConfigStore", () => {
@@ -240,6 +239,6 @@ describe("ConfigStore", () => {
     expect(policy.rules).toContainEqual({ match: "net.fetch", action: "ask" });
     expect(policy.rules).toContainEqual({ match: "fs.delete", action: "ask" });
     expect(policy.rules).toContainEqual({ match: "mail.send", action: "ask" });
-    expect(policy.rules).not.toContainEqual({ match: MAIL_STATUS, action: "ask" });
+    expect(policy.rules).not.toContainEqual({ match: "mail.status", action: "ask" });
   });
 });

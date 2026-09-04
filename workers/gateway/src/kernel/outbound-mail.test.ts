@@ -1,6 +1,7 @@
 function isString<T>(value: T): value is T & string { return String(value) === value; }
 
 import { describe, expect, it, vi } from "vitest";
+import { testPeer } from "../test-support/peers";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import type { KernelContext } from "./context";
 import { MailboxStore } from "./mailbox-store";
@@ -626,11 +627,7 @@ function outboundContext(
     },
     requestId: "request-1",
     callerOwnerUid: 1000,
-    identity: {
-      role: "user",
-      process: { ...humans[0], gids: [1000, 100], cwd: "/home/hank" },
-      capabilities: ["mail.send"],
-    },
+    peer: testPeer({ kind: "human", account: { ...humans[0], gids: [1000, 100], cwd: "/home/hank" }, calls: ["mail.send"] }),
     auth: {
       getPasswdEntries: () => humans,
       getPasswdByUid: (uid: number) => humans.find((entry) => entry.uid === uid) ?? null,

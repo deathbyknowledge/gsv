@@ -1,5 +1,5 @@
-import type { ProcessResourceWriteRequestFrame } from "../protocol/process-frames";
 import { bodyFromBytes } from "@humansandmachines/gsv/protocol";
+import type { InternalRequestFrame } from "../protocol/protocol/process-frames";
 import { evictDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
@@ -23,7 +23,7 @@ describe("proc.kill", () => {
         contentType: "image/png",
       },
       body: bodyFromBytes(new Uint8Array([7, 8, 9])),
-    } satisfies ProcessResourceWriteRequestFrame);
+    } satisfies InternalRequestFrame<"proc.resource.write">);
     if (!uploaded.ok) throw new Error(uploaded.error.message);
     const resource = uploaded.data.resource;
     await env.STORAGE.put(key, new Uint8Array([7, 8, 9]), {

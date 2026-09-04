@@ -2,7 +2,7 @@ import type { AuthStore } from "../kernel/auth-store";
 import type { CapabilityStore } from "../kernel/capabilities";
 import type { ConfigStore } from "../kernel/config";
 import type { CronFileService } from "../kernel/crontab";
-import type { DeviceRegistry } from "../kernel/devices";
+import type { TargetRegistry } from "../kernel/target-registry";
 import type { ProcessRegistry } from "../kernel/processes";
 import type { RequestFrame } from "../protocol/frames";
 import { sendFrameToProcess } from "../shared/utils";
@@ -69,7 +69,7 @@ export type ScheduleViewStore = {
 export type KernelRefs = {
   auth: AuthStore;
   procs: ProcessRegistry;
-  devices: DeviceRegistry;
+  targets: TargetRegistry;
   caps: CapabilityStore;
   config: ConfigStore;
   cron?: CronFileService;

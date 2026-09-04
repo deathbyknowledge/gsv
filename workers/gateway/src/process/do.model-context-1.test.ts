@@ -99,7 +99,7 @@ describe("model context", () => {
           ],
         },
         tools: [],
-        devices: [],
+        targets: [],
         mcpServers: [],
         approvalPolicy: { default: "auto", rules: [] },
       };
@@ -246,7 +246,7 @@ describe("model context", () => {
           ],
         },
         tools: [],
-        devices: [],
+        targets: [],
         mcpServers: [],
         approvalPolicy: { default: "auto", rules: [] },
       };
@@ -320,7 +320,7 @@ describe("model context", () => {
         ],
       };
       const firstSnapshot = {
-        devices: [
+        targets: [
           {
             id: "laptop",
             label: "Laptop",
@@ -355,7 +355,7 @@ describe("model context", () => {
         runId: "run-projection-a",
         config,
         tools: [],
-        devices: firstSnapshot.devices,
+        devices: firstSnapshot.targets,
         mcpServers: firstSnapshot.mcpServers,
         approvalPolicy: { default: "auto", rules: [] },
       };
@@ -370,7 +370,7 @@ describe("model context", () => {
 
       const nextSnapshot = {
         ...firstSnapshot,
-        devices: [
+        targets: [
           {
             id: "desktop",
             label: "Desktop",
@@ -410,7 +410,7 @@ describe("model context", () => {
         runId: "run-projection-b",
         systemPrompt: undefined,
         contextEpochId: undefined,
-        devices: nextSnapshot.devices,
+        devices: nextSnapshot.targets,
         mcpServers: nextSnapshot.mcpServers,
       };
       process.runs.active = nextRun;
@@ -488,7 +488,7 @@ describe("model context", () => {
         systemContextFiles: [{ name: "00-test.md", text: "current prompt" }],
       };
       const snapshot = {
-        devices: [],
+        targets: [],
         mcpServers: [],
         systemContextFiles: config.systemContextFiles,
         system: { timezone: "UTC" },
@@ -499,7 +499,7 @@ describe("model context", () => {
         runId: "run-current",
         config,
         tools: [],
-        devices: [],
+        targets: [],
         mcpServers: [],
         approvalPolicy: { default: "auto", rules: [] },
       };
@@ -555,7 +555,7 @@ describe("model context", () => {
         runId: "run-epoch-a",
         config: configA,
         tools: [],
-        devices: [],
+        targets: [],
         mcpServers: [],
         approvalPolicy: { default: "auto", rules: [] },
       };
@@ -893,7 +893,7 @@ describe("model context", () => {
         markContextStarted();
         await contextBlocked;
         return {
-          devices: [],
+          targets: [],
           mcpServers: [],
           system: { timezone: "UTC" },
           skillIndex: [],

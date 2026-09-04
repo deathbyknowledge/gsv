@@ -62,7 +62,7 @@ describe("gateway integration", () => {
     const wsUrl = webSocketUrl(baseUrl);
     const oneShot = new GSVClient();
     const connectArgs = {
-      protocol: 3 as const,
+      protocol: 4 as const,
       peer: {
         id: "gateway-integration",
         version: "1.0.0",

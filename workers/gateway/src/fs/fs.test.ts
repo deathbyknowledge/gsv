@@ -198,8 +198,8 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     {
       id: "sched-1",
       ownerUid: 1000,
-      creator: { kind: "user", uid: 1000, username: "sam" },
-      runAs: { kind: "user", uid: 1000, username: "sam" },
+      creator: { kind: "human", uid: 1000, username: "sam" },
+      runAs: { kind: "human", uid: 1000, username: "sam" },
       name: "daily pulse",
       enabled: true,
       expression: { kind: "every", everyMs: 60_000 },
@@ -220,8 +220,8 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     {
       id: "sched-foreign",
       ownerUid: 1001,
-      creator: { kind: "user", uid: 1001, username: "alice" },
-      runAs: { kind: "user", uid: 1001, username: "alice" },
+      creator: { kind: "human", uid: 1001, username: "alice" },
+      runAs: { kind: "human", uid: 1001, username: "alice" },
       name: "foreign",
       enabled: true,
       expression: { kind: "every", everyMs: 60_000 },
@@ -1061,6 +1061,12 @@ describe("GsvFs virtual /dev", () => {
 });
 
 describe("GsvFs virtual /sys config tree", () => {
+  it("lists the kernel views under /sys by their current names", async () => {
+    const fs = makeConfigBackedFs(ROOT, {});
+
+    expect(await fs.readdir("/sys")).toEqual(["capabilities", "config", "targets", "users"]);
+  });
+
   it("lists nested /sys/config directories based on config key prefixes", async () => {
     const models = JSON.stringify({
       version: 1,
@@ -1477,5 +1483,30 @@ describe("GsvFs search", () => {
 
     await expect(search).rejects.toBe(reason);
     expect(cancelled).toBe(true);
+  });
+});
+
+describe("GsvFs stat identity", () => {
+  it("reports a stable identity that survives repeated stats and follows links", async () => {
+    const fs = new GsvFs(env.STORAGE, {
+      uid: 1000,
+      gid: 1000,
+      gids: [1000],
+      username: "sam",
+      home: "/home/sam",
+      cwd: "/home/sam",
+    });
+    await fs.mkdir("/home/sam/identity", { recursive: true });
+    await fs.writeFile("/home/sam/identity/a.txt", "a");
+    await fs.writeFile("/home/sam/identity/b.txt", "b");
+
+    const first = await fs.stat("/home/sam/identity/a.txt");
+    const again = await fs.stat("/home/sam/identity/a.txt");
+    const other = await fs.stat("/home/sam/identity/b.txt");
+
+    expect(first.identity).toBeDefined();
+    expect(again.identity).toBe(first.identity);
+    expect(other.identity).not.toBe(first.identity);
+    expect((await fs.stat("/")).identity).toBeDefined();
   });
 });

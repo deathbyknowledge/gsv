@@ -1,6 +1,7 @@
 function isString<T>(value: T): value is T & string { return String(value) === value; }
 
 import { describe, expect, it } from "vitest";
+import { testPeer } from "../test-support/peers";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
 import {
@@ -258,11 +259,7 @@ describe("collectKernelSkillDocuments", () => {
     const readKeys: string[] = [];
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
-      identity: {
-        role: "user",
-        process: IDENTITY,
-        capabilities: ["*"],
-      },
+      peer: testPeer({ kind: "human", account: IDENTITY, calls: ["*"] }),
       env: {
         RIPGIT: makeRipgitFetcher({
           "sam/home:skills.d": [
@@ -321,11 +318,7 @@ function makeAgentOwnedContext(options: {
 } = {}): KernelContext {
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
-    identity: {
-      role: "user",
-      process: AGENT_IDENTITY,
-      capabilities: ["*"],
-    },
+    peer: testPeer({ kind: "human", account: AGENT_IDENTITY, calls: ["*"] }),
     auth: {
       getPasswdByUid(uid: number) {
         if (uid === IDENTITY.uid) {

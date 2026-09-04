@@ -4224,20 +4224,20 @@ struct MachineTokenCreateResult {
 
 #[derive(Deserialize)]
 struct MachineListResult {
-    devices: Vec<KnownMachine>,
+    targets: Vec<KnownMachine>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct KnownMachine {
-    device_id: String,
+    target_id: String,
     label: String,
 }
 
 fn machine_identity_conflicts(machines: &[KnownMachine], machine_id: &str, name: &str) -> bool {
     let normalized_name = name.trim().to_lowercase();
     machines.iter().any(|machine| {
-        machine.device_id == machine_id || machine.label.trim().to_lowercase() == normalized_name
+        machine.target_id == machine_id || machine.label.trim().to_lowercase() == normalized_name
     })
 }
 
@@ -4246,7 +4246,7 @@ fn machine_identity_conflicts(machines: &[KnownMachine], machine_id: &str, name:
 struct MachineToken {
     token_id: String,
     token: String,
-    allowed_device_id: Option<String>,
+    peer_id: Option<String>,
 }
 
 async fn configure_local_machine(
@@ -4276,14 +4276,14 @@ async fn configure_local_machine(
             let machine_id = machine_setup::machine_id_from_name(&name);
             let response = request_ok(
                 client,
-                "sys.device.list",
+                "sys.target.list",
                 Some(json!({ "includeOffline": true })),
             )
             .await?;
             let known = serde_json::from_value::<MachineListResult>(response).map_err(|_| {
                 RequestFailure::transport("GSV returned an invalid machine list response.")
             })?;
-            if machine_identity_conflicts(&known.devices, &machine_id, &name) {
+            if machine_identity_conflicts(&known.targets, &machine_id, &name) {
                 return Err(RequestFailure::rejected(
                     "A machine with this name already exists. Choose a different name.",
                 ));
@@ -4292,10 +4292,9 @@ async fn configure_local_machine(
                 client,
                 "sys.token.create",
                 Some(json!({
-                    "kind": "node",
+                    "kind": "machine",
                     "label": &name,
-                    "allowedRole": "driver",
-                    "allowedDeviceId": &machine_id,
+                    "peerId": &machine_id,
                 })),
             )
             .await?;
@@ -4306,9 +4305,7 @@ async fn configure_local_machine(
                     )
                 })?
                 .token;
-            if issued.allowed_device_id.as_deref() != Some(machine_id.as_str())
-                || issued.token.is_empty()
-            {
+            if issued.peer_id.as_deref() != Some(machine_id.as_str()) || issued.token.is_empty() {
                 let _ = revoke_machine_token(client, &issued.token_id).await;
                 return Err(RequestFailure::transport(
                     "GSV returned a credential for a different machine.",
@@ -4335,16 +4332,16 @@ async fn configure_local_machine(
     if activation.connected {
         let response = request_ok(
             client,
-            "sys.device.update",
+            "sys.target.update",
             Some(json!({
-                "deviceId": &activation.machine_id,
+                "targetId": &activation.machine_id,
                 "label": &activation.name,
             })),
         )
         .await?;
         if response
-            .get("device")
-            .and_then(|device| device.get("label"))
+            .get("target")
+            .and_then(|target| target.get("label"))
             .and_then(Value::as_str)
             != Some(activation.name.as_str())
         {
@@ -4621,7 +4618,7 @@ mod tests {
     #[test]
     fn machine_enrollment_rejects_existing_ids_and_display_names() {
         let machines = vec![KnownMachine {
-            device_id: "studio-mac".to_string(),
+            target_id: "studio-mac".to_string(),
             label: "Editing laptop".to_string(),
         }];
         assert!(machine_identity_conflicts(

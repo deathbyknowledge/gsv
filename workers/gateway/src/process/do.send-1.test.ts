@@ -1,5 +1,6 @@
+import type { InternalRequestFrame } from "../protocol/process-frames";
 import type {
-  ProcessAdapterDeliverArgs, ProcessResourceWriteRequestFrame, ProcessResourcesRetainRequestFrame,
+  ProcessAdapterDeliverArgs,
 } from "../protocol/process-frames";
 import { REQUEST_CANCEL_SIGNAL, bodyFromBytes } from "@humansandmachines/gsv/protocol";
 import { runDurableObjectAlarm } from "cloudflare:test";
@@ -598,7 +599,7 @@ describe("proc.send", () => {
       },
       body: bodyFromBytes(new Uint8Array([1, 2, 3])),
       // SAFETY: test fixture is constructed with the asserted domain shape.
-    } satisfies ProcessResourceWriteRequestFrame);
+    } satisfies InternalRequestFrame<"proc.resource.write">);
     if (!upload.ok) {
       throw new Error(upload.error.message);
     }
@@ -794,7 +795,7 @@ describe("proc.send", () => {
           await storedGate;
           return object;
         });
-        const request: ProcessResourcesRetainRequestFrame = {
+        const request: InternalRequestFrame<"proc.resources.retain"> = {
           type: "req",
           id: "retain-cancelled",
           call: "proc.resources.retain",
@@ -853,7 +854,7 @@ describe("proc.send", () => {
     let successfulKey = "";
     let cancelledKey = "";
 
-    const request = (id: string): ProcessResourcesRetainRequestFrame => ({
+    const request = (id: string): InternalRequestFrame<"proc.resources.retain"> => ({
       type: "req",
       id,
       call: "proc.resources.retain",
@@ -947,7 +948,7 @@ describe("proc.send", () => {
         const before = (await process.storage.list({ prefix: archivePrefix })).objects
           .map((object: R2Object) => object.key)
           .sort();
-        const request: ProcessResourcesRetainRequestFrame = {
+        const request: InternalRequestFrame<"proc.resources.retain"> = {
           type: "req",
           id: "retain-batch-rollback",
           call: "proc.resources.retain",

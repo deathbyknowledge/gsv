@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { testPeer } from "../test-support/peers";
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { getDurableObjectByName } from "../shared/durable-object";
@@ -10,18 +11,14 @@ import type { SignalWatchStore } from "./signal-watches";
 function makeContext(overrides: Partial<KernelContext> = {}): KernelContext {
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
-    identity: {
-      role: "user",
-      process: {
+    peer: testPeer({ kind: "human", account: {
         uid: 1000,
         gid: 1000,
         gids: [1000],
         username: "hank",
         home: "/home/hank",
         cwd: "/home/hank",
-      },
-      capabilities: ["*"],
-    },
+      }, calls: ["*"] }),
     signalWatches: {
       upsert: vi.fn(() => ({
         created: true,
@@ -61,18 +58,14 @@ describe("signal watch handlers", () => {
   it("registers process watches under the calling process owner uid", () => {
     const ctx = makeContext({
       processId: "proc-agent",
-      identity: {
-        role: "user",
-        process: {
+      peer: testPeer({ kind: "human", account: {
           uid: 2000,
           gid: 2000,
           gids: [2000],
           username: "hank-agent",
           home: "/home/hank-agent",
           cwd: "/home/hank-agent",
-        },
-        capabilities: ["*"],
-      },
+        }, calls: ["*"] }),
       procs: {
         get: vi.fn((pid: string) => ({
           uid: 2000,

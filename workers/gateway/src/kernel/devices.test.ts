@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { DeviceRegistry } from "./devices";
+import { TargetRegistry } from "./target-registry";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 
-describe("DeviceRegistry", () => {
-  const registryTest = it.extend<{ registry: DeviceRegistry }>({
+describe("TargetRegistry", () => {
+  const registryTest = it.extend<{ registry: TargetRegistry }>({
     registry: async ({ task: _task }, use) => {
-      await runWithRealKernelSql((sql) => use(new DeviceRegistry(sql)));
+      await runWithRealKernelSql((sql) => use(new TargetRegistry(sql)));
     },
   });
 
@@ -23,7 +23,7 @@ describe("DeviceRegistry", () => {
 
     const device = registry.get("macbook");
     expect(device).not.toBeNull();
-    expect(device!.device_id).toBe("macbook");
+    expect(device!.target_id).toBe("macbook");
     expect(device!.owner_uid).toBe(1000);
     expect(device!.label).toBe("macbook");
     expect(device!.description).toBe("");
@@ -161,7 +161,7 @@ describe("DeviceRegistry", () => {
 
     const online = registry.listOnline();
     expect(online).toHaveLength(1);
-    expect(online[0].device_id).toBe("a");
+    expect(online[0].target_id).toBe("a");
   });
 
   registryTest("returns null for unknown device", ({ registry }) => {
@@ -221,23 +221,23 @@ describe("DeviceRegistry", () => {
   });
 
   registryTest(
-    "findDevice finds accessible device that implements syscall",
+    "findTarget finds accessible device that implements syscall",
     ({ registry }) => {
       registry.register("macbook", 1000, 1000, ["fs.*"], "darwin", "0.1.0");
       registry.register("server", 0, 0, ["fs.*", "proc.*"], "linux", "0.1.0");
       registry.grantAccess("server", 100);
 
-      const device = registry.findDevice("proc.exec", 1000, [1000, 100]);
+      const device = registry.findTarget("proc.exec", 1000, [1000, 100]);
       expect(device).not.toBeNull();
-      expect(device!.device_id).toBe("server");
+      expect(device!.target_id).toBe("server");
     },
   );
 
   registryTest(
-    "findDevice returns null when no device matches",
+    "findTarget returns null when no device matches",
     ({ registry }) => {
       registry.register("macbook", 1000, 1000, ["fs.*"], "darwin", "0.1.0");
-      expect(registry.findDevice("adapter.send", 1000, [1000])).toBeNull();
+      expect(registry.findTarget("adapter.send", 1000, [1000])).toBeNull();
     },
   );
 
@@ -273,7 +273,7 @@ describe("DeviceRegistry", () => {
       registry.grantAccess("team-server", 100);
 
       const samDevices = registry.listForUser(1000, [1000, 100]);
-      const ids = samDevices.map((d) => d.device_id);
+      const ids = samDevices.map((d) => d.target_id);
       expect(ids).toContain("sam-laptop");
       expect(ids).toContain("team-server");
       expect(ids).not.toContain("alice-laptop");
@@ -296,7 +296,7 @@ describe("DeviceRegistry", () => {
 
       const devices = registry.listForUser(1000, []);
       expect(devices).toHaveLength(1);
-      expect(devices[0].device_id).toBe("mine");
+      expect(devices[0].target_id).toBe("mine");
     },
   );
 });

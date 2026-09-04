@@ -1,9 +1,8 @@
 import { GSVClient } from "@humansandmachines/gsv";
 import {
-  adapterGatewayResponseFrameSchema,
+  wireFrameSchemas,
   isAdapterInboundResult,
   type AdapterGatewayRequestFrame,
-  type AdapterGatewayResponseFrame,
   type AdapterInboundResult,
   type ProcHilRequest,
 } from "@humansandmachines/gsv/protocol";
@@ -797,10 +796,12 @@ function inboundFrame(options: {
   };
 }
 
+type ServiceFrameResponse = ReturnType<typeof wireFrameSchemas.response.parse>;
+
 async function sendServiceFrame(
   harness: TestHarness,
   frame: AdapterGatewayRequestFrame,
-): Promise<AdapterGatewayResponseFrame> {
+): Promise<ServiceFrameResponse> {
   const response = await harness.getWorker("gsv-test-dependencies").fetch(
     "http://gsv-test-dependencies/__test/service-frame/discord",
     {
@@ -817,10 +818,10 @@ async function sendServiceFrame(
   if (!response.ok) {
     throw new Error(`Test dependency service-frame endpoint returned ${response.status}`);
   }
-  return adapterGatewayResponseFrameSchema.parse(await response.json());
+  return wireFrameSchemas.response.parse(await response.json());
 }
 
-function inboundResult(response: AdapterGatewayResponseFrame): AdapterInboundResult {
+function inboundResult(response: ServiceFrameResponse): AdapterInboundResult {
   if (!response.ok) {
     throw new Error(response.error?.message ?? "Gateway rejected adapter ingress");
   }

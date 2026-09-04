@@ -106,7 +106,7 @@ type ConsoleOverviewHookOptions = ConsoleQueryOptions & LoadConsoleOverviewOptio
 
 const CONSOLE_OVERVIEW_SIGNALS = new Set([
   "proc.changed",
-  "device.status",
+  "target.status",
   "mcp.changed",
 ]);
 
@@ -166,7 +166,7 @@ export function useConsoleTargets(options: ConsoleQueryOptions = {}) {
 
   useEffect(() => {
     return client.onSignal((signal) => {
-      if (signal === "device.status") {
+      if (signal === "target.status") {
         void queryClient.invalidateQueries({ queryKey: consoleTargetsQueryKey });
       }
     });

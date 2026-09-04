@@ -12,8 +12,8 @@ import { abortError, bindStreamToAbort } from "../shared/streams";
 import { z } from "zod";
 
 export type NetFetchDeviceTransport = {
-  requestDevice: (
-    deviceId: string,
+  requestTarget: (
+    targetId: string,
     call: "net.fetch",
     args: NetFetchArgs,
     options?: { ttlMs?: number; body?: FrameBody; signal?: AbortSignal },
@@ -141,7 +141,7 @@ export function createRoutedFetch(
           signal: request.signal,
         };
         if (outbound.body) options.body = outbound.body;
-        return transport.requestDevice(normalizedTarget, NET_FETCH_CALL, outbound.args, options);
+        return transport.requestTarget(normalizedTarget, NET_FETCH_CALL, outbound.args, options);
       },
       request.signal,
       outbound.body,

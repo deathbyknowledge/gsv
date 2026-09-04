@@ -1,44 +1,30 @@
+import {
+  cancelUnlockedBody,
+} from "./do-shared";
+import {
+  RequestCancelledError,
+  errFrame,
+  requestAbortError,
+} from "./do-shared";
+import type {
+  TargetRequestOptions,
+} from "./do-shared";
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
 import {
-  DurableObjectOAuthClientProvider,
-  type AgentMcpOAuthProvider,
-} from "agents/mcp/do-oauth-client-provider";
-import {
   MCPClientManager,
-  type MCPConnectionResult,
 } from "agents/mcp/client";
 import type {
   Frame,
   FrameBody,
-  FrameError,
   RequestFrame,
   ResponseOkFrame,
   ResponseFrame,
-  SignalFrame,
 } from "../protocol/frames";
-import {
-  decodeWireFrameJson,
-  decodeWireResponse,
-  InvalidWireFrameError,
-} from "../protocol/decode-wire-frame";
-import type {
-  WireFrame,
-  WireRequestFrame,
-  WireResponseEnvelope,
-  WireResponseFrame,
-} from "@humansandmachines/gsv/protocol";
 import { consumeProcessRunStream } from "../protocol/process-run-stream";
 import type {
-  AdapterMedia,
-  AdapterMediaPart,
-  AdapterActivity,
   AdapterLinkedPeerContext,
   BinaryBody,
-  ConnectedPeer,
-  InstallationOnboardingAuthorization,
-  JsonObject,
-  JsonValue,
   ManagedInboundMailAccepted,
   ManagedInboundMailCompletion,
   ManagedInboundMailMetadata,
@@ -50,147 +36,78 @@ import type {
   UnlinkManagedTelegramIdentityInput,
   UnlinkManagedTelegramIdentityResult,
   NetFetchArgs,
-  MessageAttachment,
   ProcessIdentity,
-  ProcHilRequest,
-  ScheduleRecord,
-  ScheduleRunResult,
-  SchedulerRunArgs,
-  SchedulerRunResult,
-  ShellExecResult,
-  SysDeviceDeleteResult,
-  SysSetupResult,
-  ConversationMessage,
-  ConversationMessageOrigin,
-  FederationDeliveryReceipt,
+  SysTargetDeleteResult,
 } from "@humansandmachines/gsv/protocol";
-import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
-import type { ConnectionIdentity } from "./identity";
 import {
-  BinaryBodyChannel,
-  REQUEST_CANCEL_SIGNAL,
-  bundleAdapterMedia,
-  cancelBinaryBody,
   adapterSurfaceSchema,
-  procHilRequestSchema,
-  resourceBlockSchema,
-  type BinaryFrameDescriptor,
-  type OutgoingBinaryBody,
 } from "@humansandmachines/gsv/protocol";
-import type { SyscallName } from "../syscalls";
 import { AuthStore } from "./auth-store";
 import { CapabilityStore, hasCapability } from "./capabilities";
 import { ConfigStore } from "./config";
-import { DeviceRegistry } from "./devices";
+import { TargetRegistry } from "./target-registry";
 import {
   RoutingTable,
-  type FailedDeviceRoute,
   type RouteOrigin,
 } from "./routing";
-import { ShellSessionStore, type ShellSessionStatus } from "./shell-sessions";
+import { ShellSessionStore } from "./shell-sessions";
 import {
   ProcessRegistry,
-  type ProcessRuntimePatch,
-  type ProcessState,
 } from "./processes";
 import { ConversationRegistry } from "./conversations";
 import { AdapterStore } from "./adapter-store";
-import { RunRouteStore, type AdapterRunRoute } from "./run-routes";
+import { RunRouteStore } from "./run-routes";
 import { OAuthStore } from "./oauth-store";
 import { McpServerStore } from "./mcp-store";
 import { MailboxStore } from "./mailbox-store";
-import { SignalWatchStore, type SignalWatchRecord } from "./signal-watches";
-import { isUserProcessSignal, USER_PROCESS_SIGNALS } from "./user-signals";
-import { IpcCallStore, type IpcCallRecord } from "./ipc-calls";
+import { SignalWatchStore } from "./signal-watches";
+import { isUserProcessSignal } from "./user-signals";
+import { IpcCallStore } from "./ipc-calls";
 import {
-  assertCanManageSchedule,
-  computeNextRunAfterFinish,
   ScheduleStore,
-  skippedScheduleResult,
 } from "./scheduler";
-import {
-  ensureKernelBootstrapped,
-  handleConnect,
-  setupRequiredDetails,
-  SETUP_REQUIRED_ERROR_CODE,
-} from "./connect";
 import { dispatch, type DispatchDeps } from "./dispatch";
-import { bindByteStreamToAbort } from "../shared/streams";
 import { raceWithAbort } from "../shared/abort";
 import type { KernelContext } from "./context";
+import { requirePrincipal } from "./context";
 import {
   connectedPeerContext,
+  httpPeerContext,
   delegatedAdapterPeerContext,
   peerAllowsCall,
-  peerConnectionIdentity,
-  peerProvidesOperations,
   type PeerContext,
+  processPeerContext,
   servicePeerContext,
   type ServicePeerProfile,
 } from "./peer";
-import { getConversationById, sendFrameToProcess } from "../shared/utils";
-import type { ConversationAppendRequest } from "../conversation/do";
-import { stableOpaqueId } from "../shared/stable-id";
-import {
-  MAX_MESSAGE_MEDIA_ITEMS,
-  MAX_MESSAGE_MEDIA_PART_BYTES,
-  MAX_MESSAGE_MEDIA_TOTAL_BYTES,
-} from "../shared/message-media-limits";
-import {
-  agentArchiveMediaPath,
-  isValidAgentArchiveMediaObject,
-} from "../shared/process-media-path";
-import {
-  handleSysSetup as handleKernelSetup,
-  recoverCompletedSysSetup,
-} from "./sys/setup";
-import { handleSysSetupAssist } from "./sys/setup-assist";
 import { completeOAuthCallback as completeOAuthCallbackFlow } from "./sys/oauth";
-import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
 import { installMcpDiscoveryCompatibility } from "./mcp-compat";
 import { oauthCallbackHtmlResponse } from "../oauth-http";
 import { isInternalOnlySyscall } from "./syscall-exposure";
 import {
-  deliverAdapterDestination,
-  setAdapterActivityForKernel,
-  type AdapterDeliveryPresentation,
-} from "./adapter-handlers";
-import {
   assertAdapterMessageDestinationAccess,
   identityLinkRouteGeneration,
 } from "./adapter-destinations";
+import type { InternalResponseFrame } from "../protocol/process-frames";
 import type {
-  ProcessMessageCommitArgs,
-  ProcessMessageCommitResponseFrame,
-  ProcessMessageStreamSignal,
   ProcessOutboundFrame,
-  ProcessRuntimeEventDeliverRequestFrame,
-  ProcessScheduleDeliverRequestFrame,
-  ProcessScheduleDeliverResponseFrame,
 } from "../protocol/process-frames";
 import { isRepoPublic } from "./repo-visibility";
 import { canReadRepo, canWriteRepo } from "./repo";
-import { handleProcSpawn } from "./proc-handlers";
-import { ensurePersonalController } from "./personal-controller";
 import {
   ResponsibilityStore,
-  type ResponsibilityWakeBatch,
 } from "./responsibility-store";
 import { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
 import {
   recordAdapterStatusTransition,
-  recordMachineAddedResponsibility,
 } from "./lifecycle-responsibilities";
 import { FederationStore } from "./federation-store";
 import { FederationIdentity } from "./federation-crypto";
 import {
-  FEDERATION_INBOX_RECOVERY_RETRY_MS,
   handleFederationHttpRequest,
   isFederationPublicPath,
   MAX_FEDERATION_RECOVERABLE_INBOX,
   MAX_FEDERATION_RECOVERABLE_OUTBOX,
-  processFederationDelivery,
-  recoverFederationInbox,
 } from "./federation";
 import {
   acceptManagedInboundMail as acceptKernelManagedInboundMail,
@@ -201,7 +118,6 @@ import {
   completeManagedOutboundMail as completeKernelManagedOutboundMail,
   recoverManagedOutboundEnqueue,
 } from "./outbound-mail";
-import { handleShellExec } from "../drivers/native/shell";
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
 import { SERVER_VERSION } from "../version";
@@ -209,10 +125,6 @@ import { parseInstallationId } from "../installation/identity";
 import type { InstallationIdentity } from "../installation/identity";
 import { createInstallationStorage } from "../installation/storage";
 import { createInstallationRipgit } from "../installation/ripgit";
-import {
-  MANAGED_LIFECYCLE_RECHECK_MS,
-  managedInstallationWorkGate,
-} from "../installation/lifecycle";
 import {
   DurableTaskScheduler,
   type DurableTask,
@@ -224,198 +136,40 @@ import {
   KernelConnection,
   type KernelConnectionState as ConnectionState,
   type KernelWebSocketMessage,
-  restoreKernelWebSocket,
 } from "./connection";
 
-const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
-const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
-const MAX_REQUEST_CANCEL_REASON_LENGTH = 512;
-const MAX_ONE_SHOT_SCHEDULE_DELIVERY_ATTEMPTS = 10;
-const MAX_ADAPTER_ROUTE_DELIVERY_ATTEMPTS = 10;
-
-type IpcCallTimeout = {
-  callId: string;
-  mode?: "supervise";
-  intervalMs?: number;
-  checkInCount?: number;
-  lifecycleRecheckFor?: string;
-  /** Legacy payload emitted by older gateways for delegated work. */
-  terminateTargetOnTimeout?: boolean;
-};
-
-type IpcCallTimeoutTask = {
-  id: string;
-};
-
-type IpcCallSupervisionOptions = {
-  mode: "supervise";
-  intervalMs: number;
-  checkInCount: number;
-  lifecycleRecheckFor?: string;
-};
-
-type AdapterRouteDeliveryOutcome =
-  | { state: "delivered" }
-  | { state: "skipped" }
-  | { state: "retryable" | "permanent" | "ambiguous"; error: string };
-
-type AdapterDeliveryRoute = Omit<AdapterRunRoute, "createdAt" | "expiresAt">;
-
-function adapterTypingActivity(route: AdapterDeliveryRoute, active: boolean): AdapterActivity {
-  return {
-    kind: "typing",
-    active,
-    ...(route.routeGeneration === undefined
-      ? undefined
-      : { routeGeneration: route.routeGeneration }),
-  };
-}
-
-type AdapterRouteDeliveryRetry = {
-  runId: string;
-  processId: string;
-  /** Owned destination snapshot; absent only on tasks created before this field shipped. */
-  route?: AdapterDeliveryRoute;
-  event: string;
-  payload?: JsonValue;
-  attempt: number;
-};
-
-type ProcessDeliveryNoticeRetry = {
-  noticeId: string;
-  runId: string;
-  processId: string;
-  /** `final` is accepted only for durable tasks created by older gateways. */
-  deliveryKind: "hil" | "message" | "final";
-  deliveryId?: string;
-  requestId?: string;
-  state: "permanent" | "ambiguous" | "exhausted";
-  message: string;
-  /** Owned destination snapshot; absent only on tasks created before this field shipped. */
-  route?: AdapterDeliveryRoute;
-  /** Legacy field ignored because terminal run handling owns route cleanup. */
-  cleanupRunRoute?: boolean;
-};
-
-type ProcessDeliveryNoticePayload = Omit<
+import { McpConnections } from "./mcp-connections";
+import { ManagedOnboarding } from "./managed-onboarding";
+import {
+  MANAGED_ONBOARDING_COMPLETION_KEY,
+} from "./do-shared";
+import type {
+  PendingManagedOnboardingCompletion,
+} from "./do-shared";
+import { ScheduleRuntime } from "./schedule-runtime";
+import { IpcRuntime } from "./ipc-runtime";
+import {
+  ipcCallTimeoutPayloadSchema,
+  userProcessSignalFrameSchema,
+} from "./do-shared";
+import type {
+  IpcCallTimeout,
+} from "./do-shared";
+import { ResponsibilityRuntime } from "./responsibility-runtime";
+import { FederationRuntime } from "./federation-runtime";
+import { ProcessOutput } from "./process-output";
+import { AdapterDelivery } from "./adapter-delivery";
+import type {
+  AdapterRouteDeliveryRetry,
   ProcessDeliveryNoticeRetry,
-  "processId" | "deliveryId" | "route" | "cleanupRunRoute"
->;
-
-class ScheduleTargetDispatchError extends Error {
-  constructor(message: string, readonly retryable: boolean) {
-    super(message);
-    this.name = "ScheduleTargetDispatchError";
-  }
-}
-
-class AdapterReplyMediaError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "AdapterReplyMediaError";
-  }
-}
-
-function mediaTypeFromContentType(contentType: string): AdapterMedia["type"] {
-  const normalized = contentType.trim().toLowerCase();
-  if (normalized.startsWith("image/")) return "image";
-  if (normalized.startsWith("audio/")) return "audio";
-  if (normalized.startsWith("video/")) return "video";
-  return "document";
-}
-
-function scheduleDeliveryRetryDelayMs(attempt: number): number {
-  return Math.min(5 * 60_000, 5_000 * (2 ** Math.max(0, attempt - 1)));
-}
-
-function adapterRouteRetryDelayMs(attempt: number): number {
-  return Math.min(30_000, 1_000 * (2 ** Math.max(0, attempt - 1)));
-}
-
+} from "./do-shared";
+import { ConnectionRuntime } from "./connection-runtime";
+import { Transport } from "./transport";
 type ProcessNetFetchOptions = {
   ttlMs?: number;
   internalPurpose?: "model-transport";
   body?: FrameBody;
   requestId?: string;
-};
-
-type DeviceRequestOptions = {
-  ttlMs?: number;
-  body?: FrameBody;
-  id?: string;
-  signal?: AbortSignal;
-};
-
-type FrameCancellationReason = string | Error;
-type CancellableFrameBody = {
-  cancel(reason?: FrameCancellationReason): Promise<void>;
-};
-type ConnectionMessageStreamPayload = {
-  conversationId?: string;
-  messageId: string;
-  processId: string;
-  runId: string;
-  timestamp: number;
-  delta?: string;
-  reason?: string;
-};
-
-type IpcCompletionResponse = {
-  text: string | null;
-  usage: JsonValue;
-  media?: MessageAttachment[];
-};
-
-type IpcDeliverySignalPayload = {
-  callId: string;
-  sourcePid: string;
-  sourceRunId?: string;
-  targetPid: string;
-  runId: string;
-  deadlineAt: number;
-  createdAt: number;
-  status: IpcCallRecord["status"];
-  nextCheckAt?: number;
-  checkInCount?: number;
-  response?: IpcCallRecord["response"];
-  error?: string;
-};
-
-type SignalWatchDelivery = {
-  id: string;
-  key?: string;
-  state?: SignalWatchRecord["state"];
-  createdAt: number;
-};
-
-type ScheduleExecutionResult = {
-  kind?: "command.exec" | "process.spawn" | "adapter.send" | "process.event" | "responsibility" | "unknown";
-  error?: string;
-  command?: string;
-  exitCode?: number;
-  stdout?: string;
-  stderr?: string;
-  truncated?: boolean;
-  pid?: string;
-  runId?: string;
-  adapter?: string;
-  accountId?: string;
-  surfaceId?: string;
-  messageId?: string;
-  deliveryState?: string;
-  responsibilityId?: string;
-};
-
-type PendingKernelResponse = {
-  promise: Promise<ResponseFrame>;
-  cleanup: () => void;
-};
-
-type AmbientProcessChangePayload = {
-  pid: string;
-  changes: string[];
-  queuedCount?: number;
-  timestamp?: number;
 };
 
 type AuthorizeGitHttpInput = {
@@ -441,11 +195,6 @@ type AuthorizeGitHttpResult =
 
 type StoredInstallationIdentity = Omit<InstallationIdentity, "installationId">;
 
-type PendingManagedOnboardingCompletion = {
-  claimId: string;
-  installationId: string;
-};
-
 type KernelTask =
   | { callback: "onAdapterRouteDelivery"; payload: AdapterRouteDeliveryRetry }
   | { callback: "onIpcCallDelivery"; payload: string }
@@ -466,23 +215,6 @@ type KernelTask =
 
 type KernelTaskCallback = KernelTask["callback"];
 
-const ipcCallTimeoutPayloadSchema = z.union([
-  z.string().transform((callId): IpcCallTimeout => ({ callId })),
-  z.object({
-    callId: z.string(),
-    mode: z.literal("supervise").optional(),
-    intervalMs: z.number().positive().optional(),
-    checkInCount: z.number().int().nonnegative().optional(),
-    lifecycleRecheckFor: z.string().min(1).optional(),
-    terminateTargetOnTimeout: z.boolean().optional(),
-  }),
-]);
-const execStatusPayloadSchema = z.object({
-  sessionId: z.string().trim().min(1),
-  event: z.string().optional().default(""),
-  exitCode: z.number().optional(),
-  signal: z.string().optional(),
-});
 const adapterDeliveryRouteSchema = z.object({
   kind: z.literal("adapter"),
   runId: z.string(),
@@ -551,10 +283,6 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
     }),
   }),
 ]);
-const requestCancelPayloadSchema = z.object({
-  id: z.string(),
-  reason: z.string().optional(),
-});
 const processMessageStreamSignalSchema = z.object({
   type: z.literal("sig"),
   signal: z.literal("proc.message.stream"),
@@ -568,72 +296,6 @@ const processMessageStreamSignalSchema = z.object({
     reason: z.string().optional(),
     timestamp: z.number(),
   }),
-});
-const procMediaInputSchema = z.object({
-  type: z.enum(["image", "audio", "video", "document"]),
-  mimeType: z.string(),
-  key: z.string().optional(),
-  conversationId: z.string().optional(),
-  path: z.string().optional(),
-  url: z.string().optional(),
-  filename: z.string().optional(),
-  size: z.number().optional(),
-  duration: z.number().optional(),
-  transcription: z.string().optional(),
-});
-const adapterConversationMessageSchema = z.object({
-  id: z.string(),
-  conversationId: z.string(),
-  sequence: z.number().int().nonnegative(),
-  author: z.object({
-    kind: z.literal("process"),
-    pid: z.string(),
-    uid: z.number().int().nonnegative(),
-  }),
-  text: z.string(),
-  media: z.array(z.union([resourceBlockSchema, procMediaInputSchema])).optional(),
-  origin: z.object({
-    kind: z.literal("process"),
-    pid: z.string(),
-    runId: z.string(),
-  }),
-  processId: z.string().optional(),
-  runId: z.string().optional(),
-  createdAt: z.number(),
-});
-const userProcessSignalPayloadSchema = z.object({
-  pid: z.string().optional(),
-  runId: z.string().optional(),
-  conversationId: z.string().optional(),
-  queuedCount: z.number().finite().optional(),
-  timestamp: z.number().finite().optional(),
-  changes: z.array(z.string()).optional(),
-  title: z.string().optional(),
-  status: z.string().optional(),
-  reason: z.string().optional(),
-  text: z.string().nullable().optional(),
-  result: z.object({
-    text: z.string().nullable(),
-    media: z.array(z.union([resourceBlockSchema, procMediaInputSchema])).optional(),
-  }).optional(),
-  delivery: z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("none") }),
-    z.object({
-      kind: z.literal("message"),
-      conversationId: z.string().optional(),
-      messageId: z.string().optional(),
-    }),
-    z.object({ kind: z.literal("silence"), reason: z.string().optional() }),
-  ]).optional(),
-  error: z.string().optional(),
-  usage: z.json().optional(),
-  media: z.array(z.union([resourceBlockSchema, procMediaInputSchema])).optional(),
-}).catchall(z.json());
-const userProcessSignalFrameSchema = z.object({
-  type: z.literal("sig"),
-  signal: z.enum(USER_PROCESS_SIGNALS),
-  payload: userProcessSignalPayloadSchema.optional(),
-  seq: z.number().optional(),
 });
 const processSignalFrameSchema = z.object({
   type: z.literal("sig"),
@@ -666,63 +328,83 @@ const servicePeerProfileSchema = z.object({
   calls: z.array(z.string().trim().min(1)),
 });
 
-type UserProcessSignalFrame = z.infer<typeof userProcessSignalFrameSchema>;
-
-const MANAGED_ONBOARDING_COMPLETION_KEY = "managed_onboarding_completion";
+/**
+ * Kernel DO — the composition root for the installation control plane.
+ *
+ * The class owns Durable Object lifecycle, the stores, context construction,
+ * the shared syscall dispatcher preamble, the RPC surface used by the Worker,
+ * Processes, and adapters, and the durable task router. Runtime modules own
+ * the rest: Transport carries WebSocket frames, bodies, routes, and request
+ * cancellation; ConnectionRuntime owns peer sessions and user broadcasts;
+ * AdapterDelivery owns routed adapter delivery and delivery notices;
+ * ProcessOutput relays Process signals, message streams, and commits;
+ * FederationRuntime and ResponsibilityRuntime own their durable wakes;
+ * IpcRuntime owns delegated call supervision; ScheduleRuntime executes
+ * schedules; ManagedOnboarding owns setup and managed lifecycle gating; and
+ * McpConnections owns MCP client sessions. Each module is bound to one Kernel
+ * host and reaches the others through it.
+ */
+export function kernelRuntimes(host: Kernel) {
+  return {
+    transport: new Transport(host),
+    connectionRuntime: new ConnectionRuntime(host),
+    adapterDelivery: new AdapterDelivery(host),
+    processOutput: new ProcessOutput(host),
+    federationRuntime: new FederationRuntime(host),
+    responsibilityRuntime: new ResponsibilityRuntime(host),
+    ipc: new IpcRuntime(host),
+    scheduleRuntime: new ScheduleRuntime(host),
+    onboarding: new ManagedOnboarding(host),
+    mcpConnections: new McpConnections(host),
+  };
+}
 
 export class Kernel extends DurableObject<GatewayEnv> {
-  private readonly installationId: string;
-  private installationIdentity?: InstallationIdentity;
-  private readonly installationStorage: R2Bucket;
-  private readonly installationEnv: GatewayEnv;
-  private readonly auth: AuthStore;
-  private readonly caps: CapabilityStore;
-  private readonly config: ConfigStore;
-  private readonly devices: DeviceRegistry;
-  private readonly routes: RoutingTable;
-  private readonly shellSessions: ShellSessionStore;
-  private readonly procs: ProcessRegistry;
-  private readonly conversations: ConversationRegistry;
-  private readonly adapters: AdapterStore;
-  private readonly runRoutes: RunRouteStore;
-  private readonly signalWatches: SignalWatchStore;
-  private readonly ipcCalls: IpcCallStore;
-  private readonly schedules: ScheduleStore;
-  private readonly mailboxes: MailboxStore;
-  private readonly responsibilities: ResponsibilityStore;
-  private readonly responsibilitySources: ResponsibilitySourcePolicyStore;
-  private readonly federation: FederationStore;
-  private readonly federationIdentity: FederationIdentity;
-  private readonly oauth: OAuthStore;
-  private readonly mcpServers: McpServerStore;
-  private readonly connections = new Map<string, KernelConnection<ConnectionState>>();
-  private readonly tasks: DurableTaskScheduler<KernelTask>;
-  private mcp: MCPClientManager;
-  private managedOnboardingInProgress = false;
-  private pendingManagedOnboarding?: PendingManagedOnboardingCompletion;
-  private readonly pendingKernelResponses = new Map<string, (frame: ResponseFrame) => void>();
-  private readonly pendingProcessSignals = new Map<string, Promise<void>>();
-  private readonly pendingFederationInbound = new Map<
-    string,
-    Promise<FederationDeliveryReceipt>
-  >();
-  private readonly pendingFederationContacts = new Map<string, Promise<void>>();
-  private readonly frameBodyChannels = new Map<string, BinaryBodyChannel>();
-  private readonly routedBodies = new Map<
-    string,
-    CancellableFrameBody
-  >();
-  private readonly activeRequests = new Map<
-    string,
-    { origin: RouteOrigin; controller: AbortController }
-  >();
-  private readonly cancelledProcessRequests = new Map<
-    string,
-    { expiresAt: number; reason: string }
-  >();
+  readonly installationId: string;
+  installationIdentity?: InstallationIdentity;
+  readonly installationStorage: R2Bucket;
+  readonly installationEnv: GatewayEnv;
+  readonly auth: AuthStore;
+  readonly caps: CapabilityStore;
+  readonly config: ConfigStore;
+  readonly targets: TargetRegistry;
+  readonly routes: RoutingTable;
+  readonly shellSessions: ShellSessionStore;
+  readonly procs: ProcessRegistry;
+  readonly conversations: ConversationRegistry;
+  readonly adapters: AdapterStore;
+  readonly runRoutes: RunRouteStore;
+  readonly signalWatches: SignalWatchStore;
+  readonly ipcCalls: IpcCallStore;
+  readonly schedules: ScheduleStore;
+  readonly mailboxes: MailboxStore;
+  readonly responsibilities: ResponsibilityStore;
+  readonly responsibilitySources: ResponsibilitySourcePolicyStore;
+  readonly federation: FederationStore;
+  readonly federationIdentity: FederationIdentity;
+  readonly oauth: OAuthStore;
+  readonly mcpServers: McpServerStore;
+  readonly connections = new Map<string, KernelConnection<ConnectionState>>();
+  readonly tasks: DurableTaskScheduler<KernelTask>;
+  mcp: MCPClientManager;
+                      readonly ctx: DurableObjectState<{}>;
+  readonly env: GatewayEnv;
+  declare readonly mcpConnections: McpConnections;
+  declare readonly onboarding: ManagedOnboarding;
+  declare readonly scheduleRuntime: ScheduleRuntime;
+  declare readonly ipc: IpcRuntime;
+  declare readonly responsibilityRuntime: ResponsibilityRuntime;
+  declare readonly federationRuntime: FederationRuntime;
+  declare readonly processOutput: ProcessOutput;
+  declare readonly adapterDelivery: AdapterDelivery;
+  declare readonly connectionRuntime: ConnectionRuntime;
+  declare readonly transport: Transport;
 
-  constructor(ctx: DurableObjectState, env: GatewayEnv) {
+  constructor(ctx: DurableObjectState<{}>, env: GatewayEnv) {
     super(ctx, env);
+    this.ctx = ctx;
+    this.env = env;
+    Object.assign(this, kernelRuntimes(this));
     this.installationId = parseInstallationId(ctx.id.name);
     const sql = ctx.storage.sql;
     runKernelSqlMigrations(ctx.storage);
@@ -731,7 +413,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.installationIdentity = identity
       ? { ...identity, installationId: this.installationId }
       : undefined;
-    this.pendingManagedOnboarding = ctx.storage.kv.get<PendingManagedOnboardingCompletion>(
+    this.onboarding.pendingManagedOnboarding = ctx.storage.kv.get<PendingManagedOnboardingCompletion>(
       MANAGED_ONBOARDING_COMPLETION_KEY,
     );
     this.installationStorage = createInstallationStorage(
@@ -753,7 +435,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
     this.config = new ConfigStore(sql);
 
-    this.devices = new DeviceRegistry(sql);
+    this.targets = new TargetRegistry(sql);
 
     this.routes = new RoutingTable(sql);
 
@@ -790,7 +472,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     );
     this.mcp = new MCPClientManager("GSV Kernel", SERVER_VERSION, {
       storage: ctx.storage,
-      createAuthProvider: (callbackUrl) => this.createMcpOAuthProvider(callbackUrl),
+      createAuthProvider: (callbackUrl) => this.mcpConnections.createMcpOAuthProvider(callbackUrl),
     });
     installMcpDiscoveryCompatibility(this.mcp);
     this.mcp.configureOAuthCallback({
@@ -810,17 +492,17 @@ export class Kernel extends DurableObject<GatewayEnv> {
       ),
     });
     this.mcp.onServerStateChanged(() => {
-      this.broadcastMcpChanged();
+      this.mcpConnections.broadcastMcpChanged();
     });
     ctx.blockConcurrencyWhile(async () => {
       await this.mcp.restoreConnectionsFromStorage(ctx.id.name ?? this.installationId);
     });
 
-    this.rehydrateConnections();
+    this.connectionRuntime.rehydrateConnections();
     for (const callId of this.ipcCalls.recoverDeliveryIds()) {
-      this.queueIpcCallDelivery(callId);
+      this.ipc.queueIpcCallDelivery(callId);
     }
-    ctx.waitUntil(this.recoverResponsibilityWakes().catch((error) => {
+    ctx.waitUntil(this.responsibilityRuntime.recoverResponsibilityWakes().catch((error) => {
       console.warn(
         "[Kernel] Failed to recover responsibility wakes:",
         error instanceof Error ? error.message : String(error),
@@ -830,7 +512,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       for (const delivery of this.federation.recoverableOutbox(
         MAX_FEDERATION_RECOVERABLE_OUTBOX,
       )) {
-        await this.scheduleFederationDelivery(
+        await this.federationRuntime.scheduleFederationDelivery(
           delivery.deliveryId,
           delivery.nextAttemptAtMs ?? Date.now(),
           true,
@@ -839,7 +521,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       for (const inbox of this.federation.recoverableInbox(
         MAX_FEDERATION_RECOVERABLE_INBOX,
       )) {
-        await this.scheduleFederationInbox(
+        await this.federationRuntime.scheduleFederationInbox(
           inbox.contactId,
           inbox.contactGeneration,
           inbox.deliveryId,
@@ -850,20 +532,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     });
   }
 
-  createMcpOAuthProvider(callbackUrl: string): AgentMcpOAuthProvider {
-    // SAFETY: the Agents SDK provider implements AgentMcpOAuthProvider; the
-    // intersection exposes its supported dynamic client metadata extension.
-    const provider = (
-      new DurableObjectOAuthClientProvider(this.ctx.storage, this.installationId, callbackUrl)
-    ) as AgentMcpOAuthProvider & { clientMetadataUrl?: string };
-    const metadataUrl = `${new URL(callbackUrl).origin}/.well-known/oauth-client/gsv.json`;
-    if (metadataUrl.startsWith("https://")) {
-      provider.clientMetadataUrl = metadataUrl;
-    }
-    return provider;
-  }
-
-  async ensureInstallationIdentity(input: InstallationIdentity) {
+    async ensureInstallationIdentity(input: InstallationIdentity) {
     if (input.installationId !== this.installationId) {
       throw new Error("installation identity conflicts with Kernel name");
     }
@@ -928,7 +597,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         request,
         { step: "pending" } satisfies ConnectionState,
       );
-      this.onConnect(accepted.connection);
+      this.connectionRuntime.onConnect(accepted.connection);
       return accepted.response;
     }
 
@@ -937,7 +606,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       if (result.authSuccess) {
         this.ctx.waitUntil(this.mcp.establishConnection(result.serverId));
       }
-      this.broadcastMcpChanged();
+      this.mcpConnections.broadcastMcpChanged();
       const customHandler = this.mcp.getOAuthCallbackConfig()?.customHandler;
       return customHandler
         ? customHandler(result)
@@ -950,12 +619,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
     socket: WebSocket,
     message: KernelWebSocketMessage,
   ): Promise<void> {
-    const connection = this.connectionForSocket(socket);
+    const connection = this.connectionRuntime.connectionForSocket(socket);
     if (!connection) {
       socket.close(1011, "Connection state unavailable");
       return;
     }
-    await this.onMessage(connection, message);
+    await this.transport.onMessage(connection, message);
   }
 
   webSocketClose(
@@ -964,20 +633,20 @@ export class Kernel extends DurableObject<GatewayEnv> {
     _reason: string,
     _wasClean: boolean,
   ): void {
-    const connection = this.connectionForSocket(socket);
-    if (connection) this.onClose(connection);
+    const connection = this.connectionRuntime.connectionForSocket(socket);
+    if (connection) this.connectionRuntime.onClose(connection);
   }
 
   webSocketError(socket: WebSocket): void {
-    const connection = this.connectionForSocket(socket);
-    if (connection) this.onClose(connection);
+    const connection = this.connectionRuntime.connectionForSocket(socket);
+    if (connection) this.connectionRuntime.onClose(connection);
   }
 
   async alarm(): Promise<void> {
     await this.tasks.alarm();
   }
 
-  private schedule(
+  schedule(
     when: Date | number,
     callback: KernelTaskCallback,
     payload: KernelTask["payload"],
@@ -987,231 +656,48 @@ export class Kernel extends DurableObject<GatewayEnv> {
     return this.tasks.schedule(when, task, options);
   }
 
-  private cancelSchedule(id: string): Promise<boolean> {
+  cancelSchedule(id: string): Promise<boolean> {
     return this.tasks.cancel(id);
   }
 
-  private async runScheduledTask(
+  async runScheduledTask(
     task: DurableTask<KernelTask>,
   ): Promise<void> {
     switch (task.callback) {
       case "onAdapterRouteDelivery":
-        await this.onAdapterRouteDelivery(task.payload);
+        await this.adapterDelivery.onAdapterRouteDelivery(task.payload);
         return;
       case "onIpcCallDelivery":
-        await this.onIpcCallDelivery(task.payload);
+        await this.ipc.onIpcCallDelivery(task.payload);
         return;
       case "onIpcCallTimeout":
-        await this.onIpcCallTimeout(task.payload, task);
+        await this.ipc.onIpcCallTimeout(task.payload, task);
         return;
       case "onManagedOutboundEnqueue":
         await this.onManagedOutboundEnqueue(task.payload);
         return;
       case "onFederationDelivery":
-        await this.onFederationDelivery(task.payload);
+        await this.federationRuntime.onFederationDelivery(task.payload);
         return;
       case "onFederationInbox":
-        await this.onFederationInbox(task.payload);
+        await this.federationRuntime.onFederationInbox(task.payload);
         return;
       case "onProcessDeliveryNotice":
-        await this.onProcessDeliveryNotice(task.payload);
+        await this.adapterDelivery.onProcessDeliveryNotice(task.payload);
         return;
       case "onRouteExpired":
-        await this.onRouteExpired(task.payload);
+        await this.transport.onRouteExpired(task.payload);
         return;
       case "onScheduleDue":
-        await this.onScheduleDue(task.payload, task);
+        await this.scheduleRuntime.onScheduleDue(task.payload, task);
         return;
       case "onResponsibilityWake":
-        await this.onResponsibilityWake(task.payload, task);
+        await this.responsibilityRuntime.onResponsibilityWake(task.payload, task);
         return;
     }
   }
 
-  private async addMcpServerConnection(input: McpAddConnectionInput): Promise<McpAddConnectionResult> {
-    const serverName = `u${input.uid}:${input.name}`;
-    const serverId = `mcp-${crypto.randomUUID()}`;
-    const callbackHost = this.installationIdentity?.canonicalOrigin ?? input.callbackHost;
-    const callbackUrl = callbackHost
-      ? `${callbackHost.replace(/\/$/, "")}/oauth/callback`
-      : undefined;
-    const authProvider = callbackUrl ? this.createMcpOAuthProvider(callbackUrl) : undefined;
-    if (authProvider) {
-      authProvider.serverId = serverId;
-    }
-
-    const transport = input.transport.headers
-      ? {
-          authProvider,
-          type: input.transport.type,
-          requestInit: { headers: input.transport.headers },
-        }
-      : { authProvider, type: input.transport.type };
-    await this.mcp.registerServer(serverId, {
-      url: input.url,
-      name: serverName,
-      callbackUrl,
-      transport,
-    });
-
-    let result: MCPConnectionResult;
-    try {
-      result = await this.mcp.connectToServer(serverId);
-      if (result.state === "failed") {
-        throw new Error(
-          `Failed to connect to MCP server at ${input.url}: ${result.error}`,
-        );
-      }
-    } catch (error) {
-      try {
-        await this.removeMcpServer(serverId);
-      } catch (cleanupError) {
-        console.warn(
-          `[Kernel] Failed to clean up MCP server ${serverId} after add failure:`,
-          cleanupError,
-        );
-      }
-      throw error;
-    }
-
-    if (result.state === "connected") {
-      await this.mcp.discoverIfConnected(serverId);
-    }
-    return { id: serverId };
-  }
-
-  private async refreshMcpServerConnection(serverId: string): Promise<void> {
-    const connection = this.mcp.mcpConnections[serverId];
-    if (connection?.connectionState === "connected" || connection?.connectionState === "ready") {
-      await this.mcp.discoverIfConnected(serverId);
-      return;
-    }
-    if (
-      connection?.connectionState === "authenticating"
-      || connection?.connectionState === "connecting"
-      || connection?.connectionState === "discovering"
-    ) {
-      return;
-    }
-
-    if (connection) {
-      connection.connectionError = null;
-    }
-    const result = await this.mcp.connectToServer(serverId);
-    if (result.state === "connected") {
-      await this.mcp.discoverIfConnected(serverId);
-    } else if (result.state === "failed") {
-      const failedConnection = this.mcp.mcpConnections[serverId];
-      if (failedConnection) {
-        failedConnection.connectionError = result.error;
-      }
-      this.broadcastMcpChanged();
-    }
-  }
-
-  private async removeMcpServer(serverId: string): Promise<void> {
-    await this.mcp.removeServer(serverId);
-  }
-
-  private broadcastMcpChanged(): void {
-    const uids = new Set(this.mcpServers.list().map((record) => record.uid));
-    for (const uid of uids) {
-      this.broadcastToUserUid(uid, "mcp.changed");
-    }
-  }
-
-  onConnect(connection: KernelConnection<ConnectionState>): void {
-    const state: ConnectionState = { step: "pending" };
-    connection.setState(state);
-    this.connections.set(connection.id, connection);
-  }
-
-  onClose(connection: KernelConnection<ConnectionState>): void {
-    this.closeFrameBodyChannel(connection.id);
-    const state = connection.state;
-
-    this.connections.delete(connection.id);
-    const origin: RouteOrigin = { type: "connection", id: connection.id };
-    for (const [requestId, request] of this.activeRequests) {
-      if (sameRouteOrigin(request.origin, origin)) {
-        this.cancelRequest(origin, requestId, "Origin disconnected", false);
-      }
-    }
-
-    const peer = state.peer;
-
-    if (peer && peerProvidesOperations(peer)) {
-      if (state.step === "connected" && !this.findDeviceConnection(peer.id)) {
-        this.devices.setOnline(peer.id, false);
-        this.broadcastDeviceStatus(peer.id, "disconnected");
-        this.failRoutesForDevice(peer.id);
-      } else {
-        this.failRoutesForDriverConnection(connection.id);
-      }
-    }
-
-    this.failRoutesForConnection(connection.id);
-    this.runRoutes.clearForConnection(connection.id);
-  }
-
-  async onMessage(
-    connection: KernelConnection<ConnectionState>,
-    message: KernelWebSocketMessage,
-  ): Promise<void> {
-    if (message instanceof ArrayBuffer) {
-      this.handleBinaryMessage(connection, message);
-      return;
-    }
-
-    let parsed: WireFrame;
-    try {
-      parsed = decodeWireFrameJson(message);
-    } catch (error) {
-      this.sendError(
-        connection,
-        error instanceof InvalidWireFrameError ? error.frameId : "?",
-        400,
-        error instanceof Error ? error.message : "Invalid frame",
-      );
-      return;
-    }
-
-    switch (parsed.type) {
-      case "req":
-        await this.handleReq(connection, parsed);
-        break;
-      case "res":
-        this.handleRes(connection, parsed);
-        break;
-      case "sig":
-        if (parsed.signal === REQUEST_CANCEL_SIGNAL) {
-          this.handleRequestCancel(connection, parsed);
-        } else {
-          this.handleSig(connection, parsed);
-        }
-        break;
-    }
-  }
-
-  private handleRequestCancel(
-    connection: KernelConnection<ConnectionState>,
-    frame: SignalFrame,
-  ): void {
-    if (connection.state?.step !== "connected") {
-      return;
-    }
-    const parsed = requestCancelPayloadSchema.safeParse(frame.payload);
-    if (!parsed.success) return;
-    const { id: requestId, reason } = parsed.data;
-    this.cancelRequest(
-      { type: "connection", id: connection.id },
-      requestId,
-      reason,
-      false,
-    );
-  }
-
-  /**
+                  /**
    * RPC method — called by Process DOs to send/receive frames.
    *
    * Returns a Frame if the request was handled synchronously (native syscall),
@@ -1221,7 +707,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   async recvFrame(
     processId: string,
     frame: ProcessOutboundFrame,
-  ): Promise<Frame | ProcessMessageCommitResponseFrame | null> {
+  ): Promise<Frame | InternalResponseFrame<"proc.message.commit"> | null> {
     if (frame.type === "req") {
       if (frame.call === "proc.message.commit") {
         try {
@@ -1230,7 +716,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
             id: frame.id,
             ok: true,
             data: {
-              message: await this.commitProcessMessage(processId, frame.args),
+              message: await this.processOutput.commitProcessMessage(processId, frame.args),
             },
           };
         } catch (error) {
@@ -1252,7 +738,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       if (frame.signal === "proc.message.stream") {
         const parsed = processMessageStreamSignalSchema.safeParse(frame);
         if (!parsed.success) return null;
-        await this.deliverProcessMessageStream(processId, parsed.data);
+        await this.processOutput.deliverProcessMessageStream(processId, parsed.data);
         return null;
       }
       const parsed = processSignalFrameSchema.safeParse(frame);
@@ -1266,16 +752,16 @@ export class Kernel extends DurableObject<GatewayEnv> {
       const runId = typedUserFrame?.payload?.runId?.trim() || null;
       if (
         typedUserFrame
-        && !this.updateProcessRuntimeFromSignal(processId, typedUserFrame, runId)
+        && !this.processOutput.updateProcessRuntimeFromSignal(processId, typedUserFrame, runId)
       ) {
         if (frame.signal === "proc.run.finished" && runId) {
           this.runRoutes.delete(runId);
         }
         return null;
       }
-      const delivered = this.enqueueProcessSignal(processId, processFrame, typedUserFrame);
+      const delivered = this.processOutput.enqueueProcessSignal(processId, processFrame, typedUserFrame);
       if (typedUserFrame) {
-        this.completeIpcCallsForProcessSignal(processId, typedUserFrame);
+        this.ipc.completeIpcCallsForProcessSignal(processId, typedUserFrame);
       }
       if (
         frame.signal === "proc.run.finished"
@@ -1291,185 +777,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     return null;
   }
 
-  private async commitProcessMessage(
-    processId: string,
-    args: ProcessMessageCommitArgs,
-  ): Promise<ConversationMessage> {
-    const process = this.procs.get(processId);
-    if (!process) throw new Error("Unknown process");
-    if (!args.runId) {
-      throw new Error("Message runId is invalid");
-    }
-    if (!args.actionId) {
-      throw new Error("Message actionId is invalid");
-    }
-    let conversation = args.conversationId
-      ? this.conversations.get(args.conversationId)
-      : null;
-    if (conversation) {
-      if (
-        conversation.ownerUid !== process.ownerUid
-        || conversation.handlerPid !== processId
-      ) {
-        throw new Error("Process does not handle this conversation");
-      }
-    } else if (args.conversationId) {
-      throw new Error("Conversation does not exist");
-    } else {
-      conversation = process.isPersonalController
-        ? this.conversations.ensureShip(process.ownerUid, processId)
-        : this.conversations.ensureWork(process.ownerUid, processId, process.label);
-    }
-    const stub = getConversationById(this.installationId, conversation.id);
-    await stub.initialize({ ownerUid: conversation.ownerUid, kind: conversation.kind });
-    const messageId = await stableOpaqueId("msg", [
-      conversation.id,
-      processId,
-      args.runId,
-      args.actionId,
-    ]);
-    const origin: ConversationMessageOrigin = {
-      kind: "process",
-      pid: processId,
-      runId: args.runId,
-    };
-    const appendInput: ConversationAppendRequest = {
-      messageId,
-      idempotencyKey: `output:${processId}:${args.runId}:${args.actionId}`,
-      author: { kind: "process", pid: processId, uid: process.uid },
-      text: args.text,
-      mediaOwner: {
-        pid: processId,
-        uid: process.uid,
-        gid: process.gid,
-        home: process.home,
-      },
-      origin,
-      processId,
-      runId: args.runId,
-      createdAt: Date.now(),
-    };
-    if (args.media?.length) appendInput.media = args.media;
-    const appended = await stub.append(appendInput);
-    const { message } = appended;
-    this.conversations.recordSequence(conversation.id, message.sequence);
-
-    let route = this.runRoutes.get(args.runId);
-    if (!route && !args.conversationId) {
-      route = this.materializePersonalAdapterFallback(processId, args.runId, process.ownerUid);
-    }
-    if (route?.uid !== process.ownerUid || route?.processId !== processId) {
-      if (route) this.runRoutes.delete(args.runId);
-      route = null;
-    }
-    if (appended.created && conversation.kind === "ship") {
-      emitTelemetry(this.bindings, {
-        installationId: this.installationId,
-        component: "gateway",
-        event: {
-          stream: "product",
-          name: "ship.message.committed",
-          properties: {
-            delivery: route?.kind === "connection"
-              ? "client"
-              : route?.kind === "adapter"
-                ? "adapter"
-                : "background",
-            hasMedia: Boolean(message.media?.length),
-          },
-        },
-      });
-    }
-    if (route?.kind === "connection") {
-      this.sendSignalToConnection(route.connectionId, "message.committed", {
-        message,
-        directed: true,
-      });
-      if (appended.created) {
-        this.broadcastToUserUidExcept(process.ownerUid, route.connectionId, "message.committed", {
-          message,
-          directed: false,
-        });
-      }
-    } else {
-      if (appended.created) {
-        this.broadcastToUserUid(process.ownerUid, "message.committed", {
-          message,
-          directed: false,
-        });
-      }
-      if (route?.kind === "adapter") {
-        await this.queueAdapterRouteDelivery(route, {
-          type: "sig",
-          signal: "message.committed",
-          payload: { message, directed: true },
-        }, 1);
-      }
-    }
-    if (appended.created) {
-      this.broadcastToUserUid(process.ownerUid, "conversation.changed", {
-        conversationId: conversation.id,
-        latestSequence: message.sequence,
-      });
-    }
-    return message;
-  }
-
-  private async deliverProcessMessageStream(
-    processId: string,
-    frame: ProcessMessageStreamSignal,
-  ): Promise<void> {
-    const process = this.procs.get(processId);
-    const payload = frame.payload;
-    if (
-      !process
-      || !payload
-      || payload.pid !== processId
-    ) {
-      return;
-    }
-    const route = this.runRoutes.get(payload.runId);
-    if (
-      !route
-      || route.processId !== processId
-      || route.uid !== process.ownerUid
-    ) {
-      return;
-    }
-    if (payload.phase === "silenced") {
-      if (route.kind === "adapter") {
-        await setAdapterActivityForKernel(
-          this.bindings,
-          this.installationId,
-          route.destination.adapter,
-          route.destination.accountId,
-          route.destination.surface,
-          adapterTypingActivity(route, false),
-        ).catch(() => undefined);
-      }
-      return;
-    }
-    if (route.kind !== "connection") return;
-    const signal = payload.phase === "started"
-      ? "message.started"
-      : payload.phase === "delta"
-        ? "message.delta"
-        : "message.aborted";
-    const signalPayload: ConnectionMessageStreamPayload = {
-      messageId: payload.messageId,
-      processId,
-      runId: payload.runId,
-      timestamp: payload.timestamp,
-    };
-    if (payload.conversationId !== undefined) {
-      signalPayload.conversationId = payload.conversationId;
-    }
-    if (payload.phase === "delta") signalPayload.delta = payload.delta ?? "";
-    if (payload.phase === "aborted") signalPayload.reason = payload.reason ?? "aborted";
-    this.sendSignalToConnection(route.connectionId, signal, signalPayload);
-  }
-
-  async acceptProcessRunStream(
+      async acceptProcessRunStream(
     processId: string,
     stream: ReadableStream<Uint8Array>,
   ): Promise<boolean> {
@@ -1504,7 +812,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       }
       if (
         options.internalPurpose !== "model-transport" &&
-        !hasCapability(ctx.identity!.capabilities, "net.fetch")
+        !hasCapability(requirePrincipal(ctx).calls, "net.fetch")
       ) {
         throw new Error("Permission denied: net.fetch");
       }
@@ -1514,24 +822,24 @@ export class Kernel extends DurableObject<GatewayEnv> {
         throw new Error(`Access denied to device: ${target}`);
       }
       if (options.requestId) {
-        controller = this.registerActiveRequest(origin, options.requestId);
+        controller = this.transport.registerActiveRequest(origin, options.requestId);
       }
-      const requestOptions: DeviceRequestOptions = {};
+      const requestOptions: TargetRequestOptions = {};
       if (options.ttlMs !== undefined) requestOptions.ttlMs = options.ttlMs;
       if (options.body !== undefined) requestOptions.body = options.body;
       if (options.requestId !== undefined) requestOptions.id = options.requestId;
       if (controller) requestOptions.signal = controller.signal;
-      const response = await this.requestDevice(
+      const response = await this.transport.requestTarget(
         device.targetId,
         "net.fetch",
         args,
         requestOptions,
       );
-      // SAFETY: requestDevice preserves the result type for the net.fetch call.
+      // SAFETY: requestTarget preserves the result type for the net.fetch call.
       return response as ResponseOkFrame<"net.fetch">;
     } finally {
       if (options.requestId && controller) {
-        this.finishActiveRequest(options.requestId, controller);
+        this.transport.finishActiveRequest(options.requestId, controller);
       }
       await cancelUnlockedBody(options.body, "Process net.fetch completed");
     }
@@ -1544,7 +852,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     const origin: RouteOrigin = { type: "process", id: processId };
     let cancelled = 0;
     for (const requestId of new Set(requestIds)) {
-      if (this.cancelRequest(origin, requestId, reason, true)) {
+      if (this.transport.cancelRequest(origin, requestId, reason, true)) {
         cancelled += 1;
       }
     }
@@ -1565,7 +873,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       if (!parsedProfile.success) {
         return errFrame(frame.id, 403, "Service peer profile is invalid");
       }
-      const gate = await this.managedWorkGate();
+      const gate = await this.onboarding.managedWorkGate();
       if (!gate.allowed) {
         return errFrame(frame.id, gate.code, gate.message);
       }
@@ -1595,7 +903,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       if (frame.call !== "proc.hil") {
         return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
       }
-      const gate = await this.managedWorkGate();
+      const gate = await this.onboarding.managedWorkGate();
       if (!gate.allowed) return errFrame(frame.id, gate.code, gate.message);
 
       const adapter = parsedProfile.data.id;
@@ -1634,7 +942,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
         calls,
       });
       const ctx = this.buildKernelContext({
-        identity: peer.identity,
         peer,
         callerOwnerUid: link.uid,
       });
@@ -1665,7 +972,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     body: BinaryBody,
   ): Promise<ManagedInboundMailAccepted> {
     try {
-      const gate = await this.managedWorkGate();
+      const gate = await this.onboarding.managedWorkGate();
       if (!gate.allowed) throw new Error(gate.message);
       return await acceptKernelManagedInboundMail(
         metadata,
@@ -1680,7 +987,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   async completeManagedInboundMail(
     completion: ManagedInboundMailCompletion,
   ): Promise<void> {
-    const gate = await this.managedWorkGate();
+    const gate = await this.onboarding.managedWorkGate();
     if (!gate.allowed) throw new Error(gate.message);
     await completeKernelManagedInboundMail(
       completion,
@@ -1691,7 +998,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   async claimManagedOutboundMail(
     reference: ManagedOutboundMailReference,
   ): Promise<ManagedOutboundMailClaimOutcome> {
-    const gate = await this.managedWorkGate();
+    const gate = await this.onboarding.managedWorkGate();
     if (!gate.allowed) throw new Error(gate.message);
     return await claimKernelManagedOutboundMail(
       reference,
@@ -1796,7 +1103,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     if (currentStatus.ownerUid !== null) notifiedUids.add(currentStatus.ownerUid);
     for (const remainingLink of remainingLinks) notifiedUids.add(remainingLink.uid);
     for (const uid of notifiedUids) {
-      this.broadcastToUserUid(uid, "adapter.status", {
+      this.connectionRuntime.broadcastToUserUid(uid, "adapter.status", {
         adapter: normalizedAdapter,
         accountId: parsed.accountId,
       });
@@ -1823,20 +1130,17 @@ export class Kernel extends DurableObject<GatewayEnv> {
       const passwordAuth = await this.auth.authenticate(username, credential);
       const auth = passwordAuth.ok
         ? passwordAuth
-        : await this.auth.authenticateToken(username, credential, { role: "user" });
+        : await this.auth.authenticateToken(username, credential, { kind: "human" });
 
       if (auth.ok) {
         const capabilities = this.caps.resolve(auth.identity.gids);
-        const identity: ConnectionIdentity = {
-          role: "user",
-          process: {
-            ...auth.identity,
-            cwd: auth.identity.home,
-          },
-          capabilities,
-        };
+        const peer = httpPeerContext({
+          installationId: this.installationId,
+          identity: { ...auth.identity, cwd: auth.identity.home },
+          calls: capabilities,
+        });
         const repoRef = `${owner}/${repo}`;
-        const repoCtx = this.buildKernelContext({ identity });
+        const repoCtx = this.buildKernelContext({ peer });
 
         if (input.write) {
           if (!canWriteRepo(repoRef, repoCtx)) {
@@ -1866,917 +1170,39 @@ export class Kernel extends DurableObject<GatewayEnv> {
     };
   }
 
-  /**
-   * Relay process signals using deterministic run route lookups.
-   */
-  private async handleProcessSignal(
-    processId: string,
-    frame: SignalFrame<JsonValue>,
-    userFrame?: UserProcessSignalFrame,
-  ): Promise<void> {
-    const ownerUid = this.procs.getOwnerUid(processId);
-    if (ownerUid === null) {
-      console.warn(`[Kernel] Signal from unknown process ${processId}`);
-      return;
-    }
-
-    const runId = userFrame?.payload?.runId?.trim() || null;
-
-    // Signal watches are scoped to the process owner, not the run-as account.
-    await this.dispatchSignalWatches(ownerUid, processId, frame);
-
-    if (!userFrame) return;
-
-    let route = runId ? this.runRoutes.get(runId) : null;
-    if (!route && runId && frame.signal === "proc.run.hil.requested") {
-      route = this.runRoutes.materializeProcessApprovalRoute({
-        processId,
-        runId,
-        uid: ownerUid,
-      });
-      if (!route && !userFrame.payload?.conversationId) {
-        route = this.materializePersonalAdapterFallback(processId, runId, ownerUid);
-      }
-    }
-
-    this.broadcastProcessSignal(ownerUid, processId, route, userFrame);
-
-    if (frame.signal === "proc.run.finished") {
-      const process = this.procs.get(processId);
-      if (
-        process?.state === "idle"
-        && process.activeRunId === null
-        && process.queuedCount === 0
-      ) {
-        this.adapters.surfaceRoutes.clearLegacyForProcess(processId);
-      }
-    }
-    if (!runId || !route) {
-      return;
-    }
-
-    if (route.uid !== ownerUid || route.processId !== processId) {
-      this.runRoutes.delete(runId);
-      return;
-    }
-
-    if (route.kind === "connection") {
-      if (frame.signal === "proc.run.finished") {
-        this.runRoutes.delete(runId);
-      }
-      return;
-    }
-
-    if (frame.signal === "proc.run.hil.requested") {
-      // HIL admission waits only for a durable retry task, never for provider
-      // delivery, so entering HIL cannot lose its approval notification.
-      await this.queueAdapterRouteDelivery(route, userFrame, 1);
-      return;
-    }
-    if (frame.signal === "proc.run.finished") {
-      this.runRoutes.delete(runId);
-      await setAdapterActivityForKernel(
-        this.bindings,
-        this.installationId,
-        route.destination.adapter,
-        route.destination.accountId,
-        route.destination.surface,
-        adapterTypingActivity(route, false),
-      ).catch(() => undefined);
-      return;
-    }
-    await this.deliverAdapterRouteEvent(route, userFrame);
-  }
-
-  private materializePersonalAdapterFallback(
-    processId: string,
-    runId: string,
-    ownerUid: number,
-  ): AdapterRunRoute | null {
-    const process = this.procs.get(processId);
-    if (!process?.isPersonalController || process.ownerUid !== ownerUid) {
-      return null;
-    }
-    const preferred = this.adapters.privateDestinations.get(ownerUid);
-    if (!preferred) {
-      return null;
-    }
-    const ctx = this.buildProcessContext(processId, runId);
-    if (!ctx) {
-      return null;
-    }
-    try {
-      assertAdapterMessageDestinationAccess(preferred.destination, ownerUid, ctx);
-    } catch {
-      this.adapters.privateDestinations.clearIfMatches(ownerUid, preferred.destination);
-      return null;
-    }
-    const link = ctx.adapters.identityLinks.get(
-      preferred.destination.adapter,
-      preferred.destination.accountId,
-      preferred.destination.actorId,
-    );
-    const routeGeneration = link
-      ? identityLinkRouteGeneration(link, preferred.destination.surface)
-      : undefined;
-    return this.runRoutes.setAdapterRoute({
-      runId,
-      processId,
-      uid: ownerUid,
-      destination: preferred.destination,
-      ...(routeGeneration === undefined ? undefined : { routeGeneration }),
-    });
-  }
-
-  private async attemptAdapterRouteDelivery(
-    route: AdapterDeliveryRoute,
-    frame: SignalFrame,
-    attempt: number,
-  ): Promise<void> {
-    let outcome: AdapterRouteDeliveryOutcome;
-    try {
-      const parsedHilRequest = frame.signal === "proc.run.hil.requested"
-        ? procHilRequestSchema.safeParse(frame.payload)
-        : null;
-      const hilRequestId = parsedHilRequest?.success
-        ? parsedHilRequest.data.requestId
-        : undefined;
-      if (
-        hilRequestId
-        && !await this.isAdapterHilRequestPending(
-          route.processId,
-          route.runId,
-          hilRequestId,
-        )
-      ) {
-        outcome = { state: "skipped" };
-      } else {
-        outcome = await this.deliverAdapterRouteEvent(route, frame);
-      }
-    } catch (error) {
-      outcome = {
-        state: error instanceof AdapterReplyMediaError ? "permanent" : "retryable",
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-
-    if (outcome.state === "retryable" && attempt < MAX_ADAPTER_ROUTE_DELIVERY_ATTEMPTS) {
-      await this.queueAdapterRouteDelivery(route, frame, attempt + 1);
-      return;
-    }
-
-    if (outcome.state === "delivered" || outcome.state === "skipped") return;
-
-    const terminalState = outcome.state === "retryable" ? "exhausted" : outcome.state;
-    const deliveryError = outcome.error;
-    const approval = frame.signal === "proc.run.hil.requested";
-    const label = approval ? "approval notification" : "message";
-    await this.queueProcessDeliveryNotice(route, frame, {
-      state: terminalState,
-      message: terminalState === "ambiguous"
-        ? `The ${label} reached the adapter, but provider delivery is ambiguous. It was not retried to avoid a duplicate.`
-        : terminalState === "permanent"
-          ? `The ${label} could not be delivered: ${deliveryError}`
-          : `The ${label} stopped after ${attempt} retry-safe delivery attempts: ${deliveryError}`,
-    });
-    emitTelemetry(this.bindings, {
-      installationId: this.installationId,
-      component: "gateway",
-      event: {
-        stream: "operational",
-        name: "adapter.route_delivery.failed",
-        properties: {
-          adapter: route.destination.adapter.trim().toLowerCase(),
-          deliveryKind: approval ? "approval" : "message",
-          surface: route.destination.surface.kind,
-          outcome: "failed",
-          failureKind: terminalState,
-          attempts: attempt,
-        },
-      },
-    });
-  }
-
-  private async queueAdapterRouteDelivery(
-    route: AdapterDeliveryRoute,
-    frame: SignalFrame,
-    attempt: number,
-  ): Promise<void> {
-    const payload = frame.payload === undefined ? undefined : z.json().parse(frame.payload);
-    const retry: AdapterRouteDeliveryRetry = {
-      runId: route.runId,
-      processId: route.processId,
-      route,
-      event: frame.signal,
-      attempt,
-    };
-    if (payload !== undefined) retry.payload = payload;
-    await this.schedule(
-      new Date(Date.now() + (attempt === 1 ? 10 : adapterRouteRetryDelayMs(attempt - 1))),
-      "onAdapterRouteDelivery",
-      retry,
-      {
-        idempotent: true,
-        retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
-      },
-    );
-  }
-
-  async onAdapterRouteDelivery(input: AdapterRouteDeliveryRetry): Promise<void> {
-    const route = input.route ?? this.runRoutes.get(input.runId);
-    if (!route || route.kind !== "adapter" || route.processId !== input.processId) {
-      return;
-    }
-    await this.attemptAdapterRouteDelivery(route, {
-      type: "sig",
-      signal: input.event,
-      payload: input.payload,
-    }, input.attempt);
-  }
-
-  private async isAdapterHilRequestPending(
-    processId: string,
-    runId: string,
-    requestId: string,
-  ): Promise<boolean> {
-    const response = await sendFrameToProcess(this.installationId, processId, {
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.history",
-      args: { pid: processId, limit: 1, offset: 0 },
-    });
-    if (!response || response.type !== "res" || !response.ok) {
-      throw new Error(`Unable to verify pending approval ${requestId}`);
-    }
-    const data = response.data;
-    if (!data?.ok) {
-      throw new Error(`Unable to verify pending approval ${requestId}`);
-    }
-    const pending = data.pendingHil;
-    return pending?.requestId === requestId && pending.runId === runId;
-  }
-
-  private async queueProcessDeliveryNotice(
-    route: AdapterDeliveryRoute,
-    frame: SignalFrame,
-    outcome: { state: "permanent" | "ambiguous" | "exhausted"; message: string },
-  ): Promise<void> {
-    const deliveryKind = frame.signal === "proc.run.hil.requested" ? "hil" : "message";
-    const parsedHilRequest = deliveryKind === "hil"
-      ? procHilRequestSchema.safeParse(frame.payload)
-      : null;
-    const requestId = parsedHilRequest?.success
-      ? parsedHilRequest.data.requestId
-      : undefined;
-    if (deliveryKind === "hil" && !requestId) {
-      return;
-    }
-    const parsedMessage = deliveryKind === "message"
-      ? z.object({ message: z.object({ id: z.string().min(1) }) }).safeParse(frame.payload)
-      : null;
-    const deliveryId = parsedMessage?.success ? parsedMessage.data.message.id : undefined;
-    await this.queueProcessDeliveryNoticeRecord(route, {
-      deliveryKind,
-      deliveryId,
-      requestId,
-      ...outcome,
-    });
-  }
-
-  private async queueProcessDeliveryNoticeRecord(
-    route: AdapterDeliveryRoute,
-    input: {
-      deliveryKind: "hil" | "message";
-      deliveryId?: string;
-      requestId?: string;
-      state: "permanent" | "ambiguous" | "exhausted";
-      message: string;
-    },
-  ): Promise<void> {
-    const { deliveryKind, requestId } = input;
-    const noticeId = await stableOpaqueId("process-delivery-notice", [
-      route.runId,
-      deliveryKind,
-      input.deliveryId ?? requestId ?? "",
-      input.state,
-    ]);
-    const notice: ProcessDeliveryNoticeRetry = {
-      noticeId,
-      runId: route.runId,
-      processId: route.processId,
-      deliveryKind,
-      route,
-      state: input.state,
-      message: input.message,
-    };
-    if (input.deliveryId) notice.deliveryId = input.deliveryId;
-    if (requestId) notice.requestId = requestId;
-    await this.schedule(
-      new Date(Date.now() + 10),
-      "onProcessDeliveryNotice",
-      notice,
-      {
-        idempotent: true,
-        retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
-      },
-    );
-  }
-
-  async onProcessDeliveryNotice(input: ProcessDeliveryNoticeRetry): Promise<void> {
-    const route = input.route ?? this.runRoutes.get(input.runId);
-    if (!route || route.kind !== "adapter" || route.processId !== input.processId) {
-      return;
-    }
-    const requestId = input.requestId;
-    if (input.deliveryKind === "hil") {
-      if (!requestId || !await this.isAdapterHilRequestPending(
-        input.processId,
-        input.runId,
-        requestId,
-      )) {
-        return;
-      }
-    }
-    const payload: ProcessDeliveryNoticePayload = {
-      noticeId: input.noticeId,
-      runId: input.runId,
-      deliveryKind: input.deliveryKind,
-      state: input.state,
-      message: input.message,
-    };
-    if (requestId) payload.requestId = requestId;
-    await sendFrameToProcess(this.installationId, input.processId, {
-      type: "sig",
-      signal: "proc.delivery.notice",
-      payload,
-    });
-  }
-
-  private updateProcessRuntimeFromSignal(
-    processId: string,
-    frame: UserProcessSignalFrame,
-    runId: string | null,
-  ): boolean {
-    const payload = frame.payload;
-    const queuedCount = payload?.queuedCount;
-    const timestamp = payload?.timestamp ?? Date.now();
-    const current = this.procs.get(processId);
-    if (!current) {
-      return false;
-    }
-    const runtimeSignal = frame.signal === "proc.changed" || frame.signal.startsWith("proc.run.");
-    if (
-      runtimeSignal
-      && runId
-      && frame.signal !== "proc.changed"
-      && current.activeRunId !== runId
-    ) {
-      if (frame.signal === "proc.run.started") {
-        if (timestamp < (current.lastActiveAt ?? Number.NEGATIVE_INFINITY)) {
-          return false;
-        }
-      } else {
-        return frame.signal === "proc.run.finished"
-          || frame.signal === "proc.run.tool.finished";
-      }
-    }
-
-    const patchForActive = (state: ProcessState) => {
-      const patch: ProcessRuntimePatch = {
-        state,
-        lastActiveAt: timestamp,
-      };
-      if (runId) patch.activeRunId = runId;
-      if (queuedCount !== undefined) patch.queuedCount = queuedCount;
-      this.procs.updateRuntimeState(processId, patch);
-    };
-
-    switch (frame.signal) {
-      case "proc.run.started":
-      case "proc.run.stream":
-      case "proc.run.retrying":
-      case "proc.run.output":
-        patchForActive("running");
-        return true;
-      case "proc.run.tool.started":
-        patchForActive("waiting_tool");
-        return true;
-      case "proc.run.tool.finished":
-        return true;
-      case "proc.run.hil.requested":
-        patchForActive("waiting_hil");
-        return true;
-      case "proc.run.finished":
-        {
-          const patch: ProcessRuntimePatch = {
-            state: queuedCount && queuedCount > 0 ? "queued" : "idle",
-            activeRunId: null,
-            lastActiveAt: timestamp,
-          };
-          if (queuedCount !== undefined) patch.queuedCount = queuedCount;
-          this.procs.updateRuntimeState(processId, patch);
-        }
-        return true;
-      case "proc.changed":
-        if (
-          payload?.changes?.includes("title")
-          && payload.title
-        ) {
-          const title = Array.from(payload.title.trim()).slice(0, 80).join("");
-          if (title) {
-            this.procs.setLabel(processId, title);
-          }
-        }
-        if (
-          runId
-          && current.activeRunId === runId
-          && payload?.changes?.includes("messages")
-        ) {
-          patchForActive("running");
-          return true;
-        }
-        if (queuedCount !== undefined) {
-          this.procs.updateRuntimeState(processId, {
-            queuedCount,
-            lastActiveAt: timestamp,
-          });
-        }
-        return true;
-      default:
-        return true;
-    }
-  }
-
-  private enqueueProcessSignal(
-    processId: string,
-    frame: SignalFrame<JsonValue>,
-    userFrame?: UserProcessSignalFrame,
-  ): Promise<void> {
-    const previous = this.pendingProcessSignals.get(processId) ?? Promise.resolve();
-    const delivery = previous.then(() => this.handleProcessSignal(processId, frame, userFrame));
-    const queued = delivery
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        console.warn(`[Kernel] process signal dispatch failed for ${processId}/${frame.signal}: ${message}`);
-      })
-      .finally(() => {
-        if (this.pendingProcessSignals.get(processId) === queued) {
-          this.pendingProcessSignals.delete(processId);
-        }
-      });
-    this.pendingProcessSignals.set(processId, queued);
-    return delivery;
-  }
-
-  private completeIpcCallsForProcessSignal(
-    processId: string,
-    frame: UserProcessSignalFrame,
-  ): void {
-    if (frame.signal !== "proc.run.finished") {
-      return;
-    }
-    const runId = frame.payload?.runId?.trim() || null;
-    if (!runId) {
-      return;
-    }
-    const ownerUid = this.procs.getOwnerUid(processId);
-    if (ownerUid === null) {
-      return;
-    }
-
-    const payload = frame.payload;
-    const response: IpcCompletionResponse = {
-      text: payload?.result?.text ?? null,
-      usage: payload?.usage ?? null,
-    };
-    if (payload?.result?.media?.length) response.media = payload.result.media;
-    const status = payload?.status ?? "ok";
-    const reason = payload?.reason ?? null;
-    const error = payload?.error
-      ? payload.error
-      : status === "aborted"
-        ? `Target run was aborted${reason ? `: ${reason}` : ""}`
-        : status === "error"
-          ? "Target run failed"
-          : null;
-    if (status === "aborted") {
-      this.ipcCalls.cancelBySourceRun({
-        uid: ownerUid,
-        sourcePid: processId,
-        sourceRunId: runId,
-      });
-    }
-    const completed = this.ipcCalls.completeByRun({
-      uid: ownerUid,
-      targetPid: processId,
-      runId,
-      response,
-      error,
-    });
-
-    for (const callId of completed) {
-      const call = this.ipcCalls.get(callId);
-      if (call) this.returnDelegatedResponsibility(call);
-      this.queueIpcCallDelivery(callId);
-    }
-  }
-
-  private queueIpcCallDelivery(callId: string): void {
-    this.ctx.waitUntil(this.schedule(
-      new Date(Date.now() + 10),
-      "onIpcCallDelivery",
-      callId,
-      {
-        idempotent: true,
-        retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
-      },
-    ).catch(() => this.deliverIpcCall(callId)));
-  }
-
-  private async deliverIpcCall(callId: string): Promise<void> {
-    const call = this.ipcCalls.claimDelivery(callId);
-    if (!call) {
-      return;
-    }
-    try {
-      this.returnDelegatedResponsibility(call);
-      if (call.responsibilityId && !this.procs.get(call.sourcePid)) {
-        this.ipcCalls.remove(callId);
-        return;
-      }
-      await this.deliverIpcCallSignal(call);
-      this.ipcCalls.remove(callId);
-    } catch (error) {
-      this.ipcCalls.releaseDelivery(callId);
-      console.warn(`[Kernel] Failed to deliver IPC call ${callId}:`, error);
-      await this.schedule(5, "onIpcCallDelivery", callId, {
-        idempotent: false,
-        retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
-      });
-    }
-  }
-
-  private async deliverIpcCallSignal(call: IpcCallRecord): Promise<void> {
-    const payload: IpcDeliverySignalPayload = {
-      callId: call.callId,
-      sourcePid: call.sourcePid,
-      targetPid: call.targetPid,
-      runId: call.targetRunId,
-      deadlineAt: call.deadlineAt,
-      createdAt: call.createdAt,
-      status: call.status,
-    };
-    if (call.sourceRunId) payload.sourceRunId = call.sourceRunId;
-    if (call.status === "completed") payload.response = call.response;
-    if (call.error) payload.error = call.error;
-    await sendFrameToProcess(this.installationId, call.sourcePid, {
-      type: "sig",
-      signal: call.status === "timed_out" ? "ipc.timeout" : "ipc.reply",
-      payload,
-    });
-  }
-
-  private async deliverAdapterRouteEvent(
-    route: AdapterDeliveryRoute,
-    frame: SignalFrame,
-  ): Promise<AdapterRouteDeliveryOutcome> {
-    const { adapter, accountId, surface } = route.destination;
-    if (frame.signal === "proc.run.started") {
-      await setAdapterActivityForKernel(
-        this.bindings,
-        this.installationId,
-        adapter,
-        accountId,
-        surface,
-        adapterTypingActivity(route, true),
-      );
-      return { state: "delivered" };
-    }
-
-    if (frame.signal === "proc.run.hil.requested") {
-      const parsedRequest = procHilRequestSchema.safeParse(frame.payload);
-      if (!parsedRequest.success) {
-        await setAdapterActivityForKernel(
-          this.bindings,
-          this.installationId,
-          adapter,
-          accountId,
-          surface,
-          adapterTypingActivity(route, false),
-        ).catch(() => undefined);
-        return { state: "skipped" };
-      }
-      const request = parsedRequest.data;
-
-      try {
-        return await this.deliverAdapterRouteReply(route, {
-          deliveryId: `${route.runId}:hil:${request.requestId}`,
-          text: "",
-          hil: request,
-        });
-      } finally {
-        await setAdapterActivityForKernel(
-          this.bindings,
-          this.installationId,
-          adapter,
-          accountId,
-          surface,
-          adapterTypingActivity(route, false),
-        ).catch((error) => {
-          console.warn(`[Kernel] Failed to stop adapter typing for ${route.runId}:`, error);
-        });
-      }
-    }
-
-    if (frame.signal === "message.committed") {
-      const parsed = z.object({ message: adapterConversationMessageSchema }).safeParse(frame.payload);
-      if (!parsed.success) return { state: "skipped" };
-      const message = parsed.data.message;
-      if (message.processId !== route.processId || message.runId !== route.runId) {
-        return { state: "skipped" };
-      }
-      try {
-        const attachmentBundle = await this.bundleConversationReplyMedia(
-          message.conversationId,
-          message.media,
-          message.author.uid,
-        );
-        if (!message.text.trim() && attachmentBundle.media.length === 0) {
-          return { state: "delivered" };
-        }
-        const reply = {
-          deliveryId: message.id,
-          text: message.text,
-          media: attachmentBundle.media.length > 0 ? attachmentBundle.media : undefined,
-        };
-        return await this.deliverAdapterRouteReply(route, reply, attachmentBundle.body);
-      } finally {
-        await setAdapterActivityForKernel(
-          this.bindings,
-          this.installationId,
-          adapter,
-          accountId,
-          surface,
-          adapterTypingActivity(route, false),
-        ).catch(() => undefined);
-      }
-    }
-
-    return { state: "skipped" };
-  }
-
-  private async deliverAdapterRouteReply(
-    route: AdapterDeliveryRoute,
-    message: {
-      deliveryId: string;
-      text: string;
-      media?: AdapterMedia[];
-      replyToId?: string;
-      hil?: ProcHilRequest;
-    },
-    body?: BinaryBody,
-  ): Promise<AdapterRouteDeliveryOutcome> {
-    const ctx = this.buildProcessContext(route.processId, route.runId);
-    if (!ctx) {
-      await cancelBinaryBody(body, "Reply route references a missing process");
-      return { state: "permanent", error: "Reply route references a missing process" };
-    }
-    try {
-      assertAdapterMessageDestinationAccess(route.destination, route.uid, ctx);
-    } catch (error) {
-      await cancelBinaryBody(body, error);
-      ctx.adapters.privateDestinations.clearIfMatches(route.uid, route.destination);
-      return {
-        state: "permanent",
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-
-    const process = this.procs.get(route.processId);
-    const presentation: AdapterDeliveryPresentation = {
-      processId: route.processId,
-      runId: route.runId,
-    };
-    if (process?.isPersonalController === false) {
-      presentation.processMode = "work";
-    } else if (process?.isPersonalController === true) {
-      presentation.processMode = "ship";
-      if (route.destination.surface.kind === "dm") {
-        const selected = this.adapters.surfaceRoutes.resolveRoute({
-          adapter: route.destination.adapter,
-          accountId: route.destination.accountId,
-          actorId: route.destination.actorId,
-          surfaceKind: route.destination.surface.kind,
-          surfaceId: route.destination.surface.id,
-          threadId: route.destination.surface.threadId,
-          uid: route.uid,
-        });
-        if (selected?.mode === "work") presentation.shipDisplaced = true;
-      }
-    }
-    if (message.hil) presentation.hil = message.hil;
-
-    const result = await deliverAdapterDestination(route.destination, route.uid, {
-      deliveryId: message.deliveryId,
-      text: message.text,
-      ...(message.media === undefined ? undefined : { media: message.media }),
-      replyToId: message.replyToId ?? route.replyToId,
-      ...(route.routeGeneration === undefined
-        ? undefined
-        : { routeGeneration: route.routeGeneration }),
-    }, ctx, body, presentation);
-    if (!result.ok) {
-      return {
-        state: result.retryable ? "retryable" : "permanent",
-        error: `Adapter reply failed (${route.destination.adapter}): ${result.error}`,
-      };
-    }
-    if (result.deliveryState === "ambiguous") {
-      return {
-        state: "ambiguous",
-        error: `Adapter delivery ${message.deliveryId} is ambiguous`,
-      };
-    }
-    return { state: "delivered" };
-  }
-
-  private async bundleConversationReplyMedia(
-    conversationId: string,
-    value: MessageAttachment[] | undefined,
-    authorUid: number,
-  ): Promise<{ media: AdapterMedia[]; body?: BinaryBody }> {
-    if (value === undefined) {
-      return { media: [] };
-    }
-    if (value.length > MAX_MESSAGE_MEDIA_ITEMS) {
-      throw new AdapterReplyMediaError(
-        `Process reply media exceeds item limit (${MAX_MESSAGE_MEDIA_ITEMS})`,
-      );
-    }
-    const conversation = getConversationById(this.installationId, conversationId);
-    const parts: AdapterMediaPart[] = [];
-    let totalBytes = 0;
-    try {
-      for (const item of value) {
-        if (item.type === "resource") {
-          const { ref } = item;
-          const account = this.auth.getPasswdByUid(authorUid);
-          const key = ref.path.replace(/^\/+/, "");
-          const object = ref.target === "gsv" && ref.expiresAt === undefined
-            ? await this.installationStorage.get(key)
-            : null;
-          const matches = account
-            && object
-            && agentArchiveMediaPath(account.home, key) === ref.path
-            && object.httpEtag === ref.revision
-            && object.size === ref.size
-            && isValidAgentArchiveMediaObject({
-              home: account.home,
-              key,
-              uid: account.uid,
-              gid: account.gid,
-              object,
-              expectedContentType: ref.contentType,
-            });
-          if (!matches || !object) {
-            await object?.body.cancel("Message resource descriptor mismatch").catch(() => {});
-            throw new AdapterReplyMediaError("Message resource does not match retained data");
-          }
-          if (ref.size > MAX_MESSAGE_MEDIA_PART_BYTES) {
-            await object.body.cancel("Message resource exceeds the per-item limit").catch(() => {});
-            throw new AdapterReplyMediaError(
-              `Message media exceeds per-item limit (${MAX_MESSAGE_MEDIA_PART_BYTES} bytes)`,
-            );
-          }
-          totalBytes += ref.size;
-          if (totalBytes > MAX_MESSAGE_MEDIA_TOTAL_BYTES) {
-            await object.body.cancel("Message resources exceed the total limit").catch(() => {});
-            throw new AdapterReplyMediaError(
-              `Message media exceeds total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
-            );
-          }
-          const media: AdapterMedia = {
-            type: item.mediaType ?? mediaTypeFromContentType(ref.contentType),
-            mimeType: ref.contentType,
-            size: ref.size,
-          };
-          if (item.filename) media.filename = item.filename;
-          if (item.duration !== undefined) media.duration = item.duration;
-          if (item.transcription) media.transcription = item.transcription;
-          parts.push({ media, body: { stream: object.body, length: object.size } });
-          continue;
-        }
-        const key = item.key?.trim() ?? "";
-        if (!key || item.conversationId !== conversationId) {
-          throw new AdapterReplyMediaError("Message media is outside its conversation");
-        }
-        const mimeType = item.mimeType.trim();
-        if (!mimeType) {
-          throw new AdapterReplyMediaError("Process reply media requires mimeType");
-        }
-        const object = await conversation.readMedia({ key });
-        if (object.size > MAX_MESSAGE_MEDIA_PART_BYTES) {
-          await object.stream.cancel("Conversation media exceeds the per-item limit").catch(() => {});
-          throw new AdapterReplyMediaError(
-            `Message media exceeds per-item limit (${MAX_MESSAGE_MEDIA_PART_BYTES} bytes)`,
-          );
-        }
-        totalBytes += object.size;
-        if (totalBytes > MAX_MESSAGE_MEDIA_TOTAL_BYTES) {
-          await object.stream.cancel("Conversation media exceeds the total limit").catch(() => {});
-          throw new AdapterReplyMediaError(
-            `Message media exceeds total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
-          );
-        }
-        if (object.mimeType !== mimeType || item.size !== object.size) {
-          await object.stream.cancel("Conversation media descriptor mismatch").catch(() => {});
-          throw new AdapterReplyMediaError(
-            `Message media descriptor does not match stored data: ${key}`,
-          );
-        }
-        const media: AdapterMedia = {
-            type: item.type,
-            mimeType,
-            size: object.size,
-        };
-        if (item.filename) media.filename = item.filename;
-        if (item.duration !== undefined && Number.isFinite(item.duration)) {
-          media.duration = item.duration;
-        }
-        if (item.transcription) media.transcription = item.transcription;
-        parts.push({
-          media,
-          body: { stream: object.stream, length: object.size },
-        });
-      }
-      return await bundleAdapterMedia(parts);
-    } catch (error) {
-      await Promise.all(parts.map((part) => cancelBinaryBody(part.body, error)));
-      throw error;
-    }
-  }
-
-  private async handleProcessReq(processId: string, frame: RequestFrame): Promise<ResponseFrame | null> {
+                                      async handleProcessReq(processId: string, frame: RequestFrame): Promise<ResponseFrame | null> {
     const ctx = this.buildProcessContext(processId, frame.runId);
     if (!ctx) {
       return errFrame(frame.id, 404, "Unknown process");
     }
 
-    if (
-      !isInternalOnlySyscall(frame.call) &&
-      !hasCapability(ctx.identity!.capabilities, frame.call)
-    ) {
-      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
-    }
-
-    const origin: RouteOrigin = { type: "process", id: processId };
-    let controller: AbortController;
-    try {
-      controller = this.registerActiveRequest(origin, frame.id);
-    } catch (error) {
-      return errFrame(frame.id, 499, error instanceof Error ? error.message : String(error));
-    }
-    let result;
-    try {
-      frame = this.bindRequestBodyCancellation(frame, controller.signal);
-      result = await dispatch(
-        frame,
-        origin,
-        { ...ctx, requestSignal: controller.signal },
-        this.buildDispatchDeps(),
-      );
-    } finally {
-      this.finishActiveRequest(frame.id, controller);
-    }
-
-    if (result.handled) {
-      this.applyPostDispatchEffects(frame, result.response);
-      return result.response;
-    }
-
-    return null;
+    return await this.dispatchPeerRequest(
+      frame,
+      { type: "process", id: processId },
+      ctx,
+      { awaitRouted: false },
+    );
   }
 
-  private buildProcessContext(processId: string, processRunId?: string): KernelContext | null {
+  buildProcessContext(processId: string, processRunId?: string): KernelContext | null {
     const identity = this.procs.getIdentity(processId);
     if (!identity) {
       return null;
     }
 
-    const connIdentity: ConnectionIdentity = {
-      role: "user",
-      process: identity,
-      capabilities: this.caps.resolve(identity.gids),
-    };
-
     return this.buildKernelContext({
-      identity: connIdentity,
+      peer: processPeerContext({
+        installationId: this.installationId,
+        processId,
+        identity,
+        calls: this.caps.resolve(identity.gids),
+      }),
       processId,
       processRunId,
     });
   }
 
-  private async handleServiceReq(
+  async handleServiceReq(
     profile: ServicePeerProfile,
     frame: RequestFrame,
   ): Promise<ResponseFrame> {
@@ -2784,11 +1210,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       return errFrame(frame.id, 400, `${frame.call} is not supported via serviceFrame`);
     }
 
-    if (isInternalOnlySyscall(frame.call)) {
-      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
-    }
-
-    const identity = this.buildServiceBindingIdentity(profile);
+    const identity = this.buildServiceBindingIdentity();
     if (!identity) {
       return errFrame(frame.id, 503, "Service identity is not configured");
     }
@@ -2800,13 +1222,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
       installationId: this.installationId,
       profile,
       sessionId: `service:${profile.id}`,
-      identity,
+      account: identity,
     });
-    if (!peerAllowsCall(peer, frame.call)) {
-      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
-    }
-
-    const ctx = this.buildKernelContext({ identity, peer });
+    const ctx = this.buildKernelContext({ peer });
     return await this.dispatchPeerRequest(
       frame,
       { type: "kernel", id: frame.id },
@@ -2815,7 +1233,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     ) ?? errFrame(frame.id, 500, "Service request did not produce a response");
   }
 
-  private buildContext(connection: KernelConnection<ConnectionState>): KernelContext {
+  buildContext(connection: KernelConnection<ConnectionState>): KernelContext {
     const state = connection.state;
     if (!state) throw new Error("Connection state is missing");
     const peer = state.peer
@@ -2825,17 +1243,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
           credential: state.credentialMethod ?? "token",
         })
       : undefined;
-    return this.buildKernelContext({
-      connection,
-      peer,
-      identity: state.peer ? peerConnectionIdentity(state.peer) : undefined,
-    });
+    return this.buildKernelContext({ connection, peer });
   }
 
-  private buildKernelContext(options: {
+  buildKernelContext(options: {
     connection?: KernelConnection<ConnectionState> | null;
     peer?: PeerContext;
-    identity?: ConnectionIdentity;
     processId?: string;
     processRunId?: string;
     requestSignal?: AbortSignal;
@@ -2849,7 +1262,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       auth: this.auth,
       caps: this.caps,
       config: this.config,
-      devices: this.devices,
+      targets: this.targets,
       procs: this.procs,
       conversations: this.conversations,
       oauth: this.oauth,
@@ -2868,36 +1281,35 @@ export class Kernel extends DurableObject<GatewayEnv> {
       federationIdentity: this.federationIdentity,
       connection: options.connection ?? null,
       peer: options.peer,
-      identity: options.identity,
       processId: options.processId,
       processRunId: options.processRunId,
       requestSignal: options.requestSignal,
       callerOwnerUid: options.callerOwnerUid,
       serverVersion: SERVER_VERSION,
       defer: (promise) => this.ctx.waitUntil(promise),
-      broadcastToUserUid: this.broadcastToUserUid.bind(this),
-      scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
-      failIpcCallsByTarget: this.failIpcCallsByTarget.bind(this),
-      scheduleScheduleWake: this.scheduleScheduleWake.bind(this),
+      broadcastToUserUid: this.connectionRuntime.broadcastToUserUid.bind(this.connectionRuntime),
+      scheduleIpcCallTimeout: this.ipc.scheduleIpcCallTimeout.bind(this.ipc),
+      failIpcCallsByTarget: this.ipc.failIpcCallsByTarget.bind(this.ipc),
+      scheduleScheduleWake: this.scheduleRuntime.scheduleScheduleWake.bind(this.scheduleRuntime),
       cancelScheduleWake: async (wakeScheduleId) => {
         await this.cancelSchedule(wakeScheduleId);
       },
-      reconcileResponsibilityWake: this.reconcileResponsibilityWake.bind(this),
+      reconcileResponsibilityWake: this.responsibilityRuntime.reconcileResponsibilityWake.bind(this.responsibilityRuntime),
       scheduleManagedOutboundEnqueue: async (outboundId, dueAtMs) => {
         await this.scheduleManagedOutboundEnqueue(outboundId, dueAtMs);
       },
-      scheduleFederationDelivery: this.scheduleFederationDelivery.bind(this),
-      scheduleFederationInbox: this.scheduleFederationInbox.bind(this),
-      coordinateFederationInbound: this.coordinateFederationInbound.bind(this),
-      coordinateFederationContact: this.coordinateFederationContact.bind(this),
-      runSchedules: this.runSchedules.bind(this),
-      addMcpServerConnection: (input) => this.addMcpServerConnection({
+      scheduleFederationDelivery: this.federationRuntime.scheduleFederationDelivery.bind(this.federationRuntime),
+      scheduleFederationInbox: this.federationRuntime.scheduleFederationInbox.bind(this.federationRuntime),
+      coordinateFederationInbound: this.federationRuntime.coordinateFederationInbound.bind(this.federationRuntime),
+      coordinateFederationContact: this.federationRuntime.coordinateFederationContact.bind(this.federationRuntime),
+      runSchedules: this.scheduleRuntime.runSchedules.bind(this.scheduleRuntime),
+      addMcpServerConnection: (input) => this.mcpConnections.addMcpServerConnection({
         ...input,
         callbackHost: input.callbackHost
           ?? (options.connection ? new URL(options.connection.uri).origin : undefined),
       }),
-      removeMcpServerConnection: this.removeMcpServer.bind(this),
-      refreshMcpServerConnection: this.refreshMcpServerConnection.bind(this),
+      removeMcpServerConnection: this.mcpConnections.removeMcpServer.bind(this.mcpConnections),
+      refreshMcpServerConnection: this.mcpConnections.refreshMcpServerConnection.bind(this.mcpConnections),
       callMcpTool: (serverId, toolName, args, signal) => this.mcp.callTool(
         {
           serverId,
@@ -2911,26 +1323,26 @@ export class Kernel extends DurableObject<GatewayEnv> {
     };
   }
 
-  private get bindings(): GatewayEnv {
+  get bindings(): GatewayEnv {
     return this.installationEnv ?? this.env;
   }
 
-  private get storage(): R2Bucket {
+  get storage(): R2Bucket {
     return this.installationStorage ?? this.env.STORAGE;
   }
 
-  private buildDispatchDeps(): DispatchDeps {
+  buildDispatchDeps(): DispatchDeps {
     return {
       shellSessions: this.shellSessions,
       connections: this.connections,
-      sendFrame: this.sendWebSocketFrame.bind(this),
-      registerRoute: this.registerRouteWithExpiry.bind(this),
-      requestDevice: this.requestDevice.bind(this),
+      sendFrame: this.transport.sendWebSocketFrame.bind(this.transport),
+      registerRoute: this.transport.registerRouteWithExpiry.bind(this.transport),
+      requestTarget: this.transport.requestTarget.bind(this.transport),
       request: this.requestDispatchedFrame.bind(this),
     };
   }
 
-  private async requestDispatchedFrame(
+  async requestDispatchedFrame(
     frame: RequestFrame,
     ctx: KernelContext,
     signal?: AbortSignal,
@@ -2948,7 +1360,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     }
   }
 
-  private async dispatchPeerRequest(
+  async dispatchPeerRequest(
     inputFrame: RequestFrame,
     origin: RouteOrigin,
     ctx: KernelContext,
@@ -2958,12 +1370,15 @@ export class Kernel extends DurableObject<GatewayEnv> {
       throwOnCancel?: boolean;
     },
   ): Promise<ResponseFrame | null> {
-    if (isInternalOnlySyscall(inputFrame.call)) {
-      return errFrame(inputFrame.id, 403, `Permission denied: ${inputFrame.call}`);
+    const peer = ctx.peer;
+    if (!peer) {
+      return errFrame(inputFrame.id, 403, "Request has no authenticated peer");
     }
-    const allowed = ctx.peer
-      ? peerAllowsCall(ctx.peer, inputFrame.call)
-      : hasCapability(ctx.identity?.capabilities ?? [], inputFrame.call);
+    // Internal-only syscalls are reachable solely through Process provenance;
+    // every other call is gated by the peer's grant.
+    const allowed = isInternalOnlySyscall(inputFrame.call)
+      ? peer.provenance.kind === "process-registry"
+      : peerAllowsCall(peer, inputFrame.call);
     if (!allowed) {
       return errFrame(inputFrame.id, 403, `Permission denied: ${inputFrame.call}`);
     }
@@ -2978,11 +1393,11 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
     let controller: AbortController;
     try {
-      controller = this.registerActiveRequest(origin, inputFrame.id);
+      controller = this.transport.registerActiveRequest(origin, inputFrame.id);
     } catch (error) {
       return errFrame(
         inputFrame.id,
-        409,
+        error instanceof RequestCancelledError ? 499 : 409,
         error instanceof Error ? error.message : String(error),
       );
     }
@@ -2990,17 +1405,17 @@ export class Kernel extends DurableObject<GatewayEnv> {
       ? AbortSignal.any([controller.signal, callerSignal])
       : controller.signal;
     const pending = options.awaitRouted
-      ? this.createPendingKernelResponse(inputFrame.id)
+      ? this.transport.createPendingKernelResponse(inputFrame.id)
       : null;
     const cancel = () => {
-      this.cancelRequest(
+      this.transport.cancelRequest(
         origin,
         inputFrame.id,
         requestAbortError(requestSignal.reason).message,
         false,
       );
     };
-    let frame = this.bindRequestBodyCancellation(inputFrame, requestSignal);
+    let frame = this.transport.bindRequestBodyCancellation(inputFrame, requestSignal);
 
     try {
       const result = await raceWithAbort(
@@ -3044,589 +1459,11 @@ export class Kernel extends DurableObject<GatewayEnv> {
       return null;
     } finally {
       pending?.cleanup();
-      this.finishActiveRequest(frame.id, controller);
+      this.transport.finishActiveRequest(frame.id, controller);
     }
   }
 
-  private async registerRouteWithExpiry(route: {
-    id: string;
-    call: SyscallName;
-    origin: RouteOrigin;
-    deviceId: string;
-    driverConnectionId: string;
-    ttlMs: number;
-  }): Promise<{
-    cancel: () => void;
-    attachBody: (body: CancellableFrameBody) => void;
-  }> {
-    const scheduleId = (await this.schedule(
-      route.ttlMs / 1000,
-      "onRouteExpired",
-      route.id,
-    )).id;
-
-    try {
-      this.routes.register(
-        route.id,
-        route.call,
-        route.origin,
-        route.deviceId,
-        route.driverConnectionId,
-        { ttlMs: route.ttlMs, scheduleId },
-      );
-    } catch (error) {
-      this.cancelSchedule(scheduleId).catch(() => {});
-      throw error;
-    }
-
-    return {
-      cancel: () => this.cancelRoute(route.id),
-      attachBody: (body) => {
-        const previous = this.routedBodies.get(route.id);
-        this.routedBodies.set(route.id, body);
-        void previous?.cancel("Routed body replaced");
-      },
-    };
-  }
-
-  private registerActiveRequest(origin: RouteOrigin, requestId: string): AbortController {
-    if (!requestId || this.activeRequests.has(requestId) || this.routes.get(requestId)) {
-      throw new Error(`Duplicate request: ${requestId}`);
-    }
-    if (origin.type === "process") {
-      const key = `${origin.id}\0${requestId}`;
-      const cancellation = this.cancelledProcessRequests.get(key);
-      this.cancelledProcessRequests.delete(key);
-      if (cancellation && cancellation.expiresAt > Date.now()) {
-        throw new Error(cancellation.reason);
-      }
-    }
-    const controller = new AbortController();
-    this.activeRequests.set(requestId, { origin, controller });
-    return controller;
-  }
-
-  private bindRequestBodyCancellation(
-    frame: RequestFrame,
-    signal: AbortSignal,
-  ): RequestFrame {
-    if (!frame.body) {
-      return frame;
-    }
-    const body = frame.body;
-    frame.body = {
-      ...body,
-      stream: bindByteStreamToAbort(body.stream, signal),
-    };
-    return frame;
-  }
-
-  private finishActiveRequest(requestId: string, controller: AbortController): void {
-    if (this.activeRequests.get(requestId)?.controller === controller) {
-      this.activeRequests.delete(requestId);
-    }
-  }
-
-  private cancelRequest(
-    origin: RouteOrigin,
-    requestId: string,
-    reason: string | undefined,
-    rememberMissing: boolean,
-  ): boolean {
-    if (!requestId) {
-      return false;
-    }
-    const active = this.activeRequests.get(requestId);
-    const ownsActive = active !== undefined && sameRouteOrigin(active.origin, origin);
-    if (active && !ownsActive) {
-      return false;
-    }
-
-    const route = this.routes.get(requestId);
-    const internalKernelRoute = route !== null
-      && ownsActive
-      && route.origin.type === "kernel"
-      && route.origin.id === requestId;
-    const ownsRoute = route !== null && (
-      sameRouteOrigin(route.origin, origin)
-      || internalKernelRoute
-    );
-    if (route && !ownsRoute) {
-      return false;
-    }
-
-    const message = normalizeRequestCancelReason(reason);
-    if (ownsActive) {
-      active.controller.abort(new Error(message));
-    }
-    if (route && ownsRoute) {
-      this.sendDeviceRequestCancel(
-        route.deviceId,
-        route.driverConnectionId,
-        requestId,
-        message,
-      );
-      this.cancelRoute(requestId);
-    }
-    if (ownsActive || ownsRoute) {
-      return true;
-    }
-    if (!rememberMissing || origin.type !== "process") {
-      return false;
-    }
-
-    const now = Date.now();
-    for (const [key, cancellation] of this.cancelledProcessRequests) {
-      if (cancellation.expiresAt <= now) {
-        this.cancelledProcessRequests.delete(key);
-      }
-    }
-    if (this.cancelledProcessRequests.size >= MAX_PROCESS_REQUEST_CANCELLATIONS) {
-      const oldest = this.cancelledProcessRequests.keys().next().value;
-      if (oldest) {
-        this.cancelledProcessRequests.delete(oldest);
-      }
-    }
-    this.cancelledProcessRequests.set(`${origin.id}\0${requestId}`, {
-      expiresAt: now + PROCESS_REQUEST_CANCEL_TTL_MS,
-      reason: message,
-    });
-    return true;
-  }
-
-  private sendDeviceRequestCancel(
-    deviceId: string,
-    driverConnectionId: string | null,
-    requestId: string,
-    reason: string,
-  ): void {
-    const connection = driverConnectionId
-      ? this.connections.get(driverConnectionId)
-      : this.findDeviceConnection(deviceId);
-    if (!connection || !this.isConnectionForDevice(connection, deviceId)) {
-      return;
-    }
-    try {
-      this.sendWebSocketFrame(connection, {
-        type: "sig",
-        signal: REQUEST_CANCEL_SIGNAL,
-        payload: { id: requestId, reason },
-      });
-    } catch {}
-  }
-
-  private cancelRoute(routeId: string): void {
-    const route = this.routes.remove(routeId);
-    if (route?.scheduleId) {
-      this.cancelSchedule(route.scheduleId).catch(() => {});
-    }
-    this.cancelRoutedBody(routeId, "Route cancelled");
-  }
-
-  private cancelRoutedBody(routeId: string, reason: string): void {
-    const body = this.routedBodies.get(routeId);
-    if (!body) {
-      return;
-    }
-    this.routedBodies.delete(routeId);
-    void body.cancel(reason);
-  }
-
-  private decodeWebSocketRequestFrame(
-    connection: KernelConnection<ConnectionState>,
-    frame: WireRequestFrame,
-  ): RequestFrame {
-    const { body, ...request } = frame;
-    return body === undefined
-      ? request
-      : { ...request, body: this.receiveFrameBody(connection, body) };
-  }
-
-  private decodeWebSocketResponseFrame(
-    connection: KernelConnection<ConnectionState>,
-    frame: WireResponseFrame,
-  ): ResponseFrame {
-    if (!frame.ok) return frame;
-    const { body, ...response } = frame;
-    return body === undefined
-      ? response
-      : { ...response, body: this.receiveFrameBody(connection, body) };
-  }
-
-  private receiveFrameBody(
-    connection: KernelConnection<ConnectionState>,
-    descriptor: BinaryFrameDescriptor,
-  ): FrameBody {
-    return this.frameBodyChannel(connection).receive(descriptor);
-  }
-
-  private sendWebSocketFrame(
-    connection: KernelConnection<ConnectionState>,
-    frame: Frame,
-  ): OutgoingBinaryBody | null {
-    const body = frame.type === "sig" || (frame.type === "res" && !frame.ok)
-      ? undefined
-      : frame.body;
-    if (!body) {
-      connection.send(JSON.stringify(frame));
-      return null;
-    }
-
-    const outgoing: OutgoingBinaryBody = this.frameBodyChannel(connection).prepare(body);
-    try {
-      connection.send(JSON.stringify({
-        ...frame,
-        body: outgoing.descriptor,
-      }));
-    } catch (error) {
-      void outgoing.cancel(error);
-      throw error;
-    }
-    this.ctx.waitUntil(outgoing.send().catch(() => {}));
-    return outgoing;
-  }
-
-  private frameBodyChannel(connection: KernelConnection<ConnectionState>): BinaryBodyChannel {
-    let channel = this.frameBodyChannels.get(connection.id);
-    if (!channel) {
-      channel = new BinaryBodyChannel({
-        sendFrame: (binary) => connection.send(binary),
-      });
-      this.frameBodyChannels.set(connection.id, channel);
-    }
-    return channel;
-  }
-
-  private closeFrameBodyChannel(connectionId: string): void {
-    this.frameBodyChannels.get(connectionId)?.close(new Error("Connection closed"));
-    this.frameBodyChannels.delete(connectionId);
-  }
-
-  private async requestDevice(
-    deviceId: string,
-    call: "net.fetch",
-    args: NetFetchArgs,
-    options: DeviceRequestOptions = {},
-  ): Promise<ResponseOkFrame<"net.fetch">> {
-    const id = options.id ?? crypto.randomUUID();
-    let cleanupPending: (() => void) | null = null;
-    let route: { cancel: () => void } | null = null;
-    let outgoing: OutgoingBinaryBody | null = null;
-    let onAbort: (() => void) | null = null;
-    let requestSent = false;
-    let completionReason: FrameCancellationReason = "Device request completed";
-
-    try {
-      if (options.signal?.aborted) {
-        throw requestAbortError(options.signal.reason);
-      }
-      const device = this.devices.get(deviceId);
-      if (!device || !device.online) {
-        throw new Error(`Device offline: ${deviceId}`);
-      }
-      if (!this.devices.canHandle(deviceId, call)) {
-        throw new Error(`Device ${deviceId} does not implement ${call}`);
-      }
-
-      const deviceConn = this.findDeviceConnection(deviceId);
-      if (!deviceConn) {
-        throw new Error(`No active connection for device: ${deviceId}`);
-      }
-
-      const pending = this.createPendingKernelResponse(id);
-      cleanupPending = pending.cleanup;
-      route = await this.registerRouteWithExpiry({
-        id,
-        call,
-        origin: { type: "kernel", id },
-        deviceId,
-        driverConnectionId: deviceConn.id,
-        ttlMs: options.ttlMs ?? 60_000,
-      });
-      if (options.signal?.aborted) {
-        throw requestAbortError(options.signal.reason);
-      }
-
-      // SAFETY: dispatch supplies args from the syscall schema associated with call.
-      const requestFrame = {
-        type: "req",
-        id,
-        call,
-        args,
-      } as RequestFrame;
-      if (options.body) requestFrame.body = options.body;
-      outgoing = this.sendWebSocketFrame(deviceConn, requestFrame);
-      requestSent = true;
-      const frame = options.signal
-        ? await Promise.race([
-            pending.promise,
-            new Promise<never>((_, reject) => {
-              onAbort = () => {
-                if (requestSent) {
-                  this.sendDeviceRequestCancel(
-                    deviceId,
-                    deviceConn.id,
-                    id,
-                    normalizeRequestCancelReason(requestAbortError(options.signal?.reason).message),
-                  );
-                }
-                reject(requestAbortError(options.signal?.reason));
-              };
-              options.signal?.addEventListener("abort", onAbort, { once: true });
-              if (options.signal?.aborted) {
-                onAbort();
-              }
-            }),
-          ])
-        : await pending.promise;
-      if (!frame.ok) {
-        throw new Error(frame.error.message);
-      }
-      // SAFETY: the pending route was registered for the net.fetch request above.
-      return frame as ResponseOkFrame<"net.fetch">;
-    } catch (error) {
-      completionReason = error instanceof Error ? error : String(error);
-      throw error;
-    } finally {
-      if (onAbort) {
-        options.signal?.removeEventListener("abort", onAbort);
-      }
-      cleanupPending?.();
-      route?.cancel();
-      const reason = options.signal?.aborted ? options.signal.reason : completionReason;
-      if (outgoing) {
-        await outgoing.cancel(reason);
-      } else {
-        await options.body?.stream.cancel(reason).catch(() => {});
-      }
-    }
-  }
-
-  private findDeviceConnection(deviceId: string): KernelConnection<ConnectionState> | null {
-    for (const [, conn] of this.connections) {
-      if (this.isConnectionForDevice(conn, deviceId)) {
-        return conn;
-      }
-    }
-    return null;
-  }
-
-  private isConnectionForDevice(
-    connection: KernelConnection<ConnectionState>,
-    deviceId: string,
-  ): boolean {
-    const state = connection.state;
-    return state?.step === "connected" &&
-      state.peer?.id === deviceId &&
-      peerProvidesOperations(state.peer);
-  }
-
-  private disconnectDeviceConnections(deviceId: string, reason: string): void {
-    let closed = false;
-    for (const [connId, conn] of Array.from(this.connections)) {
-      if (!this.isConnectionForDevice(conn, deviceId)) {
-        continue;
-      }
-
-      closed = true;
-      conn.close(1000, reason);
-      this.connections.delete(connId);
-      this.runRoutes.clearForConnection(connId);
-    }
-
-    if (closed) {
-      this.failRoutesForDevice(deviceId);
-    }
-  }
-
-  private async scheduleIpcCallTimeout(
-    callId: string,
-    deadlineAt: number,
-    options?: IpcCallSupervisionOptions,
-  ): Promise<string> {
-    const sched = await this.scheduleIpcCallTimeoutTask(callId, deadlineAt, options);
-    return sched.id;
-  }
-
-  private async scheduleIpcCallTimeoutTask(
-    callId: string,
-    deadlineAt: number,
-    options?: IpcCallSupervisionOptions,
-  ): Promise<{ id: string; time: number }> {
-    const when = new Date(
-      Math.ceil(Math.max(Date.now() + 1_000, deadlineAt) / 1_000) * 1_000,
-    );
-    return options
-      ? await this.schedule(
-        when,
-        "onIpcCallTimeout",
-        { callId, ...options } satisfies IpcCallTimeout,
-        { idempotent: true },
-      )
-      : await this.schedule(when, "onIpcCallTimeout", callId);
-  }
-
-  private failIpcCallsByTarget(uid: number, targetPid: string, error: string): void {
-    for (const callId of this.ipcCalls.failByTargetPid({ uid, targetPid, error })) {
-      const call = this.ipcCalls.get(callId);
-      if (call) this.returnDelegatedResponsibility(call);
-      this.queueIpcCallDelivery(callId);
-    }
-  }
-
-  private returnDelegatedResponsibility(call: IpcCallRecord): void {
-    if (!call.responsibilityId) return;
-    const current = this.responsibilities.get(call.ownerUid, call.responsibilityId);
-    if (
-      !current
-      || current.state === "resolved"
-      || current.state === "cancelled"
-      || current.assignee.kind !== "process"
-      || current.assignee.processId !== call.targetPid
-    ) {
-      return;
-    }
-
-    const outcome = call.status === "timed_out"
-      ? "timed_out"
-      : call.error?.toLowerCase().includes("killed")
-        ? "killed"
-        : call.error
-          ? "failed"
-          : "completed";
-    const eventType = `process.delegation.${outcome}`;
-    const completedAtMs = Date.now();
-    const delegation: JsonObject = {
-      eventType,
-      callId: call.callId,
-      processId: call.targetPid,
-      runId: call.targetRunId,
-      status: call.status,
-      completedAtMs,
-    };
-    if (call.sourceRunId) delegation.sourceRunId = call.sourceRunId;
-    if (call.error) delegation.error = call.error.slice(0, 2_000);
-    const updated = this.responsibilities.update({
-      ownerUid: call.ownerUid,
-      id: current.id,
-      expectedRevision: current.revision,
-      patch: {
-        details: {
-          ...current.details,
-          delegation,
-        },
-        assignee: { kind: "ship" },
-        state: "open",
-        blocker: call.error ? call.error.slice(0, 2_000) : null,
-        nextCheckAtMs: null,
-        leaseExpiresAtMs: null,
-      },
-      actor: {
-        kind: "event",
-        eventType,
-        eventId: call.callId,
-      },
-      observedByShip: false,
-      now: completedAtMs,
-    });
-    if (updated.changed) {
-      const durationMs = Math.max(0, completedAtMs - call.createdAt);
-      emitTelemetry(this.bindings, {
-        installationId: this.installationId,
-        component: "gateway",
-        event: {
-          stream: "operational",
-          name: "delegation.finished",
-          properties: { outcome, durationMs },
-        },
-      });
-      if (outcome === "completed") {
-        emitTelemetry(this.bindings, {
-          installationId: this.installationId,
-          component: "gateway",
-          event: {
-            stream: "product",
-            name: "delegation.completed",
-            properties: { durationMs },
-          },
-        });
-      }
-    }
-    this.ctx.waitUntil(this.reconcileResponsibilityWake(call.ownerUid).catch((error) => {
-      console.warn("[Kernel] Failed to schedule delegated responsibility return:", error);
-    }));
-  }
-
-  private async scheduleScheduleWake(scheduleId: string, dueAtMs: number): Promise<string> {
-    const wakeAt = new Date(Math.ceil(Math.max(Date.now() + 1_000, dueAtMs) / 1_000) * 1_000);
-    const sched = await this.schedule(
-      wakeAt,
-      "onScheduleDue",
-      scheduleId,
-    );
-    return sched.id;
-  }
-
-  private async recoverResponsibilityWakes(): Promise<void> {
-    for (const ownerUid of this.responsibilities.ownersWithLedgers()) {
-      await this.reconcileResponsibilityWake(ownerUid);
-    }
-  }
-
-  private async reconcileResponsibilityWake(ownerUid: number): Promise<void> {
-    const now = Date.now();
-    const state = this.responsibilities.wakeState(ownerUid);
-    const nextWakeAt = this.responsibilities.nextWakeAt(ownerUid, now);
-    if (nextWakeAt === null) {
-      this.responsibilities.setWakeTask(
-        ownerUid,
-        state.generation,
-        null,
-        null,
-        now,
-      );
-      if (state.taskId) await this.cancelSchedule(state.taskId);
-      return;
-    }
-    await this.scheduleResponsibilityWakeAt(
-      ownerUid,
-      state.generation,
-      nextWakeAt,
-      state.taskId,
-    );
-  }
-
-  private async scheduleResponsibilityWakeAt(
-    ownerUid: number,
-    generation: number,
-    wakeAtMs: number,
-    previousTaskId: string | null,
-  ): Promise<void> {
-    const wakeAt = new Date(
-      Math.ceil(Math.max(Date.now() + 1_000, wakeAtMs) / 1_000) * 1_000,
-    );
-    const task = await this.schedule(
-      wakeAt,
-      "onResponsibilityWake",
-      { ownerUid, generation },
-    );
-    const installed = this.responsibilities.setWakeTask(
-      ownerUid,
-      generation,
-      task.id,
-      wakeAt.getTime(),
-      Date.now(),
-    );
-    if (!installed) {
-      await this.cancelSchedule(task.id);
-      return;
-    }
-    if (previousTaskId && previousTaskId !== task.id) {
-      await this.cancelSchedule(previousTaskId);
-    }
-  }
-
-  private async scheduleManagedOutboundEnqueue(
+                                                      async scheduleManagedOutboundEnqueue(
     outboundId: string,
     dueAtMs: number,
   ): Promise<void> {
@@ -3641,943 +1478,36 @@ export class Kernel extends DurableObject<GatewayEnv> {
     );
   }
 
-  private async scheduleFederationDelivery(
-    deliveryId: string,
-    dueAtMs: number,
-    idempotent = false,
-  ): Promise<void> {
-    await this.schedule(
-      new Date(Math.max(Date.now() + 10, dueAtMs)),
-      "onFederationDelivery",
-      deliveryId,
-      { idempotent },
-    );
-  }
-
-  private async scheduleFederationInbox(
-    contactId: string,
-    contactGeneration: string,
-    deliveryId: string,
-    dueAtMs: number,
-    idempotent = false,
-  ): Promise<void> {
-    await this.schedule(
-      new Date(Math.max(Date.now() + 10, dueAtMs)),
-      "onFederationInbox",
-      { contactId, contactGeneration, deliveryId },
-      { idempotent },
-    );
-  }
-
-  private async coordinateFederationInbound(
-    key: string,
-    operation: () => Promise<FederationDeliveryReceipt>,
-  ): Promise<FederationDeliveryReceipt> {
-    const pending = this.pendingFederationInbound.get(key);
-    if (pending) return await pending;
-    const started = operation();
-    this.pendingFederationInbound.set(key, started);
-    try {
-      return await started;
-    } finally {
-      if (this.pendingFederationInbound.get(key) === started) {
-        this.pendingFederationInbound.delete(key);
-      }
-    }
-  }
-
-  private async coordinateFederationContact<Value>(
-    contactId: string,
-    operation: () => Value | Promise<Value>,
-  ): Promise<Value> {
-    const preceding = this.pendingFederationContacts.get(contactId) ?? Promise.resolve();
-    let release!: () => void;
-    const current = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const tail = preceding.catch(() => {}).then(() => current);
-    this.pendingFederationContacts.set(contactId, tail);
-    await preceding.catch(() => {});
-    try {
-      return await operation();
-    } finally {
-      release();
-      if (this.pendingFederationContacts.get(contactId) === tail) {
-        this.pendingFederationContacts.delete(contactId);
-      }
-    }
-  }
-
-  private async handleReq(
-    connection: KernelConnection<ConnectionState>,
-    wireFrame: WireRequestFrame,
-  ): Promise<void> {
-    let frame: RequestFrame;
-    try {
-      frame = this.decodeWebSocketRequestFrame(connection, wireFrame);
-    } catch (error) {
-      this.sendError(
-        connection,
-        wireFrame.id,
-        400,
-        error instanceof Error ? error.message : "Invalid frame body",
-      );
-      return;
-    }
-
-    try {
-      const state = connection.state;
-
-      if (
-        frame.call !== "sys.setup"
-        && frame.call !== "sys.setup.assist"
-      ) {
-        const gate = await this.managedWorkGate();
-        if (!gate.allowed) {
-          this.sendError(connection, frame.id, gate.code, gate.message);
-          return;
-        }
-      }
-
-      if (frame.call === "sys.connect") {
-        if (state && state.step !== "pending") {
-          this.sendError(
-            connection,
-            frame.id,
-            409,
-            state.step === "superseded" ? "Connection replaced" : "Already connected",
-          );
-          return;
-        }
-        await this.handleSysConnect(connection, frame);
-        return;
-      }
-
-      if (frame.call === "sys.setup.assist") {
-        await this.handleSysSetupAssist(connection, frame);
-        return;
-      }
-
-      if (frame.call === "sys.setup") {
-        await this.handleSysSetup(connection, frame);
-        return;
-      }
-
-      if (!state || state.step !== "connected" || !state.peer) {
-        if (this.auth.isSetupMode()) {
-          if (this.managedOnboardingService()) {
-            this.sendError(
-              connection,
-              frame.id,
-              503,
-              "Managed installation provisioning is incomplete",
-            );
-            return;
-          }
-          this.sendError(
-            connection,
-            frame.id,
-            SETUP_REQUIRED_ERROR_CODE,
-            "Setup required",
-            setupRequiredDetails(),
-          );
-          return;
-        }
-        this.sendError(connection, frame.id, 403, "Must call sys.connect first");
-        return;
-      }
-
-      if (isInternalOnlySyscall(frame.call)) {
-        this.sendError(connection, frame.id, 403, `Permission denied: ${frame.call}`);
-        return;
-      }
-
-      const peer = connectedPeerContext({
-        installationId: this.installationId,
-        peer: state.peer,
-        credential: state.credentialMethod ?? "token",
-      });
-      if (!peerAllowsCall(peer, frame.call)) {
-        this.sendError(connection, frame.id, 403, `Permission denied: ${frame.call}`);
-        return;
-      }
-
-      if (frame.call === "proc.observe" || frame.call === "proc.unobserve") {
-        const pid = frame.args.pid.trim();
-        const process = pid ? this.procs.get(pid) : null;
-        if (!process || process.ownerUid !== state.peer.principal.account.uid) {
-          this.sendError(connection, frame.id, 404, `Process not found: ${pid || "(missing)"}`);
-          return;
-        }
-        const observed = new Set(state.observedProcessIds ?? []);
-        if (frame.call === "proc.observe") observed.add(pid);
-        else observed.delete(pid);
-        connection.setState({ ...state, observedProcessIds: [...observed] });
-        this.sendOk(connection, frame.id, {
-          ok: true,
-          pid,
-          observing: frame.call === "proc.observe",
-        });
-        return;
-      }
-
-      const response = await this.dispatchPeerRequest(
-        frame,
-        { type: "connection", id: connection.id },
-        this.buildContext(connection),
-        { awaitRouted: false },
-      );
-      if (response) this.sendWebSocketFrame(connection, response);
-      // Routed responses arrive asynchronously through handleRes.
-    } finally {
-      await cancelUnlockedBody(frame.body, "WebSocket request completed");
-    }
-  }
-
-  private buildServiceBindingIdentity(profile: ServicePeerProfile): ConnectionIdentity | null {
+            buildServiceBindingIdentity(): ProcessIdentity | null {
     const root = this.auth.getPasswdByUid(0);
     if (!root) {
       return null;
     }
 
     return {
-      role: "service",
-      process: {
-        uid: root.uid,
-        gid: root.gid,
-        gids: this.auth.resolveGids(root.username, root.gid),
-        username: root.username,
-        home: root.home,
-        cwd: root.home,
-      },
-      capabilities: this.caps.resolve([102]),
-      channel: profile.id,
+      uid: root.uid,
+      gid: root.gid,
+      gids: this.auth.resolveGids(root.username, root.gid),
+      username: root.username,
+      home: root.home,
+      cwd: root.home,
     };
   }
 
-  private applyPostDispatchEffects(frame: RequestFrame, response: ResponseFrame): void {
+  applyPostDispatchEffects(frame: RequestFrame, response: ResponseFrame): void {
     if (!response.ok) return;
 
-    if (frame.call === "sys.device.delete") {
+    if (frame.call === "sys.target.delete") {
       // SAFETY: dispatch preserves the syscall's request/result correlation.
-      const data = response.data as SysDeviceDeleteResult | undefined;
+      const data = response.data as SysTargetDeleteResult | undefined;
       if (data?.deleted) {
-        this.disconnectDeviceConnections(data.deviceId, "Machine forgotten");
+        this.connectionRuntime.disconnectTargetConnections(data.targetId, "Machine forgotten");
       }
     }
 
   }
 
-  private async dispatchSignalWatches(
-    uid: number,
-    processId: string,
-    frame: SignalFrame,
-  ): Promise<void> {
-    const watches = this.signalWatches.match(uid, frame.signal, processId);
-    for (const watch of watches) {
-      try {
-        await this.invokeProcessSignalWatch(watch, processId, frame);
-        if (watch.once) {
-          this.signalWatches.deleteHandled(watch.watchId);
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.signalWatches.markFailed(watch.watchId, message);
-        console.warn(`[Kernel] signal watch ${watch.watchId} failed: ${message}`);
-      }
-    }
-  }
-
-  private async invokeProcessSignalWatch(
-    watch: SignalWatchRecord,
-    processId: string,
-    frame: SignalFrame,
-  ): Promise<void> {
-    if (!watch.targetProcessId) {
-      throw new Error(`Process signal watch ${watch.watchId} is missing target process`);
-    }
-
-    const watchDelivery: SignalWatchDelivery = {
-      id: watch.watchId,
-      createdAt: watch.createdAt,
-    };
-    if (watch.key) watchDelivery.key = watch.key;
-    if (watch.state !== undefined) watchDelivery.state = watch.state;
-
-    await sendFrameToProcess(this.installationId, watch.targetProcessId, {
-      type: "sig",
-      signal: frame.signal,
-      payload: {
-        watched: true,
-        sourcePid: processId,
-        watch: watchDelivery,
-        payload: frame.payload,
-      },
-    });
-  }
-
-  private async handleSysConnect(
-    connection: KernelConnection<ConnectionState>,
-    frame: RequestFrame<"sys.connect">,
-  ): Promise<void> {
-    const ctx = this.buildContext(connection);
-
-    const outcome = await handleConnect(frame.args, ctx);
-
-    if (!outcome.ok) {
-      this.sendError(connection, frame.id, outcome.code, outcome.message, outcome.details);
-      return;
-    }
-
-    if (outcome.newMachine) {
-      await recordMachineAddedResponsibility(outcome.newMachine, ctx);
-      emitTelemetry(this.bindings, {
-        installationId: this.installationId,
-        component: "gateway",
-        event: {
-          stream: "product",
-          name: "target.connected",
-          properties: {
-            targetKind: outcome.newMachine.platform.toLowerCase().includes("browser")
-              ? "browser"
-              : "machine",
-          },
-        },
-      });
-    }
-
-    const clientId = frame.args.peer.id.trim();
-    const clientPlatform = frame.args.peer.platform.trim();
-    const newState = {
-      step: "connected",
-      peer: outcome.peer,
-      clientId: clientId || undefined,
-      clientPlatform: clientPlatform || undefined,
-      credentialMethod: frame.args.auth?.token ? "token" : "password",
-    } satisfies ConnectionState & { step: "connected" };
-
-    if (
-      outcome.peer.principal.kind === "human"
-      && outcome.peer.principal.account.uid >= 1000
-      && !ctx.auth.isPersonalAgentUid(outcome.peer.principal.account.uid)
-    ) {
-      const ownerUid = outcome.peer.principal.account.uid;
-      const pid = await ensurePersonalController(ownerUid, ctx);
-      const conversation = ctx.conversations.ensureShip(ownerUid, pid);
-      await getConversationById(this.installationId, conversation.id).initialize({
-        ownerUid,
-        kind: "ship",
-      });
-    }
-
-    this.activateConnection(connection, newState);
-
-    if (peerProvidesOperations(outcome.peer)) {
-      this.broadcastDeviceStatus(outcome.peer.id, "connected");
-    }
-
-    if (outcome.peer.principal.kind === "human") {
-      this.reconcileOwnedIdentities(outcome.peer.principal.account.uid);
-    }
-
-    this.sendOk(connection, frame.id, outcome.result);
-  }
-
-  private activateConnection(
-    connection: KernelConnection<ConnectionState>,
-    state: ConnectionState & { step: "connected"; peer: ConnectedPeer },
-  ): void {
-    connection.setState(state);
-    this.connections.set(connection.id, connection);
-
-    if (!state.clientId) {
-      return;
-    }
-    for (const [connectionId, existing] of this.connections) {
-      const existingState = existing.state;
-      if (
-        existing !== connection &&
-        existingState?.step === "connected" &&
-        existingState.peer?.principal.account.uid === state.peer.principal.account.uid &&
-        existingState.peer.principal.kind === state.peer.principal.kind &&
-        existingState.clientId === state.clientId
-      ) {
-        existing.setState({ ...existingState, step: "superseded" });
-        this.connections.delete(connectionId);
-        existing.close(1000, "Replaced by newer connection");
-      }
-    }
-  }
-
-  private async handleSysSetup(
-    connection: KernelConnection<ConnectionState>,
-    frame: RequestFrame<"sys.setup">,
-  ): Promise<void> {
-    const state = connection.state;
-    if (state && state.step !== "pending") {
-      this.sendError(
-        connection,
-        frame.id,
-        409,
-        state.step === "superseded" ? "Connection replaced" : "Already connected",
-      );
-      return;
-    }
-
-    const ctx = this.buildContext(connection);
-    await ensureKernelBootstrapped(ctx);
-
-    if (this.managedOnboardingService()) {
-      await this.handleManagedSysSetup(connection, frame, ctx);
-      return;
-    }
-
-    if (!this.auth.isSetupMode()) {
-      this.sendError(connection, frame.id, 409, "System already initialized");
-      return;
-    }
-
-    try {
-      const data = await handleKernelSetup(frame.args, ctx);
-      this.sendOk(connection, frame.id, data);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.sendError(connection, frame.id, 400, message);
-    }
-  }
-
-  private async handleSysSetupAssist(
-    connection: KernelConnection<ConnectionState>,
-    frame: RequestFrame<"sys.setup.assist">,
-  ): Promise<void> {
-    const state = connection.state;
-    if (state && state.step !== "pending") {
-      this.sendError(
-        connection,
-        frame.id,
-        409,
-        state.step === "superseded" ? "Connection replaced" : "Already connected",
-      );
-      return;
-    }
-
-    const ctx = this.buildContext(connection);
-    await ensureKernelBootstrapped(ctx);
-
-    let args = frame.args;
-    if (this.managedOnboardingService()) {
-      let authorization: InstallationOnboardingAuthorization;
-      try {
-        authorization = await this.authorizeManagedInstallationOnboarding(
-          frame.args.onboardingToken,
-        );
-      } catch {
-        this.sendError(connection, frame.id, 503, "Installation setup is unavailable");
-        return;
-      }
-      if (!authorization.ok) {
-        this.sendError(
-          connection,
-          frame.id,
-          401,
-          "Installation setup link is invalid or expired",
-        );
-        return;
-      }
-      const { onboardingToken: _onboardingToken, ...assistArgs } = frame.args;
-      args = assistArgs;
-    }
-
-    if (!this.auth.isSetupMode()) {
-      this.sendError(connection, frame.id, 409, "System already initialized");
-      return;
-    }
-
-    try {
-      const data = await handleSysSetupAssist(args, ctx);
-      this.sendOk(connection, frame.id, data);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.sendError(connection, frame.id, 400, message);
-    }
-  }
-
-  private async handleManagedSysSetup(
-    connection: KernelConnection<ConnectionState>,
-    frame: RequestFrame<"sys.setup">,
-    ctx: KernelContext,
-  ): Promise<void> {
-    if (this.managedOnboardingInProgress) {
-      this.sendError(connection, frame.id, 409, "Installation setup is already in progress");
-      return;
-    }
-    this.managedOnboardingInProgress = true;
-
-    try {
-      const { onboardingToken: _onboardingToken, ...setupArgs } = frame.args;
-      let authorization: InstallationOnboardingAuthorization;
-      try {
-        authorization = await this.authorizeManagedInstallationOnboarding(
-          frame.args.onboardingToken,
-        );
-      } catch {
-        this.sendError(connection, frame.id, 503, "Installation setup is unavailable");
-        return;
-      }
-      if (!authorization.ok) {
-        let recovered: SysSetupResult | null;
-        try {
-          recovered = await this.recoverActivatedManagedSetup(setupArgs);
-        } catch {
-          this.sendError(connection, frame.id, 503, "Installation setup is unavailable");
-          return;
-        }
-        if (recovered) {
-          this.sendOk(connection, frame.id, recovered);
-          return;
-        }
-        this.sendError(
-          connection,
-          frame.id,
-          401,
-          "Installation setup link is invalid or expired",
-        );
-        return;
-      }
-
-      let data: SysSetupResult;
-      try {
-        if (this.auth.isSetupMode()) {
-          data = await handleKernelSetup(setupArgs, ctx);
-        } else {
-          const pending = this.pendingManagedOnboarding;
-          if (
-            pending
-            && (
-              pending.claimId !== authorization.claimId
-              || pending.installationId !== authorization.installation.installationId
-            )
-          ) {
-            throw new Error("System already initialized");
-          }
-          data = await recoverCompletedSysSetup(setupArgs, ctx);
-        }
-        this.pendingManagedOnboarding = {
-          claimId: authorization.claimId,
-          installationId: authorization.installation.installationId,
-        };
-        this.ctx.storage.kv.put(
-          MANAGED_ONBOARDING_COMPLETION_KEY,
-          this.pendingManagedOnboarding,
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.sendError(connection, frame.id, 400, message);
-        return;
-      }
-
-      try {
-        const directory = this.managedOnboardingService();
-        if (!directory) throw new Error("Managed onboarding is unavailable");
-        const completion = await directory.completeInstallationOnboarding({
-          claimId: authorization.claimId,
-          installationId: authorization.installation.installationId,
-        });
-        if (
-          completion.state !== "complete"
-          || completion.installationId !== authorization.installation.installationId
-        ) {
-          throw new Error("Installation onboarding completion mismatch");
-        }
-        this.pendingManagedOnboarding = undefined;
-        this.ctx.storage.kv.delete(MANAGED_ONBOARDING_COMPLETION_KEY);
-        this.sendOk(connection, frame.id, data);
-      } catch {
-        this.sendError(
-          connection,
-          frame.id,
-          503,
-          "Installation setup could not be activated",
-        );
-      }
-    } finally {
-      this.managedOnboardingInProgress = false;
-    }
-  }
-
-  private async authorizeManagedInstallationOnboarding(
-    token: string | undefined,
-  ): Promise<InstallationOnboardingAuthorization> {
-    if (!token) return { ok: false };
-    const directory = this.managedOnboardingService();
-    const installation = this.installationIdentity;
-    if (!directory || !installation) return { ok: false };
-
-    const authorization = await directory.authorizeInstallationOnboarding({
-      installationId: installation.installationId,
-      token,
-    });
-    if (
-      !authorization.ok
-      || authorization.installation.installationId !== installation.installationId
-      || authorization.installation.handle !== installation.handle
-      || authorization.installation.canonicalOrigin !== installation.canonicalOrigin
-    ) {
-      return { ok: false };
-    }
-    return authorization;
-  }
-
-  private async recoverActivatedManagedSetup(
-    args: Parameters<typeof recoverCompletedSysSetup>[0],
-  ): Promise<SysSetupResult | null> {
-    const pending = this.pendingManagedOnboarding;
-    const installation = this.installationIdentity;
-    const directory = this.managedOnboardingService();
-    if (!pending || !installation || !directory || this.auth.isSetupMode()) {
-      return null;
-    }
-
-    const resolved = await directory.resolveHostname(
-      new URL(installation.canonicalOrigin).hostname,
-    );
-    if (
-      !resolved.found
-      || resolved.state !== "active"
-      || resolved.installationId !== installation.installationId
-      || resolved.handle !== installation.handle
-      || resolved.canonicalOrigin !== installation.canonicalOrigin
-    ) {
-      return null;
-    }
-
-    let data: SysSetupResult;
-    try {
-      data = await recoverCompletedSysSetup(args, this.buildKernelContext({}));
-    } catch {
-      return null;
-    }
-    this.pendingManagedOnboarding = undefined;
-    this.ctx.storage.kv.delete(MANAGED_ONBOARDING_COMPLETION_KEY);
-    return data;
-  }
-
-  private managedOnboardingService(): GatewayEnv["INSTALLATION_DIRECTORY"] | null {
-    return this.env.INSTALLATION_DIRECTORY ?? null;
-  }
-
-  private async managedWorkGate() {
-    return await managedInstallationWorkGate(
-      this.env,
-      this.installationId,
-    );
-  }
-
-  private handleRes(
-    connection: KernelConnection<ConnectionState>,
-    wireEnvelope: WireResponseEnvelope,
-  ): void {
-    const route = this.routes.get(wireEnvelope.id);
-    if (!route) {
-      if (wireEnvelope.ok) {
-        const descriptor = wireEnvelope.body;
-        if (descriptor) {
-          try {
-            void this.receiveFrameBody(connection, descriptor).stream.cancel("Request is no longer pending");
-          } catch {
-            // The response is already stale; malformed descriptors have no consumer to fail.
-          }
-        }
-      }
-      return;
-    }
-
-    if (
-      !this.isConnectionForDevice(connection, route.deviceId) ||
-      (route.driverConnectionId !== null && route.driverConnectionId !== connection.id)
-    ) {
-      return;
-    }
-
-    let frame: ResponseFrame;
-    try {
-      const wireFrame = decodeWireResponse(route.call, wireEnvelope);
-      frame = this.decodeWebSocketResponseFrame(connection, wireFrame);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Invalid frame body";
-      this.cancelRoute(wireEnvelope.id);
-      this.deliverToOrigin(
-        route.origin,
-        errFrame(
-          wireEnvelope.id,
-          502,
-          `Invalid response from device ${route.deviceId}: ${message}`,
-        ),
-      );
-      this.sendError(
-        connection,
-        wireEnvelope.id,
-        400,
-        message,
-      );
-      return;
-    }
-
-    this.routes.remove(frame.id);
-    this.cancelRoutedBody(frame.id, "Device response received");
-
-    if (route.scheduleId) {
-      this.cancelSchedule(route.scheduleId).catch(() => {});
-    }
-
-    if (route.call === "shell.exec") {
-      // SAFETY: decodeWireResponse validated frame against route.call above.
-      this.recordShellSessionFromResponse(
-        route.deviceId,
-        frame as ResponseFrame<"shell.exec">,
-      );
-    }
-
-    this.deliverToOrigin(route.origin, frame);
-  }
-
-  private handleBinaryMessage(
-    connection: KernelConnection<ConnectionState>,
-    message: ArrayBuffer,
-  ): void {
-    this.frameBodyChannel(connection).handleFrame(message);
-  }
-
-  private handleSig(
-    connection: KernelConnection<ConnectionState>,
-    frame: SignalFrame,
-  ): void {
-    const state = connection.state;
-    const targetId = state?.peer && peerProvidesOperations(state.peer)
-      ? state.peer.id
-      : null;
-    if (!targetId || !this.isConnectionForDevice(connection, targetId)) {
-      return;
-    }
-
-    if (frame.signal === "peer.ping") {
-      const pong: SignalFrame = {
-        type: "sig",
-        signal: "peer.pong",
-      };
-      if (frame.payload !== undefined) pong.payload = frame.payload;
-      if (frame.seq !== undefined) pong.seq = frame.seq;
-      this.sendWebSocketFrame(connection, pong);
-      return;
-    }
-
-    if (frame.signal !== "exec.status") {
-      return;
-    }
-
-    const parsed = execStatusPayloadSchema.safeParse(frame.payload);
-    if (!parsed.success) {
-      return;
-    }
-    const payload = parsed.data;
-
-    const status = shellStatusFromEvent(payload.event);
-    this.shellSessions.rememberDeviceSession(payload.sessionId, targetId, status, {
-      exitCode: payload.exitCode ?? null,
-      error: payload.signal ?? null,
-    });
-  }
-
-  private recordShellSessionFromResponse(
-    deviceId: string,
-    frame: ResponseFrame<"shell.exec">,
-  ): void {
-    if (!frame.ok) {
-      return;
-    }
-
-    const data: ShellExecResult | undefined = frame.data;
-    if (!data) return;
-    const sessionId = data.sessionId?.trim() ?? "";
-    if (!sessionId) {
-      return;
-    }
-
-    const status = shellStatusFromResult(data.status);
-    this.shellSessions.rememberDeviceSession(sessionId, deviceId, status, {
-      exitCode: data.status === "running" ? null : data.exitCode ?? null,
-      error: data.status === "failed" ? data.error : null,
-    });
-  }
-
-  /**
-   * Schedule callback — fired when a routing table entry expires.
-   */
-  async onRouteExpired(routeId: string): Promise<void> {
-    const expired = this.routes.remove(routeId);
-    if (!expired) return;
-    this.sendDeviceRequestCancel(
-      expired.deviceId,
-      expired.driverConnectionId,
-      routeId,
-      "Request timed out",
-    );
-    this.cancelRoutedBody(routeId, "Route expired");
-
-    const timeoutFrame: ResponseFrame = {
-      type: "res",
-      id: routeId,
-      ok: false,
-      error: { code: 504, message: `Syscall ${expired.call} timed out (device: ${expired.deviceId})` },
-    };
-
-    this.deliverToOrigin(expired.origin, timeoutFrame);
-  }
-
-  async onIpcCallTimeout(
-    input: string | IpcCallTimeout,
-    task?: IpcCallTimeoutTask,
-  ): Promise<void> {
-    const timeout = ipcCallTimeoutPayloadSchema.parse(input);
-    const callId = timeout.callId;
-    const call = this.ipcCalls.get(callId);
-    if (
-      call
-      && call.status === "pending"
-      && (timeout.mode === "supervise" || timeout.terminateTargetOnTimeout === true)
-    ) {
-      await this.continueSupervisedIpcCall(timeout, call, task);
-      return;
-    }
-    const timedOut = this.ipcCalls.timeout(callId);
-    if (!timedOut) return;
-    const timedOutCall = this.ipcCalls.get(callId);
-    if (timedOutCall) this.returnDelegatedResponsibility(timedOutCall);
-    this.queueIpcCallDelivery(callId);
-  }
-
-  private async continueSupervisedIpcCall(
-    timeout: IpcCallTimeout,
-    call: IpcCallRecord,
-    task?: IpcCallTimeoutTask,
-  ): Promise<void> {
-    const derivedIntervalMs = call.deadlineAt - call.createdAt;
-    const intervalMs = Math.max(
-      1_000,
-      Math.trunc(timeout.intervalMs ?? derivedIntervalMs),
-    );
-    const gate = await this.managedWorkGate();
-    if (!gate.allowed) {
-      if (!task) {
-        throw new Error("Supervision lifecycle recheck requires its scheduled task identity");
-      }
-      await this.scheduleIpcCallTimeoutTask(
-        call.callId,
-        Date.now() + MANAGED_LIFECYCLE_RECHECK_MS,
-        {
-          mode: "supervise",
-          intervalMs,
-          checkInCount: timeout.checkInCount ?? 0,
-          lifecycleRecheckFor: task.id,
-        },
-      );
-      return;
-    }
-
-    const checkInCount = (timeout.checkInCount ?? 0) + 1;
-    const successor = await this.scheduleIpcCallTimeoutTask(
-      call.callId,
-      Date.now() + intervalMs,
-      {
-        mode: "supervise",
-        intervalMs,
-        checkInCount,
-      },
-    );
-    const nextCheckAt = successor.time * 1_000;
-    const checkedAt = nextCheckAt - intervalMs;
-    const renewed = this.ipcCalls.renewDeadline(call.callId, nextCheckAt);
-    if (!renewed) return;
-
-    this.recordDelegationCheckIn(renewed, checkedAt, nextCheckAt, checkInCount);
-    const payload: IpcDeliverySignalPayload = {
-      callId: renewed.callId,
-      sourcePid: renewed.sourcePid,
-      targetPid: renewed.targetPid,
-      runId: renewed.targetRunId,
-      deadlineAt: checkedAt,
-      nextCheckAt,
-      checkInCount,
-      createdAt: renewed.createdAt,
-      status: "pending",
-    };
-    if (renewed.sourceRunId) payload.sourceRunId = renewed.sourceRunId;
-    await sendFrameToProcess(this.installationId, renewed.sourcePid, {
-      type: "sig",
-      signal: "ipc.overdue",
-      payload,
-    });
-  }
-
-  private recordDelegationCheckIn(
-    call: IpcCallRecord,
-    checkedAt: number,
-    nextCheckAt: number,
-    checkInCount: number,
-  ): void {
-    if (!call.responsibilityId) return;
-    const current = this.responsibilities.get(call.ownerUid, call.responsibilityId);
-    if (
-      !current
-      || current.state === "resolved"
-      || current.state === "cancelled"
-      || current.assignee.kind !== "process"
-      || current.assignee.processId !== call.targetPid
-    ) {
-      return;
-    }
-
-    const eventType = "process.delegation.check_in";
-    const outcome = this.responsibilities.update({
-      ownerUid: call.ownerUid,
-      id: current.id,
-      expectedRevision: current.revision,
-      patch: {
-        details: {
-          ...current.details,
-          delegation: {
-            eventType,
-            callId: call.callId,
-            processId: call.targetPid,
-            runId: call.targetRunId,
-            status: "pending",
-            checkedAtMs: checkedAt,
-            nextCheckAtMs: nextCheckAt,
-            checkInCount,
-          },
-        },
-        nextCheckAtMs: nextCheckAt,
-        leaseExpiresAtMs: nextCheckAt,
-      },
-      actor: {
-        kind: "event",
-        eventType,
-        eventId: `${call.callId}:${checkInCount}`,
-      },
-      observedByShip: false,
-      now: checkedAt,
-    });
-    if (!outcome.changed) return;
-    this.ctx.waitUntil(this.reconcileResponsibilityWake(call.ownerUid).catch((error) => {
-      console.warn("[Kernel] Failed to schedule delegated process check-in:", error);
-    }));
-  }
-
-  async onIpcCallDelivery(callId: string): Promise<void> {
-    await this.deliverIpcCall(callId);
-  }
-
-  async onManagedOutboundEnqueue(outboundId: string): Promise<void> {
+                                          async onManagedOutboundEnqueue(outboundId: string): Promise<void> {
     await recoverManagedOutboundEnqueue(
       outboundId,
       this.buildKernelContext({}),
@@ -4585,1033 +1515,13 @@ export class Kernel extends DurableObject<GatewayEnv> {
     );
   }
 
-  async onFederationDelivery(deliveryId: string): Promise<void> {
-    const gate = await this.managedWorkGate();
-    if (!gate.allowed) {
-      await this.scheduleFederationDelivery(
-        deliveryId,
-        Date.now() + MANAGED_LIFECYCLE_RECHECK_MS,
-      );
-      return;
-    }
-    await processFederationDelivery(deliveryId, this.buildKernelContext({}));
-  }
-
-  async onFederationInbox(
-    payload: { contactId: string; contactGeneration: string; deliveryId: string },
-  ): Promise<void> {
-    const gate = await this.managedWorkGate();
-    if (!gate.allowed) {
-      await this.scheduleFederationInbox(
-        payload.contactId,
-        payload.contactGeneration,
-        payload.deliveryId,
-        Date.now() + MANAGED_LIFECYCLE_RECHECK_MS,
-      );
-      return;
-    }
-    try {
-      await recoverFederationInbox(
-        payload.contactId,
-        payload.contactGeneration,
-        payload.deliveryId,
-        this.buildKernelContext({}),
-      );
-    } catch (error) {
-      const inbox = this.federation.inbox(
-        payload.contactId,
-        payload.contactGeneration,
-        payload.deliveryId,
-      );
-      if (inbox?.state !== "received") return;
-      console.warn(
-        `[Kernel] Federation inbox ${payload.deliveryId} recovery failed:`,
-        error instanceof Error ? error.message : String(error),
-      );
-      await this.scheduleFederationInbox(
-        payload.contactId,
-        payload.contactGeneration,
-        payload.deliveryId,
-        Date.now() + FEDERATION_INBOX_RECOVERY_RETRY_MS,
-      );
-    }
-  }
-
-  async onResponsibilityWake(
-    payload: { ownerUid: number; generation: number },
-    task?: { id?: string },
-  ): Promise<void> {
-    const state = this.responsibilities.wakeState(payload.ownerUid);
-    if (state.generation !== payload.generation) {
-      await this.reconcileResponsibilityWake(payload.ownerUid);
-      return;
-    }
-    if (task?.id && state.taskId !== task.id) return;
-
-    const gate = await this.managedWorkGate();
-    if (!gate.allowed) {
-      await this.scheduleResponsibilityWakeAt(
-        payload.ownerUid,
-        payload.generation,
-        Date.now() + MANAGED_LIFECYCLE_RECHECK_MS,
-        state.taskId,
-      );
-      return;
-    }
-
-    const batch = this.responsibilities.createReadyBatch(payload.ownerUid, Date.now());
-    if (!batch) {
-      await this.reconcileResponsibilityWake(payload.ownerUid);
-      return;
-    }
-
-    try {
-      const processId = await ensurePersonalController(
-        payload.ownerUid,
-        this.buildKernelContext({ callerOwnerUid: payload.ownerUid }),
-      );
-      const response = await sendFrameToProcess(
-        this.installationId,
-        processId,
-        responsibilityRuntimeEventFrame(batch),
-      );
-      if (!response) throw new Error("Responsibility event produced no Process response");
-      if (!response.ok) throw new Error(response.error.message);
-      this.responsibilities.markBatchDelivered(batch.id);
-      await this.reconcileResponsibilityWake(payload.ownerUid);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.responsibilities.markBatchFailed(batch.id, message, Date.now());
-      const current = this.responsibilities.pendingBatch(payload.ownerUid);
-      const attempt = current?.attemptCount ?? batch.attemptCount + 1;
-      const retryAt = Date.now()
-        + Math.min(5 * 60_000, 1_000 * (2 ** Math.min(8, attempt)));
-      await this.scheduleResponsibilityWakeAt(
-        payload.ownerUid,
-        payload.generation,
-        retryAt,
-        state.taskId,
-      );
-    }
-  }
-
-  async onScheduleDue(scheduleId: string, wake?: { id?: string }): Promise<void> {
-    const record = this.schedules.getStored(scheduleId);
-    const wakeId = wake?.id ?? null;
-    if (wakeId && record?.wakeScheduleId !== wakeId) {
-      return;
-    }
-
-    const gate = await this.managedWorkGate();
-    if (!gate.allowed) {
-      if (record?.enabled && record.state.nextRunAtMs !== null) {
-        const nextWakeId = await this.scheduleScheduleWake(
-          record.id,
-          Date.now() + MANAGED_LIFECYCLE_RECHECK_MS,
-        );
-        this.schedules.setWakeScheduleId(record.id, nextWakeId);
-      }
-      return;
-    }
-
-    const result = await this.runSchedules({ id: scheduleId, mode: "due" });
-    if (result.ran !== 0) {
-      return;
-    }
-
-    const current = this.schedules.getStored(scheduleId);
-    if (current?.enabled && current.state.nextRunAtMs !== null && current.state.nextRunAtMs > Date.now()) {
-      const nextWakeId = await this.scheduleScheduleWake(current.id, current.state.nextRunAtMs);
-      this.schedules.setWakeScheduleId(current.id, nextWakeId);
-    }
-  }
-
-  private async runSchedules(
-    args: SchedulerRunArgs,
-    identity?: ConnectionIdentity,
-    callerOwnerUid = identity?.process.uid,
-  ): Promise<SchedulerRunResult> {
-    const mode = args.mode ?? "due";
-    if (mode === "force" && !args.id) {
-      throw new Error("sched.run force requires an id");
-    }
-
-    const now = Date.now();
-    const records = args.id
-      ? [this.schedules.get(args.id)].filter((record): record is ScheduleRecord => record !== null)
-      : this.schedules.listDue(now, callerOwnerUid !== undefined && callerOwnerUid !== 0 ? callerOwnerUid : undefined);
-
-    const gate = await this.managedWorkGate();
-    if (!gate.allowed) {
-      return {
-        ran: 0,
-        results: records.map((record) =>
-          skippedScheduleResult(record.id, gate.message)
-        ),
-      };
-    }
-
-    const results: ScheduleRunResult[] = [];
-    for (const record of records) {
-      if (identity) {
-        assertCanManageSchedule(identity, record, callerOwnerUid);
-      }
-      results.push(await this.runScheduleRecord(record, mode));
-    }
-
-    return {
-      ran: results.filter((result) => result.status !== "skipped").length,
-      results,
-    };
-  }
-
-  private async runScheduleRecord(
-    record: ScheduleRecord,
-    mode: "due" | "force",
-  ): Promise<ScheduleRunResult> {
-    const now = Date.now();
-    const scheduledAtMs = record.state.nextRunAtMs;
-
-    if (mode === "due") {
-      if (!record.enabled) {
-        return skippedScheduleResult(record.id, "schedule is disabled");
-      }
-      if (scheduledAtMs === null || scheduledAtMs > now) {
-        return skippedScheduleResult(record.id, "schedule is not due");
-      }
-    }
-
-    const startedAtMs = Date.now();
-    const running = this.schedules.markRunning(record.id, startedAtMs);
-    if (!running) {
-      return skippedScheduleResult(record.id, "schedule is already running");
-    }
-
-    let status: "ok" | "error" = "ok";
-    let error: string | undefined;
-    let result: ScheduleExecutionResult;
-    let retryableFailure = false;
-    const oneShot = running.expression.kind === "at" || running.expression.kind === "after";
-    const occurrenceKey = this.schedules.occurrenceKey(
-      running,
-      mode,
-      scheduledAtMs,
-      startedAtMs,
-    );
-    const oneShotAttemptNumber = this.schedules.oneShotAttemptNumber(running, mode);
-
-    try {
-      result = await this.dispatchScheduleTarget(
-        record,
-        scheduledAtMs,
-        startedAtMs,
-        occurrenceKey,
-      );
-    } catch (err) {
-      status = "error";
-      error = err instanceof Error ? err.message : String(err);
-      retryableFailure = err instanceof ScheduleTargetDispatchError && err.retryable;
-      result = { error };
-    }
-
-    const finishedAtMs = Date.now();
-    const retryOneShot = mode === "due"
-      && oneShot
-      && status === "error"
-      && retryableFailure
-      && oneShotAttemptNumber !== null
-      && oneShotAttemptNumber < MAX_ONE_SHOT_SCHEDULE_DELIVERY_ATTEMPTS;
-    const next = mode === "force"
-      ? { enabled: record.enabled, nextRunAtMs: record.state.nextRunAtMs }
-      : retryOneShot
-        ? {
-            enabled: true,
-            nextRunAtMs: finishedAtMs + scheduleDeliveryRetryDelayMs(oneShotAttemptNumber),
-          }
-        : computeNextRunAfterFinish(
-            record.expression,
-            Math.max(finishedAtMs, scheduledAtMs ?? finishedAtMs),
-          );
-    const updated = this.schedules.finishRun({
-      scheduleId: record.id,
-      ownerUid: record.ownerUid,
-      scheduledAtMs: mode === "force" ? null : scheduledAtMs,
-      startedAtMs,
-      finishedAtMs,
-      status,
-      error,
-      result,
-      nextRunAtMs: next.nextRunAtMs,
-      enabled: next.enabled,
-      oneShotOccurrenceId: running.oneShotOccurrenceId,
-      countOneShotAttempt: oneShotAttemptNumber !== null,
-    });
-
-    if (updated?.enabled && updated.state.nextRunAtMs !== null && mode !== "force") {
-      const wakeId = await this.scheduleScheduleWake(updated.id, updated.state.nextRunAtMs);
-      this.schedules.setWakeScheduleId(updated.id, wakeId);
-    } else if (updated && !updated.enabled) {
-      this.schedules.setWakeScheduleId(updated.id, null);
-    }
-
-    const runResult: ScheduleRunResult = {
-      scheduleId: record.id,
-      status,
-      summary: scheduleResultSummary(record, result),
-      durationMs: Math.max(0, finishedAtMs - startedAtMs),
-      nextRunAtMs: updated?.state.nextRunAtMs ?? null,
-    };
-    if (error) runResult.error = error;
-    return runResult;
-  }
-
-  private async dispatchScheduleTarget(
-    record: ScheduleRecord,
-    scheduledAtMs: number | null,
-    firedAtMs: number,
-    occurrenceKey: string,
-  ): Promise<ScheduleExecutionResult> {
-    const target = record.target;
-    const ctx = {
-      ...this.buildScheduleContext(record),
-      requestId: target.kind === "command.exec"
-        ? `schedule:${record.id}:${occurrenceKey}`
-        : occurrenceKey,
-    };
-    if (target.kind === "command.exec") {
-      if (!hasCapability(ctx.identity?.capabilities ?? [], "shell.exec")) {
-        throw new Error("Permission denied: shell.exec");
-      }
-      const deps = this.buildDispatchDeps();
-      const result = await handleShellExec(
-        {
-          input: target.command,
-          cwd: target.cwd,
-          timeout: target.timeoutMs,
-        },
-        ctx,
-        {
-          fsTransport: deps,
-          netFetchTransport: deps,
-          request: (frame, signal) => deps.request(frame, ctx, signal),
-        },
-      );
-      if (result.status !== "completed") {
-        throw new Error(result.status === "failed" ? result.error : `Command ${result.status}`);
-      }
-      return {
-        kind: "command.exec",
-        command: target.command,
-        exitCode: result.exitCode,
-        stdout: result.stdout ?? "",
-        stderr: result.stderr ?? "",
-        truncated: result.truncated === true,
-      };
-    }
-
-    if (target.kind === "process.spawn") {
-      if (!hasCapability(ctx.identity?.capabilities ?? [], "proc.spawn")) {
-        throw new Error("Permission denied: proc.spawn");
-      }
-      const runAs = this.resolveScheduledSpawnRunAs(record, target.runAs);
-      const spawnArgs: Parameters<typeof handleProcSpawn>[0] = {
-        interactive: false,
-        label: target.label ?? record.name,
-        prompt: target.prompt,
-        parentPid: target.parentPid,
-        cwd: target.cwd,
-      };
-      if (runAs) spawnArgs.runAs = runAs;
-      const result = await handleProcSpawn(spawnArgs, ctx);
-      if (!result.ok) {
-        throw new Error(result.error);
-      }
-      return {
-        kind: "process.spawn",
-        pid: result.pid,
-      };
-    }
-
-    if (target.kind === "adapter.send") {
-      if (!hasCapability(ctx.identity?.capabilities ?? [], "adapter.send")) {
-        throw new Error("Permission denied: adapter.send");
-      }
-      const delivery = await deliverAdapterDestination(
-        target.destination,
-        record.ownerUid,
-        {
-          deliveryId: await stableOpaqueId("adapter-delivery", [
-            "schedule",
-            record.id,
-            occurrenceKey,
-          ]),
-          text: target.text,
-        },
-        ctx,
-      );
-      if (!delivery.ok) {
-        throw new ScheduleTargetDispatchError(delivery.error, delivery.retryable === true);
-      }
-      return {
-        kind: "adapter.send",
-        adapter: delivery.adapter,
-        accountId: delivery.accountId,
-        surfaceId: delivery.surfaceId,
-        messageId: delivery.messageId,
-        deliveryState: delivery.deliveryState,
-      };
-    }
-
-    if (target.kind === "responsibility") {
-      if (!hasCapability(ctx.identity?.capabilities ?? [], "r12y.create")) {
-        throw new Error("Permission denied: r12y.create");
-      }
-      const responsibilityId = this.createScheduleResponsibility(
-        record,
-        target,
-        scheduledAtMs,
-        firedAtMs,
-        occurrenceKey,
-      );
-      return {
-        kind: "responsibility",
-        responsibilityId,
-      };
-    }
-
-    if (target.kind === "process.event") {
-      if (!hasCapability(ctx.identity?.capabilities ?? [], "proc.send")) {
-        throw new Error("Permission denied: proc.send");
-      }
-      if (
-        target.replyTo
-        && !hasCapability(ctx.identity?.capabilities ?? [], "adapter.send")
-      ) {
-        throw new Error("Permission denied: adapter.send");
-      }
-      const proc = this.procs.get(target.pid);
-      if (!proc) {
-        throw new Error(`Process not found: ${target.pid}`);
-      }
-      if (proc.ownerUid !== record.ownerUid && record.ownerUid !== 0) {
-        throw new Error(`Permission denied: schedule ${record.id} cannot access process ${target.pid}`);
-      }
-      if (proc.isPersonalController) {
-        if (!hasCapability(ctx.identity?.capabilities ?? [], "r12y.create")) {
-          throw new Error("Permission denied: r12y.create");
-        }
-        return {
-          kind: "responsibility",
-          responsibilityId: this.createScheduleResponsibility(
-            record,
-            target,
-            scheduledAtMs,
-            firedAtMs,
-            occurrenceKey,
-          ),
-        };
-      }
-      if (target.replyTo) {
-        assertAdapterMessageDestinationAccess(target.replyTo, record.ownerUid, ctx);
-      }
-
-      const runId = await stableOpaqueId("schedule-run", [record.id, occurrenceKey]);
-      const delivery = target.replyTo;
-      if (delivery) {
-        const link = ctx.adapters.identityLinks.get(
-          delivery.adapter,
-          delivery.accountId,
-          delivery.actorId,
-        );
-        const routeGeneration = link
-          ? identityLinkRouteGeneration(link, delivery.surface)
-          : undefined;
-        this.runRoutes.setAdapterRoute({
-          runId,
-          processId: target.pid,
-          uid: record.ownerUid,
-          destination: delivery,
-          ...(routeGeneration === undefined ? undefined : { routeGeneration }),
-        });
-      }
-      const request: ProcessScheduleDeliverRequestFrame = {
-        type: "req",
-        id: crypto.randomUUID(),
-        call: "proc.schedule.deliver",
-        args: {
-          runId,
-          scheduleId: record.id,
-          scheduleName: record.name,
-          message: target.message,
-          data: target.data,
-          replyTo: target.replyTo,
-          scheduledAtMs,
-          firedAtMs,
-        },
-      };
-      let admittedRunId = runId;
-      let response: ProcessScheduleDeliverResponseFrame | null;
-      try {
-        response = await sendFrameToProcess(this.installationId, target.pid, request);
-      } catch (error) {
-        // As with adapter ingress, a thrown DO transport may have lost the
-        // response after admission. Preserve a preallocated reply route so an
-        // actually admitted run can still complete its delivery.
-        throw new ScheduleTargetDispatchError(
-          error instanceof Error ? error.message : String(error),
-          true,
-        );
-      }
-      if (!response || response.type !== "res" || response.id !== request.id) {
-        throw new ScheduleTargetDispatchError(
-          "proc.schedule.deliver did not return a response",
-          true,
-        );
-      }
-      if (!response.ok) {
-        throw new ScheduleTargetDispatchError(response.error.message, true);
-      }
-      admittedRunId = response.data.runId;
-      if (delivery && response.data.runId !== runId) {
-        this.runRoutes.delete(runId);
-        throw new ScheduleTargetDispatchError(
-          "proc.schedule.deliver admitted an unexpected reply run",
-          false,
-        );
-      }
-      const result: ScheduleExecutionResult = {
-        kind: "process.event",
-        pid: target.pid,
-        runId: admittedRunId,
-      };
-      return result;
-    }
-
-    return { kind: "unknown" };
-  }
-
-  private createScheduleResponsibility(
-    record: ScheduleRecord,
-    target: Extract<ScheduleRecord["target"], { kind: "responsibility" | "process.event" }>,
-    scheduledAtMs: number | null,
-    firedAtMs: number,
-    occurrenceKey: string,
-  ): string {
-    const details: JsonObject = {
-      eventType: "schedule.due",
-      scheduleId: record.id,
-      occurrenceKey,
-      scheduledAtMs,
-      firedAtMs,
-      message: target.message,
-    };
-    if (target.data !== undefined) details.data = target.data;
-    const outcome = this.responsibilities.create({
-      ownerUid: record.ownerUid,
-      title: `Run scheduled responsibility: ${record.name}`,
-      details,
-      source: { kind: "schedule", scheduleId: record.id },
-      assignee: { kind: "ship" },
-      state: "open",
-      priority: target.kind === "responsibility"
-        ? target.priority ?? "normal"
-        : "normal",
-      dedupeKey: `schedule.due:${record.id}:${occurrenceKey}`,
-      actor: { kind: "system", component: "scheduler" },
-      observedByShip: false,
-      now: firedAtMs,
-    });
-    this.ctx.waitUntil(this.reconcileResponsibilityWake(record.ownerUid).catch((error) => {
-      console.warn("[Kernel] Failed to schedule due responsibility:", error);
-    }));
-    return outcome.record.id;
-  }
-
-  private buildScheduleContext(record: ScheduleRecord): KernelContext {
-    const process = this.resolveScheduleIdentity(record);
-    const identity: ConnectionIdentity = {
-      role: "user",
-      process,
-      capabilities: this.caps.resolve(process.gids),
-    };
-
-    return this.buildKernelContext({
-      identity,
-      callerOwnerUid: record.ownerUid,
-    });
-  }
-
-  private resolveScheduleIdentity(record: ScheduleRecord): ProcessIdentity {
-    const uid = record.runAs.uid;
-    const account = this.auth.getPasswdByUid(uid);
-    if (!account) {
-      throw new Error(`Cannot resolve schedule run-as uid ${uid}`);
-    }
-
-    return {
-      uid: account.uid,
-      gid: account.gid,
-      gids: this.auth.resolveGids(account.username, account.gid),
-      username: account.username,
-      home: account.home,
-      cwd: account.home,
-    };
-  }
-
-  private resolveScheduledSpawnRunAs(record: ScheduleRecord, targetRunAs?: string): string | undefined {
-    if (targetRunAs) {
-      return targetRunAs;
-    }
-    // A process-principal schedule records a run-as account and an origin pid.
-    // Execution must keep the account without depending on that pid still being
-    // alive as the spawn parent.
-    return record.runAs.kind === "process" || record.runAs.kind === "service"
-      ? record.runAs.username
-      : undefined;
-  }
-
-  private deliverToOrigin(origin: RouteOrigin, frame: ResponseFrame): void {
-    const body = frame.ok ? frame.body : undefined;
-    if (origin.type === "connection") {
-      const conn = this.connections.get(origin.id);
-      if (conn) {
-        this.sendWebSocketFrame(conn, frame);
-      } else {
-        void body?.stream.cancel("Origin disconnected").catch(() => {});
-      }
-      return;
-    }
-
-    if (origin.type === "process") {
-      sendFrameToProcess(this.installationId, origin.id, frame).catch((err) => {
-        void body?.stream.cancel(err).catch(() => {});
-        console.error(`[Kernel] Failed to deliver frame to process ${origin.id}:`, err);
-      });
-      return;
-    }
-
-    const resolve = this.pendingKernelResponses.get(origin.id);
-    if (resolve) {
-      this.pendingKernelResponses.delete(origin.id);
-      resolve(frame);
-    } else {
-      void body?.stream.cancel("Request was cancelled").catch(() => {});
-    }
-  }
-
-  private createPendingKernelResponse(id: string): PendingKernelResponse {
-    let settled = false;
-    const promise = new Promise<ResponseFrame>((resolve) => {
-      this.pendingKernelResponses.set(id, (frame) => {
-        settled = true;
-        resolve(frame);
-      });
-    });
-
-    return {
-      promise,
-      cleanup: () => {
-        if (!settled) {
-          this.pendingKernelResponses.delete(id);
-        }
-      },
-    };
-  }
-
-  private failRoutesForDevice(deviceId: string): void {
-    this.shellSessions.failForDevice(deviceId, "Device disconnected");
-    this.failDeviceRoutes(this.routes.failForDevice(deviceId));
-  }
-
-  private failRoutesForDriverConnection(connectionId: string): void {
-    this.failDeviceRoutes(this.routes.failForDriverConnection(connectionId));
-  }
-
-  private failDeviceRoutes(failed: FailedDeviceRoute[]): void {
-    for (const entry of failed) {
-      this.cancelRoutedBody(entry.id, "Device disconnected");
-      if (entry.scheduleId) {
-        this.cancelSchedule(entry.scheduleId).catch(() => {});
-      }
-
-      const errorFrame: ResponseFrame = {
-        type: "res",
-        id: entry.id,
-        ok: false,
-        error: { code: 503, message: `Device disconnected: ${entry.deviceId}` },
-      };
-      this.deliverToOrigin(entry.origin, errorFrame);
-    }
-  }
-
-  private failRoutesForConnection(connectionId: string): void {
-    const failed = this.routes.failForConnection(connectionId);
-    for (const entry of failed) {
-      this.sendDeviceRequestCancel(
-        entry.deviceId,
-        entry.driverConnectionId,
-        entry.id,
-        "Origin disconnected",
-      );
-      this.cancelRoutedBody(entry.id, "Origin disconnected");
-      if (entry.scheduleId) {
-        this.cancelSchedule(entry.scheduleId).catch(() => {});
-      }
-    }
-  }
-
-  /**
-   * Reconcile the run-as identity of every process owned by `ownerUid` against
-   * the auth store. Each process keeps its run-as account (preserving the
-   * personal-agent split); only group/home/gid drift for that account is
-   * refreshed, and identity.changed is emitted when it changes.
-   */
-  private reconcileOwnedIdentities(ownerUid: number): void {
-    for (const proc of this.procs.list(ownerUid)) {
-      const entry = this.auth.getPasswdByUsername(proc.username);
-      if (!entry) continue;
-
-      const fresh: ProcessIdentity = {
-        uid: entry.uid,
-        gid: entry.gid,
-        gids: this.auth.resolveGids(entry.username, entry.gid),
-        username: entry.username,
-        home: entry.home,
-        cwd: proc.cwd,
-      };
-
-      if (
-        proc.gid === fresh.gid &&
-        proc.home === fresh.home &&
-        proc.username === fresh.username &&
-        JSON.stringify(proc.gids) === JSON.stringify(fresh.gids)
-      ) {
-        continue;
-      }
-
-      this.procs.updateIdentity(proc.processId, fresh);
-
-      sendFrameToProcess(this.installationId, proc.processId, {
-        type: "sig",
-        signal: "identity.changed",
-        payload: { identity: fresh },
-      }).catch((err) => {
-        console.error(`[Kernel] Failed to send identity.changed to ${proc.processId}:`, err);
-      });
-    }
-  }
-
-  /**
-   * Broadcast a signal to active user WebSockets belonging to a UID.
-   */
-  broadcastToUserUid(uid: number, signal: string, payload?: JsonValue): void {
-    const frame: SignalFrame = {
-      type: "sig",
-      signal,
-      payload,
-    };
-    const json = JSON.stringify(frame);
-
-    for (const [, conn] of this.connections) {
-      const state = conn.state;
-      const peer = state?.peer;
-      if (!peer || peer.principal.kind !== "human") continue;
-      if (!peer.grant.signals.includes(signal)) continue;
-      if (peer.principal.account.uid === uid) {
-        conn.send(json);
-      }
-    }
-  }
-
-  private broadcastProcessSignal(
-    uid: number,
-    processId: string,
-    route: ReturnType<RunRouteStore["get"]>,
-    frame: UserProcessSignalFrame,
-  ): void {
-    const json = JSON.stringify(frame);
-    const ambient = frame.signal === "proc.changed"
-      ? JSON.stringify(ambientProcessChangeFrame(processId, frame))
-      : null;
-    for (const [connectionId, connection] of this.connections) {
-      const state = connection.state;
-      const peer = state?.peer;
-      if (
-        !peer
-        || peer.principal.kind !== "human"
-        || peer.principal.account.uid !== uid
-      ) {
-        continue;
-      }
-      const routed = route?.kind === "connection" && route.connectionId === connectionId;
-      const observing = state.observedProcessIds?.includes(processId) === true;
-      if ((routed || observing) && peer.grant.signals.includes(frame.signal)) {
-        connection.send(json);
-      } else if (ambient && peer.grant.signals.includes("proc.changed")) {
-        connection.send(ambient);
-      }
-    }
-  }
-
-  private broadcastToUserUidExcept(
-    uid: number,
-    excludedConnectionId: string,
-    signal: string,
-    payload?: JsonValue,
-  ): void {
-    const json = JSON.stringify({ type: "sig", signal, payload } satisfies SignalFrame);
-    for (const [connectionId, connection] of this.connections) {
-      if (connectionId === excludedConnectionId) continue;
-      const state = connection.state;
-      const peer = state?.peer;
-      if (
-        peer?.principal.kind === "human"
-        && peer.principal.account.uid === uid
-        && peer.grant.signals.includes(signal)
-      ) {
-        connection.send(json);
-      }
-    }
-  }
-
-  private sendSignalToConnection(
-    connectionId: string,
-    signal: string,
-    payload?: JsonValue,
-  ): void {
-    const connection = this.connections.get(connectionId);
-    if (!connection?.state.peer?.grant.signals.includes(signal)) return;
-    connection.send(JSON.stringify({ type: "sig", signal, payload } satisfies SignalFrame));
-  }
-
-  private broadcastDeviceStatus(
-    deviceId: string,
-    event: "connected" | "disconnected",
-  ): void {
-    const device = this.devices.get(deviceId);
-    if (!device) {
-      return;
-    }
-
-    const frame: SignalFrame = {
-      type: "sig",
-      signal: "device.status",
-      payload: {
-        event,
-        device: {
-          deviceId: device.device_id,
-          ownerUid: device.owner_uid,
-          label: device.label,
-          description: device.description,
-          platform: device.platform,
-          version: device.version,
-          online: device.online,
-          firstSeenAt: device.first_seen_at,
-          lastSeenAt: device.last_seen_at,
-          connectedAt: device.connected_at,
-          disconnectedAt: device.disconnected_at,
-        },
-      },
-    };
-    const json = JSON.stringify(frame);
-
-    for (const [, conn] of this.connections) {
-      const state = conn.state;
-      const peer = state?.peer;
-      if (!peer?.grant.signals.includes("device.status")) continue;
-      if (peer.principal.kind === "service") continue;
-
-      if (peer.principal.kind === "human") {
-        const proc = peer.principal.account;
-        if (!this.devices.canAccess(deviceId, proc.uid, [...proc.gids])) {
-          continue;
-        }
-      } else if (peer.principal.kind === "machine") {
-        if (peer.id !== deviceId) {
-          continue;
-        }
-      }
-
-      conn.send(json);
-    }
-  }
-
-  /** Rebuild the in-memory connection index from hibernating WebSockets. */
-  private rehydrateConnections(): void {
-    const onlineTargets = new Set<string>();
-    for (const socket of this.ctx.getWebSockets()) {
-      const connection = restoreKernelWebSocket(socket);
-      if (!connection) {
-        socket.close(1011, "Connection state unavailable");
-        continue;
-      }
-      const state = connection.state;
-      this.connections.set(connection.id, connection);
-      if (!state || state.step !== "connected" || !state.peer) continue;
-      if (peerProvidesOperations(state.peer)) {
-        onlineTargets.add(state.peer.id);
-        this.devices.setOnline(state.peer.id, true);
-      }
-    }
-
-    // Reconcile registered device online flags with live rehydrated sockets.
-    for (const device of this.devices.listOnline()) {
-      if (!onlineTargets.has(device.device_id)) {
-        this.devices.setOnline(device.device_id, false);
-        this.broadcastDeviceStatus(device.device_id, "disconnected");
-      }
-    }
-  }
-
-  private connectionForSocket(socket: WebSocket): KernelConnection<ConnectionState> | null {
-    for (const connection of this.connections.values()) {
-      if (connection.socket === socket) return connection;
-    }
-    return null;
-  }
-
-  private sendOk(
-    connection: KernelConnection<ConnectionState>,
-    id: string,
-    data?: JsonValue,
-  ): void {
-    connection.send(JSON.stringify({ type: "res", id, ok: true, data }));
-  }
-
-  private sendError(
-    connection: KernelConnection<ConnectionState>,
-    id: string,
-    code: number,
-    message: string,
-    details?: JsonValue,
-  ): void {
-    const error: FrameError = {
-      code,
-      message,
-    };
-    if (details !== undefined) error.details = details;
-    connection.send(
-      JSON.stringify({
-        type: "res",
-        id,
-        ok: false,
-        error,
-      }),
-    );
-  }
-}
-
-function ambientProcessChangeFrame(
-  processId: string,
-  frame: UserProcessSignalFrame,
-): SignalFrame {
-  const payload: AmbientProcessChangePayload = {
-    pid: processId,
-    changes: frame.payload?.changes ?? [],
-  };
-  if (frame.payload?.queuedCount !== undefined) payload.queuedCount = frame.payload.queuedCount;
-  if (frame.payload?.timestamp !== undefined) payload.timestamp = frame.payload.timestamp;
-  return {
-    type: "sig",
-    signal: "proc.changed",
-    payload,
-  };
-}
-
-async function cancelUnlockedBody(body: FrameBody | undefined, reason: string): Promise<void> {
-  if (body && !body.stream.locked) {
-    await body.stream.cancel(reason).catch(() => {});
-  }
-}
-
-function errFrame(id: string, code: number, message: string): ResponseFrame {
-  return { type: "res", id, ok: false, error: { code, message } };
-}
-
-function responsibilityRuntimeEventFrame(
-  batch: ResponsibilityWakeBatch,
-): ProcessRuntimeEventDeliverRequestFrame {
-  return {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.runtime.event.deliver",
-    args: {
-      eventId: batch.eventId,
-      event: {
-        type: "r12y.ready",
-        batchId: batch.id,
-        ledgerRevision: batch.throughRevision,
-        responsibilityIds: batch.responsibilities.map(({ id }) => id),
-      },
-    },
-  };
-}
-
-function requestAbortError(reason: FrameCancellationReason | undefined): Error {
-  return reason instanceof Error ? reason : new Error("Device request cancelled");
-}
-
-function sameRouteOrigin(left: RouteOrigin, right: RouteOrigin): boolean {
-  return left.type === right.type && left.id === right.id;
-}
-
-function normalizeRequestCancelReason(reason: string | undefined): string {
-  const normalized = reason?.trim();
-  return (normalized || "Request cancelled").slice(0, MAX_REQUEST_CANCEL_REASON_LENGTH);
-}
+                                                      }
 
 function decodeKernelTask(callback: string, payloadJson: string): KernelTask {
   return KERNEL_TASK_SCHEMA.parse({
     callback,
     payload: JSON.parse(payloadJson),
   });
-}
-
-function scheduleResultSummary(record: ScheduleRecord, result: ScheduleExecutionResult): string {
-  if (record.target.kind === "command.exec") {
-    return result.exitCode !== undefined
-      ? `command exited ${result.exitCode}`
-      : "command failed";
-  }
-  if (record.target.kind === "process.spawn" && result.pid) {
-    return `spawned process ${result.pid}`;
-  }
-  if (record.target.kind === "process.event") {
-    if (result.responsibilityId && result.kind === "responsibility") {
-      return `created responsibility ${result.responsibilityId}`;
-    }
-    return `delivered event to process ${record.target.pid}`;
-  }
-  if (record.target.kind === "responsibility" && result.responsibilityId) {
-    return `created responsibility ${result.responsibilityId}`;
-  }
-  if (record.target.kind === "adapter.send") {
-    if (result.deliveryState === "ambiguous") {
-      return `message delivery through ${record.target.destination.adapter} is ambiguous`;
-    }
-    if (result.deliveryState === "deduplicated") {
-      return `message through ${record.target.destination.adapter} was already delivered`;
-    }
-    return `sent message through ${record.target.destination.adapter}`;
-  }
-  return "schedule ran";
-}
-
-function shellStatusFromResult(status: string): ShellSessionStatus {
-  if (status === "completed" || status === "failed") {
-    return status;
-  }
-  return "running";
-}
-
-function shellStatusFromEvent(event: string): ShellSessionStatus {
-  if (event === "finished") {
-    return "completed";
-  }
-  if (event === "failed" || event === "timed_out") {
-    return "failed";
-  }
-  return "running";
 }
 
 function envWithInstallationResources(

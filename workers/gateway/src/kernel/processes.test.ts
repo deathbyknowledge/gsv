@@ -38,6 +38,20 @@ describe("ProcessRegistry", () => {
     });
   });
 
+  registryTest("recognizes descendants through the parent chain", ({ registry }) => {
+    registry.spawn("proc:ship", makeIdentity("/home/sam"), {});
+    registry.spawn("proc:child", makeIdentity("/home/sam"), { parentPid: "proc:ship" });
+    registry.spawn("proc:grandchild", makeIdentity("/home/sam"), { parentPid: "proc:child" });
+    registry.spawn("proc:other", makeIdentity("/home/sam"), {});
+
+    expect(registry.isDescendant("proc:child", "proc:ship")).toBe(true);
+    expect(registry.isDescendant("proc:grandchild", "proc:ship")).toBe(true);
+    expect(registry.isDescendant("proc:ship", "proc:ship")).toBe(false);
+    expect(registry.isDescendant("proc:other", "proc:ship")).toBe(false);
+    expect(registry.isDescendant("proc:ship", "proc:child")).toBe(false);
+    expect(registry.isDescendant("missing", "proc:ship")).toBe(false);
+  });
+
   registryTest("updates a live process label", ({ registry }) => {
     registry.spawn("task:title", makeIdentity("/home/sam"), {});
 

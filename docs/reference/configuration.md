@@ -131,7 +131,7 @@ Default policies:
 | `config/server/version` | current `VERSION` | Semantic server version exposed to runtime tools. |
 | `config/shell/timeout_ms` | `120000` | Default native shell timeout. |
 | `config/shell/network_enabled` | `true` | Enables network tools in native shell execution. |
-| `config/shell/max_output_bytes` | `524288` | Maximum captured shell output. |
+| `config/shell/max_output_bytes` | `524288` | Maximum stdout and stderr returned per `shell.exec`; bytes that only flow between pipeline stages or into files are not counted. |
 | `config/process/max_per_user` | `0` | Maximum processes per user. `0` means unlimited. |
 
 The protocol's `server.version` is this semantic product version. `server.release`

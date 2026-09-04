@@ -45,7 +45,7 @@ export function contextSnapshotFromRun(
   config: AiConfigResult,
 ): AiContextResult {
   const snapshot: AiContextResult = {
-    devices: run.devices ?? [],
+    targets: run.devices ?? [],
     mcpServers: run.mcpServers ?? [],
     system: {
       timezone: config.system?.timezone ?? "UTC",

@@ -22,8 +22,10 @@ import type { RunOutputMedia } from "../run/state";
 import type { StagedResourceWriteArgs, StagedResourceWriteResult } from "../internal/contracts";
 import { exactBodyLengthSchema } from "../internal/schemas";
 import { stableOpaqueId } from "../../shared/stable-id";
+import type { InternalRequestFrame } from "../../protocol/process-frames";
 import type {
-  ProcessResourceWriteRequestFrame, ProcessResourcesRetainRequestFrame, ProcessRunAttachArgs, ProcessRunAttachResult,
+  ProcessRunAttachArgs,
+  ProcessRunAttachResult,
 } from "../../protocol/process-frames";
 import type { MessageRecord } from "../store";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
@@ -713,7 +715,7 @@ export class ProcessResources {
   }
 
   async handleProcessResourcesRetain(
-    frame: ProcessResourcesRetainRequestFrame,
+    frame: InternalRequestFrame<"proc.resources.retain">,
     signal: AbortSignal,
   ): Promise<ResourceBlock[]> {
     if (this.host.killed || !this.host.isInitialized()) {
@@ -784,7 +786,7 @@ export class ProcessResources {
   }
 
   async handleProcessResourceWrite(
-    frame: ProcessResourceWriteRequestFrame,
+    frame: InternalRequestFrame<"proc.resource.write">,
   ): Promise<ResourceBlock> {
     const body = frame.body;
     if (body.length === undefined || body.length > MAX_MESSAGE_MEDIA_PART_BYTES) {

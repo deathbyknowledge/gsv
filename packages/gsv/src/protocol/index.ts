@@ -29,6 +29,7 @@ export * from "./adapter-media-body";
 export * from "./body";
 export * from "./binary-frame";
 export * from "./binary-body-channel";
+export * from "./frame";
 export * from "./request-cancel";
 export * from "./file-content";
 export * from "./speech-text";

@@ -1,15 +1,16 @@
 type KernelTestValue<T = string | number | boolean | null | undefined> = T;
 
 import { describe, expect, it, vi } from "vitest";
+import { testPeer } from "../test-support/peers";
 import { dispatch, routedFrameTtlMs, type DispatchDeps } from "./dispatch";
 import type { KernelContext } from "./context";
 import type { RequestFrame } from "../protocol/frames";
 
-function deviceRecord(deviceId: string, online: boolean, implementsList = ["fs.*", "shell.*"]) {
+function deviceRecord(targetId: string, online: boolean, implementsList = ["fs.*", "shell.*"]) {
   return {
-    device_id: deviceId,
+    target_id: targetId,
     owner_uid: 1000,
-    label: deviceId,
+    label: targetId,
     description: "",
     implements: implementsList,
     platform: "browser",
@@ -44,8 +45,8 @@ function operationPeer(
     grant: {
       calls: kind === "human" ? ["*"] : [],
       signals: kind === "human"
-        ? ["device.status", "peer.pong", "message.committed"]
-        : ["device.status", "peer.pong"],
+        ? ["target.status", "peer.pong", "message.committed"]
+        : ["target.status", "peer.pong"],
       implements: implementsList,
     },
   };
@@ -54,16 +55,14 @@ function operationPeer(
 function makeContext(): KernelContext {
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
-    identity: {
-      process: {
+    peer: testPeer({ kind: "human", account: {
         uid: 1000,
         gid: 1000,
         gids: [1000],
         username: "sam",
         home: "/home/sam",
-      },
-    },
-    devices: {
+      } }),
+    targets: {
       canAccess: vi.fn(() => true),
       get: vi.fn(() => deviceRecord("macbook", false)),
     },
@@ -122,7 +121,7 @@ describe("dispatch", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       ...makeContext(),
-      devices: {
+      targets: {
         canAccess: vi.fn(() => true),
         get: vi.fn(() => deviceRecord("browser:conn_1", true)),
       },
@@ -149,8 +148,8 @@ describe("dispatch", () => {
       id: "req_1",
       call: "fs.read",
       origin: { type: "process", id: "proc_1" },
-      deviceId: "browser:conn_1",
-      driverConnectionId: "conn_1",
+      targetId: "browser:conn_1",
+      peerConnectionId: "conn_1",
       ttlMs: 60_000,
     });
     expect(send).toHaveBeenCalledWith(JSON.stringify({
@@ -185,7 +184,7 @@ describe("dispatch", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       ...makeContext(),
-      devices: {
+      targets: {
         canAccess: vi.fn(() => true),
         get: vi.fn(() => deviceRecord("browser", true)),
       },
@@ -243,7 +242,7 @@ describe("dispatch", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       ...makeContext(),
-      devices: {
+      targets: {
         canAccess: vi.fn(() => true),
         get: vi.fn(() => deviceRecord("linux-machine", true, ["net.fetch"])),
       },
@@ -275,8 +274,8 @@ describe("dispatch", () => {
       id: "req_fetch",
       call: "net.fetch",
       origin: { type: "process", id: "proc_1" },
-      deviceId: "linux-machine",
-      driverConnectionId: "conn_1",
+      targetId: "linux-machine",
+      peerConnectionId: "conn_1",
       ttlMs: 180_000,
     });
     expect(send).toHaveBeenCalledWith(JSON.stringify({
@@ -318,7 +317,7 @@ describe("dispatch", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       ...makeContext(),
-      devices: {
+      targets: {
         canAccess: vi.fn(() => true),
         get: vi.fn(() => deviceRecord("browser:conn_1", true)),
       },
@@ -381,7 +380,7 @@ describe("dispatch", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       ...makeContext(),
-      devices: {
+      targets: {
         canAccess: vi.fn(() => true),
         get: vi.fn(() => deviceRecord("browser:conn_1", true)),
       },
@@ -451,7 +450,7 @@ describe("dispatch", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       ...makeContext(),
-      devices: {
+      targets: {
         canAccess: vi.fn(() => true),
         get: vi.fn(() => deviceRecord("browser:conn_1", true)),
       },
@@ -497,7 +496,7 @@ describe("dispatch", () => {
       shellSessions: {
         get: vi.fn(() => ({
           sessionId: "sh_1",
-          deviceId: "macbook",
+          targetId: "macbook",
           status: "failed",
           exitCode: null,
           error: "Device disconnected",
@@ -647,10 +646,11 @@ describe("dispatch", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       ...makeContext(),
-      devices: {
+      targets: {
         canAccess: vi.fn(() => false),
         get: vi.fn(() => null),
       },
+      adapters: { identityLinks: { list: vi.fn(() => []) } },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
 

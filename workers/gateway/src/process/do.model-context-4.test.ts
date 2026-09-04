@@ -1,7 +1,5 @@
-import type {
-  ProcessResourceWriteRequestFrame, ProcessRunAttachRequestFrame,
-} from "../protocol/process-frames";
 import { bodyFromBytes } from "@humansandmachines/gsv/protocol";
+import type { InternalRequestFrame } from "../protocol/protocol/process-frames";
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -24,7 +22,7 @@ describe("model context", () => {
         filename: "report.pdf",
       },
       body: bodyFromBytes(new Uint8Array([1, 2, 3])),
-    } satisfies ProcessResourceWriteRequestFrame);
+    } satisfies InternalRequestFrame<"proc.resource.write">);
     if (!uploaded.ok) throw new Error(uploaded.error.message);
     const resource = uploaded.data.resource;
     const result = await runInProcess(stub, async (process) => {
@@ -52,7 +50,7 @@ describe("model context", () => {
           runId: "run-final-reply-media",
           media: [resource],
         },
-      } satisfies ProcessRunAttachRequestFrame);
+      } satisfies InternalRequestFrame<"proc.run.attach">);
       await process.run.runTick("run-final-reply-media");
       const history = await process.controller.handleProcHistory({});
       return {
@@ -227,7 +225,7 @@ describe("model context", () => {
         filename: "report.pdf",
       },
       body: bodyFromBytes(new Uint8Array([1])),
-    } satisfies ProcessResourceWriteRequestFrame);
+    } satisfies InternalRequestFrame<"proc.resource.write">);
     if (!uploaded.ok) throw new Error(uploaded.error.message);
     const resource = uploaded.data.resource;
     const key = resource.ref.path.replace(/^\/+/, "");
@@ -245,7 +243,7 @@ describe("model context", () => {
           runId: "run-aborted-reply-media",
           media: [resource],
         },
-      } satisfies ProcessRunAttachRequestFrame);
+      } satisfies InternalRequestFrame<"proc.run.attach">);
       expect(attach).toMatchObject({ ok: true, data: { ok: true } });
       const abort = await process.controller.handleProcAbort({
         runId: "run-aborted-reply-media",

@@ -117,14 +117,14 @@ import type {
   SysConfigGetResult,
   SysConfigSetArgs,
   SysConfigSetResult,
-  SysDeviceDeleteArgs,
-  SysDeviceDeleteResult,
-  SysDeviceGetArgs,
-  SysDeviceGetResult,
-  SysDeviceListArgs,
-  SysDeviceListResult,
-  SysDeviceUpdateArgs,
-  SysDeviceUpdateResult,
+  SysTargetDeleteArgs,
+  SysTargetDeleteResult,
+  SysTargetGetArgs,
+  SysTargetGetResult,
+  SysTargetListArgs,
+  SysTargetListResult,
+  SysTargetUpdateArgs,
+  SysTargetUpdateResult,
   SysLinkArgs,
   SysLinkConsumeArgs,
   SysLinkConsumeResult,
@@ -376,10 +376,10 @@ export type SyscallDomains = {
   "sys.bootstrap": { args: SysBootstrapArgs; result: SysBootstrapResult };
   "sys.config.get": { args: SysConfigGetArgs; result: SysConfigGetResult };
   "sys.config.set": { args: SysConfigSetArgs; result: SysConfigSetResult };
-  "sys.device.list": { args: SysDeviceListArgs; result: SysDeviceListResult };
-  "sys.device.get": { args: SysDeviceGetArgs; result: SysDeviceGetResult };
-  "sys.device.update": { args: SysDeviceUpdateArgs; result: SysDeviceUpdateResult };
-  "sys.device.delete": { args: SysDeviceDeleteArgs; result: SysDeviceDeleteResult };
+  "sys.target.list": { args: SysTargetListArgs; result: SysTargetListResult };
+  "sys.target.get": { args: SysTargetGetArgs; result: SysTargetGetResult };
+  "sys.target.update": { args: SysTargetUpdateArgs; result: SysTargetUpdateResult };
+  "sys.target.delete": { args: SysTargetDeleteArgs; result: SysTargetDeleteResult };
   "sys.oauth.start": { args: SysOAuthStartArgs; result: SysOAuthStartResult };
   "sys.oauth.device.start": { args: SysOAuthDeviceStartArgs; result: SysOAuthDeviceStartResult };
   "sys.oauth.device.poll": { args: SysOAuthDevicePollArgs; result: SysOAuthDevicePollResult };

@@ -1,6 +1,7 @@
 type KernelTestValue<T = string | number | boolean | null | undefined> = T;
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { testPeer } from "../../test-support/peers";
 import type { KernelContext } from "../context";
 import type { OAuthAccountRecord, OAuthFlowRecord } from "../oauth-store";
 import {
@@ -30,18 +31,14 @@ type FakeOAuth = {
 function makeContext(uid: number, oauth: FakeOAuth): KernelContext {
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
-    identity: {
-      role: "user",
-      process: {
+    peer: testPeer({ kind: "human", account: {
         uid,
         gid: uid,
         gids: [uid],
         username: uid === 0 ? "root" : `user${uid}`,
         home: uid === 0 ? "/root" : `/home/user${uid}`,
         cwd: uid === 0 ? "/root" : `/home/user${uid}`,
-      },
-      capabilities: ["*"],
-    },
+      }, calls: ["*"] }),
     oauth,
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as KernelContext;

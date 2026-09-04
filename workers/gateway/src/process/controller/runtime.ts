@@ -43,9 +43,15 @@ import {
 import { CODEMODE_EXEC, SYSCALL_TOOL_NAMES } from "../../syscalls/constants";
 import { cancelProcessRequests } from "../../shared/utils";
 import type {
-  ProcessRuntimeEventDeliverArgs, ProcessRuntimeEventDeliverResult, ProcessScheduleDeliverArgs,
-  ProcessAdapterDeliverResponseFrame, ProcessInboundFrame, ProcessRequestFrame, ProcessResourceResponseFrame,
-  ProcessResourcesRetainResponseFrame, ProcessRuntimeEventDeliverResponseFrame, ProcessScheduleDeliverResponseFrame,
+  InternalResponseFrame,
+  ProcessInternalCall,
+} from "../../protocol/process-frames";
+import type {
+  ProcessRuntimeEventDeliverArgs,
+  ProcessRuntimeEventDeliverResult,
+  ProcessScheduleDeliverArgs,
+  ProcessInboundFrame,
+  ProcessRequestFrame,
 } from "../../protocol/process-frames";
 import { AGENT_READ_MAX_BYTES } from "../../syscalls/read";
 import type { ResponseErrFrame, ResponseFrame, ResponseOkFrame, SignalFrame } from "../../protocol/frames";
@@ -1859,15 +1865,7 @@ export class ProcessController {
 
   async handleReq(
     frame: ProcessRequestFrame,
-  ): Promise<
-    | ResponseFrame
-    | ProcessRuntimeEventDeliverResponseFrame
-    | ProcessScheduleDeliverResponseFrame
-    | ProcessAdapterDeliverResponseFrame
-    | ProcessResourcesRetainResponseFrame
-    | ProcessResourceResponseFrame
-    | null
-  > {
+  ): Promise<ResponseFrame | InternalResponseFrame<ProcessInternalCall> | null> {
     try {
       if (frame.call === "proc.runtime.event.deliver") {
         const result = await this.handleProcessRuntimeEventDeliver(frame.args);

@@ -920,7 +920,7 @@ describe("proc.ipc.*", () => {
       const k = instance as any;
       const timedOut = k.ipcCalls.timeout(data.callId, data.deadlineAt + 1);
       expect(timedOut).toBeTruthy();
-      await k.deliverIpcCall(data.callId);
+      await k.ipc.deliverIpcCall(data.callId);
     });
 
     await runInProcess(source, (process) => {

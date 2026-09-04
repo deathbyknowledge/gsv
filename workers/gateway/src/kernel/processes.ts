@@ -253,6 +253,20 @@ export class ProcessRegistry {
   }
 
   /**
+   * Whether `processId` sits below `ancestorPid` in the process tree. A process
+   * is not its own descendant. Walks at most 64 levels so a corrupt parent
+   * chain cannot loop forever.
+   */
+  isDescendant(processId: string, ancestorPid: string): boolean {
+    let current = this.get(processId)?.parentPid ?? null;
+    for (let depth = 0; current !== null && depth < 64; depth += 1) {
+      if (current === ancestorPid) return true;
+      current = this.get(current)?.parentPid ?? null;
+    }
+    return false;
+  }
+
+  /**
    * List children of a given process.
    */
   children(parentPid: string): ProcessRecord[] {

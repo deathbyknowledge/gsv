@@ -352,8 +352,8 @@ export function buildSetupPayload(draft: OnboardingDraft): SessionSetupInput {
 
   if (advancedSectionsVisible(draft) && draft.device.enabled) {
     const expiryDays = draft.device.expiryDays.trim();
-    payload.node = {
-      deviceId: draft.device.deviceId.trim(),
+    payload.machine = {
+      peerId: draft.device.deviceId.trim(),
       ...(draft.device.label.trim() ? { label: draft.device.label.trim() } : undefined),
       ...(expiryDays
         ? { expiresAt: Date.now() + Math.floor(Number(expiryDays) * 24 * 60 * 60 * 1000) }
@@ -434,7 +434,7 @@ export function setupResultViewModel(
     };
   }
 
-  if (!result.nodeToken) {
+  if (!result.machineToken) {
     return {
       username: result.user.username,
       rootLabel,
@@ -450,9 +450,9 @@ export function setupResultViewModel(
     };
   }
 
-  const deviceId = result.nodeToken.allowedDeviceId ?? "node-id";
-  const expiresLabel = result.nodeToken.expiresAt !== null
-    ? `Expires ${new Date(result.nodeToken.expiresAt).toLocaleString()}`
+  const deviceId = result.machineToken.peerId ?? "node-id";
+  const expiresLabel = result.machineToken.expiresAt !== null
+    ? `Expires ${new Date(result.machineToken.expiresAt).toLocaleString()}`
     : "No expiry";
 
   return {
@@ -463,13 +463,13 @@ export function setupResultViewModel(
     cliMeta,
     node: {
       visible: true,
-      label: result.nodeToken.label ?? deviceId,
+      label: result.machineToken.label ?? deviceId,
       command: buildNodeBootstrapCommand({
         origin,
         platform,
         username: result.user.username,
         deviceId,
-        token: result.nodeToken.token,
+        token: result.machineToken.token,
         release,
       }),
       meta: `${deviceId} \u00b7 ${expiresLabel} \u00b7 ${installPlatformLabel(platform)} setup steps shown`,

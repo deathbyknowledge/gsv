@@ -15,7 +15,7 @@ import {
   processResponsesStream,
 } from "@earendil-works/pi-ai/api/openai-responses-shared";
 import { clampOpenAIPromptCacheKey } from "@earendil-works/pi-ai/api/openai-prompt-cache";
-import type { ResponseStreamEvent } from "openai/resources/responses/responses.js";
+import { openAiResponseEvents, parseSse } from "./sse";
 import type {
   JsonObject,
   JsonValue,
@@ -62,10 +62,6 @@ const codexJwtClaimsSchema = z.object({
 const codexEventSchema = z.object({
   type: z.string(),
 }).catchall(z.json());
-const openAiResponseEventSchema = z.custom<ResponseStreamEvent>(
-  (value) => codexEventSchema.safeParse(value).success,
-  "OpenAI response event must be a JSON object with a string discriminator",
-);
 const nonemptyStringSchema = z.string().min(1);
 
 type CodexEvent = z.infer<typeof codexEventSchema>;
@@ -116,7 +112,7 @@ export function streamWithOpenAiCodexFetch(
 
       stream.push({ type: "start", partial: output });
       await processResponsesStream(
-        toOpenAiResponseEvents(mapCodexEvents(parseSse(response, request.options?.signal))),
+        openAiResponseEvents(mapCodexEvents(codexEvents(parseSse(response, request.options?.signal)))),
         output,
         stream,
         request.model,
@@ -288,56 +284,12 @@ function decodeJwtPart(value: string): string {
   return atob(padded);
 }
 
-async function* parseSse(
-  response: Response,
-  signal: AbortSignal | undefined,
+async function* codexEvents(
+  events: AsyncIterable<unknown>,
 ): AsyncIterable<CodexEvent> {
-  const reader = response.body?.getReader();
-  if (!reader) {
-    return;
+  for await (const event of events) {
+    yield codexEventSchema.parse(event);
   }
-  const decoder = new TextDecoder();
-  let buffer = "";
-  const onAbort = (): void => {
-    void reader.cancel().catch(() => {});
-  };
-  signal?.addEventListener("abort", onAbort, { once: true });
-  try {
-    while (true) {
-      if (signal?.aborted) {
-        throw new Error("Request was aborted");
-      }
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      buffer += decoder.decode(value, { stream: true });
-      buffer = normalizeSseLineEndings(buffer);
-      let index = buffer.indexOf("\n\n");
-      while (index !== -1) {
-        const chunk = buffer.slice(0, index);
-        buffer = buffer.slice(index + 2);
-        const data = chunk
-          .split("\n")
-          .filter((line) => line.startsWith("data:"))
-          .map((line) => line.slice(5).trim())
-          .join("\n")
-          .trim();
-        if (data && data !== "[DONE]") {
-          yield codexEventSchema.parse(JSON.parse(data));
-        }
-        index = buffer.indexOf("\n\n");
-      }
-    }
-  } finally {
-    signal?.removeEventListener("abort", onAbort);
-    await reader.cancel().catch(() => {});
-    reader.releaseLock();
-  }
-}
-
-function normalizeSseLineEndings(buffer: string): string {
-  return buffer.replace(/\r\n/g, "\n");
 }
 
 async function* mapCodexEvents(
@@ -452,10 +404,3 @@ function parseProviderErrorMessage(rawBody: string): string | null {
   }
 }
 
-async function* toOpenAiResponseEvents(
-  events: AsyncIterable<CodexEvent>,
-): AsyncIterable<ResponseStreamEvent> {
-  for await (const event of events) {
-    yield openAiResponseEventSchema.parse(event);
-  }
-}

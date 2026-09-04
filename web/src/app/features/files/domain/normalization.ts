@@ -87,11 +87,11 @@ function normalizeContent(content: FilesWireValue | undefined): string | FilesCo
 export function normalizeFilesTargets(payload: FilesRpcPayload): FilesTarget[] {
   const parsed = parseFilesPayload(payload);
   const record = asRecord(parsed);
-  const rawDevices = Array.isArray(parsed) ? parsed : Array.isArray(record?.devices) ? record.devices : [];
-  const targets = rawDevices
-    .map((device) => {
-      const item = asRecord(device) ?? {};
-      const id = asString(item.deviceId) ?? asString(item.id) ?? "";
+  const rawTargets = Array.isArray(parsed) ? parsed : Array.isArray(record?.targets) ? record.targets : [];
+  const targets = rawTargets
+    .map((entry) => {
+      const item = asRecord(entry) ?? {};
+      const id = asString(item.targetId) ?? asString(item.id) ?? "";
       if (!id) {
         return null;
       }

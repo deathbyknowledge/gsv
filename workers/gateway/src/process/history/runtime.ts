@@ -1990,7 +1990,7 @@ export class ProcessHistory {
           config: promptConfig,
           identity: this.host.identity,
           ownerIdentity: config.owner ?? undefined,
-          devices: projection.targets,
+          targets: projection.targets,
           mcpServers: projection.mcpServers,
           runtime: projection.runtime,
           r12y: formatResponsibilityBaseline(ledger),

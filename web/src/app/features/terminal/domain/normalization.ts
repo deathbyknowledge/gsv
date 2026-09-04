@@ -17,7 +17,7 @@ const terminalNumberSchema = z.number().finite().nullable().catch(null);
 const terminalBooleanSchema = z.boolean().nullable().catch(null);
 
 const terminalTargetItemSchema = z.object({
-  deviceId: terminalStringSchema,
+  targetId: terminalStringSchema,
   id: terminalStringSchema,
   label: terminalStringSchema,
   online: terminalBooleanSchema,
@@ -27,7 +27,7 @@ const terminalTargetItemSchema = z.object({
 
 const terminalTargetsPayloadSchema = z.union([
   z.array(terminalWireSchema.pipe(terminalTargetItemSchema.catch({
-    deviceId: "",
+    targetId: "",
     id: "",
     label: "",
     online: false,
@@ -35,8 +35,8 @@ const terminalTargetsPayloadSchema = z.union([
     description: "",
   }))),
   z.object({
-    devices: z.array(terminalWireSchema.pipe(terminalTargetItemSchema.catch({
-      deviceId: "",
+    targets: z.array(terminalWireSchema.pipe(terminalTargetItemSchema.catch({
+      targetId: "",
       id: "",
       label: "",
       online: false,
@@ -77,10 +77,10 @@ export function normalizeTerminalTarget(target: string | null | undefined): stri
 
 export function normalizeTerminalTargets<T>(payload: T): TerminalTarget[] {
   const parsed = terminalTargetsPayloadSchema.parse(payload);
-  const rawDevices = Array.isArray(parsed) ? parsed : parsed.devices;
+  const rawDevices = Array.isArray(parsed) ? parsed : parsed.targets;
   const targets = rawDevices
     .map((device) => {
-      const id = device.deviceId || device.id;
+      const id = device.targetId || device.id;
       if (!id) {
         return null;
       }

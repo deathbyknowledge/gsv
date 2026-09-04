@@ -30,7 +30,7 @@ describe("console normalization", () => {
           },
         ],
       },
-      targets: { devices: [] },
+      targets: { targets: [] },
       accounts: { accounts: [] },
       adapters: [],
       mcpServers: { servers: [] },
@@ -78,9 +78,9 @@ describe("console normalization", () => {
 
   it("classifies browser and native device targets", () => {
     expect(normalizeTargetsPayload({
-      devices: [
-        { deviceId: "browser:brave", label: "Brave", platform: "browser-extension", online: true },
-        { deviceId: "macbook", label: "MacBook", platform: "darwin", online: true, implements: ["net.fetch", "fs.*"] },
+      targets: [
+        { targetId: "browser:brave", label: "Brave", platform: "browser-extension", online: true },
+        { targetId: "macbook", label: "MacBook", platform: "darwin", online: true, implements: ["net.fetch", "fs.*"] },
       ],
     })).toMatchObject([
       { deviceId: "browser:brave", kind: "browser" },

@@ -21,7 +21,7 @@ const toolResponseRecordSchema = z
     lines: z.number().optional(),
     truncated: z.boolean().optional(),
     nextOffset: z.number().int().nonnegative().optional(),
-    resource: fileResourceReferenceSchema.optional(),
+    resource: z.optional(fileResourceReferenceSchema),
   })
   .catchall(z.json());
 

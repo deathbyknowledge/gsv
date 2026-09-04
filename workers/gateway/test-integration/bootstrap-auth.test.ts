@@ -44,11 +44,12 @@ describe("gateway authentication integration", () => {
       peer: peerInfo("old-protocol"),
     })).rejects.toMatchObject({
       code: 102,
-      message: "Unsupported protocol version",
+      message: expect.stringContaining("requires protocol 4"),
+      details: { requestedProtocol: 1, supportedProtocol: 4 },
     });
 
     await expect(connectOnce({
-      protocol: 3,
+      protocol: 4,
       peer: { ...peerInfo("invalid-peer"), implements: [42] },
     })).rejects.toMatchObject({
       code: 400,
@@ -60,18 +61,18 @@ describe("gateway authentication integration", () => {
     await setup();
 
     await expect(connectOnce({
-      protocol: 3,
+      protocol: 4,
       peer: peerInfo("missing-auth"),
     })).rejects.toMatchObject({ code: 401, message: "Authentication required" });
 
     await expect(connectOnce({
-      protocol: 3,
+      protocol: 4,
       peer: peerInfo("unknown-user"),
       auth: { username: "nobody", token: "unknown-token" },
     })).rejects.toMatchObject({ code: 401 });
 
     await expect(connectOnce({
-      protocol: 3,
+      protocol: 4,
       peer: peerInfo("wrong-token"),
       auth: { username: USERNAME, token: "wrong-token" },
     })).rejects.toMatchObject({ code: 401 });
@@ -89,14 +90,13 @@ describe("gateway authentication integration", () => {
     expect(connected.peer.grant.calls).toContain("proc.*");
 
     const issued = await user.call<SysTokenCreateResult>("sys.token.create", {
-      kind: "user",
+      kind: "human",
       label: "integration user token",
     });
     expect(issued.token).toMatchObject({
       uid: 1000,
-      kind: "user",
-      allowedRole: "user",
-      allowedDeviceId: null,
+      kind: "human",
+      peerId: null,
     });
 
     const tokenUser = createClient({
@@ -105,12 +105,12 @@ describe("gateway authentication integration", () => {
       peer: peerInfo("token-user"),
     });
     await expect(tokenUser.connect()).resolves.toMatchObject({
-      protocol: 3,
+      protocol: 4,
       peer: { principal: { kind: "human", account: { uid: 1000 } } },
     });
 
     await expect(connectOnce({
-      protocol: 3,
+      protocol: 4,
       peer: peerInfo("ambiguous-auth"),
       auth: {
         username: USERNAME,
@@ -125,31 +125,31 @@ describe("gateway authentication integration", () => {
 
   it("infers machine authority from a device-bound token and registers its implementations", async () => {
     const setupResult = await setup({
-      node: { deviceId: "integration-device", label: "Integration device" },
+      machine: { peerId: "integration-device", label: "Integration device" },
     });
-    if (!setupResult.nodeToken) {
-      throw new Error("sys.setup returned no node token");
+    if (!setupResult.machineToken) {
+      throw new Error("sys.setup returned no machine token");
     }
 
     await expect(connectOnce({
-      protocol: 3,
+      protocol: 4,
       peer: peerInfo("integration-device"),
-      auth: { username: USERNAME, token: setupResult.nodeToken.token },
+      auth: { username: USERNAME, token: setupResult.machineToken.token },
     })).rejects.toMatchObject({
       code: 103,
       message: "Machine peers require an implements list",
     });
 
     await expect(connectOnce({
-      protocol: 3,
+      protocol: 4,
       peer: peerInfo("integration-device", ["not valid!"]),
-      auth: { username: USERNAME, token: setupResult.nodeToken.token },
+      auth: { username: USERNAME, token: setupResult.machineToken.token },
     })).rejects.toMatchObject({ code: 103, message: expect.stringContaining("Invalid implements") });
 
     await expect(connectOnce({
-      protocol: 3,
+      protocol: 4,
       peer: peerInfo("other-device", ["fs.*"]),
-      auth: { username: USERNAME, token: setupResult.nodeToken.token },
+      auth: { username: USERNAME, token: setupResult.machineToken.token },
     })).rejects.toMatchObject({ code: 401 });
 
     const humanEndpoint = createClient({
@@ -166,7 +166,7 @@ describe("gateway authentication integration", () => {
 
     const driver = createClient({
       username: USERNAME,
-      token: setupResult.nodeToken.token,
+      token: setupResult.machineToken.token,
       peer: peerInfo("integration-device", ["fs.*", "shell.exec"]),
     });
     const connected = await driver.connect();
@@ -177,7 +177,7 @@ describe("gateway authentication integration", () => {
         grant: {
           calls: [],
           implements: ["fs.*", "shell.exec"],
-          signals: expect.arrayContaining(["device.status", "peer.pong"]),
+          signals: expect.arrayContaining(["target.status", "peer.pong"]),
         },
       },
     });
@@ -188,9 +188,9 @@ describe("gateway authentication integration", () => {
       peer: peerInfo("device-observer"),
     });
     await user.connect();
-    expect((await user.call("sys.device.list", {})).devices).toContainEqual(
+    expect((await user.call("sys.target.list", {})).targets).toContainEqual(
       expect.objectContaining({
-        deviceId: "integration-device",
+        targetId: "integration-device",
         ownerUid: 1000,
         online: true,
         implements: ["fs.*", "shell.exec"],
@@ -213,7 +213,6 @@ describe("gateway authentication integration", () => {
     expect(issued.token).toMatchObject({
       uid: 0,
       kind: "service",
-      allowedRole: "service",
     });
 
     const service = createClient({
@@ -240,7 +239,7 @@ describe("gateway authentication integration", () => {
     });
     await user.connect();
     const issued = await user.call<SysTokenCreateResult>("sys.token.create", {
-      kind: "user",
+      kind: "human",
       label: "survives Kernel eviction",
     });
     const spawned = await user.proc.spawn({

@@ -4,7 +4,7 @@ Gateway control requests, responses, and signals use JSON text frames over
 `GET /ws`. Requests and successful responses may attach a byte stream carried
 by binary frames.
 
-Protocol version 3 is peer- and syscall-based:
+Protocol version 4 is peer- and syscall-based:
 
 - requests carry a syscall name in `call`
 - responses carry success data in `data`
@@ -12,6 +12,7 @@ Protocol version 3 is peer- and syscall-based:
 
 The source of truth is:
 
+- `packages/gsv/src/protocol/frame.ts`
 - `packages/gsv/src/protocol/wire-frame.ts`
 - `workers/gateway/src/protocol/frames.ts`
 - `workers/gateway/src/protocol/decode-wire-frame.ts`
@@ -171,7 +172,7 @@ derived from the password or token used to authenticate.
   "id": "uuid",
   "call": "sys.connect",
   "args": {
-    "protocol": 3,
+    "protocol": 4,
     "peer": {
       "id": "desktop-alice",
       "version": "0.1.0",
@@ -188,16 +189,16 @@ derived from the password or token used to authenticate.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `protocol` | `number` | Yes | Must currently be `3` |
+| `protocol` | `number` | Yes | Must currently be `4`. A mismatch returns error `102` with `requestedProtocol`, `supportedProtocol`, `serverVersion`, and `installer` details so an outdated client can explain the upgrade. The negotiated version is stored with the hibernating socket; a socket restored after a deploy that negotiated another version is closed with code `1008` so the client reconnects and receives the same error. |
 | `peer.id` | `string` | Yes | Stable application, machine, or service identity |
 | `peer.version` | `string` | Yes | Peer version |
 | `peer.platform` | `string` | Yes | Platform string |
 | `peer.implements` | `string[]` | No | Requested reverse syscall implementation patterns. Machine credentials require at least one. |
 | `auth.username` | `string` | No | Required when authenticating |
 | `auth.password` | `string` | No | User-password auth |
-| `auth.token` | `string` | No | User, node, or service token auth |
+| `auth.token` | `string` | No | Human, machine, or service token auth. The token kind is the principal kind. |
 
-Password and token are mutually exclusive. A node token is bound to the exact
+Password and token are mutually exclusive. A machine token is bound to the exact
 `peer.id` recorded when the token was created. `peer.implements` is an
 advertisement, not authority: the Kernel validates it and independently derives
 the returned grants.
@@ -210,7 +211,7 @@ the returned grants.
   "id": "uuid",
   "ok": true,
   "data": {
-    "protocol": 3,
+    "protocol": 4,
     "server": {
       "version": "0.4.0",
       "release": "dev",
@@ -349,14 +350,14 @@ Current principal defaults from `buildSignalList()`:
 - `message.aborted`
   - Discards the directed endpoint's transient projection when a Message cannot
     be committed or the run is superseded.
-- `device.status`
+- `target.status`
 - `adapter.status`
 - `mcp.changed`
 - `peer.pong`
 
 ### Machine peers
 
-- `device.status`
+- `target.status`
 - `peer.pong`
 
 ### Service peers
@@ -442,7 +443,9 @@ the binary chunks:
 }
 ```
 
-`streamId` is a non-zero unsigned 32-bit integer chosen by the sender.
+`streamId` is a non-zero unsigned 32-bit integer chosen by the sender. The
+peer that opened the WebSocket allocates odd ids and the peer that accepted it
+allocates even ids, so both sides can announce bodies without coordinating.
 `length` is optional in the protocol, but operations that require an exact
 size may require it. Error responses and signals cannot carry bodies.
 
@@ -454,7 +457,7 @@ Each following binary frame uses this format:
 ```
 
 The stream ID links each chunk to its JSON descriptor. Flags identify data,
-end, and error frames:
+end, error, and flow-control frames:
 
 | Flag | Value | Meaning |
 |---|---:|---|
@@ -462,6 +465,7 @@ end, and error frames:
 | `END` | `2` | This is the final frame for the stream |
 | `ERROR` | `4` | The sender terminated its own stream; the payload contains a UTF-8 error message |
 | `CANCEL` | `8` | The receiver no longer wants the sender's stream; the payload may contain a UTF-8 reason |
+| `WINDOW` | `16` | The receiver grants credit; the payload is a little-endian u32 counting additional body bytes the sender may put on the wire |
 
 Flags may be combined; failures normally use `ERROR | END` (`6`). The sender
 emits the JSON descriptor first, then zero or more data frames, and finally an
@@ -477,12 +481,33 @@ the `request.cancel` control signal above. The two mechanisms are independent:
 a request may have no body, and a completed request may leave a response body
 that its consumer can still cancel.
 
-A WebSocket may expose several already-buffered data frames without an I/O
-wait between them. Receiver pumps must give the registered body owner a chance
-to drain its bounded queue between those frames; transport scheduling alone
-must not turn a valid body into a buffer-overflow failure. That cooperation
-must not suspend the connection-wide reader on one body consumer: cancellation,
-unrelated frames, and peer closure must remain readable.
+### Flow control
+
+Body bytes are credit-based so a slow consumer stalls its sender instead of
+growing a buffer on the receiving side. Every stream starts with an implicit
+window of 4 MiB (`BINARY_INITIAL_WINDOW_BYTES`), which lets the first chunks
+race the JSON descriptor. A sender may only put as many `DATA` bytes on the
+wire as it holds credit for; once the credit is spent it waits for a `WINDOW`
+frame carrying more. Receivers grant credit as their consumer drains, keeping
+roughly one window in flight and batching small top-ups until half a window
+is owed, unless the sender has run dry. `WINDOW` frames refer to the
+sender's stream id and never combine with other flags.
+
+Two idle rules bound a stalled transfer. A receiver times out a sender that
+holds credit but sends nothing for the idle period (120 s by default) and
+answers with `CANCEL | END`; a sender waiting for credit that receives none
+within the same period fails its own stream with `ERROR | END`. A sender that
+exceeds its window is a protocol violation and is cancelled by the receiver.
+
+The window is the only receive-side bound. A receiver must accept any number
+of frames that fit its granted window, however small they are, so
+implementations must not cap buffered frames separately. Senders should
+coalesce small source reads into full chunks (1 MiB by default) so a window
+carries few frames.
+
+Flow control governs only body bytes. Cancellation, unrelated frames, and
+peer closure must remain readable while a body consumer is idle; a receiver
+must not suspend the connection-wide reader on one stream.
 
 The current body-bearing syscalls are:
 

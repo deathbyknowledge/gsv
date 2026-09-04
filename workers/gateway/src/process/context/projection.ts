@@ -1,5 +1,5 @@
 import type {
-  AiContextResult, AiSkillIndexMode, AiToolsDevice, JsonObject, JsonValue,
+  AiContextResult, AiSkillIndexMode, AiToolsTarget, JsonObject, JsonValue,
 } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import { aiToolsDeviceSchema } from "../internal/schemas";
@@ -38,7 +38,7 @@ export function createContextProjection(
       date: formatContextDate(now, timezone),
       timezone,
     },
-    targets: normalizeTargets(snapshot.devices),
+    targets: normalizeTargets(snapshot.targets),
     mcpServers: normalizeStringSet(snapshot.mcpServers),
     skills: normalizeSkillProjection(snapshot, fallbackSkills),
   };
@@ -88,7 +88,7 @@ function formatContextDate(date: Date, timezone: string): string {
   return `${year}-${month}-${day}`;
 }
 
-function normalizeTargets(devices: AiToolsDevice[]): ContextProjectionTarget[] {
+function normalizeTargets(devices: AiToolsTarget[]): ContextProjectionTarget[] {
   return devices
     .map((device): ContextProjectionTarget => {
       const target: ContextProjectionTarget = {

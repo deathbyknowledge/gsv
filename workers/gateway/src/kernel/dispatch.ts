@@ -39,12 +39,13 @@ import {
   handleProcIpcCall,
   handleProcIpcSend,
   handleProcFork,
+  handleProcObserve,
   handleProcSpawn,
   forwardToProcess,
 } from "./proc-handlers";
 import { handleAccountCreate, handleAccountList } from "./agents";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
-import { handleSysDeviceDelete, handleSysDeviceGet, handleSysDeviceList, handleSysDeviceUpdate } from "./sys/device";
+import { handleSysTargetDelete, handleSysTargetGet, handleSysTargetList, handleSysTargetUpdate } from "./sys/target";
 import { normalizeNetFetchTimeoutMs } from "./net";
 import { handleSysBootstrap } from "./sys/bootstrap";
 import { handleSysSetupAssist } from "./sys/setup-assist";
@@ -90,16 +91,24 @@ import {
 import {
   handleAdapterConnect,
   handleAdapterDisconnect,
+} from "./adapter-accounts";
+import {
   handleAdapterInbound,
+} from "./adapter-ingress";
+import {
   handleAdapterList,
+  handleAdapterStateUpdate,
+  handleAdapterStatus,
+} from "./adapter-service";
+import {
   handleAdapterPairConfirm,
   handleAdapterPairDisconnect,
   handleAdapterPairInfo,
   handleAdapterPairInspect,
+} from "./adapter-pairing";
+import {
   handleAdapterSend,
-  handleAdapterStateUpdate,
-  handleAdapterStatus,
-} from "./adapter-handlers";
+} from "./adapter-send";
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
 import {
   handleSchedulerAdd,
@@ -164,15 +173,15 @@ export type DispatchDeps = {
     id: string;
     call: SyscallName;
     origin: RouteOrigin;
-    deviceId: string;
-    driverConnectionId: string;
+    targetId: string;
+    peerConnectionId: string;
     ttlMs: number;
   }) => Promise<{
     cancel: () => void;
     attachBody: (body: CancellableFrameBody) => void;
   }>;
-  requestDevice: (
-    deviceId: string,
+  requestTarget: (
+    targetId: string,
     call: "net.fetch",
     args: NetFetchArgs,
     options?: { ttlMs?: number; body?: FrameBody; signal?: AbortSignal },
@@ -194,9 +203,9 @@ export type DispatchResult =
   | { handled: true; response: ResponseFrame }
   | { handled: false };
 
-const DEFAULT_DEVICE_TTL_MS = 60_000;
+const DEFAULT_TARGET_TTL_MS = 60_000;
 // The process watchdog is ten minutes; routing must not preempt it.
-const DEFAULT_SHELL_DEVICE_TTL_MS = 11 * 60_000;
+const DEFAULT_SHELL_TARGET_TTL_MS = 11 * 60_000;
 const SHELL_TIMEOUT_GRACE_MS = 10_000;
 
 export async function dispatch(
@@ -230,18 +239,18 @@ export async function dispatch(
         response: errFrame(frame.id, 404, `Unknown shell session: ${sessionId}`),
       };
     }
-    if (target && target !== session.deviceId) {
+    if (target && target !== session.targetId) {
       return {
         handled: true,
         response: errFrame(frame.id, 400, "Shell session target does not match the requested target"),
       };
     }
     if (session.status === "failed" && session.error) {
-      const sessionTarget = getVisibleTarget(ctx, session.deviceId, { includeOffline: true });
+      const sessionTarget = getVisibleTarget(ctx, session.targetId, { includeOffline: true });
       if (!sessionTarget) {
         return {
           handled: true,
-          response: errFrame(frame.id, 403, `Access denied to device: ${session.deviceId}`),
+          response: errFrame(frame.id, 403, `Access denied to device: ${session.targetId}`),
         };
       }
       return {
@@ -250,11 +259,11 @@ export async function dispatch(
       };
     }
     if (routingArgs) delete routingArgs.target;
-    const sessionTarget = getVisibleTarget(ctx, session.deviceId, { includeOffline: true });
+    const sessionTarget = getVisibleTarget(ctx, session.targetId, { includeOffline: true });
     if (!sessionTarget) {
       return {
         handled: true,
-        response: errFrame(frame.id, 403, `Access denied to device: ${session.deviceId}`),
+        response: errFrame(frame.id, 403, `Access denied to device: ${session.targetId}`),
       };
     }
     return routeToTarget(frame, sessionTarget, origin, ctx, deps);
@@ -381,6 +390,9 @@ async function dispatchKernel(
       case "proc.list":
         data = handleProcList(frame.args, ctx);
         break;
+      case "proc.observe":
+      case "proc.unobserve":
+        return handleProcObserve(frame, ctx);
       case "proc.spawn":
         data = await handleProcSpawn(frame.args, ctx);
         break;
@@ -514,17 +526,17 @@ async function dispatchKernel(
       case "sys.config.set":
         data = handleSysConfigSet(frame.args, ctx);
         break;
-      case "sys.device.list":
-        data = handleSysDeviceList(frame.args, ctx);
+      case "sys.target.list":
+        data = handleSysTargetList(frame.args, ctx);
         break;
-      case "sys.device.get":
-        data = handleSysDeviceGet(frame.args, ctx);
+      case "sys.target.get":
+        data = handleSysTargetGet(frame.args, ctx);
         break;
-      case "sys.device.update":
-        data = handleSysDeviceUpdate(frame.args, ctx);
+      case "sys.target.update":
+        data = handleSysTargetUpdate(frame.args, ctx);
         break;
-      case "sys.device.delete":
-        data = handleSysDeviceDelete(frame.args, ctx);
+      case "sys.target.delete":
+        data = handleSysTargetDelete(frame.args, ctx);
         break;
       case "sys.oauth.start":
         data = await handleSysOAuthStart(frame.args, ctx);
@@ -754,7 +766,7 @@ async function routeToTarget(
     };
   }
 
-  const deviceConn = findDeviceConnection(target.targetId, deps.connections);
+  const deviceConn = findTargetConnection(target.targetId, deps.connections);
   if (!deviceConn) {
     return {
       handled: true,
@@ -771,8 +783,8 @@ async function routeToTarget(
       id: frame.id,
       call: frame.call,
       origin,
-      deviceId: target.targetId,
-      driverConnectionId: deviceConn.id,
+      targetId: target.targetId,
+      peerConnectionId: deviceConn.id,
       ttlMs,
     });
     if (ctx.requestSignal?.aborted) {
@@ -812,28 +824,28 @@ export function routedFrameTtlMs(frame: RequestFrame): number {
   if (frame.call === "shell.exec") {
     const requested = frame.args.timeout;
     if (requested === undefined || !Number.isFinite(requested) || requested <= 0) {
-      return DEFAULT_SHELL_DEVICE_TTL_MS;
+      return DEFAULT_SHELL_TARGET_TTL_MS;
     }
     return Math.min(
-      DEFAULT_SHELL_DEVICE_TTL_MS,
+      DEFAULT_SHELL_TARGET_TTL_MS,
       Math.max(1_000, Math.trunc(requested) + SHELL_TIMEOUT_GRACE_MS),
     );
   }
   if (frame.call === "net.fetch") {
     return normalizeNetFetchTimeoutMs(frame.args.timeoutMs);
   }
-  return DEFAULT_DEVICE_TTL_MS;
+  return DEFAULT_TARGET_TTL_MS;
 }
 
-function findDeviceConnection(
-  deviceId: string,
+function findTargetConnection(
+  targetId: string,
   connections: Map<string, KernelConnection<KernelConnectionState>>,
 ): KernelConnection<KernelConnectionState> | null {
   for (const [, conn] of connections) {
     const state = conn.state;
     if (
       state?.step === "connected" &&
-      state.peer?.id === deviceId &&
+      state.peer?.id === targetId &&
       state.peer.grant.implements.length > 0
     ) {
       return conn;

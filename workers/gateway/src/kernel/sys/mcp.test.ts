@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { testPeer } from "../../test-support/peers";
 import type { KernelContext } from "../context";
 import type { McpServerRecord } from "../mcp-store";
 import {
@@ -43,18 +44,14 @@ function makeContext(
   const ownerUid = options.ownerUid ?? uid;
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
-    identity: {
-      role: "user",
-      process: {
+    peer: testPeer({ kind: "human", account: {
         uid,
         gid: uid,
         gids: [uid],
         username: uid === 0 ? "root" : `user${uid}`,
         home: uid === 0 ? "/root" : `/home/user${uid}`,
         cwd: uid === 0 ? "/root" : `/home/user${uid}`,
-      },
-      capabilities: ["*"],
-    },
+      }, calls: ["*"] }),
     processId: options.processId,
     procs: {
       getOwnerUid: vi.fn((processId: string) =>

@@ -53,11 +53,10 @@ async fn gateway_is_in_setup_mode(url: &str) -> Result<bool, Box<dyn std::error:
             "sys.connect",
             Some(json!({
                 "protocol": PROTOCOL_VERSION,
-                "client": {
+                "peer": {
                     "id": format!("gsv-setup-probe-{}", uuid::Uuid::new_v4()),
                     "version": gsv::build_info::BUILD_VERSION,
                     "platform": std::env::consts::OS,
-                    "role": "user",
                 },
             })),
         )
@@ -374,9 +373,8 @@ async fn issue_and_store_user_session_token(
         .request_ok(
             "sys.token.create",
             Some(json!({
-                "kind": "user",
+                "kind": "human",
                 "label": format!("gsv-cli@{}", std::env::consts::OS),
-                "allowedRole": "user",
                 "expiresAt": expiry_ms,
             })),
         )
@@ -689,7 +687,7 @@ pub(crate) async fn run_auth_setup(
 
     if let Some(device_id) = device_id {
         let mut device = json!({
-            "deviceId": device_id,
+            "peerId": device_id,
         });
         if let Some(label) = device_label {
             device["label"] = json!(label);
@@ -697,8 +695,7 @@ pub(crate) async fn run_auth_setup(
         if let Some(expires_at) = device_expires_at {
             device["expiresAt"] = json!(expires_at);
         }
-        // Gateway setup still accepts the original compatibility field name.
-        payload["node"] = device;
+        payload["machine"] = device;
     }
 
     let conn = Connection::connect_without_handshake(url, |_| {}).await?;
@@ -737,7 +734,7 @@ pub(crate) async fn run_auth_setup(
                 local_cfg.device.token = Some(device_token.token.clone());
                 saved_fields.push("device.token");
             }
-            if let Some(device_id) = device_token.allowed_device_id.as_deref() {
+            if let Some(device_id) = device_token.peer_id.as_deref() {
                 if local_cfg.device.id.as_deref() != Some(device_id) {
                     local_cfg.device.id = Some(device_id.to_string());
                     saved_fields.push("device.id");
@@ -780,10 +777,7 @@ pub(crate) async fn run_auth_setup(
         );
         println!(
             "Device binding: {}",
-            device_token
-                .allowed_device_id
-                .as_deref()
-                .unwrap_or("<none>")
+            device_token.peer_id.as_deref().unwrap_or("<none>")
         );
         println!(
             "Device token expires: {}",
@@ -863,7 +857,7 @@ pub(crate) fn run_auth_logout() -> Result<(), Box<dyn std::error::Error>> {
 struct SysSetupPayload {
     user: SysSetupUser,
     root_locked: bool,
-    #[serde(rename = "nodeToken")]
+    #[serde(rename = "machineToken")]
     device_token: Option<SysSetupDeviceToken>,
 }
 
@@ -881,7 +875,7 @@ struct SysSetupDeviceToken {
     token: String,
     token_prefix: String,
     label: Option<String>,
-    allowed_device_id: Option<String>,
+    peer_id: Option<String>,
     expires_at: Option<i64>,
 }
 

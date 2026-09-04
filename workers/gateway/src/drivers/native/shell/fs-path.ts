@@ -1,6 +1,7 @@
 import type { FsCopyEndpoint } from "@humansandmachines/gsv/protocol";
 import type { CommandContext } from "just-bash";
 import type { KernelContext } from "../../../kernel/context";
+import { principalOf } from "../../../kernel/context";
 
 export function parseShellFsEndpoint(
   spec: string,
@@ -39,15 +40,15 @@ function resolveEndpoint(
 }
 
 function knownFsTargets(kernelCtx: KernelContext): string[] {
-  const identity = kernelCtx.identity?.process;
+  const identity = principalOf(kernelCtx)?.account;
   const targets = new Set(["gsv"]);
   if (!identity) {
     return [...targets];
   }
 
   try {
-    for (const device of kernelCtx.devices.listForUser(identity.uid, identity.gids)) {
-      targets.add(device.device_id);
+    for (const device of kernelCtx.targets.listForUser(identity.uid, identity.gids)) {
+      targets.add(device.target_id);
     }
   } catch {
     // Some tests and process contexts only need local GSV paths.

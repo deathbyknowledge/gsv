@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { testPeer } from "../../../test-support/peers";
 import { InMemoryFs } from "just-bash";
 import {
   bodyFromBytes,
@@ -29,11 +30,7 @@ const IDENTITY: ProcessIdentity = {
 
 // SAFETY: media command tests exercise only identity and capability reads from this minimal context.
 const CTX = {
-  identity: {
-    role: "user",
-    process: IDENTITY,
-    capabilities: ["*"],
-  },
+  peer: testPeer({ kind: "human", account: IDENTITY, calls: ["*"] }),
 // SAFETY: The media command only reads the process identity and capabilities from this fixture.
 } as KernelContext;
 
@@ -387,14 +384,14 @@ describe("img2txt", () => {
     expect(result).toEqual({ stdout: "a remote image\n", stderr: "", exitCode: 0 });
     expect(fs.openFile).not.toHaveBeenCalled();
     expect(imageBytes).toEqual(new Uint8Array([4, 5, 6]));
-    expect(transport.requestDevice).toHaveBeenNthCalledWith(
+    expect(transport.requestTarget).toHaveBeenNthCalledWith(
       1,
       target,
       "fs.transfer.stat",
       { path: targetPath },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
-    expect(transport.requestDevice).toHaveBeenNthCalledWith(
+    expect(transport.requestTarget).toHaveBeenNthCalledWith(
       2,
       target,
       "fs.transfer.send",
@@ -409,7 +406,7 @@ describe("img2txt", () => {
 
   it("rejects inaccessible target-qualified images before transfer", async () => {
     const ctx = targetContext(["laptop"]);
-    ctx.devices.canAccess = vi.fn(() => false);
+    ctx.targets.canAccess = vi.fn(() => false);
     const transport = remoteImageTransport(
       "laptop",
       "/photos/picture.png",
@@ -425,7 +422,7 @@ describe("img2txt", () => {
     );
 
     expect(result.stderr).toContain("Access denied to device: laptop");
-    expect(transport.requestDevice).not.toHaveBeenCalled();
+    expect(transport.requestTarget).not.toHaveBeenCalled();
     expect(ai.imageRead).not.toHaveBeenCalled();
   });
 
@@ -559,10 +556,10 @@ async function run(
 function targetContext(targets: string[]): KernelContext {
   return Object.assign({}, CTX, {
     ...CTX,
-    devices: {
+    targets: {
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
-      listForUser: vi.fn(() => targets.map((device_id) => ({ device_id }))),
+      listForUser: vi.fn(() => targets.map((target_id) => ({ target_id }))),
     },
   });
 }
@@ -572,8 +569,8 @@ function remoteImageTransport(
   path: string,
   bytes: Uint8Array,
   cancel?: () => void,
-): FsDeviceTransport & { requestDevice: ReturnType<typeof vi.fn> } {
-  const requestDevice = vi.fn(async (deviceId: string, call: string, args: Record<string, string>) => {
+): FsDeviceTransport & { requestTarget: ReturnType<typeof vi.fn> } {
+  const requestTarget = vi.fn(async (deviceId: string, call: string, args: Record<string, string>) => {
     expect(deviceId).toBe(target);
     expect(args).toEqual({ path });
     if (call === "fs.transfer.stat") {
@@ -605,5 +602,5 @@ function remoteImageTransport(
     }
     throw new Error(`unexpected device call: ${call}`);
   });
-  return { requestDevice };
+  return { requestTarget };
 }

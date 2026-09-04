@@ -380,7 +380,7 @@ describe("model context", () => {
           maxContextBytes: 32768,
         },
         tools: [],
-        devices: [],
+        targets: [],
         mcpServers: [],
         systemPrompt: "Test system prompt.",
         approvalPolicy: { default: "auto", rules: [] },

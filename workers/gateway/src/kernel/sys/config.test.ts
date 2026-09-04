@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { testPeer } from "../../test-support/peers";
 import type { KernelContext } from "../context";
 import { handleSysConfigGet, handleSysConfigSet } from "./config";
 
@@ -43,18 +44,14 @@ function makeContext(uid: number, entries: EntryMap, ownerUid?: number): KernelC
 
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
-    identity: {
-      role: "user",
-      process: {
+    peer: testPeer({ kind: "human", account: {
         uid,
         gid: uid,
         gids: [uid],
         username: uid === 0 ? "root" : `user${uid}`,
         home: uid === 0 ? "/root" : `/home/user${uid}`,
         cwd: uid === 0 ? "/root" : `/home/user${uid}`,
-      },
-      capabilities: ["*"],
-    },
+      }, calls: ["*"] }),
     callerOwnerUid: ownerUid,
     processId: ownerUid === undefined ? undefined : "proc:agent",
     procs: {

@@ -224,7 +224,7 @@ describe("Process DO — mechanical", () => {
       // SAFETY: test fixture is constructed with the asserted domain shape.
       const k = instance as any;
       const project = (frame: any) =>
-        k.updateProcessRuntimeFromSignal(pid, frame, frame.payload?.runId ?? null);
+        k.processOutput.updateProcessRuntimeFromSignal(pid, frame, frame.payload?.runId ?? null);
       await project({
         type: "sig",
         signal: "proc.run.started",

@@ -5,6 +5,8 @@ export type KernelWebSocketMessage = string | ArrayBuffer;
 
 export type KernelConnectionState = {
   step: "pending" | "connected" | "superseded";
+  /** Protocol version negotiated by sys.connect; absent on pre-protocol-4 attachments. */
+  protocol?: number;
   peer?: ConnectedPeer;
   clientId?: string;
   clientPlatform?: string;
@@ -37,6 +39,7 @@ const CONNECTED_PEER_SCHEMA = z.object({
 
 const KERNEL_CONNECTION_STATE_SCHEMA = z.object({
   step: z.enum(["pending", "connected", "superseded"]),
+  protocol: z.number().int().optional(),
   peer: CONNECTED_PEER_SCHEMA.optional(),
   clientId: z.string().optional(),
   clientPlatform: z.string().optional(),
