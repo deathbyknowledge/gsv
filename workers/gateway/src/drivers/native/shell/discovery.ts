@@ -54,7 +54,7 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
     "cp /local/path [target:with:colons]:/path",
   ]),
   dd: command("Copy and slice raw bytes between files.", "Cut a byte range out of a file, rejoin binary parts, or copy bytes by block size on the gsv target.", ["bytes", "slice", "binary", "block", "range", "chunk", "copy"], [], [
-    "dd [if=SOURCE] [of=DEST] [bs=BYTES] [count=N] [skip=N] [seek=N] [status=none]",
+    "dd [if=SOURCE] [of=DEST] [bs=BYTES] [count=N] [skip=N] [seek=N] [conv=notrunc] [status=none]",
   ]),
   crontab: command("Manage recurring native shell jobs.", "Run a shell command repeatedly on a cron schedule such as every morning or each weekday.", ["schedule", "recurring", "automation", "cron", "daily", "weekly"], ["sched"]),
   codemode: command("Run a reusable JavaScript GSV tool workflow.", "Combine several shell, filesystem, or connected integration operations in one scripted workflow.", ["script", "workflow", "automation", "tools", "javascript"]),

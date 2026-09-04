@@ -2,17 +2,19 @@ import { defineCommand, type ByteString, type ExecResult } from "just-bash";
 import type { GsvFs } from "../../../fs/gsv-fs";
 
 const DD_USAGE = [
-  "dd [if=SOURCE] [of=DEST] [bs=BYTES] [count=N] [skip=N] [seek=N] [status=none]",
+  "dd [if=SOURCE] [of=DEST] [bs=BYTES] [count=N] [skip=N] [seek=N] [conv=notrunc] [status=none]",
   "",
   "Copy raw bytes, optionally skipping input blocks and seeking output blocks.",
   "Without if= the standard input is read; without of= the bytes go to standard output.",
   "bs accepts a plain byte count or a K, M, or G suffix; the default is 512.",
-  "seek= keeps the existing bytes of DEST before the written range.",
+  "seek= keeps the existing bytes of DEST before the written range; the rest of",
+  "DEST is truncated unless conv=notrunc keeps it.",
   "",
   "Examples:",
   "  dd if=archive.bin of=part.0 bs=150000 count=1",
   "  dd if=archive.bin of=part.1 bs=150000 skip=1 count=1",
   "  dd if=part.1 of=rejoined.bin bs=150000 seek=1",
+  "  dd if=header.bin of=image.bin conv=notrunc",
   "",
 ].join("\n");
 
@@ -24,6 +26,7 @@ type DdOptions = {
   skip: number;
   seek: number;
   quiet: boolean;
+  truncate: boolean;
 };
 
 const BLOCK_SUFFIXES = new Map<string, number>([
@@ -52,7 +55,7 @@ function parseCount(value: string): number | null {
 }
 
 function parseDdOptions(args: string[]): DdOptions {
-  const options: DdOptions = { blockBytes: 512, skip: 0, seek: 0, quiet: false };
+  const options: DdOptions = { blockBytes: 512, skip: 0, seek: 0, quiet: false, truncate: true };
   for (const arg of args) {
     const separator = arg.indexOf("=");
     if (separator <= 0) throw new Error(`unrecognized operand '${arg}'`);
@@ -86,7 +89,10 @@ function parseDdOptions(args: string[]): DdOptions {
         options.quiet = value === "none";
         break;
       case "conv":
-        if (value !== "notrunc") throw new Error(`unsupported conversion: '${value}'`);
+        for (const conversion of value.split(",")) {
+          if (conversion !== "notrunc") throw new Error(`unsupported conversion: '${conversion}'`);
+          options.truncate = false;
+        }
         break;
       default:
         throw new Error(`unrecognized operand '${arg}'`);
@@ -141,10 +147,14 @@ export function buildDdCommand(fs: GsvFs) {
       const path = fs.resolvePath(ctx.cwd, options.output);
       const offset = options.seek * options.blockBytes;
       let written = copied;
-      if (offset > 0) {
+      if (offset > 0 || !options.truncate) {
+        // Like dd on a regular file: bytes before the seek offset survive, and
+        // the tail past the written range survives only with conv=notrunc.
         const existing = await fs.readFileBuffer(path).catch(() => new Uint8Array());
-        written = new Uint8Array(Math.max(existing.byteLength, offset + copied.byteLength));
-        written.set(existing.subarray(0, Math.min(existing.byteLength, written.byteLength)));
+        const end = offset + copied.byteLength;
+        const length = options.truncate ? end : Math.max(existing.byteLength, end);
+        written = new Uint8Array(length);
+        written.set(existing.subarray(0, Math.min(existing.byteLength, length)));
         written.set(copied, offset);
       }
       try {

@@ -975,6 +975,28 @@ describe("native shell capability discovery", () => {
     expect(result.stderr).toBe("1+1 records in\n1+1 records out\n5 bytes copied\n");
   });
 
+  it("truncates the destination unless dd is told conv=notrunc", async () => {
+    const result = await handleShellExec(
+      {
+        input: [
+          "cd \"$HOME\"",
+          "printf 'abcdefgh' > long.bin && printf 'ZZ' > patch.bin",
+          "dd if=patch.bin of=long.bin bs=2 status=none && cat long.bin && echo",
+          "printf 'abcdefgh' > long.bin",
+          "dd if=patch.bin of=long.bin bs=2 conv=notrunc status=none && cat long.bin && echo",
+          "printf 'abcdefgh' > long.bin",
+          "dd if=patch.bin of=long.bin bs=2 seek=1 status=none && cat long.bin && echo",
+          "printf 'abcdefgh' > long.bin",
+          "dd if=patch.bin of=long.bin bs=2 seek=1 conv=notrunc status=none && cat long.bin",
+        ].join(" && "),
+      },
+      makeContext({ capabilities: ["shell.exec"] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toBe("ZZ\nZZcdefgh\nabZZ\nabZZefgh");
+  });
+
   it("rejects dd operands it does not understand", async () => {
     const result = await handleShellExec(
       { input: "dd if=missing.bin of=out.bin; dd bs=zero" },
