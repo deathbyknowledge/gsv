@@ -1723,6 +1723,7 @@ describe("handleAiConfig", () => {
       expect(result).toMatchObject({ provider: "openai", model: "gpt-5.4", apiKey: "sk-mine" });
       expect(result.fallbacks?.map((fallback) => fallback.modelId)).toEqual(["gsv-included"]);
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("Skipping fallback model shared-codex"));
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("refresh endpoint unreachable"));
     } finally {
       fetchSpy.mockRestore();
       warn.mockRestore();

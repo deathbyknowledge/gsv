@@ -959,8 +959,10 @@ async function resolveStoredAiTextModelStack(
       // a shared OAuth account that no longer refreshes, is dropped from the
       // fallbacks rather than blocking every model layered above it.
       if (resolved.length === 0) throw error;
+      // Classification only: provider errors can carry response bodies, and
+      // nothing from an auth exchange belongs in Worker logs.
       console.warn(
-        `[AI] Skipping fallback model ${entry.id}: ${error instanceof Error ? error.message : String(error)}`,
+        `[AI] Skipping fallback model ${entry.id} (${entry.provider}): ${error instanceof Error ? error.name : "Error"}`,
       );
       continue;
     }

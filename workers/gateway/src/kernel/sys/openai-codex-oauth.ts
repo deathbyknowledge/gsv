@@ -70,7 +70,7 @@ export async function startOpenAICodexDeviceFlow(
     body: JSON.stringify({ client_id: OPENAI_CODEX_CLIENT_ID }),
   });
   if (!response.ok) {
-    throw new Error(`OpenAI Codex device code request failed with status ${response.status}: ${await readLimitedText(response)}`);
+    throw new Error(`OpenAI Codex device code request failed with status ${response.status}${describeAuthFailure(await readLimitedText(response))}`);
   }
 
   const json = await readJsonObject(response);
@@ -137,7 +137,7 @@ export async function pollOpenAICodexDeviceFlow(
   if (errorCode === "slow_down") {
     return { status: "pending", intervalSeconds: (input.intervalSeconds ?? 5) + 5 };
   }
-  throw new Error(`OpenAI Codex device auth failed with status ${response.status}${body ? `: ${body}` : ""}`);
+  throw new Error(`OpenAI Codex device auth failed with status ${response.status}${describeAuthFailure(body)}`);
 }
 
 export async function exchangeOpenAICodexAuthorizationCode(
@@ -152,6 +152,29 @@ export async function exchangeOpenAICodexAuthorizationCode(
     code_verifier: codeVerifier,
     redirect_uri: OPENAI_CODEX_DEVICE_REDIRECT_URI,
   }, "exchange", fetcher);
+}
+
+/**
+ * Reduces an auth endpoint's failure body to its OAuth error code and
+ * description. Anything else in the body, including any token material a
+ * misbehaving endpoint might echo, never reaches an error message.
+ */
+function describeAuthFailure(body: string): string {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(body);
+  } catch {
+    return "";
+  }
+  const parsed = z.object({
+    error: z.string().trim().min(1).optional(),
+    error_description: z.string().trim().min(1).optional(),
+  }).safeParse(decoded);
+  if (!parsed.success || !parsed.data.error) {
+    return "";
+  }
+  const description = parsed.data.error_description?.slice(0, 200);
+  return `: ${parsed.data.error}${description ? `: ${description}` : ""}`;
 }
 
 /**
@@ -233,7 +256,7 @@ async function exchangeOpenAICodexToken(
     body: new URLSearchParams(params),
   });
   if (!response.ok) {
-    throw new Error(`OpenAI Codex token ${operation} failed with status ${response.status}: ${await readLimitedText(response)}`);
+    throw new Error(`OpenAI Codex token ${operation} failed with status ${response.status}${describeAuthFailure(await readLimitedText(response))}`);
   }
 
   const json = await readJsonObject(response);
