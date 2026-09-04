@@ -171,10 +171,6 @@ function createBash(
   const serverName = ctx.config.get("config/server/name") ?? "gsv";
   const serverVersion = ctx.config.get("config/server/version") ?? ctx.serverVersion;
   const networkEnabled = ctx.config.get("config/shell/network_enabled") !== "false";
-  const maxOutput = parseInt(
-    ctx.config.get("config/shell/max_output_bytes") ?? "524288",
-    10,
-  );
 
   return new Bash({
     fs,
@@ -208,7 +204,9 @@ function createBash(
       maxCommandCount: 1000,
       maxCallDepth: 64,
       maxLoopIterations: 10_000,
-      maxOutputSize: maxOutput,
+      // The returned stdout/stderr are truncated to config/shell/max_output_bytes
+      // separately. Pipe traffic inside one invocation, including bytes that
+      // only ever flow into files, keeps just-bash's own 256 MiB ceiling.
       maxExecutionTimeMs: timeoutMs + JUST_BASH_EXECUTION_BACKSTOP_GRACE_MS,
       maxExtensionCleanupTimeMs: JUST_BASH_EXTENSION_CLEANUP_TIME_MS,
     },
