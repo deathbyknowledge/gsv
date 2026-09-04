@@ -264,8 +264,9 @@ lexical-response rubric.
 5. Do not use this GLM route for interactive multi-agent work until its inference
    tail and nonstandard error finish reason are addressed.
 6. Run the corrected 20-scenario set ten times with Qwen3.8-27B-FP8 as the
-   primary self-hosted model, Qwen3.6-27B as the matched-size predecessor,
-   Qwen3.8-Max as the same-family ceiling, and current cross-family controls.
+   primary self-hosted model, GLM-5.3-Flash as the current cross-family
+   comparison, Qwen3.8-Max as the same-family ceiling, and current frontier
+   controls.
    Preserve scenario-level trials so Pass@k, Pass^k, and stratified intervals
    remain comparable.
 7. Use failed and near-pass trajectories to improve performance, but keep
