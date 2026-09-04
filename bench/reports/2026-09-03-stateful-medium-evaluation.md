@@ -11,6 +11,14 @@ highest partial-credit mean and much better latency, but prematurely resolved
 21% strict Pass@1 but timed out in 48/200 total episodes. Qwen 3.7 Flash did not
 complete either lifecycle once.
 
+These rankings are now classified as output-budget-limited historical results,
+not a fair model-quality comparison. A 2026-09-04 audit found that the 2,048-token
+per-response ceiling was reached by 227 DeepSeek calls across 138 rollouts, 129
+GLM calls across 88 rollouts, and 42 Qwen calls across 39 rollouts. Luna had no
+detected limit hits. The corrected harness uses 32,768 tokens per response and
+fails its validity check whenever a response reports `finish_reason=length` or
+usage at the configured ceiling.
+
 The competing-incidents family remains a stress tier, not yet a useful strict
 ranking set: every model scored 0/100 strict. Its trajectories are valuable,
 but the frozen rubric coupled an intermediate reprioritization milestone to the
@@ -202,8 +210,8 @@ evidence.
 
 ## Benchmark audit and post-run fixes
 
-The paid matrix remains immutable at `c58db22d`. Review findings produced two
-separate post-run commits:
+The paid matrix remains immutable at `c58db22d`. Review findings and the
+output-limit audit produced these post-run corrections:
 
 1. `1918dc31` decouples scheduled events and scoring from ordinal responsibility
    ids. Scenarios declare semantic references such as `initial`, `priority`, or
@@ -219,15 +227,18 @@ separate post-run commits:
    through the synthetic manual/help paths models actually tried. Valid run
    control remains owned by the Process runtime; the help commands do not create
    a second execution path.
-
-The main remaining fidelity seam is asynchronous delegation. The synthetic
-`proc delegate` creates a durable child, and a caller timeout correctly does not
-kill that child, but the current Shell call awaits child completion before
-returning its nominal in-progress handle. Slow child models can therefore show a
-generic 120-second caller timeout even while the durable child later succeeds.
-This likely penalized DeepSeek and GLM and should be fixed before the next full
-matrix: return the handle promptly, preserve background child ownership, and
-wake the parent with the eventual IPC event.
+3. `8c760964` makes synthetic delegation asynchronous: `proc delegate` returns
+   its in-progress handle promptly, the child remains owned in the background,
+   and completion wakes the parent through an ordered IPC event.
+4. `5867bc46` makes agent accounts reusable while giving every delegation a
+   fresh Process id, makes delegation without `--as` inherit the caller's
+   account, and keys transitions and scoring to the durable account rather than
+   one fixture pid. It also enforces the production `r12y wait` requirement and
+   updates the deterministic reference trajectories to yield for asynchronous
+   child results.
+5. `7a925166` sets 32,768 output tokens explicitly, reports response-limit hits,
+   fails capped matrices as invalid comparisons, and lets the same runner target
+   a self-hosted OpenAI-compatible endpoint without recording its credential.
 
 Other useful diagnostic improvements are to label zero-action hard-constraint
 passes as vacuous and to grade structured child conclusions where a child read
@@ -240,19 +251,23 @@ lexical-response rubric.
    strict outcomes, catches real unsafe ordering, and separates quality,
    reliability, latency, and cost.
 2. Keep competing incidents as a hard stress set, but rerun a small calibration
-   on the corrected rubric after fixing asynchronous delegation. Do not compare
-   new partial means against this frozen digest.
-3. Treat DeepSeek as the safety baseline and Luna as the throughput/coverage
-   candidate. Add a Kernel-enforced confirmation-before-resolution gate before
-   considering Luna for unattended service operations.
-4. Do not use Qwen 3.7 Flash for long-horizon GSV orchestration. Its 493 aggregate
-   tok/s is economically irrelevant at a 0% strict rate.
+   on the corrected rubric and lifecycle. Do not compare new partial means
+   against this frozen digest.
+3. Retain DeepSeek and Luna as longitudinal controls, not established winners:
+   DeepSeek was heavily output-limited, and both were measured before the
+   remaining synthetic runtime corrections. Add a Kernel-enforced
+   confirmation-before-resolution gate before considering any model for
+   unattended service operations.
+4. Do not use the capped Qwen 3.7 Flash result to infer Qwen3.8-27B quality. The
+   models are different generations and deployment classes, and 39 Qwen
+   rollouts reached the old response ceiling.
 5. Do not use this GLM route for interactive multi-agent work until its inference
    tail and nonstandard error finish reason are addressed.
-6. After the delegation fix, run the corrected 20-scenario set ten times on the
-   strong anchors—Terra, Qwen 3.8 Max, and one current ceiling model—under the
-   same concurrency and timeout. Preserve scenario-level trials so Pass@k,
-   Pass^k, and stratified intervals remain comparable.
+6. Run the corrected 20-scenario set ten times with Qwen3.8-27B-FP8 as the
+   primary self-hosted model, Qwen3.6-27B as the matched-size predecessor,
+   Qwen3.8-Max as the same-family ceiling, and current cross-family controls.
+   Preserve scenario-level trials so Pass@k, Pass^k, and stratified intervals
+   remain comparable.
 7. Use failed and near-pass trajectories to improve performance, but keep
    evaluation topologies held out. Generate training variants by independently
    composing principals, targets, event schedules, stale evidence, approvals,
@@ -264,8 +279,8 @@ lexical-response rubric.
 Post-run validation passed:
 
 - bench TypeScript compile;
-- 23 runtime tests across three files;
-- Ruff and 27 Python tests;
+- 26 runtime tests across three files;
+- Ruff and 28 Python tests;
 - Oxlint and shell syntax checks; and
 - the complete deterministic Verifiers endpoint flow: four fixtures, one
   release scenario, ten competing scenarios, and ten service-account scenarios,
