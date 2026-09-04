@@ -23,6 +23,7 @@ vi.spyOn(skillsSeed, "seedBuiltinSkillsToHome").mockImplementation(seedBuiltinSk
 import {
   handleAiContext,
   handleAiConfig,
+  handleAiModels,
   handleAiImageGenerate,
   handleAiImageRead,
   handleAiSpeechCreate,
@@ -312,11 +313,18 @@ describe("handleAiConfig", () => {
       capabilities?: string[];
       oauthAccounts?: OAuthAccountRecord[];
       ripgit?: Fetcher;
+      managedInference?: boolean;
     } = {},
   ): KernelContext {
     const uid = options.uid ?? 1000;
     const ownerUid = options.ownerUid ?? uid;
     const oauthAccounts = options.oauthAccounts ?? [];
+    const env: Partial<KernelContext["env"]> = {};
+    if (options.ripgit) env.RIPGIT = options.ripgit;
+    if (options.managedInference) {
+      // SAFETY: the base stack only checks that the managed inference binding exists.
+      env.MANAGED_INFERENCE = {} as never;
+    }
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {
       installationId: TEST_INSTALLATION_ID,
@@ -380,7 +388,7 @@ describe("handleAiConfig", () => {
         })),
       },
       processId: options.processId,
-      env: options.ripgit ? { RIPGIT: options.ripgit } : {},
+      env,
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
   }
@@ -1374,6 +1382,18 @@ describe("handleAiConfig", () => {
         apiKey: "",
         maxTokens: 32_768,
       }),
+      expect.objectContaining({
+        modelId: "workers-ai-glm-5-3-flash",
+        provider: "workers-ai",
+        model: "@cf/zai-org/glm-5.3-flash",
+        apiKey: "",
+      }),
+      expect.objectContaining({
+        modelId: "workers-ai-kimi-k2-6",
+        provider: "workers-ai",
+        model: "@cf/moonshotai/kimi-k2.6",
+        apiKey: "",
+      }),
     ]);
   });
 
@@ -1393,7 +1413,13 @@ describe("handleAiConfig", () => {
     }));
 
     expect([result.model, ...(result.fallbacks ?? []).map((fallback) => fallback.model)])
-      .toEqual(["claude-preferred", "gpt-primary", "@cf/last"]);
+      .toEqual([
+        "claude-preferred",
+        "gpt-primary",
+        "@cf/last",
+        "@cf/zai-org/glm-5.3-flash",
+        "@cf/moonshotai/kimi-k2.6",
+      ]);
   });
 
   it("rejects a requested model id that is not in the owner's stack", async () => {
@@ -1424,7 +1450,156 @@ describe("handleAiConfig", () => {
         modelId: "system-fallback",
         model: "@cf/fallback",
       }),
+      expect.objectContaining({
+        modelId: "workers-ai-glm-5-3-flash",
+        provider: "workers-ai",
+        model: "@cf/zai-org/glm-5.3-flash",
+        apiKey: "",
+      }),
+      expect.objectContaining({
+        modelId: "workers-ai-kimi-k2-6",
+        provider: "workers-ai",
+        model: "@cf/moonshotai/kimi-k2.6",
+        apiKey: "",
+      }),
     ]);
+  });
+
+  it("supplies GSV Included as the managed base when nothing is configured", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({}, { managedInference: true }));
+
+    expect(result).toMatchObject({ provider: "gsv", model: "default", apiKey: "" });
+    expect(result.fallbacks).toBeUndefined();
+  });
+
+  it("extends the managed base with a personal provider instead of replacing it", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "mine", name: "Mine", provider: "openai", model: "gpt-5.4" }],
+      }),
+      "users/1000/ai/models/mine/api_key": "sk-mine",
+    }, { managedInference: true }));
+
+    expect(result).toMatchObject({ provider: "openai", model: "gpt-5.4", apiKey: "sk-mine" });
+    expect(result.fallbacks).toEqual([
+      expect.objectContaining({ modelId: "gsv-included", provider: "gsv", model: "default", apiKey: "" }),
+    ]);
+  });
+
+  it("promotes a preferred base entry ahead of personal entries", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "mine", name: "Mine", provider: "openai", model: "gpt-5.4" }],
+      }),
+      "users/1000/ai/preferred_model": "gsv-included",
+    }, { managedInference: true }));
+
+    expect(result).toMatchObject({ provider: "gsv", model: "default" });
+    expect(result.fallbacks?.map((fallback) => fallback.modelId)).toEqual(["mine"]);
+  });
+
+  it("keeps one copy when a configured list repeats a base model", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "setup-primary", name: "GSV Included", provider: "gsv", model: "default" }],
+      }),
+    }, { managedInference: true }));
+
+    expect(result).toMatchObject({ provider: "gsv", model: "default" });
+    expect(result.fallbacks).toBeUndefined();
+  });
+
+  it("layers the system list between personal entries and the base", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "mine", name: "Mine", provider: "openai", model: "gpt-5.4" }],
+      }),
+      "config/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "shared", name: "Shared", provider: "anthropic", model: "claude-sonnet-5" }],
+      }),
+      "config/ai/models/shared/api_key": "sk-shared",
+    }, { managedInference: true }));
+
+    expect(result.model).toBe("gpt-5.4");
+    expect(result.fallbacks?.map((fallback) => [fallback.modelId, fallback.apiKey])).toEqual([
+      ["shared", "sk-shared"],
+      ["gsv-included", ""],
+    ]);
+  });
+
+  it("counts a connected OAuth account as a credential through ai.models", () => {
+    const stack = JSON.stringify({
+      version: 1,
+      models: [{ id: "codex", name: "Codex", provider: "openai-codex", model: "gpt-5.5" }],
+    });
+
+    const personal = handleAiModels(makeAiConfigContext({ "users/1000/ai/models": stack }, {
+      oauthAccounts: [makeOAuthAccount({ uid: 1000 })],
+    }));
+    expect(personal.models[0]).toMatchObject({ id: "codex", source: "personal", hasCredential: true });
+
+    const shared = handleAiModels(makeAiConfigContext({ "config/ai/models": stack }, {
+      oauthAccounts: [makeOAuthAccount({ uid: 0, accountId: "acct-root" })],
+    }));
+    expect(shared.models[0]).toMatchObject({ id: "codex", source: "system", hasCredential: true });
+
+    const disconnected = handleAiModels(makeAiConfigContext({ "users/1000/ai/models": stack }));
+    expect(disconnected.models[0]).toMatchObject({ id: "codex", hasCredential: false });
+    expect(JSON.stringify(personal)).not.toContain("codex-access-token");
+  });
+
+  it("keeps two profiles for one connection when they sit in the same layer", () => {
+    const listing = handleAiModels(makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [
+          { id: "fast", name: "Fast", provider: "openai", model: "gpt-5.4", maxTokens: 4096 },
+          { id: "long", name: "Long", provider: "openai", model: "gpt-5.4", maxTokens: 65536 },
+        ],
+      }),
+      "config/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "shared-gpt", name: "Shared GPT", provider: "openai", model: "gpt-5.4" }],
+      }),
+    }, { managedInference: true }));
+
+    // Both personal profiles survive; the shared copy of that connection is shadowed by them.
+    expect(listing.models.map((model) => model.id)).toEqual(["fast", "long", "gsv-included"]);
+  });
+
+  it("lists the effective stack with its layers through ai.models", () => {
+    const ctx = makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "mine", name: "Mine", provider: "openai", model: "gpt-5.4" }],
+      }),
+      "users/1000/ai/models/mine/api_key": "sk-mine",
+    }, { managedInference: true });
+
+    expect(handleAiModels(ctx)).toEqual({
+      preferredModelId: null,
+      models: [
+        expect.objectContaining({ id: "mine", source: "personal", hasCredential: true }),
+        expect.objectContaining({ id: "gsv-included", name: "GSV Included", source: "base", hasCredential: false }),
+      ],
+    });
+    expect(JSON.stringify(handleAiModels(ctx))).not.toContain("sk-mine");
+
+    const preferred = handleAiModels(makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "mine", name: "Mine", provider: "openai", model: "gpt-5.4" }],
+      }),
+      "users/1000/ai/preferred_model": "gsv-included",
+    }, { managedInference: true }));
+    expect(preferred.preferredModelId).toBe("gsv-included");
+    // The listing keeps layered order; generation is what moves the preference first.
+    expect(preferred.models.map((model) => model.id)).toEqual(["mine", "gsv-included"]);
   });
 
   it("validates one complete request-local model without adding stored fallbacks", async () => {
@@ -1488,6 +1663,107 @@ describe("handleAiConfig", () => {
     expect(result.model).toBe("owner-model");
     expect(result.apiKey).toBe("owner-key");
     expect(result.accountApprovalPolicy).toBe('{"default":"auto","rules":[]}');
+  });
+
+  it("applies the owner's preferred model to the agents the owner runs", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "mine", name: "Mine", provider: "openai", model: "gpt-5.4" }],
+      }),
+      "users/1000/ai/preferred_model": "gsv-included",
+    }, { uid: 2000, ownerUid: 1000, processId: "task-1", managedInference: true }));
+
+    expect(result).toMatchObject({ provider: "gsv", model: "default" });
+    expect(result.fallbacks?.map((fallback) => fallback.modelId)).toEqual(["mine"]);
+  });
+
+  it("treats an agent's cleared preference as inheriting the owner's", async () => {
+    const context = makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "mine", name: "Mine", provider: "openai", model: "gpt-5.4" }],
+      }),
+      "users/1000/ai/preferred_model": "gsv-included",
+      "users/2000/ai/preferred_model": "",
+    }, { uid: 2000, ownerUid: 1000, processId: "task-1", managedInference: true });
+
+    expect(await handleAiConfig({}, context)).toMatchObject({ provider: "gsv", model: "default" });
+    expect(handleAiModels(context).preferredModelId).toBe("gsv-included");
+  });
+
+  it("skips an agent's stale preference so the owner's current choice applies", async () => {
+    const context = makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "mine", name: "Mine", provider: "openai", model: "gpt-5.4" }],
+      }),
+      "users/1000/ai/preferred_model": "gsv-included",
+      "users/2000/ai/preferred_model": "deleted-model",
+    }, { uid: 2000, ownerUid: 1000, processId: "task-1", managedInference: true });
+
+    expect(await handleAiConfig({}, context)).toMatchObject({ provider: "gsv", model: "default" });
+    expect(handleAiModels(context).preferredModelId).toBe("gsv-included");
+  });
+
+  it("lets an agent's own preferred model override the owner's", async () => {
+    const context = makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "mine", name: "Mine", provider: "openai", model: "gpt-5.4" }],
+      }),
+      "users/1000/ai/preferred_model": "gsv-included",
+      "users/2000/ai/preferred_model": "mine",
+    }, { uid: 2000, ownerUid: 1000, processId: "task-1", managedInference: true });
+
+    const result = await handleAiConfig({}, context);
+    expect(result).toMatchObject({ provider: "openai", model: "gpt-5.4" });
+    expect(handleAiModels(context).models.map((model) => model.id)).toEqual(["mine", "gsv-included"]);
+  });
+
+  it("drops a shared fallback whose credential cannot be resolved instead of failing the stack", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("refresh endpoint unreachable"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = await handleAiConfig({}, makeAiConfigContext({
+        "users/1000/ai/models": JSON.stringify({
+          version: 1,
+          models: [{ id: "mine", name: "Mine", provider: "openai", model: "gpt-5.4" }],
+        }),
+        "users/1000/ai/models/mine/api_key": "sk-mine",
+        "config/ai/models": JSON.stringify({
+          version: 1,
+          models: [{ id: "shared-codex", name: "Shared Codex", provider: "openai-codex", model: "gpt-5.5" }],
+        }),
+      }, {
+        managedInference: true,
+        oauthAccounts: [makeOAuthAccount({ uid: 0, metadata: {} })],
+      }));
+
+      expect(result).toMatchObject({ provider: "openai", model: "gpt-5.4", apiKey: "sk-mine" });
+      expect(result.fallbacks?.map((fallback) => fallback.modelId)).toEqual(["gsv-included"]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("Skipping fallback model shared-codex"));
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("refresh endpoint unreachable"));
+    } finally {
+      fetchSpy.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  it("still fails when the primary model's credential cannot be resolved", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("refresh endpoint unreachable"));
+    try {
+      await expect(handleAiConfig({}, makeAiConfigContext({
+        "users/1000/ai/models": JSON.stringify({
+          version: 1,
+          models: [{ id: "codex", name: "Codex", provider: "openai-codex", model: "gpt-5.5" }],
+        }),
+      }, {
+        oauthAccounts: [makeOAuthAccount({ metadata: {} })],
+      }))).rejects.toThrow();
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
   it("keeps a complete request-local model separate from persisted runtime and media settings", async () => {

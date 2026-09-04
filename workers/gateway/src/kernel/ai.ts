@@ -12,6 +12,7 @@
  */
 
 import { principalOf, requirePrincipal, resolveCallerOwnerUid, type KernelContext } from "./context";
+import { baseAiModelStack } from "../inference/base-model-stack";
 import { peerActingAs } from "./peer";
 import type { FrameBody } from "../protocol/frames";
 import type { Context, Message, Tool } from "@earendil-works/pi-ai";
@@ -25,6 +26,7 @@ import type {
   AiModelConfig,
   AiModelEntry,
   AiModelStack,
+  AiModelsResult,
   ProcessIdentity,
   AiContextArgs,
   AiContextResult,
@@ -53,7 +55,7 @@ import type {
 import type { ToolDefinition, SyscallName } from "../syscalls";
 import { intoSyscallTool, isRoutableSyscall } from "../syscalls";
 import { hasCapability } from "./capabilities";
-import { resolveAiProviderOAuthApiKey } from "./ai-oauth";
+import { hasStoredAiProviderOAuthAccount, resolveAiProviderOAuthApiKey } from "./ai-oauth";
 
 import { FS_READ_DEFINITION } from "../syscalls/read";
 import { FS_WRITE_DEFINITION } from "../syscalls/write";
@@ -106,10 +108,11 @@ import { collectPromptSkillIndex } from "./skills";
 import { seedBuiltinSkillsToHome } from "./sys/skills-seed";
 import { listAllVisibleTargets, targetToAiTarget } from "./targets";
 import {
-  aiModelApiKeyConfigKey,
   isSameAiModelCredentialScope,
-  orderAiModelStack,
+  layerAiModelStacks,
+  orderEffectiveAiModels,
   parseAiModelStack,
+  type EffectiveAiModelEntry,
   SYSTEM_AI_MODELS_CONFIG_KEY,
   userAiModelsConfigKey,
 } from "./ai-model-stack";
@@ -144,12 +147,6 @@ type AiModelStackConfig = Pick<
   | "generationTimeoutMs"
   | "generationStreaming"
 >;
-
-type StoredAiModelStack = {
-  configKey: string;
-  stack: AiModelStack;
-  systemOwned: boolean;
-};
 
 type ResolvedAiTextModelStack = {
   primary: AiModelStackConfig;
@@ -817,7 +814,7 @@ async function resolveAiTextModelStack(options: {
   modelId: string | null | undefined;
   reasoning: string | null | undefined;
 }): Promise<ResolvedAiTextModelStack> {
-  const stored = resolveStoredAiModelStack(
+  const effective = resolveEffectiveAiModelStack(
     options.ctx,
     resolveAiModelOwnerUid(options.ctx, options.uid, options.owner),
   );
@@ -825,38 +822,93 @@ async function resolveAiTextModelStack(options: {
     return await resolveRequestAiModelConfig({
       ...options,
       modelConfig: options.modelConfig,
-    }, stored);
+    }, effective);
   }
-  return await resolveStoredAiTextModelStack(options, stored);
+  return await resolveStoredAiTextModelStack(options, effective);
 }
 
-function resolveStoredAiModelStack(
+/**
+ * The owner's own list, then the system list, then the deployment base.
+ * Nothing replaces a lower layer; a malformed configured list is an error
+ * rather than a silent fall-through to different models.
+ */
+export function resolveEffectiveAiModelStack(
   ctx: KernelContext,
   ownerUid: number,
-): StoredAiModelStack {
-  const ownerKey = userAiModelsConfigKey(ownerUid);
-  const ownerRaw = ctx.config.getExplicit(ownerKey);
-  if (ownerRaw !== null) {
-    return parseStoredAiModelStack(ownerKey, ownerRaw, false);
-  }
-
-  const systemRaw = ctx.config.get(SYSTEM_AI_MODELS_CONFIG_KEY);
-  if (systemRaw === null) {
-    throw new Error("AI model stack is not configured");
-  }
-  return parseStoredAiModelStack(SYSTEM_AI_MODELS_CONFIG_KEY, systemRaw, true);
+): EffectiveAiModelEntry[] {
+  const personalKey = userAiModelsConfigKey(ownerUid);
+  return layerAiModelStacks({
+    personal: readConfiguredAiModelStack(ctx, personalKey),
+    personalKey,
+    system: readConfiguredAiModelStack(ctx, SYSTEM_AI_MODELS_CONFIG_KEY),
+    base: baseAiModelStack(ctx.env),
+  });
 }
 
-function parseStoredAiModelStack(
-  configKey: string,
-  raw: string,
-  systemOwned: boolean,
-): StoredAiModelStack {
+function readConfiguredAiModelStack(ctx: KernelContext, configKey: string): AiModelStack | null {
+  const raw = ctx.config.getExplicit(configKey);
+  if (raw === null) {
+    return null;
+  }
   const stack = parseAiModelStack(raw);
   if (!stack) {
     throw new Error(`Invalid AI model stack at /sys/${configKey}`);
   }
-  return { configKey, stack, systemOwned };
+  return stack;
+}
+
+/**
+ * The running account's own preference wins; otherwise the owner's preference
+ * applies, so a human promoting a model also steers the agents they run.
+ */
+function resolvePreferredAiModelId(
+  ctx: KernelContext,
+  accountUids: readonly number[],
+  effective: readonly EffectiveAiModelEntry[],
+): string | null {
+  // A cleared preference is stored as an empty string, and a stale one names
+  // an entry that no longer exists; neither may shadow the owner's choice.
+  for (const accountUid of accountUids) {
+    const preferred = normalizeOptionalString(
+      ctx.config.getExplicit(`users/${accountUid}/ai/preferred_model`),
+    );
+    if (!preferred) continue;
+    const match = effective.find((item) => item.entry.id.toLowerCase() === preferred.toLowerCase());
+    if (match) return match.entry.id;
+  }
+  return null;
+}
+
+function storedCredential(ctx: KernelContext, item: EffectiveAiModelEntry): string {
+  return item.credentialKey ? ctx.config.get(item.credentialKey) ?? "" : "";
+}
+
+/** Lists the effective ordered stack for the caller's owner account, without credentials. */
+export function handleAiModels(ctx: KernelContext): AiModelsResult {
+  const principal = principalOf(ctx);
+  if (!principal) {
+    throw new Error("Authentication required");
+  }
+  const uid = principal.account.uid;
+  const owner = resolveOwnerIdentity(ctx);
+  const effective = resolveEffectiveAiModelStack(ctx, resolveAiModelOwnerUid(ctx, uid, owner));
+  const accountUids = resolveAiConfigAccountUids(uid, owner);
+  const preferredModelId = resolvePreferredAiModelId(ctx, accountUids, effective);
+  // Layered order on purpose: clients re-serialize a layer from this listing.
+  return {
+    models: effective.map((item) => ({
+      ...item.entry,
+      source: item.source,
+      // A stored key or a saved OAuth account in the entry's credential scope both count.
+      hasCredential: storedCredential(ctx, item).length > 0
+        || hasStoredAiProviderOAuthAccount(
+          ctx,
+          item.source === "personal" ? accountUids : withRootAiCredentialScope(accountUids),
+          item.entry.provider,
+        ),
+    })),
+    preferredModelId,
+  };
 }
 
 async function resolveStoredAiTextModelStack(
@@ -867,19 +919,19 @@ async function resolveStoredAiTextModelStack(
     modelId: string | null | undefined;
     reasoning: string | null | undefined;
   },
-  stored: StoredAiModelStack,
+  effective: readonly EffectiveAiModelEntry[],
 ): Promise<ResolvedAiTextModelStack> {
   const resolveConfig = createAiConfigValueResolver(options.ctx.config, options.accountUids);
   const requestedModelId = normalizeOptionalString(options.modelId);
   if (
     requestedModelId &&
-    !stored.stack.models.some((entry) => entry.id.toLowerCase() === requestedModelId.toLowerCase())
+    !effective.some((item) => item.entry.id.toLowerCase() === requestedModelId.toLowerCase())
   ) {
     throw new Error(`AI model not found: ${requestedModelId}`);
   }
   const preferredModelId = requestedModelId
-    ?? normalizeOptionalString(options.ctx.config.getExplicit(`users/${options.uid}/ai/preferred_model`));
-  const models = orderAiModelStack(stored.stack, preferredModelId);
+    ?? resolvePreferredAiModelId(options.ctx, options.accountUids, effective);
+  const models = orderEffectiveAiModels(effective, preferredModelId);
   const reasoning = normalizeOptionalString(options.reasoning)
     ?? normalizeOptionalString(resolveConfig("reasoning"));
   const generationTimeoutMs = resolveConfig("generation/timeout_ms", parsePositiveInt)
@@ -888,17 +940,32 @@ async function resolveStoredAiTextModelStack(
     resolveConfig("generation/streaming"),
   );
   const resolved: Array<{ entry: AiModelEntry; config: AiModelStackConfig }> = [];
-  for (const entry of models) {
-    const config = await resolveCompleteAiModelConfig({
-      ctx: options.ctx,
-      accountUids: options.accountUids,
-      model: entry,
-      apiKey: options.ctx.config.get(aiModelApiKeyConfigKey(stored.configKey, entry.id)) ?? "",
-      systemOwned: stored.systemOwned,
-      reasoning,
-      generationTimeoutMs,
-      generationStreaming,
-    });
+  for (const item of models) {
+    const entry = item.entry;
+    let config: AiModelStackConfig;
+    try {
+      config = await resolveCompleteAiModelConfig({
+        ctx: options.ctx,
+        accountUids: options.accountUids,
+        model: entry,
+        apiKey: storedCredential(options.ctx, item),
+        systemOwned: item.source !== "personal",
+        reasoning,
+        generationTimeoutMs,
+        generationStreaming,
+      });
+    } catch (error) {
+      // The primary must resolve; a broken entry lower in the stack, such as
+      // a shared OAuth account that no longer refreshes, is dropped from the
+      // fallbacks rather than blocking every model layered above it.
+      if (resolved.length === 0) throw error;
+      // Classification only: provider errors can carry response bodies, and
+      // nothing from an auth exchange belongs in Worker logs.
+      console.warn(
+        `[AI] Skipping fallback model ${entry.id} (${entry.provider}): ${error instanceof Error ? error.name : "Error"}`,
+      );
+      continue;
+    }
     if (!resolved.some((candidate) => isSameAiModelStack(candidate.config, config))) {
       resolved.push({ entry, config });
     }
@@ -906,7 +973,7 @@ async function resolveStoredAiTextModelStack(
 
   const [primary, ...fallbacks] = resolved;
   if (!primary) {
-    throw new Error(`AI model stack at /sys/${stored.configKey} has no usable models`);
+    throw new Error("No usable AI model is configured");
   }
   return {
     primary: primary.config,
@@ -927,7 +994,7 @@ async function resolveRequestAiModelConfig(
     modelId: string | null | undefined;
     reasoning: string | null | undefined;
   },
-  stored: StoredAiModelStack,
+  effective: readonly EffectiveAiModelEntry[],
 ): Promise<ResolvedAiTextModelStack> {
   const provider = normalizeOptionalString(options.modelConfig.provider);
   const modelName = normalizeOptionalString(options.modelConfig.model);
@@ -935,20 +1002,20 @@ async function resolveRequestAiModelConfig(
     throw new Error("modelConfig.provider and modelConfig.model are required");
   }
   const modelId = normalizeOptionalString(options.modelId);
-  const storedEntry = modelId
-    ? stored.stack.models.find((entry) => entry.id.toLowerCase() === modelId.toLowerCase())
+  const storedItem = modelId
+    ? effective.find((item) => item.entry.id.toLowerCase() === modelId.toLowerCase())
     : undefined;
-  if (modelId && !storedEntry) {
+  if (modelId && !storedItem) {
     throw new Error(`AI model not found: ${modelId}`);
   }
   const resolveConfig = createAiConfigValueResolver(options.ctx.config, options.accountUids);
   const usesStoredCredential = options.modelConfig.apiKey === undefined &&
-    storedEntry !== undefined &&
-    isSameAiModelCredentialScope(storedEntry, options.modelConfig);
+    storedItem !== undefined &&
+    isSameAiModelCredentialScope(storedItem.entry, options.modelConfig);
   const apiKey = options.modelConfig.apiKey !== undefined
     ? options.modelConfig.apiKey.trim()
     : usesStoredCredential
-      ? options.ctx.config.get(aiModelApiKeyConfigKey(stored.configKey, storedEntry.id)) ?? ""
+      ? storedCredential(options.ctx, storedItem)
       : "";
   const config = await resolveCompleteAiModelConfig({
     ctx: options.ctx,
@@ -959,7 +1026,7 @@ async function resolveRequestAiModelConfig(
       model: modelName,
     },
     apiKey,
-    systemOwned: usesStoredCredential ? stored.systemOwned : false,
+    systemOwned: usesStoredCredential ? storedItem.source !== "personal" : false,
     reasoning: normalizeOptionalString(options.reasoning)
       ?? normalizeOptionalString(resolveConfig("reasoning")),
     generationTimeoutMs: resolveConfig("generation/timeout_ms", parsePositiveInt)

@@ -130,15 +130,16 @@ describe("gateway integration", () => {
       });
       expect(connected.peer.grant.calls).toContain("proc.*");
 
-      const aiModels = await client.sys.config.get({ key: "config/ai/models" });
-      expect(aiModels.entries).toHaveLength(1);
-      expect(JSON.parse(aiModels.entries[0]!.value)).toMatchObject({
-        version: 1,
+      const aiModels = await client.call("ai.models", {});
+      expect(aiModels).toMatchObject({
+        preferredModelId: null,
         models: [
-          { provider: "workers-ai", model: expect.any(String) },
-          { provider: "workers-ai", model: expect.any(String) },
+          { provider: "workers-ai", model: expect.any(String), source: "base", hasCredential: false },
+          { provider: "workers-ai", model: expect.any(String), source: "base", hasCredential: false },
         ],
       });
+      const configured = await client.sys.config.get({ key: "config/ai/models" });
+      expect(configured.entries).toHaveLength(0);
 
       expect((await client.account.list()).accounts).toEqual(expect.arrayContaining([
         expect.objectContaining({

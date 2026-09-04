@@ -1,22 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { ConfigStore, SYSTEM_CONFIG_DEFAULTS } from "./config";
-import {
-  DEFAULT_TEXT_GENERATION_MAX_TOKENS,
-  DEFAULT_WORKERS_AI_FALLBACK_MODEL,
-  DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID,
-  DEFAULT_WORKERS_AI_MODEL,
-} from "../inference/default-models";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
-import { parseAiModelStack } from "./ai-model-stack";
 
 describe("ConfigStore", () => {
-  it("defaults text and image generation to their supported output budgets", () => {
-    const stack = parseAiModelStack(SYSTEM_CONFIG_DEFAULTS["config/ai/models"]);
-    expect(stack?.models.every((model) =>
-      model.maxTokens === DEFAULT_TEXT_GENERATION_MAX_TOKENS
-    )).toBe(true);
+  it("defaults image reading to its supported output budget", () => {
     expect(SYSTEM_CONFIG_DEFAULTS["config/ai/image/read/max_tokens"])
       .toBe("28672");
+  });
+
+  it("ships no static model stack; the deployment base supplies one", () => {
+    expect(SYSTEM_CONFIG_DEFAULTS["config/ai/models"]).toBeUndefined();
   });
 
   it("defaults native shell execution to two minutes", () => {
@@ -37,8 +30,8 @@ describe("ConfigStore", () => {
   configuredStoreTest(
     "get overlays defaults unless an explicit value is set",
     ({ store }) => {
-      expect(store.get("config/ai/models")).toBeTruthy();
-      expect(store.getExplicit("config/ai/models")).toBeNull();
+      expect(store.get("config/ai/reasoning")).toBe("medium");
+      expect(store.getExplicit("config/ai/reasoning")).toBeNull();
       expect(store.get("config/ai/generation/streaming")).toBe("off");
       expect(store.getExplicit("config/ai/generation/streaming")).toBe("off");
     },
@@ -72,7 +65,7 @@ describe("ConfigStore", () => {
     ({ store }) => {
       const ai = store.list("config/ai");
       const values = new Map(ai.map((entry) => [entry.key, entry.value]));
-      expect(values.get("config/ai/models")).toBeTruthy();
+      expect(values.get("config/ai/reasoning")).toBe("medium");
       expect(values.get("config/ai/generation/streaming")).toBe("off");
       expect(values.get("config/ai/context.d/01-gsv.md")).toContain(
         "[GSV EVENT]",
@@ -139,30 +132,6 @@ describe("ConfigStore", () => {
         "AI model missing is not configured at /sys/users/1000/ai/models",
       );
       expect(store.get("users/1000/ai/models/missing/api_key")).toBeNull();
-    }));
-
-  it("ships an ordered Workers AI primary and fallback stack", () =>
-    runWithRealKernelSql((sql) => {
-      const store = new ConfigStore(sql);
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      const stack = JSON.parse(
-        store.get("config/ai/models") ?? "{}",
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      ) as {
-        models?: Array<{ id?: string; provider?: string; model?: string }>;
-      };
-
-      expect(stack.models).toEqual([
-        expect.objectContaining({
-          provider: "workers-ai",
-          model: DEFAULT_WORKERS_AI_MODEL,
-        }),
-        expect.objectContaining({
-          id: DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID,
-          provider: "workers-ai",
-          model: DEFAULT_WORKERS_AI_FALLBACK_MODEL,
-        }),
-      ]);
     }));
 
   configuredStoreTest(

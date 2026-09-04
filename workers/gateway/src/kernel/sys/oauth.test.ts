@@ -407,6 +407,80 @@ describe("sys.oauth handlers", () => {
     }));
   });
 
+  it("describes an incomplete token response without echoing its tokens", async () => {
+    const account: OAuthAccountRecord = {
+      accountId: "acct-codex",
+      uid: 1000,
+      kind: "ai-provider",
+      provider: "openai-codex",
+      accountKey: "default",
+      label: "OpenAI Codex",
+      scope: "openid profile email offline_access",
+      resource: null,
+      clientId: "openai-codex-device",
+      tokenType: "Bearer",
+      accessToken: "stale-access-token",
+      refreshToken: "stored-refresh-token",
+      expiresAt: 1_600_000_000_000,
+      createdAt: 1_600_000_000_000,
+      updatedAt: 1_600_000_000_000,
+      lastUsedAt: null,
+      metadata: {},
+    };
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      access_token: "leaked-access-token",
+      id_token: "leaked-id-token",
+      token_type: "Bearer",
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+    const oauth = { upsertAccount: vi.fn() };
+
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    await expect(refreshOpenAICodexAccount(oauth as any, account, fetcher)).rejects.toThrow(
+      // Names the missing and received fields, never the token values themselves.
+      /^(?!.*leaked-)(?=.*missing expires_in)(?=.*received access_token, id_token, token_type)/s,
+    );
+    expect(oauth.upsertAccount).not.toHaveBeenCalled();
+  });
+
+  it("reduces a failed token exchange to its error code without the response body", async () => {
+    const account: OAuthAccountRecord = {
+      accountId: "acct-codex",
+      uid: 1000,
+      kind: "ai-provider",
+      provider: "openai-codex",
+      accountKey: "default",
+      label: "OpenAI Codex",
+      scope: "openid profile email offline_access",
+      resource: null,
+      clientId: "openai-codex-device",
+      tokenType: "Bearer",
+      accessToken: "stale-access-token",
+      refreshToken: "stored-refresh-token",
+      expiresAt: 1_600_000_000_000,
+      createdAt: 1_600_000_000_000,
+      updatedAt: 1_600_000_000_000,
+      lastUsedAt: null,
+      metadata: {},
+    };
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      error: "invalid_grant",
+      error_description: "Refresh token expired",
+      access_token: "leaked-access-token",
+    }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    }));
+    const oauth = { upsertAccount: vi.fn() };
+
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    await expect(refreshOpenAICodexAccount(oauth as any, account, fetcher)).rejects.toThrow(
+      /^(?!.*leaked-)(?=.*status 400: invalid_grant: Refresh token expired)/s,
+    );
+  });
+
   it("lists only caller accounts for non-root users", () => {
     const ctx = makeContext(1000, oauth);
     oauth.listAccounts.mockReturnValue([

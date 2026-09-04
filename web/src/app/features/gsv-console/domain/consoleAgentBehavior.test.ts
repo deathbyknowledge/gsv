@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { listingFromConfig } from "./consoleModelListing.testSupport";
 import type { ConsoleConfigEntry } from "./consoleModels";
 import {
   behaviorForAccount,
@@ -24,7 +25,7 @@ describe("console agent behavior", () => {
       { key: GLOBAL_APPROVAL_CONFIG_KEY, value: systemApproval, redacted: false },
     ];
 
-    const behavior = behaviorForAccount(config, 2000, 1000);
+    const behavior = behaviorForAccount(listingFromConfig(config, 1000), config, 2000, 1000);
 
     expect(behavior.approval).toBe(ownerApproval);
     expect(behavior.approvalInherited).toBe(true);
@@ -50,7 +51,7 @@ describe("console agent behavior", () => {
       },
     ];
 
-    const behavior = behaviorForAccount(config, 2000, 1000);
+    const behavior = behaviorForAccount(listingFromConfig(config, 1000), config, 2000, 1000);
 
     expect(behavior.modelId).toBe("fast-stack");
     expect(behavior.model).toBe("model-entry:fast-stack");
@@ -83,12 +84,12 @@ describe("console agent behavior", () => {
       },
     ];
 
-    const behavior = behaviorForAccount(config, 2000, 1000);
+    const behavior = behaviorForAccount(listingFromConfig(config, 1000), config, 2000, 1000);
 
     expect(behavior.modelId).toBe("safe-stack");
     expect(behavior.model).toBe("model-entry:safe-stack");
     expect(behavior.modelLabel).toBe("Safe Stack");
-    expect(inheritedModelLabelForAccount(config, 2000, 1000)).toBe("Owner Stack");
+    expect(inheritedModelLabelForAccount(listingFromConfig(config, 1000), config, 2000, 1000)).toBe("Owner Stack");
   });
 
   it("ignores obsolete raw model and profile selectors", () => {
@@ -110,12 +111,12 @@ describe("console agent behavior", () => {
       },
     ];
 
-    const behavior = behaviorForAccount(config, 2000, 1000);
+    const behavior = behaviorForAccount(listingFromConfig(config, 1000), config, 2000, 1000);
 
     expect(behavior.modelId).toBe("");
     expect(behavior.model).toBe("");
     expect(behavior.modelLabel).toBe("");
-    expect(inheritedModelLabelForAccount(config, 2000, 1000)).toBe("Fast Stack");
+    expect(inheritedModelLabelForAccount(listingFromConfig(config, 1000), config, 2000, 1000)).toBe("Fast Stack");
   });
 
   it("uses the configured system approval policy when account defaults are missing", () => {
@@ -127,7 +128,7 @@ describe("console agent behavior", () => {
       { key: GLOBAL_APPROVAL_CONFIG_KEY, value: approval, redacted: false },
     ];
 
-    const behavior = behaviorForAccount(config, 42);
+    const behavior = behaviorForAccount(listingFromConfig(config, 42), config, 42);
 
     expect(behavior.approval).toBe(approval);
     expect(behavior.approvalInherited).toBe(true);

@@ -18,6 +18,7 @@ import {
   processAiConfigDirEntries,
 } from "../../process/ai-config";
 import {
+  layerAiModelStacks,
   parseAiModelStack,
   SYSTEM_AI_MODELS_CONFIG_KEY,
   userAiModelsConfigKey,
@@ -365,14 +366,24 @@ export class KernelMountBackend implements MountBackend {
     return result?.ok ? result.config : null;
   }
 
+  /**
+   * Mirrors the Kernel resolver: the process-local choice, then the agent's
+   * own preference, then the owner's, each only when it names a listed
+   * model, and otherwise the first entry of the layered list.
+   */
   private effectiveProcAiModelId(
     proc: ProcessRecord,
     local: ProcAiConfig | null,
   ): string | null {
-    return local?.modelId
-      ?? this.kernel?.config?.get(`users/${proc.uid}/ai/preferred_model`)
-      ?? this.listProcAiModels(proc.ownerUid)[0]?.id
-      ?? null;
+    if (local?.modelId) return local.modelId;
+    const models = this.listProcAiModels(proc.ownerUid);
+    for (const uid of proc.uid === proc.ownerUid ? [proc.uid] : [proc.uid, proc.ownerUid]) {
+      const preferred = this.kernel?.config?.getExplicit(`users/${uid}/ai/preferred_model`)?.trim();
+      if (preferred && models.some((model) => model.id.toLowerCase() === preferred.toLowerCase())) {
+        return preferred;
+      }
+    }
+    return models[0]?.id ?? null;
   }
 
   private effectiveProcAiReasoning(proc: ProcessRecord, local: ProcAiConfig | null): string | null {
@@ -384,12 +395,15 @@ export class KernelMountBackend implements MountBackend {
   }
 
   private listProcAiModels(ownerUid: number): AiModelEntry[] {
-    const ownerKey = userAiModelsConfigKey(ownerUid);
-    const key = this.kernel?.config?.getExplicit(ownerKey) != null
-      ? ownerKey
-      : SYSTEM_AI_MODELS_CONFIG_KEY;
-    const stack = parseAiModelStack(this.kernel?.config?.get(key));
-    return stack?.models ?? [];
+    const config = this.kernel?.config;
+    if (!config) return [];
+    const personalKey = userAiModelsConfigKey(ownerUid);
+    return layerAiModelStacks({
+      personal: parseAiModelStack(config.getExplicit(personalKey)),
+      personalKey,
+      system: parseAiModelStack(config.getExplicit(SYSTEM_AI_MODELS_CONFIG_KEY)),
+      base: this.kernel?.baseAiModels?.() ?? [],
+    }).map((item) => item.entry);
   }
 
   private readDev(path: string): string | undefined {

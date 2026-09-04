@@ -258,7 +258,7 @@ describe("handleSysSetup", () => {
   });
 
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-  it("uses GSV included inference as the managed first-boot default", async () => {
+  it("leaves the managed base implicit when setup has no AI selection", async () => {
     const { ctx, config } = createCtx({ managedInference: true });
 
     const result = await handleSysSetup(
@@ -269,18 +269,7 @@ describe("handleSysSetup", () => {
       ctx,
     );
 
-    expect(config.set).toHaveBeenCalledWith(
-      "users/1000/ai/models",
-      JSON.stringify({
-        version: 1,
-        models: [{
-          id: "setup-primary",
-          name: "GSV Included",
-          provider: "gsv",
-          model: "default",
-        }],
-      }),
-    );
+    expect(config.set).not.toHaveBeenCalledWith("users/1000/ai/models", expect.anything());
     expect(result.server.features).toEqual(["ai.provider.gsv"]);
   });
 
@@ -298,7 +287,7 @@ describe("handleSysSetup", () => {
     expect(config.set).not.toHaveBeenCalledWith("users/1000/ai/models", expect.anything());
   });
 
-  it("normalizes an explicit GSV provider without accepting a model or credential", async () => {
+  it("writes nothing for an explicit GSV Included choice, which is the base", async () => {
     const { ctx, config } = createCtx({ managedInference: true });
 
     await handleSysSetup(
@@ -312,10 +301,7 @@ describe("handleSysSetup", () => {
       ctx,
     );
 
-    expect(config.set).toHaveBeenCalledWith(
-      "users/1000/ai/models",
-      expect.stringContaining('"provider":"gsv"'),
-    );
+    expect(config.set).not.toHaveBeenCalledWith("users/1000/ai/models", expect.anything());
     expect(config.set).not.toHaveBeenCalledWith(
       "users/1000/ai/models/setup-primary/api_key",
       expect.anything(),

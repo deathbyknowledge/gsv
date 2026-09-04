@@ -81,6 +81,40 @@ export type AiModelStack = {
   models: AiModelEntry[];
 };
 
+export type AiModelsArgs = Record<string, never>;
+
+/** Where an effective model entry comes from, outermost layer first. */
+export type AiModelSource = "personal" | "system" | "base";
+
+/** One entry of the effective, ordered text-model stack, without its credential. */
+export type AiModelListEntry = AiModelEntry & {
+  /**
+   * `personal` entries belong to the owner's own list, `system` entries to
+   * the installation-wide list, and `base` entries to the deployment's
+   * implicit stack that every list extends.
+   */
+  source: AiModelSource;
+  /**
+   * Whether this entry can authenticate from stored state: a saved key at
+   * its credential path or a connected OAuth account in its scope. Base
+   * entries never need one.
+   */
+  hasCredential: boolean;
+};
+
+/**
+ * The effective stack for the caller's owner account in layered order:
+ * personal entries, then system entries, then the deployment base, each
+ * layer in its configured order. Generation moves `preferredModelId` to the
+ * front; the listing keeps the stored order so a client can edit a layer
+ * without baking that preference into it.
+ */
+export type AiModelsResult = {
+  models: AiModelListEntry[];
+  /** Stable id of the entry generation runs first, when a valid preference is set. */
+  preferredModelId: string | null;
+};
+
 export type AiConfigArgs = {
   /**
    * Complete request-local model configuration, used by model validation.

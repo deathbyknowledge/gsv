@@ -515,6 +515,7 @@ describe("proc handlers", () => {
         get: vi.fn((key: string) => configEntries.get(key) ?? null),
         getExplicit: vi.fn((key: string) => configEntries.get(key) ?? null),
       },
+      env: {},
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
 
@@ -541,6 +542,63 @@ describe("proc handlers", () => {
         },
       }),
     );
+  });
+
+  it("accepts base and shared model ids for a Process, not only the owner's own list", async () => {
+    sendFrameToProcessMock.mockResolvedValue({ type: "res", id: "ai-profile-2", ok: true, data: {} });
+    const configEntries = new Map<string, string>([
+      ["users/1000/ai/models", JSON.stringify({
+        version: 1,
+        models: [{ id: "fast-stack", name: "Fast Stack", provider: "openai", model: "gpt-4.1-mini" }],
+      })],
+      ["config/ai/models", JSON.stringify({
+        version: 1,
+        models: [{ id: "shared", name: "Shared", provider: "anthropic", model: "claude-sonnet-5" }],
+      })],
+    ]);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const contextFor = (entries: Map<string, string>) => ({
+      installationId: TEST_INSTALLATION_ID,
+      peer: testPeer({ kind: "human", account: IDENTITY, calls: ["proc.ai.config.set"] }),
+      procs: {
+        get: vi.fn(() => ({ uid: 2000, ownerUid: IDENTITY.uid })),
+      },
+      config: {
+        get: vi.fn((key: string) => entries.get(key) ?? null),
+        getExplicit: vi.fn((key: string) => entries.get(key) ?? null),
+      },
+      env: {},
+    }) as KernelContext;
+
+    const cases: Array<[Map<string, string>, string]> = [
+      [configEntries, "shared"],
+      [configEntries, "WORKERS-AI-GLM-5-3-FLASH"],
+      [new Map<string, string>(), "workers-ai-kimi-k2-6"],
+    ];
+    for (const [entries, modelId] of cases) {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      await forwardToProcess({
+        type: "req",
+        id: "ai-profile-2",
+        call: "proc.ai.config.set",
+        args: { pid: "proc-1", modelId },
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as RequestFrame, contextFor(entries));
+    }
+
+    expect(sendFrameToProcessMock.mock.calls.map(([, , frame]) => frame.args.modelId)).toEqual([
+      "shared",
+      "workers-ai-glm-5-3-flash",
+      "workers-ai-kimi-k2-6",
+    ]);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    await expect(forwardToProcess({
+      type: "req",
+      id: "ai-profile-3",
+      call: "proc.ai.config.set",
+      args: { pid: "proc-1", modelId: "missing" },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as RequestFrame, contextFor(configEntries))).rejects.toThrow("AI model not found: missing");
   });
 
   it("forwards Process preference reads without a credential-bearing mode", async () => {

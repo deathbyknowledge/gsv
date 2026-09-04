@@ -196,6 +196,8 @@ import type {
   AiContextArgs,
   AiContextResult,
   AiConfigArgs,
+  AiModelsArgs,
+  AiModelsResult,
   AiConfigResult,
   AiImageGenerateArgs,
   AiImageGenerateResult,
@@ -418,6 +420,7 @@ export type SyscallDomains = {
   "ai.tools": { args: AiToolsArgs; result: AiToolsResult };
   "ai.context": { args: AiContextArgs; result: AiContextResult };
   "ai.config": { args: AiConfigArgs; result: AiConfigResult };
+  "ai.models": { args: AiModelsArgs; result: AiModelsResult };
   "ai.text.generate": { args: AiTextGenerateArgs; result: AiTextGenerateResult };
   "ai.transcription.create": { args: AiTranscriptionCreateArgs; result: AiTranscriptionCreateResult };
   "ai.image.read": { args: AiImageReadArgs; result: AiImageReadResult };

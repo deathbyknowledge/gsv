@@ -1,3 +1,4 @@
+import type { AiModelEntry } from "@humansandmachines/gsv/protocol";
 import type { AuthStore } from "../kernel/auth-store";
 import type { CapabilityStore } from "../kernel/capabilities";
 import type { ConfigStore } from "../kernel/config";
@@ -75,4 +76,6 @@ export type KernelRefs = {
   cron?: CronFileService;
   schedules?: ScheduleViewStore;
   processRequest?: ProcessViewRequest;
+  /** The deployment's implicit model stack that configured lists extend. */
+  baseAiModels?: () => AiModelEntry[];
 };

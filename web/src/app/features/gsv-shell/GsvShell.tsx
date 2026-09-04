@@ -18,7 +18,7 @@ import type {
   ConsoleOverviewData,
   ConsoleResourceState,
 } from "../gsv-console/domain/consoleModels";
-import { useConsoleConfig, useConsoleOverview } from "../gsv-console/hooks/useConsoleData";
+import { useConsoleConfig, useConsoleModels, useConsoleOverview } from "../gsv-console/hooks/useConsoleData";
 import {
   GsvConsole,
   type SettingsRouteTarget,
@@ -149,6 +149,7 @@ export function GsvShell({
   const clock = useClock();
   const consoleOverview = useConsoleOverview({ includeConfig: false });
   const consoleConfig = useConsoleConfig();
+  const consoleModels = useConsoleModels();
   const desktopObjects = useMemo(
     () => buildDesktopObjectsFromConsole(consoleOverview.data),
     [consoleOverview.data],
@@ -289,10 +290,11 @@ export function GsvShell({
       accounts: consoleOverview.data?.accounts ?? [],
       chatProcesses: chatProcessList,
       config: consoleConfig.config,
+      models: consoleModels.listing,
       ownerUid: chatOwnerUid,
       statusLabel: chatStatusLabel,
     });
-  }, [activeChatProcess, chatProcessList, chatStatusLabel, consoleConfig.config, consoleOverview.data, sessionUsername]);
+  }, [activeChatProcess, chatProcessList, chatStatusLabel, consoleConfig.config, consoleModels.listing, consoleOverview.data, sessionUsername]);
   const openWorkSession = (processId: string, process: ChatProcessSummary | null): void => {
     const listedProcess = selectWorkSessionProcess(
       chatProcessList,

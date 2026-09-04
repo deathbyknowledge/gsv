@@ -14,6 +14,23 @@ export type ResolvedAiProviderOAuthApiKey = {
 };
 const codexMetadataSchema = z.object({ chatgptAccountId: z.optional(z.string()) });
 
+/** Whether a saved OAuth account can authenticate this provider for one of the accounts, without touching tokens. */
+export function hasStoredAiProviderOAuthAccount(
+  ctx: KernelContext,
+  accountUids: readonly number[],
+  provider: string,
+): boolean {
+  if (provider !== OPENAI_CODEX_PROVIDER) {
+    return false;
+  }
+  return accountUids.some((uid) => ctx.oauth.findAccountByIdentity(
+    uid,
+    "ai-provider",
+    OPENAI_CODEX_PROVIDER,
+    OPENAI_CODEX_ACCOUNT_KEY,
+  ) !== null);
+}
+
 export async function resolveAiProviderOAuthApiKey(
   ctx: KernelContext,
   accountUids: number[],
