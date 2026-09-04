@@ -1598,7 +1598,8 @@ describe("handleAiConfig", () => {
       "users/1000/ai/preferred_model": "gsv-included",
     }, { managedInference: true }));
     expect(preferred.preferredModelId).toBe("gsv-included");
-    expect(preferred.models.map((model) => model.id)).toEqual(["gsv-included", "mine"]);
+    // The listing keeps layered order; generation is what moves the preference first.
+    expect(preferred.models.map((model) => model.id)).toEqual(["mine", "gsv-included"]);
   });
 
   it("validates one complete request-local model without adding stored fallbacks", async () => {

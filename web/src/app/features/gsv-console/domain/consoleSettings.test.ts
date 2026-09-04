@@ -19,6 +19,7 @@ import {
   modelProfileSecretConfigKey,
   modelProfilesConfigKey,
   modelProfilesFromListing,
+  writableModelProfiles,
   preferredModelSaveEntry,
   modelStackDisplayName,
   modelValidationValuesFromProfileDrafts,
@@ -190,6 +191,21 @@ describe("console settings domain", () => {
       "config/ai/provider": "openai",
       "config/ai/model": "gpt-5.4",
     }, 1000, "personal", [included])).toThrow("Model name already exists");
+  });
+
+  it("shows the preferred model first but saves the stored order", () => {
+    const listing = {
+      preferredModelId: "b",
+      models: [
+        { id: "a", name: "A", provider: "openai", model: "gpt-5.4", source: "personal" as const, hasCredential: false },
+        { id: "b", name: "B", provider: "anthropic", model: "claude-sonnet-5", source: "personal" as const, hasCredential: false },
+        { id: "gsv-included", name: "GSV Included", provider: "gsv", model: "default", source: "base" as const, hasCredential: false },
+      ],
+    };
+
+    expect(modelProfilesFromListing(listing, [], 42).map((profile) => profile.id)).toEqual(["b", "a", "gsv-included"]);
+    expect(writableModelProfiles(listing, [], 42).map((profile) => profile.id)).toEqual(["a", "b"]);
+    expect(writableModelProfiles(listing, [], 0)).toEqual([]);
   });
 
   it("edits the installation list as root and a personal list otherwise", () => {

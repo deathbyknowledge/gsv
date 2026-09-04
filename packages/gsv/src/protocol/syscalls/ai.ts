@@ -103,13 +103,15 @@ export type AiModelListEntry = AiModelEntry & {
 };
 
 /**
- * The effective ordered stack for the caller's owner account: personal
- * entries, then system entries, then the deployment base, with the preferred
- * entry moved to the front. The first entry is primary; the rest are fallbacks.
+ * The effective stack for the caller's owner account in layered order:
+ * personal entries, then system entries, then the deployment base, each
+ * layer in its configured order. Generation moves `preferredModelId` to the
+ * front; the listing keeps the stored order so a client can edit a layer
+ * without baking that preference into it.
  */
 export type AiModelsResult = {
   models: AiModelListEntry[];
-  /** Stable id of the entry promoted to the front, when one is set. */
+  /** Stable id of the entry generation runs first, when a valid preference is set. */
   preferredModelId: string | null;
 };
 

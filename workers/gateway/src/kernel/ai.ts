@@ -894,9 +894,9 @@ export function handleAiModels(ctx: KernelContext): AiModelsResult {
   const effective = resolveEffectiveAiModelStack(ctx, resolveAiModelOwnerUid(ctx, uid, owner));
   const accountUids = resolveAiConfigAccountUids(uid, owner);
   const preferredModelId = resolvePreferredAiModelId(ctx, accountUids, effective);
-  const ordered = orderEffectiveAiModels(effective, preferredModelId);
+  // Layered order on purpose: clients re-serialize a layer from this listing.
   return {
-    models: ordered.map((item) => ({
+    models: effective.map((item) => ({
       ...item.entry,
       source: item.source,
       // A stored key or a saved OAuth account in the entry's credential scope both count.

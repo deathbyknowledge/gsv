@@ -492,6 +492,33 @@ export function modelProfilesFromListing(
   if (!listing) {
     return [];
   }
+  // Display order: the preferred entry first, as generation will run it.
+  return promotePreferred(storedModelProfiles(listing, config, uid), listing.preferredModelId);
+}
+
+/**
+ * The viewer's editable layer in its stored order, which is what a save
+ * must re-serialize. Never derived from the promoted display order, or an
+ * unrelated edit would rewrite the durable fallback order.
+ */
+export function writableModelProfiles(
+  listing: ConsoleModelListing | null,
+  config: readonly ConsoleConfigEntry[],
+  uid: number | null | undefined,
+): ConsoleModelProfile[] {
+  const validUid = z.number().finite().safeParse(uid);
+  if (!listing || !validUid.success) {
+    return [];
+  }
+  const editable = editableModelSource(validUid.data);
+  return storedModelProfiles(listing, config, uid).filter((profile) => profile.source === editable);
+}
+
+function storedModelProfiles(
+  listing: ConsoleModelListing,
+  config: readonly ConsoleConfigEntry[],
+  uid: number | null | undefined,
+): ConsoleModelProfile[] {
   const validUid = z.number().finite().safeParse(uid);
   const editable = validUid.success ? editableModelSource(validUid.data) : null;
   const profiles: ConsoleModelProfile[] = [];
@@ -505,6 +532,16 @@ export function modelProfilesFromListing(
     );
   }
   return profiles;
+}
+
+function promotePreferred(
+  profiles: readonly ConsoleModelProfile[],
+  preferredModelId: string | null,
+): ConsoleModelProfile[] {
+  const preferred = preferredModelId?.toLowerCase();
+  const index = preferred ? profiles.findIndex((profile) => profile.id.toLowerCase() === preferred) : -1;
+  if (index <= 0) return [...profiles];
+  return [profiles[index], ...profiles.slice(0, index), ...profiles.slice(index + 1)];
 }
 
 export function serializeModelProfiles(profiles: readonly ConsoleModelProfile[]): string {

@@ -66,6 +66,7 @@ import {
   modelValidationValuesFromProfileDrafts,
   modelProfileSecretConfigKey,
   modelProfilesFromListing,
+  writableModelProfiles,
   preferredModelSaveEntry,
   modelStackDisplayName,
   normalizeProfileName,
@@ -434,6 +435,7 @@ function ModelSettingsPage({
         effectiveValues={effectiveValues}
         embedded={embedded}
         profiles={profiles}
+        models={models}
         editableSource={editableSource}
         preferredModelId={preferredModelId}
         scopeLabel={scopeLabel}
@@ -481,6 +483,7 @@ function ModelSettingsDetail({
   effectiveValues,
   embedded,
   profiles,
+  models,
   editableSource,
   preferredModelId,
   scopeLabel,
@@ -500,6 +503,7 @@ function ModelSettingsDetail({
   effectiveValues: Record<string, string>;
   embedded?: boolean;
   profiles: readonly ConsoleModelProfile[];
+  models: ConsoleModelListing | null;
   editableSource: AiModelSource;
   preferredModelId: string | null;
   scopeLabel: string;
@@ -562,7 +566,8 @@ function ModelSettingsDetail({
     ? profiles[0] ?? null
     : null;
   const isNewProfile = selection.kind === "new-profile" || !profile;
-  const writableProfiles = profiles.filter((candidate) => candidate.source === editableSource);
+  // Saves re-serialize the stored order, never the promoted display order.
+  const writableProfiles = writableModelProfiles(models, config, viewer.uid);
   const profileOwned = profile !== null && profile.source === editableSource;
   const profileEditable = editable && (isNewProfile || profileOwned);
   const isPreferred = profile !== null && preferredModelId === profile.id;
