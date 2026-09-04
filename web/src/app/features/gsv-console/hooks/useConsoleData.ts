@@ -291,6 +291,7 @@ export function useConsoleModels(options: ConsoleQueryOptions = {}) {
   return {
     ...query,
     listing: query.data ?? null,
+    resource: toResourceState(query, enabled, () => false),
   };
 }
 

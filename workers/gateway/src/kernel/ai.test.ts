@@ -1666,6 +1666,50 @@ describe("handleAiConfig", () => {
     expect(handleAiModels(context).models.map((model) => model.id)).toEqual(["mine", "gsv-included"]);
   });
 
+  it("drops a shared fallback whose credential cannot be resolved instead of failing the stack", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("refresh endpoint unreachable"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = await handleAiConfig({}, makeAiConfigContext({
+        "users/1000/ai/models": JSON.stringify({
+          version: 1,
+          models: [{ id: "mine", name: "Mine", provider: "openai", model: "gpt-5.4" }],
+        }),
+        "users/1000/ai/models/mine/api_key": "sk-mine",
+        "config/ai/models": JSON.stringify({
+          version: 1,
+          models: [{ id: "shared-codex", name: "Shared Codex", provider: "openai-codex", model: "gpt-5.5" }],
+        }),
+      }, {
+        managedInference: true,
+        oauthAccounts: [makeOAuthAccount({ uid: 0, metadata: {} })],
+      }));
+
+      expect(result).toMatchObject({ provider: "openai", model: "gpt-5.4", apiKey: "sk-mine" });
+      expect(result.fallbacks?.map((fallback) => fallback.modelId)).toEqual(["gsv-included"]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("Skipping fallback model shared-codex"));
+    } finally {
+      fetchSpy.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  it("still fails when the primary model's credential cannot be resolved", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("refresh endpoint unreachable"));
+    try {
+      await expect(handleAiConfig({}, makeAiConfigContext({
+        "users/1000/ai/models": JSON.stringify({
+          version: 1,
+          models: [{ id: "codex", name: "Codex", provider: "openai-codex", model: "gpt-5.5" }],
+        }),
+      }, {
+        oauthAccounts: [makeOAuthAccount({ metadata: {} })],
+      }))).rejects.toThrow();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it("keeps a complete request-local model separate from persisted runtime and media settings", async () => {
     const result = await handleAiConfig({
       modelConfig: {

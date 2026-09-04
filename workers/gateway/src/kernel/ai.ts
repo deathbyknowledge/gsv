@@ -931,16 +931,28 @@ async function resolveStoredAiTextModelStack(
   const resolved: Array<{ entry: AiModelEntry; config: AiModelStackConfig }> = [];
   for (const item of models) {
     const entry = item.entry;
-    const config = await resolveCompleteAiModelConfig({
-      ctx: options.ctx,
-      accountUids: options.accountUids,
-      model: entry,
-      apiKey: storedCredential(options.ctx, item),
-      systemOwned: item.source !== "personal",
-      reasoning,
-      generationTimeoutMs,
-      generationStreaming,
-    });
+    let config: AiModelStackConfig;
+    try {
+      config = await resolveCompleteAiModelConfig({
+        ctx: options.ctx,
+        accountUids: options.accountUids,
+        model: entry,
+        apiKey: storedCredential(options.ctx, item),
+        systemOwned: item.source !== "personal",
+        reasoning,
+        generationTimeoutMs,
+        generationStreaming,
+      });
+    } catch (error) {
+      // The primary must resolve; a broken entry lower in the stack, such as
+      // a shared OAuth account that no longer refreshes, is dropped from the
+      // fallbacks rather than blocking every model layered above it.
+      if (resolved.length === 0) throw error;
+      console.warn(
+        `[AI] Skipping fallback model ${entry.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      continue;
+    }
     if (!resolved.some((candidate) => isSameAiModelStack(candidate.config, config))) {
       resolved.push({ entry, config });
     }

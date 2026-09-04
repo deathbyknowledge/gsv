@@ -41,6 +41,7 @@ import type {
   ConsoleAccount,
   ConsoleConfigEntry,
   ConsoleTarget,
+  ConsoleResourceState,
 } from "../domain/consoleModels";
 import {
   GLOBAL_APPROVAL_CONFIG_KEY,
@@ -241,19 +242,25 @@ export function ConsoleConfigPage({ kind, select, onClearSelect, onDetailChange,
   const accounts = useConsoleAccounts();
   const targets = useConsoleTargets();
   const models = useConsoleModels();
+  // The models page edits the personal list against the Kernel's effective
+  // listing, so it must not render as editable until that listing has loaded:
+  // an empty draft would otherwise overwrite the stored list on first save.
+  const resource = kind === "models"
+    ? combineResources(config.resource, models.resource)
+    : combineResources(config.resource, null);
 
   return (
     <ConsolePage flush>
       <ConsoleResourceBoundary
-        resource={{ ...config.resource, isEmpty: false }}
+        resource={{ ...resource, isEmpty: false }}
         emptyLabel={kind === "models" ? "NO MODEL SETTINGS" : "NO RUNTIME SETTINGS"}
         errorLabel={kind === "models" ? "MODELS" : "RUNTIME"}
-        render={(data) => (
+        render={([data, listing]) => (
           <ConsoleSettingsPanel
             accounts={accounts.accounts}
             config={data}
             kind={kind}
-            models={models.listing}
+            models={listing}
             targets={toolTargetsForConsoleTargets(targets.targets)}
             select={select}
             embedded={embedded}
@@ -264,6 +271,24 @@ export function ConsoleConfigPage({ kind, select, onClearSelect, onDetailChange,
       />
     </ConsolePage>
   );
+}
+
+/** Loads, errors, or goes offline when either resource does; data only when both are ready. */
+function combineResources(
+  config: ConsoleResourceState<ConsoleConfigEntry[]>,
+  models: ConsoleResourceState<ConsoleModelListing> | null,
+): ConsoleResourceState<[ConsoleConfigEntry[], ConsoleModelListing | null]> {
+  const listing = models?.data ?? null;
+  const ready = config.data !== null && (models === null || listing !== null);
+  return {
+    data: ready ? [config.data!, listing] : null,
+    isUnavailable: config.isUnavailable || models?.isUnavailable === true,
+    isLoading: config.isLoading || models?.isLoading === true,
+    isRefreshing: config.isRefreshing || models?.isRefreshing === true,
+    isError: config.isError || models?.isError === true,
+    errorText: config.errorText || models?.errorText || "",
+    isEmpty: false,
+  };
 }
 
 function ConsoleSettingsPanel({
