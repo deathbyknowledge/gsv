@@ -15,7 +15,9 @@ rollouts="${GSV_BENCH_ROLLOUTS:-3}"
 model_concurrency="${GSV_BENCH_MODEL_CONCURRENCY:-1}"
 parallel_models="${GSV_BENCH_PARALLEL_MODELS:-1}"
 timeout_seconds="${GSV_BENCH_TIMEOUT_SECONDS:-900}"
-max_tokens="${GSV_BENCH_MAX_TOKENS:-}"
+max_tokens="${GSV_BENCH_MAX_TOKENS:-32768}"
+client_base_url="${GSV_BENCH_CLIENT_BASE_URL:-}"
+client_api_key_var="${GSV_BENCH_CLIENT_API_KEY_VAR:-OPENAI_API_KEY}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 run_prefix="${GSV_BENCH_RUN_PREFIX:-matrix-$timestamp}"
 matrix_dir="${GSV_BENCH_OUTPUT_DIR:-$package_dir/outputs/$run_prefix}"
@@ -49,13 +51,30 @@ for value in "$num_tasks" "$rollouts" "$model_concurrency" "$parallel_models" "$
     exit 2
   fi
 done
-sampling_args=()
-if [[ -n "$max_tokens" ]]; then
-  if [[ ! "$max_tokens" =~ ^[1-9][0-9]*$ ]]; then
-    echo "GSV_BENCH_MAX_TOKENS must be a positive integer" >&2
+if [[ ! "$max_tokens" =~ ^[1-9][0-9]*$ ]]; then
+  echo "GSV_BENCH_MAX_TOKENS must be a positive integer" >&2
+  exit 2
+fi
+sampling_args=(--sampling.max-tokens "$max_tokens")
+client_args=()
+if [[ -n "$client_base_url" ]]; then
+  client_authority="${client_base_url#*://}"
+  if [[ "$client_authority" != "$client_base_url" && "${client_authority%%/*}" == *@* ]]; then
+    echo "GSV_BENCH_CLIENT_BASE_URL must not contain credentials" >&2
     exit 2
   fi
-  sampling_args=(--sampling.max-tokens "$max_tokens")
+  if [[ ! "$client_api_key_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+    echo "GSV_BENCH_CLIENT_API_KEY_VAR must name an environment variable" >&2
+    exit 2
+  fi
+  if [[ -z "${!client_api_key_var:-}" ]]; then
+    echo "$client_api_key_var must contain a value for the custom inference endpoint" >&2
+    exit 2
+  fi
+  client_args=(
+    --client.base-url "$client_base_url"
+    --client.api-key-var "$client_api_key_var"
+  )
 fi
 
 mkdir -p "$matrix_dir/logs"
@@ -83,6 +102,8 @@ fi
   printf 'parallel_models=%q\n' "$parallel_models"
   printf 'timeout_seconds=%q\n' "$timeout_seconds"
   printf 'max_tokens=%q\n' "$max_tokens"
+  printf 'client_base_url=%q\n' "$client_base_url"
+  printf 'client_api_key_var=%q\n' "$client_api_key_var"
   printf 'gsv_git_commit=%q\n' "$gsv_git_commit"
   printf 'gsv_git_dirty=%q\n' "$gsv_git_dirty"
   printf 'harness_source_sha256=%q\n' "$harness_source_sha256"
@@ -96,6 +117,8 @@ jq -n \
   --arg scenario "$scenario" \
   --arg scenario_sha256 "$scenario_sha256" \
   --arg max_tokens "$max_tokens" \
+  --arg client_base_url "$client_base_url" \
+  --arg client_api_key_var "$client_api_key_var" \
   --arg gsv_git_commit "$gsv_git_commit" \
   --argjson gsv_git_dirty "$gsv_git_dirty" \
   --arg harness_source_sha256 "$harness_source_sha256" \
@@ -114,7 +137,11 @@ jq -n \
     model_concurrency: $model_concurrency,
     parallel_models: $parallel_models,
     timeout_seconds: $timeout_seconds,
-    max_tokens: (if $max_tokens == "" then null else ($max_tokens | tonumber) end),
+    max_tokens: ($max_tokens | tonumber),
+    client: (if $client_base_url == "" then null else {
+      base_url: $client_base_url,
+      api_key_var: $client_api_key_var
+    } end),
     models: $models,
     gsv_git_commit: $gsv_git_commit,
     gsv_git_dirty: $gsv_git_dirty,
@@ -151,6 +178,7 @@ run_model() {
       --env.agent.timeout.rollout "$timeout_seconds" \
       --env.taskset.scenario-path "$frozen_scenario" \
       "${sampling_args[@]}" \
+      "${client_args[@]}" \
       --no-serve --no-push --no-rich \
       --num-tasks "$num_tasks" \
       --num-rollouts "$rollouts" \
@@ -194,6 +222,10 @@ if [[ -f "$matrix_dir/pricing.json" ]]; then
 fi
 uv run python -m gsv_v1.report "${report_args[@]}" \
   | tee "$matrix_dir/summary.md"
+if ! jq -e '.output_limit_clean == true' "$matrix_dir/summary.json" >/dev/null; then
+  echo "failed validity check: one or more model responses reached the configured output limit" >&2
+  failed=1
+fi
 uv run python -m gsv_v1.review "$matrix_dir" \
   --output "$matrix_dir/review-assignments.jsonl"
 echo "matrix artifacts: $matrix_dir"

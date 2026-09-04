@@ -117,11 +117,23 @@ biasing the explanation of another trajectory.
 `GSV_BENCH_SCENARIO`, `GSV_BENCH_OUTPUT_DIR`,
 `GSV_BENCH_NUM_TASKS`, `GSV_BENCH_MODEL_CONCURRENCY`, and
 `GSV_BENCH_TIMEOUT_SECONDS` override the corresponding defaults.
-`GSV_BENCH_MAX_TOKENS` optionally sets the per-response budget for reasoning
-models that otherwise spend the provider default before issuing a tool call. A scenario
-directory can be paired with its fixture count to run a suite. Keep the
-scenario set, rollout count, concurrency, and timeout fixed when comparing
-model quality or throughput.
+Every matrix run explicitly sets a 32,768-token per-response output budget.
+`GSV_BENCH_MAX_TOKENS` may override it for a deliberate experiment. The report
+records the configured budget, counts both `finish_reason=length` responses and
+responses whose usage reaches the declared ceiling, and fails the runner's
+validity check if either occurs. A scenario directory can be paired with its
+fixture count to run a suite. Keep the scenario set, rollout count, concurrency,
+sampling profile, and timeout fixed when comparing model quality or throughput.
+
+For an OpenAI-compatible server such as a locally forwarded SGLang endpoint,
+set `GSV_BENCH_CLIENT_BASE_URL` and name its credential environment variable
+with `GSV_BENCH_CLIENT_API_KEY_VAR` (default `OPENAI_API_KEY`). The runner checks
+that the named variable exists and records its name, never its value. For a
+server that ignores authentication, use a non-secret placeholder:
+
+    OPENAI_API_KEY=local \
+      GSV_BENCH_CLIENT_BASE_URL=http://127.0.0.1:30000/v1 \
+      ./bench/scripts/run-verifiers-v1-matrix.sh Qwen3.8-27B
 
 The matrix report regrades normalized artifacts offline against the frozen
 scenario copy in its output directory. To audit a rubric revision without

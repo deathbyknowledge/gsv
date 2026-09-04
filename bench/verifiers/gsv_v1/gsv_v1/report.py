@@ -187,11 +187,21 @@ def load_evaluations(path: Path | None) -> dict[str, dict[str, Any]]:
     return {scenario["id"]: scenario["evaluation"] for scenario in load_scenarios(path)}
 
 
+def _configured_max_tokens(matrix_dir: Path) -> int | None:
+    run_path = matrix_dir / "run.json"
+    if not run_path.is_file():
+        return None
+    document = json.loads(run_path.read_text())
+    value = document.get("max_tokens") if isinstance(document, dict) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
 def summarize_matrix(
     matrix_dir: Path,
     pricing: dict[str, dict[str, float]] | None = None,
     evaluations: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    configured_max_tokens = _configured_max_tokens(matrix_dir)
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     trace_files = sorted(matrix_dir.glob("*/traces.jsonl"))
     for trace_file in trace_files:
@@ -227,6 +237,9 @@ def summarize_matrix(
         request_error_count = 0
         request_error_statuses: dict[str, int] = defaultdict(int)
         request_error_types: dict[str, int] = defaultdict(int)
+        finish_reasons: dict[str, int] = defaultdict(int)
+        output_limit_calls = 0
+        output_limit_rollouts = 0
         error_count = 0
         milestones: dict[str, dict[str, Any]] = {}
         dimensions: dict[str, dict[str, Any]] = {}
@@ -260,12 +273,16 @@ def summarize_matrix(
                     agent_ends.append(end)
 
             calls = trace.get("calls", [])
+            rollout_reached_output_limit = False
             if isinstance(calls, list):
                 for call in calls:
                     if not isinstance(call, dict):
                         continue
                     call_count += 1
                     request_seconds += _duration(call.get("time"))
+                    finish_reason = call.get("finish_reason")
+                    if isinstance(finish_reason, str):
+                        finish_reasons[finish_reason] += 1
                     call_error = call.get("error")
                     if call_error is not None:
                         request_error_count += 1
@@ -284,15 +301,29 @@ def summarize_matrix(
                             request_error_statuses["unknown"] += 1
                             request_error_types["unknown"] += 1
                     usage = call.get("usage")
+                    completion_count = 0
                     if not isinstance(usage, dict):
+                        if finish_reason == "length":
+                            output_limit_calls += 1
+                            rollout_reached_output_limit = True
                         continue
                     usage_call_count += 1
                     prompt_tokens += int(_number(usage.get("prompt_tokens")))
-                    completion_tokens += int(_number(usage.get("completion_tokens")))
+                    completion_count = int(_number(usage.get("completion_tokens")))
+                    completion_tokens += completion_count
                     cached_input_tokens += int(
                         _number(usage.get("cached_input_tokens"))
                     )
                     reasoning_tokens += int(_number(usage.get("reasoning_tokens")))
+                    reached_declared_limit = (
+                        configured_max_tokens is not None
+                        and completion_count >= configured_max_tokens
+                    )
+                    if finish_reason == "length" or reached_declared_limit:
+                        output_limit_calls += 1
+                        rollout_reached_output_limit = True
+
+            output_limit_rollouts += int(rollout_reached_output_limit)
 
             envelope_errors = envelope.get("errors", [])
             trace_errors = trace.get("errors", [])
@@ -524,6 +555,9 @@ def summarize_matrix(
                 "request_errors": request_error_count,
                 "request_error_statuses": dict(sorted(request_error_statuses.items())),
                 "request_error_types": dict(sorted(request_error_types.items())),
+                "finish_reasons": dict(sorted(finish_reasons.items())),
+                "output_limit_calls": output_limit_calls,
+                "output_limit_rollouts": output_limit_rollouts,
                 "usage_calls": usage_call_count,
                 "usage_coverage": (
                     usage_call_count / call_count if call_count else 0.0
@@ -572,9 +606,14 @@ def summarize_matrix(
             }
         )
 
+    output_limit_clean = all(
+        model["output_limit_calls"] == 0 for model in models
+    )
     return {
         "matrix_dir": str(matrix_dir.resolve()),
         "trace_files": len(trace_files),
+        "configured_max_tokens": configured_max_tokens,
+        "output_limit_clean": output_limit_clean,
         "models": models,
     }
 
@@ -583,10 +622,28 @@ def render_markdown(summary: dict[str, Any]) -> str:
     models = summary["models"]
     if not models:
         return "No traces found."
-    lines = [
-        "| Model | n | Reward | Raw | Median | Strict | Pass@1 [95% CI] | Pass@3 | Pass^3 | Pass@5 | Pass^5 | Pass@10 | Pass^10 | Errors | Calls/n | P50 s | Input tok | Output tok | E2E tok/s/process | Aggregate tok/s | Request tok/s | Cached | Listed cost |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
-    ]
+    configured_max_tokens = summary.get("configured_max_tokens")
+    lines = []
+    if configured_max_tokens is not None:
+        lines.extend([
+            f"Per-response output budget: {configured_max_tokens:,} tokens.",
+            "",
+        ])
+    if summary.get("output_limit_clean") is False:
+        affected = sum(model["output_limit_rollouts"] for model in models)
+        hits = sum(model["output_limit_calls"] for model in models)
+        lines.extend([
+            (
+                "> **Output-limit validity warning:** "
+                f"{hits} responses across {affected} rollouts reached the configured "
+                "ceiling. Treat affected quality comparisons as output-budget-limited."
+            ),
+            "",
+        ])
+    lines.extend([
+        "| Model | n | Reward | Raw | Median | Strict | Pass@1 [95% CI] | Pass@3 | Pass^3 | Pass@5 | Pass^5 | Pass@10 | Pass^10 | Errors | Limit hits (calls/rollouts) | Calls/n | P50 s | Input tok | Output tok | E2E tok/s/process | Aggregate tok/s | Request tok/s | Cached | Listed cost |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ])
     for model in models:
         cost = model["listed_cost_usd"]
         cost_text = (
@@ -610,7 +667,7 @@ def render_markdown(summary: dict[str, Any]) -> str:
             "| {model} | {rollouts} | {mean:.3f} | {raw:.3f} | {median:.3f} | "
             "{strict}/{rollouts} | {pass1} | {pass3} | {pass_power3} | "
             "{pass5} | {pass_power5} | {pass10} | {pass_power10} | "
-            "{errors} | {calls:.1f} | {seconds:.1f} | "
+            "{errors} | {limit_hits} | {calls:.1f} | {seconds:.1f} | "
             "{prompt} | {output} | {e2e_rate} | {aggregate_rate} | {request_rate} | "
             "{cached} | {cost} |".format(
                 model=model["model"],
@@ -651,6 +708,9 @@ def render_markdown(summary: dict[str, Any]) -> str:
                     else "n/a"
                 ),
                 errors=model["errors"],
+                limit_hits=(
+                    f"{model['output_limit_calls']}/{model['output_limit_rollouts']}"
+                ),
                 calls=model["calls_per_rollout"],
                 seconds=model["agent_seconds_p50"],
                 prompt=f"{input_tokens:,}" if input_tokens is not None else "n/a",

@@ -803,10 +803,10 @@ def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
     run_dir = tmp_path / "qwen"
     run_dir.mkdir()
     envelopes = []
-    for score, passed, duration in [
-        (1.0, True, 10.0),
-        (0.4, False, 20.0),
-        (1.0, True, 30.0),
+    for score, passed, duration, finish_reason in [
+        (1.0, True, 10.0, "tool_calls"),
+        (0.4, False, 20.0, "length"),
+        (1.0, True, 30.0, "stop"),
     ]:
         envelopes.append(
             {
@@ -821,6 +821,7 @@ def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
                         "timing": {"agent": {"start": 10.0, "end": 10.0 + duration}},
                         "calls": [
                             {
+                                "finish_reason": finish_reason,
                                 "time": {"start": 1.0, "end": 5.0},
                                 "usage": {
                                     "prompt_tokens": 1_000,
@@ -859,6 +860,7 @@ def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
     (run_dir / "traces.jsonl").write_text(
         "".join(json.dumps(envelope) + "\n" for envelope in envelopes)
     )
+    (tmp_path / "run.json").write_text(json.dumps({"max_tokens": 32_768}))
     legacy_run_dir = tmp_path / "legacy"
     legacy_run_dir.mkdir()
     (legacy_run_dir / "traces.jsonl").write_text(
@@ -945,6 +947,13 @@ def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
     assert model["request_errors"] == 0
     assert model["request_error_statuses"] == {}
     assert model["request_error_types"] == {}
+    assert model["finish_reasons"] == {
+        "length": 1,
+        "stop": 1,
+        "tool_calls": 1,
+    }
+    assert model["output_limit_calls"] == 1
+    assert model["output_limit_rollouts"] == 1
     assert model["input_tokens"] == 4_500
     assert model["completion_tokens"] == 300
     assert model["cached_input_rate"] == 1 / 3
@@ -991,10 +1000,15 @@ def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
     assert legacy["completion_tokens"] is None
     assert legacy["listed_cost_usd"] is None
     assert legacy["listed_cost_complete"] is None
-    assert "qwen/example" in render_markdown(summary)
-    assert "legacy/example" in render_markdown(summary)
-    assert "Failed model requests" in render_markdown(summary)
-    assert "n/a" in render_markdown(summary)
+    assert summary["configured_max_tokens"] == 32_768
+    assert summary["output_limit_clean"] is False
+    rendered = render_markdown(summary)
+    assert "qwen/example" in rendered
+    assert "legacy/example" in rendered
+    assert "Failed model requests" in rendered
+    assert "Output-limit validity warning" in rendered
+    assert "32,768" in rendered
+    assert "n/a" in rendered
 
     regraded = summarize_matrix(
         tmp_path,
@@ -1027,6 +1041,43 @@ def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:
     )
     assert regraded_model["score_mean"] == 1.0
     assert regraded_model["strict_passes"] == 3
+
+
+def test_matrix_report_flags_usage_at_cap_when_finish_reason_is_tool_calls(
+    tmp_path,
+) -> None:
+    run_dir = tmp_path / "provider"
+    run_dir.mkdir()
+    (tmp_path / "run.json").write_text(json.dumps({"max_tokens": 2_048}))
+    (run_dir / "traces.jsonl").write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "errors": [],
+                "traces": [
+                    {
+                        "ok": True,
+                        "errors": [],
+                        "agent": {"config": {"model": "provider/example"}},
+                        "calls": [
+                            {
+                                "finish_reason": "tool_calls",
+                                "usage": {"completion_tokens": 2_048},
+                            }
+                        ],
+                        "rewards": {"scenario_outcome": {"score": 0.0}},
+                    }
+                ],
+            }
+        )
+        + "\n"
+    )
+
+    summary = summarize_matrix(tmp_path)
+
+    assert summary["output_limit_clean"] is False
+    assert summary["models"][0]["output_limit_calls"] == 1
+    assert summary["models"][0]["output_limit_rollouts"] == 1
 
 
 def test_matrix_report_computes_ten_run_reliability_and_family_intervals(
