@@ -832,7 +832,7 @@ async function resolveAiTextModelStack(options: {
  * Nothing replaces a lower layer; a malformed configured list is an error
  * rather than a silent fall-through to different models.
  */
-function resolveEffectiveAiModelStack(
+export function resolveEffectiveAiModelStack(
   ctx: KernelContext,
   ownerUid: number,
 ): EffectiveAiModelEntry[] {

@@ -7,6 +7,7 @@
  */
 
 import type { FrameBody, RequestFrame, ResponseFrame } from "../protocol/frames";
+import { resolveEffectiveAiModelStack } from "./ai";
 import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
 import { principalOf, requirePrincipal } from "./context";
@@ -39,11 +40,6 @@ import { resolveUserPath } from "../fs";
 import { ensurePersonalAgent } from "./agents";
 import { accountIdentity } from "./accounts";
 import { canOwnerDelegateRunAs } from "./account-access";
-import {
-  parseAiModelStack,
-  SYSTEM_AI_MODELS_CONFIG_KEY,
-  userAiModelsConfigKey,
-} from "./ai-model-stack";
 import { invalidatePersonalControllerReadiness } from "./personal-controller";
 
 const DEFAULT_IPC_CALL_TIMEOUT_MS = 60_000;
@@ -882,13 +878,10 @@ function withValidatedProcAiConfig(
   if (!modelId) {
     return frame;
   }
-  const ownerModelsKey = userAiModelsConfigKey(ownerUid);
-  const modelsKey = ctx.config.getExplicit(ownerModelsKey) !== null
-    ? ownerModelsKey
-    : SYSTEM_AI_MODELS_CONFIG_KEY;
-  const modelsRaw = ctx.config.get(modelsKey);
-  const stack = parseAiModelStack(modelsRaw);
-  const storedModel = stack?.models.find((model) => model.id.toLowerCase() === modelId);
+  // Validate against the same layered stack generation and ai.models use, so
+  // shared and base models are as selectable for a process as personal ones.
+  const storedModel = resolveEffectiveAiModelStack(ctx, ownerUid)
+    .find((item) => item.entry.id.toLowerCase() === modelId)?.entry;
   if (!storedModel) {
     throw new Error(`AI model not found: ${modelId}`);
   }
