@@ -143,6 +143,7 @@ fn dispatch_action(app: &Rc<RefCell<App>>, action: Action) {
                 text,
                 target: _,
                 cwd: _,
+                references: _,
             } => {
                 app.borrow_mut().complete_demo_submission(id, &text);
             }
@@ -173,6 +174,23 @@ fn dispatch_action(app: &Rc<RefCell<App>>, action: Action) {
             Effect::Quit => {
                 app.borrow_mut()
                     .set_activity(Some("CLOSE THIS TAB WHEN YOU ARE READY".to_string()));
+            }
+            // The preview has no gateway: browsing, links, and history live behind it.
+            Effect::OpenUrl { url } => {
+                app.borrow_mut()
+                    .append_local_output(format!("The disconnected preview cannot open {url}."));
+            }
+            Effect::OpenPath { filename, .. } => {
+                app.borrow_mut().append_local_output(format!(
+                    "The disconnected preview cannot open {filename}."
+                ));
+            }
+            Effect::BrowseFiles { request_id, .. } | Effect::ResolveFile { request_id, .. } => {
+                app.borrow_mut()
+                    .file_picker_failed(request_id, "The disconnected preview has no files.");
+            }
+            Effect::LoadOlderHistory { .. } => {
+                app.borrow_mut().history_page_failed();
             }
         }
     }
