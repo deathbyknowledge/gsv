@@ -838,6 +838,9 @@ def test_competing_incident_change_preparation_does_not_require_triage_recipe() 
         / "competing-incidents.json"
     )
     scenario = load_scenarios(family)[0]
+    assert "register the queued change CHG-checkout-pool-17 as prepared" in (
+        scenario["prompt"]
+    )
     evaluation = evaluate_scenario(
         scenario["evaluation"],
         {
