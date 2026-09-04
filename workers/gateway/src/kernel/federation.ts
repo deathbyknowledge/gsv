@@ -2536,7 +2536,9 @@ function publicFederationFailure(cause: unknown): PublicFederationFailure {
       ...(cause.retryAfterMs === undefined ? undefined : { retryAfterMs: cause.retryAfterMs }),
     };
   }
-  if (cause instanceof z.ZodError) {
+  // The federation schemas come from the SDK's zod/mini build, whose errors
+  // share the core trait with classic zod errors but not the classic class.
+  if (cause instanceof z.core.$ZodError) {
     return { status: 400, message: "Federation request is invalid" };
   }
   console.warn(

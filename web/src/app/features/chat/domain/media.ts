@@ -22,7 +22,7 @@ const chatMediaObjectSchema = z.object({
   resource: z.undefined().optional(),
 });
 
-const chatResourceMediaSchema = resourceBlockSchema.transform((resource) => ({
+const chatResourceMediaSchema = z.pipe(resourceBlockSchema, z.transform((resource) => ({
   type: resource.mediaType ?? mediaKindFromContentType(resource.ref.contentType),
   mimeType: resource.ref.contentType,
   key: undefined,
@@ -34,7 +34,7 @@ const chatResourceMediaSchema = resourceBlockSchema.transform((resource) => ({
   transcription: resource.transcription?.trim() || undefined,
   description: undefined,
   resource: resource.ref,
-}));
+})));
 
 const chatMediaWireSchema = z.unknown().pipe(z.union([
   chatResourceMediaSchema,

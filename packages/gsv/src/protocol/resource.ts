@@ -1,6 +1,6 @@
-import { z } from "zod";
+import { z } from "zod/mini";
 
-const nonNegativeSafeIntegerSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const nonNegativeSafeIntegerSchema = z.int().check(z.nonnegative());
 
 export type FileResourceReference = {
   type: "file";
@@ -12,12 +12,12 @@ export type FileResourceReference = {
   expiresAt?: number;
 };
 
-export const fileResourceReferenceSchema: z.ZodType<FileResourceReference> = z.strictObject({
+export const fileResourceReferenceSchema: z.ZodMiniType<FileResourceReference> = z.strictObject({
   type: z.literal("file"),
-  target: z.string().min(1).max(256),
-  path: z.string().min(1).max(8_192),
-  revision: z.string().min(1).max(1_024),
-  contentType: z.string().min(1).max(256),
+  target: z.string().check(z.minLength(1), z.maxLength(256)),
+  path: z.string().check(z.minLength(1), z.maxLength(8_192)),
+  revision: z.string().check(z.minLength(1), z.maxLength(1_024)),
+  contentType: z.string().check(z.minLength(1), z.maxLength(256)),
   size: nonNegativeSafeIntegerSchema,
   expiresAt: z.optional(nonNegativeSafeIntegerSchema),
 });
@@ -31,11 +31,11 @@ export type ResourceBlock = {
   transcription?: string;
 };
 
-export const resourceBlockSchema: z.ZodType<ResourceBlock> = z.strictObject({
+export const resourceBlockSchema: z.ZodMiniType<ResourceBlock> = z.strictObject({
   type: z.literal("resource"),
   ref: fileResourceReferenceSchema,
   mediaType: z.optional(z.enum(["image", "audio", "video", "document"])),
-  filename: z.optional(z.string().max(1_024)),
-  duration: z.optional(z.number().finite().nonnegative()),
+  filename: z.optional(z.string().check(z.maxLength(1_024))),
+  duration: z.optional(z.number().check(z.nonnegative())),
   transcription: z.optional(z.string()),
 });
