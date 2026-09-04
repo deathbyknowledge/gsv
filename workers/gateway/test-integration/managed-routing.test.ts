@@ -157,7 +157,7 @@ describe("managed installation routing integration", () => {
       onboardingToken: "integration-onboarding-first",
     });
     const connect = await expectManagedRpcOk(socket, "connect-inference", "sys.connect", {
-      protocol: 3,
+      protocol: 4,
       peer: {
         id: "managed-inference-test",
         version: "1.0.0",
@@ -204,7 +204,7 @@ describe("managed installation routing integration", () => {
       onboardingToken: "integration-onboarding-first",
     });
     await expectManagedRpcOk(socket, "connect-process-inference", "sys.connect", {
-      protocol: 3,
+      protocol: 4,
       peer: {
         id: "managed-process-inference-test",
         version: "1.0.0",
@@ -329,7 +329,7 @@ describe("managed installation routing integration", () => {
       onboardingToken: "integration-onboarding-first",
     });
     await expectManagedRpcOk(socket, "connect-lifecycle", "sys.connect", {
-      protocol: 3,
+      protocol: 4,
       peer: {
         id: "managed-lifecycle-test",
         version: "1.0.0",
@@ -422,7 +422,7 @@ describe("managed installation routing integration", () => {
         onboardingToken: `integration-onboarding-${handle}`,
       });
       await expectManagedRpcOk(socket, `connect-${handle}`, "sys.connect", {
-        protocol: 3,
+        protocol: 4,
         peer: {
           id: `managed-${handle}`,
           version: "1.0.0",

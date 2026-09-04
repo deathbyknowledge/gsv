@@ -495,6 +495,7 @@ frameBodyChannel(connection: KernelConnection<ConnectionState>): BinaryBodyChann
     let channel = this.frameBodyChannels.get(connection.id);
     if (!channel) {
       channel = new BinaryBodyChannel({
+        role: "acceptor",
         sendFrame: (binary) => connection.send(binary),
       });
       this.frameBodyChannels.set(connection.id, channel);

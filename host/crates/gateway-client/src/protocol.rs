@@ -8,6 +8,12 @@ pub const BINARY_FRAME_DATA: u8 = 1 << 0;
 pub const BINARY_FRAME_END: u8 = 1 << 1;
 pub const BINARY_FRAME_ERROR: u8 = 1 << 2;
 pub const BINARY_FRAME_CANCEL: u8 = 1 << 3;
+/// Flow-control credit from a receiver to a sender: a little-endian u32 counting
+/// the additional body bytes the sender may put on the wire.
+pub const BINARY_FRAME_WINDOW: u8 = 1 << 4;
+/// Credit every sender starts with before its receiver has granted anything.
+pub const BINARY_INITIAL_WINDOW_BYTES: u64 = 4 * 1024 * 1024;
+pub const BINARY_WINDOW_PAYLOAD_BYTES: usize = 4;
 
 // ---------------------------------------------------------------------------
 //  Core frame types — mirrors workers/gateway/src/protocol/frames.ts
@@ -216,6 +222,19 @@ pub fn build_binary_frame(stream_id: u32, flags: u8, payload: &[u8]) -> Vec<u8> 
     frame.push(flags);
     frame.extend_from_slice(payload);
     frame
+}
+
+pub fn build_window_frame(stream_id: u32, credit_bytes: u32) -> Vec<u8> {
+    build_binary_frame(stream_id, BINARY_FRAME_WINDOW, &credit_bytes.to_le_bytes())
+}
+
+/// Returns the credit carried by a WINDOW payload, or `None` when it is malformed.
+pub fn parse_window_credit(payload: &[u8]) -> Option<u32> {
+    if payload.len() != BINARY_WINDOW_PAYLOAD_BYTES {
+        return None;
+    }
+    let credit = u32::from_le_bytes(payload.try_into().ok()?);
+    (credit > 0).then_some(credit)
 }
 
 pub fn parse_binary_frame(data: &[u8]) -> Option<(u32, u8, Vec<u8>)> {

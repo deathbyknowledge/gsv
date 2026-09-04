@@ -1,6 +1,7 @@
 use crate::protocol::{
-    build_binary_frame, parse_binary_frame, FrameBodyDescriptor, BINARY_FRAME_CANCEL,
-    BINARY_FRAME_DATA, BINARY_FRAME_END, BINARY_FRAME_ERROR,
+    build_binary_frame, build_window_frame, parse_binary_frame, parse_window_credit,
+    FrameBodyDescriptor, BINARY_FRAME_CANCEL, BINARY_FRAME_DATA, BINARY_FRAME_END,
+    BINARY_FRAME_ERROR, BINARY_FRAME_WINDOW, BINARY_INITIAL_WINDOW_BYTES,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::{self, Display, Formatter};
@@ -11,7 +12,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 use tokio_util::sync::CancellationToken;
 
 type SendFuture = Pin<Box<dyn Future<Output = Result<(), BodyError>> + Send>>;
@@ -44,9 +45,24 @@ impl Display for BodyError {
 
 impl std::error::Error for BodyError {}
 
+/// Which end of the transport a channel sits on. The initiator opened the
+/// connection and allocates odd stream ids; the acceptor allocates even ones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BinaryBodyRole {
+    #[default]
+    Initiator,
+    Acceptor,
+}
+
 #[derive(Debug, Clone)]
 pub struct BinaryBodyLimits {
+    pub role: BinaryBodyRole,
     pub chunk_bytes: usize,
+    /// Bytes a sender may keep in flight per stream while this side drains.
+    pub window_bytes: u64,
+    /// Credit both peers assume before any WINDOW frame. A protocol constant;
+    /// override it only in tests that exercise stalls with small bodies.
+    pub initial_window_bytes: u64,
     pub max_frame_bytes: usize,
     pub max_body_bytes: u64,
     pub max_active_streams: usize,
@@ -60,7 +76,10 @@ pub struct BinaryBodyLimits {
 impl Default for BinaryBodyLimits {
     fn default() -> Self {
         Self {
+            role: BinaryBodyRole::Initiator,
             chunk_bytes: 1024 * 1024,
+            window_bytes: BINARY_INITIAL_WINDOW_BYTES,
+            initial_window_bytes: BINARY_INITIAL_WINDOW_BYTES,
             max_frame_bytes: 1024 * 1024,
             max_body_bytes: 256 * 1024 * 1024,
             max_active_streams: 64,
@@ -78,6 +97,15 @@ impl BinaryBodyLimits {
         if self.chunk_bytes == 0 || self.chunk_bytes > self.max_frame_bytes {
             return Err(BodyError::InvalidDescriptor(
                 "Binary chunk size must be positive and no larger than the frame limit".to_string(),
+            ));
+        }
+        if self.window_bytes == 0
+            || self.window_bytes > u64::from(u32::MAX)
+            || self.initial_window_bytes == 0
+            || self.initial_window_bytes > u64::from(u32::MAX)
+        {
+            return Err(BodyError::InvalidDescriptor(
+                "Binary body windows must fit a u32 and be positive".to_string(),
             ));
         }
         if self.max_frame_bytes == 0
@@ -147,6 +175,54 @@ struct IncomingState {
     sender: mpsc::Sender<BodyEvent>,
     expected: Option<u64>,
     received: u64,
+    /// Credit granted to the sender so far, including the initial window.
+    granted: u64,
+}
+
+/// Credit the receiver has allowed an outgoing stream to put on the wire.
+#[derive(Debug, Default)]
+struct OutgoingCredit {
+    available: Mutex<u64>,
+    granted: Notify,
+}
+
+impl OutgoingCredit {
+    /// Resolves with the credit available to the next chunk. Waits for a WINDOW
+    /// frame when the receiver has consumed everything it allowed, and fails
+    /// the transfer when no credit arrives within the idle timeout.
+    async fn wait(
+        &self,
+        cancelled: &CancellationToken,
+        idle_timeout: Duration,
+        stream_id: u32,
+    ) -> Result<u64, BodyError> {
+        loop {
+            let available = self
+                .available
+                .lock()
+                .map(|available| *available)
+                .unwrap_or(0);
+            if available > 0 {
+                return Ok(available);
+            }
+            tokio::select! {
+                _ = cancelled.cancelled() => {
+                    return Err(BodyError::Cancelled("Binary body send was cancelled".to_string()));
+                }
+                granted = tokio::time::timeout(idle_timeout, self.granted.notified()) => {
+                    if granted.is_err() {
+                        return Err(BodyError::TimedOut(stream_id));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct OutgoingState {
+    token: CancellationToken,
+    credit: Arc<OutgoingCredit>,
 }
 
 #[derive(Debug, Clone)]
@@ -158,7 +234,7 @@ struct OrphanFrame {
 #[derive(Debug, Default)]
 struct BodyState {
     incoming: HashMap<u32, IncomingState>,
-    outgoing: HashMap<u32, CancellationToken>,
+    outgoing: HashMap<u32, OutgoingState>,
     orphans: HashMap<u32, VecDeque<OrphanFrame>>,
     orphan_order: VecDeque<u32>,
     orphan_frames: usize,
@@ -209,9 +285,13 @@ impl BinaryBodyChannel {
                 }
             });
         }
+        let first_stream_id = match limits.role {
+            BinaryBodyRole::Initiator => 1,
+            BinaryBodyRole::Acceptor => 2,
+        };
         Ok(Self {
             state: Arc::new(Mutex::new(BodyState::default())),
-            next_stream_id: Arc::new(AtomicU32::new(1)),
+            next_stream_id: Arc::new(AtomicU32::new(first_stream_id)),
             send_frame,
             control_tx,
             control_shutdown,
@@ -262,6 +342,7 @@ impl BinaryBodyChannel {
                     sender,
                     expected: descriptor.length,
                     received: 0,
+                    granted: self.limits.initial_window_bytes,
                 },
             );
             orphans
@@ -273,6 +354,7 @@ impl BinaryBodyChannel {
             receiver,
             channel: self.clone(),
             terminal: false,
+            consumed: 0,
         };
         for frame in orphans {
             self.dispatch_frame(descriptor.stream_id, frame.flags, frame.payload);
@@ -304,6 +386,10 @@ impl BinaryBodyChannel {
             )));
         }
         let token = CancellationToken::new();
+        let credit = Arc::new(OutgoingCredit {
+            available: Mutex::new(self.limits.initial_window_bytes),
+            granted: Notify::new(),
+        });
         let stream_id = {
             let mut state = self.state.lock().map_err(|_| {
                 BodyError::Closed("Binary body registry is unavailable".to_string())
@@ -317,7 +403,13 @@ impl BinaryBodyChannel {
                 ));
             }
             let stream_id = self.allocate_stream_id(&state)?;
-            state.outgoing.insert(stream_id, token.clone());
+            state.outgoing.insert(
+                stream_id,
+                OutgoingState {
+                    token: token.clone(),
+                    credit: credit.clone(),
+                },
+            );
             stream_id
         };
         Ok(OutgoingBody {
@@ -328,6 +420,7 @@ impl BinaryBodyChannel {
             body: Some(body),
             channel: self.clone(),
             token,
+            credit,
             terminal: Arc::new(AtomicBool::new(false)),
         })
     }
@@ -336,12 +429,26 @@ impl BinaryBodyChannel {
         let Some((stream_id, flags, payload)) = parse_binary_frame(data) else {
             return false;
         };
+        if flags & BINARY_FRAME_WINDOW != 0 {
+            let credit = self
+                .state
+                .lock()
+                .ok()
+                .and_then(|state| state.outgoing.get(&stream_id).map(|s| s.credit.clone()));
+            if let (Some(credit), Some(granted)) = (credit, parse_window_credit(&payload)) {
+                if let Ok(mut available) = credit.available.lock() {
+                    *available = available.saturating_add(u64::from(granted));
+                }
+                credit.granted.notify_one();
+            }
+            return true;
+        }
         if flags & BINARY_FRAME_CANCEL != 0 {
             let token = self
                 .state
                 .lock()
                 .ok()
-                .and_then(|state| state.outgoing.get(&stream_id).cloned());
+                .and_then(|state| state.outgoing.get(&stream_id).map(|s| s.token.clone()));
             if let Some(token) = token {
                 token.cancel();
                 return true;
@@ -399,7 +506,7 @@ impl BinaryBodyChannel {
             let outgoing = state
                 .outgoing
                 .drain()
-                .map(|(_, value)| value)
+                .map(|(_, value)| value.token)
                 .collect::<Vec<_>>();
             state.orphans.clear();
             state.orphan_order.clear();
@@ -423,11 +530,17 @@ impl BinaryBodyChannel {
     }
 
     fn allocate_stream_id(&self, state: &BodyState) -> Result<u32, BodyError> {
-        for _ in 0..u32::MAX {
-            let id = self.next_stream_id.fetch_add(1, Ordering::Relaxed);
+        let first = match self.limits.role {
+            BinaryBodyRole::Initiator => 1,
+            BinaryBodyRole::Acceptor => 2,
+        };
+        for _ in 0..u32::MAX / 2 {
+            // Stepping by two keeps this side's parity; a wrap lands on 0 (or
+            // an initiator's 1), which restarts the sequence.
+            let id = self.next_stream_id.fetch_add(2, Ordering::Relaxed);
             let id = if id == 0 {
-                self.next_stream_id.store(2, Ordering::Relaxed);
-                1
+                self.next_stream_id.store(first + 2, Ordering::Relaxed);
+                first
             } else {
                 id
             };
@@ -464,6 +577,7 @@ impl BinaryBodyChannel {
                 let next = incoming.received.saturating_add(payload.len() as u64);
                 let invalid = payload.len() > self.limits.max_frame_bytes
                     || next > self.limits.max_body_bytes
+                    || next > incoming.granted
                     || incoming.expected.is_some_and(|expected| next > expected);
                 if invalid {
                     reject_peer = true;
@@ -575,6 +689,30 @@ impl BinaryBodyChannel {
         }
     }
 
+    /// Grants the sender enough credit to keep one window in flight beyond
+    /// what the consumer has drained. Small top-ups are batched until half a
+    /// window is owed, unless the sender is out of credit entirely.
+    async fn grant_window(&self, stream_id: u32, consumed: u64) {
+        let frame = {
+            let Ok(mut state) = self.state.lock() else {
+                return;
+            };
+            let Some(incoming) = state.incoming.get_mut(&stream_id) else {
+                return;
+            };
+            let target = consumed.saturating_add(self.limits.window_bytes);
+            let increment = target.saturating_sub(incoming.granted);
+            let stalled = incoming.granted == incoming.received;
+            if increment == 0 || (!stalled && increment < self.limits.window_bytes.div_ceil(2)) {
+                return;
+            }
+            let increment = u32::try_from(increment.min(u64::from(u32::MAX))).unwrap_or(u32::MAX);
+            incoming.granted = incoming.granted.saturating_add(u64::from(increment));
+            build_window_frame(stream_id, increment)
+        };
+        let _ = (self.send_frame)(frame).await;
+    }
+
     fn cancel_incoming(&self, stream_id: u32, reason: &str) {
         let removed = self
             .state
@@ -632,6 +770,7 @@ pub struct IncomingBody {
     receiver: mpsc::Receiver<BodyEvent>,
     channel: BinaryBodyChannel,
     terminal: bool,
+    consumed: u64,
 }
 
 impl IncomingBody {
@@ -656,7 +795,13 @@ impl IncomingBody {
                 BodyError::TimedOut(self.stream_id)
             })?;
         match event {
-            Some(BodyEvent::Data(bytes)) => Ok(Some(bytes)),
+            Some(BodyEvent::Data(bytes)) => {
+                self.consumed = self.consumed.saturating_add(bytes.len() as u64);
+                self.channel
+                    .grant_window(self.stream_id, self.consumed)
+                    .await;
+                Ok(Some(bytes))
+            }
             Some(BodyEvent::End) => {
                 self.terminal = true;
                 Ok(None)
@@ -716,6 +861,7 @@ pub struct OutgoingBody {
     body: Option<BinaryBody>,
     channel: BinaryBodyChannel,
     token: CancellationToken,
+    credit: Arc<OutgoingCredit>,
     terminal: Arc<AtomicBool>,
 }
 
@@ -736,13 +882,31 @@ impl OutgoingBody {
         let mut buffer = vec![0_u8; self.channel.limits.chunk_bytes];
         let mut sent = 0_u64;
         let result = loop {
+            let allowed = match self
+                .credit
+                .wait(
+                    &self.token,
+                    self.channel.limits.idle_timeout,
+                    self.descriptor.stream_id,
+                )
+                .await
+            {
+                Ok(allowed) => allowed,
+                Err(error) => break Err(error),
+            };
+            let limit = usize::try_from(allowed)
+                .unwrap_or(usize::MAX)
+                .min(buffer.len());
             let read = tokio::select! {
                 _ = self.token.cancelled() => {
                     break Err(BodyError::Cancelled("Binary body send was cancelled".to_string()));
                 }
-                read = body.reader.read(&mut buffer) => read
+                read = body.reader.read(&mut buffer[..limit]) => read
                     .map_err(|error| BodyError::Transport(format!("Could not read binary body: {error}")))?,
             };
+            if let Ok(mut available) = self.credit.available.lock() {
+                *available = available.saturating_sub(read as u64);
+            }
             if read == 0 {
                 if body.length.is_some_and(|length| length != sent) {
                     break Err(BodyError::Protocol(format!(
@@ -1108,6 +1272,153 @@ mod tests {
             b"onetwo"
         );
         assert!(sent.lock().expect("sent frames").is_empty());
+    }
+
+    #[tokio::test]
+    async fn outgoing_body_stalls_until_the_receiver_grants_a_window() {
+        let sent = Arc::new(StdMutex::new(Vec::new()));
+        let limits = BinaryBodyLimits {
+            chunk_bytes: 2,
+            initial_window_bytes: 4,
+            idle_timeout: Duration::from_secs(5),
+            ..BinaryBodyLimits::default()
+        };
+        let channel = BinaryBodyChannel::new(limits, {
+            let sent = sent.clone();
+            move |frame| {
+                let sent = sent.clone();
+                async move {
+                    sent.lock().expect("sent frames").push(frame);
+                    Ok(())
+                }
+            }
+        })
+        .expect("body channel");
+        let outgoing = channel
+            .prepare(BinaryBody::from_bytes(b"hello!".to_vec()))
+            .expect("outgoing body");
+        let stream_id = outgoing.descriptor().stream_id;
+        let sending = tokio::spawn(outgoing.send());
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(sent.lock().expect("sent frames").len(), 2);
+        assert!(!sending.is_finished());
+
+        channel
+            .handle_frame(&build_window_frame(stream_id, 8))
+            .await;
+        sending
+            .await
+            .expect("send task")
+            .expect("send completes once credit arrives");
+        let frames = sent.lock().expect("sent frames");
+        let parsed = frames
+            .iter()
+            .map(|frame| parse_binary_frame(frame).expect("binary frame"))
+            .collect::<Vec<_>>();
+        assert_eq!(parsed[2], (stream_id, BINARY_FRAME_DATA, b"o!".to_vec()));
+        assert_eq!(parsed[3], (stream_id, BINARY_FRAME_END, Vec::new()));
+    }
+
+    #[tokio::test]
+    async fn outgoing_body_fails_when_no_window_arrives() {
+        let limits = BinaryBodyLimits {
+            chunk_bytes: 2,
+            initial_window_bytes: 2,
+            idle_timeout: Duration::from_millis(20),
+            ..BinaryBodyLimits::default()
+        };
+        let channel =
+            BinaryBodyChannel::new(limits, |_frame| async { Ok(()) }).expect("body channel");
+        let outgoing = channel
+            .prepare(BinaryBody::from_bytes(b"hello!".to_vec()))
+            .expect("outgoing body");
+        let stream_id = outgoing.descriptor().stream_id;
+        assert_eq!(
+            outgoing.send().await.expect_err("stalled send"),
+            BodyError::TimedOut(stream_id)
+        );
+    }
+
+    #[tokio::test]
+    async fn incoming_body_grants_credit_as_the_consumer_drains() {
+        let sent = Arc::new(StdMutex::new(Vec::new()));
+        let limits = BinaryBodyLimits {
+            window_bytes: 4,
+            initial_window_bytes: 4,
+            ..BinaryBodyLimits::default()
+        };
+        let channel = BinaryBodyChannel::new(limits, {
+            let sent = sent.clone();
+            move |frame| {
+                let sent = sent.clone();
+                async move {
+                    sent.lock().expect("sent frames").push(frame);
+                    Ok(())
+                }
+            }
+        })
+        .expect("body channel");
+        let mut body = channel
+            .receive(FrameBodyDescriptor {
+                stream_id: 21,
+                length: None,
+            })
+            .expect("incoming body");
+        channel
+            .handle_frame(&build_binary_frame(21, BINARY_FRAME_DATA, b"ab"))
+            .await;
+        channel
+            .handle_frame(&build_binary_frame(21, BINARY_FRAME_DATA, b"cd"))
+            .await;
+        assert_eq!(
+            body.recv().await.expect("first chunk"),
+            Some(b"ab".to_vec())
+        );
+        {
+            let frames = sent.lock().expect("sent frames");
+            let (stream_id, flags, payload) = parse_binary_frame(&frames[0]).expect("window frame");
+            assert_eq!((stream_id, flags), (21, BINARY_FRAME_WINDOW));
+            assert_eq!(parse_window_credit(&payload), Some(2));
+        }
+        // Data beyond the granted window is a protocol violation.
+        channel
+            .handle_frame(&build_binary_frame(21, BINARY_FRAME_DATA, b"efghi"))
+            .await;
+        assert_eq!(
+            body.recv().await.expect("second chunk"),
+            Some(b"cd".to_vec())
+        );
+        assert!(body.recv().await.is_err());
+    }
+
+    #[test]
+    fn acceptor_channels_allocate_even_stream_ids() {
+        let acceptor = BinaryBodyChannel::new(
+            BinaryBodyLimits {
+                role: BinaryBodyRole::Acceptor,
+                ..BinaryBodyLimits::default()
+            },
+            |_frame| async { Ok(()) },
+        )
+        .expect("body channel");
+        let initiator =
+            BinaryBodyChannel::new(BinaryBodyLimits::default(), |_frame| async { Ok(()) })
+                .expect("body channel");
+        let ids = |channel: &BinaryBodyChannel| {
+            (0..3)
+                .map(|_| {
+                    channel
+                        .prepare(BinaryBody::from_bytes(Vec::new()))
+                        .expect("outgoing body")
+                        .descriptor()
+                        .stream_id
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&acceptor), vec![2, 4, 6]);
+        assert_eq!(ids(&initiator), vec![1, 3, 5]);
     }
 
     #[test]

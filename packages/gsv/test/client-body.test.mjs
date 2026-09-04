@@ -6,8 +6,12 @@ import {
   BINARY_FRAME_DATA,
   BINARY_FRAME_END,
   BINARY_FRAME_ERROR,
+  BINARY_FRAME_WINDOW,
+  BINARY_INITIAL_WINDOW_BYTES,
   buildBinaryFrame,
+  buildWindowFrame,
   parseBinaryFrame,
+  parseWindowCredit,
 } from "../dist/protocol/binary-frame.js";
 import { BinaryBodyChannel } from "../dist/protocol/binary-body-channel.js";
 import { bodyFromBytes, bodyToBytes } from "../dist/protocol/body.js";
@@ -1142,4 +1146,108 @@ test("cancelling an inbound request stops its response body", async () => {
   assert.equal(terminal.streamId, response.body.streamId);
   assert.equal(terminal.flags, BINARY_FRAME_ERROR | BINARY_FRAME_END);
   driver.close();
+});
+
+const MEBIBYTE = 1024 * 1024;
+
+function parsedFrames(frames) {
+  return frames.map((frame) => parseBinaryFrame(frame));
+}
+
+test("a sender stalls at the initial window until the receiver grants credit", async () => {
+  const frames = [];
+  const sender = new BinaryBodyChannel({
+    idleTimeoutMs: 2_000,
+    sendFrame: (frame) => {
+      frames.push(frame);
+    },
+  });
+  const outgoing = sender.prepare(bodyFromBytes(new Uint8Array(BINARY_INITIAL_WINDOW_BYTES + 1)));
+  const sending = outgoing.send();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const inFlight = parsedFrames(frames).filter((frame) => frame.flags === BINARY_FRAME_DATA);
+  assert.equal(inFlight.reduce((total, frame) => total + frame.payload.byteLength, 0), BINARY_INITIAL_WINDOW_BYTES);
+  assert.equal(frames.length, inFlight.length);
+
+  sender.handleFrame(buildWindowFrame(outgoing.descriptor.streamId, 1));
+  await sending;
+
+  const tail = parsedFrames(frames).slice(-2);
+  assert.equal(tail[0].flags, BINARY_FRAME_DATA);
+  assert.equal(tail[0].payload.byteLength, 1);
+  assert.equal(tail[1].flags, BINARY_FRAME_END);
+});
+
+test("a stalled sender fails after the idle timeout", async () => {
+  const frames = [];
+  const sender = new BinaryBodyChannel({
+    idleTimeoutMs: 20,
+    sendFrame: (frame) => {
+      frames.push(frame);
+    },
+  });
+  const outgoing = sender.prepare(bodyFromBytes(new Uint8Array(BINARY_INITIAL_WINDOW_BYTES + 1)));
+
+  await assert.rejects(outgoing.send(), /stalled/);
+
+  const terminal = parseBinaryFrame(frames.at(-1));
+  assert.equal(terminal.streamId, outgoing.descriptor.streamId);
+  assert.equal(terminal.flags, BINARY_FRAME_ERROR | BINARY_FRAME_END);
+});
+
+test("a receiver grants credit as its consumer drains", async () => {
+  const frames = [];
+  const receiver = new BinaryBodyChannel({
+    sendFrame: (frame) => {
+      frames.push(frame);
+    },
+  });
+  const chunk = new Uint8Array(MEBIBYTE);
+  const incoming = receiver.receive({ streamId: 1, length: 5 * MEBIBYTE });
+  for (let index = 0; index < 4; index += 1) {
+    receiver.handleFrame(buildBinaryFrame(1, BINARY_FRAME_DATA, chunk));
+  }
+  assert.equal(frames.length, 0, "nothing is granted before the consumer reads");
+
+  const reader = incoming.stream.getReader();
+  await reader.read();
+  // The sender is out of credit, so the first drained chunk is granted at once.
+  assert.deepEqual(parsedFrames(frames).map((frame) => [frame.flags, parseWindowCredit(frame.payload)]), [
+    [BINARY_FRAME_WINDOW, MEBIBYTE],
+  ]);
+  await reader.read();
+  assert.equal(frames.length, 1, "small top-ups are batched while the sender still has credit");
+  await reader.read();
+  assert.deepEqual(parsedFrames(frames).map((frame) => parseWindowCredit(frame.payload)), [MEBIBYTE, 2 * MEBIBYTE]);
+
+  receiver.handleFrame(buildBinaryFrame(1, BINARY_FRAME_DATA, chunk));
+  receiver.handleFrame(buildBinaryFrame(1, BINARY_FRAME_END));
+  assert.equal((await reader.read()).value.byteLength, MEBIBYTE);
+  assert.equal((await reader.read()).value.byteLength, MEBIBYTE);
+  assert.equal((await reader.read()).done, true);
+});
+
+test("a receiver rejects data beyond the granted window", async () => {
+  const frames = [];
+  const receiver = new BinaryBodyChannel({
+    sendFrame: (frame) => {
+      frames.push(frame);
+    },
+  });
+  const incoming = receiver.receive({ streamId: 1 });
+  const chunk = new Uint8Array(MEBIBYTE);
+  for (let index = 0; index < 5; index += 1) {
+    receiver.handleFrame(buildBinaryFrame(1, BINARY_FRAME_DATA, chunk));
+  }
+
+  await assert.rejects(bodyToBytes(incoming, { maxBytes: 8 * MEBIBYTE }), /receive window/);
+  const terminal = parseBinaryFrame(frames.at(-1));
+  assert.equal(terminal.flags, BINARY_FRAME_CANCEL | BINARY_FRAME_END);
+});
+
+test("stream ids keep the parity of the channel's role", () => {
+  const ids = (channel) => [0, 1].map(() => channel.prepare(bodyFromBytes(new Uint8Array())).descriptor.streamId);
+  assert.deepEqual(ids(new BinaryBodyChannel({ sendFrame: () => {} })), [1, 3]);
+  assert.deepEqual(ids(new BinaryBodyChannel({ role: "acceptor", sendFrame: () => {} })), [2, 4]);
 });
