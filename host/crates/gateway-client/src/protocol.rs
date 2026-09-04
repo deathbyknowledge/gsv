@@ -31,7 +31,9 @@ pub enum Frame {
 pub struct RequestFrame {
     pub id: String,
     pub call: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Every request carries `args` on the wire; `None` serializes as `{}` so
+    /// argument-free calls still pass the Gateway's frame validation.
+    #[serde(default, serialize_with = "serialize_request_args")]
     pub args: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body: Option<FrameBodyDescriptor>,
@@ -216,6 +218,16 @@ impl RequestFrame {
     }
 }
 
+fn serialize_request_args<S>(args: &Option<Value>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match args {
+        Some(value) => value.serialize(serializer),
+        None => serde_json::Map::new().serialize(serializer),
+    }
+}
+
 pub fn build_binary_frame(stream_id: u32, flags: u8, payload: &[u8]) -> Vec<u8> {
     let mut frame = Vec::with_capacity(BINARY_FRAME_HEADER_BYTES + payload.len());
     frame.extend_from_slice(&stream_id.to_le_bytes());
@@ -257,6 +269,14 @@ pub fn parse_binary_frame(data: &[u8]) -> Option<(u32, u8, Vec<u8>)> {
 mod tests {
     use super::{Frame, FrameBodyDescriptor, RequestFrame, ResponseFrame};
     use serde_json::json;
+
+    #[test]
+    fn request_without_args_serializes_an_empty_object() {
+        let frame = RequestFrame::new("sys.target.list", None);
+        let value = serde_json::to_value(&frame).expect("request frame");
+        assert_eq!(value["args"], json!({}));
+        assert_eq!(value.get("body"), None);
+    }
 
     #[test]
     fn request_body_descriptor_deserializes_from_wire_shape() {
