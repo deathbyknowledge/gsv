@@ -471,8 +471,8 @@ describe("model context", () => {
     await runInDurableObject(kernel, (instance: Kernel) => {
       // SAFETY: test fixture delays the internal canonical commit boundary.
       const k = instance as any;
-      originalCommitProcessMessage = k.commitProcessMessage;
-      k.commitProcessMessage = vi.fn(async (processId: string, args: any) => {
+      originalCommitProcessMessage = k.processOutput.commitProcessMessage;
+      k.processOutput.commitProcessMessage = vi.fn(async (processId: string, args: any) => {
         expect(processId).toBe(pid);
         expect(args).toMatchObject({ runId, actionId, text: "Committed first." });
         markCommitStarted();
@@ -537,7 +537,7 @@ describe("model context", () => {
     } finally {
       await runInDurableObject(kernel, (instance: Kernel) => {
         // SAFETY: restore the test-only internal Kernel override.
-        (instance as any).commitProcessMessage = originalCommitProcessMessage;
+        (instance as any).processOutput.commitProcessMessage = originalCommitProcessMessage;
       });
     }
   });

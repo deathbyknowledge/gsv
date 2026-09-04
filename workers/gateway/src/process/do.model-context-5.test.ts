@@ -832,8 +832,8 @@ describe("model context", () => {
       // SAFETY: test fixture is constructed with the asserted domain shape.
       const k = instance as any;
       k.testRunStreamFrames = [];
-      k.testOriginalEnqueueProcessSignal = k.enqueueProcessSignal;
-      k.enqueueProcessSignal = async (_processId: string, frame: ProcessTestValue) => {
+      k.testOriginalEnqueueProcessSignal = k.processOutput.enqueueProcessSignal;
+      k.processOutput.enqueueProcessSignal = async (_processId: string, frame: ProcessTestValue) => {
         k.testRunStreamFrames.push(frame);
       };
     });
@@ -888,7 +888,7 @@ describe("model context", () => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const k = instance as any;
         if (k.testOriginalEnqueueProcessSignal) {
-          k.enqueueProcessSignal = k.testOriginalEnqueueProcessSignal;
+          k.processOutput.enqueueProcessSignal = k.testOriginalEnqueueProcessSignal;
         }
         delete k.testOriginalEnqueueProcessSignal;
         delete k.testRunStreamFrames;

@@ -7,7 +7,8 @@ import * as personalController from "./personal-controller";
 import type { AdapterService } from "../adapter-interface";
 const getConversationByIdMock = vi.spyOn(utils, "getConversationById");
 
-import { Kernel } from "./do";
+import { Kernel, kernelRuntimes } from "./do";
+import { AdapterDelivery } from "./adapter-delivery";
 import {
   BINARY_FRAME_CANCEL,
   BINARY_FRAME_DATA,
@@ -15,6 +16,14 @@ import {
   buildBinaryFrame,
   parseBinaryFrame,
 } from "@humansandmachines/gsv/protocol";
+
+/** A Kernel prototype with its runtime modules attached and no Durable Object state. */
+// SAFETY: tests assign the exact collaborators each scenario asserts on.
+const bareKernel = (): any => {
+  const kernel = Object.create(Kernel.prototype);
+  Object.assign(kernel, kernelRuntimes(kernel));
+  return kernel;
+};
 
 const sendFrameToProcessMock = vi.spyOn(utils, "sendFrameToProcess");
 const TEST_INSTALLATION_ID = "singleton";
@@ -43,7 +52,7 @@ describe("Kernel responsibility wakes", () => {
       createdAtMs: 1,
     };
     // SAFETY: test fixture is constructed with the asserted Kernel boundary shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.installationId = TEST_INSTALLATION_ID;
     kernel.responsibilities = {
       wakeState: vi.fn(() => ({
@@ -56,9 +65,9 @@ describe("Kernel responsibility wakes", () => {
       markBatchDelivered: vi.fn(),
       markBatchFailed: vi.fn(),
     };
-    kernel.managedWorkGate = vi.fn(async () => ({ allowed: true }));
+    kernel.onboarding.managedWorkGate = vi.fn(async () => ({ allowed: true }));
     kernel.buildKernelContext = vi.fn(() => ({}));
-    kernel.reconcileResponsibilityWake = vi.fn(async () => {});
+    kernel.responsibilityRuntime.reconcileResponsibilityWake = vi.fn(async () => {});
     const ensureShip = vi.spyOn(personalController, "ensurePersonalController")
       .mockResolvedValue("proc:ship");
     sendFrameToProcessMock.mockImplementationOnce(async (_installationId, _pid, frame) => ({
@@ -69,7 +78,7 @@ describe("Kernel responsibility wakes", () => {
     }));
 
     try {
-      await kernel.onResponsibilityWake(
+      await kernel.responsibilityRuntime.onResponsibilityWake(
         { ownerUid: 1000, generation: 1 },
         { id: "wake-1" },
       );
@@ -93,12 +102,12 @@ describe("Kernel responsibility wakes", () => {
       }),
     );
     expect(kernel.responsibilities.markBatchDelivered).toHaveBeenCalledWith(batch.id);
-    expect(kernel.reconcileResponsibilityWake).toHaveBeenCalledWith(1000);
+    expect(kernel.responsibilityRuntime.reconcileResponsibilityWake).toHaveBeenCalledWith(1000);
   });
 
   it("reconciles the current generation when a stale wake fires", async () => {
     // SAFETY: test fixture is constructed with the asserted Kernel boundary shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.responsibilities = {
       wakeState: vi.fn(() => ({
         ownerUid: 1000,
@@ -107,22 +116,22 @@ describe("Kernel responsibility wakes", () => {
         scheduledAtMs: 2,
       })),
     };
-    kernel.reconcileResponsibilityWake = vi.fn(async () => {});
+    kernel.responsibilityRuntime.reconcileResponsibilityWake = vi.fn(async () => {});
 
-    await kernel.onResponsibilityWake(
+    await kernel.responsibilityRuntime.onResponsibilityWake(
       { ownerUid: 1000, generation: 1 },
       { id: "wake-1" },
     );
 
-    expect(kernel.reconcileResponsibilityWake).toHaveBeenCalledWith(1000);
+    expect(kernel.responsibilityRuntime.reconcileResponsibilityWake).toHaveBeenCalledWith(1000);
   });
 });
 
 describe("Kernel service peer identity", () => {
   it("rejects an adapter frame that claims another binding identity", async () => {
     // SAFETY: this fixture isolates the service-frame admission boundary on Kernel.
-    const kernel = Object.create(Kernel.prototype) as any;
-    kernel.managedWorkGate = vi.fn(async () => ({ allowed: true }));
+    const kernel = bareKernel();
+    kernel.onboarding.managedWorkGate = vi.fn(async () => ({ allowed: true }));
     kernel.buildServiceBindingIdentity = vi.fn(() => ({
       role: "service",
       process: {
@@ -183,9 +192,9 @@ describe("Kernel service peer identity", () => {
       },
     };
     // SAFETY: this fixture isolates the linked adapter admission boundary.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.installationId = TEST_INSTALLATION_ID;
-    kernel.managedWorkGate = vi.fn(async () => ({ allowed: true }));
+    kernel.onboarding.managedWorkGate = vi.fn(async () => ({ allowed: true }));
     kernel.adapters = {
       identityLinks: { get: vi.fn(() => link) },
       surfaceRoutes: { get: vi.fn(() => null) },
@@ -257,8 +266,8 @@ describe("Kernel service peer identity", () => {
 
   it("rejects a linked adapter interaction after its route generation changes", async () => {
     // SAFETY: this fixture isolates the generation fence before user dispatch.
-    const kernel = Object.create(Kernel.prototype) as any;
-    kernel.managedWorkGate = vi.fn(async () => ({ allowed: true }));
+    const kernel = bareKernel();
+    kernel.onboarding.managedWorkGate = vi.fn(async () => ({ allowed: true }));
     kernel.adapters = {
       identityLinks: {
         get: vi.fn(() => ({
@@ -332,7 +341,7 @@ describe("Kernel managed adapter unlink", () => {
     };
     // SAFETY: this focused fixture supplies the Kernel stores and methods used
     // by the managed unlink boundary.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.adapters = {
       identityLinks: {
         get: vi.fn(() => link),
@@ -353,7 +362,7 @@ describe("Kernel managed adapter unlink", () => {
       },
       responsibilitySources: { isEnabled: vi.fn(() => false) },
     }));
-    kernel.broadcastToUserUid = vi.fn();
+    kernel.connectionRuntime.broadcastToUserUid = vi.fn();
 
     await expect(kernel.unlinkManagedAdapterIdentity("slack", {
       operationId: "move-peer",
@@ -373,7 +382,7 @@ describe("Kernel managed adapter unlink", () => {
         mode: "managed-shared",
       }),
     );
-    expect(kernel.broadcastToUserUid).toHaveBeenCalledWith(
+    expect(kernel.connectionRuntime.broadcastToUserUid).toHaveBeenCalledWith(
       1000,
       "adapter.status",
       { adapter: "slack", accountId: "workspace-hash" },
@@ -415,7 +424,7 @@ function connectedPeer(
 
 function createRoutedKernel() {
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-  const kernel = Object.create(Kernel.prototype) as any;
+  const kernel = bareKernel();
   kernel.installationId = TEST_INSTALLATION_ID;
   kernel.connections = new Map();
   return kernel;
@@ -425,7 +434,7 @@ describe("Kernel frame bodies", () => {
   it("passes request cancellation to Kernel MCP calls", async () => {
     const callTool = vi.fn(async () => ({ content: [] }));
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.mcp = { callTool };
     const controller = new AbortController();
     const ctx = kernel.buildKernelContext({ requestSignal: controller.signal });
@@ -445,8 +454,8 @@ describe("Kernel frame bodies", () => {
 
   it("cancels an unfinished request body when a device responds early", async () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
-    kernel.pendingKernelResponses = new Map();
+    const kernel = bareKernel();
+    kernel.transport.pendingKernelResponses = new Map();
     kernel.devices = {
       get: () => ({ online: true }),
       canHandle: () => true,
@@ -459,11 +468,11 @@ describe("Kernel frame bodies", () => {
       },
     };
     kernel.connections = new Map([[deviceConnection.id, deviceConnection]]);
-    kernel.findDeviceConnection = () => deviceConnection;
-    kernel.registerRouteWithExpiry = vi.fn(async () => ({ cancel: vi.fn() }));
+    kernel.transport.findDeviceConnection = () => deviceConnection;
+    kernel.transport.registerRouteWithExpiry = vi.fn(async () => ({ cancel: vi.fn() }));
     const outgoing = { cancel: vi.fn(async () => {}) };
-    kernel.sendWebSocketFrame = vi.fn((_connection: KernelTestValue, frame: { id: string }) => {
-      queueMicrotask(() => kernel.pendingKernelResponses.get(frame.id)?.({
+    kernel.transport.sendWebSocketFrame = vi.fn((_connection: KernelTestValue, frame: { id: string }) => {
+      queueMicrotask(() => kernel.transport.pendingKernelResponses.get(frame.id)?.({
         type: "res",
         id: frame.id,
         ok: true,
@@ -472,7 +481,7 @@ describe("Kernel frame bodies", () => {
       return outgoing;
     });
 
-    await kernel.requestDevice("device-1", "net.fetch", {}, {
+    await kernel.transport.requestDevice("device-1", "net.fetch", {}, {
       body: { stream: new ReadableStream(), length: 1 },
     });
 
@@ -482,10 +491,10 @@ describe("Kernel frame bodies", () => {
   it("cancels a request body when device routing fails before send", async () => {
     const cancel = vi.fn();
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.devices = { get: () => null };
 
-    await expect(kernel.requestDevice("offline-device", "fs.transfer.receive", {}, {
+    await expect(kernel.transport.requestDevice("offline-device", "fs.transfer.receive", {}, {
       body: {
         stream: new ReadableStream({ cancel }),
         length: 1,
@@ -499,8 +508,8 @@ describe("Kernel frame bodies", () => {
 
   it("cancels the route and upload when a device request is aborted", async () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
-    kernel.pendingKernelResponses = new Map();
+    const kernel = bareKernel();
+    kernel.transport.pendingKernelResponses = new Map();
     kernel.devices = {
       get: () => ({ online: true }),
       canHandle: () => true,
@@ -513,25 +522,25 @@ describe("Kernel frame bodies", () => {
       },
     };
     kernel.connections = new Map([[deviceConnection.id, deviceConnection]]);
-    kernel.findDeviceConnection = () => deviceConnection;
+    kernel.transport.findDeviceConnection = () => deviceConnection;
     const cancelRoute = vi.fn();
-    kernel.registerRouteWithExpiry = vi.fn(async () => ({ cancel: cancelRoute }));
+    kernel.transport.registerRouteWithExpiry = vi.fn(async () => ({ cancel: cancelRoute }));
     const outgoing = { cancel: vi.fn(async () => {}) };
-    kernel.sendWebSocketFrame = vi.fn(() => outgoing);
+    kernel.transport.sendWebSocketFrame = vi.fn(() => outgoing);
     const controller = new AbortController();
     const reason = new Error("caller stopped");
 
-    const request = kernel.requestDevice("device-1", "net.fetch", {}, {
+    const request = kernel.transport.requestDevice("device-1", "net.fetch", {}, {
       body: { stream: new ReadableStream(), length: 1 },
       signal: controller.signal,
     });
-    await vi.waitFor(() => expect(kernel.sendWebSocketFrame).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(kernel.transport.sendWebSocketFrame).toHaveBeenCalledOnce());
     controller.abort(reason);
 
     await expect(request).rejects.toBe(reason);
     expect(cancelRoute).toHaveBeenCalledOnce();
     expect(outgoing.cancel).toHaveBeenCalledWith(reason);
-    expect(kernel.sendWebSocketFrame).toHaveBeenLastCalledWith(
+    expect(kernel.transport.sendWebSocketFrame).toHaveBeenLastCalledWith(
       deviceConnection,
       {
         type: "sig",
@@ -544,10 +553,10 @@ describe("Kernel frame bodies", () => {
   it("cancels announced bodies on requests rejected before dispatch", async () => {
     const sends: Array<string | ArrayBuffer> = [];
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.env = {};
     kernel.installationId = TEST_INSTALLATION_ID;
-    kernel.frameBodyChannels = new Map();
+    kernel.transport.frameBodyChannels = new Map();
     kernel.auth = { isSetupMode: () => false };
     const connection = {
       id: "pending-connection",
@@ -555,7 +564,7 @@ describe("Kernel frame bodies", () => {
       send: (message: string | ArrayBuffer) => sends.push(message),
     };
 
-    await kernel.handleReq(connection, {
+    await kernel.transport.handleReq(connection, {
       type: "req",
       id: "denied-request",
       call: "fs.transfer.receive",
@@ -579,40 +588,40 @@ describe("Kernel frame bodies", () => {
 
   it("rejects bodies that do not match their declared length", async () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
-    kernel.frameBodyChannels = new Map();
+    const kernel = bareKernel();
+    kernel.transport.frameBodyChannels = new Map();
     const connection = { id: "conn-1", send: vi.fn() };
-    const body = kernel.receiveFrameBody(connection, { streamId: 8, length: 3 });
+    const body = kernel.transport.receiveFrameBody(connection, { streamId: 8, length: 3 });
 
-    kernel.handleBinaryMessage(
+    kernel.transport.handleBinaryMessage(
       connection,
       buildBinaryFrame(8, BINARY_FRAME_DATA, new Uint8Array([1, 2])),
     );
-    kernel.handleBinaryMessage(connection, buildBinaryFrame(8, BINARY_FRAME_END));
+    kernel.transport.handleBinaryMessage(connection, buildBinaryFrame(8, BINARY_FRAME_END));
 
     await expect(new Response(body.stream).arrayBuffer()).rejects.toThrow(
       "Body length 2 did not match 3",
     );
-    expect(kernel.frameBodyChannels.get(connection.id).pending.size).toBe(0);
+    expect(kernel.transport.frameBodyChannels.get(connection.id).pending.size).toBe(0);
   });
 
   it("does not register bodies from an invalid response route", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
-    kernel.frameBodyChannels = new Map();
+    const kernel = bareKernel();
+    kernel.transport.frameBodyChannels = new Map();
     kernel.routes = {
       get: () => ({ deviceId: "expected-device", driverConnectionId: null }),
     };
-    kernel.isConnectionForDevice = vi.fn(() => false);
+    kernel.transport.isConnectionForDevice = vi.fn(() => false);
 
-    kernel.handleRes({ id: "wrong-connection" }, {
+    kernel.transport.handleRes({ id: "wrong-connection" }, {
       type: "res",
       id: "req-1",
       ok: true,
       body: { streamId: 9, length: 3 },
     });
 
-    expect(kernel.frameBodyChannels.size).toBe(0);
+    expect(kernel.transport.frameBodyChannels.size).toBe(0);
   });
 
   it("rejects a response from a different connection for the same device", () => {
@@ -624,15 +633,15 @@ describe("Kernel frame bodies", () => {
       scheduleId: null,
     };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.routes = {
       get: vi.fn(() => route),
       remove: vi.fn(),
     };
-    kernel.isConnectionForDevice = vi.fn(() => true);
+    kernel.transport.isConnectionForDevice = vi.fn(() => true);
     kernel.decodeWebSocketFrame = vi.fn();
 
-    kernel.handleRes({ id: "stale-connection" }, {
+    kernel.transport.handleRes({ id: "stale-connection" }, {
       type: "res",
       id: "req-1",
       ok: true,
@@ -652,17 +661,17 @@ describe("Kernel frame bodies", () => {
       scheduleId: null,
     };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.routes = {
       get: vi.fn(() => route),
       remove: vi.fn(() => route),
     };
-    kernel.routedBodies = new Map();
-    kernel.isConnectionForDevice = vi.fn(() => true);
+    kernel.transport.routedBodies = new Map();
+    kernel.transport.isConnectionForDevice = vi.fn(() => true);
     kernel.decodeWebSocketFrame = vi.fn((_connection: KernelTestValue, frame: KernelTestValue) => frame);
-    kernel.deliverToOrigin = vi.fn();
+    kernel.transport.deliverToOrigin = vi.fn();
 
-    kernel.handleRes({ id: "current-connection" }, {
+    kernel.transport.handleRes({ id: "current-connection" }, {
       type: "res",
       id: "req-1",
       ok: true,
@@ -676,7 +685,7 @@ describe("Kernel frame bodies", () => {
     });
 
     expect(kernel.routes.remove).toHaveBeenCalledWith("req-1");
-    expect(kernel.deliverToOrigin).toHaveBeenCalledWith(route.origin, {
+    expect(kernel.transport.deliverToOrigin).toHaveBeenCalledWith(route.origin, {
       type: "res",
       id: "req-1",
       ok: true,
@@ -700,19 +709,19 @@ describe("Kernel frame bodies", () => {
       scheduleId: "schedule-1",
     };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
-    kernel.frameBodyChannels = new Map();
+    const kernel = bareKernel();
+    kernel.transport.frameBodyChannels = new Map();
     kernel.routes = {
       get: vi.fn(() => route),
       remove: vi.fn(() => route),
     };
-    kernel.routedBodies = new Map([["req-1", { cancel: cancelBody }]]);
-    kernel.isConnectionForDevice = () => true;
+    kernel.transport.routedBodies = new Map([["req-1", { cancel: cancelBody }]]);
+    kernel.transport.isConnectionForDevice = () => true;
     kernel.cancelSchedule = vi.fn(async () => {});
-    kernel.deliverToOrigin = vi.fn();
+    kernel.transport.deliverToOrigin = vi.fn();
     const connection = { id: "device-connection", send: vi.fn() };
 
-    kernel.handleRes(connection, {
+    kernel.transport.handleRes(connection, {
       type: "res",
       id: "req-1",
       ok: true,
@@ -722,8 +731,8 @@ describe("Kernel frame bodies", () => {
     expect(kernel.routes.remove).toHaveBeenCalledWith("req-1");
     expect(kernel.cancelSchedule).toHaveBeenCalledWith("schedule-1");
     expect(cancelBody).toHaveBeenCalledWith("Route cancelled");
-    expect(kernel.routedBodies.size).toBe(0);
-    expect(kernel.deliverToOrigin).toHaveBeenCalledWith(route.origin, {
+    expect(kernel.transport.routedBodies.size).toBe(0);
+    expect(kernel.transport.deliverToOrigin).toHaveBeenCalledWith(route.origin, {
       type: "res",
       id: "req-1",
       ok: false,
@@ -743,15 +752,15 @@ describe("Kernel frame bodies", () => {
   it("cancels a response body that arrives after its route is gone", async () => {
     const sends: ArrayBuffer[] = [];
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
-    kernel.frameBodyChannels = new Map();
+    const kernel = bareKernel();
+    kernel.transport.frameBodyChannels = new Map();
     kernel.routes = { get: () => null };
     const connection = {
       id: "conn-late",
       send: (message: ArrayBuffer) => sends.push(message),
     };
 
-    kernel.handleRes(connection, {
+    kernel.transport.handleRes(connection, {
       type: "res",
       id: "late-response",
       ok: true,
@@ -775,17 +784,17 @@ describe("Kernel frame bodies", () => {
       scheduleId: null,
     };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.routes = {
       get: () => route,
       remove: () => route,
     };
-    kernel.routedBodies = new Map([["req-1", { cancel }]]);
-    kernel.isConnectionForDevice = () => true;
+    kernel.transport.routedBodies = new Map([["req-1", { cancel }]]);
+    kernel.transport.isConnectionForDevice = () => true;
     kernel.decodeWebSocketFrame = (_connection: KernelTestValue, frame: KernelTestValue) => frame;
-    kernel.deliverToOrigin = vi.fn();
+    kernel.transport.deliverToOrigin = vi.fn();
 
-    kernel.handleRes({ id: "device-connection" }, {
+    kernel.transport.handleRes({ id: "device-connection" }, {
       type: "res",
       id: "req-1",
       ok: true,
@@ -800,19 +809,19 @@ describe("Kernel frame bodies", () => {
     });
 
     await vi.waitFor(() => expect(cancel).toHaveBeenCalledWith("Device response received"));
-    expect(kernel.routedBodies.size).toBe(0);
+    expect(kernel.transport.routedBodies.size).toBe(0);
   });
 
   it("sends a cancellation frame when an inbound body is discarded", async () => {
     const sends: ArrayBuffer[] = [];
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
-    kernel.frameBodyChannels = new Map();
+    const kernel = bareKernel();
+    kernel.transport.frameBodyChannels = new Map();
     const connection = {
       id: "conn-1",
       send: (message: ArrayBuffer) => sends.push(message),
     };
-    const body = kernel.receiveFrameBody(connection, { streamId: 10 });
+    const body = kernel.transport.receiveFrameBody(connection, { streamId: 10 });
 
     await body.stream.cancel("body ignored");
 
@@ -827,8 +836,8 @@ describe("Kernel frame bodies", () => {
     const pending: Promise<KernelTestValue>[] = [];
     let cancelled = false;
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
-    kernel.frameBodyChannels = new Map();
+    const kernel = bareKernel();
+    kernel.transport.frameBodyChannels = new Map();
     kernel.ctx = { waitUntil: (promise: Promise<KernelTestValue>) => pending.push(promise) };
     const connection = {
       id: "connection-1",
@@ -841,7 +850,7 @@ describe("Kernel frame bodies", () => {
       },
     });
 
-    kernel.sendWebSocketFrame(connection, {
+    kernel.transport.sendWebSocketFrame(connection, {
       type: "res",
       id: "req-1",
       ok: true,
@@ -849,7 +858,7 @@ describe("Kernel frame bodies", () => {
     });
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const descriptor = JSON.parse(sends[0] as string);
-    kernel.handleBinaryMessage(
+    kernel.transport.handleBinaryMessage(
       connection,
       buildBinaryFrame(descriptor.body.streamId, BINARY_FRAME_CANCEL | BINARY_FRAME_END),
     );
@@ -865,7 +874,7 @@ describe("Kernel nested dispatch", () => {
   it("cancels request bodies rejected by nested capability checks", async () => {
     let cancelled: KernelTestValue;
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     const response = await kernel.requestDispatchedFrame(
       {
         type: "req",
@@ -911,13 +920,13 @@ describe("Kernel nested dispatch", () => {
     };
     let route: any = null;
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
-    kernel.pendingKernelResponses = new Map();
-    kernel.activeRequests = new Map();
-    kernel.cancelledProcessRequests = new Map();
+    const kernel = bareKernel();
+    kernel.transport.pendingKernelResponses = new Map();
+    kernel.transport.activeRequests = new Map();
+    kernel.transport.cancelledProcessRequests = new Map();
     kernel.connections = new Map([[driver.id, driver]]);
     kernel.shellSessions = { get: vi.fn() };
-    kernel.routedBodies = new Map();
+    kernel.transport.routedBodies = new Map();
     kernel.routes = {
       get: vi.fn((id: string) => route?.id === id ? route : null),
       remove: vi.fn((id: string) => {
@@ -934,15 +943,15 @@ describe("Kernel nested dispatch", () => {
       }),
     };
     kernel.cancelSchedule = vi.fn(async () => {});
-    kernel.registerRouteWithExpiry = vi.fn(async (input: any) => {
+    kernel.transport.registerRouteWithExpiry = vi.fn(async (input: any) => {
       route = { ...input, scheduleId: null };
       return {
-        cancel: () => kernel.cancelRoute(input.id),
+        cancel: () => kernel.transport.cancelRoute(input.id),
         attachBody: vi.fn(),
       };
     });
-    kernel.sendWebSocketFrame = vi.fn(() => null);
-    kernel.requestDevice = vi.fn();
+    kernel.transport.sendWebSocketFrame = vi.fn(() => null);
+    kernel.transport.requestDevice = vi.fn();
     const ctx = {
       peer: {
         peer: {
@@ -993,7 +1002,7 @@ describe("Kernel nested dispatch", () => {
       controller.signal,
     );
 
-    await vi.waitFor(() => expect(kernel.sendWebSocketFrame).toHaveBeenCalledWith(
+    await vi.waitFor(() => expect(kernel.transport.sendWebSocketFrame).toHaveBeenCalledWith(
       driver,
       {
         type: "req",
@@ -1002,11 +1011,11 @@ describe("Kernel nested dispatch", () => {
         args: { input: "sleep 300" },
       },
     ));
-    expect(kernel.activeRequests.size).toBe(1);
+    expect(kernel.transport.activeRequests.size).toBe(1);
     controller.abort(reason);
 
     await expect(request).rejects.toThrow("new user message");
-    expect(kernel.sendWebSocketFrame).toHaveBeenCalledWith(
+    expect(kernel.transport.sendWebSocketFrame).toHaveBeenCalledWith(
       driver,
       {
         type: "sig",
@@ -1042,10 +1051,10 @@ describe("Kernel device connection cleanup", () => {
       close: vi.fn(),
     };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.connections = new Map([[oldConnection.id, oldConnection]]);
 
-    kernel.activateConnection(replacement, {
+    kernel.connectionRuntime.activateConnection(replacement, {
       step: "connected",
       peer,
       clientId: "browser",
@@ -1075,24 +1084,24 @@ describe("Kernel device connection cleanup", () => {
       },
     };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.connections = new Map([[replacement.id, replacement]]);
-    kernel.activeRequests = new Map();
-    kernel.closeFrameBodyChannel = vi.fn();
+    kernel.transport.activeRequests = new Map();
+    kernel.transport.closeFrameBodyChannel = vi.fn();
     kernel.devices = { setOnline: vi.fn() };
-    kernel.broadcastDeviceStatus = vi.fn();
-    kernel.failRoutesForDevice = vi.fn();
-    kernel.failRoutesForDriverConnection = vi.fn();
-    kernel.failRoutesForConnection = vi.fn();
+    kernel.connectionRuntime.broadcastDeviceStatus = vi.fn();
+    kernel.transport.failRoutesForDevice = vi.fn();
+    kernel.transport.failRoutesForDriverConnection = vi.fn();
+    kernel.transport.failRoutesForConnection = vi.fn();
     kernel.runRoutes = { clearForConnection: vi.fn() };
 
-    kernel.onClose(oldConnection);
+    kernel.connectionRuntime.onClose(oldConnection);
 
     expect(kernel.connections.get(replacement.id)).toBe(replacement);
     expect(kernel.devices.setOnline).not.toHaveBeenCalled();
-    expect(kernel.broadcastDeviceStatus).not.toHaveBeenCalled();
-    expect(kernel.failRoutesForDevice).not.toHaveBeenCalled();
-    expect(kernel.failRoutesForDriverConnection).toHaveBeenCalledWith(oldConnection.id);
+    expect(kernel.connectionRuntime.broadcastDeviceStatus).not.toHaveBeenCalled();
+    expect(kernel.transport.failRoutesForDevice).not.toHaveBeenCalled();
+    expect(kernel.transport.failRoutesForDriverConnection).toHaveBeenCalledWith(oldConnection.id);
   });
 
   it("replies to an authoritative driver ping on the same connection", () => {
@@ -1104,18 +1113,18 @@ describe("Kernel device connection cleanup", () => {
       },
     };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.connections = new Map([[connection.id, connection]]);
-    kernel.sendWebSocketFrame = vi.fn();
+    kernel.transport.sendWebSocketFrame = vi.fn();
 
-    kernel.handleSig(connection, {
+    kernel.transport.handleSig(connection, {
       type: "sig",
       signal: "peer.ping",
       payload: { at: 1234, nonce: "ping-1" },
       seq: 7,
     });
 
-    expect(kernel.sendWebSocketFrame).toHaveBeenCalledWith(connection, {
+    expect(kernel.transport.sendWebSocketFrame).toHaveBeenCalledWith(connection, {
       type: "sig",
       signal: "peer.pong",
       payload: { at: 1234, nonce: "ping-1" },
@@ -1130,23 +1139,23 @@ describe("Kernel device connection cleanup", () => {
       state: { step: "connected", peer: connectedPeer("human", "web") },
     };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.connections = new Map([[connection.id, connection]]);
-    kernel.activeRequests = new Map([
+    kernel.transport.activeRequests = new Map([
       ["request-1", {
         origin: { type: "connection", id: connection.id },
         controller,
       }],
     ]);
     kernel.routes = { get: vi.fn(() => null) };
-    kernel.closeFrameBodyChannel = vi.fn();
-    kernel.failRoutesForConnection = vi.fn();
+    kernel.transport.closeFrameBodyChannel = vi.fn();
+    kernel.transport.failRoutesForConnection = vi.fn();
     kernel.runRoutes = { clearForConnection: vi.fn() };
 
-    kernel.onClose(connection);
+    kernel.connectionRuntime.onClose(connection);
 
     expect(controller.signal.reason).toEqual(new Error("Origin disconnected"));
-    expect(kernel.failRoutesForConnection).toHaveBeenCalledWith(connection.id);
+    expect(kernel.transport.failRoutesForConnection).toHaveBeenCalledWith(connection.id);
   });
 
   it("closes live driver connections when a machine is forgotten", () => {
@@ -1172,7 +1181,7 @@ describe("Kernel device connection cleanup", () => {
       close: vi.fn(),
     };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as {
+    const kernel = bareKernel() as {
       connections: Map<string, KernelTestValue>;
       disconnectDeviceConnections(deviceId: string, reason: string): void;
       failRoutesForDevice: ReturnType<typeof vi.fn>;
@@ -1185,12 +1194,12 @@ describe("Kernel device connection cleanup", () => {
       ["beta", beta],
       ["user", user],
     ]);
-    kernel.failRoutesForDevice = vi.fn();
+    kernel.transport.failRoutesForDevice = vi.fn();
     kernel.runRoutes = {
       clearForConnection: vi.fn(),
     };
 
-    kernel.disconnectDeviceConnections("node-alpha", "Machine forgotten");
+    kernel.connectionRuntime.disconnectDeviceConnections("node-alpha", "Machine forgotten");
 
     expect(alpha.close).toHaveBeenCalledWith(1000, "Machine forgotten");
     expect(beta.close).not.toHaveBeenCalled();
@@ -1199,7 +1208,7 @@ describe("Kernel device connection cleanup", () => {
     expect(kernel.connections.has("beta")).toBe(true);
     expect(kernel.connections.has("user")).toBe(true);
     expect(kernel.runRoutes.clearForConnection).toHaveBeenCalledWith("alpha");
-    expect(kernel.failRoutesForDevice).toHaveBeenCalledWith("node-alpha");
+    expect(kernel.transport.failRoutesForDevice).toHaveBeenCalledWith("node-alpha");
   });
 });
 
@@ -1210,7 +1219,7 @@ describe("Kernel user signal broadcasts", () => {
     const driver = { state: { peer: connectedPeer("machine", "machine", 1000, ["fs.*"]) }, send: vi.fn() };
     const service = { state: { peer: connectedPeer("service", "telegram", 0) }, send: vi.fn() };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.connections = new Map([
       ["user", user],
       ["other-user", otherUser],
@@ -1218,7 +1227,7 @@ describe("Kernel user signal broadcasts", () => {
       ["service", service],
     ]);
 
-    kernel.broadcastToUserUid(1000, "mcp.changed", { id: "mcp-1" });
+    kernel.connectionRuntime.broadcastToUserUid(1000, "mcp.changed", { id: "mcp-1" });
 
     expect(user.send).toHaveBeenCalledWith(JSON.stringify({
       type: "sig",
@@ -1254,7 +1263,7 @@ describe("Kernel user signal broadcasts", () => {
       send: vi.fn(),
     };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.connections = new Map([
       ["routed", routed],
       ["observing", observing],
@@ -1267,7 +1276,7 @@ describe("Kernel user signal broadcasts", () => {
       payload: { pid: "proc-1", runId: "run-1", seq: 1 },
     };
 
-    kernel.broadcastProcessSignal(1000, "proc-1", {
+    kernel.processOutput.broadcastProcessSignal(1000, "proc-1", {
       kind: "connection",
       connectionId: "routed",
     }, frame);
@@ -1289,7 +1298,7 @@ describe("Kernel user signal broadcasts", () => {
       send: vi.fn(),
     };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.connections = new Map([["routed", routed], ["idle", idle]]);
     const frame = {
       type: "sig",
@@ -1305,7 +1314,7 @@ describe("Kernel user signal broadcasts", () => {
       },
     };
 
-    kernel.broadcastProcessSignal(1000, "proc-1", {
+    kernel.processOutput.broadcastProcessSignal(1000, "proc-1", {
       kind: "connection",
       connectionId: "routed",
     }, frame);
@@ -1357,8 +1366,8 @@ describe("Kernel canonical message commits", () => {
       get: vi.fn(() => route),
       delete: vi.fn(),
     };
-    kernel.materializePersonalAdapterFallback = vi.fn(() => null);
-    kernel.queueAdapterRouteDelivery = vi.fn(async () => undefined);
+    kernel.adapterDelivery.materializePersonalAdapterFallback = vi.fn(() => null);
+    kernel.adapterDelivery.queueAdapterRouteDelivery = vi.fn(async () => undefined);
     return kernel;
   }
 
@@ -1404,7 +1413,7 @@ describe("Kernel canonical message commits", () => {
     getConversationByIdMock.mockReset();
     getConversationByIdMock.mockReturnValueOnce(conversationStub());
 
-    const message = await kernel.commitProcessMessage("proc-1", {
+    const message = await kernel.processOutput.commitProcessMessage("proc-1", {
       runId: "run-1",
       actionId: "send-1",
       conversationId: conversation.id,
@@ -1432,7 +1441,7 @@ describe("Kernel canonical message commits", () => {
     };
     const kernel = buildCommitKernel(route);
 
-    await kernel.deliverProcessMessageStream("proc-1", {
+    await kernel.processOutput.deliverProcessMessageStream("proc-1", {
       type: "sig",
       signal: "proc.message.stream",
       payload: {
@@ -1463,7 +1472,7 @@ describe("Kernel canonical message commits", () => {
       },
     };
     const kernel = buildCommitKernel(null);
-    kernel.materializePersonalAdapterFallback.mockReturnValue(route);
+    kernel.adapterDelivery.materializePersonalAdapterFallback.mockReturnValue(route);
     const synced = {
       state: { peer: connectedPeer("human", "web", 1000) },
       send: vi.fn(),
@@ -1472,13 +1481,13 @@ describe("Kernel canonical message commits", () => {
     getConversationByIdMock.mockReset();
     getConversationByIdMock.mockReturnValueOnce(conversationStub());
 
-    const message = await kernel.commitProcessMessage("proc-1", {
+    const message = await kernel.processOutput.commitProcessMessage("proc-1", {
       runId: "run-background",
       actionId: "send-background",
       text: "new mail",
     });
 
-    expect(kernel.queueAdapterRouteDelivery).toHaveBeenCalledWith(
+    expect(kernel.adapterDelivery.queueAdapterRouteDelivery).toHaveBeenCalledWith(
       route,
       {
         type: "sig",
@@ -1499,15 +1508,15 @@ describe("Kernel canonical message commits", () => {
     getConversationByIdMock.mockReset();
     getConversationByIdMock.mockReturnValueOnce(conversationStub());
 
-    await kernel.commitProcessMessage("proc-1", {
+    await kernel.processOutput.commitProcessMessage("proc-1", {
       runId: "run-disconnected-client",
       actionId: "send-disconnected",
       conversationId: conversation.id,
       text: "stays in Ship",
     });
 
-    expect(kernel.materializePersonalAdapterFallback).not.toHaveBeenCalled();
-    expect(kernel.queueAdapterRouteDelivery).not.toHaveBeenCalled();
+    expect(kernel.adapterDelivery.materializePersonalAdapterFallback).not.toHaveBeenCalled();
+    expect(kernel.adapterDelivery.queueAdapterRouteDelivery).not.toHaveBeenCalled();
   });
 
   it("uses a distinct idempotency identity for every send in one run", async () => {
@@ -1517,13 +1526,13 @@ describe("Kernel canonical message commits", () => {
     getConversationByIdMock.mockReset();
     getConversationByIdMock.mockReturnValue(stub);
 
-    await kernel.commitProcessMessage("proc-1", {
+    await kernel.processOutput.commitProcessMessage("proc-1", {
       runId: "run-multiple-sends",
       actionId: "progress-send",
       conversationId: conversation.id,
       text: "Still working.",
     });
-    await kernel.commitProcessMessage("proc-1", {
+    await kernel.processOutput.commitProcessMessage("proc-1", {
       runId: "run-multiple-sends",
       actionId: "final-send",
       conversationId: conversation.id,
@@ -1559,18 +1568,18 @@ describe("Kernel process signal routing", () => {
       surfaceRoutes: { clearLegacyForProcess: vi.fn() },
       privateDestinations: { get: vi.fn(() => null), clearIfMatches: vi.fn() },
     };
-    kernel.dispatchSignalWatches = vi.fn(async () => {});
+    kernel.processOutput.dispatchSignalWatches = vi.fn(async () => {});
     kernel.runRoutes = {
       get: vi.fn(() => route),
       delete: vi.fn(),
       materializeProcessApprovalRoute: vi.fn(() => null),
     };
-    kernel.broadcastToUserUid = vi.fn();
-    kernel.broadcastProcessSignal = vi.fn((_uid, _processId, _route, frame) => {
-      kernel.broadcastToUserUid(1000, frame.signal, frame.payload);
+    kernel.connectionRuntime.broadcastToUserUid = vi.fn();
+    kernel.processOutput.broadcastProcessSignal = vi.fn((_uid, _processId, _route, frame) => {
+      kernel.connectionRuntime.broadcastToUserUid(1000, frame.signal, frame.payload);
     });
     kernel.deliverSignalToConnection = vi.fn();
-    kernel.deliverAdapterRouteEvent = vi.fn(async () => ({ state: "delivered" }));
+    kernel.adapterDelivery.deliverAdapterRouteEvent = vi.fn(async () => ({ state: "delivered" }));
     kernel.schedule = vi.fn(async () => ({ id: "scheduled-delivery" }));
     return kernel;
   }
@@ -1636,8 +1645,8 @@ describe("Kernel process signal routing", () => {
       expiresAt: 2,
     }));
     kernel.runRoutes.setAdapterRoute = setAdapterRoute;
-    kernel.attemptAdapterRouteDelivery = vi.fn(async () => {});
-    kernel.queueAdapterRouteDelivery = vi.fn(async () => {});
+    kernel.adapterDelivery.attemptAdapterRouteDelivery = vi.fn(async () => {});
+    kernel.adapterDelivery.queueAdapterRouteDelivery = vi.fn(async () => {});
     return {
       kernel,
       getPreferred,
@@ -1786,10 +1795,10 @@ describe("Kernel process signal routing", () => {
       },
     }));
     // SAFETY: this fixture binds the private method to a Kernel-shaped test double.
-    kernel.deliverAdapterRouteEvent = (Kernel.prototype as any).deliverAdapterRouteEvent.bind(kernel);
+    kernel.adapterDelivery.deliverAdapterRouteEvent = (AdapterDelivery.prototype as any).deliverAdapterRouteEvent.bind(kernel.adapterDelivery);
     const payload = hilPayload(route.runId, "request-frame");
 
-    await expect(kernel.deliverAdapterRouteEvent(route, {
+    await expect(kernel.adapterDelivery.deliverAdapterRouteEvent(route, {
       type: "sig",
       signal: "proc.run.hil.requested",
       payload,
@@ -1842,10 +1851,10 @@ describe("Kernel process signal routing", () => {
       release = resolve;
     });
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
-    kernel.updateProcessRuntimeFromSignal = vi.fn(() => true);
-    kernel.enqueueProcessSignal = vi.fn(() => queued);
-    kernel.completeIpcCallsForProcessSignal = vi.fn();
+    const kernel = bareKernel();
+    kernel.processOutput.updateProcessRuntimeFromSignal = vi.fn(() => true);
+    kernel.processOutput.enqueueProcessSignal = vi.fn(() => queued);
+    kernel.ipc.completeIpcCallsForProcessSignal = vi.fn();
     const frame = {
       type: "sig",
       signal: "proc.run.hil.requested",
@@ -1860,7 +1869,7 @@ describe("Kernel process signal routing", () => {
     expect(acknowledged).toBe(false);
     release();
     await receiving;
-    expect(kernel.enqueueProcessSignal).toHaveBeenCalledWith("proc-1", frame, frame);
+    expect(kernel.processOutput.enqueueProcessSignal).toHaveBeenCalledWith("proc-1", frame, frame);
   });
 
   it("broadcasts connection-routed HIL requests without duplicating the origin", async () => {
@@ -1871,11 +1880,11 @@ describe("Kernel process signal routing", () => {
       payload: { pid: "proc-1", runId: "run-1", requestId: "hil-1" },
     };
 
-    await kernel.handleProcessSignal("proc-1", frame, frame);
+    await kernel.processOutput.handleProcessSignal("proc-1", frame, frame);
 
-    expect(kernel.broadcastToUserUid).toHaveBeenCalledWith(1000, frame.signal, frame.payload);
+    expect(kernel.connectionRuntime.broadcastToUserUid).toHaveBeenCalledWith(1000, frame.signal, frame.payload);
     expect(kernel.deliverSignalToConnection).not.toHaveBeenCalled();
-    expect(kernel.deliverAdapterRouteEvent).not.toHaveBeenCalled();
+    expect(kernel.adapterDelivery.deliverAdapterRouteEvent).not.toHaveBeenCalled();
   });
 
   it("broadcasts adapter-routed HIL requests and durably queues attempt one", async () => {
@@ -1899,10 +1908,10 @@ describe("Kernel process signal routing", () => {
       payload: { pid: "proc-1", runId: "run-1", requestId: "hil-1" },
     };
 
-    await kernel.handleProcessSignal("proc-1", frame, frame);
+    await kernel.processOutput.handleProcessSignal("proc-1", frame, frame);
 
-    expect(kernel.broadcastToUserUid).toHaveBeenCalledWith(1000, frame.signal, frame.payload);
-    expect(kernel.deliverAdapterRouteEvent).not.toHaveBeenCalled();
+    expect(kernel.connectionRuntime.broadcastToUserUid).toHaveBeenCalledWith(1000, frame.signal, frame.payload);
+    expect(kernel.adapterDelivery.deliverAdapterRouteEvent).not.toHaveBeenCalled();
     expect(kernel.schedule).toHaveBeenCalledWith(
       expect.any(Date),
       "onAdapterRouteDelivery",
@@ -1937,7 +1946,7 @@ describe("Kernel process signal routing", () => {
       payload: { pid: "proc-1", runId: inherited.runId, requestId: "hil-child" },
     };
 
-    await kernel.handleProcessSignal("proc-1", frame, frame);
+    await kernel.processOutput.handleProcessSignal("proc-1", frame, frame);
 
     expect(kernel.runRoutes.materializeProcessApprovalRoute).toHaveBeenCalledWith({
       processId: "proc-1",
@@ -1961,11 +1970,11 @@ describe("Kernel process signal routing", () => {
       payload: { pid: "proc-1", runId: "run-background", text: "Mail is ready.", queuedCount: 0 },
     };
 
-    await kernel.handleProcessSignal("proc-1", frame, frame);
+    await kernel.processOutput.handleProcessSignal("proc-1", frame, frame);
 
     expect(setAdapterRoute).not.toHaveBeenCalled();
-    expect(kernel.attemptAdapterRouteDelivery).not.toHaveBeenCalled();
-    expect(kernel.broadcastToUserUid).toHaveBeenCalledOnce();
+    expect(kernel.adapterDelivery.attemptAdapterRouteDelivery).not.toHaveBeenCalled();
+    expect(kernel.connectionRuntime.broadcastToUserUid).toHaveBeenCalledOnce();
   });
 
   it("routes a background personal HIL request to the last active private destination", async () => {
@@ -1976,10 +1985,10 @@ describe("Kernel process signal routing", () => {
       payload: hilPayload("run-background-hil", "hil-background"),
     };
 
-    await kernel.handleProcessSignal("proc-1", frame, frame);
+    await kernel.processOutput.handleProcessSignal("proc-1", frame, frame);
 
     expect(setAdapterRoute).toHaveBeenCalledOnce();
-    expect(kernel.queueAdapterRouteDelivery).toHaveBeenCalledWith(
+    expect(kernel.adapterDelivery.queueAdapterRouteDelivery).toHaveBeenCalledWith(
       expect.objectContaining({ destination: preferredDestination }),
       frame,
       1,
@@ -1997,11 +2006,11 @@ describe("Kernel process signal routing", () => {
       },
     };
 
-    await kernel.handleProcessSignal("proc-1", frame, frame);
+    await kernel.processOutput.handleProcessSignal("proc-1", frame, frame);
 
     expect(setAdapterRoute).not.toHaveBeenCalled();
-    expect(kernel.queueAdapterRouteDelivery).not.toHaveBeenCalled();
-    expect(kernel.broadcastToUserUid).toHaveBeenCalledOnce();
+    expect(kernel.adapterDelivery.queueAdapterRouteDelivery).not.toHaveBeenCalled();
+    expect(kernel.connectionRuntime.broadcastToUserUid).toHaveBeenCalledOnce();
   });
 
   it("drops and clears a revoked personal fallback before adapter delivery", async () => {
@@ -2014,12 +2023,12 @@ describe("Kernel process signal routing", () => {
       payload: hilPayload("run-revoked", "hil-revoked"),
     };
 
-    await kernel.handleProcessSignal("proc-1", frame, frame);
+    await kernel.processOutput.handleProcessSignal("proc-1", frame, frame);
 
     expect(clearPreferred).toHaveBeenCalledWith(1000, preferredDestination);
     expect(setAdapterRoute).not.toHaveBeenCalled();
-    expect(kernel.attemptAdapterRouteDelivery).not.toHaveBeenCalled();
-    expect(kernel.broadcastToUserUid).toHaveBeenCalledOnce();
+    expect(kernel.adapterDelivery.attemptAdapterRouteDelivery).not.toHaveBeenCalled();
+    expect(kernel.connectionRuntime.broadcastToUserUid).toHaveBeenCalledOnce();
   });
 
   it("keeps exact Web routes exclusive and leaves no-destination personal runs Web-only", async () => {
@@ -2036,7 +2045,7 @@ describe("Kernel process signal routing", () => {
       signal: "proc.run.finished",
       payload: { pid: "proc-1", runId: "run-web", text: "web", queuedCount: 0 },
     };
-    await web.kernel.handleProcessSignal("proc-1", webFrame, webFrame);
+    await web.kernel.processOutput.handleProcessSignal("proc-1", webFrame, webFrame);
     expect(web.getPreferred).not.toHaveBeenCalled();
     expect(web.setAdapterRoute).not.toHaveBeenCalled();
 
@@ -2046,13 +2055,13 @@ describe("Kernel process signal routing", () => {
       signal: "proc.run.finished",
       payload: { pid: "proc-1", runId: "run-no-destination", text: "web only", queuedCount: 0 },
     };
-    await noDestination.kernel.handleProcessSignal(
+    await noDestination.kernel.processOutput.handleProcessSignal(
       "proc-1",
       noDestinationFrame,
       noDestinationFrame,
     );
     expect(noDestination.setAdapterRoute).not.toHaveBeenCalled();
-    expect(noDestination.kernel.broadcastToUserUid).toHaveBeenCalledOnce();
+    expect(noDestination.kernel.connectionRuntime.broadcastToUserUid).toHaveBeenCalledOnce();
   });
 
   it("clears legacy DM routes only after a process becomes fully idle", async () => {
@@ -2062,7 +2071,7 @@ describe("Kernel process signal routing", () => {
       payload: { pid: "proc-1", runId: "run-1", text: "done", queuedCount: 0 },
     };
     const idle = buildKernel(connectionRoute);
-    await idle.handleProcessSignal("proc-1", terminal, terminal);
+    await idle.processOutput.handleProcessSignal("proc-1", terminal, terminal);
     expect(idle.adapters.surfaceRoutes.clearLegacyForProcess).toHaveBeenCalledWith("proc-1");
 
     const queued = buildKernel(connectionRoute);
@@ -2074,7 +2083,7 @@ describe("Kernel process signal routing", () => {
       activeRunId: null,
       queuedCount: 1,
     });
-    await queued.handleProcessSignal("proc-1", terminal, terminal);
+    await queued.processOutput.handleProcessSignal("proc-1", terminal, terminal);
     expect(queued.adapters.surfaceRoutes.clearLegacyForProcess).not.toHaveBeenCalled();
   });
 
@@ -2096,7 +2105,7 @@ describe("Kernel process signal routing", () => {
     };
     const kernel = buildKernel(route);
 
-    await kernel.onAdapterRouteDelivery({
+    await kernel.adapterDelivery.onAdapterRouteDelivery({
       runId: route.runId,
       processId: route.processId,
       event: "proc.run.hil.requested",
@@ -2112,7 +2121,7 @@ describe("Kernel process signal routing", () => {
         call: "proc.history",
       }),
     );
-    expect(kernel.deliverAdapterRouteEvent).not.toHaveBeenCalled();
+    expect(kernel.adapterDelivery.deliverAdapterRouteEvent).not.toHaveBeenCalled();
     expect(kernel.schedule).not.toHaveBeenCalled();
   });
 
@@ -2136,7 +2145,7 @@ describe("Kernel process signal routing", () => {
     );
     const kernel = buildKernel(route);
 
-    await kernel.onAdapterRouteDelivery({
+    await kernel.adapterDelivery.onAdapterRouteDelivery({
       runId: route.runId,
       processId: route.processId,
       event: "proc.run.hil.requested",
@@ -2144,7 +2153,7 @@ describe("Kernel process signal routing", () => {
       attempt: 3,
     });
 
-    expect(kernel.deliverAdapterRouteEvent).not.toHaveBeenCalled();
+    expect(kernel.adapterDelivery.deliverAdapterRouteEvent).not.toHaveBeenCalled();
     expect(kernel.schedule).not.toHaveBeenCalled();
   });
 
@@ -2166,12 +2175,12 @@ describe("Kernel process signal routing", () => {
     const payload = hilPayload(route.runId, "hil-pending");
     sendFrameToProcessMock.mockResolvedValueOnce(historyResponse(payload));
     const kernel = buildKernel(route);
-    kernel.deliverAdapterRouteEvent.mockResolvedValueOnce({
+    kernel.adapterDelivery.deliverAdapterRouteEvent.mockResolvedValueOnce({
       state: "retryable",
       error: "adapter temporarily unavailable",
     });
 
-    await kernel.onAdapterRouteDelivery({
+    await kernel.adapterDelivery.onAdapterRouteDelivery({
       runId: route.runId,
       processId: route.processId,
       event: "proc.run.hil.requested",
@@ -2179,7 +2188,7 @@ describe("Kernel process signal routing", () => {
       attempt: 2,
     });
 
-    expect(kernel.deliverAdapterRouteEvent).toHaveBeenCalledWith(route, {
+    expect(kernel.adapterDelivery.deliverAdapterRouteEvent).toHaveBeenCalledWith(route, {
       type: "sig",
       signal: "proc.run.hil.requested",
       payload,
@@ -2208,7 +2217,7 @@ describe("Kernel process signal routing", () => {
     };
     const kernel = buildKernel(route);
 
-    await kernel.queueProcessDeliveryNotice(
+    await kernel.adapterDelivery.queueProcessDeliveryNotice(
       route,
       {
         type: "sig",
@@ -2217,7 +2226,7 @@ describe("Kernel process signal routing", () => {
       },
       { state: "permanent", message: "First approval delivery failed." },
     );
-    await kernel.queueProcessDeliveryNotice(
+    await kernel.adapterDelivery.queueProcessDeliveryNotice(
       route,
       {
         type: "sig",
@@ -2242,10 +2251,10 @@ describe("Kernel process signal routing", () => {
       payload: { pid: "proc-1", runId: "run-1", event: { type: "text_delta", delta: "hi" } },
     };
 
-    await kernel.handleProcessSignal("proc-1", frame, frame);
+    await kernel.processOutput.handleProcessSignal("proc-1", frame, frame);
 
-    expect(kernel.broadcastToUserUid).toHaveBeenCalledOnce();
-    expect(kernel.broadcastToUserUid).toHaveBeenCalledWith(1000, frame.signal, frame.payload);
+    expect(kernel.connectionRuntime.broadcastToUserUid).toHaveBeenCalledOnce();
+    expect(kernel.connectionRuntime.broadcastToUserUid).toHaveBeenCalledWith(1000, frame.signal, frame.payload);
     expect(kernel.deliverSignalToConnection).not.toHaveBeenCalled();
   });
 
@@ -2264,7 +2273,7 @@ describe("Kernel process signal routing", () => {
       },
     };
     const kernel = buildKernel(route);
-    kernel.deliverAdapterRouteEvent.mockResolvedValue({
+    kernel.adapterDelivery.deliverAdapterRouteEvent.mockResolvedValue({
       state: "retryable",
       error: "service binding disconnected",
     });
@@ -2287,7 +2296,7 @@ describe("Kernel process signal routing", () => {
       },
     };
 
-    await kernel.attemptAdapterRouteDelivery(route, frame, 1);
+    await kernel.adapterDelivery.attemptAdapterRouteDelivery(route, frame, 1);
 
     expect(kernel.schedule).toHaveBeenCalledWith(
       expect.any(Date),
@@ -2308,15 +2317,15 @@ describe("Kernel process signal routing", () => {
     const route = adapterRoute("run-terminal-telemetry");
     const kernel = buildKernel(route);
     kernel.installationEnv = { GSV_TELEMETRY_ENABLED: "1" };
-    kernel.deliverAdapterRouteEvent.mockResolvedValue({
+    kernel.adapterDelivery.deliverAdapterRouteEvent.mockResolvedValue({
       state: "retryable",
       error: "private provider response for chat-1",
     });
-    kernel.queueProcessDeliveryNotice = vi.fn(async () => {});
+    kernel.adapterDelivery.queueProcessDeliveryNotice = vi.fn(async () => {});
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
     try {
-      await kernel.attemptAdapterRouteDelivery(
+      await kernel.adapterDelivery.attemptAdapterRouteDelivery(
         route,
         committedMessageFrame(route, "msg:terminal", "done"),
         10,
@@ -2348,10 +2357,10 @@ describe("Kernel process signal routing", () => {
   it("keeps an adapter route after an intermediate message and clears it at the terminal signal", async () => {
     const route = adapterRoute("run-intermediate");
     const kernel = buildKernel(route);
-    kernel.deliverAdapterRouteEvent.mockResolvedValue({ state: "delivered" });
+    kernel.adapterDelivery.deliverAdapterRouteEvent.mockResolvedValue({ state: "delivered" });
     const committed = committedMessageFrame(route, "msg:intermediate", "still working");
 
-    await kernel.attemptAdapterRouteDelivery(route, committed, 1);
+    await kernel.adapterDelivery.attemptAdapterRouteDelivery(route, committed, 1);
     expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
 
     const finished = {
@@ -2365,7 +2374,7 @@ describe("Kernel process signal routing", () => {
         delivery: { kind: "message", messageId: "msg:final" },
       },
     };
-    await kernel.handleProcessSignal(route.processId, finished, finished);
+    await kernel.processOutput.handleProcessSignal(route.processId, finished, finished);
 
     expect(kernel.runRoutes.delete).toHaveBeenCalledOnce();
     expect(kernel.runRoutes.delete).toHaveBeenCalledWith(route.runId);
@@ -2374,10 +2383,10 @@ describe("Kernel process signal routing", () => {
   it("delivers a committed message from its owned route after terminal cleanup", async () => {
     const route = adapterRoute("run-owned-delivery");
     const kernel = buildKernel(null);
-    kernel.deliverAdapterRouteEvent.mockResolvedValue({ state: "delivered" });
+    kernel.adapterDelivery.deliverAdapterRouteEvent.mockResolvedValue({ state: "delivered" });
     const frame = committedMessageFrame(route, "msg:owned", "done");
 
-    await kernel.onAdapterRouteDelivery({
+    await kernel.adapterDelivery.onAdapterRouteDelivery({
       runId: route.runId,
       processId: route.processId,
       route,
@@ -2387,7 +2396,7 @@ describe("Kernel process signal routing", () => {
     });
 
     expect(kernel.runRoutes.get).not.toHaveBeenCalled();
-    expect(kernel.deliverAdapterRouteEvent).toHaveBeenCalledWith(route, {
+    expect(kernel.adapterDelivery.deliverAdapterRouteEvent).toHaveBeenCalledWith(route, {
       type: "sig",
       signal: "message.committed",
       payload: frame.payload,
@@ -2409,11 +2418,11 @@ describe("Kernel process signal routing", () => {
       },
     };
     const kernel = buildKernel(route);
-    kernel.deliverAdapterRouteEvent.mockResolvedValue({
+    kernel.adapterDelivery.deliverAdapterRouteEvent.mockResolvedValue({
       state: "ambiguous",
       error: "provider acknowledgement was lost",
     });
-    kernel.queueProcessDeliveryNotice = vi.fn(async () => {});
+    kernel.adapterDelivery.queueProcessDeliveryNotice = vi.fn(async () => {});
     const frame = {
       type: "sig",
       signal: "message.committed",
@@ -2432,10 +2441,10 @@ describe("Kernel process signal routing", () => {
       },
     };
 
-    await kernel.attemptAdapterRouteDelivery(route, frame, 1);
+    await kernel.adapterDelivery.attemptAdapterRouteDelivery(route, frame, 1);
 
     expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
-    expect(kernel.queueProcessDeliveryNotice).toHaveBeenCalledWith(
+    expect(kernel.adapterDelivery.queueProcessDeliveryNotice).toHaveBeenCalledWith(
       route,
       frame,
       expect.objectContaining({
@@ -2448,10 +2457,10 @@ describe("Kernel process signal routing", () => {
   it("suppresses stale delivery notices after their run route is cleared", async () => {
     sendFrameToProcessMock.mockReset();
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.runRoutes = { get: vi.fn(() => null), delete: vi.fn() };
 
-    await kernel.onProcessDeliveryNotice({
+    await kernel.adapterDelivery.onProcessDeliveryNotice({
       noticeId: "notice:stale",
       runId: "run-stale",
       processId: "proc-1",
@@ -2476,7 +2485,7 @@ describe("Kernel process signal routing", () => {
     const kernel = createRoutedKernel();
     kernel.runRoutes = { get: vi.fn(() => route), delete: vi.fn() };
 
-    await kernel.onProcessDeliveryNotice({
+    await kernel.adapterDelivery.onProcessDeliveryNotice({
       noticeId: "notice:hil:stale",
       runId: route.runId,
       processId: route.processId,
@@ -2513,7 +2522,7 @@ describe("Kernel process signal routing", () => {
     const kernel = createRoutedKernel();
     kernel.runRoutes = { get: vi.fn(() => route), delete: vi.fn() };
 
-    await kernel.onProcessDeliveryNotice({
+    await kernel.adapterDelivery.onProcessDeliveryNotice({
       noticeId: "notice:hil:current",
       runId: route.runId,
       processId: route.processId,
@@ -2546,7 +2555,7 @@ describe("Kernel process signal routing", () => {
     const kernel = createRoutedKernel();
     kernel.runRoutes = { get: vi.fn(() => null), delete: vi.fn() };
 
-    await kernel.onProcessDeliveryNotice({
+    await kernel.adapterDelivery.onProcessDeliveryNotice({
       noticeId: "notice:accepted",
       runId: route.runId,
       processId: route.processId,
@@ -2595,11 +2604,11 @@ describe("Kernel adapter route replies", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSetActivity = vi.fn(async () => ({ ok: true as const }));
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.env = { CHANNEL_TELEGRAM: { adapterSetActivity } };
     kernel.installationId = TEST_INSTALLATION_ID;
 
-    await expect(kernel.deliverAdapterRouteEvent(route, {
+    await expect(kernel.adapterDelivery.deliverAdapterRouteEvent(route, {
       type: "sig",
       signal: "proc.run.started",
       payload: { runId: route.runId },
@@ -2620,7 +2629,7 @@ describe("Kernel adapter route replies", () => {
 
   it("streams a retained resource after its originating Process is gone", async () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     const key = `home/sam/.gsv/media/archived-media:${"a".repeat(64)}`;
     const revision = '"archive-revision"';
     kernel.installationId = TEST_INSTALLATION_ID;
@@ -2654,7 +2663,7 @@ describe("Kernel adapter route replies", () => {
       })),
     };
 
-    const bundle = await kernel.bundleConversationReplyMedia("conv:home", [{
+    const bundle = await kernel.adapterDelivery.bundleConversationReplyMedia("conv:home", [{
       type: "resource",
       ref: {
         type: "file",
@@ -2686,7 +2695,7 @@ describe("Kernel adapter route replies", () => {
 
   it("rejects message media whose descriptor differs from its conversation object", async () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     const key = `conversations/conv%3Ahome/media/msg%3Atwo/0`;
     const cancel = vi.fn(async () => undefined);
     kernel.installationId = TEST_INSTALLATION_ID;
@@ -2699,7 +2708,7 @@ describe("Kernel adapter route replies", () => {
       })),
     });
 
-    await expect(kernel.bundleConversationReplyMedia("conv:home", [{
+    await expect(kernel.adapterDelivery.bundleConversationReplyMedia("conv:home", [{
       type: "document",
       mimeType: "application/pdf",
       filename: "report.pdf",
@@ -2726,8 +2735,8 @@ describe("Kernel scheduled process reply routes", () => {
     const setAdapterRoute = vi.fn();
     const deleteRoute = vi.fn();
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
-    kernel.buildScheduleContext = vi.fn(() => ({
+    const kernel = bareKernel();
+    kernel.scheduleRuntime.buildScheduleContext = vi.fn(() => ({
       identity: {
         role: "user",
         capabilities: ["proc.send", "adapter.send"],
@@ -2776,11 +2785,11 @@ describe("Kernel scheduled process reply routes", () => {
     }));
     const waitUntil = vi.fn();
     // SAFETY: test fixture is constructed with the asserted Kernel internals.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.ctx = { waitUntil };
-    kernel.buildScheduleContext = vi.fn(() => ({ identity: { capabilities: ["r12y.create"] } }));
+    kernel.scheduleRuntime.buildScheduleContext = vi.fn(() => ({ identity: { capabilities: ["r12y.create"] } }));
     kernel.responsibilities = { create };
-    kernel.reconcileResponsibilityWake = vi.fn(async () => {});
+    kernel.responsibilityRuntime.reconcileResponsibilityWake = vi.fn(async () => {});
     const record = {
       id: "schedule-r12y",
       name: "Daily review",
@@ -2793,7 +2802,7 @@ describe("Kernel scheduled process reply routes", () => {
       },
     };
 
-    const result = await kernel.dispatchScheduleTarget(
+    const result = await kernel.scheduleRuntime.dispatchScheduleTarget(
       record,
       1_800_000_000_000,
       1_800_000_000_100,
@@ -2834,17 +2843,17 @@ describe("Kernel scheduled process reply routes", () => {
       revision: 1,
     }));
     // SAFETY: this focused Kernel fixture supplies every field used by schedule dispatch.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.ctx = { waitUntil: vi.fn() };
-    kernel.buildScheduleContext = vi.fn(() => ({
+    kernel.scheduleRuntime.buildScheduleContext = vi.fn(() => ({
       identity: { capabilities: ["adapter.send", "proc.send", "r12y.create"] },
     }));
     kernel.procs = { get: vi.fn(() => ({ ownerUid: 1000, isPersonalController: true })) };
     kernel.responsibilities = { create };
-    kernel.reconcileResponsibilityWake = vi.fn(async () => {});
+    kernel.responsibilityRuntime.reconcileResponsibilityWake = vi.fn(async () => {});
     kernel.runRoutes = { setAdapterRoute: vi.fn() };
 
-    const result = await kernel.dispatchScheduleTarget({
+    const result = await kernel.scheduleRuntime.dispatchScheduleTarget({
       id: "schedule-legacy-ship-event",
       name: "Daily review",
       ownerUid: 1000,
@@ -2868,7 +2877,7 @@ describe("Kernel scheduled process reply routes", () => {
     const { kernel, record, setAdapterRoute, deleteRoute } = makeScheduledProcessKernel();
     sendFrameToProcessMock.mockRejectedValueOnce(new Error("Process response was lost"));
 
-    await expect(kernel.dispatchScheduleTarget(record, 100, 101, "occurrence-1")).rejects.toThrow(
+    await expect(kernel.scheduleRuntime.dispatchScheduleTarget(record, 100, 101, "occurrence-1")).rejects.toThrow(
       "Process response was lost",
     );
 
@@ -2921,7 +2930,7 @@ describe("Kernel scheduled process reply routes", () => {
     const { kernel, record, setAdapterRoute, deleteRoute } = makeScheduledProcessKernel();
     sendFrameToProcessMock.mockImplementationOnce(async (_installationId, _pid, request) => response(request));
 
-    await expect(kernel.dispatchScheduleTarget(
+    await expect(kernel.scheduleRuntime.dispatchScheduleTarget(
       record,
       100,
       101,
@@ -2941,7 +2950,7 @@ describe("Kernel scheduled process reply routes", () => {
 describe("Kernel MCP connection cleanup", () => {
   it("removes newly registered MCP servers when the initial connection fails", async () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as {
+    const kernel = bareKernel() as {
       addMcpServerConnection(input: {
         uid: number;
         name: string;
@@ -2956,7 +2965,7 @@ describe("Kernel MCP connection cleanup", () => {
       };
       removeMcpServer: ReturnType<typeof vi.fn>;
     };
-    kernel.createMcpOAuthProvider = vi.fn(() => ({}));
+    kernel.mcpConnections.createMcpOAuthProvider = vi.fn(() => ({}));
     kernel.mcp = {
       registerServer: vi.fn(async () => undefined),
       connectToServer: vi.fn(async () => ({
@@ -2964,12 +2973,12 @@ describe("Kernel MCP connection cleanup", () => {
         error: "connection rejected",
       })),
     };
-    kernel.removeMcpServer = vi.fn(async () => undefined);
+    kernel.mcpConnections.removeMcpServer = vi.fn(async () => undefined);
     const expectedError =
       "Failed to connect to MCP server at https://tinyfish.example/mcp: connection rejected";
 
     await expect(
-      kernel.addMcpServerConnection({
+      kernel.mcpConnections.addMcpServerConnection({
         uid: 1000,
         name: "TinyFish",
         url: "https://tinyfish.example/mcp",
@@ -2979,7 +2988,7 @@ describe("Kernel MCP connection cleanup", () => {
     ).rejects.toThrow(expectedError);
 
     const serverId = kernel.mcp.registerServer.mock.calls[0][0];
-    expect(kernel.removeMcpServer).toHaveBeenCalledWith(serverId);
+    expect(kernel.mcpConnections.removeMcpServer).toHaveBeenCalledWith(serverId);
   });
 
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -2992,7 +3001,7 @@ describe("Kernel MCP connection cleanup", () => {
       };
     };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as {
+    const kernel = bareKernel() as {
       addMcpServerConnection(input: {
         uid: number;
         name: string;
@@ -3010,7 +3019,7 @@ describe("Kernel MCP connection cleanup", () => {
       };
     };
     let registeredOptions: RegisteredServerOptions | null = null;
-    kernel.createMcpOAuthProvider = vi.fn(() => ({}));
+    kernel.mcpConnections.createMcpOAuthProvider = vi.fn(() => ({}));
     kernel.mcp = {
       registerServer: vi.fn(async (_serverId: string, options: RegisteredServerOptions) => {
         registeredOptions = options;
@@ -3021,7 +3030,7 @@ describe("Kernel MCP connection cleanup", () => {
       })),
     };
 
-    await kernel.addMcpServerConnection({
+    await kernel.mcpConnections.addMcpServerConnection({
       uid: 1000,
       name: "TinyFish",
       url: "https://tinyfish.example/mcp",
@@ -3079,7 +3088,7 @@ describe("Kernel process device requests", () => {
       },
     }));
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as {
+    const kernel = bareKernel() as {
       env: Record<string, never>;
       procs: { getIdentity: ReturnType<typeof vi.fn> };
       caps: { resolve: ReturnType<typeof vi.fn> };
@@ -3126,10 +3135,10 @@ describe("Kernel process device requests", () => {
       canAccess: vi.fn(() => true),
       get: vi.fn(() => device),
     };
-    kernel.requestDevice = requestDevice;
+    kernel.transport.requestDevice = requestDevice;
     kernel.routes = { get: vi.fn(() => null) };
-    kernel.activeRequests = new Map();
-    kernel.cancelledProcessRequests = new Map();
+    kernel.transport.activeRequests = new Map();
+    kernel.transport.cancelledProcessRequests = new Map();
     return { kernel, requestDevice };
   }
 
@@ -3218,17 +3227,17 @@ describe("Kernel process device requests", () => {
         signal: expect.any(AbortSignal),
       }),
     );
-    expect(kernel.activeRequests.size).toBe(0);
+    expect(kernel.transport.activeRequests.size).toBe(0);
   });
 
   it("only lets the owning process cancel an active request", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     const controller = new AbortController();
-    kernel.activeRequests = new Map([
+    kernel.transport.activeRequests = new Map([
       ["fetch-1", { origin: { type: "process", id: "proc_1" }, controller }],
     ]);
-    kernel.cancelledProcessRequests = new Map();
+    kernel.transport.cancelledProcessRequests = new Map();
     kernel.routes = { get: vi.fn(() => null) };
 
     expect(kernel.cancelProcessRequests("proc_2", ["fetch-1"])).toBe(0);
@@ -3239,9 +3248,9 @@ describe("Kernel process device requests", () => {
 
   it("forwards routed cancellation only for the owning process", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
-    kernel.activeRequests = new Map();
-    kernel.cancelledProcessRequests = new Map();
+    const kernel = bareKernel();
+    kernel.transport.activeRequests = new Map();
+    kernel.transport.cancelledProcessRequests = new Map();
     kernel.routes = {
       get: vi.fn(() => ({
         id: "search-1",
@@ -3250,31 +3259,31 @@ describe("Kernel process device requests", () => {
         driverConnectionId: "driver-connection",
       })),
     };
-    kernel.sendDeviceRequestCancel = vi.fn();
-    kernel.cancelRoute = vi.fn();
+    kernel.transport.sendDeviceRequestCancel = vi.fn();
+    kernel.transport.cancelRoute = vi.fn();
 
     expect(kernel.cancelProcessRequests("proc_2", ["search-1"], "stopped")).toBe(0);
-    expect(kernel.sendDeviceRequestCancel).not.toHaveBeenCalled();
+    expect(kernel.transport.sendDeviceRequestCancel).not.toHaveBeenCalled();
     expect(kernel.cancelProcessRequests("proc_1", ["search-1"], "stopped")).toBe(1);
-    expect(kernel.sendDeviceRequestCancel).toHaveBeenCalledWith(
+    expect(kernel.transport.sendDeviceRequestCancel).toHaveBeenCalledWith(
       "device-1",
       "driver-connection",
       "search-1",
       "stopped",
     );
-    expect(kernel.cancelRoute).toHaveBeenCalledWith("search-1");
+    expect(kernel.transport.cancelRoute).toHaveBeenCalledWith("search-1");
   });
 
   it("cancels a connection request without exposing the control signal", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     const controller = new AbortController();
-    kernel.activeRequests = new Map([
+    kernel.transport.activeRequests = new Map([
       ["request-1", { origin: { type: "connection", id: "conn-1" }, controller }],
     ]);
     kernel.routes = { get: vi.fn(() => null) };
 
-    kernel.handleRequestCancel(
+    kernel.transport.handleRequestCancel(
       { id: "conn-1", state: { step: "connected" } },
       {
         type: "sig",
@@ -3298,7 +3307,7 @@ describe("Kernel process device requests", () => {
     )).rejects.toThrow("superseded");
 
     expect(requestDevice).not.toHaveBeenCalled();
-    expect(kernel.cancelledProcessRequests.size).toBe(0);
+    expect(kernel.transport.cancelledProcessRequests.size).toBe(0);
   });
 });
 
@@ -3306,14 +3315,14 @@ describe("Kernel process runtime projection", () => {
   it("projects process titles into the process registry", () => {
     const setLabel = vi.fn(() => true);
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.procs = {
       get: vi.fn(() => ({ activeRunId: null, lastActiveAt: null })),
       setLabel,
       updateRuntimeState: vi.fn(),
     };
 
-    expect(kernel.updateProcessRuntimeFromSignal("proc-1", {
+    expect(kernel.processOutput.updateProcessRuntimeFromSignal("proc-1", {
       type: "sig",
       signal: "proc.changed",
       payload: {
@@ -3332,13 +3341,13 @@ describe("Kernel process runtime projection", () => {
     });
     const events: string[] = [];
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.ctx = { waitUntil: vi.fn() };
-    kernel.pendingProcessSignals = new Map();
+    kernel.processOutput.pendingProcessSignals = new Map();
     kernel.extractRunId = vi.fn((payload) => payload.runId);
-    kernel.updateProcessRuntimeFromSignal = vi.fn(() => true);
-    kernel.completeIpcCallsForProcessSignal = vi.fn();
-    kernel.handleProcessSignal = vi.fn(async (_pid: string, frame: { signal: string }) => {
+    kernel.processOutput.updateProcessRuntimeFromSignal = vi.fn(() => true);
+    kernel.ipc.completeIpcCallsForProcessSignal = vi.fn();
+    kernel.processOutput.handleProcessSignal = vi.fn(async (_pid: string, frame: { signal: string }) => {
       events.push(`${frame.signal}:start`);
       if (frame.signal === "proc.run.started") {
         await startedBlocked;
@@ -3380,42 +3389,42 @@ describe("Kernel process runtime projection", () => {
       Object.assign(record, patch);
     });
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.procs = {
       get: vi.fn(() => record),
       updateRuntimeState,
     };
 
-    expect(kernel.updateProcessRuntimeFromSignal("proc-1", {
+    expect(kernel.processOutput.updateProcessRuntimeFromSignal("proc-1", {
       type: "sig",
       signal: "proc.run.started",
       payload: { runId: "run-new", timestamp: 200 },
     }, "run-new")).toBe(true);
     expect(record).toMatchObject({ activeRunId: "run-new", lastActiveAt: 200 });
 
-    expect(kernel.updateProcessRuntimeFromSignal("proc-1", {
+    expect(kernel.processOutput.updateProcessRuntimeFromSignal("proc-1", {
       type: "sig",
       signal: "proc.run.started",
       payload: { runId: "run-old", timestamp: 150 },
     }, "run-old")).toBe(false);
 
-    expect(kernel.updateProcessRuntimeFromSignal("proc-1", {
+    expect(kernel.processOutput.updateProcessRuntimeFromSignal("proc-1", {
       type: "sig",
       signal: "proc.run.finished",
       payload: { runId: "run-old", timestamp: 250 },
     }, "run-old")).toBe(true);
-    expect(kernel.updateProcessRuntimeFromSignal("proc-1", {
+    expect(kernel.processOutput.updateProcessRuntimeFromSignal("proc-1", {
       type: "sig",
       signal: "proc.run.output",
       payload: { runId: "run-old", timestamp: 300 },
     }, "run-old")).toBe(false);
 
-    expect(kernel.updateProcessRuntimeFromSignal("proc-1", {
+    expect(kernel.processOutput.updateProcessRuntimeFromSignal("proc-1", {
       type: "sig",
       signal: "proc.run.finished",
       payload: { runId: "run-new", timestamp: 400 },
     }, "run-new")).toBe(true);
-    expect(kernel.updateProcessRuntimeFromSignal("proc-1", {
+    expect(kernel.processOutput.updateProcessRuntimeFromSignal("proc-1", {
       type: "sig",
       signal: "proc.run.started",
       payload: { runId: "run-old", timestamp: 350 },
@@ -3433,7 +3442,7 @@ describe("Kernel process runtime projection", () => {
     };
     let delivered: Promise<void> | null = null;
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.ctx = {
       waitUntil: vi.fn((promise: Promise<void>) => {
         delivered = promise;
@@ -3446,14 +3455,14 @@ describe("Kernel process runtime projection", () => {
         Object.assign(record, patch);
       }),
     };
-    kernel.pendingProcessSignals = new Map();
-    kernel.dispatchSignalWatches = vi.fn(async () => {});
+    kernel.processOutput.pendingProcessSignals = new Map();
+    kernel.processOutput.dispatchSignalWatches = vi.fn(async () => {});
     kernel.runRoutes = { get: vi.fn(() => null), delete: vi.fn() };
-    kernel.broadcastToUserUid = vi.fn();
-    kernel.broadcastProcessSignal = vi.fn((_uid, _processId, _route, emitted) => {
-      kernel.broadcastToUserUid(1000, emitted.signal, emitted.payload);
+    kernel.connectionRuntime.broadcastToUserUid = vi.fn();
+    kernel.processOutput.broadcastProcessSignal = vi.fn((_uid, _processId, _route, emitted) => {
+      kernel.connectionRuntime.broadcastToUserUid(1000, emitted.signal, emitted.payload);
     });
-    kernel.completeIpcCallsForProcessSignal = vi.fn();
+    kernel.ipc.completeIpcCallsForProcessSignal = vi.fn();
     const frame = {
       type: "sig",
       signal: "proc.run.tool.finished",
@@ -3477,7 +3486,7 @@ describe("Kernel process runtime projection", () => {
       state: "waiting_tool",
     });
     expect(kernel.procs.updateRuntimeState).not.toHaveBeenCalled();
-    expect(kernel.broadcastToUserUid).toHaveBeenCalledWith(
+    expect(kernel.connectionRuntime.broadcastToUserUid).toHaveBeenCalledWith(
       1000,
       frame.signal,
       frame.payload,
@@ -3492,11 +3501,11 @@ describe("Kernel IPC completion", () => {
 
   it("schedules timeout callbacks no earlier than their deadline", async () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.schedule = vi.fn(async () => ({ id: "ipc-timeout" }));
     const deadlineAt = Date.now() + 1_250;
 
-    await kernel.scheduleIpcCallTimeout("call-timeout", deadlineAt);
+    await kernel.ipc.scheduleIpcCallTimeout("call-timeout", deadlineAt);
 
     const scheduledAt = kernel.schedule.mock.calls[0]?.[0];
     expect(scheduledAt).toBeInstanceOf(Date);
@@ -3507,7 +3516,7 @@ describe("Kernel IPC completion", () => {
       "call-timeout",
     );
 
-    await kernel.scheduleIpcCallTimeout("delegated-timeout", deadlineAt, {
+    await kernel.ipc.scheduleIpcCallTimeout("delegated-timeout", deadlineAt, {
       mode: "supervise",
       intervalMs: 600_000,
       checkInCount: 0,
@@ -3528,18 +3537,18 @@ describe("Kernel IPC completion", () => {
   it("expires an ordinary IPC call without terminating its target", async () => {
     const call = { callId: "regular-call", targetPid: "worker" };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.ipcCalls = {
       get: vi.fn(() => call),
       timeout: vi.fn(() => true),
     };
-    kernel.queueIpcCallDelivery = vi.fn();
-    kernel.returnDelegatedResponsibility = vi.fn();
+    kernel.ipc.queueIpcCallDelivery = vi.fn();
+    kernel.ipc.returnDelegatedResponsibility = vi.fn();
 
-    await kernel.onIpcCallTimeout(call.callId);
+    await kernel.ipc.onIpcCallTimeout(call.callId);
 
-    expect(kernel.queueIpcCallDelivery).toHaveBeenCalledWith(call.callId);
-    expect(kernel.returnDelegatedResponsibility).toHaveBeenCalledWith(call);
+    expect(kernel.ipc.queueIpcCallDelivery).toHaveBeenCalledWith(call.callId);
+    expect(kernel.ipc.returnDelegatedResponsibility).toHaveBeenCalledWith(call);
   });
 
   it("converts legacy delegated kill deadlines into supervision checkpoints", async () => {
@@ -3549,19 +3558,19 @@ describe("Kernel IPC completion", () => {
       status: "pending",
     };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.ipcCalls = {
       get: vi.fn(() => call),
       timeout: vi.fn(),
     };
-    kernel.continueSupervisedIpcCall = vi.fn(async () => {});
+    kernel.ipc.continueSupervisedIpcCall = vi.fn(async () => {});
 
-    await kernel.onIpcCallTimeout({
+    await kernel.ipc.onIpcCallTimeout({
       callId: call.callId,
       terminateTargetOnTimeout: true,
     });
 
-    expect(kernel.continueSupervisedIpcCall).toHaveBeenCalledWith(
+    expect(kernel.ipc.continueSupervisedIpcCall).toHaveBeenCalledWith(
       expect.objectContaining({ callId: call.callId }),
       call,
       undefined,
@@ -3587,14 +3596,14 @@ describe("Kernel IPC completion", () => {
     };
     const now = vi.spyOn(Date, "now").mockReturnValue(checkedAt);
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.installationId = TEST_INSTALLATION_ID;
-    kernel.managedWorkGate = vi.fn(async () => ({ allowed: true }));
-    kernel.scheduleIpcCallTimeoutTask = vi.fn(async () => ({
+    kernel.onboarding.managedWorkGate = vi.fn(async () => ({ allowed: true }));
+    kernel.ipc.scheduleIpcCallTimeoutTask = vi.fn(async () => ({
       id: "next-check",
       time: (checkedAt + 60_000) / 1_000,
     }));
-    kernel.recordDelegationCheckIn = vi.fn();
+    kernel.ipc.recordDelegationCheckIn = vi.fn();
     kernel.ipcCalls = {
       get: vi.fn(() => call),
       timeout: vi.fn(),
@@ -3605,7 +3614,7 @@ describe("Kernel IPC completion", () => {
     };
 
     try {
-      await kernel.onIpcCallTimeout({
+      await kernel.ipc.onIpcCallTimeout({
         callId: call.callId,
         mode: "supervise",
         intervalMs: 60_000,
@@ -3615,7 +3624,7 @@ describe("Kernel IPC completion", () => {
       now.mockRestore();
     }
 
-    expect(kernel.scheduleIpcCallTimeoutTask).toHaveBeenCalledWith(
+    expect(kernel.ipc.scheduleIpcCallTimeoutTask).toHaveBeenCalledWith(
       call.callId,
       checkedAt + 60_000,
       {
@@ -3662,17 +3671,17 @@ describe("Kernel IPC completion", () => {
     };
     const now = vi.spyOn(Date, "now").mockReturnValue(checkedAt);
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
-    kernel.managedWorkGate = vi.fn(async () => ({
+    const kernel = bareKernel();
+    kernel.onboarding.managedWorkGate = vi.fn(async () => ({
       allowed: false,
       code: 423,
       message: "Managed installation is suspended",
     }));
-    kernel.scheduleIpcCallTimeoutTask = vi.fn(async () => ({
+    kernel.ipc.scheduleIpcCallTimeoutTask = vi.fn(async () => ({
       id: "lifecycle-recheck",
       time: (checkedAt + 60_000) / 1_000,
     }));
-    kernel.recordDelegationCheckIn = vi.fn();
+    kernel.ipc.recordDelegationCheckIn = vi.fn();
     kernel.ipcCalls = {
       get: vi.fn(() => call),
       timeout: vi.fn(),
@@ -3680,7 +3689,7 @@ describe("Kernel IPC completion", () => {
     };
 
     try {
-      await kernel.onIpcCallTimeout(
+      await kernel.ipc.onIpcCallTimeout(
         {
           callId: call.callId,
           mode: "supervise",
@@ -3693,7 +3702,7 @@ describe("Kernel IPC completion", () => {
       now.mockRestore();
     }
 
-    expect(kernel.scheduleIpcCallTimeoutTask).toHaveBeenCalledWith(
+    expect(kernel.ipc.scheduleIpcCallTimeoutTask).toHaveBeenCalledWith(
       call.callId,
       checkedAt + 60_000,
       {
@@ -3704,7 +3713,7 @@ describe("Kernel IPC completion", () => {
       },
     );
     expect(kernel.ipcCalls.renewDeadline).not.toHaveBeenCalled();
-    expect(kernel.recordDelegationCheckIn).not.toHaveBeenCalled();
+    expect(kernel.ipc.recordDelegationCheckIn).not.toHaveBeenCalled();
     expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
@@ -3726,14 +3735,14 @@ describe("Kernel IPC completion", () => {
     };
     const now = vi.spyOn(Date, "now").mockReturnValue(checkedAt);
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.installationId = TEST_INSTALLATION_ID;
-    kernel.managedWorkGate = vi.fn(async () => ({ allowed: true }));
-    kernel.scheduleIpcCallTimeoutTask = vi.fn(async () => ({
+    kernel.onboarding.managedWorkGate = vi.fn(async () => ({ allowed: true }));
+    kernel.ipc.scheduleIpcCallTimeoutTask = vi.fn(async () => ({
       id: "next-check",
       time: (checkedAt + 60_000) / 1_000,
     }));
-    kernel.recordDelegationCheckIn = vi.fn();
+    kernel.ipc.recordDelegationCheckIn = vi.fn();
     kernel.ipcCalls = {
       get: vi.fn(() => call),
       timeout: vi.fn(),
@@ -3745,7 +3754,7 @@ describe("Kernel IPC completion", () => {
     sendFrameToProcessMock.mockRejectedValueOnce(new Error("process unavailable"));
 
     try {
-      await expect(kernel.onIpcCallTimeout(
+      await expect(kernel.ipc.onIpcCallTimeout(
         {
           callId: call.callId,
           mode: "supervise",
@@ -3758,7 +3767,7 @@ describe("Kernel IPC completion", () => {
       now.mockRestore();
     }
 
-    expect(kernel.scheduleIpcCallTimeoutTask).toHaveBeenCalledWith(
+    expect(kernel.ipc.scheduleIpcCallTimeoutTask).toHaveBeenCalledWith(
       call.callId,
       checkedAt + 60_000,
       {
@@ -3794,14 +3803,14 @@ describe("Kernel IPC completion", () => {
     };
     const now = vi.spyOn(Date, "now").mockReturnValue(invokedAt);
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.installationId = TEST_INSTALLATION_ID;
-    kernel.managedWorkGate = vi.fn(async () => ({ allowed: true }));
-    kernel.scheduleIpcCallTimeoutTask = vi.fn(async () => ({
+    kernel.onboarding.managedWorkGate = vi.fn(async () => ({ allowed: true }));
+    kernel.ipc.scheduleIpcCallTimeoutTask = vi.fn(async () => ({
       id: "next-check",
       time: nextCheckAt / 1_000,
     }));
-    kernel.recordDelegationCheckIn = vi.fn();
+    kernel.ipc.recordDelegationCheckIn = vi.fn();
     kernel.ipcCalls = {
       get: vi.fn(() => call),
       timeout: vi.fn(),
@@ -3812,7 +3821,7 @@ describe("Kernel IPC completion", () => {
     };
 
     try {
-      await kernel.onIpcCallTimeout(
+      await kernel.ipc.onIpcCallTimeout(
         {
           callId: call.callId,
           mode: "supervise",
@@ -3825,7 +3834,7 @@ describe("Kernel IPC completion", () => {
       now.mockRestore();
     }
 
-    expect(kernel.scheduleIpcCallTimeoutTask).toHaveBeenCalledWith(
+    expect(kernel.ipc.scheduleIpcCallTimeoutTask).toHaveBeenCalledWith(
       call.callId,
       nextCheckAt,
       {
@@ -3838,7 +3847,7 @@ describe("Kernel IPC completion", () => {
       call.callId,
       nextCheckAt,
     );
-    expect(kernel.recordDelegationCheckIn).toHaveBeenCalledWith(
+    expect(kernel.ipc.recordDelegationCheckIn).toHaveBeenCalledWith(
       expect.objectContaining({ deadlineAt: nextCheckAt }),
       invokedAt,
       nextCheckAt,
@@ -3869,12 +3878,12 @@ describe("Kernel IPC completion", () => {
     const reconcileResponsibilityWake = vi.fn(async () => {});
     const waitUntil = vi.fn();
     // SAFETY: test fixture is constructed with the asserted Kernel boundary shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.responsibilities = {
       get: vi.fn(() => responsibility),
       update,
     };
-    kernel.reconcileResponsibilityWake = reconcileResponsibilityWake;
+    kernel.responsibilityRuntime.reconcileResponsibilityWake = reconcileResponsibilityWake;
     kernel.ctx = { waitUntil };
     const call = {
       callId: "ipc:call-1",
@@ -3891,7 +3900,7 @@ describe("Kernel IPC completion", () => {
       responsibilityId,
     };
 
-    kernel.recordDelegationCheckIn(call, 10_000, 70_000, 2);
+    kernel.ipc.recordDelegationCheckIn(call, 10_000, 70_000, 2);
 
     expect(update).toHaveBeenCalledWith(expect.objectContaining({
       ownerUid: 1000,
@@ -3931,11 +3940,11 @@ describe("Kernel IPC completion", () => {
     const cancelBySourceRun = vi.fn();
     const completeByRun = vi.fn(() => []);
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.procs = { getOwnerUid: vi.fn(() => 1000) };
     kernel.ipcCalls = { cancelBySourceRun, completeByRun };
 
-    await kernel.completeIpcCallsForProcessSignal("proc-source", {
+    await kernel.ipc.completeIpcCallsForProcessSignal("proc-source", {
       type: "sig",
       signal: "proc.run.finished",
       payload: {
@@ -3976,17 +3985,17 @@ describe("Kernel IPC completion", () => {
   it("completes a call from the Process result independently of human delivery", async () => {
     const completeByRun = vi.fn(() => ["call-1"]);
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.procs = { getOwnerUid: vi.fn(() => 1000) };
     kernel.ipcCalls = {
       cancelBySourceRun: vi.fn(),
       completeByRun,
       get: vi.fn(() => ({ callId: "call-1" })),
     };
-    kernel.queueIpcCallDelivery = vi.fn();
-    kernel.returnDelegatedResponsibility = vi.fn();
+    kernel.ipc.queueIpcCallDelivery = vi.fn();
+    kernel.ipc.returnDelegatedResponsibility = vi.fn();
 
-    await kernel.completeIpcCallsForProcessSignal("proc-worker", {
+    await kernel.ipc.completeIpcCallsForProcessSignal("proc-worker", {
       type: "sig",
       signal: "proc.run.finished",
       payload: {
@@ -4008,8 +4017,8 @@ describe("Kernel IPC completion", () => {
       },
       error: null,
     });
-    expect(kernel.returnDelegatedResponsibility).toHaveBeenCalledWith({ callId: "call-1" });
-    expect(kernel.queueIpcCallDelivery).toHaveBeenCalledWith("call-1");
+    expect(kernel.ipc.returnDelegatedResponsibility).toHaveBeenCalledWith({ callId: "call-1" });
+    expect(kernel.ipc.queueIpcCallDelivery).toHaveBeenCalledWith("call-1");
   });
 
   it.each([
@@ -4072,12 +4081,12 @@ describe("Kernel IPC completion", () => {
       const reconcileResponsibilityWake = vi.fn(async () => {});
       const waitUntil = vi.fn();
       // SAFETY: test fixture is constructed with the asserted Kernel boundary shape.
-      const kernel = Object.create(Kernel.prototype) as any;
+      const kernel = bareKernel();
       kernel.responsibilities = {
         get: vi.fn(() => responsibility),
         update,
       };
-      kernel.reconcileResponsibilityWake = reconcileResponsibilityWake;
+      kernel.responsibilityRuntime.reconcileResponsibilityWake = reconcileResponsibilityWake;
       kernel.ctx = { waitUntil };
       const call = {
         callId: "ipc:call-1",
@@ -4094,8 +4103,8 @@ describe("Kernel IPC completion", () => {
         responsibilityId,
       };
 
-      kernel.returnDelegatedResponsibility(call);
-      kernel.returnDelegatedResponsibility(call);
+      kernel.ipc.returnDelegatedResponsibility(call);
+      kernel.ipc.returnDelegatedResponsibility(call);
 
       expect(update).toHaveBeenCalledTimes(1);
       expect(update).toHaveBeenCalledWith(expect.objectContaining({
@@ -4158,7 +4167,7 @@ describe("Kernel IPC completion", () => {
         error: signal === "ipc.timeout" ? "IPC call timed out" : null,
       };
 
-      await kernel.deliverIpcCallSignal(call);
+      await kernel.ipc.deliverIpcCallSignal(call);
 
       expect(sendFrameToProcessMock).toHaveBeenCalledWith(TEST_INSTALLATION_ID, "proc-source", {
         type: "sig",
@@ -4195,17 +4204,17 @@ describe("Kernel IPC completion", () => {
     const releaseDelivery = vi.fn();
     const remove = vi.fn();
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.ipcCalls = {
       claimDelivery: vi.fn(() => call),
       releaseDelivery,
       remove,
     };
-    kernel.returnDelegatedResponsibility = vi.fn();
+    kernel.ipc.returnDelegatedResponsibility = vi.fn();
     kernel.schedule = vi.fn(async () => ({ id: "ipc-delivery-retry" }));
     sendFrameToProcessMock.mockRejectedValue(new Error("source unavailable"));
 
-    await kernel.deliverIpcCall(call.callId);
+    await kernel.ipc.deliverIpcCall(call.callId);
 
     expect(releaseDelivery).toHaveBeenCalledWith(call.callId);
     expect(remove).not.toHaveBeenCalled();
@@ -4237,17 +4246,17 @@ describe("Kernel IPC completion", () => {
     };
     const remove = vi.fn();
     // SAFETY: this focused Kernel fixture supplies every field used by IPC delivery.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.ipcCalls = {
       claimDelivery: vi.fn(() => call),
       remove,
     };
     kernel.procs = { get: vi.fn(() => null) };
-    kernel.returnDelegatedResponsibility = vi.fn();
+    kernel.ipc.returnDelegatedResponsibility = vi.fn();
 
-    await kernel.deliverIpcCall(call.callId);
+    await kernel.ipc.deliverIpcCall(call.callId);
 
-    expect(kernel.returnDelegatedResponsibility).toHaveBeenCalledWith(call);
+    expect(kernel.ipc.returnDelegatedResponsibility).toHaveBeenCalledWith(call);
     expect(remove).toHaveBeenCalledWith(call.callId);
     expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
@@ -4255,11 +4264,11 @@ describe("Kernel IPC completion", () => {
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it("queues terminal IPC delivery as an idempotent retrying job", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.ctx = { waitUntil: vi.fn() };
     kernel.schedule = vi.fn(async () => ({ id: "ipc-delivery" }));
 
-    kernel.queueIpcCallDelivery("call-queued");
+    kernel.ipc.queueIpcCallDelivery("call-queued");
 
     expect(kernel.schedule).toHaveBeenCalledWith(
       expect.any(Date),

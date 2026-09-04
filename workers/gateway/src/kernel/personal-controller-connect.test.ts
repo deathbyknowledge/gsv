@@ -8,7 +8,15 @@ const handleConnectMock = vi.spyOn(connect, "handleConnect");
 const ensurePersonalControllerMock = vi.spyOn(personalController, "ensurePersonalController");
 const getConversationByIdMock = vi.spyOn(utils, "getConversationById");
 
-import { Kernel } from "./do";
+import { Kernel, kernelRuntimes } from "./do";
+
+/** A Kernel prototype with its runtime modules attached and no Durable Object state. */
+// SAFETY: tests assign the exact collaborators each scenario asserts on.
+const bareKernel = (): any => {
+  const kernel = Object.create(Kernel.prototype);
+  Object.assign(kernel, kernelRuntimes(kernel));
+  return kernel;
+};
 
 const PROCESS_IDENTITY = {
   uid: 1000,
@@ -71,7 +79,7 @@ describe("Kernel personal controller connect lifecycle", () => {
 
   it("ensures a human controller before activating and accepting the connection", async () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     const ctx = {
       auth: { isPersonalAgentUid: vi.fn(() => false) },
       conversations: {
@@ -84,19 +92,19 @@ describe("Kernel personal controller connect lifecycle", () => {
     };
     const connection = { id: "connection-1", setState: vi.fn() };
     kernel.buildContext = vi.fn(() => ctx);
-    kernel.activateConnection = vi.fn();
-    kernel.broadcastDeviceStatus = vi.fn();
-    kernel.reconcileOwnedIdentities = vi.fn();
-    kernel.sendOk = vi.fn();
-    kernel.sendError = vi.fn();
+    kernel.connectionRuntime.activateConnection = vi.fn();
+    kernel.connectionRuntime.broadcastDeviceStatus = vi.fn();
+    kernel.connectionRuntime.reconcileOwnedIdentities = vi.fn();
+    kernel.transport.sendOk = vi.fn();
+    kernel.transport.sendError = vi.fn();
 
-    await kernel.handleSysConnect(connection, connectFrame());
+    await kernel.connectionRuntime.handleSysConnect(connection, connectFrame());
 
     expect(ensurePersonalControllerMock).toHaveBeenCalledWith(PROCESS_IDENTITY.uid, ctx);
     expect(ensurePersonalControllerMock.mock.invocationCallOrder[0])
-      .toBeLessThan(kernel.activateConnection.mock.invocationCallOrder[0]);
-    expect(kernel.activateConnection).toHaveBeenCalledOnce();
-    expect(kernel.sendOk).toHaveBeenCalledWith(
+      .toBeLessThan(kernel.connectionRuntime.activateConnection.mock.invocationCallOrder[0]);
+    expect(kernel.connectionRuntime.activateConnection).toHaveBeenCalledOnce();
+    expect(kernel.transport.sendOk).toHaveBeenCalledWith(
       connection,
       "connect-1",
       expect.objectContaining({ protocol: 3 }),
@@ -105,25 +113,25 @@ describe("Kernel personal controller connect lifecycle", () => {
 
   it("does not activate a human connection when controller recovery fails", async () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     const ctx = {
       auth: { isPersonalAgentUid: vi.fn(() => false) },
       conversations: { ensureShip: vi.fn() },
     };
     const connection = { id: "connection-1", setState: vi.fn() };
     kernel.buildContext = vi.fn(() => ctx);
-    kernel.activateConnection = vi.fn();
-    kernel.broadcastDeviceStatus = vi.fn();
-    kernel.reconcileOwnedIdentities = vi.fn();
-    kernel.sendOk = vi.fn();
-    kernel.sendError = vi.fn();
+    kernel.connectionRuntime.activateConnection = vi.fn();
+    kernel.connectionRuntime.broadcastDeviceStatus = vi.fn();
+    kernel.connectionRuntime.reconcileOwnedIdentities = vi.fn();
+    kernel.transport.sendOk = vi.fn();
+    kernel.transport.sendError = vi.fn();
     ensurePersonalControllerMock.mockRejectedValueOnce(new Error("controller unavailable"));
 
-    await expect(kernel.handleSysConnect(connection, connectFrame()))
+    await expect(kernel.connectionRuntime.handleSysConnect(connection, connectFrame()))
       .rejects.toThrow("controller unavailable");
 
-    expect(kernel.activateConnection).not.toHaveBeenCalled();
-    expect(kernel.sendOk).not.toHaveBeenCalled();
+    expect(kernel.connectionRuntime.activateConnection).not.toHaveBeenCalled();
+    expect(kernel.transport.sendOk).not.toHaveBeenCalled();
   });
 
   it("records a first machine registration as Ship work before accepting it", async () => {
@@ -174,15 +182,15 @@ describe("Kernel personal controller connect lifecycle", () => {
     };
     const connection = { id: "connection-1", setState: vi.fn() };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = bareKernel();
     kernel.buildContext = vi.fn(() => ctx);
-    kernel.activateConnection = vi.fn();
-    kernel.broadcastDeviceStatus = vi.fn();
-    kernel.reconcileOwnedIdentities = vi.fn();
-    kernel.sendOk = vi.fn();
-    kernel.sendError = vi.fn();
+    kernel.connectionRuntime.activateConnection = vi.fn();
+    kernel.connectionRuntime.broadcastDeviceStatus = vi.fn();
+    kernel.connectionRuntime.reconcileOwnedIdentities = vi.fn();
+    kernel.transport.sendOk = vi.fn();
+    kernel.transport.sendError = vi.fn();
 
-    await kernel.handleSysConnect(connection, connectFrame());
+    await kernel.connectionRuntime.handleSysConnect(connection, connectFrame());
 
     expect(create).toHaveBeenCalledWith(expect.objectContaining({
       ownerUid: 1000,
@@ -190,7 +198,7 @@ describe("Kernel personal controller connect lifecycle", () => {
       source: expect.objectContaining({ eventType: "machine.added" }),
     }));
     expect(ctx.reconcileResponsibilityWake).toHaveBeenCalledWith(1000);
-    expect(kernel.activateConnection).toHaveBeenCalledOnce();
-    expect(kernel.sendOk).toHaveBeenCalledOnce();
+    expect(kernel.connectionRuntime.activateConnection).toHaveBeenCalledOnce();
+    expect(kernel.transport.sendOk).toHaveBeenCalledOnce();
   });
 });

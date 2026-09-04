@@ -482,8 +482,8 @@ describe("scheduler", () => {
           mode: "due" | "force",
         ) => Promise<ScheduleRunResult>;
       };
-      k.buildScheduleContext = () => makeAdapterSchedulerContext(adapterFrame);
-      k.scheduleScheduleWake = async () => "wake-retry";
+      k.scheduleRuntime.buildScheduleContext = () => makeAdapterSchedulerContext(adapterFrame);
+      k.scheduleRuntime.scheduleScheduleWake = async () => "wake-retry";
 
       const now = Date.now();
       const created = k.schedules.create({
@@ -509,10 +509,10 @@ describe("scheduler", () => {
       );
 
       const retryStartedAt = Date.now();
-      const retryResult = await k.runScheduleRecord(k.schedules.get(created.id)!, "due");
+      const retryResult = await k.scheduleRuntime.runScheduleRecord(k.schedules.get(created.id)!, "due");
       const retryFinishedAt = Date.now();
       const retryStored = k.schedules.getStored(created.id)!;
-      const forceResult = await k.runScheduleRecord(k.schedules.get(created.id)!, "force");
+      const forceResult = await k.scheduleRuntime.runScheduleRecord(k.schedules.get(created.id)!, "force");
       const afterForce = k.schedules.getStored(created.id)!;
 
       k.ctx.storage.sql.exec(
@@ -522,7 +522,7 @@ describe("scheduler", () => {
         Date.now() - 1,
         created.id,
       );
-      const cutoffResult = await k.runScheduleRecord(k.schedules.get(created.id)!, "due");
+      const cutoffResult = await k.scheduleRuntime.runScheduleRecord(k.schedules.get(created.id)!, "due");
       const cutoffStored = k.schedules.getStored(created.id)!;
 
       return {
@@ -600,7 +600,7 @@ describe("scheduler", () => {
           mode: "due" | "force",
         ) => Promise<ScheduleRunResult>;
       };
-      k.buildScheduleContext = () => makeAdapterSchedulerContext(adapterFrame);
+      k.scheduleRuntime.buildScheduleContext = () => makeAdapterSchedulerContext(adapterFrame);
 
       const now = Date.now();
       const created = k.schedules.create({
@@ -623,7 +623,7 @@ describe("scheduler", () => {
         created.id,
       );
 
-      const result = await k.runScheduleRecord(k.schedules.get(created.id)!, "due");
+      const result = await k.scheduleRuntime.runScheduleRecord(k.schedules.get(created.id)!, "due");
       return {
         result,
         schedule: k.schedules.getStored(created.id),
@@ -1297,7 +1297,7 @@ describe("scheduler", () => {
       return schedule.id;
     });
 
-    await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(scheduleId));
+    await runInDurableObject(kernel, (instance: Kernel) => instance.scheduleRuntime.onScheduleDue(scheduleId));
 
     const messages = await runInDurableObject(process, (instance: Process) => {
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -1359,7 +1359,7 @@ describe("scheduler", () => {
       return schedule.id;
     });
 
-    await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(scheduleId));
+    await runInDurableObject(kernel, (instance: Kernel) => instance.scheduleRuntime.onScheduleDue(scheduleId));
 
     const state = await runInDurableObject(kernel, (instance: Kernel) => {
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -1424,7 +1424,7 @@ describe("scheduler", () => {
     });
 
     await runInDurableObject(kernel, (instance: Kernel) =>
-      instance.onScheduleDue(scheduled.scheduleId)
+      instance.scheduleRuntime.onScheduleDue(scheduled.scheduleId)
     );
     await runInDurableObject(kernel, (instance: Kernel) => {
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -1436,7 +1436,7 @@ describe("scheduler", () => {
       );
     });
     await runInDurableObject(kernel, (instance: Kernel) =>
-      instance.onScheduleDue(scheduled.scheduleId)
+      instance.scheduleRuntime.onScheduleDue(scheduled.scheduleId)
     );
 
     const errors = await runInDurableObject(kernel, (instance: Kernel) =>
@@ -1502,7 +1502,7 @@ describe("scheduler", () => {
     });
 
     for (const id of scheduled.ids) {
-      await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(id));
+      await runInDurableObject(kernel, (instance: Kernel) => instance.scheduleRuntime.onScheduleDue(id));
     }
 
     const errors = await runInDurableObject(kernel, (instance: Kernel) => {
@@ -1566,7 +1566,7 @@ describe("scheduler", () => {
       return schedule.id;
     });
 
-    await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(scheduleId));
+    await runInDurableObject(kernel, (instance: Kernel) => instance.scheduleRuntime.onScheduleDue(scheduleId));
 
     const state = await runInDurableObject(kernel, (instance: Kernel) => {
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -1598,13 +1598,7 @@ describe("scheduler", () => {
 
     await expect(runInDurableObject(kernel, (instance: Kernel) =>
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      (instance as {
-        dispatchScheduleTarget: (
-          record: ScheduleRecord,
-          scheduledAtMs: number | null,
-          firedAtMs: number,
-        ) => Promise<ScheduleRunResult>;
-      }).dispatchScheduleTarget(record, null, Date.now()),
+      (instance as any).scheduleRuntime.dispatchScheduleTarget(record, null, Date.now()),
     )).rejects.toThrow("Cannot resolve schedule run-as uid 9999");
   });
 
@@ -1646,13 +1640,7 @@ describe("scheduler", () => {
 
     await expect(runInDurableObject(kernel, (instance: Kernel) =>
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      (instance as {
-        dispatchScheduleTarget: (
-          record: ScheduleRecord,
-          scheduledAtMs: number | null,
-          firedAtMs: number,
-        ) => Promise<ScheduleRunResult>;
-      }).dispatchScheduleTarget(record, null, Date.now()),
+      (instance as any).scheduleRuntime.dispatchScheduleTarget(record, null, Date.now()),
     )).rejects.toThrow(`Permission denied: ${capability}`);
   });
 
@@ -1688,13 +1676,7 @@ describe("scheduler", () => {
 
     await expect(runInDurableObject(kernel, (instance: Kernel) =>
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      (instance as {
-        dispatchScheduleTarget: (
-          record: ScheduleRecord,
-          scheduledAtMs: number | null,
-          firedAtMs: number,
-        ) => Promise<ScheduleRunResult>;
-      }).dispatchScheduleTarget(record, null, Date.now()),
+      (instance as any).scheduleRuntime.dispatchScheduleTarget(record, null, Date.now()),
     )).rejects.toThrow("Permission denied: adapter.send");
   });
 
@@ -1746,7 +1728,7 @@ describe("scheduler", () => {
         },
         now,
       });
-      const wakeId = await k.scheduleScheduleWake(schedule.id, schedule.state.nextRunAtMs!);
+      const wakeId = await k.scheduleRuntime.scheduleScheduleWake(schedule.id, schedule.state.nextRunAtMs!);
       k.schedules.setWakeScheduleId(schedule.id, wakeId);
 
       const dueAtMs = now - 1_000;
@@ -1874,7 +1856,7 @@ describe("scheduler", () => {
         }>;
         schedules: ScheduleStore;
       };
-      k.managedWorkGate = async () => ({
+      k.onboarding.managedWorkGate = async () => ({
         allowed: false,
         code: 423,
         message: "Managed installation is suspended",
@@ -1899,7 +1881,7 @@ describe("scheduler", () => {
         schedule.id,
       );
 
-      await instance.onScheduleDue(schedule.id);
+      await instance.scheduleRuntime.onScheduleDue(schedule.id);
       return {
         schedule: k.schedules.getStored(schedule.id),
         wakes: k.ctx.storage.sql.exec<{ id: string; time: number }>(
@@ -1931,7 +1913,7 @@ describe("scheduler", () => {
         ctx: DurableObjectState;
         scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;
       };
-      const wakeId = await k.scheduleScheduleWake("sched-rounding", dueAtMs);
+      const wakeId = await k.scheduleRuntime.scheduleScheduleWake("sched-rounding", dueAtMs);
       return k.ctx.storage.sql.exec<{ time: number }>(
         "SELECT time FROM cf_agents_schedules WHERE id = ?",
         wakeId,
@@ -1989,7 +1971,7 @@ describe("scheduler", () => {
         },
         now,
       });
-      const oldWakeId = await k.scheduleScheduleWake(schedule.id, nextRunAtMs);
+      const oldWakeId = await k.scheduleRuntime.scheduleScheduleWake(schedule.id, nextRunAtMs);
       k.schedules.setWakeScheduleId(schedule.id, oldWakeId);
       k.ctx.storage.sql.exec(
         "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
@@ -2079,8 +2061,8 @@ describe("scheduler", () => {
         },
         now,
       });
-      const oldWakeId = await k.scheduleScheduleWake(schedule.id, now + 1_000);
-      const newWakeId = await k.scheduleScheduleWake(schedule.id, now + 60_000);
+      const oldWakeId = await k.scheduleRuntime.scheduleScheduleWake(schedule.id, now + 1_000);
+      const newWakeId = await k.scheduleRuntime.scheduleScheduleWake(schedule.id, now + 60_000);
       k.schedules.setWakeScheduleId(schedule.id, newWakeId);
       k.ctx.storage.sql.exec(
         "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
@@ -2171,9 +2153,7 @@ describe("scheduler", () => {
 
     const runResult = await runInDurableObject(kernel, (instance: Kernel) =>
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      (instance as {
-        runSchedules: (args: { id: string; mode: "force" }) => Promise<ScheduleRunResult>;
-      }).runSchedules({ id: scheduleId, mode: "force" }),
+      (instance as any).scheduleRuntime.runSchedules({ id: scheduleId, mode: "force" }),
     );
 
     expect(runResult).toMatchObject({
@@ -2237,9 +2217,7 @@ describe("scheduler", () => {
 
     const result = await runInDurableObject(kernel, (instance: Kernel) =>
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      (instance as {
-        runSchedules: (args: { id: string; mode: "due" }) => Promise<ScheduleRunResult>;
-      }).runSchedules({ id: scheduleId, mode: "due" }),
+      (instance as any).scheduleRuntime.runSchedules({ id: scheduleId, mode: "due" }),
     );
 
     expect(result).toMatchObject({
@@ -2303,7 +2281,7 @@ describe("scheduler", () => {
       return schedule.id;
     });
 
-    await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(scheduleId));
+    await runInDurableObject(kernel, (instance: Kernel) => instance.scheduleRuntime.onScheduleDue(scheduleId));
 
     const schedule = await runInDurableObject(kernel, (instance: Kernel) =>
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -2361,7 +2339,7 @@ describe("scheduler", () => {
       return schedule.id;
     });
 
-    await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(scheduleId));
+    await runInDurableObject(kernel, (instance: Kernel) => instance.scheduleRuntime.onScheduleDue(scheduleId));
 
     const spawned = await runInDurableObject(kernel, (instance: Kernel) => {
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -2457,7 +2435,7 @@ describe("scheduler", () => {
       return schedule.id;
     });
 
-    await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(scheduleId));
+    await runInDurableObject(kernel, (instance: Kernel) => instance.scheduleRuntime.onScheduleDue(scheduleId));
 
     const spawned = await runInDurableObject(kernel, (instance: Kernel) => {
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
