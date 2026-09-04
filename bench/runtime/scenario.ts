@@ -129,11 +129,15 @@ const transitionEffectSchema = z.discriminatedUnion("type", [
 const transitionSchema = z.object({
   id: z.string().min(1),
   after: z.object({
-    processId: z.string().min(1),
+    processId: z.string().min(1).optional(),
+    account: z.string().min(1).optional(),
     tool: z.string().min(1),
     arguments: optionalJsonObjectSchema.optional(),
     outcome: z.enum(["success", "error", "any"]).optional(),
-  }).strict(),
+  }).strict().refine(
+    ({ processId, account }) => (processId === undefined) !== (account === undefined),
+    "transition trigger requires exactly one of processId or account",
+  ),
   effects: z.array(transitionEffectSchema).min(1),
 }).strict();
 
@@ -279,8 +283,17 @@ export function parseGsvSurfaceScenario(value: JsonValue): GsvSurfaceScenario {
     requireCapabilities(target.implements ?? [], "target " + target.id);
   }
   for (const transition of scenario.components.transitions) {
-    if (!allProcessIds(scenario).has(transition.after.processId)) {
+    if (
+      transition.after.processId !== undefined
+      && !allProcessIds(scenario).has(transition.after.processId)
+    ) {
       throw new Error("Transition does not name a synthetic process: " + transition.id);
+    }
+    if (
+      transition.after.account !== undefined
+      && !allAccounts(scenario).has(transition.after.account)
+    ) {
+      throw new Error("Transition does not name a synthetic account: " + transition.id);
     }
     requireTargetEffects(scenario, transition.id, transition.effects);
   }
@@ -312,6 +325,13 @@ function allProcessIds(scenario: GsvSurfaceScenario): Set<string> {
   return new Set([
     ...scenario.world.processes.map(({ id }) => id),
     ...(scenario.world.delegates ?? []).map(({ process }) => process.id),
+  ]);
+}
+
+function allAccounts(scenario: GsvSurfaceScenario): Set<string> {
+  return new Set([
+    ...scenario.world.processes.map((process) => process.username ?? process.id),
+    ...(scenario.world.delegates ?? []).map(({ account }) => account),
   ]);
 }
 

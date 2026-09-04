@@ -109,6 +109,11 @@ type ExternalEventState = {
 };
 
 const SYNTHETIC_GSV_IMPLEMENTATIONS = ["fs.*", "shell.exec"] as const;
+const DEFAULT_INHERITED_DELEGATE_MAX_TURNS = 16;
+const DEFAULT_INHERITED_DELEGATE_PROMPT = [
+  "You are a delegated GSV worker Process.",
+  "Complete the bounded task using only your available capabilities and return a concise result.",
+].join(" ");
 
 export type SyntheticAppliedExternalEvent = SyntheticExternalEventSnapshot & {
   evictProcess: boolean;
@@ -152,12 +157,14 @@ export class SyntheticKernel {
   private readonly adapters = new Map<string, SyntheticMessagingAdapter>();
   private readonly adapterRoutes = new Map<string, EntryRoute>();
   private readonly delegateSpecs = new Map<string, SyntheticDelegateSpec>();
+  private readonly delegateSpawnCounts = new Map<string, number>();
   private readonly delegateTasks = new Map<string, SyntheticDelegateTask>();
   private readonly delegations: SyntheticDelegationSnapshot[] = [];
   private readonly environments = new Map<string, SyntheticTargetEnvironment>();
   private readonly externalEvents = new Map<string, ExternalEventState>();
   private readonly nativeFilesystem = new SyntheticNativeFilesystem();
   private readonly processes = new Map<string, SyntheticProcessSpec>();
+  private readonly processAccounts = new Map<string, string>();
   private readonly processEvents = new Map<string, SyntheticProcessEvent[]>();
   private readonly processParents = new Map<string, string>();
   private readonly processStates = new Map<
@@ -226,12 +233,17 @@ export class SyntheticKernel {
     if (this.processes.has(process.id) || this.hasDelegateProcess(process.id)) {
       throw new Error("Duplicate synthetic process id: " + process.id);
     }
+    this.registerProcess(process, process.username ?? process.id);
+  }
+
+  private registerProcess(process: SyntheticProcessSpec, account: string): void {
     const normalized: SyntheticProcessSpec = {
       ...structuredClone(process),
       ownerUid: processOwnerUid(process),
       username: process.username ?? process.id.replace(/^proc:/u, ""),
     };
     this.processes.set(process.id, normalized);
+    this.processAccounts.set(process.id, account);
     this.processStates.set(process.id, "idle");
   }
 
@@ -269,7 +281,20 @@ export class SyntheticKernel {
     if (this.transitions.has(transition.id)) {
       throw new Error("Duplicate synthetic transition id: " + transition.id);
     }
-    this.requireConfiguredProcess(transition.after.processId);
+    if (
+      (transition.after.processId === undefined)
+      === (transition.after.account === undefined)
+    ) {
+      throw new Error(
+        "Synthetic transition must name exactly one process or account: "
+          + transition.id,
+      );
+    }
+    if (transition.after.processId !== undefined) {
+      this.requireConfiguredProcess(transition.after.processId);
+    } else if (transition.after.account !== undefined) {
+      this.requireConfiguredAccount(transition.after.account);
+    }
     for (const effect of transition.effects) this.requireEnvironment(effect.targetId);
     this.transitions.set(transition.id, structuredClone(transition));
   }
@@ -365,6 +390,11 @@ export class SyntheticKernel {
 
   process(processId: string): SyntheticProcessSpec {
     return structuredClone(this.requireProcess(processId));
+  }
+
+  processAccount(processId: string): string {
+    this.requireProcess(processId);
+    return this.processAccounts.get(processId) ?? processId;
   }
 
   setProcessState(
@@ -537,6 +567,7 @@ export class SyntheticKernel {
       .sort((left, right) => left.id.localeCompare(right.id))) {
       const snapshot: SyntheticProcessSnapshot = {
         id: process.id,
+        account: this.processAccount(process.id),
         role: process.role,
         uid: process.uid,
         ownerUid: processOwnerUid(process),
@@ -901,10 +932,8 @@ export class SyntheticKernel {
       throw new Error("synthetic Process runner is not attached");
     }
     const source = this.requireProcess(sourceProcessId);
-    const template = this.selectDelegate(input.runAs, processOwnerUid(source));
-    const target = template.process;
-    this.delegateSpecs.delete(template.account);
-    this.addProcess(target);
+    const template = this.selectDelegate(input.runAs, source);
+    const target = this.spawnDelegateProcess(template);
     this.processParents.set(target.id, sourceProcessId);
     this.recordSemanticEvent?.({
       type: "process.spawned",
@@ -937,6 +966,7 @@ export class SyntheticKernel {
     const delegation: SyntheticDelegationSnapshot = {
       callId,
       runId,
+      account: template.account,
       sourceProcessId,
       targetProcessId: target.id,
       state: "in_progress",
@@ -1114,7 +1144,9 @@ export class SyntheticKernel {
       const trigger = transition.after;
       const outcome = trigger.outcome ?? "success";
       if (
-        trigger.processId !== processId
+        (trigger.processId !== undefined && trigger.processId !== processId)
+        || (trigger.account !== undefined
+          && trigger.account !== this.processAccount(processId))
         || trigger.tool !== toolName
         || (outcome === "success" && isError)
         || (outcome === "error" && !isError)
@@ -1159,22 +1191,47 @@ export class SyntheticKernel {
 
   private selectDelegate(
     account: string | undefined,
-    ownerUid: number,
+    source: SyntheticProcessSpec,
   ): SyntheticDelegateSpec {
-    const candidates = account
-      ? [this.delegateSpecs.get(account)].filter(
-        (value): value is SyntheticDelegateSpec => value !== undefined,
-      )
-      : [...this.delegateSpecs.values()];
-    const delegate = candidates.find((candidate) => (
-      processOwnerUid(candidate.process) === ownerUid
-    ));
-    if (!delegate) {
-      throw new Error(account
-        ? "unknown or unavailable agent account: " + account
-        : "no synthetic delegate is available for this owner");
+    if (!account) {
+      const inheritedAccount = this.processAccount(source.id);
+      return {
+        account: inheritedAccount,
+        process: {
+          ...structuredClone(source),
+          id: "proc:" + inheritedAccount,
+          role: "worker",
+        },
+        systemPrompt: DEFAULT_INHERITED_DELEGATE_PROMPT,
+        maxTurns: DEFAULT_INHERITED_DELEGATE_MAX_TURNS,
+      };
+    }
+
+    const delegate = this.delegateSpecs.get(account);
+    if (!delegate || processOwnerUid(delegate.process) !== processOwnerUid(source)) {
+      throw new Error("unknown or unavailable agent account: " + account);
     }
     return structuredClone(delegate);
+  }
+
+  private spawnDelegateProcess(
+    template: SyntheticDelegateSpec,
+  ): SyntheticProcessSpec {
+    let spawnCount = (this.delegateSpawnCounts.get(template.account) ?? 0) + 1;
+    let processId = spawnCount === 1
+      ? template.process.id
+      : template.process.id + ":" + spawnCount;
+    while (
+      this.processes.has(processId)
+      || (processId !== template.process.id && this.hasDelegateProcess(processId))
+    ) {
+      spawnCount += 1;
+      processId = template.process.id + ":" + spawnCount;
+    }
+    this.delegateSpawnCounts.set(template.account, spawnCount);
+    const process = { ...structuredClone(template.process), id: processId };
+    this.registerProcess(process, template.account);
+    return process;
   }
 
   private requireCapability(processId: string, capability: string): void {
@@ -1200,6 +1257,12 @@ export class SyntheticKernel {
     if (!this.processes.has(processId) && !this.hasDelegateProcess(processId)) {
       throw new Error("Unknown synthetic process: " + processId);
     }
+  }
+
+  private requireConfiguredAccount(account: string): void {
+    const configured = this.delegateSpecs.has(account)
+      || [...this.processAccounts.values()].includes(account);
+    if (!configured) throw new Error("Unknown synthetic account: " + account);
   }
 
   private hasDelegateProcess(processId: string): boolean {
@@ -1304,6 +1367,9 @@ function parseResponsibilityWait(args: string[]): ParsedResponsibilityWait {
       if (Number.isNaN(untilMs)) throw new Error("invalid wait time: " + value);
     } else if (option === "--blocker") blocker = value;
     else throw new Error("unexpected wait option: " + option);
+  }
+  if (untilMs === undefined && blocker === undefined) {
+    throw new Error("wait requires --until ISO or --blocker TEXT");
   }
   const result: ParsedResponsibilityWait = { id };
   if (untilMs !== undefined) result.untilMs = untilMs;
@@ -1558,7 +1624,8 @@ function r12yUsage(): string {
     "  r12y create --title TITLE [--details JSON] [--priority PRIORITY] [--dedupe KEY]",
     "  r12y update ID --json PATCH",
     "  r12y start ID",
-    "  r12y wait ID [--until ISO] [--blocker TEXT]",
+    "  r12y wait ID --until ISO [--blocker TEXT]",
+    "  r12y wait ID --blocker TEXT",
     "  r12y resolve ID [--json RESOLUTION]",
     "  r12y cancel ID [--json RESOLUTION]",
     "",

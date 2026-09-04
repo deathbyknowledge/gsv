@@ -230,6 +230,11 @@ function selectResponse(messages: FakeMessage[]): FakeResponse {
         },
       },
       {
+        id: "yield-for-release-workers",
+        name: "Shell",
+        arguments: { input: "yield" },
+      },
+      {
         id: "read-initial-release-health",
         name: "Read",
         arguments: {
@@ -267,6 +272,11 @@ function selectResponse(messages: FakeMessage[]): FakeResponse {
         },
       },
       {
+        id: "yield-for-canary-worker",
+        name: "Shell",
+        arguments: { input: "yield" },
+      },
+      {
         id: "wait-canary-window",
         name: "Shell",
         arguments: {
@@ -294,6 +304,11 @@ function selectResponse(messages: FakeMessage[]): FakeResponse {
           input: "proc delegate --as promotion-operator --responsibility r12y:00000000-0000-4000-8000-000000000001 'Independent monitoring now shows checkout-2026.09.02-rc2 healthy in canary. Promote that candidate and report the action without claiming final stability.'",
           target: "gsv",
         },
+      },
+      {
+        id: "yield-for-promotion-worker",
+        name: "Shell",
+        arguments: { input: "yield" },
       },
       {
         id: "wait-production-window",
@@ -434,6 +449,13 @@ function selectResponse(messages: FakeMessage[]): FakeResponse {
     }
     if (resultCount === 4) {
       return {
+        id: "yield-for-checkout-worker",
+        name: "Shell",
+        arguments: { input: "yield" },
+      };
+    }
+    if (resultCount === 5) {
+      return {
         id: "inspect-initial-checkout-health",
         name: "Read",
         arguments: {
@@ -442,7 +464,7 @@ function selectResponse(messages: FakeMessage[]): FakeResponse {
         },
       };
     }
-    if (resultCount === 5) {
+    if (resultCount === 6) {
       return {
         id: "wait-for-first-checkout-window",
         name: "Shell",
@@ -452,14 +474,14 @@ function selectResponse(messages: FakeMessage[]): FakeResponse {
         },
       };
     }
-    if (resultCount === 6) {
+    if (resultCount === 7) {
       return {
         id: "yield-for-first-checkout-window",
         name: "Shell",
         arguments: { input: "yield" },
       };
     }
-    if (resultCount === 7) {
+    if (resultCount === 8) {
       return {
         id: "inspect-first-checkout-window",
         name: "Read",
@@ -469,7 +491,7 @@ function selectResponse(messages: FakeMessage[]): FakeResponse {
         },
       };
     }
-    if (resultCount === 8) {
+    if (resultCount === 9) {
       return {
         id: "wait-for-second-checkout-window",
         name: "Shell",
@@ -479,14 +501,14 @@ function selectResponse(messages: FakeMessage[]): FakeResponse {
         },
       };
     }
-    if (resultCount === 9) {
+    if (resultCount === 10) {
       return {
         id: "yield-for-second-checkout-window",
         name: "Shell",
         arguments: { input: "yield" },
       };
     }
-    if (resultCount === 10) {
+    if (resultCount === 11) {
       return {
         id: "inspect-second-checkout-window",
         name: "Read",
@@ -496,7 +518,7 @@ function selectResponse(messages: FakeMessage[]): FakeResponse {
         },
       };
     }
-    if (resultCount === 11) {
+    if (resultCount === 12) {
       return {
         id: "resolve-checkout-incident",
         name: "Shell",
@@ -536,6 +558,13 @@ function selectResponse(messages: FakeMessage[]): FakeResponse {
       };
     }
     if (resultCount === 2) {
+      return {
+        id: "yield-for-incident-worker",
+        name: "Shell",
+        arguments: { input: "yield" },
+      };
+    }
+    if (resultCount === 3) {
       return {
         id: "resolve-incident",
         name: "Shell",
@@ -739,6 +768,7 @@ function selectCompetingIncidentResponse(
       `proc delegate --as initial-planner --responsibility r12y:00000000-0000-4000-8000-000000000001 'Prepare but do not apply the queued change. Facts: initial_incident=${incident} initial_service=${service} initial_change=${change}.'`,
       "gsv",
     ),
+    fakeShell("competing-ship-yield-initial-delegates", "yield"),
     fakeShell(
       "competing-ship-wait-decision",
       `r12y wait r12y:00000000-0000-4000-8000-000000000001 --until ${decisionAt} --blocker 'awaiting shared change-window priority decision'`,
@@ -782,6 +812,7 @@ function selectCompetingIncidentResponse(
         `proc delegate --as priority-responder --responsibility r12y:00000000-0000-4000-8000-000000000002 'Contain only the selected critical incident. Facts: priority_incident=${priorityIncident} priority_service=${priorityService} priority_change=${priorityChange}.'`,
         "gsv",
       ),
+      fakeShell("competing-ship-yield-priority-delegate", "yield"),
       fakeShell(
         "competing-ship-wait-verification",
         `r12y wait r12y:00000000-0000-4000-8000-000000000002 --until ${verificationAt} --blocker 'awaiting independent dual-service recovery evidence'`,
@@ -933,6 +964,7 @@ function selectServiceAccountResponse(
       `proc delegate --as identity-reviewer --responsibility r12y:00000000-0000-4000-8000-000000000001 'Verify identity and scope read-only. Facts: request_id=${request} external_handle=${requireFakeFact(externalHandle, "external_handle")} claimed_email=${requireFakeFact(claimedEmail, "claimed_email")} channel_id=${requireFakeFact(channelId, "channel_id")} requested_role=${requireFakeFact(role, "requested_role")} security_ticket=${requireFakeFact(securityTicket, "security_ticket")} contract_id=${requireFakeFact(contractId, "contract_id")} sponsor_id=${requireFakeFact(sponsorId, "sponsor_id")}.'`,
       "gsv",
     ),
+    fakeShell("service-ship-yield-identity", "yield"),
     fakeShell(
       "service-ship-wait-decision",
       `r12y wait r12y:00000000-0000-4000-8000-000000000001 --until ${approvalAt} --blocker 'awaiting authoritative service access decision'`,
@@ -947,6 +979,7 @@ function selectServiceAccountResponse(
       `proc delegate --as service-access-admin --responsibility r12y:00000000-0000-4000-8000-000000000001 'Apply the authoritative disposition without exceeding its scope. Facts: disposition=${disposition} request_id=${request} member_id=${memberId} channel_id=${channelId} requested_role=${role}.'`,
       "gsv",
     ));
+    calls.push(fakeShell("service-ship-yield-admin", "yield"));
     if (disposition === "approved") {
       const confirmationAt = requireFakeFact(
         transcriptFact(transcript, "confirmation_at"),

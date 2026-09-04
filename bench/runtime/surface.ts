@@ -191,6 +191,7 @@ class SyntheticEpisode {
     request: SyntheticDelegateRunRequest,
   ): Promise<SyntheticProcessRunOutcome> {
     const process = this.kernel.process(request.processId);
+    const processAccount = this.kernel.processAccount(request.processId);
     const epoch = this.processEpoch(request);
     const messages = epoch.messages;
     const systemPrompt = epoch.systemPrompt;
@@ -335,6 +336,7 @@ class SyntheticEpisode {
           this.log.push({
             type: "tool.call",
             processId: request.processId,
+            account: processAccount,
             name: call.name,
             arguments: args,
           });
@@ -349,6 +351,7 @@ class SyntheticEpisode {
           this.log.push({
             type: "tool.result",
             processId: request.processId,
+            account: processAccount,
             name: call.name,
             content: "message send and yield must be issued separately from other tool actions",
             isError: true,
@@ -363,6 +366,7 @@ class SyntheticEpisode {
         this.log.push({
           type: "tool.call",
           processId: request.processId,
+          account: processAccount,
           name: runControl.toolCall.name,
           arguments: args,
         });
@@ -379,6 +383,7 @@ class SyntheticEpisode {
           this.log.push({
             type: "tool.result",
             processId: request.processId,
+            account: processAccount,
             name: "Shell",
             content: result.error,
             isError: true,
@@ -413,6 +418,7 @@ class SyntheticEpisode {
           this.log.push({
             type: "tool.result",
             processId: request.processId,
+            account: processAccount,
             name: "Shell",
             content: terminalError,
             isError: true,
@@ -438,6 +444,7 @@ class SyntheticEpisode {
             this.log.push({
               type: "tool.result",
               processId: request.processId,
+              account: processAccount,
               name: "Shell",
               content: deliveryError,
               isError: true,
@@ -464,6 +471,7 @@ class SyntheticEpisode {
           this.log.push({
             type: "tool.result",
             processId: request.processId,
+            account: processAccount,
             name: "Shell",
             content,
             isError: false,
@@ -489,6 +497,7 @@ class SyntheticEpisode {
         this.log.push({
           type: "tool.result",
           processId: request.processId,
+          account: processAccount,
           name: "Shell",
           content: "Run yielded",
           isError: false,
@@ -504,6 +513,7 @@ class SyntheticEpisode {
         this.log.push({
           type: "tool.call",
           processId: request.processId,
+          account: processAccount,
           name: call.name,
           arguments: args,
         });
@@ -516,6 +526,7 @@ class SyntheticEpisode {
           this.log.push({
             type: "tool.result",
             processId: request.processId,
+            account: processAccount,
             name: call.name,
             content,
             isError: true,
@@ -534,6 +545,7 @@ class SyntheticEpisode {
         this.log.push({
           type: "tool.result",
           processId: request.processId,
+          account: processAccount,
           name: call.name,
           content: artifactLogContent(content),
           isError: result.isError,

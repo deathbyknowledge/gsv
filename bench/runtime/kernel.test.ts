@@ -144,7 +144,7 @@ describe("SyntheticKernel", () => {
       transitions: [{
         id: "operator-action",
         after: {
-          processId: "proc:operator",
+          account: "operator",
           tool: "Shell",
         },
         effects: [{
@@ -451,6 +451,19 @@ describe("SyntheticKernel", () => {
     });
     expect(created.isError).toBe(false);
 
+    const invalidWait = await kernel.dispatch("ship", "Shell", {
+      input: "r12y wait r12y:00000000-0000-4000-8000-000000000001",
+      target: "gsv",
+    });
+    expect(invalidWait).toMatchObject({
+      isError: true,
+      value: {
+        error: expect.stringContaining(
+          "wait requires --until ISO or --blocker TEXT",
+        ),
+      },
+    });
+
     const updated = await kernel.dispatch("ship", "Shell", {
       input: "r12y update r12y:00000000-0000-4000-8000-000000000001 --json '{\"priority\":\"low\",\"state\":\"waiting\",\"blocker\":\"superseded\"}'",
       target: "gsv",
@@ -518,7 +531,7 @@ describe("SyntheticKernel", () => {
       target: "gsv",
     });
     await kernel.dispatch("ship", "Shell", {
-      input: "r12y wait r12y:00000000-0000-4000-8000-000000000002",
+      input: "r12y wait r12y:00000000-0000-4000-8000-000000000002 --blocker 'awaiting priority incident'",
       target: "gsv",
     });
 
@@ -628,6 +641,82 @@ describe("SyntheticKernel", () => {
       type: "ipc.completed",
       targetProcessId: "proc:researcher",
       resultText: "release is healthy",
+    });
+
+    const agents = await kernel.dispatch("ship", "Shell", {
+      input: "proc agents --json",
+      target: "gsv",
+    });
+    expect(agents).toMatchObject({
+      isError: false,
+      value: {
+        output: expect.stringContaining('"account":"researcher"'),
+      },
+    });
+
+    kernel.setDelegateRunner(async () => ({
+      status: "returned",
+      resultText: "second opinion is healthy",
+    }));
+    const retry = await kernel.dispatch("ship", "Shell", {
+      input: "proc delegate --as researcher 'independently recheck the release'",
+      target: "gsv",
+    });
+    await kernel.settleDelegations();
+
+    expect(retry).toMatchObject({
+      isError: false,
+      value: {
+        output: expect.stringContaining("pid=proc:researcher:2"),
+      },
+    });
+    expect(kernel.snapshot().delegations[1]).toMatchObject({
+      account: "researcher",
+      targetProcessId: "proc:researcher:2",
+      state: "completed",
+      resultText: "second opinion is healthy",
+    });
+  });
+
+  it("inherits the source account when delegation omits --as", async () => {
+    const kernel = SyntheticKernel.fromSpec({
+      runtime: {
+        now: "2026-09-01T12:00:00.000Z",
+        timezone: "UTC",
+      },
+      processes: [{
+        id: "ship",
+        role: "ship",
+        uid: 1000,
+        username: "personal-agent",
+        gids: [1000],
+        capabilities: ["shell.exec", "proc.spawn", "proc.ipc.call"],
+      }],
+    }, { targets: [], transitions: [], events: [] });
+    kernel.setDelegateRunner(async (request) => {
+      expect(request).toMatchObject({
+        processId: "proc:personal-agent",
+        maxTurns: 16,
+      });
+      return { status: "returned", resultText: "done" };
+    });
+
+    const result = await kernel.dispatch("ship", "Shell", {
+      input: "proc delegate 'handle the bounded task'",
+      target: "gsv",
+    });
+    await kernel.settleDelegations();
+
+    expect(result.isError).toBe(false);
+    expect(kernel.snapshot().delegations[0]).toMatchObject({
+      account: "personal-agent",
+      targetProcessId: "proc:personal-agent",
+      state: "completed",
+    });
+    expect(kernel.snapshot().processes["proc:personal-agent"]).toMatchObject({
+      account: "personal-agent",
+      uid: 1000,
+      role: "worker",
     });
   });
 });

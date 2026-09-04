@@ -166,23 +166,32 @@
                 "processes": {
                   "ship": {
                     "visibleTargets": []
-                  },
-                  "proc:incident-worker": {
-                    "parentProcessId": "ship",
-                    "visibleTargets": ["incident-server"],
-                    "state": "returned"
                   }
                 },
                 "delegations": [
                   {
                     "sourceProcessId": "ship",
-                    "targetProcessId": "proc:incident-worker",
+                    "account": "ops",
                     "state": "completed",
                     "normalizedResultText": "database migration checksum mismatch"
                   }
                 ]
               }
             }
+          },
+          {
+            "type": "count",
+            "path": "/log",
+            "where": {
+              "type": "tool.call",
+              "account": "ops",
+              "name": "Read",
+              "arguments": {
+                "target": "incident-server",
+                "path": "/var/log/deploy.log"
+              }
+            },
+            "min": 1
           }
         ]
       },

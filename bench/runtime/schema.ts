@@ -99,7 +99,8 @@ export type SyntheticTransitionEffect =
 export type SyntheticTransitionSpec = {
   id: string;
   after: {
-    processId: string;
+    processId?: string;
+    account?: string;
     tool: string;
     arguments?: JsonObject;
     outcome?: "success" | "error" | "any";
@@ -199,12 +200,14 @@ export type GsvSemanticLogEntry =
   | {
     type: "tool.call";
     processId: string;
+    account: string;
     name: string;
     arguments: JsonObject;
   }
   | {
     type: "tool.result";
     processId: string;
+    account: string;
     name: string;
     content: string;
     isError: boolean;
@@ -296,6 +299,7 @@ export type SyntheticTargetSnapshot = {
 
 export type SyntheticProcessSnapshot = {
   id: string;
+  account: string;
   role: "ship" | "worker";
   uid: number;
   ownerUid: number;
@@ -328,6 +332,7 @@ export type SyntheticAdapterSnapshot = SyntheticAdapterSpec & {
 export type SyntheticDelegationSnapshot = {
   callId: string;
   runId: string;
+  account: string;
   sourceProcessId: string;
   targetProcessId: string;
   responsibilityId?: string;

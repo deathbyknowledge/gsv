@@ -405,7 +405,7 @@
                 "path": "/log",
                 "where": {
                   "type": "tool.call",
-                  "processId": "proc:${initial_service}-triage",
+                  "account": "initial-triage",
                   "name": "Read",
                   "arguments": {
                     "target": "${initial_service}-customer-browser",
@@ -460,7 +460,7 @@
                 "path": "/log",
                 "where": {
                   "type": "tool.call",
-                  "processId": "proc:${initial_service}-triage",
+                  "account": "initial-triage",
                   "name": "Read",
                   "arguments": {
                     "target": "shared-dependency-diagnostics",
@@ -516,7 +516,7 @@
                 "path": "/log",
                 "where": {
                   "type": "tool.call",
-                  "processId": "proc:${priority_service}-responder",
+                  "account": "priority-responder",
                   "name": "Read",
                   "arguments": {
                     "target": "${priority_service}-approval",
@@ -541,7 +541,7 @@
                   "path": "/log",
                   "where": {
                     "type": "tool.call",
-                    "processId": "proc:${priority_service}-responder",
+                    "account": "priority-responder",
                     "arguments": {
                       "target": "${priority_service}-control",
                       "input": "incidentctl contain ${priority_incident} --change ${priority_change_id}"
@@ -555,7 +555,7 @@
                   "items": [
                     {
                       "type": "tool.call",
-                      "processId": "proc:${priority_service}-responder",
+                      "account": "priority-responder",
                       "name": "Read",
                       "arguments": {
                         "target": "${priority_service}-approval",
@@ -564,7 +564,7 @@
                     },
                     {
                       "type": "tool.call",
-                      "processId": "proc:${priority_service}-responder",
+                      "account": "priority-responder",
                       "name": "Shell",
                       "arguments": {
                         "target": "${priority_service}-control",
@@ -764,12 +764,12 @@
                 "value": [
                   {
                     "sourceProcessId": "ship",
-                    "targetProcessId": "proc:${initial_service}-triage",
+                    "account": "initial-triage",
                     "state": "completed"
                   },
                   {
                     "sourceProcessId": "ship",
-                    "targetProcessId": "proc:${initial_service}-planner",
+                    "account": "initial-planner",
                     "state": "completed"
                   }
                 ]
@@ -874,7 +874,7 @@
                 "value": [
                   {
                     "sourceProcessId": "ship",
-                    "targetProcessId": "proc:${priority_service}-responder",
+                    "account": "priority-responder",
                     "state": "completed"
                   }
                 ]
@@ -1140,7 +1140,7 @@
                     },
                     {
                       "type": "tool.call",
-                      "processId": "proc:${priority_service}-responder",
+                      "account": "priority-responder",
                       "name": "Shell",
                       "arguments": {
                         "target": "${priority_service}-control",

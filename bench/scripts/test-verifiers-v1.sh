@@ -95,7 +95,7 @@ jq -s -e '
     "gpu-lab ready",
     "release deployed"
   ] and
-  ([.[].traces[0].calls | length] | add) == 30
+  ([.[].traces[0].calls | length] | add) == 32
 ' "$trace" >/dev/null
 
 family_trace="$smoke_dir/family-output/gsv-family-smoke/traces.jsonl"

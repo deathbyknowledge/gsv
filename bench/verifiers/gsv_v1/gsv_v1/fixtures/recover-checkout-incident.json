@@ -330,22 +330,31 @@
                 "processes": {
                   "ship": {
                     "visibleTargets": ["checkout-monitor"]
-                  },
-                  "proc:checkout-ops": {
-                    "parentProcessId": "ship",
-                    "visibleTargets": ["checkout-production"],
-                    "state": "returned"
                   }
                 },
                 "delegations": [
                   {
                     "sourceProcessId": "ship",
-                    "targetProcessId": "proc:checkout-ops",
+                    "account": "ops",
                     "state": "completed"
                   }
                 ]
               }
             }
+          },
+          {
+            "type": "count",
+            "path": "/log",
+            "where": {
+              "type": "tool.call",
+              "account": "ops",
+              "name": "Shell",
+              "arguments": {
+                "target": "checkout-production",
+                "input": "releasectl rollback checkout-2026.08.31"
+              }
+            },
+            "min": 1
           }
         ]
       },
