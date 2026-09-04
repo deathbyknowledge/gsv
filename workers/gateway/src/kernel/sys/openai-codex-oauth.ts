@@ -79,7 +79,7 @@ export async function startOpenAICodexDeviceFlow(
   const intervalSeconds = positiveNumberField(json, "interval") ?? 5;
   const expiresInSeconds = positiveNumberField(json, "expires_in") ?? OPENAI_CODEX_DEVICE_EXPIRES_SECONDS;
   if (!deviceAuthId || !userCode) {
-    throw new Error(`Invalid OpenAI Codex device code response: ${JSON.stringify(json)}`);
+    throw new Error(`Invalid OpenAI Codex device code response: ${describeMissingFields(json, ["device_auth_id", "user_code"])}`);
   }
 
   return {
@@ -116,7 +116,7 @@ export async function pollOpenAICodexDeviceFlow(
     const authorizationCode = stringField(json, "authorization_code");
     const codeVerifier = stringField(json, "code_verifier");
     if (!authorizationCode || !codeVerifier) {
-      throw new Error(`Invalid OpenAI Codex device token response: ${JSON.stringify(json)}`);
+      throw new Error(`Invalid OpenAI Codex device token response: ${describeMissingFields(json, ["authorization_code", "code_verifier"])}`);
     }
     return {
       status: "complete",
@@ -152,6 +152,16 @@ export async function exchangeOpenAICodexAuthorizationCode(
     code_verifier: codeVerifier,
     redirect_uri: OPENAI_CODEX_DEVICE_REDIRECT_URI,
   }, "exchange", fetcher);
+}
+
+/**
+ * Names the expected fields a response lacks. Auth responses carry tokens, so
+ * errors describe their shape and never echo their contents.
+ */
+function describeMissingFields(json: JsonObject, expected: readonly string[]): string {
+  const missing = expected.filter((field) => !stringField(json, field) && positiveNumberField(json, field) === null);
+  const present = Object.keys(json).sort();
+  return `missing ${missing.length > 0 ? missing.join(", ") : "expected fields"}; received ${present.length > 0 ? present.join(", ") : "an empty object"}`;
 }
 
 export async function refreshOpenAICodexAccount(
@@ -233,7 +243,10 @@ async function exchangeOpenAICodexToken(
   const idToken = stringField(json, "id_token");
   const expiresIn = positiveNumberField(json, "expires_in");
   if (!accessToken || !refreshToken || expiresIn === null) {
-    throw new Error(`OpenAI Codex token ${operation} response missing fields: ${JSON.stringify(json)}`);
+    const expected = fallbackRefreshToken
+      ? ["access_token", "expires_in"]
+      : ["access_token", "refresh_token", "expires_in"];
+    throw new Error(`OpenAI Codex token ${operation} response ${describeMissingFields(json, expected)}`);
   }
   const accountId = extractOpenAICodexAccountId(accessToken)
     ?? (idToken ? extractOpenAICodexAccountId(idToken) : null);
