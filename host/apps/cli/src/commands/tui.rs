@@ -2089,9 +2089,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        apply_signal, target_environments, file_inspection_request, history_has_more,
-        history_moments, key_action, media_artifact, parse_file_listing, parse_file_reference,
-        parse_shell_response, reconnect_delay, trace_actions, trace_deliveries, truncate_chars,
+        apply_signal, file_inspection_request, history_has_more, history_moments, key_action,
+        media_artifact, parse_file_listing, parse_file_reference, parse_shell_response,
+        reconnect_delay, target_environments, trace_actions, trace_deliveries, truncate_chars,
         FileInspectionKind, RuntimeEvent, SessionEvent, ShellResponse, SignalGate,
     };
 
