@@ -90,7 +90,9 @@ export class ProcessRun {
         error: parsed.error,
       };
     }
-    if (parsed.command.action === "yield" && assistantText.trim()) {
+    const activeRun = this.host.runs.active;
+    const isHumanFacingRun = activeRun?.runId === runId && !activeRun.returnToCaller;
+    if (parsed.command.action === "yield" && isHumanFacingRun && assistantText.trim()) {
       return {
         ok: false,
         action: "yield",

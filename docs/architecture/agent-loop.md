@@ -151,7 +151,8 @@ The model response can contain text, thinking blocks, and tool calls:
   commits one canonical user-visible message and any media registered by `message attach`. The run
   continues, allowing multiple exactly-once messages from one run.
 - A direct `yield` finishes the run. Composing the final send as `message send ... && yield` avoids
-  another generation; a bare `yield` finishes without another Message.
+  another generation; a bare `yield` finishes without another Message and is valid only when the
+  same assistant turn contains no meaningful text.
 - Once the Process validates a message command, the originating client receives
   `message.started` and `message.delta`. Adapters wait for `message.committed`.
 - Ordinary assistant text in a human-facing run that stops without yielding causes one `[GSV EVENT]`
