@@ -95,7 +95,7 @@ implemented syscall patterns.
 
 ```json
 {
-  "deviceId": "macbook",
+  "targetId": "macbook",
   "description": "Personal MacBook I use for everything",
   "platform": "darwin",
   "version": "0.1.0",
@@ -239,7 +239,7 @@ Use a device target for local source trees, private networks, machine-local cred
 For `fs.*` and `shell.exec`, the Gateway reads `target` at dispatch time.
 
 - `target: "gsv"` runs the native handler.
-- `target: "<deviceId>"` verifies access, online state, and `implements`, then forwards the same syscall to the device.
+- `target: "<targetId>"` verifies access, online state, and `implements`, then forwards the same syscall to the device.
 - `shell.exec` with `sessionId` routes through the persisted shell session owner; `target` is not required for continuation.
 - `target` is removed before native execution or device forwarding, so implementations receive the same syscall-specific arguments.
 

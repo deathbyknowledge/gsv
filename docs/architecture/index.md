@@ -131,7 +131,7 @@ compatibility. A registered endpoint connects over WebSocket with a descriptor
 containing its id, platform, version, owner, and `implements` list such as:
 
 ```json
-{ "deviceId": "macbook", "implements": ["fs.*", "shell.exec", "net.fetch"] }
+{ "targetId": "macbook", "implements": ["fs.*", "shell.exec", "net.fetch"] }
 ```
 
 Agents always see the same tool names: `Read`, `Write`, `Edit`, `Delete`,
