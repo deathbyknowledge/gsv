@@ -44,7 +44,8 @@ describe("gateway authentication integration", () => {
       peer: peerInfo("old-protocol"),
     })).rejects.toMatchObject({
       code: 102,
-      message: "Unsupported protocol version",
+      message: expect.stringContaining("requires protocol 4"),
+      details: { requestedProtocol: 1, supportedProtocol: 4 },
     });
 
     await expect(connectOnce({
