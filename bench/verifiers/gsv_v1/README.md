@@ -125,6 +125,18 @@ validity check if either occurs. A scenario directory can be paired with its
 fixture count to run a suite. Keep the scenario set, rollout count, concurrency,
 sampling profile, and timeout fixed when comparing model quality or throughput.
 
+Set `GSV_BENCH_REASONING_EFFORTS_JSON` to a complete model-to-effort map when a
+matrix must pin provider reasoning modes. If set, every requested model must
+have a non-empty value; the runner passes each value as `reasoning_effort` and
+records the complete map in `run.json`. For example:
+
+    GSV_BENCH_REASONING_EFFORTS_JSON='{
+      "deepseek/deepseek-v4-flash-0731": "max",
+      "qwen/qwen3.8-max": "xhigh"
+    }' \
+      ./bench/scripts/run-verifiers-v1-matrix.sh \
+        deepseek/deepseek-v4-flash-0731 qwen/qwen3.8-max
+
 For an OpenAI-compatible server such as a locally forwarded SGLang endpoint,
 set `GSV_BENCH_CLIENT_BASE_URL` and name its credential environment variable
 with `GSV_BENCH_CLIENT_API_KEY_VAR` (default `OPENAI_API_KEY`). The runner checks

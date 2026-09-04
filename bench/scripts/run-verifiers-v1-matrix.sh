@@ -16,6 +16,7 @@ model_concurrency="${GSV_BENCH_MODEL_CONCURRENCY:-1}"
 parallel_models="${GSV_BENCH_PARALLEL_MODELS:-1}"
 timeout_seconds="${GSV_BENCH_TIMEOUT_SECONDS:-900}"
 max_tokens="${GSV_BENCH_MAX_TOKENS:-32768}"
+reasoning_efforts_json="${GSV_BENCH_REASONING_EFFORTS_JSON:-}"
 client_base_url="${GSV_BENCH_CLIENT_BASE_URL:-}"
 client_api_key_var="${GSV_BENCH_CLIENT_API_KEY_VAR:-OPENAI_API_KEY}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -54,6 +55,24 @@ done
 if [[ ! "$max_tokens" =~ ^[1-9][0-9]*$ ]]; then
   echo "GSV_BENCH_MAX_TOKENS must be a positive integer" >&2
   exit 2
+fi
+if [[ -n "$reasoning_efforts_json" ]]; then
+  if ! jq -e '
+    type == "object" and
+    all(to_entries[]; (.value | type) == "string" and .value != "")
+  ' <<<"$reasoning_efforts_json" >/dev/null; then
+    echo "GSV_BENCH_REASONING_EFFORTS_JSON must be a JSON object of non-empty strings" >&2
+    exit 2
+  fi
+  for model in "${models[@]}"; do
+    if ! jq -e --arg model "$model" 'has($model)' \
+      <<<"$reasoning_efforts_json" >/dev/null; then
+      echo "GSV_BENCH_REASONING_EFFORTS_JSON has no setting for $model" >&2
+      exit 2
+    fi
+  done
+else
+  reasoning_efforts_json="{}"
 fi
 sampling_args=(--sampling.max-tokens "$max_tokens")
 client_args=()
@@ -102,6 +121,7 @@ fi
   printf 'parallel_models=%q\n' "$parallel_models"
   printf 'timeout_seconds=%q\n' "$timeout_seconds"
   printf 'max_tokens=%q\n' "$max_tokens"
+  printf 'reasoning_efforts_json=%q\n' "$reasoning_efforts_json"
   printf 'client_base_url=%q\n' "$client_base_url"
   printf 'client_api_key_var=%q\n' "$client_api_key_var"
   printf 'gsv_git_commit=%q\n' "$gsv_git_commit"
@@ -117,6 +137,7 @@ jq -n \
   --arg scenario "$scenario" \
   --arg scenario_sha256 "$scenario_sha256" \
   --arg max_tokens "$max_tokens" \
+  --argjson reasoning_efforts "$reasoning_efforts_json" \
   --arg client_base_url "$client_base_url" \
   --arg client_api_key_var "$client_api_key_var" \
   --arg gsv_git_commit "$gsv_git_commit" \
@@ -138,6 +159,7 @@ jq -n \
     parallel_models: $parallel_models,
     timeout_seconds: $timeout_seconds,
     max_tokens: ($max_tokens | tonumber),
+    reasoning_efforts: $reasoning_efforts,
     client: (if $client_base_url == "" then null else {
       base_url: $client_base_url,
       api_key_var: $client_api_key_var
@@ -166,8 +188,18 @@ run_model() {
   local model="$1"
   local slug
   local log
+  local reasoning_effort
+  local -a model_sampling_args
   slug="$(slugify "$model")"
   log="$matrix_dir/logs/$slug.log"
+  reasoning_effort="$(
+    jq -r --arg model "$model" '.[$model] // empty' \
+      <<<"$reasoning_efforts_json"
+  )"
+  model_sampling_args=("${sampling_args[@]}")
+  if [[ -n "$reasoning_effort" ]]; then
+    model_sampling_args+=(--sampling.reasoning-effort "$reasoning_effort")
+  fi
   echo "starting $model"
   if (
     cd "$package_dir"
@@ -177,7 +209,7 @@ run_model() {
       --env.timeout.episode "$((timeout_seconds + 120))" \
       --env.agent.timeout.rollout "$timeout_seconds" \
       --env.taskset.scenario-path "$frozen_scenario" \
-      "${sampling_args[@]}" \
+      "${model_sampling_args[@]}" \
       "${client_args[@]}" \
       --no-serve --no-push --no-rich \
       --num-tasks "$num_tasks" \
