@@ -205,7 +205,7 @@ as a transport timeout.
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env and built-in commands such as `codemode`, `mail`, `mcp`, and `wiki`. Device targets run a real local shell through the CLI. Device start calls return within a runtime-owned wait budget. If the command is still running, the result includes a `sessionId`; later calls with that `sessionId` poll or write stdin. |
+| `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env and built-in commands such as `codemode`, `cp`, `dd`, `mail`, `mcp`, and `wiki`. Device targets run a real local shell through the CLI. Device start calls return within a runtime-owned wait budget. If the command is still running, the result includes a `sessionId`; later calls with that `sessionId` poll or write stdin. |
 
 ```ts
 type ShellSyscalls = {
@@ -1441,7 +1441,7 @@ Runtime behavior:
 type AiSyscalls = {
   "ai.tools": {
     args: Empty;
-    result: { tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>; devices: Array<{ id: string; implements: string[]; description?: string; platform?: string }> };
+    result: { tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>; targets: Array<{ id: string; implements: string[]; label?: string; description?: string; platform?: string; }> };
   };
 
   "ai.config": {
