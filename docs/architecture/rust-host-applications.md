@@ -35,6 +35,15 @@ owns presentation state but no authentication, gateway connection, Process,
 conversation, or machine lifecycle. Its effects are interpreted by the client
 backend that owns those operations.
 
+Inside `tui-core`, `model.rs` holds the public types (moments, media,
+environments, actions, effects), `state.rs` the private interaction state the
+`App` composes, and `paths.rs`, `render.rs`, `text.rs`, and `demo.rs` the
+helper groups. The `App` implementation lives under `app/`, one module per
+concern: `dispatch`, `draft`, `files`, `search`, `runs`, `history`,
+`actions`, `browse`, `environments`, and `render`, with its tests beside it.
+Every module imports the crate prelude; nothing outside `lib.rs` is public
+beyond `App`, the model types, and `Theme`.
+
 The host applications, helpers, and shared crates form one Cargo workspace
 rooted at `host/`. Its lockfile and build output belong to that boundary;
 `workers/ripgit/` remains an independent Rust project.
