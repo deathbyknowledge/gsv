@@ -587,23 +587,6 @@
             "processId": "ship",
             "delayMs": 300000,
             "content": "Priority decision: incident ${priority_incident} affecting ${priority_service} is now critical and owns the single change slot. The shared cause is ${shared_cause}; containment change ${priority_change_id} supersedes prepared change ${initial_change_id}. Downgrade the ${initial_incident} record to low priority, record ${priority_incident} as its blocker, and cancel it without executing the old plan. Retain ${priority_incident} as critical durable work and use a bounded responder. Current event facts: priority_incident=${priority_incident} priority_service=${priority_service} priority_change=${priority_change_id} verification_at=${verification_at}.",
-            "when": {
-              "targets": {
-                "${initial_service}-change-control": {
-                  "state": {
-                    "planPrepared": true,
-                    "changeApplied": false
-                  }
-                }
-              },
-              "responsibilities": {
-                "references": {
-                  "initial": {
-                    "state": "waiting"
-                  }
-                }
-              }
-            },
             "effects": [
               {
                 "type": "target.online",
@@ -641,18 +624,6 @@
                   "state": {
                     "contained": true,
                     "lastChange": "${priority_change_id}"
-                  }
-                }
-              },
-              "responsibilities": {
-                "references": {
-                  "initial": {
-                    "state": "cancelled",
-                    "priority": "low"
-                  },
-                  "priority": {
-                    "state": "waiting",
-                    "priority": "critical"
                   }
                 }
               }

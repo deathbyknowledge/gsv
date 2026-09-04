@@ -686,6 +686,35 @@ def test_service_account_family_covers_authorized_and_withheld_outcomes() -> Non
     assert optional_target_counts == {0, 1, 2, 3}
 
 
+def test_scheduled_events_do_not_depend_on_responsibility_scoring_state() -> None:
+    families = Path(__file__).resolve().parents[1] / "gsv_v1" / "families"
+    scenarios = [
+        scenario
+        for family in sorted(families.glob("*.json"))
+        for scenario in load_scenarios(family)
+    ]
+
+    for scenario in scenarios:
+        for event in scenario["components"]["events"]:
+            assert "responsibilities" not in event.get("when", {})
+
+    competing = load_scenarios(families / "competing-incidents.json")[0]
+    priority_decision = next(
+        event
+        for event in competing["components"]["events"]
+        if event["id"].endswith("-priority-inversion")
+    )
+    assert "when" not in priority_decision
+
+    service_scenarios = load_scenarios(
+        families / "service-account-operation.json"
+    )
+    assert all(
+        "when" not in scenario["components"]["events"][0]
+        for scenario in service_scenarios
+    )
+
+
 def test_stateful_outcome_rubrics_do_not_require_one_resolution_vocabulary() -> None:
     families = (
         Path(__file__).resolve().parents[1] / "gsv_v1" / "families"

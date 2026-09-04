@@ -747,6 +747,30 @@ function selectCompetingIncidentResponse(
     transcriptFact(transcript, "decision_at"),
     "decision_at",
   );
+  const delegateSynchronizationId = "competing-ship-yield-initial-results";
+  const synchronizedInitialDelegates = transcript.includes(
+    `\"id\":\"${delegateSynchronizationId}\"`,
+  );
+  const decisionDeferred = transcript.includes(
+    '"id":"competing-ship-wait-decision"',
+  );
+  const decisionYielded = transcript.includes(
+    '"id":"competing-ship-yield-decision"',
+  );
+  const initialDelegatesComplete = [
+    "Delegated task from process `proc:" + service + "-triage` finished.",
+    "Delegated task from process `proc:" + service + "-planner` finished.",
+  ].every((message) => transcript.includes(message));
+  if (
+    !priorityIncident
+    && decisionDeferred
+    && initialDelegatesComplete
+    && !synchronizedInitialDelegates
+  ) {
+    return fakeShell(delegateSynchronizationId, "yield");
+  }
+  const scriptedResultCount = resultCount
+    - (synchronizedInitialDelegates && decisionYielded ? 1 : 0);
   const calls: FakeToolCall[] = [
     fakeShell(
       "competing-ship-ack",
@@ -840,7 +864,8 @@ function selectCompetingIncidentResponse(
       ),
     );
   }
-  return calls[resultCount] ?? { text: "Unexpected competing-incident state" };
+  return calls[scriptedResultCount]
+    ?? { text: "Unexpected competing-incident state" };
 }
 
 function selectServiceAccountResponse(

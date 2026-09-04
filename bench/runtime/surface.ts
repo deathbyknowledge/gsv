@@ -117,10 +117,12 @@ export async function runGsvSurfaceScenario(
       maxTurns: scenario.maxTurns,
     });
     if (outcome.status !== "yielded") break;
-    const event = kernel.advanceAfterYield(scenario.entryProcessId);
-    const hasProcessEvent = event
-      ? false
-      : await kernel.waitForProcessEvent(scenario.entryProcessId);
+    const hasProcessEvent = await kernel.waitForProcessEvent(
+      scenario.entryProcessId,
+    );
+    const event = hasProcessEvent
+      ? null
+      : kernel.advanceAfterYield(scenario.entryProcessId);
     if (!event && !hasProcessEvent) break;
     if (event?.evictProcess) {
       episode.evictProcess(scenario.entryProcessId, run);

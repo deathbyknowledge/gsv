@@ -550,13 +550,6 @@
                     "rollbackCompleted": true
                   }
                 }
-              },
-              "responsibilities": {
-                "references": {
-                  "incident": {
-                    "state": "waiting"
-                  }
-                }
               }
             },
             "effects": [
@@ -624,13 +617,6 @@
                     "status": "deployed"
                   }
                 }
-              },
-              "responsibilities": {
-                "references": {
-                  "incident": {
-                    "state": "waiting"
-                  }
-                }
               }
             },
             "effects": [
@@ -677,13 +663,6 @@
                 "${service}-promotion": {
                   "state": {
                     "promotedRelease": "${candidate_release}"
-                  }
-                }
-              },
-              "responsibilities": {
-                "references": {
-                  "incident": {
-                    "state": "waiting"
                   }
                 }
               }

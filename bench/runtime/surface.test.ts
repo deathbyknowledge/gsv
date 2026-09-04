@@ -574,9 +574,19 @@ describe("GSV Process surface", () => {
   });
 
   it("wakes an idle Ship when an asynchronous delegated result arrives", async () => {
+    const baseScenario = await fixture("delegate-incident-from-slack.json");
     const scenario = {
-      ...await fixture("delegate-incident-from-slack.json"),
-      maxRuns: 2,
+      ...baseScenario,
+      components: {
+        ...baseScenario.components,
+        events: [{
+          id: "scheduled-review",
+          processId: "ship",
+          delayMs: 300_000,
+          content: "The scheduled incident review is now available.",
+        }],
+      },
+      maxRuns: 3,
     };
     const shipResponses = [
       assistant(toolCall("create-responsibility", "Shell", {
@@ -588,6 +598,11 @@ describe("GSV Process surface", () => {
         target: "gsv",
       })),
       assistant(toolCall("wait-for-worker", "Shell", { input: "yield" })),
+      assistant(toolCall("defer-for-review", "Shell", {
+        input: "r12y wait r12y:00000000-0000-4000-8000-000000000001 --until 2026-09-01T12:05:00.000Z --blocker 'awaiting scheduled incident review'",
+        target: "gsv",
+      })),
+      assistant(toolCall("wait-for-review", "Shell", { input: "yield" })),
       assistant(toolCall("resolve", "Shell", {
         input: "r12y resolve r12y:00000000-0000-4000-8000-000000000001 --json '{\"cause\":\"database migration checksum mismatch\"}'",
         target: "gsv",
@@ -603,6 +618,8 @@ describe("GSV Process surface", () => {
     let checkpointInFlight = false;
     let checkpointsOverlapped = false;
     let sawHandleBeforeResult = false;
+    let sawWorkerBeforeScheduledReview = false;
+    let sawScheduledReviewAfterWorker = false;
 
     const artifact = await runGsvSurfaceScenario(
       scenario,
@@ -623,6 +640,22 @@ describe("GSV Process surface", () => {
             && !transcript.includes("Delegated task from process");
           setImmediate(releaseWorker);
         }
+        if (next.content.some((block) => (
+          block.type === "toolCall" && block.id === "defer-for-review"
+        ))) {
+          const transcript = JSON.stringify(context.messages);
+          sawWorkerBeforeScheduledReview = transcript.includes(
+            "Delegated task from process",
+          ) && !transcript.includes("scheduled incident review");
+        }
+        if (next.content.some((block) => (
+          block.type === "toolCall" && block.id === "resolve"
+        ))) {
+          const transcript = JSON.stringify(context.messages);
+          sawScheduledReviewAfterWorker = transcript.includes(
+            "Delegated task from process",
+          ) && transcript.includes("scheduled incident review");
+        }
         return next;
       },
       async () => {
@@ -640,6 +673,8 @@ describe("GSV Process surface", () => {
       entry.type === "ipc.completed"
     ));
     expect(sawHandleBeforeResult).toBe(true);
+    expect(sawWorkerBeforeScheduledReview).toBe(true);
+    expect(sawScheduledReviewAfterWorker).toBe(true);
     expect(checkpointsOverlapped).toBe(false);
     expect(handleIndex).toBeGreaterThanOrEqual(0);
     expect(completionIndex).toBeGreaterThan(handleIndex);
@@ -647,7 +682,14 @@ describe("GSV Process surface", () => {
       .toEqual([
         { run: 1, processId: "ship", status: "yielded" },
         { run: 2, processId: "ship", status: "yielded" },
+        { run: 3, processId: "ship", status: "yielded" },
       ]);
+    expect(artifact.world.externalEvents).toEqual([{
+      id: "scheduled-review",
+      processId: "ship",
+      state: "applied",
+      appliedAtMs: Date.parse("2026-09-01T12:05:00.000Z"),
+    }]);
     expect(artifact.world.delegations[0]).toMatchObject({
       state: "completed",
       resultText: "database migration checksum mismatch",
