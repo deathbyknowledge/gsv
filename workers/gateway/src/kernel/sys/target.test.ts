@@ -7,8 +7,8 @@ import {
   handleSysTargetUpdate,
 } from "./target";
 
-type FakeDeviceRecord = {
-  device_id: string;
+type FakeTargetRecord = {
+  target_id: string;
   owner_uid: number;
   label: string;
   description: string;
@@ -24,10 +24,10 @@ type FakeDeviceRecord = {
 
 function makeContext(
   uid: number,
-  records: FakeDeviceRecord[],
+  records: FakeTargetRecord[],
   accessibleDeviceIds: string[] = [],
 ): KernelContext {
-  const byId = new Map(records.map((record) => [record.device_id, record]));
+  const byId = new Map(records.map((record) => [record.target_id, record]));
 
   const devices = {
     listForUser() {
@@ -49,7 +49,7 @@ function makeContext(
         return false;
       }
       if (patch.label !== undefined) {
-        record.label = patch.label.trim().slice(0, 120) || record.device_id;
+        record.label = patch.label.trim().slice(0, 120) || record.target_id;
       }
       if (patch.description !== undefined) {
         record.description = patch.description.trim().slice(0, 500);
@@ -129,15 +129,15 @@ function makeContext(
       revokeToken,
     },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    devices: devices as KernelContext["devices"],
+    targets: devices as KernelContext["targets"],
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as KernelContext;
 }
 
 describe("sys.target handlers", () => {
-  const records: FakeDeviceRecord[] = [
+  const records: FakeTargetRecord[] = [
     {
-      device_id: "node-alpha",
+      target_id: "node-alpha",
       owner_uid: 1000,
       label: "Alpha",
       description: "Linux home server",
@@ -151,7 +151,7 @@ describe("sys.target handlers", () => {
       disconnected_at: null,
     },
     {
-      device_id: "node-beta",
+      target_id: "node-beta",
       owner_uid: 1000,
       label: "Beta",
       description: "",
@@ -251,7 +251,7 @@ describe("sys.target handlers", () => {
       targetId: "node-alpha",
       revokedTokens: 1,
     });
-    expect(ctx.devices.remove).toHaveBeenCalledWith("node-alpha");
+    expect(ctx.targets.remove).toHaveBeenCalledWith("node-alpha");
     expect(ctx.auth.revokeToken).toHaveBeenCalledWith("tok-active-alpha", "machine forgotten", 1000);
     expect(ctx.auth.revokeToken).toHaveBeenCalledTimes(1);
   });
@@ -262,6 +262,6 @@ describe("sys.target handlers", () => {
     expect(() => handleSysTargetDelete({ targetId: "node-alpha" }, ctx)).toThrow(
       "Permission denied: machine forgetting is owner-managed",
     );
-    expect(ctx.devices.remove).not.toHaveBeenCalled();
+    expect(ctx.targets.remove).not.toHaveBeenCalled();
   });
 });

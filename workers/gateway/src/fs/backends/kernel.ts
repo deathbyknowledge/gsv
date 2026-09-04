@@ -440,8 +440,8 @@ export class KernelMountBackend implements MountBackend {
       return undefined;
     }
 
-    if (rel.startsWith("devices/")) {
-      return this.readSysDevice(rel.slice("devices/".length));
+    if (rel.startsWith("targets/")) {
+      return this.readSysTarget(rel.slice("targets/".length));
     }
 
     if (rel.startsWith("capabilities/")) {
@@ -451,24 +451,24 @@ export class KernelMountBackend implements MountBackend {
     return undefined;
   }
 
-  private readSysDevice(rel: string): string | undefined {
+  private readSysTarget(rel: string): string | undefined {
     if (!this.kernel) return undefined;
     const parts = rel.split("/");
-    const deviceId = parts[0];
+    const targetId = parts[0];
     const attr = parts.slice(1).join("/");
 
-    if (!deviceId) return undefined;
+    if (!targetId) return undefined;
 
-    const device = this.kernel.devices.get(deviceId);
+    const device = this.kernel.targets.get(targetId);
     if (!device) return undefined;
 
-    if (!this.kernel.devices.canAccess(deviceId, this.identity.uid, this.identity.gids)) {
+    if (!this.kernel.targets.canAccess(targetId, this.identity.uid, this.identity.gids)) {
       return undefined;
     }
 
     if (!attr) {
       return [
-        `device_id=${device.device_id}`,
+        `target_id=${device.target_id}`,
         `owner_uid=${device.owner_uid}`,
         `description=${device.description}`,
         `platform=${device.platform}`,
@@ -780,7 +780,7 @@ export class KernelMountBackend implements MountBackend {
   private async isVirtualDir(path: string): Promise<boolean> {
     const virtualDirs = [
       "/proc", "/dev", "/sys",
-      "/sys/config", "/sys/users", "/sys/devices", "/sys/capabilities",
+      "/sys/config", "/sys/users", "/sys/targets", "/sys/capabilities",
       "/var", "/var/spool", "/var/spool/cron", "/var/log", "/var/log/gsv",
       "/var/lib", "/var/lib/gsv",
       "/etc/cron.d",
@@ -809,9 +809,9 @@ export class KernelMountBackend implements MountBackend {
       }
     }
 
-    if (path.startsWith("/sys/devices/") && !path.slice("/sys/devices/".length).includes("/")) {
-      const deviceId = path.slice("/sys/devices/".length);
-      return this.kernel.devices.get(deviceId) !== null;
+    if (path.startsWith("/sys/targets/") && !path.slice("/sys/targets/".length).includes("/")) {
+      const targetId = path.slice("/sys/targets/".length);
+      return this.kernel.targets.get(targetId) !== null;
     }
 
     if (path.startsWith("/sys/users/") && !path.slice("/sys/users/".length).includes("/")) {
@@ -911,9 +911,9 @@ export class KernelMountBackend implements MountBackend {
       }
     }
 
-    if (path === "/sys/devices") {
-      const devices = this.kernel.devices.listForUser(this.identity.uid, this.identity.gids);
-      return devices.map((d) => d.device_id).sort();
+    if (path === "/sys/targets") {
+      const devices = this.kernel.targets.listForUser(this.identity.uid, this.identity.gids);
+      return devices.map((d) => d.target_id).sort();
     }
 
     if (path === "/sys/capabilities") {
@@ -964,10 +964,10 @@ export class KernelMountBackend implements MountBackend {
       return this.kernel?.cron?.listSystemCrontabs().map(encodePathSegment).sort() ?? [];
     }
 
-    if (path.startsWith("/sys/devices/")) {
-      const parts = path.slice("/sys/devices/".length).split("/");
+    if (path.startsWith("/sys/targets/")) {
+      const parts = path.slice("/sys/targets/".length).split("/");
       if (parts.length === 1 && parts[0]) {
-        const device = this.kernel.devices.get(parts[0]);
+        const device = this.kernel.targets.get(parts[0]);
         if (device) return ["description", "implements", "owner", "platform", "status", "version"];
       }
     }

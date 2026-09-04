@@ -1801,7 +1801,7 @@ export class ProcessRun {
       const updated = this.host.mutateActiveRun(runId, (current) => ({
         ...current,
         tools: toolsResult.tools,
-        devices: toolsResult.devices,
+        targets: toolsResult.targets,
         mcpServers: toolsResult.mcpServers,
       }));
       if (!updated) return null;
@@ -1917,7 +1917,7 @@ export class ProcessRun {
     const contextSnapshot = await this.host.settings.resolveAiContext(this.runAbortSignal(runId));
     const projectedRun = this.host.mutateActiveRun(runId, (current) => ({
       ...current,
-      devices: contextSnapshot.devices,
+      devices: contextSnapshot.targets,
       mcpServers: contextSnapshot.mcpServers,
     }));
     if (!projectedRun) return null;

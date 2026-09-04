@@ -2,7 +2,7 @@ type KernelTestValue<T = string | number | boolean | null | undefined> = T;
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "./context";
-import type { DeviceRecord } from "./devices";
+import type { TargetRecord } from "./target-registry";
 import type { OAuthAccountRecord } from "./oauth-store";
 import { bodyFromBytes, bodyToBytes } from "@humansandmachines/gsv/protocol";
 
@@ -49,12 +49,12 @@ beforeEach(() => {
   seedBuiltinSkillsToHomeMock.mockResolvedValue({ username: "sam", copied: 0, skipped: 0 });
 });
 
-function makeDevice(partial: Partial<DeviceRecord> & { device_id: string }): DeviceRecord {
+function makeDevice(partial: Partial<TargetRecord> & { target_id: string }): TargetRecord {
   const now = 1_800_000_000_000;
   return {
-    device_id: partial.device_id,
+    target_id: partial.target_id,
     owner_uid: partial.owner_uid ?? 1000,
-    label: partial.label ?? partial.device_id,
+    label: partial.label ?? partial.target_id,
     description: partial.description ?? "",
     implements: partial.implements ?? ["shell.exec"],
     platform: partial.platform ?? "linux",
@@ -116,7 +116,7 @@ function makeContext(
         processId === options.processId ? ownerUid : null
       ),
     },
-    devices: {
+    targets: {
       listForUser: vi.fn(() => []),
     },
     auth: {
@@ -269,12 +269,12 @@ describe("handleAiTools", () => {
 
   it("keeps routable tool schemas stable as online targets change", async () => {
     const records = Array.from({ length: 12 }, (_value, index) =>
-      makeDevice({ device_id: `node-${String(index + 1).padStart(2, "0")}` })
+      makeDevice({ target_id: `node-${String(index + 1).padStart(2, "0")}` })
     );
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       ...makeContext("ready"),
-      devices: {
+      targets: {
         listForUser: vi.fn(() => records),
       },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -290,12 +290,12 @@ describe("handleAiTools", () => {
     expect(description).not.toContain("node-01");
     expect(description).not.toContain("node-11");
     expect(description).not.toContain("node-12");
-    expect(result.devices).toHaveLength(12);
+    expect(result.targets).toHaveLength(12);
 
     // SAFETY: fixture replaces only the typed device-store method used by handleAiTools.
     const withoutTargets = await handleAiTools({
       ...ctx,
-      devices: {
+      targets: {
         listForUser: vi.fn(() => []),
       },
     } as KernelContext);
@@ -351,7 +351,7 @@ describe("handleAiConfig", () => {
       procs: {
         getOwnerUid: vi.fn(() => ownerUid),
       },
-      devices: {
+      targets: {
         listForUser: vi.fn(() => []),
       },
       adapters: {
@@ -450,9 +450,9 @@ describe("handleAiConfig", () => {
       "config/ai/context.d/00-runtime.md": "Date: {{current.date}}",
     });
     // SAFETY: fixture implements the device-store method exercised by handleAiContext.
-    ctx.devices = {
-      listForUser: vi.fn(() => [makeDevice({ device_id: "desktop" })]),
-    } as KernelContext["devices"];
+    ctx.targets = {
+      listForUser: vi.fn(() => [makeDevice({ target_id: "desktop" })]),
+    } as KernelContext["targets"];
     // SAFETY: fixture implements the MCP store method exercised by handleAiContext.
     ctx.mcpServers = {
       list: vi.fn(() => [{
@@ -473,7 +473,7 @@ describe("handleAiConfig", () => {
     const result = await handleAiContext({}, ctx);
 
     expect(result).toMatchObject({
-      devices: [expect.objectContaining({ id: "desktop" })],
+      targets: [expect.objectContaining({ id: "desktop" })],
       mcpServers: ["Search"],
       system: { timezone: "Europe/Amsterdam" },
       systemContextFiles: [{ name: "00-runtime.md", text: "Date: {{current.date}}" }],
@@ -496,7 +496,7 @@ describe("handleAiConfig", () => {
       const result = await handleAiContext({}, makeAiConfigContext({}, { ripgit }));
 
       expect(result).toMatchObject({
-        devices: [],
+        targets: [],
         mcpServers: [],
         skillIndexMode: "summary",
       });
@@ -1187,13 +1187,13 @@ describe("handleAiConfig", () => {
     });
 
     const device = makeDevice({
-      device_id: "linux-machine",
+      target_id: "linux-machine",
       implements: ["net.fetch"],
     });
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       ...makeAiConfigContext(),
-      devices: {
+      targets: {
         canAccess: vi.fn(() => true),
         get: vi.fn(() => device),
         listForUser: vi.fn(() => [device]),
@@ -1211,7 +1211,7 @@ describe("handleAiConfig", () => {
         },
       },
     }, ctx, {
-      requestDevice: vi.fn(),
+      requestTarget: vi.fn(),
     });
 
     expect(result.text).toBe("pong");
@@ -1239,7 +1239,7 @@ describe("handleAiConfig", () => {
       timestamp: 1,
     }));
     const device = makeDevice({
-      device_id: "linux-machine",
+      target_id: "linux-machine",
       implements: ["net.fetch"],
     });
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -1252,7 +1252,7 @@ describe("handleAiConfig", () => {
           }),
         ],
       }),
-      devices: {
+      targets: {
         canAccess: vi.fn(() => true),
         get: vi.fn(() => device),
         listForUser: vi.fn(() => [device]),
@@ -1271,7 +1271,7 @@ describe("handleAiConfig", () => {
         },
       },
     }, ctx, {
-      requestDevice: vi.fn(),
+      requestTarget: vi.fn(),
     });
 
     expect(result.text).toBe("pong");

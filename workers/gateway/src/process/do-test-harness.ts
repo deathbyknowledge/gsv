@@ -265,7 +265,7 @@ export function generationRun(
     runId,
     config,
     tools: [],
-    devices: [],
+    targets: [],
     systemPrompt: "Test system prompt.",
     approvalPolicy: { default: "auto", rules: [] },
     ...overrides,

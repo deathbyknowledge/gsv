@@ -378,7 +378,7 @@ describe("response handling", () => {
             generationStreaming: "off",
           },
           tools: offeredTools("Shell"),
-          devices: [],
+          targets: [],
           mcpServers: [],
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },

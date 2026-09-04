@@ -17,7 +17,7 @@ import {
 import * as inferenceService from "../../inference/service";
 import * as sharedUtils from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
-import type { DeviceRecord } from "../../kernel/devices";
+import type { TargetRecord } from "../../kernel/target-registry";
 import type { ProcessRecord } from "../../kernel/processes";
 import type { FederationContactRecord } from "../../kernel/federation-store";
 import type { SurfaceRouteRecord } from "../../kernel/surface-routes";
@@ -116,12 +116,12 @@ const wikiApplyBodySchema = z.object({
   }))),
 });
 
-function makeDevice(partial: Partial<DeviceRecord> & { device_id: string }): DeviceRecord {
+function makeDevice(partial: Partial<TargetRecord> & { target_id: string }): TargetRecord {
   const now = 1_800_000_000_000;
   return {
-    device_id: partial.device_id,
+    target_id: partial.target_id,
     owner_uid: partial.owner_uid ?? IDENTITY.uid,
-    label: partial.label ?? partial.device_id,
+    label: partial.label ?? partial.target_id,
     description: partial.description ?? "",
     implements: partial.implements ?? ["shell.exec"],
     platform: partial.platform ?? "linux",
@@ -202,7 +202,7 @@ function makeContext(options?: {
   capabilities?: string[];
   config?: Record<string, string>;
   procs?: Partial<KernelContext["procs"]>;
-  devices?: Partial<KernelContext["devices"]>;
+  targets?: Partial<KernelContext["targets"]>;
   auth?: Partial<KernelContext["auth"]>;
   caps?: Partial<KernelContext["caps"]>;
   schedules?: Partial<KernelContext["schedules"]>;
@@ -296,7 +296,7 @@ function makeContext(options?: {
           .sort((left, right) => left.key.localeCompare(right.key));
       },
     }),
-    devices: focusedFixture<KernelContext["devices"]>(options?.devices ?? {}),
+    targets: focusedFixture<KernelContext["targets"]>(options?.targets ?? {}),
     procs: focusedFixture<KernelContext["procs"]>({
       get() {
         return {
@@ -1060,7 +1060,7 @@ describe("native shell capability discovery", () => {
   it("discovers only caller-visible connected targets", async () => {
     const devices = {
       listForUser: vi.fn(() => [makeDevice({
-        device_id: "studio-mac",
+        target_id: "studio-mac",
         label: "Studio MacBook",
         description: "Laptop used for design work.",
         platform: "darwin",
@@ -1069,11 +1069,11 @@ describe("native shell capability discovery", () => {
     };
     const visible = await handleShellExec(
       { input: "man --search -- 'work on studio macbook'" },
-      makeContext({ capabilities: ["shell.exec", "sys.target.list"], devices }),
+      makeContext({ capabilities: ["shell.exec", "sys.target.list"], targets: devices }),
     );
     const hidden = await handleShellExec(
       { input: "man --search -- 'work on studio macbook'" },
-      makeContext({ capabilities: ["shell.exec"], devices }),
+      makeContext({ capabilities: ["shell.exec"], targets: devices }),
     );
 
     expect(visible.ok).toBe(true);
@@ -1276,7 +1276,7 @@ describe("media native commands", () => {
     });
 
     const device = makeDevice({
-      device_id: "linux-machine",
+      target_id: "linux-machine",
       implements: ["net.fetch"],
     });
     const devices = {
@@ -1284,13 +1284,13 @@ describe("media native commands", () => {
       get: vi.fn(() => device),
       listForUser: vi.fn(() => [device]),
     };
-    const requestDevice = vi.fn();
+    const requestTarget = vi.fn();
 
     const result = await handleShellExec(
       { input: "llm --model-id local hello" },
       makeContext({
         capabilities: ["ai.text.generate"],
-        devices,
+        targets: devices,
         config: {
           "users/1000/ai/models": JSON.stringify({
             version: 1,
@@ -1309,7 +1309,7 @@ describe("media native commands", () => {
       }),
       {
         netFetchTransport: {
-          requestDevice,
+          requestTarget,
         },
       },
     );
@@ -1414,14 +1414,14 @@ describe("targets native command", () => {
   it("lists targets with pagination and keeps devices as an alias", async () => {
     const records = [
       makeDevice({
-        device_id: "macbook",
+        target_id: "macbook",
         label: "Work MacBook",
         description: "Laptop",
         platform: "darwin",
         implements: ["shell.exec", "fs.read"],
       }),
       makeDevice({
-        device_id: "rearden:brave",
+        target_id: "rearden:brave",
         label: "Browser",
         platform: "browser-extension",
         implements: ["shell.exec", "fs.*"],
@@ -1433,7 +1433,7 @@ describe("targets native command", () => {
 
     const result = await handleShellExec(
       { input: "targets list --limit 2" },
-      makeContext({ capabilities: ["sys.target.list"], devices }),
+      makeContext({ capabilities: ["sys.target.list"], targets: devices }),
     );
 
     expect(result.ok).toBe(true);
@@ -1443,24 +1443,24 @@ describe("targets native command", () => {
 
     const browserSearch = await handleShellExec(
       { input: "targets search browser-extension" },
-      makeContext({ capabilities: ["sys.target.list"], devices }),
+      makeContext({ capabilities: ["sys.target.list"], targets: devices }),
     );
     expect(browserSearch.ok).toBe(true);
-    expect(browserSearch.stdout).toContain("rearden:brave\tdevice\tonline\tbrowser-extension");
+    expect(browserSearch.stdout).toContain("rearden:brave\tmachine\tonline\tbrowser-extension");
 
     const alias = await handleShellExec(
       { input: "devices search macbook" },
-      makeContext({ capabilities: ["sys.target.list"], devices }),
+      makeContext({ capabilities: ["sys.target.list"], targets: devices }),
     );
     expect(alias.ok).toBe(true);
-    expect(alias.stdout).toContain("macbook\tdevice\tonline\tdarwin");
+    expect(alias.stdout).toContain("macbook\tmachine\tonline\tdarwin");
   });
 
   it("keeps registered offline targets visible by default", async () => {
     const devices = {
       listForUser: vi.fn(() => [
         makeDevice({
-          device_id: "macbook",
+          target_id: "macbook",
           label: "Work MacBook",
           platform: "darwin",
           online: false,
@@ -1469,12 +1469,12 @@ describe("targets native command", () => {
         }),
       ]),
     };
-    const ctx = makeContext({ capabilities: ["sys.target.list"], devices });
+    const ctx = makeContext({ capabilities: ["sys.target.list"], targets: devices });
 
     const result = await handleShellExec({ input: "targets list" }, ctx);
 
     expect(result.ok).toBe(true);
-    expect(result.stdout).toContain("macbook\tdevice\toffline\tdarwin");
+    expect(result.stdout).toContain("macbook\tmachine\toffline\tdarwin");
 
     const onlineOnly = await handleShellExec({ input: "targets list --online" }, ctx);
     expect(onlineOnly.ok).toBe(true);
@@ -1483,7 +1483,7 @@ describe("targets native command", () => {
 
   it("shows target details", async () => {
     const record = makeDevice({
-      device_id: "macbook",
+      target_id: "macbook",
       label: "Work MacBook",
       description: "Laptop",
       platform: "darwin",
@@ -1499,12 +1499,12 @@ describe("targets native command", () => {
 
     const result = await handleShellExec(
       { input: "targets show macbook" },
-      makeContext({ capabilities: ["sys.target.get"], devices, auth }),
+      makeContext({ capabilities: ["sys.target.get"], targets: devices, auth }),
     );
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("target: macbook");
-    expect(result.stdout).toContain("provider: device");
+    expect(result.stdout).toContain("provider: machine");
     expect(result.stdout).toContain("owner: sam (uid 1000)");
     expect(result.stdout).toContain("- shell.exec");
     expect(result.stdout).toContain("- fs.read");
@@ -2663,7 +2663,7 @@ describe("fs copy", () => {
       input: `cp ${contact.id}:/resources/resource:shared /home/sam/copy-test/contact-source.txt`,
     }, ctx, {
       fsTransport: {
-        requestDevice: vi.fn(),
+        requestTarget: vi.fn(),
         openContactSource,
       },
     });
@@ -2684,7 +2684,7 @@ describe("fs copy", () => {
       customMetadata: { uid: "1000", gid: "1000", mode: "644" },
     });
     const ctx = makeContext();
-    ctx.devices = focusedFixture<KernelContext["devices"]>({
+    ctx.targets = focusedFixture<KernelContext["targets"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
     });
@@ -2694,7 +2694,7 @@ describe("fs copy", () => {
       source: { target: "gsv", path: "/home/sam/copy-test/device-source.txt" },
       destination: { target: "rearden", path: "/tmp/device-destination.txt" },
     }, ctx, {
-      async requestDevice(deviceId, call, args, options) {
+      async requestTarget(deviceId, call, args, options) {
         expect(deviceId).toBe("rearden");
         if (call === "fs.transfer.stat") {
           throw new Error("No such file or directory: /tmp/device-destination.txt");
@@ -2730,7 +2730,7 @@ describe("fs copy", () => {
     const controller = new AbortController();
     const ctx = makeContext();
     ctx.requestSignal = controller.signal;
-    ctx.devices = focusedFixture<KernelContext["devices"]>({
+    ctx.targets = focusedFixture<KernelContext["targets"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
     });
@@ -2739,7 +2739,7 @@ describe("fs copy", () => {
       source: { target: "gsv", path: "/tmp/source.txt" },
       destination: { target: "rearden", path: "/tmp/destination.txt" },
     }, ctx, {
-      async requestDevice(_deviceId, _call, _args, options) {
+      async requestTarget(_deviceId, _call, _args, options) {
         requestSignal = options?.signal;
         return await new Promise((_resolve, reject) => {
           requestSignal?.addEventListener(
@@ -2766,7 +2766,7 @@ describe("fs copy", () => {
       customMetadata: { uid: "1000", gid: "1000", mode: "644" },
     });
     const ctx = makeContext();
-    ctx.devices = focusedFixture<KernelContext["devices"]>({
+    ctx.targets = focusedFixture<KernelContext["targets"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
     });
@@ -2774,7 +2774,7 @@ describe("fs copy", () => {
       source: { target: "gsv", path: "/home/sam/copy-test/device-send-fail.txt" },
       destination: { target: "rearden", path: "/tmp/device-destination.txt" },
     }, ctx, {
-      async requestDevice(deviceId, call) {
+      async requestTarget(deviceId, call) {
         expect(deviceId).toBe("rearden");
         if (call === "fs.transfer.stat") {
           return {
@@ -2798,7 +2798,7 @@ describe("fs copy", () => {
     const destinationKey = "home/sam/copy-test/from-device.txt";
     await env.STORAGE.delete(destinationKey);
     const ctx = makeContext();
-    ctx.devices = focusedFixture<KernelContext["devices"]>({
+    ctx.targets = focusedFixture<KernelContext["targets"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
     });
@@ -2807,7 +2807,7 @@ describe("fs copy", () => {
       source: { target: "rearden", path: "/tmp/source.txt" },
       destination: { target: "gsv", path: "/home/sam/copy-test/from-device.txt" },
     }, ctx, {
-      async requestDevice(deviceId, call, args) {
+      async requestTarget(deviceId, call, args) {
         expect(deviceId).toBe("rearden");
         if (call === "fs.transfer.stat") {
           return {
@@ -2849,7 +2849,7 @@ describe("fs copy", () => {
 
   it("returns device send failures when copying to gsv", async () => {
     const ctx = makeContext();
-    ctx.devices = focusedFixture<KernelContext["devices"]>({
+    ctx.targets = focusedFixture<KernelContext["targets"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
     });
@@ -2857,7 +2857,7 @@ describe("fs copy", () => {
       source: { target: "rearden", path: "/tmp/source.txt" },
       destination: { target: "gsv", path: "/home/sam/copy-test/from-device-fail.txt" },
     }, ctx, {
-      async requestDevice(deviceId, call) {
+      async requestTarget(deviceId, call) {
         expect(deviceId).toBe("rearden");
         if (call === "fs.transfer.stat") {
           return {
@@ -2879,7 +2879,7 @@ describe("fs copy", () => {
 
   it("streams device files directly to another device", async () => {
     const ctx = makeContext();
-    ctx.devices = focusedFixture<KernelContext["devices"]>({
+    ctx.targets = focusedFixture<KernelContext["targets"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
     });
@@ -2889,7 +2889,7 @@ describe("fs copy", () => {
       source: { target: "rearden", path: "/tmp/source.txt" },
       destination: { target: "browser", path: "/tmp/destination.txt" },
     }, ctx, {
-      async requestDevice(deviceId, call, _args, options) {
+      async requestTarget(deviceId, call, _args, options) {
         if (call === "fs.transfer.stat" && deviceId === "browser") {
           return {
             type: "res",

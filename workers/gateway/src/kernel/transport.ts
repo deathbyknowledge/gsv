@@ -36,7 +36,7 @@ import type {
   SyscallName,
 } from "../syscalls";
 import {
-  type FailedDeviceRoute,
+  type FailedTargetRoute,
   type RouteOrigin,
 } from "./routing";
 import {
@@ -71,7 +71,7 @@ import {
   requestAbortError,
 } from "./do-shared";
 import type {
-  DeviceRequestOptions,
+  TargetRequestOptions,
   FrameCancellationReason,
 } from "./do-shared";
 
@@ -320,8 +320,8 @@ handleRes(
     }
 
     if (
-      !this.isConnectionForDevice(connection, route.deviceId) ||
-      (route.driverConnectionId !== null && route.driverConnectionId !== connection.id)
+      !this.isConnectionForTarget(connection, route.targetId) ||
+      (route.peerConnectionId !== null && route.peerConnectionId !== connection.id)
     ) {
       return;
     }
@@ -338,7 +338,7 @@ handleRes(
         errFrame(
           wireEnvelope.id,
           502,
-          `Invalid response from device ${route.deviceId}: ${message}`,
+          `Invalid response from device ${route.targetId}: ${message}`,
         ),
       );
       this.sendError(
@@ -360,7 +360,7 @@ handleRes(
     if (route.call === "shell.exec") {
       // SAFETY: decodeWireResponse validated frame against route.call above.
       this.recordShellSessionFromResponse(
-        route.deviceId,
+        route.targetId,
         frame as ResponseFrame<"shell.exec">,
       );
     }
@@ -383,7 +383,7 @@ handleSig(
     const targetId = state?.peer && peerProvidesOperations(state.peer)
       ? state.peer.id
       : null;
-    if (!targetId || !this.isConnectionForDevice(connection, targetId)) {
+    if (!targetId || !this.isConnectionForTarget(connection, targetId)) {
       return;
     }
 
@@ -416,7 +416,7 @@ handleSig(
   }
 
 recordShellSessionFromResponse(
-    deviceId: string,
+    targetId: string,
     frame: ResponseFrame<"shell.exec">,
   ): void {
     if (!frame.ok) {
@@ -431,7 +431,7 @@ recordShellSessionFromResponse(
     }
 
     const status = shellStatusFromResult(data.status);
-    this.host.shellSessions.rememberDeviceSession(sessionId, deviceId, status, {
+    this.host.shellSessions.rememberDeviceSession(sessionId, targetId, status, {
       exitCode: data.status === "running" ? null : data.exitCode ?? null,
       error: data.status === "failed" ? data.error : null,
     });
@@ -507,11 +507,11 @@ closeFrameBodyChannel(connectionId: string): void {
     this.frameBodyChannels.delete(connectionId);
   }
 
-async requestDevice(
-    deviceId: string,
+async requestTarget(
+    targetId: string,
     call: "net.fetch",
     args: NetFetchArgs,
-    options: DeviceRequestOptions = {},
+    options: TargetRequestOptions = {},
   ): Promise<ResponseOkFrame<"net.fetch">> {
     const id = options.id ?? crypto.randomUUID();
     let cleanupPending: (() => void) | null = null;
@@ -525,17 +525,17 @@ async requestDevice(
       if (options.signal?.aborted) {
         throw requestAbortError(options.signal.reason);
       }
-      const device = this.host.devices.get(deviceId);
+      const device = this.host.targets.get(targetId);
       if (!device || !device.online) {
-        throw new Error(`Device offline: ${deviceId}`);
+        throw new Error(`Device offline: ${targetId}`);
       }
-      if (!this.host.devices.canHandle(deviceId, call)) {
-        throw new Error(`Device ${deviceId} does not implement ${call}`);
+      if (!this.host.targets.canHandle(targetId, call)) {
+        throw new Error(`Device ${targetId} does not implement ${call}`);
       }
 
-      const deviceConn = this.findDeviceConnection(deviceId);
+      const deviceConn = this.findTargetConnection(targetId);
       if (!deviceConn) {
-        throw new Error(`No active connection for device: ${deviceId}`);
+        throw new Error(`No active connection for device: ${targetId}`);
       }
 
       const pending = this.createPendingKernelResponse(id);
@@ -544,8 +544,8 @@ async requestDevice(
         id,
         call,
         origin: { type: "kernel", id },
-        deviceId,
-        driverConnectionId: deviceConn.id,
+        targetId,
+        peerConnectionId: deviceConn.id,
         ttlMs: options.ttlMs ?? 60_000,
       });
       if (options.signal?.aborted) {
@@ -568,8 +568,8 @@ async requestDevice(
             new Promise<never>((_, reject) => {
               onAbort = () => {
                 if (requestSent) {
-                  this.sendDeviceRequestCancel(
-                    deviceId,
+                  this.sendTargetRequestCancel(
+                    targetId,
                     deviceConn.id,
                     id,
                     normalizeRequestCancelReason(requestAbortError(options.signal?.reason).message),
@@ -607,22 +607,22 @@ async requestDevice(
     }
   }
 
-findDeviceConnection(deviceId: string): KernelConnection<ConnectionState> | null {
+findTargetConnection(targetId: string): KernelConnection<ConnectionState> | null {
     for (const [, conn] of this.host.connections) {
-      if (this.isConnectionForDevice(conn, deviceId)) {
+      if (this.isConnectionForTarget(conn, targetId)) {
         return conn;
       }
     }
     return null;
   }
 
-isConnectionForDevice(
+isConnectionForTarget(
     connection: KernelConnection<ConnectionState>,
-    deviceId: string,
+    targetId: string,
   ): boolean {
     const state = connection.state;
     return state?.step === "connected" &&
-      state.peer?.id === deviceId &&
+      state.peer?.id === targetId &&
       peerProvidesOperations(state.peer);
   }
 
@@ -630,8 +630,8 @@ async registerRouteWithExpiry(route: {
     id: string;
     call: SyscallName;
     origin: RouteOrigin;
-    deviceId: string;
-    driverConnectionId: string;
+    targetId: string;
+    peerConnectionId: string;
     ttlMs: number;
   }): Promise<{
     cancel: () => void;
@@ -648,8 +648,8 @@ async registerRouteWithExpiry(route: {
         route.id,
         route.call,
         route.origin,
-        route.deviceId,
-        route.driverConnectionId,
+        route.targetId,
+        route.peerConnectionId,
         { ttlMs: route.ttlMs, scheduleId },
       );
     } catch (error) {
@@ -738,9 +738,9 @@ cancelRequest(
       active.controller.abort(new Error(message));
     }
     if (route && ownsRoute) {
-      this.sendDeviceRequestCancel(
-        route.deviceId,
-        route.driverConnectionId,
+      this.sendTargetRequestCancel(
+        route.targetId,
+        route.peerConnectionId,
         requestId,
         message,
       );
@@ -772,16 +772,16 @@ cancelRequest(
     return true;
   }
 
-sendDeviceRequestCancel(
-    deviceId: string,
-    driverConnectionId: string | null,
+sendTargetRequestCancel(
+    targetId: string,
+    peerConnectionId: string | null,
     requestId: string,
     reason: string,
   ): void {
-    const connection = driverConnectionId
-      ? this.host.connections.get(driverConnectionId)
-      : this.findDeviceConnection(deviceId);
-    if (!connection || !this.isConnectionForDevice(connection, deviceId)) {
+    const connection = peerConnectionId
+      ? this.host.connections.get(peerConnectionId)
+      : this.findTargetConnection(targetId);
+    if (!connection || !this.isConnectionForTarget(connection, targetId)) {
       return;
     }
     try {
@@ -816,9 +816,9 @@ cancelRoutedBody(routeId: string, reason: string): void {
   async onRouteExpired(routeId: string): Promise<void> {
     const expired = this.host.routes.remove(routeId);
     if (!expired) return;
-    this.sendDeviceRequestCancel(
-      expired.deviceId,
-      expired.driverConnectionId,
+    this.sendTargetRequestCancel(
+      expired.targetId,
+      expired.peerConnectionId,
       routeId,
       "Request timed out",
     );
@@ -828,7 +828,7 @@ cancelRoutedBody(routeId: string, reason: string): void {
       type: "res",
       id: routeId,
       ok: false,
-      error: { code: 504, message: `Syscall ${expired.call} timed out (device: ${expired.deviceId})` },
+      error: { code: 504, message: `Syscall ${expired.call} timed out (device: ${expired.targetId})` },
     };
 
     this.deliverToOrigin(expired.origin, timeoutFrame);
@@ -882,16 +882,16 @@ createPendingKernelResponse(id: string): PendingKernelResponse {
     };
   }
 
-failRoutesForDevice(deviceId: string): void {
-    this.host.shellSessions.failForDevice(deviceId, "Device disconnected");
-    this.failDeviceRoutes(this.host.routes.failForDevice(deviceId));
+failRoutesForTarget(targetId: string): void {
+    this.host.shellSessions.failForDevice(targetId, "Device disconnected");
+    this.failTargetRoutes(this.host.routes.failForDevice(targetId));
   }
 
-failRoutesForDriverConnection(connectionId: string): void {
-    this.failDeviceRoutes(this.host.routes.failForDriverConnection(connectionId));
+failRoutesForPeerConnection(connectionId: string): void {
+    this.failTargetRoutes(this.host.routes.failForDriverConnection(connectionId));
   }
 
-failDeviceRoutes(failed: FailedDeviceRoute[]): void {
+failTargetRoutes(failed: FailedTargetRoute[]): void {
     for (const entry of failed) {
       this.cancelRoutedBody(entry.id, "Device disconnected");
       if (entry.scheduleId) {
@@ -902,7 +902,7 @@ failDeviceRoutes(failed: FailedDeviceRoute[]): void {
         type: "res",
         id: entry.id,
         ok: false,
-        error: { code: 503, message: `Device disconnected: ${entry.deviceId}` },
+        error: { code: 503, message: `Device disconnected: ${entry.targetId}` },
       };
       this.deliverToOrigin(entry.origin, errorFrame);
     }
@@ -911,9 +911,9 @@ failDeviceRoutes(failed: FailedDeviceRoute[]): void {
 failRoutesForConnection(connectionId: string): void {
     const failed = this.host.routes.failForConnection(connectionId);
     for (const entry of failed) {
-      this.sendDeviceRequestCancel(
-        entry.deviceId,
-        entry.driverConnectionId,
+      this.sendTargetRequestCancel(
+        entry.targetId,
+        entry.peerConnectionId,
         entry.id,
         "Origin disconnected",
       );

@@ -285,7 +285,7 @@ function targetToEntryOrNull(target: TargetDescriptor | null): TargetListEntry |
 }
 
 function targetToEntry(target: TargetDescriptor): TargetListEntry {
-  const provider = target.route.kind === "adapter" ? target.route.adapter : "device";
+  const provider = target.route.kind === "adapter" ? target.route.adapter : "machine";
   return {
     id: target.targetId,
     provider,
@@ -302,7 +302,7 @@ function targetToEntry(target: TargetDescriptor): TargetListEntry {
     lastSeenAt: target.lastSeenAt,
     connectedAt: target.connectedAt,
     disconnectedAt: target.disconnectedAt,
-    metadataWritable: target.route.kind === "device",
+    metadataWritable: target.route.kind === "machine",
     route: target.route.kind === "adapter" ? "service-binding" : "connection",
   };
 }

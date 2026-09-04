@@ -9,7 +9,7 @@ export type ToolDefinition = {
 
 export type AiToolsArgs = Record<string, never>;
 
-export type AiToolsDevice = {
+export type AiToolsTarget = {
   id: string;
   implements: string[];
   label?: string;
@@ -19,7 +19,7 @@ export type AiToolsDevice = {
 
 export type AiToolsResult = {
   tools: ToolDefinition[];
-  devices: AiToolsDevice[];
+  targets: AiToolsTarget[];
   mcpServers: string[];
 };
 
@@ -27,7 +27,7 @@ export type AiToolsResult = {
 export type AiContextArgs = Record<string, never>;
 
 export type AiContextResult = {
-  devices: AiToolsDevice[];
+  targets: AiToolsTarget[];
   mcpServers: string[];
   systemContextFiles?: ContextFile[];
   system: {

@@ -176,7 +176,7 @@ describe("createSystemContextProvider", () => {
     const provider = createSystemContextProvider();
     const sections = await provider.collect(
       makeInput({
-        devices: [
+        targets: [
           {
             id: "macbook",
             label: "Work MacBook",
@@ -225,7 +225,7 @@ describe("createSystemContextProvider", () => {
     const provider = createSystemContextProvider();
     const sections = await provider.collect(
       makeInput({
-        devices: Array.from({ length: 7 }, (_value, index) => ({
+        targets: Array.from({ length: 7 }, (_value, index) => ({
           id: `node-${index + 1}`,
           label: `Node ${index + 1}`,
           platform: "linux",
@@ -348,7 +348,7 @@ function makeInput(overrides: Partial<PromptAssemblyInput> = {}): PromptAssembly
   return {
     config: CONFIG,
     identity: IDENTITY,
-    devices: [],
+    targets: [],
     mcpServers: [],
     runtime: {
       date: currentDateInTimezone("Europe/Amsterdam"),

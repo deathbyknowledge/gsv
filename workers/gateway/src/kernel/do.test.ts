@@ -456,7 +456,7 @@ describe("Kernel frame bodies", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = bareKernel();
     kernel.transport.pendingKernelResponses = new Map();
-    kernel.devices = {
+    kernel.targets = {
       get: () => ({ online: true }),
       canHandle: () => true,
     };
@@ -468,7 +468,7 @@ describe("Kernel frame bodies", () => {
       },
     };
     kernel.connections = new Map([[deviceConnection.id, deviceConnection]]);
-    kernel.transport.findDeviceConnection = () => deviceConnection;
+    kernel.transport.findTargetConnection = () => deviceConnection;
     kernel.transport.registerRouteWithExpiry = vi.fn(async () => ({ cancel: vi.fn() }));
     const outgoing = { cancel: vi.fn(async () => {}) };
     kernel.transport.sendWebSocketFrame = vi.fn((_connection: KernelTestValue, frame: { id: string }) => {
@@ -481,7 +481,7 @@ describe("Kernel frame bodies", () => {
       return outgoing;
     });
 
-    await kernel.transport.requestDevice("device-1", "net.fetch", {}, {
+    await kernel.transport.requestTarget("device-1", "net.fetch", {}, {
       body: { stream: new ReadableStream(), length: 1 },
     });
 
@@ -492,9 +492,9 @@ describe("Kernel frame bodies", () => {
     const cancel = vi.fn();
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = bareKernel();
-    kernel.devices = { get: () => null };
+    kernel.targets = { get: () => null };
 
-    await expect(kernel.transport.requestDevice("offline-device", "fs.transfer.receive", {}, {
+    await expect(kernel.transport.requestTarget("offline-device", "fs.transfer.receive", {}, {
       body: {
         stream: new ReadableStream({ cancel }),
         length: 1,
@@ -510,7 +510,7 @@ describe("Kernel frame bodies", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = bareKernel();
     kernel.transport.pendingKernelResponses = new Map();
-    kernel.devices = {
+    kernel.targets = {
       get: () => ({ online: true }),
       canHandle: () => true,
     };
@@ -522,7 +522,7 @@ describe("Kernel frame bodies", () => {
       },
     };
     kernel.connections = new Map([[deviceConnection.id, deviceConnection]]);
-    kernel.transport.findDeviceConnection = () => deviceConnection;
+    kernel.transport.findTargetConnection = () => deviceConnection;
     const cancelRoute = vi.fn();
     kernel.transport.registerRouteWithExpiry = vi.fn(async () => ({ cancel: cancelRoute }));
     const outgoing = { cancel: vi.fn(async () => {}) };
@@ -530,7 +530,7 @@ describe("Kernel frame bodies", () => {
     const controller = new AbortController();
     const reason = new Error("caller stopped");
 
-    const request = kernel.transport.requestDevice("device-1", "net.fetch", {}, {
+    const request = kernel.transport.requestTarget("device-1", "net.fetch", {}, {
       body: { stream: new ReadableStream(), length: 1 },
       signal: controller.signal,
     });
@@ -610,9 +610,9 @@ describe("Kernel frame bodies", () => {
     const kernel = bareKernel();
     kernel.transport.frameBodyChannels = new Map();
     kernel.routes = {
-      get: () => ({ deviceId: "expected-device", driverConnectionId: null }),
+      get: () => ({ targetId: "expected-device", peerConnectionId: null }),
     };
-    kernel.transport.isConnectionForDevice = vi.fn(() => false);
+    kernel.transport.isConnectionForTarget = vi.fn(() => false);
 
     kernel.transport.handleRes({ id: "wrong-connection" }, {
       type: "res",
@@ -626,8 +626,8 @@ describe("Kernel frame bodies", () => {
 
   it("rejects a response from a different connection for the same device", () => {
     const route = {
-      deviceId: "device-1",
-      driverConnectionId: "current-connection",
+      targetId: "device-1",
+      peerConnectionId: "current-connection",
       origin: { type: "app", id: "req-1" },
       call: "fs.read",
       scheduleId: null,
@@ -638,7 +638,7 @@ describe("Kernel frame bodies", () => {
       get: vi.fn(() => route),
       remove: vi.fn(),
     };
-    kernel.transport.isConnectionForDevice = vi.fn(() => true);
+    kernel.transport.isConnectionForTarget = vi.fn(() => true);
     kernel.decodeWebSocketFrame = vi.fn();
 
     kernel.transport.handleRes({ id: "stale-connection" }, {
@@ -654,8 +654,8 @@ describe("Kernel frame bodies", () => {
 
   it("accepts an authoritative response for a route created before connection binding", () => {
     const route = {
-      deviceId: "device-1",
-      driverConnectionId: null,
+      targetId: "device-1",
+      peerConnectionId: null,
       origin: { type: "app", id: "req-1" },
       call: "fs.read",
       scheduleId: null,
@@ -667,7 +667,7 @@ describe("Kernel frame bodies", () => {
       remove: vi.fn(() => route),
     };
     kernel.transport.routedBodies = new Map();
-    kernel.transport.isConnectionForDevice = vi.fn(() => true);
+    kernel.transport.isConnectionForTarget = vi.fn(() => true);
     kernel.decodeWebSocketFrame = vi.fn((_connection: KernelTestValue, frame: KernelTestValue) => frame);
     kernel.transport.deliverToOrigin = vi.fn();
 
@@ -702,8 +702,8 @@ describe("Kernel frame bodies", () => {
   it("fails a routed caller immediately when the response body descriptor is invalid", () => {
     const cancelBody = vi.fn(async () => {});
     const route = {
-      deviceId: "device-1",
-      driverConnectionId: "device-connection",
+      targetId: "device-1",
+      peerConnectionId: "device-connection",
       origin: { type: "app", id: "req-1" },
       call: "net.fetch",
       scheduleId: "schedule-1",
@@ -716,7 +716,7 @@ describe("Kernel frame bodies", () => {
       remove: vi.fn(() => route),
     };
     kernel.transport.routedBodies = new Map([["req-1", { cancel: cancelBody }]]);
-    kernel.transport.isConnectionForDevice = () => true;
+    kernel.transport.isConnectionForTarget = () => true;
     kernel.cancelSchedule = vi.fn(async () => {});
     kernel.transport.deliverToOrigin = vi.fn();
     const connection = { id: "device-connection", send: vi.fn() };
@@ -777,8 +777,8 @@ describe("Kernel frame bodies", () => {
   it("stops a routed upload when the device response arrives", async () => {
     const cancel = vi.fn(async () => {});
     const route = {
-      deviceId: "device-1",
-      driverConnectionId: "device-connection",
+      targetId: "device-1",
+      peerConnectionId: "device-connection",
       origin: { type: "app", id: "req-1" },
       call: "net.fetch",
       scheduleId: null,
@@ -790,7 +790,7 @@ describe("Kernel frame bodies", () => {
       remove: () => route,
     };
     kernel.transport.routedBodies = new Map([["req-1", { cancel }]]);
-    kernel.transport.isConnectionForDevice = () => true;
+    kernel.transport.isConnectionForTarget = () => true;
     kernel.decodeWebSocketFrame = (_connection: KernelTestValue, frame: KernelTestValue) => frame;
     kernel.transport.deliverToOrigin = vi.fn();
 
@@ -934,8 +934,8 @@ describe("Kernel nested dispatch", () => {
         const removed = {
           origin: route.origin,
           call: route.call,
-          deviceId: route.deviceId,
-          driverConnectionId: route.driverConnectionId,
+          targetId: route.targetId,
+          peerConnectionId: route.peerConnectionId,
           scheduleId: null,
         };
         route = null;
@@ -951,7 +951,7 @@ describe("Kernel nested dispatch", () => {
       };
     });
     kernel.transport.sendWebSocketFrame = vi.fn(() => null);
-    kernel.transport.requestDevice = vi.fn();
+    kernel.transport.requestTarget = vi.fn();
     const ctx = {
       peer: {
         peer: {
@@ -972,10 +972,10 @@ describe("Kernel nested dispatch", () => {
         },
         capabilities: ["shell.exec"],
       },
-      devices: {
+      targets: {
         canAccess: vi.fn(() => true),
         get: vi.fn(() => ({
-          device_id: "workstation",
+          target_id: "workstation",
           owner_uid: 1000,
           label: "Workstation",
           description: "",
@@ -1088,20 +1088,20 @@ describe("Kernel device connection cleanup", () => {
     kernel.connections = new Map([[replacement.id, replacement]]);
     kernel.transport.activeRequests = new Map();
     kernel.transport.closeFrameBodyChannel = vi.fn();
-    kernel.devices = { setOnline: vi.fn() };
-    kernel.connectionRuntime.broadcastDeviceStatus = vi.fn();
-    kernel.transport.failRoutesForDevice = vi.fn();
-    kernel.transport.failRoutesForDriverConnection = vi.fn();
+    kernel.targets = { setOnline: vi.fn() };
+    kernel.connectionRuntime.broadcastTargetStatus = vi.fn();
+    kernel.transport.failRoutesForTarget = vi.fn();
+    kernel.transport.failRoutesForPeerConnection = vi.fn();
     kernel.transport.failRoutesForConnection = vi.fn();
     kernel.runRoutes = { clearForConnection: vi.fn() };
 
     kernel.connectionRuntime.onClose(oldConnection);
 
     expect(kernel.connections.get(replacement.id)).toBe(replacement);
-    expect(kernel.devices.setOnline).not.toHaveBeenCalled();
-    expect(kernel.connectionRuntime.broadcastDeviceStatus).not.toHaveBeenCalled();
-    expect(kernel.transport.failRoutesForDevice).not.toHaveBeenCalled();
-    expect(kernel.transport.failRoutesForDriverConnection).toHaveBeenCalledWith(oldConnection.id);
+    expect(kernel.targets.setOnline).not.toHaveBeenCalled();
+    expect(kernel.connectionRuntime.broadcastTargetStatus).not.toHaveBeenCalled();
+    expect(kernel.transport.failRoutesForTarget).not.toHaveBeenCalled();
+    expect(kernel.transport.failRoutesForPeerConnection).toHaveBeenCalledWith(oldConnection.id);
   });
 
   it("replies to an authoritative driver ping on the same connection", () => {
@@ -1183,8 +1183,8 @@ describe("Kernel device connection cleanup", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = bareKernel() as {
       connections: Map<string, KernelTestValue>;
-      disconnectDeviceConnections(deviceId: string, reason: string): void;
-      failRoutesForDevice: ReturnType<typeof vi.fn>;
+      disconnectTargetConnections(targetId: string, reason: string): void;
+      failRoutesForTarget: ReturnType<typeof vi.fn>;
       runRoutes: {
         clearForConnection: ReturnType<typeof vi.fn>;
       };
@@ -1194,12 +1194,12 @@ describe("Kernel device connection cleanup", () => {
       ["beta", beta],
       ["user", user],
     ]);
-    kernel.transport.failRoutesForDevice = vi.fn();
+    kernel.transport.failRoutesForTarget = vi.fn();
     kernel.runRoutes = {
       clearForConnection: vi.fn(),
     };
 
-    kernel.connectionRuntime.disconnectDeviceConnections("node-alpha", "Machine forgotten");
+    kernel.connectionRuntime.disconnectTargetConnections("node-alpha", "Machine forgotten");
 
     expect(alpha.close).toHaveBeenCalledWith(1000, "Machine forgotten");
     expect(beta.close).not.toHaveBeenCalled();
@@ -1208,7 +1208,7 @@ describe("Kernel device connection cleanup", () => {
     expect(kernel.connections.has("beta")).toBe(true);
     expect(kernel.connections.has("user")).toBe(true);
     expect(kernel.runRoutes.clearForConnection).toHaveBeenCalledWith("alpha");
-    expect(kernel.transport.failRoutesForDevice).toHaveBeenCalledWith("node-alpha");
+    expect(kernel.transport.failRoutesForTarget).toHaveBeenCalledWith("node-alpha");
   });
 });
 
@@ -3059,7 +3059,7 @@ describe("Kernel process device requests", () => {
     implements?: string[];
   } = {}) {
     const device = {
-      device_id: "linux-machine",
+      target_id: "linux-machine",
       owner_uid: 0,
       label: "Linux machine",
       description: "",
@@ -3072,7 +3072,7 @@ describe("Kernel process device requests", () => {
       connected_at: 2,
       disconnected_at: null,
     };
-    const requestDevice = vi.fn(async () => ({
+    const requestTarget = vi.fn(async () => ({
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       type: "res" as const,
       id: "req-1",
@@ -3093,11 +3093,11 @@ describe("Kernel process device requests", () => {
       procs: { getIdentity: ReturnType<typeof vi.fn> };
       caps: { resolve: ReturnType<typeof vi.fn> };
       auth: { getPasswdByUid: ReturnType<typeof vi.fn> };
-      devices: {
+      targets: {
         canAccess: ReturnType<typeof vi.fn>;
         get: ReturnType<typeof vi.fn>;
       };
-      requestDevice: typeof requestDevice;
+      requestTarget: typeof requestTarget;
       routes: { get: ReturnType<typeof vi.fn> };
       cancelProcessRequests(processId: string, requestIds: string[], reason?: string): number;
       activeRequests: Map<
@@ -3131,19 +3131,19 @@ describe("Kernel process device requests", () => {
     })) };
     kernel.caps = { resolve: vi.fn(() => options.capabilities ?? ["net.fetch"]) };
     kernel.auth = { getPasswdByUid: vi.fn(() => null) };
-    kernel.devices = {
+    kernel.targets = {
       canAccess: vi.fn(() => true),
       get: vi.fn(() => device),
     };
-    kernel.transport.requestDevice = requestDevice;
+    kernel.transport.requestTarget = requestTarget;
     kernel.routes = { get: vi.fn(() => null) };
     kernel.transport.activeRequests = new Map();
     kernel.transport.cancelledProcessRequests = new Map();
-    return { kernel, requestDevice };
+    return { kernel, requestTarget };
   }
 
-  it("validates the process target and calls requestDevice", async () => {
-    const { kernel, requestDevice } = buildKernelForDeviceRequest();
+  it("validates the process target and calls requestTarget", async () => {
+    const { kernel, requestTarget } = buildKernelForDeviceRequest();
 
     const result = await kernel.requestProcessNetFetch(
       "proc_1",
@@ -3154,8 +3154,8 @@ describe("Kernel process device requests", () => {
 
     expect(result).toMatchObject({ ok: true, data: { status: 204 } });
     expect(kernel.procs.getIdentity).toHaveBeenCalledWith("proc_1");
-    expect(kernel.devices.canAccess).toHaveBeenCalledWith("linux-machine", 0, [0]);
-    expect(requestDevice).toHaveBeenCalledWith(
+    expect(kernel.targets.canAccess).toHaveBeenCalledWith("linux-machine", 0, [0]);
+    expect(requestTarget).toHaveBeenCalledWith(
       "linux-machine",
       "net.fetch",
       { url: "https://example.com", timeoutMs: 180000 },
@@ -3164,7 +3164,7 @@ describe("Kernel process device requests", () => {
   });
 
   it("requires net.fetch capability for default process net fetches", async () => {
-    const { kernel, requestDevice } = buildKernelForDeviceRequest({ capabilities: [] });
+    const { kernel, requestTarget } = buildKernelForDeviceRequest({ capabilities: [] });
     let bodyCancelled = false;
 
     await expect(kernel.requestProcessNetFetch(
@@ -3185,11 +3185,11 @@ describe("Kernel process device requests", () => {
     )).rejects.toThrow("Permission denied: net.fetch");
 
     expect(bodyCancelled).toBe(true);
-    expect(requestDevice).not.toHaveBeenCalled();
+    expect(requestTarget).not.toHaveBeenCalled();
   });
 
   it("allows internal model transport net fetches without tool capability", async () => {
-    const { kernel, requestDevice } = buildKernelForDeviceRequest({ capabilities: [] });
+    const { kernel, requestTarget } = buildKernelForDeviceRequest({ capabilities: [] });
 
     const result = await kernel.requestProcessNetFetch(
       "proc_1",
@@ -3199,7 +3199,7 @@ describe("Kernel process device requests", () => {
     );
 
     expect(result).toMatchObject({ ok: true, data: { status: 204 } });
-    expect(requestDevice).toHaveBeenCalledWith(
+    expect(requestTarget).toHaveBeenCalledWith(
       "linux-machine",
       "net.fetch",
       { url: "https://example.com", timeoutMs: 180000 },
@@ -3208,7 +3208,7 @@ describe("Kernel process device requests", () => {
   });
 
   it("registers cancellable process net.fetch requests", async () => {
-    const { kernel, requestDevice } = buildKernelForDeviceRequest();
+    const { kernel, requestTarget } = buildKernelForDeviceRequest();
 
     await kernel.requestProcessNetFetch(
       "proc_1",
@@ -3217,7 +3217,7 @@ describe("Kernel process device requests", () => {
       { ttlMs: 180000, requestId: "fetch-1" },
     );
 
-    expect(requestDevice).toHaveBeenCalledWith(
+    expect(requestTarget).toHaveBeenCalledWith(
       "linux-machine",
       "net.fetch",
       { url: "https://example.com", timeoutMs: 180000 },
@@ -3255,17 +3255,17 @@ describe("Kernel process device requests", () => {
       get: vi.fn(() => ({
         id: "search-1",
         origin: { type: "process", id: "proc_1" },
-        deviceId: "device-1",
-        driverConnectionId: "driver-connection",
+        targetId: "device-1",
+        peerConnectionId: "driver-connection",
       })),
     };
-    kernel.transport.sendDeviceRequestCancel = vi.fn();
+    kernel.transport.sendTargetRequestCancel = vi.fn();
     kernel.transport.cancelRoute = vi.fn();
 
     expect(kernel.cancelProcessRequests("proc_2", ["search-1"], "stopped")).toBe(0);
-    expect(kernel.transport.sendDeviceRequestCancel).not.toHaveBeenCalled();
+    expect(kernel.transport.sendTargetRequestCancel).not.toHaveBeenCalled();
     expect(kernel.cancelProcessRequests("proc_1", ["search-1"], "stopped")).toBe(1);
-    expect(kernel.transport.sendDeviceRequestCancel).toHaveBeenCalledWith(
+    expect(kernel.transport.sendTargetRequestCancel).toHaveBeenCalledWith(
       "device-1",
       "driver-connection",
       "search-1",
@@ -3296,7 +3296,7 @@ describe("Kernel process device requests", () => {
   });
 
   it("honors cancellation that arrives before process fetch registration", async () => {
-    const { kernel, requestDevice } = buildKernelForDeviceRequest();
+    const { kernel, requestTarget } = buildKernelForDeviceRequest();
 
     expect(kernel.cancelProcessRequests("proc_1", ["fetch-early"], "superseded")).toBe(1);
     await expect(kernel.requestProcessNetFetch(
@@ -3306,7 +3306,7 @@ describe("Kernel process device requests", () => {
       { requestId: "fetch-early" },
     )).rejects.toThrow("superseded");
 
-    expect(requestDevice).not.toHaveBeenCalled();
+    expect(requestTarget).not.toHaveBeenCalled();
     expect(kernel.transport.cancelledProcessRequests.size).toBe(0);
   });
 });

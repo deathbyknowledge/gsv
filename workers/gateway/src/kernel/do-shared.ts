@@ -159,7 +159,7 @@ export class RequestCancelledError extends Error {
 }
 
 
-export type DeviceRequestOptions = {
+export type TargetRequestOptions = {
   ttlMs?: number;
   body?: FrameBody;
   id?: string;

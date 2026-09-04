@@ -28,7 +28,7 @@ import type {
   AiContextArgs,
   AiContextResult,
   AiToolsResult,
-  AiToolsDevice,
+  AiToolsTarget,
   AiConfigArgs,
   AiConfigFallback,
   AiConfigResult,
@@ -103,7 +103,7 @@ import { isVectorImageMimeType } from "../inference/image-mime";
 import { RipgitClient } from "../fs";
 import { collectPromptSkillIndex } from "./skills";
 import { seedBuiltinSkillsToHome } from "./sys/skills-seed";
-import { listAllVisibleTargets, targetToAiDevice } from "./targets";
+import { listAllVisibleTargets, targetToAiTarget } from "./targets";
 import {
   aiModelApiKeyConfigKey,
   isSameAiModelCredentialScope,
@@ -172,7 +172,7 @@ export async function handleAiTools(
   const mcpUid = resolveCallerOwnerUid(ctx);
 
   const visibleTargets = await listAllVisibleTargets(ctx);
-  const onlineDevices: AiToolsDevice[] = visibleTargets.map(targetToAiDevice);
+  const onlineDevices: AiToolsTarget[] = visibleTargets.map(targetToAiTarget);
 
   const tools: ToolDefinition[] = [];
 
@@ -189,7 +189,7 @@ export async function handleAiTools(
 
   return {
     tools,
-    devices: onlineDevices,
+    targets: onlineDevices,
     mcpServers: canUseMcpTools ? listReadyMcpServerNames(ctx, mcpUid) : [],
   };
 }
@@ -217,7 +217,7 @@ export async function handleAiContext(
   const mcpUid = resolveCallerOwnerUid(ctx);
 
   const result: AiContextResult = {
-    devices: (await listAllVisibleTargets(ctx)).map(targetToAiDevice),
+    targets: (await listAllVisibleTargets(ctx)).map(targetToAiTarget),
     mcpServers: canUseMcpTools ? listReadyMcpServerNames(ctx, mcpUid) : [],
     systemContextFiles: listConfigContextFiles(config, "config/ai/context.d"),
     system: {

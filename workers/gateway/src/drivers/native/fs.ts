@@ -37,8 +37,8 @@ import { bodyFromText, bodyToBytes, type JsonObject } from "@humansandmachines/g
 import { createNativeFileSystem } from "./filesystem";
 
 export type FsDeviceTransport = {
-  requestDevice(
-    deviceId: string,
+  requestTarget(
+    targetId: string,
     call: string,
     args: JsonObject,
     options?: { ttlMs?: number; body?: FrameBody; signal?: AbortSignal },
@@ -610,7 +610,7 @@ export async function handleFsCopy(
       destination.target !== "gsv" &&
       source.target === destination.target
     ) {
-      if (ctx.devices.canHandle(source.target, "fs.copy")) {
+      if (ctx.targets.canHandle(source.target, "fs.copy")) {
         assertCanUseDeviceCapabilities(source, ctx, ["fs.copy"]);
         return await copyOnDevice(
           source,
@@ -898,7 +898,7 @@ async function openDeviceSource(
   }
   const sendArgs: JsonObject = { path: source.path };
   if (stat.revision) sendArgs.revision = stat.revision;
-  const response = await transport.requestDevice(
+  const response = await transport.requestTarget(
     source.target,
     "fs.transfer.send",
     sendArgs,
@@ -927,13 +927,13 @@ async function openDeviceSource(
 
 async function requestDeviceResult<T>(
   transport: FsDeviceTransport,
-  deviceId: string,
+  targetId: string,
   call: string,
   args: JsonObject,
   options?: { ttlMs?: number; body?: FrameBody; signal?: AbortSignal },
 ): Promise<T> {
   // SAFETY: The caller selects T from the syscall response contract for this request.
-  return (await transport.requestDevice(deviceId, call, args, options)).data as T;
+  return (await transport.requestTarget(targetId, call, args, options)).data as T;
 }
 
 export async function handleFsEdit(
@@ -1000,7 +1000,7 @@ function assertCanAccessCopyEndpoint(
     return;
   }
   const identity = ctx.identity!.process;
-  if (!ctx.devices.canAccess(endpoint.target, identity.uid, identity.gids)) {
+  if (!ctx.targets.canAccess(endpoint.target, identity.uid, identity.gids)) {
     throw new Error(`Access denied to device: ${endpoint.target}`);
   }
 }
@@ -1018,7 +1018,7 @@ function assertCanUseDeviceCapabilities(
     return;
   }
   for (const syscall of syscalls) {
-    if (!ctx.devices.canHandle(endpoint.target, syscall)) {
+    if (!ctx.targets.canHandle(endpoint.target, syscall)) {
       throw new Error(`Device ${endpoint.target} does not implement ${syscall}`);
     }
   }

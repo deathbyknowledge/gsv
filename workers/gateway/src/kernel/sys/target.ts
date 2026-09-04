@@ -51,12 +51,12 @@ export function handleSysTargetGet(
   }
 
   const raw = targetArgsSchema.parse(args ?? {});
-  const deviceId = raw.targetId?.trim() ?? "";
-  if (!deviceId) {
+  const targetId = raw.targetId?.trim() ?? "";
+  if (!targetId) {
     throw new Error("sys.target.get requires targetId");
   }
 
-  const target = getVisibleTarget(ctx, deviceId, { includeOffline: true });
+  const target = getVisibleTarget(ctx, targetId, { includeOffline: true });
 
   return {
     target: target ? targetToDetail(target) : null,
@@ -72,12 +72,12 @@ export function handleSysTargetUpdate(
   }
 
   const raw = targetArgsSchema.parse(args ?? {});
-  const deviceId = raw.targetId?.trim() ?? "";
-  if (!deviceId) {
+  const targetId = raw.targetId?.trim() ?? "";
+  if (!targetId) {
     throw new Error("sys.target.update requires targetId");
   }
 
-  const target = getVisibleTarget(ctx, deviceId, { includeOffline: true });
+  const target = getVisibleTarget(ctx, targetId, { includeOffline: true });
   if (!target) {
     return { target: null };
   }
@@ -88,7 +88,7 @@ export function handleSysTargetUpdate(
   const metadata: TargetMetadata = {};
   if (raw.label !== undefined) metadata.label = raw.label;
   if (raw.description !== undefined) metadata.description = raw.description;
-  const updated = updateTargetMetadata(ctx, deviceId, metadata);
+  const updated = updateTargetMetadata(ctx, targetId, metadata);
   return {
     target: updated ? targetToDetail(updated) : null,
   };
@@ -104,14 +104,14 @@ export function handleSysTargetDelete(
   }
 
   const raw = targetArgsSchema.parse(args ?? {});
-  const deviceId = raw.targetId?.trim() ?? "";
-  if (!deviceId) {
+  const targetId = raw.targetId?.trim() ?? "";
+  if (!targetId) {
     throw new Error("sys.target.delete requires targetId");
   }
 
-  const device = ctx.devices.get(deviceId);
-  if (!device || !ctx.devices.canAccess(deviceId, identity.uid, identity.gids)) {
-    return { deleted: false, targetId: deviceId, revokedTokens: 0 };
+  const device = ctx.targets.get(targetId);
+  if (!device || !ctx.targets.canAccess(targetId, identity.uid, identity.gids)) {
+    return { deleted: false, targetId: targetId, revokedTokens: 0 };
   }
   if (identity.uid !== 0 && device.owner_uid !== identity.uid) {
     throw new Error("Permission denied: machine forgetting is owner-managed");
@@ -121,7 +121,7 @@ export function handleSysTargetDelete(
     .listTokens(identity.uid === 0 ? undefined : identity.uid)
     .filter((token) =>
       token.kind === "machine" &&
-      token.peerId === deviceId &&
+      token.peerId === targetId &&
       token.revokedAt === null
     )
     .reduce((count, token) => (
@@ -131,8 +131,8 @@ export function handleSysTargetDelete(
     ), 0);
 
   return {
-    deleted: ctx.devices.remove(deviceId),
-    targetId: deviceId,
+    deleted: ctx.targets.remove(targetId),
+    targetId: targetId,
     revokedTokens,
   };
 }

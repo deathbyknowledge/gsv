@@ -1,11 +1,11 @@
 import type {
-  AiToolsDevice,
+  AiToolsTarget,
   SysTargetDetail,
   SysTargetSummary,
 } from "@humansandmachines/gsv/protocol";
 import { hasCapability } from "./capabilities";
 import type { KernelContext } from "./context";
-import type { DeviceRecord } from "./devices";
+import type { TargetRecord } from "./target-registry";
 import {
   listVisibleAdapterTargets,
   type AdapterTargetRoute,
@@ -28,7 +28,7 @@ export type TargetDescriptor = {
   lastSeenAt: number;
   connectedAt: number | null;
   disconnectedAt: number | null;
-  route: { kind: "device"; deviceId: string } | AdapterTargetRoute;
+  route: { kind: "machine"; targetId: string } | AdapterTargetRoute;
 };
 
 export type TargetListOptions = {
@@ -49,10 +49,10 @@ export function listVisibleTargets(
     return [];
   }
 
-  return ctx.devices
+  return ctx.targets
     .listForUser(identity.uid, identity.gids)
     .filter((device) => options.includeOffline || device.online)
-    .map((device) => deviceRecordToTarget(ctx, device));
+    .map((device) => targetRecordToDescriptor(ctx, device));
 }
 
 export async function listAllVisibleTargets(
@@ -69,16 +69,16 @@ export function getVisibleTarget(
   options: TargetListOptions = {},
 ): TargetDescriptor | null {
   const identity = ctx.identity?.process;
-  if (!identity || !ctx.devices.canAccess(targetId, identity.uid, identity.gids)) {
+  if (!identity || !ctx.targets.canAccess(targetId, identity.uid, identity.gids)) {
     return null;
   }
 
-  const device = ctx.devices.get(targetId);
+  const device = ctx.targets.get(targetId);
   if (!device || (!options.includeOffline && !device.online)) {
     return null;
   }
 
-  return deviceRecordToTarget(ctx, device);
+  return targetRecordToDescriptor(ctx, device);
 }
 
 export async function resolveVisibleTarget(
@@ -111,17 +111,17 @@ export function updateTargetMetadata(
     throw new Error("Permission denied: device metadata is owner-managed");
   }
 
-  ctx.devices.setMetadata(target.targetId, patch);
-  const device = ctx.devices.get(target.targetId);
-  return device ? deviceRecordToTarget(ctx, device) : null;
+  ctx.targets.setMetadata(target.targetId, patch);
+  const device = ctx.targets.get(target.targetId);
+  return device ? targetRecordToDescriptor(ctx, device) : null;
 }
 
 export function targetCanHandle(target: TargetDescriptor, syscall: string): boolean {
   return hasCapability(target.implements, syscall);
 }
 
-export function targetToAiDevice(target: TargetDescriptor): AiToolsDevice {
-  const device: AiToolsDevice = {
+export function targetToAiTarget(target: TargetDescriptor): AiToolsTarget {
+  const device: AiToolsTarget = {
     id: target.targetId,
     implements: target.implements,
     label: target.label,
@@ -157,9 +157,9 @@ export function targetToDetail(target: TargetDescriptor): SysTargetDetail {
   };
 }
 
-function deviceRecordToTarget(ctx: KernelContext, record: DeviceRecord): TargetDescriptor {
+function targetRecordToDescriptor(ctx: KernelContext, record: TargetRecord): TargetDescriptor {
   return {
-    targetId: record.device_id,
+    targetId: record.target_id,
     ownerUid: record.owner_uid,
     ownerUsername: ctx.auth.getPasswdByUid(record.owner_uid)?.username ?? null,
     label: record.label,
@@ -172,6 +172,6 @@ function deviceRecordToTarget(ctx: KernelContext, record: DeviceRecord): TargetD
     lastSeenAt: record.last_seen_at,
     connectedAt: record.connected_at,
     disconnectedAt: record.disconnected_at,
-    route: { kind: "device", deviceId: record.device_id },
+    route: { kind: "machine", targetId: record.target_id },
   };
 }

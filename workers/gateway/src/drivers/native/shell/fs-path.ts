@@ -46,8 +46,8 @@ function knownFsTargets(kernelCtx: KernelContext): string[] {
   }
 
   try {
-    for (const device of kernelCtx.devices.listForUser(identity.uid, identity.gids)) {
-      targets.add(device.device_id);
+    for (const device of kernelCtx.targets.listForUser(identity.uid, identity.gids)) {
+      targets.add(device.target_id);
     }
   } catch {
     // Some tests and process contexts only need local GSV paths.

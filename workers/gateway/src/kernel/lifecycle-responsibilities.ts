@@ -1,5 +1,5 @@
 import type { KernelContext } from "./context";
-import type { DeviceRecord } from "./devices";
+import type { TargetRecord } from "./target-registry";
 import type { AdapterStatusRecord } from "./adapter-status";
 import type { FederationContactRecord } from "./federation-store";
 import { stableOpaqueId } from "../shared/stable-id";
@@ -13,7 +13,7 @@ type AdapterTransitionOptions = {
 export type ContactInviteDirection = "incoming" | "outgoing";
 
 export async function recordMachineAddedResponsibility(
-  machine: DeviceRecord,
+  machine: TargetRecord,
   ctx: KernelContext,
 ): Promise<void> {
   const ownerUid = humanOwnerUid(machine.owner_uid, ctx);
@@ -25,7 +25,7 @@ export async function recordMachineAddedResponsibility(
   }
 
   const eventId = await stableOpaqueId("machine-added", [
-    machine.device_id,
+    machine.target_id,
     machine.first_seen_at,
   ]);
   const outcome = ctx.responsibilities.create({
@@ -33,7 +33,7 @@ export async function recordMachineAddedResponsibility(
     title: "Confirm that a new machine is connected",
     details: {
       eventType: "machine.added",
-      deviceId: boundedUntrustedText(machine.device_id, 512),
+      deviceId: boundedUntrustedText(machine.target_id, 512),
       label: boundedUntrustedText(machine.label, 512),
       platform: boundedUntrustedText(machine.platform, 128),
       version: boundedUntrustedText(machine.version, 128),

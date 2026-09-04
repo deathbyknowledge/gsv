@@ -228,10 +228,10 @@ late responses remove routes and release owned bodies.
 `peer.ping` and `peer.pong` are generic endpoint liveness signals. They replace
 the old device-specific heartbeat names.
 
-The Kernel currently retains `device` names in its persisted target registry
-and machine-management syscalls for upgrade compatibility. That storage detail
-does not define the public target model: any authorized peer with coherent
-implementations may back a route target.
+Any authorized peer with coherent implementations may back a route target. The
+Kernel's target registry, routes, and `sys.target.*` syscalls use that
+vocabulary end to end; a machine is one kind of target provider, not the
+definition of target-ness.
 
 ## Adapters and delegated humans
 

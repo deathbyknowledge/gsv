@@ -187,7 +187,7 @@ describe("gateway authentication integration", () => {
       peer: peerInfo("device-observer"),
     });
     await user.connect();
-    expect((await user.call("sys.target.list", {})).devices).toContainEqual(
+    expect((await user.call("sys.target.list", {})).targets).toContainEqual(
       expect.objectContaining({
         deviceId: "integration-device",
         ownerUid: 1000,

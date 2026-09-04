@@ -7,7 +7,7 @@ import {
   requestAbortError,
 } from "./do-shared";
 import type {
-  DeviceRequestOptions,
+  TargetRequestOptions,
 } from "./do-shared";
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
@@ -46,7 +46,7 @@ import {
 import { AuthStore } from "./auth-store";
 import { CapabilityStore, hasCapability } from "./capabilities";
 import { ConfigStore } from "./config";
-import { DeviceRegistry } from "./devices";
+import { TargetRegistry } from "./target-registry";
 import {
   RoutingTable,
   type RouteOrigin,
@@ -366,7 +366,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly auth: AuthStore;
   readonly caps: CapabilityStore;
   readonly config: ConfigStore;
-  readonly devices: DeviceRegistry;
+  readonly targets: TargetRegistry;
   readonly routes: RoutingTable;
   readonly shellSessions: ShellSessionStore;
   readonly procs: ProcessRegistry;
@@ -434,7 +434,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
     this.config = new ConfigStore(sql);
 
-    this.devices = new DeviceRegistry(sql);
+    this.targets = new TargetRegistry(sql);
 
     this.routes = new RoutingTable(sql);
 
@@ -823,18 +823,18 @@ export class Kernel extends DurableObject<GatewayEnv> {
       if (options.requestId) {
         controller = this.transport.registerActiveRequest(origin, options.requestId);
       }
-      const requestOptions: DeviceRequestOptions = {};
+      const requestOptions: TargetRequestOptions = {};
       if (options.ttlMs !== undefined) requestOptions.ttlMs = options.ttlMs;
       if (options.body !== undefined) requestOptions.body = options.body;
       if (options.requestId !== undefined) requestOptions.id = options.requestId;
       if (controller) requestOptions.signal = controller.signal;
-      const response = await this.transport.requestDevice(
+      const response = await this.transport.requestTarget(
         device.targetId,
         "net.fetch",
         args,
         requestOptions,
       );
-      // SAFETY: requestDevice preserves the result type for the net.fetch call.
+      // SAFETY: requestTarget preserves the result type for the net.fetch call.
       return response as ResponseOkFrame<"net.fetch">;
     } finally {
       if (options.requestId && controller) {
@@ -1266,7 +1266,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       auth: this.auth,
       caps: this.caps,
       config: this.config,
-      devices: this.devices,
+      targets: this.targets,
       procs: this.procs,
       conversations: this.conversations,
       oauth: this.oauth,
@@ -1342,7 +1342,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       connections: this.connections,
       sendFrame: this.transport.sendWebSocketFrame.bind(this.transport),
       registerRoute: this.transport.registerRouteWithExpiry.bind(this.transport),
-      requestDevice: this.transport.requestDevice.bind(this.transport),
+      requestTarget: this.transport.requestTarget.bind(this.transport),
       request: this.requestDispatchedFrame.bind(this),
     };
   }
@@ -1511,7 +1511,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       // SAFETY: dispatch preserves the syscall's request/result correlation.
       const data = response.data as SysTargetDeleteResult | undefined;
       if (data?.deleted) {
-        this.connectionRuntime.disconnectDeviceConnections(data.targetId, "Machine forgotten");
+        this.connectionRuntime.disconnectTargetConnections(data.targetId, "Machine forgotten");
       }
     }
 

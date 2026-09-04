@@ -93,7 +93,7 @@ describe("Kernel personal controller connect lifecycle", () => {
     const connection = { id: "connection-1", setState: vi.fn() };
     kernel.buildContext = vi.fn(() => ctx);
     kernel.connectionRuntime.activateConnection = vi.fn();
-    kernel.connectionRuntime.broadcastDeviceStatus = vi.fn();
+    kernel.connectionRuntime.broadcastTargetStatus = vi.fn();
     kernel.connectionRuntime.reconcileOwnedIdentities = vi.fn();
     kernel.transport.sendOk = vi.fn();
     kernel.transport.sendError = vi.fn();
@@ -121,7 +121,7 @@ describe("Kernel personal controller connect lifecycle", () => {
     const connection = { id: "connection-1", setState: vi.fn() };
     kernel.buildContext = vi.fn(() => ctx);
     kernel.connectionRuntime.activateConnection = vi.fn();
-    kernel.connectionRuntime.broadcastDeviceStatus = vi.fn();
+    kernel.connectionRuntime.broadcastTargetStatus = vi.fn();
     kernel.connectionRuntime.reconcileOwnedIdentities = vi.fn();
     kernel.transport.sendOk = vi.fn();
     kernel.transport.sendError = vi.fn();
@@ -136,7 +136,7 @@ describe("Kernel personal controller connect lifecycle", () => {
 
   it("records a first machine registration as Ship work before accepting it", async () => {
     const machine = {
-      device_id: "workstation",
+      target_id: "workstation",
       owner_uid: 1000,
       label: "Workstation",
       description: "",
@@ -150,7 +150,7 @@ describe("Kernel personal controller connect lifecycle", () => {
       disconnected_at: null,
     };
     const peer = {
-      id: machine.device_id,
+      id: machine.target_id,
       sessionId: "connection-1",
       principal: { kind: "machine" as const, account: PROCESS_IDENTITY },
       grant: { calls: [], signals: ["target.status"], implements: ["shell.exec"] },
@@ -185,7 +185,7 @@ describe("Kernel personal controller connect lifecycle", () => {
     const kernel = bareKernel();
     kernel.buildContext = vi.fn(() => ctx);
     kernel.connectionRuntime.activateConnection = vi.fn();
-    kernel.connectionRuntime.broadcastDeviceStatus = vi.fn();
+    kernel.connectionRuntime.broadcastTargetStatus = vi.fn();
     kernel.connectionRuntime.reconcileOwnedIdentities = vi.fn();
     kernel.transport.sendOk = vi.fn();
     kernel.transport.sendError = vi.fn();

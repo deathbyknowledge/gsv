@@ -199,7 +199,7 @@ describe("adapter-backed targets", () => {
     const deferred: Promise<unknown>[] = [];
     const ctx = makeContext(service, { deferred });
     const localTarget = {
-      device_id: "laptop",
+      target_id: "laptop",
       owner_uid: 1000,
       label: "Laptop",
       description: "Local machine",
@@ -214,9 +214,9 @@ describe("adapter-backed targets", () => {
     };
     // SAFETY: the focused test supplies the device-store method consulted by
     // target projection; no other device-store operation is reachable here.
-    ctx.devices = {
+    ctx.targets = {
       listForUser: vi.fn(() => [localTarget]),
-    } as KernelContext["devices"];
+    } as KernelContext["targets"];
 
     try {
       const discovery = listAllVisibleTargets(ctx);

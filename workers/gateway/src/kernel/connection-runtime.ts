@@ -64,12 +64,12 @@ onClose(connection: KernelConnection<ConnectionState>): void {
     const peer = state.peer;
 
     if (peer && peerProvidesOperations(peer)) {
-      if (state.step === "connected" && !this.host.transport.findDeviceConnection(peer.id)) {
-        this.host.devices.setOnline(peer.id, false);
-        this.broadcastDeviceStatus(peer.id, "disconnected");
-        this.host.transport.failRoutesForDevice(peer.id);
+      if (state.step === "connected" && !this.host.transport.findTargetConnection(peer.id)) {
+        this.host.targets.setOnline(peer.id, false);
+        this.broadcastTargetStatus(peer.id, "disconnected");
+        this.host.transport.failRoutesForTarget(peer.id);
       } else {
-        this.host.transport.failRoutesForDriverConnection(connection.id);
+        this.host.transport.failRoutesForPeerConnection(connection.id);
       }
     }
 
@@ -91,15 +91,15 @@ onClose(connection: KernelConnection<ConnectionState>): void {
       if (!state || state.step !== "connected" || !state.peer) continue;
       if (peerProvidesOperations(state.peer)) {
         onlineTargets.add(state.peer.id);
-        this.host.devices.setOnline(state.peer.id, true);
+        this.host.targets.setOnline(state.peer.id, true);
       }
     }
 
     // Reconcile registered device online flags with live rehydrated sockets.
-    for (const device of this.host.devices.listOnline()) {
-      if (!onlineTargets.has(device.device_id)) {
-        this.host.devices.setOnline(device.device_id, false);
-        this.broadcastDeviceStatus(device.device_id, "disconnected");
+    for (const device of this.host.targets.listOnline()) {
+      if (!onlineTargets.has(device.target_id)) {
+        this.host.targets.setOnline(device.target_id, false);
+        this.broadcastTargetStatus(device.target_id, "disconnected");
       }
     }
   }
@@ -194,7 +194,7 @@ async handleSysConnect(
     this.activateConnection(connection, newState);
 
     if (peerProvidesOperations(outcome.peer)) {
-      this.broadcastDeviceStatus(outcome.peer.id, "connected");
+      this.broadcastTargetStatus(outcome.peer.id, "connected");
     }
 
     if (outcome.peer.principal.kind === "human") {
@@ -245,10 +245,10 @@ async handleSysConnect(
     }
   }
 
-disconnectDeviceConnections(deviceId: string, reason: string): void {
+disconnectTargetConnections(targetId: string, reason: string): void {
     let closed = false;
     for (const [connId, conn] of Array.from(this.host.connections)) {
-      if (!this.host.transport.isConnectionForDevice(conn, deviceId)) {
+      if (!this.host.transport.isConnectionForTarget(conn, targetId)) {
         continue;
       }
 
@@ -259,7 +259,7 @@ disconnectDeviceConnections(deviceId: string, reason: string): void {
     }
 
     if (closed) {
-      this.host.transport.failRoutesForDevice(deviceId);
+      this.host.transport.failRoutesForTarget(targetId);
     }
   }
 
@@ -316,11 +316,11 @@ sendSignalToConnection(
     connection.send(JSON.stringify({ type: "sig", signal, payload } satisfies SignalFrame));
   }
 
-broadcastDeviceStatus(
-    deviceId: string,
+broadcastTargetStatus(
+    targetId: string,
     event: "connected" | "disconnected",
   ): void {
-    const device = this.host.devices.get(deviceId);
+    const device = this.host.targets.get(targetId);
     if (!device) {
       return;
     }
@@ -331,7 +331,7 @@ broadcastDeviceStatus(
       payload: {
         event,
         target: {
-          targetId: device.device_id,
+          targetId: device.target_id,
           ownerUid: device.owner_uid,
           label: device.label,
           description: device.description,
@@ -355,11 +355,11 @@ broadcastDeviceStatus(
 
       if (peer.principal.kind === "human") {
         const proc = peer.principal.account;
-        if (!this.host.devices.canAccess(deviceId, proc.uid, [...proc.gids])) {
+        if (!this.host.targets.canAccess(targetId, proc.uid, [...proc.gids])) {
           continue;
         }
       } else if (peer.principal.kind === "machine") {
-        if (peer.id !== deviceId) {
+        if (peer.id !== targetId) {
           continue;
         }
       }

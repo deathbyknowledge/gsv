@@ -21,7 +21,7 @@ import type {
 import type { CapabilityStore } from "./capabilities";
 import { isValidCapability } from "./capabilities";
 import type { KernelContext } from "./context";
-import type { DeviceRecord } from "./devices";
+import type { TargetRecord } from "./target-registry";
 import { SERVER_RELEASE } from "../version";
 import { ensureAccountHomeLayout } from "./account-home";
 import { ensurePublicAssetStorageLayout } from "../public-assets";
@@ -33,7 +33,7 @@ export type ConnectOutcome =
       ok: true;
       peer: ConnectedPeer;
       result: ConnectResult;
-      newMachine?: DeviceRecord;
+      newMachine?: TargetRecord;
     }
   | { ok: false; code: number; message: string; details?: JsonValue };
 
@@ -96,7 +96,7 @@ export async function handleConnect(
   args: ConnectArgs,
   ctx: KernelContext,
 ): Promise<ConnectOutcome> {
-  const { auth, caps, devices, serverVersion } = ctx;
+  const { auth, caps, targets, serverVersion } = ctx;
   if (!ctx.connection) {
     throw new Error("sys.connect requires an active connection");
   }
@@ -159,10 +159,10 @@ export async function handleConnect(
 
   const capabilities = resolvePeerCalls(principalKind, identity, caps);
   const signals = buildSignalList(principalKind);
-  let newMachine: DeviceRecord | undefined;
+  let newMachine: TargetRecord | undefined;
 
   if (implementsList.length > 0) {
-    const registered = devices.register(
+    const registered = targets.register(
       peerId,
       identity.uid,
       identity.gid,

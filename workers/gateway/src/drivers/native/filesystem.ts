@@ -25,7 +25,7 @@ export function createNativeFileSystem(ctx: KernelContext): GsvFs {
     {
       auth: ctx.auth,
       procs: ctx.procs,
-      devices: ctx.devices,
+      targets: ctx.targets,
       caps: ctx.caps,
       config: ctx.config,
       cron: createCronFileService(ctx),

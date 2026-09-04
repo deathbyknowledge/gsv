@@ -16,7 +16,7 @@ describe("ShellSessionStore", () => {
 
       expect(store.get("sh_1")).toMatchObject({
         sessionId: "sh_1",
-        deviceId: "macbook",
+        targetId: "macbook",
         status: "running",
       });
     });
