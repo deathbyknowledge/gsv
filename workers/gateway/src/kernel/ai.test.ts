@@ -1553,6 +1553,25 @@ describe("handleAiConfig", () => {
     expect(JSON.stringify(personal)).not.toContain("codex-access-token");
   });
 
+  it("keeps two profiles for one connection when they sit in the same layer", () => {
+    const listing = handleAiModels(makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [
+          { id: "fast", name: "Fast", provider: "openai", model: "gpt-5.4", maxTokens: 4096 },
+          { id: "long", name: "Long", provider: "openai", model: "gpt-5.4", maxTokens: 65536 },
+        ],
+      }),
+      "config/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "shared-gpt", name: "Shared GPT", provider: "openai", model: "gpt-5.4" }],
+      }),
+    }, { managedInference: true }));
+
+    // Both personal profiles survive; the shared copy of that connection is shadowed by them.
+    expect(listing.models.map((model) => model.id)).toEqual(["fast", "long", "gsv-included"]);
+  });
+
   it("lists the effective stack with its layers through ai.models", () => {
     const ctx = makeAiConfigContext({
       "users/1000/ai/models": JSON.stringify({

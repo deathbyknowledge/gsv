@@ -92,8 +92,11 @@ export type EffectiveAiModelEntry = {
 
 /**
  * Layers the owner's list ahead of the system list ahead of the deployment
- * base. An entry is dropped when an earlier layer already carries the same id
- * or the same connection, so a personal copy of a base model wins once.
+ * base. An entry is dropped when an earlier entry has the same id, or when a
+ * higher layer already carries the same connection, so a personal copy of a
+ * base model wins once. Within one layer every entry is kept: two profiles
+ * for the same connection with different limits are a deliberate choice, and
+ * the console re-serializes the layer from this listing.
  */
 export function layerAiModelStacks(layers: {
   personal: AiModelStack | null;
@@ -104,7 +107,11 @@ export function layerAiModelStacks(layers: {
   const effective: EffectiveAiModelEntry[] = [];
   const admit = (entry: AiModelEntry, source: AiModelSource, credentialKey: string | null) => {
     const id = entry.id.toLowerCase();
-    if (effective.some((item) => item.entry.id.toLowerCase() === id || isSameAiModelCredentialScope(item.entry, entry))) {
+    const shadowed = effective.some((item) =>
+      item.entry.id.toLowerCase() === id
+      || (item.source !== source && isSameAiModelCredentialScope(item.entry, entry)),
+    );
+    if (shadowed) {
       return;
     }
     effective.push({ entry, source, credentialKey });
