@@ -20,13 +20,6 @@ import {
   GSV_RUNTIME_FACTS,
   GSV_TARGET_CONTEXT,
 } from "../prompts/system";
-import {
-  DEFAULT_TEXT_GENERATION_MAX_TOKENS,
-  DEFAULT_WORKERS_AI_FALLBACK_MODEL,
-  DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID,
-  DEFAULT_WORKERS_AI_FALLBACK_PROFILE_NAME,
-  DEFAULT_WORKERS_AI_MODEL,
-} from "../inference/default-models";
 import { MAIL_SEND } from "../syscalls/constants";
 import { DEFAULT_SHELL_EXEC_TIMEOUT_MS } from "@humansandmachines/gsv/protocol";
 import {
@@ -63,31 +56,12 @@ function defineSystemConfigDefaults<T extends SystemConfigDefaults>(
   return defaults;
 }
 
-const DEFAULT_AI_MODELS = JSON.stringify({
-  version: 1,
-  models: [
-    {
-      id: "workers-ai-glm-5-3-flash",
-      name: "GLM 5.3 Flash",
-      provider: "workers-ai",
-      model: DEFAULT_WORKERS_AI_MODEL,
-      maxTokens: DEFAULT_TEXT_GENERATION_MAX_TOKENS,
-    },
-    {
-      id: DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID,
-      name: DEFAULT_WORKERS_AI_FALLBACK_PROFILE_NAME,
-      provider: "workers-ai",
-      model: DEFAULT_WORKERS_AI_FALLBACK_MODEL,
-      maxTokens: DEFAULT_TEXT_GENERATION_MAX_TOKENS,
-    },
-  ],
-});
 
 export const SYSTEM_CONFIG_DEFAULTS = defineSystemConfigDefaults({
   // -- AI / LLM ---------------------------------------------------------------
-  // Complete text-model entries in primary/fallback order. Per-owner stacks
-  // live at users/{uid}/ai/models and replace this list as a unit.
-  "config/ai/models": DEFAULT_AI_MODELS,
+  // config/ai/models has no static default: the deployment supplies a base
+  // stack (see inference/base-model-stack.ts) that the system list at
+  // config/ai/models and each owner's users/{uid}/ai/models extend in order.
   // Reasoning effort/mode hint passed to the model (off, minimal, low, medium, high, xhigh).
   // Only applies to models that support extended thinking.
   "config/ai/reasoning": "medium",
@@ -152,7 +126,8 @@ export const SYSTEM_CONFIG_DEFAULTS = defineSystemConfigDefaults({
 });
 
 // Per-user config keys follow the same structure under "users/{uid}/ai/*".
-// e.g. "users/1000/ai/models" replaces "config/ai/models" for uid 1000.
+// e.g. "users/1000/ai/models" is uid 1000's own model list, layered ahead of
+// "config/ai/models" and the deployment base.
 // Only AI config and UI presentation prefs (e.g. "users/{uid}/ui/avatar") are
 // user-overridable; server/shell/process config is system-only.
 export const USER_OVERRIDABLE_PREFIXES = ["ai/", "ui/"] as const;
@@ -183,7 +158,7 @@ export class ConfigStore {
       }
     }
     if (isAiModelStackConfigKey(key)) {
-      if (key.startsWith("users/") && value.trim().length === 0) {
+      if (value.trim().length === 0) {
         this.delete(key);
         return;
       }

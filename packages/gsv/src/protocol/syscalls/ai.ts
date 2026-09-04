@@ -81,6 +81,34 @@ export type AiModelStack = {
   models: AiModelEntry[];
 };
 
+export type AiModelsArgs = Record<string, never>;
+
+/** Where an effective model entry comes from, outermost layer first. */
+export type AiModelSource = "personal" | "system" | "base";
+
+/** One entry of the effective, ordered text-model stack, without its credential. */
+export type AiModelListEntry = AiModelEntry & {
+  /**
+   * `personal` entries belong to the owner's own list, `system` entries to
+   * the installation-wide list, and `base` entries to the deployment's
+   * implicit stack that every list extends.
+   */
+  source: AiModelSource;
+  /** Whether a stored credential exists for this entry; base entries never need one. */
+  hasCredential: boolean;
+};
+
+/**
+ * The effective ordered stack for the caller's owner account: personal
+ * entries, then system entries, then the deployment base, with the preferred
+ * entry moved to the front. The first entry is primary; the rest are fallbacks.
+ */
+export type AiModelsResult = {
+  models: AiModelListEntry[];
+  /** Stable id of the entry promoted to the front, when one is set. */
+  preferredModelId: string | null;
+};
+
 export type AiConfigArgs = {
   /**
    * Complete request-local model configuration, used by model validation.

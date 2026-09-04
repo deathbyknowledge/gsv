@@ -1,4 +1,4 @@
-import type { AiModelEntry, AiModelStack } from "@humansandmachines/gsv/protocol";
+import type { AiModelEntry, AiModelSource, AiModelStack } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 
 export const SYSTEM_AI_MODELS_CONFIG_KEY = "config/ai/models";
@@ -80,6 +80,61 @@ export function parseAiModelStack(raw: string | null | undefined): AiModelStack 
     models.push(copyModelEntry(parsed.data));
   }
   return { version: 1, models };
+}
+
+/** One entry of the effective stack with the layer it came from and where its credential lives. */
+export type EffectiveAiModelEntry = {
+  entry: AiModelEntry;
+  source: AiModelSource;
+  /** Config key holding the entry's credential; null for base entries. */
+  credentialKey: string | null;
+};
+
+/**
+ * Layers the owner's list ahead of the system list ahead of the deployment
+ * base. An entry is dropped when an earlier layer already carries the same id
+ * or the same connection, so a personal copy of a base model wins once.
+ */
+export function layerAiModelStacks(layers: {
+  personal: AiModelStack | null;
+  personalKey: string;
+  system: AiModelStack | null;
+  base: readonly AiModelEntry[];
+}): EffectiveAiModelEntry[] {
+  const effective: EffectiveAiModelEntry[] = [];
+  const admit = (entry: AiModelEntry, source: AiModelSource, credentialKey: string | null) => {
+    const id = entry.id.toLowerCase();
+    if (effective.some((item) => item.entry.id.toLowerCase() === id || isSameAiModelCredentialScope(item.entry, entry))) {
+      return;
+    }
+    effective.push({ entry, source, credentialKey });
+  };
+  for (const entry of layers.personal?.models ?? []) {
+    admit(entry, "personal", aiModelApiKeyConfigKey(layers.personalKey, entry.id));
+  }
+  for (const entry of layers.system?.models ?? []) {
+    admit(entry, "system", aiModelApiKeyConfigKey(SYSTEM_AI_MODELS_CONFIG_KEY, entry.id));
+  }
+  for (const entry of layers.base) {
+    admit(entry, "base", null);
+  }
+  return effective;
+}
+
+/** Moves the preferred entry to the front; the rest keep their layered order. */
+export function orderEffectiveAiModels(
+  entries: readonly EffectiveAiModelEntry[],
+  preferredModelId: string | null | undefined,
+): EffectiveAiModelEntry[] {
+  const preferred = preferredModelId?.trim().toLowerCase();
+  if (!preferred) {
+    return [...entries];
+  }
+  const index = entries.findIndex((item) => item.entry.id.toLowerCase() === preferred);
+  if (index <= 0) {
+    return [...entries];
+  }
+  return [entries[index], ...entries.slice(0, index), ...entries.slice(index + 1)];
 }
 
 export function orderAiModelStack(

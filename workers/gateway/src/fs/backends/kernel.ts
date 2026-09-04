@@ -18,6 +18,7 @@ import {
   processAiConfigDirEntries,
 } from "../../process/ai-config";
 import {
+  layerAiModelStacks,
   parseAiModelStack,
   SYSTEM_AI_MODELS_CONFIG_KEY,
   userAiModelsConfigKey,
@@ -384,12 +385,15 @@ export class KernelMountBackend implements MountBackend {
   }
 
   private listProcAiModels(ownerUid: number): AiModelEntry[] {
-    const ownerKey = userAiModelsConfigKey(ownerUid);
-    const key = this.kernel?.config?.getExplicit(ownerKey) != null
-      ? ownerKey
-      : SYSTEM_AI_MODELS_CONFIG_KEY;
-    const stack = parseAiModelStack(this.kernel?.config?.get(key));
-    return stack?.models ?? [];
+    const config = this.kernel?.config;
+    if (!config) return [];
+    const personalKey = userAiModelsConfigKey(ownerUid);
+    return layerAiModelStacks({
+      personal: parseAiModelStack(config.getExplicit(personalKey)),
+      personalKey,
+      system: parseAiModelStack(config.getExplicit(SYSTEM_AI_MODELS_CONFIG_KEY)),
+      base: this.kernel?.baseAiModels?.() ?? [],
+    }).map((item) => item.entry);
   }
 
   private readDev(path: string): string | undefined {

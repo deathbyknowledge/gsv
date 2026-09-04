@@ -182,17 +182,6 @@ function resolveSetupAiConfig(
       model: GSV_INFERENCE_MODEL,
     };
   }
-  if (
-    managedInferenceAvailable
-    && ai.provider === undefined
-    && ai.model === undefined
-    && ai.apiKey === undefined
-  ) {
-    return {
-      provider: GSV_INFERENCE_PROVIDER,
-      model: GSV_INFERENCE_MODEL,
-    };
-  }
   return ai;
 }
 
@@ -203,11 +192,15 @@ function setupAiModelStack(ai: SetupAiConfig): AiModelStack | null {
   if (!ai.provider || !ai.model) {
     throw new Error("AI provider and model must be configured together");
   }
+  // GSV Included is the managed deployment's base stack; choosing it writes nothing.
+  if (ai.provider === GSV_INFERENCE_PROVIDER) {
+    return null;
+  }
   return {
     version: 1,
     models: [{
       id: "setup-primary",
-      name: ai.provider === GSV_INFERENCE_PROVIDER ? "GSV Included" : ai.model,
+      name: ai.model,
       provider: ai.provider,
       model: ai.model,
     }],

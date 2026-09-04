@@ -42,7 +42,13 @@ Reading a prefix returns every readable key below that prefix. Reading an exact 
 
 ## AI Model Config
 
-The owner controls one ordered list of complete text-model entries at `users/{ownerUid}/ai/models`. The first entry is primary and every later entry is tried in order after an eligible provider failure. If an owner has no list, `config/ai/models` supplies the system stack.
+Text models resolve as one ordered stack built from three layers:
+
+1. The owner's own list at `users/{ownerUid}/ai/models`.
+2. The installation-wide list at `config/ai/models`, which root manages.
+3. The deployment base, which needs no configuration: **GSV Included** on managed installations and the Workers AI pair (GLM 5.3 Flash, then Kimi K2.6) on self-hosted ones.
+
+Each layer extends the ones below it; nothing replaces the base. The first entry of the combined stack is primary and every later entry is tried in order after an eligible provider failure. An entry is skipped when an earlier layer already has the same id or the same provider, model, endpoint, API style, and transport target, so a personal copy of a base model appears once. Setup writes nothing unless the user explicitly chooses a model, and choosing GSV Included writes nothing because it is already the base. `ai.models` returns the effective stack with each entry's layer and whether it has a stored credential, never the credential itself.
 
 ```json
 {
@@ -62,11 +68,11 @@ The owner controls one ordered list of complete text-model entries at `users/{ow
 
 `id`, `name`, `provider`, and `model` are required. `baseUrl`, `providerStyle`, `transportTarget`, `maxTokens`, and `contextWindowTokens` are optional entry properties. A credential is stored separately at `users/{ownerUid}/ai/models/{id}/api_key` (or `config/ai/models/{id}/api_key` for a system entry), so list reads never expose it. The config store retains that credential across renames, ordering, and policy changes, but clears it when the entry's provider, model, endpoint, API style, or transport target changes.
 
-An agent or Process may prefer an entry by its stable ID through `users/{uid}/ai/preferred_model` or its Process-local AI configuration. The preferred entry moves to the front for that Process; the rest of the owner's list retains its order. Reasoning remains an orthogonal preference. Request-local validation also supplies one complete model configuration; it cannot merge individual provider fields into a stored entry. It may reference the credential attached to a stable entry only while the provider, model, endpoint, API style, and transport target still match that entry.
+An agent, Process, or the owner may prefer an entry from any layer by its stable ID through `users/{uid}/ai/preferred_model` or a Process-local AI configuration. The preferred entry moves to the front; the rest of the combined stack keeps its layered order, so promoting GSV Included ahead of a personal provider is one setting rather than a rewrite of the list. Reasoning remains an orthogonal preference. Request-local validation also supplies one complete model configuration; it cannot merge individual provider fields into a stored entry. It may reference the credential attached to a stable entry only while the provider, model, endpoint, API style, and transport target still match that entry.
 
 | System Key | User Override | Default | Description |
 |---|---|---|---|
-| `config/ai/models` | `users/{ownerUid}/ai/models` | Workers AI primary plus fallback | Ordered complete text-model stack. |
+| `config/ai/models` | `users/{ownerUid}/ai/models` | none; the deployment base applies beneath both | Ordered complete text-model entries that extend the deployment base. |
 | — | `users/{uid}/ai/preferred_model` | empty | Stable entry ID preferred by this agent account. |
 | `config/ai/reasoning` | `users/{uid}/ai/reasoning` | `medium` | Reasoning mode hint: `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`. Unsupported values are clamped to the nearest model-supported level at generation time. |
 | `config/ai/max_context_bytes` | `users/{uid}/ai/max_context_bytes` | `32768` | Prompt context budget before messages. |

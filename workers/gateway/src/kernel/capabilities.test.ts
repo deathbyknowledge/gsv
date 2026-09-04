@@ -110,6 +110,7 @@ describe("CapabilityStore", () => {
         "adapter.status",
         "ai.image.generate",
         "ai.image.read",
+        "ai.models",
         "ai.speech.create",
         "ai.text.generate",
         "ai.transcription.create",

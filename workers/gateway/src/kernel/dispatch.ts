@@ -31,6 +31,7 @@ import {
   handleAiImageRead,
   handleAiSpeechCreate,
   handleAiTextGenerate,
+  handleAiModels,
   handleAiTools,
   handleAiTranscriptionCreate,
 } from "./ai";
@@ -480,6 +481,9 @@ async function dispatchKernel(
         break;
       case "ai.config":
         data = await handleAiConfig(frame.args, ctx);
+        break;
+      case "ai.models":
+        data = handleAiModels(ctx);
         break;
       case "ai.text.generate":
         data = await handleAiTextGenerate(frame.args, ctx, deps);

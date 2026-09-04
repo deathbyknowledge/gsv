@@ -5,6 +5,7 @@ import {
   RipgitClient,
 } from "../../fs";
 import { GsvFs } from "../../fs/gsv-fs";
+import { baseAiModelStack } from "../../inference/base-model-stack";
 import type { KernelContext } from "../../kernel/context";
 import { requirePrincipal } from "../../kernel/context";
 import { resolveCallerOwnerUid } from "../../kernel/context";
@@ -32,6 +33,7 @@ export function createNativeFileSystem(ctx: KernelContext): GsvFs {
       cron: createCronFileService(ctx),
       schedules: ctx.schedules,
       processRequest: createProcessViewRequest(ctx.installationId),
+      baseAiModels: () => baseAiModelStack(ctx.env),
     },
     ctx.processId ?? undefined,
     sourceBackend,

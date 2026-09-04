@@ -1287,7 +1287,6 @@ describe("GsvFs Linux-like runtime views", () => {
     ]);
 
     const models = JSON.parse(await fs.readFile("/proc/task-alpha/ai/models"));
-    expect(models).toHaveLength(1);
     expect(models[0]).toMatchObject({
       id: "fast-stack",
       name: "Fast Stack",

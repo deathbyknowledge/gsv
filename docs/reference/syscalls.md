@@ -1422,8 +1422,8 @@ type SystemSyscalls = {
 
 ## AI: `ai.*`
 
-`ai.tools` and `ai.config` are internal Process bootstrap calls. The media
-syscalls below are public, capability-gated operations. Their binary media uses
+`ai.tools` and `ai.config` are internal Process bootstrap calls. `ai.models`
+and the media syscalls below are public, capability-gated operations. Their binary media uses
 top-level frame bodies rather than JSON/base64 fields.
 
 Runtime behavior:
@@ -1432,6 +1432,7 @@ Runtime behavior:
 |---|---|---|
 | `ai.tools` | `handleAiTools` | Process-internal. Lists online accessible devices and filters built-in tool definitions by caller capabilities. Routable filesystem and shell tools are wrapped with required `target`; CodeMode is exposed as a process-local programmable tool. MCP tools are used through CodeMode or shell, not expanded into this direct tool list. |
 | `ai.config` | `handleAiConfig` | Process-internal. Resolves one ordered owner model stack, optionally moves one stable model ID to the front, and hydrates each entry's own credential. A request-local validation model is a complete replacement rather than a field overlay. Reasoning and runtime limits remain orthogonal settings. |
+| `ai.models` | `handleAiModels` | Lists the caller's effective ordered text-model stack: the owner's own entries, then the system list, then the deployment base, with the preferred entry first. Each entry carries its `source` layer and `hasCredential`; credentials are never returned. |
 | `ai.transcription.create` | `handleAiTranscriptionCreate` | Requires audio metadata plus an audio request body. An optional `pid` selects an accessible Process account for capability configuration and authorization. Transcription uses that account's complete provider/model/credential configuration or the complete system configuration; it does not borrow text-model fields. Returns transcription text and model metadata in JSON. |
 | `ai.image.read` | `handleAiImageRead` | Requires image metadata plus an image request body. Uses Moondream 3.1 exclusively for caption, query, OCR, point, and detect modes. Query reasoning may include normalized grounding coordinates. Query and OCR can request prompt-driven JSON, XML, Markdown, or CSV; JSON is parsed and optionally checked against the supplied schema. Caption, query, and OCR may stream decoded UTF-8 output in the response body. The shell `img2txt` command may acquire that body from a target-qualified filesystem path, but the AI syscall remains byte-oriented and does not route or resolve paths. |
 | `ai.image.generate` | `handleAiImageGenerate` | Accepts a text prompt. Inline generated image bytes use a response body; `data.image` contains MIME type and size, and providers may instead return `url`. |
@@ -1442,6 +1443,11 @@ type AiSyscalls = {
   "ai.tools": {
     args: Empty;
     result: { tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>; targets: Array<{ id: string; implements: string[]; label?: string; description?: string; platform?: string; }> };
+  };
+
+  "ai.models": {
+    args: Empty;
+    result: { models: Array<{ id: string; name: string; provider: string; model: string; baseUrl?: string; providerStyle?: string; transportTarget?: string; maxTokens?: number; contextWindowTokens?: number; source: "personal" | "system" | "base"; hasCredential: boolean }>; preferredModelId: string | null };
   };
 
   "ai.config": {

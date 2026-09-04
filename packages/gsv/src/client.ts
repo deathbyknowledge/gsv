@@ -370,6 +370,7 @@ const SYSCALL_NAMES = [
   "ai.tools",
   "ai.context",
   "ai.config",
+  "ai.models",
   "ai.text.generate",
   "adapter.connect",
   "adapter.disconnect",
