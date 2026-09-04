@@ -42,7 +42,8 @@ export async function* parseSse(
       if (done) {
         break;
       }
-      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+      // Normalize the whole buffer, not the chunk: a CRLF can straddle two reads.
+      buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, "\n");
       let index = buffer.indexOf("\n\n");
       while (index !== -1) {
         const chunk = buffer.slice(0, index);
@@ -53,7 +54,11 @@ export async function* parseSse(
           .map((line) => line.slice(5).trim())
           .join("\n")
           .trim();
-        if (data && data !== "[DONE]") {
+        if (data === "[DONE]") {
+          // The protocol's terminal marker; do not wait for the server to hang up.
+          return;
+        }
+        if (data) {
           yield JSON.parse(data);
         }
         index = buffer.indexOf("\n\n");
