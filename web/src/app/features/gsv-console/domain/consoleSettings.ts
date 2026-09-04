@@ -550,24 +550,30 @@ export function modelProfileSaveEntries(
   return entries;
 }
 
+/**
+ * Appends a profile to the writable layer. Ids and names are reserved against
+ * `visibleProfiles`, every layer the viewer can see, so a new personal model
+ * cannot take an included or shared model's id and hide it from the stack.
+ */
 export function createModelProfile(
   profiles: readonly ConsoleModelProfile[],
   name: string,
   values: Record<string, string>,
   now = Date.now(),
   source: AiModelSource = "personal",
+  visibleProfiles: readonly ConsoleModelProfile[] = profiles,
 ): ConsoleModelProfile[] {
   const normalizedName = normalizeProfileName(name);
   if (!normalizedName) {
     throw new Error("Model name is required");
   }
-  if (profiles.some((profile) => profile.name.toLowerCase() === normalizedName.toLowerCase())) {
+  if (visibleProfiles.some((profile) => profile.name.toLowerCase() === normalizedName.toLowerCase())) {
     throw new Error("Model name already exists");
   }
   return [
     ...profiles,
     {
-      id: uniqueProfileId(profiles, normalizedName),
+      id: uniqueProfileId(visibleProfiles, normalizedName),
       name: normalizedName,
       values: normalizeProfileValues(values),
       source,

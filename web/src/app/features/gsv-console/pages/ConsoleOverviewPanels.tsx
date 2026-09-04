@@ -9,6 +9,7 @@ import type { TagTone } from "../../../components/ui/Tag";
 import { fixedAiProviderModel } from "../../../domain/aiProviders";
 import {
   configValueForKey,
+  editableModelSource,
   effectiveAiValuesForViewer,
   modelDisplayName,
   modelStackDisplayName,
@@ -313,7 +314,9 @@ function SettingsCard({
       ? modelStackDisplayName(modelValues)
       : modelCoreName(modelValues["config/ai/model"] ?? "")
   ) || "Not configured";
-  const savedModels = `${profiles.length} saved model${profiles.length === 1 ? "" : "s"}`;
+  // Only the viewer's own layer is persisted state; included and shared entries are available, not saved.
+  const ownModels = profiles.filter((profile) => profile.source === editableModelSource(viewer?.uid));
+  const savedModels = `${ownModels.length} saved model${ownModels.length === 1 ? "" : "s"}`;
   const behavior = viewer ? behaviorForAccount(models.listing, config, viewer.uid, viewer.uid) : null;
   const permission = behavior?.permission ?? "ask";
   // AGENT PERMISSIONS counts the saved approval-policy rules (owned by the CREW

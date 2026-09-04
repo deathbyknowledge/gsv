@@ -644,7 +644,7 @@ function ModelSettingsDetail({
         onSave={async (name, values, clearedSecretKeys, makeDefault) => {
           let nextProfiles = profile
             ? updateModelProfile(writableProfiles, profile.id, name, values)
-            : createModelProfile(writableProfiles, name, values, Date.now(), editableSource);
+            : createModelProfile(writableProfiles, name, values, Date.now(), editableSource, profiles);
           const savedProfile = profile
             ? nextProfiles.find((candidate) => candidate.id === profile.id)!
             : nextProfiles[nextProfiles.length - 1];

@@ -24,6 +24,7 @@ import {
   modelValidationValuesFromProfileDrafts,
   serializeModelProfiles,
   updateModelProfile,
+  type ConsoleModelProfile,
 } from "./consoleSettings";
 
 function primaryProfile(config: readonly ConsoleConfigEntry[], uid: number) {
@@ -165,6 +166,30 @@ describe("console settings domain", () => {
     expect(projected[0].values["config/ai/api_key"]).toBe("sk-fast");
     expect(projected[1].values["config/ai/api_key"]).toBe("");
     expect(modelProfilesFromListing(null, config, 42)).toEqual([]);
+  });
+
+  it("reserves ids and names across every visible layer when creating a model", () => {
+    const included: ConsoleModelProfile = {
+      id: "gsv-included",
+      name: "GSV Included",
+      values: { "config/ai/provider": "gsv", "config/ai/model": "default" },
+      source: "base",
+      createdAt: 0,
+      updatedAt: 0,
+    };
+
+    // "GSV-Included" is a different name but slugifies to the reserved id.
+    const created = createModelProfile([], "GSV-Included", {
+      "config/ai/provider": "openai",
+      "config/ai/model": "gpt-5.4",
+    }, 1000, "personal", [included]);
+    expect(created).toHaveLength(1);
+    expect(created[0].id).not.toBe("gsv-included");
+    expect(created[0].source).toBe("personal");
+    expect(() => createModelProfile([], "GSV Included", {
+      "config/ai/provider": "openai",
+      "config/ai/model": "gpt-5.4",
+    }, 1000, "personal", [included])).toThrow("Model name already exists");
   });
 
   it("edits the installation list as root and a personal list otherwise", () => {
