@@ -1061,6 +1061,12 @@ describe("GsvFs virtual /dev", () => {
 });
 
 describe("GsvFs virtual /sys config tree", () => {
+  it("lists the kernel views under /sys by their current names", async () => {
+    const fs = makeConfigBackedFs(ROOT, {});
+
+    expect(await fs.readdir("/sys")).toEqual(["capabilities", "config", "targets", "users"]);
+  });
+
   it("lists nested /sys/config directories based on config key prefixes", async () => {
     const models = JSON.stringify({
       version: 1,

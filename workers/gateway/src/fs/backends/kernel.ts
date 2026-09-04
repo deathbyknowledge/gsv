@@ -866,7 +866,7 @@ export class KernelMountBackend implements MountBackend {
     }
 
     if (path === "/sys") {
-      return ["capabilities", "config", "devices", "users"];
+      return ["capabilities", "config", "targets", "users"];
     }
 
     if (path === "/sys/config") {
@@ -912,8 +912,8 @@ export class KernelMountBackend implements MountBackend {
     }
 
     if (path === "/sys/targets") {
-      const devices = this.kernel.targets.listForUser(this.identity.uid, this.identity.gids);
-      return devices.map((d) => d.target_id).sort();
+      const targets = this.kernel.targets.listForUser(this.identity.uid, this.identity.gids);
+      return targets.map((target) => target.target_id).sort();
     }
 
     if (path === "/sys/capabilities") {
