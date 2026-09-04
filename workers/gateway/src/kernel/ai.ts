@@ -857,6 +857,14 @@ function readConfiguredAiModelStack(ctx: KernelContext, configKey: string): AiMo
   return stack;
 }
 
+/**
+ * The running account's own preference wins; otherwise the owner's preference
+ * applies, so a human promoting a model also steers the agents they run.
+ */
+function resolvePreferredAiModelId(ctx: KernelContext, accountUids: readonly number[]): string | null {
+  return normalizeOptionalString(resolveAiConfigValue(ctx.config, accountUids, "preferred_model")) ?? null;
+}
+
 function storedCredential(ctx: KernelContext, item: EffectiveAiModelEntry): string {
   return item.credentialKey ? ctx.config.get(item.credentialKey) ?? "" : "";
 }
@@ -870,9 +878,7 @@ export function handleAiModels(ctx: KernelContext): AiModelsResult {
   const uid = principal.account.uid;
   const owner = resolveOwnerIdentity(ctx);
   const effective = resolveEffectiveAiModelStack(ctx, resolveAiModelOwnerUid(ctx, uid, owner));
-  const preferredModelId = normalizeOptionalString(
-    ctx.config.getExplicit(`users/${uid}/ai/preferred_model`),
-  );
+  const preferredModelId = resolvePreferredAiModelId(ctx, resolveAiConfigAccountUids(uid, owner));
   const ordered = orderEffectiveAiModels(effective, preferredModelId);
   const preferred = preferredModelId
     ? ordered.find((item) => item.entry.id.toLowerCase() === preferredModelId.toLowerCase())
@@ -906,7 +912,7 @@ async function resolveStoredAiTextModelStack(
     throw new Error(`AI model not found: ${requestedModelId}`);
   }
   const preferredModelId = requestedModelId
-    ?? normalizeOptionalString(options.ctx.config.getExplicit(`users/${options.uid}/ai/preferred_model`));
+    ?? resolvePreferredAiModelId(options.ctx, options.accountUids);
   const models = orderEffectiveAiModels(effective, preferredModelId);
   const reasoning = normalizeOptionalString(options.reasoning)
     ?? normalizeOptionalString(resolveConfig("reasoning"));

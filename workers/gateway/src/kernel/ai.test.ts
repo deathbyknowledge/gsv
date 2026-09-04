@@ -1624,6 +1624,34 @@ describe("handleAiConfig", () => {
     expect(result.accountApprovalPolicy).toBe('{"default":"auto","rules":[]}');
   });
 
+  it("applies the owner's preferred model to the agents the owner runs", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "mine", name: "Mine", provider: "openai", model: "gpt-5.4" }],
+      }),
+      "users/1000/ai/preferred_model": "gsv-included",
+    }, { uid: 2000, ownerUid: 1000, processId: "task-1", managedInference: true }));
+
+    expect(result).toMatchObject({ provider: "gsv", model: "default" });
+    expect(result.fallbacks?.map((fallback) => fallback.modelId)).toEqual(["mine"]);
+  });
+
+  it("lets an agent's own preferred model override the owner's", async () => {
+    const context = makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({
+        version: 1,
+        models: [{ id: "mine", name: "Mine", provider: "openai", model: "gpt-5.4" }],
+      }),
+      "users/1000/ai/preferred_model": "gsv-included",
+      "users/2000/ai/preferred_model": "mine",
+    }, { uid: 2000, ownerUid: 1000, processId: "task-1", managedInference: true });
+
+    const result = await handleAiConfig({}, context);
+    expect(result).toMatchObject({ provider: "openai", model: "gpt-5.4" });
+    expect(handleAiModels(context).models.map((model) => model.id)).toEqual(["mine", "gsv-included"]);
+  });
+
   it("keeps a complete request-local model separate from persisted runtime and media settings", async () => {
     const result = await handleAiConfig({
       modelConfig: {
