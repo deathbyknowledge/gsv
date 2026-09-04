@@ -44,8 +44,8 @@ function operationPeer(
     grant: {
       calls: kind === "human" ? ["*"] : [],
       signals: kind === "human"
-        ? ["device.status", "peer.pong", "message.committed"]
-        : ["device.status", "peer.pong"],
+        ? ["target.status", "peer.pong", "message.committed"]
+        : ["target.status", "peer.pong"],
       implements: implementsList,
     },
   };

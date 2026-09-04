@@ -153,7 +153,7 @@ describe("Kernel personal controller connect lifecycle", () => {
       id: machine.device_id,
       sessionId: "connection-1",
       principal: { kind: "machine" as const, account: PROCESS_IDENTITY },
-      grant: { calls: [], signals: ["device.status"], implements: ["shell.exec"] },
+      grant: { calls: [], signals: ["target.status"], implements: ["shell.exec"] },
     };
     handleConnectMock.mockResolvedValueOnce({
       ok: true,

@@ -40,7 +40,9 @@ export type ConnectOutcome =
 export const SETUP_REQUIRED_ERROR_CODE = 425;
 type SetupRequiredDetails = { setupMode: true; next: "sys.setup" };
 
-const DRIVER_CONNECTION_CAPABILITIES: string[] = [];
+const PROTOCOL_VERSION = 4;
+const INSTALLER_URL = "https://install.gsv.space";
+const MACHINE_CONNECTION_CAPABILITIES: string[] = [];
 const SERVICE_CAPABILITY_GIDS = [102];
 
 export function setupRequiredDetails(): SetupRequiredDetails {
@@ -99,8 +101,20 @@ export async function handleConnect(
     throw new Error("sys.connect requires an active connection");
   }
 
-  if (args.protocol !== 3) {
-    return { ok: false, code: 102, message: "Unsupported protocol version" };
+  if (args.protocol !== PROTOCOL_VERSION) {
+    return {
+      ok: false,
+      code: 102,
+      message: args.protocol < PROTOCOL_VERSION
+        ? `This client speaks protocol ${args.protocol}; the gateway requires protocol ${PROTOCOL_VERSION}. Update the client with ${INSTALLER_URL}.`
+        : `This client speaks protocol ${args.protocol}; the gateway only supports protocol ${PROTOCOL_VERSION}. Redeploy the gateway.`,
+      details: {
+        requestedProtocol: args.protocol,
+        supportedProtocol: PROTOCOL_VERSION,
+        serverVersion: ctx.serverVersion,
+        installer: INSTALLER_URL,
+      },
+    };
   }
 
   const peerId = args.peer?.id?.trim();
@@ -177,7 +191,7 @@ export async function handleConnect(
 
   const serverFeatures = gsvInferenceFeaturesFromEnv(ctx.env);
   const result: ConnectResult = {
-    protocol: 3,
+    protocol: PROTOCOL_VERSION,
     server: {
       version: serverVersion,
       release: SERVER_RELEASE,
@@ -222,7 +236,7 @@ function resolvePeerCalls(
     case "human":
       return caps.resolve(identity.gids);
     case "machine":
-      return [...DRIVER_CONNECTION_CAPABILITIES];
+      return [...MACHINE_CONNECTION_CAPABILITIES];
     case "service":
       return caps.resolve(SERVICE_CAPABILITY_GIDS);
   }
@@ -247,13 +261,13 @@ async function authenticatePeer(
   if (hasToken) {
     const result = await auth.authenticatePeerToken(username, args.auth.token!);
     if (!result.ok) return { ok: false, error: result.error };
-    if (result.role === "driver" && result.allowedDeviceId !== args.peer.id.trim()) {
+    if (result.peerId !== null && result.peerId !== args.peer.id.trim()) {
       return { ok: false, error: "Authentication failed" };
     }
     return {
       ok: true,
       identity: withDefaultProcessContext(result.identity),
-      principalKind: principalKindForTokenRole(result.role),
+      principalKind: result.kind,
     };
   }
 
@@ -268,20 +282,12 @@ async function authenticatePeer(
   };
 }
 
-function principalKindForTokenRole(role: "driver" | "service" | "user"): PeerPrincipalKind {
-  switch (role) {
-    case "user": return "human";
-    case "driver": return "machine";
-    case "service": return "service";
-  }
-}
-
 function buildSignalList(kind: PeerPrincipalKind): string[] {
   switch (kind) {
     case "human":
       return [...USER_CONNECTION_SIGNALS, "peer.pong"];
     case "machine":
-      return ["device.status", "peer.pong"];
+      return ["target.status", "peer.pong"];
     default:
       return [];
   }

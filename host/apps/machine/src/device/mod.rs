@@ -664,6 +664,14 @@ pub async fn run(
                             );
                             return Err(e);
                         }
+                        if rpc_error.is_protocol_unsupported() {
+                            error!(
+                                event = "connect.protocol_unsupported",
+                                error = %rpc_error,
+                                hint = "This gsvd build cannot talk to the gateway; install the matching release from https://install.gsv.space and restart the service.",
+                            );
+                            return Err(e);
+                        }
                     }
                     reconnect_attempt = reconnect_attempt.saturating_add(1);
                     runtime.reconnecting(reconnect_attempt, e.to_string());

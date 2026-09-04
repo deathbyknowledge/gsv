@@ -45,7 +45,7 @@ import {
 } from "./proc-handlers";
 import { handleAccountCreate, handleAccountList } from "./agents";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
-import { handleSysDeviceDelete, handleSysDeviceGet, handleSysDeviceList, handleSysDeviceUpdate } from "./sys/device";
+import { handleSysTargetDelete, handleSysTargetGet, handleSysTargetList, handleSysTargetUpdate } from "./sys/target";
 import { normalizeNetFetchTimeoutMs } from "./net";
 import { handleSysBootstrap } from "./sys/bootstrap";
 import { handleSysSetupAssist } from "./sys/setup-assist";
@@ -526,17 +526,17 @@ async function dispatchKernel(
       case "sys.config.set":
         data = handleSysConfigSet(frame.args, ctx);
         break;
-      case "sys.device.list":
-        data = handleSysDeviceList(frame.args, ctx);
+      case "sys.target.list":
+        data = handleSysTargetList(frame.args, ctx);
         break;
-      case "sys.device.get":
-        data = handleSysDeviceGet(frame.args, ctx);
+      case "sys.target.get":
+        data = handleSysTargetGet(frame.args, ctx);
         break;
-      case "sys.device.update":
-        data = handleSysDeviceUpdate(frame.args, ctx);
+      case "sys.target.update":
+        data = handleSysTargetUpdate(frame.args, ctx);
         break;
-      case "sys.device.delete":
-        data = handleSysDeviceDelete(frame.args, ctx);
+      case "sys.target.delete":
+        data = handleSysTargetDelete(frame.args, ctx);
         break;
       case "sys.oauth.start":
         data = await handleSysOAuthStart(frame.args, ctx);

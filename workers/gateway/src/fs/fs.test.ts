@@ -198,8 +198,8 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     {
       id: "sched-1",
       ownerUid: 1000,
-      creator: { kind: "user", uid: 1000, username: "sam" },
-      runAs: { kind: "user", uid: 1000, username: "sam" },
+      creator: { kind: "human", uid: 1000, username: "sam" },
+      runAs: { kind: "human", uid: 1000, username: "sam" },
       name: "daily pulse",
       enabled: true,
       expression: { kind: "every", everyMs: 60_000 },
@@ -220,8 +220,8 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     {
       id: "sched-foreign",
       ownerUid: 1001,
-      creator: { kind: "user", uid: 1001, username: "alice" },
-      runAs: { kind: "user", uid: 1001, username: "alice" },
+      creator: { kind: "human", uid: 1001, username: "alice" },
+      runAs: { kind: "human", uid: 1001, username: "alice" },
       name: "foreign",
       enabled: true,
       expression: { kind: "every", everyMs: 60_000 },

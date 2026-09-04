@@ -253,7 +253,7 @@ export class ShellDiscoveryCatalog {
   }
 
   private async targetEntries(): Promise<ShellDiscoveryEntry[]> {
-    if (!hasCapability(this.ctx.identity?.capabilities ?? [], "sys.device.list")) {
+    if (!hasCapability(this.ctx.identity?.capabilities ?? [], "sys.target.list")) {
       return [];
     }
     try {

@@ -1,6 +1,6 @@
 # Unified Protocol Peers
 
-Status: **implemented in protocol version 3**.
+Status: **implemented in protocol version 4**.
 
 GSV has one request, response, signal, body, and cancellation model. A browser,
 native application, CLI, machine daemon, or adapter service is a protocol peer.
@@ -56,7 +56,7 @@ These fields are deliberately different axes.
 never claimed in the connect request.
 
 - Password and user-token authentication produce a human principal.
-- A node token produces a machine principal and is bound to its machine id.
+- A machine token produces a machine principal and is bound to its peer id.
 - A service token or a fixed first-party service binding produces a service
   principal.
 - Linked adapter ingress produces a short-lived delegated human context only

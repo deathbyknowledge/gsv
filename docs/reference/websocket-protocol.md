@@ -4,7 +4,7 @@ Gateway control requests, responses, and signals use JSON text frames over
 `GET /ws`. Requests and successful responses may attach a byte stream carried
 by binary frames.
 
-Protocol version 3 is peer- and syscall-based:
+Protocol version 4 is peer- and syscall-based:
 
 - requests carry a syscall name in `call`
 - responses carry success data in `data`
@@ -172,7 +172,7 @@ derived from the password or token used to authenticate.
   "id": "uuid",
   "call": "sys.connect",
   "args": {
-    "protocol": 3,
+    "protocol": 4,
     "peer": {
       "id": "desktop-alice",
       "version": "0.1.0",
@@ -189,16 +189,16 @@ derived from the password or token used to authenticate.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `protocol` | `number` | Yes | Must currently be `3` |
+| `protocol` | `number` | Yes | Must currently be `4`. A mismatch returns error `102` with `requestedProtocol`, `supportedProtocol`, `serverVersion`, and `installer` details so an outdated client can explain the upgrade. |
 | `peer.id` | `string` | Yes | Stable application, machine, or service identity |
 | `peer.version` | `string` | Yes | Peer version |
 | `peer.platform` | `string` | Yes | Platform string |
 | `peer.implements` | `string[]` | No | Requested reverse syscall implementation patterns. Machine credentials require at least one. |
 | `auth.username` | `string` | No | Required when authenticating |
 | `auth.password` | `string` | No | User-password auth |
-| `auth.token` | `string` | No | User, node, or service token auth |
+| `auth.token` | `string` | No | Human, machine, or service token auth. The token kind is the principal kind. |
 
-Password and token are mutually exclusive. A node token is bound to the exact
+Password and token are mutually exclusive. A machine token is bound to the exact
 `peer.id` recorded when the token was created. `peer.implements` is an
 advertisement, not authority: the Kernel validates it and independently derives
 the returned grants.
@@ -211,7 +211,7 @@ the returned grants.
   "id": "uuid",
   "ok": true,
   "data": {
-    "protocol": 3,
+    "protocol": 4,
     "server": {
       "version": "0.4.0",
       "release": "dev",
@@ -350,14 +350,14 @@ Current principal defaults from `buildSignalList()`:
 - `message.aborted`
   - Discards the directed endpoint's transient projection when a Message cannot
     be committed or the run is superseded.
-- `device.status`
+- `target.status`
 - `adapter.status`
 - `mcp.changed`
 - `peer.pong`
 
 ### Machine peers
 
-- `device.status`
+- `target.status`
 - `peer.pong`
 
 ### Service peers

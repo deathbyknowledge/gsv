@@ -1,7 +1,7 @@
 import type {
   AiToolsDevice,
-  SysDeviceDetail,
-  SysDeviceSummary,
+  SysTargetDetail,
+  SysTargetSummary,
 } from "@humansandmachines/gsv/protocol";
 import { hasCapability } from "./capabilities";
 import type { KernelContext } from "./context";
@@ -133,9 +133,9 @@ export function targetToAiDevice(target: TargetDescriptor): AiToolsDevice {
   return device;
 }
 
-export function targetToDeviceSummary(target: TargetDescriptor): SysDeviceSummary {
+export function targetToSummary(target: TargetDescriptor): SysTargetSummary {
   return {
-    deviceId: target.targetId,
+    targetId: target.targetId,
     ownerUid: target.ownerUid,
     ownerUsername: target.ownerUsername,
     label: target.label,
@@ -148,9 +148,9 @@ export function targetToDeviceSummary(target: TargetDescriptor): SysDeviceSummar
   };
 }
 
-export function targetToDeviceDetail(target: TargetDescriptor): SysDeviceDetail {
+export function targetToDetail(target: TargetDescriptor): SysTargetDetail {
   return {
-    ...targetToDeviceSummary(target),
+    ...targetToSummary(target),
     firstSeenAt: target.firstSeenAt,
     connectedAt: target.connectedAt,
     disconnectedAt: target.disconnectedAt,

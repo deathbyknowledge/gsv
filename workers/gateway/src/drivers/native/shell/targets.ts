@@ -87,7 +87,7 @@ async function runTargetsCommand(
 }
 
 async function listTargets(options: ListOptions, ctx: KernelContext): Promise<ExecResult> {
-  requireCommandCapability(ctx, "sys.device.list");
+  requireCommandCapability(ctx, "sys.target.list");
 
   const entries = [
     gsvTarget(ctx),
@@ -145,7 +145,7 @@ async function showTarget(
   ctx: KernelContext,
   commandName: "targets" | "devices",
 ): Promise<ExecResult> {
-  requireCommandCapability(ctx, "sys.device.get");
+  requireCommandCapability(ctx, "sys.target.get");
 
   const { targetId, json } = parseTargetShowOptions(args, commandName);
   const entry = targetId === GSV_TARGET_ID

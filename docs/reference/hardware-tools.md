@@ -16,7 +16,7 @@ resource, or hardware dependency lives in that environment.
 | `gsv` | Native Gateway target running in the Cloudflare Worker sandbox. |
 | `<targetId>` | A registered target, such as a computer, browser profile, or authorized service environment; routable while online. |
 
-The Gateway includes accessible online devices in `ai.tools` context and, by default, in `sys.device.list`. Those inventories advertise devices that can accept work immediately. The agent-facing `targets list` command includes every visible registered device by default and labels each one `online` or `offline`; use `targets list --online` to restrict it to reachable targets. Device notes are included too, so processes can identify machines using the user's own descriptions. Registered devices also appear in the native filesystem under `/sys/devices`.
+The Gateway includes accessible online devices in `ai.tools` context and, by default, in `sys.target.list`. Those inventories advertise devices that can accept work immediately. The agent-facing `targets list` command includes every visible registered device by default and labels each one `online` or `offline`; use `targets list --online` to restrict it to reachable targets. Device notes are included too, so processes can identify machines using the user's own descriptions. Registered devices also appear in the native filesystem under `/sys/devices`.
 
 Most bundled messaging adapters are transport-only. Use `message destinations`
 to discover authorized external chat surfaces; use adapter APIs or the
@@ -111,10 +111,10 @@ driver connection.
 
 Inspect descriptors with:
 
-- `sys.device.list`
-- `sys.device.get`
-- `sys.device.update` to change the owner-managed `description`
-- `sys.device.delete` to forget an owned physical device, disconnect any live device socket, and revoke device-bound node tokens
+- `sys.target.list`
+- `sys.target.get`
+- `sys.target.update` to change the owner-managed `description`
+- `sys.target.delete` to forget an owned physical device, disconnect any live device socket, and revoke its machine tokens
 - `Read` with `target: "gsv"` and `path: "/sys/devices"`
 
 ## Native `gsv` Target

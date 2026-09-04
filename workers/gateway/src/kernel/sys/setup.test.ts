@@ -103,11 +103,11 @@ function createCtx(overrides?: {
       tokenPrefix: "gsv_node_abc",
       uid: 1000,
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      kind: "node" as const,
+      kind: "machine" as const,
       label: "node:macbook",
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       allowedRole: "driver" as const,
-      allowedDeviceId: "macbook",
+      peerId: "macbook",
       createdAt: 1_700_000_000_000,
       expiresAt: null,
     })),
@@ -213,8 +213,8 @@ describe("handleSysSetup", () => {
           apiKey: "or-key",
         },
         timezone: "Europe/Amsterdam",
-        node: {
-          deviceId: "macbook",
+        machine: {
+          peerId: "macbook",
         },
       },
       ctx,
@@ -253,7 +253,7 @@ describe("handleSysSetup", () => {
     );
     expect(result.user.username).toBe("alice");
     expect(result.server).toEqual({ version: "0.0.1-test", release: "dev" });
-    expect(result.nodeToken?.allowedDeviceId).toBe("macbook");
+    expect(result.machineToken?.peerId).toBe("macbook");
     expect(ensurePersonalControllerMock).toHaveBeenCalledWith(1000, ctx, undefined);
   });
 

@@ -327,11 +327,11 @@ broadcastDeviceStatus(
 
     const frame: SignalFrame = {
       type: "sig",
-      signal: "device.status",
+      signal: "target.status",
       payload: {
         event,
-        device: {
-          deviceId: device.device_id,
+        target: {
+          targetId: device.device_id,
           ownerUid: device.owner_uid,
           label: device.label,
           description: device.description,
@@ -350,7 +350,7 @@ broadcastDeviceStatus(
     for (const [, conn] of this.host.connections) {
       const state = conn.state;
       const peer = state?.peer;
-      if (!peer?.grant.signals.includes("device.status")) continue;
+      if (!peer?.grant.signals.includes("target.status")) continue;
       if (peer.principal.kind === "service") continue;
 
       if (peer.principal.kind === "human") {

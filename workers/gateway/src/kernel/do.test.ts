@@ -413,9 +413,9 @@ function connectedPeer(
     grant: {
       calls: kind === "human" ? ["*"] : [],
       signals: kind === "human"
-        ? ["mcp.changed", "proc.run.stream", "proc.changed", "message.committed", "device.status"]
+        ? ["mcp.changed", "proc.run.stream", "proc.changed", "message.committed", "target.status"]
         : kind === "machine"
-          ? ["device.status", "peer.pong"]
+          ? ["target.status", "peer.pong"]
           : [],
       implements: implementsList,
     },

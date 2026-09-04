@@ -112,17 +112,16 @@ describe("console agent service", () => {
     expect(caught?.message).not.toContain("do-not-expose");
   });
 
-  it("creates driver-scoped node tokens for machine provisioning", async () => {
+  it("creates machine tokens bound to a peer id for machine provisioning", async () => {
     const create = vi.fn(async () => ({
       token: {
         tokenId: "tok-1",
         token: "secret-node-token",
         tokenPrefix: "gsv_node",
         uid: 42,
-        kind: "node",
+        kind: "machine",
         label: "Studio Mac",
-        allowedRole: "driver",
-        allowedDeviceId: "studio-mac",
+        peerId: "studio-mac",
         createdAt: 1_700_000_000,
         expiresAt: 1_700_086_400,
       },
@@ -143,17 +142,15 @@ describe("console agent service", () => {
       token: "secret-node-token",
       tokenPrefix: "gsv_node",
       uid: 42,
-      kind: "node",
+      kind: "machine",
       label: "Studio Mac",
-      allowedRole: "driver",
-      allowedDeviceId: "studio-mac",
+      peerId: "studio-mac",
       createdAt: 1_700_000_000,
       expiresAt: 1_700_086_400,
     });
     expect(create).toHaveBeenCalledWith({
-      kind: "node",
-      allowedRole: "driver",
-      allowedDeviceId: "studio-mac",
+      kind: "machine",
+      peerId: "studio-mac",
       label: "Studio Mac",
       expiresAt: 1_700_086_400,
     });

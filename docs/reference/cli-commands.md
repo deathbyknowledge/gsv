@@ -422,7 +422,7 @@ Device identity resolves as `--id`, then local `device.id`, then
 `device.workspace`, then the current directory. A persistent daemon should have
 `gateway.username` and `device.token` configured, usually from
 `gsv auth setup --device-id ...` or
-`gsv auth token create --kind device --device ...` followed by
+`gsv auth token create --kind machine --peer ...` followed by
 `gsv config --local set device.token ...`.
 Because the compatibility launcher replaces itself with `gsvd`, gateway setup
 must be completed before starting `gsvd`; use `gsv auth setup` when connecting
@@ -481,13 +481,13 @@ to an agent, so send another message after the command succeeds.
 ### Auth Tokens
 
 ```bash
-gsv auth token create [--kind device|service|user] [--uid UID] [--label LABEL] \
+gsv auth token create [--kind machine|service|human] [--uid UID] [--label LABEL] \
   [--role driver|service|user] [--device DEVICE] [--expires-at UNIX_MS]
 gsv auth token list [--uid UID]
 gsv auth token revoke TOKEN_ID [--reason TEXT] [--uid UID]
 ```
 
-`device` is the default token kind. Use `--device` to bind a driver token to one
+`machine` is the default token kind. Use `--peer` to bind a machine token to one
 device ID. `--uid` is for root-managed token operations.
 
 ## Config Commands

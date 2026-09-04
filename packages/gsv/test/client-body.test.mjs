@@ -47,7 +47,7 @@ class FakeWebSocket extends EventTarget {
         id: frame.id,
         ok: true,
         data: {
-          protocol: 3,
+          protocol: 4,
           server: { connectionId: "test" },
           peer: {
             id: frame.args.peer.id,

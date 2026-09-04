@@ -193,9 +193,8 @@ function waitFor(ms: number): Promise<void> {
 
 async function createUserSessionToken(client: SessionClient, expiresAt: number): Promise<UserSessionToken> {
   const result = await client.sys.token.create({
-    kind: "user",
+    kind: "human",
     label: "gsv-ui-session",
-    allowedRole: "user",
     expiresAt,
   });
 
@@ -217,7 +216,7 @@ async function revokeSessionToken(client: SessionClient, tokenId: string, reason
 async function probeSetupMode(client: SessionClient, url: string): Promise<boolean> {
   try {
     await client.requestOnce(url, "sys.connect", {
-      protocol: 3,
+      protocol: 4,
       peer: {
         id: "gsv-ui-setup-probe",
         version: "0.4.1",

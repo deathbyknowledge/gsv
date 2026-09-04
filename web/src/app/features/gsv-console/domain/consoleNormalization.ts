@@ -51,7 +51,7 @@ export function normalizeProcessesPayload(payload: ConsoleRpcPayload): ConsolePr
 
 export function normalizeTargetsPayload(payload: ConsoleRpcPayload): ConsoleTarget[] {
   const record = asRecord(parseConsolePayload(payload));
-  return asArray(record?.devices)
+  return asArray(record?.targets)
     .map(normalizeTarget)
     .filter((entry): entry is ConsoleTarget => entry !== null)
     .sort((left, right) => {
@@ -222,7 +222,7 @@ function normalizeProcess(value: ConsoleWireValue): ConsoleProcess | null {
 
 function normalizeTarget(value: ConsoleWireValue): ConsoleTarget | null {
   const record = asRecord(value);
-  const deviceId = nonEmptyString(record?.deviceId);
+  const deviceId = nonEmptyString(record?.targetId);
   if (!record || !deviceId) {
     return null;
   }

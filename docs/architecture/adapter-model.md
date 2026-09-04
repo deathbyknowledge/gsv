@@ -37,7 +37,7 @@ Most bundled adapters do not appear in the `targets` shell inventory or the
 model's available-target list because they do not implement targetable syscalls.
 Managed Slack is the first adapter-backed exception: after personal OAuth and
 pairing it advertises a `shell.exec` target containing the provider-owned
-`slack` CLI. The compatibility `sys.device.*` API and Machines console remain
+`slack` CLI. The `sys.target.*` API and Machines console remain
 hardware-oriented and do not administer service-backed targets.
 
 Messaging has its own two deliberate views:

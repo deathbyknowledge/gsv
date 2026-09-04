@@ -19,7 +19,7 @@ type TerminalRequestArgs = {
 };
 
 export async function listTerminalTargets(client: TerminalClient): Promise<TerminalTarget[]> {
-  const payload = await client.call<unknown>("sys.device.list", { includeOffline: true });
+  const payload = await client.call<unknown>("sys.target.list", { includeOffline: true });
   return normalizeTerminalTargets(payload);
 }
 

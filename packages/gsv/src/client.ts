@@ -227,7 +227,7 @@ export type GsvSignalNamespace = GsvClientNamespaces["signal"];
 export type GsvSysNamespace = GsvClientNamespaces["sys"];
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 8_000;
-const PROTOCOL_VERSION = 3;
+const PROTOCOL_VERSION = 4;
 const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
 const LONG_RUNNING_REQUEST_TIMEOUT_MS = 120_000;
 const AI_TEXT_GENERATION_REQUEST_TIMEOUT_MS = 180_000;
@@ -332,10 +332,10 @@ const SYSCALL_NAMES = [
   "sys.bootstrap",
   "sys.config.get",
   "sys.config.set",
-  "sys.device.list",
-  "sys.device.get",
-  "sys.device.update",
-  "sys.device.delete",
+  "sys.target.list",
+  "sys.target.get",
+  "sys.target.update",
+  "sys.target.delete",
   "sys.oauth.start",
   "sys.oauth.device.start",
   "sys.oauth.device.poll",

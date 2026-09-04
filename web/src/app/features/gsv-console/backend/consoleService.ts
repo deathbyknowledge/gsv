@@ -243,10 +243,9 @@ export type IssuedMachineNodeToken = {
   token: string;
   tokenPrefix: string;
   uid: number;
-  kind: "node";
+  kind: "machine";
   label: string | null;
-  allowedRole: "driver" | null;
-  allowedDeviceId: string | null;
+  peerId: string | null;
   createdAt: number;
   expiresAt: number | null;
 };
@@ -261,7 +260,7 @@ export async function loadConsoleProcesses(client: Pick<GSVClient, "proc">): Pro
 }
 
 export async function loadConsoleTargets(client: ConsoleClient): Promise<ConsoleTarget[]> {
-  return normalizeTargetsPayload(await client.call("sys.device.list", { includeOffline: true }));
+  return normalizeTargetsPayload(await client.call("sys.target.list", { includeOffline: true }));
 }
 
 export async function loadConsoleAccounts(client: Pick<GSVClient, "account">): Promise<ConsoleAccount[]> {
@@ -596,9 +595,8 @@ export async function createMachineNodeToken(
   const label = input.label?.trim();
   const expiresAt = z.number().finite().safeParse(input.expiresAt);
   const result = await client.sys.token.create({
-    kind: "node",
-    allowedRole: "driver",
-    allowedDeviceId: deviceId,
+    kind: "machine",
+    peerId: deviceId,
     ...(label ? { label } : undefined),
     ...(expiresAt.success ? { expiresAt: expiresAt.data } : undefined),
   });
@@ -608,10 +606,9 @@ export async function createMachineNodeToken(
     token: result.token.token,
     tokenPrefix: result.token.tokenPrefix,
     uid: result.token.uid,
-    kind: "node",
+    kind: "machine",
     label: result.token.label,
-    allowedRole: result.token.allowedRole === "driver" ? "driver" : null,
-    allowedDeviceId: result.token.allowedDeviceId,
+    peerId: result.token.peerId,
     createdAt: result.token.createdAt,
     expiresAt: result.token.expiresAt,
   };
@@ -626,10 +623,10 @@ export async function deleteConsoleMachine(
     throw new Error("device id is required");
   }
 
-  const result = parseGatewayRecord(await client.call("sys.device.delete", { deviceId }));
+  const result = parseGatewayRecord(await client.call("sys.target.delete", { targetId: deviceId }));
   return {
     deleted: result.deleted === true,
-    deviceId: stringOr(deviceId, result.deviceId),
+    deviceId: stringOr(deviceId, result.targetId),
     revokedTokens: (() => {
       const count = z.number().finite().safeParse(result.revokedTokens);
       return count.success ? Math.max(0, Math.floor(count.data)) : 0;
@@ -818,7 +815,7 @@ export async function loadConsoleOverview(
     config,
   ] = await Promise.all([
     client.proc.list({}),
-    client.call("sys.device.list", { includeOffline: true }),
+    client.call("sys.target.list", { includeOffline: true }),
     client.account.list({}),
     loadAdapterPayloads(client, options.adapters),
     loadOptionalPayload(() => client.call("sys.mcp.list", {})),

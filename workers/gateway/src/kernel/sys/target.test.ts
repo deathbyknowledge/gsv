@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
 import {
-  handleSysDeviceDelete,
-  handleSysDeviceList,
-  handleSysDeviceGet,
-  handleSysDeviceUpdate,
-} from "./device";
+  handleSysTargetDelete,
+  handleSysTargetList,
+  handleSysTargetGet,
+  handleSysTargetUpdate,
+} from "./target";
 
 type FakeDeviceRecord = {
   device_id: string;
@@ -33,18 +33,18 @@ function makeContext(
     listForUser() {
       return records;
     },
-    canAccess(deviceId: string) {
+    canAccess(targetId: string) {
       if (uid === 0) {
         return true;
       }
-      const record = byId.get(deviceId);
-      return record ? record.owner_uid === uid || accessibleDeviceIds.includes(deviceId) : false;
+      const record = byId.get(targetId);
+      return record ? record.owner_uid === uid || accessibleDeviceIds.includes(targetId) : false;
     },
-    get(deviceId: string) {
-      return byId.get(deviceId) ?? null;
+    get(targetId: string) {
+      return byId.get(targetId) ?? null;
     },
-    setMetadata(deviceId: string, patch: { label?: string; description?: string }) {
-      const record = byId.get(deviceId);
+    setMetadata(targetId: string, patch: { label?: string; description?: string }) {
+      const record = byId.get(targetId);
       if (!record) {
         return false;
       }
@@ -56,17 +56,16 @@ function makeContext(
       }
       return true;
     },
-    remove: vi.fn((deviceId: string) => byId.delete(deviceId)),
+    remove: vi.fn((targetId: string) => byId.delete(targetId)),
   };
   const tokens = [
     {
       tokenId: "tok-active-alpha",
       uid,
-      kind: "node",
+      kind: "machine",
       label: null,
       tokenPrefix: "alpha",
-      allowedRole: "driver",
-      allowedDeviceId: "node-alpha",
+      peerId: "node-alpha",
       createdAt: 1,
       lastUsedAt: null,
       expiresAt: null,
@@ -76,11 +75,10 @@ function makeContext(
     {
       tokenId: "tok-revoked-alpha",
       uid,
-      kind: "node",
+      kind: "machine",
       label: null,
       tokenPrefix: "alpha-old",
-      allowedRole: "driver",
-      allowedDeviceId: "node-alpha",
+      peerId: "node-alpha",
       createdAt: 1,
       lastUsedAt: null,
       expiresAt: null,
@@ -90,11 +88,10 @@ function makeContext(
     {
       tokenId: "tok-beta",
       uid,
-      kind: "node",
+      kind: "machine",
       label: null,
       tokenPrefix: "beta",
-      allowedRole: "driver",
-      allowedDeviceId: "node-beta",
+      peerId: "node-beta",
       createdAt: 1,
       lastUsedAt: null,
       expiresAt: null,
@@ -137,7 +134,7 @@ function makeContext(
   } as KernelContext;
 }
 
-describe("sys.device handlers", () => {
+describe("sys.target handlers", () => {
   const records: FakeDeviceRecord[] = [
     {
       device_id: "node-alpha",
@@ -171,87 +168,87 @@ describe("sys.device handlers", () => {
 
   it("lists only online devices by default", () => {
     const ctx = makeContext(1000, records);
-    const result = handleSysDeviceList({}, ctx);
-    expect(result.devices.map((device) => device.deviceId)).toEqual(["node-alpha"]);
-    expect(result.devices[0].label).toBe("Alpha");
-    expect(result.devices[0].description).toBe("Linux home server");
-    expect(result.devices[0].implements).toEqual(["fs.*", "shell.*"]);
+    const result = handleSysTargetList({}, ctx);
+    expect(result.targets.map((device) => device.targetId)).toEqual(["node-alpha"]);
+    expect(result.targets[0].label).toBe("Alpha");
+    expect(result.targets[0].description).toBe("Linux home server");
+    expect(result.targets[0].implements).toEqual(["fs.*", "shell.*"]);
   });
 
   it("accepts empty args payloads for list", () => {
     const ctx = makeContext(1000, records);
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const result = handleSysDeviceList(undefined as { includeOffline?: boolean }, ctx);
-    expect(result.devices.map((device) => device.deviceId)).toEqual(["node-alpha"]);
+    const result = handleSysTargetList(undefined as { includeOffline?: boolean }, ctx);
+    expect(result.targets.map((device) => device.targetId)).toEqual(["node-alpha"]);
   });
 
   it("includes offline devices when requested", () => {
     const ctx = makeContext(1000, records);
-    const result = handleSysDeviceList({ includeOffline: true }, ctx);
-    expect(result.devices.map((device) => device.deviceId)).toEqual(["node-alpha", "node-beta"]);
+    const result = handleSysTargetList({ includeOffline: true }, ctx);
+    expect(result.targets.map((device) => device.targetId)).toEqual(["node-alpha", "node-beta"]);
   });
 
   it("returns null for inaccessible device details", () => {
     const ctx = makeContext(1001, records);
-    const result = handleSysDeviceGet({ deviceId: "node-alpha" }, ctx);
-    expect(result).toEqual({ device: null });
+    const result = handleSysTargetGet({ targetId: "node-alpha" }, ctx);
+    expect(result).toEqual({ target: null });
   });
 
-  it("rejects missing deviceId in detail lookup", () => {
+  it("rejects missing targetId in detail lookup", () => {
     const ctx = makeContext(1000, records);
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    expect(() => handleSysDeviceGet(undefined as { deviceId: string }, ctx)).toThrow(
-      "sys.device.get requires deviceId",
+    expect(() => handleSysTargetGet(undefined as { targetId: string }, ctx)).toThrow(
+      "sys.target.get requires targetId",
     );
   });
 
   it("returns detailed device metadata for accessible devices", () => {
     const ctx = makeContext(1000, records);
-    const result = handleSysDeviceGet({ deviceId: "node-alpha" }, ctx);
+    const result = handleSysTargetGet({ targetId: "node-alpha" }, ctx);
 
-    expect(result.device?.deviceId).toBe("node-alpha");
-    expect(result.device?.implements).toEqual(["fs.*", "shell.*"]);
-    expect(result.device?.online).toBe(true);
-    expect(result.device?.ownerUid).toBe(1000);
-    expect(result.device?.label).toBe("Alpha");
-    expect(result.device?.description).toBe("Linux home server");
+    expect(result.target?.targetId).toBe("node-alpha");
+    expect(result.target?.implements).toEqual(["fs.*", "shell.*"]);
+    expect(result.target?.online).toBe(true);
+    expect(result.target?.ownerUid).toBe(1000);
+    expect(result.target?.label).toBe("Alpha");
+    expect(result.target?.description).toBe("Linux home server");
   });
 
   it("lets owners update device descriptions", () => {
     const ctx = makeContext(1000, records.map((record) => ({ ...record })));
-    const result = handleSysDeviceUpdate({
-      deviceId: "node-alpha",
+    const result = handleSysTargetUpdate({
+      targetId: "node-alpha",
       description: "GPU and home automation box",
     }, ctx);
 
-    expect(result.device?.description).toBe("GPU and home automation box");
+    expect(result.target?.description).toBe("GPU and home automation box");
   });
 
   it("lets owners update device labels", () => {
     const ctx = makeContext(1000, records.map((record) => ({ ...record })));
-    const result = handleSysDeviceUpdate({
-      deviceId: "node-alpha",
+    const result = handleSysTargetUpdate({
+      targetId: "node-alpha",
       label: "New Alpha",
     }, ctx);
 
-    expect(result.device?.label).toBe("New Alpha");
+    expect(result.target?.label).toBe("New Alpha");
   });
 
   it("rejects metadata updates from group-only users", () => {
     const ctx = makeContext(1001, records, ["node-alpha"]);
-    expect(() => handleSysDeviceUpdate({
-      deviceId: "node-alpha",
+    expect(() => handleSysTargetUpdate({
+      targetId: "node-alpha",
       description: "not mine",
     }, ctx)).toThrow("Permission denied: device metadata is owner-managed");
   });
 
   it("deletes an owned physical machine and revokes active node tokens", () => {
     const ctx = makeContext(1000, records.map((record) => ({ ...record })));
-    const result = handleSysDeviceDelete({ deviceId: "node-alpha" }, ctx);
+    const result = handleSysTargetDelete({ targetId: "node-alpha" }, ctx);
 
     expect(result).toEqual({
       deleted: true,
-      deviceId: "node-alpha",
+      targetId: "node-alpha",
       revokedTokens: 1,
     });
     expect(ctx.devices.remove).toHaveBeenCalledWith("node-alpha");
@@ -262,7 +259,7 @@ describe("sys.device handlers", () => {
   it("rejects deleting a shared machine owned by another user", () => {
     const ctx = makeContext(1001, records.map((record) => ({ ...record })), ["node-alpha"]);
 
-    expect(() => handleSysDeviceDelete({ deviceId: "node-alpha" }, ctx)).toThrow(
+    expect(() => handleSysTargetDelete({ targetId: "node-alpha" }, ctx)).toThrow(
       "Permission denied: machine forgetting is owner-managed",
     );
     expect(ctx.devices.remove).not.toHaveBeenCalled();

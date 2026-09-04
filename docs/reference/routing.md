@@ -163,7 +163,7 @@ clients and process history without guessing a transport.
 Messaging adapters call `adapter.inbound` through a service identity. The Kernel normalizes the adapter id and account id, then resolves the external actor id through `identity_links`.
 
 An adapter's transport projection is not automatically a target. The bundled
-adapters are currently absent from `sys.device.*` and the generic target
+adapters are currently absent from `sys.target.*` and the generic target
 inventory because they do not implement the target contract. Explicit outbound
 delivery resolves an opaque authorized surface from `message destinations`;
 adapter account status and administration remain on the `adapter.*`

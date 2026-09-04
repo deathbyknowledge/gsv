@@ -1069,7 +1069,7 @@ describe("native shell capability discovery", () => {
     };
     const visible = await handleShellExec(
       { input: "man --search -- 'work on studio macbook'" },
-      makeContext({ capabilities: ["shell.exec", "sys.device.list"], devices }),
+      makeContext({ capabilities: ["shell.exec", "sys.target.list"], devices }),
     );
     const hidden = await handleShellExec(
       { input: "man --search -- 'work on studio macbook'" },
@@ -1433,7 +1433,7 @@ describe("targets native command", () => {
 
     const result = await handleShellExec(
       { input: "targets list --limit 2" },
-      makeContext({ capabilities: ["sys.device.list"], devices }),
+      makeContext({ capabilities: ["sys.target.list"], devices }),
     );
 
     expect(result.ok).toBe(true);
@@ -1443,14 +1443,14 @@ describe("targets native command", () => {
 
     const browserSearch = await handleShellExec(
       { input: "targets search browser-extension" },
-      makeContext({ capabilities: ["sys.device.list"], devices }),
+      makeContext({ capabilities: ["sys.target.list"], devices }),
     );
     expect(browserSearch.ok).toBe(true);
     expect(browserSearch.stdout).toContain("rearden:brave\tdevice\tonline\tbrowser-extension");
 
     const alias = await handleShellExec(
       { input: "devices search macbook" },
-      makeContext({ capabilities: ["sys.device.list"], devices }),
+      makeContext({ capabilities: ["sys.target.list"], devices }),
     );
     expect(alias.ok).toBe(true);
     expect(alias.stdout).toContain("macbook\tdevice\tonline\tdarwin");
@@ -1469,7 +1469,7 @@ describe("targets native command", () => {
         }),
       ]),
     };
-    const ctx = makeContext({ capabilities: ["sys.device.list"], devices });
+    const ctx = makeContext({ capabilities: ["sys.target.list"], devices });
 
     const result = await handleShellExec({ input: "targets list" }, ctx);
 
@@ -1499,7 +1499,7 @@ describe("targets native command", () => {
 
     const result = await handleShellExec(
       { input: "targets show macbook" },
-      makeContext({ capabilities: ["sys.device.get"], devices, auth }),
+      makeContext({ capabilities: ["sys.target.get"], devices, auth }),
     );
 
     expect(result.ok).toBe(true);
@@ -1511,7 +1511,7 @@ describe("targets native command", () => {
 
     const native = await handleShellExec(
       { input: "targets show gsv" },
-      makeContext({ capabilities: ["sys.device.get"] }),
+      makeContext({ capabilities: ["sys.target.get"] }),
     );
     expect(native.stdout).toContain("description: Native GSV capability environment.");
     expect(native.stdout).toContain("- net.fetch");

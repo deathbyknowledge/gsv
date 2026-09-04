@@ -39,7 +39,7 @@ export function GatewaySignalInvalidator() {
         return;
       }
 
-      if (signal === "device.status") {
+      if (signal === "target.status") {
         void queryClient.invalidateQueries({ queryKey: ["devices"] });
         return;
       }

@@ -37,7 +37,7 @@ import type {
   UnlinkManagedTelegramIdentityResult,
   NetFetchArgs,
   ProcessIdentity,
-  SysDeviceDeleteResult,
+  SysTargetDeleteResult,
 } from "@humansandmachines/gsv/protocol";
 import type { ConnectionIdentity } from "./identity";
 import {
@@ -1130,7 +1130,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       const passwordAuth = await this.auth.authenticate(username, credential);
       const auth = passwordAuth.ok
         ? passwordAuth
-        : await this.auth.authenticateToken(username, credential, { role: "user" });
+        : await this.auth.authenticateToken(username, credential, { kind: "human" });
 
       if (auth.ok) {
         const capabilities = this.caps.resolve(auth.identity.gids);
@@ -1507,11 +1507,11 @@ export class Kernel extends DurableObject<GatewayEnv> {
   applyPostDispatchEffects(frame: RequestFrame, response: ResponseFrame): void {
     if (!response.ok) return;
 
-    if (frame.call === "sys.device.delete") {
+    if (frame.call === "sys.target.delete") {
       // SAFETY: dispatch preserves the syscall's request/result correlation.
-      const data = response.data as SysDeviceDeleteResult | undefined;
+      const data = response.data as SysTargetDeleteResult | undefined;
       if (data?.deleted) {
-        this.connectionRuntime.disconnectDeviceConnections(data.deviceId, "Machine forgotten");
+        this.connectionRuntime.disconnectDeviceConnections(data.targetId, "Machine forgotten");
       }
     }
 
