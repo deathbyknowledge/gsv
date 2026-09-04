@@ -4305,9 +4305,7 @@ async fn configure_local_machine(
                     )
                 })?
                 .token;
-            if issued.peer_id.as_deref() != Some(machine_id.as_str())
-                || issued.token.is_empty()
-            {
+            if issued.peer_id.as_deref() != Some(machine_id.as_str()) || issued.token.is_empty() {
                 let _ = revoke_machine_token(client, &issued.token_id).await;
                 return Err(RequestFailure::transport(
                     "GSV returned a credential for a different machine.",
@@ -4620,7 +4618,7 @@ mod tests {
     #[test]
     fn machine_enrollment_rejects_existing_ids_and_display_names() {
         let machines = vec![KnownMachine {
-            device_id: "studio-mac".to_string(),
+            target_id: "studio-mac".to_string(),
             label: "Editing laptop".to_string(),
         }];
         assert!(machine_identity_conflicts(
