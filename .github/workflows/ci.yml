@@ -350,11 +350,13 @@ jobs:
         run: npm ci
 
       - name: Install adapter dependencies
+        # Run each install from inside the package. Invoked from the workspace
+        # root with --prefix, npm stalls for a full fetch timeout per adapter.
         run: |
           set -euo pipefail
           for manifest in workers/adapters/*/package.json; do
             directory="${manifest%/package.json}"
-            npm ci --prefix "$directory" --workspaces=false
+            (cd "$directory" && npm ci)
           done
 
       - name: Type check adapter packages
