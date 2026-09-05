@@ -138,21 +138,29 @@ export interface McpConnection {
 
 const DISCOVERY_TIMEOUT_MS = 15_000;
 
+type ServerLists = {
+  tools: Tool[];
+  resources: Resource[];
+  prompts: Prompt[];
+  resourceTemplates: ResourceTemplate[];
+};
+
 export class McpClientConnection implements McpConnection {
   readonly client: Client;
   connectionState: McpConnectionState = "connecting";
   connectionError: string | null = null;
-  tools: Tool[] = [];
-  resources: Resource[] = [];
-  prompts: Prompt[] = [];
-  resourceTemplates: ResourceTemplate[] = [];
   serverCapabilities?: ServerCapabilities;
   instructions?: string;
+  private readonly lists: ServerLists = { tools: [], resources: [], prompts: [], resourceTemplates: [] };
+  /**
+   * One counter per list, taken by every fetch of that list, whether discovery
+   * or a list-changed notification started it. Only the fetch that still holds
+   * the latest number publishes, so the newest request wins.
+   */
+  private readonly listGenerations = { tools: 0, resources: 0, prompts: 0, resourceTemplates: 0 };
   private transport?: { kind: McpTransportKind; instance: McpClientTransport };
   private discoveryAbort?: AbortController;
   private discoveryAttempt = 0;
-  /** One counter per list so an older list-changed refresh cannot overwrite a newer one. */
-  private readonly listGenerations = { tools: 0, resources: 0, prompts: 0 };
 
   constructor(
     readonly url: URL,
@@ -166,6 +174,38 @@ export class McpClientConnection implements McpConnection {
     return this.transport?.kind === "streamable-http"
       ? this.transport.instance.sessionId
       : undefined;
+  }
+
+  get tools(): Tool[] {
+    return this.lists.tools;
+  }
+
+  set tools(tools: Tool[]) {
+    this.lists.tools = tools;
+  }
+
+  get resources(): Resource[] {
+    return this.lists.resources;
+  }
+
+  set resources(resources: Resource[]) {
+    this.lists.resources = resources;
+  }
+
+  get prompts(): Prompt[] {
+    return this.lists.prompts;
+  }
+
+  set prompts(prompts: Prompt[]) {
+    this.lists.prompts = prompts;
+  }
+
+  get resourceTemplates(): ResourceTemplate[] {
+    return this.lists.resourceTemplates;
+  }
+
+  set resourceTemplates(resourceTemplates: ResourceTemplate[]) {
+    this.lists.resourceTemplates = resourceTemplates;
   }
 
   /** Connect the transport. Returns the error message when the connection failed. */
@@ -320,9 +360,10 @@ export class McpClientConnection implements McpConnection {
   }
 
   /**
-   * Fetch capabilities under `signal`, and publish them only if this attempt
-   * is still the current one: a timed-out or cancelled discovery must not
-   * rewrite the lists later.
+   * Fetch the server's lists under `signal`, each through its own generation,
+   * then publish capabilities and instructions only if this attempt is still
+   * the current one. A list-changed notification that arrives meanwhile
+   * supersedes what discovery fetched for that list.
    */
   private async discoverAndRegister(attempt: number, signal: AbortSignal): Promise<void> {
     const capabilities = this.client.getServerCapabilities();
@@ -332,74 +373,56 @@ export class McpClientConnection implements McpConnection {
     if (!capabilities && !probe) {
       throw new Error("The MCP Server failed to return server capabilities");
     }
-    const none: never[] = [];
-    const [tools, resources, prompts, resourceTemplates] = await Promise.all([
-      capabilities?.tools || probe ? this.registerTools(capabilities, probe, signal) : none,
-      capabilities?.resources || probe ? this.registerResources(capabilities, probe, signal) : none,
-      capabilities?.prompts || probe ? this.registerPrompts(capabilities, probe, signal) : none,
-      capabilities?.resources || probe ? this.fetchResourceTemplates(signal) : none,
+    const hasTools = Boolean(capabilities?.tools) || probe;
+    const hasResources = Boolean(capabilities?.resources) || probe;
+    const hasPrompts = Boolean(capabilities?.prompts) || probe;
+    if (capabilities?.tools?.listChanged || probe) {
+      this.client.setNotificationHandler(ToolListChangedNotificationSchema, () =>
+        this.refreshOnNotification("tools", (abort) => this.fetchTools(abort)));
+    }
+    if (capabilities?.resources?.listChanged || probe) {
+      this.client.setNotificationHandler(ResourceListChangedNotificationSchema, () =>
+        this.refreshOnNotification("resources", (abort) => this.fetchResources(abort)));
+    }
+    if (capabilities?.prompts?.listChanged || probe) {
+      this.client.setNotificationHandler(PromptListChangedNotificationSchema, () =>
+        this.refreshOnNotification("prompts", (abort) => this.fetchPrompts(abort)));
+    }
+    const none = async (): Promise<never[]> => [];
+    await Promise.all([
+      this.refreshList("tools", hasTools ? (abort) => this.fetchTools(abort) : none, signal),
+      this.refreshList("resources", hasResources ? (abort) => this.fetchResources(abort) : none, signal),
+      this.refreshList("prompts", hasPrompts ? (abort) => this.fetchPrompts(abort) : none, signal),
+      this.refreshList(
+        "resourceTemplates",
+        hasResources ? (abort) => this.fetchResourceTemplates(abort) : none,
+        signal,
+      ),
     ]);
     if (signal.aborted || attempt !== this.discoveryAttempt) return;
     this.serverCapabilities = capabilities;
     this.instructions = this.client.getInstructions();
-    this.tools = tools;
-    this.resources = resources;
-    this.prompts = prompts;
-    this.resourceTemplates = resourceTemplates;
   }
 
-  private async registerTools(
-    capabilities: ServerCapabilities | undefined,
-    probe: boolean,
-    signal: AbortSignal,
-  ): Promise<Tool[]> {
-    if (capabilities?.tools?.listChanged || probe) {
-      this.client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
-        this.listGenerations.tools += 1;
-        const generation = this.listGenerations.tools;
-        const tools = await this.fetchTools();
-        if (generation !== this.listGenerations.tools) return;
-        this.tools = tools;
-        this.options.onListsChanged?.();
-      });
-    }
-    return this.fetchTools(signal);
+  /** Fetch one list under the next generation; publish only if still current. */
+  private async refreshList<K extends keyof ServerLists>(
+    list: K,
+    fetch: (signal?: AbortSignal) => Promise<ServerLists[K]>,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    this.listGenerations[list] += 1;
+    const generation = this.listGenerations[list];
+    const items = await fetch(signal);
+    if (signal?.aborted || generation !== this.listGenerations[list]) return false;
+    this.lists[list] = items;
+    return true;
   }
 
-  private async registerResources(
-    capabilities: ServerCapabilities | undefined,
-    probe: boolean,
-    signal: AbortSignal,
-  ): Promise<Resource[]> {
-    if (capabilities?.resources?.listChanged || probe) {
-      this.client.setNotificationHandler(ResourceListChangedNotificationSchema, async () => {
-        this.listGenerations.resources += 1;
-        const generation = this.listGenerations.resources;
-        const resources = await this.fetchResources();
-        if (generation !== this.listGenerations.resources) return;
-        this.resources = resources;
-        this.options.onListsChanged?.();
-      });
-    }
-    return this.fetchResources(signal);
-  }
-
-  private async registerPrompts(
-    capabilities: ServerCapabilities | undefined,
-    probe: boolean,
-    signal: AbortSignal,
-  ): Promise<Prompt[]> {
-    if (capabilities?.prompts?.listChanged || probe) {
-      this.client.setNotificationHandler(PromptListChangedNotificationSchema, async () => {
-        this.listGenerations.prompts += 1;
-        const generation = this.listGenerations.prompts;
-        const prompts = await this.fetchPrompts();
-        if (generation !== this.listGenerations.prompts) return;
-        this.prompts = prompts;
-        this.options.onListsChanged?.();
-      });
-    }
-    return this.fetchPrompts(signal);
+  private async refreshOnNotification<K extends keyof ServerLists>(
+    list: K,
+    fetch: (signal?: AbortSignal) => Promise<ServerLists[K]>,
+  ): Promise<void> {
+    if (await this.refreshList(list, fetch)) this.options.onListsChanged?.();
   }
 
   private fetchTools(signal?: AbortSignal): Promise<Tool[]> {
@@ -849,9 +872,16 @@ export class McpClientManager {
     }
     if (provider) {
       provider.serverId = serverId;
-      await provider.purge().catch((error) => {
-        console.warn(`[MCP] Failed to delete the OAuth records of ${serverId}:`, error);
-      });
+      try {
+        await provider.purge();
+      } catch (error) {
+        // The row stays so the next remove retries the purge; the session is
+        // already closed, which the next attempt tolerates.
+        throw new Error(
+          `Could not remove MCP server ${serverId}: its sign-in records could not be deleted`,
+          { cause: error },
+        );
+      }
     }
     this.options.rows.remove(serverId);
     this.fireStateChanged();
