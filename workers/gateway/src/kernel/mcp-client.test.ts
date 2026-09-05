@@ -3,6 +3,7 @@ import {
   ErrorCode,
   LATEST_PROTOCOL_VERSION,
   McpError,
+  ToolListChangedNotificationSchema,
   type JSONRPCMessage,
 } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -363,6 +364,7 @@ describe("McpClientManager", () => {
     expect(manager.listServers()[0]?.auth_url).toBeNull();
     expect(changes).toHaveBeenCalledTimes(1);
     expect(storage.keys().filter((key) => key.includes("/state/"))).toEqual([]);
+    expect(storage.keys().filter((key) => key.includes("code_verifier"))).toEqual([]);
 
     const replay = await manager.handleCallbackRequest(denied);
 
@@ -373,6 +375,49 @@ describe("McpClientManager", () => {
     });
     expect(connection.connectionError).toBe("Denied by user");
     expect(changes).toHaveBeenCalledTimes(1);
+  });
+
+  it("joins a sign-in that is still completing instead of racing it", async () => {
+    const { manager, storage, connections } = makeManager();
+    await manager.registerServer("mcp-1", {
+      url: "https://tools.example/mcp",
+      name: "tools",
+      callbackUrl: CALLBACK_URL,
+      transport: { type: "streamable-http" },
+    });
+    const connection = connections.get("https://tools.example/mcp");
+    if (!connection) throw new Error("connection missing");
+    const { state } = await startAuthorization({ manager, storage, serverId: "mcp-1", connection });
+    await manager.connectToServer("mcp-1");
+    let releaseInit = () => undefined;
+    connection.init.mockImplementation(() => new Promise<undefined>((resolve) => {
+      releaseInit = () => {
+        connection.connectionState = "connected";
+        resolve(undefined);
+      };
+    }));
+    const callback = new Request(`${CALLBACK_URL}?code=code-1&state=${encodeURIComponent(state)}`);
+
+    await expect(manager.handleCallbackRequest(callback)).resolves.toEqual({
+      serverId: "mcp-1",
+      authSuccess: true,
+    });
+    const task = manager.establishConnection("mcp-1");
+    await expect(manager.handleCallbackRequest(callback)).resolves.toEqual({
+      serverId: "mcp-1",
+      authSuccess: true,
+      completing: true,
+    });
+    expect(manager.establishConnection("mcp-1")).toBe(task);
+
+    releaseInit();
+    await manager.whenIdle();
+
+    expect(connection.completeAuthorization).toHaveBeenCalledTimes(1);
+    // One probe before sign-in, one connect after it; the repeat added none.
+    expect(connection.init).toHaveBeenCalledTimes(2);
+    expect(connection.discover).toHaveBeenCalledTimes(1);
+    expect(connection.connectionState).toBe("ready");
   });
 
   it("ignores a forged error callback for an authenticating server", async () => {
@@ -624,6 +669,29 @@ describe("McpClientConnection transports", () => {
     expect(created).toEqual(["streamable-http", "sse", "streamable-http", "streamable-http"]);
     await connection.close();
   });
+
+  it("opens a fresh streamable session when the saved one is gone", async () => {
+    const created: string[] = [];
+    const scripted = [new StubTransport(new Error("Error POSTing to endpoint (HTTP 404): Session not found"))];
+    const connection = new McpClientConnection(
+      new URL("https://tools.example/mcp"),
+      { name: "GSV Kernel", version: "0.0.0" },
+      {
+        transport: { type: "streamable-http", sessionId: "stale-session" },
+        createTransport: (kind, _url, options) => {
+          created.push(`${kind}:${options.sessionId ?? "fresh"}`);
+          return scripted.shift() ?? new StubTransport();
+        },
+      },
+    );
+
+    await expect(connection.init()).resolves.toBeUndefined();
+
+    expect(connection.connectionState).toBe("connected");
+    expect(created).toEqual(["streamable-http:stale-session", "streamable-http:fresh"]);
+    expect(connection.options.transport.sessionId).toBeUndefined();
+    await connection.close();
+  });
 });
 
 describe("McpClientConnection discovery", () => {
@@ -665,6 +733,43 @@ describe("McpClientConnection discovery", () => {
     expect(connection.connectionError).toBe(
       "Failed to discover MCP server capabilities: tools/list timed out",
     );
+  });
+
+  it("keeps the newest tool list when list-changed refreshes overlap", async () => {
+    const connection = new McpClientConnection(
+      new URL("https://tools.example/mcp"),
+      { name: "GSV Kernel", version: "0.0.0" },
+      { transport: { type: "auto" } },
+    );
+    connection.connectionState = "connected";
+    vi.spyOn(connection.client, "getServerCapabilities").mockReturnValue({ tools: { listChanged: true } });
+    vi.spyOn(connection.client, "getInstructions").mockReturnValue(undefined);
+    let refresh: (() => Promise<void> | void) | undefined;
+    vi.spyOn(connection.client, "setNotificationHandler").mockImplementation((schema, handler) => {
+      if (schema === ToolListChangedNotificationSchema) {
+        // SAFETY: the handler only refreshes the list; the notification body is not read.
+        refresh = () => handler({ method: "notifications/tools/list_changed" } as never);
+      }
+    });
+    type ToolList = Awaited<ReturnType<typeof connection.client.listTools>>;
+    const answers: Array<(list: ToolList) => void> = [];
+    vi.spyOn(connection.client, "listTools").mockImplementation(
+      () => new Promise<ToolList>((resolve) => answers.push(resolve)),
+    );
+
+    const discovery = connection.discover();
+    answers.shift()?.({ tools: [{ name: "initial", inputSchema: { type: "object" } }] });
+    await expect(discovery).resolves.toEqual({ success: true });
+    if (!refresh) throw new Error("list-changed handler missing");
+
+    const older = refresh();
+    const newer = refresh();
+    answers[1]?.({ tools: [{ name: "newest", inputSchema: { type: "object" } }] });
+    await newer;
+    answers[0]?.({ tools: [{ name: "stale", inputSchema: { type: "object" } }] });
+    await older;
+
+    expect(connection.tools.map((tool) => tool.name)).toEqual(["newest"]);
   });
 
   it("aborts list requests on timeout and ignores their late answers", async () => {
