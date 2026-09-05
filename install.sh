@@ -69,6 +69,30 @@ validate_channel() {
     fi
 }
 
+# Turn a plist string back into the path it encodes: the five XML entities
+# and their numeric forms. `&amp;` goes last so an encoded entity stays literal.
+decode_plist_string() {
+    sed -e 's/&lt;/</g; s/&#60;/</g' \
+        -e 's/&gt;/>/g; s/&#62;/>/g' \
+        -e 's/&quot;/"/g; s/&#34;/"/g' \
+        -e "s/&apos;/'/g; s/&#39;/'/g" \
+        -e 's/&#38;/\&/g; s/&amp;/\&/g'
+}
+
+# The first word of a systemd ExecStart line: the CLI writes it as a
+# double-quoted string with embedded quotes and backslashes escaped.
+decode_exec_start_program() {
+    local line="$1"
+    case "$line" in
+        \"*)
+            printf '%s\n' "$line" \
+                | sed -n 's/^"\(\([^"\\]\|\\.\)*\)".*/\1/p' \
+                | sed 's/\\\(.\)/\1/g'
+            ;;
+        *) printf '%s\n' "${line%% *}" ;;
+    esac
+}
+
 # The program a previous installation registered as the gsvd service, if any:
 # gsvd itself, or gsv from the `gsv device run` compatibility launcher.
 service_definition_executable() {
@@ -77,17 +101,14 @@ service_definition_executable() {
         local unit="${CONFIG_HOME}/systemd/user/gsvd.service"
         [ -f "$unit" ] || return 0
         line="$(grep -m 1 '^ExecStart=' "$unit" || true)"
-        line="${line#ExecStart=}"
-        case "$line" in
-            \"*) line="${line#\"}"; printf '%s\n' "${line%%\"*}" ;;
-            *) printf '%s\n' "${line%% *}" ;;
-        esac
+        decode_exec_start_program "${line#ExecStart=}"
     else
         local plist="${HOME}/Library/LaunchAgents/gsvd.plist"
         [ -f "$plist" ] || return 0
         sed -n '/<key>ProgramArguments<\/key>/,/<\/array>/p' "$plist" \
             | sed -n 's/^[[:space:]]*<string>\(.*\)<\/string>.*/\1/p' \
-            | head -n 1
+            | head -n 1 \
+            | decode_plist_string
     fi
 }
 

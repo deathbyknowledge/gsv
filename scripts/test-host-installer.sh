@@ -366,4 +366,44 @@ printf '%s\n' "$COMPAT_OUTPUT" | grep -q "Updating the existing installation in 
 test "$("$COMPAT_EXISTING_DIR/gsvd")" = "gsvd-v2"
 test ! -e "$COMPAT_EXISTING_HOME/.gsv/bin"
 
-echo "host installer checksum, replacement, default directory, PATH, bundle, and launcher smoke passed"
+# Service definitions encode their paths: a plist stores `&` as `&amp;`, and
+# a systemd ExecStart escapes embedded quotes. Both must still resolve to the
+# existing installation and update it in place.
+ENCODED_MAC_HOME="$TEST_ROOT/encoded-mac-home"
+ENCODED_MAC_DIR="$TEST_ROOT/GSV & Tools/bin"
+mkdir -p "$ENCODED_MAC_HOME/Library/LaunchAgents" "$ENCODED_MAC_DIR"
+cp "$INSTALL_DIR/gsv" "$ENCODED_MAC_DIR/gsv"
+cp "$INSTALL_DIR/gsvd" "$ENCODED_MAC_DIR/gsvd"
+cat > "$ENCODED_MAC_HOME/Library/LaunchAgents/gsvd.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>gsvd</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$TEST_ROOT/GSV &amp; Tools/bin/gsvd</string>
+    <string>--foreground</string>
+  </array>
+</dict>
+</plist>
+PLIST
+ENCODED_OUTPUT="$(DEFAULT_HOME="$ENCODED_MAC_HOME" run_default_installer env GSV_TEST_UNAME_S=Darwin)"
+printf '%s\n' "$ENCODED_OUTPUT" | grep -q "Updating the existing installation in $ENCODED_MAC_DIR$"
+test "$("$ENCODED_MAC_DIR/gsv")" = "gsv-mac"
+test "$("$ENCODED_MAC_DIR/gsvd")" = "gsvd-mac"
+test ! -e "$ENCODED_MAC_HOME/.gsv/bin"
+test ! -e "$ENCODED_MAC_HOME/.profile"
+
+ENCODED_LINUX_HOME="$TEST_ROOT/encoded-linux-home"
+ENCODED_LINUX_DIR="$TEST_ROOT/quoted \"GSV\" dir/bin"
+mkdir -p "$ENCODED_LINUX_HOME/.config/systemd/user" "$ENCODED_LINUX_DIR"
+cp "$INSTALL_DIR/gsv" "$ENCODED_LINUX_DIR/gsv"
+printf '[Service]\nExecStart="%s/gsv" "device" "run"\n' "$TEST_ROOT/quoted \\\"GSV\\\" dir/bin" > "$ENCODED_LINUX_HOME/.config/systemd/user/gsvd.service"
+grep -q 'ExecStart="'"$TEST_ROOT"'/quoted \\"GSV\\" dir/bin/gsv" "device" "run"' "$ENCODED_LINUX_HOME/.config/systemd/user/gsvd.service"
+ENCODED_OUTPUT="$(DEFAULT_HOME="$ENCODED_LINUX_HOME" run_default_installer env)"
+printf '%s\n' "$ENCODED_OUTPUT" | grep -qF "Updating the existing installation in $ENCODED_LINUX_DIR"
+test "$("$ENCODED_LINUX_DIR/gsvd")" = "gsvd-v2"
+test ! -e "$ENCODED_LINUX_HOME/.gsv/bin"
+
+echo "host installer checksum, replacement, default directory, PATH, bundle, launcher, and encoded-path smoke passed"
