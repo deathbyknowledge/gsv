@@ -3,12 +3,15 @@
  * void ground, phosphor glyphs, square corners, tracked uppercase chrome. */
 
 .instrument {
+  /* the instrument's own faces: Martian Mono for the machine, Bricolage Grotesque for the person and the ship */
+  --gsv-font-mono: "Martian Mono", "IBM Plex Mono", "JetBrains Mono", monospace;
+  --gsv-font-prose: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
   position: fixed;
   inset: 0;
   background: var(--void);
   color: var(--text);
   font-family: var(--gsv-font-mono);
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.5;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
@@ -48,6 +51,10 @@
   height: 100%;
   display: block;
 }
+/* the star field's grid assumes the pixel face's 5px advance, whatever the instrument's own mono is */
+.instrument-field .gsv-glyph-stars pre {
+  font-family: "Departure Mono", monospace;
+}
 .instrument-scan {
   position: absolute;
   inset: 0;
@@ -86,8 +93,8 @@
   justify-content: space-between;
   gap: var(--space-4);
   padding: 0 56px;
-  font-size: 11px;
-  letter-spacing: 0.14em;
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--text-dim);
 }
@@ -118,8 +125,8 @@
   display: flex;
   gap: var(--space-5);
   flex-wrap: wrap;
-  font-size: 11px;
-  letter-spacing: 0.12em;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--text-dim);
   min-height: 26px;
@@ -136,7 +143,7 @@
   align-items: baseline;
   border-top: 1px solid var(--border);
   padding-top: 14px;
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1.4;
 }
 .prompt-line .who { color: var(--principal); }
@@ -196,7 +203,7 @@
 /* the machine rail: what a target actually ran */
 .machine-rail {
   font-family: var(--gsv-font-mono);
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--label);
   margin: 14px 0 6px;

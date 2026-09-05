@@ -42,3 +42,19 @@
   --gsv-font-mono: "Departure Mono", "JetBrains Mono", "IBM Plex Mono", monospace;
   --gsv-font-prose: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
 }
+
+/* The instrument's faces (Zen, the first day, Fleet). Variable fonts, latin subset, OFL. */
+@font-face {
+  font-family: "Martian Mono";
+  src: url("/fonts/MartianMono-Variable.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Bricolage Grotesque";
+  src: url("/fonts/BricolageGrotesque-Variable.woff2") format("woff2");
+  font-weight: 400 500;
+  font-style: normal;
+  font-display: swap;
+}

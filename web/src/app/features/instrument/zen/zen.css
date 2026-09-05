@@ -112,7 +112,7 @@
   align-items: baseline;
   gap: 10px;
   font-family: var(--gsv-font-mono);
-  font-size: 13px;
+  font-size: 12px;
   color: var(--label);
   cursor: pointer;
   padding: 4px 0;
