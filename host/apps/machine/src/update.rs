@@ -198,11 +198,15 @@ impl Display for DetachStrategy {
 struct AttemptRecord {
     attempted_at: u64,
     release: String,
+    /// Set once the installer process actually started; a record without it
+    /// is a failed attempt that only rate-limits the next one.
+    #[serde(default)]
+    launched: bool,
 }
 
-/// Whether the daemon is inside the hour that follows an installer launch.
-/// Alone it means "wait for the next window"; for the release the gateway
-/// still names it means an installer is presumably running right now.
+/// Whether the daemon is inside the hour that follows an update attempt.
+/// Alone it means "wait for the next window"; a launched installer for the
+/// release the gateway still names means one is presumably running now.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AttemptState {
     None,
@@ -360,6 +364,11 @@ impl AutoUpdater {
             .kill_on_drop(false)
             .spawn()
             .map_err(|error| UpdateError::Spawn(error.to_string()))?;
+        if let Err(error) = self.mark_launched(&target.release) {
+            // The installer is running either way; without the mark the next
+            // handshake within the hour reads a cooling attempt and waits.
+            warn!(event = "update.record_failed", release = %target.release, error = %error);
+        }
         let release = target.release.clone();
         let strategy_for_log = strategy.clone();
         tokio::spawn(async move {
@@ -392,7 +401,7 @@ impl AutoUpdater {
         if record.attempted_at > now || since >= MIN_ATTEMPT_INTERVAL {
             return AttemptState::None;
         }
-        if record.release == release {
+        if record.launched && record.release == release {
             AttemptState::InProgress { since }
         } else {
             AttemptState::Cooling { since }
@@ -424,19 +433,45 @@ impl AutoUpdater {
         &self,
         release: &str,
         now: SystemTime,
+        launched: bool,
     ) -> Result<(), UpdateError> {
-        self.record_attempt(release, now)
+        self.record_attempt(release, now)?;
+        if launched {
+            self.mark_launched(release)?;
+        }
+        Ok(())
     }
 
     fn record_attempt(&self, release: &str, now: SystemTime) -> Result<(), UpdateError> {
         self.ensure_work_dir()
             .map_err(|error| UpdateError::State(error.to_string()))?;
-        let record = AttemptRecord {
+        self.write_record(&AttemptRecord {
             attempted_at: unix_seconds(now),
             release: release.to_string(),
+            launched: false,
+        })
+    }
+
+    /// Promote the current attempt to a launched one, once the installer
+    /// process exists.
+    fn mark_launched(&self, release: &str) -> Result<(), UpdateError> {
+        let Some(mut record) = self.last_attempt() else {
+            return Err(UpdateError::State(
+                "the attempt record is missing".to_string(),
+            ));
         };
+        if record.release != release {
+            return Err(UpdateError::State(
+                "the attempt record names another release".to_string(),
+            ));
+        }
+        record.launched = true;
+        self.write_record(&record)
+    }
+
+    fn write_record(&self, record: &AttemptRecord) -> Result<(), UpdateError> {
         let encoded =
-            serde_json::to_vec(&record).map_err(|error| UpdateError::State(error.to_string()))?;
+            serde_json::to_vec(record).map_err(|error| UpdateError::State(error.to_string()))?;
         fs::write(&self.state_path, encoded).map_err(|error| UpdateError::State(error.to_string()))
     }
 
@@ -1249,12 +1284,28 @@ mod tests {
             .record_attempt("v0.5.0", now)
             .expect("record attempt");
         let later = now + Duration::from_secs(600);
+        // Recorded but never launched: a failed download or spawn only cools.
+        assert_eq!(
+            updater.attempt_state("v0.5.0", later),
+            AttemptState::Cooling {
+                since: Duration::from_secs(600)
+            }
+        );
+        assert!(matches!(
+            updater.check_allowed(later),
+            Err(UpdateError::Deferred { .. })
+        ));
+        updater.mark_launched("v0.5.0").expect("mark launched");
         assert_eq!(
             updater.attempt_state("v0.5.0", later),
             AttemptState::InProgress {
                 since: Duration::from_secs(600)
             }
         );
+        assert!(matches!(
+            updater.mark_launched("v0.6.0"),
+            Err(UpdateError::State(_))
+        ));
         assert_eq!(
             updater.attempt_state("v0.6.0", later),
             AttemptState::Cooling {

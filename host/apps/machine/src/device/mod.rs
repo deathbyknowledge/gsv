@@ -23,6 +23,9 @@ use crate::update::{AttemptState, AutoUpdater, UpdateError, UpdateTarget};
 mod transfer;
 
 const MAX_DEVICE_EXEC_EVENT_OUTBOX: usize = 2048;
+/// How often a connected daemon re-checks whether machine work has finished
+/// so a waiting update can start.
+const UPDATE_RECHECK_INTERVAL: tokio::time::Duration = tokio::time::Duration::from_secs(300);
 const DEVICE_DRIVER_IMPLEMENTS: &[&str] = &["fs.*", "shell.exec", "net.fetch"];
 
 #[derive(Default)]
@@ -133,6 +136,16 @@ impl ActiveRequests {
 
     fn stop(request: ActiveRequest) {
         request.cancellation.cancel();
+    }
+
+    /// Requests still being served, bodies included: work a service stop
+    /// would cut off.
+    fn in_flight(&self) -> usize {
+        self.0
+            .lock()
+            .expect("active request mutex poisoned")
+            .requests
+            .len()
     }
 
     fn finish(&self, id: &str, cancellation: &Arc<CancellationToken>) {
@@ -808,25 +821,24 @@ pub async fn run(
             // Dropping the guard at the end of this connection aborts it, so a
             // reconnect or a reload never leaves a launch running against
             // settings this driver no longer holds.
-            let _update_task = match update_after_connect(&updater, conn.connect_result.as_ref()) {
-                Some(target) => {
-                    let shutdown = shutdown.clone();
-                    let launch = start_update(updater.clone(), runtime.clone(), target);
-                    Some(AbortOnDrop(tokio::spawn(
-                        async move {
-                            run_until_cancelled(&shutdown, launch).await;
-                        }
-                        .instrument(tracing::Span::current()),
-                    )))
-                }
-                None => {
-                    // Nothing to move to any more: an earlier "available"
-                    // notice would now be wrong, while a running installer's
-                    // notice still describes what is happening.
-                    runtime.clear_stale_update_notice();
-                    None
-                }
-            };
+            let mut pending_update = update_after_connect(&updater, conn.connect_result.as_ref());
+            if pending_update.is_none() {
+                // Nothing to move to any more: an earlier "available" notice
+                // would now be wrong, while a running installer's notice still
+                // describes what is happening.
+                runtime.clear_stale_update_notice();
+            }
+            let mut update_task: Option<AbortOnDrop> = None;
+            let mut next_update_check_at = tokio::time::Instant::now() + UPDATE_RECHECK_INTERVAL;
+            launch_update_when_idle(
+                &updater,
+                &runtime,
+                &active_requests,
+                &shutdown,
+                &mut pending_update,
+                &mut update_task,
+            )
+            .await;
 
             let flushed = flush_exec_event_outbox(&conn, &exec_event_outbox).await;
             if flushed > 0 {
@@ -876,6 +888,22 @@ pub async fn run(
                                 sent = flushed,
                                 remaining = exec_event_outbox_len(&exec_event_outbox),
                             );
+                        }
+
+                        if pending_update.is_some()
+                            && tokio::time::Instant::now() >= next_update_check_at
+                        {
+                            next_update_check_at =
+                                tokio::time::Instant::now() + UPDATE_RECHECK_INTERVAL;
+                            launch_update_when_idle(
+                                &updater,
+                                &runtime,
+                                &active_requests,
+                                &shutdown,
+                                &mut pending_update,
+                                &mut update_task,
+                            )
+                            .await;
                         }
 
                         if tokio::time::Instant::now() >= next_keepalive_at {
@@ -967,6 +995,82 @@ fn update_after_connect(
     result: Option<&ConnectResult>,
 ) -> Option<UpdateTarget> {
     updater.plan_for_server(&result?.server)
+}
+
+/// Whether a newer release may be installed now or must wait for the machine
+/// to go idle: the installer stops the service, and a service stop kills
+/// every process in it, shell children included.
+#[derive(Debug, Eq, PartialEq)]
+enum UpdateGate {
+    Launch(UpdateTarget),
+    Wait {
+        target: UpdateTarget,
+        reason: &'static str,
+    },
+    Nothing,
+}
+
+fn update_gate(target: Option<UpdateTarget>, busy: Option<&'static str>) -> UpdateGate {
+    match (target, busy) {
+        (None, _) => UpdateGate::Nothing,
+        (Some(target), Some(reason)) => UpdateGate::Wait { target, reason },
+        (Some(target), None) => UpdateGate::Launch(target),
+    }
+}
+
+/// What the daemon is doing for the gateway right now, if anything.
+async fn machine_busy(active_requests: &ActiveRequests) -> Option<&'static str> {
+    if active_requests.in_flight() > 0 {
+        return Some("requests in flight");
+    }
+    if crate::tools::running_process_count().await > 0 {
+        return Some("shell sessions running");
+    }
+    None
+}
+
+/// Launch the pending update on the newer-release path once the machine is
+/// idle; while it is busy, keep the target for the next check and say so.
+async fn launch_update_when_idle(
+    updater: &AutoUpdater,
+    runtime: &DaemonRuntime,
+    active_requests: &ActiveRequests,
+    shutdown: &CancellationToken,
+    pending: &mut Option<UpdateTarget>,
+    task: &mut Option<AbortOnDrop>,
+) {
+    use daemon_protocol::{DiagnosticLevel, DiagnosticNotice};
+    match update_gate(pending.take(), machine_busy(active_requests).await) {
+        UpdateGate::Launch(target) => {
+            let shutdown = shutdown.clone();
+            let launch = start_update(updater.clone(), runtime.clone(), target);
+            *task = Some(AbortOnDrop(tokio::spawn(
+                async move {
+                    run_until_cancelled(&shutdown, launch).await;
+                }
+                .instrument(tracing::Span::current()),
+            )));
+        }
+        UpdateGate::Wait { target, reason } => {
+            info!(
+                event = "update.deferred",
+                release = %target.release,
+                reason = "machine work in progress",
+                detail = reason,
+            );
+            runtime.set_update_notice(Some(DiagnosticNotice {
+                level: DiagnosticLevel::Info,
+                code: "autoUpdateWaiting".to_string(),
+                message: format!(
+                    "GSV {} is available because {}; waiting for machine work to finish before installing.",
+                    target.release,
+                    target.reason.describe()
+                ),
+            }));
+            *pending = Some(target);
+        }
+        UpdateGate::Nothing => {}
+    }
 }
 
 /// What a handshake's update decision left behind, for the 102 path to know
@@ -1174,11 +1278,64 @@ mod tests {
             dir.join("auto-update.log"),
         );
         assert_eq!(installer_in_progress(&updater, "v0.5.0"), None);
+        // An attempt that failed before the installer started is only a
+        // cooling record: the 102 path sees no installer and takes its exit.
         updater
-            .record_attempt_for_test("v0.5.0", std::time::SystemTime::now())
+            .record_attempt_for_test("v0.5.0", std::time::SystemTime::now(), false)
             .expect("record attempt");
+        assert_eq!(installer_in_progress(&updater, "v0.5.0"), None);
+        updater
+            .record_attempt_for_test("v0.5.0", std::time::SystemTime::now(), true)
+            .expect("record launched attempt");
         assert!(installer_in_progress(&updater, "v0.5.0").is_some());
         assert_eq!(installer_in_progress(&updater, "v0.6.0"), None);
+    }
+
+    fn target(release: &str) -> UpdateTarget {
+        UpdateTarget {
+            release: release.to_string(),
+            reason: crate::update::UpdateReason::NewerRelease,
+            installer_url: crate::update::DEFAULT_INSTALLER_URL.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_busy_machine_waits_and_an_idle_one_launches() {
+        assert_eq!(
+            update_gate(Some(target("v0.5.0")), Some("shell sessions running")),
+            UpdateGate::Wait {
+                target: target("v0.5.0"),
+                reason: "shell sessions running",
+            }
+        );
+        assert_eq!(
+            update_gate(Some(target("v0.5.0")), None),
+            UpdateGate::Launch(target("v0.5.0"))
+        );
+        assert_eq!(
+            update_gate(None, Some("requests in flight")),
+            UpdateGate::Nothing
+        );
+        assert_eq!(update_gate(None, None), UpdateGate::Nothing);
+    }
+
+    #[tokio::test]
+    async fn in_flight_requests_make_the_machine_busy() {
+        let requests = ActiveRequests::default();
+        assert_eq!(requests.in_flight(), 0);
+        assert_eq!(machine_busy(&requests).await, None);
+        let frame = RequestFrame {
+            id: "req-1".to_string(),
+            call: "fs.read".to_string(),
+            args: None,
+            body: None,
+        };
+        let cancellation = requests.register(&frame);
+        assert_eq!(requests.in_flight(), 1);
+        assert_eq!(machine_busy(&requests).await, Some("requests in flight"));
+        requests.finish("req-1", &cancellation);
+        assert_eq!(requests.in_flight(), 0);
+        assert_eq!(machine_busy(&requests).await, None);
     }
 
     #[test]
