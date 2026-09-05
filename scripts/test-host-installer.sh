@@ -19,10 +19,16 @@ mkdir -p \
     "$PINNED_INSTALL_DIR" \
     "$TEST_HOME"
 
+# Fixture binaries print their marker; as `gsv daemon start` they also start
+# the service the way the real CLI does, so the fake systemctl can record it.
 make_fixture() {
     local name="$1"
     local marker="$2"
-    printf '#!/usr/bin/env sh\nprintf "%%s\\n" "%s"\n' "$marker" > "$FIXTURES/$name"
+    {
+        printf '#!/usr/bin/env sh\n'
+        printf 'if [ "${1:-}" = "daemon" ] && [ "${2:-}" = "start" ]; then systemctl --user start gsvd.service; fi\n'
+        printf 'printf "%%s\\n" "%s"\n' "$marker"
+    } > "$FIXTURES/$name"
     chmod 0755 "$FIXTURES/$name"
 }
 
@@ -67,7 +73,9 @@ chmod 0755 "$FAKE_BIN/curl"
 SYSTEMCTL_LOG="$TEST_ROOT/systemctl.log"
 cat > "$FAKE_BIN/systemctl" <<'SH'
 #!/usr/bin/env sh
-printf '%s\n' "$*" >> "${GSV_TEST_SYSTEMCTL_LOG:-/dev/null}"
+config_file="${XDG_CONFIG_HOME:-$HOME/.config}/gsv/config.toml"
+channel="$(grep -m 1 '^channel' "$config_file" 2>/dev/null || printf 'none')"
+printf '%s channel=%s\n' "$*" "$channel" >> "${GSV_TEST_SYSTEMCTL_LOG:-/dev/null}"
 exit 0
 SH
 chmod 0755 "$FAKE_BIN/systemctl"
@@ -438,5 +446,18 @@ mkdir -p "$STABLE_EXISTING_HOME/.config/gsv"
 printf '[release]\nchannel = "stable"\n' > "$STABLE_EXISTING_HOME/.config/gsv/config.toml"
 DEFAULT_HOME="$STABLE_EXISTING_HOME" run_default_installer env >/dev/null
 test "$(cat "$STABLE_EXISTING_HOME/.config/gsv/config.toml")" = "$(printf '[release]\nchannel = "stable"')"
+
+# The channel is on disk before the replacement daemon is started, so the
+# new daemon reads it on its first run.
+DEV_SERVICE_HOME="$TEST_ROOT/dev-service-home"
+DEV_SERVICE_DIR="$TEST_ROOT/dev-service-bin"
+mkdir -p "$DEV_SERVICE_HOME/.config/systemd/user" "$DEV_SERVICE_HOME/.config/gsv" "$DEV_SERVICE_DIR"
+cp "$INSTALL_DIR/gsv" "$DEV_SERVICE_DIR/gsv"
+printf '[Service]\nExecStart="%s/gsvd" "--foreground"\n' "$DEV_SERVICE_DIR" > "$DEV_SERVICE_HOME/.config/systemd/user/gsvd.service"
+printf '[release]\nchannel = "stable"\n' > "$DEV_SERVICE_HOME/.config/gsv/config.toml"
+: > "$SYSTEMCTL_LOG"
+DEFAULT_HOME="$DEV_SERVICE_HOME" run_default_installer env GSV_VERSION=dev >/dev/null
+grep -qF -- '--user start gsvd.service channel=channel = "dev"' "$SYSTEMCTL_LOG"
+test "$(grep -c '^channel = "dev"$' "$DEV_SERVICE_HOME/.config/gsv/config.toml")" = "1"
 
 echo "host installer checksum, replacement, default directory, PATH, bundle, launcher, encoded-path, and dev-channel smoke passed"

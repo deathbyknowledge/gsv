@@ -224,6 +224,10 @@ function Install-GsvHost {
         }
       }
 
+      # The config must be complete before the replacement daemon starts.
+      Ensure-ConfigFile
+      if ($Version -eq $DevReleaseTag) { Set-ReleaseChannelInConfig "dev" }
+
       if ($taskExisted) {
         & (Join-Path $InstallDir "gsv.exe") daemon start *> $null
         if ($LASTEXITCODE -ne 0 -or -not (Wait-GsvdHealthy)) {
@@ -258,8 +262,6 @@ Write-Host ""
 Write-Host "GSV host installer · Windows x64" -ForegroundColor Cyan
 Write-Host ""
 Install-GsvHost
-Ensure-ConfigFile
-if ($Version -eq $DevReleaseTag) { Set-ReleaseChannelInConfig "dev" }
 if ($env:GSV_NO_MODIFY_PATH -eq "1") {
   Write-Info "Left the user PATH alone (GSV_NO_MODIFY_PATH=1); add $InstallDir yourself"
 } else {

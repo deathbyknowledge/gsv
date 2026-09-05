@@ -623,6 +623,11 @@ main() {
         exit 1
     fi
 
+    # The config must be complete before the replacement daemon starts, or
+    # it reads the old release channel until its next restart.
+    ensure_config_file
+    persist_release_channel
+
     if [ "$SERVICE_INSTALLED" -eq 1 ]; then
         if ! "${INSTALL_DIR}/gsv" daemon start >/dev/null || ! health_check_service; then
             error "The updated daemon did not become healthy"
@@ -637,8 +642,6 @@ main() {
 
     INSTALL_IN_PROGRESS=0
     remove_backups
-    ensure_config_file
-    persist_release_channel
     configure_path
     success "Installed gsv, gsvd, Desktop, and local helpers to $INSTALL_DIR"
     echo ""
