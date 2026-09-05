@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { GlyphStars } from "../session/backgrounds/GlyphStars";
+import { SessionScreens } from "../session/SessionScreens";
+import { useSession } from "../../services/session/SessionProvider";
 import { Zen } from "./zen/Zen";
 import { FirstDay } from "./firstday/FirstDay";
 import { Fleet } from "./fleet/Fleet";
@@ -30,7 +32,16 @@ function reducedMotion(): boolean {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 }
 
+/** The instrument behind the session gate: the sign-in screens own the galaxy until the session is ready. */
 export function Instrument({ initialPath }: { initialPath: string }) {
+  const { service, snapshot } = useSession();
+  if (snapshot.phase !== "ready") {
+    return <SessionScreens session={service} snapshot={snapshot} />;
+  }
+  return <InstrumentReady initialPath={initialPath} />;
+}
+
+function InstrumentReady({ initialPath }: { initialPath: string }) {
   const [distance, setDistance] = useState<Distance>(() => distanceForPath(initialPath));
   const [phase, setPhase] = useState<"still" | "leaving" | "arriving">("still");
   const [fleetRow, setFleetRow] = useState<FleetRow | null>(null);
