@@ -70,7 +70,13 @@ function Ensure-ConfigFile {
     Write-Info "Found existing config at $configFile; leaving it unchanged"
     return
   }
-  $channelLine = if ($Version) { '# channel = "stable"' } else { "channel = `"$Channel`"" }
+  $channelLine = if (-not $Version) {
+    "channel = `"$Channel`""
+  } elseif ($Version -eq $DevReleaseTag) {
+    'channel = "dev"'
+  } else {
+    '# channel = "stable"'
+  }
   $configContent = @"
 # GSV host application configuration
 # gsv config --local set gateway.url wss://<your-gateway>.workers.dev/ws

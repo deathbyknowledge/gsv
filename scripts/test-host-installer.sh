@@ -406,4 +406,14 @@ printf '%s\n' "$ENCODED_OUTPUT" | grep -qF "Updating the existing installation i
 test "$("$ENCODED_LINUX_DIR/gsvd")" = "gsvd-v2"
 test ! -e "$ENCODED_LINUX_HOME/.gsv/bin"
 
-echo "host installer checksum, replacement, default directory, PATH, bundle, launcher, and encoded-path smoke passed"
+# A pinned install of the moving dev tag records the dev channel in the
+# config it creates, so the daemon knows to follow dev gateways; a pinned
+# stable tag records nothing.
+test "$(grep -c '^# channel = "stable"$' "$DEFAULT_HOME/.config/gsv/config.toml")" = "1"
+DEV_HOME="$TEST_ROOT/dev-home"
+mkdir -p "$DEV_HOME"
+DEFAULT_HOME="$DEV_HOME" run_default_installer env GSV_VERSION=dev >/dev/null
+test "$("$DEV_HOME/.gsv/bin/gsv")" = "gsv-v2"
+test "$(grep -c '^channel = "dev"$' "$DEV_HOME/.config/gsv/config.toml")" = "1"
+
+echo "host installer checksum, replacement, default directory, PATH, bundle, launcher, encoded-path, and dev-channel smoke passed"

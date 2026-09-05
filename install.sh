@@ -496,7 +496,14 @@ ensure_config_file() {
         echo "# gsv config --local set gateway.url wss://<your-gateway>.workers.dev/ws"
         echo ""
         echo "[release]"
-        if [ -z "$VERSION" ]; then echo "channel = \"${CHANNEL}\""; else echo "# channel = \"stable\""; fi
+        if [ -z "$VERSION" ]; then
+            echo "channel = \"${CHANNEL}\""
+        elif [ "$VERSION" = "$DEV_RELEASE_TAG" ]; then
+            # A pinned install of the moving tag is a dev-channel machine.
+            echo "channel = \"${DEV_RELEASE_TAG}\""
+        else
+            echo "# channel = \"stable\""
+        fi
     } > "$config_file"
     chmod 0600 "$config_file"
     success "Created config at $config_file"
