@@ -174,8 +174,10 @@ pub struct UpdateLaunch {
 /// The running installer as far as the daemon can see it.
 #[derive(Debug)]
 pub enum InstallerHandle {
-    /// The installer is a direct child; its exit is its outcome.
-    Process(tokio::process::Child),
+    /// The installer is a direct child; its exit is its outcome. Boxed
+    /// because a child carries platform handles (over 270 bytes on Windows)
+    /// that would dwarf the other variant.
+    Process(Box<tokio::process::Child>),
     /// The installer runs in a transient user unit; `systemctl --user
     /// is-active` says whether it is still going, when `systemctl` resolves.
     TransientUnit {
@@ -460,7 +462,7 @@ impl AutoUpdater {
                 systemctl: systemctl_path(),
             }
         } else {
-            InstallerHandle::Process(child)
+            InstallerHandle::Process(Box::new(child))
         };
         if let Err(error) = self.mark_launched(&target.release) {
             // The installer is running either way; without the mark the next
