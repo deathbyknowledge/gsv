@@ -585,7 +585,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
       if (result.authSuccess) {
         this.ctx.waitUntil(this.mcp.establishConnection(result.serverId));
       }
-      this.mcpConnections.broadcastMcpChanged();
       return oauthCallbackHtmlResponse(
         result.authSuccess
           ? { ok: true, account: { provider: "MCP server", label: result.serverId } }

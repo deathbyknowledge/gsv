@@ -520,6 +520,7 @@ export type McpClientManagerOptions = {
 
 const RECONNECT_ATTEMPTS = 3;
 const DEFAULT_RETRY_BACKOFF_MS = 500;
+const INVALID_CALLBACK_STATE = "The sign-in link is invalid or has expired";
 
 export class McpClientManager {
   readonly mcpConnections: Record<string, McpConnection> = {};
@@ -714,10 +715,14 @@ export class McpClientManager {
     const code = url.searchParams.get("code");
     const oauthError = url.searchParams.get("error");
     if (oauthError || !code) {
-      if (isAuthAccepted(connection)) {
-        await this.consumeStaleState(serverId, provider, state);
-        return this.callbackSuccess(serverId, connection);
+      // Only a callback that carries a state this server minted may change
+      // anything; a forged or replayed one gets the generic page and nothing else.
+      const check = await provider.checkState(state);
+      if (!check.valid) {
+        return { serverId, authSuccess: false, authError: INVALID_CALLBACK_STATE };
       }
+      await provider.consumeState(state);
+      if (isAuthAccepted(connection)) return this.callbackSuccess(serverId, connection);
       const message = oauthError
         ? url.searchParams.get("error_description") || oauthError
         : "Unauthorized: no code provided";
@@ -760,9 +765,7 @@ export class McpClientManager {
         if (completeError !== undefined) throw completeError;
       });
       this.updateStoredSessionId(serverId, connection.sessionId);
-      const result = this.callbackSuccess(serverId, connection);
-      this.fireStateChanged();
-      return result;
+      return this.callbackSuccess(serverId, connection);
     } catch (error) {
       return this.failConnection(serverId, errorMessage(error));
     }
@@ -917,6 +920,7 @@ export class McpClientManager {
   private callbackSuccess(serverId: string, connection: McpConnection): McpCallbackResult {
     this.clearAuthUrl(serverId);
     connection.connectionError = null;
+    this.fireStateChanged();
     return { serverId, authSuccess: true };
   }
 

@@ -337,7 +337,7 @@ describe("McpClientManager", () => {
     expect(connection.connectionError).toBeNull();
   });
 
-  it("fails the session when the authorization server denies the flow", async () => {
+  it("fails the session once when the authorization server denies the flow", async () => {
     const { manager, storage, connections } = makeManager();
     await manager.registerServer("mcp-1", {
       url: "https://tools.example/mcp",
@@ -349,15 +349,63 @@ describe("McpClientManager", () => {
     if (!connection) throw new Error("connection missing");
     const { state } = await startAuthorization({ manager, storage, serverId: "mcp-1", connection });
     await manager.connectToServer("mcp-1");
-
-    const result = await manager.handleCallbackRequest(new Request(
+    const changes = vi.fn();
+    manager.onServerStateChanged(changes);
+    const denied = new Request(
       `${CALLBACK_URL}?error=access_denied&error_description=Denied+by+user&state=${encodeURIComponent(state)}`,
-    ));
+    );
+
+    const result = await manager.handleCallbackRequest(denied);
 
     expect(result).toEqual({ serverId: "mcp-1", authSuccess: false, authError: "Denied by user" });
     expect(connection.connectionState).toBe("failed");
     expect(connection.connectionError).toBe("Denied by user");
     expect(manager.listServers()[0]?.auth_url).toBeNull();
+    expect(changes).toHaveBeenCalledTimes(1);
+    expect(storage.keys().filter((key) => key.includes("/state/"))).toEqual([]);
+
+    const replay = await manager.handleCallbackRequest(denied);
+
+    expect(replay).toEqual({
+      serverId: "mcp-1",
+      authSuccess: false,
+      authError: "The sign-in link is invalid or has expired",
+    });
+    expect(connection.connectionError).toBe("Denied by user");
+    expect(changes).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a forged error callback for an authenticating server", async () => {
+    const { manager, storage, connections } = makeManager();
+    await manager.registerServer("mcp-1", {
+      url: "https://tools.example/mcp",
+      name: "tools",
+      callbackUrl: CALLBACK_URL,
+      transport: { type: "auto" },
+    });
+    const connection = connections.get("https://tools.example/mcp");
+    if (!connection) throw new Error("connection missing");
+    await startAuthorization({ manager, storage, serverId: "mcp-1", connection });
+    const connected = await manager.connectToServer("mcp-1");
+    if (connected.state !== "authenticating") throw new Error("expected authenticating");
+    const changes = vi.fn();
+    manager.onServerStateChanged(changes);
+
+    for (const query of ["error=access_denied&state=forged.mcp-1", "state=forged.mcp-1"]) {
+      const result = await manager.handleCallbackRequest(new Request(`${CALLBACK_URL}?${query}`));
+      expect(result).toEqual({
+        serverId: "mcp-1",
+        authSuccess: false,
+        authError: "The sign-in link is invalid or has expired",
+      });
+    }
+
+    expect(connection.connectionState).toBe("authenticating");
+    expect(connection.connectionError).toBeNull();
+    expect(connection.completeAuthorization).not.toHaveBeenCalled();
+    expect(manager.listServers()[0]?.auth_url).toBe(connected.authUrl);
+    expect(changes).not.toHaveBeenCalled();
+    expect(storage.keys().filter((key) => key.includes("/state/"))).toHaveLength(1);
   });
 
   it("restores stored servers in the background and leaves pending authorizations alone", async () => {
