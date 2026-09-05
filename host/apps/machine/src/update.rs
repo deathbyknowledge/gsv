@@ -8,6 +8,7 @@
 //! so that stopping `gsvd` cannot kill the installer, and lets the installer
 //! swap the binaries, restart the service, and roll back on failure.
 
+use std::ffi::OsStr;
 use std::fmt::{self, Display, Formatter};
 use std::fs::{self, OpenOptions};
 use std::io;
@@ -79,6 +80,11 @@ pub enum UpdateError {
     NotServiceManaged {
         dir: PathBuf,
     },
+    /// The installer could not be kept out of the daemon's own service, so
+    /// stopping the service would kill it mid-update.
+    NoDetachment {
+        dir: PathBuf,
+    },
     State(String),
     Download(String),
     Spawn(String),
@@ -95,6 +101,7 @@ impl UpdateError {
                 | Self::Unwritable { .. }
                 | Self::AppBundle { .. }
                 | Self::NotServiceManaged { .. }
+                | Self::NoDetachment { .. }
         )
     }
 }
@@ -139,6 +146,11 @@ impl Display for UpdateError {
                 "this daemon is not run by a service manager, so nothing would restart it after an update. Run the installer yourself: {}",
                 manual_install_command(dir)
             ),
+            Self::NoDetachment { dir } => write!(
+                f,
+                "automatic updates need systemd-run on this machine, and it is not installed. Run the installer yourself: {}",
+                manual_install_command(dir)
+            ),
             Self::State(error) => write!(f, "could not record the update attempt: {error}"),
             Self::Download(error) => write!(f, "could not download the installer: {error}"),
             Self::Spawn(error) => write!(f, "could not start the installer: {error}"),
@@ -158,10 +170,11 @@ pub struct UpdateLaunch {
 
 /// How the installer escapes the daemon's own service so that stopping
 /// `gsvd` cannot stop the update.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DetachStrategy {
-    /// A transient `systemd-run --user` unit outside the `gsvd` cgroup.
-    SystemdRun,
+    /// A transient `systemd-run --user` unit outside the `gsvd` cgroup,
+    /// started through the named `systemd-run` executable.
+    SystemdRun { program: PathBuf },
     /// A new session and process group; launchd and plain shells only kill
     /// the daemon's own group.
     NewSession,
@@ -173,7 +186,7 @@ pub enum DetachStrategy {
 impl Display for DetachStrategy {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::SystemdRun => "systemd-run",
+            Self::SystemdRun { .. } => "systemd-run",
             Self::NewSession => "new-session",
             Self::WindowsDetached => "detached-process",
         })
@@ -313,6 +326,9 @@ impl AutoUpdater {
         let Some(manager) = detect_service_manager() else {
             return Err(UpdateError::NotServiceManaged { dir: install_dir });
         };
+        let Some(strategy) = detach_strategy(manager, systemd_run_path()) else {
+            return Err(UpdateError::NoDetachment { dir: install_dir });
+        };
         if is_app_bundle_dir(&install_dir) {
             return Err(UpdateError::AppBundle { dir: install_dir });
         }
@@ -327,25 +343,25 @@ impl AutoUpdater {
             .await
             .map_err(UpdateError::Download)?;
         let invocation = installer_invocation(&script, &target.release, &install_dir);
-        let strategy = detach_strategy(manager);
         let log = self.open_log()?;
-        let mut command = detached_command(&invocation, strategy, &self.log_path, log)
+        let mut command = detached_command(&invocation, &strategy, &self.log_path, log)
             .map_err(|error| UpdateError::Spawn(error.to_string()))?;
         let mut child = tokio::process::Command::from(command_take(&mut command))
             .kill_on_drop(false)
             .spawn()
             .map_err(|error| UpdateError::Spawn(error.to_string()))?;
         let release = target.release.clone();
+        let strategy_for_log = strategy.clone();
         tokio::spawn(async move {
             match child.wait().await {
                 Ok(status) if status.success() => {
-                    info!(event = "update.launcher_exited", release = %release, detach = %strategy);
+                    info!(event = "update.launcher_exited", release = %release, detach = %strategy_for_log);
                 }
                 Ok(status) => {
-                    warn!(event = "update.launcher_failed", release = %release, detach = %strategy, status = %status);
+                    warn!(event = "update.launcher_failed", release = %release, detach = %strategy_for_log, status = %status);
                 }
                 Err(error) => {
-                    warn!(event = "update.launcher_failed", release = %release, detach = %strategy, error = %error);
+                    warn!(event = "update.launcher_failed", release = %release, detach = %strategy_for_log, error = %error);
                 }
             }
         });
@@ -697,31 +713,62 @@ pub fn task_status_running(listing: &str) -> bool {
     })
 }
 
-fn detach_strategy(manager: ServiceManager) -> DetachStrategy {
-    match manager {
-        ServiceManager::Systemd if systemd_run_available() => DetachStrategy::SystemdRun,
-        ServiceManager::Systemd | ServiceManager::Launchd => DetachStrategy::NewSession,
-        ServiceManager::WindowsTask => DetachStrategy::WindowsDetached,
-    }
+/// Where distributions install `systemd-run` when a unit's PATH is too
+/// minimal to find it.
+const SYSTEMD_RUN_FALLBACKS: &[&str] = &["/usr/bin/systemd-run", "/bin/systemd-run"];
+
+/// Resolve `systemd-run`: the service PATH first, then the distribution
+/// locations, so a unit with a minimal PATH still gets a working update.
+pub fn resolve_systemd_run(
+    path_env: Option<&OsStr>,
+    exists: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+    let from_path: Vec<PathBuf> = path_env
+        .map(|path| {
+            std::env::split_paths(path)
+                .map(|dir| dir.join("systemd-run"))
+                .collect()
+        })
+        .unwrap_or_default();
+    from_path
+        .into_iter()
+        .chain(SYSTEMD_RUN_FALLBACKS.iter().map(PathBuf::from))
+        .find(|candidate| exists(candidate))
 }
 
-fn systemd_run_available() -> bool {
-    std::env::var_os("PATH").is_some_and(|path| {
-        std::env::split_paths(&path).any(|dir| dir.join("systemd-run").is_file())
+fn systemd_run_path() -> Option<PathBuf> {
+    resolve_systemd_run(std::env::var_os("PATH").as_deref(), |candidate| {
+        candidate.is_file()
     })
+}
+
+/// How to keep the installer alive once it stops this service. Under systemd
+/// only a transient unit escapes the cgroup that `systemctl stop` kills, so
+/// without `systemd-run` there is no safe way and the answer is `None`.
+pub fn detach_strategy(
+    manager: ServiceManager,
+    systemd_run: Option<PathBuf>,
+) -> Option<DetachStrategy> {
+    match manager {
+        ServiceManager::Systemd => {
+            systemd_run.map(|program| DetachStrategy::SystemdRun { program })
+        }
+        ServiceManager::Launchd => Some(DetachStrategy::NewSession),
+        ServiceManager::WindowsTask => Some(DetachStrategy::WindowsDetached),
+    }
 }
 
 fn detached_command(
     invocation: &InstallerInvocation,
-    strategy: DetachStrategy,
+    strategy: &DetachStrategy,
     log_path: &Path,
     log: fs::File,
 ) -> io::Result<Command> {
     let mut command = match strategy {
-        DetachStrategy::SystemdRun => {
+        DetachStrategy::SystemdRun { program } => {
             let unit = format!("gsv-auto-update-{}", unix_seconds(SystemTime::now()));
             let path_env = std::env::var("PATH").ok();
-            let mut command = Command::new("systemd-run");
+            let mut command = Command::new(program);
             command.args(systemd_run_arguments(
                 &unit,
                 log_path,
@@ -746,9 +793,9 @@ fn detached_command(
 }
 
 #[cfg(unix)]
-fn detach(command: &mut Command, strategy: DetachStrategy) {
+fn detach(command: &mut Command, strategy: &DetachStrategy) {
     use std::os::unix::process::CommandExt;
-    if strategy != DetachStrategy::NewSession {
+    if *strategy != DetachStrategy::NewSession {
         return;
     }
     // SAFETY: setsid only detaches the child from the daemon's session and
@@ -765,7 +812,7 @@ fn detach(command: &mut Command, strategy: DetachStrategy) {
 }
 
 #[cfg(windows)]
-fn detach(command: &mut Command, _strategy: DetachStrategy) {
+fn detach(command: &mut Command, _strategy: &DetachStrategy) {
     use std::os::windows::process::CommandExt;
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
     const DETACHED_PROCESS: u32 = 0x0000_0008;
@@ -915,6 +962,46 @@ mod tests {
             "TaskName: \\gsvd\r\nStatus:        Ready\r\n"
         ));
         assert!(!task_status_running(""));
+    }
+
+    #[test]
+    fn under_systemd_only_a_transient_unit_will_do() {
+        let program = PathBuf::from("/usr/bin/systemd-run");
+        assert_eq!(
+            detach_strategy(ServiceManager::Systemd, Some(program.clone())),
+            Some(DetachStrategy::SystemdRun { program })
+        );
+        assert_eq!(detach_strategy(ServiceManager::Systemd, None), None);
+        assert_eq!(
+            detach_strategy(ServiceManager::Launchd, None),
+            Some(DetachStrategy::NewSession)
+        );
+        assert_eq!(
+            detach_strategy(ServiceManager::WindowsTask, None),
+            Some(DetachStrategy::WindowsDetached)
+        );
+    }
+
+    #[test]
+    fn systemd_run_is_found_on_path_before_the_distribution_locations() {
+        let path = std::env::join_paths(["/opt/tools/bin", "/home/u/bin"]).expect("join paths");
+        let everywhere = |_: &Path| true;
+        assert_eq!(
+            resolve_systemd_run(Some(path.as_os_str()), everywhere),
+            Some(PathBuf::from("/opt/tools/bin/systemd-run"))
+        );
+        let only_bin = |candidate: &Path| candidate == Path::new("/bin/systemd-run");
+        assert_eq!(
+            resolve_systemd_run(Some(path.as_os_str()), only_bin),
+            Some(PathBuf::from("/bin/systemd-run"))
+        );
+        let only_usr_bin = |candidate: &Path| candidate == Path::new("/usr/bin/systemd-run");
+        assert_eq!(
+            resolve_systemd_run(None, only_usr_bin),
+            Some(PathBuf::from("/usr/bin/systemd-run"))
+        );
+        let nowhere = |_: &Path| false;
+        assert_eq!(resolve_systemd_run(Some(path.as_os_str()), nowhere), None);
     }
 
     #[test]
