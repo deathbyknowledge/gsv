@@ -587,7 +587,13 @@ export class Kernel extends DurableObject<GatewayEnv> {
       }
       return oauthCallbackHtmlResponse(
         result.authSuccess
-          ? { ok: true, account: { provider: "MCP server", label: result.serverId } }
+          ? {
+            ok: true,
+            account: {
+              provider: "MCP server",
+              label: result.completing ? `${result.serverId} (sign-in completing)` : result.serverId,
+            },
+          }
           : { ok: false, message: result.authError },
       );
     }

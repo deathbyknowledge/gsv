@@ -174,6 +174,15 @@ export class McpOAuthProvider implements OAuthClientProvider {
     await this.storage.delete(this.stateKey(parsed.nonce));
   }
 
+  /** Forget a flow that ended without a token: its state and the PKCE verifier tied to it. */
+  async discardState(state: string): Promise<void> {
+    const parsed = parseOAuthState(state);
+    if (!parsed) return;
+    const keys = [this.stateKey(parsed.nonce)];
+    if (this.storedClientId) keys.push(this.stateCodeVerifierKey(this.clientId, parsed.nonce));
+    await this.storage.delete(keys);
+  }
+
   /**
    * Remember the authorization URL, and move the PKCE verifier the SDK saved
    * under its challenge to the state nonce, so the callback can find it.

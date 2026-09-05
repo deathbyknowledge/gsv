@@ -75,7 +75,8 @@ export type McpDiscoveryResult = {
 };
 
 export type McpCallbackResult =
-  | { serverId: string; authSuccess: true }
+  /** `completing` marks a repeated callback that found the sign-in already finishing. */
+  | { serverId: string; authSuccess: true; completing?: boolean }
   | { serverId?: string; authSuccess: false; authError: string };
 
 export type McpToolCallParams = {
@@ -148,6 +149,8 @@ export class McpClientConnection implements McpConnection {
   private transport?: { kind: McpTransportKind; instance: McpClientTransport };
   private discoveryAbort?: AbortController;
   private discoveryAttempt = 0;
+  /** One counter per list so an older list-changed refresh cannot overwrite a newer one. */
+  private readonly listGenerations = { tools: 0, resources: 0, prompts: 0 };
 
   constructor(
     readonly url: URL,
@@ -254,17 +257,33 @@ export class McpClientConnection implements McpConnection {
     const candidates: McpTransportKind[] = type === "auto" ? ["streamable-http", "sse"] : [type];
     for (const [index, candidate] of candidates.entries()) {
       const hasFallback = index < candidates.length - 1;
-      await this.client.close().catch(() => undefined);
-      this.transport = undefined;
-      const transport = this.createTransport(candidate);
-      try {
-        await this.client.connect(transport);
-        this.transport = { kind: candidate, instance: transport };
-        return { state: "connected" };
-      } catch (error) {
-        if (isUnauthorized(error)) return { state: "authenticating" };
-        if (hasFallback && isTransportNotImplemented(error)) continue;
-        return { state: "failed", error: errorMessage(error) };
+      let retriedWithoutSession = false;
+      for (;;) {
+        await this.client.close().catch(() => undefined);
+        this.transport = undefined;
+        const transport = this.createTransport(candidate);
+        try {
+          await this.client.connect(transport);
+          this.transport = { kind: candidate, instance: transport };
+          return { state: "connected" };
+        } catch (error) {
+          if (isUnauthorized(error)) return { state: "authenticating" };
+          const notImplemented = isTransportNotImplemented(error);
+          if (
+            notImplemented
+            && candidate === "streamable-http"
+            && this.options.transport.sessionId !== undefined
+            && !retriedWithoutSession
+          ) {
+            // The saved session is gone on the server; open a fresh one
+            // before concluding the endpoint has no streamable transport.
+            this.options.transport.sessionId = undefined;
+            retriedWithoutSession = true;
+            continue;
+          }
+          if (hasFallback && notImplemented) break;
+          return { state: "failed", error: errorMessage(error) };
+        }
       }
     }
     return { state: "failed", error: "No transports available" };
@@ -334,7 +353,10 @@ export class McpClientConnection implements McpConnection {
   ): Promise<Tool[]> {
     if (capabilities?.tools?.listChanged || probe) {
       this.client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
-        this.tools = await this.fetchTools();
+        this.listGenerations.tools += 1;
+        const generation = this.listGenerations.tools;
+        const tools = await this.fetchTools();
+        if (generation === this.listGenerations.tools) this.tools = tools;
       });
     }
     return this.fetchTools(signal);
@@ -347,7 +369,10 @@ export class McpClientConnection implements McpConnection {
   ): Promise<Resource[]> {
     if (capabilities?.resources?.listChanged || probe) {
       this.client.setNotificationHandler(ResourceListChangedNotificationSchema, async () => {
-        this.resources = await this.fetchResources();
+        this.listGenerations.resources += 1;
+        const generation = this.listGenerations.resources;
+        const resources = await this.fetchResources();
+        if (generation === this.listGenerations.resources) this.resources = resources;
       });
     }
     return this.fetchResources(signal);
@@ -360,7 +385,10 @@ export class McpClientConnection implements McpConnection {
   ): Promise<Prompt[]> {
     if (capabilities?.prompts?.listChanged || probe) {
       this.client.setNotificationHandler(PromptListChangedNotificationSchema, async () => {
-        this.prompts = await this.fetchPrompts();
+        this.listGenerations.prompts += 1;
+        const generation = this.listGenerations.prompts;
+        const prompts = await this.fetchPrompts();
+        if (generation === this.listGenerations.prompts) this.prompts = prompts;
       });
     }
     return this.fetchPrompts(signal);
@@ -626,8 +654,13 @@ export class McpClientManager {
       : { success: result.success, error: result.error, state: connection.connectionState };
   }
 
-  /** Connect and discover after authorization completed. */
+  /**
+   * Connect and discover after authorization completed. A repeated request
+   * while that is still running joins the running task instead of racing it.
+   */
   establishConnection(serverId: string): Promise<void> {
+    const inFlight = this.pending.get(serverId);
+    if (inFlight) return inFlight;
     const connection = this.mcpConnections[serverId];
     if (!connection) return Promise.resolve();
     if (connection.connectionState === "discovering" || connection.connectionState === "ready") {
@@ -711,6 +744,10 @@ export class McpClientManager {
       );
     }
     provider.serverId = serverId;
+    if (connection.connectionState === "connecting") {
+      // An earlier callback is finishing this sign-in; do not race it.
+      return { serverId, authSuccess: true, completing: true };
+    }
 
     const code = url.searchParams.get("code");
     const oauthError = url.searchParams.get("error");
@@ -721,7 +758,7 @@ export class McpClientManager {
       if (!check.valid) {
         return { serverId, authSuccess: false, authError: INVALID_CALLBACK_STATE };
       }
-      await provider.consumeState(state);
+      await provider.discardState(state);
       if (isAuthAccepted(connection)) return this.callbackSuccess(serverId, connection);
       const message = oauthError
         ? url.searchParams.get("error_description") || oauthError
@@ -964,10 +1001,10 @@ export class McpClientManager {
   }
 }
 
+/** Sessions whose authorization already went through; `connecting` is still in flight. */
 function isAuthAccepted(connection: McpConnection): boolean {
   return connection.connectionState === "ready"
     || connection.connectionState === "connected"
-    || connection.connectionState === "connecting"
     || connection.connectionState === "discovering";
 }
 
