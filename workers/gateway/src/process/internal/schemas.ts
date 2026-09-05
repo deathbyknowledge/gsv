@@ -5,17 +5,11 @@ import { RUN_CONTROL_INSTRUCTION } from "./lifecycle";
 import type { Tool } from "@earendil-works/pi-ai";
 import { jsonObjectSchema, jsonValueSchema } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
+import { processIdentitySchema } from "../../protocol/peer-schemas";
+
+export { processIdentitySchema };
 
 export const nonEmptyStringSchema = z.string().trim().min(1);
-
-export const processIdentitySchema = z.object({
-  uid: z.number(),
-  gid: z.number(),
-  gids: z.array(z.number()),
-  username: z.string(),
-  home: z.string(),
-  cwd: z.string(),
-});
 
 export const aiToolsDeviceSchema = z.object({
   id: z.string(),

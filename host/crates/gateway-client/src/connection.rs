@@ -988,7 +988,7 @@ mod tests {
     fn connect_result_requires_protocol_4() {
         let data = serde_json::json!({
             "protocol": 1,
-            "server": { "version": "test", "connectionId": "conn-1" },
+            "server": { "version": "test", "release": "dev", "connectionId": "conn-1" },
             "peer": {
                 "id": "test-peer",
                 "sessionId": "conn-1",

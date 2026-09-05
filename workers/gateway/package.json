@@ -27,7 +27,7 @@
     "@cloudflare/codemode": "^0.3.4",
     "@earendil-works/pi-ai": "0.84.2",
     "@humansandmachines/gsv": "file:../../packages/gsv",
-    "agents": "^0.16.0",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "just-bash": "^3.4.2",
     "marked": "^16.4.2",
     "zod": "4.3.6"

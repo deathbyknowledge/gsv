@@ -17,6 +17,8 @@ The source of truth is:
 - `workers/gateway/src/protocol/frames.ts`
 - `workers/gateway/src/protocol/decode-wire-frame.ts`
 - `tools/protocol/generate-gateway-wire-validator.mjs`
+- `tools/protocol/generate-host-protocol-types.mjs`, which emits the Rust
+  mirrors in `host/crates/gateway-client/src/protocol/generated.rs`
 - `packages/gsv/src/protocol/request-cancel.ts`
 - `packages/gsv/src/protocol/adapters.ts`
 - `packages/gsv/src/protocol/adapter-media-body.ts`
