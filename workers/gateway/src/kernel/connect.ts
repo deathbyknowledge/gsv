@@ -112,6 +112,7 @@ export async function handleConnect(
         requestedProtocol: args.protocol,
         supportedProtocol: PROTOCOL_VERSION,
         serverVersion: ctx.serverVersion,
+        serverRelease: SERVER_RELEASE,
         installer: INSTALLER_URL,
       },
     };
