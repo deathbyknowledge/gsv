@@ -1,6 +1,10 @@
 /* Zen: the response is the page. */
 .zen {
-  grid-template-rows: 44px 1fr auto;
+  display: grid;
+  grid-template-rows: 44px minmax(0, 1fr) auto;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 .zen-body {
   position: relative;

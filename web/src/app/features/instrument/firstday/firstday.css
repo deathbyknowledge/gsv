@@ -1,6 +1,10 @@
 /* The first day: onboarding is Fleet with empty rows. A row lights when the place says hello. */
 .firstday {
-  grid-template-rows: 44px 1fr auto;
+  display: grid;
+  grid-template-rows: 44px minmax(0, 1fr) auto;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 .fd-body {
   overflow-y: auto;

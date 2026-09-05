@@ -1,6 +1,10 @@
 /* Fleet: the far distance. A manifest, not a dashboard. */
 .fleet {
-  grid-template-rows: 44px 1fr auto 30px;
+  display: grid;
+  grid-template-rows: 44px minmax(0, 1fr) auto 30px;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 .fleet-top {
   display: grid;
