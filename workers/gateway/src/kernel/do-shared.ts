@@ -9,6 +9,7 @@ import type {
 import type {
   AdapterActivity,
   JsonValue,
+  ProcMediaInput,
 } from "@humansandmachines/gsv/protocol";
 import {
   resourceBlockSchema,
@@ -67,7 +68,7 @@ export const procMediaInputSchema = z.object({
   size: z.number().optional(),
   duration: z.number().optional(),
   transcription: z.string().optional(),
-});
+}) satisfies z.ZodType<ProcMediaInput>;
 
 export const userProcessSignalPayloadSchema = z.object({
   pid: z.string().optional(),
