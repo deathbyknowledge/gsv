@@ -1,0 +1,210 @@
+/* The instrument: Zen, the first day, and Fleet.
+ * Every color comes from gsv-tokens.css. The identity is the auth screen's:
+ * void ground, phosphor glyphs, square corners, tracked uppercase chrome. */
+
+.instrument {
+  position: fixed;
+  inset: 0;
+  background: var(--void);
+  color: var(--text);
+  font-family: var(--gsv-font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+.instrument button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.instrument :is(button, a, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.instrument a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+/* ---------- field: stars, scanlines, vignette ---------- */
+.instrument-field {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-settle) ease;
+}
+.instrument-field.is-fleet {
+  opacity: 0.45;
+}
+.instrument-scan {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg, transparent 0, transparent 2px, rgba(0, 0, 0, 0.22) 3px);
+  mix-blend-mode: multiply;
+}
+.instrument-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse 86% 84% at 50% 50%, transparent 66%, rgba(0, 0, 0, 0.38) 100%);
+}
+
+/* ---------- distances ---------- */
+.distance {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  transition: opacity var(--dur-move) ease, transform var(--dur-move) ease;
+}
+.distance.is-leaving {
+  opacity: 0;
+  transform: scale(0.985);
+  pointer-events: none;
+}
+.distance.is-arriving {
+  opacity: 0;
+  transform: scale(1.015);
+}
+
+/* ---------- shared chrome ---------- */
+.instrument-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 0 var(--space-5);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.instrument-top .keys span {
+  margin-left: 14px;
+}
+.instrument kbd {
+  font: inherit;
+  color: var(--label);
+  border: 1px solid var(--border-raised);
+  padding: 0 5px;
+  margin-right: 4px;
+}
+.wordmark {
+  color: var(--glyph);
+  text-shadow: var(--glow);
+  letter-spacing: 0.34em;
+  font-size: 12px;
+}
+.wordmark.is-glitch {
+  text-shadow: 1px 0 0 rgba(255, 90, 160, 0.3), -1px 0 0 rgba(90, 200, 255, 0.28), 0 0 9px rgba(140, 120, 235, 0.55);
+  transform: translateX(0.6px);
+}
+.instrument-status {
+  display: flex;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  min-height: 26px;
+}
+.instrument-status .is-on { color: var(--online); }
+.instrument-status .is-live { color: var(--live); }
+.instrument-status .is-warn { color: var(--update); }
+.instrument-status .is-err { color: var(--error); }
+
+/* the prompt line: who @ where directory $ */
+.prompt-line {
+  display: flex;
+  align-items: baseline;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+  font-size: 16px;
+  line-height: 1.4;
+}
+.prompt-line .who { color: var(--principal); }
+.prompt-line .at { color: var(--target); }
+.prompt-line .where { color: var(--target); font-weight: 700; }
+.prompt-line .dir { color: var(--path); margin-left: 8px; }
+.prompt-line .sigil { color: var(--text-hi); font-weight: 700; margin: 0 10px 0 8px; }
+.prompt-line input {
+  flex: 1;
+  min-width: 120px;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  color: var(--text-hi);
+  font: inherit;
+  letter-spacing: 0.02em;
+  caret-color: var(--accent);
+}
+.prompt-line input:focus {
+  text-shadow: var(--glow-focus);
+}
+.prompt-line input::placeholder {
+  color: #565199;
+  letter-spacing: 0.06em;
+}
+.prompt-hint {
+  font-size: 11px;
+  color: var(--faint);
+  letter-spacing: 0.1em;
+  padding-top: var(--space-2);
+  text-transform: uppercase;
+}
+.prompt-hint b {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+/* buttons in the identity: square, tracked, glowing primary */
+.ibtn {
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  padding: 9px 14px;
+  border: 1px solid var(--border-raised);
+  color: var(--accent);
+}
+.ibtn:hover { border-color: var(--accent); background: var(--hover); }
+.ibtn.is-primary {
+  background: #5a52a8;
+  border-color: var(--primary-hi);
+  color: #fff;
+  box-shadow: 0 0 18px rgba(120, 110, 230, 0.4);
+}
+.ibtn.is-primary:hover { background: var(--primary-hi); box-shadow: 0 0 28px rgba(120, 110, 230, 0.7); }
+.ibtn.is-danger { border-color: var(--danger); color: var(--error); }
+
+/* the machine rail: what a target actually ran */
+.machine-rail {
+  font-family: var(--gsv-font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--label);
+  margin: 14px 0 6px;
+  border-left: 2px solid var(--border);
+  padding-left: 14px;
+  white-space: pre;
+  overflow-x: auto;
+}
+.machine-rail .cmd { color: var(--text-hi); }
+.machine-rail .who { color: var(--principal); }
+.machine-rail .where { color: var(--target); font-weight: 700; }
+.machine-rail .dir { color: var(--path); }
+.machine-rail .meta { color: var(--text-dim); }
+.machine-rail .err { color: var(--error); }
+
+@keyframes instrument-blink { 50% { opacity: 0; } }
+.blink { animation: instrument-blink 1s steps(1) infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .distance { transition: none; }
+  .blink { animation: none; }
+  .wordmark.is-glitch { transform: none; }
+}
