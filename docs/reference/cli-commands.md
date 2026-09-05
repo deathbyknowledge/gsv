@@ -410,7 +410,10 @@ defaulting to `100`. Foreground logs use compact text by default; set
 `GSV_DEVICE_CONSOLE_FORMAT=json` or `GSV_DEVICE_CONSOLE_FORMAT=quiet` to change that.
 
 `reload` rereads `config.toml` and reconnects, while `reconnect` keeps the
-current settings. `diagnostics` reports bounded, redacted runtime notices.
+current settings. `diagnostics` reports bounded, redacted runtime notices,
+including the daemon's latest automatic-update decision; the installer it
+starts logs to `~/.gsv/logs/auto-update.log`, and `device.auto_update`
+turns automatic updates off.
 `status` combines the operating-system service state with the live daemon's
 version, PID, machine id, connection phase, uptime, and reconnect count. These
 live operations use a versioned same-user Unix socket on macOS/Linux and a
@@ -516,8 +519,10 @@ With `--local`, commands edit `~/.config/gsv/config.toml`. Supported local keys:
 `gateway.url`, `gateway.username`, `gateway.token`, `gateway.session_token`,
 `gateway.session_token_id`, `gateway.session_expires_at`,
 `gateway.session_expires_at_ms`, `release.channel`,
-`session.default_key`, `device.id`, `device.token`, and `device.workspace`.
-`release.channel` must be `stable` or `dev`; token values are masked
+`session.default_key`, `device.id`, `device.token`, `device.workspace`, and
+`device.auto_update`.
+`release.channel` must be `stable` or `dev`; `device.auto_update` must be
+`true` or `false`; token values are masked
 on local `get`. Adapter workers use Cloudflare service bindings rather than
 locally configured WhatsApp URLs or tokens.
 

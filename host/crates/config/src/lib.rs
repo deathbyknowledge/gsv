@@ -8,6 +8,8 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+pub mod release;
+
 pub const DEFAULT_SESSION_KEY: &str = "agent:main:cli:dm:main";
 
 pub fn gsv_home() -> PathBuf {
@@ -119,6 +121,10 @@ pub struct DeviceConfig {
 
     /// Workspace directory for file tools
     pub workspace: Option<PathBuf>,
+
+    /// Whether `gsvd` installs the release the gateway names when it falls
+    /// behind. Unset means on.
+    pub auto_update: Option<bool>,
 
     #[serde(default, flatten)]
     pub extra: toml::Table,
@@ -602,6 +608,11 @@ impl CliConfig {
         self.device.token.clone()
     }
 
+    /// Whether the machine daemon may install gateway-named releases on its own
+    pub fn device_auto_update(&self) -> bool {
+        self.device.auto_update.unwrap_or(true)
+    }
+
     /// Get the GSV home directory (~/.gsv)
     pub fn gsv_home(&self) -> PathBuf {
         gsv_home()
@@ -644,6 +655,8 @@ default_key = "agent:main:cli:dm:main"
 # gateway_url = "wss://gateway.example/ws"
 # gateway_username = "hank"
 # workspace = "/Users/you/projects"
+# Let gsvd install the release the gateway names when it falls behind (default: true)
+# auto_update = true
 
 "#
 }
@@ -685,6 +698,16 @@ selected_pid = "proc-7"
         assert_eq!(value["gateway"]["future_gateway"].as_integer(), Some(42));
         assert_eq!(value["desktop"]["selected_pid"].as_str(), Some("proc-7"));
         assert_eq!(value["gateway"]["username"].as_str(), Some("root"));
+    }
+
+    #[test]
+    fn automatic_updates_default_to_on_until_switched_off() {
+        let config: CliConfig =
+            toml::from_str("[device]\nid = \"machine-1\"\n").expect("config parses");
+        assert!(config.device_auto_update());
+        let config: CliConfig =
+            toml::from_str("[device]\nauto_update = false\n").expect("config parses");
+        assert!(!config.device_auto_update());
     }
 
     #[test]

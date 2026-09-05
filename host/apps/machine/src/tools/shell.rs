@@ -96,6 +96,19 @@ async fn store_process(handle: ProcessHandle) {
     registry.insert(session_id, handle);
 }
 
+/// How many shell sessions still have a live process, foreground or
+/// backgrounded. Machine work that a service stop would kill.
+pub async fn running_process_count() -> usize {
+    let registry = process_registry().lock().await;
+    let mut running = 0;
+    for handle in registry.values() {
+        if handle.state.lock().await.ended_at.is_none() {
+            running += 1;
+        }
+    }
+    running
+}
+
 async fn get_process(session_id: &str) -> Option<ProcessHandle> {
     let registry = process_registry().lock().await;
     registry.get(session_id).cloned()

@@ -474,6 +474,14 @@ pub(crate) async fn run_client(
         Ok(client) => client,
         Err(error) => return Err(error),
     };
+    if let Some(hint) = client
+        .connection()
+        .connect_result
+        .as_ref()
+        .and_then(|result| release_hint(gsv::build_info::PACKAGE_VERSION, &result.server))
+    {
+        eprintln!("{hint}");
+    }
     let interactive_stdin = io::stdin().is_terminal();
     let mut stdin_lines = spawn_stdin_reader();
 
@@ -806,5 +814,54 @@ mod tests {
 
         assert_eq!(hil_requests.try_recv().ok(), Some(payload));
         assert!(awaiting_response.load(Ordering::SeqCst));
+    }
+}
+
+/// One line when the gateway runs a newer stable release than this CLI. The
+/// CLI is never replaced under a person; the installer does that on request.
+fn release_hint(current: &str, server: &gateway_client::protocol::ServerInfo) -> Option<String> {
+    use host_config::release::{parse_version, stable_tag, DEV_RELEASE_TAG};
+    if server.release.as_deref() == Some(DEV_RELEASE_TAG) {
+        return None;
+    }
+    let current = parse_version(current)?;
+    let available = parse_version(&server.version)?;
+    if available <= current {
+        return None;
+    }
+    let command = if cfg!(windows) {
+        "irm https://install.gsv.space/install.ps1 | iex"
+    } else {
+        "curl -fsSL https://install.gsv.space | bash"
+    };
+    Some(format!(
+        "GSV {} is available; this CLI is {current}. Update with: {command}",
+        stable_tag(available)
+    ))
+}
+
+#[cfg(test)]
+mod release_hint_tests {
+    use super::release_hint;
+    use gateway_client::protocol::ServerInfo;
+
+    fn server(version: &str, release: Option<&str>) -> ServerInfo {
+        ServerInfo {
+            version: version.to_string(),
+            release: release.map(str::to_string),
+            connection_id: "conn".to_string(),
+        }
+    }
+
+    #[test]
+    fn hints_only_for_a_newer_stable_gateway() {
+        let hint = release_hint("0.4.1", &server("0.4.2", Some("v0.4.2"))).expect("newer hints");
+        assert!(hint.starts_with("GSV v0.4.2 is available; this CLI is 0.4.1."));
+        assert_eq!(
+            release_hint("0.4.1", &server("0.4.1", Some("v0.4.1"))),
+            None
+        );
+        assert_eq!(release_hint("0.4.1", &server("0.9.0", Some("dev"))), None);
+        assert_eq!(release_hint("0.4.1", &server("nope", None)), None);
     }
 }

@@ -70,7 +70,13 @@ function Ensure-ConfigFile {
     Write-Info "Found existing config at $configFile; leaving it unchanged"
     return
   }
-  $channelLine = if ($Version) { '# channel = "stable"' } else { "channel = `"$Channel`"" }
+  $channelLine = if (-not $Version) {
+    "channel = `"$Channel`""
+  } elseif ($Version -eq $DevReleaseTag) {
+    'channel = "dev"'
+  } else {
+    '# channel = "stable"'
+  }
   $configContent = @"
 # GSV host application configuration
 # gsv config --local set gateway.url wss://<your-gateway>.workers.dev/ws
@@ -80,6 +86,34 @@ $channelLine
 "@
   Set-Content -Path $configFile -Value $configContent -Encoding UTF8
   Write-Success "Created config at $configFile"
+}
+
+function Set-ReleaseChannelInConfig([string]$Channel) {
+  # Set release.channel in an existing config without touching anything else.
+  $configFile = Join-Path $ConfigDir "config.toml"
+  if (-not (Test-Path $configFile)) { return }
+  $lines = [System.Collections.Generic.List[string]](Get-Content -Path $configFile)
+  $channelLine = "channel = `"$Channel`""
+  $inRelease = $false
+  $releaseIndex = -1
+  for ($index = 0; $index -lt $lines.Count; $index++) {
+    $line = $lines[$index]
+    if ($line -match '^\s*\[release\]\s*$') { $inRelease = $true; $releaseIndex = $index; continue }
+    if ($line -match '^\s*\[') { $inRelease = $false; continue }
+    if ($inRelease -and $line -match '^\s*#?\s*channel\s*=') {
+      $lines[$index] = $channelLine
+      Set-Content -Path $configFile -Value $lines -Encoding UTF8
+      return
+    }
+  }
+  if ($releaseIndex -ge 0) {
+    $lines.Insert($releaseIndex + 1, $channelLine)
+  } else {
+    $lines.Add("")
+    $lines.Add("[release]")
+    $lines.Add($channelLine)
+  }
+  Set-Content -Path $configFile -Value $lines -Encoding UTF8
 }
 
 function Add-InstallDirToPath {
@@ -190,6 +224,10 @@ function Install-GsvHost {
         }
       }
 
+      # The config must be complete before the replacement daemon starts.
+      Ensure-ConfigFile
+      if ($Version -eq $DevReleaseTag) { Set-ReleaseChannelInConfig "dev" }
+
       if ($taskExisted) {
         & (Join-Path $InstallDir "gsv.exe") daemon start *> $null
         if ($LASTEXITCODE -ne 0 -or -not (Wait-GsvdHealthy)) {
@@ -224,8 +262,11 @@ Write-Host ""
 Write-Host "GSV host installer · Windows x64" -ForegroundColor Cyan
 Write-Host ""
 Install-GsvHost
-Ensure-ConfigFile
-Add-InstallDirToPath
+if ($env:GSV_NO_MODIFY_PATH -eq "1") {
+  Write-Info "Left the user PATH alone (GSV_NO_MODIFY_PATH=1); add $InstallDir yourself"
+} else {
+  Add-InstallDirToPath
+}
 if (-not $Version) {
   try {
     & (Join-Path $InstallDir "gsv.exe") config --local set release.channel $Channel *> $null
