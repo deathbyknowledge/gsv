@@ -393,7 +393,7 @@ impl AutoUpdater {
         {
             return None;
         }
-        let release = self.accepted_release(server.release.as_deref(), server_version)?;
+        let release = self.accepted_release(Some(&server.release), server_version)?;
         Some(UpdateTarget {
             release,
             reason: UpdateReason::NewerRelease,
@@ -1208,7 +1208,8 @@ mod tests {
     fn server(version: &str, release: Option<&str>) -> ServerInfo {
         ServerInfo {
             version: version.to_string(),
-            release: release.map(str::to_string),
+            release: release.unwrap_or_default().to_string(),
+            features: Vec::new(),
             connection_id: "conn-1".to_string(),
         }
     }
@@ -1663,7 +1664,7 @@ mod tests {
             .expect("newer release plans an update");
         assert_eq!(target.release, "v0.4.2");
         assert_eq!(target.reason, UpdateReason::NewerRelease);
-        // An older gateway that names no release: the stable tag of its version.
+        // A gateway that names an empty release: the stable tag of its version.
         assert_eq!(
             updater
                 .plan_for_server(&server("0.4.2", None))
