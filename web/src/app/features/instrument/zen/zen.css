@@ -191,3 +191,65 @@
   text-wrap: pretty;
 }
 .zen-empty .place { color: var(--target); }
+
+/* the ASCII forms inside Zen: sized here, since the shared galaxy fills its container */
+.zen-galaxy {
+  width: min(1200px, 96vw);
+  height: 384px;
+}
+.zen-galaxy .gsv-ascii-galaxy {
+  aspect-ratio: auto;
+  height: 100%;
+  min-height: 0;
+}
+.zen-empty .zen-galaxy .gsv-ascii-galaxy {
+  --gsv-ascii-galaxy-font-size: 8px;
+}
+.zen-think-form {
+  display: inline-block;
+  width: 264px;
+  height: 72px;
+  vertical-align: middle;
+  margin-right: 4px;
+}
+.zen-think-form .gsv-ascii-galaxy {
+  aspect-ratio: auto;
+  height: 100%;
+  min-height: 0;
+  --gsv-ascii-galaxy-font-size: 6px;
+}
+.zen-moment .text .noise {
+  color: var(--glyph);
+}
+.zen-moment .text p {
+  margin: 0 0 0.6em;
+}
+.zen-moment .text a {
+  color: var(--link);
+}
+.zen-moment .text a[href^="#place:"] {
+  color: var(--target);
+  border-bottom: 1px solid rgba(151, 170, 255, 0.35);
+}
+.zen-moment .text pre {
+  font-family: var(--gsv-font-mono);
+  font-size: 0.6em;
+  line-height: 1.5;
+  color: var(--label);
+  border-left: 2px solid var(--border);
+  padding-left: 14px;
+  overflow-x: auto;
+  white-space: pre;
+}
+.zen-moment .text ul,
+.zen-moment .text ol {
+  padding-left: 1.2em;
+}
+.zen-approval .keys .ibtn {
+  padding: 6px 12px;
+}
+.zen-approval .keys .ibtn kbd {
+  color: inherit;
+  border-color: currentColor;
+  margin-right: 6px;
+}
