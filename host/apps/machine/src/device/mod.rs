@@ -18,7 +18,7 @@ use tracing::{error, info, info_span, warn, Instrument};
 use crate::control::DaemonRuntime;
 use crate::logger;
 use crate::tools::{all_tools_with_workspace_for_device, subscribe_exec_events, Tool, ToolOutput};
-use crate::update::{AutoUpdater, UpdateError, UpdateTarget};
+use crate::update::{AttemptState, AutoUpdater, UpdateError, UpdateTarget};
 
 mod transfer;
 
@@ -667,18 +667,18 @@ pub async fn run(
                             return Err(e);
                         }
                         if rpc_error.is_protocol_unsupported() {
-                            let launched = match updater.plan_for_protocol_error(rpc_error) {
+                            let outcome = match updater.plan_for_protocol_error(rpc_error) {
                                 Some(target) => {
                                     let launch =
                                         start_update(updater.clone(), runtime.clone(), target);
                                     match run_until_cancelled(&shutdown, launch).await {
-                                        Some(launched) => launched,
+                                        Some(outcome) => outcome,
                                         None => shutdown_device!("control"),
                                     }
                                 }
-                                None => false,
+                                None => UpdateOutcome::NotLaunched,
                             };
-                            if launched {
+                            if outcome != UpdateOutcome::NotLaunched {
                                 // The installer stops this service itself once
                                 // the release is verified. Staying alive until
                                 // then keeps its service snapshot accurate.
@@ -808,17 +808,25 @@ pub async fn run(
             // Dropping the guard at the end of this connection aborts it, so a
             // reconnect or a reload never leaves a launch running against
             // settings this driver no longer holds.
-            let _update_task =
-                update_after_connect(&updater, conn.connect_result.as_ref()).map(|target| {
+            let _update_task = match update_after_connect(&updater, conn.connect_result.as_ref()) {
+                Some(target) => {
                     let shutdown = shutdown.clone();
                     let launch = start_update(updater.clone(), runtime.clone(), target);
-                    AbortOnDrop(tokio::spawn(
+                    Some(AbortOnDrop(tokio::spawn(
                         async move {
                             run_until_cancelled(&shutdown, launch).await;
                         }
                         .instrument(tracing::Span::current()),
-                    ))
-                });
+                    )))
+                }
+                None => {
+                    // Nothing to move to any more: an earlier "available"
+                    // notice would now be wrong, while a running installer's
+                    // notice still describes what is happening.
+                    runtime.clear_stale_update_notice();
+                    None
+                }
+            };
 
             let flushed = flush_exec_event_outbox(&conn, &exec_event_outbox).await;
             if flushed > 0 {
@@ -961,9 +969,33 @@ fn update_after_connect(
     updater.plan_for_server(&result?.server)
 }
 
+/// What a handshake's update decision left behind, for the 102 path to know
+/// whether to keep waiting for an installer or to give up.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UpdateOutcome {
+    /// An installer was started just now.
+    Launched,
+    /// An installer started earlier for this release is presumably running.
+    InProgress,
+    NotLaunched,
+}
+
+/// Whether a deferred launch means an installer for `release` is already on
+/// its way, so the daemon should wait for it rather than give up.
+fn installer_in_progress(updater: &AutoUpdater, release: &str) -> Option<std::time::Duration> {
+    match updater.attempt_state(release, std::time::SystemTime::now()) {
+        AttemptState::InProgress { since } => Some(since),
+        AttemptState::Cooling { .. } | AttemptState::None => None,
+    }
+}
+
 /// Start the installer for `target` and record the decision where
-/// `gsv daemon diagnostics` shows it. Returns whether an installer is running.
-async fn start_update(updater: AutoUpdater, runtime: DaemonRuntime, target: UpdateTarget) -> bool {
+/// `gsv daemon diagnostics` shows it.
+async fn start_update(
+    updater: AutoUpdater,
+    runtime: DaemonRuntime,
+    target: UpdateTarget,
+) -> UpdateOutcome {
     use daemon_protocol::{DiagnosticLevel, DiagnosticNotice};
     const STARTED: &str = "autoUpdateStarted";
     let reason = target.reason.describe();
@@ -984,7 +1016,7 @@ async fn start_update(updater: AutoUpdater, runtime: DaemonRuntime, target: Upda
                     launch.release
                 ),
             }));
-            true
+            UpdateOutcome::Launched
         }
         Err(UpdateError::Disabled) => {
             info!(event = "update.available", release = %target.release, reason);
@@ -996,7 +1028,7 @@ async fn start_update(updater: AutoUpdater, runtime: DaemonRuntime, target: Upda
                     target.release
                 ),
             }));
-            false
+            UpdateOutcome::NotLaunched
         }
         Err(error @ UpdateError::NotServiceManaged { .. }) => {
             info!(event = "update.available", release = %target.release, reason, detail = %error);
@@ -1005,9 +1037,22 @@ async fn start_update(updater: AutoUpdater, runtime: DaemonRuntime, target: Upda
                 code: "autoUpdateSkipped".to_string(),
                 message: format!("GSV {} is available, but {error}.", target.release),
             }));
-            false
+            UpdateOutcome::NotLaunched
         }
         Err(error @ UpdateError::Deferred { .. }) => {
+            if let Some(since) = installer_in_progress(&updater, &target.release) {
+                let minutes = since.as_secs() / 60;
+                info!(event = "update.in_progress", release = %target.release, reason, minutes);
+                runtime.set_update_notice(Some(DiagnosticNotice {
+                    level: DiagnosticLevel::Info,
+                    code: STARTED.to_string(),
+                    message: format!(
+                        "Installing GSV {} because {reason}; the installer started {minutes} minutes ago.",
+                        target.release
+                    ),
+                }));
+                return UpdateOutcome::InProgress;
+            }
             info!(event = "update.deferred", release = %target.release, reason, detail = %error);
             // An installer from this process lifetime is presumably still
             // running; its notice stays until the outcome replaces it.
@@ -1017,17 +1062,17 @@ async fn start_update(updater: AutoUpdater, runtime: DaemonRuntime, target: Upda
             if !started {
                 runtime.set_update_notice(Some(skipped_notice(&target.release, &error)));
             }
-            false
+            UpdateOutcome::NotLaunched
         }
         Err(error) if error.is_skip() => {
             info!(event = "update.skipped", release = %target.release, reason, detail = %error);
             runtime.set_update_notice(Some(skipped_notice(&target.release, &error)));
-            false
+            UpdateOutcome::NotLaunched
         }
         Err(error) => {
             warn!(event = "update.failed", release = %target.release, reason, error = %error);
             runtime.set_update_notice(Some(skipped_notice(&target.release, &error)));
-            false
+            UpdateOutcome::NotLaunched
         }
     }
 }
@@ -1116,6 +1161,24 @@ mod tests {
         assert!(handle_is_finished);
         drop(guard);
         tokio::task::yield_now().await;
+    }
+
+    #[test]
+    fn a_recent_attempt_for_the_named_release_means_an_installer_is_running() {
+        let dir = std::env::temp_dir().join(format!("gsvd-progress-{}", uuid::Uuid::new_v4()));
+        let updater = AutoUpdater::new(
+            true,
+            ReleaseChannel::Stable,
+            "0.4.1",
+            dir.join("auto-update"),
+            dir.join("auto-update.log"),
+        );
+        assert_eq!(installer_in_progress(&updater, "v0.5.0"), None);
+        updater
+            .record_attempt_for_test("v0.5.0", std::time::SystemTime::now())
+            .expect("record attempt");
+        assert!(installer_in_progress(&updater, "v0.5.0").is_some());
+        assert_eq!(installer_in_progress(&updater, "v0.6.0"), None);
     }
 
     #[test]

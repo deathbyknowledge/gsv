@@ -85,6 +85,20 @@ impl DaemonRuntime {
         self.update(|snapshot| snapshot.update_notice = notice);
     }
 
+    /// Drop an update notice that only said a release was available, once the
+    /// gateway no longer names one. A running installer's notice stays.
+    pub fn clear_stale_update_notice(&self) {
+        self.update(|snapshot| {
+            if snapshot
+                .update_notice
+                .as_ref()
+                .is_some_and(|notice| notice.code != "autoUpdateStarted")
+            {
+                snapshot.update_notice = None;
+            }
+        });
+    }
+
     pub fn update_notice(&self) -> Option<DiagnosticNotice> {
         self.snapshot
             .read()
@@ -237,5 +251,28 @@ mod tests {
         assert_eq!(codes, vec!["autoUpdateStarted".to_string()]);
         runtime.set_update_notice(None);
         assert!(runtime.diagnostics().notices.is_empty());
+    }
+
+    #[test]
+    fn a_stale_availability_notice_clears_but_a_running_installer_stays() {
+        let (runtime, _receiver) = DaemonRuntime::new("machine-a".to_string());
+        runtime.set_update_notice(Some(DiagnosticNotice {
+            level: DiagnosticLevel::Warning,
+            code: "autoUpdateOff".to_string(),
+            message: "GSV v0.5.0 is available.".to_string(),
+        }));
+        runtime.clear_stale_update_notice();
+        assert!(runtime.update_notice().is_none());
+
+        runtime.set_update_notice(Some(DiagnosticNotice {
+            level: DiagnosticLevel::Info,
+            code: "autoUpdateStarted".to_string(),
+            message: "Installing GSV v0.5.0.".to_string(),
+        }));
+        runtime.clear_stale_update_notice();
+        assert_eq!(
+            runtime.update_notice().map(|notice| notice.code),
+            Some("autoUpdateStarted".to_string())
+        );
     }
 }

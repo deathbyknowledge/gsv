@@ -200,6 +200,16 @@ struct AttemptRecord {
     release: String,
 }
 
+/// Whether the daemon is inside the hour that follows an installer launch.
+/// Alone it means "wait for the next window"; for the release the gateway
+/// still names it means an installer is presumably running right now.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AttemptState {
+    None,
+    Cooling { since: Duration },
+    InProgress { since: Duration },
+}
+
 /// The installer process as the daemon would start it, before detachment.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InstallerInvocation {
@@ -372,6 +382,23 @@ impl AutoUpdater {
         })
     }
 
+    /// How the last recorded attempt relates to `release` at `now`.
+    pub fn attempt_state(&self, release: &str, now: SystemTime) -> AttemptState {
+        let Some(record) = self.last_attempt() else {
+            return AttemptState::None;
+        };
+        let now = unix_seconds(now);
+        let since = Duration::from_secs(now.saturating_sub(record.attempted_at));
+        if record.attempted_at > now || since >= MIN_ATTEMPT_INTERVAL {
+            return AttemptState::None;
+        }
+        if record.release == release {
+            AttemptState::InProgress { since }
+        } else {
+            AttemptState::Cooling { since }
+        }
+    }
+
     fn check_allowed(&self, now: SystemTime) -> Result<(), UpdateError> {
         if !self.enabled {
             return Err(UpdateError::Disabled);
@@ -390,6 +417,15 @@ impl AutoUpdater {
     fn last_attempt(&self) -> Option<AttemptRecord> {
         let contents = fs::read(&self.state_path).ok()?;
         serde_json::from_slice(&contents).ok()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn record_attempt_for_test(
+        &self,
+        release: &str,
+        now: SystemTime,
+    ) -> Result<(), UpdateError> {
+        self.record_attempt(release, now)
     }
 
     fn record_attempt(&self, release: &str, now: SystemTime) -> Result<(), UpdateError> {
@@ -633,47 +669,176 @@ impl Display for ServiceManager {
 /// `detect_service_manager` so the decision itself stays testable.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ServiceContext {
+    /// The running daemon executable, which the managed service definition
+    /// must name for an update to be restartable.
+    pub executable: PathBuf,
     /// systemd sets `INVOCATION_ID` for every unit it starts.
     pub systemd_invocation: bool,
+    /// The program the user unit `gsvd.service` runs, if the unit exists.
+    pub systemd_unit_program: Option<PathBuf>,
     /// launchd sets `XPC_SERVICE_NAME` to the label of the job it started.
     pub xpc_service_name: Option<String>,
     /// On macOS a process launchd started has launchd (pid 1) as its parent.
     pub parent_is_launchd: bool,
+    /// The program `~/Library/LaunchAgents/gsvd.plist` runs, if it exists.
+    pub launchd_program: Option<PathBuf>,
     /// The `gsvd` scheduled task reports itself running; the control pipe is
     /// exclusive, so a running task is this process.
     pub windows_task_running: bool,
+    /// The program the scheduled task runs, when the listing exposes it.
+    pub windows_task_program: Option<PathBuf>,
 }
 
 const SERVICE_LABEL: &str = "gsvd";
 
+/// The manager that will restart this daemon after an update: not just any
+/// supervisor, but the `gsvd` definition the installer stops and starts, and
+/// only when that definition runs this very executable.
 pub fn service_manager(context: &ServiceContext) -> Option<ServiceManager> {
-    if context.systemd_invocation {
+    let exe = &context.executable;
+    if context.systemd_invocation && same_executable(context.systemd_unit_program.as_deref(), exe) {
         return Some(ServiceManager::Systemd);
     }
     let launchd_label = context
         .xpc_service_name
         .as_deref()
         .is_some_and(|name| name == SERVICE_LABEL || name.starts_with("gsvd."));
-    if launchd_label || context.parent_is_launchd {
+    if (launchd_label || context.parent_is_launchd)
+        && same_executable(context.launchd_program.as_deref(), exe)
+    {
         return Some(ServiceManager::Launchd);
     }
-    if context.windows_task_running {
+    // schtasks lists the action on most systems; when the listing lacks it
+    // the exclusive control pipe still proves a running task is this process.
+    if context.windows_task_running
+        && context
+            .windows_task_program
+            .as_deref()
+            .is_none_or(|program| same_executable(Some(program), exe))
+    {
         return Some(ServiceManager::WindowsTask);
     }
     None
 }
 
+fn same_executable(program: Option<&Path>, executable: &Path) -> bool {
+    let Some(program) = program else {
+        return false;
+    };
+    let canonical = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let (program, executable) = (canonical(program), canonical(executable));
+    if cfg!(windows) {
+        program
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&executable.to_string_lossy())
+    } else {
+        program == executable
+    }
+}
+
+/// The program a systemd unit's `ExecStart=` runs. The CLI writes it as a
+/// double-quoted string with embedded quotes and backslashes escaped.
+pub fn exec_start_program(unit: &str) -> Option<PathBuf> {
+    let line = unit
+        .lines()
+        .map(str::trim_start)
+        .find_map(|line| line.strip_prefix("ExecStart="))?
+        .trim_start();
+    let Some(quoted) = line.strip_prefix('"') else {
+        return line.split_whitespace().next().map(PathBuf::from);
+    };
+    let mut program = String::new();
+    let mut chars = quoted.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => program.extend(chars.next()),
+            '"' => return Some(PathBuf::from(program)),
+            other => program.push(other),
+        }
+    }
+    None
+}
+
+/// The first `ProgramArguments` entry of a launchd plist, XML entities decoded.
+pub fn plist_program(plist: &str) -> Option<PathBuf> {
+    let start = plist.find("<key>ProgramArguments</key>")?;
+    let rest = &plist[start..];
+    let array = &rest[..rest.find("</array>").unwrap_or(rest.len())];
+    let open = array.find("<string>")? + "<string>".len();
+    let close = array[open..].find("</string>")? + open;
+    Some(PathBuf::from(decode_xml_entities(&array[open..close])))
+}
+
+fn decode_xml_entities(text: &str) -> String {
+    [
+        ("&lt;", "<"),
+        ("&#60;", "<"),
+        ("&gt;", ">"),
+        ("&#62;", ">"),
+        ("&quot;", "\""),
+        ("&#34;", "\""),
+        ("&apos;", "'"),
+        ("&#39;", "'"),
+        ("&#38;", "&"),
+        ("&amp;", "&"),
+    ]
+    .iter()
+    .fold(text.to_string(), |decoded, (entity, plain)| {
+        decoded.replace(entity, plain)
+    })
+}
+
+/// The program a `schtasks /query /fo LIST /v` listing shows as the action.
+pub fn task_to_run_program(listing: &str) -> Option<PathBuf> {
+    let value = listing.lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        key.trim()
+            .eq_ignore_ascii_case("Task To Run")
+            .then(|| value.trim())
+    })?;
+    match value.strip_prefix('"') {
+        Some(quoted) => quoted.split('"').next().map(PathBuf::from),
+        None => value.split_whitespace().next().map(PathBuf::from),
+    }
+}
+
+/// The program the user unit in `config_dir` runs, if the unit exists.
+pub fn systemd_unit_program(config_dir: &Path) -> Option<PathBuf> {
+    let unit = config_dir.join("systemd").join("user").join("gsvd.service");
+    exec_start_program(&fs::read_to_string(unit).ok()?)
+}
+
+/// The program the launch agent under `home` runs, if the plist exists.
+pub fn launchd_agent_program(home: &Path) -> Option<PathBuf> {
+    let plist = home.join("Library").join("LaunchAgents").join("gsvd.plist");
+    plist_program(&fs::read_to_string(plist).ok()?)
+}
+
 fn detect_service_manager() -> Option<ServiceManager> {
+    let executable = std::env::current_exe().ok()?;
+    let listing = windows_task_listing();
     service_manager(&ServiceContext {
+        executable,
         systemd_invocation: cfg!(target_os = "linux")
             && std::env::var_os("INVOCATION_ID").is_some(),
+        systemd_unit_program: if cfg!(target_os = "linux") {
+            dirs::config_dir().and_then(|dir| systemd_unit_program(&dir))
+        } else {
+            None
+        },
         xpc_service_name: if cfg!(target_os = "macos") {
             std::env::var("XPC_SERVICE_NAME").ok()
         } else {
             None
         },
         parent_is_launchd: parent_is_launchd(),
-        windows_task_running: windows_task_running(),
+        launchd_program: if cfg!(target_os = "macos") {
+            dirs::home_dir().and_then(|home| launchd_agent_program(&home))
+        } else {
+            None
+        },
+        windows_task_running: listing.as_deref().is_some_and(task_status_running),
+        windows_task_program: listing.as_deref().and_then(task_to_run_program),
     })
 }
 
@@ -689,18 +854,18 @@ fn parent_is_launchd() -> bool {
 }
 
 #[cfg(windows)]
-fn windows_task_running() -> bool {
+fn windows_task_listing() -> Option<String> {
     Command::new("schtasks")
         .args(["/query", "/tn", SERVICE_LABEL, "/fo", "LIST", "/v"])
         .output()
         .ok()
         .filter(|output| output.status.success())
-        .is_some_and(|output| task_status_running(&String::from_utf8_lossy(&output.stdout)))
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 #[cfg(not(windows))]
-fn windows_task_running() -> bool {
-    false
+fn windows_task_listing() -> Option<String> {
+    None
 }
 
 /// Whether a `schtasks /query /fo LIST /v` listing shows the task running.
@@ -918,42 +1083,84 @@ mod tests {
     }
 
     #[test]
-    fn only_a_supervised_daemon_updates_itself() {
-        assert_eq!(service_manager(&ServiceContext::default()), None);
+    fn only_the_managed_service_running_this_executable_updates_itself() {
+        let exe = PathBuf::from("/opt/gsv/bin/gsvd");
+        let other = PathBuf::from("/opt/other/gsvd");
+        let base = ServiceContext {
+            executable: exe.clone(),
+            ..ServiceContext::default()
+        };
+        assert_eq!(service_manager(&base), None);
+
+        let systemd = ServiceContext {
+            systemd_invocation: true,
+            systemd_unit_program: Some(exe.clone()),
+            ..base.clone()
+        };
+        assert_eq!(service_manager(&systemd), Some(ServiceManager::Systemd));
         assert_eq!(
             service_manager(&ServiceContext {
-                systemd_invocation: true,
-                ..ServiceContext::default()
+                systemd_unit_program: Some(other.clone()),
+                ..systemd.clone()
             }),
-            Some(ServiceManager::Systemd)
+            None
         );
         assert_eq!(
             service_manager(&ServiceContext {
-                xpc_service_name: Some("gsvd".to_string()),
-                ..ServiceContext::default()
+                systemd_unit_program: None,
+                ..systemd.clone()
+            }),
+            None
+        );
+
+        let launchd = ServiceContext {
+            xpc_service_name: Some("gsvd".to_string()),
+            launchd_program: Some(exe.clone()),
+            ..base.clone()
+        };
+        assert_eq!(service_manager(&launchd), Some(ServiceManager::Launchd));
+        assert_eq!(
+            service_manager(&ServiceContext {
+                xpc_service_name: Some("0".to_string()),
+                parent_is_launchd: true,
+                ..launchd.clone()
             }),
             Some(ServiceManager::Launchd)
         );
         assert_eq!(
             service_manager(&ServiceContext {
                 xpc_service_name: Some("0".to_string()),
-                ..ServiceContext::default()
+                ..launchd.clone()
             }),
             None
         );
         assert_eq!(
             service_manager(&ServiceContext {
-                parent_is_launchd: true,
-                ..ServiceContext::default()
+                launchd_program: Some(other.clone()),
+                ..launchd.clone()
             }),
-            Some(ServiceManager::Launchd)
+            None
+        );
+
+        let task = ServiceContext {
+            windows_task_running: true,
+            windows_task_program: Some(exe.clone()),
+            ..base.clone()
+        };
+        assert_eq!(service_manager(&task), Some(ServiceManager::WindowsTask));
+        assert_eq!(
+            service_manager(&ServiceContext {
+                windows_task_program: None,
+                ..task.clone()
+            }),
+            Some(ServiceManager::WindowsTask)
         );
         assert_eq!(
             service_manager(&ServiceContext {
-                windows_task_running: true,
-                ..ServiceContext::default()
+                windows_task_program: Some(other),
+                ..task.clone()
             }),
-            Some(ServiceManager::WindowsTask)
+            None
         );
         assert!(task_status_running(
             "TaskName: \\gsvd\r\nStatus:        Running\r\n"
@@ -965,43 +1172,99 @@ mod tests {
     }
 
     #[test]
-    fn under_systemd_only_a_transient_unit_will_do() {
-        let program = PathBuf::from("/usr/bin/systemd-run");
+    fn service_definitions_name_their_program() {
         assert_eq!(
-            detach_strategy(ServiceManager::Systemd, Some(program.clone())),
-            Some(DetachStrategy::SystemdRun { program })
-        );
-        assert_eq!(detach_strategy(ServiceManager::Systemd, None), None);
-        assert_eq!(
-            detach_strategy(ServiceManager::Launchd, None),
-            Some(DetachStrategy::NewSession)
+            exec_start_program(
+                "[Service]\nType=simple\nExecStart=\"/opt/quoted \\\"GSV\\\" dir/gsvd\" \"--foreground\"\n"
+            ),
+            Some(PathBuf::from("/opt/quoted \"GSV\" dir/gsvd"))
         );
         assert_eq!(
-            detach_strategy(ServiceManager::WindowsTask, None),
-            Some(DetachStrategy::WindowsDetached)
+            exec_start_program("ExecStart=/usr/local/bin/gsv device run\n"),
+            Some(PathBuf::from("/usr/local/bin/gsv"))
         );
+        assert_eq!(exec_start_program("[Service]\nType=simple\n"), None);
+        assert_eq!(exec_start_program("ExecStart=\"/unterminated"), None);
+
+        let plist = "<plist><dict><key>Label</key><string>gsvd</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>/Users/me/GSV &amp; Tools/bin/gsvd</string>\n    <string>--foreground</string>\n  </array>\n</dict></plist>";
+        assert_eq!(
+            plist_program(plist),
+            Some(PathBuf::from("/Users/me/GSV & Tools/bin/gsvd"))
+        );
+        assert_eq!(plist_program("<plist><dict></dict></plist>"), None);
+
+        let listing = "HostName:      PC\r\nTaskName:      \\gsvd\r\nStatus:        Running\r\nTask To Run:   \"C:\\Users\\me\\AppData\\Local\\Programs\\gsv\\bin\\gsvd.exe\" --foreground\r\n";
+        assert_eq!(
+            task_to_run_program(listing),
+            Some(PathBuf::from(
+                "C:\\Users\\me\\AppData\\Local\\Programs\\gsv\\bin\\gsvd.exe"
+            ))
+        );
+        assert_eq!(task_to_run_program("Status: Running\r\n"), None);
     }
 
     #[test]
-    fn systemd_run_is_found_on_path_before_the_distribution_locations() {
-        let path = std::env::join_paths(["/opt/tools/bin", "/home/u/bin"]).expect("join paths");
-        let everywhere = |_: &Path| true;
+    fn service_definition_files_are_read_from_their_managed_locations() {
+        let root = std::env::temp_dir().join(format!("gsvd-service-{}", uuid::Uuid::new_v4()));
+        let unit_dir = root.join("config").join("systemd").join("user");
+        fs::create_dir_all(&unit_dir).expect("unit dir");
+        fs::write(
+            unit_dir.join("gsvd.service"),
+            "[Service]\nExecStart=\"/opt/gsv/bin/gsvd\" \"--foreground\"\n",
+        )
+        .expect("unit file");
         assert_eq!(
-            resolve_systemd_run(Some(path.as_os_str()), everywhere),
-            Some(PathBuf::from("/opt/tools/bin/systemd-run"))
+            systemd_unit_program(&root.join("config")),
+            Some(PathBuf::from("/opt/gsv/bin/gsvd"))
         );
-        let only_bin = |candidate: &Path| candidate == Path::new("/bin/systemd-run");
+        assert_eq!(systemd_unit_program(&root.join("missing")), None);
+
+        let agents = root.join("home").join("Library").join("LaunchAgents");
+        fs::create_dir_all(&agents).expect("agents dir");
+        fs::write(
+            agents.join("gsvd.plist"),
+            "<plist><dict><key>ProgramArguments</key><array><string>/Applications/GSV.app/Contents/MacOS/gsvd</string></array></dict></plist>",
+        )
+        .expect("plist");
         assert_eq!(
-            resolve_systemd_run(Some(path.as_os_str()), only_bin),
-            Some(PathBuf::from("/bin/systemd-run"))
+            launchd_agent_program(&root.join("home")),
+            Some(PathBuf::from("/Applications/GSV.app/Contents/MacOS/gsvd"))
         );
-        let only_usr_bin = |candidate: &Path| candidate == Path::new("/usr/bin/systemd-run");
+        assert_eq!(launchd_agent_program(&root.join("nowhere")), None);
+
+        let exe = root.join("gsvd");
+        fs::write(&exe, b"").expect("exe");
+        assert!(same_executable(Some(&exe), &exe));
+        assert!(!same_executable(Some(&root.join("other")), &exe));
+        assert!(!same_executable(None, &exe));
+        fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn an_attempt_for_the_named_release_counts_as_in_progress() {
+        let updater = updater(true, ReleaseChannel::Stable, "0.4.1");
+        let now = SystemTime::now();
+        assert_eq!(updater.attempt_state("v0.5.0", now), AttemptState::None);
+        updater
+            .record_attempt("v0.5.0", now)
+            .expect("record attempt");
+        let later = now + Duration::from_secs(600);
         assert_eq!(
-            resolve_systemd_run(None, only_usr_bin),
-            Some(PathBuf::from("/usr/bin/systemd-run"))
+            updater.attempt_state("v0.5.0", later),
+            AttemptState::InProgress {
+                since: Duration::from_secs(600)
+            }
         );
-        let nowhere = |_: &Path| false;
-        assert_eq!(resolve_systemd_run(Some(path.as_os_str()), nowhere), None);
+        assert_eq!(
+            updater.attempt_state("v0.6.0", later),
+            AttemptState::Cooling {
+                since: Duration::from_secs(600)
+            }
+        );
+        assert_eq!(
+            updater.attempt_state("v0.5.0", now + MIN_ATTEMPT_INTERVAL),
+            AttemptState::None
+        );
     }
 
     #[test]
