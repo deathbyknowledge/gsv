@@ -1,7 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use gateway_client::client::GatewayAuth;
@@ -688,12 +687,13 @@ pub async fn run(
                             return Err(e);
                         }
                         if rpc_error.is_protocol_unsupported() {
+                            lifecycle.handshake();
                             let outcome = match updater.plan_for_protocol_error(rpc_error) {
-                                Some(target) => match lifecycle.begin_drain_for(target) {
+                                Some(target) => match lifecycle.begin_drain_for(target, None) {
                                     // Already draining or installing from an
                                     // earlier decision: keep waiting for it.
                                     None => UpdateOutcome::Waiting,
-                                    Some(guard) => {
+                                    Some((guard, _)) => {
                                         // A refused connection has no requests
                                         // in flight, but a shell session from
                                         // the last one may still be running.
@@ -810,25 +810,26 @@ pub async fn run(
                     let Some(conn) = conn_for_handler.upgrade() else {
                         return;
                     };
-                    if lifecycle_for_handler.refusing() {
-                        if let Some(refusal) = update_refusal_frame(&req) {
-                            cancel_refused_body(&body_channel, req.body);
-                            tokio::spawn(async move {
-                                match serde_json::to_string(&refusal) {
-                                    Ok(text) => {
-                                        if let Err(error) = conn.send_raw(text).await {
-                                            warn!(event = "update.refusal_send_failed", error = %error);
+                    let cancellation =
+                        match lifecycle_for_handler.admit(&active_requests_for_handler, &req) {
+                            Admission::Admitted(cancellation) => cancellation,
+                            Admission::Refused(refusal) => {
+                                cancel_refused_body(&body_channel, req.body);
+                                tokio::spawn(async move {
+                                    match serde_json::to_string(&refusal) {
+                                        Ok(text) => {
+                                            if let Err(error) = conn.send_raw(text).await {
+                                                warn!(event = "update.refusal_send_failed", error = %error);
+                                            }
+                                        }
+                                        Err(error) => {
+                                            warn!(event = "update.refusal_encode_failed", error = %error);
                                         }
                                     }
-                                    Err(error) => {
-                                        warn!(event = "update.refusal_encode_failed", error = %error);
-                                    }
-                                }
-                            });
-                            return;
-                        }
-                    }
-                    let cancellation = active_requests_for_handler.register(&req);
+                                });
+                                return;
+                            }
+                        };
                     let request_body = req
                         .body
                         .map(|descriptor| body_channel.receive(descriptor))
@@ -876,6 +877,7 @@ pub async fn run(
             // Dropping the guard at the end of this connection aborts it, so a
             // reconnect or a reload never leaves a launch running against
             // settings this driver no longer holds.
+            lifecycle.handshake();
             match update_after_connect(&updater, conn.connect_result.as_ref()) {
                 Some(target) => lifecycle.queue(target),
                 None => {
@@ -1067,14 +1069,6 @@ fn work_reason(in_flight: usize, shell_sessions: usize) -> Option<&'static str> 
     }
 }
 
-/// What the daemon is doing for the gateway right now, if anything.
-async fn machine_busy(active_requests: &ActiveRequests) -> Option<&'static str> {
-    work_reason(
-        active_requests.in_flight(),
-        crate::tools::running_process_count().await,
-    )
-}
-
 /// Requests that create work an installer's service stop would kill are
 /// refused while an update is being installed; reads still pass.
 fn admits_during_update(call: &str) -> bool {
@@ -1138,15 +1132,35 @@ enum UpdatePhase {
 struct LifecycleState {
     phase: UpdatePhase,
     pending: Option<UpdateTarget>,
+    /// Bumped on every handshake result, so a watcher from before a
+    /// reconnect can tell whether its decision has been superseded.
+    epoch: u64,
 }
 
-/// The update lifecycle the driver owns: one state behind one mutex, with the
-/// refusal flag published only by lock holders so the frame handler reads a
-/// consistent snapshot.
+/// The update lifecycle the driver owns: one state behind one mutex.
+/// Admitting a request and beginning a drain both happen under that lock,
+/// so a request is either admitted before the drain and counted, or refused
+/// after it; nothing slips between the flip and the in-flight sample.
 #[derive(Debug)]
 struct UpdateLifecycle {
     state: Mutex<LifecycleState>,
-    refusing: AtomicBool,
+}
+
+/// How the frame handler may treat a request right now.
+enum Admission {
+    Admitted(Arc<CancellationToken>),
+    Refused(Frame),
+}
+
+/// What became of a failed installer's target when the watcher lowered the
+/// gate.
+#[derive(Debug, Eq, PartialEq)]
+enum InstallerExit {
+    /// The same handshake still stands and nothing else is queued: retry it.
+    Requeued(UpdateTarget),
+    /// A later handshake decided otherwise; the gate lowers, nothing else.
+    Superseded(UpdateTarget),
+    NotInstalling,
 }
 
 impl UpdateLifecycle {
@@ -1155,19 +1169,31 @@ impl UpdateLifecycle {
             state: Mutex::new(LifecycleState {
                 phase: UpdatePhase::Idle,
                 pending: None,
+                epoch: 0,
             }),
-            refusing: AtomicBool::new(false),
         })
     }
 
-    /// Whether the frame handler must refuse work-creating requests now.
+    /// Whether work-creating requests are being refused.
+    #[cfg(test)]
     fn refusing(&self) -> bool {
-        self.refusing.load(Ordering::SeqCst)
+        self.lock().phase != UpdatePhase::Idle
     }
 
     #[cfg(test)]
     fn phase(&self) -> UpdatePhase {
         self.lock().phase.clone()
+    }
+
+    /// A handshake produced a result; decisions made before it are stale.
+    fn handshake(&self) -> u64 {
+        let mut state = self.lock();
+        state.epoch += 1;
+        state.epoch
+    }
+
+    fn epoch(&self) -> u64 {
+        self.lock().epoch
     }
 
     fn queue(&self, target: UpdateTarget) {
@@ -1186,10 +1212,26 @@ impl UpdateLifecycle {
         self.lock().pending.clone()
     }
 
-    /// Start draining for the pending target: from this instant new work is
-    /// refused, so the idle check that follows cannot be raced. `None` when
-    /// nothing is pending or a launch is already draining or installing.
-    fn begin_drain(self: &Arc<Self>) -> Option<DrainGuard> {
+    /// Admit `request`, registering it for cancellation, or refuse it: one
+    /// critical section with the drain, so the in-flight count a drain reads
+    /// includes every request admitted before it and none admitted after.
+    fn admit(&self, requests: &ActiveRequests, request: &RequestFrame) -> Admission {
+        let state = self.lock();
+        if state.phase != UpdatePhase::Idle {
+            if let Some(refusal) = update_refusal_frame(request) {
+                return Admission::Refused(refusal);
+            }
+        }
+        let cancellation = requests.register(request);
+        drop(state);
+        Admission::Admitted(cancellation)
+    }
+
+    /// Start draining for the pending target and read the in-flight count in
+    /// the same critical section. From this instant new work is refused, so
+    /// the count is exact and no shell session can appear behind it. `None`
+    /// when nothing is pending or a launch is already draining or installing.
+    fn begin_drain(self: &Arc<Self>, requests: &ActiveRequests) -> Option<(DrainGuard, usize)> {
         let mut state = self.lock();
         if state.phase != UpdatePhase::Idle {
             return None;
@@ -1198,18 +1240,26 @@ impl UpdateLifecycle {
         state.phase = UpdatePhase::Draining {
             target: target.clone(),
         };
-        self.refusing.store(true, Ordering::SeqCst);
+        let in_flight = requests.in_flight();
         drop(state);
-        Some(DrainGuard {
-            lifecycle: self.clone(),
-            target: Some(target),
-            confirmed: false,
-        })
+        Some((
+            DrainGuard {
+                lifecycle: self.clone(),
+                target: Some(target),
+                confirmed: false,
+            },
+            in_flight,
+        ))
     }
 
     /// Start draining for a target that did not come from the queue (the
-    /// 102 path). `None` when a launch is already draining or installing.
-    fn begin_drain_for(self: &Arc<Self>, target: UpdateTarget) -> Option<DrainGuard> {
+    /// 102 path, which has no request registry yet). `None` when a launch is
+    /// already draining or installing.
+    fn begin_drain_for(
+        self: &Arc<Self>,
+        target: UpdateTarget,
+        requests: Option<&ActiveRequests>,
+    ) -> Option<(DrainGuard, usize)> {
         let mut state = self.lock();
         if state.phase != UpdatePhase::Idle {
             return None;
@@ -1218,26 +1268,33 @@ impl UpdateLifecycle {
         state.phase = UpdatePhase::Draining {
             target: target.clone(),
         };
-        self.refusing.store(true, Ordering::SeqCst);
+        let in_flight = requests.map_or(0, ActiveRequests::in_flight);
         drop(state);
-        Some(DrainGuard {
-            lifecycle: self.clone(),
-            target: Some(target),
-            confirmed: false,
-        })
+        Some((
+            DrainGuard {
+                lifecycle: self.clone(),
+                target: Some(target),
+                confirmed: false,
+            },
+            in_flight,
+        ))
     }
 
-    /// The installer ended while this daemon is still alive: lower the gate
-    /// and queue the target again for the retry path.
-    fn installer_exited(&self) -> Option<UpdateTarget> {
+    /// The installer ended while this daemon is still alive: lower the gate,
+    /// and queue the target again only if the handshake that chose it is
+    /// still the latest and nothing newer is waiting.
+    fn installer_exited(&self, epoch: u64) -> InstallerExit {
         let mut state = self.lock();
         let UpdatePhase::Installing { target, .. } = state.phase.clone() else {
-            return None;
+            return InstallerExit::NotInstalling;
         };
         state.phase = UpdatePhase::Idle;
-        state.pending = Some(target.clone());
-        self.refusing.store(false, Ordering::SeqCst);
-        Some(target)
+        if state.epoch == epoch && state.pending.is_none() {
+            state.pending = Some(target.clone());
+            InstallerExit::Requeued(target)
+        } else {
+            InstallerExit::Superseded(target)
+        }
     }
 
     fn reset(&self, requeue: Option<UpdateTarget>) {
@@ -1246,13 +1303,10 @@ impl UpdateLifecycle {
         if let Some(target) = requeue {
             state.pending = Some(target);
         }
-        self.refusing.store(false, Ordering::SeqCst);
     }
 
     fn confirm(&self, target: UpdateTarget, since: std::time::SystemTime) {
-        let mut state = self.lock();
-        state.phase = UpdatePhase::Installing { target, since };
-        self.refusing.store(true, Ordering::SeqCst);
+        self.lock().phase = UpdatePhase::Installing { target, since };
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, LifecycleState> {
@@ -1373,10 +1427,11 @@ async fn launch_update_when_idle(
     if cooling {
         return;
     }
-    let Some(guard) = lifecycle.begin_drain() else {
+    let Some((guard, in_flight)) = lifecycle.begin_drain(active_requests) else {
         return;
     };
-    if let Some(reason) = machine_busy(active_requests).await {
+    let shell_sessions = crate::tools::running_process_count().await;
+    if let Some(reason) = work_reason(in_flight, shell_sessions) {
         note_update_waiting(runtime, guard.target(), reason);
         guard.abandon();
         return;
@@ -1478,6 +1533,7 @@ async fn start_update(
             }));
             let since = std::time::SystemTime::now();
             guard.confirm(since);
+            let epoch = lifecycle.epoch();
             spawn_installer_watch(InstallerWatch {
                 updater,
                 runtime,
@@ -1486,6 +1542,7 @@ async fn start_update(
                 release: launch.release,
                 log_path: launch.log_path,
                 since,
+                epoch,
                 shutdown,
             });
             return UpdateOutcome::Launched;
@@ -1530,6 +1587,7 @@ async fn start_update(
                     .unwrap_or_else(std::time::SystemTime::now);
                 let log_path = updater.log_path().to_path_buf();
                 guard.confirm(started_at);
+                let epoch = lifecycle.epoch();
                 spawn_installer_watch(InstallerWatch {
                     updater,
                     runtime,
@@ -1538,6 +1596,7 @@ async fn start_update(
                     release: target.release.clone(),
                     log_path,
                     since: started_at,
+                    epoch,
                     shutdown,
                 });
                 return UpdateOutcome::InProgress;
@@ -1599,12 +1658,14 @@ struct InstallerWatch {
     release: String,
     log_path: PathBuf,
     since: std::time::SystemTime,
+    /// The handshake epoch the launch was decided in.
+    epoch: u64,
     shutdown: CancellationToken,
 }
 
 /// Watch the installer. If it ends while this daemon is still alive, the
 /// service was not restarted: lower the gate, demote the attempt to cooling,
-/// queue the target again, and say so.
+/// queue the target again unless a later handshake superseded it, and say so.
 fn spawn_installer_watch(watch: InstallerWatch) {
     let InstallerWatch {
         updater,
@@ -1614,6 +1675,7 @@ fn spawn_installer_watch(watch: InstallerWatch) {
         release,
         log_path,
         since,
+        epoch,
         shutdown,
     } = watch;
     tokio::spawn(
@@ -1623,18 +1685,29 @@ fn spawn_installer_watch(watch: InstallerWatch) {
             else {
                 return;
             };
-            warn!(event = "update.installer_exited", release = %release, detail = %detail);
             if let Err(error) = updater.clear_launched(&release) {
                 warn!(event = "update.record_failed", release = %release, error = %error);
             }
-            lifecycle.installer_exited();
+            let message = match lifecycle.installer_exited(epoch) {
+                InstallerExit::Requeued(_) | InstallerExit::NotInstalling => {
+                    warn!(event = "update.installer_exited", release = %release, detail = %detail);
+                    format!(
+                        "GSV {release} was not installed: the installer ended without restarting the service ({detail}). See {}.",
+                        log_path.display()
+                    )
+                }
+                InstallerExit::Superseded(_) => {
+                    info!(event = "update.superseded", release = %release, detail = %detail);
+                    format!(
+                        "GSV {release} was not installed ({detail}); a newer handshake has since decided what to do. See {}.",
+                        log_path.display()
+                    )
+                }
+            };
             runtime.set_update_notice(Some(daemon_protocol::DiagnosticNotice {
                 level: daemon_protocol::DiagnosticLevel::Warning,
                 code: "autoUpdateSkipped".to_string(),
-                message: format!(
-                    "GSV {release} was not installed: the installer ended without restarting the service ({detail}). See {}.",
-                    log_path.display()
-                ),
+                message,
             }));
         }
         .instrument(tracing::Span::current()),
@@ -1715,6 +1788,7 @@ mod tests {
     use gateway_client::protocol::{
         ConnectedPeer, PeerGrant, PeerPrincipal, PeerPrincipalKind, ProcessIdentity, ServerInfo,
     };
+    use std::sync::atomic::Ordering;
 
     fn connect_result(version: &str, release: &str) -> ConnectResult {
         ConnectResult {
@@ -1960,9 +2034,14 @@ mod tests {
     #[test]
     fn a_busy_machine_at_drain_returns_to_idle_with_the_target_queued() {
         let lifecycle = UpdateLifecycle::new();
-        assert!(lifecycle.begin_drain().is_none(), "nothing pending");
+        let requests = ActiveRequests::default();
+        assert!(
+            lifecycle.begin_drain(&requests).is_none(),
+            "nothing pending"
+        );
         lifecycle.queue(target("v0.5.0"));
-        let guard = lifecycle.begin_drain().expect("drain begins");
+        let (guard, in_flight) = lifecycle.begin_drain(&requests).expect("drain begins");
+        assert_eq!(in_flight, 0);
         assert!(
             lifecycle.refusing(),
             "new work is refused from the drain on"
@@ -1974,7 +2053,10 @@ mod tests {
             }
         );
         assert!(!lifecycle.has_pending());
-        assert!(lifecycle.begin_drain().is_none(), "one drain at a time");
+        assert!(
+            lifecycle.begin_drain(&requests).is_none(),
+            "one drain at a time"
+        );
         guard.abandon();
         assert_eq!(lifecycle.phase(), UpdatePhase::Idle);
         assert!(!lifecycle.refusing());
@@ -1984,8 +2066,8 @@ mod tests {
     #[tokio::test]
     async fn an_aborted_launch_task_resets_the_lifecycle_by_dropping_its_guard() {
         let lifecycle = UpdateLifecycle::new();
-        let guard = lifecycle
-            .begin_drain_for(target("v0.5.0"))
+        let (guard, _) = lifecycle
+            .begin_drain_for(target("v0.5.0"), None)
             .expect("drain begins");
         let task = AbortOnDrop(tokio::spawn(async move {
             let _guard = guard;
@@ -2003,11 +2085,12 @@ mod tests {
     #[test]
     fn a_confirmed_launch_installs_until_the_installer_is_seen_to_end() {
         let lifecycle = UpdateLifecycle::new();
-        let guard = lifecycle
-            .begin_drain_for(target("v0.5.0"))
+        let (guard, _) = lifecycle
+            .begin_drain_for(target("v0.5.0"), None)
             .expect("drain begins");
         let since = std::time::SystemTime::now();
         guard.confirm(since);
+        let epoch = lifecycle.epoch();
         assert_eq!(
             lifecycle.phase(),
             UpdatePhase::Installing {
@@ -2017,7 +2100,7 @@ mod tests {
         );
         assert!(lifecycle.refusing());
         assert!(!lifecycle.has_pending());
-        assert!(lifecycle.begin_drain_for(target("v0.6.0")).is_none());
+        assert!(lifecycle.begin_drain_for(target("v0.6.0"), None).is_none());
 
         let updater = test_updater(true);
         updater
@@ -2025,14 +2108,70 @@ mod tests {
             .expect("record launched attempt");
         assert!(installer_in_progress(&updater, "v0.5.0").is_some());
 
-        // The installer ended and this daemon is still here.
-        assert_eq!(lifecycle.installer_exited(), Some(target("v0.5.0")));
+        // The installer ended and this daemon is still here, with the same
+        // handshake standing: the target is queued again.
+        assert_eq!(
+            lifecycle.installer_exited(epoch),
+            InstallerExit::Requeued(target("v0.5.0"))
+        );
         updater.clear_launched("v0.5.0").expect("clear launched");
         assert_eq!(lifecycle.phase(), UpdatePhase::Idle);
         assert!(!lifecycle.refusing());
         assert_eq!(lifecycle.pending(), Some(target("v0.5.0")));
         assert_eq!(installer_in_progress(&updater, "v0.5.0"), None);
-        assert_eq!(lifecycle.installer_exited(), None);
+        assert_eq!(
+            lifecycle.installer_exited(epoch),
+            InstallerExit::NotInstalling
+        );
+    }
+
+    #[test]
+    fn a_newer_handshake_supersedes_a_failed_installers_target() {
+        // A later handshake chose a different release.
+        let lifecycle = UpdateLifecycle::new();
+        let (guard, _) = lifecycle
+            .begin_drain_for(target("v0.5.0"), None)
+            .expect("drain begins");
+        guard.confirm(std::time::SystemTime::now());
+        let epoch = lifecycle.epoch();
+        lifecycle.handshake();
+        lifecycle.queue(target("v0.6.0"));
+        assert_eq!(
+            lifecycle.installer_exited(epoch),
+            InstallerExit::Superseded(target("v0.5.0"))
+        );
+        assert_eq!(lifecycle.phase(), UpdatePhase::Idle);
+        assert!(!lifecycle.refusing());
+        assert_eq!(lifecycle.pending(), Some(target("v0.6.0")));
+
+        // A later handshake decided there is nothing to install (a rollback).
+        let lifecycle = UpdateLifecycle::new();
+        let (guard, _) = lifecycle
+            .begin_drain_for(target("v0.5.0"), None)
+            .expect("drain begins");
+        guard.confirm(std::time::SystemTime::now());
+        let epoch = lifecycle.epoch();
+        lifecycle.handshake();
+        lifecycle.clear_pending();
+        assert_eq!(
+            lifecycle.installer_exited(epoch),
+            InstallerExit::Superseded(target("v0.5.0"))
+        );
+        assert!(!lifecycle.has_pending());
+
+        // Same handshake, but something else is already queued: keep it.
+        let lifecycle = UpdateLifecycle::new();
+        let (guard, _) = lifecycle
+            .begin_drain_for(target("v0.5.0"), None)
+            .expect("drain begins");
+        guard.confirm(std::time::SystemTime::now());
+        let epoch = lifecycle.epoch();
+        lifecycle.queue(target("v0.7.0"));
+        assert_eq!(
+            lifecycle.installer_exited(epoch),
+            InstallerExit::Superseded(target("v0.5.0"))
+        );
+        assert_eq!(lifecycle.pending(), Some(target("v0.7.0")));
     }
 
     #[tokio::test]
@@ -2042,8 +2181,8 @@ mod tests {
         // Disabled is not worth retrying, so the target is discarded; the
         // guard's drop is the only reset path, whatever the error.
         let lifecycle = UpdateLifecycle::new();
-        let guard = lifecycle
-            .begin_drain_for(target("v0.5.0"))
+        let (guard, _) = lifecycle
+            .begin_drain_for(target("v0.5.0"), None)
             .expect("drain begins");
         assert!(lifecycle.refusing());
         let outcome = start_update(
@@ -2105,23 +2244,87 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn in_flight_requests_make_the_machine_busy() {
-        let requests = ActiveRequests::default();
-        assert_eq!(requests.in_flight(), 0);
-        assert_eq!(machine_busy(&requests).await, None);
-        let frame = RequestFrame {
-            id: "req-1".to_string(),
-            call: "fs.read".to_string(),
+    fn shell_request(id: &str) -> RequestFrame {
+        RequestFrame {
+            id: id.to_string(),
+            call: "shell.exec".to_string(),
             args: None,
             body: None,
-        };
-        let cancellation = requests.register(&frame);
+        }
+    }
+
+    #[test]
+    fn admission_and_the_drain_share_one_critical_section() {
+        let lifecycle = UpdateLifecycle::new();
+        let requests = ActiveRequests::default();
+
+        // Admitted before the drain: counted in flight, so the machine is busy.
+        let before = match lifecycle.admit(&requests, &shell_request("req-before")) {
+            Admission::Admitted(cancellation) => Some(cancellation),
+            Admission::Refused(_) => None,
+        }
+        .expect("an idle lifecycle admits work");
+        lifecycle.queue(target("v0.5.0"));
+        let (guard, in_flight) = lifecycle.begin_drain(&requests).expect("drain begins");
+        assert_eq!(in_flight, 1);
+        assert_eq!(work_reason(in_flight, 0), Some("requests in flight"));
+
+        // Arriving after the flip: refused, never registered. Reads pass.
+        assert!(matches!(
+            lifecycle.admit(&requests, &shell_request("req-after")),
+            Admission::Refused(_)
+        ));
         assert_eq!(requests.in_flight(), 1);
-        assert_eq!(machine_busy(&requests).await, Some("requests in flight"));
-        requests.finish("req-1", &cancellation);
-        assert_eq!(requests.in_flight(), 0);
-        assert_eq!(machine_busy(&requests).await, None);
+        let read = RequestFrame {
+            call: "fs.read".to_string(),
+            ..shell_request("req-read")
+        };
+        assert!(matches!(
+            lifecycle.admit(&requests, &read),
+            Admission::Admitted(_)
+        ));
+
+        requests.finish("req-before", &before);
+        guard.abandon();
+        assert!(matches!(
+            lifecycle.admit(&requests, &shell_request("req-idle-again")),
+            Admission::Admitted(_)
+        ));
+    }
+
+    #[test]
+    fn no_interleaving_admits_a_request_the_drain_does_not_count() {
+        for round in 0..20 {
+            let lifecycle = UpdateLifecycle::new();
+            let requests = ActiveRequests::default();
+            lifecycle.queue(target("v0.5.0"));
+            let admitted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let start = Arc::new(std::sync::Barrier::new(9));
+            let mut workers = Vec::new();
+            for worker in 0..8 {
+                let lifecycle = lifecycle.clone();
+                let requests = requests.clone();
+                let admitted = admitted.clone();
+                let start = start.clone();
+                workers.push(std::thread::spawn(move || {
+                    start.wait();
+                    let request = shell_request(&format!("req-{round}-{worker}"));
+                    if let Admission::Admitted(_) = lifecycle.admit(&requests, &request) {
+                        admitted.fetch_add(1, Ordering::SeqCst);
+                    }
+                }));
+            }
+            start.wait();
+            let (guard, in_flight) = lifecycle.begin_drain(&requests).expect("drain begins");
+            for worker in workers {
+                worker.join().expect("worker finishes");
+            }
+            // Every admitted request was counted by the drain, and every
+            // request the drain did not count was refused.
+            assert_eq!(in_flight, admitted.load(Ordering::SeqCst), "round {round}");
+            assert_eq!(requests.in_flight(), in_flight, "round {round}");
+            guard.abandon();
+        }
     }
 
     #[test]
