@@ -11,18 +11,19 @@ export type Distance = "zen" | "firstday" | "fleet";
 /** A row in Fleet, addressed the way the manifest addresses it: `target:<id>` or `proc:<pid>`. */
 export type FleetRow = `target:${string}` | `proc:${number}`;
 
-const PATH_TO_DISTANCE: Record<string, Distance> = {
-  "/zen": "zen",
-  "/first-day": "firstday",
-  "/fleet": "fleet",
-};
-const DISTANCE_TO_PATH: Record<Distance, string> = {
+const DISTANCE_TO_PATH = {
   zen: "/zen",
   firstday: "/first-day",
   fleet: "/fleet",
-};
+} satisfies Record<Distance, string>;
 
-const STAR_DENSITY: Record<Distance, number> = { zen: 0.013, firstday: 0.013, fleet: 0.022 };
+const DISTANCES: readonly Distance[] = ["zen", "firstday", "fleet"];
+
+function distanceForPath(path: string): Distance {
+  return DISTANCES.find((distance) => DISTANCE_TO_PATH[distance] === path) ?? "zen";
+}
+
+const STAR_DENSITY = { zen: 0.013, firstday: 0.013, fleet: 0.022 } satisfies Record<Distance, number>;
 const MOVE_MS = 150;
 
 function reducedMotion(): boolean {
@@ -30,7 +31,7 @@ function reducedMotion(): boolean {
 }
 
 export function Instrument({ initialPath }: { initialPath: string }) {
-  const [distance, setDistance] = useState<Distance>(PATH_TO_DISTANCE[initialPath] ?? "zen");
+  const [distance, setDistance] = useState<Distance>(() => distanceForPath(initialPath));
   const [phase, setPhase] = useState<"still" | "leaving" | "arriving">("still");
   const [fleetRow, setFleetRow] = useState<FleetRow | null>(null);
   const moving = useRef(false);
@@ -65,8 +66,10 @@ export function Instrument({ initialPath }: { initialPath: string }) {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      const typing = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable;
+      const target = event.target;
+      const typing =
+        target instanceof HTMLElement &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
       if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.key === "z") {
         event.preventDefault();
