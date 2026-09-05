@@ -125,11 +125,6 @@
 }
 
 /* connect panels */
-.fd-orb {
-  display: inline-block;
-  transform: scale(0.75);
-  transform-origin: right center;
-}
 .fd-commands {
   display: grid;
   gap: var(--space-3);

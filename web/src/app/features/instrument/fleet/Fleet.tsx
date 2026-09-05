@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { AsciiPlanet } from "../../../components/ui/AsciiPlanet";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
 import { decideChatHil, getChatHistory, getChatProcessAiConfig } from "../../chat/backend/chatService";
@@ -30,7 +29,6 @@ import {
   orderProcesses,
   padRight,
   placeStateLabel,
-  planetVariantForKind,
   processRow,
   processStateLabel,
   processStateTone,
@@ -519,9 +517,6 @@ type PlaceInspectorProps = {
 function PlaceInspector({ place, runsToday, now, onRun, onBrowse, onZen }: PlaceInspectorProps) {
   return (
     <div>
-      <div class="body">
-        <AsciiPlanet variant={planetVariantForKind(place.kind)} animate={false} showStars={false} label={`${place.label} as a planet`} />
-      </div>
       <h3>{place.label}</h3>
       <div class="sub">
         {place.kind} · {placeStateLabel(place)}

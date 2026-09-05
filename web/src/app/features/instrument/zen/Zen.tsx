@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { JSX } from "preact";
 import type { ProcHilRequest } from "@humansandmachines/gsv/protocol";
-import { AsciiGalaxyScan } from "../../../components/ui/AsciiGalaxyScan";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
 import {
@@ -548,9 +547,6 @@ export function Zen({ onFleet, onFirstDay }: ZenProps) {
         </div>
         {empty ? (
           <div class="zen-empty">
-            <div class="zen-galaxy">
-              <AsciiGalaxyScan showNebula={false} showStars={false} showTexture cols={150} rows={48} particleCount={2600} label="Your ship forming" />
-            </div>
             <p>
               Ask anything. I can reach <span class="place">your cloud home</span>
               {onlinePlaces.map((place) => (
@@ -622,11 +618,6 @@ export function Zen({ onFleet, onFirstDay }: ZenProps) {
 
       <div class="zen-bottom">
         <div class="instrument-status">
-          {thinking ? (
-            <span class="zen-think-form" aria-hidden="true">
-              <AsciiGalaxyScan text="" showNebula={false} showStars={false} cols={44} rows={12} particleCount={260} fontSize={6} label="Thinking" />
-            </span>
-          ) : null}
           {status.map((part, index) => (
             <span key={index} class={part.tone}>
               {part.text}

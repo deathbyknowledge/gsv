@@ -192,32 +192,6 @@
 }
 .zen-empty .place { color: var(--target); }
 
-/* the ASCII forms inside Zen: sized here, since the shared galaxy fills its container */
-.zen-galaxy {
-  width: min(1200px, 96vw);
-  height: 384px;
-}
-.zen-galaxy .gsv-ascii-galaxy {
-  aspect-ratio: auto;
-  height: 100%;
-  min-height: 0;
-}
-.zen-empty .zen-galaxy .gsv-ascii-galaxy {
-  --gsv-ascii-galaxy-font-size: 8px;
-}
-.zen-think-form {
-  display: inline-block;
-  width: 264px;
-  height: 72px;
-  vertical-align: middle;
-  margin-right: 4px;
-}
-.zen-think-form .gsv-ascii-galaxy {
-  aspect-ratio: auto;
-  height: 100%;
-  min-height: 0;
-  --gsv-ascii-galaxy-font-size: 6px;
-}
 .zen-moment .text .noise {
   color: var(--glyph);
 }

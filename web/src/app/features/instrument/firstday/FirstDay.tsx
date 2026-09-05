@@ -1,8 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { useQuery } from "@tanstack/preact-query";
-import { AsciiGalaxyScan } from "../../../components/ui/AsciiGalaxyScan";
-import { AsciiPlanet } from "../../../components/ui/AsciiPlanet";
 import { browserExtensionDownloadUrl } from "../../../domain/cliInstall";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
@@ -307,17 +305,6 @@ export function FirstDay({ onZen }: FirstDayProps) {
       </div>
       <div class="fd-body">
         <div class="fd-inner">
-          <div class="fd-galaxy">
-            <AsciiGalaxyScan
-              showNebula={false}
-              showStars={false}
-              showTexture
-              cols={150}
-              rows={48}
-              particleCount={2600}
-              label="GSV forming"
-            />
-          </div>
           <p class="fd-hello">
             I'm your ship. Right now I can reach{" "}
             {reachablePlaces(rows).map((name, index, all) => (
@@ -340,7 +327,7 @@ export function FirstDay({ onZen }: FirstDayProps) {
                   </div>
                   <div>
                     {row.lit ? (
-                      <div class="fd-orb"><AsciiPlanet variant="orb" animate={false} showStars={false} label={`${row.lit} body`} /></div>
+                      <span class="state">ready</span>
                     ) : (
                       <button type="button" class="ibtn" onClick={() => setOpen(isOpen ? null : row.id)}>
                         {isOpen ? "later" : "connect"}
