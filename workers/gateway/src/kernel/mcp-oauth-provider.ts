@@ -40,7 +40,8 @@ type StoredCodeVerifier = {
 
 export type OAuthStateCheck =
   | { valid: true; serverId: string }
-  | { valid: false; error: string };
+  /** `expired` means the state was this server's own flow, just too old; the others reveal nothing. */
+  | { valid: false; reason: "invalid" | "unknown" | "mismatch" | "expired"; error: string };
 
 export function parseOAuthState(state: string): { nonce: string; serverId: string } | undefined {
   const parts = state.split(".");
@@ -151,19 +152,21 @@ export class McpOAuthProvider implements OAuthClientProvider {
 
   async checkState(state: string): Promise<OAuthStateCheck> {
     const parsed = parseOAuthState(state);
-    if (!parsed) return { valid: false, error: "Invalid state format" };
+    if (!parsed) return { valid: false, reason: "invalid", error: "Invalid state format" };
     const key = this.stateKey(parsed.nonce);
     const stored = await this.storage.get<StoredOAuthState>(key);
-    if (!stored) return { valid: false, error: "State not found or already used" };
+    if (!stored) {
+      return { valid: false, reason: "unknown", error: "State not found or already used" };
+    }
     if (stored.serverId !== parsed.serverId) {
       await this.storage.delete(key);
-      return { valid: false, error: "State serverId mismatch" };
+      return { valid: false, reason: "mismatch", error: "State serverId mismatch" };
     }
     if (isExpired(stored.createdAt)) {
       const keys = [key];
       if (this.storedClientId) keys.push(this.stateCodeVerifierKey(this.clientId, parsed.nonce));
       await this.storage.delete(keys);
-      return { valid: false, error: "State expired" };
+      return { valid: false, reason: "expired", error: "State expired" };
     }
     return { valid: true, serverId: parsed.serverId };
   }
@@ -172,6 +175,15 @@ export class McpOAuthProvider implements OAuthClientProvider {
     const parsed = parseOAuthState(state);
     if (!parsed) return;
     await this.storage.delete(this.stateKey(parsed.nonce));
+  }
+
+  /** Delete everything stored for this server: client registration, tokens, states, verifiers. */
+  async purge(): Promise<void> {
+    const prefix = `/${this.clientName}/${this.serverId}/`;
+    const keys = [...(await this.storage.list({ prefix })).keys()];
+    for (let start = 0; start < keys.length; start += 128) {
+      await this.storage.delete(keys.slice(start, start + 128));
+    }
   }
 
   /** Forget a flow that ended without a token: its state and the PKCE verifier tied to it. */

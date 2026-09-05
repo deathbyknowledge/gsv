@@ -105,6 +105,8 @@ export type McpClientTransport = Transport & {
 
 export type McpConnectionOptions = {
   transport: McpTransportOptions;
+  /** Called after a server-announced list change has been applied. */
+  onListsChanged?: () => void;
   /** Test seam; production connections build the SDK transports. */
   createTransport?: (
     kind: McpTransportKind,
@@ -356,7 +358,9 @@ export class McpClientConnection implements McpConnection {
         this.listGenerations.tools += 1;
         const generation = this.listGenerations.tools;
         const tools = await this.fetchTools();
-        if (generation === this.listGenerations.tools) this.tools = tools;
+        if (generation !== this.listGenerations.tools) return;
+        this.tools = tools;
+        this.options.onListsChanged?.();
       });
     }
     return this.fetchTools(signal);
@@ -372,7 +376,9 @@ export class McpClientConnection implements McpConnection {
         this.listGenerations.resources += 1;
         const generation = this.listGenerations.resources;
         const resources = await this.fetchResources();
-        if (generation === this.listGenerations.resources) this.resources = resources;
+        if (generation !== this.listGenerations.resources) return;
+        this.resources = resources;
+        this.options.onListsChanged?.();
       });
     }
     return this.fetchResources(signal);
@@ -388,7 +394,9 @@ export class McpClientConnection implements McpConnection {
         this.listGenerations.prompts += 1;
         const generation = this.listGenerations.prompts;
         const prompts = await this.fetchPrompts();
-        if (generation === this.listGenerations.prompts) this.prompts = prompts;
+        if (generation !== this.listGenerations.prompts) return;
+        this.prompts = prompts;
+        this.options.onListsChanged?.();
       });
     }
     return this.fetchPrompts(signal);
@@ -549,6 +557,7 @@ export type McpClientManagerOptions = {
 const RECONNECT_ATTEMPTS = 3;
 const DEFAULT_RETRY_BACKOFF_MS = 500;
 const INVALID_CALLBACK_STATE = "The sign-in link is invalid or has expired";
+const SIGN_IN_EXPIRED = "The sign-in took too long and expired; start it again";
 
 export class McpClientManager {
   readonly mcpConnections: Record<string, McpConnection> = {};
@@ -755,9 +764,7 @@ export class McpClientManager {
       // Only a callback that carries a state this server minted may change
       // anything; a forged or replayed one gets the generic page and nothing else.
       const check = await provider.checkState(state);
-      if (!check.valid) {
-        return { serverId, authSuccess: false, authError: INVALID_CALLBACK_STATE };
-      }
+      if (!check.valid) return this.rejectCallback(serverId, connection, check.reason);
       await provider.discardState(state);
       if (isAuthAccepted(connection)) return this.callbackSuccess(serverId, connection);
       const message = oauthError
@@ -769,11 +776,8 @@ export class McpClientManager {
     try {
       const check = await provider.checkState(state);
       if (!check.valid) {
-        if (isAuthAccepted(connection)) {
-          await this.consumeStaleState(serverId, provider, state);
-          return this.callbackSuccess(serverId, connection);
-        }
-        throw new Error(check.error);
+        if (isAuthAccepted(connection)) return this.callbackSuccess(serverId, connection);
+        return this.rejectCallback(serverId, connection, check.reason);
       }
       if (isAuthAccepted(connection)) {
         await this.consumeStaleState(serverId, provider, state);
@@ -831,10 +835,23 @@ export class McpClientManager {
     return connection.callTool(call, options);
   }
 
-  /** Close the session if it is open and forget the server. */
+  /**
+   * Close the session if it is open, delete every OAuth record kept for the
+   * server, and forget the row.
+   */
   async removeServer(serverId: string): Promise<void> {
-    if (this.mcpConnections[serverId]) {
+    const connection = this.mcpConnections[serverId];
+    const row = this.options.rows.get(serverId);
+    const provider = connection?.options.transport.authProvider
+      ?? (row?.callback_url ? this.options.createAuthProvider(row.callback_url) : undefined);
+    if (connection) {
       await this.closeConnection(serverId).catch(() => undefined);
+    }
+    if (provider) {
+      provider.serverId = serverId;
+      await provider.purge().catch((error) => {
+        console.warn(`[MCP] Failed to delete the OAuth records of ${serverId}:`, error);
+      });
     }
     this.options.rows.remove(serverId);
     this.fireStateChanged();
@@ -849,7 +866,10 @@ export class McpClientManager {
     if (existing) return existing;
     const create = this.options.createConnection
       ?? ((target, info, options) => new McpClientConnection(target, info, options));
-    const connection = create(new URL(url), this.info, { transport });
+    const connection = create(new URL(url), this.info, {
+      transport,
+      onListsChanged: () => this.fireStateChanged(),
+    });
     this.mcpConnections[id] = connection;
     return connection;
   }
@@ -952,6 +972,23 @@ export class McpClientManager {
     }
     this.fireStateChanged();
     return { serverId, authSuccess: false, authError: error };
+  }
+
+  /**
+   * A callback whose state did not check out. Only a state this server minted
+   * and let expire says anything about the session: that sign-in is over, so
+   * the person can start another. Anything else is answered generically and
+   * changes nothing.
+   */
+  private rejectCallback(
+    serverId: string,
+    connection: McpConnection,
+    reason: "invalid" | "unknown" | "mismatch" | "expired",
+  ): McpCallbackResult {
+    if (reason === "expired" && connection.connectionState === "authenticating") {
+      return this.failConnection(serverId, SIGN_IN_EXPIRED);
+    }
+    return { serverId, authSuccess: false, authError: INVALID_CALLBACK_STATE };
   }
 
   private callbackSuccess(serverId: string, connection: McpConnection): McpCallbackResult {

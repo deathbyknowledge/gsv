@@ -14,9 +14,9 @@ import {
   McpClientManager,
   type McpClientTransport,
   type McpConnection,
+  type McpConnectionOptions,
   type McpServerRow,
   type McpServerRows,
-  type McpTransportOptions,
 } from "./mcp-client";
 import { McpOAuthProvider, type OAuthKeyValueStorage } from "./mcp-oauth-provider";
 
@@ -85,10 +85,10 @@ type FakeConnection = McpConnection & {
   callTool: ReturnType<typeof vi.fn>;
 };
 
-function fakeConnection(url: URL, transport: McpTransportOptions): FakeConnection {
+function fakeConnection(url: URL, options: McpConnectionOptions): FakeConnection {
   const connection: FakeConnection = {
     url,
-    options: { transport },
+    options,
     connectionState: "connecting",
     connectionError: null,
     tools: [],
@@ -123,7 +123,7 @@ function makeManager(setup: Record<string, (connection: FakeConnection) => void>
     waitUntil,
     createAuthProvider: (callbackUrl) => new McpOAuthProvider(storage, "install-1", callbackUrl),
     createConnection: (url, _info, options) => {
-      const connection = fakeConnection(url, options.transport);
+      const connection = fakeConnection(url, options);
       setup[url.href]?.(connection);
       connections.set(url.href, connection);
       return connection;
@@ -201,8 +201,8 @@ describe("McpClientManager", () => {
     vi.restoreAllMocks();
   });
 
-  it("persists a registered server and forgets it on removal", async () => {
-    const { manager, rows, connections } = makeManager();
+  it("persists a registered server and forgets it and its oauth records on removal", async () => {
+    const { manager, rows, storage, connections } = makeManager();
     await manager.registerServer("mcp-1", {
       url: "https://tools.example/mcp",
       name: "u1000:tools",
@@ -222,10 +222,27 @@ describe("McpClientManager", () => {
       }),
     }]);
 
+    const connection = connections.get("https://tools.example/mcp");
+    if (!connection) throw new Error("connection missing");
+    const provider = new McpOAuthProvider(storage, "install-1", CALLBACK_URL);
+    provider.serverId = "mcp-1";
+    connection.options.transport.authProvider = provider;
+    await provider.saveClientInformation({ client_id: "client-1" });
+    await provider.saveTokens({ access_token: "token", token_type: "bearer" });
+    await provider.state();
+    await provider.saveCodeVerifier("verifier-1");
+    const other = new McpOAuthProvider(storage, "install-1", CALLBACK_URL);
+    other.serverId = "mcp-2";
+    other.clientId = "client-2";
+    await other.saveTokens({ access_token: "keep", token_type: "bearer" });
+    expect(storage.keys().filter((key) => key.includes("/mcp-1/"))).toHaveLength(4);
+
     await manager.removeServer("mcp-1");
     expect(rows.list()).toEqual([]);
-    expect(connections.get("https://tools.example/mcp")?.close).toHaveBeenCalledTimes(1);
+    expect(connection.close).toHaveBeenCalledTimes(1);
     expect(manager.mcpConnections["mcp-1"]).toBeUndefined();
+    expect(storage.keys().filter((key) => key.includes("/mcp-1/"))).toEqual([]);
+    expect(storage.keys()).toEqual(["/install-1/mcp-2/client-2/token"]);
   });
 
   it("refuses private and unspecified addresses", async () => {
@@ -377,6 +394,41 @@ describe("McpClientManager", () => {
     expect(changes).toHaveBeenCalledTimes(1);
   });
 
+  it("fails an authenticating server when its own sign-in expired", async () => {
+    const { manager, storage, connections } = makeManager();
+    await manager.registerServer("mcp-1", {
+      url: "https://tools.example/mcp",
+      name: "tools",
+      callbackUrl: CALLBACK_URL,
+      transport: { type: "auto" },
+    });
+    const connection = connections.get("https://tools.example/mcp");
+    if (!connection) throw new Error("connection missing");
+    const { state } = await startAuthorization({ manager, storage, serverId: "mcp-1", connection });
+    await manager.connectToServer("mcp-1");
+    const changes = vi.fn();
+    manager.onServerStateChanged(changes);
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now + 11 * 60 * 1000);
+
+    const result = await manager.handleCallbackRequest(new Request(
+      `${CALLBACK_URL}?error=access_denied&state=${encodeURIComponent(state)}`,
+    ));
+
+    expect(result).toEqual({
+      serverId: "mcp-1",
+      authSuccess: false,
+      authError: "The sign-in took too long and expired; start it again",
+    });
+    expect(connection.connectionState).toBe("failed");
+    expect(connection.connectionError).toBe("The sign-in took too long and expired; start it again");
+    expect(manager.listServers()[0]?.auth_url).toBeNull();
+    expect(changes).toHaveBeenCalledTimes(1);
+    expect(storage.keys().filter((key) => key.includes("/state/") || key.includes("code_verifier")))
+      .toEqual([]);
+    vi.restoreAllMocks();
+  });
+
   it("joins a sign-in that is still completing instead of racing it", async () => {
     const { manager, storage, connections } = makeManager();
     await manager.registerServer("mcp-1", {
@@ -436,7 +488,11 @@ describe("McpClientManager", () => {
     const changes = vi.fn();
     manager.onServerStateChanged(changes);
 
-    for (const query of ["error=access_denied&state=forged.mcp-1", "state=forged.mcp-1"]) {
+    for (const query of [
+      "error=access_denied&state=forged.mcp-1",
+      "state=forged.mcp-1",
+      "code=forged-code&state=forged.mcp-1",
+    ]) {
       const result = await manager.handleCallbackRequest(new Request(`${CALLBACK_URL}?${query}`));
       expect(result).toEqual({
         serverId: "mcp-1",
@@ -569,6 +625,11 @@ describe("McpClientManager", () => {
     });
     expect(connection.connectionError).toContain("tools/list timed out");
     expect(await manager.discoverIfConnected("missing")).toBeUndefined();
+
+    const changes = vi.fn();
+    manager.onServerStateChanged(changes);
+    connection.options.onListsChanged?.();
+    expect(changes).toHaveBeenCalledTimes(1);
 
     connection.tools = [{ name: "lookup", inputSchema: { type: "object" } }];
     expect(manager.listTools({ serverId: "mcp-1" })).toEqual([
@@ -736,10 +797,11 @@ describe("McpClientConnection discovery", () => {
   });
 
   it("keeps the newest tool list when list-changed refreshes overlap", async () => {
+    const onListsChanged = vi.fn();
     const connection = new McpClientConnection(
       new URL("https://tools.example/mcp"),
       { name: "GSV Kernel", version: "0.0.0" },
-      { transport: { type: "auto" } },
+      { transport: { type: "auto" }, onListsChanged },
     );
     connection.connectionState = "connected";
     vi.spyOn(connection.client, "getServerCapabilities").mockReturnValue({ tools: { listChanged: true } });
@@ -770,6 +832,7 @@ describe("McpClientConnection discovery", () => {
     await older;
 
     expect(connection.tools.map((tool) => tool.name)).toEqual(["newest"]);
+    expect(onListsChanged).toHaveBeenCalledTimes(1);
   });
 
   it("aborts list requests on timeout and ignores their late answers", async () => {
@@ -840,10 +903,12 @@ describe("McpOAuthProvider", () => {
     const state = await provider.state();
     await expect(provider.checkState("garbage")).resolves.toEqual({
       valid: false,
+      reason: "invalid",
       error: "Invalid state format",
     });
     await expect(provider.checkState("nonce.mcp-1")).resolves.toEqual({
       valid: false,
+      reason: "unknown",
       error: "State not found or already used",
     });
     await expect(provider.checkState(state)).resolves.toEqual({ valid: true, serverId: "mcp-1" });
@@ -866,6 +931,7 @@ describe("McpOAuthProvider", () => {
     vi.spyOn(Date, "now").mockReturnValue(now + 11 * 60 * 1000);
     await expect(provider.checkState(state)).resolves.toEqual({
       valid: false,
+      reason: "expired",
       error: "State expired",
     });
     vi.restoreAllMocks();
