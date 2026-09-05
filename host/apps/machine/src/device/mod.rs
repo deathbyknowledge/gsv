@@ -669,7 +669,12 @@ pub async fn run(
                         if rpc_error.is_protocol_unsupported() {
                             let launched = match updater.plan_for_protocol_error(rpc_error) {
                                 Some(target) => {
-                                    start_update(updater.clone(), runtime.clone(), target).await
+                                    let launch =
+                                        start_update(updater.clone(), runtime.clone(), target);
+                                    match run_until_cancelled(&shutdown, launch).await {
+                                        Some(launched) => launched,
+                                        None => shutdown_device!("control"),
+                                    }
                                 }
                                 None => false,
                             };
@@ -800,12 +805,20 @@ pub async fn run(
 
             // The handler is serving requests now; the update decision runs
             // beside it so a slow installer download never delays a route.
-            if let Some(target) = update_after_connect(&updater, conn.connect_result.as_ref()) {
-                tokio::spawn(
-                    start_update(updater.clone(), runtime.clone(), target)
+            // Dropping the guard at the end of this connection aborts it, so a
+            // reconnect or a reload never leaves a launch running against
+            // settings this driver no longer holds.
+            let _update_task =
+                update_after_connect(&updater, conn.connect_result.as_ref()).map(|target| {
+                    let shutdown = shutdown.clone();
+                    let launch = start_update(updater.clone(), runtime.clone(), target);
+                    AbortOnDrop(tokio::spawn(
+                        async move {
+                            run_until_cancelled(&shutdown, launch).await;
+                        }
                         .instrument(tracing::Span::current()),
-                );
-            }
+                    ))
+                });
 
             let flushed = flush_exec_event_outbox(&conn, &exec_event_outbox).await;
             if flushed > 0 {
@@ -913,6 +926,29 @@ pub async fn run(
     };
 
     run.instrument(device_span).await
+}
+
+/// A spawned task that must not outlive the driver that started it.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Drive `work` until it completes or `shutdown` is cancelled, whichever
+/// comes first. Cancellation wins ties so a stalled installer endpoint cannot
+/// hold reload, reconnect, or Ctrl+C open.
+async fn run_until_cancelled<T>(
+    shutdown: &CancellationToken,
+    work: impl Future<Output = T>,
+) -> Option<T> {
+    tokio::select! {
+        biased;
+        () = shutdown.cancelled() => None,
+        result = work => Some(result),
+    }
 }
 
 /// The release to move to after a successful handshake, if the gateway is
@@ -1041,6 +1077,45 @@ mod tests {
                 },
             },
         }
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_driver_stops_a_pending_launch() {
+        let shutdown = CancellationToken::new();
+        shutdown.cancel();
+        assert_eq!(
+            run_until_cancelled(&shutdown, std::future::pending::<bool>()).await,
+            None
+        );
+
+        let live = CancellationToken::new();
+        assert_eq!(
+            run_until_cancelled(&live, std::future::ready(true)).await,
+            Some(true)
+        );
+
+        let later = CancellationToken::new();
+        let stopper = later.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            stopper.cancel();
+        });
+        assert_eq!(
+            run_until_cancelled(&later, std::future::pending::<bool>()).await,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn dropping_the_guard_aborts_the_task() {
+        let guard = AbortOnDrop(tokio::spawn(std::future::pending::<()>()));
+        let handle_is_finished = {
+            let task = &guard.0;
+            !task.is_finished()
+        };
+        assert!(handle_is_finished);
+        drop(guard);
+        tokio::task::yield_now().await;
     }
 
     #[test]
