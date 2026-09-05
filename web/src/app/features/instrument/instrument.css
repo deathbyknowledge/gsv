@@ -40,6 +40,14 @@
 .instrument-field.is-fleet {
   opacity: 0.45;
 }
+/* the star field sizes its grid from its host, so the host must fill the field (the auth screen does the same) */
+.instrument-field .gsv-glyph-stars {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
 .instrument-scan {
   position: absolute;
   inset: 0;
@@ -115,6 +123,7 @@
   text-transform: uppercase;
   color: var(--text-dim);
   min-height: 26px;
+  padding: 0 0 10px 2px;
 }
 .instrument-status .is-on { color: var(--online); }
 .instrument-status .is-live { color: var(--live); }
