@@ -1,6 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use gateway_client::client::GatewayAuth;
@@ -632,6 +633,9 @@ pub async fn run(
         let mut retry_delay = INITIAL_RETRY_DELAY;
         let mut reconnect_attempt = 0_u32;
         let updater = AutoUpdater::from_config(&host_config::CliConfig::load());
+        // Set once an installer launch begins, on either path. New work is
+        // refused while it is set, so the service stop finds nothing to kill.
+        let updating = Arc::new(AtomicBool::new(false));
 
         loop {
             runtime.set_phase(daemon_protocol::DaemonPhase::Connecting);
@@ -682,16 +686,35 @@ pub async fn run(
                         if rpc_error.is_protocol_unsupported() {
                             let outcome = match updater.plan_for_protocol_error(rpc_error) {
                                 Some(target) => {
-                                    let launch =
-                                        start_update(updater.clone(), runtime.clone(), target);
-                                    match run_until_cancelled(&shutdown, launch).await {
-                                        Some(outcome) => outcome,
-                                        None => shutdown_device!("control"),
+                                    // A refused connection has no requests in
+                                    // flight, but a shell session from the last
+                                    // one may still be running.
+                                    let shell_sessions =
+                                        crate::tools::running_process_count().await;
+                                    match update_gate(Some(target), work_reason(0, shell_sessions))
+                                    {
+                                        UpdateGate::Wait { target, reason } => {
+                                            note_update_waiting(&runtime, &target, reason);
+                                            UpdateOutcome::Waiting
+                                        }
+                                        UpdateGate::Launch(target) => {
+                                            let launch = start_update(
+                                                updater.clone(),
+                                                runtime.clone(),
+                                                updating.clone(),
+                                                target,
+                                            );
+                                            match run_until_cancelled(&shutdown, launch).await {
+                                                Some(outcome) => outcome,
+                                                None => shutdown_device!("control"),
+                                            }
+                                        }
+                                        UpdateGate::Nothing => UpdateOutcome::NotLaunched,
                                     }
                                 }
                                 None => UpdateOutcome::NotLaunched,
                             };
-                            if outcome != UpdateOutcome::NotLaunched {
+                            if outcome.keeps_waiting() {
                                 // The installer stops this service itself once
                                 // the release is verified. Staying alive until
                                 // then keeps its service snapshot accurate.
@@ -765,6 +788,7 @@ pub async fn run(
             let active_requests = ActiveRequests::default();
             let active_requests_for_handler = active_requests.clone();
             let request_span = tracing::Span::current();
+            let updating_for_handler = updating.clone();
 
             // In the new OS architecture, the kernel sends req frames directly to
             // the driver. We dispatch based on `call` and respond with a res frame.
@@ -773,6 +797,23 @@ pub async fn run(
                     let Some(conn) = conn_for_handler.upgrade() else {
                         return;
                     };
+                    if updating_for_handler.load(Ordering::SeqCst) {
+                        if let Some(refusal) = update_refusal_frame(&req) {
+                            tokio::spawn(async move {
+                                match serde_json::to_string(&refusal) {
+                                    Ok(text) => {
+                                        if let Err(error) = conn.send_raw(text).await {
+                                            warn!(event = "update.refusal_send_failed", error = %error);
+                                        }
+                                    }
+                                    Err(error) => {
+                                        warn!(event = "update.refusal_encode_failed", error = %error);
+                                    }
+                                }
+                            });
+                            return;
+                        }
+                    }
                     let cancellation = active_requests_for_handler.register(&req);
                     let request_body = req
                         .body
@@ -821,8 +862,9 @@ pub async fn run(
             // Dropping the guard at the end of this connection aborts it, so a
             // reconnect or a reload never leaves a launch running against
             // settings this driver no longer holds.
-            let mut pending_update = update_after_connect(&updater, conn.connect_result.as_ref());
-            if pending_update.is_none() {
+            let pending_update =
+                PendingUpdate::new(update_after_connect(&updater, conn.connect_result.as_ref()));
+            if pending_update.is_empty() {
                 // Nothing to move to any more: an earlier "available" notice
                 // would now be wrong, while a running installer's notice still
                 // describes what is happening.
@@ -833,9 +875,10 @@ pub async fn run(
             launch_update_when_idle(
                 &updater,
                 &runtime,
+                &updating,
                 &active_requests,
                 &shutdown,
-                &mut pending_update,
+                &pending_update,
                 &mut update_task,
             )
             .await;
@@ -890,7 +933,7 @@ pub async fn run(
                             );
                         }
 
-                        if pending_update.is_some()
+                        if !pending_update.is_empty()
                             && tokio::time::Instant::now() >= next_update_check_at
                         {
                             next_update_check_at =
@@ -898,9 +941,10 @@ pub async fn run(
                             launch_update_when_idle(
                                 &updater,
                                 &runtime,
+                                &updating,
                                 &active_requests,
                                 &shutdown,
-                                &mut pending_update,
+                                &pending_update,
                                 &mut update_task,
                             )
                             .await;
@@ -1018,56 +1062,164 @@ fn update_gate(target: Option<UpdateTarget>, busy: Option<&'static str>) -> Upda
     }
 }
 
+/// Why the machine counts as busy, given its in-flight requests and live
+/// shell sessions.
+fn work_reason(in_flight: usize, shell_sessions: usize) -> Option<&'static str> {
+    if in_flight > 0 {
+        Some("requests in flight")
+    } else if shell_sessions > 0 {
+        Some("shell sessions running")
+    } else {
+        None
+    }
+}
+
 /// What the daemon is doing for the gateway right now, if anything.
 async fn machine_busy(active_requests: &ActiveRequests) -> Option<&'static str> {
-    if active_requests.in_flight() > 0 {
-        return Some("requests in flight");
+    work_reason(
+        active_requests.in_flight(),
+        crate::tools::running_process_count().await,
+    )
+}
+
+/// Requests that create work an installer's service stop would kill are
+/// refused while an update is being installed; reads still pass.
+fn admits_during_update(call: &str) -> bool {
+    matches!(call, "fs.read" | "fs.search")
+}
+
+/// The retryable refusal for `request` while an update installs, in the
+/// shape the caller expects for its call family, or `None` if it may pass.
+fn update_refusal_frame(request: &RequestFrame) -> Option<Frame> {
+    if admits_during_update(&request.call) {
+        return None;
     }
-    if crate::tools::running_process_count().await > 0 {
-        return Some("shell sessions running");
+    let message = "This machine is installing an update; retry shortly.".to_string();
+    if request.call.starts_with("fs.") {
+        return Some(driver_error_frame(request, message));
     }
-    None
+    Some(Frame::Res(ResponseFrame {
+        id: request.id.clone(),
+        ok: false,
+        data: None,
+        error: Some(ErrorShape {
+            code: 503,
+            message,
+            details: None,
+            retryable: Some(true),
+        }),
+        body: None,
+    }))
+}
+
+/// The newer-release target waiting for the machine to go idle or for a
+/// failed launch's cooldown to pass. Shared with the launch task so a
+/// retryable failure can hand the target back.
+#[derive(Clone)]
+struct PendingUpdate(Arc<Mutex<Option<UpdateTarget>>>);
+
+impl PendingUpdate {
+    fn new(target: Option<UpdateTarget>) -> Self {
+        Self(Arc::new(Mutex::new(target)))
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_none()
+    }
+
+    fn take(&self) -> Option<UpdateTarget> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+    }
+
+    fn put_back(&self, target: UpdateTarget) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .replace(target);
+    }
+}
+
+/// Whether a failed launch is worth retrying on a later check: transient
+/// trouble is, a machine that cannot update itself at all is not.
+fn retry_later(error: &UpdateError) -> bool {
+    match error {
+        UpdateError::Download(_)
+        | UpdateError::State(_)
+        | UpdateError::Spawn(_)
+        | UpdateError::Deferred { .. } => true,
+        UpdateError::Disabled
+        | UpdateError::NotServiceManaged { .. }
+        | UpdateError::NoDetachment { .. }
+        | UpdateError::AppBundle { .. }
+        | UpdateError::Unwritable { .. } => false,
+    }
+}
+
+fn note_update_waiting(runtime: &DaemonRuntime, target: &UpdateTarget, reason: &'static str) {
+    use daemon_protocol::{DiagnosticLevel, DiagnosticNotice};
+    info!(
+        event = "update.deferred",
+        release = %target.release,
+        reason = "machine work in progress",
+        detail = reason,
+    );
+    runtime.set_update_notice(Some(DiagnosticNotice {
+        level: DiagnosticLevel::Info,
+        code: "autoUpdateWaiting".to_string(),
+        message: format!(
+            "GSV {} is available because {}; waiting for machine work to finish before installing.",
+            target.release,
+            target.reason.describe()
+        ),
+    }));
 }
 
 /// Launch the pending update on the newer-release path once the machine is
-/// idle; while it is busy, keep the target for the next check and say so.
+/// idle; while it is busy, or a failed attempt is still cooling, keep the
+/// target for the next check.
 async fn launch_update_when_idle(
     updater: &AutoUpdater,
     runtime: &DaemonRuntime,
+    updating: &Arc<AtomicBool>,
     active_requests: &ActiveRequests,
     shutdown: &CancellationToken,
-    pending: &mut Option<UpdateTarget>,
+    pending: &PendingUpdate,
     task: &mut Option<AbortOnDrop>,
 ) {
-    use daemon_protocol::{DiagnosticLevel, DiagnosticNotice};
-    match update_gate(pending.take(), machine_busy(active_requests).await) {
+    let Some(target) = pending.take() else {
+        return;
+    };
+    if let AttemptState::Cooling { .. } =
+        updater.attempt_state(&target.release, std::time::SystemTime::now())
+    {
+        pending.put_back(target);
+        return;
+    }
+    match update_gate(Some(target), machine_busy(active_requests).await) {
         UpdateGate::Launch(target) => {
             let shutdown = shutdown.clone();
-            let launch = start_update(updater.clone(), runtime.clone(), target);
+            let pending = pending.clone();
+            let launch = start_update(updater.clone(), runtime.clone(), updating.clone(), target);
             *task = Some(AbortOnDrop(tokio::spawn(
                 async move {
-                    run_until_cancelled(&shutdown, launch).await;
+                    if let Some(UpdateOutcome::Retry(target)) =
+                        run_until_cancelled(&shutdown, launch).await
+                    {
+                        pending.put_back(target);
+                    }
                 }
                 .instrument(tracing::Span::current()),
             )));
         }
         UpdateGate::Wait { target, reason } => {
-            info!(
-                event = "update.deferred",
-                release = %target.release,
-                reason = "machine work in progress",
-                detail = reason,
-            );
-            runtime.set_update_notice(Some(DiagnosticNotice {
-                level: DiagnosticLevel::Info,
-                code: "autoUpdateWaiting".to_string(),
-                message: format!(
-                    "GSV {} is available because {}; waiting for machine work to finish before installing.",
-                    target.release,
-                    target.reason.describe()
-                ),
-            }));
-            *pending = Some(target);
+            note_update_waiting(runtime, &target, reason);
+            pending.put_back(target);
         }
         UpdateGate::Nothing => {}
     }
@@ -1075,13 +1227,24 @@ async fn launch_update_when_idle(
 
 /// What a handshake's update decision left behind, for the 102 path to know
 /// whether to keep waiting for an installer or to give up.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 enum UpdateOutcome {
     /// An installer was started just now.
     Launched,
     /// An installer started earlier for this release is presumably running.
     InProgress,
+    /// Machine work is running; the update waits for it.
+    Waiting,
+    /// A transient failure; the target is handed back for a later check.
+    Retry(UpdateTarget),
     NotLaunched,
+}
+
+impl UpdateOutcome {
+    /// Whether the 102 path should stay alive and retry rather than exit.
+    fn keeps_waiting(&self) -> bool {
+        matches!(self, Self::Launched | Self::InProgress | Self::Waiting)
+    }
 }
 
 /// Whether a deferred launch means an installer for `release` is already on
@@ -1094,16 +1257,19 @@ fn installer_in_progress(updater: &AutoUpdater, release: &str) -> Option<std::ti
 }
 
 /// Start the installer for `target` and record the decision where
-/// `gsv daemon diagnostics` shows it.
+/// `gsv daemon diagnostics` shows it. `updating` is raised for the launch
+/// and stays up once an installer runs; a failure lowers it again.
 async fn start_update(
     updater: AutoUpdater,
     runtime: DaemonRuntime,
+    updating: Arc<AtomicBool>,
     target: UpdateTarget,
 ) -> UpdateOutcome {
     use daemon_protocol::{DiagnosticLevel, DiagnosticNotice};
     const STARTED: &str = "autoUpdateStarted";
     let reason = target.reason.describe();
-    match updater.launch(&target).await {
+    updating.store(true, Ordering::SeqCst);
+    let error = match updater.launch(&target).await {
         Ok(launch) => {
             info!(
                 event = "update.started",
@@ -1120,9 +1286,13 @@ async fn start_update(
                     launch.release
                 ),
             }));
-            UpdateOutcome::Launched
+            return UpdateOutcome::Launched;
         }
-        Err(UpdateError::Disabled) => {
+        Err(error) => error,
+    };
+    updating.store(false, Ordering::SeqCst);
+    match &error {
+        UpdateError::Disabled => {
             info!(event = "update.available", release = %target.release, reason);
             runtime.set_update_notice(Some(DiagnosticNotice {
                 level: DiagnosticLevel::Warning,
@@ -1132,18 +1302,16 @@ async fn start_update(
                     target.release
                 ),
             }));
-            UpdateOutcome::NotLaunched
         }
-        Err(error @ UpdateError::NotServiceManaged { .. }) => {
+        UpdateError::NotServiceManaged { .. } => {
             info!(event = "update.available", release = %target.release, reason, detail = %error);
             runtime.set_update_notice(Some(DiagnosticNotice {
                 level: DiagnosticLevel::Info,
                 code: "autoUpdateSkipped".to_string(),
                 message: format!("GSV {} is available, but {error}.", target.release),
             }));
-            UpdateOutcome::NotLaunched
         }
-        Err(error @ UpdateError::Deferred { .. }) => {
+        UpdateError::Deferred { .. } => {
             if let Some(since) = installer_in_progress(&updater, &target.release) {
                 let minutes = since.as_secs() / 60;
                 info!(event = "update.in_progress", release = %target.release, reason, minutes);
@@ -1155,6 +1323,7 @@ async fn start_update(
                         target.release
                     ),
                 }));
+                updating.store(true, Ordering::SeqCst);
                 return UpdateOutcome::InProgress;
             }
             info!(event = "update.deferred", release = %target.release, reason, detail = %error);
@@ -1166,18 +1335,20 @@ async fn start_update(
             if !started {
                 runtime.set_update_notice(Some(skipped_notice(&target.release, &error)));
             }
-            UpdateOutcome::NotLaunched
         }
-        Err(error) if error.is_skip() => {
+        skip if skip.is_skip() => {
             info!(event = "update.skipped", release = %target.release, reason, detail = %error);
             runtime.set_update_notice(Some(skipped_notice(&target.release, &error)));
-            UpdateOutcome::NotLaunched
         }
-        Err(error) => {
+        _ => {
             warn!(event = "update.failed", release = %target.release, reason, error = %error);
             runtime.set_update_notice(Some(skipped_notice(&target.release, &error)));
-            UpdateOutcome::NotLaunched
         }
+    }
+    if retry_later(&error) {
+        UpdateOutcome::Retry(target)
+    } else {
+        UpdateOutcome::NotLaunched
     }
 }
 
@@ -1297,6 +1468,118 @@ mod tests {
             reason: crate::update::UpdateReason::NewerRelease,
             installer_url: crate::update::DEFAULT_INSTALLER_URL.to_string(),
         }
+    }
+
+    #[test]
+    fn work_is_named_by_what_is_running() {
+        assert_eq!(work_reason(0, 0), None);
+        assert_eq!(work_reason(2, 0), Some("requests in flight"));
+        assert_eq!(work_reason(0, 1), Some("shell sessions running"));
+        assert_eq!(work_reason(1, 1), Some("requests in flight"));
+        // The 102 path has no requests in flight; only shell sessions count.
+        assert_eq!(
+            update_gate(Some(target("v0.5.0")), work_reason(0, 1)),
+            UpdateGate::Wait {
+                target: target("v0.5.0"),
+                reason: "shell sessions running",
+            }
+        );
+        assert_eq!(
+            update_gate(Some(target("v0.5.0")), work_reason(0, 0)),
+            UpdateGate::Launch(target("v0.5.0"))
+        );
+    }
+
+    /// The response inside a refusal; a missing refusal yields a response
+    /// with an empty id so the assertions on it fail plainly.
+    fn response_of(frame: Option<Frame>) -> ResponseFrame {
+        match frame {
+            Some(Frame::Res(response)) => response,
+            _ => ResponseFrame {
+                id: String::new(),
+                ok: true,
+                data: None,
+                error: None,
+                body: None,
+            },
+        }
+    }
+
+    #[test]
+    fn work_creating_requests_are_refused_while_an_update_installs() {
+        let shell = RequestFrame {
+            id: "req-shell".to_string(),
+            call: "shell.exec".to_string(),
+            args: None,
+            body: None,
+        };
+        let refusal = response_of(update_refusal_frame(&shell));
+        assert!(!refusal.ok);
+        assert_eq!(refusal.id, "req-shell");
+        let error = refusal.error.expect("refusal carries an error");
+        assert_eq!(error.code, 503);
+        assert_eq!(error.retryable, Some(true));
+        assert!(error.message.contains("installing an update"));
+        assert!(error.message.contains("retry"));
+
+        let write = RequestFrame {
+            id: "req-write".to_string(),
+            call: "fs.write".to_string(),
+            ..shell.clone()
+        };
+        let refusal = response_of(update_refusal_frame(&write));
+        assert!(refusal.ok);
+        assert_eq!(refusal.id, "req-write");
+        assert_eq!(
+            refusal.data.and_then(|data| data.get("ok").cloned()),
+            Some(json!(false))
+        );
+
+        for call in ["fs.read", "fs.search"] {
+            let read = RequestFrame {
+                call: call.to_string(),
+                ..shell.clone()
+            };
+            assert!(update_refusal_frame(&read).is_none(), "{call} passes");
+        }
+        assert!(!admits_during_update("net.fetch"));
+    }
+
+    #[test]
+    fn transient_failures_keep_the_target_for_a_later_check() {
+        let dir = PathBuf::from("/opt/gsv/bin");
+        assert!(retry_later(&UpdateError::Download("timed out".to_string())));
+        assert!(retry_later(&UpdateError::Spawn("no such file".to_string())));
+        assert!(retry_later(&UpdateError::State("disk full".to_string())));
+        assert!(retry_later(&UpdateError::Deferred {
+            since: std::time::Duration::from_secs(60)
+        }));
+        assert!(!retry_later(&UpdateError::Disabled));
+        assert!(!retry_later(&UpdateError::NotServiceManaged {
+            dir: dir.clone()
+        }));
+        assert!(!retry_later(&UpdateError::NoDetachment {
+            dir: dir.clone()
+        }));
+        assert!(!retry_later(&UpdateError::AppBundle { dir: dir.clone() }));
+        assert!(!retry_later(&UpdateError::Unwritable { dir }));
+    }
+
+    #[tokio::test]
+    async fn a_launch_that_fails_before_spawning_lowers_the_updating_flag() {
+        let dir = std::env::temp_dir().join(format!("gsvd-flag-{}", uuid::Uuid::new_v4()));
+        let updater = AutoUpdater::new(
+            false,
+            ReleaseChannel::Stable,
+            "0.4.1",
+            dir.join("auto-update"),
+            dir.join("auto-update.log"),
+        );
+        let (runtime, _receiver) = DaemonRuntime::new("machine-a".to_string());
+        let updating = Arc::new(AtomicBool::new(false));
+        let outcome = start_update(updater, runtime, updating.clone(), target("v0.5.0")).await;
+        assert_eq!(outcome, UpdateOutcome::NotLaunched);
+        assert!(!updating.load(Ordering::SeqCst));
     }
 
     #[test]

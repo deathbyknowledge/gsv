@@ -364,26 +364,44 @@ impl AutoUpdater {
             .kill_on_drop(false)
             .spawn()
             .map_err(|error| UpdateError::Spawn(error.to_string()))?;
+        let release = target.release.clone();
+        let strategy_for_log = strategy.clone();
+        let installer = if matches!(strategy, DetachStrategy::SystemdRun { .. }) {
+            // The child is only the launcher: it exits once the transient
+            // unit is submitted, and its status says whether that happened.
+            let status = child
+                .wait()
+                .await
+                .map_err(|error| UpdateError::Spawn(error.to_string()))?;
+            if let Err(detail) = launcher_outcome(status) {
+                warn!(event = "update.launcher_failed", release = %release, detach = %strategy_for_log, status = %status);
+                return Err(UpdateError::Spawn(detail));
+            }
+            info!(event = "update.launcher_exited", release = %release, detach = %strategy_for_log);
+            None
+        } else {
+            Some(child)
+        };
         if let Err(error) = self.mark_launched(&target.release) {
             // The installer is running either way; without the mark the next
             // handshake within the hour reads a cooling attempt and waits.
             warn!(event = "update.record_failed", release = %target.release, error = %error);
         }
-        let release = target.release.clone();
-        let strategy_for_log = strategy.clone();
-        tokio::spawn(async move {
-            match child.wait().await {
-                Ok(status) if status.success() => {
-                    info!(event = "update.launcher_exited", release = %release, detach = %strategy_for_log);
+        if let Some(mut child) = installer {
+            tokio::spawn(async move {
+                match child.wait().await {
+                    Ok(status) if status.success() => {
+                        info!(event = "update.launcher_exited", release = %release, detach = %strategy_for_log);
+                    }
+                    Ok(status) => {
+                        warn!(event = "update.launcher_failed", release = %release, detach = %strategy_for_log, status = %status);
+                    }
+                    Err(error) => {
+                        warn!(event = "update.launcher_failed", release = %release, detach = %strategy_for_log, error = %error);
+                    }
                 }
-                Ok(status) => {
-                    warn!(event = "update.launcher_failed", release = %release, detach = %strategy_for_log, status = %status);
-                }
-                Err(error) => {
-                    warn!(event = "update.launcher_failed", release = %release, detach = %strategy_for_log, error = %error);
-                }
-            }
-        });
+            });
+        }
         Ok(UpdateLaunch {
             release: target.release.clone(),
             log_path: self.log_path.clone(),
@@ -657,6 +675,18 @@ pub fn systemd_run_arguments(
     args.push(invocation.program.clone());
     args.extend(invocation.args.iter().cloned());
     args
+}
+
+/// Whether `systemd-run` managed to submit the transient unit: only a clean
+/// exit means the installer exists somewhere the service stop cannot reach.
+pub fn launcher_outcome(status: std::process::ExitStatus) -> Result<(), String> {
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "systemd-run did not start the installer ({status})"
+        ))
+    }
 }
 
 /// Reject a response that announces more than `limit` bytes before reading it.
@@ -1316,6 +1346,16 @@ mod tests {
             updater.attempt_state("v0.5.0", now + MIN_ATTEMPT_INTERVAL),
             AttemptState::None
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_a_clean_launcher_exit_counts_as_launched() {
+        use std::os::unix::process::ExitStatusExt;
+        assert!(launcher_outcome(std::process::ExitStatus::from_raw(0)).is_ok());
+        let failed = launcher_outcome(std::process::ExitStatus::from_raw(1 << 8))
+            .expect_err("a non-zero exit is a failure");
+        assert!(failed.contains("did not start the installer"));
     }
 
     #[test]
