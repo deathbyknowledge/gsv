@@ -2,7 +2,7 @@ import {
   bodyToBytes, bodyToText, fileResourceReferenceSchema, jsonValueSchema, type JsonValue,
 } from "@humansandmachines/gsv/protocol";
 import type { FrameBody, ResponseOkFrame } from "../protocol/frames";
-import { formatSize } from "../fs";
+import { formatSize } from "../fs/utils";
 import { encodeBase64Bytes } from "../shared/base64";
 import { z } from "zod";
 

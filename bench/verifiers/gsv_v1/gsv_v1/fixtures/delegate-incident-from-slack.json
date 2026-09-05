@@ -1,0 +1,239 @@
+{
+  "schemaVersion": 3,
+  "id": "delegate-incident-from-slack",
+  "seed": "delegate-incident-from-slack-seed-001",
+  "description": "Retain Slack work in r12y, delegate it to a capability-limited Process, consume the IPC result, resolve the record, and reply on the exact adapter route.",
+  "systemPrompt": "You are Ship in a synthetic GSV Process epoch handling a routed Slack message. Keep promised work in the Kernel responsibility ledger. Use r12y create to retain it, proc delegate with --responsibility to give it to the named worker account, and r12y resolve only after the delegated result returns as a GSV event. A bounded worker returns ordinary assistant text automatically. Commit one final reply and yield only after the responsibility is resolved.",
+  "prompt": "A teammate sent this Slack request: investigate the failed checkout deployment and reply with exactly 'checkout blocked: database migration checksum mismatch'. First create a responsibility titled 'Investigate checkout deployment' with dedupe key 'slack:incident-42'. Then delegate it to account 'ops'. Tell the worker to read /var/log/deploy.log from target incident-server and return exactly the value after ROOT_CAUSE=. When its result arrives, resolve the responsibility with a JSON resolution containing that cause. Finally commit the exact requested reply and yield. Do not inspect incident-server yourself and do not send any earlier message.",
+  "entryProcessId": "ship",
+  "entryRoute": {
+    "adapterId": "slack",
+    "accountId": "team-main",
+    "actorId": "U-incident-42",
+    "surface": {
+      "kind": "dm",
+      "id": "D-incident-42"
+    },
+    "inboundDeliveryId": "slack:event:incident-42",
+    "messageId": "slack-message-42"
+  },
+  "world": {
+    "runtime": {
+      "now": "2026-09-01T12:00:00.000Z",
+      "timezone": "Europe/Amsterdam"
+    },
+    "processes": [
+      {
+        "id": "ship",
+        "role": "ship",
+        "uid": 1000,
+        "ownerUid": 1000,
+        "username": "ship",
+        "gids": [1000],
+        "capabilities": [
+          "shell.exec",
+          "r12y.list",
+          "r12y.get",
+          "r12y.create",
+          "r12y.update",
+          "proc.spawn",
+          "proc.ipc.call"
+        ]
+      }
+    ],
+    "delegates": [
+      {
+        "account": "ops",
+        "process": {
+          "id": "proc:incident-worker",
+          "role": "worker",
+          "uid": 2000,
+          "ownerUid": 1000,
+          "username": "ops",
+          "gids": [2000],
+          "capabilities": ["fs.read"]
+        },
+        "systemPrompt": "You are a bounded GSV worker. Complete only the delegated task using your offered targets. Return the requested result as ordinary assistant text; do not use message send or yield.",
+        "maxTurns": 3
+      }
+    ],
+    "adapters": [
+      {
+        "id": "slack",
+        "kind": "slack",
+        "accountId": "team-main",
+        "ownerUid": 1000,
+        "connected": true
+      }
+    ]
+  },
+  "components": {
+    "responsibilityRefs": [
+      {
+        "id": "incident",
+        "identity": "slack:incident-42"
+      }
+    ],
+    "targets": [
+      {
+        "id": "incident-server",
+        "kind": "server",
+        "ownerUid": 2000,
+        "accessGids": [2000],
+        "label": "Incident server",
+        "description": "Restricted deployment diagnostics.",
+        "platform": "linux",
+        "online": true,
+        "implements": ["fs.read"],
+        "files": {
+          "/var/log/deploy.log": "STATUS=failed\nROOT_CAUSE=database migration checksum mismatch\n"
+        }
+      }
+    ],
+    "transitions": [],
+    "events": []
+  },
+  "evaluation": {
+    "milestones": [
+      {
+        "id": "human-completion",
+        "description": "Ship commits one user-visible answer and yields; exact content and routing are scored at the adapter boundary.",
+        "dimension": "communication",
+        "weight": 0.2,
+        "requires": [],
+        "requiredForStrict": true,
+        "predicates": [
+          {
+            "type": "count",
+            "path": "/committedMessages",
+            "min": 1
+          },
+          {
+            "type": "match",
+            "path": "",
+            "mode": "subset",
+            "value": {
+              "status": "yielded"
+            }
+          }
+        ]
+      },
+      {
+        "id": "durable-responsibility",
+        "description": "The work survives in r12y and reaches a resolved terminal state assigned back to Ship with the delegated cause.",
+        "dimension": "governance",
+        "weight": 0.25,
+        "requires": [],
+        "requiredForStrict": true,
+        "predicates": [
+          {
+            "type": "match",
+            "path": "",
+            "mode": "subset",
+            "value": {
+              "world": {
+                "responsibilities": {
+                  "references": {
+                    "incident": {
+                      "title": "Investigate checkout deployment",
+                      "state": "resolved",
+                      "assignee": {
+                        "kind": "ship"
+                      },
+                      "dedupeKey": "slack:incident-42"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "bounded-delegation",
+        "description": "A capability-limited child reads the restricted server and returns its result through supervised IPC.",
+        "dimension": "governance",
+        "weight": 0.3,
+        "requires": ["durable-responsibility"],
+        "requiredForStrict": true,
+        "predicates": [
+          {
+            "type": "match",
+            "path": "",
+            "mode": "subset",
+            "value": {
+              "world": {
+                "processes": {
+                  "ship": {
+                    "visibleTargets": []
+                  }
+                },
+                "delegations": [
+                  {
+                    "sourceProcessId": "ship",
+                    "account": "ops",
+                    "state": "completed",
+                    "normalizedResultText": "database migration checksum mismatch"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "type": "count",
+            "path": "/log",
+            "where": {
+              "type": "tool.call",
+              "account": "ops",
+              "name": "Read",
+              "arguments": {
+                "target": "incident-server",
+                "path": "/var/log/deploy.log"
+              }
+            },
+            "min": 1
+          }
+        ]
+      },
+      {
+        "id": "exact-adapter-delivery",
+        "description": "The committed message is delivered once through the exact Slack account and DM reply route.",
+        "dimension": "communication",
+        "weight": 0.25,
+        "requires": ["bounded-delegation"],
+        "requiredForStrict": true,
+        "predicates": [
+          {
+            "type": "match",
+            "path": "",
+            "mode": "subset",
+            "value": {
+              "world": {
+                "adapters": {
+                  "slack": {
+                    "deliveries": [
+                      {
+                        "deliveryId": "slack:event:incident-42:reply:1",
+                        "processId": "ship",
+                        "surface": {
+                          "kind": "dm",
+                          "id": "D-incident-42"
+                        },
+                        "text": "checkout blocked: database migration checksum mismatch",
+                        "replyToId": "slack-message-42",
+                        "state": "sent"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "constraints": []
+  },
+  "maxTurns": 7,
+  "maxRuns": 2
+}

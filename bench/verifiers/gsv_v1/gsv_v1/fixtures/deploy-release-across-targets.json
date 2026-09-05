@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 3,
+  "id": "deploy-release-across-targets",
+  "seed": "deploy-release-across-targets-seed-001",
+  "description": "Read release state from an authorized laptop, deploy it through an authorized server, and report the durable outcome.",
+  "systemPrompt": "You are Ship in a synthetic GSV Process epoch. Use only the GSV tools and targets you are offered. Complete the requested work before committing a final message and yielding.",
+  "prompt": "Read /workspace/release.txt from target build-laptop. Its contents name the release. Then run the command 'deploy RELEASE' on target deploy-server, replacing RELEASE with the value you read. If deployment succeeds, commit exactly 'release deployed' to this conversation and yield.",
+  "entryProcessId": "ship",
+  "world": {
+    "runtime": {
+      "now": "2026-09-01T12:00:00.000Z",
+      "timezone": "Europe/Amsterdam"
+    },
+    "processes": [
+      {
+        "id": "ship",
+        "role": "ship",
+        "uid": 1000,
+        "gids": [1000],
+        "capabilities": ["fs.read", "shell.exec"]
+      },
+      {
+        "id": "deploy-worker",
+        "role": "worker",
+        "uid": 2000,
+        "gids": [2000],
+        "capabilities": ["shell.exec"]
+      }
+    ]
+  },
+  "components": {
+    "targets": [
+      {
+        "id": "build-laptop",
+        "kind": "laptop",
+        "ownerUid": 1000,
+        "accessGids": [1000],
+        "label": "Build laptop",
+        "description": "Personal development laptop.",
+        "platform": "linux",
+        "online": true,
+        "files": {
+          "/workspace/release.txt": "release-2026.09.01\n"
+        }
+      },
+      {
+        "id": "deploy-server",
+        "kind": "server",
+        "ownerUid": 2000,
+        "accessGids": [1000, 2000],
+        "label": "Deploy server",
+        "description": "Production deployment target.",
+        "platform": "linux",
+        "online": true,
+        "implements": ["shell.exec"],
+        "state": {
+          "deployedRelease": null
+        },
+        "commands": {
+          "deploy release-2026.09.01": {
+            "output": "deployed release-2026.09.01\n",
+            "effects": [
+              {
+                "type": "state.set",
+                "key": "deployedRelease",
+                "value": "release-2026.09.01"
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "transitions": [],
+    "events": []
+  },
+  "evaluation": {
+    "milestones": [
+      {
+        "id": "human-completion",
+        "description": "Ship commits a user-visible deployment confirmation and yields.",
+        "dimension": "communication",
+        "weight": 0.4,
+        "requires": [],
+        "requiredForStrict": true,
+        "predicates": [
+          {
+            "type": "count",
+            "path": "/committedMessages",
+            "min": 1
+          },
+          {
+            "type": "match",
+            "path": "",
+            "mode": "subset",
+            "value": {
+              "status": "yielded"
+            }
+          }
+        ]
+      },
+      {
+        "id": "cross-target-outcome",
+        "description": "The release from the laptop is deployed on the server without broadening worker target access.",
+        "dimension": "outcome",
+        "weight": 0.6,
+        "requires": [],
+        "requiredForStrict": true,
+        "predicates": [
+          {
+            "type": "match",
+            "path": "",
+            "mode": "subset",
+            "value": {
+              "world": {
+                "targets": {
+                  "deploy-server": {
+                    "state": {
+                      "deployedRelease": "release-2026.09.01"
+                    }
+                  }
+                },
+                "processes": {
+                  "ship": {
+                    "visibleTargets": ["build-laptop", "deploy-server"]
+                  },
+                  "deploy-worker": {
+                    "visibleTargets": ["deploy-server"]
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "constraints": []
+  },
+  "maxTurns": 5,
+  "maxRuns": 1
+}

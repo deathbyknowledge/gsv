@@ -1,0 +1,963 @@
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import type { JsonObject } from "@humansandmachines/gsv/protocol";
+import type {
+  AssistantMessage,
+  Context,
+  ToolCall,
+} from "@earendil-works/pi-ai";
+import { describe, expect, it } from "vitest";
+import { formatContextProjectionEvent } from "../../workers/gateway/src/prompts/context-events";
+import { SyntheticKernel } from "./kernel";
+import { parseGsvSurfaceScenario } from "./scenario";
+import type { GsvSurfacePartialArtifact } from "./schema";
+import {
+  runGsvSurfaceScenario,
+  runSyntheticProcess,
+} from "./surface";
+
+const FIXTURES = resolve(
+  import.meta.dirname,
+  "../verifiers/gsv_v1/gsv_v1/fixtures",
+);
+
+describe("GSV Process surface", () => {
+  it("freezes the epoch prompt and appends a production context event", async () => {
+    const scenario = await fixture("target-appears-after-inspection.json");
+    const scripted = [
+      assistant(toolCall("inspect-targets", "Shell", {
+        input: "targets list --json",
+        target: "gsv",
+      })),
+      assistant(toolCall("finish", "Shell", {
+        input: "message send --message 'gpu-lab ready' && yield",
+      })),
+    ];
+    const seen: Context[] = [];
+    const checkpoints: GsvSurfacePartialArtifact[] = [];
+
+    const artifact = await runGsvSurfaceScenario(
+      scenario,
+      async (context) => {
+        seen.push(context);
+        const next = scripted.shift();
+        if (!next) throw new Error("Unexpected model turn");
+        return next;
+      },
+      async (checkpoint) => {
+        checkpoints.push(checkpoint);
+      },
+    );
+
+    expect(artifact.status).toBe("yielded");
+    expect(artifact.committedMessages).toEqual(["gpu-lab ready"]);
+    expect(artifact.world.transitionsApplied).toEqual(["connect-gpu-lab"]);
+    expect(artifact.log.map(({ type }) => type)).toEqual([
+      "run.started",
+      "tool.call",
+      "tool.result",
+      "world.transition",
+      "context.delta",
+      "tool.call",
+      "message.committed",
+      "tool.result",
+      "run.yielded",
+    ]);
+    expect(new Set(
+      artifact.observations.map(({ systemPromptSha256 }) => systemPromptSha256),
+    ).size).toBe(1);
+    expect(seen[0]?.systemPrompt).toContain("Context availability baseline:");
+    expect(seen[0]?.systemPrompt).toContain("Accessible external targets:\n- (none)");
+    expect(artifact.observations[0]?.projection.targets).toEqual([]);
+    expect(artifact.observations[1]?.projection.targets.map(({ id }) => id))
+      .toEqual(["gpu-lab"]);
+    const delta = artifact.log.find(({ type }) => type === "context.delta");
+    expect(delta).toEqual({
+      type: "context.delta",
+      processId: "ship",
+      content: "[GSV EVENT]\n" + formatContextProjectionEvent(
+        artifact.observations[0]!.projection,
+        artifact.observations[1]!.projection,
+      ),
+    });
+    expect(seen[1]?.messages.at(-1)).toMatchObject({
+      role: "user",
+      content: delta?.type === "context.delta" ? delta.content : undefined,
+    });
+    expect(checkpoints.map(({ phase }) => phase)).toEqual([
+      "model.request",
+      "model.response",
+      "model.request",
+      "model.response",
+    ]);
+    expect(checkpoints[0]).toMatchObject({
+      schemaVersion: 1,
+      scenarioId: "target-appears-after-inspection",
+      activeProcessId: "ship",
+      run: 1,
+      turn: 1,
+      log: [{ type: "run.started", processId: "ship", run: 1 }],
+      world: { processes: { ship: { state: "running" } } },
+    });
+    expect(checkpoints[2]?.log.map(({ type }) => type)).toEqual([
+      "run.started",
+      "tool.call",
+      "tool.result",
+      "world.transition",
+      "context.delta",
+    ]);
+  });
+
+  it("rejects yield until the current responsibility batch is handled", async () => {
+    const scenario = parseGsvSurfaceScenario({
+      schemaVersion: 3,
+      id: "responsibility-yield-gate",
+      seed: "responsibility-yield-gate-001",
+      description: "Match the production responsibility admission gate.",
+      systemPrompt: "Keep durable work handled before yielding.",
+      prompt: "Record this work and wait for the scheduled review.",
+      entryProcessId: "ship",
+      world: {
+        runtime: { now: "2026-09-01T12:00:00.000Z", timezone: "UTC" },
+        processes: [{
+          id: "ship",
+          role: "ship",
+          uid: 1000,
+          gids: [1000],
+          capabilities: ["shell.exec", "r12y.create", "r12y.update"],
+        }],
+      },
+      components: { targets: [], transitions: [], events: [] },
+      evaluation: {
+        milestones: [{
+          id: "yielded",
+          description: "The Process explicitly defers before yielding.",
+          dimension: "lifecycle",
+          weight: 1,
+          requires: [],
+          requiredForStrict: true,
+          predicates: [{ type: "match", path: "/status", value: "yielded" }],
+        }],
+        constraints: [],
+      },
+      maxTurns: 6,
+      maxRuns: 1,
+    });
+    const scripted = [
+      assistant(toolCall("create", "Shell", {
+        input: "r12y create --title 'Review access request'",
+        target: "gsv",
+      })),
+      assistant(toolCall("premature-yield", "Shell", { input: "yield" })),
+      assistant(toolCall("defer", "Shell", {
+        input: "r12y wait r12y:00000000-0000-4000-8000-000000000001 --until 2026-09-01T12:05:00.000Z --blocker 'awaiting scheduled review'",
+        target: "gsv",
+      })),
+      assistant(toolCall("accepted-yield", "Shell", { input: "yield" })),
+    ];
+    const seen: Context[] = [];
+
+    const artifact = await runGsvSurfaceScenario(scenario, async (context) => {
+      seen.push(context);
+      const next = scripted.shift();
+      if (!next) throw new Error("Unexpected model turn");
+      return next;
+    });
+
+    expect(artifact.status).toBe("yielded");
+    expect(artifact.log.filter(({ type }) => type === "run.yielded"))
+      .toHaveLength(1);
+    expect(JSON.stringify(seen[2]?.messages)).toContain(
+      "The responsibility batch still contains unhandled work.",
+    );
+    expect(artifact.world.responsibilities.records[
+      "r12y:00000000-0000-4000-8000-000000000001"
+    ]).toMatchObject({
+      state: "waiting",
+      blocker: "awaiting scheduled review",
+    });
+  });
+
+  it("rejects an empty user-visible message", async () => {
+    const scenario = parseGsvSurfaceScenario({
+      schemaVersion: 3,
+      id: "empty-message",
+      seed: "empty-message-001",
+      description: "Match production message validation.",
+      systemPrompt: "Send a non-empty response and yield.",
+      prompt: "Respond.",
+      entryProcessId: "ship",
+      world: {
+        runtime: { now: "2026-09-01T12:00:00.000Z", timezone: "UTC" },
+        processes: [{
+          id: "ship",
+          role: "ship",
+          uid: 1000,
+          gids: [1000],
+          capabilities: ["shell.exec"],
+        }],
+      },
+      components: { targets: [], transitions: [], events: [] },
+      evaluation: {
+        milestones: [{
+          id: "message",
+          description: "A non-empty message is committed.",
+          dimension: "communication",
+          weight: 1,
+          requires: [],
+          requiredForStrict: true,
+          predicates: [{ type: "count", path: "/committedMessages", min: 1 }],
+        }],
+        constraints: [],
+      },
+      maxTurns: 3,
+      maxRuns: 1,
+    });
+    const scripted = [
+      assistant(toolCall("empty", "Shell", {
+        input: "message send --message '' && yield",
+      })),
+      assistant(toolCall("valid", "Shell", {
+        input: "message send --message 'done' && yield",
+      })),
+    ];
+    const seen: Context[] = [];
+
+    const artifact = await runGsvSurfaceScenario(scenario, async (context) => {
+      seen.push(context);
+      const next = scripted.shift();
+      if (!next) throw new Error("Unexpected model turn");
+      return next;
+    });
+
+    expect(artifact.committedMessages).toEqual(["done"]);
+    expect(JSON.stringify(seen[1]?.messages)).toContain(
+      "Message requires non-empty text or attached media",
+    );
+  });
+
+  it("bounds captured command output in the normalized artifact", async () => {
+    const fullOutput = "x".repeat(128 * 1024);
+    const scenario = parseGsvSurfaceScenario({
+      schemaVersion: 3,
+      id: "bounded-artifact-output",
+      seed: "bounded-artifact-output-001",
+      description: "Keep verbose command output within the artifact contract.",
+      systemPrompt: "Inspect the target, then yield.",
+      prompt: "Run the diagnostic.",
+      entryProcessId: "ship",
+      world: {
+        runtime: { now: "2026-09-01T12:00:00.000Z", timezone: "UTC" },
+        processes: [{
+          id: "ship",
+          role: "ship",
+          uid: 1000,
+          gids: [1000],
+          capabilities: ["shell.exec"],
+        }],
+      },
+      components: {
+        targets: [{
+          id: "diagnostic-server",
+          kind: "server",
+          ownerUid: 1000,
+          accessGids: [1000],
+          online: true,
+          implements: ["shell.exec"],
+          commands: { verbose: { output: fullOutput } },
+        }],
+        transitions: [],
+        events: [],
+      },
+      evaluation: {
+        milestones: [{
+          id: "yielded",
+          description: "The Process finishes after the diagnostic.",
+          dimension: "lifecycle",
+          weight: 1,
+          requires: [],
+          requiredForStrict: true,
+          predicates: [{ type: "match", path: "/status", value: "yielded" }],
+        }],
+        constraints: [],
+      },
+      maxTurns: 3,
+      maxRuns: 1,
+    });
+    const scripted = [
+      assistant(toolCall("verbose", "Shell", {
+        input: "verbose",
+        target: "diagnostic-server",
+      })),
+      assistant(toolCall("yield", "Shell", { input: "yield" })),
+    ];
+    const seen: Context[] = [];
+
+    const artifact = await runGsvSurfaceScenario(scenario, async (context) => {
+      seen.push(context);
+      const next = scripted.shift();
+      if (!next) throw new Error("Unexpected model turn");
+      return next;
+    });
+
+    expect(JSON.stringify(seen[1]?.messages)).toContain(fullOutput);
+    const result = artifact.log.find((entry) => (
+      entry.type === "tool.result" && entry.name === "Shell"
+    ));
+    expect(result?.type === "tool.result" ? result.content : "")
+      .toMatch(/\[GSV artifact log truncated from \d+ bytes\]/u);
+    expect(Buffer.byteLength(JSON.stringify(artifact), "utf8"))
+      .toBeLessThan(64 * 1024);
+  });
+
+  it("preserves one Process epoch across a logical-time wake and eviction", async () => {
+    const scenario = parseGsvSurfaceScenario({
+      schemaVersion: 3,
+      id: "multi-run-wake",
+      seed: "multi-run-wake-001",
+      description: "Resume one Process after an external state change.",
+      systemPrompt: "Observe durable GSV events across runs.",
+      prompt: "Wait for the monitor update, then report ready.",
+      entryProcessId: "ship",
+      world: {
+        runtime: {
+          now: "2026-09-01T12:00:00.000Z",
+          timezone: "Europe/Amsterdam",
+        },
+        processes: [{
+          id: "ship",
+          role: "ship",
+          uid: 1000,
+          gids: [1000],
+          capabilities: ["shell.exec", "fs.read"],
+        }],
+      },
+      components: {
+        targets: [{
+          id: "monitor",
+          kind: "server",
+          ownerUid: 1000,
+          accessGids: [1000],
+          online: true,
+          implements: ["fs.read"],
+          files: { "/status": "pending\n" },
+        }],
+        transitions: [],
+        events: [{
+          id: "monitor-ready",
+          processId: "ship",
+          delayMs: 300_000,
+          content: "The monitor completed its next observation window.",
+          effects: [{
+            type: "target.file.write",
+            targetId: "monitor",
+            path: "/status",
+            content: "ready\n",
+          }],
+          evictProcess: true,
+        }],
+      },
+      evaluation: {
+        milestones: [{
+          id: "complete",
+          description: "The resumed Process reports completion.",
+          dimension: "outcome",
+          weight: 1,
+          requires: [],
+          requiredForStrict: true,
+          predicates: [{
+            type: "match",
+            path: "/status",
+            mode: "equals",
+            value: "yielded",
+          }],
+        }],
+        constraints: [],
+      },
+      maxTurns: 2,
+      maxRuns: 2,
+    });
+    const scripted = [
+      assistant(toolCall("wait", "Shell", { input: "yield" })),
+      assistant(toolCall("finish", "Shell", {
+        input: "message send --message 'ready' && yield",
+      })),
+    ];
+    const seen: Context[] = [];
+
+    const artifact = await runGsvSurfaceScenario(scenario, async (context) => {
+      seen.push(context);
+      const next = scripted.shift();
+      if (!next) throw new Error("Unexpected model turn");
+      return next;
+    });
+
+    expect(artifact.status).toBe("yielded");
+    expect(artifact.runs.filter(({ processId }) => processId === "ship"))
+      .toEqual([
+        { run: 1, processId: "ship", status: "yielded" },
+        { run: 2, processId: "ship", status: "yielded" },
+      ]);
+    expect(artifact.world.runtime.now).toBe("2026-09-01T12:05:00.000Z");
+    expect(artifact.world.targets.monitor?.files["/status"]).toBe("ready\n");
+    expect(artifact.world.externalEvents).toEqual([{
+      id: "monitor-ready",
+      processId: "ship",
+      state: "applied",
+      appliedAtMs: Date.parse("2026-09-01T12:05:00.000Z"),
+    }]);
+    expect(artifact.log.map(({ type }) => type)).toContain("process.evicted");
+    const shipObservations = artifact.observations.filter(
+      ({ processId }) => processId === "ship",
+    );
+    expect(shipObservations.map(({ run }) => run)).toEqual([1, 2]);
+    expect(new Set(shipObservations.map(({ systemPromptSha256 }) => (
+      systemPromptSha256
+    ))).size).toBe(1);
+    expect(JSON.stringify(seen[1]?.messages)).toContain(
+      "The monitor completed its next observation window.",
+    );
+    expect(JSON.stringify(seen[1]?.messages)).toContain("Run yielded");
+  });
+
+  it("routes one Process across laptop and server environments", async () => {
+    const scenario = await fixture("deploy-release-across-targets.json");
+    const scripted = [
+      assistant(toolCall("read-release", "Read", {
+        path: "/workspace/release.txt",
+        target: "build-laptop",
+      })),
+      assistant(toolCall("deploy-release", "Shell", {
+        input: "deploy release-2026.09.01",
+        target: "deploy-server",
+      })),
+      assistant(toolCall("finish", "Shell", {
+        input: "message send --message 'release deployed' && yield",
+      })),
+    ];
+
+    const artifact = await runGsvSurfaceScenario(scenario, async () => {
+      const next = scripted.shift();
+      if (!next) throw new Error("Unexpected model turn");
+      return next;
+    });
+
+    expect(artifact.status).toBe("yielded");
+    expect(artifact.world.targets["deploy-server"]?.state).toMatchObject({
+      deployedRelease: "release-2026.09.01",
+    });
+    expect(artifact.world.processes.ship?.visibleTargets).toEqual([
+      "build-laptop",
+      "deploy-server",
+    ]);
+    expect(artifact.world.processes["deploy-worker"]?.visibleTargets).toEqual([
+      "deploy-server",
+    ]);
+    expect(artifact.observations[0]?.toolNames).toEqual(["Read", "Shell"]);
+  });
+
+  it("lets a bounded worker return ordinary assistant output", async () => {
+    const scenario = await fixture("deploy-release-across-targets.json");
+    const kernel = SyntheticKernel.fromSpec(scenario.world, scenario.components);
+
+    const artifact = await runSyntheticProcess(
+      kernel,
+      "deploy-worker",
+      "worker-return",
+      scenario.systemPrompt,
+      "Report the current deployment state.",
+      2,
+      async () => textAssistant("No deployment is active."),
+    );
+
+    expect(artifact.status).toBe("returned");
+    expect(artifact.resultText).toBe("No deployment is active.");
+    expect(artifact.committedMessages).toEqual([]);
+    expect(artifact.log.at(-1)).toEqual({
+      type: "run.returned",
+      processId: "deploy-worker",
+      text: "No deployment is active.",
+    });
+  });
+
+  it("supervises delegated r12y work and replies through the exact Slack route", async () => {
+    const scenario = await fixture("delegate-incident-from-slack.json");
+    const shipResponses = [
+      assistant(toolCall("create-responsibility", "Shell", {
+        input: "r12y create --title 'Investigate checkout deployment' --dedupe 'slack:incident-42'",
+        target: "gsv",
+      })),
+      assistant(toolCall("delegate", "Shell", {
+        input: "proc delegate --as ops --responsibility r12y:00000000-0000-4000-8000-000000000001 'Read /var/log/deploy.log on target incident-server and return exactly the value after ROOT_CAUSE=.'",
+        target: "gsv",
+      })),
+      assistant(toolCall("resolve", "Shell", {
+        input: "r12y resolve r12y:00000000-0000-4000-8000-000000000001 --json '{\"cause\":\"database migration checksum mismatch\"}'",
+        target: "gsv",
+      })),
+      assistant(toolCall("reply", "Shell", {
+        input: "message send --message 'checkout blocked: database migration checksum mismatch' && yield",
+      })),
+    ];
+    const workerResponses = [
+      assistant(toolCall("read-log", "Read", {
+        path: "/var/log/deploy.log",
+        target: "incident-server",
+      })),
+      textAssistant("database migration checksum mismatch"),
+    ];
+    const seen: Context[] = [];
+
+    const artifact = await runGsvSurfaceScenario(scenario, async (context) => {
+      seen.push(context);
+      const delegated = String(context.messages[0]?.content)
+        .includes("Delegated task from ship (ship).");
+      const next = delegated ? workerResponses.shift() : shipResponses.shift();
+      if (!next) throw new Error("Unexpected model turn");
+      return next;
+    });
+
+    expect(artifact.status).toBe("yielded");
+    expect(artifact.committedMessages).toEqual([
+      "checkout blocked: database migration checksum mismatch",
+    ]);
+    expect(artifact.world.processes.ship).toMatchObject({
+      visibleTargets: [],
+      state: "idle",
+    });
+    expect(artifact.world.processes["proc:incident-worker"]).toMatchObject({
+      parentProcessId: "ship",
+      visibleTargets: ["incident-server"],
+      state: "returned",
+    });
+    expect(artifact.world.delegations).toEqual([
+      expect.objectContaining({
+        sourceProcessId: "ship",
+        targetProcessId: "proc:incident-worker",
+        state: "completed",
+        resultText: "database migration checksum mismatch",
+        normalizedResultText: "database migration checksum mismatch",
+      }),
+    ]);
+    expect(artifact.world.responsibilities).toMatchObject({
+      revision: 4,
+      records: {
+        "r12y:00000000-0000-4000-8000-000000000001": {
+          state: "resolved",
+          assignee: { kind: "ship" },
+          resolution: { cause: "database migration checksum mismatch" },
+        },
+      },
+    });
+    expect(artifact.world.adapters.slack?.deliveries).toEqual([{
+      deliveryId: "slack:event:incident-42:reply:1",
+      processId: "ship",
+      surface: { kind: "dm", id: "D-incident-42" },
+      text: "checkout blocked: database migration checksum mismatch",
+      replyToId: "slack-message-42",
+      state: "sent",
+    }]);
+    expect(artifact.observations
+      .filter(({ processId }) => processId === "proc:incident-worker")[0]
+      ?.toolNames).toEqual(["Read"]);
+    expect(seen.some(({ messages }) => String(messages[0]?.content).includes(
+      "Delegated task from ship (ship).",
+    ))).toBe(true);
+    expect(seen.some(({ messages }) => JSON.stringify(messages).includes(
+      "Delegated task from process `proc:incident-worker` finished.",
+    ))).toBe(true);
+    for (const processId of ["ship", "proc:incident-worker"]) {
+      expect(new Set(artifact.observations
+        .filter((observation) => observation.processId === processId)
+        .map(({ systemPromptSha256 }) => systemPromptSha256)).size).toBe(1);
+    }
+  });
+
+  it("wakes an idle Ship when an asynchronous delegated result arrives", async () => {
+    const baseScenario = await fixture("delegate-incident-from-slack.json");
+    const scenario = {
+      ...baseScenario,
+      components: {
+        ...baseScenario.components,
+        events: [{
+          id: "scheduled-review",
+          processId: "ship",
+          delayMs: 300_000,
+          content: "The scheduled incident review is now available.",
+        }],
+      },
+      maxRuns: 3,
+    };
+    const shipResponses = [
+      assistant(toolCall("create-responsibility", "Shell", {
+        input: "r12y create --title 'Investigate checkout deployment' --dedupe 'slack:incident-42'",
+        target: "gsv",
+      })),
+      assistant(toolCall("delegate", "Shell", {
+        input: "proc delegate --as ops --responsibility r12y:00000000-0000-4000-8000-000000000001 'Inspect the checkout deployment.'",
+        target: "gsv",
+      })),
+      assistant(toolCall("wait-for-worker", "Shell", { input: "yield" })),
+      assistant(toolCall("defer-for-review", "Shell", {
+        input: "r12y wait r12y:00000000-0000-4000-8000-000000000001 --until 2026-09-01T12:05:00.000Z --blocker 'awaiting scheduled incident review'",
+        target: "gsv",
+      })),
+      assistant(toolCall("wait-for-review", "Shell", { input: "yield" })),
+      assistant(toolCall("resolve", "Shell", {
+        input: "r12y resolve r12y:00000000-0000-4000-8000-000000000001 --json '{\"cause\":\"database migration checksum mismatch\"}'",
+        target: "gsv",
+      })),
+      assistant(toolCall("reply", "Shell", {
+        input: "message send --message 'checkout blocked: database migration checksum mismatch' && yield",
+      })),
+    ];
+    let releaseWorker!: () => void;
+    const workerMayFinish = new Promise<void>((resolve) => {
+      releaseWorker = resolve;
+    });
+    let checkpointInFlight = false;
+    let checkpointsOverlapped = false;
+    let sawHandleBeforeResult = false;
+    let sawWorkerBeforeScheduledReview = false;
+    let sawScheduledReviewAfterWorker = false;
+
+    const artifact = await runGsvSurfaceScenario(
+      scenario,
+      async (context) => {
+        const delegated = String(context.messages[0]?.content)
+          .includes("Delegated task from ship (ship).");
+        if (delegated) {
+          await workerMayFinish;
+          return textAssistant("database migration checksum mismatch");
+        }
+        const next = shipResponses.shift();
+        if (!next) throw new Error("Unexpected Ship turn");
+        if (next.content.some((block) => (
+          block.type === "toolCall" && block.id === "wait-for-worker"
+        ))) {
+          const transcript = JSON.stringify(context.messages);
+          sawHandleBeforeResult = transcript.includes("status=in_progress")
+            && !transcript.includes("Delegated task from process");
+          setImmediate(releaseWorker);
+        }
+        if (next.content.some((block) => (
+          block.type === "toolCall" && block.id === "defer-for-review"
+        ))) {
+          const transcript = JSON.stringify(context.messages);
+          sawWorkerBeforeScheduledReview = transcript.includes(
+            "Delegated task from process",
+          ) && !transcript.includes("scheduled incident review");
+        }
+        if (next.content.some((block) => (
+          block.type === "toolCall" && block.id === "resolve"
+        ))) {
+          const transcript = JSON.stringify(context.messages);
+          sawScheduledReviewAfterWorker = transcript.includes(
+            "Delegated task from process",
+          ) && transcript.includes("scheduled incident review");
+        }
+        return next;
+      },
+      async () => {
+        if (checkpointInFlight) checkpointsOverlapped = true;
+        checkpointInFlight = true;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        checkpointInFlight = false;
+      },
+    );
+
+    const handleIndex = artifact.log.findIndex((entry) => (
+      entry.type === "tool.result" && entry.content.includes("status=in_progress")
+    ));
+    const completionIndex = artifact.log.findIndex((entry) => (
+      entry.type === "ipc.completed"
+    ));
+    expect(sawHandleBeforeResult).toBe(true);
+    expect(sawWorkerBeforeScheduledReview).toBe(true);
+    expect(sawScheduledReviewAfterWorker).toBe(true);
+    expect(checkpointsOverlapped).toBe(false);
+    expect(handleIndex).toBeGreaterThanOrEqual(0);
+    expect(completionIndex).toBeGreaterThan(handleIndex);
+    expect(artifact.runs.filter(({ processId }) => processId === "ship"))
+      .toEqual([
+        { run: 1, processId: "ship", status: "yielded" },
+        { run: 2, processId: "ship", status: "yielded" },
+        { run: 3, processId: "ship", status: "yielded" },
+      ]);
+    expect(artifact.world.externalEvents).toEqual([{
+      id: "scheduled-review",
+      processId: "ship",
+      state: "applied",
+      appliedAtMs: Date.parse("2026-09-01T12:05:00.000Z"),
+    }]);
+    expect(artifact.world.delegations[0]).toMatchObject({
+      state: "completed",
+      resultText: "database migration checksum mismatch",
+    });
+    expect(artifact.world.responsibilities.records[
+      "r12y:00000000-0000-4000-8000-000000000001"
+    ]).toMatchObject({
+      state: "resolved",
+      assignee: { kind: "ship" },
+    });
+  });
+
+  it("recovers checkout across delegated mitigation and three durable runs", async () => {
+    const scenario = await fixture("recover-checkout-incident.json");
+    const seen: Context[] = [];
+    const shipResponses = [
+      assistant(toolCall("ack", "Shell", {
+        input: "message send --message 'Checkout incident acknowledged; investigating with operations.'",
+      })),
+      assistant(toolCall("create", "Shell", {
+        input: "r12y create --title 'Restore stable checkout service' --dedupe 'slack:checkout-incident'",
+        target: "gsv",
+      })),
+      assistant(toolCall("agents", "Shell", {
+        input: "proc agents --json",
+        target: "gsv",
+      })),
+      assistant(toolCall("delegate", "Shell", {
+        input: "proc delegate --as ops --responsibility r12y:00000000-0000-4000-8000-000000000001 'Discover the production checkout target, diagnose the current incident, and safely restore the last known healthy release. Return the mitigation and evidence; do not claim independent health verification.'",
+        target: "gsv",
+      })),
+      assistant(toolCall("initial-health", "Read", {
+        path: "/checkout/health.json",
+        target: "checkout-monitor",
+      })),
+      assistant(toolCall("wait-1", "Shell", {
+        input: "r12y wait r12y:00000000-0000-4000-8000-000000000001 --until 2026-09-01T12:05:00.000Z --blocker 'awaiting independent stability evidence'",
+        target: "gsv",
+      })),
+      assistant(toolCall("yield-1", "Shell", { input: "yield" })),
+      assistant(toolCall("health-1", "Read", {
+        path: "/checkout/health.json",
+        target: "checkout-monitor",
+      })),
+      assistant(toolCall("wait-2", "Shell", {
+        input: "r12y wait r12y:00000000-0000-4000-8000-000000000001 --until 2026-09-01T12:10:00.000Z --blocker 'awaiting second consecutive healthy window'",
+        target: "gsv",
+      })),
+      assistant(toolCall("yield-2", "Shell", { input: "yield" })),
+      assistant(toolCall("health-2", "Read", {
+        path: "/checkout/health.json",
+        target: "checkout-monitor",
+      })),
+      assistant(toolCall("resolve", "Shell", {
+        input: "r12y resolve r12y:00000000-0000-4000-8000-000000000001 --json '{\"release\":\"checkout-2026.08.31\",\"healthyWindows\":2}'",
+        target: "gsv",
+      })),
+      assistant(toolCall("finish", "Shell", {
+        input: "message send --message 'Checkout is stable on checkout-2026.08.31 after rollback; two healthy monitor windows confirmed.' && yield",
+      })),
+    ];
+    const workerResponses = [
+      assistant(toolCall("targets", "Shell", {
+        input: "targets list --json",
+        target: "gsv",
+      })),
+      assistant(toolCall("status", "Shell", {
+        input: "releasectl status",
+        target: "checkout-production",
+      })),
+      assistant(toolCall("history", "Shell", {
+        input: "releasectl history",
+        target: "checkout-production",
+      })),
+      assistant(toolCall("errors", "Read", {
+        path: "/var/log/checkout/error.log",
+        target: "checkout-production",
+      })),
+      assistant(toolCall("rollback", "Shell", {
+        input: "releasectl rollback checkout-2026.08.31",
+        target: "checkout-production",
+      })),
+      textAssistant("Rolled back to checkout-2026.08.31; verification pending."),
+    ];
+
+    const artifact = await runGsvSurfaceScenario(scenario, async (context) => {
+      seen.push(context);
+      const delegated = String(context.messages[0]?.content)
+        .includes("Delegated task from ship (ship).");
+      const next = delegated ? workerResponses.shift() : shipResponses.shift();
+      if (!next) throw new Error("Unexpected model turn");
+      return next;
+    });
+
+    expect(artifact.status).toBe("yielded");
+    expect(artifact.runs.filter(({ processId }) => processId === "ship"))
+      .toEqual([
+        { run: 1, processId: "ship", status: "yielded" },
+        { run: 2, processId: "ship", status: "yielded" },
+        { run: 3, processId: "ship", status: "yielded" },
+      ]);
+    expect(artifact.world.targets["checkout-production"]?.state).toMatchObject({
+      activeRelease: "checkout-2026.08.31",
+      recoveryStarted: true,
+      lastAction: "rollback",
+    });
+    expect(artifact.world.targets["checkout-monitor"]?.state).toMatchObject({
+      status: "stable",
+      consecutiveHealthyWindows: 2,
+    });
+    expect(artifact.world.responsibilities.records[
+      "r12y:00000000-0000-4000-8000-000000000001"
+    ]).toMatchObject({ state: "resolved", assignee: { kind: "ship" } });
+    expect(artifact.world.externalEvents.map(({ state }) => state))
+      .toEqual(["applied", "applied"]);
+    expect(artifact.world.adapters.slack?.deliveries).toHaveLength(2);
+    expect(artifact.log.some((entry) => (
+      entry.type === "tool.call"
+      && entry.processId === "ship"
+      && entry.arguments.target === "checkout-production"
+    ))).toBe(false);
+    const health2 = artifact.log.findIndex((entry) => (
+      entry.type === "external.event" && entry.id === "checkout-health-window-2"
+    ));
+    const resolved = artifact.log.findIndex((entry) => (
+      entry.type === "responsibility.transition"
+      && entry.transition.kind === "resolved"
+    ));
+    expect(health2).toBeGreaterThan(-1);
+    expect(resolved).toBeGreaterThan(health2);
+    const shipObservations = artifact.observations.filter(
+      ({ processId }) => processId === "ship",
+    );
+    expect(new Set(shipObservations.map(({ systemPromptSha256 }) => (
+      systemPromptSha256
+    ))).size).toBe(1);
+    expect(seen.some(({ messages }) => JSON.stringify(messages).includes(
+      "Checkout monitor observation window 1 of 2",
+    ))).toBe(true);
+    const workerObservation = artifact.observations.find(
+      ({ processId }) => processId === "proc:checkout-ops",
+    );
+    expect(workerObservation?.projection.targets[0]?.description)
+      .toContain("Operational interfaces");
+    expect(seen.find((context) => String(context.messages[0]?.content)
+      .includes("Delegated task from ship (ship)."))?.systemPrompt)
+      .toContain("releasectl rollback RELEASE");
+  });
+
+  it("keeps long-run observations compact in the normalized artifact", async () => {
+    const scenario = parseGsvSurfaceScenario({
+      schemaVersion: 3,
+      id: "compact-observations",
+      seed: "compact-observations-001",
+      description: "Exercise a growing Process context without duplicating it.",
+      systemPrompt: "Inspect the offered target repeatedly, then yield.",
+      prompt: "Begin the inspection.",
+      entryProcessId: "ship",
+      world: {
+        runtime: {
+          now: "2026-09-01T12:00:00.000Z",
+          timezone: "UTC",
+        },
+        processes: [{
+          id: "ship",
+          role: "ship",
+          uid: 1000,
+          gids: [1000],
+          capabilities: ["fs.read", "shell.exec"],
+        }],
+      },
+      components: {
+        targets: [{
+          id: "large-file",
+          kind: "server",
+          ownerUid: 1000,
+          accessGids: [1000],
+          online: true,
+          implements: ["fs.read"],
+          files: { "/sample": "x".repeat(4096) },
+        }],
+        transitions: [],
+        events: [],
+      },
+      evaluation: {
+        milestones: [{
+          id: "complete",
+          description: "The Process yields.",
+          dimension: "outcome",
+          weight: 1,
+          requires: [],
+          requiredForStrict: true,
+          predicates: [{
+            type: "match",
+            path: "/status",
+            mode: "equals",
+            value: "yielded",
+          }],
+        }],
+        constraints: [],
+      },
+      maxTurns: 41,
+    });
+    let turn = 0;
+
+    const artifact = await runGsvSurfaceScenario(scenario, async () => {
+      turn += 1;
+      return turn <= 40
+        ? assistant(toolCall(`read-${turn}`, "Read", {
+            path: "/sample",
+            target: "large-file",
+          }))
+        : assistant(toolCall("finish", "Shell", { input: "yield" }));
+    });
+
+    expect(artifact.status).toBe("yielded");
+    expect(artifact.observations).toHaveLength(41);
+    expect(artifact.observations.at(-1)?.messageCount).toBeGreaterThan(80);
+    expect(JSON.stringify(artifact).length).toBeLessThan(512 * 1024);
+  });
+});
+
+async function fixture(name: string) {
+  return parseGsvSurfaceScenario(
+    JSON.parse(await readFile(resolve(FIXTURES, name), "utf8")),
+  );
+}
+
+function toolCall(
+  id: string,
+  name: string,
+  arguments_: JsonObject,
+): ToolCall {
+  return {
+    type: "toolCall",
+    id,
+    name,
+    arguments: arguments_,
+  };
+}
+
+function assistant(call: ToolCall): AssistantMessage {
+  return assistantMessage([call], "toolUse");
+}
+
+function textAssistant(text: string): AssistantMessage {
+  return assistantMessage([{ type: "text", text }], "stop");
+}
+
+function assistantMessage(
+  content: AssistantMessage["content"],
+  stopReason: AssistantMessage["stopReason"],
+): AssistantMessage {
+  return {
+    role: "assistant",
+    content,
+    api: "openai-completions",
+    provider: "custom",
+    model: "gsv-bench-model",
+    usage: {
+      input: 10,
+      output: 5,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 15,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason,
+    timestamp: 0,
+  };
+}
