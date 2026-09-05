@@ -8,13 +8,14 @@
  * - Per-identity Bash instances with proper uid/gid/env and process info
  */
 
-import { Bash } from "just-bash";
 import type {
+  Bash,
   BashExecResult,
   Command,
   NetworkConfig,
 } from "just-bash";
 import { resolveUserPath } from "../../fs";
+import { loadJustBash } from "../../shared/just-bash";
 import type { KernelContext } from "../../kernel/context";
 import { requirePrincipal } from "../../kernel/context";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
@@ -81,7 +82,9 @@ export async function handleShellExec(
     ? AbortSignal.any([controller.signal, ctx.requestSignal])
     : controller.signal;
   const commandFence = new NativeCommandFence();
+  const { Bash: BashRuntime } = await loadJustBash();
   const bash = createBash(
+    BashRuntime,
     { ...ctx, requestSignal: signal },
     identity,
     cwd,
@@ -159,6 +162,7 @@ export async function handleShellExec(
 }
 
 function createBash(
+  BashRuntime: typeof Bash,
   ctx: KernelContext,
   identity: ProcessIdentity,
   cwd: string,
@@ -172,7 +176,7 @@ function createBash(
   const serverVersion = ctx.config.get("config/server/version") ?? ctx.serverVersion;
   const networkEnabled = ctx.config.get("config/shell/network_enabled") !== "false";
 
-  return new Bash({
+  return new BashRuntime({
     fs,
     cwd,
     env: {

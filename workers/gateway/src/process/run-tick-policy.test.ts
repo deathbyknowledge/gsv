@@ -34,7 +34,7 @@ function config(overrides: Partial<AiConfigResult> = {}): AiConfigResult {
 }
 
 describe("run tick policy", () => {
-  it("classifies assistant turns without overlapping continuation categories", () => {
+  it("classifies assistant turns without overlapping continuation categories", async () => {
     const runControl = {
       type: "toolCall" as const,
       id: "yield-call",
@@ -54,14 +54,14 @@ describe("run tick policy", () => {
       arguments: {},
     };
 
-    expect(classifyAssistantTurn(assistant([runControl]), ["Read"]).kind).toBe("run-control");
-    expect(classifyAssistantTurn(assistant([runControl, read]), ["Read"]).kind).toBe(
+    expect((await classifyAssistantTurn(assistant([runControl]), ["Read"])).kind).toBe("run-control");
+    expect((await classifyAssistantTurn(assistant([runControl, read]), ["Read"])).kind).toBe(
       "invalid-run-control",
     );
-    expect(classifyAssistantTurn(assistant([read, forged]), ["Read"]).kind).toBe("tools");
-    expect(classifyAssistantTurn(assistant([forged]), ["Read"]).kind).toBe("unoffered-tools");
+    expect((await classifyAssistantTurn(assistant([read, forged]), ["Read"])).kind).toBe("tools");
+    expect((await classifyAssistantTurn(assistant([forged]), ["Read"])).kind).toBe("unoffered-tools");
     expect(
-      classifyAssistantTurn(assistant([{ type: "text", text: "done" }]), ["Read"]),
+      await classifyAssistantTurn(assistant([{ type: "text", text: "done" }]), ["Read"]),
     ).toMatchObject({ kind: "terminal", text: "done" });
   });
 

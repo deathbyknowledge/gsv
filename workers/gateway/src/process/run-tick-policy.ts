@@ -34,10 +34,10 @@ const terminalShellToolArgsSchema = z
   })
   .strict();
 
-export function classifyAssistantTurn(
+export async function classifyAssistantTurn(
   response: AssistantMessage,
   offeredToolNames: readonly string[],
-): AssistantTurnClassification {
+): Promise<AssistantTurnClassification> {
   const text = response.content
     .filter((block): block is TextContent => block.type === "text")
     .map((block) => block.text)
@@ -48,10 +48,9 @@ export function classifyAssistantTurn(
   const returnedToolCalls = response.content.filter(
     (block): block is ToolCall => block.type === "toolCall",
   );
-  const runControlCalls = returnedToolCalls.flatMap((toolCall) => {
-    const call = parseRunControlShellCall(toolCall);
-    return call ? [call] : [];
-  });
+  const runControlCalls = (
+    await Promise.all(returnedToolCalls.map((toolCall) => parseRunControlShellCall(toolCall)))
+  ).flatMap((call) => (call ? [call] : []));
   const runControlIds = new Set(runControlCalls.map(({ toolCall }) => toolCall.id));
   const offered = new Set(offeredToolNames);
   const toolCalls = returnedToolCalls.filter(
@@ -98,11 +97,11 @@ export function nextAiConfigFallback(
   return null;
 }
 
-function parseRunControlShellCall(toolCall: ToolCall): RunControlShellCall | null {
+async function parseRunControlShellCall(toolCall: ToolCall): Promise<RunControlShellCall | null> {
   if (toolCall.name !== "Shell") return null;
   const args = terminalShellToolArgsSchema.safeParse(toolCall.arguments);
   if (!args.success) return null;
-  const parsed = parseRunControlCommand(args.data.input);
+  const parsed = await parseRunControlCommand(args.data.input);
   return parsed ? { toolCall, parsed } : null;
 }
 

@@ -1,6 +1,17 @@
-import { Bash, type SimpleCommandNode, type StatementNode, type WordNode } from "just-bash";
+import type { Bash, SimpleCommandNode, StatementNode, WordNode } from "just-bash";
+import { loadJustBash } from "../shared/just-bash";
 
-const runControlBash = new Bash({ commands: [] });
+let runControlBash: Promise<Bash> | undefined;
+
+function runControlParser(): Promise<Bash> {
+  runControlBash ??= loadJustBash()
+    .then(({ Bash: BashRuntime }) => new BashRuntime({ commands: [] }))
+    .catch((error) => {
+      runControlBash = undefined;
+      throw error;
+    });
+  return runControlBash;
+}
 
 type RunControlCommand =
   | { action: "message"; text: string; finish: boolean }
@@ -10,10 +21,13 @@ export type RunControlCommandParseResult =
   | { ok: true; command: RunControlCommand }
   | { ok: false; action: RunControlCommand["action"]; error: string };
 
-export function parseRunControlCommand(input: string): RunControlCommandParseResult | null {
+export async function parseRunControlCommand(
+  input: string,
+): Promise<RunControlCommandParseResult | null> {
+  const bash = await runControlParser();
   let statements: StatementNode[];
   try {
-    statements = runControlBash.transform(input).ast.statements;
+    statements = bash.transform(input).ast.statements;
   } catch (error) {
     const delimiter = error instanceof Error ? unterminatedMessageDelimiter(input, error) : null;
     if (delimiter) {
@@ -40,7 +54,7 @@ export function parseRunControlCommand(input: string): RunControlCommandParseRes
         };
   }
   if (name !== "message" || literalWord(control.command.args[0]) !== "send") return null;
-  return parseMessageCommand(input, control.command, control.finish);
+  return parseMessageCommand(bash, input, control.command, control.finish);
 }
 
 function controlCommand(
@@ -77,6 +91,7 @@ function simpleCommand(statement: StatementNode, index: number): SimpleCommandNo
 }
 
 function parseMessageCommand(
+  bash: Bash,
   input: string,
   command: SimpleCommandNode,
   finish: boolean,
@@ -87,12 +102,12 @@ function parseMessageCommand(
     return parseMessageHeredoc(input, command, finish);
   }
   if (!args.every((arg): arg is string => arg !== null)) {
-    return parseOpaqueMessageSend(messageSource(input, finish), finish);
+    return parseOpaqueMessageSend(messageSource(bash, input, finish), finish);
   }
   const parsed = parseMessageSend(args.slice(1), finish);
   return parsed.ok
     ? parsed
-    : (parseOpaqueMessageSend(messageSource(input, finish), finish) ?? parsed);
+    : (parseOpaqueMessageSend(messageSource(bash, input, finish), finish) ?? parsed);
 }
 
 function parseMessageHeredoc(
@@ -128,9 +143,9 @@ function parseMessageHeredoc(
   return { ok: true, command: { action: "message", text, finish } };
 }
 
-function messageSource(input: string, finish: boolean): string {
+function messageSource(bash: Bash, input: string, finish: boolean): string {
   if (!finish) return input;
-  const source = runControlBash.transform(input).ast.statements[0]?.sourceText ?? input;
+  const source = bash.transform(input).ast.statements[0]?.sourceText ?? input;
   return source.replace(/[ \t]+&&[ \t]+yield[ \t]*$/, "");
 }
 

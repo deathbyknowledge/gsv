@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { parseRunControlCommand } from "./run-control-command";
 
 describe("parseRunControlCommand", () => {
-  it("parses sends that continue the run", () => {
-    expect(parseRunControlCommand(`message send --message 'Here is an update.'`)).toEqual({
+  it("parses sends that continue the run", async () => {
+    expect(await parseRunControlCommand(`message send --message 'Here is an update.'`)).toEqual({
       ok: true,
       command: { action: "message", text: "Here is an update.", finish: false },
     });
-    expect(parseRunControlCommand(`message send --message 'hey, i'm here. what's up?'`)).toEqual({
+    expect(await parseRunControlCommand(`message send --message 'hey, i'm here. what's up?'`)).toEqual({
       ok: true,
       command: {
         action: "message",
@@ -17,9 +17,9 @@ describe("parseRunControlCommand", () => {
     });
   });
 
-  it("parses opaque message blocks with optional yield composition", () => {
+  it("parses opaque message blocks with optional yield composition", async () => {
     expect(
-      parseRunControlCommand(
+      await parseRunControlCommand(
         `message send <<'GSV_MESSAGE'
 Here's $HOME, \`literal code\`, and "both" quotes.
 
@@ -35,7 +35,7 @@ GSV_MESSAGE`,
       },
     });
     expect(
-      parseRunControlCommand(
+      await parseRunControlCommand(
         `message send <<'GSV_MESSAGE' && yield
 Finished.
 GSV_MESSAGE`,
@@ -45,7 +45,7 @@ GSV_MESSAGE`,
       command: { action: "message", text: "Finished.", finish: true },
     });
     expect(
-      parseRunControlCommand(
+      await parseRunControlCommand(
         `message send <<'GSV_MESSAGE'
 Finished.
 
@@ -59,25 +59,25 @@ GSV_MESSAGE
     });
   });
 
-  it("parses standalone and one-line composed yield", () => {
-    expect(parseRunControlCommand("yield")).toEqual({
+  it("parses standalone and one-line composed yield", async () => {
+    expect(await parseRunControlCommand("yield")).toEqual({
       ok: true,
       command: { action: "yield" },
     });
-    expect(parseRunControlCommand("yield now")).toEqual({
+    expect(await parseRunControlCommand("yield now")).toEqual({
       ok: false,
       action: "yield",
       error: "yield does not accept arguments",
     });
-    expect(parseRunControlCommand(`message send --message 'Finished.' && yield`)).toEqual({
+    expect(await parseRunControlCommand(`message send --message 'Finished.' && yield`)).toEqual({
       ok: true,
       command: { action: "message", text: "Finished.", finish: true },
     });
   });
 
-  it("rejects an unterminated message block", () => {
+  it("rejects an unterminated message block", async () => {
     expect(
-      parseRunControlCommand(
+      await parseRunControlCommand(
         `message send <<'GSV_MESSAGE'
 This block never closes.`,
       ),
@@ -88,25 +88,25 @@ This block never closes.`,
     });
   });
 
-  it("accepts an attachment-only current-conversation send", () => {
-    expect(parseRunControlCommand("message send")).toEqual({
+  it("accepts an attachment-only current-conversation send", async () => {
+    expect(await parseRunControlCommand("message send")).toEqual({
       ok: true,
       command: { action: "message", text: "", finish: false },
     });
-    expect(parseRunControlCommand("message send && yield")).toEqual({
+    expect(await parseRunControlCommand("message send && yield")).toEqual({
       ok: true,
       command: { action: "message", text: "", finish: true },
     });
   });
 
-  it("leaves explicit additional sends to the ordinary shell command", () => {
+  it("leaves explicit additional sends to the ordinary shell command", async () => {
     expect(
-      parseRunControlCommand("message send --to telegram --message 'also there' --also"),
+      await parseRunControlCommand("message send --to telegram --message 'also there' --also"),
     ).toBeNull();
   });
 
-  it("rejects unsupported current-conversation options", () => {
-    expect(parseRunControlCommand("message send --to telegram --message hi")).toEqual({
+  it("rejects unsupported current-conversation options", async () => {
+    expect(await parseRunControlCommand("message send --to telegram --message hi")).toEqual({
       ok: false,
       action: "message",
       error: "message send does not accept --to for the current conversation; "
@@ -115,12 +115,12 @@ This block never closes.`,
     });
   });
 
-  it("treats the message option tail as opaque text", () => {
-    expect(parseRunControlCommand("message send --message safe; echo unsafe")).toEqual({
+  it("treats the message option tail as opaque text", async () => {
+    expect(await parseRunControlCommand("message send --message safe; echo unsafe")).toEqual({
       ok: true,
       command: { action: "message", text: "safe; echo unsafe", finish: false },
     });
-    expect(parseRunControlCommand('message send --message "$(cat /root/secret)"')).toEqual({
+    expect(await parseRunControlCommand('message send --message "$(cat /root/secret)"')).toEqual({
       ok: true,
       command: {
         action: "message",

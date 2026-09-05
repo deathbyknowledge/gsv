@@ -1256,7 +1256,7 @@ export class ProcessRun {
     generated: GeneratedRunTick,
   ): Promise<PersistedRunTick | null> {
     const { prepared, response, fallbackMetadata, inferenceSpanId } = generated;
-    const turn = classifyAssistantTurn(
+    const turn = await classifyAssistantTurn(
       response,
       prepared.workTools.map((tool) => tool.name),
     );
