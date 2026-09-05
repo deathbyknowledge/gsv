@@ -19,7 +19,10 @@ use tracing::{error, info, info_span, warn, Instrument};
 use crate::control::DaemonRuntime;
 use crate::logger;
 use crate::tools::{all_tools_with_workspace_for_device, subscribe_exec_events, Tool, ToolOutput};
-use crate::update::{AttemptState, AutoUpdater, UpdateError, UpdateTarget};
+use crate::update::{
+    installing_window_elapsed, transient_unit_active, AttemptState, AutoUpdater, InstallerHandle,
+    UpdateError, UpdateTarget, INSTALLING_WINDOW,
+};
 
 mod transfer;
 
@@ -633,9 +636,10 @@ pub async fn run(
         let mut retry_delay = INITIAL_RETRY_DELAY;
         let mut reconnect_attempt = 0_u32;
         let updater = AutoUpdater::from_config(&host_config::CliConfig::load());
-        // Set once an installer launch begins, on either path. New work is
-        // refused while it is set, so the service stop finds nothing to kill.
-        let updating = Arc::new(AtomicBool::new(false));
+        // One lifecycle per driver run: idle, draining for a launch, or
+        // installing. New work is refused from the moment a drain begins, so
+        // the installer's service stop finds nothing to kill.
+        let lifecycle = UpdateLifecycle::new();
 
         loop {
             runtime.set_phase(daemon_protocol::DaemonPhase::Connecting);
@@ -685,33 +689,42 @@ pub async fn run(
                         }
                         if rpc_error.is_protocol_unsupported() {
                             let outcome = match updater.plan_for_protocol_error(rpc_error) {
-                                Some(target) => {
-                                    // A refused connection has no requests in
-                                    // flight, but a shell session from the last
-                                    // one may still be running.
-                                    let shell_sessions =
-                                        crate::tools::running_process_count().await;
-                                    match update_gate(Some(target), work_reason(0, shell_sessions))
-                                    {
-                                        UpdateGate::Wait { target, reason } => {
-                                            note_update_waiting(&runtime, &target, reason);
-                                            UpdateOutcome::Waiting
-                                        }
-                                        UpdateGate::Launch(target) => {
-                                            let launch = start_update(
-                                                updater.clone(),
-                                                runtime.clone(),
-                                                updating.clone(),
-                                                target,
-                                            );
-                                            match run_until_cancelled(&shutdown, launch).await {
-                                                Some(outcome) => outcome,
-                                                None => shutdown_device!("control"),
+                                Some(target) => match lifecycle.begin_drain_for(target) {
+                                    // Already draining or installing from an
+                                    // earlier decision: keep waiting for it.
+                                    None => UpdateOutcome::Waiting,
+                                    Some(guard) => {
+                                        // A refused connection has no requests
+                                        // in flight, but a shell session from
+                                        // the last one may still be running.
+                                        let shell_sessions =
+                                            crate::tools::running_process_count().await;
+                                        match work_reason(0, shell_sessions) {
+                                            Some(reason) => {
+                                                note_update_waiting(
+                                                    &runtime,
+                                                    guard.target(),
+                                                    reason,
+                                                );
+                                                guard.abandon();
+                                                UpdateOutcome::Waiting
+                                            }
+                                            None => {
+                                                let launch = start_update(
+                                                    updater.clone(),
+                                                    runtime.clone(),
+                                                    lifecycle.clone(),
+                                                    guard,
+                                                    shutdown.clone(),
+                                                );
+                                                match run_until_cancelled(&shutdown, launch).await {
+                                                    Some(outcome) => outcome,
+                                                    None => shutdown_device!("control"),
+                                                }
                                             }
                                         }
-                                        UpdateGate::Nothing => UpdateOutcome::NotLaunched,
                                     }
-                                }
+                                },
                                 None => UpdateOutcome::NotLaunched,
                             };
                             if outcome.keeps_waiting() {
@@ -788,7 +801,7 @@ pub async fn run(
             let active_requests = ActiveRequests::default();
             let active_requests_for_handler = active_requests.clone();
             let request_span = tracing::Span::current();
-            let updating_for_handler = updating.clone();
+            let lifecycle_for_handler = lifecycle.clone();
 
             // In the new OS architecture, the kernel sends req frames directly to
             // the driver. We dispatch based on `call` and respond with a res frame.
@@ -797,8 +810,9 @@ pub async fn run(
                     let Some(conn) = conn_for_handler.upgrade() else {
                         return;
                     };
-                    if updating_for_handler.load(Ordering::SeqCst) {
+                    if lifecycle_for_handler.refusing() {
                         if let Some(refusal) = update_refusal_frame(&req) {
+                            cancel_refused_body(&body_channel, req.body);
                             tokio::spawn(async move {
                                 match serde_json::to_string(&refusal) {
                                     Ok(text) => {
@@ -862,23 +876,24 @@ pub async fn run(
             // Dropping the guard at the end of this connection aborts it, so a
             // reconnect or a reload never leaves a launch running against
             // settings this driver no longer holds.
-            let pending_update =
-                PendingUpdate::new(update_after_connect(&updater, conn.connect_result.as_ref()));
-            if pending_update.is_empty() {
-                // Nothing to move to any more: an earlier "available" notice
-                // would now be wrong, while a running installer's notice still
-                // describes what is happening.
-                runtime.clear_stale_update_notice();
+            match update_after_connect(&updater, conn.connect_result.as_ref()) {
+                Some(target) => lifecycle.queue(target),
+                None => {
+                    // Nothing to move to any more: an earlier "available"
+                    // notice would now be wrong, while a running installer's
+                    // notice still describes what is happening.
+                    lifecycle.clear_pending();
+                    runtime.clear_stale_update_notice();
+                }
             }
             let mut update_task: Option<AbortOnDrop> = None;
             let mut next_update_check_at = tokio::time::Instant::now() + UPDATE_RECHECK_INTERVAL;
             launch_update_when_idle(
                 &updater,
                 &runtime,
-                &updating,
+                &lifecycle,
                 &active_requests,
                 &shutdown,
-                &pending_update,
                 &mut update_task,
             )
             .await;
@@ -933,7 +948,7 @@ pub async fn run(
                             );
                         }
 
-                        if !pending_update.is_empty()
+                        if lifecycle.has_pending()
                             && tokio::time::Instant::now() >= next_update_check_at
                         {
                             next_update_check_at =
@@ -941,10 +956,9 @@ pub async fn run(
                             launch_update_when_idle(
                                 &updater,
                                 &runtime,
-                                &updating,
+                                &lifecycle,
                                 &active_requests,
                                 &shutdown,
-                                &pending_update,
                                 &mut update_task,
                             )
                             .await;
@@ -1041,27 +1055,6 @@ fn update_after_connect(
     updater.plan_for_server(&result?.server)
 }
 
-/// Whether a newer release may be installed now or must wait for the machine
-/// to go idle: the installer stops the service, and a service stop kills
-/// every process in it, shell children included.
-#[derive(Debug, Eq, PartialEq)]
-enum UpdateGate {
-    Launch(UpdateTarget),
-    Wait {
-        target: UpdateTarget,
-        reason: &'static str,
-    },
-    Nothing,
-}
-
-fn update_gate(target: Option<UpdateTarget>, busy: Option<&'static str>) -> UpdateGate {
-    match (target, busy) {
-        (None, _) => UpdateGate::Nothing,
-        (Some(target), Some(reason)) => UpdateGate::Wait { target, reason },
-        (Some(target), None) => UpdateGate::Launch(target),
-    }
-}
-
 /// Why the machine counts as busy, given its in-flight requests and live
 /// shell sessions.
 fn work_reason(in_flight: usize, shell_sessions: usize) -> Option<&'static str> {
@@ -1112,37 +1105,216 @@ fn update_refusal_frame(request: &RequestFrame) -> Option<Frame> {
     }))
 }
 
-/// The newer-release target waiting for the machine to go idle or for a
-/// failed launch's cooldown to pass. Shared with the launch task so a
-/// retryable failure can hand the target back.
-#[derive(Clone)]
-struct PendingUpdate(Arc<Mutex<Option<UpdateTarget>>>);
+/// A refused request may already be sending a body; owning and dropping it
+/// tells the sender to stop, so no orphan frames pile up.
+fn cancel_refused_body(
+    channel: &gateway_client::BinaryBodyChannel,
+    descriptor: Option<gateway_client::protocol::FrameBodyDescriptor>,
+) {
+    if let Some(descriptor) = descriptor {
+        if let Ok(body) = channel.receive(descriptor) {
+            drop(body);
+        }
+    }
+}
 
-impl PendingUpdate {
-    fn new(target: Option<UpdateTarget>) -> Self {
-        Self(Arc::new(Mutex::new(target)))
+/// Where an update stands for this driver run.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum UpdatePhase {
+    Idle,
+    /// A launch is being decided or started; new work is refused.
+    Draining {
+        target: UpdateTarget,
+    },
+    /// An installer is running; new work stays refused until it restarts the
+    /// service or the watcher learns it ended.
+    Installing {
+        target: UpdateTarget,
+        since: std::time::SystemTime,
+    },
+}
+
+#[derive(Debug)]
+struct LifecycleState {
+    phase: UpdatePhase,
+    pending: Option<UpdateTarget>,
+}
+
+/// The update lifecycle the driver owns: one state behind one mutex, with the
+/// refusal flag published only by lock holders so the frame handler reads a
+/// consistent snapshot.
+#[derive(Debug)]
+struct UpdateLifecycle {
+    state: Mutex<LifecycleState>,
+    refusing: AtomicBool,
+}
+
+impl UpdateLifecycle {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            state: Mutex::new(LifecycleState {
+                phase: UpdatePhase::Idle,
+                pending: None,
+            }),
+            refusing: AtomicBool::new(false),
+        })
     }
 
-    fn is_empty(&self) -> bool {
-        self.0
+    /// Whether the frame handler must refuse work-creating requests now.
+    fn refusing(&self) -> bool {
+        self.refusing.load(Ordering::SeqCst)
+    }
+
+    #[cfg(test)]
+    fn phase(&self) -> UpdatePhase {
+        self.lock().phase.clone()
+    }
+
+    fn queue(&self, target: UpdateTarget) {
+        self.lock().pending = Some(target);
+    }
+
+    fn clear_pending(&self) {
+        self.lock().pending = None;
+    }
+
+    fn has_pending(&self) -> bool {
+        self.lock().pending.is_some()
+    }
+
+    fn pending(&self) -> Option<UpdateTarget> {
+        self.lock().pending.clone()
+    }
+
+    /// Start draining for the pending target: from this instant new work is
+    /// refused, so the idle check that follows cannot be raced. `None` when
+    /// nothing is pending or a launch is already draining or installing.
+    fn begin_drain(self: &Arc<Self>) -> Option<DrainGuard> {
+        let mut state = self.lock();
+        if state.phase != UpdatePhase::Idle {
+            return None;
+        }
+        let target = state.pending.take()?;
+        state.phase = UpdatePhase::Draining {
+            target: target.clone(),
+        };
+        self.refusing.store(true, Ordering::SeqCst);
+        drop(state);
+        Some(DrainGuard {
+            lifecycle: self.clone(),
+            target: Some(target),
+            confirmed: false,
+        })
+    }
+
+    /// Start draining for a target that did not come from the queue (the
+    /// 102 path). `None` when a launch is already draining or installing.
+    fn begin_drain_for(self: &Arc<Self>, target: UpdateTarget) -> Option<DrainGuard> {
+        let mut state = self.lock();
+        if state.phase != UpdatePhase::Idle {
+            return None;
+        }
+        state.pending = None;
+        state.phase = UpdatePhase::Draining {
+            target: target.clone(),
+        };
+        self.refusing.store(true, Ordering::SeqCst);
+        drop(state);
+        Some(DrainGuard {
+            lifecycle: self.clone(),
+            target: Some(target),
+            confirmed: false,
+        })
+    }
+
+    /// The installer ended while this daemon is still alive: lower the gate
+    /// and queue the target again for the retry path.
+    fn installer_exited(&self) -> Option<UpdateTarget> {
+        let mut state = self.lock();
+        let UpdatePhase::Installing { target, .. } = state.phase.clone() else {
+            return None;
+        };
+        state.phase = UpdatePhase::Idle;
+        state.pending = Some(target.clone());
+        self.refusing.store(false, Ordering::SeqCst);
+        Some(target)
+    }
+
+    fn reset(&self, requeue: Option<UpdateTarget>) {
+        let mut state = self.lock();
+        state.phase = UpdatePhase::Idle;
+        if let Some(target) = requeue {
+            state.pending = Some(target);
+        }
+        self.refusing.store(false, Ordering::SeqCst);
+    }
+
+    fn confirm(&self, target: UpdateTarget, since: std::time::SystemTime) {
+        let mut state = self.lock();
+        state.phase = UpdatePhase::Installing { target, since };
+        self.refusing.store(true, Ordering::SeqCst);
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, LifecycleState> {
+        self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_none()
+    }
+}
+
+/// Holds the `Draining` phase for one launch. Dropping it before the launch
+/// is confirmed, whether by failure or by cancellation, returns the
+/// lifecycle to `Idle` and re-queues the target, so there is exactly one
+/// reset path and it is the one cancellation takes.
+struct DrainGuard {
+    lifecycle: Arc<UpdateLifecycle>,
+    target: Option<UpdateTarget>,
+    confirmed: bool,
+}
+
+impl DrainGuard {
+    fn target(&self) -> &UpdateTarget {
+        self.target.as_ref().unwrap_or_else(|| placeholder_target())
     }
 
-    fn take(&self) -> Option<UpdateTarget> {
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take()
+    /// Give the target back for a later check.
+    fn abandon(self) {
+        drop(self);
     }
 
-    fn put_back(&self, target: UpdateTarget) {
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .replace(target);
+    /// Drop the target for good: the machine cannot update itself this way.
+    fn discard(mut self) {
+        self.target = None;
+        drop(self);
     }
+
+    /// The installer exists: keep refusing work until it restarts the
+    /// service or the watcher learns it ended.
+    fn confirm(mut self, since: std::time::SystemTime) {
+        self.confirmed = true;
+        if let Some(target) = self.target.take() {
+            self.lifecycle.confirm(target, since);
+        }
+    }
+}
+
+impl Drop for DrainGuard {
+    fn drop(&mut self) {
+        if !self.confirmed {
+            self.lifecycle.reset(self.target.take());
+        }
+    }
+}
+
+/// A `DrainGuard` carries its target until confirmation moves it into the
+/// lifecycle; this placeholder only keeps `target()` total after that.
+fn placeholder_target() -> &'static UpdateTarget {
+    static EMPTY: std::sync::OnceLock<UpdateTarget> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(|| UpdateTarget {
+        release: String::new(),
+        reason: crate::update::UpdateReason::NewerRelease,
+        installer_url: String::new(),
+    })
 }
 
 /// Whether a failed launch is worth retrying on a later check: transient
@@ -1181,53 +1353,53 @@ fn note_update_waiting(runtime: &DaemonRuntime, target: &UpdateTarget, reason: &
 }
 
 /// Launch the pending update on the newer-release path once the machine is
-/// idle; while it is busy, or a failed attempt is still cooling, keep the
-/// target for the next check.
+/// idle. Draining begins before the idle check, so nothing new is admitted
+/// between the check and the launch; a busy machine or a cooling attempt
+/// hands the target back for the next check.
 async fn launch_update_when_idle(
     updater: &AutoUpdater,
     runtime: &DaemonRuntime,
-    updating: &Arc<AtomicBool>,
+    lifecycle: &Arc<UpdateLifecycle>,
     active_requests: &ActiveRequests,
     shutdown: &CancellationToken,
-    pending: &PendingUpdate,
     task: &mut Option<AbortOnDrop>,
 ) {
-    let Some(target) = pending.take() else {
+    let cooling = lifecycle.pending().is_some_and(|target| {
+        matches!(
+            updater.attempt_state(&target.release, std::time::SystemTime::now()),
+            AttemptState::Cooling { .. }
+        )
+    });
+    if cooling {
+        return;
+    }
+    let Some(guard) = lifecycle.begin_drain() else {
         return;
     };
-    if let AttemptState::Cooling { .. } =
-        updater.attempt_state(&target.release, std::time::SystemTime::now())
-    {
-        pending.put_back(target);
+    if let Some(reason) = machine_busy(active_requests).await {
+        note_update_waiting(runtime, guard.target(), reason);
+        guard.abandon();
         return;
     }
-    match update_gate(Some(target), machine_busy(active_requests).await) {
-        UpdateGate::Launch(target) => {
-            let shutdown = shutdown.clone();
-            let pending = pending.clone();
-            let launch = start_update(updater.clone(), runtime.clone(), updating.clone(), target);
-            *task = Some(AbortOnDrop(tokio::spawn(
-                async move {
-                    if let Some(UpdateOutcome::Retry(target)) =
-                        run_until_cancelled(&shutdown, launch).await
-                    {
-                        pending.put_back(target);
-                    }
-                }
-                .instrument(tracing::Span::current()),
-            )));
+    let launch = start_update(
+        updater.clone(),
+        runtime.clone(),
+        lifecycle.clone(),
+        guard,
+        shutdown.clone(),
+    );
+    let shutdown = shutdown.clone();
+    *task = Some(AbortOnDrop(tokio::spawn(
+        async move {
+            run_until_cancelled(&shutdown, launch).await;
         }
-        UpdateGate::Wait { target, reason } => {
-            note_update_waiting(runtime, &target, reason);
-            pending.put_back(target);
-        }
-        UpdateGate::Nothing => {}
-    }
+        .instrument(tracing::Span::current()),
+    )));
 }
 
 /// What a handshake's update decision left behind, for the 102 path to know
 /// whether to keep waiting for an installer or to give up.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum UpdateOutcome {
     /// An installer was started just now.
     Launched,
@@ -1235,8 +1407,6 @@ enum UpdateOutcome {
     InProgress,
     /// Machine work is running; the update waits for it.
     Waiting,
-    /// A transient failure; the target is handed back for a later check.
-    Retry(UpdateTarget),
     NotLaunched,
 }
 
@@ -1256,19 +1426,21 @@ fn installer_in_progress(updater: &AutoUpdater, release: &str) -> Option<std::ti
     }
 }
 
-/// Start the installer for `target` and record the decision where
-/// `gsv daemon diagnostics` shows it. `updating` is raised for the launch
-/// and stays up once an installer runs; a failure lowers it again.
+/// Start the installer for the drained target and record the decision where
+/// `gsv daemon diagnostics` shows it. A confirmed launch moves the lifecycle
+/// to `Installing` and starts the watcher; any other outcome drops the guard,
+/// which resets the lifecycle and re-queues the target when that is useful.
 async fn start_update(
     updater: AutoUpdater,
     runtime: DaemonRuntime,
-    updating: Arc<AtomicBool>,
-    target: UpdateTarget,
+    lifecycle: Arc<UpdateLifecycle>,
+    guard: DrainGuard,
+    shutdown: CancellationToken,
 ) -> UpdateOutcome {
     use daemon_protocol::{DiagnosticLevel, DiagnosticNotice};
     const STARTED: &str = "autoUpdateStarted";
+    let target = guard.target().clone();
     let reason = target.reason.describe();
-    updating.store(true, Ordering::SeqCst);
     let error = match updater.launch(&target).await {
         Ok(launch) => {
             info!(
@@ -1286,11 +1458,22 @@ async fn start_update(
                     launch.release
                 ),
             }));
+            let since = std::time::SystemTime::now();
+            guard.confirm(since);
+            spawn_installer_watch(InstallerWatch {
+                updater,
+                runtime,
+                lifecycle,
+                installer: Some(launch.installer),
+                release: launch.release,
+                log_path: launch.log_path,
+                since,
+                shutdown,
+            });
             return UpdateOutcome::Launched;
         }
         Err(error) => error,
     };
-    updating.store(false, Ordering::SeqCst);
     match &error {
         UpdateError::Disabled => {
             info!(event = "update.available", release = %target.release, reason);
@@ -1323,7 +1506,22 @@ async fn start_update(
                         target.release
                     ),
                 }));
-                updating.store(true, Ordering::SeqCst);
+                // No handle to that installer: the bounded window watches it.
+                let started_at = std::time::SystemTime::now()
+                    .checked_sub(since)
+                    .unwrap_or_else(std::time::SystemTime::now);
+                let log_path = updater.log_path().to_path_buf();
+                guard.confirm(started_at);
+                spawn_installer_watch(InstallerWatch {
+                    updater,
+                    runtime,
+                    lifecycle,
+                    installer: None,
+                    release: target.release.clone(),
+                    log_path,
+                    since: started_at,
+                    shutdown,
+                });
                 return UpdateOutcome::InProgress;
             }
             info!(event = "update.deferred", release = %target.release, reason, detail = %error);
@@ -1346,9 +1544,109 @@ async fn start_update(
         }
     }
     if retry_later(&error) {
-        UpdateOutcome::Retry(target)
+        guard.abandon();
     } else {
-        UpdateOutcome::NotLaunched
+        guard.discard();
+    }
+    UpdateOutcome::NotLaunched
+}
+
+/// Everything the installer watcher needs for the rest of this driver run.
+struct InstallerWatch {
+    updater: AutoUpdater,
+    runtime: DaemonRuntime,
+    lifecycle: Arc<UpdateLifecycle>,
+    installer: Option<InstallerHandle>,
+    release: String,
+    log_path: PathBuf,
+    since: std::time::SystemTime,
+    shutdown: CancellationToken,
+}
+
+/// Watch the installer. If it ends while this daemon is still alive, the
+/// service was not restarted: lower the gate, demote the attempt to cooling,
+/// queue the target again, and say so.
+fn spawn_installer_watch(watch: InstallerWatch) {
+    let InstallerWatch {
+        updater,
+        runtime,
+        lifecycle,
+        installer,
+        release,
+        log_path,
+        since,
+        shutdown,
+    } = watch;
+    tokio::spawn(
+        async move {
+            let Some(detail) =
+                run_until_cancelled(&shutdown, installer_ended(installer, since)).await
+            else {
+                return;
+            };
+            warn!(event = "update.installer_exited", release = %release, detail = %detail);
+            if let Err(error) = updater.clear_launched(&release) {
+                warn!(event = "update.record_failed", release = %release, error = %error);
+            }
+            lifecycle.installer_exited();
+            runtime.set_update_notice(Some(daemon_protocol::DiagnosticNotice {
+                level: daemon_protocol::DiagnosticLevel::Warning,
+                code: "autoUpdateSkipped".to_string(),
+                message: format!(
+                    "GSV {release} was not installed: the installer ended without restarting the service ({detail}). See {}.",
+                    log_path.display()
+                ),
+            }));
+        }
+        .instrument(tracing::Span::current()),
+    );
+}
+
+/// Resolve once the installer is known to have ended without restarting this
+/// daemon: the child's exit, the transient unit going inactive, or, with no
+/// cheaper signal, the bounded installing window running out.
+async fn installer_ended(
+    installer: Option<InstallerHandle>,
+    since: std::time::SystemTime,
+) -> String {
+    match installer {
+        Some(InstallerHandle::Process(mut child)) => match child.wait().await {
+            Ok(status) => format!("exit status {status}"),
+            Err(error) => format!("could not wait for the installer: {error}"),
+        },
+        Some(InstallerHandle::TransientUnit {
+            unit,
+            systemctl: Some(systemctl),
+        }) => loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+            if !transient_unit_active(&systemctl, &unit).await {
+                break format!("transient unit {unit} is no longer active");
+            }
+        },
+        Some(InstallerHandle::TransientUnit {
+            unit,
+            systemctl: None,
+        }) => {
+            wait_for_window(since).await;
+            format!("transient unit {unit} could not be watched; the installing window ran out")
+        }
+        None => {
+            wait_for_window(since).await;
+            "the installing window ran out".to_string()
+        }
+    }
+}
+
+async fn wait_for_window(since: std::time::SystemTime) {
+    while !installing_window_elapsed(since, std::time::SystemTime::now()) {
+        let elapsed = std::time::SystemTime::now()
+            .duration_since(since)
+            .unwrap_or_default();
+        let remaining = INSTALLING_WINDOW
+            .checked_sub(elapsed)
+            .unwrap_or_default()
+            .max(std::time::Duration::from_secs(1));
+        tokio::time::sleep(remaining).await;
     }
 }
 
@@ -1477,17 +1775,8 @@ mod tests {
         assert_eq!(work_reason(0, 1), Some("shell sessions running"));
         assert_eq!(work_reason(1, 1), Some("requests in flight"));
         // The 102 path has no requests in flight; only shell sessions count.
-        assert_eq!(
-            update_gate(Some(target("v0.5.0")), work_reason(0, 1)),
-            UpdateGate::Wait {
-                target: target("v0.5.0"),
-                reason: "shell sessions running",
-            }
-        );
-        assert_eq!(
-            update_gate(Some(target("v0.5.0")), work_reason(0, 0)),
-            UpdateGate::Launch(target("v0.5.0"))
-        );
+        assert_eq!(work_reason(0, 1), Some("shell sessions running"));
+        assert_eq!(work_reason(0, 0), None);
     }
 
     /// The response inside a refusal; a missing refusal yields a response
@@ -1565,41 +1854,163 @@ mod tests {
         assert!(!retry_later(&UpdateError::Unwritable { dir }));
     }
 
-    #[tokio::test]
-    async fn a_launch_that_fails_before_spawning_lowers_the_updating_flag() {
-        let dir = std::env::temp_dir().join(format!("gsvd-flag-{}", uuid::Uuid::new_v4()));
-        let updater = AutoUpdater::new(
-            false,
+    fn test_updater(enabled: bool) -> AutoUpdater {
+        let dir = std::env::temp_dir().join(format!("gsvd-lifecycle-{}", uuid::Uuid::new_v4()));
+        AutoUpdater::new(
+            enabled,
             ReleaseChannel::Stable,
             "0.4.1",
             dir.join("auto-update"),
             dir.join("auto-update.log"),
-        );
-        let (runtime, _receiver) = DaemonRuntime::new("machine-a".to_string());
-        let updating = Arc::new(AtomicBool::new(false));
-        let outcome = start_update(updater, runtime, updating.clone(), target("v0.5.0")).await;
-        assert_eq!(outcome, UpdateOutcome::NotLaunched);
-        assert!(!updating.load(Ordering::SeqCst));
+        )
     }
 
     #[test]
-    fn a_busy_machine_waits_and_an_idle_one_launches() {
+    fn a_busy_machine_at_drain_returns_to_idle_with_the_target_queued() {
+        let lifecycle = UpdateLifecycle::new();
+        assert!(lifecycle.begin_drain().is_none(), "nothing pending");
+        lifecycle.queue(target("v0.5.0"));
+        let guard = lifecycle.begin_drain().expect("drain begins");
+        assert!(
+            lifecycle.refusing(),
+            "new work is refused from the drain on"
+        );
         assert_eq!(
-            update_gate(Some(target("v0.5.0")), Some("shell sessions running")),
-            UpdateGate::Wait {
-                target: target("v0.5.0"),
-                reason: "shell sessions running",
+            lifecycle.phase(),
+            UpdatePhase::Draining {
+                target: target("v0.5.0")
             }
         );
+        assert!(!lifecycle.has_pending());
+        assert!(lifecycle.begin_drain().is_none(), "one drain at a time");
+        guard.abandon();
+        assert_eq!(lifecycle.phase(), UpdatePhase::Idle);
+        assert!(!lifecycle.refusing());
+        assert_eq!(lifecycle.pending(), Some(target("v0.5.0")));
+    }
+
+    #[tokio::test]
+    async fn an_aborted_launch_task_resets_the_lifecycle_by_dropping_its_guard() {
+        let lifecycle = UpdateLifecycle::new();
+        let guard = lifecycle
+            .begin_drain_for(target("v0.5.0"))
+            .expect("drain begins");
+        let task = AbortOnDrop(tokio::spawn(async move {
+            let _guard = guard;
+            std::future::pending::<()>().await;
+        }));
+        tokio::task::yield_now().await;
+        assert!(lifecycle.refusing());
+        drop(task);
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert_eq!(lifecycle.phase(), UpdatePhase::Idle);
+        assert!(!lifecycle.refusing());
+        assert_eq!(lifecycle.pending(), Some(target("v0.5.0")));
+    }
+
+    #[test]
+    fn a_confirmed_launch_installs_until_the_installer_is_seen_to_end() {
+        let lifecycle = UpdateLifecycle::new();
+        let guard = lifecycle
+            .begin_drain_for(target("v0.5.0"))
+            .expect("drain begins");
+        let since = std::time::SystemTime::now();
+        guard.confirm(since);
         assert_eq!(
-            update_gate(Some(target("v0.5.0")), None),
-            UpdateGate::Launch(target("v0.5.0"))
+            lifecycle.phase(),
+            UpdatePhase::Installing {
+                target: target("v0.5.0"),
+                since,
+            }
         );
-        assert_eq!(
-            update_gate(None, Some("requests in flight")),
-            UpdateGate::Nothing
+        assert!(lifecycle.refusing());
+        assert!(!lifecycle.has_pending());
+        assert!(lifecycle.begin_drain_for(target("v0.6.0")).is_none());
+
+        let updater = test_updater(true);
+        updater
+            .record_attempt_for_test("v0.5.0", since, true)
+            .expect("record launched attempt");
+        assert!(installer_in_progress(&updater, "v0.5.0").is_some());
+
+        // The installer ended and this daemon is still here.
+        assert_eq!(lifecycle.installer_exited(), Some(target("v0.5.0")));
+        updater.clear_launched("v0.5.0").expect("clear launched");
+        assert_eq!(lifecycle.phase(), UpdatePhase::Idle);
+        assert!(!lifecycle.refusing());
+        assert_eq!(lifecycle.pending(), Some(target("v0.5.0")));
+        assert_eq!(installer_in_progress(&updater, "v0.5.0"), None);
+        assert_eq!(lifecycle.installer_exited(), None);
+    }
+
+    #[tokio::test]
+    async fn a_launch_that_fails_before_the_installer_exists_resets_the_lifecycle() {
+        let (runtime, _receiver) = DaemonRuntime::new("machine-a".to_string());
+        let shutdown = CancellationToken::new();
+        // Disabled is not worth retrying, so the target is discarded; the
+        // guard's drop is the only reset path, whatever the error.
+        let lifecycle = UpdateLifecycle::new();
+        let guard = lifecycle
+            .begin_drain_for(target("v0.5.0"))
+            .expect("drain begins");
+        assert!(lifecycle.refusing());
+        let outcome = start_update(
+            test_updater(false),
+            runtime,
+            lifecycle.clone(),
+            guard,
+            shutdown,
+        )
+        .await;
+        assert_eq!(outcome, UpdateOutcome::NotLaunched);
+        assert_eq!(lifecycle.phase(), UpdatePhase::Idle);
+        assert!(!lifecycle.refusing());
+        assert!(!lifecycle.has_pending());
+    }
+
+    #[tokio::test]
+    async fn a_refused_request_with_a_body_cancels_the_body() {
+        use gateway_client::protocol::{
+            parse_binary_frame, FrameBodyDescriptor, BINARY_FRAME_CANCEL,
+        };
+        let (frames_tx, mut frames_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+        let channel = gateway_client::BinaryBodyChannel::new(BinaryBodyLimits::default(), {
+            move |frame| {
+                let frames_tx = frames_tx.clone();
+                async move {
+                    let _ = frames_tx.send(frame);
+                    Ok(())
+                }
+            }
+        })
+        .expect("body channel");
+        let descriptor = FrameBodyDescriptor {
+            stream_id: 7,
+            length: Some(64),
+        };
+        let request = RequestFrame {
+            id: "req-shell".to_string(),
+            call: "shell.exec".to_string(),
+            args: None,
+            body: Some(descriptor),
+        };
+        assert!(update_refusal_frame(&request).is_some());
+        cancel_refused_body(&channel, request.body);
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(2), frames_rx.recv())
+            .await
+            .expect("a control frame is sent")
+            .expect("frame");
+        let (stream_id, flags, _) = parse_binary_frame(&frame).expect("binary frame");
+        assert_eq!(stream_id, 7);
+        assert_ne!(flags & BINARY_FRAME_CANCEL, 0, "the sender is told to stop");
+
+        // Without a body there is nothing to cancel and nothing is sent.
+        cancel_refused_body(&channel, None);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), frames_rx.recv())
+                .await
+                .is_err()
         );
-        assert_eq!(update_gate(None, None), UpdateGate::Nothing);
     }
 
     #[tokio::test]

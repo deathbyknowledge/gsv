@@ -161,11 +161,48 @@ impl Display for UpdateError {
 impl std::error::Error for UpdateError {}
 
 /// What the daemon started, for the log line and the diagnostics notice.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct UpdateLaunch {
     pub release: String,
     pub log_path: PathBuf,
     pub detach: DetachStrategy,
+    /// What to watch to learn that the installer finished without
+    /// restarting this daemon.
+    pub installer: InstallerHandle,
+}
+
+/// The running installer as far as the daemon can see it.
+#[derive(Debug)]
+pub enum InstallerHandle {
+    /// The installer is a direct child; its exit is its outcome.
+    Process(tokio::process::Child),
+    /// The installer runs in a transient user unit; `systemctl --user
+    /// is-active` says whether it is still going, when `systemctl` resolves.
+    TransientUnit {
+        unit: String,
+        systemctl: Option<PathBuf>,
+    },
+}
+
+/// How long an installer may stay unobserved before the daemon assumes it
+/// ended without restarting the service and lowers its gate.
+pub const INSTALLING_WINDOW: Duration = Duration::from_secs(15 * 60);
+
+/// Whether the installing window that started at `since` has run out.
+pub fn installing_window_elapsed(since: SystemTime, now: SystemTime) -> bool {
+    now.duration_since(since)
+        .map(|elapsed| elapsed >= INSTALLING_WINDOW)
+        .unwrap_or(false)
+}
+
+/// Whether the transient unit is still active, asked of `systemctl`.
+pub async fn transient_unit_active(systemctl: &Path, unit: &str) -> bool {
+    tokio::process::Command::new(systemctl)
+        .args(["--user", "is-active", "--quiet", unit])
+        .status()
+        .await
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 /// How the installer escapes the daemon's own service so that stopping
@@ -268,6 +305,11 @@ impl AutoUpdater {
         self.enabled
     }
 
+    /// Where installer output goes.
+    pub fn log_path(&self) -> &Path {
+        &self.log_path
+    }
+
     /// The release to install after a protocol error 102, if the gateway is
     /// ahead of this build. A gateway that is behind this build cannot be
     /// fixed from the machine, so it yields nothing.
@@ -358,7 +400,8 @@ impl AutoUpdater {
             .map_err(UpdateError::Download)?;
         let invocation = installer_invocation(&script, &target.release, &install_dir);
         let log = self.open_log()?;
-        let mut command = detached_command(&invocation, &strategy, &self.log_path, log)
+        let unit = format!("gsv-auto-update-{}", unix_seconds(SystemTime::now()));
+        let mut command = detached_command(&invocation, &strategy, &self.log_path, log, &unit)
             .map_err(|error| UpdateError::Spawn(error.to_string()))?;
         let mut child = tokio::process::Command::from(command_take(&mut command))
             .kill_on_drop(false)
@@ -378,34 +421,23 @@ impl AutoUpdater {
                 return Err(UpdateError::Spawn(detail));
             }
             info!(event = "update.launcher_exited", release = %release, detach = %strategy_for_log);
-            None
+            InstallerHandle::TransientUnit {
+                unit,
+                systemctl: systemctl_path(),
+            }
         } else {
-            Some(child)
+            InstallerHandle::Process(child)
         };
         if let Err(error) = self.mark_launched(&target.release) {
             // The installer is running either way; without the mark the next
             // handshake within the hour reads a cooling attempt and waits.
             warn!(event = "update.record_failed", release = %target.release, error = %error);
         }
-        if let Some(mut child) = installer {
-            tokio::spawn(async move {
-                match child.wait().await {
-                    Ok(status) if status.success() => {
-                        info!(event = "update.launcher_exited", release = %release, detach = %strategy_for_log);
-                    }
-                    Ok(status) => {
-                        warn!(event = "update.launcher_failed", release = %release, detach = %strategy_for_log, status = %status);
-                    }
-                    Err(error) => {
-                        warn!(event = "update.launcher_failed", release = %release, detach = %strategy_for_log, error = %error);
-                    }
-                }
-            });
-        }
         Ok(UpdateLaunch {
             release: target.release.clone(),
             log_path: self.log_path.clone(),
             detach: strategy,
+            installer,
         })
     }
 
@@ -484,6 +516,19 @@ impl AutoUpdater {
             ));
         }
         record.launched = true;
+        self.write_record(&record)
+    }
+
+    /// Demote the attempt for `release` to a plain, cooling one after its
+    /// installer ended without restarting the service.
+    pub fn clear_launched(&self, release: &str) -> Result<(), UpdateError> {
+        let Some(mut record) = self.last_attempt() else {
+            return Ok(());
+        };
+        if record.release != release {
+            return Ok(());
+        }
+        record.launched = false;
         self.write_record(&record)
     }
 
@@ -945,31 +990,53 @@ pub fn task_status_running(listing: &str) -> bool {
 
 /// Where distributions install `systemd-run` when a unit's PATH is too
 /// minimal to find it.
-const SYSTEMD_RUN_FALLBACKS: &[&str] = &["/usr/bin/systemd-run", "/bin/systemd-run"];
+/// Where distributions install the systemd tools when a unit's PATH is too
+/// minimal to find them.
+const SYSTEMD_TOOL_DIRS: &[&str] = &["/usr/bin", "/bin"];
 
-/// Resolve `systemd-run`: the service PATH first, then the distribution
+/// Resolve a systemd tool: the service PATH first, then the distribution
 /// locations, so a unit with a minimal PATH still gets a working update.
-pub fn resolve_systemd_run(
+pub fn resolve_systemd_tool(
+    name: &str,
     path_env: Option<&OsStr>,
     exists: impl Fn(&Path) -> bool,
 ) -> Option<PathBuf> {
     let from_path: Vec<PathBuf> = path_env
         .map(|path| {
             std::env::split_paths(path)
-                .map(|dir| dir.join("systemd-run"))
+                .map(|dir| dir.join(name))
                 .collect()
         })
         .unwrap_or_default();
     from_path
         .into_iter()
-        .chain(SYSTEMD_RUN_FALLBACKS.iter().map(PathBuf::from))
+        .chain(
+            SYSTEMD_TOOL_DIRS
+                .iter()
+                .map(|dir| Path::new(dir).join(name)),
+        )
         .find(|candidate| exists(candidate))
+}
+
+pub fn resolve_systemd_run(
+    path_env: Option<&OsStr>,
+    exists: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+    resolve_systemd_tool("systemd-run", path_env, exists)
 }
 
 fn systemd_run_path() -> Option<PathBuf> {
     resolve_systemd_run(std::env::var_os("PATH").as_deref(), |candidate| {
         candidate.is_file()
     })
+}
+
+fn systemctl_path() -> Option<PathBuf> {
+    resolve_systemd_tool(
+        "systemctl",
+        std::env::var_os("PATH").as_deref(),
+        |candidate| candidate.is_file(),
+    )
 }
 
 /// How to keep the installer alive once it stops this service. Under systemd
@@ -993,14 +1060,14 @@ fn detached_command(
     strategy: &DetachStrategy,
     log_path: &Path,
     log: fs::File,
+    unit: &str,
 ) -> io::Result<Command> {
     let mut command = match strategy {
         DetachStrategy::SystemdRun { program } => {
-            let unit = format!("gsv-auto-update-{}", unix_seconds(SystemTime::now()));
             let path_env = std::env::var("PATH").ok();
             let mut command = Command::new(program);
             command.args(systemd_run_arguments(
-                &unit,
+                unit,
                 log_path,
                 path_env.as_deref(),
                 invocation,
@@ -1332,6 +1399,25 @@ mod tests {
                 since: Duration::from_secs(600)
             }
         );
+        // An installer that ended without restarting the service leaves a
+        // cooling record again.
+        updater.clear_launched("v0.5.0").expect("clear launched");
+        assert_eq!(
+            updater.attempt_state("v0.5.0", later),
+            AttemptState::Cooling {
+                since: Duration::from_secs(600)
+            }
+        );
+        let start = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        assert!(!installing_window_elapsed(
+            start,
+            start + INSTALLING_WINDOW - Duration::from_secs(1)
+        ));
+        assert!(installing_window_elapsed(start, start + INSTALLING_WINDOW));
+        assert!(!installing_window_elapsed(
+            start,
+            start - Duration::from_secs(1)
+        ));
         assert!(matches!(
             updater.mark_launched("v0.6.0"),
             Err(UpdateError::State(_))
