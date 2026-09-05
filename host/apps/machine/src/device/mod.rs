@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 use gateway_client::client::GatewayAuth;
 use gateway_client::connection::{Connection, ConnectionOptions, GatewayRpcError, PeerIdentity};
 use gateway_client::protocol::{
-    DeviceExecEventParams, ErrorShape, Frame, RequestFrame, ResponseFrame, SignalFrame,
-    REQUEST_CANCEL_SIGNAL,
+    ConnectResult, DeviceExecEventParams, ErrorShape, Frame, RequestFrame, ResponseFrame,
+    SignalFrame, REQUEST_CANCEL_SIGNAL,
 };
 use gateway_client::{BinaryBody, BinaryBodyLimits, IncomingBody, OutgoingBody};
 use serde::Deserialize;
@@ -668,7 +668,9 @@ pub async fn run(
                         }
                         if rpc_error.is_protocol_unsupported() {
                             let launched = match updater.plan_for_protocol_error(rpc_error) {
-                                Some(target) => start_update(&updater, &runtime, &target).await,
+                                Some(target) => {
+                                    start_update(updater.clone(), runtime.clone(), target).await
+                                }
                                 None => false,
                             };
                             if launched {
@@ -733,13 +735,6 @@ pub async fn run(
 
             runtime.set_phase(daemon_protocol::DaemonPhase::Connected);
             info!(event = "connect.ok", implements = ?DEVICE_DRIVER_IMPLEMENTS);
-            if let Some(target) = conn
-                .connect_result
-                .as_ref()
-                .and_then(|result| updater.plan_for_server(&result.server))
-            {
-                start_update(&updater, &runtime, &target).await;
-            }
 
             let conn = Arc::new(conn);
             // The Connection owns its frame handler. Keep only a weak reference
@@ -802,6 +797,15 @@ pub async fn run(
                 _ => {}
             })
             .await;
+
+            // The handler is serving requests now; the update decision runs
+            // beside it so a slow installer download never delays a route.
+            if let Some(target) = update_after_connect(&updater, conn.connect_result.as_ref()) {
+                tokio::spawn(
+                    start_update(updater.clone(), runtime.clone(), target)
+                        .instrument(tracing::Span::current()),
+                );
+            }
 
             let flushed = flush_exec_event_outbox(&conn, &exec_event_outbox).await;
             if flushed > 0 {
@@ -911,17 +915,23 @@ pub async fn run(
     run.instrument(device_span).await
 }
 
+/// The release to move to after a successful handshake, if the gateway is
+/// ahead. Decided after the frame handler is installed and launched in the
+/// background, so the connection serves requests while the installer loads.
+fn update_after_connect(
+    updater: &AutoUpdater,
+    result: Option<&ConnectResult>,
+) -> Option<UpdateTarget> {
+    updater.plan_for_server(&result?.server)
+}
+
 /// Start the installer for `target` and record the decision where
 /// `gsv daemon diagnostics` shows it. Returns whether an installer is running.
-async fn start_update(
-    updater: &AutoUpdater,
-    runtime: &DaemonRuntime,
-    target: &UpdateTarget,
-) -> bool {
+async fn start_update(updater: AutoUpdater, runtime: DaemonRuntime, target: UpdateTarget) -> bool {
     use daemon_protocol::{DiagnosticLevel, DiagnosticNotice};
     const STARTED: &str = "autoUpdateStarted";
     let reason = target.reason.describe();
-    match updater.launch(target).await {
+    match updater.launch(&target).await {
         Ok(launch) => {
             info!(
                 event = "update.started",
@@ -949,6 +959,15 @@ async fn start_update(
                     "GSV {} is available because {reason}, but automatic updates are off. Run the installer, or set device.auto_update = true.",
                     target.release
                 ),
+            }));
+            false
+        }
+        Err(error @ UpdateError::NotServiceManaged { .. }) => {
+            info!(event = "update.available", release = %target.release, reason, detail = %error);
+            runtime.set_update_notice(Some(DiagnosticNotice {
+                level: DiagnosticLevel::Info,
+                code: "autoUpdateSkipped".to_string(),
+                message: format!("GSV {} is available, but {error}.", target.release),
             }));
             false
         }
@@ -988,6 +1007,63 @@ fn skipped_notice(release: &str, error: &UpdateError) -> daemon_protocol::Diagno
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::update::ReleaseChannel;
+    use gateway_client::protocol::{
+        ConnectedPeer, PeerGrant, PeerPrincipal, PeerPrincipalKind, ProcessIdentity, ServerInfo,
+    };
+
+    fn connect_result(version: &str, release: &str) -> ConnectResult {
+        ConnectResult {
+            protocol: gateway_client::protocol::PROTOCOL_VERSION,
+            server: ServerInfo {
+                version: version.to_string(),
+                release: Some(release.to_string()),
+                connection_id: "conn-1".to_string(),
+            },
+            peer: ConnectedPeer {
+                id: "machine-1".to_string(),
+                session_id: "session-1".to_string(),
+                principal: PeerPrincipal {
+                    kind: PeerPrincipalKind::Machine,
+                    account: ProcessIdentity {
+                        uid: 1000,
+                        gid: 1000,
+                        gids: vec![1000],
+                        username: "u".to_string(),
+                        home: "/home/u".to_string(),
+                        cwd: "/home/u".to_string(),
+                    },
+                },
+                grant: PeerGrant {
+                    calls: Vec::new(),
+                    signals: Vec::new(),
+                    implements: Vec::new(),
+                },
+            },
+        }
+    }
+
+    #[test]
+    fn a_newer_gateway_is_followed_only_after_the_handshake_result_exists() {
+        let dir = std::env::temp_dir().join(format!("gsvd-connect-{}", uuid::Uuid::new_v4()));
+        let updater = AutoUpdater::new(
+            true,
+            ReleaseChannel::Stable,
+            "0.4.1",
+            dir.join("auto-update"),
+            dir.join("auto-update.log"),
+        );
+        assert_eq!(update_after_connect(&updater, None), None);
+        assert_eq!(
+            update_after_connect(&updater, Some(&connect_result("0.4.1", "v0.4.1"))),
+            None
+        );
+        assert_eq!(
+            update_after_connect(&updater, Some(&connect_result("0.5.0", "v0.5.0")))
+                .map(|target| target.release),
+            Some("v0.5.0".to_string())
+        );
+    }
 
     fn test_exec_event(index: usize) -> DeviceExecEventParams {
         DeviceExecEventParams {
