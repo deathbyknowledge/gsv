@@ -224,6 +224,23 @@ binary transactionally and restart only after the replacement is complete; a
 failed health check restores the previous executable. Desktop updates do not
 silently alter a running agent Process.
 
+The daemon keeps itself current from the gateway handshake, because the gateway
+cannot reach a machine. A protocol error 102 names the server version and the
+installer, which means the daemon must update; a successful connect against a
+newer release means it should. Either way `gsvd` starts the ordinary installer,
+pinned with `GSV_VERSION` to the release the gateway named (`vX.Y.Z` on the
+stable channel, `dev` on the dev channel), detached from its own service: a
+transient `systemd-run --user` unit on Linux under systemd, a new session on
+macOS and other Unix hosts, and a detached process on Windows. The installer's
+checksum verification, service stop, transactional swap, health check, and
+rollback then run unchanged, and the daemon stays connected or retrying until
+the installer stops it. Guardrails: only a release the gateway named, at most
+one attempt per hour, a stable daemon never follows a `dev` gateway, and
+`device.auto_update = false` turns the mechanism off. The decision shows in
+`gsv daemon diagnostics`; installer output goes to
+`~/.gsv/logs/auto-update.log`. The CLI and Desktop are never replaced under a
+person; the CLI prints one hint when the gateway is newer.
+
 Published host artifacts cover Linux x64/ARM64 and macOS Intel/Apple Silicon
 for Desktop, `gsv-transcribe`, `gsv-vision`, `gsv`, and `gsvd`, plus Windows x64
 for `gsv` and `gsvd`. Checksums cover every release asset, including the vision

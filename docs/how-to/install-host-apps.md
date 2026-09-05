@@ -57,6 +57,31 @@ If migration or the health check fails, the previous executable and service
 definition are restored. A machine without an existing service is not silently
 enrolled; run `gsv daemon install` after configuring a driver credential.
 
+## Automatic daemon updates
+
+A connected machine keeps itself current. When the gateway is redeployed,
+`gsvd` learns about it the next time it connects: a gateway that requires a
+newer protocol rejects the handshake and names the release it needs, and a
+gateway that merely runs a newer release reports it on a successful connect.
+In both cases the daemon runs this same installer, pinned to that release,
+detached from its own service so the installer can stop, replace, restart,
+health-check, and if necessary roll back the daemon exactly as a manual
+upgrade would. A stable daemon only follows stable releases; a daemon on the
+`dev` channel follows the `dev` tag.
+
+The daemon makes at most one attempt per hour and only ever moves to a release
+the gateway named. Installer output is written to `~/.gsv/logs/auto-update.log`,
+and `gsv daemon diagnostics` shows the latest decision. To turn the mechanism
+off:
+
+```bash
+gsv config --local set device.auto_update false
+```
+
+The CLI and Desktop are never replaced while a person is using them. The CLI
+prints a hint when the gateway runs a newer release; rerun the installer to
+update them.
+
 ## Desktop
 
 On Linux and macOS, start or focus the installed app with:
