@@ -18,6 +18,7 @@ import {
 import { ToolSchema, type Tool } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { requirePrincipal, resolveCallerOwnerUid, type KernelContext } from "../context";
+import type { McpServerRow } from "../mcp-client";
 import type { McpServerRecord } from "../mcp-store";
 
 export type McpAddConnectionInput = {
@@ -35,16 +36,6 @@ export type McpAddConnectionResult = {
   id: string;
 };
 
-type SdkMcpServerRow = {
-  id: string;
-  name: string;
-  server_url: string;
-  client_id: string | null;
-  auth_url: string | null;
-  callback_url: string;
-  server_options: string | null;
-};
-
 const MCP_TRANSPORT_TYPES = new Set<SysMcpTransportType>(["auto", "streamable-http", "sse"]);
 const sdkMcpServerRowSchema = z.object({
   id: z.string(),
@@ -54,7 +45,7 @@ const sdkMcpServerRowSchema = z.object({
   auth_url: z.string().nullable(),
   callback_url: z.string(),
   server_options: z.string().nullable(),
-});
+}) satisfies z.ZodType<McpServerRow>;
 const sdkMcpServerRowsSchema = z.array(sdkMcpServerRowSchema);
 const sdkMcpToolsSchema = z.array(ToolSchema);
 const mcpCallResultProjectionSchema = z.object({
@@ -217,12 +208,12 @@ function findUserMcpServerByNameUrl(
   return null;
 }
 
-function findSdkMcpServer(ctx: KernelContext, serverId: string): SdkMcpServerRow | undefined {
+function findSdkMcpServer(ctx: KernelContext, serverId: string): McpServerRow | undefined {
   return sdkMcpServerRowsSchema.parse(ctx.mcp.listServers())
     .find((item) => item.id === serverId);
 }
 
-function parseSdkServerTransport(server: SdkMcpServerRow | undefined): SysMcpTransportType {
+function parseSdkServerTransport(server: McpServerRow | undefined): SysMcpTransportType {
   if (!server?.server_options) {
     return "auto";
   }

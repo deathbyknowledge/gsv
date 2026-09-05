@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ConnectedPeer } from "@humansandmachines/gsv/protocol";
+import { connectedPeerSchema } from "../protocol/peer-schemas";
 
 export type KernelWebSocketMessage = string | ArrayBuffer;
 
@@ -14,38 +15,15 @@ export type KernelConnectionState = {
   observedProcessIds?: string[];
 };
 
-const PROCESS_IDENTITY_SCHEMA = z.object({
-  uid: z.number().int(),
-  gid: z.number().int(),
-  gids: z.array(z.number().int()),
-  username: z.string(),
-  home: z.string(),
-  cwd: z.string(),
-});
-
-const CONNECTED_PEER_SCHEMA = z.object({
-  id: z.string(),
-  sessionId: z.string(),
-  principal: z.object({
-    kind: z.enum(["human", "machine", "service"]),
-    account: PROCESS_IDENTITY_SCHEMA,
-  }),
-  grant: z.object({
-    calls: z.array(z.string()),
-    signals: z.array(z.string()),
-    implements: z.array(z.string()),
-  }),
-});
-
 const KERNEL_CONNECTION_STATE_SCHEMA = z.object({
   step: z.enum(["pending", "connected", "superseded"]),
   protocol: z.number().int().optional(),
-  peer: CONNECTED_PEER_SCHEMA.optional(),
+  peer: connectedPeerSchema.optional(),
   clientId: z.string().optional(),
   clientPlatform: z.string().optional(),
   credentialMethod: z.enum(["password", "token"]).optional(),
   observedProcessIds: z.array(z.string()).optional(),
-});
+}) satisfies z.ZodType<KernelConnectionState>;
 
 type ConnectionAttachment<State> = {
   version: 1;
