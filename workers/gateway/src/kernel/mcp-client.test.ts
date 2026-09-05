@@ -117,6 +117,7 @@ function makeManager(setup: Record<string, (connection: FakeConnection) => void>
   const connections = new Map<string, FakeConnection>();
   const manager = new McpClientManager({ name: "GSV Kernel", version: "0.0.0" }, {
     rows,
+    retryBackoffMs: 0,
     createAuthProvider: (callbackUrl) => new McpOAuthProvider(storage, "install-1", callbackUrl),
     createConnection: (url, _info, options) => {
       const connection = fakeConnection(url, options.transport);
@@ -462,6 +463,54 @@ describe("McpClientManager", () => {
     );
     await expect(manager.callTool({ serverId: "missing", name: "lookup" }))
       .rejects.toThrow("MCP server missing is not connected");
+  });
+});
+
+describe("McpClientManager reconnects", () => {
+  it("retries transient failures after authorization but not final ones", async () => {
+    const { manager, connections } = makeManager({
+      "https://flaky.example/mcp": (connection) => {
+        let attempts = 0;
+        connection.init.mockImplementation(async () => {
+          attempts += 1;
+          if (attempts < 3) {
+            connection.connectionState = "failed";
+            return "socket hang up";
+          }
+          connection.connectionState = "connected";
+          return undefined;
+        });
+      },
+      "https://gone.example/mcp": (connection) => {
+        connection.init.mockImplementation(async () => {
+          connection.connectionState = "failed";
+          return "HTTP 404 Not Found";
+        });
+      },
+    });
+    await manager.registerServer("mcp-flaky", {
+      url: "https://flaky.example/mcp",
+      name: "flaky",
+      transport: { type: "streamable-http" },
+    });
+    await manager.registerServer("mcp-gone", {
+      url: "https://gone.example/mcp",
+      name: "gone",
+      transport: { type: "streamable-http" },
+    });
+
+    await manager.establishConnection("mcp-flaky");
+    await manager.establishConnection("mcp-gone");
+    await manager.whenIdle();
+
+    const flaky = connections.get("https://flaky.example/mcp");
+    const gone = connections.get("https://gone.example/mcp");
+    expect(flaky?.init).toHaveBeenCalledTimes(3);
+    expect(flaky?.discover).toHaveBeenCalledTimes(1);
+    expect(flaky?.connectionState).toBe("ready");
+    expect(gone?.init).toHaveBeenCalledTimes(1);
+    expect(gone?.discover).not.toHaveBeenCalled();
+    expect(gone?.connectionState).toBe("failed");
   });
 });
 

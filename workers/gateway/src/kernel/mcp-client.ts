@@ -487,18 +487,26 @@ export type McpClientManagerOptions = {
     info: Implementation,
     options: McpConnectionOptions,
   ) => McpConnection;
+  /** Base delay between reconnect attempts; tests set it to zero. */
+  retryBackoffMs?: number;
 };
+
+const RECONNECT_ATTEMPTS = 3;
+const DEFAULT_RETRY_BACKOFF_MS = 500;
 
 export class McpClientManager {
   readonly mcpConnections: Record<string, McpConnection> = {};
   private readonly listeners = new Set<() => void>();
   private readonly pending = new Map<string, Promise<void>>();
+  private readonly retryBackoffMs: number;
   private restored = false;
 
   constructor(
     private readonly info: Implementation,
     private readonly options: McpClientManagerOptions,
-  ) {}
+  ) {
+    this.retryBackoffMs = options.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS;
+  }
 
   /** Resolves once every detached restore and reconnect has settled. */
   async whenIdle(): Promise<void> {
@@ -800,7 +808,7 @@ export class McpClientManager {
   }
 
   private async connectAndDiscover(serverId: string): Promise<void> {
-    const result = await this.connectToServer(serverId);
+    const result = await this.connectWithRetry(serverId);
     if (result.state === "failed") {
       console.error(`[MCP] Error connecting to ${serverId}:`, result.error);
       return;
@@ -810,6 +818,22 @@ export class McpClientManager {
       if (discovery && !discovery.success) {
         console.error(`[MCP] Error discovering ${serverId}:`, discovery.error);
       }
+    }
+  }
+
+  /**
+   * Connect with a few attempts for transient failures. An authorization
+   * request or a transport the server does not implement is final.
+   */
+  private async connectWithRetry(serverId: string): Promise<McpConnectionResult> {
+    for (let attempt = 1; ; attempt += 1) {
+      const result = await this.connectToServer(serverId);
+      const transient = result.state === "failed"
+        && !isUnauthorized(result.error)
+        && !isTransportNotImplemented(result.error);
+      if (!transient || attempt >= RECONNECT_ATTEMPTS) return result;
+      const delay = this.retryBackoffMs * 2 ** (attempt - 1);
+      if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
 
