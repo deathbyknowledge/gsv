@@ -919,6 +919,7 @@ async fn start_update(
     target: &UpdateTarget,
 ) -> bool {
     use daemon_protocol::{DiagnosticLevel, DiagnosticNotice};
+    const STARTED: &str = "autoUpdateStarted";
     let reason = target.reason.describe();
     match updater.launch(target).await {
         Ok(launch) => {
@@ -931,7 +932,7 @@ async fn start_update(
             );
             runtime.set_update_notice(Some(DiagnosticNotice {
                 level: DiagnosticLevel::Info,
-                code: "autoUpdateStarted".to_string(),
+                code: STARTED.to_string(),
                 message: format!(
                     "Installing GSV {} because {reason}; the service restarts when the installer finishes.",
                     launch.release
@@ -951,15 +952,36 @@ async fn start_update(
             }));
             false
         }
-        Err(error) => {
-            warn!(event = "update.skipped", release = %target.release, reason, error = %error);
-            runtime.set_update_notice(Some(DiagnosticNotice {
-                level: DiagnosticLevel::Warning,
-                code: "autoUpdateSkipped".to_string(),
-                message: format!("GSV {} was not installed: {error}.", target.release),
-            }));
+        Err(error @ UpdateError::Deferred { .. }) => {
+            info!(event = "update.deferred", release = %target.release, reason, detail = %error);
+            // An installer from this process lifetime is presumably still
+            // running; its notice stays until the outcome replaces it.
+            let started = runtime
+                .update_notice()
+                .is_some_and(|notice| notice.code == STARTED);
+            if !started {
+                runtime.set_update_notice(Some(skipped_notice(&target.release, &error)));
+            }
             false
         }
+        Err(error) if error.is_skip() => {
+            info!(event = "update.skipped", release = %target.release, reason, detail = %error);
+            runtime.set_update_notice(Some(skipped_notice(&target.release, &error)));
+            false
+        }
+        Err(error) => {
+            warn!(event = "update.failed", release = %target.release, reason, error = %error);
+            runtime.set_update_notice(Some(skipped_notice(&target.release, &error)));
+            false
+        }
+    }
+}
+
+fn skipped_notice(release: &str, error: &UpdateError) -> daemon_protocol::DiagnosticNotice {
+    daemon_protocol::DiagnosticNotice {
+        level: daemon_protocol::DiagnosticLevel::Warning,
+        code: "autoUpdateSkipped".to_string(),
+        message: format!("GSV {release} is available, but {error}."),
     }
 }
 

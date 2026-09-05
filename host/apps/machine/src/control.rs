@@ -85,6 +85,14 @@ impl DaemonRuntime {
         self.update(|snapshot| snapshot.update_notice = notice);
     }
 
+    pub fn update_notice(&self) -> Option<DiagnosticNotice> {
+        self.snapshot
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .update_notice
+            .clone()
+    }
+
     pub async fn request(&self, action: ControlAction) -> Result<(), OperationError> {
         self.actions.try_send(action).map_err(|error| match error {
             mpsc::error::TrySendError::Full(_) => OperationError::Busy,
