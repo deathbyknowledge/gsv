@@ -24,7 +24,7 @@ import {
 import { openAiResponseEvents, parseSse } from "./sse";
 import { z } from "zod";
 import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
-import { convertMessages } from "@earendil-works/pi-ai/api/openai-completions";
+import type { convertMessages } from "@earendil-works/pi-ai/api/openai-completions";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 import {
@@ -237,6 +237,24 @@ function streamWithCustomFetch(
   return streamOpenAICompletionsWithFetch(fetchImpl, model, request);
 }
 
+type OpenAICompletionsModule = { convertMessages: typeof convertMessages };
+
+let openAICompletions: Promise<OpenAICompletionsModule> | undefined;
+
+/**
+ * pi-ai's chat-completions module brings the OpenAI SDK with it, and every
+ * other pi-ai API already loads on first use. Importing this one the same way
+ * keeps the SDK out of the Worker's start-up evaluation. A failed load is not
+ * cached so the next request retries it.
+ */
+function loadOpenAICompletions(): Promise<OpenAICompletionsModule> {
+  openAICompletions ??= import("@earendil-works/pi-ai/api/openai-completions").catch((error) => {
+    openAICompletions = undefined;
+    throw error;
+  });
+  return openAICompletions;
+}
+
 function streamOpenAICompletionsWithFetch(
   fetchImpl: typeof fetch,
   model: Model<"openai-completions">,
@@ -247,9 +265,10 @@ function streamOpenAICompletionsWithFetch(
     const output = emptyAssistantMessage(model);
     try {
       const compat = resolvedOpenAICompletionsCompat(model);
+      const { convertMessages: convertChatMessages } = await loadOpenAICompletions();
       const payload: OpenAIChatPayload = {
         model: model.id,
-        messages: convertMessages(model, request.context, compat),
+        messages: convertChatMessages(model, request.context, compat),
         stream: true,
         max_tokens: request.options?.maxTokens ?? request.maxTokens,
       };

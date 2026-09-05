@@ -48,6 +48,7 @@ export default defineConfig({
       "**/test-integration/**",
       "src/process/do.*.test.ts",
     ],
+    setupFiles: ["./test-support/preload-lazy-modules.ts"],
     deps: {
       optimizer: {
         ssr: {
