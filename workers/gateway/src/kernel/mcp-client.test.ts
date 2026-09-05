@@ -115,9 +115,11 @@ function makeManager(setup: Record<string, (connection: FakeConnection) => void>
   const rows = new FakeRows();
   const storage = new FakeStorage();
   const connections = new Map<string, FakeConnection>();
+  const waitUntil = vi.fn();
   const manager = new McpClientManager({ name: "GSV Kernel", version: "0.0.0" }, {
     rows,
     retryBackoffMs: 0,
+    waitUntil,
     createAuthProvider: (callbackUrl) => new McpOAuthProvider(storage, "install-1", callbackUrl),
     createConnection: (url, _info, options) => {
       const connection = fakeConnection(url, options.transport);
@@ -126,7 +128,7 @@ function makeManager(setup: Record<string, (connection: FakeConnection) => void>
       return connection;
     },
   });
-  return { manager, rows, storage, connections };
+  return { manager, rows, storage, connections, waitUntil };
 }
 
 /** An in-memory MCP server transport that fails to start, or answers `initialize`. */
@@ -359,12 +361,29 @@ describe("McpClientManager", () => {
   });
 
   it("restores stored servers in the background and leaves pending authorizations alone", async () => {
-    const { manager, rows, connections } = makeManager({
+    const { manager, rows, connections, waitUntil } = makeManager({
       "https://broken.example/mcp": (connection) => {
         connection.init.mockImplementation(async () => {
           throw new Error("socket hang up");
         });
       },
+      "https://gone.example/mcp": (connection) => {
+        connection.init.mockImplementation(async () => {
+          connection.connectionState = "failed";
+          return "HTTP 404 Not Found";
+        });
+      },
+    });
+    const changes = vi.fn();
+    manager.onServerStateChanged(changes);
+    rows.save({
+      id: "mcp-gone",
+      name: "gone",
+      server_url: "https://gone.example/mcp",
+      client_id: null,
+      auth_url: null,
+      callback_url: "",
+      server_options: null,
     });
     rows.save({
       id: "mcp-broken",
@@ -401,9 +420,17 @@ describe("McpClientManager", () => {
     const ready = connections.get("https://ready.example/mcp");
     const pending = connections.get("https://pending.example/mcp");
     const broken = connections.get("https://broken.example/mcp");
-    expect(Object.keys(manager.mcpConnections).sort()).toEqual(["mcp-broken", "mcp-pending", "mcp-ready"]);
+    const gone = connections.get("https://gone.example/mcp");
+    expect(Object.keys(manager.mcpConnections).sort()).toEqual([
+      "mcp-broken",
+      "mcp-gone",
+      "mcp-pending",
+      "mcp-ready",
+    ]);
     expect(ready?.discover).not.toHaveBeenCalled();
     expect(ready?.connectionState).not.toBe("ready");
+    expect(waitUntil).toHaveBeenCalledTimes(3);
+    expect(waitUntil.mock.calls.every(([task]) => task instanceof Promise)).toBe(true);
 
     await manager.whenIdle();
 
@@ -412,6 +439,10 @@ describe("McpClientManager", () => {
     expect(ready?.connectionState).toBe("ready");
     expect(broken?.connectionState).toBe("failed");
     expect(broken?.connectionError).toBe("socket hang up");
+    expect(gone?.init).toHaveBeenCalledTimes(1);
+    expect(gone?.connectionState).toBe("failed");
+    expect(gone?.connectionError).toBe("HTTP 404 Not Found");
+    expect(changes).toHaveBeenCalled();
     expect(ready?.options.transport).toMatchObject({
       type: "sse",
       requestInit: { headers: { "x-api-key": "k" } },
@@ -468,7 +499,7 @@ describe("McpClientManager", () => {
 
 describe("McpClientManager reconnects", () => {
   it("retries transient failures after authorization but not final ones", async () => {
-    const { manager, connections } = makeManager({
+    const { manager, connections, waitUntil } = makeManager({
       "https://flaky.example/mcp": (connection) => {
         let attempts = 0;
         connection.init.mockImplementation(async () => {
@@ -502,6 +533,7 @@ describe("McpClientManager reconnects", () => {
     await manager.establishConnection("mcp-flaky");
     await manager.establishConnection("mcp-gone");
     await manager.whenIdle();
+    expect(waitUntil).toHaveBeenCalledTimes(2);
 
     const flaky = connections.get("https://flaky.example/mcp");
     const gone = connections.get("https://gone.example/mcp");
@@ -585,6 +617,34 @@ describe("McpClientConnection discovery", () => {
     expect(connection.connectionError).toBe(
       "Failed to discover MCP server capabilities: tools/list timed out",
     );
+  });
+
+  it("aborts list requests on timeout and ignores their late answers", async () => {
+    const connection = new McpClientConnection(
+      new URL("https://tools.example/mcp"),
+      { name: "GSV Kernel", version: "0.0.0" },
+      { transport: { type: "auto" } },
+    );
+    connection.connectionState = "connected";
+    connection.tools = [{ name: "stable", inputSchema: { type: "object" } }];
+    vi.spyOn(connection.client, "getServerCapabilities").mockReturnValue({ tools: {} });
+    vi.spyOn(connection.client, "getInstructions").mockReturnValue(undefined);
+    const listTools = vi.spyOn(connection.client, "listTools").mockImplementation(
+      () => new Promise((resolve) => {
+        setTimeout(() => resolve({ tools: [{ name: "late", inputSchema: { type: "object" } }] }), 30);
+      }),
+    );
+
+    await expect(connection.discover({ timeoutMs: 5 })).resolves.toEqual({
+      success: false,
+      error: "Discovery timed out after 5ms",
+    });
+    expect(connection.connectionState).toBe("connected");
+    expect(listTools.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(connection.tools.map((tool) => tool.name)).toEqual(["stable"]);
+    expect(connection.serverCapabilities).toBeUndefined();
   });
 });
 

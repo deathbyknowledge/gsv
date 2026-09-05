@@ -147,7 +147,7 @@ export class McpClientConnection implements McpConnection {
   instructions?: string;
   private transport?: { kind: McpTransportKind; instance: McpClientTransport };
   private discoveryAbort?: AbortController;
-  private probingCapabilities = false;
+  private discoveryAttempt = 0;
 
   constructor(
     readonly url: URL,
@@ -190,11 +190,13 @@ export class McpClientConnection implements McpConnection {
     this.discoveryAbort?.abort();
     const abort = new AbortController();
     this.discoveryAbort = abort;
+    this.discoveryAttempt += 1;
+    const attempt = this.discoveryAttempt;
     this.connectionState = "discovering";
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
-        this.discoverAndRegister(),
+        this.discoverAndRegister(attempt, abort.signal),
         new Promise<never>((_, reject) => {
           timer = setTimeout(
             () => reject(new Error(`Discovery timed out after ${timeoutMs}ms`)),
@@ -213,6 +215,8 @@ export class McpClientConnection implements McpConnection {
       this.connectionError = null;
       return { success: true };
     } catch (error) {
+      // Stop the list requests still in flight so a late answer cannot land.
+      abort.abort();
       this.connectionState = "connected";
       const message = errorMessage(error);
       this.connectionError = `Failed to discover MCP server capabilities: ${message}`;
@@ -294,22 +298,28 @@ export class McpClientConnection implements McpConnection {
     return new SSEClientTransport(this.url, { authProvider, requestInit });
   }
 
-  private async discoverAndRegister(): Promise<void> {
+  /**
+   * Fetch capabilities under `signal`, and publish them only if this attempt
+   * is still the current one: a timed-out or cancelled discovery must not
+   * rewrite the lists later.
+   */
+  private async discoverAndRegister(attempt: number, signal: AbortSignal): Promise<void> {
     const capabilities = this.client.getServerCapabilities();
     const resumed = this.transport?.kind === "streamable-http"
       && this.transport.instance.sessionId !== undefined;
     const probe = !capabilities && resumed;
-    this.serverCapabilities = capabilities;
-    this.probingCapabilities = probe;
     if (!capabilities && !probe) {
       throw new Error("The MCP Server failed to return server capabilities");
     }
+    const none: never[] = [];
     const [tools, resources, prompts, resourceTemplates] = await Promise.all([
-      capabilities?.tools || probe ? this.registerTools() : Promise.resolve([]),
-      capabilities?.resources || probe ? this.registerResources() : Promise.resolve([]),
-      capabilities?.prompts || probe ? this.registerPrompts() : Promise.resolve([]),
-      capabilities?.resources || probe ? this.fetchResourceTemplates() : Promise.resolve([]),
+      capabilities?.tools || probe ? this.registerTools(capabilities, probe, signal) : none,
+      capabilities?.resources || probe ? this.registerResources(capabilities, probe, signal) : none,
+      capabilities?.prompts || probe ? this.registerPrompts(capabilities, probe, signal) : none,
+      capabilities?.resources || probe ? this.fetchResourceTemplates(signal) : none,
     ]);
+    if (signal.aborted || attempt !== this.discoveryAttempt) return;
+    this.serverCapabilities = capabilities;
     this.instructions = this.client.getInstructions();
     this.tools = tools;
     this.resources = resources;
@@ -317,57 +327,69 @@ export class McpClientConnection implements McpConnection {
     this.resourceTemplates = resourceTemplates;
   }
 
-  private async registerTools(): Promise<Tool[]> {
-    if (this.serverCapabilities?.tools?.listChanged || this.probingCapabilities) {
+  private async registerTools(
+    capabilities: ServerCapabilities | undefined,
+    probe: boolean,
+    signal: AbortSignal,
+  ): Promise<Tool[]> {
+    if (capabilities?.tools?.listChanged || probe) {
       this.client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
         this.tools = await this.fetchTools();
       });
     }
-    return this.fetchTools();
+    return this.fetchTools(signal);
   }
 
-  private async registerResources(): Promise<Resource[]> {
-    if (this.serverCapabilities?.resources?.listChanged || this.probingCapabilities) {
+  private async registerResources(
+    capabilities: ServerCapabilities | undefined,
+    probe: boolean,
+    signal: AbortSignal,
+  ): Promise<Resource[]> {
+    if (capabilities?.resources?.listChanged || probe) {
       this.client.setNotificationHandler(ResourceListChangedNotificationSchema, async () => {
         this.resources = await this.fetchResources();
       });
     }
-    return this.fetchResources();
+    return this.fetchResources(signal);
   }
 
-  private async registerPrompts(): Promise<Prompt[]> {
-    if (this.serverCapabilities?.prompts?.listChanged || this.probingCapabilities) {
+  private async registerPrompts(
+    capabilities: ServerCapabilities | undefined,
+    probe: boolean,
+    signal: AbortSignal,
+  ): Promise<Prompt[]> {
+    if (capabilities?.prompts?.listChanged || probe) {
       this.client.setNotificationHandler(PromptListChangedNotificationSchema, async () => {
         this.prompts = await this.fetchPrompts();
       });
     }
-    return this.fetchPrompts();
+    return this.fetchPrompts(signal);
   }
 
-  private fetchTools(): Promise<Tool[]> {
+  private fetchTools(signal?: AbortSignal): Promise<Tool[]> {
     return this.fetchPages(async (cursor) => {
-      const page = await this.client.listTools({ cursor });
+      const page = await this.client.listTools({ cursor }, { signal });
       return { items: page.tools, nextCursor: page.nextCursor };
     });
   }
 
-  private fetchResources(): Promise<Resource[]> {
+  private fetchResources(signal?: AbortSignal): Promise<Resource[]> {
     return this.fetchPages(async (cursor) => {
-      const page = await this.client.listResources({ cursor });
+      const page = await this.client.listResources({ cursor }, { signal });
       return { items: page.resources, nextCursor: page.nextCursor };
     });
   }
 
-  private fetchPrompts(): Promise<Prompt[]> {
+  private fetchPrompts(signal?: AbortSignal): Promise<Prompt[]> {
     return this.fetchPages(async (cursor) => {
-      const page = await this.client.listPrompts({ cursor });
+      const page = await this.client.listPrompts({ cursor }, { signal });
       return { items: page.prompts, nextCursor: page.nextCursor };
     });
   }
 
-  private fetchResourceTemplates(): Promise<ResourceTemplate[]> {
+  private fetchResourceTemplates(signal?: AbortSignal): Promise<ResourceTemplate[]> {
     return this.fetchPages(async (cursor) => {
-      const page = await this.client.listResourceTemplates({ cursor });
+      const page = await this.client.listResourceTemplates({ cursor }, { signal });
       return { items: page.resourceTemplates, nextCursor: page.nextCursor };
     });
   }
@@ -489,6 +511,11 @@ export type McpClientManagerOptions = {
   ) => McpConnection;
   /** Base delay between reconnect attempts; tests set it to zero. */
   retryBackoffMs?: number;
+  /**
+   * Keeps a detached session task alive past the request that started it;
+   * the Kernel passes `ctx.waitUntil`.
+   */
+  waitUntil?: (task: Promise<unknown>) => void;
 };
 
 const RECONNECT_ATTEMPTS = 3;
@@ -804,6 +831,7 @@ export class McpClientManager {
         if (this.pending.get(serverId) === tracked) this.pending.delete(serverId);
       });
     this.pending.set(serverId, tracked);
+    this.options.waitUntil?.(tracked);
     return tracked;
   }
 
@@ -811,6 +839,12 @@ export class McpClientManager {
     const result = await this.connectWithRetry(serverId);
     if (result.state === "failed") {
       console.error(`[MCP] Error connecting to ${serverId}:`, result.error);
+      const connection = this.mcpConnections[serverId];
+      if (connection) {
+        connection.connectionState = "failed";
+        connection.connectionError = result.error;
+      }
+      this.fireStateChanged();
       return;
     }
     if (result.state === "connected") {
