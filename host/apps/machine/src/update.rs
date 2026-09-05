@@ -205,13 +205,15 @@ pub enum UnitState {
     Unknown,
 }
 
-/// `systemctl is-active` exits 0 for active and 3 for inactive; anything
-/// else (1 for a failed query, a bus it cannot reach, a spawn error) is
-/// unknown.
+/// `systemctl is-active` exits 0 for active, 3 for inactive, and 4 for a
+/// unit it does not know; since the transient unit is uniquely named and
+/// started with `--collect`, which unloads it once it ran, 4 means finished.
+/// Anything else (1 for a failed query, a bus it cannot reach, a signal, a
+/// spawn error) proves nothing.
 pub fn unit_state_from_status(status: io::Result<std::process::ExitStatus>) -> UnitState {
     match status.ok().and_then(|status| status.code()) {
         Some(0) => UnitState::Active,
-        Some(3) => UnitState::Inactive,
+        Some(3 | 4) => UnitState::Inactive,
         _ => UnitState::Unknown,
     }
 }
@@ -425,7 +427,7 @@ impl AutoUpdater {
         let mut command = detached_command(&invocation, &strategy, &self.log_path, log, &unit)
             .map_err(|error| UpdateError::Spawn(error.to_string()))?;
         let mut child = tokio::process::Command::from(command_take(&mut command))
-            .kill_on_drop(false)
+            .kill_on_drop(kill_launcher_on_drop(&strategy))
             .spawn()
             .map_err(|error| UpdateError::Spawn(error.to_string()))?;
         let release = target.release.clone();
@@ -741,6 +743,15 @@ pub fn systemd_run_arguments(
     args.push(invocation.program.clone());
     args.extend(invocation.args.iter().cloned());
     args
+}
+
+/// Whether the spawned child dies with the launch future. Under systemd the
+/// child is only the launcher, awaited before the launch is confirmed, so a
+/// cancelled launch must not let it submit the unit afterwards; once its
+/// exit is observed there is nothing left to kill. Elsewhere the child is
+/// the detached installer itself and spawning it is the confirmation.
+pub fn kill_launcher_on_drop(strategy: &DetachStrategy) -> bool {
+    matches!(strategy, DetachStrategy::SystemdRun { .. })
 }
 
 /// Whether `systemd-run` managed to submit the transient unit: only a clean
@@ -1462,8 +1473,14 @@ mod tests {
         let status = |code: i32| Ok(std::process::ExitStatus::from_raw(code << 8));
         assert_eq!(unit_state_from_status(status(0)), UnitState::Active);
         assert_eq!(unit_state_from_status(status(3)), UnitState::Inactive);
+        assert_eq!(
+            unit_state_from_status(status(4)),
+            UnitState::Inactive,
+            "a collected transient unit is one that finished"
+        );
         assert_eq!(unit_state_from_status(status(1)), UnitState::Unknown);
-        assert_eq!(unit_state_from_status(status(4)), UnitState::Unknown);
+        assert_eq!(unit_state_from_status(status(2)), UnitState::Unknown);
+        assert_eq!(unit_state_from_status(status(5)), UnitState::Unknown);
         assert_eq!(
             unit_state_from_status(Ok(std::process::ExitStatus::from_raw(9))),
             UnitState::Unknown,
@@ -1473,6 +1490,15 @@ mod tests {
             unit_state_from_status(Err(io::Error::other("no such file"))),
             UnitState::Unknown
         );
+    }
+
+    #[test]
+    fn only_the_systemd_launcher_dies_with_a_cancelled_launch() {
+        assert!(kill_launcher_on_drop(&DetachStrategy::SystemdRun {
+            program: PathBuf::from("/usr/bin/systemd-run"),
+        }));
+        assert!(!kill_launcher_on_drop(&DetachStrategy::NewSession));
+        assert!(!kill_launcher_on_drop(&DetachStrategy::WindowsDetached));
     }
 
     #[cfg(unix)]
