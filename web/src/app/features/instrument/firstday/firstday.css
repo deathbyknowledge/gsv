@@ -123,3 +123,54 @@
 @media (max-width: 720px) {
   .fd-foot { padding: 0 18px 14px; }
 }
+
+/* connect panels */
+.fd-orb {
+  display: inline-block;
+  transform: scale(0.75);
+  transform-origin: right center;
+}
+.fd-commands {
+  display: grid;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.fd-command-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+.fd-command pre {
+  margin: 0;
+  font-size: 13px;
+  color: var(--label);
+  border-left: 2px solid var(--border);
+  padding-left: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: all;
+}
+.fd-command pre.is-dim { color: var(--text-dim); user-select: none; }
+.fd-command pre.is-error, .fd-note.is-error { color: var(--error); }
+.fd-note {
+  font-size: 13px !important;
+  color: var(--text-dim) !important;
+}
+.fd-panel .ibtn { text-decoration: none; display: inline-block; }
+.fd-flow {
+  border-left: 2px solid var(--border);
+  padding-left: 14px;
+}
+.fd-flow-step {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: var(--space-3);
+}
