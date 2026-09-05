@@ -324,4 +324,46 @@ assert_bundle_left_alone "$BUNDLE_LINUX_HOME" "$BUNDLE_LINUX_DIR" "$BUNDLE_OUTPU
 test "$("$BUNDLE_LINUX_HOME/.gsv/bin/gsv")" = "gsv-v2"
 test ! -s "$SYSTEMCTL_LOG"
 
-echo "host installer checksum, replacement, default directory, PATH, and bundle smoke passed"
+# The same holds when the service still runs the `gsv device run`
+# compatibility launcher from inside the bundle.
+COMPAT_MAC_HOME="$TEST_ROOT/compat-mac-home"
+mkdir -p "$COMPAT_MAC_HOME/Library/LaunchAgents"
+cat > "$COMPAT_MAC_HOME/Library/LaunchAgents/gsvd.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>gsvd</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$BUNDLE_MAC_DIR/gsv</string>
+    <string>device</string>
+    <string>run</string>
+  </array>
+</dict>
+</plist>
+PLIST
+BUNDLE_OUTPUT="$(DEFAULT_HOME="$COMPAT_MAC_HOME" run_default_installer env GSV_TEST_UNAME_S=Darwin)"
+assert_bundle_left_alone "$COMPAT_MAC_HOME" "$BUNDLE_MAC_DIR" "$BUNDLE_OUTPUT"
+test ! -s "$SYSTEMCTL_LOG"
+
+COMPAT_LINUX_HOME="$TEST_ROOT/compat-linux-home"
+mkdir -p "$COMPAT_LINUX_HOME/.config/systemd/user"
+printf '[Service]\nExecStart="%s/gsv" "device" "run"\n' "$BUNDLE_LINUX_DIR" > "$COMPAT_LINUX_HOME/.config/systemd/user/gsvd.service"
+BUNDLE_OUTPUT="$(DEFAULT_HOME="$COMPAT_LINUX_HOME" run_default_installer env)"
+assert_bundle_left_alone "$COMPAT_LINUX_HOME" "$BUNDLE_LINUX_DIR" "$BUNDLE_OUTPUT"
+test ! -s "$SYSTEMCTL_LOG"
+
+# Outside a bundle, the compatibility launcher still marks an existing
+# installation that is updated in place.
+COMPAT_EXISTING_HOME="$TEST_ROOT/compat-existing-home"
+COMPAT_EXISTING_DIR="$TEST_ROOT/compat-existing-bin"
+mkdir -p "$COMPAT_EXISTING_HOME/.config/systemd/user" "$COMPAT_EXISTING_DIR"
+cp "$INSTALL_DIR/gsv" "$COMPAT_EXISTING_DIR/gsv"
+printf '[Service]\nExecStart="%s/gsv" "device" "run"\n' "$COMPAT_EXISTING_DIR" > "$COMPAT_EXISTING_HOME/.config/systemd/user/gsvd.service"
+COMPAT_OUTPUT="$(DEFAULT_HOME="$COMPAT_EXISTING_HOME" run_default_installer env)"
+printf '%s\n' "$COMPAT_OUTPUT" | grep -q "Updating the existing installation in $COMPAT_EXISTING_DIR$"
+test "$("$COMPAT_EXISTING_DIR/gsvd")" = "gsvd-v2"
+test ! -e "$COMPAT_EXISTING_HOME/.gsv/bin"
+
+echo "host installer checksum, replacement, default directory, PATH, bundle, and launcher smoke passed"

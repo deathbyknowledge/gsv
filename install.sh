@@ -69,7 +69,8 @@ validate_channel() {
     fi
 }
 
-# The executable a previous installation registered as the gsvd service, if any.
+# The program a previous installation registered as the gsvd service, if any:
+# gsvd itself, or gsv from the `gsv device run` compatibility launcher.
 service_definition_executable() {
     local line=""
     if [ "$OS" = "linux" ]; then
@@ -84,7 +85,9 @@ service_definition_executable() {
     else
         local plist="${HOME}/Library/LaunchAgents/gsvd.plist"
         [ -f "$plist" ] || return 0
-        sed -n 's/.*<string>\(.*\/gsvd\)<\/string>.*/\1/p' "$plist" | head -n 1
+        sed -n '/<key>ProgramArguments<\/key>/,/<\/array>/p' "$plist" \
+            | sed -n 's/^[[:space:]]*<string>\(.*\)<\/string>.*/\1/p' \
+            | head -n 1
     fi
 }
 
