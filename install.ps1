@@ -225,7 +225,11 @@ Write-Host "GSV host installer · Windows x64" -ForegroundColor Cyan
 Write-Host ""
 Install-GsvHost
 Ensure-ConfigFile
-Add-InstallDirToPath
+if ($env:GSV_NO_MODIFY_PATH -eq "1") {
+  Write-Info "Left the user PATH alone (GSV_NO_MODIFY_PATH=1); add $InstallDir yourself"
+} else {
+  Add-InstallDirToPath
+}
 if (-not $Version) {
   try {
     & (Join-Path $InstallDir "gsv.exe") config --local set release.channel $Channel *> $null

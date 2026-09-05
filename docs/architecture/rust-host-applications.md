@@ -214,7 +214,10 @@ of implementing platform commands in the menu layer.
 ## Distribution and upgrades
 
 Release artifacts install `gsv`, `gsvd`, Desktop, and any Desktop helper as one
-versioned distribution. The service definition points directly at `gsvd` while
+versioned distribution, into a per-user directory (`~/.gsv/bin`, or
+`%LOCALAPPDATA%\Programs\gsv\bin` on Windows) unless `GSV_INSTALL_DIR` says
+otherwise or an earlier installation already exists. The service definition
+points directly at `gsvd` by absolute path while
 retaining the established `gsvd` systemd, launchd, or Windows task identity.
 Service installation detects and replaces legacy definitions that invoke the
 hidden compatibility launcher `gsv device run`.

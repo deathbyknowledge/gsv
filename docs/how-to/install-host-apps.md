@@ -34,9 +34,35 @@ irm https://install.gsv.space/install.ps1 | iex
 ```
 
 Use `GSV_CHANNEL=dev` for the moving development channel, or set
-`GSV_VERSION=vX.Y.Z` to install an immutable release tag. `GSV_INSTALL_DIR`
-overrides the destination. The default is `/usr/local/bin` on Linux and macOS,
-and `%LOCALAPPDATA%\Programs\gsv\bin` on Windows.
+`GSV_VERSION=vX.Y.Z` to install an immutable release tag.
+
+## Install location
+
+New installations go to a per-user directory: `~/.gsv/bin` on Linux and macOS,
+`%LOCALAPPDATA%\Programs\gsv\bin` on Windows. No `sudo` is involved, the
+daemon can update itself there, and `~/.gsv` then holds everything GSV writes
+on the machine besides `config.toml` and the service definition. The installer
+puts the directory on `PATH` for new shells: one marked, guarded line in
+`~/.profile`, plus `~/.bash_profile`, `~/.bashrc`, `~/.zshrc`, and
+`~/.config/fish/conf.d/gsv.fish` where those exist, never added twice; on
+Windows it is the user `Path` in the registry. Set `GSV_NO_MODIFY_PATH=1` to
+skip that and add it yourself. The daemon service never depends on `PATH`; it
+is registered with the absolute path of `gsvd`.
+
+`GSV_INSTALL_DIR` overrides the destination. A directory this user cannot write
+is installed with `sudo`, and the daemon there cannot update itself.
+
+An existing installation stays where it is. When `GSV_INSTALL_DIR` is unset the
+installer updates the directory the `gsvd` service runs from, or a previous
+`/usr/local/bin` installation, in place, and prints how to move if that
+directory is not user-writable. To migrate by hand:
+
+```bash
+curl -fsSL https://install.gsv.space | GSV_INSTALL_DIR="$HOME/.gsv/bin" bash
+sudo rm /usr/local/bin/gsv /usr/local/bin/gsvd /usr/local/bin/gsv-desktop \
+  /usr/local/bin/gsv-transcribe /usr/local/bin/gsv-vision
+gsv daemon install
+```
 
 Every artifact is checked against the release's `checksums.txt` before an
 installed binary is changed. The installer preserves the existing config and
@@ -70,8 +96,9 @@ upgrade would. A stable daemon only follows stable releases; a daemon on the
 `dev` channel follows the `dev` tag.
 
 Automatic updates need the install directory to be writable by the user
-running `gsvd`; an installation under `/usr/local/bin` that needed `sudo`
-updates manually, and a daemon inside the Desktop application bundle is
+running `gsvd`, which the per-user default guarantees. Only a pre-existing
+system-wide installation, such as one under `/usr/local/bin`, updates manually
+until it is migrated, and a daemon inside the Desktop application bundle is
 updated by Desktop. The daemon makes at most one attempt per hour and only
 ever moves to a release the gateway named. Installer output is written to `~/.gsv/logs/auto-update.log`,
 and `gsv daemon diagnostics` shows the latest decision. To turn the mechanism

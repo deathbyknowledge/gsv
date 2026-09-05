@@ -4,7 +4,15 @@
 set -euo pipefail
 
 REPO="deathbyknowledge/gsv"
-INSTALL_DIR="${GSV_INSTALL_DIR:-/usr/local/bin}"
+# New installations go to a per-user directory so the daemon can update itself
+# without privileges. GSV_INSTALL_DIR overrides it; an existing installation is
+# updated where it is.
+DEFAULT_INSTALL_DIR="${HOME}/.gsv/bin"
+# Where installations landed before the per-user default; overridable so a
+# machine with an unrelated system-wide install can be told to ignore it.
+LEGACY_INSTALL_DIR="${GSV_LEGACY_INSTALL_DIR:-/usr/local/bin}"
+INSTALL_DIR=""
+INSTALL_DIR_SOURCE=""
 CHANNEL="${GSV_CHANNEL:-stable}"
 VERSION="${GSV_VERSION:-}"
 if [ "$(uname -s)" = "Darwin" ]; then
@@ -55,6 +63,54 @@ validate_channel() {
         case "$VERSION" in
             *[!A-Za-z0-9._-]*) error "Invalid GSV_VERSION release tag"; exit 1 ;;
         esac
+    fi
+}
+
+# The executable a previous installation registered as the gsvd service, if any.
+service_definition_executable() {
+    local line=""
+    if [ "$OS" = "linux" ]; then
+        local unit="${CONFIG_HOME}/systemd/user/gsvd.service"
+        [ -f "$unit" ] || return 0
+        line="$(grep -m 1 '^ExecStart=' "$unit" || true)"
+        line="${line#ExecStart=}"
+        case "$line" in
+            \"*) line="${line#\"}"; printf '%s\n' "${line%%\"*}" ;;
+            *) printf '%s\n' "${line%% *}" ;;
+        esac
+    else
+        local plist="${HOME}/Library/LaunchAgents/gsvd.plist"
+        [ -f "$plist" ] || return 0
+        sed -n 's/.*<string>\(.*\/gsvd\)<\/string>.*/\1/p' "$plist" | head -n 1
+    fi
+}
+
+# Where a previous installation lives: the directory the gsvd service runs
+# from, else the pre-per-user default. Empty when this is a fresh install.
+existing_install_dir() {
+    local service_exe
+    service_exe="$(service_definition_executable)"
+    if [ -n "$service_exe" ] && [ -x "$(dirname "$service_exe")/gsv" ]; then
+        dirname "$service_exe"
+        return
+    fi
+    if [ -x "${LEGACY_INSTALL_DIR}/gsv" ]; then
+        printf '%s\n' "$LEGACY_INSTALL_DIR"
+    fi
+}
+
+resolve_install_dir() {
+    if [ -n "${GSV_INSTALL_DIR:-}" ]; then
+        INSTALL_DIR="$GSV_INSTALL_DIR"
+        INSTALL_DIR_SOURCE="explicit"
+    else
+        INSTALL_DIR="$(existing_install_dir)"
+        if [ -n "$INSTALL_DIR" ]; then
+            INSTALL_DIR_SOURCE="existing"
+        else
+            INSTALL_DIR="$DEFAULT_INSTALL_DIR"
+            INSTALL_DIR_SOURCE="default"
+        fi
     fi
     case "$INSTALL_DIR" in
         ""|/|"$HOME") error "GSV_INSTALL_DIR must name a dedicated binary directory"; exit 1 ;;
@@ -175,12 +231,81 @@ prepare_install_dir() {
         USE_SUDO=0
         return
     fi
+    if [ "$INSTALL_DIR_SOURCE" = "default" ]; then
+        error "Cannot write $INSTALL_DIR"
+        exit 1
+    fi
     if ! command -v sudo >/dev/null 2>&1; then
         error "Cannot write $INSTALL_DIR and sudo is unavailable"
         exit 1
     fi
     sudo mkdir -p "$INSTALL_DIR"
     USE_SUDO=1
+}
+
+explain_existing_install_dir() {
+    [ "$INSTALL_DIR_SOURCE" = "existing" ] || return 0
+    if [ -w "$INSTALL_DIR" ]; then
+        info "Updating the existing installation in $INSTALL_DIR"
+        return
+    fi
+    warn "Updating the existing installation in $INSTALL_DIR. Automatic daemon updates need a directory this user can write; to move to the default, run: curl -fsSL https://install.gsv.space | GSV_INSTALL_DIR=\"\$HOME/.gsv/bin\" bash, then remove the old gsv, gsvd, gsv-desktop, gsv-transcribe, and gsv-vision files from $INSTALL_DIR and run gsv daemon install."
+}
+
+PATH_MARKER="# Added by the GSV installer"
+
+path_already_configured() {
+    case ":${PATH}:" in
+        *":${INSTALL_DIR}:"*) return 0 ;;
+    esac
+    return 1
+}
+
+append_path_line() {
+    local file="$1"
+    local line="$2"
+    if [ -f "$file" ] && grep -qF "$PATH_MARKER" "$file"; then
+        return 1
+    fi
+    mkdir -p "$(dirname "$file")"
+    printf '\n%s %s\n' "$line" "$PATH_MARKER" >> "$file"
+    return 0
+}
+
+# Put the default directory on PATH for new shells, the way rustup does: one
+# guarded, marked line per shell profile, never twice, and never when asked
+# not to.
+configure_path() {
+    [ "$INSTALL_DIR_SOURCE" = "default" ] || return 0
+    PATH_FILES_UPDATED=""
+    if [ "${GSV_NO_MODIFY_PATH:-0}" = "1" ]; then
+        info "Left PATH alone (GSV_NO_MODIFY_PATH=1); add $INSTALL_DIR yourself"
+        return
+    fi
+    if path_already_configured; then
+        return
+    fi
+    local posix_line='case ":$PATH:" in *":$HOME/.gsv/bin:"*) ;; *) export PATH="$HOME/.gsv/bin:$PATH" ;; esac'
+    local fish_line='if not contains "$HOME/.gsv/bin" $PATH; set -gx PATH "$HOME/.gsv/bin" $PATH; end'
+    local file
+    for file in "${HOME}/.profile" "${HOME}/.bash_profile" "${HOME}/.bashrc" "${HOME}/.zshrc"; do
+        case "$file" in
+            "${HOME}/.profile") ;;
+            "${HOME}/.zshrc") [ -f "$file" ] || case "${SHELL:-}" in */zsh) ;; *) continue ;; esac ;;
+            *) [ -f "$file" ] || continue ;;
+        esac
+        if append_path_line "$file" "$posix_line"; then
+            PATH_FILES_UPDATED="${PATH_FILES_UPDATED:+$PATH_FILES_UPDATED, }~${file#"$HOME"}"
+        fi
+    done
+    if [ -d "${HOME}/.config/fish" ]; then
+        if append_path_line "${HOME}/.config/fish/conf.d/gsv.fish" "$fish_line"; then
+            PATH_FILES_UPDATED="${PATH_FILES_UPDATED:+$PATH_FILES_UPDATED, }~/.config/fish/conf.d/gsv.fish"
+        fi
+    fi
+    if [ -n "$PATH_FILES_UPDATED" ]; then
+        success "Added $INSTALL_DIR to PATH in $PATH_FILES_UPDATED"
+    fi
 }
 
 as_installer() {
@@ -360,6 +485,7 @@ main() {
     detect_platform
     validate_channel
     delegate_to_pinned_installer
+    resolve_install_dir
     local release_ref
     release_ref="$(resolve_release_ref)"
     TMP_DIR="$(mktemp -d)"
@@ -407,6 +533,7 @@ main() {
     done
     success "Verified ${#ASSETS[@]} release artifacts"
 
+    explain_existing_install_dir
     prepare_install_dir
     service_snapshot
     INSTALL_IN_PROGRESS=1
@@ -433,8 +560,12 @@ main() {
     remove_backups
     ensure_config_file
     persist_release_channel
+    configure_path
     success "Installed gsv, gsvd, Desktop, and local helpers to $INSTALL_DIR"
     echo ""
+    if [ "$INSTALL_DIR_SOURCE" = "default" ] && ! path_already_configured; then
+        echo "  Open a new shell, or run now: export PATH=\"\$HOME/.gsv/bin:\$PATH\""
+    fi
     echo "  Next: gsv auth setup"
     echo "  Open: gsv desktop"
     echo ""

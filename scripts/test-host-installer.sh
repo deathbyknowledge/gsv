@@ -62,6 +62,18 @@ cp "$GSV_TEST_RELEASE_DIR/$asset" "$output"
 SH
 chmod 0755 "$FAKE_BIN/curl"
 
+# Service-manager and privilege calls must never reach the real machine from a
+# test: systemctl records what it was asked and succeeds, sudo always fails.
+SYSTEMCTL_LOG="$TEST_ROOT/systemctl.log"
+cat > "$FAKE_BIN/systemctl" <<'SH'
+#!/usr/bin/env sh
+printf '%s\n' "$*" >> "${GSV_TEST_SYSTEMCTL_LOG:-/dev/null}"
+exit 0
+SH
+chmod 0755 "$FAKE_BIN/systemctl"
+printf '#!/usr/bin/env sh\nexit 1\n' > "$FAKE_BIN/sudo"
+chmod 0755 "$FAKE_BIN/sudo"
+
 cat > "$PINNED_FIXTURES/install.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -76,9 +88,10 @@ chmod 0755 "$PINNED_FIXTURES/install.sh"
 )
 
 run_pinned_installer() {
-    env \
+    env -u XDG_CONFIG_HOME \
         HOME="$TEST_HOME" \
         PATH="$FAKE_BIN:$PATH" \
+        GSV_TEST_SYSTEMCTL_LOG="$SYSTEMCTL_LOG" \
         GSV_INSTALL_DIR="$PINNED_INSTALL_DIR" \
         GSV_INSTALLER_RELEASE_BOUND=0 \
         GSV_TEST_RELEASE_DIR="$PINNED_FIXTURES" \
@@ -97,9 +110,10 @@ fi
 test ! -e "$PINNED_INSTALL_DIR/pinned-installer-ran"
 
 run_installer() {
-    env \
+    env -u XDG_CONFIG_HOME \
         HOME="$TEST_HOME" \
         PATH="$FAKE_BIN:$PATH" \
+        GSV_TEST_SYSTEMCTL_LOG="$SYSTEMCTL_LOG" \
         GSV_INSTALL_DIR="$INSTALL_DIR" \
         GSV_INSTALLER_RELEASE_BOUND=0 \
         GSV_TEST_RELEASE_DIR="$FIXTURES" \
@@ -155,4 +169,86 @@ test "$(cat "$INSTALL_DIR/gsv-transcribe-THIRD_PARTY.md")" = "license-v1"
 test "$(cat "$INSTALL_DIR/gsv-vision-LICENSE.apache-2.0")" = "vision-license-v1"
 test "$(cat "$INSTALL_DIR/gsv-vision-PROVENANCE.md")" = "vision-provenance-v1"
 
-echo "host installer checksum and replacement smoke passed"
+# A fresh install with no GSV_INSTALL_DIR goes to ~/.gsv/bin and puts it on
+# PATH once, however often the installer runs.
+DEFAULT_HOME="$TEST_ROOT/default-home"
+mkdir -p "$DEFAULT_HOME"
+printf '# existing profile\n' > "$DEFAULT_HOME/.bashrc"
+run_default_installer() {
+    env -u GSV_INSTALL_DIR -u XDG_CONFIG_HOME \
+        HOME="$DEFAULT_HOME" \
+        SHELL="/bin/bash" \
+        PATH="$FAKE_BIN:/usr/bin:/bin" \
+        GSV_INSTALLER_RELEASE_BOUND=0 \
+        GSV_TEST_RELEASE_DIR="$FIXTURES" \
+        GSV_TEST_SYSTEMCTL_LOG="$SYSTEMCTL_LOG" \
+        GSV_LEGACY_INSTALL_DIR="$TEST_ROOT/no-legacy" \
+        GSV_VERSION="v-test" \
+        "$@" bash "$REPOSITORY_ROOT/install.sh"
+}
+DEFAULT_OUTPUT="$(run_default_installer env)"
+test "$("$DEFAULT_HOME/.gsv/bin/gsv")" = "gsv-v2"
+test "$("$DEFAULT_HOME/.gsv/bin/gsvd")" = "gsvd-v2"
+printf '%s\n' "$DEFAULT_OUTPUT" | grep -q "Added $DEFAULT_HOME/.gsv/bin to PATH in ~/.profile, ~/.bashrc"
+printf '%s\n' "$DEFAULT_OUTPUT" | grep -q 'Open a new shell, or run now: export PATH="$HOME/.gsv/bin:$PATH"'
+test "$(grep -c 'Added by the GSV installer' "$DEFAULT_HOME/.profile")" = "1"
+test "$(grep -c 'Added by the GSV installer' "$DEFAULT_HOME/.bashrc")" = "1"
+test ! -e "$DEFAULT_HOME/.zshrc"
+grep -q '^case ":$PATH:" in \*":$HOME/.gsv/bin:"\*) ;; \*) export PATH="$HOME/.gsv/bin:$PATH" ;; esac # Added by the GSV installer$' "$DEFAULT_HOME/.profile"
+# The guarded line is valid sh and prepends the directory exactly once.
+test "$(HOME="$DEFAULT_HOME" PATH="/usr/bin:/bin" sh -c ". \"$DEFAULT_HOME/.profile\"; . \"$DEFAULT_HOME/.profile\"; printf '%s' \"\$PATH\"")" = "$DEFAULT_HOME/.gsv/bin:/usr/bin:/bin"
+run_default_installer env >/dev/null
+test "$(grep -c 'Added by the GSV installer' "$DEFAULT_HOME/.profile")" = "1"
+test "$(grep -c 'Added by the GSV installer' "$DEFAULT_HOME/.bashrc")" = "1"
+
+# Opting out leaves every profile untouched; a PATH that already has the
+# directory needs nothing.
+OPT_OUT_HOME="$TEST_ROOT/opt-out-home"
+mkdir -p "$OPT_OUT_HOME"
+DEFAULT_HOME="$OPT_OUT_HOME" run_default_installer env GSV_NO_MODIFY_PATH=1 | grep -q "Left PATH alone"
+test ! -e "$OPT_OUT_HOME/.profile"
+ON_PATH_HOME="$TEST_ROOT/on-path-home"
+mkdir -p "$ON_PATH_HOME"
+DEFAULT_HOME="$ON_PATH_HOME" run_default_installer env PATH="$ON_PATH_HOME/.gsv/bin:$FAKE_BIN:/usr/bin:/bin" >/dev/null
+test ! -e "$ON_PATH_HOME/.profile"
+
+# An installation the gsvd service already runs from stays where it is, with
+# the migration hint, and nothing lands in ~/.gsv/bin.
+EXISTING_HOME="$TEST_ROOT/existing-home"
+LEGACY_DIR="$TEST_ROOT/legacy-bin"
+mkdir -p "$EXISTING_HOME/.config/systemd/user" "$LEGACY_DIR"
+cp "$INSTALL_DIR/gsv" "$LEGACY_DIR/gsv"
+cp "$INSTALL_DIR/gsvd" "$LEGACY_DIR/gsvd"
+printf '[Service]\nExecStart="%s/gsvd" "--foreground"\n' "$LEGACY_DIR" > "$EXISTING_HOME/.config/systemd/user/gsvd.service"
+chmod 0555 "$LEGACY_DIR"
+EXISTING_OUTPUT="$(DEFAULT_HOME="$EXISTING_HOME" run_default_installer env 2>&1 || true)"
+chmod 0755 "$LEGACY_DIR"
+if [ "$(id -u)" != "0" ]; then
+    # Without sudo the read-only legacy directory cannot be updated, which is
+    # the point: the installer must not fall back to ~/.gsv/bin instead.
+    printf '%s\n' "$EXISTING_OUTPUT" | grep -q "Updating the existing installation in $LEGACY_DIR. Automatic daemon updates need a directory this user can write"
+    printf '%s\n' "$EXISTING_OUTPUT" | grep -q 'GSV_INSTALL_DIR="$HOME/.gsv/bin" bash'
+fi
+test ! -e "$EXISTING_HOME/.gsv/bin"
+test ! -e "$EXISTING_HOME/.profile"
+EXISTING_OUTPUT="$(DEFAULT_HOME="$EXISTING_HOME" run_default_installer env)"
+printf '%s\n' "$EXISTING_OUTPUT" | grep -q "Updating the existing installation in $LEGACY_DIR"
+test "$("$LEGACY_DIR/gsv")" = "gsv-v2"
+test "$("$LEGACY_DIR/gsvd")" = "gsvd-v2"
+test ! -e "$EXISTING_HOME/.gsv/bin"
+test ! -e "$EXISTING_HOME/.profile"
+grep -q -- "--user stop gsvd.service" "$SYSTEMCTL_LOG"
+
+# A writable installation in the old default location is also kept in place,
+# without the migration warning.
+LEGACY_DEFAULT_HOME="$TEST_ROOT/legacy-default-home"
+LEGACY_DEFAULT_DIR="$TEST_ROOT/legacy-default-bin"
+mkdir -p "$LEGACY_DEFAULT_HOME" "$LEGACY_DEFAULT_DIR"
+cp "$INSTALL_DIR/gsv" "$LEGACY_DEFAULT_DIR/gsv"
+LEGACY_OUTPUT="$(DEFAULT_HOME="$LEGACY_DEFAULT_HOME" run_default_installer env GSV_LEGACY_INSTALL_DIR="$LEGACY_DEFAULT_DIR")"
+printf '%s\n' "$LEGACY_OUTPUT" | grep -q "Updating the existing installation in $LEGACY_DEFAULT_DIR$"
+test "$("$LEGACY_DEFAULT_DIR/gsvd")" = "gsvd-v2"
+test ! -e "$LEGACY_DEFAULT_HOME/.gsv/bin"
+test ! -e "$LEGACY_DEFAULT_HOME/.profile"
+
+echo "host installer checksum, replacement, default directory, and PATH smoke passed"
