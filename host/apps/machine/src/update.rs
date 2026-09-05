@@ -195,14 +195,35 @@ pub fn installing_window_elapsed(since: SystemTime, now: SystemTime) -> bool {
         .unwrap_or(false)
 }
 
-/// Whether the transient unit is still active, asked of `systemctl`.
-pub async fn transient_unit_active(systemctl: &Path, unit: &str) -> bool {
-    tokio::process::Command::new(systemctl)
-        .args(["--user", "is-active", "--quiet", unit])
-        .status()
-        .await
-        .map(|status| status.success())
-        .unwrap_or(false)
+/// What `systemctl --user is-active` said about the transient unit. Only a
+/// query that ran and answered counts; a probe that could not run or reach
+/// the user manager proves nothing about the installer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UnitState {
+    Active,
+    Inactive,
+    Unknown,
+}
+
+/// `systemctl is-active` exits 0 for active and 3 for inactive; anything
+/// else (1 for a failed query, a bus it cannot reach, a spawn error) is
+/// unknown.
+pub fn unit_state_from_status(status: io::Result<std::process::ExitStatus>) -> UnitState {
+    match status.ok().and_then(|status| status.code()) {
+        Some(0) => UnitState::Active,
+        Some(3) => UnitState::Inactive,
+        _ => UnitState::Unknown,
+    }
+}
+
+/// Ask `systemctl` whether the transient unit is still active.
+pub async fn transient_unit_state(systemctl: &Path, unit: &str) -> UnitState {
+    unit_state_from_status(
+        tokio::process::Command::new(systemctl)
+            .args(["--user", "is-active", "--quiet", unit])
+            .status()
+            .await,
+    )
 }
 
 /// How the installer escapes the daemon's own service so that stopping
@@ -1431,6 +1452,26 @@ mod tests {
         assert_eq!(
             updater.attempt_state("v0.5.0", now + MIN_ATTEMPT_INTERVAL),
             AttemptState::None
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_an_answered_probe_says_whether_the_unit_is_active() {
+        use std::os::unix::process::ExitStatusExt;
+        let status = |code: i32| Ok(std::process::ExitStatus::from_raw(code << 8));
+        assert_eq!(unit_state_from_status(status(0)), UnitState::Active);
+        assert_eq!(unit_state_from_status(status(3)), UnitState::Inactive);
+        assert_eq!(unit_state_from_status(status(1)), UnitState::Unknown);
+        assert_eq!(unit_state_from_status(status(4)), UnitState::Unknown);
+        assert_eq!(
+            unit_state_from_status(Ok(std::process::ExitStatus::from_raw(9))),
+            UnitState::Unknown,
+            "killed by a signal has no exit code"
+        );
+        assert_eq!(
+            unit_state_from_status(Err(io::Error::other("no such file"))),
+            UnitState::Unknown
         );
     }
 

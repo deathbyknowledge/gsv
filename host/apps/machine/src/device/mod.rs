@@ -20,8 +20,8 @@ use crate::control::DaemonRuntime;
 use crate::logger;
 use crate::tools::{all_tools_with_workspace_for_device, subscribe_exec_events, Tool, ToolOutput};
 use crate::update::{
-    installing_window_elapsed, transient_unit_active, AttemptState, AutoUpdater, InstallerHandle,
-    UpdateError, UpdateTarget, INSTALLING_WINDOW,
+    installing_window_elapsed, transient_unit_state, AttemptState, AutoUpdater, InstallerHandle,
+    UnitState, UpdateError, UpdateTarget, INSTALLING_WINDOW, MIN_ATTEMPT_INTERVAL,
 };
 
 mod transfer;
@@ -1407,13 +1407,31 @@ enum UpdateOutcome {
     InProgress,
     /// Machine work is running; the update waits for it.
     Waiting,
+    /// The launch failed in a way worth retrying, or a recent failed attempt
+    /// is still cooling; the next handshake retries once the cooldown ends.
+    Cooling,
     NotLaunched,
 }
 
 impl UpdateOutcome {
     /// Whether the 102 path should stay alive and retry rather than exit.
+    /// Only an outcome that no retry can change is worth the fatal exit,
+    /// since the service manager would otherwise restart the daemon every
+    /// few seconds for the length of the cooldown.
     fn keeps_waiting(&self) -> bool {
-        matches!(self, Self::Launched | Self::InProgress | Self::Waiting)
+        matches!(
+            self,
+            Self::Launched | Self::InProgress | Self::Waiting | Self::Cooling
+        )
+    }
+}
+
+/// The outcome of a launch that returned `error`, before any launch happened.
+fn outcome_for_error(error: &UpdateError) -> UpdateOutcome {
+    if retry_later(error) {
+        UpdateOutcome::Cooling
+    } else {
+        UpdateOutcome::NotLaunched
     }
 }
 
@@ -1531,7 +1549,18 @@ async fn start_update(
                 .update_notice()
                 .is_some_and(|notice| notice.code == STARTED);
             if !started {
-                runtime.set_update_notice(Some(skipped_notice(&target.release, &error)));
+                let notice =
+                    match updater.attempt_state(&target.release, std::time::SystemTime::now()) {
+                        AttemptState::Cooling { since } => DiagnosticNotice {
+                            level: DiagnosticLevel::Warning,
+                            code: "autoUpdateSkipped".to_string(),
+                            message: cooling_message(&target.release, since),
+                        },
+                        AttemptState::InProgress { .. } | AttemptState::None => {
+                            skipped_notice(&target.release, &error)
+                        }
+                    };
+                runtime.set_update_notice(Some(notice));
             }
         }
         skip if skip.is_skip() => {
@@ -1543,12 +1572,22 @@ async fn start_update(
             runtime.set_update_notice(Some(skipped_notice(&target.release, &error)));
         }
     }
+    let outcome = outcome_for_error(&error);
     if retry_later(&error) {
         guard.abandon();
     } else {
         guard.discard();
     }
-    UpdateOutcome::NotLaunched
+    outcome
+}
+
+/// The notice for a release whose last attempt failed `since` ago.
+fn cooling_message(release: &str, since: std::time::Duration) -> String {
+    let failed_minutes = since.as_secs() / 60;
+    let due_minutes = MIN_ATTEMPT_INTERVAL.saturating_sub(since).as_secs() / 60;
+    format!(
+        "GSV {release} was not installed: the last attempt failed {failed_minutes} minutes ago. The next attempt is due in {due_minutes} minutes."
+    )
 }
 
 /// Everything the installer watcher needs for the rest of this driver run.
@@ -1619,8 +1658,19 @@ async fn installer_ended(
             systemctl: Some(systemctl),
         }) => loop {
             tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
-            if !transient_unit_active(&systemctl, &unit).await {
-                break format!("transient unit {unit} is no longer active");
+            match transient_unit_state(&systemctl, &unit).await {
+                UnitState::Inactive => break format!("transient unit {unit} is no longer active"),
+                UnitState::Active => {}
+                // A probe that proved nothing keeps the gate closed, but not
+                // forever: the installing window bounds the wait.
+                UnitState::Unknown
+                    if installing_window_elapsed(since, std::time::SystemTime::now()) =>
+                {
+                    break format!(
+                        "the state of transient unit {unit} could not be confirmed within the installing window"
+                    );
+                }
+                UnitState::Unknown => {}
             }
         },
         Some(InstallerHandle::TransientUnit {
@@ -1832,6 +1882,48 @@ mod tests {
             assert!(update_refusal_frame(&read).is_none(), "{call} passes");
         }
         assert!(!admits_during_update("net.fetch"));
+    }
+
+    #[test]
+    fn only_outcomes_no_retry_can_change_take_the_fatal_exit() {
+        let dir = PathBuf::from("/opt/gsv/bin");
+        for outcome in [
+            UpdateOutcome::Launched,
+            UpdateOutcome::InProgress,
+            UpdateOutcome::Waiting,
+            UpdateOutcome::Cooling,
+        ] {
+            assert!(outcome.keeps_waiting(), "{outcome:?}");
+        }
+        assert!(!UpdateOutcome::NotLaunched.keeps_waiting());
+
+        for error in [
+            UpdateError::Download("timed out".to_string()),
+            UpdateError::State("disk full".to_string()),
+            UpdateError::Spawn("no such file".to_string()),
+            UpdateError::Deferred {
+                since: std::time::Duration::from_secs(60),
+            },
+        ] {
+            assert_eq!(outcome_for_error(&error), UpdateOutcome::Cooling, "{error}");
+        }
+        for error in [
+            UpdateError::Disabled,
+            UpdateError::NotServiceManaged { dir: dir.clone() },
+            UpdateError::NoDetachment { dir: dir.clone() },
+            UpdateError::AppBundle { dir: dir.clone() },
+            UpdateError::Unwritable { dir },
+        ] {
+            assert_eq!(
+                outcome_for_error(&error),
+                UpdateOutcome::NotLaunched,
+                "{error}"
+            );
+        }
+
+        let message = cooling_message("v0.5.0", std::time::Duration::from_secs(25 * 60));
+        assert!(message.contains("failed 25 minutes ago"));
+        assert!(message.contains("due in 35 minutes"));
     }
 
     #[test]
