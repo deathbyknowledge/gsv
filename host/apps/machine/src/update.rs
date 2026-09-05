@@ -75,6 +75,10 @@ pub enum UpdateError {
     AppBundle {
         dir: PathBuf,
     },
+    /// Nothing would restart the daemon after the installer replaced it.
+    NotServiceManaged {
+        dir: PathBuf,
+    },
     State(String),
     Download(String),
     Spawn(String),
@@ -90,6 +94,7 @@ impl UpdateError {
                 | Self::Deferred { .. }
                 | Self::Unwritable { .. }
                 | Self::AppBundle { .. }
+                | Self::NotServiceManaged { .. }
         )
     }
 }
@@ -128,6 +133,11 @@ impl Display for UpdateError {
                 f,
                 "{} is part of the Desktop application, which updates it",
                 dir.display()
+            ),
+            Self::NotServiceManaged { dir } => write!(
+                f,
+                "this daemon is not run by a service manager, so nothing would restart it after an update. Run the installer yourself: {}",
+                manual_install_command(dir)
             ),
             Self::State(error) => write!(f, "could not record the update attempt: {error}"),
             Self::Download(error) => write!(f, "could not download the installer: {error}"),
@@ -244,6 +254,12 @@ impl AutoUpdater {
             return None;
         }
         let server_version = parse_version(details.get("serverVersion")?.as_str()?)?;
+        let server_release = details
+            .get("serverRelease")
+            .and_then(|value| value.as_str());
+        if self.channel == ReleaseChannel::Stable && server_release == Some(DEV_RELEASE_TAG) {
+            return None;
+        }
         let installer_url = details
             .get("installer")
             .and_then(|value| value.as_str())
@@ -294,6 +310,9 @@ impl AutoUpdater {
             return Err(UpdateError::Disabled);
         }
         let install_dir = install_dir()?;
+        let Some(manager) = detect_service_manager() else {
+            return Err(UpdateError::NotServiceManaged { dir: install_dir });
+        };
         if is_app_bundle_dir(&install_dir) {
             return Err(UpdateError::AppBundle { dir: install_dir });
         }
@@ -308,7 +327,7 @@ impl AutoUpdater {
             .await
             .map_err(UpdateError::Download)?;
         let invocation = installer_invocation(&script, &target.release, &install_dir);
-        let strategy = detach_strategy();
+        let strategy = detach_strategy(manager);
         let log = self.open_log()?;
         let mut command = detached_command(&invocation, strategy, &self.log_path, log)
             .map_err(|error| UpdateError::Spawn(error.to_string()))?;
@@ -386,19 +405,20 @@ impl AutoUpdater {
             .timeout(INSTALLER_DOWNLOAD_TIMEOUT)
             .build()
             .map_err(|error| error.to_string())?;
-        let response = client
+        let mut response = client
             .get(&url)
             .send()
             .await
             .map_err(|error| error.to_string())?
             .error_for_status()
             .map_err(|error| error.to_string())?;
-        let body = response.bytes().await.map_err(|error| error.to_string())?;
-        if body.is_empty() || body.len() > MAX_INSTALLER_BYTES {
-            return Err(format!(
-                "installer script has an unexpected size ({} bytes)",
-                body.len()
-            ));
+        check_declared_length(response.content_length(), MAX_INSTALLER_BYTES)?;
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|error| error.to_string())? {
+            push_within_limit(&mut body, &chunk, MAX_INSTALLER_BYTES)?;
+        }
+        if body.is_empty() {
+            return Err("installer script is empty".to_string());
         }
         let script = self.work_dir.join(installer_script_name());
         fs::write(&script, &body).map_err(|error| error.to_string())?;
@@ -552,15 +572,136 @@ pub fn systemd_run_arguments(
     args
 }
 
-fn detach_strategy() -> DetachStrategy {
-    if cfg!(windows) {
-        return DetachStrategy::WindowsDetached;
+/// Reject a response that announces more than `limit` bytes before reading it.
+fn check_declared_length(declared: Option<u64>, limit: usize) -> Result<(), String> {
+    match declared {
+        Some(length) if length > limit as u64 => Err(format!(
+            "installer script is too large ({length} bytes, limit {limit})"
+        )),
+        _ => Ok(()),
     }
-    let under_systemd = std::env::var_os("INVOCATION_ID").is_some();
-    if cfg!(target_os = "linux") && under_systemd && systemd_run_available() {
-        DetachStrategy::SystemdRun
-    } else {
-        DetachStrategy::NewSession
+}
+
+/// Append `chunk` to `body` unless that would exceed `limit`, so an
+/// undeclared or lying length still cannot buffer more than the cap.
+fn push_within_limit(body: &mut Vec<u8>, chunk: &[u8], limit: usize) -> Result<(), String> {
+    if body.len().saturating_add(chunk.len()) > limit {
+        return Err(format!(
+            "installer script is too large (over {limit} bytes)"
+        ));
+    }
+    body.extend_from_slice(chunk);
+    Ok(())
+}
+
+/// What supervises this daemon and would restart it after the installer
+/// swaps the binary. Without one, an update would leave old code running.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ServiceManager {
+    Systemd,
+    Launchd,
+    WindowsTask,
+}
+
+impl Display for ServiceManager {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Systemd => "systemd",
+            Self::Launchd => "launchd",
+            Self::WindowsTask => "windows-task",
+        })
+    }
+}
+
+/// The observations `service_manager` decides from, gathered by
+/// `detect_service_manager` so the decision itself stays testable.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ServiceContext {
+    /// systemd sets `INVOCATION_ID` for every unit it starts.
+    pub systemd_invocation: bool,
+    /// launchd sets `XPC_SERVICE_NAME` to the label of the job it started.
+    pub xpc_service_name: Option<String>,
+    /// On macOS a process launchd started has launchd (pid 1) as its parent.
+    pub parent_is_launchd: bool,
+    /// The `gsvd` scheduled task reports itself running; the control pipe is
+    /// exclusive, so a running task is this process.
+    pub windows_task_running: bool,
+}
+
+const SERVICE_LABEL: &str = "gsvd";
+
+pub fn service_manager(context: &ServiceContext) -> Option<ServiceManager> {
+    if context.systemd_invocation {
+        return Some(ServiceManager::Systemd);
+    }
+    let launchd_label = context
+        .xpc_service_name
+        .as_deref()
+        .is_some_and(|name| name == SERVICE_LABEL || name.starts_with("gsvd."));
+    if launchd_label || context.parent_is_launchd {
+        return Some(ServiceManager::Launchd);
+    }
+    if context.windows_task_running {
+        return Some(ServiceManager::WindowsTask);
+    }
+    None
+}
+
+fn detect_service_manager() -> Option<ServiceManager> {
+    service_manager(&ServiceContext {
+        systemd_invocation: cfg!(target_os = "linux")
+            && std::env::var_os("INVOCATION_ID").is_some(),
+        xpc_service_name: if cfg!(target_os = "macos") {
+            std::env::var("XPC_SERVICE_NAME").ok()
+        } else {
+            None
+        },
+        parent_is_launchd: parent_is_launchd(),
+        windows_task_running: windows_task_running(),
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn parent_is_launchd() -> bool {
+    // SAFETY: getppid has no preconditions and only reads the parent's id.
+    unsafe { libc::getppid() == 1 }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn parent_is_launchd() -> bool {
+    false
+}
+
+#[cfg(windows)]
+fn windows_task_running() -> bool {
+    Command::new("schtasks")
+        .args(["/query", "/tn", SERVICE_LABEL, "/fo", "LIST", "/v"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .is_some_and(|output| task_status_running(&String::from_utf8_lossy(&output.stdout)))
+}
+
+#[cfg(not(windows))]
+fn windows_task_running() -> bool {
+    false
+}
+
+/// Whether a `schtasks /query /fo LIST /v` listing shows the task running.
+pub fn task_status_running(listing: &str) -> bool {
+    listing.lines().any(|line| {
+        let mut parts = line.splitn(2, ':');
+        let key = parts.next().unwrap_or("").trim();
+        let value = parts.next().unwrap_or("").trim();
+        key.eq_ignore_ascii_case("Status") && value.eq_ignore_ascii_case("Running")
+    })
+}
+
+fn detach_strategy(manager: ServiceManager) -> DetachStrategy {
+    match manager {
+        ServiceManager::Systemd if systemd_run_available() => DetachStrategy::SystemdRun,
+        ServiceManager::Systemd | ServiceManager::Launchd => DetachStrategy::NewSession,
+        ServiceManager::WindowsTask => DetachStrategy::WindowsDetached,
     }
 }
 
@@ -699,6 +840,93 @@ mod tests {
             .expect("newer gateway plans an update");
         assert_eq!(target.release, DEV_RELEASE_TAG);
         assert_eq!(target.installer_url, DEFAULT_INSTALLER_URL);
+    }
+
+    #[test]
+    fn a_stable_daemon_does_not_chase_a_dev_gateway_after_a_102() {
+        let stable = updater(true, ReleaseChannel::Stable, "0.4.1");
+        let mut error = protocol_error(u64::from(PROTOCOL_VERSION) + 1, "0.5.0", None);
+        if let Some(details) = error.details.as_mut() {
+            details["serverRelease"] = json!("dev");
+        }
+        assert_eq!(stable.plan_for_protocol_error(&error), None);
+        if let Some(details) = error.details.as_mut() {
+            details["serverRelease"] = json!("v0.5.0");
+        }
+        assert_eq!(
+            stable
+                .plan_for_protocol_error(&error)
+                .map(|target| target.release),
+            Some("v0.5.0".to_string())
+        );
+        let dev = updater(true, ReleaseChannel::Dev, "0.4.1");
+        if let Some(details) = error.details.as_mut() {
+            details["serverRelease"] = json!("dev");
+        }
+        assert_eq!(
+            dev.plan_for_protocol_error(&error)
+                .map(|target| target.release),
+            Some(DEV_RELEASE_TAG.to_string())
+        );
+    }
+
+    #[test]
+    fn only_a_supervised_daemon_updates_itself() {
+        assert_eq!(service_manager(&ServiceContext::default()), None);
+        assert_eq!(
+            service_manager(&ServiceContext {
+                systemd_invocation: true,
+                ..ServiceContext::default()
+            }),
+            Some(ServiceManager::Systemd)
+        );
+        assert_eq!(
+            service_manager(&ServiceContext {
+                xpc_service_name: Some("gsvd".to_string()),
+                ..ServiceContext::default()
+            }),
+            Some(ServiceManager::Launchd)
+        );
+        assert_eq!(
+            service_manager(&ServiceContext {
+                xpc_service_name: Some("0".to_string()),
+                ..ServiceContext::default()
+            }),
+            None
+        );
+        assert_eq!(
+            service_manager(&ServiceContext {
+                parent_is_launchd: true,
+                ..ServiceContext::default()
+            }),
+            Some(ServiceManager::Launchd)
+        );
+        assert_eq!(
+            service_manager(&ServiceContext {
+                windows_task_running: true,
+                ..ServiceContext::default()
+            }),
+            Some(ServiceManager::WindowsTask)
+        );
+        assert!(task_status_running(
+            "TaskName: \\gsvd\r\nStatus:        Running\r\n"
+        ));
+        assert!(!task_status_running(
+            "TaskName: \\gsvd\r\nStatus:        Ready\r\n"
+        ));
+        assert!(!task_status_running(""));
+    }
+
+    #[test]
+    fn the_installer_download_is_capped_before_it_is_buffered() {
+        assert!(check_declared_length(None, 8).is_ok());
+        assert!(check_declared_length(Some(8), 8).is_ok());
+        assert!(check_declared_length(Some(9), 8).is_err());
+        let mut body = Vec::new();
+        push_within_limit(&mut body, b"12345", 8).expect("under the cap");
+        push_within_limit(&mut body, b"678", 8).expect("exactly the cap");
+        assert!(push_within_limit(&mut body, b"9", 8).is_err());
+        assert_eq!(body, b"12345678");
     }
 
     #[test]

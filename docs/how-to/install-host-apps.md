@@ -102,7 +102,11 @@ Automatic updates need the install directory to be writable by the user
 running `gsvd`, which the per-user default guarantees. Only a pre-existing
 system-wide installation, such as one under `/usr/local/bin`, updates manually
 until it is migrated, and a daemon inside the Desktop application bundle is
-updated by Desktop. The daemon makes at most one attempt per hour and only
+updated by Desktop. The daemon also
+only updates itself when a service manager runs it (systemd, launchd, or the
+Windows scheduled task), since something has to restart it afterwards; a
+`gsvd --foreground` started by hand reports the newer release and leaves the
+update to you. The daemon makes at most one attempt per hour and only
 ever moves to a release the gateway named. Installer output is written to `~/.gsv/logs/auto-update.log`,
 and `gsv daemon diagnostics` shows the latest decision. To turn the mechanism
 off:
