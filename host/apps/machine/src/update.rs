@@ -328,6 +328,17 @@ impl AutoUpdater {
         self.enabled
     }
 
+    /// Take the switch and the channel from `config` again, so a change on
+    /// disk applies at the next handshake without a reload. Paths and the
+    /// attempt record stay as they are.
+    pub fn refresh_from(&mut self, config: &CliConfig) {
+        self.enabled = config.device_auto_update();
+        self.channel = match config.release_channel().as_deref() {
+            Some("dev") => ReleaseChannel::Dev,
+            _ => ReleaseChannel::Stable,
+        };
+    }
+
     /// Where installer output goes.
     pub fn log_path(&self) -> &Path {
         &self.log_path
@@ -1216,6 +1227,48 @@ mod tests {
             .expect("newer gateway plans an update");
         assert_eq!(target.release, DEV_RELEASE_TAG);
         assert_eq!(target.installer_url, DEFAULT_INSTALLER_URL);
+    }
+
+    #[tokio::test]
+    async fn a_switch_flipped_on_disk_between_handshakes_is_honoured_by_the_second() {
+        let dir = std::env::temp_dir().join(format!("gsvd-refresh-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("config dir");
+        let config_path = dir.join("config.toml");
+        let load = |contents: &str| -> CliConfig {
+            fs::write(&config_path, contents).expect("write config");
+            host_config::ConfigFile::<CliConfig>::new(&config_path)
+                .load()
+                .expect("config loads")
+        };
+        let mut updater = updater(true, ReleaseChannel::Stable, "0.4.1");
+        let newer = server("0.5.0", Some("v0.5.0"));
+        let target = updater
+            .plan_for_server(&newer)
+            .expect("newer release plans an update");
+        assert_eq!(target.release, "v0.5.0");
+
+        // First handshake: the switch is on and the channel stable.
+        updater.refresh_from(&load("[device]\nauto_update = true\n"));
+        assert!(updater.enabled());
+        assert_eq!(
+            updater.plan_for_server(&newer).map(|target| target.release),
+            Some("v0.5.0".to_string())
+        );
+
+        // Flipped on disk, then the second handshake.
+        updater.refresh_from(&load(
+            "[device]\nauto_update = false\n\n[release]\nchannel = \"dev\"\n",
+        ));
+        assert!(!updater.enabled());
+        assert!(matches!(
+            updater.launch(&target).await,
+            Err(UpdateError::Disabled)
+        ));
+        assert_eq!(
+            updater.plan_for_server(&newer).map(|target| target.release),
+            Some(DEV_RELEASE_TAG.to_string())
+        );
+        fs::remove_dir_all(&dir).expect("cleanup");
     }
 
     #[test]

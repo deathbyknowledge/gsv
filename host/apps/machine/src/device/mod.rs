@@ -634,7 +634,7 @@ pub async fn run(
         const MAX_RETRY_DELAY: tokio::time::Duration = tokio::time::Duration::from_secs(300);
         let mut retry_delay = INITIAL_RETRY_DELAY;
         let mut reconnect_attempt = 0_u32;
-        let updater = AutoUpdater::from_config(&host_config::CliConfig::load());
+        let mut updater = AutoUpdater::from_config(&host_config::CliConfig::load());
         // One lifecycle per driver run: idle, draining for a launch, or
         // installing. New work is refused from the moment a drain begins, so
         // the installer's service stop finds nothing to kill.
@@ -688,6 +688,7 @@ pub async fn run(
                         }
                         if rpc_error.is_protocol_unsupported() {
                             lifecycle.handshake();
+                            updater.refresh_from(&host_config::CliConfig::load());
                             let outcome = match updater.plan_for_protocol_error(rpc_error) {
                                 Some(target) => match lifecycle.begin_drain_for(target, None) {
                                     // Already draining or installing from an
@@ -878,6 +879,9 @@ pub async fn run(
             // reconnect or a reload never leaves a launch running against
             // settings this driver no longer holds.
             lifecycle.handshake();
+            // The switch and the channel are read again at every handshake,
+            // so an opt-out on disk applies at the next connect.
+            updater.refresh_from(&host_config::CliConfig::load());
             match update_after_connect(&updater, conn.connect_result.as_ref()) {
                 Some(target) => lifecycle.queue(target),
                 None => {

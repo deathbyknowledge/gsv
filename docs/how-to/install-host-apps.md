@@ -115,6 +115,9 @@ off:
 gsv config --local set device.auto_update false
 ```
 
+The daemon reads that setting again at every handshake, so the change applies
+the next time it connects; `gsv daemon reload` applies it immediately.
+
 The CLI and Desktop are never replaced while a person is using them. The CLI
 prints a hint when the gateway runs a newer release; rerun the installer to
 update them.
