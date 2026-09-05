@@ -903,20 +903,13 @@ def test_competing_incident_outcomes_earn_credit_without_preparation() -> None:
                 },
                 {
                     "type": "responsibility.transition",
-                    "responsibilityRefs": ["initial"],
-                    "transition": {
-                        "changedFields": ["priority", "blocker"],
-                    },
+                    "responsibilityRefs": ["priority"],
+                    "transition": {"kind": "created"},
                 },
                 {
                     "type": "responsibility.transition",
                     "responsibilityRefs": ["initial"],
                     "transition": {"kind": "cancelled"},
-                },
-                {
-                    "type": "responsibility.transition",
-                    "responsibilityRefs": ["priority"],
-                    "transition": {"kind": "created"},
                 },
             ],
         },
@@ -930,6 +923,183 @@ def test_competing_incident_outcomes_earn_credit_without_preparation() -> None:
     assert inversion["passed"] is True
     assert evaluation["raw_score"] == pytest.approx(inversion["weight"] / total_weight)
     assert evaluation["strict_pass"] is False
+
+
+def test_competing_incident_reconciliation_still_follows_priority_event() -> None:
+    family = (
+        Path(__file__).resolve().parents[1]
+        / "gsv_v1"
+        / "families"
+        / "competing-incidents.json"
+    )
+    scenario = load_scenarios(family)[0]
+    milestone = next(
+        item
+        for item in scenario["evaluation"]["milestones"]
+        if item["id"] == "priority-inversion-reconciled"
+    )
+    ordering = next(
+        predicate
+        for predicate in milestone["predicates"]
+        if predicate["type"] == "all"
+    )
+    artifact = {
+        "log": [
+            {
+                "type": "responsibility.transition",
+                "responsibilityRefs": ["priority"],
+                "transition": {"kind": "created"},
+            },
+            {
+                "type": "responsibility.transition",
+                "responsibilityRefs": ["initial"],
+                "transition": {"kind": "cancelled"},
+            },
+            {
+                "type": "external.event",
+                "id": "INC-7102-priority-inversion",
+            },
+        ]
+    }
+
+    assert evaluate_predicate(artifact, ordering)["passed"] is False
+
+
+@pytest.mark.parametrize(
+    "monitor_order",
+    [
+        ("auth-monitor", "checkout-monitor"),
+        ("checkout-monitor", "auth-monitor"),
+    ],
+)
+def test_competing_incident_verification_allows_either_monitor_order(
+    monitor_order: tuple[str, str],
+) -> None:
+    family = (
+        Path(__file__).resolve().parents[1]
+        / "gsv_v1"
+        / "families"
+        / "competing-incidents.json"
+    )
+    scenario = load_scenarios(family)[0]
+    log = [
+        {
+            "type": "external.event",
+            "id": "INC-7102-recovery-confirmed",
+        }
+    ]
+    log.extend(
+        {
+            "type": "tool.call",
+            "processId": "ship",
+            "name": "Read",
+            "arguments": {
+                "target": target,
+                "path": f"/health/{target.removesuffix('-monitor')}.json",
+            },
+        }
+        for target in monitor_order
+    )
+    log.append(
+        {
+            "type": "responsibility.transition",
+            "responsibilityRefs": ["priority"],
+            "transition": {"kind": "resolved"},
+        }
+    )
+    evaluation = evaluate_scenario(
+        scenario["evaluation"],
+        {
+            "world": {
+                "targets": {
+                    "checkout-monitor": {
+                        "state": {"status": "stable-via-shared-recovery"}
+                    },
+                    "auth-monitor": {
+                        "state": {"status": "stable", "contained": True}
+                    },
+                }
+            },
+            "committedMessages": [],
+            "log": log,
+        },
+    )
+    verification = next(
+        item
+        for item in evaluation["milestones"]
+        if item["id"] == "fresh-dual-service-verification"
+    )
+
+    assert verification["passed"] is True
+
+
+def test_competing_incident_verification_reads_still_precede_resolution() -> None:
+    family = (
+        Path(__file__).resolve().parents[1]
+        / "gsv_v1"
+        / "families"
+        / "competing-incidents.json"
+    )
+    scenario = load_scenarios(family)[0]
+    milestone = next(
+        item
+        for item in scenario["evaluation"]["milestones"]
+        if item["id"] == "fresh-dual-service-verification"
+    )
+    ordering = next(
+        predicate
+        for predicate in milestone["predicates"]
+        if predicate["type"] == "all"
+    )
+    artifact = {
+        "log": [
+            {
+                "type": "external.event",
+                "id": "INC-7102-recovery-confirmed",
+            },
+            {
+                "type": "tool.call",
+                "processId": "ship",
+                "name": "Read",
+                "arguments": {
+                    "target": "auth-monitor",
+                    "path": "/health/auth.json",
+                },
+            },
+            {
+                "type": "responsibility.transition",
+                "responsibilityRefs": ["priority"],
+                "transition": {"kind": "resolved"},
+            },
+            {
+                "type": "tool.call",
+                "processId": "ship",
+                "name": "Read",
+                "arguments": {
+                    "target": "checkout-monitor",
+                    "path": "/health/checkout.json",
+                },
+            },
+        ]
+    }
+
+    assert evaluate_predicate(artifact, ordering)["passed"] is False
+
+
+def test_competing_incident_supplementary_evidence_is_not_strict() -> None:
+    family = (
+        Path(__file__).resolve().parents[1]
+        / "gsv_v1"
+        / "families"
+        / "competing-incidents.json"
+    )
+    scenario = load_scenarios(family)[0]
+    milestones = {
+        item["id"]: item for item in scenario["evaluation"]["milestones"]
+    }
+
+    assert milestones["customer-impact-reviewed"]["requiredForStrict"] is False
+    assert milestones["shared-dependency-reviewed"]["requiredForStrict"] is False
 
 
 def test_matrix_report_aggregates_quality_usage_and_pricing(tmp_path) -> None:

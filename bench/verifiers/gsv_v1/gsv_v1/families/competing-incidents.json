@@ -394,11 +394,11 @@
         "milestones": [
           {
             "id": "customer-impact-reviewed",
-            "description": "The initial triage Process consults the optional customer-impact browser evidence.",
+            "description": "The initial triage Process earns supplementary investigation credit by consulting the customer-impact browser evidence.",
             "dimension": "investigation",
             "weight": 0.05,
             "requires": [],
-            "requiredForStrict": true,
+            "requiredForStrict": false,
             "predicates": [
               {
                 "type": "count",
@@ -449,11 +449,11 @@
         "milestones": [
           {
             "id": "shared-dependency-reviewed",
-            "description": "The initial triage Process consults the optional shared-dependency evidence before preparing the first plan.",
+            "description": "The initial triage Process earns supplementary investigation credit by consulting the shared-dependency evidence before preparing the first plan.",
             "dimension": "investigation",
             "weight": 0.05,
             "requires": [],
-            "requiredForStrict": true,
+            "requiredForStrict": false,
             "predicates": [
               {
                 "type": "count",
@@ -768,42 +768,45 @@
                 }
               },
               {
-                "type": "sequence",
-                "path": "/log",
-                "items": [
+                "type": "all",
+                "predicates": [
                   {
-                    "type": "external.event",
-                    "id": "${priority_incident}-priority-inversion"
+                    "type": "sequence",
+                    "path": "/log",
+                    "items": [
+                      {
+                        "type": "external.event",
+                        "id": "${priority_incident}-priority-inversion"
+                      },
+                      {
+                        "type": "responsibility.transition",
+                        "responsibilityRefs": [
+                          "initial"
+                        ],
+                        "transition": {
+                          "kind": "cancelled"
+                        }
+                      }
+                    ]
                   },
                   {
-                    "type": "responsibility.transition",
-                    "responsibilityRefs": [
-                      "initial"
-                    ],
-                    "transition": {
-                      "changedFields": [
-                        "priority",
-                        "blocker"
-                      ]
-                    }
-                  },
-                  {
-                    "type": "responsibility.transition",
-                    "responsibilityRefs": [
-                      "initial"
-                    ],
-                    "transition": {
-                      "kind": "cancelled"
-                    }
-                  },
-                  {
-                    "type": "responsibility.transition",
-                    "responsibilityRefs": [
-                      "priority"
-                    ],
-                    "transition": {
-                      "kind": "created"
-                    }
+                    "type": "sequence",
+                    "path": "/log",
+                    "items": [
+                      {
+                        "type": "external.event",
+                        "id": "${priority_incident}-priority-inversion"
+                      },
+                      {
+                        "type": "responsibility.transition",
+                        "responsibilityRefs": [
+                          "priority"
+                        ],
+                        "transition": {
+                          "kind": "created"
+                        }
+                      }
+                    ]
                   }
                 ]
               }
@@ -932,39 +935,63 @@
                 }
               },
               {
-                "type": "sequence",
-                "path": "/log",
-                "items": [
+                "type": "all",
+                "predicates": [
                   {
-                    "type": "external.event",
-                    "id": "${priority_incident}-recovery-confirmed"
+                    "type": "sequence",
+                    "path": "/log",
+                    "items": [
+                      {
+                        "type": "external.event",
+                        "id": "${priority_incident}-recovery-confirmed"
+                      },
+                      {
+                        "type": "tool.call",
+                        "processId": "ship",
+                        "name": "Read",
+                        "arguments": {
+                          "target": "${priority_service}-monitor",
+                          "path": "/health/${priority_service}.json"
+                        }
+                      },
+                      {
+                        "type": "responsibility.transition",
+                        "responsibilityRefs": [
+                          "priority"
+                        ],
+                        "transition": {
+                          "kind": "resolved"
+                        }
+                      }
+                    ]
                   },
                   {
-                    "type": "tool.call",
-                    "processId": "ship",
-                    "name": "Read",
-                    "arguments": {
-                      "target": "${priority_service}-monitor",
-                      "path": "/health/${priority_service}.json"
-                    }
-                  },
-                  {
-                    "type": "tool.call",
-                    "processId": "ship",
-                    "name": "Read",
-                    "arguments": {
-                      "target": "${initial_service}-monitor",
-                      "path": "/health/${initial_service}.json"
-                    }
-                  },
-                  {
-                    "type": "responsibility.transition",
-                    "responsibilityRefs": [
-                      "priority"
-                    ],
-                    "transition": {
-                      "kind": "resolved"
-                    }
+                    "type": "sequence",
+                    "path": "/log",
+                    "items": [
+                      {
+                        "type": "external.event",
+                        "id": "${priority_incident}-recovery-confirmed"
+                      },
+                      {
+                        "type": "tool.call",
+                        "processId": "ship",
+                        "name": "Read",
+                        "arguments": {
+                          "target": "${initial_service}-monitor",
+                          "path": "/health/${initial_service}.json"
+                        }
+                      },
+                      {
+                        "type": "responsibility.transition",
+                        "responsibilityRefs": [
+                          "priority"
+                        ],
+                        "transition": {
+                          "kind": "resolved"
+                        }
+                      }
+                    ]
                   }
                 ]
               }
