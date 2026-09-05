@@ -73,6 +73,20 @@ SH
 chmod 0755 "$FAKE_BIN/systemctl"
 printf '#!/usr/bin/env sh\nexit 1\n' > "$FAKE_BIN/sudo"
 chmod 0755 "$FAKE_BIN/sudo"
+# uname can be told to report macOS so the launchd paths get exercised here.
+cat > "$FAKE_BIN/uname" <<'SH'
+#!/usr/bin/env sh
+if [ -n "${GSV_TEST_UNAME_S:-}" ]; then
+    case "$1" in
+        -s) printf '%s\n' "$GSV_TEST_UNAME_S"; exit 0 ;;
+        -m) printf 'x86_64\n'; exit 0 ;;
+    esac
+fi
+exec /usr/bin/uname "$@"
+SH
+chmod 0755 "$FAKE_BIN/uname"
+printf '#!/usr/bin/env sh\nexit 1\n' > "$FAKE_BIN/launchctl"
+chmod 0755 "$FAKE_BIN/launchctl"
 
 cat > "$PINNED_FIXTURES/install.sh" <<'SH'
 #!/usr/bin/env bash
@@ -143,6 +157,11 @@ make_fixture gsvd-linux-x64 gsvd-v2
 make_fixture gsv-desktop-linux-x64 desktop-v2
 make_fixture gsv-transcribe-linux-x64 transcribe-v2
 make_fixture gsv-vision-linux-x64 vision-v2
+make_fixture gsv-darwin-x64 gsv-mac
+make_fixture gsvd-darwin-x64 gsvd-mac
+make_fixture gsv-desktop-darwin-x64 desktop-mac
+make_fixture gsv-transcribe-darwin-x64 transcribe-mac
+make_fixture gsv-vision-darwin-x64 vision-mac
 printf 'license-v2\n' > "$FIXTURES/gsv-transcribe-THIRD_PARTY.md"
 printf 'vision-license-v2\n' > "$FIXTURES/gsv-vision-LICENSE.apache-2.0"
 printf 'vision-provenance-v2\n' > "$FIXTURES/gsv-vision-PROVENANCE.md"
@@ -251,4 +270,58 @@ test "$("$LEGACY_DEFAULT_DIR/gsvd")" = "gsvd-v2"
 test ! -e "$LEGACY_DEFAULT_HOME/.gsv/bin"
 test ! -e "$LEGACY_DEFAULT_HOME/.profile"
 
-echo "host installer checksum, replacement, default directory, and PATH smoke passed"
+# A daemon that Desktop enrolled from inside its application bundle is not an
+# existing installation: nothing is written into the bundle, its service is
+# left alone, and the command-line install goes to the default directory.
+assert_bundle_left_alone() {
+    local home="$1"
+    local bundle_dir="$2"
+    local output="$3"
+    printf '%s\n' "$output" | grep -q "The Desktop application manages the gsvd service and updates it; adding a separate command-line installation in $home/.gsv/bin"
+    test "$("$bundle_dir/gsv")" = "bundled-gsv"
+    test "$("$bundle_dir/gsvd")" = "bundled-gsvd"
+    test "$(find "$bundle_dir" -type f | wc -l)" = "2"
+    test -x "$home/.gsv/bin/gsv"
+    test "$(grep -c 'Added by the GSV installer' "$home/.profile")" = "1"
+}
+BUNDLE_MAC_HOME="$TEST_ROOT/bundle-mac-home"
+BUNDLE_MAC_DIR="$TEST_ROOT/Applications/GSV.app/Contents/MacOS"
+mkdir -p "$BUNDLE_MAC_HOME/Library/LaunchAgents" "$BUNDLE_MAC_DIR"
+printf '#!/usr/bin/env sh\nprintf "bundled-gsv\\n"\n' > "$BUNDLE_MAC_DIR/gsv"
+printf '#!/usr/bin/env sh\nprintf "bundled-gsvd\\n"\n' > "$BUNDLE_MAC_DIR/gsvd"
+chmod 0755 "$BUNDLE_MAC_DIR/gsv" "$BUNDLE_MAC_DIR/gsvd"
+cat > "$BUNDLE_MAC_HOME/Library/LaunchAgents/gsvd.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>gsvd</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$BUNDLE_MAC_DIR/gsvd</string>
+    <string>--foreground</string>
+  </array>
+</dict>
+</plist>
+PLIST
+: > "$SYSTEMCTL_LOG"
+BUNDLE_OUTPUT="$(DEFAULT_HOME="$BUNDLE_MAC_HOME" run_default_installer env GSV_TEST_UNAME_S=Darwin)"
+assert_bundle_left_alone "$BUNDLE_MAC_HOME" "$BUNDLE_MAC_DIR" "$BUNDLE_OUTPUT"
+test "$("$BUNDLE_MAC_HOME/.gsv/bin/gsv")" = "gsv-mac"
+test "$("$BUNDLE_MAC_HOME/.gsv/bin/gsvd")" = "gsvd-mac"
+test -e "$BUNDLE_MAC_HOME/Library/LaunchAgents/gsvd.plist"
+test ! -s "$SYSTEMCTL_LOG"
+
+BUNDLE_LINUX_HOME="$TEST_ROOT/bundle-linux-home"
+BUNDLE_LINUX_DIR="$TEST_ROOT/opt/GSV.app/Contents/MacOS"
+mkdir -p "$BUNDLE_LINUX_HOME/.config/systemd/user" "$BUNDLE_LINUX_DIR"
+printf '#!/usr/bin/env sh\nprintf "bundled-gsv\\n"\n' > "$BUNDLE_LINUX_DIR/gsv"
+printf '#!/usr/bin/env sh\nprintf "bundled-gsvd\\n"\n' > "$BUNDLE_LINUX_DIR/gsvd"
+chmod 0755 "$BUNDLE_LINUX_DIR/gsv" "$BUNDLE_LINUX_DIR/gsvd"
+printf '[Service]\nExecStart="%s/gsvd" "--foreground"\n' "$BUNDLE_LINUX_DIR" > "$BUNDLE_LINUX_HOME/.config/systemd/user/gsvd.service"
+BUNDLE_OUTPUT="$(DEFAULT_HOME="$BUNDLE_LINUX_HOME" run_default_installer env)"
+assert_bundle_left_alone "$BUNDLE_LINUX_HOME" "$BUNDLE_LINUX_DIR" "$BUNDLE_OUTPUT"
+test "$("$BUNDLE_LINUX_HOME/.gsv/bin/gsv")" = "gsv-v2"
+test ! -s "$SYSTEMCTL_LOG"
+
+echo "host installer checksum, replacement, default directory, PATH, and bundle smoke passed"

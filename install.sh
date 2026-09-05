@@ -13,6 +13,9 @@ DEFAULT_INSTALL_DIR="${HOME}/.gsv/bin"
 LEGACY_INSTALL_DIR="${GSV_LEGACY_INSTALL_DIR:-/usr/local/bin}"
 INSTALL_DIR=""
 INSTALL_DIR_SOURCE=""
+# Set when the gsvd service runs from inside the Desktop application bundle,
+# which Desktop updates as a whole; the installer leaves it alone.
+DESKTOP_MANAGED_DAEMON=0
 CHANNEL="${GSV_CHANNEL:-stable}"
 VERSION="${GSV_VERSION:-}"
 if [ "$(uname -s)" = "Darwin" ]; then
@@ -86,10 +89,15 @@ service_definition_executable() {
 }
 
 # Where a previous installation lives: the directory the gsvd service runs
-# from, else the pre-per-user default. Empty when this is a fresh install.
+# from, else the pre-per-user default. Empty when this is a fresh install. A
+# service inside the Desktop application bundle does not count: loose release
+# binaries must never be written into the bundle.
 existing_install_dir() {
     local service_exe
     service_exe="$(service_definition_executable)"
+    case "$service_exe" in
+        *.app/Contents/*) service_exe="" ;;
+    esac
     if [ -n "$service_exe" ] && [ -x "$(dirname "$service_exe")/gsv" ]; then
         dirname "$service_exe"
         return
@@ -100,6 +108,9 @@ existing_install_dir() {
 }
 
 resolve_install_dir() {
+    case "$(service_definition_executable)" in
+        *.app/Contents/*) DESKTOP_MANAGED_DAEMON=1 ;;
+    esac
     if [ -n "${GSV_INSTALL_DIR:-}" ]; then
         INSTALL_DIR="$GSV_INSTALL_DIR"
         INSTALL_DIR_SOURCE="explicit"
@@ -244,6 +255,9 @@ prepare_install_dir() {
 }
 
 explain_existing_install_dir() {
+    if [ "$DESKTOP_MANAGED_DAEMON" -eq 1 ]; then
+        info "The Desktop application manages the gsvd service and updates it; adding a separate command-line installation in $INSTALL_DIR"
+    fi
     [ "$INSTALL_DIR_SOURCE" = "existing" ] || return 0
     if [ -w "$INSTALL_DIR" ]; then
         info "Updating the existing installation in $INSTALL_DIR"
@@ -320,6 +334,9 @@ service_snapshot() {
     SERVICE_INSTALLED=0
     SERVICE_WAS_ACTIVE=0
     SERVICE_WAS_ENABLED=0
+    # Desktop owns that service and the executable it runs; do not stop,
+    # migrate, or restart it here.
+    [ "$DESKTOP_MANAGED_DAEMON" -eq 0 ] || return 0
     if [ "$OS" = "linux" ]; then
         SERVICE_PATH="${CONFIG_HOME}/systemd/user/gsvd.service"
         if [ -f "$SERVICE_PATH" ]; then

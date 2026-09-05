@@ -55,7 +55,10 @@ is installed with `sudo`, and the daemon there cannot update itself.
 An existing installation stays where it is. When `GSV_INSTALL_DIR` is unset the
 installer updates the directory the `gsvd` service runs from, or a previous
 `/usr/local/bin` installation, in place, and prints how to move if that
-directory is not user-writable. To migrate by hand:
+directory is not user-writable. A daemon that Desktop enrolled from inside its
+macOS application bundle is the exception: Desktop updates that bundle as a
+whole, so the installer leaves it and its service alone and adds a separate
+command-line installation in the default directory. To migrate by hand:
 
 ```bash
 curl -fsSL https://install.gsv.space | GSV_INSTALL_DIR="$HOME/.gsv/bin" bash
