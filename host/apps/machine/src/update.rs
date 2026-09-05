@@ -94,12 +94,18 @@ impl UpdateError {
     }
 }
 
-/// The command a person runs to update by hand.
-pub fn manual_install_command() -> &'static str {
+/// The command a person runs to update the installation in `dir` by hand.
+pub fn manual_install_command(dir: &Path) -> String {
     if cfg!(windows) {
-        "irm https://install.gsv.space/install.ps1 | iex"
+        format!(
+            "$env:GSV_INSTALL_DIR='{}'; irm https://install.gsv.space/install.ps1 | iex",
+            dir.display()
+        )
     } else {
-        "curl -fsSL https://install.gsv.space | bash"
+        format!(
+            "curl -fsSL https://install.gsv.space | GSV_INSTALL_DIR=\"{}\" bash",
+            dir.display()
+        )
     }
 }
 
@@ -116,7 +122,7 @@ impl Display for UpdateError {
                 f,
                 "{} is not writable by this user. Run the installer yourself: {}",
                 dir.display(),
-                manual_install_command()
+                manual_install_command(dir)
             ),
             Self::AppBundle { dir } => write!(
                 f,
@@ -832,6 +838,17 @@ mod tests {
                 "/tmp/install.sh",
             ]
         );
+    }
+
+    #[test]
+    fn the_manual_command_keeps_the_installation_where_it_is() {
+        let message = UpdateError::Unwritable {
+            dir: PathBuf::from("/usr/local/bin"),
+        }
+        .to_string();
+        assert!(message.starts_with("/usr/local/bin is not writable by this user."));
+        assert!(message.contains("GSV_INSTALL_DIR"));
+        assert!(message.contains("/usr/local/bin"));
     }
 
     #[test]
