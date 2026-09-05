@@ -1,4 +1,4 @@
-import { defineCommand } from "just-bash";
+import { defineCommand } from "./command";
 import type { ExecResult } from "just-bash";
 import type { KernelContext } from "../../../kernel/context";
 import {

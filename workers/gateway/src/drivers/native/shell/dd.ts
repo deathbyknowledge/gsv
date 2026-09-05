@@ -1,4 +1,5 @@
-import { defineCommand, type ByteString, type ExecResult } from "just-bash";
+import type { ByteString, ExecResult } from "just-bash";
+import { defineCommand } from "./command";
 import type { GsvFs } from "../../../fs/gsv-fs";
 
 const DD_USAGE = [

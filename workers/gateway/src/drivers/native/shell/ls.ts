@@ -1,4 +1,4 @@
-import { defineCommand } from "just-bash";
+import { defineCommand } from "./command";
 import type { ExecResult } from "just-bash";
 import { GsvFs } from "../../../fs/gsv-fs";
 import type { ExtendedStat } from "../../../fs/gsv-fs";

@@ -1,4 +1,5 @@
-import { defineCommand, type ExecResult } from "just-bash";
+import type { ExecResult } from "just-bash";
+import { defineCommand } from "./command";
 import type { KernelContext } from "../../../kernel/context";
 import { handleFsCopy, type FsDeviceTransport } from "../fs";
 import { parseShellFsEndpoint } from "./fs-path";

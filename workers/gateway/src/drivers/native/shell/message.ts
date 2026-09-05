@@ -1,4 +1,4 @@
-import { defineCommand } from "just-bash";
+import { defineCommand } from "./command";
 import type { CommandContext, ExecResult } from "just-bash";
 import type {
   AdapterMedia,

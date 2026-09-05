@@ -1,4 +1,5 @@
-import { defineCommand, type CommandContext } from "just-bash";
+import type { CommandContext } from "just-bash";
+import { defineCommand } from "./command";
 import type { ExecResult } from "just-bash";
 import { GsvFs } from "../../../fs/gsv-fs";
 import { createCronFileService } from "../../../kernel/crontab";

@@ -1,9 +1,9 @@
-import {
-  defineCommand,
-  type Command,
-  type CommandContext,
-  type ExecResult,
+import type {
+  Command,
+  CommandContext,
+  ExecResult,
 } from "just-bash";
+import { defineCommand } from "./command";
 import {
   bodyToText,
   jsonObjectSchema,
