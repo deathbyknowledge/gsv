@@ -44,6 +44,7 @@ class FakeRows implements McpServerRows {
 
 class FakeStorage implements OAuthKeyValueStorage {
   readonly entries = new Map<string, unknown>();
+  failDelete: Error | null = null;
 
   async get<T>(key: string): Promise<T | undefined> {
     // SAFETY: the fake stores exactly the values the provider put under each key.
@@ -55,6 +56,7 @@ class FakeStorage implements OAuthKeyValueStorage {
   }
 
   async delete(keys: string | string[]): Promise<number> {
+    if (this.failDelete) throw this.failDelete;
     let removed = 0;
     for (const key of Array.isArray(keys) ? keys : [keys]) {
       if (this.entries.delete(key)) removed += 1;
@@ -237,9 +239,17 @@ describe("McpClientManager", () => {
     await other.saveTokens({ access_token: "keep", token_type: "bearer" });
     expect(storage.keys().filter((key) => key.includes("/mcp-1/"))).toHaveLength(4);
 
+    storage.failDelete = new Error("storage unavailable");
+    await expect(manager.removeServer("mcp-1")).rejects.toThrow(
+      "Could not remove MCP server mcp-1: its sign-in records could not be deleted",
+    );
+    expect(rows.get("mcp-1")).toBeDefined();
+    expect(connection.close).toHaveBeenCalledTimes(1);
+    expect(storage.keys().filter((key) => key.includes("/mcp-1/"))).toHaveLength(4);
+
+    storage.failDelete = null;
     await manager.removeServer("mcp-1");
     expect(rows.list()).toEqual([]);
-    expect(connection.close).toHaveBeenCalledTimes(1);
     expect(manager.mcpConnections["mcp-1"]).toBeUndefined();
     expect(storage.keys().filter((key) => key.includes("/mcp-1/"))).toEqual([]);
     expect(storage.keys()).toEqual(["/install-1/mcp-2/client-2/token"]);
@@ -833,6 +843,28 @@ describe("McpClientConnection discovery", () => {
 
     expect(connection.tools.map((tool) => tool.name)).toEqual(["newest"]);
     expect(onListsChanged).toHaveBeenCalledTimes(1);
+
+    // A notification fetch that began before a rediscovery and answers after it
+    // is stale, whichever way the answers land.
+    const staleNote = refresh();
+    const rediscover = connection.discover();
+    answers[3]?.({ tools: [{ name: "discovered", inputSchema: { type: "object" } }] });
+    await expect(rediscover).resolves.toEqual({ success: true });
+    answers[2]?.({ tools: [{ name: "stale-note", inputSchema: { type: "object" } }] });
+    await staleNote;
+    expect(connection.tools.map((tool) => tool.name)).toEqual(["discovered"]);
+    expect(onListsChanged).toHaveBeenCalledTimes(1);
+
+    // A discovery that began before a notification and answers after it loses
+    // the list to the notification, since the server said the list changed.
+    const lateDiscovery = connection.discover();
+    const laterNote = refresh();
+    answers[5]?.({ tools: [{ name: "announced", inputSchema: { type: "object" } }] });
+    await laterNote;
+    answers[4]?.({ tools: [{ name: "old-discovery", inputSchema: { type: "object" } }] });
+    await expect(lateDiscovery).resolves.toEqual({ success: true });
+    expect(connection.tools.map((tool) => tool.name)).toEqual(["announced"]);
+    expect(onListsChanged).toHaveBeenCalledTimes(2);
   });
 
   it("aborts list requests on timeout and ignores their late answers", async () => {
