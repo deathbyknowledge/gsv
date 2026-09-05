@@ -448,7 +448,6 @@ describe("Kernel frame bodies", () => {
         name: "lookup",
         arguments: { query: "gsv" },
       },
-      undefined,
       { signal: controller.signal },
     );
   });

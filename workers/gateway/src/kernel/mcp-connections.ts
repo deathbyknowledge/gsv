@@ -1,10 +1,5 @@
-import {
-  DurableObjectOAuthClientProvider,
-  type AgentMcpOAuthProvider,
-} from "agents/mcp/do-oauth-client-provider";
-import {
-  type MCPConnectionResult,
-} from "agents/mcp/client";
+import type { McpConnectionResult, McpTransportOptions } from "./mcp-client";
+import { McpOAuthProvider } from "./mcp-oauth-provider";
 import type {
   McpAddConnectionInput,
   McpAddConnectionResult,
@@ -15,12 +10,12 @@ import type { Kernel } from "./do";
 export class McpConnections {
   constructor(readonly host: Kernel) {}
 
-createMcpOAuthProvider(callbackUrl: string): AgentMcpOAuthProvider {
-    // SAFETY: the Agents SDK provider implements AgentMcpOAuthProvider; the
-    // intersection exposes its supported dynamic client metadata extension.
-    const provider = (
-      new DurableObjectOAuthClientProvider(this.host.ctx.storage, this.host.installationId, callbackUrl)
-    ) as AgentMcpOAuthProvider & { clientMetadataUrl?: string };
+createMcpOAuthProvider(callbackUrl: string): McpOAuthProvider {
+    const provider = new McpOAuthProvider(
+      this.host.ctx.storage,
+      this.host.installationId,
+      callbackUrl,
+    );
     const metadataUrl = `${new URL(callbackUrl).origin}/.well-known/oauth-client/gsv.json`;
     if (metadataUrl.startsWith("https://")) {
       provider.clientMetadataUrl = metadataUrl;
@@ -40,13 +35,9 @@ async addMcpServerConnection(input: McpAddConnectionInput): Promise<McpAddConnec
       authProvider.serverId = serverId;
     }
 
-    const transport = input.transport.headers
-      ? {
-          authProvider,
-          type: input.transport.type,
-          requestInit: { headers: input.transport.headers },
-        }
-      : { authProvider, type: input.transport.type };
+    const transport: McpTransportOptions = { type: input.transport.type };
+    if (authProvider) transport.authProvider = authProvider;
+    if (input.transport.headers) transport.requestInit = { headers: input.transport.headers };
     await this.host.mcp.registerServer(serverId, {
       url: input.url,
       name: serverName,
@@ -54,7 +45,7 @@ async addMcpServerConnection(input: McpAddConnectionInput): Promise<McpAddConnec
       transport,
     });
 
-    let result: MCPConnectionResult;
+    let result: McpConnectionResult;
     try {
       result = await this.host.mcp.connectToServer(serverId);
       if (result.state === "failed") {
