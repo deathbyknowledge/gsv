@@ -69,8 +69,11 @@ health-check, and if necessary roll back the daemon exactly as a manual
 upgrade would. A stable daemon only follows stable releases; a daemon on the
 `dev` channel follows the `dev` tag.
 
-The daemon makes at most one attempt per hour and only ever moves to a release
-the gateway named. Installer output is written to `~/.gsv/logs/auto-update.log`,
+Automatic updates need the install directory to be writable by the user
+running `gsvd`; an installation under `/usr/local/bin` that needed `sudo`
+updates manually, and a daemon inside the Desktop application bundle is
+updated by Desktop. The daemon makes at most one attempt per hour and only
+ever moves to a release the gateway named. Installer output is written to `~/.gsv/logs/auto-update.log`,
 and `gsv daemon diagnostics` shows the latest decision. To turn the mechanism
 off:
 

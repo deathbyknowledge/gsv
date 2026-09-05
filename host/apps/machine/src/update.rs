@@ -63,10 +63,44 @@ pub struct UpdateTarget {
 #[derive(Debug)]
 pub enum UpdateError {
     Disabled,
-    Deferred { since: Duration },
+    Deferred {
+        since: Duration,
+    },
+    /// The daemon lives in a directory this user cannot write, so the
+    /// installer would need sudo, which an unattended service cannot give.
+    Unwritable {
+        dir: PathBuf,
+    },
+    /// The daemon lives inside a macOS application bundle that Desktop owns.
+    AppBundle {
+        dir: PathBuf,
+    },
     State(String),
     Download(String),
     Spawn(String),
+}
+
+impl UpdateError {
+    /// Whether nothing was attempted, so the decision is worth one quiet
+    /// line rather than a warning.
+    pub fn is_skip(&self) -> bool {
+        matches!(
+            self,
+            Self::Disabled
+                | Self::Deferred { .. }
+                | Self::Unwritable { .. }
+                | Self::AppBundle { .. }
+        )
+    }
+}
+
+/// The command a person runs to update by hand.
+pub fn manual_install_command() -> &'static str {
+    if cfg!(windows) {
+        "irm https://install.gsv.space/install.ps1 | iex"
+    } else {
+        "curl -fsSL https://install.gsv.space | bash"
+    }
 }
 
 impl Display for UpdateError {
@@ -77,6 +111,17 @@ impl Display for UpdateError {
                 f,
                 "the last update attempt was {} minutes ago; the next one waits until an hour has passed",
                 since.as_secs() / 60
+            ),
+            Self::Unwritable { dir } => write!(
+                f,
+                "{} is not writable by this user. Run the installer yourself: {}",
+                dir.display(),
+                manual_install_command()
+            ),
+            Self::AppBundle { dir } => write!(
+                f,
+                "{} is part of the Desktop application, which updates it",
+                dir.display()
             ),
             Self::State(error) => write!(f, "could not record the update attempt: {error}"),
             Self::Download(error) => write!(f, "could not download the installer: {error}"),
@@ -239,10 +284,19 @@ impl AutoUpdater {
     /// Start the installer for `target`, detached from this daemon. Records
     /// the attempt before anything else so a crash cannot turn into a loop.
     pub async fn launch(&self, target: &UpdateTarget) -> Result<UpdateLaunch, UpdateError> {
+        if !self.enabled {
+            return Err(UpdateError::Disabled);
+        }
+        let install_dir = install_dir()?;
+        if is_app_bundle_dir(&install_dir) {
+            return Err(UpdateError::AppBundle { dir: install_dir });
+        }
+        if !dir_writable(&install_dir) {
+            return Err(UpdateError::Unwritable { dir: install_dir });
+        }
         self.check_allowed(SystemTime::now())?;
         self.record_attempt(&target.release, SystemTime::now())?;
 
-        let install_dir = install_dir()?;
         let script = self
             .download_installer(&target.installer_url)
             .await
@@ -381,6 +435,33 @@ fn install_dir() -> Result<PathBuf, UpdateError> {
     exe.parent()
         .map(Path::to_path_buf)
         .ok_or_else(|| UpdateError::State("the daemon executable has no parent directory".into()))
+}
+
+/// Whether `dir` sits inside a macOS application bundle (`Foo.app/Contents/`).
+/// Desktop owns that distribution; loose binaries must not be mixed into it.
+pub fn is_app_bundle_dir(dir: &Path) -> bool {
+    let components: Vec<&str> = dir
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect();
+    components
+        .windows(2)
+        .any(|pair| pair[0].ends_with(".app") && pair[1] == "Contents")
+}
+
+/// Whether this user can replace files in `dir`, proven by creating and
+/// removing a file there rather than by reading permission bits.
+pub fn dir_writable(dir: &Path) -> bool {
+    let probe = dir.join(format!(".gsv-update-probe-{}", std::process::id()));
+    let created = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .is_ok();
+    if created {
+        let _ = fs::remove_file(&probe);
+    }
+    created
 }
 
 fn installer_script_name() -> &'static str {
@@ -751,6 +832,45 @@ mod tests {
                 "/tmp/install.sh",
             ]
         );
+    }
+
+    #[test]
+    fn app_bundles_belong_to_desktop() {
+        assert!(is_app_bundle_dir(Path::new(
+            "/Applications/GSV.app/Contents/MacOS"
+        )));
+        assert!(is_app_bundle_dir(Path::new(
+            "/Users/u/Applications/GSV.app/Contents/Helpers"
+        )));
+        assert!(!is_app_bundle_dir(Path::new("/usr/local/bin")));
+        assert!(!is_app_bundle_dir(Path::new("/home/u/my.app/bin")));
+        assert!(!is_app_bundle_dir(Path::new("/opt/Contents/bin")));
+    }
+
+    #[test]
+    fn a_writable_directory_is_proven_by_writing_to_it() {
+        let dir = std::env::temp_dir().join(format!("gsvd-writable-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create probe dir");
+        assert!(dir_writable(&dir));
+        assert!(fs::read_dir(&dir).expect("list probe dir").next().is_none());
+        assert!(!dir_writable(&dir.join("missing")));
+        fs::remove_dir_all(&dir).expect("remove probe dir");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_read_only_directory_is_not_writable() {
+        use std::os::unix::fs::PermissionsExt;
+        // SAFETY: geteuid has no preconditions and only reads the caller's id.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("gsvd-readonly-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create probe dir");
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o500)).expect("make read-only");
+        assert!(!dir_writable(&dir));
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).expect("restore");
+        fs::remove_dir_all(&dir).expect("remove probe dir");
     }
 
     #[test]
