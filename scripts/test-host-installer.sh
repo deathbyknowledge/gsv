@@ -416,4 +416,27 @@ DEFAULT_HOME="$DEV_HOME" run_default_installer env GSV_VERSION=dev >/dev/null
 test "$("$DEV_HOME/.gsv/bin/gsv")" = "gsv-v2"
 test "$(grep -c '^channel = "dev"$' "$DEV_HOME/.config/gsv/config.toml")" = "1"
 
+# An existing config moves to the dev channel when the moving tag is pinned,
+# keeping everything else in the file; a pinned stable tag leaves it alone.
+DEV_EXISTING_HOME="$TEST_ROOT/dev-existing-home"
+mkdir -p "$DEV_EXISTING_HOME/.config/gsv"
+printf '[gateway]\nurl = "wss://example.test/ws"\n\n[release]\n# a comment to keep\nchannel = "stable"\n\n[device]\nid = "machine-1"\n' > "$DEV_EXISTING_HOME/.config/gsv/config.toml"
+DEFAULT_HOME="$DEV_EXISTING_HOME" run_default_installer env GSV_VERSION=dev >/dev/null
+test "$(grep -c '^channel = "dev"$' "$DEV_EXISTING_HOME/.config/gsv/config.toml")" = "1"
+test "$(grep -c 'channel = "stable"' "$DEV_EXISTING_HOME/.config/gsv/config.toml")" = "0"
+grep -q '^url = "wss://example.test/ws"$' "$DEV_EXISTING_HOME/.config/gsv/config.toml"
+grep -q '^# a comment to keep$' "$DEV_EXISTING_HOME/.config/gsv/config.toml"
+grep -q '^id = "machine-1"$' "$DEV_EXISTING_HOME/.config/gsv/config.toml"
+test "$(stat -c '%a' "$DEV_EXISTING_HOME/.config/gsv/config.toml")" = "600"
+# A config with no [release] table gains one.
+printf '[gateway]\nurl = "wss://example.test/ws"\n' > "$DEV_EXISTING_HOME/.config/gsv/config.toml"
+DEFAULT_HOME="$DEV_EXISTING_HOME" run_default_installer env GSV_VERSION=dev >/dev/null
+test "$(grep -c '^\[release\]$' "$DEV_EXISTING_HOME/.config/gsv/config.toml")" = "1"
+test "$(grep -c '^channel = "dev"$' "$DEV_EXISTING_HOME/.config/gsv/config.toml")" = "1"
+STABLE_EXISTING_HOME="$TEST_ROOT/stable-existing-home"
+mkdir -p "$STABLE_EXISTING_HOME/.config/gsv"
+printf '[release]\nchannel = "stable"\n' > "$STABLE_EXISTING_HOME/.config/gsv/config.toml"
+DEFAULT_HOME="$STABLE_EXISTING_HOME" run_default_installer env >/dev/null
+test "$(cat "$STABLE_EXISTING_HOME/.config/gsv/config.toml")" = "$(printf '[release]\nchannel = "stable"')"
+
 echo "host installer checksum, replacement, default directory, PATH, bundle, launcher, encoded-path, and dev-channel smoke passed"

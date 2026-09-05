@@ -509,10 +509,41 @@ ensure_config_file() {
     success "Created config at $config_file"
 }
 
+# Set release.channel in an existing config without touching anything else:
+# replace the key inside [release], add it to an existing [release] table, or
+# append the table.
+set_release_channel_in_config() {
+    local channel="$1"
+    local config_file="${CONFIG_DIR}/config.toml"
+    [ -f "$config_file" ] || return 0
+    local updated="${config_file}.new.$$"
+    awk -v channel="$channel" '
+        function emit_channel() { print "channel = \"" channel "\""; done = 1 }
+        /^[[:space:]]*\[release\][[:space:]]*$/ { in_release = 1; seen_release = 1; print; next }
+        /^[[:space:]]*\[/ {
+            if (in_release && !done) emit_channel()
+            in_release = 0; print; next
+        }
+        in_release && !done && /^[[:space:]]*#?[[:space:]]*channel[[:space:]]*=/ { emit_channel(); next }
+        { print }
+        END {
+            if (!done) {
+                if (!seen_release) { print ""; print "[release]" }
+                emit_channel()
+            }
+        }
+    ' "$config_file" > "$updated" || { rm -f "$updated"; return 1; }
+    chmod 0600 "$updated" && mv "$updated" "$config_file"
+}
+
 persist_release_channel() {
     if [ -z "$VERSION" ]; then
         "${INSTALL_DIR}/gsv" config --local set release.channel "$CHANNEL" >/dev/null 2>&1 || \
             warn "Could not persist release.channel"
+    elif [ "$VERSION" = "$DEV_RELEASE_TAG" ]; then
+        # A machine on the moving tag is a dev-channel machine, whatever its
+        # config said before; a pinned stable tag leaves the channel alone.
+        set_release_channel_in_config "$DEV_RELEASE_TAG" || warn "Could not persist release.channel"
     fi
 }
 

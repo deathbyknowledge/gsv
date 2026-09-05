@@ -88,6 +88,34 @@ $channelLine
   Write-Success "Created config at $configFile"
 }
 
+function Set-ReleaseChannelInConfig([string]$Channel) {
+  # Set release.channel in an existing config without touching anything else.
+  $configFile = Join-Path $ConfigDir "config.toml"
+  if (-not (Test-Path $configFile)) { return }
+  $lines = [System.Collections.Generic.List[string]](Get-Content -Path $configFile)
+  $channelLine = "channel = `"$Channel`""
+  $inRelease = $false
+  $releaseIndex = -1
+  for ($index = 0; $index -lt $lines.Count; $index++) {
+    $line = $lines[$index]
+    if ($line -match '^\s*\[release\]\s*$') { $inRelease = $true; $releaseIndex = $index; continue }
+    if ($line -match '^\s*\[') { $inRelease = $false; continue }
+    if ($inRelease -and $line -match '^\s*#?\s*channel\s*=') {
+      $lines[$index] = $channelLine
+      Set-Content -Path $configFile -Value $lines -Encoding UTF8
+      return
+    }
+  }
+  if ($releaseIndex -ge 0) {
+    $lines.Insert($releaseIndex + 1, $channelLine)
+  } else {
+    $lines.Add("")
+    $lines.Add("[release]")
+    $lines.Add($channelLine)
+  }
+  Set-Content -Path $configFile -Value $lines -Encoding UTF8
+}
+
 function Add-InstallDirToPath {
   $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
   $entries = if ([string]::IsNullOrWhiteSpace($userPath)) { @() } else { $userPath -split ";" }
@@ -231,6 +259,7 @@ Write-Host "GSV host installer · Windows x64" -ForegroundColor Cyan
 Write-Host ""
 Install-GsvHost
 Ensure-ConfigFile
+if ($Version -eq $DevReleaseTag) { Set-ReleaseChannelInConfig "dev" }
 if ($env:GSV_NO_MODIFY_PATH -eq "1") {
   Write-Info "Left the user PATH alone (GSV_NO_MODIFY_PATH=1); add $InstallDir yourself"
 } else {
