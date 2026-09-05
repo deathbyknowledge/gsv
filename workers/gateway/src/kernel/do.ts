@@ -11,9 +11,7 @@ import type {
 } from "./do-shared";
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
-import {
-  MCPClientManager,
-} from "agents/mcp/client";
+import { McpClientManager, SqlMcpServerRows } from "./mcp-client";
 import type {
   Frame,
   FrameBody,
@@ -81,7 +79,6 @@ import {
   type ServicePeerProfile,
 } from "./peer";
 import { completeOAuthCallback as completeOAuthCallbackFlow } from "./sys/oauth";
-import { installMcpDiscoveryCompatibility } from "./mcp-compat";
 import { oauthCallbackHtmlResponse } from "../oauth-http";
 import { isInternalOnlySyscall } from "./syscall-exposure";
 import {
@@ -386,7 +383,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly mcpServers: McpServerStore;
   readonly connections = new Map<string, KernelConnection<ConnectionState>>();
   readonly tasks: DurableTaskScheduler<KernelTask>;
-  mcp: MCPClientManager;
+  mcp: McpClientManager;
                       readonly ctx: DurableObjectState<{}>;
   readonly env: GatewayEnv;
   declare readonly mcpConnections: McpConnections;
@@ -470,32 +467,15 @@ export class Kernel extends DurableObject<GatewayEnv> {
       decodeKernelTask,
       this.runScheduledTask.bind(this),
     );
-    this.mcp = new MCPClientManager("GSV Kernel", SERVER_VERSION, {
-      storage: ctx.storage,
+    this.mcp = new McpClientManager({ name: "GSV Kernel", version: SERVER_VERSION }, {
+      rows: new SqlMcpServerRows(sql),
       createAuthProvider: (callbackUrl) => this.mcpConnections.createMcpOAuthProvider(callbackUrl),
-    });
-    installMcpDiscoveryCompatibility(this.mcp);
-    this.mcp.configureOAuthCallback({
-      customHandler: (result) => oauthCallbackHtmlResponse(
-        result.authSuccess
-          ? {
-            ok: true,
-            account: {
-              provider: "MCP server",
-              label: result.serverId,
-            },
-          }
-          : {
-            ok: false,
-            message: result.authError,
-          },
-      ),
     });
     this.mcp.onServerStateChanged(() => {
       this.mcpConnections.broadcastMcpChanged();
     });
     ctx.blockConcurrencyWhile(async () => {
-      await this.mcp.restoreConnectionsFromStorage(ctx.id.name ?? this.installationId);
+      await this.mcp.restoreConnectionsFromStorage();
     });
 
     this.connectionRuntime.rehydrateConnections();
@@ -607,10 +587,11 @@ export class Kernel extends DurableObject<GatewayEnv> {
         this.ctx.waitUntil(this.mcp.establishConnection(result.serverId));
       }
       this.mcpConnections.broadcastMcpChanged();
-      const customHandler = this.mcp.getOAuthCallbackConfig()?.customHandler;
-      return customHandler
-        ? customHandler(result)
-        : Response.redirect(url.origin);
+      return oauthCallbackHtmlResponse(
+        result.authSuccess
+          ? { ok: true, account: { provider: "MCP server", label: result.serverId } }
+          : { ok: false, message: result.authError },
+      );
     }
     return await this.onRequest(request);
   }
@@ -1311,12 +1292,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       removeMcpServerConnection: this.mcpConnections.removeMcpServer.bind(this.mcpConnections),
       refreshMcpServerConnection: this.mcpConnections.refreshMcpServerConnection.bind(this.mcpConnections),
       callMcpTool: (serverId, toolName, args, signal) => this.mcp.callTool(
-        {
-          serverId,
-          name: toolName,
-          arguments: args,
-        },
-        undefined,
+        { serverId, name: toolName, arguments: args },
         signal ? { signal } : undefined,
       ),
       request: this.requestDispatchedFrame.bind(this),
