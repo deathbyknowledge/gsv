@@ -449,12 +449,17 @@ export function Zen({ onFleet, onFirstDay }: ZenProps) {
     [client, pendingHil, pid],
   );
 
+  /* an approval takes the keys: the prompt lets go so y and n reach the decision */
+  useEffect(() => {
+    if (pendingHil) promptRef.current?.querySelector("input")?.blur();
+  }, [pendingHil]);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target;
       const typing = target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA");
       if (event.metaKey || event.ctrlKey || event.altKey) return;
-      if (pendingHil && (event.key === "y" || event.key === "n")) {
+      if (pendingHil && !typing && (event.key === "y" || event.key === "n")) {
         event.preventDefault();
         void decide(event.key === "y" ? "approve" : "deny");
         return;
@@ -670,7 +675,7 @@ export function Zen({ onFleet, onFirstDay }: ZenProps) {
           />
         </div>
         <div class="prompt-hint">
-          <b>enter</b> send · <b>$ ls</b> runs on {placeLabel(where ?? "gsv", places)} with no model in the loop · <b>@name</b> moves the prompt · click a <b>used …</b> line for the raw run
+          <b>esc</b> leaves the prompt, then <b>z</b> fleet and <b>n</b> first day · <b>enter</b> send · <b>$ ls</b> runs on {placeLabel(where ?? "gsv", places)} with no model in the loop · <b>@name</b> moves the prompt · click a <b>used …</b> line for the raw run
         </div>
       </div>
     </main>

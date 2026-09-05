@@ -30,7 +30,14 @@ export function PromptLine({ who, where, dir, placeholder, disabled, onSubmit, o
   };
   const onKeyDown = (event: KeyboardEvent) => {
     const input = inputRef.current;
-    if (!input || !onHistory || input.value !== "") return;
+    if (!input) return;
+    if (event.key === "Escape") {
+      // Escape leaves the prompt, the way the TUI drops into browse mode; shortcuts work from there.
+      event.preventDefault();
+      input.blur();
+      return;
+    }
+    if (!onHistory || input.value !== "") return;
     if (event.key === "ArrowUp") {
       event.preventDefault();
       onHistory(-1);
