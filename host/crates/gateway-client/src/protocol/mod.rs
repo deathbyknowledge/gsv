@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod generated;
+
+pub use generated::*;
+
 pub const BINARY_FRAME_HEADER_BYTES: usize = 5;
 pub const PROTOCOL_VERSION: u32 = 4;
 pub const REQUEST_CANCEL_SIGNAL: &str = "request.cancel";
@@ -16,7 +20,8 @@ pub const BINARY_INITIAL_WINDOW_BYTES: u64 = 4 * 1024 * 1024;
 pub const BINARY_WINDOW_PAYLOAD_BYTES: usize = 4;
 
 // ---------------------------------------------------------------------------
-//  Core frame types — mirrors workers/gateway/src/protocol/frames.ts
+//  Frame envelopes — mirrors packages/gsv/src/protocol/frame.ts; the payload
+//  types they carry are generated into generated.rs from the same source
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,14 +56,6 @@ pub struct ResponseFrame {
     pub body: Option<FrameBodyDescriptor>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FrameBodyDescriptor {
-    pub stream_id: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub length: Option<u64>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignalFrame {
     pub signal: String,
@@ -66,105 +63,6 @@ pub struct SignalFrame {
     pub payload: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seq: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ErrorShape {
-    pub code: i32,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub details: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub retryable: Option<bool>,
-}
-
-// ---------------------------------------------------------------------------
-//  sys.connect payload — mirrors workers/gateway/src/syscalls/system.ts
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConnectArgs {
-    pub protocol: u32,
-    pub peer: PeerInfo,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auth: Option<AuthInfo>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PeerInfo {
-    pub id: String,
-    pub version: String,
-    pub platform: String,
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub implements: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuthInfo {
-    pub username: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub password: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub token: Option<String>,
-}
-
-// ---------------------------------------------------------------------------
-//  sys.connect result
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConnectResult {
-    pub protocol: u32,
-    pub server: ServerInfo,
-    pub peer: ConnectedPeer,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConnectedPeer {
-    pub id: String,
-    pub session_id: String,
-    pub principal: PeerPrincipal,
-    pub grant: PeerGrant,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum PeerPrincipalKind {
-    Human,
-    Machine,
-    Service,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PeerPrincipal {
-    pub kind: PeerPrincipalKind,
-    pub account: ProcessIdentity,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessIdentity {
-    pub uid: u64,
-    pub gid: u64,
-    pub gids: Vec<u64>,
-    pub username: String,
-    pub home: String,
-    pub cwd: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PeerGrant {
-    pub calls: Vec<String>,
-    pub signals: Vec<String>,
-    pub implements: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ServerInfo {
-    pub version: String,
-    pub connection_id: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -189,18 +87,6 @@ pub struct DeviceExecEventParams {
     pub started_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ended_at: Option<i64>,
-}
-
-// ---------------------------------------------------------------------------
-//  Tool definition (used by local driver syscall implementations)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ToolDefinition {
-    pub name: String,
-    pub description: String,
-    pub input_schema: Value,
 }
 
 // ---------------------------------------------------------------------------
