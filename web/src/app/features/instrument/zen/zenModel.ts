@@ -77,7 +77,8 @@ export type Activity = {
 
 export type Moment = {
   id: string;
-  role: "human" | "ship";
+  /** `note` is the ship's own memory: a compaction summary the gateway wrote when it folded older history. */
+  role: "human" | "ship" | "note";
   text: string;
   streaming: boolean;
   thinking: boolean;
@@ -254,7 +255,7 @@ export function momentsFromRows(rows: readonly ChatTranscriptRow[], activeRunId:
     if (row.role === "system" && row.text.trim()) {
       moments.push({
         id: row.id,
-        role: "ship",
+        role: "note",
         text: row.text,
         streaming: false,
         thinking: false,
@@ -338,3 +339,15 @@ export function linkPlaceReferences(text: string, places: readonly Place[]): str
 }
 
 export const PLACE_REFERENCE_PREFIX = "#place:";
+
+const NOTE_SUMMARY_LENGTH = 92;
+
+/** One line for a folded note: the first sentence or the first 92 characters, whichever is shorter. */
+export function noteSummary(text: string): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  if (!flat) return "";
+  const sentence = flat.match(/^[^.!?]{12,}?[.!?](?=\s|$)/)?.[0] ?? flat;
+  const candidate = sentence.length < flat.length ? sentence : flat;
+  if (candidate.length <= NOTE_SUMMARY_LENGTH) return candidate;
+  return `${candidate.slice(0, NOTE_SUMMARY_LENGTH - 3).trim()}...`;
+}

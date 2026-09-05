@@ -38,6 +38,7 @@ import {
   resolvePlace,
   resolveTail,
   trimOutput,
+  noteSummary,
   type Activity,
   type Moment,
   type Place,
@@ -165,6 +166,19 @@ function StreamingText({ text, tick }: { text: string; tick: number }) {
   );
 }
 
+function NoteMoment({ moment, open, onToggle }: { moment: Moment; open: boolean; onToggle: () => void }) {
+  return (
+    <div class={`zen-moment is-note${open ? " is-open" : ""}`}>
+      <div class="who">memory</div>
+      <button type="button" class="note-line" aria-expanded={open} onClick={onToggle}>
+        <span class="tri">{open ? "▾" : "▸"}</span>
+        <span class="note-summary">{noteSummary(moment.text)}</span>
+      </button>
+      {open ? <div class="note-text">{moment.text}</div> : null}
+    </div>
+  );
+}
+
 export function Zen({ onFleet, onFirstDay }: ZenProps) {
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
@@ -177,6 +191,7 @@ export function Zen({ onFleet, onFirstDay }: ZenProps) {
   const [where, setWhere] = useState<string | null>(null);
   const [localRuns, setLocalRuns] = useState<LocalRun[]>([]);
   const [openActivities, setOpenActivities] = useState<ReadonlySet<string>>(() => new Set());
+  const [openNotes, setOpenNotes] = useState<ReadonlySet<string>>(() => new Set());
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
   const [lastRun, setLastRun] = useState<{ startedAt: number; endedAt: number | null } | null>(null);
@@ -542,7 +557,7 @@ export function Zen({ onFleet, onFirstDay }: ZenProps) {
       <div class="zen-body">
         <div class="zen-timeline" aria-hidden="true">
           {moments.map((moment, index) => (
-            <i key={moment.id} class={`${moment.role === "human" ? "is-human" : ""}${index === moments.length - 1 ? " is-here" : ""}`} />
+            <i key={moment.id} class={`${moment.role === "human" ? "is-human" : moment.role === "note" ? "is-note" : ""}${index === moments.length - 1 ? " is-here" : ""}`} />
           ))}
         </div>
         {empty ? (
@@ -561,6 +576,23 @@ export function Zen({ onFleet, onFirstDay }: ZenProps) {
           <div class="zen-moments" ref={momentsRef}>
             {moments.map((moment, index) => {
               const isLatest = index === moments.length - 1;
+              if (moment.role === "note") {
+                return (
+                  <NoteMoment
+                    key={moment.id}
+                    moment={moment}
+                    open={openNotes.has(moment.id)}
+                    onToggle={() =>
+                      setOpenNotes((current) => {
+                        const next = new Set(current);
+                        if (next.has(moment.id)) next.delete(moment.id);
+                        else next.add(moment.id);
+                        return next;
+                      })
+                    }
+                  />
+                );
+              }
               return (
                 <div key={moment.id} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${isLatest ? "" : " is-older"}`}>
                   <div class="who">{moment.role === "human" ? who : "ship"}</div>

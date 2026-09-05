@@ -6,7 +6,7 @@
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  padding: 0 var(--space-5);
+  padding: 0 56px;
   background: linear-gradient(180deg, rgba(19, 17, 46, 0.6), transparent);
   font-size: 11px;
   letter-spacing: 0.14em;

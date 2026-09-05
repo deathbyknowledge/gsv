@@ -12,6 +12,7 @@ import {
   resolvePlace,
   resolveTail,
   trimOutput,
+  noteSummary,
 } from "./zenModel";
 
 const places = [
@@ -160,5 +161,20 @@ describe("formatting", () => {
   it("links known place mentions", () => {
     expect(linkPlaceReferences("on @laptop and @nowhere", places)).toBe("on [@laptop](#place:laptop) and @nowhere");
     expect(linkPlaceReferences("mail@laptop", places)).toBe("mail@laptop");
+  });
+});
+
+describe("noteSummary", () => {
+  it("keeps a short note whole", () => {
+    expect(noteSummary("Three installers were removed.")).toBe("Three installers were removed.");
+  });
+  it("takes the first sentence of a long note", () => {
+    const text = "Earlier we sorted the downloads folder and filed two invoices. Then a long tail of detail follows that nobody needs on one line.";
+    expect(noteSummary(text)).toBe("Earlier we sorted the downloads folder and filed two invoices.");
+  });
+  it("truncates a long first sentence", () => {
+    const text = "a".repeat(200);
+    expect(noteSummary(text)).toHaveLength(92);
+    expect(noteSummary(text).endsWith("...")).toBe(true);
   });
 });

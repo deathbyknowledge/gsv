@@ -77,11 +77,14 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  padding: 0 var(--space-5);
+  padding: 0 56px;
   font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--text-dim);
+}
+@media (max-width: 720px) {
+  .instrument-top { padding: 0 18px; }
 }
 .instrument-top .keys span {
   margin-left: 14px;

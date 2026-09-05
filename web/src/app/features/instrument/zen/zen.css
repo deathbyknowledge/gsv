@@ -227,3 +227,33 @@
   border-color: currentColor;
   margin-right: 6px;
 }
+
+/* a folded note: the ship's memory, one line unless opened */
+.zen-timeline i.is-note { background: transparent; border: 1px solid var(--faint); }
+.zen-moment.is-note { padding: 1.2vh 0; }
+.zen-moment.is-note .who { color: var(--faint); }
+.zen-moment.is-note .note-line {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  text-align: left;
+  font-family: var(--gsv-font-mono);
+  font-size: 13px;
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+  padding: 4px 0;
+}
+.zen-moment.is-note .note-line:hover { color: var(--label); }
+.zen-moment.is-note .tri { color: var(--faint); width: 1ch; }
+.zen-moment.is-note.is-open .tri { color: var(--accent); }
+.zen-moment.is-note .note-text {
+  margin-top: 8px;
+  max-width: var(--measure-prose);
+  font-family: var(--gsv-font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--label);
+  white-space: pre-wrap;
+  border-left: 2px solid var(--border);
+  padding-left: 14px;
+}
