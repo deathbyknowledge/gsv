@@ -5,5 +5,6 @@ pub mod device;
 mod file_revision;
 pub mod logger;
 pub mod tools;
+pub mod update;
 
 pub use gateway_client::protocol;

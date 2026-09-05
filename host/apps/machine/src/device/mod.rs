@@ -18,6 +18,7 @@ use tracing::{error, info, info_span, warn, Instrument};
 use crate::control::DaemonRuntime;
 use crate::logger;
 use crate::tools::{all_tools_with_workspace_for_device, subscribe_exec_events, Tool, ToolOutput};
+use crate::update::{AutoUpdater, UpdateError, UpdateTarget};
 
 mod transfer;
 
@@ -617,6 +618,7 @@ pub async fn run(
         const MAX_RETRY_DELAY: tokio::time::Duration = tokio::time::Duration::from_secs(300);
         let mut retry_delay = INITIAL_RETRY_DELAY;
         let mut reconnect_attempt = 0_u32;
+        let updater = AutoUpdater::from_config(&host_config::CliConfig::load());
 
         loop {
             runtime.set_phase(daemon_protocol::DaemonPhase::Connecting);
@@ -665,6 +667,25 @@ pub async fn run(
                             return Err(e);
                         }
                         if rpc_error.is_protocol_unsupported() {
+                            let launched = match updater.plan_for_protocol_error(rpc_error) {
+                                Some(target) => start_update(&updater, &runtime, &target).await,
+                                None => false,
+                            };
+                            if launched {
+                                // The installer stops this service itself once
+                                // the release is verified. Staying alive until
+                                // then keeps its service snapshot accurate.
+                                reconnect_attempt = reconnect_attempt.saturating_add(1);
+                                runtime.reconnecting(
+                                    reconnect_attempt,
+                                    "Installing the release the gateway requires.",
+                                );
+                                tokio::select! {
+                                    () = shutdown.cancelled() => shutdown_device!("control"),
+                                    _ = tokio::time::sleep(MAX_RETRY_DELAY) => {}
+                                }
+                                continue;
+                            }
                             error!(
                                 event = "connect.protocol_unsupported",
                                 error = %rpc_error,
@@ -712,6 +733,13 @@ pub async fn run(
 
             runtime.set_phase(daemon_protocol::DaemonPhase::Connected);
             info!(event = "connect.ok", implements = ?DEVICE_DRIVER_IMPLEMENTS);
+            if let Some(target) = conn
+                .connect_result
+                .as_ref()
+                .and_then(|result| updater.plan_for_server(&result.server))
+            {
+                start_update(&updater, &runtime, &target).await;
+            }
 
             let conn = Arc::new(conn);
             // The Connection owns its frame handler. Keep only a weak reference
@@ -882,6 +910,59 @@ pub async fn run(
 
     run.instrument(device_span).await
 }
+
+/// Start the installer for `target` and record the decision where
+/// `gsv daemon diagnostics` shows it. Returns whether an installer is running.
+async fn start_update(
+    updater: &AutoUpdater,
+    runtime: &DaemonRuntime,
+    target: &UpdateTarget,
+) -> bool {
+    use daemon_protocol::{DiagnosticLevel, DiagnosticNotice};
+    let reason = target.reason.describe();
+    match updater.launch(target).await {
+        Ok(launch) => {
+            info!(
+                event = "update.started",
+                release = %launch.release,
+                reason,
+                detach = %launch.detach,
+                log_path = %launch.log_path.display(),
+            );
+            runtime.set_update_notice(Some(DiagnosticNotice {
+                level: DiagnosticLevel::Info,
+                code: "autoUpdateStarted".to_string(),
+                message: format!(
+                    "Installing GSV {} because {reason}; the service restarts when the installer finishes.",
+                    launch.release
+                ),
+            }));
+            true
+        }
+        Err(UpdateError::Disabled) => {
+            info!(event = "update.available", release = %target.release, reason);
+            runtime.set_update_notice(Some(DiagnosticNotice {
+                level: DiagnosticLevel::Warning,
+                code: "autoUpdateOff".to_string(),
+                message: format!(
+                    "GSV {} is available because {reason}, but automatic updates are off. Run the installer, or set device.auto_update = true.",
+                    target.release
+                ),
+            }));
+            false
+        }
+        Err(error) => {
+            warn!(event = "update.skipped", release = %target.release, reason, error = %error);
+            runtime.set_update_notice(Some(DiagnosticNotice {
+                level: DiagnosticLevel::Warning,
+                code: "autoUpdateSkipped".to_string(),
+                message: format!("GSV {} was not installed: {error}.", target.release),
+            }));
+            false
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

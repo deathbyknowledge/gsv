@@ -24,6 +24,7 @@ struct RuntimeSnapshot {
     connected: bool,
     reconnect_attempt: u32,
     last_error: Option<String>,
+    update_notice: Option<DiagnosticNotice>,
 }
 
 #[derive(Clone)]
@@ -45,6 +46,7 @@ impl DaemonRuntime {
                     connected: false,
                     reconnect_attempt: 0,
                     last_error: None,
+                    update_notice: None,
                 })),
                 actions,
             },
@@ -75,6 +77,12 @@ impl DaemonRuntime {
             snapshot.reconnect_attempt = attempt;
             snapshot.last_error = Some(error);
         });
+    }
+
+    /// The latest automatic-update decision, shown in diagnostics until the
+    /// next handshake replaces it.
+    pub fn set_update_notice(&self, notice: Option<DiagnosticNotice>) {
+        self.update(|snapshot| snapshot.update_notice = notice);
     }
 
     pub async fn request(&self, action: ControlAction) -> Result<(), OperationError> {
@@ -120,6 +128,9 @@ impl DaemonRuntime {
                 code: "connected".to_string(),
                 message: "The machine is connected to GSV.".to_string(),
             });
+        }
+        if let Some(notice) = snapshot.update_notice {
+            notices.push(notice);
         }
         Diagnostics::new(self.status(), notices).unwrap_or_else(|_| Diagnostics {
             status: self.status(),
@@ -199,5 +210,24 @@ mod tests {
             .await
             .expect("reload queues");
         assert_eq!(receiver.recv().await, Some(ControlAction::Reload));
+    }
+
+    #[test]
+    fn diagnostics_carry_the_latest_update_decision() {
+        let (runtime, _receiver) = DaemonRuntime::new("machine-a".to_string());
+        runtime.set_update_notice(Some(DiagnosticNotice {
+            level: DiagnosticLevel::Info,
+            code: "autoUpdateStarted".to_string(),
+            message: "Installing GSV v0.5.0.".to_string(),
+        }));
+        let codes: Vec<String> = runtime
+            .diagnostics()
+            .notices
+            .into_iter()
+            .map(|notice| notice.code)
+            .collect();
+        assert_eq!(codes, vec!["autoUpdateStarted".to_string()]);
+        runtime.set_update_notice(None);
+        assert!(runtime.diagnostics().notices.is_empty());
     }
 }
