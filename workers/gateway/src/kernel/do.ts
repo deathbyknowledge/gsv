@@ -474,9 +474,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.mcp.onServerStateChanged(() => {
       this.mcpConnections.broadcastMcpChanged();
     });
-    ctx.blockConcurrencyWhile(async () => {
-      await this.mcp.restoreConnectionsFromStorage();
-    });
+    this.mcp.restoreConnectionsFromStorage();
 
     this.connectionRuntime.rehydrateConnections();
     for (const callId of this.ipcCalls.recoverDeliveryIds()) {

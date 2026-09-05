@@ -2,6 +2,7 @@ import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import {
   ErrorCode,
@@ -93,10 +94,28 @@ type McpTransportProbe =
   | { state: "authenticating" }
   | { state: "failed"; error: string };
 
+export type McpTransportKind = "streamable-http" | "sse";
+
+/** What the connection needs from a transport beyond the SDK's `Transport`. */
+export type McpClientTransport = Transport & {
+  finishAuth(code: string): Promise<void>;
+  terminateSession?(): Promise<void>;
+};
+
+export type McpConnectionOptions = {
+  transport: McpTransportOptions;
+  /** Test seam; production connections build the SDK transports. */
+  createTransport?: (
+    kind: McpTransportKind,
+    url: URL,
+    options: McpTransportOptions,
+  ) => McpClientTransport;
+};
+
 /** One server session as the manager and the syscalls see it. */
 export interface McpConnection {
   readonly url: URL;
-  readonly options: { transport: McpTransportOptions };
+  readonly options: McpConnectionOptions;
   connectionState: McpConnectionState;
   connectionError: string | null;
   tools: Tool[];
@@ -126,21 +145,21 @@ export class McpClientConnection implements McpConnection {
   resourceTemplates: ResourceTemplate[] = [];
   serverCapabilities?: ServerCapabilities;
   instructions?: string;
-  private transport?: StreamableHTTPClientTransport | SSEClientTransport;
+  private transport?: { kind: McpTransportKind; instance: McpClientTransport };
   private discoveryAbort?: AbortController;
   private probingCapabilities = false;
 
   constructor(
     readonly url: URL,
     info: Implementation,
-    readonly options: { transport: McpTransportOptions },
+    readonly options: McpConnectionOptions,
   ) {
     this.client = new Client(info, { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() });
   }
 
   get sessionId(): string | undefined {
-    return this.transport instanceof StreamableHTTPClientTransport
-      ? this.transport.sessionId
+    return this.transport?.kind === "streamable-http"
+      ? this.transport.instance.sessionId
       : undefined;
   }
 
@@ -212,8 +231,8 @@ export class McpClientConnection implements McpConnection {
   async close(): Promise<void> {
     const transport = this.transport;
     this.transport = undefined;
-    if (transport instanceof StreamableHTTPClientTransport && transport.sessionId) {
-      await transport.terminateSession().catch(() => undefined);
+    if (transport?.kind === "streamable-http" && transport.instance.sessionId) {
+      await transport.instance.terminateSession?.().catch(() => undefined);
     }
     await this.client.close();
   }
@@ -222,15 +241,21 @@ export class McpClientConnection implements McpConnection {
     return this.client.callTool(params, undefined, options);
   }
 
+  /**
+   * Probe the configured transports in order. The SDK client keeps a transport
+   * whose `start()` failed (an SSE 401 or 404 happens inside `start()`), and
+   * refuses to connect again while it does, so every attempt closes it first.
+   */
   private async tryConnect(type: McpTransportType): Promise<McpTransportProbe> {
-    const candidates: Array<"streamable-http" | "sse"> =
-      type === "auto" ? ["streamable-http", "sse"] : [type];
+    const candidates: McpTransportKind[] = type === "auto" ? ["streamable-http", "sse"] : [type];
     for (const [index, candidate] of candidates.entries()) {
       const hasFallback = index < candidates.length - 1;
+      await this.client.close().catch(() => undefined);
+      this.transport = undefined;
       const transport = this.createTransport(candidate);
       try {
         await this.client.connect(transport);
-        this.transport = transport;
+        this.transport = { kind: candidate, instance: transport };
         return { state: "connected" };
       } catch (error) {
         if (isUnauthorized(error)) return { state: "authenticating" };
@@ -243,7 +268,7 @@ export class McpClientConnection implements McpConnection {
 
   private async finishAuth(code: string): Promise<void> {
     const type = this.options.transport.type;
-    const finish = async (candidate: "streamable-http" | "sse") => {
+    const finish = async (candidate: McpTransportKind) => {
       await this.createTransport(candidate).finishAuth(code);
     };
     if (type !== "auto") {
@@ -258,11 +283,12 @@ export class McpClientConnection implements McpConnection {
     }
   }
 
-  private createTransport(
-    type: "streamable-http" | "sse",
-  ): StreamableHTTPClientTransport | SSEClientTransport {
+  private createTransport(kind: McpTransportKind): McpClientTransport {
+    if (this.options.createTransport) {
+      return this.options.createTransport(kind, this.url, this.options.transport);
+    }
     const { authProvider, requestInit, sessionId } = this.options.transport;
-    if (type === "streamable-http") {
+    if (kind === "streamable-http") {
       return new StreamableHTTPClientTransport(this.url, { authProvider, requestInit, sessionId });
     }
     return new SSEClientTransport(this.url, { authProvider, requestInit });
@@ -270,8 +296,8 @@ export class McpClientConnection implements McpConnection {
 
   private async discoverAndRegister(): Promise<void> {
     const capabilities = this.client.getServerCapabilities();
-    const resumed = this.transport instanceof StreamableHTTPClientTransport
-      && this.transport.sessionId !== undefined;
+    const resumed = this.transport?.kind === "streamable-http"
+      && this.transport.instance.sessionId !== undefined;
     const probe = !capabilities && resumed;
     this.serverCapabilities = capabilities;
     this.probingCapabilities = probe;
@@ -459,19 +485,27 @@ export type McpClientManagerOptions = {
   createConnection?: (
     url: URL,
     info: Implementation,
-    options: { transport: McpTransportOptions },
+    options: McpConnectionOptions,
   ) => McpConnection;
 };
 
 export class McpClientManager {
   readonly mcpConnections: Record<string, McpConnection> = {};
   private readonly listeners = new Set<() => void>();
+  private readonly pending = new Map<string, Promise<void>>();
   private restored = false;
 
   constructor(
     private readonly info: Implementation,
     private readonly options: McpClientManagerOptions,
   ) {}
+
+  /** Resolves once every detached restore and reconnect has settled. */
+  async whenIdle(): Promise<void> {
+    while (this.pending.size > 0) {
+      await Promise.allSettled(this.pending.values());
+    }
+  }
 
   onServerStateChanged(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -557,28 +591,25 @@ export class McpClientManager {
   }
 
   /** Connect and discover after authorization completed. */
-  async establishConnection(serverId: string): Promise<void> {
+  establishConnection(serverId: string): Promise<void> {
     const connection = this.mcpConnections[serverId];
-    if (!connection) return;
+    if (!connection) return Promise.resolve();
     if (connection.connectionState === "discovering" || connection.connectionState === "ready") {
-      return;
+      return Promise.resolve();
     }
-    const result = await this.connectToServer(serverId);
-    if (result.state === "connected") await this.discoverIfConnected(serverId);
+    return this.track(serverId, this.connectAndDiscover(serverId));
   }
 
-  async restoreConnectionsFromStorage(): Promise<void> {
+  /**
+   * Recreate the sessions for every stored server. Rows are registered right
+   * away; connecting and discovery run detached, so a slow or unreachable
+   * server never holds up the Kernel that is waking. Await `whenIdle()` to
+   * observe the outcome.
+   */
+  restoreConnectionsFromStorage(): void {
     if (this.restored) return;
     this.restored = true;
     for (const row of this.options.rows.list()) {
-      const existing = this.mcpConnections[row.id];
-      if (existing) {
-        if (existing.connectionState !== "failed") continue;
-        await existing.close().catch((error) => {
-          console.warn(`[MCP] Error closing failed connection ${row.id}:`, error);
-        });
-        this.cleanupClosedConnection(row.id);
-      }
       const stored = parseStoredTransport(row.server_options);
       const transport: McpTransportOptions = { type: stored.type };
       if (stored.requestInit !== undefined) transport.requestInit = stored.requestInit;
@@ -594,7 +625,7 @@ export class McpClientManager {
         connection.connectionState = "authenticating";
         continue;
       }
-      await this.restoreServer(row.id);
+      this.track(row.id, this.connectAndDiscover(row.id));
     }
   }
 
@@ -748,7 +779,27 @@ export class McpClientManager {
     return connection;
   }
 
-  private async restoreServer(serverId: string): Promise<void> {
+  /** Track a detached session task; a rejection marks the session failed. */
+  private track(serverId: string, task: Promise<void>): Promise<void> {
+    const tracked: Promise<void> = task
+      .catch((error) => {
+        const message = errorMessage(error);
+        console.error(`[MCP] Session task for ${serverId} failed:`, message);
+        const connection = this.mcpConnections[serverId];
+        if (connection) {
+          connection.connectionState = "failed";
+          connection.connectionError = message;
+          this.fireStateChanged();
+        }
+      })
+      .finally(() => {
+        if (this.pending.get(serverId) === tracked) this.pending.delete(serverId);
+      });
+    this.pending.set(serverId, tracked);
+    return tracked;
+  }
+
+  private async connectAndDiscover(serverId: string): Promise<void> {
     const result = await this.connectToServer(serverId);
     if (result.state === "failed") {
       console.error(`[MCP] Error connecting to ${serverId}:`, result.error);

@@ -1,10 +1,17 @@
-import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
+import {
+  ErrorCode,
+  LATEST_PROTOCOL_VERSION,
+  McpError,
+  type JSONRPCMessage,
+} from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   isBlockedUrl,
   isMethodNotFound,
   McpClientConnection,
   McpClientManager,
+  type McpClientTransport,
   type McpConnection,
   type McpServerRow,
   type McpServerRows,
@@ -104,7 +111,7 @@ function fakeConnection(url: URL, transport: McpTransportOptions): FakeConnectio
   return connection;
 }
 
-function makeManager() {
+function makeManager(setup: Record<string, (connection: FakeConnection) => void> = {}) {
   const rows = new FakeRows();
   const storage = new FakeStorage();
   const connections = new Map<string, FakeConnection>();
@@ -113,11 +120,44 @@ function makeManager() {
     createAuthProvider: (callbackUrl) => new McpOAuthProvider(storage, "install-1", callbackUrl),
     createConnection: (url, _info, options) => {
       const connection = fakeConnection(url, options.transport);
+      setup[url.href]?.(connection);
       connections.set(url.href, connection);
       return connection;
     },
   });
   return { manager, rows, storage, connections };
+}
+
+/** An in-memory MCP server transport that fails to start, or answers `initialize`. */
+class StubTransport implements McpClientTransport {
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+  onmessage?: (message: JSONRPCMessage) => void;
+  readonly finishAuth = vi.fn(async () => undefined);
+
+  constructor(private readonly startError?: Error) {}
+
+  async start(): Promise<void> {
+    if (this.startError) throw this.startError;
+  }
+
+  async send(message: JSONRPCMessage): Promise<void> {
+    if (!("method" in message) || message.method !== "initialize" || !("id" in message)) return;
+    const response: JSONRPCMessage = {
+      jsonrpc: "2.0",
+      id: message.id,
+      result: {
+        protocolVersion: LATEST_PROTOCOL_VERSION,
+        capabilities: { tools: {} },
+        serverInfo: { name: "stub", version: "0" },
+      },
+    };
+    queueMicrotask(() => this.onmessage?.(response));
+  }
+
+  async close(): Promise<void> {
+    this.onclose?.();
+  }
 }
 
 async function sha256Base64Url(text: string): Promise<string> {
@@ -317,8 +357,23 @@ describe("McpClientManager", () => {
     expect(manager.listServers()[0]?.auth_url).toBeNull();
   });
 
-  it("restores stored servers and leaves pending authorizations for the callback", async () => {
-    const { manager, rows, connections } = makeManager();
+  it("restores stored servers in the background and leaves pending authorizations alone", async () => {
+    const { manager, rows, connections } = makeManager({
+      "https://broken.example/mcp": (connection) => {
+        connection.init.mockImplementation(async () => {
+          throw new Error("socket hang up");
+        });
+      },
+    });
+    rows.save({
+      id: "mcp-broken",
+      name: "broken",
+      server_url: "https://broken.example/mcp",
+      client_id: null,
+      auth_url: null,
+      callback_url: "",
+      server_options: null,
+    });
     rows.save({
       id: "mcp-ready",
       name: "ready",
@@ -340,13 +395,22 @@ describe("McpClientManager", () => {
       server_options: null,
     });
 
-    await manager.restoreConnectionsFromStorage();
+    manager.restoreConnectionsFromStorage();
 
     const ready = connections.get("https://ready.example/mcp");
     const pending = connections.get("https://pending.example/mcp");
+    const broken = connections.get("https://broken.example/mcp");
+    expect(Object.keys(manager.mcpConnections).sort()).toEqual(["mcp-broken", "mcp-pending", "mcp-ready"]);
+    expect(ready?.discover).not.toHaveBeenCalled();
+    expect(ready?.connectionState).not.toBe("ready");
+
+    await manager.whenIdle();
+
     expect(ready?.init).toHaveBeenCalledTimes(1);
     expect(ready?.discover).toHaveBeenCalledTimes(1);
     expect(ready?.connectionState).toBe("ready");
+    expect(broken?.connectionState).toBe("failed");
+    expect(broken?.connectionError).toBe("socket hang up");
     expect(ready?.options.transport).toMatchObject({
       type: "sse",
       requestInit: { headers: { "x-api-key": "k" } },
@@ -398,6 +462,38 @@ describe("McpClientManager", () => {
     );
     await expect(manager.callTool({ serverId: "missing", name: "lookup" }))
       .rejects.toThrow("MCP server missing is not connected");
+  });
+});
+
+describe("McpClientConnection transports", () => {
+  it("reconnects after a probe failed inside the transport start", async () => {
+    const created: string[] = [];
+    const scripted = [
+      new StubTransport(new Error("Streamable HTTP error: HTTP 404 Not Found")),
+      new StubTransport(new UnauthorizedError("Unauthorized")),
+    ];
+    const connection = new McpClientConnection(
+      new URL("https://tools.example/mcp"),
+      { name: "GSV Kernel", version: "0.0.0" },
+      {
+        transport: { type: "auto" },
+        createTransport: (kind) => {
+          created.push(kind);
+          return scripted.shift() ?? new StubTransport();
+        },
+      },
+    );
+
+    await expect(connection.init()).resolves.toBeUndefined();
+    expect(connection.connectionState).toBe("authenticating");
+
+    await connection.completeAuthorization("code-1");
+    await expect(connection.init()).resolves.toBeUndefined();
+
+    expect(connection.connectionState).toBe("connected");
+    expect(connection.client.getServerCapabilities()).toEqual({ tools: {} });
+    expect(created).toEqual(["streamable-http", "sse", "streamable-http", "streamable-http"]);
+    await connection.close();
   });
 });
 
