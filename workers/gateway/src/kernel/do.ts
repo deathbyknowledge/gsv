@@ -470,6 +470,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.mcp = new McpClientManager({ name: "GSV Kernel", version: SERVER_VERSION }, {
       rows: new SqlMcpServerRows(sql),
       createAuthProvider: (callbackUrl) => this.mcpConnections.createMcpOAuthProvider(callbackUrl),
+      waitUntil: (task) => ctx.waitUntil(task),
     });
     this.mcp.onServerStateChanged(() => {
       this.mcpConnections.broadcastMcpChanged();
