@@ -210,9 +210,10 @@
   margin: 14px 0 6px;
   border-left: 2px solid var(--border);
   padding-left: 14px;
-  white-space: pre;
-  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
+.machine-rail .who, .machine-rail .where, .machine-rail .dir { font: inherit; text-transform: none; letter-spacing: 0; }
 .machine-rail .cmd { color: var(--text-hi); }
 .machine-rail .who { color: var(--principal); }
 .machine-rail .where { color: var(--target); font-weight: 700; }

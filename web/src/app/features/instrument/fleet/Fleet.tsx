@@ -27,7 +27,6 @@ import {
   mergeLedger,
   orderPlaces,
   orderProcesses,
-  padRight,
   placeStateLabel,
   processRow,
   processStateLabel,
@@ -36,7 +35,6 @@ import {
   relativeTime,
   rowKeys,
   runsTodayByPlace,
-  shortenPath,
   targetRow,
   type LedgerLine,
   type Place,
@@ -400,23 +398,21 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
               <p class="note">Showing the {ledgerPids.length} most recently active processes.</p>
             ) : null}
             {ledgerQuery.error ? <p class="error">Could not read history: {String(ledgerQuery.error)}</p> : null}
-            <pre class="fleet-ledger">
+            <div class="fleet-ledger" role="table">
               {shownLedger.map((line) => (
-                <span key={line.id}>
+                <div class="row" role="row" key={line.id}>
                   <span class="t">{clockTime(line.timestamp)}</span>
-                  {"  "}
-                  <span class="place">{padRight(shortenPath(placeLabel(line.place), 16), 17)}</span>
-                  {technical ? padRight(line.syscall, 14) : padRight(shortenPath(line.what, 26), 28)}
-                  <span class="m">{padRight(shortenPath(line.detail, technical ? 44 : 30), technical ? 46 : 32)}</span>
+                  <span class="place">{placeLabel(line.place)}</span>
+                  <span class="what">{technical ? line.syscall : line.what}</span>
+                  <span class="m detail" title={line.detail}>{line.detail}</span>
                   <span class={line.outcome === "completed" ? "ok" : line.outcome === "failed" || line.outcome === "denied" ? "no" : "m"}>
-                    {padRight(outcomeWord(line.outcome), 8)}
+                    {outcomeWord(line.outcome)}
                   </span>
-                  <span class="m">{line.processId === "you" ? "you" : processNameFor(line.processId)}</span>
-                  {"\n"}
-                </span>
+                  <span class="m who">{line.processId === "you" ? "you" : processNameFor(line.processId)}</span>
+                </div>
               ))}
               {shownLedger.length === 0 ? <span class="m">{ledgerState === "ledger loading" ? "reading…" : "nothing has run yet"}</span> : null}
-            </pre>
+            </div>
           </section>
 
           <section class="fleet-block">

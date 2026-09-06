@@ -81,11 +81,11 @@ function placesFromTargets(targets: Awaited<ReturnType<typeof loadConsoleTargets
   return targets.map((target) => ({ id: target.deviceId, label: target.label || target.deviceId, online: target.online }));
 }
 
-function railHtml(activity: Activity, who: string, places: readonly Place[]): string {
+function railHtml(activity: Activity, who: string): string {
   const where = escapeHtml(activity.target);
   return activity.calls
     .map((call) => {
-      const head = `<span class="cmd"><span class="who">${escapeHtml(who)}</span>@<span class="where">${where}</span> <span class="dir">${escapeHtml(placeLabel(activity.target, places))}</span> $ ${escapeHtml(call.syscall)} ${escapeHtml(call.summary)}</span>`;
+      const head = `<span class="cmd"><span class="who">${escapeHtml(who)}</span>@<span class="where">${where}</span> <span class="dir">~</span> $ ${escapeHtml(call.syscall)} ${escapeHtml(call.summary)}</span>`;
       const body = call.output ? `\n${escapeHtml(call.output)}` : call.finished ? "" : `\n<span class="meta">running…</span>`;
       const failed = call.failed ? `\n<span class="err">failed</span>` : "";
       return `${head}${body}${failed}`;
@@ -143,7 +143,7 @@ function ActivityLine({
         {head}
       </div>
       <div class="detail">
-        <div class="machine-rail" dangerouslySetInnerHTML={{ __html: railHtml(activity, who, places) }} />
+        <div class="machine-rail" dangerouslySetInnerHTML={{ __html: railHtml(activity, who) }} />
       </div>
     </div>
   );

@@ -149,12 +149,16 @@
   text-transform: uppercase;
 }
 .fleet-ledger {
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.6;
   color: var(--label);
-  white-space: pre;
-  overflow-x: auto;
   margin: 0;
+  display: grid;
+  /* time · place · what (never truncates) · detail (takes what is left) · outcome · who */
+  grid-template-columns: auto auto max-content minmax(0, 1fr) auto auto;
+  column-gap: 14px;
+  row-gap: 1px;
+  width: 100%;
   font-family: var(--gsv-font-mono);
 }
 .fleet-ledger .t { color: var(--faint); }
@@ -369,3 +373,11 @@
 .fleet .file-preview { margin-top: 12px; max-height: 40vh; overflow: auto; border-left: 2px solid var(--border); padding-left: 12px; }
 .fleet .file-preview pre { margin: 0; font-family: var(--gsv-font-mono); font-size: 11px; line-height: 1.5; color: var(--label); white-space: pre; }
 .fleet .file-preview img { max-width: 100%; display: block; }
+
+.fleet-ledger .row { display: contents; }
+.fleet-ledger .row > span { white-space: nowrap; }
+.fleet-ledger .detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.fleet-ledger .who { text-align: right; }
+/* the tree, as the prototype drew it: places bold in the target color, folders in the path color, files plain */
+.fleet-tree > div > .place-head { font-weight: 700; }
+.fleet-tree .dir > .place-head { color: var(--path); font-weight: 400; }
