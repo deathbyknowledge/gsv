@@ -11,7 +11,7 @@ import "./instrument.css";
 export type Distance = "zen" | "firstday" | "fleet";
 
 /** A row in Fleet, addressed the way the manifest addresses it: `target:<id>` or `proc:<pid>`. */
-export type FleetRow = `target:${string}` | `proc:${string}` | `ledger:${string}`;
+export type FleetRow = `target:${string}` | `proc:${string}` | `ledger:${string}` | `more:${string}`;
 
 const DISTANCE_TO_PATH = {
   zen: "/zen",

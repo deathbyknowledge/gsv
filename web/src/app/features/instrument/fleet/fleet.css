@@ -397,3 +397,5 @@
 .fleet-ledger .row > span { padding: 1px 0; }
 .fleet-ledger .row:focus-visible > span { outline: 1px solid var(--accent); outline-offset: -1px; }
 .fleet .line-detail { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; color: var(--label); }
+
+.fleet tr.more.is-sel td { background: var(--selected); box-shadow: inset 3px 0 0 var(--accent); }

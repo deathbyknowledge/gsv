@@ -203,7 +203,12 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
   });
 
   const shownLedger = useMemo(() => mergeLedger([localLines, ledger], LEDGER_CAP), [localLines, ledger]);
-  const rows = useMemo(() => rowKeys(places, processes, shownLedger), [places, processes, shownLedger]);
+  const moreRow: FleetRow = "more:processes";
+  const rows = useMemo(() => {
+    const keys = rowKeys(places, processes.slice(0, processLimit), []);
+    if (processes.length > PROCESS_PAGE) keys.push(moreRow);
+    return [...keys, ...rowKeys([], [], shownLedger)];
+  }, [places, processes, processLimit, shownLedger]);
   useEffect(() => {
     if (rows.length === 0) return;
     if (!selected || !rows.includes(selected)) setSelected(initialRow && rows.includes(initialRow) ? initialRow : rows[0]);
@@ -240,6 +245,9 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
       } else if (event.key === "/") {
         event.preventDefault();
         openCmd();
+      } else if (event.key === "Enter" && selected === moreRow) {
+        event.preventDefault();
+        setProcessLimit((limit) => (limit < processes.length ? limit + 20 : PROCESS_PAGE));
       } else if (event.key === "Enter") {
         const primary = inspectorRef.current?.querySelector<HTMLButtonElement>(".ibtn.is-primary");
         if (primary) {
@@ -252,7 +260,7 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [rows, selected, openCmd]);
+  }, [rows, selected, openCmd, processes.length]);
 
   useEffect(() => {
     if (!selected) return;
@@ -376,7 +384,7 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
                   </tr>
                 ))}
                 {processes.length > PROCESS_PAGE ? (
-                  <tr class="more">
+                  <tr class={`more${selected === moreRow ? " is-sel" : ""}`} data-row={moreRow} tabIndex={0} onClick={() => setSelected(moreRow)}>
                     <td colSpan={6}>
                       {processLimit < processes.length ? (
                         <button type="button" onClick={() => setProcessLimit(processLimit + 20)}>
