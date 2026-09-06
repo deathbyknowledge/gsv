@@ -11,7 +11,7 @@ import "./instrument.css";
 export type Distance = "zen" | "firstday" | "fleet";
 
 /** A row in Fleet, addressed the way the manifest addresses it: `target:<id>` or `proc:<pid>`. */
-export type FleetRow = `target:${string}` | `proc:${number}`;
+export type FleetRow = `target:${string}` | `proc:${string}`;
 
 const DISTANCE_TO_PATH = {
   zen: "/zen",
@@ -46,6 +46,8 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   const [phase, setPhase] = useState<"still" | "leaving" | "arriving">("still");
   const [fleetRow, setFleetRow] = useState<FleetRow | null>(null);
   const [zenPrefill, setZenPrefill] = useState<string | null>(null);
+  /* which process Zen shows: null is the ship; Fleet can open a helper's conversation */
+  const [zenPid, setZenPid] = useState<string | null>(null);
   const moving = useRef(false);
 
   const move = useCallback(
@@ -107,14 +109,15 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       <div class="instrument-vignette" aria-hidden="true" />
       <div class={`distance${phaseClass}`}>
         {distance === "zen" ? (
-          <Zen onFleet={(row) => move("fleet", row ?? null)} onFirstDay={() => move("firstday")} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} />
+          <Zen onFleet={(row) => move("fleet", row ?? null)} onFirstDay={() => move("firstday")} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid} onShip={() => setZenPid(null)} />
         ) : distance === "firstday" ? (
           <FirstDay onZen={() => move("zen")} />
         ) : (
           <Fleet
             initialRow={fleetRow}
-            onZen={(prefill) => {
+            onZen={(prefill, pid) => {
               if (prefill) setZenPrefill(prefill);
+              setZenPid(pid ?? null);
               move("zen");
             }}
           />

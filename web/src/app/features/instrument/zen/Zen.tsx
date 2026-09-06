@@ -53,6 +53,10 @@ export type ZenProps = {
   /** Text to place in the prompt on arrival, such as a file reference from Fleet. */
   prefill?: string | null;
   onPrefillUsed?: () => void;
+  /** A specific process to show instead of the ship, for a helper opened from Fleet. */
+  pid?: string | null;
+  /** Back to the ship's own conversation. */
+  onShip?: () => void;
 };
 
 type StatusTone = "" | "is-on" | "is-live" | "is-warn" | "is-err";
@@ -182,7 +186,7 @@ function NoteMoment({ moment, open, focus, index, onToggle }: { moment: Moment; 
   );
 }
 
-export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed }: ZenProps) {
+export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp, onShip }: ZenProps) {
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
   const who = snapshot.username || "you";
@@ -216,6 +220,10 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed }: ZenProps) {
   /* the personal process, spawned if the account has none yet */
   useEffect(() => {
     if (!connected) return undefined;
+    if (pidProp) {
+      setPid(pidProp);
+      return undefined;
+    }
     let cancelled = false;
     void (async () => {
       try {
@@ -234,7 +242,7 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed }: ZenProps) {
     return () => {
       cancelled = true;
     };
-  }, [client, connected]);
+  }, [client, connected, pidProp]);
 
   /* places, refreshed whenever a target's status changes */
   useEffect(() => {
@@ -613,7 +621,18 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed }: ZenProps) {
         <span>
           ship ·{" "}
           <span class={connected ? "is-on" : "is-err"} style={connected ? "color: var(--online)" : "color: var(--error)"}>
-            {connected ? `${countLabel(onlinePlaces.length + 1, "place")} reachable` : "offline"}
+            {pidProp ? (
+              <>
+                helper ·{" "}
+                <button type="button" onClick={onShip}>
+                  back to your ship
+                </button>
+              </>
+            ) : connected ? (
+              `${countLabel(onlinePlaces.length + 1, "place")} reachable`
+            ) : (
+              "offline"
+            )}
           </span>
         </span>
         <span class="keys">

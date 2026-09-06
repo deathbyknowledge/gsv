@@ -131,7 +131,7 @@ export function targetRow(placeId: string): FleetRow {
 }
 
 export function processRow(pid: string): FleetRow {
-  return `proc:${Number(pid)}`;
+  return `proc:${pid}`;
 }
 
 /** Every selectable row in manifest order: places, then processes. */
@@ -145,6 +145,8 @@ const toolArgsSchema = z.object({
   path: z.string().optional(),
   url: z.string().optional(),
   query: z.string().optional(),
+  code: z.string().optional(),
+  script: z.string().optional(),
 });
 
 type ToolArgs = z.infer<typeof toolArgsSchema>;
@@ -163,7 +165,7 @@ export function targetFromToolArgs(args: ChatTranscriptValue | undefined): strin
 /** The argument that matters, collapsed to one line, so a heredoc or a long path never breaks a row. */
 export function describeToolCall(syscall: string, args: ChatTranscriptValue | undefined): string {
   const parsed = parseToolArgs(args);
-  const raw = parsed.input || parsed.path || parsed.url || parsed.query || syscall;
+  const raw = parsed.input || parsed.path || parsed.url || parsed.query || parsed.code || parsed.script || syscall;
   return raw.replace(/\s+/g, " ").trim();
 }
 
@@ -210,6 +212,7 @@ export function humanCall(syscall: string, args: ChatTranscriptValue | undefined
   if (syscall.startsWith("fs.transfer")) return "moved a file between places";
   if (syscall.startsWith("fs.")) return "worked with files";
   if (syscall === "net.fetch") return parsed.url ? `fetched ${hostOf(parsed.url)}` : "fetched from the web";
+  if (syscall.startsWith("codemode.")) return "ran a script";
   if (syscall.startsWith("ai.")) return "thought about it";
   if (syscall === "adapter.send") return "sent a message";
   if (syscall.startsWith("adapter.")) return "used a messenger";

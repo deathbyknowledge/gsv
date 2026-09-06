@@ -180,6 +180,7 @@ describe("humanCall", () => {
     expect(humanCall("fs.search", { query: "invoice" })).toBe("searched for invoice");
     expect(humanCall("net.fetch", { url: "https://api.github.com/repos" })).toBe("fetched api.github.com");
     expect(humanCall("ai.generate", undefined)).toBe("thought about it");
+    expect(humanCall("codemode.exec", { code: "const x = 1;\nreturn x;" })).toBe("ran a script");
   });
   it("collapses a heredoc to one line in the detail", () => {
     expect(describeToolCall("shell.exec", { input: "message ana <<GSV_MESSAGE\nhello there\nGSV_MESSAGE" })).toBe("message ana <<GSV_MESSAGE hello there GSV_MESSAGE");

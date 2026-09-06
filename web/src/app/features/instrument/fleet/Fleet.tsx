@@ -45,8 +45,8 @@ import "./fleet.css";
 export type FleetProps = {
   /** The row to land on, when Zen sent us here from a reference. */
   initialRow: FleetRow | null;
-  /** Back to Zen, optionally with text placed in the prompt (a file reference, for instance). */
-  onZen: (prefill?: string) => void;
+  /** Back to Zen, optionally with text placed in the prompt (a file reference, for instance) and a process to open instead of the ship. */
+  onZen: (prefill?: string, pid?: string) => void;
 };
 
 const LEDGER_PROCESSES = 3;
@@ -460,6 +460,7 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
               uid={accountsQuery.data?.find((account) => account.relation === "self")?.uid ?? null}
               now={now}
               onZen={onZen}
+              lines={shownLedger.filter((line) => line.processId === selectedProcess.pid).slice(0, 8)}
             />
           ) : (
             <p class="note">{connected ? "Nothing here yet." : "Connecting…"}</p>
@@ -701,10 +702,11 @@ type ProcessInspectorProps = {
   preferredModelId: string | null;
   uid: number | null;
   now: number;
-  onZen: () => void;
+  onZen: (prefill?: string, pid?: string) => void;
+  lines: LedgerLine[];
 };
 
-function ProcessInspector({ process, model, cost, responsibilities, models, preferredModelId, uid, now, onZen }: ProcessInspectorProps) {
+function ProcessInspector({ process, model, cost, responsibilities, models, preferredModelId, uid, now, onZen, lines }: ProcessInspectorProps) {
   const { client } = useGateway();
   const queryClient = useQueryClient();
   const invalidate = () => {
@@ -782,7 +784,7 @@ function ProcessInspector({ process, model, cost, responsibilities, models, pref
             </button>
           </>
         ) : (
-          <button type="button" class="ibtn is-primary" onClick={() => onZen()}>
+          <button type="button" class="ibtn is-primary" onClick={() => onZen(undefined, process.personal ? undefined : process.pid)}>
             open conversation
           </button>
         )}
@@ -812,6 +814,17 @@ function ProcessInspector({ process, model, cost, responsibilities, models, pref
         ) : null}
       </div>
       {error ? <p class="error">{String(error)}</p> : null}
+      {lines.length > 0 ? (
+        <div class="inspector-lines">
+          <div class="kicker">recently</div>
+          {lines.map((line) => (
+            <div class="line" key={line.id}>
+              <span class="t">{relativeTime(line.timestamp, now)}</span> <span class="place">{placeLabel(line.place)}</span> {line.what}
+              <span class="m"> · {line.detail}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
       <p class="note">
         {process.state === "waiting_hil" && pending.data
           ? `The process is held on ${pending.data.syscall} on ${pending.data.target}. Approving runs exactly what it asked for, nothing else.`

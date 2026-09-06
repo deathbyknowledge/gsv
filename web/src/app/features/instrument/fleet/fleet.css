@@ -381,3 +381,11 @@
 /* the tree, as the prototype drew it: places bold in the target color, folders in the path color, files plain */
 .fleet-tree > div > .place-head { font-weight: 700; }
 .fleet-tree .dir > .place-head { color: var(--path); font-weight: 400; }
+
+/* a process's own recent lines in the inspector */
+.fleet .inspector-lines { margin-top: 18px; font-size: 12px; line-height: 1.55; }
+.fleet .inspector-lines .kicker { font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--faint); margin-bottom: 6px; }
+.fleet .inspector-lines .line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--label); }
+.fleet .inspector-lines .t { color: var(--faint); }
+.fleet .inspector-lines .place { color: var(--target); }
+.fleet .inspector-lines .m { color: var(--text-dim); }
