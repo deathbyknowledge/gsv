@@ -14,10 +14,12 @@ export type PromptLineProps = {
   /** Called on ArrowUp / ArrowDown with the input empty, for history browsing. */
   onHistory?: (direction: -1 | 1) => void;
   autoFocus?: boolean;
+  /** Called when the input gains or loses focus, so the surface can enter and leave browse mode. */
+  onFocusChange?: (focused: boolean) => void;
 };
 
 /** The TUI's prompt line: `who@where dir $` and one input. A sentence goes to the ship; `$` runs directly. */
-export function PromptLine({ who, where, dir, placeholder, disabled, onSubmit, onHistory, autoFocus }: PromptLineProps) {
+export function PromptLine({ who, where, dir, placeholder, disabled, onSubmit, onHistory, autoFocus, onFocusChange }: PromptLineProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const submit = (event: JSX.TargetedEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -61,6 +63,8 @@ export function PromptLine({ who, where, dir, placeholder, disabled, onSubmit, o
         spellcheck={false}
         disabled={disabled}
         onKeyDown={onKeyDown}
+        onFocus={() => onFocusChange?.(true)}
+        onBlur={() => onFocusChange?.(false)}
         autoFocus={autoFocus}
       />
     </form>

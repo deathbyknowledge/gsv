@@ -166,9 +166,9 @@ function StreamingText({ text, tick }: { text: string; tick: number }) {
   );
 }
 
-function NoteMoment({ moment, open, onToggle }: { moment: Moment; open: boolean; onToggle: () => void }) {
+function NoteMoment({ moment, open, focus, index, onToggle }: { moment: Moment; open: boolean; focus: boolean; index: number; onToggle: () => void }) {
   return (
-    <div class={`zen-moment is-note${open ? " is-open" : ""}`}>
+    <div data-index={index} class={`zen-moment is-note${open ? " is-open" : ""}${focus ? " is-focus" : ""}`}>
       <div class="who">memory</div>
       <button type="button" class="note-line" aria-expanded={open} onClick={onToggle}>
         <span class="tri">{open ? "▾" : "▸"}</span>
@@ -192,6 +192,9 @@ export function Zen({ onFleet, onFirstDay }: ZenProps) {
   const [localRuns, setLocalRuns] = useState<LocalRun[]>([]);
   const [openActivities, setOpenActivities] = useState<ReadonlySet<string>>(() => new Set());
   const [openNotes, setOpenNotes] = useState<ReadonlySet<string>>(() => new Set());
+  /* browse mode: null while the prompt has focus, else the index of the focused moment (the TUI's browse cursor) */
+  const [browse, setBrowse] = useState<number | null>(null);
+  const browseRef = useRef<number | null>(null);
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
   const [lastRun, setLastRun] = useState<{ startedAt: number; endedAt: number | null } | null>(null);
@@ -343,6 +346,7 @@ export function Zen({ onFleet, onFirstDay }: ZenProps) {
   }, [localRuns, runtime.activeRunId, runtime.rows]);
 
   useEffect(() => {
+    if (browseRef.current !== null) return;
     const element = momentsRef.current;
     if (element) element.scrollTop = element.scrollHeight;
   }, [moments, tick]);
@@ -454,10 +458,38 @@ export function Zen({ onFleet, onFirstDay }: ZenProps) {
     if (pendingHil) promptRef.current?.querySelector("input")?.blur();
   }, [pendingHil]);
 
+  const focusPrompt = useCallback(() => {
+    promptRef.current?.querySelector("input")?.focus();
+  }, []);
+  const onPromptFocus = useCallback(
+    (focused: boolean) => {
+      if (focused) {
+        browseRef.current = null;
+        setBrowse(null);
+      } else {
+        const index = moments.length > 0 ? moments.length - 1 : null;
+        browseRef.current = index;
+        setBrowse(index);
+      }
+    },
+    [moments.length],
+  );
+  useEffect(() => {
+    browseRef.current = browse;
+    if (browse === null) return;
+    momentsRef.current?.querySelector(`[data-index="${browse}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [browse]);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target;
       const typing = target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA");
+      if (typing && event.key === "Escape") {
+        // Escape leaves the prompt even if the input's own handler did not run.
+        event.preventDefault();
+        target.blur();
+        return;
+      }
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       if (pendingHil && !typing && (event.key === "y" || event.key === "n")) {
         event.preventDefault();
@@ -465,18 +497,34 @@ export function Zen({ onFleet, onFirstDay }: ZenProps) {
         return;
       }
       if (typing) return;
-      if (event.key === "o" && latest && latest.activities.length > 0) {
+      const focused = browse !== null ? moments[browse] : latest;
+      if (event.key === "o" && focused && focused.activities.length > 0) {
         event.preventDefault();
-        toggleActivity(latest.activities[latest.activities.length - 1].key);
+        toggleActivity(focused.activities[focused.activities.length - 1].key);
         return;
       }
-      if (event.key.length === 1 && event.key !== "z" && event.key !== "n") {
-        promptRef.current?.querySelector("input")?.focus();
+      if (browse !== null && (event.key === "j" || event.key === "ArrowDown")) {
+        event.preventDefault();
+        setBrowse(Math.min(moments.length - 1, browse + 1));
+        return;
+      }
+      if (browse !== null && (event.key === "k" || event.key === "ArrowUp")) {
+        event.preventDefault();
+        setBrowse(Math.max(0, browse - 1));
+        return;
+      }
+      if (event.key === "Escape" || event.key === "Enter") {
+        event.preventDefault();
+        focusPrompt();
+        return;
+      }
+      if (event.key.length === 1 && !["z", "n", "j", "k", "o"].includes(event.key)) {
+        focusPrompt();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [decide, latest, pendingHil, toggleActivity]);
+  }, [browse, decide, focusPrompt, latest, moments, pendingHil, toggleActivity]);
 
   /* references to places inside ship text */
   const onTextClick = useCallback(
@@ -493,6 +541,9 @@ export function Zen({ onFleet, onFirstDay }: ZenProps) {
 
   /* the status line */
   const status = useMemo<StatusPart[]>(() => {
+    if (browse !== null) {
+      return [part("is-live", "browse"), part("", `${browse + 1} of ${moments.length}`), part("", "j k move"), part("", "o show the run"), part("", "esc or type to return")];
+    }
     if (!connected) return [part("is-err", "not connected")];
     if (!pid) return [part("", "starting your ship")];
     if (thinking) {
@@ -528,13 +579,13 @@ export function Zen({ onFleet, onFirstDay }: ZenProps) {
     if (latest && latest.role === "ship") parts.push(part("", `${countLabel(placesUsed(latest), "place")} used`));
     if (parts.length === 0) parts.push(part("", "nothing yet"));
     return parts;
-  }, [connected, lastRun, latest, localRuns, now, pendingHil, pid, places, runtime.context, thinking, where]);
+  }, [browse, connected, lastRun, latest, localRuns, moments.length, now, pendingHil, pid, places, runtime.context, thinking, where]);
 
   const onlinePlaces = places.filter((place) => place.online);
   const empty = moments.length === 0 && pid !== null;
 
   return (
-    <main class="zen" aria-label="Zen">
+    <main class={`zen${browse !== null ? " is-browse" : ""}`} aria-label="Zen">
       <div class="instrument-top">
         <Wordmark />
         <span>
@@ -562,7 +613,7 @@ export function Zen({ onFleet, onFirstDay }: ZenProps) {
       <div class="zen-body">
         <div class="zen-timeline" aria-hidden="true">
           {moments.map((moment, index) => (
-            <i key={moment.id} class={`${moment.role === "human" ? "is-human" : moment.role === "note" ? "is-note" : ""}${index === moments.length - 1 ? " is-here" : ""}`} />
+            <i key={moment.id} class={`${moment.role === "human" ? "is-human" : moment.role === "note" ? "is-note" : ""}${index === moments.length - 1 ? " is-here" : ""}${browse === index ? " is-focus" : ""}`} />
           ))}
         </div>
         {empty ? (
@@ -586,6 +637,8 @@ export function Zen({ onFleet, onFirstDay }: ZenProps) {
                   <NoteMoment
                     key={moment.id}
                     moment={moment}
+                    index={index}
+                    focus={browse === index}
                     open={openNotes.has(moment.id)}
                     onToggle={() =>
                       setOpenNotes((current) => {
@@ -599,7 +652,7 @@ export function Zen({ onFleet, onFirstDay }: ZenProps) {
                 );
               }
               return (
-                <div key={moment.id} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${isLatest ? "" : " is-older"}`}>
+                <div key={moment.id} data-index={index} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${isLatest ? "" : " is-older"}${browse === index ? " is-focus" : ""}`}>
                   <div class="who">{moment.role === "human" ? who : "ship"}</div>
                   {moment.activities.map((activity) => (
                     <ActivityLine
@@ -664,6 +717,7 @@ export function Zen({ onFleet, onFirstDay }: ZenProps) {
         </div>
         <div ref={promptRef}>
           <PromptLine
+            onFocusChange={onPromptFocus}
             who={who}
             where={where ?? "gsv"}
             dir="~"
