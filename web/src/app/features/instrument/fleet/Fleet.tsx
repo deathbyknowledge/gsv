@@ -47,12 +47,15 @@ import "./fleet.css";
 export type FleetProps = {
   /** The row to land on, when Zen sent us here from a reference. */
   initialRow: FleetRow | null;
-  onZen: () => void;
+  /** Back to Zen, optionally with text placed in the prompt (a file reference, for instance). */
+  onZen: (prefill?: string) => void;
 };
 
 const LEDGER_PROCESSES = 3;
 const LEDGER_ROWS_PER_PROCESS = 40;
 const LEDGER_CAP = 60;
+const PROCESS_PAGE = 8;
+type OpenFile = { target: string; path: string; name: string };
 const LEDGER_QUERY_KEY = ["fleet", "ledger"] as const;
 
 type ProcessLedger = {
@@ -72,6 +75,12 @@ function useNow(): number {
 }
 
 /** The Fleet distance: places, processes, the ledger, and files, with an inspector for the selected row. */
+function outcomeWord(outcome: string): string {
+  if (outcome === "completed") return "done";
+  if (outcome === "held" || outcome === "pending") return "held";
+  return outcome;
+}
+
 export function Fleet({ initialRow, onZen }: FleetProps) {
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
@@ -160,6 +169,14 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
   );
 
   const [cmdOpen, setCmdOpen] = useState(false);
+  /* the technical view shows raw syscalls and arguments; t toggles it */
+  const [technical, setTechnical] = useState(false);
+  const [processLimit, setProcessLimit] = useState(PROCESS_PAGE);
+  const [openFile, setOpenFile] = useState<OpenFile | null>(null);
+  const processNameFor = (pid: string): string => {
+    const found = processes.find((process) => process.pid === pid);
+    return found ? (found.personal ? "ship" : found.label) : shortPid(pid);
+  };
   const cmdInputRef = useRef<HTMLInputElement>(null);
   const inspectorRef = useRef<HTMLElement>(null);
   const cmdPlace = selectedPlace ?? places.find((place) => place.id === CLOUD_TARGET_ID) ?? null;
@@ -181,7 +198,8 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
           processId: "you",
           place: entry.target || CLOUD_TARGET_ID,
           syscall: "shell.exec",
-          what: `${entry.command} · by you`,
+          what: "ran a command",
+          detail: `${entry.command} · by you`,
           outcome: entry.status === "failed" ? "failed" : "completed",
           runId: null,
         },
@@ -213,6 +231,9 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
       } else if (event.key === "k" || event.key === "ArrowUp") {
         event.preventDefault();
         setSelected(rows[Math.max(0, index - 1)]);
+      } else if (event.key === "t") {
+        event.preventDefault();
+        setTechnical((value) => !value);
       } else if (event.key === "/") {
         event.preventDefault();
         openCmd();
@@ -266,7 +287,7 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
           {modelsQuery.data?.preferredModelId ? ` · ${modelsQuery.data.preferredModelId}` : ""}
         </div>
         <div class="right">
-          <button type="button" onClick={onZen}>
+          <button type="button" onClick={() => onZen()}>
             <kbd>z</kbd>zen
           </button>
         </div>
@@ -332,7 +353,7 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
                 </tr>
               </thead>
               <tbody>
-                {processes.map((process) => (
+                {processes.slice(0, processLimit).map((process) => (
                   <tr
                     key={process.pid}
                     data-row={processRow(process.pid)}
@@ -351,6 +372,21 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
                     <td class="num">{formatUsd(costFor(process.pid))}</td>
                   </tr>
                 ))}
+                {processes.length > PROCESS_PAGE ? (
+                  <tr class="more">
+                    <td colSpan={6}>
+                      {processLimit < processes.length ? (
+                        <button type="button" onClick={() => setProcessLimit(processLimit + 20)}>
+                          show {Math.min(20, processes.length - processLimit)} more of {processes.length}
+                        </button>
+                      ) : (
+                        <button type="button" onClick={() => setProcessLimit(PROCESS_PAGE)}>
+                          show fewer
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ) : null}
               </tbody>
             </table>
             </div>
@@ -370,12 +406,12 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
                   <span class="t">{clockTime(line.timestamp)}</span>
                   {"  "}
                   <span class="place">{padRight(shortenPath(placeLabel(line.place), 16), 17)}</span>
-                  {padRight(line.syscall, 14)}
-                  {padRight(shortenPath(line.what, 44), 46)}
+                  {technical ? padRight(line.syscall, 14) : padRight(shortenPath(line.what, 26), 28)}
+                  <span class="m">{padRight(shortenPath(line.detail, technical ? 44 : 30), technical ? 46 : 32)}</span>
                   <span class={line.outcome === "completed" ? "ok" : line.outcome === "failed" || line.outcome === "denied" ? "no" : "m"}>
-                    {padRight(line.outcome, 10)}
+                    {padRight(outcomeWord(line.outcome), 8)}
                   </span>
-                  <span class="m">{line.processId === "you" ? "you" : `pid ${line.processId}`}</span>
+                  <span class="m">{line.processId === "you" ? "you" : processNameFor(line.processId)}</span>
                   {"\n"}
                 </span>
               ))}
@@ -392,21 +428,23 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
                 <ul class="touched">
                   {recentlyTouched(shownLedger, 6).map((line) => (
                     <li key={line.id}>
-                      <span class="place">{placeLabel(line.place)}</span> {line.what}{" "}
+                      <span class="place">{placeLabel(line.place)}</span> {line.detail}{" "}
                       <span class="m">· {relativeTime(line.timestamp, now)}</span>
                     </li>
                   ))}
                 </ul>
               ) : null}
               {places.map((place) => (
-                <PlaceTree key={place.id} place={place} enabled={connected && place.online} />
+                <PlaceTree key={place.id} place={place} enabled={connected && place.online} onOpenFile={setOpenFile} />
               ))}
             </div>
           </section>
         </div>
 
         <aside class="fleet-inspector" ref={inspectorRef}>
-          {selectedPlace ? (
+          {openFile ? (
+            <FileInspector file={openFile} placeLabel={placeLabel(openFile.target)} onClose={() => setOpenFile(null)} onZen={onZen} />
+          ) : selectedPlace ? (
             <PlaceInspector
               place={selectedPlace}
               runsToday={runsToday.get(selectedPlace.id) ?? 0}
@@ -448,7 +486,7 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
           <kbd>enter</kbd>open
         </span>
         <span>
-          <kbd>/</kbd>command
+          <kbd>/</kbd>command</span><span><kbd>t</kbd>{technical ? "plain words" : "technical"}
         </span>
         <span>
           <kbd>z</kbd>zen
@@ -463,50 +501,142 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
   );
 }
 
-function PlaceTree({ place, enabled }: { place: Place; enabled: boolean }) {
+type OpenFileHandler = (file: OpenFile) => void;
+
+function readArgsFor(target: string, path: string) {
+  return { target: target === CLOUD_TARGET_ID ? null : target, path };
+}
+
+/** One directory level, read when opened; directories open in place, files open in the inspector. */
+function DirNode({
+  place,
+  path,
+  name,
+  depth,
+  enabled,
+  onOpenFile,
+}: {
+  place: Place;
+  path: string;
+  name: string;
+  depth: number;
+  enabled: boolean;
+  onOpenFile: OpenFileHandler;
+}) {
   const { client } = useGateway();
   const [open, setOpen] = useState(false);
   const listing = useQuery({
-    queryKey: ["fleet", "files", place.id],
-    // the cloud home understands "~"; a machine reads relative to the daemon's home, so "." is the same place there
-    queryFn: () => readFilesPath(client, { target: place.id === CLOUD_TARGET_ID ? null : place.id, path: place.id === CLOUD_TARGET_ID ? "~" : "." }),
+    queryKey: ["fleet", "files", place.id, path],
+    queryFn: () => readFilesPath(client, readArgsFor(place.id, path)),
     enabled: enabled && open,
   });
   const entries = listing.data && listing.data.ok && "entries" in listing.data ? listing.data.entries : [];
   const error = listing.data && !listing.data.ok ? listing.data.error : listing.error ? String(listing.error) : null;
+  const toggle = () => setOpen(!open);
   return (
-    <div>
+    <div class={depth === 0 ? "" : "dir"}>
       <div
         class={`place-head${open ? " is-open" : ""}`}
         role="button"
         tabIndex={0}
         aria-expanded={open}
-        onClick={() => setOpen(!open)}
+        onClick={toggle}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
-            setOpen(!open);
+            toggle();
           }
         }}
       >
         <span class="tri">{open ? "▾" : "▸"}</span>
-        {place.label}
-        <span class="m">{enabled ? "~" : "offline"}</span>
+        {depth === 0 ? place.label : `${name}/`}
+        {depth === 0 ? <span class="m">{enabled ? "~" : "offline"}</span> : null}
       </div>
       {open ? (
         <ul>
           {listing.isPending ? <li class="m">reading…</li> : null}
           {error ? <li class="m">{error}</li> : null}
-          {entries.slice(0, 40).map((entry) => (
-            <li key={entry.path} class={entry.kind === "directory" ? "d" : "f"}>
-              {entry.name}
-              {entry.kind === "directory" ? "/" : ""}
-            </li>
-          ))}
-          {entries.length > 40 ? <li class="m">… {entries.length - 40} more</li> : null}
+          {entries.slice(0, 60).map((entry) =>
+            entry.kind === "directory" ? (
+              <li key={entry.path}>
+                <DirNode place={place} path={entry.path} name={entry.name} depth={depth + 1} enabled={enabled} onOpenFile={onOpenFile} />
+              </li>
+            ) : (
+              <li key={entry.path} class="f">
+                <button type="button" class="file" onClick={() => onOpenFile({ target: place.id, path: entry.path, name: entry.name })}>
+                  {entry.name}
+                </button>
+              </li>
+            ),
+          )}
+          {entries.length > 60 ? <li class="m">… {entries.length - 60} more</li> : null}
           {!listing.isPending && !error && entries.length === 0 ? <li class="m">empty</li> : null}
         </ul>
       ) : null}
+    </div>
+  );
+}
+
+function PlaceTree({ place, enabled, onOpenFile }: { place: Place; enabled: boolean; onOpenFile: OpenFileHandler }) {
+  // the cloud home understands "~"; a machine reads relative to the daemon's home, so "." is the same place there
+  return <DirNode place={place} path={place.id === CLOUD_TARGET_ID ? "~" : "."} name={place.label} depth={0} enabled={enabled} onOpenFile={onOpenFile} />;
+}
+
+const PREVIEW_LINES = 40;
+
+/** A file in the inspector: a bounded preview, and the two things a person does with it here. */
+function FileInspector({
+  file,
+  placeLabel: label,
+  onClose,
+  onZen,
+}: {
+  file: OpenFile;
+  placeLabel: string;
+  onClose: () => void;
+  onZen: (prefill?: string) => void;
+}) {
+  const { client } = useGateway();
+  const read = useQuery({
+    queryKey: ["fleet", "file", file.target, file.path],
+    queryFn: () => readFilesPath(client, { ...readArgsFor(file.target, file.path), limit: PREVIEW_LINES }),
+  });
+  const payload = read.data;
+  const content = payload && payload.ok && "content" in payload ? payload.content : null;
+  const text = content !== null && !Array.isArray(content) ? content : null;
+  const image = Array.isArray(content) ? content.find((item) => item.type === "image") : null;
+  const error = payload && !payload.ok ? payload.error : read.error ? String(read.error) : null;
+  const reference = `@${file.target === CLOUD_TARGET_ID ? "gsv" : file.target} ${file.path}`;
+  return (
+    <div>
+      <h3>{file.name}</h3>
+      <div class="sub">
+        {label} · {file.path}
+      </div>
+      <dl class="fleet-kv">
+        <dt>Size</dt>
+        <dd>{payload && payload.ok && "size" in payload && payload.size !== null ? `${payload.size.toLocaleString()} bytes` : "—"}</dd>
+        <dt>Lines</dt>
+        <dd>{payload && payload.ok && "lines" in payload && payload.lines !== null ? payload.lines : "—"}</dd>
+      </dl>
+      <div class="file-preview">
+        {read.isPending ? <p class="note">reading…</p> : null}
+        {error ? <p class="error">{error}</p> : null}
+        {text !== null ? <pre>{text}</pre> : null}
+        {image && image.type === "image" ? <img src={`data:${image.mimeType};base64,${image.data}`} alt={file.name} /> : null}
+      </div>
+      <div class="fleet-actions">
+        <button type="button" class="ibtn is-primary" onClick={() => onZen(`${reference} `)}>
+          talk about it
+        </button>
+        <button type="button" class="ibtn" onClick={() => void navigator.clipboard?.writeText(file.path)}>
+          copy path
+        </button>
+        <button type="button" class="ibtn" onClick={onClose}>
+          close
+        </button>
+      </div>
+      <p class="note">Talking about it puts a reference to this file in the prompt; the ship reads it from {label} when it needs to, without copying it.</p>
     </div>
   );
 }
@@ -550,7 +680,7 @@ function PlaceInspector({ place, runsToday, now, onRun, onBrowse, onZen }: Place
         <button type="button" class="ibtn" onClick={onBrowse}>
           browse files
         </button>
-        <button type="button" class="ibtn" onClick={onZen}>
+        <button type="button" class="ibtn" onClick={() => onZen()}>
           talk about it
         </button>
         {place.kind === "machine" ? (
@@ -656,7 +786,7 @@ function ProcessInspector({ process, model, cost, responsibilities, models, pref
             </button>
           </>
         ) : (
-          <button type="button" class="ibtn is-primary" onClick={onZen}>
+          <button type="button" class="ibtn is-primary" onClick={() => onZen()}>
             open conversation
           </button>
         )}

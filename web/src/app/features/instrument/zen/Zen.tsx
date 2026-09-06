@@ -50,6 +50,9 @@ export type ZenProps = {
   onFleet: (row?: FleetRow) => void;
   /** Open the first day: the places manifest with empty rows. */
   onFirstDay: () => void;
+  /** Text to place in the prompt on arrival, such as a file reference from Fleet. */
+  prefill?: string | null;
+  onPrefillUsed?: () => void;
 };
 
 type StatusTone = "" | "is-on" | "is-live" | "is-warn" | "is-err";
@@ -179,7 +182,7 @@ function NoteMoment({ moment, open, focus, index, onToggle }: { moment: Moment; 
   );
 }
 
-export function Zen({ onFleet, onFirstDay }: ZenProps) {
+export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed }: ZenProps) {
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
   const who = snapshot.username || "you";
@@ -457,6 +460,16 @@ export function Zen({ onFleet, onFirstDay }: ZenProps) {
   useEffect(() => {
     if (pendingHil) promptRef.current?.querySelector("input")?.blur();
   }, [pendingHil]);
+
+  useEffect(() => {
+    if (!prefill) return;
+    const input = promptRef.current?.querySelector("input");
+    if (!input) return;
+    input.value = prefill;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    onPrefillUsed?.();
+  }, [prefill, onPrefillUsed]);
 
   const focusPrompt = useCallback(() => {
     promptRef.current?.querySelector("input")?.focus();

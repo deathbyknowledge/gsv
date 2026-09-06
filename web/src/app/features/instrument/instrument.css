@@ -16,7 +16,8 @@
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
 }
-.instrument button {
+/* :where keeps the reset at element specificity, so .ibtn and friends win the way the prototype's did */
+:where(.instrument) button {
   font: inherit;
   color: inherit;
   background: none;
@@ -28,7 +29,7 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-.instrument a {
+:where(.instrument) a {
   color: var(--accent);
   text-decoration: none;
 }

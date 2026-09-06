@@ -358,3 +358,14 @@
 .fleet .inspector h3 { margin: 0 0 4px; font-size: 16px; font-weight: 400; letter-spacing: 0.12em; color: var(--text-title); text-shadow: var(--glow-soft); }
 .fleet .inspector .sub { font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 16px; }
 .fleet .inspector .note { margin-top: 18px; font-size: 12px; color: var(--text-dim); line-height: 1.55; }
+
+/* deeper directories and files in the tree; a bounded preview in the inspector */
+.fleet-tree .dir .place-head { font-size: 12px; }
+.fleet-tree li.f button.file { color: var(--text); font: inherit; padding: 1px 0; text-align: left; }
+.fleet-tree li.f button.file:hover { color: var(--accent); }
+.fleet .more td { padding: 8px 10px; border-top: 1px solid var(--rule-inner); }
+.fleet .more button { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-dim); }
+.fleet .more button:hover { color: var(--accent); }
+.fleet .file-preview { margin-top: 12px; max-height: 40vh; overflow: auto; border-left: 2px solid var(--border); padding-left: 12px; }
+.fleet .file-preview pre { margin: 0; font-family: var(--gsv-font-mono); font-size: 11px; line-height: 1.5; color: var(--label); white-space: pre; }
+.fleet .file-preview img { max-width: 100%; display: block; }

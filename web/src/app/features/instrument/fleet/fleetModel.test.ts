@@ -15,6 +15,7 @@ import {
   runsTodayByPlace,
   targetFromToolArgs,
   shortPid,
+  humanCall,
 } from "./fleetModel";
 
 function target(overrides: Partial<ConsoleTarget>): ConsoleTarget {
@@ -119,7 +120,7 @@ describe("ledger", () => {
       "42",
     );
     expect(lines).toHaveLength(2);
-    expect(lines[0]).toMatchObject({ place: "laptop", what: "ls", outcome: "completed", processId: "42" });
+    expect(lines[0]).toMatchObject({ place: "laptop", what: "looked around", detail: "ls", outcome: "completed", processId: "42" });
     expect(lines[1]).toMatchObject({ place: CLOUD_TARGET_ID, syscall: "fs.write", outcome: "failed" });
   });
 
@@ -144,7 +145,7 @@ describe("ledger", () => {
     );
     expect(runsTodayByPlace(lines, now).get("laptop")).toBe(2);
     expect(runsTodayByPlace(lines, now).get(CLOUD_TARGET_ID)).toBeUndefined();
-    expect(recentlyTouched(lines, 5).map((line) => line.what)).toEqual(["~/a", "~/b"]);
+    expect(recentlyTouched(lines, 5).map((line) => line.detail)).toEqual(["~/a", "~/b"]);
   });
 });
 
@@ -164,5 +165,23 @@ describe("shortPid", () => {
     expect(shortPid("42")).toBe("42");
     expect(shortPid("proc-1")).toBe("proc1");
     expect(shortPid("3f9a2c7e-11b2-4c1d-9e0f-a1b2c3d4e5f6")).toBe("d4e5f6");
+  });
+});
+
+describe("humanCall", () => {
+  it("names shell work by its first word", () => {
+    expect(humanCall("shell.exec", { input: "message ana <<GSV_MESSAGE\nhello\nGSV_MESSAGE" })).toBe("sent a message");
+    expect(humanCall("shell.exec", { input: "ls -la ~/Downloads" })).toBe("looked around");
+    expect(humanCall("shell.exec", { input: "cp a b" })).toBe("copied files");
+    expect(humanCall("shell.exec", { input: "./deploy.sh" })).toBe("ran a command");
+  });
+  it("names file and web calls by what they touched", () => {
+    expect(humanCall("fs.read", { path: "/home/e/Downloads/invoice-0231.pdf" })).toBe("read invoice-0231.pdf");
+    expect(humanCall("fs.search", { query: "invoice" })).toBe("searched for invoice");
+    expect(humanCall("net.fetch", { url: "https://api.github.com/repos" })).toBe("fetched api.github.com");
+    expect(humanCall("ai.generate", undefined)).toBe("thought about it");
+  });
+  it("collapses a heredoc to one line in the detail", () => {
+    expect(describeToolCall("shell.exec", { input: "message ana <<GSV_MESSAGE\nhello there\nGSV_MESSAGE" })).toBe("message ana <<GSV_MESSAGE hello there GSV_MESSAGE");
   });
 });

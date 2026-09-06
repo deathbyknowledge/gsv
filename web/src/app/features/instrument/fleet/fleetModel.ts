@@ -27,7 +27,10 @@ export type LedgerLine = {
   processId: string;
   place: string;
   syscall: string;
+  /** What happened, in a person's words: "read a file", "sent a message". */
   what: string;
+  /** The argument that matters, one line: a path, a command, a query. */
+  detail: string;
   outcome: string;
   runId: string | null;
 };
@@ -157,10 +160,64 @@ export function targetFromToolArgs(args: ChatTranscriptValue | undefined): strin
   return parseToolArgs(args).target ?? CLOUD_TARGET_ID;
 }
 
-/** A one-line description of what a call did, from the arguments people recognize. */
+/** The argument that matters, collapsed to one line, so a heredoc or a long path never breaks a row. */
 export function describeToolCall(syscall: string, args: ChatTranscriptValue | undefined): string {
   const parsed = parseToolArgs(args);
-  return parsed.input || parsed.path || parsed.url || parsed.query || syscall;
+  const raw = parsed.input || parsed.path || parsed.url || parsed.query || syscall;
+  return raw.replace(/\s+/g, " ").trim();
+}
+
+const SHELL_VERBS: readonly [RegExp, string][] = [
+  [/^(gsv\s+)?message\b/, "sent a message"],
+  [/^(ls|find|tree|du|pwd)\b/, "looked around"],
+  [/^(cat|head|tail|less|more|bat)\b/, "read a file"],
+  [/^(grep|rg|ag)\b/, "searched files"],
+  [/^cp\b/, "copied files"],
+  [/^mv\b/, "moved files"],
+  [/^(rm|rmdir|trash)\b/, "removed files"],
+  [/^(mkdir|touch)\b/, "made a place for files"],
+  [/^git\b/, "used git"],
+  [/^(curl|wget|http)\b/, "fetched from the web"],
+  [/^(python|python3|node|npm|npx|cargo|go|make|bun|deno)\b/, "ran a program"],
+  [/^(open|xdg-open)\b/, "opened something"],
+];
+
+function basename(path: string): string {
+  const trimmed = path.replace(/[/\\]+$/, "");
+  const name = trimmed.split(/[/\\]/).pop() ?? trimmed;
+  return name || path;
+}
+
+function hostOf(url: string): string {
+  const match = url.match(/^[a-z]+:\/\/([^/]+)/i);
+  return match ? match[1] : url;
+}
+
+/** What a call did, in the words a person would use, with the raw syscall left for the technical view. */
+export function humanCall(syscall: string, args: ChatTranscriptValue | undefined): string {
+  const parsed = parseToolArgs(args);
+  if (syscall === "shell.exec") {
+    const input = (parsed.input ?? "").replace(/\s+/g, " ").trim();
+    for (const [pattern, verb] of SHELL_VERBS) if (pattern.test(input)) return verb;
+    return "ran a command";
+  }
+  const name = parsed.path ? basename(parsed.path) : "";
+  if (syscall === "fs.read") return name ? `read ${name}` : "read a file";
+  if (syscall === "fs.write") return name ? `wrote ${name}` : "wrote a file";
+  if (syscall === "fs.delete") return name ? `removed ${name}` : "removed a file";
+  if (syscall === "fs.copy") return name ? `copied ${name}` : "copied a file";
+  if (syscall === "fs.search") return parsed.query ? `searched for ${parsed.query}` : "searched files";
+  if (syscall.startsWith("fs.transfer")) return "moved a file between places";
+  if (syscall.startsWith("fs.")) return "worked with files";
+  if (syscall === "net.fetch") return parsed.url ? `fetched ${hostOf(parsed.url)}` : "fetched from the web";
+  if (syscall.startsWith("ai.")) return "thought about it";
+  if (syscall === "adapter.send") return "sent a message";
+  if (syscall.startsWith("adapter.")) return "used a messenger";
+  if (syscall === "proc.spawn") return "started a helper";
+  if (syscall.startsWith("proc.")) return "checked on a helper";
+  if (syscall.startsWith("contact.")) return "worked with a contact";
+  if (syscall.startsWith("sys.")) return "checked the system";
+  return syscall;
 }
 
 export function ledgerFromRows(rows: readonly ChatTranscriptRow[], processId: string): LedgerLine[] {
@@ -174,7 +231,8 @@ export function ledgerFromRows(rows: readonly ChatTranscriptRow[], processId: st
       processId,
       place: targetFromToolArgs(row.toolArgs),
       syscall,
-      what: describeToolCall(syscall, row.toolArgs),
+      what: humanCall(syscall, row.toolArgs),
+      detail: describeToolCall(syscall, row.toolArgs),
       outcome: row.toolOutcome ?? (row.status === "error" ? "failed" : row.status === "running" ? "running" : "completed"),
       runId: row.runId ?? null,
     });
@@ -211,7 +269,7 @@ export function recentlyTouched(ledger: readonly LedgerLine[], limit: number): L
   const touched: LedgerLine[] = [];
   for (const line of ledger) {
     if (!line.syscall.startsWith("fs.")) continue;
-    const key = `${line.place}:${line.what}`;
+    const key = `${line.place}:${line.detail}`;
     if (seen.has(key)) continue;
     seen.add(key);
     touched.push(line);

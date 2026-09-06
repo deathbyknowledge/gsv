@@ -45,6 +45,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   const [distance, setDistance] = useState<Distance>(() => distanceForPath(initialPath));
   const [phase, setPhase] = useState<"still" | "leaving" | "arriving">("still");
   const [fleetRow, setFleetRow] = useState<FleetRow | null>(null);
+  const [zenPrefill, setZenPrefill] = useState<string | null>(null);
   const moving = useRef(false);
 
   const move = useCallback(
@@ -106,11 +107,17 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       <div class="instrument-vignette" aria-hidden="true" />
       <div class={`distance${phaseClass}`}>
         {distance === "zen" ? (
-          <Zen onFleet={(row) => move("fleet", row ?? null)} onFirstDay={() => move("firstday")} />
+          <Zen onFleet={(row) => move("fleet", row ?? null)} onFirstDay={() => move("firstday")} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} />
         ) : distance === "firstday" ? (
           <FirstDay onZen={() => move("zen")} />
         ) : (
-          <Fleet initialRow={fleetRow} onZen={() => move("zen")} />
+          <Fleet
+            initialRow={fleetRow}
+            onZen={(prefill) => {
+              if (prefill) setZenPrefill(prefill);
+              move("zen");
+            }}
+          />
         )}
       </div>
     </div>
