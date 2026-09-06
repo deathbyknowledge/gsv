@@ -461,6 +461,7 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
               now={now}
               onZen={onZen}
               lines={shownLedger.filter((line) => line.processId === selectedProcess.pid).slice(0, 8)}
+              placeLabelFor={placeLabel}
             />
           ) : (
             <p class="note">{connected ? "Nothing here yet." : "Connecting…"}</p>
@@ -704,9 +705,10 @@ type ProcessInspectorProps = {
   now: number;
   onZen: (prefill?: string, pid?: string) => void;
   lines: LedgerLine[];
+  placeLabelFor: (placeId: string) => string;
 };
 
-function ProcessInspector({ process, model, cost, responsibilities, models, preferredModelId, uid, now, onZen, lines }: ProcessInspectorProps) {
+function ProcessInspector({ process, model, cost, responsibilities, models, preferredModelId, uid, now, onZen, lines, placeLabelFor }: ProcessInspectorProps) {
   const { client } = useGateway();
   const queryClient = useQueryClient();
   const invalidate = () => {
@@ -819,7 +821,7 @@ function ProcessInspector({ process, model, cost, responsibilities, models, pref
           <div class="kicker">recently</div>
           {lines.map((line) => (
             <div class="line" key={line.id}>
-              <span class="t">{relativeTime(line.timestamp, now)}</span> <span class="place">{placeLabel(line.place)}</span> {line.what}
+              <span class="t">{relativeTime(line.timestamp, now)}</span> <span class="place">{placeLabelFor(line.place)}</span> {line.what}
               <span class="m"> · {line.detail}</span>
             </div>
           ))}
