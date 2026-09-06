@@ -388,3 +388,12 @@
 .fleet .inspector-lines .t { color: var(--faint); }
 .fleet .inspector-lines .place { color: var(--target); }
 .fleet .inspector-lines .m { color: var(--text-dim); }
+
+/* ledger rows are rows: hover, selection, and the accent inset, as in the tables */
+.fleet-ledger .row { cursor: pointer; }
+.fleet-ledger .row:hover > span { background: var(--hover); }
+.fleet-ledger .row.is-sel > span { background: var(--selected); }
+.fleet-ledger .row.is-sel > span:first-child { box-shadow: inset 3px 0 0 var(--accent); padding-left: 8px; }
+.fleet-ledger .row > span { padding: 1px 0; }
+.fleet-ledger .row:focus-visible > span { outline: 1px solid var(--accent); outline-offset: -1px; }
+.fleet .line-detail { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; color: var(--label); }

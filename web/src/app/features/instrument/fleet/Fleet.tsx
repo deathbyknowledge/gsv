@@ -39,6 +39,7 @@ import {
   type LedgerLine,
   type Place,
   shortPid,
+  ledgerRow,
 } from "./fleetModel";
 import "./fleet.css";
 
@@ -150,12 +151,7 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
     [places],
   );
 
-  const rows = useMemo(() => rowKeys(places, processes), [places, processes]);
   const [selected, setSelected] = useState<FleetRow | null>(initialRow);
-  useEffect(() => {
-    if (rows.length === 0) return;
-    if (!selected || !rows.includes(selected)) setSelected(initialRow && rows.includes(initialRow) ? initialRow : rows[0]);
-  }, [rows, selected, initialRow]);
 
   const selectedPlace = useMemo(
     () => (selected?.startsWith("target:") ? places.find((place) => targetRow(place.id) === selected) ?? null : null),
@@ -207,6 +203,15 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
   });
 
   const shownLedger = useMemo(() => mergeLedger([localLines, ledger], LEDGER_CAP), [localLines, ledger]);
+  const rows = useMemo(() => rowKeys(places, processes, shownLedger), [places, processes, shownLedger]);
+  useEffect(() => {
+    if (rows.length === 0) return;
+    if (!selected || !rows.includes(selected)) setSelected(initialRow && rows.includes(initialRow) ? initialRow : rows[0]);
+  }, [rows, selected, initialRow]);
+  const selectedLine = useMemo(
+    () => (selected?.startsWith("ledger:") ? shownLedger.find((line) => ledgerRow(line.id) === selected) ?? null : null),
+    [selected, shownLedger],
+  );
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -400,7 +405,7 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
             {ledgerQuery.error ? <p class="error">Could not read history: {String(ledgerQuery.error)}</p> : null}
             <div class="fleet-ledger" role="table">
               {shownLedger.map((line) => (
-                <div class="row" role="row" key={line.id}>
+                <div class={`row${selected === ledgerRow(line.id) ? " is-sel" : ""}`} role="row" key={line.id} data-row={ledgerRow(line.id)} tabIndex={0} onClick={() => setSelected(ledgerRow(line.id))}>
                   <span class="t">{clockTime(line.timestamp)}</span>
                   <span class="place">{placeLabel(line.place)}</span>
                   <span class="what">{technical ? line.syscall : line.what}</span>
@@ -438,7 +443,9 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
         </div>
 
         <aside class="fleet-inspector" ref={inspectorRef}>
-          {openFile ? (
+          {selectedLine && !openFile ? (
+            <LineInspector line={selectedLine} placeLabelFor={placeLabel} processName={selectedLine.processId === "you" ? "you" : processNameFor(selectedLine.processId)} now={now} technical={technical} onZen={onZen} />
+          ) : openFile ? (
             <FileInspector file={openFile} placeLabel={placeLabel(openFile.target)} onClose={() => setOpenFile(null)} onZen={onZen} />
           ) : selectedPlace ? (
             <PlaceInspector
@@ -832,6 +839,61 @@ function ProcessInspector({ process, model, cost, responsibilities, models, pref
           ? `The process is held on ${pending.data.syscall} on ${pending.data.target}. Approving runs exactly what it asked for, nothing else.`
           : "Responsibilities are the standing instructions this process carries between runs; the preferred model applies to your whole installation."}
       </p>
+    </div>
+  );
+}
+
+
+/** One line of the ledger, in full: everything the row truncated, and the way to the run it belongs to. */
+function LineInspector({
+  line,
+  placeLabelFor,
+  processName,
+  now,
+  technical,
+  onZen,
+}: {
+  line: LedgerLine;
+  placeLabelFor: (placeId: string) => string;
+  processName: string;
+  now: number;
+  technical: boolean;
+  onZen: (prefill?: string, pid?: string) => void;
+}) {
+  const failed = line.outcome === "failed" || line.outcome === "denied";
+  return (
+    <div>
+      <h3>{line.what}</h3>
+      <div class="sub">
+        {placeLabelFor(line.place)} · {relativeTime(line.timestamp, now)}
+      </div>
+      <dl class="fleet-kv">
+        <dt>Outcome</dt>
+        <dd class={failed ? "error" : ""}>{outcomeWord(line.outcome)}</dd>
+        <dt>By</dt>
+        <dd>{processName}</dd>
+        {technical ? (
+          <>
+            <dt>Syscall</dt>
+            <dd>{line.syscall}</dd>
+          </>
+        ) : null}
+        <dt>Detail</dt>
+        <dd>
+          <pre class="line-detail">{line.detail}</pre>
+        </dd>
+      </dl>
+      <div class="fleet-actions">
+        {line.processId !== "you" ? (
+          <button type="button" class="ibtn is-primary" onClick={() => onZen(undefined, line.processId)}>
+            open the conversation
+          </button>
+        ) : null}
+        <button type="button" class="ibtn" onClick={() => void navigator.clipboard?.writeText(line.detail)}>
+          copy
+        </button>
+      </div>
+      <p class="note">{technical ? "Raw view. Press t for plain words." : "Press t for the raw syscall and arguments."}</p>
     </div>
   );
 }
