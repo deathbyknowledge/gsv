@@ -279,3 +279,7 @@
 .zen-timeline i.is-focus { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
 .zen.is-browse .prompt-line { opacity: 0.55; }
 @media (prefers-reduced-motion: reduce) { .zen-moment.is-focus::before { animation: none; } }
+
+/* the ship's own narration, folded: it is not a message */
+.activity.is-thoughts .line { color: var(--text-dim); }
+.machine-rail.narration { white-space: pre-wrap; font-size: 12px; color: var(--text-dim); max-width: var(--measure-prose); }

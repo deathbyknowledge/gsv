@@ -85,6 +85,8 @@ export type Moment = {
   runId: string | null;
   timestamp: number | null;
   activities: Activity[];
+  /** The ship's working narration for this run: what it told itself, not what it sent. Folded by default. */
+  narration: string;
 };
 
 const OUTPUT_LIMIT = 600;
@@ -204,6 +206,7 @@ export function momentsFromRows(rows: readonly ChatTranscriptRow[], activeRunId:
         runId: row.runId ?? null,
         timestamp: row.timestamp ?? null,
         activities: [],
+        narration: "",
       });
       return;
     }
@@ -221,6 +224,7 @@ export function momentsFromRows(rows: readonly ChatTranscriptRow[], activeRunId:
           runId: row.runId ?? null,
           timestamp: row.timestamp ?? null,
           activities: [],
+          narration: "",
         };
         shipByRun.set(runKey, placeholder);
         moments.push(placeholder);
@@ -247,6 +251,7 @@ export function momentsFromRows(rows: readonly ChatTranscriptRow[], activeRunId:
         runId: row.runId ?? null,
         timestamp: row.timestamp ?? null,
         activities: [],
+        narration: "",
       };
       shipByRun.set(runKey, moment);
       moments.push(moment);
@@ -262,6 +267,7 @@ export function momentsFromRows(rows: readonly ChatTranscriptRow[], activeRunId:
         runId: row.runId ?? null,
         timestamp: row.timestamp ?? null,
         activities: [],
+        narration: "",
       });
     }
   });
@@ -350,4 +356,74 @@ export function noteSummary(text: string): string {
   const candidate = sentence.length < flat.length ? sentence : flat;
   if (candidate.length <= NOTE_SUMMARY_LENGTH) return candidate;
   return `${candidate.slice(0, NOTE_SUMMARY_LENGTH - 3).trim()}...`;
+}
+
+/**
+ * Moments from the conversation, which is what the ship actually sent and received, joined with the
+ * process transcript for what it did along the way. Assistant text in the transcript is narration and
+ * never becomes a message here; it folds under the moment it belongs to.
+ */
+export function momentsFromConversation(
+  messages: readonly ChatTranscriptRow[],
+  transcript: readonly ChatTranscriptRow[],
+  activeRunId: string | null,
+): Moment[] {
+  const moments: Moment[] = [];
+  const shipByRun = new Map<string, Moment>();
+  for (const row of messages) {
+    if (row.role !== "user" && row.role !== "assistant") continue;
+    if (row.role === "assistant" && !row.text.trim() && !row.streaming) continue;
+    const moment: Moment = {
+      id: row.id,
+      role: row.role === "user" ? "human" : "ship",
+      text: row.text,
+      streaming: row.streaming === true,
+      thinking: false,
+      runId: row.runId ?? null,
+      timestamp: row.timestamp ?? null,
+      activities: [],
+      narration: "",
+    };
+    moments.push(moment);
+    if (moment.role === "ship" && moment.runId) shipByRun.set(moment.runId, moment);
+  }
+
+  const toolRowsByRun = new Map<string, ChatTranscriptRow[]>();
+  const narrationByRun = new Map<string, string[]>();
+  const runStarted = new Map<string, number | null>();
+  transcript.forEach((row, index) => {
+    if (row.role === "system" && row.text.trim()) {
+      moments.push({ id: row.id, role: "note", text: row.text, streaming: false, thinking: false, runId: row.runId ?? null, timestamp: row.timestamp ?? null, activities: [], narration: "" });
+      return;
+    }
+    const runKey = runKeyOf(row, index);
+    if (!runStarted.has(runKey)) runStarted.set(runKey, row.timestamp ?? null);
+    if (isToolRow(row)) {
+      const bucket = toolRowsByRun.get(runKey) ?? [];
+      bucket.push(row);
+      toolRowsByRun.set(runKey, bucket);
+    } else if (row.role === "assistant" && row.text.trim()) {
+      const bucket = narrationByRun.get(runKey) ?? [];
+      bucket.push(row.text.trim());
+      narrationByRun.set(runKey, bucket);
+    }
+  });
+
+  const runKeys = new Set([...toolRowsByRun.keys(), ...narrationByRun.keys()]);
+  for (const runKey of runKeys) {
+    const toolRows = toolRowsByRun.get(runKey) ?? [];
+    const active = activeRunId !== null && runKey === activeRunId;
+    let moment = shipByRun.get(runKey);
+    if (!moment) {
+      // a run that has not sent anything yet, or never did: it still shows what it did
+      moment = { id: `run:${runKey}`, role: "ship", text: "", streaming: false, thinking: active, runId: runKey, timestamp: runStarted.get(runKey) ?? null, activities: [], narration: "" };
+      moments.push(moment);
+      shipByRun.set(runKey, moment);
+    }
+    moment.activities = toolRows.length > 0 ? activitiesForRows(toolRows, runKey, active) : [];
+    moment.narration = (narrationByRun.get(runKey) ?? []).join("\n\n");
+    if (moment.thinking && (moment.activities.length > 0 || moment.narration)) moment.thinking = active;
+  }
+
+  return moments.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
 }

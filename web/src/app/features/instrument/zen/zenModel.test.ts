@@ -7,6 +7,7 @@ import {
   formatSeconds,
   linkPlaceReferences,
   momentsFromRows,
+  momentsFromConversation,
   parsePromptInput,
   placeLabel,
   resolvePlace,
@@ -176,5 +177,34 @@ describe("noteSummary", () => {
     const text = "a".repeat(200);
     expect(noteSummary(text)).toHaveLength(92);
     expect(noteSummary(text).endsWith("...")).toBe(true);
+  });
+});
+
+describe("momentsFromConversation", () => {
+  const message = (overrides: Partial<ChatTranscriptRow>): ChatTranscriptRow => ({
+    id: "m", role: "assistant", text: "", time: "", timestamp: 1_000, ...overrides,
+  });
+  it("shows what the ship sent, folds what it told itself, and keeps the run's work", () => {
+    const messages = [
+      message({ id: "u1", role: "user", text: "tidy my downloads", timestamp: 1_000 }),
+      message({ id: "a1", role: "assistant", text: "Done: three installers gone.", timestamp: 5_000, runId: "r1" }),
+    ];
+    const transcript = [
+      message({ id: "t1", role: "tool", toolSyscall: "shell.exec", toolArgs: { input: "ls", target: "laptop" }, toolOutcome: "completed", timestamp: 2_000, runId: "r1" }),
+      message({ id: "n1", role: "assistant", text: "I should look first, then remove.", timestamp: 3_000, runId: "r1" }),
+    ];
+    const moments = momentsFromConversation(messages, transcript, null);
+    expect(moments.map((moment) => [moment.role, moment.text])).toEqual([
+      ["human", "tidy my downloads"],
+      ["ship", "Done: three installers gone."],
+    ]);
+    expect(moments[1].activities).toHaveLength(1);
+    expect(moments[1].narration).toBe("I should look first, then remove.");
+  });
+  it("shows a working moment for an active run that has not sent anything yet", () => {
+    const transcript = [message({ id: "t1", role: "tool", toolSyscall: "fs.read", toolArgs: { path: "~/a" }, timestamp: 2_000, runId: "r2", status: "running" })];
+    const moments = momentsFromConversation([], transcript, "r2");
+    expect(moments).toHaveLength(1);
+    expect(moments[0]).toMatchObject({ role: "ship", text: "", thinking: true, runId: "r2" });
   });
 });

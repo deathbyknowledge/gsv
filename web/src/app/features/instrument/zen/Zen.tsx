@@ -11,12 +11,12 @@ import {
   spawnChatProcess,
 } from "../../chat/backend/chatService";
 import {
-  addOptimisticUserMessage,
   applyChatSignal,
   chatRuntimeStateFromHistory,
   emptyChatRuntimeState,
   type ChatRuntimeState,
 } from "../../chat/domain/transcript";
+import { useChatConversation } from "../../chat/hooks/useChatConversation";
 import { loadConsoleTargets } from "../../gsv-console/backend/consoleService";
 import { executeTerminalCommand } from "../../terminal/backend/terminalService";
 import type { FleetRow } from "../Instrument";
@@ -30,7 +30,7 @@ import {
   formatSeconds,
   isStringValue,
   linkPlaceReferences,
-  momentsFromRows,
+  momentsFromConversation,
   parsePromptInput,
   PLACE_REFERENCE_PREFIX,
   placeLabel,
@@ -189,6 +189,8 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed }: ZenProps) {
 
   const [pid, setPid] = useState<string | null>(null);
   const [runtime, setRuntime] = useState<ChatRuntimeState>(() => emptyChatRuntimeState());
+  /* the conversation is what was actually said, both ways; the process transcript is what the ship did */
+  const conversation = useChatConversation({ processId: pid ?? "", enabled: pid !== null });
   const runtimeRef = useRef(runtime);
   const [places, setPlaces] = useState<Place[]>([]);
   const [where, setWhere] = useState<string | null>(null);
@@ -315,7 +317,7 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed }: ZenProps) {
 
   /* moments: the runtime's, plus the commands run by hand */
   const moments = useMemo(() => {
-    const fromRuntime = momentsFromRows(runtime.rows, runtime.activeRunId);
+    const fromRuntime = momentsFromConversation(conversation.rows, runtime.rows, runtime.activeRunId);
     const fromLocal: Moment[] = localRuns.map((run) => ({
       id: run.id,
       role: "ship",
@@ -324,6 +326,7 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed }: ZenProps) {
       thinking: false,
       runId: null,
       timestamp: run.startedAt,
+      narration: "",
       activities: [
         {
           key: run.id,
@@ -346,7 +349,7 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed }: ZenProps) {
       ],
     }));
     return [...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
-  }, [localRuns, runtime.activeRunId, runtime.rows]);
+  }, [conversation.rows, localRuns, runtime.activeRunId, runtime.rows]);
 
   useEffect(() => {
     if (browseRef.current !== null) return;
@@ -373,16 +376,14 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed }: ZenProps) {
         setNote("Your ship is still starting.");
         return;
       }
-      const optimistic = addOptimisticUserMessage(runtimeRef.current, text, []);
-      runtimeRef.current = optimistic;
-      setRuntime(optimistic);
+      conversation.appendOptimistic(text);
       try {
         await sendChatMessage(client, { pid, message: text });
       } catch (error) {
         setNote(error instanceof Error ? error.message : "The message did not go through.");
       }
     },
-    [client, pid],
+    [client, conversation, pid],
   );
 
   const runDirectly = useCallback(
@@ -685,6 +686,17 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed }: ZenProps) {
                       onToggle={() => toggleActivity(activity.key)}
                     />
                   ))}
+                  {moment.narration ? (
+                    <div class={`activity is-thoughts${openActivities.has(`thoughts:${moment.id}`) ? " is-open" : ""}`}>
+                      <div class="line" role="button" tabIndex={0} aria-expanded={openActivities.has(`thoughts:${moment.id}`)} onClick={() => toggleActivity(`thoughts:${moment.id}`)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleActivity(`thoughts:${moment.id}`); } }}>
+                        <span class="tri">{openActivities.has(`thoughts:${moment.id}`) ? "▾" : "▸"}</span>
+                        thought it through <span class="n">· {countLabel(moment.narration.split(/\n\n+/).length, "note")}</span>
+                      </div>
+                      <div class="detail">
+                        <div class="machine-rail narration">{moment.narration}</div>
+                      </div>
+                    </div>
+                  ) : null}
                   {moment.role === "human" ? (
                     <div class="text">{moment.text}</div>
                   ) : moment.streaming ? (
