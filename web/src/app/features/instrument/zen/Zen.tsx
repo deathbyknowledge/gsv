@@ -636,6 +636,9 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
           </span>
         </span>
         <span class="keys">
+          <span>
+            <kbd>l</kbd>light · dark
+          </span>
           <button type="button" onClick={() => onFleet()}>
             <kbd>z</kbd>fleet
           </button>
