@@ -45,9 +45,10 @@
   padding: 5vh 0 6vh;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
   min-height: 0;
 }
+/* short transcripts sit at the bottom; long ones scroll all the way up (end-aligned flex cannot) */
+.zen-moments > :first-child { margin-top: auto; }
 .zen-moments::-webkit-scrollbar { display: none; }
 .zen-moment {
   max-width: min(var(--measure-response), 92%);

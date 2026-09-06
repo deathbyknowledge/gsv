@@ -12,6 +12,7 @@
   color: var(--text);
   font-family: var(--gsv-font-mono);
   font-size: 12px;
+  --inspector-bg: rgba(10, 8, 32, 0.55);
   line-height: 1.5;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
@@ -271,6 +272,7 @@
   --glow: none;
   --glow-soft: none;
   --glow-focus: none;
+  --inspector-bg: rgba(255, 255, 255, 0.72);
 }
 .instrument.is-light .instrument-scan,
 .instrument.is-light .instrument-vignette { display: none; }
@@ -287,3 +289,20 @@
 .instrument.is-light .fleet-block h2 i { box-shadow: none; }
 .instrument.is-light .zen-approval { box-shadow: none; }
 .instrument.is-light .prompt-line input::placeholder { color: var(--faint); }
+
+/* ---------- narrow viewports, which is also what 200% zoom is ---------- */
+@media (max-width: 1280px) {
+  .instrument-top .keys span:nth-child(n + 4) { display: none; }
+  .fleet-body { grid-template-columns: minmax(0, 1fr) 300px; }
+  .fleet-ledger { grid-template-columns: auto auto max-content minmax(0, 1fr) auto; }
+  .fleet-ledger .who { display: none; }
+}
+@media (max-width: 900px) {
+  .instrument-top { padding: 0 18px; }
+  .instrument-top .keys { display: none; }
+  .fleet-body { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; }
+  .fleet-inspector { border-left: 0; border-top: 1px solid var(--border); max-height: 45vh; }
+  .fleet-ledger { grid-template-columns: auto max-content minmax(0, 1fr) auto; }
+  .fleet-ledger .t { display: none; }
+  .zen-bottom { padding: 0 18px 14px; }
+}

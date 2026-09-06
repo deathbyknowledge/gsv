@@ -217,10 +217,9 @@
 
 .fleet-inspector {
   border-left: 1px solid var(--border);
-  background: rgba(10, 8, 32, 0.55);
-  backdrop-filter: blur(3px);
   padding: 18px var(--space-5);
   overflow-y: auto;
+  background: var(--inspector-bg);
 }
 .fleet-inspector .body {
   margin: 0 0 14px -6px;
