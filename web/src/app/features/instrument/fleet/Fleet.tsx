@@ -40,6 +40,7 @@ import {
   targetRow,
   type LedgerLine,
   type Place,
+  shortPid,
 } from "./fleetModel";
 import "./fleet.css";
 
@@ -278,6 +279,7 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
               <i /> Places <span class="count">{places.length}</span>
             </h2>
             {targetsQuery.error ? <p class="error">Could not list places: {String(targetsQuery.error)}</p> : null}
+            <div class="tablewrap">
             <table>
               <thead>
                 <tr>
@@ -298,7 +300,7 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
                     onClick={() => setSelected(targetRow(place.id))}
                   >
                     <td>
-                      <span class={`dot${place.online ? " is-on" : ""}`} />
+                      <span class={`dot ${place.kind === "cloud" ? "is-on" : place.online ? "is-on" : "is-idle"}`} />
                       {place.label}
                     </td>
                     <td class="kind">{place.kind}</td>
@@ -309,6 +311,7 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
                 ))}
               </tbody>
             </table>
+            </div>
           </section>
 
           <section class="fleet-block">
@@ -316,11 +319,12 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
               <i /> Processes <span class="count">{processes.length}</span>
             </h2>
             {processesQuery.error ? <p class="error">Could not list processes: {String(processesQuery.error)}</p> : null}
+            <div class="tablewrap">
             <table>
               <thead>
                 <tr>
-                  <th>PID</th>
-                  <th>Name</th>
+                  <th>Process</th>
+                  <th>Id</th>
                   <th>Responsibilities</th>
                   <th>State</th>
                   <th>Last active</th>
@@ -336,8 +340,8 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
                     tabIndex={0}
                     onClick={() => setSelected(processRow(process.pid))}
                   >
-                    <td>{process.pid}</td>
-                    <td>{process.personal ? "ship" : process.label}</td>
+                    <td class="name">{process.personal ? "ship" : process.label}</td>
+                    <td class="id" title={process.pid}>{shortPid(process.pid)}</td>
                     <td class="dim">{responsibilityCount(process.pid) || "—"}</td>
                     <td>
                       <span class={`dot is-${processStateTone(process.state)}`} />
@@ -349,6 +353,7 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
                 ))}
               </tbody>
             </table>
+            </div>
           </section>
 
           <section class="fleet-block">
@@ -463,7 +468,8 @@ function PlaceTree({ place, enabled }: { place: Place; enabled: boolean }) {
   const [open, setOpen] = useState(false);
   const listing = useQuery({
     queryKey: ["fleet", "files", place.id],
-    queryFn: () => readFilesPath(client, { target: place.id === CLOUD_TARGET_ID ? null : place.id, path: "~" }),
+    // the cloud home understands "~"; a machine reads relative to the daemon's home, so "." is the same place there
+    queryFn: () => readFilesPath(client, { target: place.id === CLOUD_TARGET_ID ? null : place.id, path: place.id === CLOUD_TARGET_ID ? "~" : "." }),
     enabled: enabled && open,
   });
   const entries = listing.data && listing.data.ok && "entries" in listing.data ? listing.data.entries : [];
@@ -617,8 +623,9 @@ function ProcessInspector({ process, model, cost, responsibilities, models, pref
     <div>
       <h3>{process.personal ? "ship" : process.label}</h3>
       <div class="sub">
-        pid {process.pid} · {processStateLabel(process.state)}
+        {shortPid(process.pid)} · {processStateLabel(process.state)}
       </div>
+      <div class="full-id">{process.pid}</div>
       <dl class="fleet-kv">
         <dt>State</dt>
         <dd>

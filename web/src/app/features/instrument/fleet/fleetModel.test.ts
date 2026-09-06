@@ -14,6 +14,7 @@ import {
   rowKeys,
   runsTodayByPlace,
   targetFromToolArgs,
+  shortPid,
 } from "./fleetModel";
 
 function target(overrides: Partial<ConsoleTarget>): ConsoleTarget {
@@ -155,5 +156,13 @@ describe("time", () => {
     expect(relativeTime(now - 5 * 60_000, now)).toBe("5m ago");
     expect(relativeTime(now - 3 * 3_600_000, now)).toBe("3h ago");
     expect(relativeTime(now - 3 * 86_400_000, now)).toBe("3d ago");
+  });
+});
+
+describe("shortPid", () => {
+  it("keeps short ids and tails long ones", () => {
+    expect(shortPid("42")).toBe("42");
+    expect(shortPid("proc-1")).toBe("proc1");
+    expect(shortPid("3f9a2c7e-11b2-4c1d-9e0f-a1b2c3d4e5f6")).toBe("d4e5f6");
   });
 });

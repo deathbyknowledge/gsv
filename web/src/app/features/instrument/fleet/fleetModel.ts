@@ -252,3 +252,9 @@ export function shortenPath(path: string, max: number): string {
 export function padRight(text: string, width: number): string {
   return text.length >= width ? text : text + " ".repeat(width - text.length);
 }
+
+/** A process id is a long opaque string on the wire; people read the label and a six-character tail. */
+export function shortPid(pid: string): string {
+  const compact = pid.replace(/[^a-z0-9]/gi, "");
+  return compact.length <= 8 ? compact : compact.slice(-6);
+}

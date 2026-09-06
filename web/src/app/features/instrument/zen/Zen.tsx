@@ -477,7 +477,15 @@ export function Zen({ onFleet, onFirstDay }: ZenProps) {
   useEffect(() => {
     browseRef.current = browse;
     if (browse === null) return;
-    momentsRef.current?.querySelector(`[data-index="${browse}"]`)?.scrollIntoView({ block: "nearest" });
+    const container = momentsRef.current;
+    const focused = container?.querySelector<HTMLElement>(`[data-index="${browse}"]`);
+    if (!container || !focused) return;
+    // keep the focused moment inside the reading area with a margin, scrolling the container itself
+    const margin = 48;
+    const top = focused.offsetTop - container.offsetTop;
+    const bottom = top + focused.offsetHeight;
+    if (top - margin < container.scrollTop) container.scrollTop = Math.max(0, top - margin);
+    else if (bottom + margin > container.scrollTop + container.clientHeight) container.scrollTop = bottom + margin - container.clientHeight;
   }, [browse]);
 
   useEffect(() => {
