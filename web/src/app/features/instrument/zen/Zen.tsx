@@ -548,7 +548,7 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
         focusPrompt();
         return;
       }
-      if (event.key.length === 1 && !["z", "n", "j", "k", "o"].includes(event.key)) {
+      if (event.key.length === 1 && !["z", "n", "j", "k", "o", "l"].includes(event.key)) {
         focusPrompt();
       }
     };

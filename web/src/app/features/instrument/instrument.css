@@ -229,3 +229,61 @@
   .blink { animation: none; }
   .wordmark.is-glitch { transform: none; }
 }
+
+/* ---------- the light theme: the same identity on paper ----------
+ * Tokens only. Glows and the scanlines belong to phosphor and switch off; the star field turns to
+ * ink-colored glyphs at the same density. Toggled by the shell with the l key, or the system setting. */
+.instrument.is-light {
+  color-scheme: light;
+  --void: #f4f3fb;
+  --panel: #ffffff;
+  --panel-2: #f0eef8;
+  --node-bg: #f7f6fc;
+  --header-bar: #e9e6f5;
+  --border: #d8d4ec;
+  --border-raised: #c4bee3;
+  --rule-inner: #e6e3f2;
+  --rule-section: #d1ccea;
+  --hover: #edeaf8;
+  --active: #e4e0f7;
+  --selected: #e4e0f7;
+  --text-hi: #14112b;
+  --text: #1b1836;
+  --text-title: #221e44;
+  --accent: #5a52a8;
+  --accent-bright: #4a43a0;
+  --link: #2f5fc7;
+  --label: #4a4677;
+  --text-muted: #5f5a8e;
+  --text-dim: #6d6899;
+  --faint: #a7a3c8;
+  --glyph: #6b5fd6;
+  --star: #b8b2e6;
+  --online: #1e8a55;
+  --error: #c0364f;
+  --idle: #9d98c6;
+  --update: #a46b00;
+  --live: #5a52a8;
+  --primary-hi: #4a43a0;
+  --principal: #2e7d4f;
+  --target: #3d4fbf;
+  --path: #7a56b5;
+  --glow: none;
+  --glow-soft: none;
+  --glow-focus: none;
+}
+.instrument.is-light .instrument-scan,
+.instrument.is-light .instrument-vignette { display: none; }
+.instrument.is-light .instrument-field .gsv-glyph-stars pre { color: var(--star); text-shadow: none; }
+.instrument.is-light .wordmark.is-glitch { text-shadow: none; }
+.instrument.is-light .ibtn.is-primary { background: var(--accent); border-color: var(--accent-bright); box-shadow: none; }
+.instrument.is-light .ibtn.is-primary:hover { background: var(--accent-bright); box-shadow: none; }
+.instrument.is-light .zen-caret,
+.instrument.is-light .zen-timeline i.is-here,
+.instrument.is-light .zen-timeline i.is-focus,
+.instrument.is-light .zen-moment.is-focus::before,
+.instrument.is-light .activity .pulse,
+.instrument.is-light .fleet .dot,
+.instrument.is-light .fleet-block h2 i { box-shadow: none; }
+.instrument.is-light .zen-approval { box-shadow: none; }
+.instrument.is-light .prompt-line input::placeholder { color: var(--faint); }
