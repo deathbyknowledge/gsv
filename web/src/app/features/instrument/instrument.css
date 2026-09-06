@@ -3,6 +3,12 @@
  * void ground, phosphor glyphs, square corners, tracked uppercase chrome. */
 
 .instrument {
+  /* type scale: 1, 1.5 or 2; the x key cycles it. zoom scales layout with the type, and the container
+   * queries below see the zoomed width, so 2x on a wide screen reflows like a narrow one. */
+  --type-scale: 1;
+  zoom: var(--type-scale);
+  container-type: inline-size;
+  container-name: instrument;
   /* the instrument's own faces: Martian Mono for the machine, Bricolage Grotesque for the person and the ship */
   --gsv-font-mono: "Martian Mono", "IBM Plex Mono", "JetBrains Mono", monospace;
   --gsv-font-prose: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
@@ -234,6 +240,8 @@
 /* ---------- the light theme: the same identity on paper ----------
  * Tokens only. Glows and the scanlines belong to phosphor and switch off; the star field turns to
  * ink-colored glyphs at the same density. Toggled by the shell with the l key, or the system setting. */
+.instrument.is-scale-15 { --type-scale: 1.5; }
+.instrument.is-scale-2 { --type-scale: 2; }
 .instrument.is-light {
   color-scheme: light;
   --void: #f4f3fb;
@@ -291,13 +299,13 @@
 .instrument.is-light .prompt-line input::placeholder { color: var(--faint); }
 
 /* ---------- narrow viewports, which is also what 200% zoom is ---------- */
-@media (max-width: 1280px) {
+@container instrument (max-width: 1280px) {
   .instrument-top .keys span:nth-child(n + 4) { display: none; }
   .fleet-body { grid-template-columns: minmax(0, 1fr) 300px; }
   .fleet-ledger { grid-template-columns: auto auto max-content minmax(0, 1fr) auto; }
   .fleet-ledger .who { display: none; }
 }
-@media (max-width: 900px) {
+@container instrument (max-width: 900px) {
   .instrument-top { padding: 0 18px; }
   .instrument-top .keys { display: none; }
   .fleet-body { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; }

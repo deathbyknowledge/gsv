@@ -548,7 +548,7 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
         focusPrompt();
         return;
       }
-      if (event.key.length === 1 && !["z", "n", "j", "k", "o", "l"].includes(event.key)) {
+      if (event.key.length === 1 && !["z", "n", "j", "k", "o", "l", "x"].includes(event.key)) {
         focusPrompt();
       }
     };
@@ -638,6 +638,9 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
         <span class="keys">
           <span>
             <kbd>l</kbd>light · dark
+          </span>
+          <span>
+            <kbd>x</kbd>type size
           </span>
           <button type="button" onClick={() => onFleet()}>
             <kbd>z</kbd>fleet

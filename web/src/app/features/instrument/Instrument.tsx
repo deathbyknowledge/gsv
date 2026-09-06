@@ -26,6 +26,18 @@ function distanceForPath(path: string): Distance {
 }
 
 const THEME_KEY = "gsv.instrument.theme";
+const SCALE_KEY = "gsv.instrument.scale";
+const SCALES = [1, 1.5, 2] as const;
+type Scale = (typeof SCALES)[number];
+
+function storedScale(): Scale {
+  try {
+    const value = Number(window.localStorage.getItem(SCALE_KEY));
+    return SCALES.find((scale) => scale === value) ?? 1;
+  } catch {
+    return 1;
+  }
+}
 type Theme = "light" | "dark";
 
 function storedTheme(): Theme | null {
@@ -71,6 +83,18 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
     const follow = () => setTheme(systemTheme());
     query.addEventListener("change", follow);
     return () => query.removeEventListener("change", follow);
+  }, []);
+  const [scale, setScale] = useState<Scale>(() => storedScale());
+  const cycleScale = useCallback(() => {
+    setScale((current) => {
+      const next = SCALES[(SCALES.indexOf(current) + 1) % SCALES.length];
+      try {
+        window.localStorage.setItem(SCALE_KEY, String(next));
+      } catch {
+        // storage blocked: the choice lasts for this page only
+      }
+      return next;
+    });
   }, []);
   const toggleTheme = useCallback(() => {
     setTheme((current) => {
@@ -134,15 +158,19 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         event.preventDefault();
         toggleTheme();
       }
+      if (event.key === "x") {
+        event.preventDefault();
+        cycleScale();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [distance, move, toggleTheme]);
+  }, [cycleScale, distance, move, toggleTheme]);
 
   const phaseClass = phase === "leaving" ? " is-leaving" : phase === "arriving" ? " is-arriving" : "";
 
   return (
-    <div class={`instrument${theme === "light" ? " is-light" : ""}`}>
+    <div class={`instrument${theme === "light" ? " is-light" : ""}${scale === 1.5 ? " is-scale-15" : scale === 2 ? " is-scale-2" : ""}`}>
       <div class={`instrument-field${distance === "fleet" ? " is-fleet" : ""}`}>
         <GlyphStars density={STAR_DENSITY[distance]} />
       </div>
