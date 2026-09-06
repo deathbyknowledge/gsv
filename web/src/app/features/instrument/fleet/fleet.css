@@ -346,15 +346,15 @@
   white-space: nowrap;
 }
 .fleet td.id { font-family: var(--gsv-font-mono); color: var(--faint); font-size: 11px; letter-spacing: 0.04em; }
-.fleet .dot { border-radius: 0; }
+.fleet .dot { border-radius: 0; box-shadow: none; }
 .fleet .dot.is-idle { background: var(--idle); box-shadow: none; }
-.fleet .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.fleet .actions, .fleet .fleet-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
 .fleet .inspector .full-id { font-size: 11px; color: var(--faint); letter-spacing: 0.04em; word-break: break-all; margin-top: 4px; }
 
 /* the inspector's facts: label and value pairs, as the prototype drew them */
-.fleet .kv { display: grid; grid-template-columns: 110px 1fr; gap: 6px 12px; font-size: 12px; margin: 0; }
-.fleet .kv dt { color: var(--faint); letter-spacing: 0.12em; text-transform: uppercase; font-size: 10px; padding-top: 2px; }
-.fleet .kv dd { margin: 0; color: var(--label); white-space: normal; overflow-wrap: anywhere; }
+.fleet .kv, .fleet .fleet-kv { display: grid; grid-template-columns: 110px 1fr; gap: 6px 12px; font-size: 12px; margin: 0; }
+.fleet .kv dt, .fleet .fleet-kv dt { color: var(--faint); letter-spacing: 0.12em; text-transform: uppercase; font-size: 10px; padding-top: 2px; }
+.fleet .kv dd, .fleet .fleet-kv dd { margin: 0; color: var(--label); white-space: normal; overflow-wrap: anywhere; }
 .fleet .inspector h3 { margin: 0 0 4px; font-size: 16px; font-weight: 400; letter-spacing: 0.12em; color: var(--text-title); text-shadow: var(--glow-soft); }
 .fleet .inspector .sub { font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 16px; }
 .fleet .inspector .note { margin-top: 18px; font-size: 12px; color: var(--text-dim); line-height: 1.55; }

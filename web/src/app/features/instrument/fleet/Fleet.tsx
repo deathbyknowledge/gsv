@@ -629,7 +629,7 @@ function ProcessInspector({ process, model, cost, responsibilities, models, pref
       <dl class="fleet-kv">
         <dt>State</dt>
         <dd>
-          {process.activeRunId ? `running ${process.activeRunId}` : processStateLabel(process.state)}
+          {process.activeRunId ? "running" : processStateLabel(process.state)}
           {process.queuedCount > 0 ? ` · ${process.queuedCount} queued` : ""}
         </dd>
         <dt>Model</dt>
