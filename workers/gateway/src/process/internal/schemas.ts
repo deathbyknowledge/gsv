@@ -1,7 +1,7 @@
 /** Internal Process schemas primitives. */
 
 import type { CodeModeExecArgs } from "../../syscalls/codemode";
-import { RUN_CONTROL_INSTRUCTION, SEND_TOOL_DESCRIPTION } from "./lifecycle";
+import { RUN_CONTROL_INSTRUCTION, SEND_TOOL_DESCRIPTION, SEND_TOOL_NAME } from "./lifecycle";
 import type { Tool } from "@earendil-works/pi-ai";
 import { jsonObjectSchema, jsonValueSchema } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
@@ -41,7 +41,7 @@ export const RUN_CONTROL_SHELL_TOOL: Tool = {
 
 /** The run-control actions as one tool: text sends, yield ends, both send and end. */
 export const SEND_TOOL: Tool = {
-  name: "Send",
+  name: SEND_TOOL_NAME,
   description: SEND_TOOL_DESCRIPTION,
   parameters: {
     type: "object",

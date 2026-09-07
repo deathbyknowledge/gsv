@@ -636,9 +636,10 @@ describe("model context", () => {
       call: "proc.message.commit",
       args: { runId, actionId: "send-1", text: "all done" },
     });
-    expect(result.messages.find((message: any) => message.role === "toolResult")?.content).toBe(
-      "Message committed and run yielded",
-    );
+    const sendResult = result.messages.find((message: any) => message.role === "toolResult");
+    expect(sendResult).toMatchObject({ content: "Message committed and run yielded", toolCallId: "send-1" });
+    // the result is recorded under the tool's own name, so the call and its result pair up for every provider
+    expect(sendResult?.toolCalls).toContain('"toolName":"Send"');
     expect(
       result.emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload,
     ).toMatchObject({ status: "ok", reason: "run.yielded" });

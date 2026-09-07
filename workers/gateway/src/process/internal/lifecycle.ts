@@ -121,6 +121,13 @@ export const CORRECTION_FAILURE_NOTICE = "I wrote a reply but did not send it. A
 
 export const PENDING_RUN_CONTROL_CALL = "Shell";
 
+export const SEND_TOOL_NAME = "Send";
+
+/** A pending tool call registered under one of these names is run control, not a syscall to dispatch. */
+export function isRunControlCall(call: string): boolean {
+  return call === PENDING_RUN_CONTROL_CALL || call === SEND_TOOL_NAME;
+}
+
 export const INTERRUPTED_RUN_CONTROL_MESSAGE =
   "Run-control completion was interrupted before its result was recorded; its external effect may already have completed";
 

@@ -10,7 +10,7 @@ import type {
 } from "../internal/contracts";
 import {
   CORRECTION_FAILURE_NOTICE, MAX_TERMINAL_CORRECTION_ROUNDS, RUNTIME_EVENT_WAKE_MESSAGE, YIELD_CORRECTION_MESSAGE,
-  MAX_RETRYABLE_GENERATION_ATTEMPTS, PENDING_RUN_CONTROL_CALL, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE,
+  MAX_RETRYABLE_GENERATION_ATTEMPTS, SEND_TOOL_NAME, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE, isRunControlCall,
   MEDIA_PREPARATION_TIMEOUT_MS, TOOL_DISPATCH_TIMEOUT_MS,
 } from "../internal/lifecycle";
 import {
@@ -58,16 +58,16 @@ import { createContextProjection, parseContextProjection } from "../context";
 import { deriveGenerationContextId } from "../context-message-metadata";
 import { SEND_TOOL, piToolParametersSchema } from "../internal/schemas";
 
-function hasRunControlRegistration(
+/** The name a run-control result is recorded under: the Send tool's own, or the Shell's syscall. */
+function runControlRegistration(
   host: Process,
   runId: string,
   dispatchId: string,
   toolCallId: string,
-): boolean {
+): { resultName: string } | null {
   const pending = host.store.tools.getPending(dispatchId);
-  return pending?.runId === runId
-    && pending.callId === toolCallId
-    && pending.call === PENDING_RUN_CONTROL_CALL;
+  if (pending?.runId !== runId || pending.callId !== toolCallId || !isRunControlCall(pending.call)) return null;
+  return { resultName: pending.call === SEND_TOOL_NAME ? SEND_TOOL_NAME : "shell.exec" };
 }
 
 export class ProcessRun {
@@ -1224,7 +1224,8 @@ export class ProcessRun {
     return this.host.ctx.storage.transactionSync(() => {
       const active = this.host.runs.active;
       if (this.host.killed || !active || active.runId !== runId) return false;
-      if (!hasRunControlRegistration(this.host, runId, dispatchId, toolCallId)) {
+      const registration = runControlRegistration(this.host, runId, dispatchId, toolCallId);
+      if (!registration) {
         throw new Error("Run-control tool registration was lost before its result");
       }
       const updated = result.ok ? active : incrementRunControlFailure(active, result.failureKind);
@@ -1238,7 +1239,7 @@ export class ProcessRun {
       }
       this.host.store.messages.appendToolResult(
         toolCallId,
-        "shell.exec",
+        registration.resultName,
         content,
         !result.ok,
         runId,
@@ -1258,12 +1259,13 @@ export class ProcessRun {
     this.host.ctx.storage.transactionSync(() => {
       const active = this.host.runs.active;
       if (this.host.killed || !active || active.runId !== runId) return;
-      if (!hasRunControlRegistration(this.host, runId, dispatchId, toolCallId)) return;
+      const registration = runControlRegistration(this.host, runId, dispatchId, toolCallId);
+      if (!registration) return;
       const message = `Run-control execution failed: ${error}`;
       this.host.store.tools.fail(dispatchId, message, "failed");
       this.host.store.messages.appendToolResult(
         toolCallId,
-        "shell.exec",
+        registration.resultName,
         message,
         true,
         runId,
@@ -1413,11 +1415,12 @@ export class ProcessRun {
       const call = turn.runControlCalls[0];
       if (!call) throw new Error("Run-control turn omitted its command");
       const dispatchId = crypto.randomUUID();
+      // registered under the tool's own name, Shell or Send, so its result and any interruption carry that name
       this.host.store.tools.register(
         dispatchId,
         call.toolCall.id,
         runId,
-        PENDING_RUN_CONTROL_CALL,
+        call.toolCall.name,
         jsonObjectSchema.parse(call.toolCall.arguments),
       );
       return dispatchId;
