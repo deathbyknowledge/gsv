@@ -46,9 +46,9 @@ export const KERNEL_V039_ADD_LEDGER: SqlMigration = {
         last_ts INTEGER NOT NULL,
         row_count INTEGER NOT NULL,
         bytes INTEGER NOT NULL,
-        uids TEXT NOT NULL,
-        pids TEXT NOT NULL,
-        targets TEXT NOT NULL,
+        uids TEXT,
+        pids TEXT,
+        targets TEXT,
         created_at INTEGER NOT NULL
       )
     `,
