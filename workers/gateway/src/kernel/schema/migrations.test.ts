@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(38);
+    expect(KERNEL_MIGRATIONS).toHaveLength(39);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -219,6 +219,8 @@ describe("kernel schema migrations", () => {
       "mail_outbound",
       "cf_agents_schedules",
       "cf_agents_mcp_servers",
+      "ledger_window",
+      "ledger_segments",
     ]);
   });
 
