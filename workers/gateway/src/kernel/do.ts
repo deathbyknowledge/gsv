@@ -1597,7 +1597,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
         );
       }
     } catch (error) {
-      console.warn(`[ledger] rotation failed, will retry: ${error instanceof Error ? error.name : "error"}`);
+      drained = false;
+      console.warn(`[ledger] housekeeping failed, will retry: ${error instanceof Error ? error.name : "error"}`);
     }
     // a re-arm that fails leaves the ledger unarmed, so the next line arms it again
     const more = this.ledger.needsRotation() || !drained;
