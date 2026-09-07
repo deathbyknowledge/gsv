@@ -351,6 +351,7 @@ handleRes(
     }
 
     this.host.routes.remove(frame.id);
+    this.host.completeLedger(frame);
     this.cancelRoutedBody(frame.id, "Device response received");
 
     if (route.scheduleId) {
@@ -796,6 +797,7 @@ sendTargetRequestCancel(
 
 cancelRoute(routeId: string): void {
     const route = this.host.routes.remove(routeId);
+    if (route) this.host.completeLedgerAs(routeId, "cancelled");
     if (route?.scheduleId) {
       this.host.cancelSchedule(route.scheduleId).catch(() => {});
     }
@@ -832,6 +834,7 @@ cancelRoutedBody(routeId: string, reason: string): void {
       error: { code: 504, message: `Syscall ${expired.call} timed out (device: ${expired.targetId})` },
     };
 
+    this.host.completeLedger(timeoutFrame);
     this.deliverToOrigin(expired.origin, timeoutFrame);
   }
 
