@@ -81,7 +81,16 @@ fn read_directory(path: &Path) -> Result<ToolOutput, String> {
             .file_type()
             .map_err(|e| format!("Failed to inspect '{}': {}", entry.path().display(), e))?;
 
-        if file_type.is_dir() {
+        // A link to a directory is a directory to whoever lists it: follow links when deciding.
+        let is_directory = if file_type.is_symlink() {
+            fs::metadata(entry.path())
+                .map(|metadata| metadata.is_dir())
+                .unwrap_or(false)
+        } else {
+            file_type.is_dir()
+        };
+
+        if is_directory {
             directories.push(name);
         } else {
             files.push(name);
@@ -458,5 +467,33 @@ mod tests {
         assert_eq!(actual, "é");
 
         fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod symlink_tests {
+    use super::read_directory;
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn a_link_to_a_directory_lists_as_a_directory() {
+        let root = std::env::temp_dir().join(format!("gsv-read-symlink-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("real")).expect("create real dir");
+        fs::write(root.join("note.txt"), "hi").expect("write file");
+        symlink(root.join("real"), root.join("linked")).expect("link dir");
+        symlink(root.join("note.txt"), root.join("linked-note")).expect("link file");
+
+        let output = read_directory(&root).expect("listing");
+        let directories: Vec<String> =
+            serde_json::from_value(output.data["directories"].clone()).expect("dirs");
+        let files: Vec<String> =
+            serde_json::from_value(output.data["files"].clone()).expect("files");
+        assert!(directories.contains(&"linked".to_string()));
+        assert!(directories.contains(&"real".to_string()));
+        assert!(files.contains(&"linked-note".to_string()));
+        assert!(files.contains(&"note.txt".to_string()));
+        let _ = fs::remove_dir_all(&root);
     }
 }
