@@ -821,7 +821,7 @@ mod tests {
 /// CLI is never replaced under a person; the installer does that on request.
 fn release_hint(current: &str, server: &gateway_client::protocol::ServerInfo) -> Option<String> {
     use host_config::release::{parse_version, stable_tag, DEV_RELEASE_TAG};
-    if server.release.as_deref() == Some(DEV_RELEASE_TAG) {
+    if server.release == DEV_RELEASE_TAG {
         return None;
     }
     let current = parse_version(current)?;
@@ -848,7 +848,8 @@ mod release_hint_tests {
     fn server(version: &str, release: Option<&str>) -> ServerInfo {
         ServerInfo {
             version: version.to_string(),
-            release: release.map(str::to_string),
+            release: release.unwrap_or_default().to_string(),
+            features: Vec::new(),
             connection_id: "conn".to_string(),
         }
     }

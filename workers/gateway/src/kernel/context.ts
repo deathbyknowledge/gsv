@@ -5,7 +5,7 @@
  * sys.setup.assist handlers. Authenticated dispatch guarantees it is present.
  */
 
-import type { MCPClientManager } from "agents/mcp/client";
+import type { McpClientManager } from "./mcp-client";
 import type {
   FederationDeliveryReceipt,
   JsonObject,
@@ -52,7 +52,7 @@ export type KernelContext = {
   procs: ProcessRegistry;
   conversations: ConversationRegistry;
   oauth: OAuthStore;
-  mcp: MCPClientManager;
+  mcp: McpClientManager;
   mcpServers: McpServerStore;
   adapters: AdapterStore;
   runRoutes: RunRouteStore;
@@ -125,7 +125,7 @@ export type KernelContext = {
     toolName: string,
     args: JsonObject,
     signal?: AbortSignal,
-  ) => ReturnType<MCPClientManager["callTool"]>;
+  ) => ReturnType<McpClientManager["callTool"]>;
   request?: (
     frame: RequestFrame,
     ctx: KernelContext,

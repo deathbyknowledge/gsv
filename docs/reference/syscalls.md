@@ -134,8 +134,35 @@ type FilesystemSyscalls = {
       | { ok: true; matches: Array<{ path: string; line: number; content: string }>; count: number; truncated?: boolean }
       | OperationError;
   };
+
+  "fs.copy": {
+    args: { source: { target?: string; path: string }; destination: { target?: string; path: string } };
+    result: { ok: true; source: { target: string; path: string }; destination: { target: string; path: string }; size: number; contentType?: string } | OperationError;
+  };
+
+  "fs.transfer.send": {
+    args: { target?: string; path: string; revision?: string };
+    result: { ok: true; path: string; size: number; contentType?: string; revision?: string } | OperationError;
+  };
+
+  "fs.transfer.receive": {
+    args: { target?: string; path: string; contentType?: string };
+    result: { ok: true; path: string; bytesWritten: number; contentType?: string } | OperationError;
+  };
+
+  "fs.transfer.stat": {
+    args: { target?: string; path: string };
+    result: { ok: true; path: string; size: number; isFile: boolean; isDirectory: boolean; contentType?: string; revision?: string } | OperationError;
+  };
 };
 ```
+
+`fs.copy` copies one file between two endpoints, each on `gsv` or on a target
+machine, so a machine-to-`gsv` copy needs no client in the middle. The
+`fs.transfer.*` calls are the body-bearing transport: `fs.transfer.send`
+answers with the bytes as a response body, `fs.transfer.receive` takes them as
+a request body, and `fs.transfer.stat` reports size and revision without a
+body. See [Frame Bodies](/reference/websocket-protocol#frame-bodies).
 
 For a file result, `size` is the original file size; the body descriptor length
 is the transmitted payload size and can differ when `offset` or `limit` selects
@@ -787,6 +814,7 @@ Runtime behavior:
 | `proc.setidentity` | Process DO direct path | Kernel-only through public dispatch. Stores pid, identity, interaction mode, initial label, and auto-title policy. |
 
 ```ts
+type ProcAiConfig = { version: 2; modelId?: string; reasoning?: string; updatedAt: number };
 type ProcHilRequest = {
   pid: string;
   requestId: string;
@@ -1004,8 +1032,22 @@ type ProcessSyscalls = {
     args: { pid: string; identity: ProcessIdentity; interactive?: boolean; title?: string; autoTitle?: boolean };
     result: { ok: true };
   };
+
+  "proc.ai.config.get": {
+    args: { pid?: string };
+    result: { ok: true; pid: string; config: ProcAiConfig | null } | OperationError;
+  };
+
+  "proc.ai.config.set": {
+    args: { pid?: string; clear: true } | { pid?: string; modelId?: string | null; reasoning?: string | null };
+    result: { ok: true; pid: string; config: ProcAiConfig | null } | OperationError;
+  };
 };
 ```
+
+`proc.ai.config.get` and `proc.ai.config.set` read and pin the model a process
+runs with. `modelId` names an entry in the owning human's layered model stack;
+`clear: true` returns the process to the account's preferred model.
 
 `proc.ipc.deliver`, `proc.history.export`, `proc.history.import`, and
 `proc.setidentity` are kernel-only. User and device callers receive a forbidden
@@ -1223,6 +1265,11 @@ type RepoSyscalls = {
     args: { repo: string };
     result: { deleted: boolean; repo: string };
   };
+
+  "repo.visibility.set": {
+    args: { repo: string; public: boolean };
+    result: { changed: boolean; repo: string; public: boolean };
+  };
 };
 ```
 
@@ -1244,7 +1291,6 @@ Runtime behavior:
 | `sys.target.get` | `handleSysTargetGet` | Reads one target descriptor. Missing or inaccessible targets return `target: null` rather than a permission error. |
 | `sys.target.update` | `handleSysTargetUpdate` | Updates owner-managed target metadata. Root or the device owner may update the process-visible `description`; group-only device access can use the device but cannot edit its metadata. Missing or inaccessible targets return `target: null`. |
 | `sys.target.delete` | `handleSysTargetDelete` | Forgets an owned physical target, disconnects any live socket for it, and revokes active machine tokens bound to that peer id. Group-only access cannot forget. Missing or inaccessible devices return `deleted: false`. |
-| `sys.workspace.list` | `handleSysWorkspaceList` | Lists workspaces for caller uid by default. Root may request any uid; non-root may only request self. Adds active process summary and process count. |
 | `sys.oauth.start` | `handleSysOAuthStart` | Starts an OAuth authorization-code + PKCE flow for an AI provider, MCP server, or generic integration. Returns an authorization URL and pending flow summary. Redirects must target `/oauth/callback` on the deployed GSV origin. Non-root is scoped to self. |
 | `sys.oauth.list` | `handleSysOAuthList` | Lists OAuth account summaries without access or refresh tokens. Non-root is scoped to self; root can list all or one uid. `includePending: true` also returns unexpired pending flows. |
 | `sys.oauth.forget` | `handleSysOAuthForget` | Deletes a stored OAuth account. Non-root can delete only own accounts. Missing or inaccessible accounts return `forgotten: false`. |
@@ -1338,11 +1384,6 @@ type SystemSyscalls = {
     result: { deleted: boolean; targetId: string; revokedTokens: number };
   };
 
-  "sys.workspace.list": {
-    args: { uid?: number; kind?: "thread" | "app" | "shared"; state?: "active" | "archived"; limit?: number };
-    result: { workspaces: Array<{ workspaceId: string; ownerUid: number; label: string | null; kind: "thread" | "app" | "shared"; state: "active" | "archived"; createdAt: number; updatedAt: number; defaultBranch: string; headCommit: string | null; activeProcess: { pid: string; label: string | null; cwd: string; createdAt: number } | null; processCount: number }> };
-  };
-
   "sys.oauth.start": {
     args: { uid?: number; kind: OAuthConnectionKind; provider: string; accountKey?: string; label?: string; authorizationEndpoint: string; tokenEndpoint: string; clientId: string; redirectUri: string; scope?: string; resource?: string; extraAuthParams?: Record<string, string> };
     result: { authorizationUrl: string; flow: OAuthFlowSummary };
@@ -1356,6 +1397,18 @@ type SystemSyscalls = {
   "sys.oauth.forget": {
     args: { accountId: string; uid?: number };
     result: { forgotten: boolean };
+  };
+
+  "sys.oauth.device.start": {
+    args: { uid?: number; kind: "ai-provider"; provider: "openai-codex"; accountKey?: string; label?: string };
+    result: { flow: OAuthFlowSummary; provider: string; userCode: string; verificationUrl: string; intervalSeconds: number; expiresAt: number };
+  };
+
+  "sys.oauth.device.poll": {
+    args: { uid?: number; flowId: string };
+    result:
+      | { status: "pending"; flow: OAuthFlowSummary; intervalSeconds: number; expiresAt: number }
+      | { status: "complete"; account: OAuthAccountSummary };
   };
 
   "sys.mcp.add": {
@@ -1417,8 +1470,24 @@ type SystemSyscalls = {
     args: { code: string };
     result: { linked: boolean; link?: { adapter: string; accountId: string; actorId: string; uid: number; createdAt: number } };
   };
+
+  "account.create": {
+    args: { kind: "human" | "agent"; username: string; password?: string; gecos?: string; persona?: string; contextFiles?: Array<{ name: string; text: string }> };
+    result: { account: ProcessIdentity; kind: "human" | "agent"; personalAgent?: ProcessIdentity };
+  };
+
+  "account.list": {
+    args: { uid?: number };
+    result: { accounts: Array<{ uid: number; username: string; displayName: string; relation: "self" | "personal-agent" | "agent" | "human"; runnable: boolean; capabilities?: string[]; gecos?: string }> };
+  };
 };
 ```
+
+`sys.oauth.device.start` and `sys.oauth.device.poll` run the device
+authorization flow for providers that sign in with a code shown to the person,
+currently the OpenAI Codex account. `account.create` and `account.list` manage
+the accounts a human owns: a `human` account gets a personal agent, and an
+`agent` account is a non-login identity the owner can run processes as.
 
 ## AI: `ai.*`
 
@@ -1483,8 +1552,25 @@ type AiSyscalls = {
     args: { text: string; textFormat?: "markdown" | "plain"; model?: string; voice?: string; language?: string; encoding?: string; container?: string; sampleRate?: number; bitRate?: number };
     result: { audio: { mimeType: string; size: number }; provider: string; model: string; voice?: string; encoding?: string; container?: string; skipped?: boolean };
   };
+
+  "ai.context": {
+    args: Empty;
+    result: { targets: Array<{ id: string; implements: string[]; label?: string; description?: string; platform?: string }>; mcpServers: string[]; systemContextFiles?: Array<{ name: string; text: string }>; system: { timezone: string }; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home"; label: string; writable: boolean } }>; skillIndexMode: "summary" | "names" | "off" };
+  };
+
+  "ai.text.generate": {
+    args: { target?: string; systemPrompt?: string; messages: AiTextMessage[]; tools?: Array<{ name: string; description: string; parameters: Record<string, unknown> }>; config?: { modelConfig?: { provider: string; model: string; apiKey?: string; baseUrl?: string; providerStyle?: string; transportTarget?: string; maxTokens?: number; contextWindowTokens?: number }; modelId?: string; reasoning?: string }; options?: { maxTokens?: number; reasoning?: AiTextGenerationReasoning; timeoutMs?: number }; sessionAffinityKey?: string };
+    result: { message: AiAssistantMessage; provider: string; model: string; text?: string };
+  };
 };
 ```
+
+`ai.context` is the process-facing projection of everything a run needs
+besides the model: reachable targets, ready MCP servers, system context files,
+and the skill index. `ai.text.generate` runs one model turn through the
+gateway's provider stack; `AiTextMessage`, `AiAssistantMessage`, and
+`AiTextGenerationReasoning` are the message and reasoning records in
+`packages/gsv/src/protocol/syscalls/ai.ts`.
 
 ## Adapters: `adapter.*`
 
