@@ -160,12 +160,17 @@ export function argsText(args: JsonLike): string {
   return capField(JSON.stringify(args ?? null), LEDGER_ARGS_LIMIT);
 }
 
-const targetArgSchema = z.object({ target: z.string().min(1).optional() });
+const targetArgSchema = z.object({ target: z.string().min(1).optional(), sessionId: z.string().min(1).optional() });
 
-/** The place a call went to: its `target` argument, capped, else the cloud home. */
-export function ledgerTargetOf(args: JsonLike): string {
+/**
+ * The place a call went to: its `target` argument, else the target of the
+ * shell session it continues, else the cloud home. Capped either way.
+ */
+export function ledgerTargetOf(args: JsonLike, sessionTarget: (sessionId: string) => string | null = () => null): string {
   const parsed = targetArgSchema.safeParse(args);
-  return parsed.success && parsed.data.target ? capField(parsed.data.target, LEDGER_ID_LIMIT) : "gsv";
+  if (!parsed.success) return "gsv";
+  const target = parsed.data.target ?? (parsed.data.sessionId ? sessionTarget(parsed.data.sessionId) : null);
+  return target ? capField(target, LEDGER_ID_LIMIT) : "gsv";
 }
 
 /** JSON as it arrives on the wire; the redactor parses what it needs at the boundary. */

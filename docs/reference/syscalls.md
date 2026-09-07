@@ -1291,7 +1291,7 @@ Runtime behavior:
 | `sys.target.get` | `handleSysTargetGet` | Reads one target descriptor. Missing or inaccessible targets return `target: null` rather than a permission error. |
 | `sys.target.update` | `handleSysTargetUpdate` | Updates owner-managed target metadata. Root or the device owner may update the process-visible `description`; group-only device access can use the device but cannot edit its metadata. Missing or inaccessible targets return `target: null`. |
 | `sys.target.delete` | `handleSysTargetDelete` | Forgets an owned physical target, disconnects any live socket for it, and revokes active machine tokens bound to that peer id. Group-only access cannot forget. Missing or inaccessible devices return `deleted: false`. |
-| `sys.ledger.list` | `handleSysLedgerList` | Lists the ledger of dispatched syscalls, newest first, paged by `cursor`. Each line carries who, where, the call, a redacted one-line detail, the outcome, and duration; ai calls add tokens and cost. Non-root sees the lines of its owning human; root sees all. Filters: `pid`, `target`, `callPrefix`, `since`, `until`. |
+| `sys.ledger.list` | `handleSysLedgerList` | Lists the ledger of dispatched syscalls, newest first, paged by `cursor`. Each line carries who, where, the call, its arguments as sent (JSON text, cut at 16 KB), the outcome, and duration; ai calls add tokens and cost. Non-root sees the lines of its owning human; root sees all. Filters: `pid`, `target`, `callPrefix`, `since`, `until`. |
 | `sys.oauth.start` | `handleSysOAuthStart` | Starts an OAuth authorization-code + PKCE flow for an AI provider, MCP server, or generic integration. Returns an authorization URL and pending flow summary. Redirects must target `/oauth/callback` on the deployed GSV origin. Non-root is scoped to self. |
 | `sys.oauth.list` | `handleSysOAuthList` | Lists OAuth account summaries without access or refresh tokens. Non-root is scoped to self; root can list all or one uid. `includePending: true` also returns unexpired pending flows. |
 | `sys.oauth.forget` | `handleSysOAuthForget` | Deletes a stored OAuth account. Non-root can delete only own accounts. Missing or inaccessible accounts return `forgotten: false`. |
@@ -1387,7 +1387,7 @@ type SystemSyscalls = {
 
   "sys.ledger.list": {
     args: { pid?: string; target?: string; callPrefix?: string; since?: number; until?: number; limit?: number; cursor?: string };
-    result: { lines: Array<{ seq: number; timestamp: number; principalKind: string; uid: number; pid: string | null; runId: string | null; target: string; call: string; detail: string; outcome: ("ok" | "failed" | "denied" | "cancelled") | null; durationMs: number | null; tokens?: number | null; costNanoUsd?: number | null }>; nextCursor: string | null };
+    result: { lines: Array<{ seq: number; timestamp: number; principalKind: string; uid: number; pid: string | null; runId: string | null; target: string; call: string; args: string; outcome: ("ok" | "failed" | "denied" | "cancelled") | null; durationMs: number | null; tokens?: number | null; costNanoUsd?: number | null }>; nextCursor: string | null };
   };
 
   "sys.oauth.start": {

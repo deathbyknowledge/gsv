@@ -88,6 +88,13 @@ describe("argsText", () => {
     expect(ledgerTargetOf({ path: "~" })).toBe("gsv");
     expect(ledgerTargetOf({ target: "t".repeat(1_000) })).toHaveLength(LEDGER_ID_LIMIT);
   });
+
+  it("names the place a shell session continues at when the call does not repeat it", () => {
+    const sessions = (sessionId: string) => (sessionId === "s1" ? "laptop" : null);
+    expect(ledgerTargetOf({ sessionId: "s1", input: "ls" }, sessions)).toBe("laptop");
+    expect(ledgerTargetOf({ sessionId: "gone", input: "ls" }, sessions)).toBe("gsv");
+    expect(ledgerTargetOf({ sessionId: "s1", target: "desk", input: "ls" }, sessions)).toBe("desk");
+  });
 });
 
 describe("outcomeOfResponse", () => {

@@ -1488,7 +1488,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         ownerUid,
         pid: ctx.processId ?? (origin.type === "process" ? origin.id : null),
         runId: ctx.processRunId ?? null,
-        target: ledgerTargetOf(args),
+        target: ledgerTargetOf(args, (sessionId) => this.shellSessions.get(sessionId)?.targetId ?? null),
         call: frame.call,
         args: argsText(args),
       });
@@ -1598,8 +1598,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
     } catch (error) {
       console.warn(`[ledger] rotation failed, will retry: ${error instanceof Error ? error.name : "error"}`);
     }
+    // a re-arm that fails leaves the ledger unarmed, so the next line arms it again
     const more = this.ledger.needsRotation() || !drained;
-    await this.ensureLedgerRotation(more ? LEDGER_ROTATION_RETRY_MS : LEDGER_ROTATION_DAILY_MS, runningTaskId);
+    this.ledgerRotationArmed = await this.ensureLedgerRotation(more ? LEDGER_ROTATION_RETRY_MS : LEDGER_ROTATION_DAILY_MS, runningTaskId);
   }
 
   async scheduleManagedOutboundEnqueue(
