@@ -1568,12 +1568,17 @@ export class Kernel extends DurableObject<GatewayEnv> {
     }
   }
 
+  /** The ledger's housekeeping: stale lines close, a window over its bound rotates, retention applies to what stayed. */
   async onLedgerRotate(reason: string, runningTaskId?: string): Promise<void> {
     try {
+      const closed = this.ledger.closeStale();
       const segments = await this.ledger.rotate();
+      const expired = this.ledger.pruneExpired();
       const dropped = await this.ledger.pruneMissingSegments();
-      if (segments.length > 0 || dropped > 0) {
-        console.log(`[ledger] rotated ${segments.length} segment(s) (${reason}); dropped ${dropped} expired index entries`);
+      if (closed > 0 || segments.length > 0 || expired > 0 || dropped > 0) {
+        console.log(
+          `[ledger] closed ${closed} stale, rotated ${segments.length} segment(s), expired ${expired} line(s) (${reason}); dropped ${dropped} index entries`,
+        );
       }
     } catch (error) {
       console.warn(`[ledger] rotation failed, will retry: ${error instanceof Error ? error.name : "error"}`);

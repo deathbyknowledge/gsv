@@ -7,6 +7,7 @@ import {
   LEDGER_DETAIL_LIMIT,
   LEDGER_ID_LIMIT,
   LEDGER_INDEX_SET_LIMIT,
+  LEDGER_RETENTION_MS,
   LEDGER_SEGMENTS_PER_READ,
   LEDGER_SEGMENT_ROWS,
   LEDGER_WINDOW_AGE_MS,
@@ -78,6 +79,9 @@ describe("redactDetail", () => {
     expect(redactShellInput('curl -H "Authorization: Bearer abc" https://x.test/a?b=c')).toBe("curl");
     expect(redactShellInput("curl https://user:pw@x.test/path?token=1#frag")).toBe("curl https://x.test/path");
     expect(redactShellInput("ls -la ~/Downloads")).toBe("ls");
+    expect(redactShellInput("grep -r 'secret phrase' ~/notes")).toBe("grep");
+    expect(redactShellInput("rg secret notes.md")).toBe("rg");
+    expect(redactShellInput("sed 's/old/new/' f.txt")).toBe("sed");
     expect(redactShellInput("cp a.txt b.txt")).toBe("cp a.txt");
     expect(redactShellInput("git --data=x commit")).toBe("git");
     expect(redactShellInput("export OPENAI_API_KEY=sk-live-secret")).toBe("export");
@@ -171,7 +175,6 @@ describe("LedgerStore", () => {
         if (i !== 5) store.complete(requestId, { outcome: "ok" }, now - LEDGER_WINDOW_AGE_MS - 500 + i);
       }
       store.append(entry({ requestId: "fresh", timestamp: now - 1_000 }));
-      expect(store.needsRotation(now)).toBe(true);
 
       const result = await store.rotateOnce(now);
       expect(result.rotated).toBe(true);
@@ -183,7 +186,29 @@ describe("LedgerStore", () => {
       expect(body?.split("\n").filter(Boolean)).toHaveLength(6);
       // the line still open past the window age left as cancelled
       expect(body).toContain('"outcome":"cancelled"');
-      expect(store.needsRotation(now)).toBe(false);
+    });
+  });
+
+  it("rotates on the row bound alone, and the alarm closes stale lines and applies retention in place", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const memory = new MemoryBucket();
+      const store = new LedgerStore(sql, storage, bucketOf(memory));
+      const now = 100_000_000_000;
+      store.append(entry({ requestId: "ancient", timestamp: now - LEDGER_RETENTION_MS - 1_000 }));
+      store.complete("ancient", { outcome: "ok" }, now - LEDGER_RETENTION_MS - 900);
+      store.append(entry({ requestId: "stale-open", timestamp: now - LEDGER_WINDOW_AGE_MS - 1_000 }));
+      store.append(entry({ requestId: "fresh", timestamp: now - 10 }));
+      // a quiet installation never writes a segment, however old its lines
+      expect(store.needsRotation()).toBe(false);
+      expect(await store.rotate(now)).toEqual([]);
+      expect(memory.objects.size).toBe(0);
+      expect(store.closeStale(now)).toBe(1);
+      expect(store.pruneExpired(now)).toBe(1);
+      const { lines } = await store.list({ ownerUid: 1000, limit: 10 });
+      expect(lines.map((line) => [line.seq, line.outcome])).toEqual([
+        [3, null],
+        [2, "cancelled"],
+      ]);
     });
   });
 
@@ -250,7 +275,7 @@ describe("LedgerStore", () => {
       const first = await store.rotateOnce(now);
       expect(first.rotated && first.segment.rowCount).toBe(LEDGER_SEGMENT_ROWS);
       expect(store.windowCount()).toBe(LEDGER_WINDOW_ROWS + 10 - LEDGER_SEGMENT_ROWS);
-      expect((await store.rotateOnce(now)).rotated).toBe(false);
+      expect((await store.rotate(now)).length).toBe(0);
     });
   });
 
@@ -478,8 +503,11 @@ describe("rotation scheduling", () => {
       expect(daily).toHaveLength(1);
       expect(daily[0].time).toBeGreaterThan(nowSeconds + 60 * 60);
 
-      // a line past the window age while storage refuses writes: the retry is armed, not the daily run
-      kernel.ledger.append(entry({ requestId: "stale", timestamp: Date.now() - LEDGER_WINDOW_AGE_MS - 1_000 }));
+      // a window over its bound while storage refuses writes: the retry is armed, not the daily run
+      for (let i = 0; i <= LEDGER_WINDOW_ROWS; i += 1) {
+        kernel.ledger.append(entry({ requestId: `r${i}`, timestamp: Date.now() - 1_000 }));
+        kernel.ledger.complete(`r${i}`, { outcome: "ok" });
+      }
       kernel.ledger.bucket = {
         put: async () => {
           throw new Error("storage unavailable");
@@ -489,7 +517,7 @@ describe("rotation scheduling", () => {
       };
       await kernel.ensureLedgerRotation(0);
       await kernel.alarm();
-      expect(kernel.ledger.windowCount()).toBe(1);
+      expect(kernel.ledger.windowCount()).toBe(LEDGER_WINDOW_ROWS + 1);
       const retry = pendingRotations(state.storage.sql);
       expect(retry).toHaveLength(1);
       expect(retry[0].time).toBeGreaterThan(nowSeconds);

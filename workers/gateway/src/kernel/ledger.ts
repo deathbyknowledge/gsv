@@ -16,6 +16,8 @@ import type { SysLedgerLine, SysLedgerListArgs, SysLedgerListResult, SysLedgerOu
 
 export const LEDGER_WINDOW_ROWS = 5_000;
 export const LEDGER_WINDOW_AGE_MS = 24 * 60 * 60 * 1000;
+/** Lines older than this leave the window without a segment; keep it equal to the bucket's lifecycle rule. */
+export const LEDGER_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 export const LEDGER_SEGMENT_ROWS = 2_000;
 export const LEDGER_DETAIL_LIMIT = 200;
 export const LEDGER_ID_LIMIT = 128;
@@ -78,7 +80,7 @@ export type LedgerQuery = {
 };
 
 export type RotationResult =
-  | { rotated: false; reason: "within-bounds" | "nothing-closed" }
+  | { rotated: false; reason: "nothing-closed" }
   | { rotated: true; segment: LedgerSegment };
 
 type WindowRow = {
@@ -179,7 +181,8 @@ const CONTENT_FLAGS = [
 ];
 
 /** Commands whose arguments are content: only the word is kept. */
-const CONTENT_COMMANDS = new Set(["echo", "printf"]);
+/** Commands whose first argument is content (a pattern, an expression, a message) rather than a place. */
+const CONTENT_COMMANDS = new Set(["echo", "printf", "grep", "egrep", "fgrep", "rg", "ag", "ack", "sed", "awk", "gawk"]);
 
 function isContentFlag(token: string): boolean {
   return CONTENT_FLAGS.some((flag) => token === flag || token.startsWith(`${flag}=`));
@@ -499,11 +502,22 @@ export class LedgerStore {
     return row?.ts ?? null;
   }
 
-  /** True when the window holds more rows than its bound, or rows older than its age. */
-  needsRotation(now = Date.now()): boolean {
-    if (this.windowCount() > LEDGER_WINDOW_ROWS) return true;
-    const oldest = this.oldestTimestamp();
-    return oldest !== null && now - oldest > LEDGER_WINDOW_AGE_MS;
+  /** True when the window holds more rows than its bound. Age alone never rotates: a quiet installation keeps its lines in SQL. */
+  needsRotation(): boolean {
+    return this.windowCount() > LEDGER_WINDOW_ROWS;
+  }
+
+  /** Closes as cancelled every line still open past the window age; returns how many. */
+  closeStale(now = Date.now()): number {
+    return this.sql.exec(
+      "UPDATE ledger_window SET outcome = 'cancelled', duration_ms = NULL WHERE outcome IS NULL AND ts < ?",
+      now - LEDGER_WINDOW_AGE_MS,
+    ).rowsWritten;
+  }
+
+  /** Drops lines past retention that never needed a segment, so the window keeps the bucket's promise; returns how many. */
+  pruneExpired(now = Date.now()): number {
+    return this.sql.exec("DELETE FROM ledger_window WHERE ts < ?", now - LEDGER_RETENTION_MS).rowsWritten;
   }
 
   /* ---------- rotation ---------- */
@@ -516,10 +530,10 @@ export class LedgerStore {
    * the window: that is what keeps a read newest-first across the two. An open
    * line older than the window age is closed as cancelled on the way out. The
    * rows are captured before the object write, and only those seqs are
-   * deleted; a failed object write leaves the window untouched.
+   * deleted; a failed object write leaves the window untouched. Whether to
+   * rotate at all is `rotate`'s decision; this moves one segment when asked.
    */
   async rotateOnce(now = Date.now()): Promise<RotationResult> {
-    if (!this.needsRotation(now)) return { rotated: false, reason: "within-bounds" };
     const cutoff = now - LEDGER_WINDOW_AGE_MS;
     const rows = [...this.sql.exec<WindowRow>(
       `SELECT * FROM ledger_window
@@ -581,10 +595,11 @@ export class LedgerStore {
     return { rotated: true, segment };
   }
 
-  /** Rotates until the window is within bounds or the per-alarm budget is spent. */
+  /** Rotates while the window is over its row bound, until the per-alarm budget is spent. */
   async rotate(now = Date.now()): Promise<LedgerSegment[]> {
     const written: LedgerSegment[] = [];
     for (let i = 0; i < ROTATIONS_PER_ALARM; i += 1) {
+      if (!this.needsRotation()) break;
       const result = await this.rotateOnce(now);
       if (!result.rotated) break;
       written.push(result.segment);

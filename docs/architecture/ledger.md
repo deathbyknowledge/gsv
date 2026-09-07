@@ -58,11 +58,17 @@ its line. The dispatch path only inserts and, on the Kernel's first line and
 every hundredth after, counts the window to keep a rotation armed; nothing
 else runs inline.
 
-The window is bounded to 5,000 lines or 24 hours, whichever comes first.
-Exactly one rotation task is pending at any time, keyed by its callback and
-payload: a row-bound crossing moves the pending task nearer, never adds to it,
-and the task re-arms itself once when it runs, daily, or a minute later while
-the window is still over its bound, as after a failed write. The running task
+The window is bounded to 5,000 lines. Age alone never rotates: a quiet
+installation keeps every line in SQL and never writes a segment, so segments
+are always full and a read of a quiet history never leaves the Kernel. The
+daily task does the housekeeping that age does call for: a line still open
+after 24 hours closes as `cancelled` in place, and a line older than the
+retention period is deleted from the window, the same 90 days the bucket
+promises for segments. Exactly one rotation task is pending at any time, keyed
+by its callback and payload: a row-bound crossing moves the pending task
+nearer, never adds to it, and the task re-arms itself once when it runs,
+daily, or a minute later while the window is still over its bound, as after a
+failed write. The running task
 still has its row while it runs, so the re-arm names it and replaces it rather
 than mistaking it for a pending one.
 
@@ -97,7 +103,9 @@ wrangler r2 bucket lifecycle add gsv-storage --prefix "ledger/" --expire-days 90
 
 Lifecycle rules are bucket configuration, not Worker configuration, so the
 deployment does not declare them. The alarm drops index entries whose object
-is gone.
+is gone, and deletes window lines past the same age, so retention holds
+whether or not a line ever reached a segment; the constant in `ledger.ts`
+and the rule on the bucket are meant to say the same number.
 
 ## Reading
 
