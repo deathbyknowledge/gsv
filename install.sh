@@ -18,6 +18,14 @@ INSTALL_DIR_SOURCE=""
 DESKTOP_MANAGED_DAEMON=0
 CHANNEL="${GSV_CHANNEL:-stable}"
 VERSION="${GSV_VERSION:-}"
+# Which parts of the distribution to install, in two groups that move as one:
+# the host pair (`gsv,gsvd`, what the daemon's unattended update passes so
+# Desktop is never swapped under itself) and Desktop with its helpers, which
+# share private protocols. A person installs everything.
+ALL_COMPONENTS="gsv,gsvd,gsv-desktop,gsv-transcribe,gsv-vision"
+HOST_GROUP="gsv gsvd"
+DESKTOP_GROUP="gsv-desktop gsv-transcribe gsv-vision"
+COMPONENTS="${GSV_INSTALL_COMPONENTS:-$ALL_COMPONENTS}"
 if [ "$(uname -s)" = "Darwin" ]; then
     CONFIG_HOME="${HOME}/Library/Application Support"
 else
@@ -67,6 +75,71 @@ validate_channel() {
             *[!A-Za-z0-9._-]*) error "Invalid GSV_VERSION release tag"; exit 1 ;;
         esac
     fi
+}
+
+# Every member of a group is selected, or none is.
+validate_group() {
+    local group="$1" seen="$2" name="$3" member present=0 missing=0
+    for member in $group; do
+        case "$seen" in
+            *",${member},"*) present=1 ;;
+            *) missing=1 ;;
+        esac
+    done
+    if [ "$present" -eq 1 ] && [ "$missing" -eq 1 ]; then
+        error "$name move together: select all of them or none"
+        exit 1
+    fi
+}
+
+validate_components() {
+    local tokens component seen=","
+    tokens="$(printf '%s' "$COMPONENTS" | tr ',' ' ')"
+    # shellcheck disable=SC2086
+    set -- $tokens
+    [ "$#" -gt 0 ] || { error "GSV_INSTALL_COMPONENTS must name at least one component"; exit 1; }
+    for component in "$@"; do
+        case ",${ALL_COMPONENTS}," in
+            *",${component},"*) ;;
+            *) error "Unknown component in GSV_INSTALL_COMPONENTS: $component (choose from ${ALL_COMPONENTS})"; exit 1 ;;
+        esac
+        case "$seen" in
+            *",${component},"*) error "Component listed twice in GSV_INSTALL_COMPONENTS: $component"; exit 1 ;;
+        esac
+        seen="${seen}${component},"
+    done
+    # gsv controls gsvd and refuses a daemon of another version; Desktop and its helpers share private protocols
+    validate_group "$HOST_GROUP" "$seen" "gsv and gsvd"
+    validate_group "$DESKTOP_GROUP" "$seen" "gsv-desktop, gsv-transcribe and gsv-vision"
+    HOST_SELECTED=0
+    case "$seen" in *,gsv,*) HOST_SELECTED=1 ;; esac
+}
+
+# The release assets for the selected components, in install order. A
+# helper brings its license and provenance sidecars with it, so a subset is
+# complete, verified, and rolled back on its own.
+select_assets() {
+    ASSETS=()
+    TARGETS=()
+    EXECUTABLES=()
+    local component
+    for component in $(printf '%s' "$COMPONENTS" | tr ',' ' '); do
+        ASSETS+=("${component}-${PLATFORM}")
+        TARGETS+=("$component")
+        EXECUTABLES+=(1)
+        case "$component" in
+            gsv-transcribe)
+                ASSETS+=("gsv-transcribe-THIRD_PARTY.md")
+                TARGETS+=("gsv-transcribe-THIRD_PARTY.md")
+                EXECUTABLES+=(0)
+                ;;
+            gsv-vision)
+                ASSETS+=("gsv-vision-LICENSE.apache-2.0" "gsv-vision-PROVENANCE.md")
+                TARGETS+=("gsv-vision-LICENSE.apache-2.0" "gsv-vision-PROVENANCE.md")
+                EXECUTABLES+=(0 0)
+                ;;
+        esac
+    done
 }
 
 # Turn a plist string back into the path it encodes: the five XML entities
@@ -254,6 +327,12 @@ delegate_to_pinned_installer() {
         exit 1
     fi
     success "Verified installer for $VERSION"
+    # an installer from before component selection would install everything; refuse rather than surprise
+    if [ "$COMPONENTS" != "$ALL_COMPONENTS" ] && ! grep -q "GSV_INSTALL_COMPONENTS" "$installer_file"; then
+        rm -rf "$bootstrap_dir"
+        error "The installer for $VERSION predates component selection; unset GSV_INSTALL_COMPONENTS or pin a newer release"
+        exit 1
+    fi
 
     local status=0
     GSV_INSTALLER_RELEASE_BOUND=1 bash "$installer_file" || status=$?
@@ -359,8 +438,10 @@ service_snapshot() {
     SERVICE_WAS_ACTIVE=0
     SERVICE_WAS_ENABLED=0
     # Desktop owns that service and the executable it runs; do not stop,
-    # migrate, or restart it here.
+    # migrate, or restart it here. An install that does not touch the daemon
+    # leaves its service alone as well.
     [ "$DESKTOP_MANAGED_DAEMON" -eq 0 ] || return 0
+    [ "$HOST_SELECTED" -eq 1 ] || return 0
     if [ "$OS" = "linux" ]; then
         SERVICE_PATH="${CONFIG_HOME}/systemd/user/gsvd.service"
         if [ -f "$SERVICE_PATH" ]; then
@@ -563,6 +644,7 @@ cleanup() {
 main() {
     detect_platform
     validate_channel
+    validate_components
     delegate_to_pinned_installer
     resolve_install_dir
     local release_ref
@@ -572,30 +654,14 @@ main() {
     BACKUPS=()
     trap cleanup EXIT INT TERM
 
-    ASSETS=(
-        "gsv-${PLATFORM}"
-        "gsvd-${PLATFORM}"
-        "gsv-desktop-${PLATFORM}"
-        "gsv-transcribe-${PLATFORM}"
-        "gsv-vision-${PLATFORM}"
-        "gsv-transcribe-THIRD_PARTY.md"
-        "gsv-vision-LICENSE.apache-2.0"
-        "gsv-vision-PROVENANCE.md"
-    )
-    TARGETS=(
-        "gsv"
-        "gsvd"
-        "gsv-desktop"
-        "gsv-transcribe"
-        "gsv-vision"
-        "gsv-transcribe-THIRD_PARTY.md"
-        "gsv-vision-LICENSE.apache-2.0"
-        "gsv-vision-PROVENANCE.md"
-    )
-    EXECUTABLES=(1 1 1 1 1 0 0 0)
+    select_assets
 
     echo ""
-    echo -e "  ${BOLD}GSV host installer${NC} · ${PLATFORM} · ${release_ref}"
+    if [ "$COMPONENTS" = "$ALL_COMPONENTS" ]; then
+        echo -e "  ${BOLD}GSV host installer${NC} · ${PLATFORM} · ${release_ref}"
+    else
+        echo -e "  ${BOLD}GSV host installer${NC} · ${PLATFORM} · ${release_ref} · ${COMPONENTS}"
+    fi
     echo ""
     info "Downloading release manifest"
     local checksum_url
@@ -623,10 +689,13 @@ main() {
         exit 1
     fi
 
-    # The config must be complete before the replacement daemon starts, or
-    # it reads the old release channel until its next restart.
-    ensure_config_file
-    persist_release_channel
+    # The config belongs to the daemon and must be complete before its
+    # replacement starts, or it reads the old release channel until its next
+    # restart; an install without the daemon leaves it as it is.
+    if [ "$HOST_SELECTED" -eq 1 ]; then
+        ensure_config_file
+        persist_release_channel
+    fi
 
     if [ "$SERVICE_INSTALLED" -eq 1 ]; then
         if ! "${INSTALL_DIR}/gsv" daemon start >/dev/null || ! health_check_service; then
@@ -643,7 +712,11 @@ main() {
     INSTALL_IN_PROGRESS=0
     remove_backups
     configure_path
-    success "Installed gsv, gsvd, Desktop, and local helpers to $INSTALL_DIR"
+    if [ "$COMPONENTS" = "$ALL_COMPONENTS" ]; then
+        success "Installed gsv, gsvd, Desktop, and local helpers to $INSTALL_DIR"
+    else
+        success "Installed ${COMPONENTS//,/, } to $INSTALL_DIR"
+    fi
     echo ""
     if [ "$INSTALL_DIR_SOURCE" = "default" ] && ! path_already_configured; then
         echo "  Open a new shell, or run now: export PATH=\"\$HOME/.gsv/bin:\$PATH\""
