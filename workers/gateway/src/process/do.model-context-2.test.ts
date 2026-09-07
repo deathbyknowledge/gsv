@@ -572,6 +572,11 @@ describe("model context", () => {
           message.content.includes("Call the Send tool"),
         )?.content,
       ).toContain("[GSV EVENT]");
+      // the restriction survives a tick that loads its inputs and is interrupted before generating
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const inputs = await process.run.loadRunTickInputs(runId, process.runs.active);
+        expect(inputs?.tools.map((tool: any) => tool.name)).toEqual(["Send"]);
+      }
 
       await process.run.runTick(runId);
       await process.run.runTick(runId);

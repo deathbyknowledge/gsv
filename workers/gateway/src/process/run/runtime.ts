@@ -1314,6 +1314,10 @@ export class ProcessRun {
       assistantMetadata,
     );
     if (!assistantHistory) return null;
+    // the correction turn has produced its response; only now does the restriction lift, so an interrupted tick keeps it
+    if (this.host.runs.active?.runId === runId && this.host.runs.active.terminalCorrectionPending) {
+      this.host.mutateActiveRun(runId, (current) => ({ ...current, terminalCorrectionPending: undefined }));
+    }
     if (inferenceSpanId) {
       this.host.store.traces.setTraceSpanReference(inferenceSpanId, {
         kind: "message",
@@ -1864,7 +1868,6 @@ export class ProcessRun {
     const offeredRun = this.host.mutateActiveRun(runId, (current) => ({
       ...current,
       offeredToolNames,
-      terminalCorrectionPending: undefined,
     }));
     if (!offeredRun) return null;
     return { run: offeredRun, activeConfig, workTools: offeredWork, tools };
