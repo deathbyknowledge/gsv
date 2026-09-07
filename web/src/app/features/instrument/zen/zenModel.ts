@@ -164,7 +164,8 @@ export function outputText(syscall: string, output: ChatTranscriptValue | undefi
   return fallback;
 }
 
-/** Some rows carry the result as a JSON string in their text; read it as the result it is. */
+/** Some rows carry the result as a JSON string in their text; read it as the result it is.
+ * TODO: remove once process history stores tool results structured (typed history records) instead of the model-facing text. */
 function resultOf(row: ChatTranscriptRow): ChatTranscriptValue | undefined {
   if (row.toolOutput !== undefined && row.toolOutput !== null && !isStringValue(row.toolOutput)) return row.toolOutput;
   const text = isStringValue(row.toolOutput) ? row.toolOutput : row.text;

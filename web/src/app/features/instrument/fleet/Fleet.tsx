@@ -139,7 +139,8 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
       ),
   });
 
-  /* the Kernel's own ledger when the gateway has it; the history merge above stays as the fallback */
+  /* the Kernel's own ledger when the gateway has it; the history merge above stays as the fallback.
+   * TODO: remove the history merge (ledgerQuery, LEDGER_PROCESSES, mergeLedger of process lines) once feat/kernel-ledger is merged and deployed. */
   const sysLedgerQuery = useQuery({
     queryKey: [...LEDGER_QUERY_KEY, "sys"],
     enabled: connected,
@@ -685,6 +686,7 @@ function FileInspector({
         {error ? <p class="error">{error}</p> : null}
         {linkedEntries ? (
           <>
+            {/* TODO: remove once fix/symlink-dirs is in a released daemon; machines then report linked folders as folders */}
             <p class="note">This is a folder reached through a link; the place reported it as a file. What it holds:</p>
             <pre>{linkedEntries.map((entry) => `${entry.name}${entry.kind === "directory" ? "/" : ""}`).join("\n")}</pre>
           </>
