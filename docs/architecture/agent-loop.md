@@ -173,15 +173,15 @@ still preserved in assistant history with synthetic terminal tool results so
 provider history remains structurally valid and the next model turn can recover
 instead of silently completing or hanging.
 
-Only the fixed syscall-backed tool surface is exposed to the model. Current agent-visible
-tool names are `Read`, `Write`, `Edit`, `Delete`, `Search`, `Shell`, and `CodeMode`;
-they map to `fs.read`, `fs.write`, `fs.edit`, `fs.delete`, `fs.search`,
-`shell.exec`, and `codemode.exec`.
+The model sees a fixed surface of eight tools. Seven are syscall-backed: `Read`, `Write`, `Edit`,
+`Delete`, `Search`, `Shell`, and `CodeMode` map to `fs.read`, `fs.write`, `fs.edit`, `fs.delete`,
+`fs.search`, `shell.exec`, and `codemode.exec`. The eighth, `Send`, is the run control as a tool and
+backs no syscall; it is offered to human-facing runs only.
 
-The message and run-control commands are Process-owned Shell intrinsics. They do not add model tools,
-require `shell.exec` approval, target a device, or enlarge the composable tool surface. An explicit
-`message send --to ... --also` remains an ordinary approved shell operation for additional or
-cross-channel delivery.
+The message and run-control commands are Process-owned Shell intrinsics, the same actions as `Send`
+in command form. They do not require `shell.exec` approval, target a device, or enlarge the composable
+tool surface. An explicit `message send --to ... --also` remains an ordinary approved shell operation
+for additional or cross-channel delivery.
 
 `CodeMode` remains the programmable tool for multi-step orchestration. It can
 call `fs.*`, `shell.exec`, and connected MCP tools as generated async
