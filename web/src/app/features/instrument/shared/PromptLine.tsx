@@ -16,10 +16,14 @@ export type PromptLineProps = {
   autoFocus?: boolean;
   /** Called when the input gains or loses focus, so the surface can enter and leave browse mode. */
   onFocusChange?: (focused: boolean) => void;
+  /** Called with the current text on every keystroke, for pickers that follow the input. */
+  onInput?: (value: string) => void;
+  /** Runs before the line's own key handling; return true to consume the key. */
+  onKeyIntercept?: (event: KeyboardEvent, value: string) => boolean;
 };
 
 /** The TUI's prompt line: `who@where dir $` and one input. A sentence goes to the ship; `$` runs directly. */
-export function PromptLine({ who, where, dir, placeholder, disabled, onSubmit, onHistory, autoFocus, onFocusChange }: PromptLineProps) {
+export function PromptLine({ who, where, dir, placeholder, disabled, onSubmit, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }: PromptLineProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const submit = (event: JSX.TargetedEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -28,11 +32,13 @@ export function PromptLine({ who, where, dir, placeholder, disabled, onSubmit, o
     const text = input.value.trim();
     if (!text) return;
     input.value = "";
+    onInput?.("");
     onSubmit(text);
   };
   const onKeyDown = (event: KeyboardEvent) => {
     const input = inputRef.current;
     if (!input) return;
+    if (onKeyIntercept?.(event, input.value)) return;
     if (event.key === "Escape") {
       // Escape leaves the prompt, the way the TUI drops into browse mode; shortcuts work from there.
       event.preventDefault();
@@ -63,6 +69,7 @@ export function PromptLine({ who, where, dir, placeholder, disabled, onSubmit, o
         spellcheck={false}
         disabled={disabled}
         onKeyDown={onKeyDown}
+        onInput={() => onInput?.(inputRef.current?.value ?? "")}
         onFocus={() => onFocusChange?.(true)}
         onBlur={() => onFocusChange?.(false)}
         autoFocus={autoFocus}

@@ -203,6 +203,53 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
   const [openNotes, setOpenNotes] = useState<ReadonlySet<string>>(() => new Set());
   /* browse mode: null while the prompt has focus, else the index of the focused moment (the TUI's browse cursor) */
   const [browse, setBrowse] = useState<number | null>(null);
+  /* the place picker: shown while the prompt holds only "@" and a prefix; filtered as you type */
+  const [pickerQuery, setPickerQuery] = useState<string | null>(null);
+  const [pickerIndex, setPickerIndex] = useState(0);
+  const pickerPlaces = useMemo(() => {
+    if (pickerQuery === null) return [];
+    const all = [{ id: "gsv", label: "your cloud home", online: true }, ...places.filter((place) => place.id !== "gsv")];
+    const needle = pickerQuery.toLowerCase();
+    return all.filter((place) => !needle || place.id.toLowerCase().includes(needle) || place.label.toLowerCase().includes(needle)).slice(0, 8);
+  }, [pickerQuery, places]);
+  const onPromptInput = useCallback((value: string) => {
+    const match = value.match(/^@(\S*)$/);
+    setPickerQuery(match ? match[1] : null);
+    setPickerIndex(0);
+  }, []);
+  const pickPlace = useCallback((id: string) => {
+    setWhere(id);
+    setPickerQuery(null);
+    const input = promptRef.current?.querySelector("input");
+    if (input) input.value = "";
+  }, []);
+  const onPromptKey = useCallback(
+    (event: KeyboardEvent): boolean => {
+      if (pickerQuery === null || pickerPlaces.length === 0) return false;
+      if (event.key === "ArrowDown" || (event.key === "Tab" && !event.shiftKey)) {
+        event.preventDefault();
+        setPickerIndex((index) => (index + 1) % pickerPlaces.length);
+        return true;
+      }
+      if (event.key === "ArrowUp" || (event.key === "Tab" && event.shiftKey)) {
+        event.preventDefault();
+        setPickerIndex((index) => (index - 1 + pickerPlaces.length) % pickerPlaces.length);
+        return true;
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        pickPlace(pickerPlaces[pickerIndex].id);
+        return true;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setPickerQuery(null);
+        return true;
+      }
+      return false;
+    },
+    [pickPlace, pickerIndex, pickerPlaces, pickerQuery],
+  );
   const browseRef = useRef<number | null>(null);
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
@@ -765,8 +812,33 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
           {note ? <span class="is-err">{note}</span> : null}
         </div>
         <div ref={promptRef}>
+          {pickerQuery !== null && pickerPlaces.length > 0 ? (
+            <div class="zen-picker" role="listbox" aria-label="Places">
+              {pickerPlaces.map((place, index) => (
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={index === pickerIndex}
+                  class={`pick${index === pickerIndex ? " is-sel" : ""}`}
+                  key={place.id}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    pickPlace(place.id);
+                  }}
+                >
+                  <span class={`dot ${place.online ? "is-on" : "is-idle"}`} />
+                  <span class="label">{place.label}</span>
+                  <span class="id">@{place.id}</span>
+                </button>
+              ))}
+              <div class="hint">↑ ↓ choose · enter move the prompt · esc</div>
+            </div>
+          ) : null}
+
           <PromptLine
             onFocusChange={onPromptFocus}
+            onInput={onPromptInput}
+            onKeyIntercept={onPromptKey}
             who={who}
             where={where ?? "gsv"}
             dir="~"

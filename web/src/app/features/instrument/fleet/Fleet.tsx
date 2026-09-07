@@ -215,7 +215,9 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
   }, [rows, selected, initialRow]);
   useEffect(() => {
     if (!selected) return;
-    document.querySelector(`[data-row="${selected}"]`)?.scrollIntoView({ block: "nearest" });
+    const row = document.querySelector(`[data-row="${selected}"]`);
+    // ledger rows are display: contents and have no box of their own; their first cell does
+    (row?.firstElementChild ?? row)?.scrollIntoView({ block: "nearest" });
   }, [selected]);
   const selectedLine = useMemo(
     () => (selected?.startsWith("ledger:") ? shownLedger.find((line) => ledgerRow(line.id) === selected) ?? null : null),

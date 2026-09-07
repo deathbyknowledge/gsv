@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { ChatTranscriptRow, ChatTranscriptValue } from "../../chat/domain/transcript";
 
 /* ---------- the prompt line ---------- */
@@ -127,6 +128,39 @@ export function trimOutput(text: string): string {
   return `${clean.slice(0, OUTPUT_LIMIT)}\n… ${clean.length - OUTPUT_LIMIT} more characters`;
 }
 
+const shellResultSchema = z.object({ stdout: z.string().optional(), stderr: z.string().optional(), exitCode: z.number().nullable().optional() });
+const fileResultSchema = z.object({ content: z.string().optional(), entries: z.array(z.object({ name: z.string(), kind: z.string().optional() })).optional() });
+const searchResultSchema = z.object({ results: z.array(z.object({ path: z.string() })).optional(), matches: z.array(z.object({ path: z.string() })).optional() });
+
+/** The tool result as a person would read it: stdout and stderr for a command, content or names for files, never the transport JSON. */
+export function outputText(syscall: string, output: ChatTranscriptValue | undefined, fallback: string): string {
+  if (output === undefined || output === null) return fallback;
+  if (syscall === "shell.exec" || syscall.startsWith("codemode.")) {
+    const shell = shellResultSchema.safeParse(output);
+    if (shell.success) {
+      const stdout = shell.data.stdout ?? "";
+      const stderr = shell.data.stderr ?? "";
+      const text = stderr ? (stdout ? `${stdout}\n${stderr}` : stderr) : stdout;
+      const exit = shell.data.exitCode;
+      return text.trim() ? text : exit === 0 || exit === null || exit === undefined ? "" : `exit ${exit}`;
+    }
+  }
+  if (syscall === "fs.read") {
+    const file = fileResultSchema.safeParse(output);
+    if (file.success) {
+      if (file.data.content !== undefined) return file.data.content;
+      if (file.data.entries) return file.data.entries.map((entry) => `${entry.name}${entry.kind === "directory" ? "/" : ""}`).join("\n");
+    }
+  }
+  if (syscall === "fs.search") {
+    const search = searchResultSchema.safeParse(output);
+    const hits = search.success ? (search.data.results ?? search.data.matches ?? []) : [];
+    if (hits.length > 0) return hits.map((hit) => hit.path).join("\n");
+  }
+  if (isStringValue(output)) return output;
+  return fallback;
+}
+
 function callFromRow(row: ChatTranscriptRow): ActivityCall {
   const syscall = row.toolSyscall ?? row.toolName ?? "call";
   const finished = row.role === "toolResult" || row.status === "done" || row.status === "error";
@@ -135,7 +169,7 @@ function callFromRow(row: ChatTranscriptRow): ActivityCall {
     callId: row.toolCallId ?? row.id,
     syscall,
     summary,
-    output: finished ? trimOutput(row.text) : "",
+    output: finished ? trimOutput(outputText(syscall, row.toolOutput, row.text)) : "",
     finished,
     failed: row.isError === true || row.toolOutcome === "failed" || row.toolOutcome === "denied",
   };

@@ -9,6 +9,7 @@ import {
   momentsFromRows,
   momentsFromConversation,
   isMessageSend,
+  outputText,
   parsePromptInput,
   placeLabel,
   resolvePlace,
@@ -216,5 +217,17 @@ describe("isMessageSend", () => {
     expect(isMessageSend(row("message ana <<GSV_MESSAGE\nhi\nGSV_MESSAGE"))).toBe(true);
     expect(isMessageSend(row("gsv message esteve hello"))).toBe(true);
     expect(isMessageSend(row("ls ~/messages"))).toBe(false);
+  });
+});
+
+describe("outputText", () => {
+  it("reads a command's stdout and stderr instead of the transport json", () => {
+    expect(outputText("shell.exec", { ok: true, stdout: "a\nb\n", stderr: "", exitCode: 0 }, "{json}")).toBe("a\nb\n");
+    expect(outputText("shell.exec", { stdout: "", stderr: "no such file", exitCode: 1 }, "")).toBe("no such file");
+    expect(outputText("shell.exec", { stdout: "", stderr: "", exitCode: 0 }, "")).toBe("");
+  });
+  it("lists a directory and shows a file", () => {
+    expect(outputText("fs.read", { ok: true, entries: [{ name: "Downloads", kind: "directory" }, { name: "a.txt", kind: "file" }] }, "")).toBe("Downloads/\na.txt");
+    expect(outputText("fs.read", { content: "hello" }, "")).toBe("hello");
   });
 });
