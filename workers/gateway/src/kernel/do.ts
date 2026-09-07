@@ -67,7 +67,7 @@ import {
 import { dispatch, type DispatchDeps } from "./dispatch";
 import { raceWithAbort } from "../shared/abort";
 import type { KernelContext } from "./context";
-import { requirePrincipal } from "./context";
+import { resolveCallerOwnerUid, principalOf, requirePrincipal } from "./context";
 import {
   connectedPeerContext,
   httpPeerContext,
@@ -117,6 +117,12 @@ import {
 } from "./outbound-mail";
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
+import { LEDGER_PRUNE_PER_ALARM, LEDGER_WINDOW_ROWS, LedgerStore, argsText, ledgerTargetOf, outcomeOfResponse, usageOfResponse, type JsonLike } from "./ledger";
+
+const LEDGER_ROTATION_TASK = "rotate";
+const LEDGER_ROTATION_SOON_MS = 5_000;
+const LEDGER_ROTATION_RETRY_MS = 60_000;
+const LEDGER_ROTATION_DAILY_MS = 24 * 60 * 60 * 1000;
 import { SERVER_VERSION } from "../version";
 import { parseInstallationId } from "../installation/identity";
 import type { InstallationIdentity } from "../installation/identity";
@@ -208,7 +214,8 @@ type KernelTask =
   | {
       callback: "onResponsibilityWake";
       payload: { ownerUid: number; generation: number };
-    };
+    }
+  | { callback: "onLedgerRotate"; payload: string };
 
 type KernelTaskCallback = KernelTask["callback"];
 
@@ -279,6 +286,7 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
       generation: z.number().int().nonnegative(),
     }),
   }),
+  z.object({ callback: z.literal("onLedgerRotate"), payload: z.string() }),
 ]);
 const processMessageStreamSignalSchema = z.object({
   type: z.literal("sig"),
@@ -366,6 +374,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly config: ConfigStore;
   readonly targets: TargetRegistry;
   readonly routes: RoutingTable;
+  readonly ledger: LedgerStore;
   readonly shellSessions: ShellSessionStore;
   readonly procs: ProcessRegistry;
   readonly conversations: ConversationRegistry;
@@ -435,6 +444,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.targets = new TargetRegistry(sql);
 
     this.routes = new RoutingTable(sql);
+    this.ledger = new LedgerStore(sql, ctx.storage, this.storage);
 
     this.shellSessions = new ShellSessionStore(sql);
 
@@ -508,6 +518,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
           true,
         );
       }
+      // every start of the Kernel makes sure the ledger's daily housekeeping is pending
+      await this.ensureLedgerRotation(LEDGER_ROTATION_DAILY_MS);
     });
   }
 
@@ -678,6 +690,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
         return;
       case "onResponsibilityWake":
         await this.responsibilityRuntime.onResponsibilityWake(task.payload, task);
+        return;
+      case "onLedgerRotate":
+        await this.onLedgerRotate(task.payload, task.id);
         return;
     }
   }
@@ -1270,6 +1285,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       processRunId: options.processRunId,
       requestSignal: options.requestSignal,
       callerOwnerUid: options.callerOwnerUid,
+      ledger: this.ledger,
       serverVersion: SERVER_VERSION,
       defer: (promise) => this.ctx.waitUntil(promise),
       broadcastToUserUid: this.connectionRuntime.broadcastToUserUid.bind(this.connectionRuntime),
@@ -1359,14 +1375,20 @@ export class Kernel extends DurableObject<GatewayEnv> {
     const allowed = isInternalOnlySyscall(inputFrame.call)
       ? peer.provenance.kind === "process-registry"
       : peerAllowsCall(peer, inputFrame.call);
+    // The ledger line is written after the grant decision, with every client-controlled field capped by size;
+    // a denied call is recorded with its arguments and closed as denied.
+    this.recordLedgerDispatch(inputFrame, ctx, origin);
     if (!allowed) {
-      return errFrame(inputFrame.id, 403, `Permission denied: ${inputFrame.call}`);
+      const denied = errFrame(inputFrame.id, 403, `Permission denied: ${inputFrame.call}`);
+      this.completeLedger(denied);
+      return denied;
     }
 
     const callerSignal = ctx.requestSignal && options.signal && ctx.requestSignal !== options.signal
       ? AbortSignal.any([ctx.requestSignal, options.signal])
       : options.signal ?? ctx.requestSignal;
     if (callerSignal?.aborted) {
+      this.completeLedgerAs(inputFrame.id, "cancelled");
       if (options.throwOnCancel) throw requestAbortError(callerSignal.reason);
       return null;
     }
@@ -1375,11 +1397,13 @@ export class Kernel extends DurableObject<GatewayEnv> {
     try {
       controller = this.transport.registerActiveRequest(origin, inputFrame.id);
     } catch (error) {
-      return errFrame(
+      const refused = errFrame(
         inputFrame.id,
         error instanceof RequestCancelledError ? 499 : 409,
         error instanceof Error ? error.message : String(error),
       );
+      this.completeLedgerAs(inputFrame.id, error instanceof RequestCancelledError ? "cancelled" : "failed");
+      return refused;
     }
     const requestSignal = callerSignal
       ? AbortSignal.any([controller.signal, callerSignal])
@@ -1432,9 +1456,13 @@ export class Kernel extends DurableObject<GatewayEnv> {
           },
         );
       }
-      if (response) this.applyPostDispatchEffects(frame, response);
+      if (response) {
+        this.applyPostDispatchEffects(frame, response);
+        this.completeLedger(response);
+      }
       return response;
     } catch (error) {
+      this.completeLedgerAs(frame.id, requestSignal.aborted ? "cancelled" : "failed");
       if (!requestSignal.aborted || options.throwOnCancel) throw error;
       return null;
     } finally {
@@ -1443,7 +1471,134 @@ export class Kernel extends DurableObject<GatewayEnv> {
     }
   }
 
-                                                      async scheduleManagedOutboundEnqueue(
+                                                      /* ---------- the ledger: one line per dispatched syscall ---------- */
+
+  private readonly ledgerSignals = new Map<number, { timer: ReturnType<typeof setTimeout>; count: number; seq: number }>();
+
+  private recordLedgerDispatch(frame: RequestFrame, ctx: KernelContext, origin: RouteOrigin): void {
+    try {
+      const principal = principalOf(ctx);
+      if (!principal) return;
+      const ownerUid = resolveCallerOwnerUid(ctx);
+      // SAFETY: request args are the wire JSON the frame decoder accepted; the ledger keeps them as text.
+      const args = frame.args as JsonLike;
+      const seq = this.ledger.append({
+        requestId: frame.id,
+        timestamp: Date.now(),
+        principalKind: principal.kind,
+        uid: principal.account.uid,
+        ownerUid,
+        pid: ctx.processId ?? (origin.type === "process" ? origin.id : null),
+        runId: ctx.processRunId ?? null,
+        target: ledgerTargetOf(args, (sessionId) => this.shellSessions.get(sessionId)?.targetId ?? null),
+        call: frame.call,
+        args: argsText(args),
+      });
+      // a read of the ledger is a line like any other, but it does not signal: a surface that lists on every signal must not chase itself
+      this.noteLedgerAppend(ownerUid, seq, frame.call !== "sys.ledger.list");
+    } catch (error) {
+      console.warn(`[ledger] append failed: ${error instanceof Error ? error.name : "error"}`);
+    }
+  }
+
+  /** Closes the line for a response, whether it came back inline or over a route. Idempotent. */
+  completeLedger(frame: ResponseFrame): void {
+    try {
+      this.ledger.complete(frame.id, { outcome: outcomeOfResponse(frame), ...usageOfResponse(frame) });
+    } catch (error) {
+      console.warn(`[ledger] complete failed: ${error instanceof Error ? error.name : "error"}`);
+    }
+  }
+
+  completeLedgerAs(requestId: string, outcome: "cancelled" | "failed"): void {
+    try {
+      this.ledger.complete(requestId, { outcome });
+    } catch (error) {
+      console.warn(`[ledger] complete failed: ${error instanceof Error ? error.name : "error"}`);
+    }
+  }
+
+  /** Coalesces the tail signal to a few per second per owner, and keeps a rotation armed. */
+  private noteLedgerAppend(ownerUid: number, seq: number, signal: boolean): void {
+    for (const uid of signal ? (ownerUid === 0 ? [0] : [ownerUid, 0]) : []) {
+      const pending = this.ledgerSignals.get(uid);
+      if (pending) {
+        pending.count += 1;
+        pending.seq = seq;
+        continue;
+      }
+      const timer = setTimeout(() => {
+        const entry = this.ledgerSignals.get(uid);
+        this.ledgerSignals.delete(uid);
+        if (!entry) return;
+        this.connectionRuntime.broadcastToUserUid(uid, "ledger.appended", { seq: entry.seq, count: entry.count });
+      }, 500);
+      this.ledgerSignals.set(uid, { timer, count: 1, seq });
+    }
+    void this.armLedgerRotation(seq);
+  }
+
+  /**
+   * The daily task is armed when the Kernel starts; every hundredth line
+   * counts the window and pulls the task nearer when it is over its bound.
+   */
+  async armLedgerRotation(seq: number): Promise<void> {
+    if (seq % 100 !== 0) return;
+    if (this.ledger.windowCount() > LEDGER_WINDOW_ROWS) await this.ensureLedgerRotation(LEDGER_ROTATION_SOON_MS);
+  }
+
+  /**
+   * Exactly one pending rotation task, keyed by its callback and payload. A
+   * nearer due replaces the pending task; a later one never adds to it. The
+   * task that is running still has its row while it runs, so re-arming from
+   * inside it names that row, which is then replaced rather than kept.
+   */
+  async ensureLedgerRotation(delayMs: number, runningTaskId?: string): Promise<boolean> {
+    const due = Date.now() + delayMs;
+    try {
+      const existing = await this.schedule(new Date(due), "onLedgerRotate", LEDGER_ROTATION_TASK, { idempotent: true });
+      // task times are whole seconds; a pending task due no later than this one stands
+      if (existing.id !== runningTaskId && existing.time * 1_000 <= due + 1_000) return true;
+      await this.cancelSchedule(existing.id);
+      await this.schedule(new Date(due), "onLedgerRotate", LEDGER_ROTATION_TASK, { idempotent: true });
+      return true;
+    } catch (error) {
+      console.warn(`[ledger] could not schedule rotation: ${error instanceof Error ? error.name : "error"}`);
+      return false;
+    }
+  }
+
+  /**
+   * The ledger's housekeeping: stale lines close, lines past retention leave
+   * the window before anything rotates, so no segment carries them, a window
+   * over its bound rotates, and segments past retention go. It comes back in
+   * a minute while there is more to do, and daily otherwise.
+   */
+  async onLedgerRotate(reason: string, runningTaskId?: string): Promise<void> {
+    let drained = true;
+    try {
+      const closed = this.ledger.closeStale();
+      const expired = this.ledger.pruneExpired();
+      const segments = await this.ledger.rotate();
+      const expiredSegments = await this.ledger.pruneExpiredSegments();
+      drained = expiredSegments < LEDGER_PRUNE_PER_ALARM;
+      const dropped = await this.ledger.pruneMissingSegments();
+      if (closed > 0 || segments.length > 0 || expired > 0 || expiredSegments > 0 || dropped > 0) {
+        console.log(
+          `[ledger] closed ${closed} stale, rotated ${segments.length}, expired ${expired} line(s) and ${expiredSegments} segment(s) (${reason}); dropped ${dropped} index entries`,
+        );
+      }
+    } catch (error) {
+      drained = false;
+      console.warn(`[ledger] housekeeping failed, will retry: ${error instanceof Error ? error.name : "error"}`);
+    }
+    // a re-arm that fails is thrown so the task scheduler retries the run; failing that, the next start of the Kernel arms again
+    const more = this.ledger.needsRotation() || !drained;
+    const armed = await this.ensureLedgerRotation(more ? LEDGER_ROTATION_RETRY_MS : LEDGER_ROTATION_DAILY_MS, runningTaskId);
+    if (!armed) throw new Error("ledger housekeeping could not re-arm");
+  }
+
+  async scheduleManagedOutboundEnqueue(
     outboundId: string,
     dueAtMs: number,
   ): Promise<void> {

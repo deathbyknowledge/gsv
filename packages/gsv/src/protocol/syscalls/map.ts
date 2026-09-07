@@ -119,6 +119,8 @@ import type {
   SysConfigSetResult,
   SysTargetDeleteArgs,
   SysTargetDeleteResult,
+  SysLedgerListArgs,
+  SysLedgerListResult,
   SysTargetGetArgs,
   SysTargetGetResult,
   SysTargetListArgs,
@@ -382,6 +384,7 @@ export type SyscallDomains = {
   "sys.target.get": { args: SysTargetGetArgs; result: SysTargetGetResult };
   "sys.target.update": { args: SysTargetUpdateArgs; result: SysTargetUpdateResult };
   "sys.target.delete": { args: SysTargetDeleteArgs; result: SysTargetDeleteResult };
+  "sys.ledger.list": { args: SysLedgerListArgs; result: SysLedgerListResult };
   "sys.oauth.start": { args: SysOAuthStartArgs; result: SysOAuthStartResult };
   "sys.oauth.device.start": { args: SysOAuthDeviceStartArgs; result: SysOAuthDeviceStartResult };
   "sys.oauth.device.poll": { args: SysOAuthDevicePollArgs; result: SysOAuthDevicePollResult };

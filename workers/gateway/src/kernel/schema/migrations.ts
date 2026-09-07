@@ -75,6 +75,7 @@ import {
 } from "./v036_supervise_delegated_ipc_calls";
 import { KERNEL_V037_CUT_OVER_TO_PROTOCOL_4 } from "./v037_cut_over_to_protocol_4";
 import { KERNEL_V038_RENAME_DEVICES_TO_TARGETS } from "./v038_rename_devices_to_targets";
+import { KERNEL_V039_ADD_LEDGER } from "./v039_add_ledger";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -118,6 +119,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V036_SUPERVISE_DELEGATED_IPC_CALLS,
   KERNEL_V037_CUT_OVER_TO_PROTOCOL_4,
   KERNEL_V038_RENAME_DEVICES_TO_TARGETS,
+  KERNEL_V039_ADD_LEDGER,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {
