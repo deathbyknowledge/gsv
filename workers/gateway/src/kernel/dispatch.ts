@@ -47,6 +47,7 @@ import {
 import { handleAccountCreate, handleAccountList } from "./agents";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysTargetDelete, handleSysTargetGet, handleSysTargetList, handleSysTargetUpdate } from "./sys/target";
+import { handleSysLedgerList } from "./sys/ledger";
 import { normalizeNetFetchTimeoutMs } from "./net";
 import { handleSysBootstrap } from "./sys/bootstrap";
 import { handleSysSetupAssist } from "./sys/setup-assist";
@@ -541,6 +542,9 @@ async function dispatchKernel(
         break;
       case "sys.target.delete":
         data = handleSysTargetDelete(frame.args, ctx);
+        break;
+      case "sys.ledger.list":
+        data = await handleSysLedgerList(frame.args, ctx);
         break;
       case "sys.oauth.start":
         data = await handleSysOAuthStart(frame.args, ctx);

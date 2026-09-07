@@ -141,6 +141,7 @@ describe("CapabilityStore", () => {
         "sys.bootstrap",
         "sys.config.get",
         "sys.config.set",
+        "sys.ledger.list",
         "sys.link",
         "sys.link.consume",
         "sys.link.list",
