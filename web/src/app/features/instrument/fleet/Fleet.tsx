@@ -33,7 +33,6 @@ import {
   processStateTone,
   recentlyTouched,
   relativeTime,
-  rowKeys,
   runsTodayByPlace,
   targetRow,
   type LedgerLine,
@@ -74,6 +73,11 @@ function useNow(): number {
 }
 
 /** The Fleet distance: places, processes, the ledger, and files, with an inspector for the selected row. */
+const ROW_PREFIXES = ["target:", "proc:", "ledger:", "more:", "dir:", "file:"];
+function isFleetRow(value: string | undefined): value is FleetRow {
+  return value !== undefined && ROW_PREFIXES.some((prefix) => value.startsWith(prefix));
+}
+
 function outcomeWord(outcome: string): string {
   if (outcome === "completed") return "done";
   if (outcome === "held" || outcome === "pending") return "held";
@@ -204,15 +208,17 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
 
   const shownLedger = useMemo(() => mergeLedger([localLines, ledger], LEDGER_CAP), [localLines, ledger]);
   const moreRow: FleetRow = "more:processes";
-  const rows = useMemo(() => {
-    const keys = rowKeys(places, processes.slice(0, processLimit), []);
-    if (processes.length > PROCESS_PAGE) keys.push(moreRow);
-    return [...keys, ...rowKeys([], [], shownLedger)];
-  }, [places, processes, processLimit, shownLedger]);
+  /* the rows are whatever is on screen, in reading order: places, processes, the ledger, folders and files */
+  const manifestRef = useRef<HTMLDivElement>(null);
+  const visibleRows = useCallback((): FleetRow[] => {
+    const nodes = manifestRef.current?.querySelectorAll<HTMLElement>("[data-row]") ?? [];
+    return Array.from(nodes).map((node) => node.dataset.row).filter(isFleetRow);
+  }, []);
   useEffect(() => {
+    const rows = visibleRows();
     if (rows.length === 0) return;
     if (!selected || !rows.includes(selected)) setSelected(initialRow && rows.includes(initialRow) ? initialRow : rows[0]);
-  }, [rows, selected, initialRow]);
+  }, [places.length, processes.length, shownLedger.length, selected, initialRow, visibleRows]);
   useEffect(() => {
     if (!selected) return;
     const row = document.querySelector(`[data-row="${selected}"]`);
@@ -237,6 +243,7 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
         }
         return;
       }
+      const rows = visibleRows();
       if (event.metaKey || event.ctrlKey || event.altKey || rows.length === 0) return;
       const index = selected ? rows.indexOf(selected) : 0;
       if (event.key === "j" || event.key === "ArrowDown") {
@@ -251,6 +258,9 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
       } else if (event.key === "/") {
         event.preventDefault();
         openCmd();
+      } else if (event.key === "Enter" && selected && (selected.startsWith("dir:") || selected.startsWith("file:"))) {
+        event.preventDefault();
+        manifestRef.current?.querySelector<HTMLElement>(`[data-row="${selected}"]`)?.click();
       } else if (event.key === "Enter" && selected === moreRow) {
         event.preventDefault();
         setProcessLimit((limit) => (limit < processes.length ? limit + 20 : PROCESS_PAGE));
@@ -266,7 +276,7 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [rows, selected, openCmd, processes.length]);
+  }, [selected, openCmd, processes.length, visibleRows]);
 
   useEffect(() => {
     if (!selected) return;
@@ -311,7 +321,7 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
       </div>
 
       <div class="fleet-body">
-        <div class="fleet-manifest">
+        <div ref={manifestRef} class="fleet-manifest">
           <section class="fleet-block">
             <h2>
               <i /> Places <span class="count">{places.length}</span>
@@ -450,7 +460,7 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
                 </ul>
               ) : null}
               {places.map((place) => (
-                <PlaceTree key={place.id} place={place} enabled={connected && place.online} onOpenFile={setOpenFile} />
+                <PlaceTree key={place.id} place={place} enabled={connected && place.online} onOpenFile={setOpenFile} selectedRow={selected} onSelect={setSelected} />
               ))}
             </div>
           </section>
@@ -534,6 +544,8 @@ function DirNode({
   depth,
   enabled,
   onOpenFile,
+  selectedRow,
+  onSelect,
 }: {
   place: Place;
   path: string;
@@ -541,7 +553,10 @@ function DirNode({
   depth: number;
   enabled: boolean;
   onOpenFile: OpenFileHandler;
+  selectedRow: FleetRow | null;
+  onSelect: (row: FleetRow) => void;
 }) {
+  const rowKey: FleetRow = `dir:${place.id}:${path}`;
   const { client } = useGateway();
   const [open, setOpen] = useState(false);
   const listing = useQuery({
@@ -555,11 +570,15 @@ function DirNode({
   return (
     <div class={depth === 0 ? "" : "dir"}>
       <div
-        class={`place-head${open ? " is-open" : ""}`}
+        class={`place-head${open ? " is-open" : ""}${selectedRow === rowKey ? " is-sel" : ""}`}
         role="button"
         tabIndex={0}
         aria-expanded={open}
-        onClick={toggle}
+        data-row={rowKey}
+        onClick={() => {
+          onSelect(rowKey);
+          toggle();
+        }}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
@@ -578,11 +597,19 @@ function DirNode({
           {entries.slice(0, 60).map((entry) =>
             entry.kind === "directory" ? (
               <li key={entry.path}>
-                <DirNode place={place} path={entry.path} name={entry.name} depth={depth + 1} enabled={enabled} onOpenFile={onOpenFile} />
+                <DirNode place={place} path={entry.path} name={entry.name} depth={depth + 1} enabled={enabled} onOpenFile={onOpenFile} selectedRow={selectedRow} onSelect={onSelect} />
               </li>
             ) : (
               <li key={entry.path} class="f">
-                <button type="button" class="file" onClick={() => onOpenFile({ target: place.id, path: entry.path, name: entry.name })}>
+                <button
+                  type="button"
+                  class={`file${selectedRow === `file:${place.id}:${entry.path}` ? " is-sel" : ""}`}
+                  data-row={`file:${place.id}:${entry.path}`}
+                  onClick={() => {
+                    onSelect(`file:${place.id}:${entry.path}`);
+                    onOpenFile({ target: place.id, path: entry.path, name: entry.name });
+                  }}
+                >
                   {entry.name}
                 </button>
               </li>
@@ -596,9 +623,9 @@ function DirNode({
   );
 }
 
-function PlaceTree({ place, enabled, onOpenFile }: { place: Place; enabled: boolean; onOpenFile: OpenFileHandler }) {
+function PlaceTree({ place, enabled, onOpenFile, selectedRow, onSelect }: { place: Place; enabled: boolean; onOpenFile: OpenFileHandler; selectedRow: FleetRow | null; onSelect: (row: FleetRow) => void }) {
   // the cloud home understands "~"; a machine reads relative to the daemon's home, so "." is the same place there
-  return <DirNode place={place} path={place.id === CLOUD_TARGET_ID ? "~" : "."} name={place.label} depth={0} enabled={enabled} onOpenFile={onOpenFile} />;
+  return <DirNode place={place} path={place.id === CLOUD_TARGET_ID ? "~" : "."} name={place.label} depth={0} enabled={enabled} onOpenFile={onOpenFile} selectedRow={selectedRow} onSelect={onSelect} />;
 }
 
 const PREVIEW_LINES = 40;

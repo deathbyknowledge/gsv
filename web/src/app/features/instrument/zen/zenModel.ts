@@ -129,6 +129,7 @@ export function trimOutput(text: string): string {
 }
 
 const shellResultSchema = z.object({ stdout: z.string().optional(), stderr: z.string().optional(), exitCode: z.number().nullable().optional() });
+const commandResultSchema = z.object({ status: z.string().optional(), output: z.string() });
 const fileResultSchema = z.object({ content: z.string().optional(), entries: z.array(z.object({ name: z.string(), kind: z.string().optional() })).optional() });
 const searchResultSchema = z.object({ results: z.array(z.object({ path: z.string() })).optional(), matches: z.array(z.object({ path: z.string() })).optional() });
 
@@ -136,6 +137,8 @@ const searchResultSchema = z.object({ results: z.array(z.object({ path: z.string
 export function outputText(syscall: string, output: ChatTranscriptValue | undefined, fallback: string): string {
   if (output === undefined || output === null) return fallback;
   if (syscall === "shell.exec" || syscall.startsWith("codemode.")) {
+    const command = commandResultSchema.safeParse(output);
+    if (command.success) return command.data.output;
     const shell = shellResultSchema.safeParse(output);
     if (shell.success) {
       const stdout = shell.data.stdout ?? "";

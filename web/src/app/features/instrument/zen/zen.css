@@ -303,7 +303,7 @@
 .instrument.is-light .zen-picker { box-shadow: 0 14px 40px rgba(20, 17, 43, 0.15); }
 .zen-picker .pick { display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left; padding: 6px 10px; font: inherit; color: var(--text); }
 .zen-picker .pick.is-sel, .zen-picker .pick:hover { background: var(--selected); }
-.zen-picker .pick .dot { width: 6px; height: 6px; display: inline-block; background: var(--idle); align-self: center; }
+.zen-picker .pick .dot { width: 6px; height: 6px; display: inline-block; background: var(--idle); align-self: center; border-radius: 0; box-shadow: none; }
 .zen-picker .pick .dot.is-on { background: var(--online); }
 .zen-picker .pick .id { color: var(--text-dim); margin-left: auto; font-size: 11px; }
 .zen-picker .hint { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); padding: 6px 10px 2px; }

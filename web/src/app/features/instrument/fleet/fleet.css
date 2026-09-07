@@ -399,3 +399,5 @@
 .fleet .line-detail { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; color: var(--label); }
 
 .fleet tr.more.is-sel td { background: var(--selected); box-shadow: inset 3px 0 0 var(--accent); }
+
+.fleet-tree .place-head.is-sel, .fleet-tree li.f button.file.is-sel { background: var(--selected); box-shadow: inset 3px 0 0 var(--accent); padding-left: 6px; }

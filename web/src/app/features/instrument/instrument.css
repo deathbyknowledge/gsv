@@ -6,9 +6,6 @@
   /* type scale: 1, 1.5 or 2; the x key cycles it. zoom scales layout with the type, and the container
    * queries below see the zoomed width, so 2x on a wide screen reflows like a narrow one. */
   --type-scale: 1;
-  zoom: var(--type-scale);
-  container-type: inline-size;
-  container-name: instrument;
   /* the instrument's own faces: Martian Mono for the machine, Bricolage Grotesque for the person and the ship */
   --gsv-font-mono: "Martian Mono", "IBM Plex Mono", "JetBrains Mono", monospace;
   --gsv-font-prose: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
@@ -46,8 +43,6 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
-  /* the field is atmosphere: it keeps its size whatever the type scale */
-  zoom: calc(1 / var(--type-scale));
   transition: opacity var(--dur-settle) ease;
 }
 .instrument-field.is-fleet {
@@ -77,6 +72,20 @@
   inset: 0;
   pointer-events: none;
   background: radial-gradient(ellipse 86% 84% at 50% 50%, transparent 66%, rgba(0, 0, 0, 0.38) 100%);
+}
+
+/* the scaled layer: laid out at 1/scale of the box and scaled back up by a transform, which every engine
+ * agrees on; the field behind it stays unscaled, and the container queries see the laid-out width */
+.instrument-scaled {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: calc(100% / var(--type-scale));
+  height: calc(100% / var(--type-scale));
+  transform: scale(var(--type-scale));
+  transform-origin: 0 0;
+  container-type: inline-size;
+  container-name: instrument;
 }
 
 /* ---------- distances ---------- */

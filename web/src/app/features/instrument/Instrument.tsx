@@ -11,7 +11,7 @@ import "./instrument.css";
 export type Distance = "zen" | "firstday" | "fleet";
 
 /** A row in Fleet, addressed the way the manifest addresses it: `target:<id>` or `proc:<pid>`. */
-export type FleetRow = `target:${string}` | `proc:${string}` | `ledger:${string}` | `more:${string}`;
+export type FleetRow = `target:${string}` | `proc:${string}` | `ledger:${string}` | `more:${string}` | `dir:${string}` | `file:${string}`;
 
 const DISTANCE_TO_PATH = {
   zen: "/zen",
@@ -184,6 +184,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       </div>
       <div class="instrument-scan" aria-hidden="true" />
       <div class="instrument-vignette" aria-hidden="true" />
+      <div class="instrument-scaled">
       {help ? (
         <aside class="instrument-help" aria-label="Keys">
           <h4>Everywhere</h4>
@@ -226,6 +227,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
             }}
           />
         )}
+      </div>
       </div>
     </div>
   );

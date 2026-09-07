@@ -225,6 +225,7 @@ describe("outputText", () => {
     expect(outputText("shell.exec", { ok: true, stdout: "a\nb\n", stderr: "", exitCode: 0 }, "{json}")).toBe("a\nb\n");
     expect(outputText("shell.exec", { stdout: "", stderr: "no such file", exitCode: 1 }, "")).toBe("no such file");
     expect(outputText("shell.exec", { stdout: "", stderr: "", exitCode: 0 }, "")).toBe("");
+    expect(outputText("shell.exec", { status: "completed", output: "total 21\ndrwxr-xr-x .gsv" }, "{json}")).toBe("total 21\ndrwxr-xr-x .gsv");
   });
   it("lists a directory and shows a file", () => {
     expect(outputText("fs.read", { ok: true, entries: [{ name: "Downloads", kind: "directory" }, { name: "a.txt", kind: "file" }] }, "")).toBe("Downloads/\na.txt");

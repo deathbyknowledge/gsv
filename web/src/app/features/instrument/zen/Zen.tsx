@@ -208,7 +208,7 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
   const [pickerIndex, setPickerIndex] = useState(0);
   const pickerPlaces = useMemo(() => {
     if (pickerQuery === null) return [];
-    const all = [{ id: "gsv", label: "your cloud home", online: true }, ...places.filter((place) => place.id !== "gsv")];
+    const all = [{ id: "gsv", label: "your cloud home", online: true }, ...places.filter((place) => place.id !== "gsv" && place.online)];
     const needle = pickerQuery.toLowerCase();
     return all.filter((place) => !needle || place.id.toLowerCase().includes(needle) || place.label.toLowerCase().includes(needle)).slice(0, 8);
   }, [pickerQuery, places]);
