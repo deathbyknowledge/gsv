@@ -2,8 +2,14 @@ import { Bash, type SimpleCommandNode, type StatementNode, type WordNode } from 
 
 const runControlBash = new Bash({ commands: [] });
 
-type RunControlCommand =
-  | { action: "message"; text: string; finish: boolean }
+export type RunControlCommand =
+  | {
+    action: "message";
+    text: string;
+    finish: boolean;
+    /** A send with nothing to say: a final message when staged media makes it one, a bare yield otherwise. */
+    emptyMeansYield?: true;
+  }
   | { action: "yield" };
 
 export type RunControlCommandParseResult =

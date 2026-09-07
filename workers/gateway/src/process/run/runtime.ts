@@ -9,15 +9,15 @@ import type {
   PersistedRunTick, RunTickContextState, RunTickInputs,
 } from "../internal/contracts";
 import {
-  FINAL_MESSAGE_BLOCK_EXAMPLE, MAX_TERMINAL_CORRECTION_ROUNDS, RUNTIME_EVENT_WAKE_MESSAGE,
-  MAX_RETRYABLE_GENERATION_ATTEMPTS, PENDING_RUN_CONTROL_CALL, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE,
+  CORRECTION_FAILURE_NOTICE, MAX_TERMINAL_CORRECTION_ROUNDS, RUNTIME_EVENT_WAKE_MESSAGE, YIELD_CORRECTION_MESSAGE,
+  MAX_RETRYABLE_GENERATION_ATTEMPTS, SEND_TOOL_NAME, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE, isRunControlCall,
   MEDIA_PREPARATION_TIMEOUT_MS, TOOL_DISPATCH_TIMEOUT_MS,
 } from "../internal/lifecycle";
 import {
   type ResponsibilityRecord, jsonObjectSchema, type AiConfigResult, type AiTextGenerateConfig,
   type AiTextGenerateOptions, type ProcUsageState, jsonValueSchema, type JsonObject, type ProcTraceSpanStatus,
 } from "@humansandmachines/gsv/protocol";
-import type { RunControlCommandParseResult } from "../run-control-command";
+import type { RunControlCommand, RunControlCommandParseResult } from "../run-control-command";
 import type { RunOutputMedia, RunState } from "./state";
 import {
   errorMessageFromUnknown, isProviderContextOverflow, isProviderContextOverflowErrorMessage,
@@ -56,18 +56,18 @@ import { MANAGED_LIFECYCLE_RECHECK_MS, managedInstallationWorkGate } from "../..
 import { GSV_DELEGATED_TASK_CONTEXT } from "../../prompts/system";
 import { createContextProjection, parseContextProjection } from "../context";
 import { deriveGenerationContextId } from "../context-message-metadata";
-import { piToolParametersSchema } from "../internal/schemas";
+import { SEND_TOOL, piToolParametersSchema } from "../internal/schemas";
 
-function hasRunControlRegistration(
+/** The name a run-control result is recorded under: the Send tool's own, or the Shell's syscall. */
+function runControlRegistration(
   host: Process,
   runId: string,
   dispatchId: string,
   toolCallId: string,
-): boolean {
+): { resultName: string } | null {
   const pending = host.store.tools.getPending(dispatchId);
-  return pending?.runId === runId
-    && pending.callId === toolCallId
-    && pending.call === PENDING_RUN_CONTROL_CALL;
+  if (pending?.runId !== runId || pending.callId !== toolCallId || !isRunControlCall(pending.call)) return null;
+  return { resultName: pending.call === SEND_TOOL_NAME ? SEND_TOOL_NAME : "shell.exec" };
 }
 
 export class ProcessRun {
@@ -92,7 +92,15 @@ export class ProcessRun {
     }
     const activeRun = this.host.runs.active;
     const isHumanFacingRun = activeRun?.runId === runId && !activeRun.returnToCaller;
-    if (parsed.command.action === "yield" && isHumanFacingRun && assistantText.trim()) {
+    // a Send with yield and nothing to say is a bare yield, unless staged media makes it a final message
+    const command: RunControlCommand =
+      parsed.command.action === "message"
+        && parsed.command.emptyMeansYield === true
+        && !parsed.command.text.trim()
+        && media.length === 0
+        ? { action: "yield" }
+        : parsed.command;
+    if (command.action === "yield" && isHumanFacingRun && assistantText.trim()) {
       return {
         ok: false,
         action: "yield",
@@ -102,7 +110,7 @@ export class ProcessRun {
         error: "yield cannot accompany non-empty assistant text",
       };
     }
-    if (parsed.command.action === "message" && !parsed.command.text.trim() && media.length === 0) {
+    if (command.action === "message" && !command.text.trim() && media.length === 0) {
       return {
         ok: false,
         action: "message",
@@ -112,7 +120,6 @@ export class ProcessRun {
         error: "Message requires non-empty text or attached media",
       };
     }
-    const command = parsed.command;
     let responsibilityAdmissionKey: string | undefined;
     if (command.action === "yield" || command.finish) {
       const responsibilityCheck = await this.verifyTerminalResponsibilities(runId);
@@ -391,6 +398,7 @@ export class ProcessRun {
     const run = this.host.runs.active;
     if (!run || run.runId !== runId) return;
     if ((run.terminalCorrectionRounds ?? 0) >= MAX_TERMINAL_CORRECTION_ROUNDS) {
+      await this.deliverCorrectionNotice(runId);
       await this.finishRun(runId, {
         reason: "message.action.missing",
         status: "error",
@@ -403,15 +411,36 @@ export class ProcessRun {
     const correctedRun = this.host.mutateActiveRun(runId, (current) => ({
       ...current,
       terminalCorrectionRounds: (current.terminalCorrectionRounds ?? 0) + 1,
+      terminalCorrectionPending: true,
     }));
     if (!correctedRun) return;
-    const message = [
-      "This run is not complete. Ordinary assistant text is Process activity and is not sent to the user.",
-      "Run `yield` now if the work is complete.",
-      `If the user still needs a final message, send and finish with:\n${FINAL_MESSAGE_BLOCK_EXAMPLE}`,
-    ].join("\n");
-    await this.host.history.appendSystemMessage(runId, message);
+    await this.host.history.appendSystemMessage(runId, YIELD_CORRECTION_MESSAGE);
     if (!this.host.handleRunStopped(runId)) await this.scheduleTick(runId);
+  }
+
+  /** The run could not be corrected into sending; the person hears that much rather than nothing. */
+  async deliverCorrectionNotice(runId: string): Promise<void> {
+    const run = this.host.runs.active;
+    if (!run || run.runId !== runId || run.returnToCaller) return;
+    const actionId = `correction-notice-${runId}`;
+    try {
+      const release = this.beginRunControlCommit(runId);
+      try {
+        const request = this.buildRunControlMessageCommitRequest(run, {
+          runId,
+          actionId,
+          text: CORRECTION_FAILURE_NOTICE,
+          media: [],
+        });
+        await this.commitRunControlMessage(runId, actionId, request);
+      } finally {
+        release();
+      }
+    } catch (error) {
+      console.warn(
+        `[Process] Could not deliver the correction notice for ${runId}: ${errorMessageFromUnknown(error)}`,
+      );
+    }
   }
 
   async finishRun(
@@ -1202,7 +1231,8 @@ export class ProcessRun {
     return this.host.ctx.storage.transactionSync(() => {
       const active = this.host.runs.active;
       if (this.host.killed || !active || active.runId !== runId) return false;
-      if (!hasRunControlRegistration(this.host, runId, dispatchId, toolCallId)) {
+      const registration = runControlRegistration(this.host, runId, dispatchId, toolCallId);
+      if (!registration) {
         throw new Error("Run-control tool registration was lost before its result");
       }
       const updated = result.ok ? active : incrementRunControlFailure(active, result.failureKind);
@@ -1216,7 +1246,7 @@ export class ProcessRun {
       }
       this.host.store.messages.appendToolResult(
         toolCallId,
-        "shell.exec",
+        registration.resultName,
         content,
         !result.ok,
         runId,
@@ -1236,12 +1266,13 @@ export class ProcessRun {
     this.host.ctx.storage.transactionSync(() => {
       const active = this.host.runs.active;
       if (this.host.killed || !active || active.runId !== runId) return;
-      if (!hasRunControlRegistration(this.host, runId, dispatchId, toolCallId)) return;
+      const registration = runControlRegistration(this.host, runId, dispatchId, toolCallId);
+      if (!registration) return;
       const message = `Run-control execution failed: ${error}`;
       this.host.store.tools.fail(dispatchId, message, "failed");
       this.host.store.messages.appendToolResult(
         toolCallId,
-        "shell.exec",
+        registration.resultName,
         message,
         true,
         runId,
@@ -1258,7 +1289,7 @@ export class ProcessRun {
     const { prepared, response, fallbackMetadata, inferenceSpanId } = generated;
     const turn = classifyAssistantTurn(
       response,
-      prepared.workTools.map((tool) => tool.name),
+      prepared.run.offeredToolNames ?? prepared.workTools.map((tool) => tool.name),
     );
     let outputMedia =
       turn.toolCalls.length === 0 && turn.unofferedToolCalls.length === 0
@@ -1290,6 +1321,10 @@ export class ProcessRun {
       assistantMetadata,
     );
     if (!assistantHistory) return null;
+    // the correction turn has produced its response; only now does the restriction lift, so an interrupted tick keeps it
+    if (this.host.runs.active?.runId === runId && this.host.runs.active.terminalCorrectionPending) {
+      this.host.mutateActiveRun(runId, (current) => ({ ...current, terminalCorrectionPending: undefined }));
+    }
     if (inferenceSpanId) {
       this.host.store.traces.setTraceSpanReference(inferenceSpanId, {
         kind: "message",
@@ -1391,11 +1426,12 @@ export class ProcessRun {
       const call = turn.runControlCalls[0];
       if (!call) throw new Error("Run-control turn omitted its command");
       const dispatchId = crypto.randomUUID();
+      // registered under the tool's own name, Shell or Send, so its result and any interruption carry that name
       this.host.store.tools.register(
         dispatchId,
         call.toolCall.id,
         runId,
-        PENDING_RUN_CONTROL_CALL,
+        call.toolCall.name,
         jsonObjectSchema.parse(call.toolCall.arguments),
       );
       return dispatchId;
@@ -1827,14 +1863,21 @@ export class ProcessRun {
       description: tool.description,
       parameters: piToolParametersSchema.parse(tool.inputSchema),
     }));
-    const tools = run.returnToCaller ? workTools : withRunControlInstructions(workTools);
-    const offeredToolNames = [...new Set(workTools.map((tool) => tool.name))];
+    // a correction turn offers Send alone: the model stopped in text, and the only question left is what to send
+    const correcting = run.terminalCorrectionPending === true && !run.returnToCaller;
+    const offeredWork = correcting ? [] : workTools;
+    const tools = run.returnToCaller ? workTools : correcting ? [SEND_TOOL] : withRunControlInstructions(workTools);
+    // the offered names are what the turn is classified against; Send counts only where the model was given it
+    const offeredToolNames = [
+      ...new Set(offeredWork.map((tool) => tool.name)),
+      ...(run.returnToCaller ? [] : [SEND_TOOL.name]),
+    ];
     const offeredRun = this.host.mutateActiveRun(runId, (current) => ({
       ...current,
       offeredToolNames,
     }));
     if (!offeredRun) return null;
-    return { run: offeredRun, activeConfig, workTools, tools };
+    return { run: offeredRun, activeConfig, workTools: offeredWork, tools };
   }
 
   async prepareRunTickContext(

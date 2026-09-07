@@ -12,7 +12,7 @@ import type { PreparedJsonToolArgs, DynamicRequestFrameData } from "../internal/
 import type { Process } from "../do";
 import type { RunState } from "../run/state";
 import {
-  INTERRUPTED_RUN_CONTROL_MESSAGE, PENDING_RUN_CONTROL_CALL, SHELL_SESSION_TARGET_KEY_PREFIX,
+  INTERRUPTED_RUN_CONTROL_MESSAGE, SHELL_SESSION_TARGET_KEY_PREFIX, isRunControlCall,
   TOOL_APPROVAL_OVERRIDES_KEY, TOOL_DISPATCH_TIMEOUT_MS, CODE_MODE_APPROVAL_TIMEOUT_MS,
   CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE,
 } from "../internal/lifecycle";
@@ -436,7 +436,7 @@ export class ProcessTools {
     toolCall: ToolCallRecord,
     approvalPolicy: ToolApprovalPolicy,
   ): AdmittedToolCall | null {
-    if (toolCall.call === PENDING_RUN_CONTROL_CALL) {
+    if (isRunControlCall(toolCall.call)) {
       this.host.store.tools.fail(toolCall.dispatchId, INTERRUPTED_RUN_CONTROL_MESSAGE);
       return null;
     }

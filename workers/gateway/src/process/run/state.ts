@@ -139,6 +139,7 @@ export const runStateSchema = z.object({
   responsibilityBatches: z.array(responsibilityBatchStateSchema).optional(),
   offeredToolNames: z.array(z.string()).optional(),
   terminalCorrectionRounds: z.number().optional(),
+  terminalCorrectionPending: z.boolean().optional(),
   terminalCommandFailures: z.number().optional(),
   terminalDeliveryFailures: z.number().optional(),
   config: aiConfigResultSchema.optional(),

@@ -1,9 +1,13 @@
 import { z } from "zod";
 import type { AiConfigResult } from "@humansandmachines/gsv/protocol";
 import type { AssistantMessage, TextContent, ThinkingContent, ToolCall } from "@earendil-works/pi-ai";
-import { parseRunControlCommand, type RunControlCommandParseResult } from "./run-control-command";
+import {
+  parseRunControlCommand, type RunControlCommand, type RunControlCommandParseResult,
+} from "./run-control-command";
+import { SEND_TOOL, sendToolArgsSchema } from "./internal/schemas";
 
-type RunControlShellCall = {
+/** A run-control action the model took: a Shell `message send` or `yield`, or a Send tool call. */
+type RunControlCall = {
   toolCall: ToolCall;
   parsed: RunControlCommandParseResult;
 };
@@ -20,7 +24,7 @@ export type AssistantTurnClassification = {
   text: string;
   thinking: ThinkingContent[];
   returnedToolCalls: ToolCall[];
-  runControlCalls: RunControlShellCall[];
+  runControlCalls: RunControlCall[];
   toolCalls: ToolCall[];
   unofferedToolCalls: ToolCall[];
 };
@@ -48,12 +52,14 @@ export function classifyAssistantTurn(
   const returnedToolCalls = response.content.filter(
     (block): block is ToolCall => block.type === "toolCall",
   );
+  const offered = new Set(offeredToolNames);
+  // Send is run control only where it was offered; a bounded IPC run never offers it, so a fabricated call is unoffered
   const runControlCalls = returnedToolCalls.flatMap((toolCall) => {
-    const call = parseRunControlShellCall(toolCall);
+    const call = parseRunControlShellCall(toolCall)
+      ?? (offered.has(SEND_TOOL.name) ? parseRunControlSendCall(toolCall) : null);
     return call ? [call] : [];
   });
   const runControlIds = new Set(runControlCalls.map(({ toolCall }) => toolCall.id));
-  const offered = new Set(offeredToolNames);
   const toolCalls = returnedToolCalls.filter(
     (toolCall) => offered.has(toolCall.name) && !runControlIds.has(toolCall.id),
   );
@@ -98,12 +104,39 @@ export function nextAiConfigFallback(
   return null;
 }
 
-function parseRunControlShellCall(toolCall: ToolCall): RunControlShellCall | null {
+function parseRunControlShellCall(toolCall: ToolCall): RunControlCall | null {
   if (toolCall.name !== "Shell") return null;
   const args = terminalShellToolArgsSchema.safeParse(toolCall.arguments);
   if (!args.success) return null;
   const parsed = parseRunControlCommand(args.data.input);
   return parsed ? { toolCall, parsed } : null;
+}
+
+/**
+ * The Send tool is the same command as a tool call. Text alone sends and the
+ * run continues; text with yield sends and ends; yield alone ends, or sends
+ * staged media and ends. Whether an empty text is a message is decided where
+ * the staged media is known.
+ */
+function parseRunControlSendCall(toolCall: ToolCall): RunControlCall | null {
+  if (toolCall.name !== SEND_TOOL.name) return null;
+  const args = sendToolArgsSchema.safeParse(toolCall.arguments);
+  if (!args.success) {
+    return {
+      toolCall,
+      parsed: {
+        ok: false,
+        action: "message",
+        error: "Send accepts text (a string) and yield (a boolean) and nothing else",
+      },
+    };
+  }
+  const text = args.data.text ?? "";
+  const finish = args.data.yield === true;
+  const command: RunControlCommand = finish && !text.trim()
+    ? { action: "message", text: "", finish: true, emptyMeansYield: true }
+    : { action: "message", text, finish };
+  return { toolCall, parsed: { ok: true, command } };
 }
 
 function aiConfigWithFallback(

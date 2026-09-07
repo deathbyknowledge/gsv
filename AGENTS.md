@@ -53,7 +53,7 @@ This document is the root engineering contract for the repository. It explains h
 
 ### Keep the agent interface small and composable
 
-The fixed model-facing surface is Read, Write, Edit, Delete, Search, Shell, and CodeMode. Add capabilities beneath that surface through syscalls, targets, or CodeMode instead of growing a bespoke tool for every integration.
+The fixed model-facing surface is Read, Write, Edit, Delete, Search, Shell, CodeMode, and Send. Send is the run control, message and yield, as a tool, and is the only tool that is not a capability. Add capabilities beneath that surface through syscalls, targets, or CodeMode instead of growing a bespoke tool for every integration.
 
 GSV is Linux-inspired because familiar, orthogonal semantics reduce instruction burden for models and humans. This is a design model, not a promise of POSIX compatibility.
 

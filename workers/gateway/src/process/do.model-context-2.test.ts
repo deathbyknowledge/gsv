@@ -280,7 +280,7 @@ describe("model context", () => {
       process.generation = {
         async generate(request: any) {
           generationCalls += 1;
-          expect(request.context.tools.map((tool: any) => tool.name)).toEqual(["Read", "Shell"]);
+          expect(request.context.tools.map((tool: any) => tool.name)).toEqual(["Read", "Shell", "Send"]);
           return generationCalls === 1
             ? assistantResponse([
                 {
@@ -542,15 +542,18 @@ describe("model context", () => {
     }
   });
 
-  it("requires an explicit yield and bounds the correction", async () => {
+  it("offers Send alone while correcting, then tells the person rather than going silent", async () => {
     const pid = "mech-terminal-action-required";
     const runId = "run-terminal-action-required";
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
     const result = await runInProcess(stub, async (process) => {
       const emitted = captureSignals(process);
+      const offered: string[][] = [];
       process.run.scheduleTick = vi.fn(async () => {});
-      mockGeneration(process, async () => {
+      process.run.commitRunControlMessage = vi.fn(async () => ({ conversationId: "conv", id: "notice" }));
+      mockGeneration(process, async (request: any) => {
+        offered.push((request.context?.tools ?? []).map((tool: any) => tool.name));
         return terminalTestResponse([{ type: "text", text: "This is only a draft." }]);
       }, async () => {
         return "unused";
@@ -563,20 +566,40 @@ describe("model context", () => {
       const correction = process.store.messages
         .getMessages()
         .find((message: any) => message.role === "system" && message.runId === runId);
-      expect(correction?.content).toContain("Run `yield` now");
+      expect(correction?.content).toContain("Call the Send tool");
       expect(
         (await process.history.buildContextMessages("default")).find((message: any) =>
-          message.content.includes("Run `yield` now"),
+          message.content.includes("Call the Send tool"),
         )?.content,
       ).toContain("[GSV EVENT]");
+      // the restriction survives a tick that loads its inputs and is interrupted before generating
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const inputs = await process.run.loadRunTickInputs(runId, process.runs.active);
+        expect(inputs?.tools.map((tool: any) => tool.name)).toEqual(["Send"]);
+      }
 
       await process.run.runTick(runId);
-      return { emitted, messages: process.store.messages.getMessages() };
+      await process.run.runTick(runId);
+      await process.run.runTick(runId);
+      return {
+        emitted,
+        offered,
+        notices: process.run.commitRunControlMessage.mock.calls,
+        messages: process.store.messages.getMessages(),
+      };
     });
 
-    expect(result.messages.filter((message: any) => message.role === "assistant")).toHaveLength(
-      2,
-    );
+    expect(result.messages.filter((message: any) => message.role === "assistant")).toHaveLength(4);
+    expect(
+      result.messages.filter((message: any) => message.role === "system" && message.content.includes("Call the Send tool")),
+    ).toHaveLength(3);
+    expect(result.offered[0]).toEqual(["Shell", "Send"]);
+    expect(result.offered.slice(1)).toEqual([["Send"], ["Send"], ["Send"]]);
+    expect(result.notices).toHaveLength(1);
+    expect(result.notices[0][2]).toMatchObject({
+      call: "proc.message.commit",
+      args: { runId, text: "I wrote a reply but did not send it. Ask me again." },
+    });
     expect(
       result.emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload,
     ).toMatchObject({
@@ -584,6 +607,84 @@ describe("model context", () => {
       reason: "message.action.missing",
       error: "The model did not yield after correction",
     });
+  });
+
+  it("treats a Send that only yields as a bare yield, or as a final message when media is staged", async () => {
+    const pid = "mech-send-yield-only";
+    const runId = "run-send-yield-only";
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+
+    await runInProcess(stub, async (process) => {
+      process.runs.active = generationRun(runId, terminalTestConfig(pid));
+      process.streams.silence = vi.fn(async () => {});
+      process.streams.complete = vi.fn(async () => {});
+      process.run.commitMessageRunControlAction = vi.fn(async (options: any) => ({
+        ok: true,
+        action: "message",
+        finish: options.finish,
+        text: options.text,
+        delivery: { kind: "none" },
+      }));
+      const yieldOnly = {
+        ok: true as const,
+        command: { action: "message" as const, text: "", finish: true, emptyMeansYield: true as const },
+      };
+      expect(await process.run.executeRunControlAction(runId, "send-yield-1", yieldOnly, [], "")).toMatchObject({
+        ok: true,
+        action: "yield",
+        finish: true,
+      });
+      const staged = [{ type: "image", mimeType: "image/png", key: "k", path: "p", size: 1 }];
+      expect(
+        await process.run.executeRunControlAction(runId, "send-yield-2", yieldOnly, staged, ""),
+      ).toMatchObject({ ok: true, action: "message", finish: true });
+      expect(process.run.commitMessageRunControlAction).toHaveBeenCalledOnce();
+      // a bare yield still may not carry meaningful assistant text
+      expect(
+        await process.run.executeRunControlAction(runId, "send-yield-3", yieldOnly, [], "the real reply"),
+      ).toMatchObject({ ok: false, error: "yield cannot accompany non-empty assistant text" });
+    });
+  });
+
+  it("sends and ends the run through the Send tool", async () => {
+    const pid = "mech-send-tool";
+    const runId = "run-send-tool";
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+
+    const result = await runInProcess(stub, async (process) => {
+      const emitted = captureSignals(process);
+      process.run.scheduleTick = vi.fn(async () => {});
+      process.run.commitRunControlMessage = vi.fn(async () => ({ conversationId: "conv", id: "sent" }));
+      mockGeneration(process, async () => {
+        return terminalTestResponse([
+          { type: "toolCall", id: "send-1", name: "Send", arguments: { text: "all done", yield: true } },
+        ]);
+      }, async () => {
+        return "unused";
+      });
+      process.store.messages.appendMessage("user", "Do the thing.", { runId });
+      process.runs.active = generationRun(runId, terminalTestConfig(pid));
+
+      await process.run.runTick(runId);
+      return {
+        emitted,
+        commits: process.run.commitRunControlMessage.mock.calls,
+        messages: process.store.messages.getMessages(),
+      };
+    });
+
+    expect(result.commits).toHaveLength(1);
+    expect(result.commits[0][2]).toMatchObject({
+      call: "proc.message.commit",
+      args: { runId, actionId: "send-1", text: "all done" },
+    });
+    const sendResult = result.messages.find((message: any) => message.role === "toolResult");
+    expect(sendResult).toMatchObject({ content: "Message committed and run yielded", toolCallId: "send-1" });
+    // the result is recorded under the tool's own name, so the call and its result pair up for every provider
+    expect(sendResult?.toolCalls).toContain('"toolName":"Send"');
+    expect(
+      result.emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload,
+    ).toMatchObject({ status: "ok", reason: "run.yielded" });
   });
 
   it("does not resurrect a superseded run after yield correction awaits", async () => {

@@ -169,7 +169,8 @@ GSV_MESSAGE
 
 Run `yield` when the work is complete. A final message can commit and yield without another model
 turn by placing `&& yield` after the block declaration. The Process recognizes these message and
-run-control commands without shell approval. During an active run,
+run-control commands without shell approval; the model usually reaches the same three actions
+through its `Send` tool, whose `text` and `yield` map onto them exactly. During an active run,
 `message send --to ... --also` creates an
 additional outbound message or sends to another authorized destination.
 `message destinations` lists observed destinations that are online; `--all`
