@@ -1492,7 +1492,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
         call: frame.call,
         args: argsText(args),
       });
-      this.noteLedgerAppend(ownerUid, seq);
+      // a read of the ledger is a line like any other, but it does not signal: a surface that lists on every signal must not chase itself
+      this.noteLedgerAppend(ownerUid, seq, frame.call !== "sys.ledger.list");
     } catch (error) {
       console.warn(`[ledger] append failed: ${error instanceof Error ? error.name : "error"}`);
     }
@@ -1516,8 +1517,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
   }
 
   /** Coalesces the tail signal to a few per second per owner, and keeps a rotation armed. */
-  private noteLedgerAppend(ownerUid: number, seq: number): void {
-    for (const uid of ownerUid === 0 ? [0] : [ownerUid, 0]) {
+  private noteLedgerAppend(ownerUid: number, seq: number, signal: boolean): void {
+    for (const uid of signal ? (ownerUid === 0 ? [0] : [ownerUid, 0]) : []) {
       const pending = this.ledgerSignals.get(uid);
       if (pending) {
         pending.count += 1;

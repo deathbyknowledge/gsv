@@ -127,7 +127,9 @@ Visibility is the rule `proc.list` uses: a caller sees the lines of the human
 who owns them, and root sees every line. The `ledger.appended` signal, sent to
 the owner's connections and to root's, coalesced to a few per second, carries
 the newest sequence and the count since the last signal, so a surface can tail
-the ledger without polling.
+the ledger without polling. A read of the ledger is recorded like any other
+call but does not signal, so a surface that lists on every signal does not
+chase itself.
 
 ## Cost
 
