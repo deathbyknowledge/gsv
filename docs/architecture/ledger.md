@@ -24,7 +24,7 @@ Kernel at all. Both remain in their own records.
 | `target` | The place the call went to: a target id, or `gsv` for the cloud home |
 | `call` | The syscall name |
 | `args` | The call's arguments as sent, as JSON text, whole; cut at 16 KB with the cut marked |
-| `outcome` | `ok`, `failed`, `denied`, or `cancelled`; null while the call is in flight |
+| `outcome` | `ok`, `failed`, `denied`, or `cancelled`; null while the call is in flight. A call whose own result reports failure inside an ok envelope (`ok: false` on fs calls, `status: "failed"` on shell.exec) closes as `failed` |
 | `durationMs` | From dispatch to response |
 | `tokens`, `costNanoUsd` | From `message.usage` on an `ai.text.generate` result: its `totalTokens`, and `cost.total` in USD converted to nano-USD |
 

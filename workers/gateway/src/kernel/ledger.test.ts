@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { JsonValue } from "@humansandmachines/gsv/protocol";
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
@@ -99,6 +100,15 @@ describe("argsText", () => {
 });
 
 describe("outcomeOfResponse", () => {
+  it("closes a call as failed when its own result says so inside an ok envelope", () => {
+    const ok = (data: JsonValue) => ({ type: "res" as const, id: "r", ok: true as const, data });
+    expect(outcomeOfResponse(ok({ ok: false, error: "no such file" }))).toBe("failed");
+    expect(outcomeOfResponse(ok({ status: "failed", output: "" }))).toBe("failed");
+    expect(outcomeOfResponse(ok({ status: "running", sessionId: "s1" }))).toBe("ok");
+    expect(outcomeOfResponse(ok({ ok: true, path: "~/a" }))).toBe("ok");
+    expect(outcomeOfResponse(ok(null))).toBe("ok");
+  });
+
   it("maps frames to the four words", () => {
     expect(outcomeOfResponse({ type: "res", id: "1", ok: true, data: {} })).toBe("ok");
     expect(outcomeOfResponse({ type: "res", id: "1", ok: false, error: { code: 403, message: "no" } })).toBe("denied");

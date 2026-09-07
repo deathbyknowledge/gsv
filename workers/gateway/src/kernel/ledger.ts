@@ -179,9 +179,12 @@ export function ledgerTargetOf(args: JsonLike, sessionTarget: (sessionId: string
 /** JSON as it arrives on the wire; the redactor parses what it needs at the boundary. */
 export type JsonLike = string | number | boolean | null | JsonLike[] | { [key: string]: JsonLike } | undefined;
 
-/** The outcome of a response frame, in the ledger's four words. */
+/** A result that reports its own failure inside an ok envelope: `{ ok: false }` on fs calls, `{ status: "failed" }` on shell.exec. */
+const failedResultSchema = z.union([z.object({ ok: z.literal(false) }), z.object({ status: z.literal("failed") })]);
+
+/** The outcome of a response frame, in the ledger's four words; a call whose own result reports failure closes as failed. */
 export function outcomeOfResponse(frame: ResponseFrame): LedgerOutcome {
-  if (frame.ok) return "ok";
+  if (frame.ok) return failedResultSchema.safeParse(frame.data).success ? "failed" : "ok";
   const code = frame.error.code;
   if (code === 403) return "denied";
   if (code === 499) return "cancelled";
@@ -427,7 +430,8 @@ export class LedgerStore {
    */
   async rotateOnce(now = Date.now()): Promise<RotationResult> {
     const cutoff = now - LEDGER_WINDOW_AGE_MS;
-    const rows = [...this.sql.exec<WindowRow>(
+    // rows are read from the cursor one at a time and the read stops at the size bound, so no more than a segment is ever held
+    const rows = this.sql.exec<WindowRow>(
       `SELECT * FROM ledger_window
        WHERE seq < COALESCE((SELECT MIN(seq) FROM ledger_window WHERE outcome IS NULL AND ts >= ?), ?)
        ORDER BY seq ASC
@@ -435,8 +439,7 @@ export class LedgerStore {
       cutoff,
       Number.MAX_SAFE_INTEGER,
       LEDGER_SEGMENT_ROWS,
-    )];
-    if (rows.length === 0) return { rotated: false, reason: "nothing-closed" };
+    );
 
     // a segment closes at its row bound or its size bound, whichever comes first, and always holds at least one line
     const lines: StoredLine[] = [];
@@ -453,6 +456,7 @@ export class LedgerStore {
       encoded.push(text);
       used += size;
     }
+    if (lines.length === 0) return { rotated: false, reason: "nothing-closed" };
     const seqs = lines.map((line) => line.seq);
     const body = encoded.join("\n") + "\n";
     const lastSeq = seqs[seqs.length - 1];
