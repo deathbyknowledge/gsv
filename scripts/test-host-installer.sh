@@ -128,6 +128,12 @@ run_pinned_installer() {
 run_pinned_installer
 test "$(cat "$PINNED_INSTALL_DIR/pinned-installer-ran")" = "v-legacy:1"
 rm "$PINNED_INSTALL_DIR/pinned-installer-ran"
+# A subset is refused when the pinned release's installer predates component selection.
+if GSV_INSTALL_COMPONENTS="gsv,gsvd" run_pinned_installer 2>/dev/null; then
+    echo "installer delegated a component subset to an installer that cannot honour it" >&2
+    exit 1
+fi
+test ! -e "$PINNED_INSTALL_DIR/pinned-installer-ran"
 printf '\n# changed after checksums were written\n' >> "$PINNED_FIXTURES/install.sh"
 if run_pinned_installer 2>/dev/null; then
     echo "installer accepted a pinned release installer that did not match checksums.txt" >&2
@@ -493,6 +499,14 @@ untouched_by_subset() {
 }
 if run_subset_installer env GSV_INSTALL_COMPONENTS="gsv,gsvd,gsv-mystery" >/dev/null 2>&1; then
     echo "installer accepted an unknown component" >&2
+    exit 1
+fi
+if run_subset_installer env GSV_INSTALL_COMPONENTS="gsv,gsvd,gsv" >/dev/null 2>&1; then
+    echo "installer accepted a component listed twice" >&2
+    exit 1
+fi
+if run_subset_installer env GSV_INSTALL_COMPONENTS="gsvd,gsv-transcribe" >/dev/null 2>&1; then
+    echo "installer accepted gsvd without gsv" >&2
     exit 1
 fi
 test "$("$SUBSET_DIR/gsv")" = "gsv-v1"

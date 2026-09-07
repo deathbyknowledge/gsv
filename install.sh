@@ -76,13 +76,24 @@ validate_channel() {
 
 validate_components() {
     [ -n "$COMPONENTS" ] || { error "GSV_INSTALL_COMPONENTS must name at least one component"; exit 1; }
-    local component
+    local component seen="," has_gsv=0 has_gsvd=0
     for component in $(printf '%s' "$COMPONENTS" | tr ',' ' '); do
         case ",${ALL_COMPONENTS}," in
             *",${component},"*) ;;
             *) error "Unknown component in GSV_INSTALL_COMPONENTS: $component (choose from ${ALL_COMPONENTS})"; exit 1 ;;
         esac
+        case "$seen" in
+            *",${component},"*) error "Component listed twice in GSV_INSTALL_COMPONENTS: $component"; exit 1 ;;
+        esac
+        seen="${seen}${component},"
+        [ "$component" = gsv ] && has_gsv=1
+        [ "$component" = gsvd ] && has_gsvd=1
     done
+    # gsv controls gsvd and refuses a daemon of another version, so the pair moves together
+    if [ "$has_gsv" -ne "$has_gsvd" ]; then
+        error "gsv and gsvd move together: select both or neither"
+        exit 1
+    fi
 }
 
 # The release assets for the selected components, in install order. A
@@ -297,6 +308,12 @@ delegate_to_pinned_installer() {
         exit 1
     fi
     success "Verified installer for $VERSION"
+    # an installer from before component selection would install everything; refuse rather than surprise
+    if [ "$COMPONENTS" != "$ALL_COMPONENTS" ] && ! grep -q "GSV_INSTALL_COMPONENTS" "$installer_file"; then
+        rm -rf "$bootstrap_dir"
+        error "The installer for $VERSION predates component selection; unset GSV_INSTALL_COMPONENTS or pin a newer release"
+        exit 1
+    fi
 
     local status=0
     GSV_INSTALLER_RELEASE_BOUND=1 bash "$installer_file" || status=$?

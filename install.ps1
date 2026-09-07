@@ -184,10 +184,17 @@ function Install-GsvHost {
   $releaseRef = Resolve-ReleaseRef
   $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString("N"))
   if ($Components.Count -eq 0) { throw "GSV_INSTALL_COMPONENTS must name at least one component" }
+  $seen = @{}
   foreach ($component in $Components) {
     if ($AllComponents -notcontains $component) {
       throw "Unknown component in GSV_INSTALL_COMPONENTS: $component (choose from $($AllComponents -join ','))"
     }
+    if ($seen.ContainsKey($component)) { throw "Component listed twice in GSV_INSTALL_COMPONENTS: $component" }
+    $seen[$component] = $true
+  }
+  # gsv controls gsvd and refuses a daemon of another version, so the pair moves together
+  if (($Components -contains "gsv") -ne ($Components -contains "gsvd")) {
+    throw "gsv and gsvd move together: select both or neither"
   }
   $assets = [ordered]@{}
   foreach ($component in $Components) {
