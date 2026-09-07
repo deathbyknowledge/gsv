@@ -6,6 +6,7 @@ import type { Kernel } from "./do";
 import {
   LEDGER_ARGS_LIMIT,
   LEDGER_ID_LIMIT,
+  LEDGER_INDEX_BATCH,
   LEDGER_INDEX_SET_LIMIT,
   LEDGER_RETENTION_MS,
   LEDGER_PRUNE_PER_ALARM,
@@ -490,6 +491,49 @@ describe("LedgerStore", () => {
       const page3 = await store.list({ ownerUid: 1000, limit: 2, cursor: page2.nextCursor ?? undefined });
       expect(page3.lines.map((line) => line.args)).toEqual(["a2", "a1"]);
       expect(memory.gets).toBe(2);
+    });
+  });
+
+  it("walks the index in batches when the filter skips many segments", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const memory = new MemoryBucket();
+      const store = new LedgerStore(sql, storage, bucketOf(memory));
+      const now = 70_000_000;
+      // the one line at the cloud home is in the oldest segment; every later segment names another place
+      store.append(entry({ requestId: "home", timestamp: now - 5_000, target: "gsv", args: "home" }));
+      store.complete("home", { outcome: "ok" }, now);
+      expect((await store.rotateOnce(now)).rotated).toBe(true);
+      for (let segment = 0; segment < LEDGER_INDEX_BATCH + 8; segment += 1) {
+        store.append(entry({ requestId: `away-${segment}`, timestamp: now - 4_000 + segment, target: "elsewhere", args: "away" }));
+        store.complete(`away-${segment}`, { outcome: "ok" }, now);
+        expect((await store.rotateOnce(now)).rotated).toBe(true);
+      }
+      memory.gets = 0;
+      const found = await store.list({ ownerUid: 1000, target: "gsv", limit: 10 });
+      expect(found.lines.map((line) => line.args)).toEqual(["home"]);
+      expect(found.nextCursor).toBeNull();
+      expect(memory.gets).toBe(1);
+    });
+  });
+
+  it("repairs a different batch of the index each day, so a missing object anywhere is found", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const memory = new MemoryBucket();
+      const store = new LedgerStore(sql, storage, bucketOf(memory));
+      const now = 70_000_000;
+      for (let segment = 0; segment < LEDGER_PRUNE_PER_ALARM + 5; segment += 1) {
+        store.append(entry({ requestId: `s${segment}`, timestamp: now - 1_000 + segment }));
+        store.complete(`s${segment}`, { outcome: "ok" }, now);
+        expect((await store.rotateOnce(now)).rotated).toBe(true);
+      }
+      // the third newest object goes missing: beyond the oldest batch
+      const gone = store.segments()[2];
+      memory.objects.delete(gone.objectKey);
+      const day = 24 * 60 * 60 * 1000;
+      const dropped = (await store.pruneMissingSegments(0)) + (await store.pruneMissingSegments(day));
+      expect(dropped).toBe(1);
+      expect(store.segments().some((segment) => segment.seq === gone.seq)).toBe(false);
+      expect(store.segments()).toHaveLength(LEDGER_PRUNE_PER_ALARM + 4);
     });
   });
 

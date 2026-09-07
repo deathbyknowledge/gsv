@@ -24,6 +24,10 @@ export const LEDGER_SEGMENT_ROWS = 2_000;
 export const LEDGER_SEGMENT_BYTES = 4 * 1024 * 1024;
 /** Index entries checked or expired per alarm, so housekeeping stays a bounded amount of storage work. */
 export const LEDGER_PRUNE_PER_ALARM = 25;
+/** Index rows a read fetches at a time while looking for segments that may match. */
+export const LEDGER_INDEX_BATCH = 32;
+/** The missing-object repair moves on to the next batch of the index once a day. */
+const REPAIR_STEP_MS = 24 * 60 * 60 * 1000;
 /** Characters of JSON text a line keeps of its arguments; the cut is marked. */
 export const LEDGER_ARGS_LIMIT = 16_384;
 export const LEDGER_ID_LIMIT = 128;
@@ -542,6 +546,25 @@ export class LedgerStore {
     return [...this.sql.exec<SegmentRow>(`SELECT * FROM ledger_segments${filter} ORDER BY seq DESC`, ...params)].map(segmentFromRow);
   }
 
+  /** The index from `belowOrAt` downward, newest first, narrowed by time bounds, one batch. */
+  private segmentsFrom(belowOrAt: number, bounds: { since?: number; until?: number }, limit: number): LedgerSegment[] {
+    const where: string[] = ["seq <= ?"];
+    const params: number[] = [belowOrAt];
+    if (bounds.since !== undefined) {
+      where.push("last_ts >= ?");
+      params.push(bounds.since);
+    }
+    if (bounds.until !== undefined) {
+      where.push("first_ts <= ?");
+      params.push(bounds.until);
+    }
+    return [...this.sql.exec<SegmentRow>(
+      `SELECT * FROM ledger_segments WHERE ${where.join(" AND ")} ORDER BY seq DESC LIMIT ?`,
+      ...params,
+      limit,
+    )].map(segmentFromRow);
+  }
+
   private newestSegmentSeq(): number {
     const row = this.sql.exec<{ seq: number | null }>("SELECT MAX(seq) AS seq FROM ledger_segments").one();
     return row.seq ?? 0;
@@ -563,10 +586,23 @@ export class LedgerStore {
     return expired.length;
   }
 
-  /** Drops index entries whose object was removed from storage by something other than the Kernel, checking the oldest few per alarm. */
-  async pruneMissingSegments(): Promise<number> {
+  /**
+   * Drops index entries whose object was removed from storage by something
+   * other than the Kernel. Each run checks one bounded batch, chosen by the
+   * day, so successive days walk the whole index without keeping a cursor.
+   */
+  async pruneMissingSegments(now = Date.now()): Promise<number> {
+    const total = this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM ledger_segments").one().n;
+    if (total === 0) return 0;
+    const batches = Math.ceil(total / LEDGER_PRUNE_PER_ALARM);
+    const offset = (Math.floor(now / REPAIR_STEP_MS) % batches) * LEDGER_PRUNE_PER_ALARM;
+    const batch = [...this.sql.exec<SegmentRow>(
+      "SELECT * FROM ledger_segments ORDER BY seq ASC LIMIT ? OFFSET ?",
+      LEDGER_PRUNE_PER_ALARM,
+      offset,
+    )].map(segmentFromRow);
     let dropped = 0;
-    for (const segment of this.segments().slice(-LEDGER_PRUNE_PER_ALARM)) {
+    for (const segment of batch) {
       const head = await this.bucket.head(segment.objectKey);
       if (head) continue;
       this.sql.exec("DELETE FROM ledger_segments WHERE seq = ?", segment.seq);
@@ -632,38 +668,36 @@ export class LedgerStore {
       if (lines.length >= limit) return { lines, nextCursor: segTop === 0 ? null : formatCursor(pages, null) };
     }
 
-    const segments = this.segments(query);
-    const startIndex = cursor?.segment ? segments.findIndex((segment) => segment.seq <= (cursor.segment?.seq ?? 0)) : 0;
-    if (startIndex < 0) return { lines, nextCursor: null };
+    // the index is walked a batch at a time from the cursor down, so a read never holds more of it than it looks at
+    let below = cursor?.segment ? cursor.segment.seq : Number.MAX_SAFE_INTEGER;
     let touched = 0;
-    for (let index = startIndex; index < segments.length; index += 1) {
-      const segment = segments[index];
-      const from = examinedFrom(pages, segment);
-      if (from !== null && segment.firstSeq >= from) continue;
-      if (!segmentMayMatch(segment, query)) continue;
-      if (touched === LEDGER_SEGMENTS_PER_READ) {
-        return { lines, nextCursor: formatCursor(pages, { seq: segment.seq, offset: 0 }) };
-      }
-      touched += 1;
-      const offset = cursor?.segment && segment.seq === cursor.segment.seq ? cursor.segment.offset : 0;
-      const stored = await this.readSegment(segment);
-      for (let position = stored.length - 1 - offset; position >= 0; position -= 1) {
-        const line = stored[position];
-        if ((from !== null && line.seq >= from) || !matches(line, query)) continue;
-        lines.push(publicLine(line));
-        if (lines.length >= limit) {
-          const nextOffset = stored.length - position;
-          const next = index + 1 < segments.length ? segments[index + 1] : null;
-          return {
-            lines,
-            nextCursor: nextOffset >= stored.length
-              ? next ? formatCursor(pages, { seq: next.seq, offset: 0 }) : null
-              : formatCursor(pages, { seq: segment.seq, offset: nextOffset }),
-          };
+    for (;;) {
+      const batch = this.segmentsFrom(below, query, LEDGER_INDEX_BATCH);
+      if (batch.length === 0) return { lines, nextCursor: null };
+      for (const segment of batch) {
+        const from = examinedFrom(pages, segment);
+        if (from !== null && segment.firstSeq >= from) continue;
+        if (!segmentMayMatch(segment, query)) continue;
+        if (touched === LEDGER_SEGMENTS_PER_READ) {
+          return { lines, nextCursor: formatCursor(pages, { seq: segment.seq, offset: 0 }) };
+        }
+        touched += 1;
+        const offset = cursor?.segment && segment.seq === cursor.segment.seq ? cursor.segment.offset : 0;
+        const stored = await this.readSegment(segment);
+        for (let position = stored.length - 1 - offset; position >= 0; position -= 1) {
+          const line = stored[position];
+          if ((from !== null && line.seq >= from) || !matches(line, query)) continue;
+          lines.push(publicLine(line));
+          if (lines.length >= limit) {
+            const nextOffset = stored.length - position;
+            if (nextOffset < stored.length) return { lines, nextCursor: formatCursor(pages, { seq: segment.seq, offset: nextOffset }) };
+            const next = this.segmentsFrom(segment.seq - 1, query, 1)[0];
+            return { lines, nextCursor: next ? formatCursor(pages, { seq: next.seq, offset: 0 }) : null };
+          }
         }
       }
+      below = batch[batch.length - 1].seq - 1;
     }
-    return { lines, nextCursor: null };
   }
 
   /** Segments are immutable, so the last few read stay parsed for the pages that follow inside them. */
