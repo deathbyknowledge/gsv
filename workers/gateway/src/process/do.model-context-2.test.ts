@@ -609,6 +609,43 @@ describe("model context", () => {
     });
   });
 
+  it("treats a Send that only yields as a bare yield, or as a final message when media is staged", async () => {
+    const pid = "mech-send-yield-only";
+    const runId = "run-send-yield-only";
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+
+    await runInProcess(stub, async (process) => {
+      process.runs.active = generationRun(runId, terminalTestConfig(pid));
+      process.streams.silence = vi.fn(async () => {});
+      process.streams.complete = vi.fn(async () => {});
+      process.run.commitMessageRunControlAction = vi.fn(async (options: any) => ({
+        ok: true,
+        action: "message",
+        finish: options.finish,
+        text: options.text,
+        delivery: { kind: "none" },
+      }));
+      const yieldOnly = {
+        ok: true as const,
+        command: { action: "message" as const, text: "", finish: true, emptyMeansYield: true as const },
+      };
+      expect(await process.run.executeRunControlAction(runId, "send-yield-1", yieldOnly, [], "")).toMatchObject({
+        ok: true,
+        action: "yield",
+        finish: true,
+      });
+      const staged = [{ type: "image", mimeType: "image/png", key: "k", path: "p", size: 1 }];
+      expect(
+        await process.run.executeRunControlAction(runId, "send-yield-2", yieldOnly, staged, ""),
+      ).toMatchObject({ ok: true, action: "message", finish: true });
+      expect(process.run.commitMessageRunControlAction).toHaveBeenCalledOnce();
+      // a bare yield still may not carry meaningful assistant text
+      expect(
+        await process.run.executeRunControlAction(runId, "send-yield-3", yieldOnly, [], "the real reply"),
+      ).toMatchObject({ ok: false, error: "yield cannot accompany non-empty assistant text" });
+    });
+  });
+
   it("sends and ends the run through the Send tool", async () => {
     const pid = "mech-send-tool";
     const runId = "run-send-tool";

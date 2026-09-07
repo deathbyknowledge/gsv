@@ -17,7 +17,7 @@ import {
   type ResponsibilityRecord, jsonObjectSchema, type AiConfigResult, type AiTextGenerateConfig,
   type AiTextGenerateOptions, type ProcUsageState, jsonValueSchema, type JsonObject, type ProcTraceSpanStatus,
 } from "@humansandmachines/gsv/protocol";
-import type { RunControlCommandParseResult } from "../run-control-command";
+import type { RunControlCommand, RunControlCommandParseResult } from "../run-control-command";
 import type { RunOutputMedia, RunState } from "./state";
 import {
   errorMessageFromUnknown, isProviderContextOverflow, isProviderContextOverflowErrorMessage,
@@ -92,7 +92,15 @@ export class ProcessRun {
     }
     const activeRun = this.host.runs.active;
     const isHumanFacingRun = activeRun?.runId === runId && !activeRun.returnToCaller;
-    if (parsed.command.action === "yield" && isHumanFacingRun && assistantText.trim()) {
+    // a Send with yield and nothing to say is a bare yield, unless staged media makes it a final message
+    const command: RunControlCommand =
+      parsed.command.action === "message"
+        && parsed.command.emptyMeansYield === true
+        && !parsed.command.text.trim()
+        && media.length === 0
+        ? { action: "yield" }
+        : parsed.command;
+    if (command.action === "yield" && isHumanFacingRun && assistantText.trim()) {
       return {
         ok: false,
         action: "yield",
@@ -102,7 +110,7 @@ export class ProcessRun {
         error: "yield cannot accompany non-empty assistant text",
       };
     }
-    if (parsed.command.action === "message" && !parsed.command.text.trim() && media.length === 0) {
+    if (command.action === "message" && !command.text.trim() && media.length === 0) {
       return {
         ok: false,
         action: "message",
@@ -112,7 +120,6 @@ export class ProcessRun {
         error: "Message requires non-empty text or attached media",
       };
     }
-    const command = parsed.command;
     let responsibilityAdmissionKey: string | undefined;
     if (command.action === "yield" || command.finish) {
       const responsibilityCheck = await this.verifyTerminalResponsibilities(runId);

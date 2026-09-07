@@ -114,8 +114,9 @@ function parseRunControlShellCall(toolCall: ToolCall): RunControlCall | null {
 
 /**
  * The Send tool is the same command as a tool call. Text alone sends and the
- * run continues; text with yield sends and ends; yield alone ends. Whether an
- * empty text is a message is decided where the staged media is known.
+ * run continues; text with yield sends and ends; yield alone ends, or sends
+ * staged media and ends. Whether an empty text is a message is decided where
+ * the staged media is known.
  */
 function parseRunControlSendCall(toolCall: ToolCall): RunControlCall | null {
   if (toolCall.name !== SEND_TOOL.name) return null;
@@ -133,7 +134,7 @@ function parseRunControlSendCall(toolCall: ToolCall): RunControlCall | null {
   const text = args.data.text ?? "";
   const finish = args.data.yield === true;
   const command: RunControlCommand = finish && !text.trim()
-    ? { action: "yield" }
+    ? { action: "message", text: "", finish: true, emptyMeansYield: true }
     : { action: "message", text, finish };
   return { toolCall, parsed: { ok: true, command } };
 }

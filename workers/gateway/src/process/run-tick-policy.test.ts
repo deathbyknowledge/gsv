@@ -91,7 +91,11 @@ describe("run tick policy", () => {
       ok: true,
       command: { action: "message", text: "bye", finish: true },
     });
-    expect(parsedOf([send("s3", { yield: true })])).toEqual({ ok: true, command: { action: "yield" } });
+    // yield alone is a final message when media is staged and a bare yield otherwise; the runtime decides
+    expect(parsedOf([send("s3", { yield: true })])).toEqual({
+      ok: true,
+      command: { action: "message", text: "", finish: true, emptyMeansYield: true },
+    });
     // an empty send is a message with no text: the runtime decides whether staged media makes it one
     expect(parsedOf([send("s4", {})])).toEqual({ ok: true, command: { action: "message", text: "", finish: false } });
     expect(parsedOf([send("s5", { text: "x", extra: 1 })])).toMatchObject({ ok: false, action: "message" });
