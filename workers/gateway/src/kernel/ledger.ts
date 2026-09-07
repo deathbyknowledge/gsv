@@ -144,7 +144,6 @@ const detailArgsSchema = z.object({
   from: z.string().optional(),
   to: z.string().optional(),
   url: z.string().optional(),
-  query: z.string().optional(),
   code: z.string().optional(),
   model: z.string().optional(),
   label: z.string().optional(),
@@ -234,7 +233,7 @@ function scriptLabel(code: string): string {
 
 /**
  * What a person would recognize the call by. A command's shape, a path, a
- * host, a query, a model id. Never bodies, message text, tokens, or keys.
+ * host, a model id. Never bodies, message text, search queries, tokens, or keys.
  */
 export function redactDetail(call: string, args: JsonLike): string {
   const parsed = detailArgsSchema.safeParse(args);
@@ -245,7 +244,7 @@ export function redactDetail(call: string, args: JsonLike): string {
     const from = a.from ?? a.path ?? "";
     return oneLine(a.to ? `${from} → ${a.to}` : from);
   }
-  if (call.startsWith("fs.")) return oneLine(a.path ?? a.query ?? "");
+  if (call.startsWith("fs.")) return oneLine(a.path ?? "");
   if (call === "net.fetch") return oneLine(a.url ? hostOf(a.url) : "");
   if (call.startsWith("ai.")) return oneLine(a.model ?? "");
   if (call.startsWith("proc.")) return oneLine(a.label ?? a.name ?? "");
@@ -432,6 +431,14 @@ export class LedgerStore {
 
   /* ---------- the active window ---------- */
 
+  /**
+   * The seq of each line still open, by its full request id. Request ids are
+   * capped in the row, so two open requests sharing a long prefix would meet
+   * in SQL; here they never do. The map only outlives a line by a restart,
+   * after which completion falls back to the capped id.
+   */
+  private readonly open = new Map<string, number>();
+
   /** Writes an open line. Every client-controlled field is capped here, whatever the caller checked. */
   append(entry: LedgerAppend): number {
     this.sql.exec(
@@ -450,15 +457,26 @@ export class LedgerStore {
       oneLine(entry.detail),
     );
     const [row] = [...this.sql.exec<{ seq: number }>("SELECT last_insert_rowid() AS seq")];
-    return row?.seq ?? 0;
+    const seq = row?.seq ?? 0;
+    this.open.set(entry.requestId, seq);
+    while (this.open.size > LEDGER_WINDOW_ROWS) {
+      const oldest = this.open.keys().next().value;
+      if (oldest === undefined) break;
+      this.open.delete(oldest);
+    }
+    return seq;
   }
 
-  /** Completes the newest open line for the request; returns false when nothing was open. */
+  /** Completes the request's own open line; returns false when nothing was open. */
   complete(requestId: string, completion: LedgerCompletion, now = Date.now()): boolean {
-    const [open] = [...this.sql.exec<{ seq: number; ts: number }>(
-      "SELECT seq, ts FROM ledger_window WHERE request_id = ? AND outcome IS NULL ORDER BY seq DESC LIMIT 1",
-      capField(requestId, LEDGER_ID_LIMIT),
-    )];
+    const known = this.open.get(requestId);
+    this.open.delete(requestId);
+    const [open] = known === undefined
+      ? [...this.sql.exec<{ seq: number; ts: number }>(
+        "SELECT seq, ts FROM ledger_window WHERE request_id = ? AND outcome IS NULL ORDER BY seq DESC LIMIT 1",
+        capField(requestId, LEDGER_ID_LIMIT),
+      )]
+      : [...this.sql.exec<{ seq: number; ts: number }>("SELECT seq, ts FROM ledger_window WHERE seq = ? AND outcome IS NULL", known)];
     if (!open) return false;
     this.sql.exec(
       "UPDATE ledger_window SET outcome = ?, duration_ms = ?, tokens = ?, cost_nano_usd = ? WHERE seq = ?",
@@ -491,26 +509,25 @@ export class LedgerStore {
   /* ---------- rotation ---------- */
 
   /**
-   * Moves the oldest closed lines into one segment object, then in one
+   * Moves the oldest lines, in seq order, into one segment object, then in one
    * transaction removes exactly those lines from the window and records the
-   * segment. The rows are captured before the object write, and only those
-   * seqs are deleted: a line that completes while the write is in flight stays
-   * in the window for the next rotation. Lines still open after the window age
-   * are closed as cancelled on the way out. A failed object write leaves the
-   * window untouched.
-   *
-   * A line that closes late rotates in a later segment with a lower seq, so
-   * segment seq ranges may overlap; readers page by seq bound, not by range.
+   * segment. Rotation stops at the first line still open within the window
+   * age, so a segment is always a contiguous range below everything left in
+   * the window: that is what keeps a read newest-first across the two. An open
+   * line older than the window age is closed as cancelled on the way out. The
+   * rows are captured before the object write, and only those seqs are
+   * deleted; a failed object write leaves the window untouched.
    */
   async rotateOnce(now = Date.now()): Promise<RotationResult> {
     if (!this.needsRotation(now)) return { rotated: false, reason: "within-bounds" };
     const cutoff = now - LEDGER_WINDOW_AGE_MS;
     const rows = [...this.sql.exec<WindowRow>(
       `SELECT * FROM ledger_window
-       WHERE outcome IS NOT NULL OR ts < ?
+       WHERE seq < COALESCE((SELECT MIN(seq) FROM ledger_window WHERE outcome IS NULL AND ts >= ?), ?)
        ORDER BY seq ASC
        LIMIT ?`,
       cutoff,
+      Number.MAX_SAFE_INTEGER,
       LEDGER_SEGMENT_ROWS,
     )];
     if (rows.length === 0) return { rotated: false, reason: "nothing-closed" };

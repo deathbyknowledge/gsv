@@ -198,24 +198,24 @@ describe("LedgerStore", () => {
       store.append(entry({ requestId: "open", timestamp: now - 1_000 }));
       store.append(entry({ requestId: "closed-2", timestamp: now - 900 }));
       store.complete("closed-2", { outcome: "ok" }, now - 800);
-      // the open line completes during the put, after the rows were captured
+      // the open line holds the boundary, and completes during the put, after the rows were captured
       memory.duringPut = () => {
         store.complete("open", { outcome: "ok" }, now);
       };
       const first = await store.rotateOnce(now);
-      expect(first.rotated && first.segment.rowCount).toBe(2);
-      expect(store.windowCount()).toBe(1);
+      expect(first.rotated && first.segment.rowCount).toBe(1);
+      expect(store.windowCount()).toBe(2);
       const everything = await store.list({ ownerUid: 1000, limit: 10 });
       expect(everything.lines).toHaveLength(3);
       expect(everything.lines.every((line) => line.outcome === "ok")).toBe(true);
       memory.duringPut = null;
-      // it rotates in the next segment, with a lower seq than the previous segment's last: ranges overlap by design
+      // now closed, it rotates with what followed it, in order
       sql.exec("UPDATE ledger_window SET ts = ?", now - LEDGER_WINDOW_AGE_MS - 1);
       const second = await store.rotateOnce(now);
-      expect(second.rotated && second.segment.rowCount).toBe(1);
+      expect(second.rotated && second.segment.rowCount).toBe(2);
       expect(store.windowCount()).toBe(0);
       const all = await store.list({ ownerUid: 1000, limit: 10 });
-      expect(all.lines).toHaveLength(3);
+      expect(all.lines.map((line) => line.seq)).toEqual([3, 2, 1]);
     });
   });
 
@@ -334,7 +334,7 @@ describe("LedgerStore", () => {
     });
   });
 
-  it("never loses a line when a rotation leaves an open straggler behind", async () => {
+  it("holds rotation at an open line, so a segment never overtakes the window", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       const memory = new MemoryBucket();
       const store = new LedgerStore(sql, storage, bucketOf(memory));
@@ -345,20 +345,40 @@ describe("LedgerStore", () => {
         store.append(entry({ requestId: `r${i}`, timestamp: now - LEDGER_WINDOW_AGE_MS - 100 + i, detail: `r${i}` }));
         store.complete(`r${i}`, { outcome: "ok" }, now);
       }
+      // the open line holds the boundary: nothing behind it rotates, and the window reads newest first
+      expect(await store.rotateOnce(now)).toEqual({ rotated: false, reason: "nothing-closed" });
+      expect(store.windowCount()).toBe(10);
       const page1 = await store.list({ ownerUid: 1000, limit: 3 });
       expect(page1.lines.map((line) => line.detail)).toEqual(["r10", "r9", "r8"]);
 
+      // once it closes everything rotates in order, and a walk begun before the rotation stays strictly descending
+      store.complete("r1", { outcome: "ok" }, now);
       expect((await store.rotateOnce(now)).rotated).toBe(true);
-      expect(store.windowCount()).toBe(1);
-
-      const seen = page1.lines.map((line) => line.detail);
+      expect(store.windowCount()).toBe(0);
+      const seqs = page1.lines.map((line) => line.seq);
       let cursor = page1.nextCursor;
       while (cursor) {
         const page = await store.list({ ownerUid: 1000, limit: 3, cursor });
-        seen.push(...page.lines.map((line) => line.detail));
+        seqs.push(...page.lines.map((line) => line.seq));
         cursor = page.nextCursor;
       }
-      expect([...seen].sort()).toEqual(Array.from({ length: 10 }, (_, i) => `r${i + 1}`).sort());
+      expect(seqs).toEqual([10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
+    });
+  });
+
+  it("completes the line whose request it is when two open ids share a long prefix", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const store = new LedgerStore(sql, storage, bucketOf(new MemoryBucket()));
+      const prefix = "r".repeat(LEDGER_ID_LIMIT + 8);
+      store.append(entry({ requestId: `${prefix}1`, detail: "first" }));
+      store.append(entry({ requestId: `${prefix}2`, detail: "second" }));
+      expect(store.complete(`${prefix}1`, { outcome: "ok" })).toBe(true);
+      expect(store.complete(`${prefix}2`, { outcome: "failed" })).toBe(true);
+      const { lines } = await store.list({ ownerUid: 1000, limit: 10 });
+      expect(lines.map((line) => [line.detail, line.outcome])).toEqual([
+        ["second", "failed"],
+        ["first", "ok"],
+      ]);
     });
   });
 
@@ -474,6 +494,17 @@ describe("rotation scheduling", () => {
       expect(retry).toHaveLength(1);
       expect(retry[0].time).toBeGreaterThan(nowSeconds);
       expect(retry[0].time).toBeLessThanOrEqual(nowSeconds + 120);
+    });
+  });
+
+  it("arms the daily rotation on the first line, not the hundredth", async () => {
+    const stub = env.KERNEL.get(env.KERNEL.idFromName(crypto.randomUUID()));
+    await runInDurableObject(stub, async (kernel: Kernel, state) => {
+      expect(pendingRotations(state.storage.sql)).toHaveLength(0);
+      await kernel.armLedgerRotation(1);
+      expect(pendingRotations(state.storage.sql)).toHaveLength(1);
+      await kernel.armLedgerRotation(2);
+      expect(pendingRotations(state.storage.sql)).toHaveLength(1);
     });
   });
 

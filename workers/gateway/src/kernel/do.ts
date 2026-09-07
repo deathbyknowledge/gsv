@@ -1515,7 +1515,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     }
   }
 
-  /** Coalesces the tail signal to a few per second per owner, and arms rotation when the window fills. */
+  /** Coalesces the tail signal to a few per second per owner, and keeps a rotation armed. */
   private noteLedgerAppend(ownerUid: number, seq: number): void {
     for (const uid of ownerUid === 0 ? [0] : [ownerUid, 0]) {
       const pending = this.ledgerSignals.get(uid);
@@ -1532,9 +1532,21 @@ export class Kernel extends DurableObject<GatewayEnv> {
       }, 500);
       this.ledgerSignals.set(uid, { timer, count: 1, seq });
     }
-    if (seq % 100 !== 0) return;
+    void this.armLedgerRotation(seq);
+  }
+
+  private ledgerRotationArmed = false;
+
+  /**
+   * The first line of this Kernel's life arms the daily rotation, so a quiet
+   * installation still rotates on age; every hundredth line after that counts
+   * the window and pulls the rotation nearer when it is over its bound.
+   */
+  armLedgerRotation(seq: number): Promise<void> {
+    if (this.ledgerRotationArmed && seq % 100 !== 0) return Promise.resolve();
+    this.ledgerRotationArmed = true;
     const overBound = this.ledger.windowCount() > LEDGER_WINDOW_ROWS;
-    void this.ensureLedgerRotation(overBound ? LEDGER_ROTATION_SOON_MS : LEDGER_ROTATION_DAILY_MS);
+    return this.ensureLedgerRotation(overBound ? LEDGER_ROTATION_SOON_MS : LEDGER_ROTATION_DAILY_MS);
   }
 
   /**

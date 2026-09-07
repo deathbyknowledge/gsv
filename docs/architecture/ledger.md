@@ -36,11 +36,12 @@ onward (`--message`, `-m`, `-H`, `--header`, `--data`, `-d`, `--body`,
 `echo` or `printf` is kept, `user:password@` is removed from any token, and a
 URL, with or without a scheme, ends before its query or fragment. A script
 run through codemode is described as `script (N lines)` and never by its
-text. For other calls the detail is a path, a URL's host only, a search
-query, a model id, a process label, an adapter name, a config key. Request ids,
+text. For other calls the detail is a path, a URL's host only, a model id,
+a process label, an adapter name, a config key. Request ids,
 targets, process and run ids are capped at 128 characters and the detail at
-200, truncation marked, whatever the caller sent. Bodies, message text, prompt
-content, tokens, and credentials never enter the ledger, so a segment is safe
+200, truncation marked, whatever the caller sent. Bodies, message text, search
+queries, prompt content, tokens, and credentials never enter the ledger, so a
+segment is safe
 to hand to a client as it is.
 
 ## The window
@@ -53,8 +54,9 @@ cancellation, or a refused registration otherwise. A routed call whose device
 or origin disconnects mid-flight, or whose device answers something the Kernel
 cannot decode, closes as `failed`; a call refused because its request was
 already cancelled closes as `cancelled`. Every exit from the dispatch closes
-its line. The dispatch path only inserts and, every hundredth line,
-counts; nothing else runs inline.
+its line. The dispatch path only inserts and, on the Kernel's first line and
+every hundredth after, counts the window to keep a rotation armed; nothing
+else runs inline.
 
 The window is bounded to 5,000 lines or 24 hours, whichever comes first.
 Exactly one rotation task is pending at any time, keyed by its callback and
@@ -66,7 +68,8 @@ than mistaking it for a pending one.
 
 ## Segments
 
-Rotation captures the oldest closed lines, up to 2,000 at a time, writes them
+Rotation captures the oldest lines in sequence order, up to 2,000 at a time,
+stopping at the first line still open within the window age, writes them
 as one immutable object under `ledger/<seq>.jsonl` in the installation's R2
 storage, one JSON line per ledger line, and only then, in one transaction,
 deletes exactly those sequence numbers from the window and inserts the
@@ -78,9 +81,9 @@ untouched and rotates next time. Lines still open after the window age are
 closed as `cancelled` on the way out. A failed write retries on the next alarm
 and prunes nothing. A segment stays well under 1.5 MB.
 
-A line that closes late rotates in a later segment with a lower sequence
-number, so segment ranges may overlap; readers page by a sequence bound, not
-by range. The index is what keeps reads cheap: a query filtered by owner,
+An open line holds the boundary until it closes or ages out, so every segment
+is a contiguous range below everything left in the window and a read is
+newest-first across the two. The index is what keeps reads cheap: a query filtered by owner,
 process, or place skips every segment whose sets cannot contain a match.
 
 ## Retention
@@ -111,9 +114,8 @@ the window records the newest segment that existed at the time and the lowest
 window sequence it examined, so everything at or above that number had been
 seen. A segment created after such a page holds lines that were in the window
 then, and reading it skips exactly those and returns the rest; segments older
-than the walk are read whole. A line is therefore never lost; a line can be returned twice when a late-closing call rotates into a segment below one already paged and
-never lost, including a straggler that stayed open in the window while the
-lines around it rotated out. Filters are
+than the walk are read whole. A line is therefore neither lost nor repeated
+across a rotation. Filters are
 `pid`, `target`, `callPrefix`, `since`, and `until`; `limit` is at most 200.
 Visibility is the rule `proc.list` uses: a caller sees the lines of the human
 who owns them, and root sees every line. The `ledger.appended` signal, sent to
