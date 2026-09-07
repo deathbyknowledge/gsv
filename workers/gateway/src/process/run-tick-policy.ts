@@ -3,7 +3,7 @@ import type { AiConfigResult } from "@humansandmachines/gsv/protocol";
 import type { AssistantMessage, TextContent, ThinkingContent, ToolCall } from "@earendil-works/pi-ai";
 import { parseRunControlCommand, type RunControlCommandParseResult } from "./run-control-command";
 
-type RunControlShellCall = {
+export type RunControlShellCall = {
   toolCall: ToolCall;
   parsed: RunControlCommandParseResult;
 };

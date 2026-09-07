@@ -2,7 +2,8 @@
 
 import type { AiConfigResult, AiContextResult } from "@humansandmachines/gsv/protocol";
 import {
-  MAX_TERMINAL_COMMAND_FAILURES, MAX_TERMINAL_DELIVERY_FAILURES, RUN_CONTROL_INSTRUCTION,
+  FINAL_MESSAGE_BLOCK_EXAMPLE, MAX_TERMINAL_COMMAND_FAILURES, MAX_TERMINAL_DELIVERY_FAILURES,
+  RUN_CONTROL_INSTRUCTION,
 } from "../internal/lifecycle";
 import type { Message, Tool } from "@earendil-works/pi-ai";
 import { RUN_CONTROL_SHELL_TOOL, conversationProvenanceSchema } from "../internal/schemas";
@@ -86,6 +87,14 @@ export function withRunControlInstructions(workTools: Tool[]): Tool[] {
     };
   });
   return foundShell ? tools : [...tools, RUN_CONTROL_SHELL_TOOL];
+}
+
+export function missingRunControlCorrectionMessage(): string {
+  return [
+    "This run is not complete. Ordinary assistant text is Process activity and is not sent to the user.",
+    "Run `yield` now if the work is complete.",
+    `If the user still needs a final message, send and finish with:\n${FINAL_MESSAGE_BLOCK_EXAMPLE}`,
+  ].join("\n");
 }
 
 export type RunControlFailureKind = Extract<RunControlResult, { ok: false; }>["failureKind"];

@@ -9,7 +9,7 @@ import type {
   PersistedRunTick, RunTickContextState, RunTickInputs,
 } from "../internal/contracts";
 import {
-  FINAL_MESSAGE_BLOCK_EXAMPLE, MAX_TERMINAL_CORRECTION_ROUNDS, RUNTIME_EVENT_WAKE_MESSAGE,
+  MAX_TERMINAL_CORRECTION_ROUNDS, RUNTIME_EVENT_WAKE_MESSAGE,
   MAX_RETRYABLE_GENERATION_ATTEMPTS, PENDING_RUN_CONTROL_CALL, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE,
   MEDIA_PREPARATION_TIMEOUT_MS, TOOL_DISPATCH_TIMEOUT_MS,
 } from "../internal/lifecycle";
@@ -46,7 +46,7 @@ import {
 import {
   formatRunControlToolResult, incrementRunControlFailure, isRunControlFailureExhausted, runControlFailureAttempt,
   PROCESS_TASK_SCHEMA, type ProcessTask, type ProcessTaskCallback, contextSnapshotFromRun,
-  withRunControlInstructions,
+  missingRunControlCorrectionMessage, withRunControlInstructions,
 } from "./helpers";
 import { ProcessStore, stringifyAssistantMessageMeta, type MessageMetadata, type ContextEpochRecord } from "../store";
 import { TOOL_TO_SYSCALL } from "../../syscalls/constants";
@@ -405,12 +405,10 @@ export class ProcessRun {
       terminalCorrectionRounds: (current.terminalCorrectionRounds ?? 0) + 1,
     }));
     if (!correctedRun) return;
-    const message = [
-      "This run is not complete. Ordinary assistant text is Process activity and is not sent to the user.",
-      "Run `yield` now if the work is complete.",
-      `If the user still needs a final message, send and finish with:\n${FINAL_MESSAGE_BLOCK_EXAMPLE}`,
-    ].join("\n");
-    await this.host.history.appendSystemMessage(runId, message);
+    await this.host.history.appendSystemMessage(
+      runId,
+      missingRunControlCorrectionMessage(),
+    );
     if (!this.host.handleRunStopped(runId)) await this.scheduleTick(runId);
   }
 
