@@ -323,3 +323,43 @@ export function shortPid(pid: string): string {
   const compact = pid.replace(/[^a-z0-9]/gi, "");
   return compact.length <= 8 ? compact : compact.slice(-6);
 }
+
+/* ---------- the Kernel's own ledger, when the gateway has it ---------- */
+const sysLedgerLineSchema = z.object({
+  seq: z.number(),
+  timestamp: z.number(),
+  principalKind: z.string(),
+  uid: z.number(),
+  pid: z.string().nullable(),
+  runId: z.string().nullable(),
+  target: z.string(),
+  call: z.string(),
+  detail: z.string(),
+  outcome: z.enum(["ok", "failed", "denied", "cancelled"]).nullable(),
+  durationMs: z.number().nullable(),
+});
+export const sysLedgerListResultSchema = z.object({ lines: z.array(sysLedgerLineSchema), nextCursor: z.string().nullable() });
+export type SysLedgerListResult = z.infer<typeof sysLedgerListResultSchema>;
+
+function argsFromDetail(call: string, detail: string): { input?: string; path?: string; url?: string; query?: string } {
+  if (call === "shell.exec" || call.startsWith("codemode.")) return { input: detail };
+  if (call === "fs.search") return { query: detail };
+  if (call.startsWith("fs.")) return { path: detail };
+  if (call === "net.fetch") return { url: `https://${detail}` };
+  return {};
+}
+
+/** Lines from `sys.ledger.list`, in the same shape Fleet draws, so the two sources are interchangeable. */
+export function ledgerFromSysLines(lines: readonly z.infer<typeof sysLedgerLineSchema>[]): LedgerLine[] {
+  return lines.map((line) => ({
+    id: `sys:${line.seq}`,
+    timestamp: line.timestamp,
+    processId: line.pid ?? (line.principalKind === "user" ? "you" : "gsv"),
+    place: line.target,
+    syscall: line.call,
+    what: humanCall(line.call, argsFromDetail(line.call, line.detail)),
+    detail: line.detail,
+    outcome: line.outcome === null ? "running" : line.outcome === "ok" ? "completed" : line.outcome,
+    runId: line.runId,
+  }));
+}

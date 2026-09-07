@@ -16,6 +16,7 @@ import {
   targetFromToolArgs,
   shortPid,
   humanCall,
+  ledgerFromSysLines,
 } from "./fleetModel";
 
 function target(overrides: Partial<ConsoleTarget>): ConsoleTarget {
@@ -184,5 +185,16 @@ describe("humanCall", () => {
   });
   it("collapses a heredoc to one line in the detail", () => {
     expect(describeToolCall("shell.exec", { input: "message ana <<GSV_MESSAGE\nhello there\nGSV_MESSAGE" })).toBe("message ana <<GSV_MESSAGE hello there GSV_MESSAGE");
+  });
+});
+
+describe("ledgerFromSysLines", () => {
+  it("draws the kernel's lines the way it draws history lines", () => {
+    const lines = ledgerFromSysLines([
+      { seq: 7, timestamp: 5_000, principalKind: "process", uid: 1000, pid: "p1", runId: "r1", target: "laptop", call: "shell.exec", detail: "ls -la", outcome: "ok", durationMs: 40 },
+      { seq: 8, timestamp: 6_000, principalKind: "user", uid: 1000, pid: null, runId: null, target: "gsv", call: "fs.read", detail: "~/notes.md", outcome: null, durationMs: null },
+    ]);
+    expect(lines[0]).toMatchObject({ id: "sys:7", place: "laptop", what: "looked around", detail: "ls -la", outcome: "completed", processId: "p1" });
+    expect(lines[1]).toMatchObject({ id: "sys:8", what: "read notes.md", outcome: "running", processId: "you" });
   });
 });

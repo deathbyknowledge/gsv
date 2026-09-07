@@ -24,6 +24,8 @@ import {
   clockTime,
   formatUsd,
   ledgerFromRows,
+  ledgerFromSysLines,
+  sysLedgerListResultSchema,
   mergeLedger,
   orderPlaces,
   orderProcesses,
@@ -137,17 +139,29 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
       ),
   });
 
+  /* the Kernel's own ledger when the gateway has it; the history merge above stays as the fallback */
+  const sysLedgerQuery = useQuery({
+    queryKey: [...LEDGER_QUERY_KEY, "sys"],
+    enabled: connected,
+    retry: false,
+    queryFn: async () => {
+      const raw = await client.call("sys.ledger.list", { limit: LEDGER_CAP });
+      return ledgerFromSysLines(sysLedgerListResultSchema.parse(raw).lines);
+    },
+  });
+  const kernelLedger = sysLedgerQuery.data ?? null;
+
   useEffect(() => {
     return client.onSignal((signal) => {
-      if (signal === "proc.run.finished" || signal === "proc.run.tool.finished") {
+      if (signal === "proc.run.finished" || signal === "proc.run.tool.finished" || signal === "ledger.appended") {
         void queryClient.invalidateQueries({ queryKey: LEDGER_QUERY_KEY });
       }
     });
   }, [client, queryClient]);
 
   const ledger = useMemo(
-    () => mergeLedger((ledgerQuery.data ?? []).map((entry) => entry.lines), LEDGER_CAP),
-    [ledgerQuery.data],
+    () => kernelLedger ?? mergeLedger((ledgerQuery.data ?? []).map((entry) => entry.lines), LEDGER_CAP),
+    [kernelLedger, ledgerQuery.data],
   );
   const runsToday = useMemo(() => runsTodayByPlace(ledger, now), [ledger, now]);
   const placeLabel = useCallback(
@@ -423,7 +437,7 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
             <h2>
               <i /> Ledger <span class="count">{ledgerState}</span>
             </h2>
-            {ledgerPids.length < processes.length ? (
+            {!kernelLedger && ledgerPids.length < processes.length ? (
               <p class="note">Showing the {ledgerPids.length} most recently active processes.</p>
             ) : null}
             {ledgerQuery.error ? <p class="error">Could not read history: {String(ledgerQuery.error)}</p> : null}
