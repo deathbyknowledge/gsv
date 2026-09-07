@@ -117,7 +117,7 @@ import {
 } from "./outbound-mail";
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
-import { LEDGER_WINDOW_ROWS, LedgerStore, argsText, ledgerTargetOf, outcomeOfResponse, usageOfResponse, type JsonLike } from "./ledger";
+import { LEDGER_PRUNE_PER_ALARM, LEDGER_WINDOW_ROWS, LedgerStore, argsText, ledgerTargetOf, outcomeOfResponse, usageOfResponse, type JsonLike } from "./ledger";
 
 const LEDGER_ROTATION_TASK = "rotate";
 const LEDGER_ROTATION_SOON_MS = 5_000;
@@ -1576,13 +1576,19 @@ export class Kernel extends DurableObject<GatewayEnv> {
     }
   }
 
-  /** The ledger's housekeeping: stale lines close, a window over its bound rotates, retention applies to what stayed. */
+  /**
+   * The ledger's housekeeping: stale lines close, a window over its bound
+   * rotates, retention applies to what stayed. It comes back in a minute
+   * while there is more to do, and daily otherwise.
+   */
   async onLedgerRotate(reason: string, runningTaskId?: string): Promise<void> {
+    let drained = true;
     try {
       const closed = this.ledger.closeStale();
       const segments = await this.ledger.rotate();
       const expired = this.ledger.pruneExpired();
       const expiredSegments = await this.ledger.pruneExpiredSegments();
+      drained = expiredSegments < LEDGER_PRUNE_PER_ALARM;
       const dropped = await this.ledger.pruneMissingSegments();
       if (closed > 0 || segments.length > 0 || expired > 0 || expiredSegments > 0 || dropped > 0) {
         console.log(
@@ -1592,7 +1598,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
     } catch (error) {
       console.warn(`[ledger] rotation failed, will retry: ${error instanceof Error ? error.name : "error"}`);
     }
-    await this.ensureLedgerRotation(this.ledger.needsRotation() ? LEDGER_ROTATION_RETRY_MS : LEDGER_ROTATION_DAILY_MS, runningTaskId);
+    const more = this.ledger.needsRotation() || !drained;
+    await this.ensureLedgerRotation(more ? LEDGER_ROTATION_RETRY_MS : LEDGER_ROTATION_DAILY_MS, runningTaskId);
   }
 
   async scheduleManagedOutboundEnqueue(

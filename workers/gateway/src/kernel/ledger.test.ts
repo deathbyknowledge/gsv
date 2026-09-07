@@ -569,6 +569,31 @@ describe("rotation scheduling", () => {
     });
   });
 
+  it("comes back in a minute while expired segments remain, and daily once drained", async () => {
+    const stub = env.KERNEL.get(env.KERNEL.idFromName(crypto.randomUUID()));
+    await runInDurableObject(stub, async (kernel: Kernel, state) => {
+      const memory = new MemoryBucket();
+      kernel.ledger.bucket = memory;
+      const now = Date.now();
+      const nowSeconds = Math.floor(now / 1_000);
+      for (let segment = 0; segment < LEDGER_PRUNE_PER_ALARM + 1; segment += 1) {
+        kernel.ledger.append(entry({ requestId: `old-${segment}`, timestamp: now - LEDGER_RETENTION_MS - 10_000 + segment }));
+        kernel.ledger.complete(`old-${segment}`, { outcome: "ok" }, now);
+        expect((await kernel.ledger.rotateOnce(now)).rotated).toBe(true);
+      }
+      await kernel.onLedgerRotate("test");
+      expect(kernel.ledger.segments()).toHaveLength(1);
+      const soon = pendingRotations(state.storage.sql);
+      expect(soon).toHaveLength(1);
+      expect(soon[0].time).toBeLessThanOrEqual(nowSeconds + 120);
+      await kernel.onLedgerRotate("test", soon[0].id);
+      expect(kernel.ledger.segments()).toHaveLength(0);
+      const daily = pendingRotations(state.storage.sql);
+      expect(daily).toHaveLength(1);
+      expect(daily[0].time).toBeGreaterThan(nowSeconds + 60 * 60);
+    });
+  });
+
   it("re-arms exactly once when it runs", async () => {
     const stub = env.KERNEL.get(env.KERNEL.idFromName(crypto.randomUUID()));
     await runInDurableObject(stub, async (kernel: Kernel, state) => {
