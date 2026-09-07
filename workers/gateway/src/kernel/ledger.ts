@@ -7,20 +7,23 @@ import type { SysLedgerLine, SysLedgerListArgs, SysLedgerListResult, SysLedgerOu
  * syscall, written when the call is dispatched and completed when its response
  * is known. The active window stays small; closed lines rotate into immutable
  * segments in the installation's R2 storage, and an index of those segments
- * stays here so reads can page across both and skip segments by process or
- * place.
+ * stays here so reads can page across both and skip segments by owner,
+ * process, or place.
  *
  * Lines carry the argument that matters, redacted and capped, never a body,
- * prompt text, or a credential.
+ * message text, or a credential.
  */
 
 export const LEDGER_WINDOW_ROWS = 5_000;
 export const LEDGER_WINDOW_AGE_MS = 24 * 60 * 60 * 1000;
 export const LEDGER_SEGMENT_ROWS = 2_000;
 export const LEDGER_DETAIL_LIMIT = 200;
+export const LEDGER_ID_LIMIT = 128;
 export const LEDGER_LIST_MAX = 200;
+export const LEDGER_SEGMENTS_PER_READ = 4;
 export const LEDGER_OBJECT_PREFIX = "ledger/";
 const ROTATIONS_PER_ALARM = 8;
+const DELETE_CHUNK = 50;
 
 export type LedgerOutcome = SysLedgerOutcome;
 export type LedgerLine = SysLedgerLine;
@@ -52,6 +55,7 @@ export type LedgerSegment = {
   lastTs: number;
   rowCount: number;
   bytes: number;
+  uids: number[];
   pids: string[];
   targets: string[];
   createdAt: number;
@@ -99,6 +103,7 @@ type SegmentRow = {
   last_ts: number;
   row_count: number;
   bytes: number;
+  uids: string;
   pids: string;
   targets: string;
   created_at: number;
@@ -125,6 +130,7 @@ const storedLineSchema = z.object({
   costNanoUsd: z.number().nullable().optional(),
 });
 const stringListSchema = z.array(z.string());
+const numberListSchema = z.array(z.number());
 
 /* ---------- redaction: the argument that matters, one line, capped ---------- */
 
@@ -145,9 +151,14 @@ const detailArgsSchema = z.object({
   name: z.string().optional(),
 });
 
+/** Truncates to `limit` characters, marking the cut so a reader knows the line was longer. */
+export function capField(value: string, limit: number): string {
+  return value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
+}
+
 function oneLine(value: string, limit = LEDGER_DETAIL_LIMIT): string {
   const flat = value.split(/\r?\n/, 1)[0]?.replace(/\s+/g, " ").trim() ?? "";
-  return flat.length > limit ? `${flat.slice(0, limit - 1)}…` : flat;
+  return capField(flat, limit);
 }
 
 function hostOf(url: string): string {
@@ -158,14 +169,57 @@ function hostOf(url: string): string {
   }
 }
 
+/** Flags whose value is content, not a name: nothing after them is kept. */
+const CONTENT_FLAGS = [
+  "--message", "-m", "-H", "--header", "--data", "-d", "--data-raw", "--data-binary",
+  "--body", "-b", "--cookie", "-u", "--user", "--token", "--password",
+];
+
+function isContentFlag(token: string): boolean {
+  return CONTENT_FLAGS.some((flag) => token === flag || token.startsWith(`${flag}=`));
+}
+
+/** A token that looks like a URL keeps its scheme, host, and path; never userinfo, query, or fragment. */
+function scrubUrlToken(token: string): string {
+  const match = token.match(/^([a-z][a-z0-9+.-]*:\/\/)(.*)$/i);
+  if (!match) return token;
+  const rest = match[2];
+  const withoutUserinfo = rest.includes("@") ? rest.slice(rest.lastIndexOf("@") + 1) : rest;
+  const cut = withoutUserinfo.search(/[?#]/);
+  return `${match[1]}${cut >= 0 ? withoutUserinfo.slice(0, cut) : withoutUserinfo}`;
+}
+
 /**
- * What a person would recognize the call by. Paths, hosts, the first line of a
- * command, a query, a model id. Never bodies, message text, tokens, or keys.
+ * The shape of a shell command without its content: the command word and its
+ * first argument when that argument is not a flag, cut at the first flag that
+ * carries content, with URLs stripped to scheme, host, and path.
+ */
+export function redactShellInput(input: string): string {
+  const line = oneLine(input, LEDGER_DETAIL_LIMIT * 4);
+  const tokens = line.split(" ").filter(Boolean);
+  const kept: string[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (isContentFlag(token)) break;
+    if (index === 0) {
+      kept.push(scrubUrlToken(token));
+      continue;
+    }
+    if (token.startsWith("-")) break;
+    kept.push(scrubUrlToken(token));
+    break;
+  }
+  return capField(kept.join(" "), LEDGER_DETAIL_LIMIT);
+}
+
+/**
+ * What a person would recognize the call by. A command's shape, a path, a
+ * host, a query, a model id. Never bodies, message text, tokens, or keys.
  */
 export function redactDetail(call: string, args: JsonLike): string {
   const parsed = detailArgsSchema.safeParse(args);
   const a = parsed.success ? parsed.data : {};
-  if (call === "shell.exec") return oneLine(a.input ?? "");
+  if (call === "shell.exec") return redactShellInput(a.input ?? "");
   if (call.startsWith("codemode.")) return oneLine(a.code ?? "");
   if (call === "fs.copy" || call.startsWith("fs.transfer")) {
     const from = a.from ?? a.path ?? "";
@@ -184,10 +238,10 @@ export function redactDetail(call: string, args: JsonLike): string {
 
 const targetArgSchema = z.object({ target: z.string().min(1).optional() });
 
-/** The place a call went to: its `target` argument, else the cloud home. */
+/** The place a call went to: its `target` argument, capped, else the cloud home. */
 export function ledgerTargetOf(args: JsonLike): string {
   const parsed = targetArgSchema.safeParse(args);
-  return parsed.success && parsed.data.target ? parsed.data.target : "gsv";
+  return parsed.success && parsed.data.target ? capField(parsed.data.target, LEDGER_ID_LIMIT) : "gsv";
 }
 
 /** JSON as it arrives on the wire; the redactor parses what it needs at the boundary. */
@@ -202,27 +256,31 @@ export function outcomeOfResponse(frame: ResponseFrame): LedgerOutcome {
   return "failed";
 }
 
-const usageSchema = z.object({
-  usage: z
-    .object({
+/** The usage an ai.text.generate result carries: on its assistant message, with cost in USD. */
+const aiResultUsageSchema = z.object({
+  message: z.object({
+    usage: z.object({
       totalTokens: z.number().optional(),
-      inputTokens: z.number().optional(),
-      outputTokens: z.number().optional(),
-      costNanoUsd: z.number().optional(),
-    })
-    .optional(),
+      input: z.number().optional(),
+      output: z.number().optional(),
+      cost: z.object({ total: z.number().optional() }).optional(),
+    }),
+  }),
 });
 
-/** Tokens and cost when a response carries usage, as the ai.* calls do. */
+const NANO = 1_000_000_000;
+
+/** Tokens and cost when a response carries usage, as ai.text.generate does. */
 export function usageOfResponse(frame: ResponseFrame): Pick<LedgerCompletion, "tokens" | "costNanoUsd"> {
   if (!frame.ok) return {};
-  const parsed = usageSchema.safeParse(frame.data);
-  const usage = parsed.success ? parsed.data.usage : undefined;
-  if (!usage) return {};
-  const tokens = usage.totalTokens ?? ((usage.inputTokens ?? 0) + (usage.outputTokens ?? 0) || null);
+  const parsed = aiResultUsageSchema.safeParse(frame.data);
+  if (!parsed.success) return {};
+  const usage = parsed.data.message.usage;
+  const tokens = usage.totalTokens ?? ((usage.input ?? 0) + (usage.output ?? 0) || null);
+  const total = usage.cost?.total;
   return {
     tokens,
-    costNanoUsd: usage.costNanoUsd ?? null,
+    costNanoUsd: total === undefined ? null : Math.round(total * NANO),
   };
 }
 
@@ -251,6 +309,7 @@ function rowToStored(row: WindowRow): StoredLine {
 }
 
 function segmentFromRow(row: SegmentRow): LedgerSegment {
+  const uids = numberListSchema.safeParse(JSON.parse(row.uids));
   const pids = stringListSchema.safeParse(JSON.parse(row.pids));
   const targets = stringListSchema.safeParse(JSON.parse(row.targets));
   return {
@@ -261,6 +320,7 @@ function segmentFromRow(row: SegmentRow): LedgerSegment {
     lastTs: row.last_ts,
     rowCount: row.row_count,
     bytes: row.bytes,
+    uids: uids.success ? uids.data : [],
     pids: pids.success ? pids.data : [],
     targets: targets.success ? targets.data : [],
     createdAt: row.created_at,
@@ -282,16 +342,37 @@ function matches(line: StoredLine, query: LedgerQuery): boolean {
   return true;
 }
 
-/** Cursor: `w:<seq>` reads window lines below seq; `s:<segmentSeq>:<offset>` reads a segment from the end. */
-type Cursor = { kind: "window"; belowSeq: number } | { kind: "segment"; seq: number; offset: number };
+/**
+ * A cursor remembers which window lines a reader has already been handed, as
+ * the seq range `[low, high]` returned from the window so far, plus where it
+ * is: `<low>:<high>:w` continues in the window below `low`;
+ * `<low>:<high>:s:<segmentSeq>:<offset>` continues in a segment. Segment reads
+ * skip lines inside that range, so a line that rotated between two pages is
+ * never returned twice, while stragglers with lower seqs than the segments
+ * around them are still reachable.
+ */
+type Cursor = { low: number; high: number; segment: { seq: number; offset: number } | null };
+
+const NO_RANGE = { low: Number.MAX_SAFE_INTEGER, high: 0 };
 
 function parseCursor(cursor: string | undefined): Cursor | null {
   if (!cursor) return null;
-  const window = cursor.match(/^w:(\d+)$/);
-  if (window) return { kind: "window", belowSeq: Number(window[1]) };
-  const segment = cursor.match(/^s:(\d+):(\d+)$/);
-  if (segment) return { kind: "segment", seq: Number(segment[1]), offset: Number(segment[2]) };
+  const window = cursor.match(/^(\d+):(\d+):w$/);
+  if (window) return { low: Number(window[1]), high: Number(window[2]), segment: null };
+  const segment = cursor.match(/^(\d+):(\d+):s:(\d+):(\d+)$/);
+  if (segment) {
+    return { low: Number(segment[1]), high: Number(segment[2]), segment: { seq: Number(segment[3]), offset: Number(segment[4]) } };
+  }
   throw new Error("Invalid ledger cursor");
+}
+
+function formatCursor(range: { low: number; high: number }, segment: { seq: number; offset: number } | null): string {
+  const head = `${range.low}:${range.high}`;
+  return segment ? `${head}:s:${segment.seq}:${segment.offset}` : `${head}:w`;
+}
+
+function inRange(seq: number, range: { low: number; high: number }): boolean {
+  return seq >= range.low && seq <= range.high;
 }
 
 /** The three things the ledger asks of the installation's storage; an R2 bucket satisfies it as is. */
@@ -310,20 +391,21 @@ export class LedgerStore {
 
   /* ---------- the active window ---------- */
 
+  /** Writes an open line. Every client-controlled field is capped here, whatever the caller checked. */
   append(entry: LedgerAppend): number {
     this.sql.exec(
       `INSERT INTO ledger_window
        (request_id, ts, principal_kind, uid, owner_uid, pid, run_id, target, call, detail)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      entry.requestId,
+      capField(entry.requestId, LEDGER_ID_LIMIT),
       entry.timestamp,
-      entry.principalKind,
+      capField(entry.principalKind, 32),
       entry.uid,
       entry.ownerUid,
-      entry.pid,
-      entry.runId,
-      entry.target,
-      entry.call,
+      entry.pid === null ? null : capField(entry.pid, LEDGER_ID_LIMIT),
+      entry.runId === null ? null : capField(entry.runId, LEDGER_ID_LIMIT),
+      capField(entry.target, LEDGER_ID_LIMIT),
+      capField(entry.call, LEDGER_ID_LIMIT),
       oneLine(entry.detail),
     );
     const [row] = [...this.sql.exec<{ seq: number }>("SELECT last_insert_rowid() AS seq")];
@@ -334,7 +416,7 @@ export class LedgerStore {
   complete(requestId: string, completion: LedgerCompletion, now = Date.now()): boolean {
     const [open] = [...this.sql.exec<{ seq: number; ts: number }>(
       "SELECT seq, ts FROM ledger_window WHERE request_id = ? AND outcome IS NULL ORDER BY seq DESC LIMIT 1",
-      requestId,
+      capField(requestId, LEDGER_ID_LIMIT),
     )];
     if (!open) return false;
     this.sql.exec(
@@ -369,9 +451,15 @@ export class LedgerStore {
 
   /**
    * Moves the oldest closed lines into one segment object, then in one
-   * transaction removes them from the window and records the segment. Lines
-   * still open after the window age are closed as cancelled on the way out. A
-   * failed object write leaves the window untouched.
+   * transaction removes exactly those lines from the window and records the
+   * segment. The rows are captured before the object write, and only those
+   * seqs are deleted: a line that completes while the write is in flight stays
+   * in the window for the next rotation. Lines still open after the window age
+   * are closed as cancelled on the way out. A failed object write leaves the
+   * window untouched.
+   *
+   * A line that closes late rotates in a later segment with a lower seq, so
+   * segment seq ranges may overlap; readers page by seq bound, not by range.
    */
   async rotateOnce(now = Date.now()): Promise<RotationResult> {
     if (!this.needsRotation(now)) return { rotated: false, reason: "within-bounds" };
@@ -390,30 +478,35 @@ export class LedgerStore {
       const stored = rowToStored(row);
       return stored.outcome === null ? { ...stored, outcome: "cancelled" as const, durationMs: null } : stored;
     });
+    const seqs = lines.map((line) => line.seq);
     const body = lines.map((line) => JSON.stringify(line)).join("\n") + "\n";
-    const lastSeq = lines[lines.length - 1].seq;
+    const lastSeq = seqs[seqs.length - 1];
     const key = segmentKey(lastSeq);
     const bytes = new TextEncoder().encode(body).byteLength;
     await this.bucket.put(key, body, { httpMetadata: { contentType: "application/x-ndjson" } });
 
     const segment: LedgerSegment = {
       seq: lastSeq,
-      firstSeq: lines[0].seq,
+      firstSeq: seqs[0],
       objectKey: key,
       firstTs: Math.min(...lines.map((line) => line.timestamp)),
       lastTs: Math.max(...lines.map((line) => line.timestamp)),
       rowCount: lines.length,
       bytes,
+      uids: [...new Set(lines.map((line) => line.ownerUid))].sort((a, b) => a - b),
       pids: [...new Set(lines.flatMap((line) => (line.pid ? [line.pid] : [])))].sort(),
       targets: [...new Set(lines.map((line) => line.target))].sort(),
       createdAt: now,
     };
     this.storage.transactionSync(() => {
-      this.sql.exec("DELETE FROM ledger_window WHERE seq >= ? AND seq <= ? AND (outcome IS NOT NULL OR ts < ?)", segment.firstSeq, segment.seq, cutoff);
+      for (let start = 0; start < seqs.length; start += DELETE_CHUNK) {
+        const chunk = seqs.slice(start, start + DELETE_CHUNK);
+        this.sql.exec(`DELETE FROM ledger_window WHERE seq IN (${chunk.map(() => "?").join(",")})`, ...chunk);
+      }
       this.sql.exec(
         `INSERT INTO ledger_segments
-         (seq, first_seq, object_key, first_ts, last_ts, row_count, bytes, pids, targets, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (seq, first_seq, object_key, first_ts, last_ts, row_count, bytes, uids, pids, targets, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         segment.seq,
         segment.firstSeq,
         segment.objectKey,
@@ -421,6 +514,7 @@ export class LedgerStore {
         segment.lastTs,
         segment.rowCount,
         segment.bytes,
+        JSON.stringify(segment.uids),
         JSON.stringify(segment.pids),
         JSON.stringify(segment.targets),
         segment.createdAt,
@@ -458,44 +552,84 @@ export class LedgerStore {
 
   /* ---------- reads ---------- */
 
+  /**
+   * Newest first. The window is filtered and limited in SQL; segments are then
+   * walked newest to oldest, at most a few per call, skipping any whose index
+   * sets cannot match. A filtered read may return fewer than `limit` lines with
+   * a cursor still set: that means "more may exist, continue here".
+   */
   async list(query: LedgerQuery): Promise<SysLedgerListResult> {
     const limit = Math.max(1, Math.min(LEDGER_LIST_MAX, query.limit));
     const cursor = parseCursor(query.cursor);
+    const range = cursor ? { low: cursor.low, high: cursor.high } : { ...NO_RANGE };
     const lines: LedgerLine[] = [];
 
-    if (cursor === null || cursor.kind === "window") {
-      const belowSeq = cursor?.kind === "window" ? cursor.belowSeq : Number.MAX_SAFE_INTEGER;
-      const rows = [...this.sql.exec<WindowRow>(
-        "SELECT * FROM ledger_window WHERE seq < ? ORDER BY seq DESC",
-        belowSeq,
-      )];
-      for (const row of rows) {
-        const stored = rowToStored(row);
-        if (!matches(stored, query)) continue;
-        lines.push(publicLine(stored));
-        if (lines.length === limit) return { lines, nextCursor: `w:${stored.seq}` };
+    if (cursor === null || cursor.segment === null) {
+      const where: string[] = ["seq < ?"];
+      const params: (string | number)[] = [cursor ? cursor.low : Number.MAX_SAFE_INTEGER];
+      if (query.ownerUid !== null) {
+        where.push("owner_uid = ?");
+        params.push(query.ownerUid);
       }
+      if (query.pid !== undefined) {
+        where.push("pid = ?");
+        params.push(query.pid);
+      }
+      if (query.target !== undefined) {
+        where.push("target = ?");
+        params.push(query.target);
+      }
+      if (query.callPrefix !== undefined) {
+        where.push("substr(call, 1, ?) = ?");
+        params.push(query.callPrefix.length, query.callPrefix);
+      }
+      if (query.since !== undefined) {
+        where.push("ts >= ?");
+        params.push(query.since);
+      }
+      if (query.until !== undefined) {
+        where.push("ts <= ?");
+        params.push(query.until);
+      }
+      const rows = [...this.sql.exec<WindowRow>(
+        `SELECT * FROM ledger_window WHERE ${where.join(" AND ")} ORDER BY seq DESC LIMIT ?`,
+        ...params,
+        limit + 1,
+      )];
+      for (const row of rows.slice(0, limit)) {
+        const stored = rowToStored(row);
+        range.high = Math.max(range.high, stored.seq);
+        range.low = Math.min(range.low, stored.seq);
+        lines.push(publicLine(stored));
+      }
+      if (rows.length > limit) return { lines, nextCursor: formatCursor(range, null) };
     }
 
     const segments = this.segments();
-    const startIndex = cursor?.kind === "segment" ? segments.findIndex((segment) => segment.seq === cursor.seq) : 0;
-    if (cursor?.kind === "segment" && startIndex < 0) return { lines, nextCursor: null };
+    const startIndex = cursor?.segment ? segments.findIndex((segment) => segment.seq === cursor.segment?.seq) : 0;
+    if (cursor?.segment && startIndex < 0) return { lines, nextCursor: null };
+    let touched = 0;
     for (let index = Math.max(0, startIndex); index < segments.length; index += 1) {
       const segment = segments[index];
-      const offset = cursor?.kind === "segment" && segment.seq === cursor.seq ? cursor.offset : 0;
-      if (!segmentMayMatch(segment, query)) continue;
+      if (!segmentMayMatch(segment, query, range)) continue;
+      if (touched === LEDGER_SEGMENTS_PER_READ) {
+        return { lines, nextCursor: formatCursor(range, { seq: segment.seq, offset: 0 }) };
+      }
+      touched += 1;
+      const offset = cursor?.segment && segment.seq === cursor.segment.seq ? cursor.segment.offset : 0;
       const stored = await this.readSegment(segment);
       for (let position = stored.length - 1 - offset; position >= 0; position -= 1) {
         const line = stored[position];
-        if (!matches(line, query)) continue;
+        if (inRange(line.seq, range) || !matches(line, query)) continue;
         lines.push(publicLine(line));
         if (lines.length === limit) {
           const nextOffset = stored.length - position;
+          const next = index + 1 < segments.length ? segments[index + 1] : null;
           return {
             lines,
             nextCursor: nextOffset >= stored.length
-              ? index + 1 < segments.length ? `s:${segments[index + 1].seq}:0` : null
-              : `s:${segment.seq}:${nextOffset}`,
+              ? next ? formatCursor(range, { seq: next.seq, offset: 0 }) : null
+              : formatCursor(range, { seq: segment.seq, offset: nextOffset }),
           };
         }
       }
@@ -517,7 +651,9 @@ export class LedgerStore {
   }
 }
 
-function segmentMayMatch(segment: LedgerSegment, query: LedgerQuery): boolean {
+function segmentMayMatch(segment: LedgerSegment, query: LedgerQuery, range: { low: number; high: number }): boolean {
+  if (segment.firstSeq >= range.low && segment.seq <= range.high) return false;
+  if (query.ownerUid !== null && !segment.uids.includes(query.ownerUid)) return false;
   if (query.pid !== undefined && !segment.pids.includes(query.pid)) return false;
   if (query.target !== undefined && !segment.targets.includes(query.target)) return false;
   if (query.since !== undefined && segment.lastTs < query.since) return false;
@@ -527,11 +663,11 @@ function segmentMayMatch(segment: LedgerSegment, query: LedgerQuery): boolean {
 
 /** Validates a client's list arguments at the boundary. */
 export const ledgerListArgsSchema = z.object({
-  pid: z.string().min(1).optional(),
-  target: z.string().min(1).optional(),
-  callPrefix: z.string().min(1).optional(),
+  pid: z.string().min(1).max(LEDGER_ID_LIMIT).optional(),
+  target: z.string().min(1).max(LEDGER_ID_LIMIT).optional(),
+  callPrefix: z.string().min(1).max(LEDGER_ID_LIMIT).optional(),
   since: z.number().optional(),
   until: z.number().optional(),
   limit: z.number().int().positive().max(LEDGER_LIST_MAX).optional(),
-  cursor: z.string().optional(),
+  cursor: z.string().max(64).optional(),
 }) satisfies z.ZodType<SysLedgerListArgs>;
