@@ -505,8 +505,16 @@ if run_subset_installer env GSV_INSTALL_COMPONENTS="gsv,gsvd,gsv" >/dev/null 2>&
     echo "installer accepted a component listed twice" >&2
     exit 1
 fi
-if run_subset_installer env GSV_INSTALL_COMPONENTS="gsvd,gsv-transcribe" >/dev/null 2>&1; then
+if run_subset_installer env GSV_INSTALL_COMPONENTS="gsvd,gsv-transcribe,gsv-vision,gsv-desktop" >/dev/null 2>&1; then
     echo "installer accepted gsvd without gsv" >&2
+    exit 1
+fi
+if run_subset_installer env GSV_INSTALL_COMPONENTS="gsv-transcribe" >/dev/null 2>&1; then
+    echo "installer accepted a helper without Desktop" >&2
+    exit 1
+fi
+if run_subset_installer env GSV_INSTALL_COMPONENTS="," >/dev/null 2>&1; then
+    echo "installer accepted a component list with no components" >&2
     exit 1
 fi
 test "$("$SUBSET_DIR/gsv")" = "gsv-v1"
@@ -516,14 +524,15 @@ grep -q "Installed gsv, gsvd to $SUBSET_DIR" <<< "$SUBSET_OUTPUT"
 test "$("$SUBSET_DIR/gsv")" = "gsv-v2"
 test "$("$SUBSET_DIR/gsvd")" = "gsvd-v2"
 untouched_by_subset
-# A helper brings its sidecars: the transcription subset is three files.
-grep -q "Verified 2 release artifacts" <<< "$(run_subset_installer env GSV_INSTALL_COMPONENTS="gsv-transcribe")"
+# Desktop and its helpers move as one group, and a helper brings its sidecars: six files, gsv and gsvd untouched.
+grep -q "Verified 6 release artifacts" <<< "$(run_subset_installer env GSV_INSTALL_COMPONENTS="gsv-desktop,gsv-transcribe,gsv-vision")"
+test "$("$SUBSET_DIR/gsv-desktop")" = "desktop-v2"
 test "$("$SUBSET_DIR/gsv-transcribe")" = "transcribe-v2"
 test "$(cat "$SUBSET_DIR/gsv-transcribe-THIRD_PARTY.md")" = "license-v2"
-test "$("$SUBSET_DIR/gsv-desktop")" = "desktop-v1"
+test "$("$SUBSET_DIR/gsv-vision")" = "vision-v2"
+test "$("$SUBSET_DIR/gsv")" = "gsv-v2"
 # A replacement gsv whose doctor fails rolls back gsv and gsvd only.
-cp "$SUBSET_DIR/gsv-transcribe" "$SUBSET_BEFORE/gsv-transcribe"
-cp "$SUBSET_DIR/gsv-transcribe-THIRD_PARTY.md" "$SUBSET_BEFORE/gsv-transcribe-THIRD_PARTY.md"
+cp "$SUBSET_DIR"/gsv-desktop "$SUBSET_DIR"/gsv-transcribe* "$SUBSET_DIR"/gsv-vision* "$SUBSET_BEFORE/"
 make_fixture gsv-linux-x64 gsv-v3 fail-doctor
 make_fixture gsvd-linux-x64 gsvd-v3
 write_checksums

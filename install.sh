@@ -18,10 +18,13 @@ INSTALL_DIR_SOURCE=""
 DESKTOP_MANAGED_DAEMON=0
 CHANNEL="${GSV_CHANNEL:-stable}"
 VERSION="${GSV_VERSION:-}"
-# Which parts of the distribution to install. The daemon's unattended update
-# passes `gsv,gsvd` so Desktop and its helpers are never swapped under a
-# running Desktop; a person installs everything.
+# Which parts of the distribution to install, in two groups that move as one:
+# the host pair (`gsv,gsvd`, what the daemon's unattended update passes so
+# Desktop is never swapped under itself) and Desktop with its helpers, which
+# share private protocols. A person installs everything.
 ALL_COMPONENTS="gsv,gsvd,gsv-desktop,gsv-transcribe,gsv-vision"
+HOST_GROUP="gsv gsvd"
+DESKTOP_GROUP="gsv-desktop gsv-transcribe gsv-vision"
 COMPONENTS="${GSV_INSTALL_COMPONENTS:-$ALL_COMPONENTS}"
 if [ "$(uname -s)" = "Darwin" ]; then
     CONFIG_HOME="${HOME}/Library/Application Support"
@@ -74,10 +77,28 @@ validate_channel() {
     fi
 }
 
+# Every member of a group is selected, or none is.
+validate_group() {
+    local group="$1" seen="$2" name="$3" member present=0 missing=0
+    for member in $group; do
+        case "$seen" in
+            *",${member},"*) present=1 ;;
+            *) missing=1 ;;
+        esac
+    done
+    if [ "$present" -eq 1 ] && [ "$missing" -eq 1 ]; then
+        error "$name move together: select all of them or none"
+        exit 1
+    fi
+}
+
 validate_components() {
-    [ -n "$COMPONENTS" ] || { error "GSV_INSTALL_COMPONENTS must name at least one component"; exit 1; }
-    local component seen="," has_gsv=0 has_gsvd=0
-    for component in $(printf '%s' "$COMPONENTS" | tr ',' ' '); do
+    local tokens component seen=","
+    tokens="$(printf '%s' "$COMPONENTS" | tr ',' ' ')"
+    # shellcheck disable=SC2086
+    set -- $tokens
+    [ "$#" -gt 0 ] || { error "GSV_INSTALL_COMPONENTS must name at least one component"; exit 1; }
+    for component in "$@"; do
         case ",${ALL_COMPONENTS}," in
             *",${component},"*) ;;
             *) error "Unknown component in GSV_INSTALL_COMPONENTS: $component (choose from ${ALL_COMPONENTS})"; exit 1 ;;
@@ -86,14 +107,10 @@ validate_components() {
             *",${component},"*) error "Component listed twice in GSV_INSTALL_COMPONENTS: $component"; exit 1 ;;
         esac
         seen="${seen}${component},"
-        [ "$component" = gsv ] && has_gsv=1
-        [ "$component" = gsvd ] && has_gsvd=1
     done
-    # gsv controls gsvd and refuses a daemon of another version, so the pair moves together
-    if [ "$has_gsv" -ne "$has_gsvd" ]; then
-        error "gsv and gsvd move together: select both or neither"
-        exit 1
-    fi
+    # gsv controls gsvd and refuses a daemon of another version; Desktop and its helpers share private protocols
+    validate_group "$HOST_GROUP" "$seen" "gsv and gsvd"
+    validate_group "$DESKTOP_GROUP" "$seen" "gsv-desktop, gsv-transcribe and gsv-vision"
 }
 
 # The release assets for the selected components, in install order. A

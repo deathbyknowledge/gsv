@@ -38,9 +38,11 @@ Use `GSV_CHANNEL=dev` for the moving development channel, or set
 `GSV_INSTALL_COMPONENTS` selects a subset of `gsv`, `gsvd`, `gsv-desktop`,
 `gsv-transcribe`, and `gsv-vision` (default: all); a helper brings its license
 and provenance files with it, and the subset is verified, installed, and rolled
-back on its own. `gsv` and `gsvd` move together, since the CLI refuses to
-control a daemon of another version. A pinned release whose installer predates
-this option refuses a subset rather than installing everything.
+back on its own. Components move in two groups: `gsv` with `gsvd`, since the
+CLI refuses to control a daemon of another version, and `gsv-desktop` with
+both helpers, since they share private protocols. A pinned release whose
+installer predates this option refuses a subset rather than installing
+everything.
 
 ## Install location
 
