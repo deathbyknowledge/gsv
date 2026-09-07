@@ -8,6 +8,7 @@ import {
   linkPlaceReferences,
   momentsFromRows,
   momentsFromConversation,
+  isMessageSend,
   parsePromptInput,
   placeLabel,
   resolvePlace,
@@ -206,5 +207,14 @@ describe("momentsFromConversation", () => {
     const moments = momentsFromConversation([], transcript, "r2");
     expect(moments).toHaveLength(1);
     expect(moments[0]).toMatchObject({ role: "ship", text: "", thinking: true, runId: "r2" });
+  });
+});
+
+describe("isMessageSend", () => {
+  it("recognizes the message command and nothing else", () => {
+    const row = (input: string): ChatTranscriptRow => ({ id: "x", role: "tool", text: "", time: "", timestamp: 1, toolSyscall: "shell.exec", toolArgs: { input } });
+    expect(isMessageSend(row("message ana <<GSV_MESSAGE\nhi\nGSV_MESSAGE"))).toBe(true);
+    expect(isMessageSend(row("gsv message esteve hello"))).toBe(true);
+    expect(isMessageSend(row("ls ~/messages"))).toBe(false);
   });
 });

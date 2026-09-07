@@ -213,6 +213,10 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
     if (rows.length === 0) return;
     if (!selected || !rows.includes(selected)) setSelected(initialRow && rows.includes(initialRow) ? initialRow : rows[0]);
   }, [rows, selected, initialRow]);
+  useEffect(() => {
+    if (!selected) return;
+    document.querySelector(`[data-row="${selected}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [selected]);
   const selectedLine = useMemo(
     () => (selected?.startsWith("ledger:") ? shownLedger.find((line) => ledgerRow(line.id) === selected) ?? null : null),
     [selected, shownLedger],

@@ -74,7 +74,7 @@ type LocalRun = {
   pending: boolean;
 };
 
-const HISTORY_LIMIT = 80;
+const HISTORY_LIMIT = 400;
 const RESOLVE_FRAME_MS = 60;
 
 function reducedMotion(): boolean {
@@ -89,7 +89,7 @@ function railHtml(activity: Activity, who: string): string {
   const where = escapeHtml(activity.target);
   return activity.calls
     .map((call) => {
-      const head = `<span class="cmd"><span class="who">${escapeHtml(who)}</span>@<span class="where">${where}</span> <span class="dir">~</span> $ ${escapeHtml(call.syscall)} ${escapeHtml(call.summary)}</span>`;
+      const head = `<span class="cmd"><span class="who">${escapeHtml(who)}</span>@<span class="where">${where}</span> <span class="dir">~</span> $ ${call.syscall === "shell.exec" ? escapeHtml(call.summary) : `${escapeHtml(call.syscall)} ${escapeHtml(call.summary)}`}</span>`;
       const body = call.output ? `\n${escapeHtml(call.output)}` : call.finished ? "" : `\n<span class="meta">running…</span>`;
       const failed = call.failed ? `\n<span class="err">failed</span>` : "";
       return `${head}${body}${failed}`;
@@ -548,7 +548,7 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
         focusPrompt();
         return;
       }
-      if (event.key.length === 1 && !["z", "n", "j", "k", "o", "l", "x"].includes(event.key)) {
+      if (event.key.length === 1 && !["z", "n", "j", "k", "o", "l", "x", "?"].includes(event.key)) {
         focusPrompt();
       }
     };
@@ -636,25 +636,16 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
           </span>
         </span>
         <span class="keys">
-          <span>
-            <kbd>l</kbd>light · dark
-          </span>
-          <span>
-            <kbd>x</kbd>type size
-          </span>
-          <button type="button" onClick={() => onFleet()}>
-            <kbd>z</kbd>fleet
-          </button>
-          <span>
-            <kbd>o</kbd>show the run
-          </span>
-          <span>
-            <kbd>$</kbd>run it yourself
-          </span>
-          <button type="button" onClick={onFirstDay}>
-            <kbd>n</kbd>first day
-          </button>
+        <button type="button" onClick={() => onFleet()}>
+          <kbd>z</kbd>fleet
+        </button>
+        <button type="button" onClick={onFirstDay}>
+          <kbd>n</kbd>first day
+        </button>
+        <span>
+          <kbd>?</kbd>keys
         </span>
+      </span>
       </div>
 
       <div class="zen-body">
@@ -785,9 +776,6 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
             onHistory={onHistory}
             autoFocus
           />
-        </div>
-        <div class="prompt-hint">
-          <b>esc</b> leaves the prompt, then <b>z</b> fleet and <b>n</b> first day · <b>enter</b> send · <b>$ ls</b> runs on {placeLabel(where ?? "gsv", places)} with no model in the loop · <b>@name</b> moves the prompt · click a <b>used …</b> line for the raw run
         </div>
       </div>
     </main>

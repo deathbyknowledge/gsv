@@ -149,10 +149,17 @@ function isToolRow(row: ChatTranscriptRow): boolean {
  * Group a run's tool rows by the place they touched, in first-touch order.
  * The last activity of an active run is live while its latest call is unfinished.
  */
+/** A `message` command is the ship sending the moment itself; it is not something it did along the way. */
+export function isMessageSend(row: ChatTranscriptRow): boolean {
+  if ((row.toolSyscall ?? row.toolName) !== "shell.exec") return false;
+  const input = stringField(row.toolArgs, "input") ?? "";
+  return /^\s*(gsv\s+)?message\b/.test(input);
+}
+
 export function activitiesForRows(rows: readonly ChatTranscriptRow[], runKey: string, active: boolean): Activity[] {
   const activities: Activity[] = [];
   for (const row of rows) {
-    if (!isToolRow(row)) continue;
+    if (!isToolRow(row) || isMessageSend(row)) continue;
     const target = callTarget(row.toolArgs);
     const call = callFromRow(row);
     const existing = activities.find((activity) => activity.target === target);

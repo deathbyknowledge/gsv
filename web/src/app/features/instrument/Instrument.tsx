@@ -85,6 +85,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
     return () => query.removeEventListener("change", follow);
   }, []);
   const [scale, setScale] = useState<Scale>(() => storedScale());
+  const [help, setHelp] = useState(false);
   const cycleScale = useCallback(() => {
     setScale((current) => {
       const next = SCALES[(SCALES.indexOf(current) + 1) % SCALES.length];
@@ -162,10 +163,17 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         event.preventDefault();
         cycleScale();
       }
+      if (event.key === "?") {
+        event.preventDefault();
+        setHelp((open) => !open);
+      }
+      if (event.key === "Escape" && help) {
+        setHelp(false);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [cycleScale, distance, move, toggleTheme]);
+  }, [cycleScale, distance, help, move, toggleTheme]);
 
   const phaseClass = phase === "leaving" ? " is-leaving" : phase === "arriving" ? " is-arriving" : "";
 
@@ -176,6 +184,33 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       </div>
       <div class="instrument-scan" aria-hidden="true" />
       <div class="instrument-vignette" aria-hidden="true" />
+      {help ? (
+        <aside class="instrument-help" aria-label="Keys">
+          <h4>Everywhere</h4>
+          <dl>
+            <dt>z</dt><dd>zen and fleet</dd>
+            <dt>n</dt><dd>first day</dd>
+            <dt>l</dt><dd>light and dark</dd>
+            <dt>x</dt><dd>type size</dd>
+            <dt>esc</dt><dd>leave the prompt</dd>
+          </dl>
+          <h4>Zen</h4>
+          <dl>
+            <dt>$ …</dt><dd>run it yourself, no model</dd>
+            <dt>@place</dt><dd>move the prompt</dd>
+            <dt>j k</dt><dd>browse moments</dd>
+            <dt>o</dt><dd>show the run</dd>
+            <dt>y n</dt><dd>answer an approval</dd>
+          </dl>
+          <h4>Fleet</h4>
+          <dl>
+            <dt>j k</dt><dd>move</dd>
+            <dt>enter</dt><dd>open</dd>
+            <dt>/</dt><dd>command on the place</dd>
+            <dt>t</dt><dd>plain words or technical</dd>
+          </dl>
+        </aside>
+      ) : null}
       <div class={`distance${phaseClass}`}>
         {distance === "zen" ? (
           <Zen onFleet={(row) => move("fleet", row ?? null)} onFirstDay={() => move("firstday")} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid} onShip={() => setZenPid(null)} />

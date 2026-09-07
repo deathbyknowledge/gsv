@@ -46,6 +46,8 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
+  /* the field is atmosphere: it keeps its size whatever the type scale */
+  zoom: calc(1 / var(--type-scale));
   transition: opacity var(--dur-settle) ease;
 }
 .instrument-field.is-fleet {
@@ -82,6 +84,7 @@
   position: absolute;
   inset: 0;
   display: grid;
+  grid-template-rows: minmax(0, 1fr);
   transition: opacity var(--dur-move) ease, transform var(--dur-move) ease;
 }
 .distance.is-leaving {
@@ -314,3 +317,24 @@
   .fleet-ledger .t { display: none; }
   .zen-bottom { padding: 0 18px 14px; }
 }
+
+/* ---------- the keys, on ? ---------- */
+.instrument-help {
+  position: absolute;
+  right: 56px;
+  top: 52px;
+  z-index: 5;
+  background: var(--panel);
+  border: 1px solid var(--border-raised);
+  padding: 14px 18px;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--label);
+  box-shadow: 0 0 0 1px rgba(150, 140, 255, 0.04), 0 14px 40px rgba(5, 3, 18, 0.55);
+  min-width: 240px;
+}
+.instrument.is-light .instrument-help { box-shadow: 0 14px 40px rgba(20, 17, 43, 0.15); }
+.instrument-help h4 { margin: 0 0 6px; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--faint); font-weight: 400; }
+.instrument-help dl { display: grid; grid-template-columns: auto 1fr; gap: 0 14px; margin: 0 0 10px; }
+.instrument-help dt { color: var(--text-hi); }
+.instrument-help dd { margin: 0; }
