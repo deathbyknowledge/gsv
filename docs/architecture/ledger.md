@@ -111,7 +111,7 @@ the window records the newest segment that existed at the time and the lowest
 window sequence it examined, so everything at or above that number had been
 seen. A segment created after such a page holds lines that were in the window
 then, and reading it skips exactly those and returns the rest; segments older
-than the walk are read whole. A line is therefore never returned twice and
+than the walk are read whole. A line is therefore never lost; a line can be returned twice when a late-closing call rotates into a segment below one already paged and
 never lost, including a straggler that stayed open in the window while the
 lines around it rotated out. Filters are
 `pid`, `target`, `callPrefix`, `since`, and `until`; `limit` is at most 200.
