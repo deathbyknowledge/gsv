@@ -638,9 +638,9 @@ export type SysLinkListResult = {
 export type SysLedgerOutcome = "ok" | "failed" | "denied" | "cancelled";
 
 /**
- * One dispatched syscall. `detail` is the argument a person recognizes the call
- * by, redacted to one line: a path, a host, the first line of a command, a
- * query, a model id. Never a body, message text, or a credential.
+ * One dispatched syscall. `args` is the call's arguments as sent, as JSON
+ * text, whole; a line longer than 16 KB is cut with the cut marked, so
+ * `JSON.parse` failing on it is how a reader knows.
  */
 export type SysLedgerLine = {
   seq: number;
@@ -651,7 +651,7 @@ export type SysLedgerLine = {
   runId: string | null;
   target: string;
   call: string;
-  detail: string;
+  args: string;
   /** Null while the call is still in flight. */
   outcome: SysLedgerOutcome | null;
   durationMs: number | null;

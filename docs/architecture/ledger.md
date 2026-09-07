@@ -23,24 +23,20 @@ Kernel at all. Both remain in their own records.
 | `pid`, `runId` | The process and run when a process asked |
 | `target` | The place the call went to: a target id, or `gsv` for the cloud home |
 | `call` | The syscall name |
-| `detail` | The argument a person recognizes the call by, one line, at most 200 characters |
+| `args` | The call's arguments as sent, as JSON text, whole; cut at 16 KB with the cut marked |
 | `outcome` | `ok`, `failed`, `denied`, or `cancelled`; null while the call is in flight |
 | `durationMs` | From dispatch to response |
 | `tokens`, `costNanoUsd` | From `message.usage` on an `ai.text.generate` result: its `totalTokens`, and `cost.total` in USD converted to nano-USD |
 
-`detail` is redacted at write time and only ever holds: for a shell command,
-its command word alone, the first token after any leading `KEY=value`
-assignments, so no argument is kept and nothing has to decide which argument
-is content. The command as typed stays in the process transcript, which is the
-owner's own record. A script
-run through codemode is described as `script (N lines)` and never by its
-text. For other calls the detail is a path, a URL's host only, a model id,
-a process label, an adapter name, a config key. Request ids,
-targets, process and run ids are capped at 128 characters and the detail at
-200, truncation marked, whatever the caller sent. Bodies, message text, search
-queries, prompt content, tokens, and credentials never enter the ledger, so a
-segment is safe
-to hand to a client as it is.
+`args` is the input as sent, the whole of it, so the ledger answers "what
+exactly ran" on its own. Nothing is interpreted or redacted: the ledger is the
+owner's own record, read by that owner and by root, and it records a command
+the way an endpoint sensor records a command line. A credential handed to a
+syscall as an argument is recorded like anything else. A line is cut at 16 KB
+of JSON text with the cut marked, which holds nearly every command, script and
+message; `JSON.parse` failing on a line is how a reader knows it was cut.
+Request ids, targets, process and run ids are capped at 128 characters,
+whatever the caller sent.
 
 ## The window
 
@@ -72,8 +68,9 @@ than mistaking it for a pending one.
 
 ## Segments
 
-Rotation captures the oldest lines in sequence order, up to 2,000 at a time,
-stopping at the first line still open within the window age, writes them
+Rotation captures the oldest lines in sequence order, up to 2,000 lines or
+4 MB at a time, stopping at the first line still open within the window age,
+writes them
 as one immutable object under `ledger/<seq>.jsonl` in the installation's R2
 storage, one JSON line per ledger line, and only then, in one transaction,
 deletes exactly those sequence numbers from the window and inserts the
@@ -83,7 +80,8 @@ targets present. A set with more than 64 distinct values is stored as
 "unknown", and a read then opens the segment rather than trusting the index. A line that completes while the object write is in flight is
 untouched and rotates next time. Lines still open after the window age are
 closed as `cancelled` on the way out. A failed write retries on the next alarm
-and prunes nothing. A segment stays well under 1.5 MB.
+and prunes nothing. A segment stays under 4 MB, so a read that holds a few
+of them stays small.
 
 An open line holds the boundary until it closes or ages out, so every segment
 is a contiguous range below everything left in the window and a read is

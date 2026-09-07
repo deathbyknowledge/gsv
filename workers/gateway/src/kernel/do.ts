@@ -117,7 +117,7 @@ import {
 } from "./outbound-mail";
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
-import { LEDGER_WINDOW_ROWS, LedgerStore, ledgerTargetOf, outcomeOfResponse, redactDetail, usageOfResponse, type JsonLike } from "./ledger";
+import { LEDGER_WINDOW_ROWS, LedgerStore, argsText, ledgerTargetOf, outcomeOfResponse, usageOfResponse, type JsonLike } from "./ledger";
 
 const LEDGER_ROTATION_TASK = "rotate";
 const LEDGER_ROTATION_SOON_MS = 5_000;
@@ -1373,8 +1373,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
     const allowed = isInternalOnlySyscall(inputFrame.call)
       ? peer.provenance.kind === "process-registry"
       : peerAllowsCall(peer, inputFrame.call);
-    // The ledger line is written after the grant decision, with every client-controlled field capped;
-    // a denied call is recorded and closed as denied with nothing but those capped fields.
+    // The ledger line is written after the grant decision, with every client-controlled field capped by size;
+    // a denied call is recorded with its arguments and closed as denied.
     this.recordLedgerDispatch(inputFrame, ctx, origin);
     if (!allowed) {
       const denied = errFrame(inputFrame.id, 403, `Permission denied: ${inputFrame.call}`);
@@ -1478,7 +1478,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       const principal = principalOf(ctx);
       if (!principal) return;
       const ownerUid = resolveCallerOwnerUid(ctx);
-      // SAFETY: request args are the wire JSON the frame decoder accepted; the redactor parses what it needs.
+      // SAFETY: request args are the wire JSON the frame decoder accepted; the ledger keeps them as text.
       const args = frame.args as JsonLike;
       const seq = this.ledger.append({
         requestId: frame.id,
@@ -1490,7 +1490,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         runId: ctx.processRunId ?? null,
         target: ledgerTargetOf(args),
         call: frame.call,
-        detail: redactDetail(frame.call, args),
+        args: argsText(args),
       });
       this.noteLedgerAppend(ownerUid, seq);
     } catch (error) {

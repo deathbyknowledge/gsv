@@ -10,8 +10,9 @@ import type { SysLedgerLine, SysLedgerListArgs, SysLedgerListResult, SysLedgerOu
  * stays here so reads can page across both and skip segments by owner,
  * process, or place.
  *
- * Lines carry the argument that matters, redacted and capped, never a body,
- * message text, or a credential.
+ * Lines carry the call's arguments as sent, whole, capped only by size: the
+ * ledger is the owner's own record of what ran, and a record that leaves out
+ * the input is not one.
  */
 
 export const LEDGER_WINDOW_ROWS = 5_000;
@@ -19,7 +20,10 @@ export const LEDGER_WINDOW_AGE_MS = 24 * 60 * 60 * 1000;
 /** Lines older than this leave the window without a segment; keep it equal to the bucket's lifecycle rule. */
 export const LEDGER_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 export const LEDGER_SEGMENT_ROWS = 2_000;
-export const LEDGER_DETAIL_LIMIT = 200;
+/** A segment closes early past this many characters, so a read that holds a few segments stays small. */
+export const LEDGER_SEGMENT_CHARS = 4 * 1024 * 1024;
+/** Characters of JSON text a line keeps of its arguments; the cut is marked. */
+export const LEDGER_ARGS_LIMIT = 16_384;
 export const LEDGER_ID_LIMIT = 128;
 export const LEDGER_LIST_MAX = 200;
 export const LEDGER_SEGMENTS_PER_READ = 4;
@@ -43,7 +47,7 @@ export type LedgerAppend = {
   runId: string | null;
   target: string;
   call: string;
-  detail: string;
+  args: string;
 };
 
 export type LedgerCompletion = {
@@ -94,7 +98,7 @@ type WindowRow = {
   run_id: string | null;
   target: string;
   call: string;
-  detail: string;
+  args: string;
   outcome: string | null;
   duration_ms: number | null;
   tokens: number | null;
@@ -129,7 +133,7 @@ const storedLineSchema = z.object({
   runId: z.string().nullable(),
   target: z.string(),
   call: z.string(),
-  detail: z.string(),
+  args: z.string(),
   outcome: outcomeSchema.nullable(),
   durationMs: z.number().nullable(),
   tokens: z.number().nullable().optional(),
@@ -138,81 +142,20 @@ const storedLineSchema = z.object({
 const stringListSchema = z.array(z.string());
 const numberListSchema = z.array(z.number());
 
-/* ---------- redaction: the argument that matters, one line, capped ---------- */
-
-const detailArgsSchema = z.object({
-  input: z.string().optional(),
-  path: z.string().optional(),
-  from: z.string().optional(),
-  to: z.string().optional(),
-  url: z.string().optional(),
-  code: z.string().optional(),
-  model: z.string().optional(),
-  label: z.string().optional(),
-  adapter: z.string().optional(),
-  key: z.string().optional(),
-  contactId: z.string().optional(),
-  serverId: z.string().optional(),
-  name: z.string().optional(),
-});
+/* ---------- the input: the call's arguments as sent, capped by size ---------- */
 
 /** Truncates to `limit` characters, marking the cut so a reader knows the line was longer. */
 export function capField(value: string, limit: number): string {
   return value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
 }
 
-function oneLine(value: string, limit = LEDGER_DETAIL_LIMIT): string {
-  const flat = value.split(/\r?\n/, 1)[0]?.replace(/\s+/g, " ").trim() ?? "";
-  return capField(flat, limit);
-}
-
-function hostOf(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return "";
-  }
-}
-
 /**
- * A shell command is known by its command word alone: the first token after
- * any leading `KEY=value` assignments. No argument is ever kept, so nothing
- * here has to decide which argument is content.
+ * The call's arguments as JSON text, whole. A line longer than the limit is
+ * cut and the cut marked; `JSON.parse` failing on a line is how a reader
+ * knows it was cut.
  */
-export function redactShellInput(input: string): string {
-  const line = oneLine(input, LEDGER_DETAIL_LIMIT * 4);
-  const word = line.split(" ").find((token) => token !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) ?? "";
-  return capField(word, LEDGER_DETAIL_LIMIT);
-}
-
-/** A script is described by its size only; its text never enters the ledger. */
-function scriptLabel(code: string): string {
-  const count = code.length === 0 ? 0 : code.split(/\r?\n/).length;
-  return `script (${count} ${count === 1 ? "line" : "lines"})`;
-}
-
-/**
- * What a person would recognize the call by. A command word, a path, a
- * host, a model id. Never arguments, bodies, message text, tokens, or keys.
- */
-export function redactDetail(call: string, args: JsonLike): string {
-  const parsed = detailArgsSchema.safeParse(args);
-  const a = parsed.success ? parsed.data : {};
-  if (call === "shell.exec") return redactShellInput(a.input ?? "");
-  if (call.startsWith("codemode.")) return scriptLabel(a.code ?? "");
-  if (call === "fs.copy" || call.startsWith("fs.transfer")) {
-    const from = a.from ?? a.path ?? "";
-    return oneLine(a.to ? `${from} → ${a.to}` : from);
-  }
-  if (call.startsWith("fs.")) return oneLine(a.path ?? "");
-  if (call === "net.fetch") return oneLine(a.url ? hostOf(a.url) : "");
-  if (call.startsWith("ai.")) return oneLine(a.model ?? "");
-  if (call.startsWith("proc.")) return oneLine(a.label ?? a.name ?? "");
-  if (call.startsWith("adapter.")) return oneLine(a.adapter ?? "");
-  if (call.startsWith("contact.")) return oneLine(a.contactId ?? "");
-  if (call.startsWith("sys.config")) return oneLine(a.key ?? "");
-  if (call.startsWith("sys.mcp")) return oneLine(a.serverId ?? a.name ?? "");
-  return "";
+export function argsText(args: JsonLike): string {
+  return capField(JSON.stringify(args ?? null), LEDGER_ARGS_LIMIT);
 }
 
 const targetArgSchema = z.object({ target: z.string().min(1).optional() });
@@ -279,7 +222,7 @@ function rowToStored(row: WindowRow): StoredLine {
     runId: row.run_id,
     target: row.target,
     call: row.call,
-    detail: row.detail,
+    args: row.args,
     outcome: outcome.success ? outcome.data : null,
     durationMs: row.duration_ms,
     tokens: row.tokens,
@@ -403,7 +346,7 @@ export class LedgerStore {
   append(entry: LedgerAppend): number {
     this.sql.exec(
       `INSERT INTO ledger_window
-       (request_id, ts, principal_kind, uid, owner_uid, pid, run_id, target, call, detail)
+       (request_id, ts, principal_kind, uid, owner_uid, pid, run_id, target, call, args)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       capField(entry.requestId, LEDGER_ID_LIMIT),
       entry.timestamp,
@@ -414,7 +357,7 @@ export class LedgerStore {
       entry.runId === null ? null : capField(entry.runId, LEDGER_ID_LIMIT),
       capField(entry.target, LEDGER_ID_LIMIT),
       capField(entry.call, LEDGER_ID_LIMIT),
-      oneLine(entry.detail),
+      capField(entry.args, LEDGER_ARGS_LIMIT),
     );
     const [row] = [...this.sql.exec<{ seq: number }>("SELECT last_insert_rowid() AS seq")];
     const seq = row?.seq ?? 0;
@@ -503,12 +446,21 @@ export class LedgerStore {
     )];
     if (rows.length === 0) return { rotated: false, reason: "nothing-closed" };
 
-    const lines = rows.map((row) => {
+    // a segment closes at its row bound or its size bound, whichever comes first, and always holds at least one line
+    const lines: StoredLine[] = [];
+    const encoded: string[] = [];
+    let chars = 0;
+    for (const row of rows) {
       const stored = rowToStored(row);
-      return stored.outcome === null ? { ...stored, outcome: "cancelled" as const, durationMs: null } : stored;
-    });
+      const line = stored.outcome === null ? { ...stored, outcome: "cancelled" as const, durationMs: null } : stored;
+      const text = JSON.stringify(line);
+      if (lines.length > 0 && chars + text.length + 1 > LEDGER_SEGMENT_CHARS) break;
+      lines.push(line);
+      encoded.push(text);
+      chars += text.length + 1;
+    }
     const seqs = lines.map((line) => line.seq);
-    const body = lines.map((line) => JSON.stringify(line)).join("\n") + "\n";
+    const body = encoded.join("\n") + "\n";
     const lastSeq = seqs[seqs.length - 1];
     const key = segmentKey(lastSeq);
     const bytes = new TextEncoder().encode(body).byteLength;

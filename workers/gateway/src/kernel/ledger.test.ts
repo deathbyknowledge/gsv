@@ -4,10 +4,11 @@ import { env } from "cloudflare:workers";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import type { Kernel } from "./do";
 import {
-  LEDGER_DETAIL_LIMIT,
+  LEDGER_ARGS_LIMIT,
   LEDGER_ID_LIMIT,
   LEDGER_INDEX_SET_LIMIT,
   LEDGER_RETENTION_MS,
+  LEDGER_SEGMENT_CHARS,
   LEDGER_SEGMENTS_PER_READ,
   LEDGER_SEGMENT_ROWS,
   LEDGER_WINDOW_AGE_MS,
@@ -16,8 +17,7 @@ import {
   type LedgerObjectStore,
   ledgerTargetOf,
   outcomeOfResponse,
-  redactDetail,
-  redactShellInput,
+  argsText,
   usageOfResponse,
   type LedgerAppend,
 } from "./ledger";
@@ -60,38 +60,24 @@ function entry(overrides: Partial<LedgerAppend> = {}): LedgerAppend {
     runId: null,
     target: "gsv",
     call: "fs.read",
-    detail: "~/notes.txt",
+    args: '{"path":"~/notes.txt"}',
     ...overrides,
   };
 }
 
-describe("redactDetail", () => {
-  it("keeps the argument that matters and nothing else", () => {
-    expect(redactDetail("fs.read", { path: "~/Downloads/invoice.pdf", content: "never" })).toBe("~/Downloads/invoice.pdf");
-    expect(redactDetail("net.fetch", { url: "https://api.example.com/v1/secret?token=abc" })).toBe("api.example.com");
-    expect(redactDetail("fs.copy", { from: "a.txt", to: "b.txt" })).toBe("a.txt → b.txt");
-    expect(redactDetail("ai.text.generate", { model: "gsv/default", prompt: "never" })).toBe("gsv/default");
-    expect(redactDetail("conversation.send", { text: "never" })).toBe("");
+describe("argsText", () => {
+  it("records the whole input as JSON text", () => {
+    expect(argsText({ input: 'curl -H "Authorization: Bearer abc" https://x.test/a?b=c' })).toBe(
+      '{"input":"curl -H \\"Authorization: Bearer abc\\" https://x.test/a?b=c"}',
+    );
+    expect(argsText({ path: "~/notes.txt", content: "the whole file" })).toBe('{"path":"~/notes.txt","content":"the whole file"}');
+    expect(argsText(undefined)).toBe("null");
   });
-  it("keeps only the command word of a shell command", () => {
-    expect(redactShellInput("message ana <<GSV_MESSAGE\nsecret body\nGSV_MESSAGE")).toBe("message");
-    expect(redactShellInput('curl -H "Authorization: Bearer abc" https://x.test/a?b=c')).toBe("curl");
-    expect(redactShellInput("cp a.txt b.txt")).toBe("cp");
-    expect(redactShellInput("grep -r 'secret phrase' ~/notes")).toBe("grep");
-    expect(redactShellInput("export OPENAI_API_KEY=sk-live-secret")).toBe("export");
-    expect(redactShellInput("TOKEN=x python run.py")).toBe("python");
-    expect(redactShellInput("  /usr/bin/env  node  app.js")).toBe("/usr/bin/env");
-    expect(redactShellInput("")).toBe("");
-  });
-  it("describes a script by its size and never by its text", () => {
-    expect(redactDetail("codemode.exec", { code: 'gsv.message.send("ana", "the secret text")\nawait done()' })).toBe("script (2 lines)");
-    expect(redactDetail("codemode.exec", { code: "x" })).toBe("script (1 line)");
-    expect(redactDetail("codemode.exec", {})).toBe("script (0 lines)");
-  });
-  it("caps the line and marks the cut", () => {
-    const capped = redactDetail("fs.read", { path: "x".repeat(500) });
-    expect(capped).toHaveLength(LEDGER_DETAIL_LIMIT);
-    expect(capped.endsWith("…")).toBe(true);
+  it("cuts a long input at the limit and marks the cut", () => {
+    const text = argsText({ code: "x".repeat(LEDGER_ARGS_LIMIT * 2) });
+    expect(text).toHaveLength(LEDGER_ARGS_LIMIT);
+    expect(text.endsWith("…")).toBe(true);
+    expect(() => JSON.parse(text)).toThrow();
   });
   it("names the place and caps it", () => {
     expect(ledgerTargetOf({ target: "laptop", path: "~" })).toBe("laptop");
@@ -130,12 +116,12 @@ describe("LedgerStore", () => {
   it("appends open lines, caps every client field, and completes with outcome and duration", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       const store = new LedgerStore(sql, storage, bucketOf(new MemoryBucket()));
-      const seq = store.append(entry({ requestId: "r".repeat(1_000), timestamp: 1_000, target: "t".repeat(1_000), detail: "d".repeat(1_000) }));
+      const seq = store.append(entry({ requestId: "r".repeat(1_000), timestamp: 1_000, target: "t".repeat(1_000), args: "d".repeat(LEDGER_ARGS_LIMIT * 2) }));
       expect(seq).toBeGreaterThan(0);
       const open = await store.list({ ownerUid: 1000, limit: 10 });
       expect(open.lines[0]).toMatchObject({ seq, call: "fs.read", outcome: null, durationMs: null });
       expect(open.lines[0].target).toHaveLength(LEDGER_ID_LIMIT);
-      expect(open.lines[0].detail).toHaveLength(LEDGER_DETAIL_LIMIT);
+      expect(open.lines[0].args).toHaveLength(LEDGER_ARGS_LIMIT);
       expect(store.complete("r".repeat(1_000), { outcome: "ok" }, 1_250)).toBe(true);
       expect(store.complete("r".repeat(1_000), { outcome: "failed" }, 1_300)).toBe(false);
       const done = await store.list({ ownerUid: 1000, limit: 10 });
@@ -147,10 +133,10 @@ describe("LedgerStore", () => {
     await runWithRealKernelSql(async (sql, storage) => {
       const store = new LedgerStore(sql, storage, bucketOf(new MemoryBucket()));
       store.append(entry({ ownerUid: 1000, call: "fs.read" }));
-      store.append(entry({ ownerUid: 1001, call: "shell.exec", detail: "ls" }));
+      store.append(entry({ ownerUid: 1001, call: "shell.exec", args: "ls" }));
       expect((await store.list({ ownerUid: 1000, limit: 10 })).lines.map((line) => line.call)).toEqual(["fs.read"]);
       expect((await store.list({ ownerUid: null, limit: 10 })).lines).toHaveLength(2);
-      expect((await store.list({ ownerUid: null, callPrefix: "shell.", limit: 10 })).lines.map((line) => line.detail)).toEqual(["ls"]);
+      expect((await store.list({ ownerUid: null, callPrefix: "shell.", limit: 10 })).lines.map((line) => line.args)).toEqual(["ls"]);
     });
   });
 
@@ -269,6 +255,24 @@ describe("LedgerStore", () => {
     });
   });
 
+  it("closes a segment at its size bound before its row bound", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const store = new LedgerStore(sql, storage, bucketOf(new MemoryBucket()));
+      const big = "x".repeat(LEDGER_ARGS_LIMIT - 2);
+      // 300 lines of 16 KB each: about 4.8 MB, over the size bound and well under the row bound
+      for (let i = 0; i < 300; i += 1) {
+        store.append(entry({ requestId: `r${i}`, args: big }));
+        store.complete(`r${i}`, { outcome: "ok" });
+      }
+      const first = await store.rotateOnce();
+      expect(first.rotated && first.segment.rowCount).toBeLessThan(300);
+      expect(first.rotated && first.segment.bytes).toBeLessThanOrEqual(LEDGER_SEGMENT_CHARS);
+      const second = await store.rotateOnce();
+      expect(first.rotated && second.rotated && first.segment.rowCount + second.segment.rowCount).toBe(300);
+      expect(store.windowCount()).toBe(0);
+    });
+  });
+
   it("pages newest first across the window and the segments without repeating across a rotation", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       const memory = new MemoryBucket();
@@ -276,30 +280,30 @@ describe("LedgerStore", () => {
       const now = 20_000_000;
       for (let i = 0; i < 5; i += 1) {
         const requestId = `old-${i}`;
-        store.append(entry({ requestId, timestamp: now - LEDGER_WINDOW_AGE_MS - 100 + i, detail: `old ${i}`, target: i < 3 ? "laptop" : "gsv" }));
+        store.append(entry({ requestId, timestamp: now - LEDGER_WINDOW_AGE_MS - 100 + i, args: `old ${i}`, target: i < 3 ? "laptop" : "gsv" }));
         store.complete(requestId, { outcome: "ok" }, now);
       }
       expect((await store.rotateOnce(now)).rotated).toBe(true);
       for (let i = 0; i < 3; i += 1) {
         const requestId = `new-${i}`;
-        store.append(entry({ requestId, timestamp: now - 10 + i, detail: `new ${i}` }));
+        store.append(entry({ requestId, timestamp: now - 10 + i, args: `new ${i}` }));
         store.complete(requestId, { outcome: "ok" }, now);
       }
 
       const page1 = await store.list({ ownerUid: 1000, limit: 2 });
-      expect(page1.lines.map((line) => line.detail)).toEqual(["new 2", "new 1"]);
+      expect(page1.lines.map((line) => line.args)).toEqual(["new 2", "new 1"]);
       expect(page1.nextCursor).toMatch(/^\d+\.\d+\|w$/);
       // a rotation lands between pages: the window lines move into a newer segment
       sql.exec("UPDATE ledger_window SET ts = ?", now - LEDGER_WINDOW_AGE_MS - 1);
       expect((await store.rotateOnce(now)).rotated).toBe(true);
       const page2 = await store.list({ ownerUid: 1000, limit: 2, cursor: page1.nextCursor ?? undefined });
-      expect(page2.lines.map((line) => line.detail)).toEqual(["new 0", "old 4"]);
+      expect(page2.lines.map((line) => line.args)).toEqual(["new 0", "old 4"]);
       const page3 = await store.list({ ownerUid: 1000, limit: 10, cursor: page2.nextCursor ?? undefined });
-      expect(page3.lines.map((line) => line.detail)).toEqual(["old 3", "old 2", "old 1", "old 0"]);
+      expect(page3.lines.map((line) => line.args)).toEqual(["old 3", "old 2", "old 1", "old 0"]);
       expect(page3.nextCursor).toBeNull();
 
       const laptop = await store.list({ ownerUid: 1000, target: "laptop", limit: 10 });
-      expect(laptop.lines.map((line) => line.detail)).toEqual(["old 2", "old 1", "old 0"]);
+      expect(laptop.lines.map((line) => line.args)).toEqual(["old 2", "old 1", "old 0"]);
       const none = await store.list({ ownerUid: 1000, pid: "nobody", limit: 10 });
       expect(none.lines).toEqual([]);
       expect((await store.list({ ownerUid: 4242, limit: 10 })).lines).toEqual([]);
@@ -313,7 +317,7 @@ describe("LedgerStore", () => {
       const now = 40_000_000;
       for (let segment = 0; segment < LEDGER_SEGMENTS_PER_READ + 2; segment += 1) {
         const requestId = `s${segment}`;
-        store.append(entry({ requestId, timestamp: now - LEDGER_WINDOW_AGE_MS - 10, detail: `seg ${segment}`, target: "elsewhere" }));
+        store.append(entry({ requestId, timestamp: now - LEDGER_WINDOW_AGE_MS - 10, args: `seg ${segment}`, target: "elsewhere" }));
         store.complete(requestId, { outcome: "ok" }, now);
         expect((await store.rotateOnce(now)).rotated).toBe(true);
       }
@@ -335,16 +339,16 @@ describe("LedgerStore", () => {
       const memory = new MemoryBucket();
       const store = new LedgerStore(sql, storage, bucketOf(memory));
       const now = 50_000_000;
-      store.append(entry({ requestId: "old", timestamp: now - LEDGER_WINDOW_AGE_MS - 1, detail: "old" }));
+      store.append(entry({ requestId: "old", timestamp: now - LEDGER_WINDOW_AGE_MS - 1, args: "old" }));
       store.complete("old", { outcome: "ok" }, now);
       expect((await store.rotateOnce(now)).rotated).toBe(true);
-      for (let i = 0; i < 3; i += 1) store.append(entry({ requestId: `w${i}`, timestamp: now, detail: `w${i}` }));
+      for (let i = 0; i < 3; i += 1) store.append(entry({ requestId: `w${i}`, timestamp: now, args: `w${i}` }));
 
       const page1 = await store.list({ ownerUid: 1000, limit: 3 });
-      expect(page1.lines.map((line) => line.detail)).toEqual(["w2", "w1", "w0"]);
+      expect(page1.lines.map((line) => line.args)).toEqual(["w2", "w1", "w0"]);
       expect(page1.nextCursor).not.toBeNull();
       const page2 = await store.list({ ownerUid: 1000, limit: 3, cursor: page1.nextCursor ?? undefined });
-      expect(page2.lines.map((line) => line.detail)).toEqual(["old"]);
+      expect(page2.lines.map((line) => line.args)).toEqual(["old"]);
       expect(page2.nextCursor).toBeNull();
     });
   });
@@ -355,16 +359,16 @@ describe("LedgerStore", () => {
       const store = new LedgerStore(sql, storage, bucketOf(memory));
       const now = 60_000_000;
       // seq 1 is open and fresh; 2..10 are closed and past the window age
-      store.append(entry({ requestId: "r1", timestamp: now - 10, detail: "r1" }));
+      store.append(entry({ requestId: "r1", timestamp: now - 10, args: "r1" }));
       for (let i = 2; i <= 10; i += 1) {
-        store.append(entry({ requestId: `r${i}`, timestamp: now - LEDGER_WINDOW_AGE_MS - 100 + i, detail: `r${i}` }));
+        store.append(entry({ requestId: `r${i}`, timestamp: now - LEDGER_WINDOW_AGE_MS - 100 + i, args: `r${i}` }));
         store.complete(`r${i}`, { outcome: "ok" }, now);
       }
       // the open line holds the boundary: nothing behind it rotates, and the window reads newest first
       expect(await store.rotateOnce(now)).toEqual({ rotated: false, reason: "nothing-closed" });
       expect(store.windowCount()).toBe(10);
       const page1 = await store.list({ ownerUid: 1000, limit: 3 });
-      expect(page1.lines.map((line) => line.detail)).toEqual(["r10", "r9", "r8"]);
+      expect(page1.lines.map((line) => line.args)).toEqual(["r10", "r9", "r8"]);
 
       // once it closes everything rotates in order, and a walk begun before the rotation stays strictly descending
       store.complete("r1", { outcome: "ok" }, now);
@@ -385,12 +389,12 @@ describe("LedgerStore", () => {
     await runWithRealKernelSql(async (sql, storage) => {
       const store = new LedgerStore(sql, storage, bucketOf(new MemoryBucket()));
       const prefix = "r".repeat(LEDGER_ID_LIMIT + 8);
-      store.append(entry({ requestId: `${prefix}1`, detail: "first" }));
-      store.append(entry({ requestId: `${prefix}2`, detail: "second" }));
+      store.append(entry({ requestId: `${prefix}1`, args: "first" }));
+      store.append(entry({ requestId: `${prefix}2`, args: "second" }));
       expect(store.complete(`${prefix}1`, { outcome: "ok" })).toBe(true);
       expect(store.complete(`${prefix}2`, { outcome: "failed" })).toBe(true);
       const { lines } = await store.list({ ownerUid: 1000, limit: 10 });
-      expect(lines.map((line) => [line.detail, line.outcome])).toEqual([
+      expect(lines.map((line) => [line.args, line.outcome])).toEqual([
         ["second", "failed"],
         ["first", "ok"],
       ]);
@@ -403,7 +407,7 @@ describe("LedgerStore", () => {
       const store = new LedgerStore(sql, storage, bucketOf(memory));
       const now = 70_000_000;
       for (let i = 0; i <= LEDGER_INDEX_SET_LIMIT; i += 1) {
-        store.append(entry({ requestId: `t${i}`, timestamp: now - LEDGER_WINDOW_AGE_MS - 1, target: `t${i}`, detail: `t${i}` }));
+        store.append(entry({ requestId: `t${i}`, timestamp: now - LEDGER_WINDOW_AGE_MS - 1, target: `t${i}`, args: `t${i}` }));
         store.complete(`t${i}`, { outcome: "ok" }, now);
       }
       const result = await store.rotateOnce(now);
@@ -411,7 +415,7 @@ describe("LedgerStore", () => {
       expect(result.segment.targets).toBeNull();
       expect(result.segment.uids).toEqual([1000]);
       const found = await store.list({ ownerUid: 1000, target: `t${LEDGER_INDEX_SET_LIMIT}`, limit: 10 });
-      expect(found.lines.map((line) => line.detail)).toEqual([`t${LEDGER_INDEX_SET_LIMIT}`]);
+      expect(found.lines.map((line) => line.args)).toEqual([`t${LEDGER_INDEX_SET_LIMIT}`]);
       expect((await store.list({ ownerUid: 1000, target: "nowhere", limit: 10 })).lines).toEqual([]);
     });
   });
@@ -422,11 +426,11 @@ describe("LedgerStore", () => {
       const store = new LedgerStore(sql, storage, bucketOf(memory));
       const now = 80_000_000;
       for (let i = 0; i < 6; i += 1) {
-        store.append(entry({ requestId: `a${i}`, timestamp: now - LEDGER_WINDOW_AGE_MS - 1_000 + i, detail: `a${i}` }));
+        store.append(entry({ requestId: `a${i}`, timestamp: now - LEDGER_WINDOW_AGE_MS - 1_000 + i, args: `a${i}` }));
         store.complete(`a${i}`, { outcome: "ok" }, now);
       }
       expect((await store.rotateOnce(now)).rotated).toBe(true);
-      store.append(entry({ requestId: "b", timestamp: now - LEDGER_WINDOW_AGE_MS - 10, detail: "b" }));
+      store.append(entry({ requestId: "b", timestamp: now - LEDGER_WINDOW_AGE_MS - 10, args: "b" }));
       store.complete("b", { outcome: "ok" }, now);
       expect((await store.rotateOnce(now)).rotated).toBe(true);
       expect(store.segments()).toHaveLength(2);
@@ -435,11 +439,11 @@ describe("LedgerStore", () => {
 
       memory.gets = 0;
       const page1 = await store.list({ ownerUid: 1000, limit: 2 });
-      expect(page1.lines.map((line) => line.detail)).toEqual(["b", "a5"]);
+      expect(page1.lines.map((line) => line.args)).toEqual(["b", "a5"]);
       const page2 = await store.list({ ownerUid: 1000, limit: 2, cursor: page1.nextCursor ?? undefined });
-      expect(page2.lines.map((line) => line.detail)).toEqual(["a4", "a3"]);
+      expect(page2.lines.map((line) => line.args)).toEqual(["a4", "a3"]);
       const page3 = await store.list({ ownerUid: 1000, limit: 2, cursor: page2.nextCursor ?? undefined });
-      expect(page3.lines.map((line) => line.detail)).toEqual(["a2", "a1"]);
+      expect(page3.lines.map((line) => line.args)).toEqual(["a2", "a1"]);
       expect(memory.gets).toBe(2);
     });
   });
@@ -542,20 +546,20 @@ describe("routed lines", () => {
     const stub = env.KERNEL.get(env.KERNEL.idFromName(crypto.randomUUID()));
     await runInDurableObject(stub, async (kernel: Kernel) => {
       const now = Date.now();
-      kernel.ledger.append(entry({ requestId: "device-gone", timestamp: now, target: "laptop", detail: "device-gone" }));
+      kernel.ledger.append(entry({ requestId: "device-gone", timestamp: now, target: "laptop", args: "device-gone" }));
       kernel.routes.register("device-gone", "fs.read", { type: "process", id: "proc-1" }, "laptop", "conn-1");
       kernel.transport.failTargetRoutes(kernel.routes.failForDevice("laptop"));
 
-      kernel.ledger.append(entry({ requestId: "origin-gone", timestamp: now, target: "laptop", detail: "origin-gone" }));
+      kernel.ledger.append(entry({ requestId: "origin-gone", timestamp: now, target: "laptop", args: "origin-gone" }));
       kernel.routes.register("origin-gone", "fs.read", { type: "connection", id: "conn-9" }, "laptop", "conn-1");
       kernel.transport.failRoutesForConnection("conn-9");
 
-      kernel.ledger.append(entry({ requestId: "garbled", timestamp: now, target: "laptop", detail: "garbled" }));
+      kernel.ledger.append(entry({ requestId: "garbled", timestamp: now, target: "laptop", args: "garbled" }));
       kernel.routes.register("garbled", "fs.read", { type: "kernel", id: "garbled" }, "laptop", "conn-1");
       kernel.transport.cancelRoute("garbled", "failed");
 
       const page = await kernel.ledger.list({ ownerUid: null, limit: 10 });
-      expect(page.lines.map((line) => [line.detail, line.outcome])).toEqual([
+      expect(page.lines.map((line) => [line.args, line.outcome])).toEqual([
         ["garbled", "failed"],
         ["origin-gone", "failed"],
         ["device-gone", "failed"],

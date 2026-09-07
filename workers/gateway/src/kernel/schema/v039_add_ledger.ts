@@ -22,7 +22,7 @@ export const KERNEL_V039_ADD_LEDGER: SqlMigration = {
         run_id TEXT,
         target TEXT NOT NULL,
         call TEXT NOT NULL,
-        detail TEXT NOT NULL,
+        args TEXT NOT NULL,
         outcome TEXT CHECK(outcome IN ('ok', 'failed', 'denied', 'cancelled')),
         duration_ms INTEGER,
         tokens INTEGER,
