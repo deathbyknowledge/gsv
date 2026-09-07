@@ -518,6 +518,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
           true,
         );
       }
+      // every start of the Kernel makes sure the ledger's daily housekeeping is pending
+      await this.ensureLedgerRotation(LEDGER_ROTATION_DAILY_MS);
     });
   }
 
@@ -1536,24 +1538,13 @@ export class Kernel extends DurableObject<GatewayEnv> {
     void this.armLedgerRotation(seq);
   }
 
-  private ledgerRotationArmed = false;
-  private ledgerArming = false;
-
   /**
-   * The first line of this Kernel's life arms the daily housekeeping, and
-   * counts as armed only once the task is confirmed, so a scheduler failure
-   * is retried on the next line; every hundredth line after that counts the
-   * window and pulls the task nearer when it is over its bound.
+   * The daily task is armed when the Kernel starts; every hundredth line
+   * counts the window and pulls the task nearer when it is over its bound.
    */
   async armLedgerRotation(seq: number): Promise<void> {
-    if ((this.ledgerRotationArmed && seq % 100 !== 0) || this.ledgerArming) return;
-    this.ledgerArming = true;
-    try {
-      const overBound = this.ledger.windowCount() > LEDGER_WINDOW_ROWS;
-      this.ledgerRotationArmed = await this.ensureLedgerRotation(overBound ? LEDGER_ROTATION_SOON_MS : LEDGER_ROTATION_DAILY_MS);
-    } finally {
-      this.ledgerArming = false;
-    }
+    if (seq % 100 !== 0) return;
+    if (this.ledger.windowCount() > LEDGER_WINDOW_ROWS) await this.ensureLedgerRotation(LEDGER_ROTATION_SOON_MS);
   }
 
   /**
@@ -1578,16 +1569,17 @@ export class Kernel extends DurableObject<GatewayEnv> {
   }
 
   /**
-   * The ledger's housekeeping: stale lines close, a window over its bound
-   * rotates, retention applies to what stayed. It comes back in a minute
-   * while there is more to do, and daily otherwise.
+   * The ledger's housekeeping: stale lines close, lines past retention leave
+   * the window before anything rotates, so no segment carries them, a window
+   * over its bound rotates, and segments past retention go. It comes back in
+   * a minute while there is more to do, and daily otherwise.
    */
   async onLedgerRotate(reason: string, runningTaskId?: string): Promise<void> {
     let drained = true;
     try {
       const closed = this.ledger.closeStale();
-      const segments = await this.ledger.rotate();
       const expired = this.ledger.pruneExpired();
+      const segments = await this.ledger.rotate();
       const expiredSegments = await this.ledger.pruneExpiredSegments();
       drained = expiredSegments < LEDGER_PRUNE_PER_ALARM;
       const dropped = await this.ledger.pruneMissingSegments();
@@ -1600,9 +1592,10 @@ export class Kernel extends DurableObject<GatewayEnv> {
       drained = false;
       console.warn(`[ledger] housekeeping failed, will retry: ${error instanceof Error ? error.name : "error"}`);
     }
-    // a re-arm that fails leaves the ledger unarmed, so the next line arms it again
+    // a re-arm that fails is thrown so the task scheduler retries the run; failing that, the next start of the Kernel arms again
     const more = this.ledger.needsRotation() || !drained;
-    this.ledgerRotationArmed = await this.ensureLedgerRotation(more ? LEDGER_ROTATION_RETRY_MS : LEDGER_ROTATION_DAILY_MS, runningTaskId);
+    const armed = await this.ensureLedgerRotation(more ? LEDGER_ROTATION_RETRY_MS : LEDGER_ROTATION_DAILY_MS, runningTaskId);
+    if (!armed) throw new Error("ledger housekeeping could not re-arm");
   }
 
   async scheduleManagedOutboundEnqueue(

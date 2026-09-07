@@ -646,14 +646,40 @@ describe("rotation scheduling", () => {
     });
   });
 
-  it("arms the daily rotation on the first line, not the hundredth", async () => {
+  it("keeps a daily task from the moment the Kernel starts, and pulls it nearer once the window is over its bound", async () => {
     const stub = env.KERNEL.get(env.KERNEL.idFromName(crypto.randomUUID()));
     await runInDurableObject(stub, async (kernel: Kernel, state) => {
-      expect(pendingRotations(state.storage.sql)).toHaveLength(0);
-      await kernel.armLedgerRotation(1);
-      expect(pendingRotations(state.storage.sql)).toHaveLength(1);
-      await kernel.armLedgerRotation(2);
-      expect(pendingRotations(state.storage.sql)).toHaveLength(1);
+      const nowSeconds = Math.floor(Date.now() / 1_000);
+      const daily = pendingRotations(state.storage.sql);
+      expect(daily).toHaveLength(1);
+      expect(daily[0].time).toBeGreaterThan(nowSeconds + 60 * 60);
+      await kernel.armLedgerRotation(100);
+      expect(pendingRotations(state.storage.sql)).toEqual(daily);
+      for (let i = 0; i <= LEDGER_WINDOW_ROWS; i += 1) kernel.ledger.append(entry({ requestId: `r${i}` }));
+      await kernel.armLedgerRotation(200);
+      const soon = pendingRotations(state.storage.sql);
+      expect(soon).toHaveLength(1);
+      expect(soon[0].time).toBeLessThanOrEqual(nowSeconds + 120);
+    });
+  });
+
+  it("drops lines past retention from the window before rotating, so no segment carries them", async () => {
+    const stub = env.KERNEL.get(env.KERNEL.idFromName(crypto.randomUUID()));
+    await runInDurableObject(stub, async (kernel: Kernel) => {
+      const memory = new MemoryBucket();
+      kernel.ledger.bucket = memory;
+      const now = Date.now();
+      kernel.ledger.append(entry({ requestId: "ancient", timestamp: now - LEDGER_RETENTION_MS - 10_000 }));
+      kernel.ledger.complete("ancient", { outcome: "ok" }, now);
+      for (let i = 0; i <= LEDGER_WINDOW_ROWS; i += 1) {
+        kernel.ledger.append(entry({ requestId: `r${i}`, timestamp: now - 1_000 }));
+        kernel.ledger.complete(`r${i}`, { outcome: "ok" }, now);
+      }
+      await kernel.onLedgerRotate("test");
+      const written = [...memory.objects.values()].join("\n");
+      expect(written).not.toContain('"requestId":"ancient"');
+      expect(written).not.toContain(String(now - LEDGER_RETENTION_MS - 10_000));
+      expect(kernel.ledger.segments().every((segment) => segment.firstTs >= now - 1_000)).toBe(true);
     });
   });
 

@@ -48,9 +48,10 @@ cancellation, or a refused registration otherwise. A routed call whose device
 or origin disconnects mid-flight, or whose device answers something the Kernel
 cannot decode, closes as `failed`; a call refused because its request was
 already cancelled closes as `cancelled`. Every exit from the dispatch closes
-its line. The dispatch path only inserts and, on the Kernel's first line and
-every hundredth after, counts the window to keep a rotation armed; nothing
-else runs inline.
+its line. The dispatch path only inserts and, every hundredth line, counts
+the window to pull the housekeeping task nearer when it is over its bound;
+nothing else runs inline. The daily task itself is armed whenever the Kernel
+starts, and a run that cannot re-arm throws so the task scheduler retries it.
 
 The window is bounded to 5,000 lines. Age alone never rotates: a quiet
 installation keeps every line in SQL and never writes a segment, so segments
@@ -58,7 +59,8 @@ are always full and a read of a quiet history never leaves the Kernel. The
 daily task does the housekeeping that age does call for: a line still open
 after 24 hours closes as `cancelled` in place, and a line older than the
 retention period is deleted from the window, the same 90 days a segment
-gets. Exactly one rotation task is pending at any time, keyed
+gets, before anything rotates, so no segment ever carries an expired line.
+Exactly one rotation task is pending at any time, keyed
 by its callback and payload: a row-bound crossing moves the pending task
 nearer, never adds to it, and the task re-arms itself once when it runs,
 daily, or a minute later while the window is still over its bound, as after a
