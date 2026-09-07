@@ -23,6 +23,12 @@ use host_config::CliConfig;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
+/// Whether `tag` is a release tag the installer would accept as
+/// `GSV_VERSION`: the moving `dev` tag or an `vX.Y.Z` stable tag.
+fn is_release_tag(tag: &str) -> bool {
+    tag == DEV_RELEASE_TAG || (tag.starts_with('v') && parse_version(tag).is_some())
+}
+
 /// Where the public installer lives when the gateway does not name one.
 pub const DEFAULT_INSTALLER_URL: &str = "https://install.gsv.space";
 /// The daemon starts at most one installer per hour, whatever the outcome.
@@ -362,9 +368,7 @@ impl AutoUpdater {
         let server_release = details
             .get("serverRelease")
             .and_then(|value| value.as_str());
-        if self.channel == ReleaseChannel::Stable && server_release == Some(DEV_RELEASE_TAG) {
-            return None;
-        }
+        let release = self.accepted_release(server_release, server_version)?;
         let installer_url = details
             .get("installer")
             .and_then(|value| value.as_str())
@@ -372,15 +376,15 @@ impl AutoUpdater {
             .unwrap_or(DEFAULT_INSTALLER_URL)
             .to_string();
         Some(UpdateTarget {
-            release: self.release_for(server_version),
+            release,
             reason: UpdateReason::ProtocolUnsupported,
             installer_url,
         })
     }
 
     /// The release to install after a successful handshake against a newer
-    /// gateway. A stable daemon only follows stable releases; a gateway built
-    /// from the moving `dev` tag never moves it.
+    /// gateway: the one the gateway names, if this daemon's channel accepts
+    /// it.
     pub fn plan_for_server(&self, server: &ServerInfo) -> Option<UpdateTarget> {
         let server_version = parse_version(&server.version)?;
         if self
@@ -389,22 +393,29 @@ impl AutoUpdater {
         {
             return None;
         }
-        if self.channel == ReleaseChannel::Stable
-            && server.release.as_deref() == Some(DEV_RELEASE_TAG)
-        {
-            return None;
-        }
+        let release = self.accepted_release(server.release.as_deref(), server_version)?;
         Some(UpdateTarget {
-            release: self.release_for(server_version),
+            release,
             reason: UpdateReason::NewerRelease,
             installer_url: DEFAULT_INSTALLER_URL.to_string(),
         })
     }
 
-    fn release_for(&self, version: ReleaseVersion) -> String {
+    /// The release the gateway named (`serverRelease` or `server.release`),
+    /// or the stable tag of its version when an older gateway names none.
+    /// The local channel only decides acceptance: stable takes only stable
+    /// tags, dev takes both. A `dev` target is never synthesized from a
+    /// stable version, so the installer only ever installs what the gateway
+    /// named.
+    fn accepted_release(&self, named: Option<&str>, version: ReleaseVersion) -> Option<String> {
+        let release = match named.map(str::trim).filter(|tag| is_release_tag(tag)) {
+            Some(tag) => tag.to_string(),
+            None => stable_tag(version),
+        };
+        let stable = parse_version(&release).is_some();
         match self.channel {
-            ReleaseChannel::Stable => stable_tag(version),
-            ReleaseChannel::Dev => DEV_RELEASE_TAG.to_string(),
+            ReleaseChannel::Stable if !stable => None,
+            ReleaseChannel::Stable | ReleaseChannel::Dev => Some(release),
         }
     }
 
@@ -1218,8 +1229,9 @@ mod tests {
     }
 
     #[test]
-    fn a_dev_daemon_moves_to_the_dev_tag() {
+    fn a_dev_daemon_installs_the_release_the_gateway_named_never_a_synthesized_dev() {
         let updater = updater(true, ReleaseChannel::Dev, "0.4.1");
+        // An older gateway names no release: its version's stable tag.
         let target = updater
             .plan_for_protocol_error(&protocol_error(
                 u64::from(PROTOCOL_VERSION) + 1,
@@ -1227,8 +1239,34 @@ mod tests {
                 None,
             ))
             .expect("newer gateway plans an update");
-        assert_eq!(target.release, DEV_RELEASE_TAG);
+        assert_eq!(target.release, "v0.5.0");
         assert_eq!(target.installer_url, DEFAULT_INSTALLER_URL);
+        // A stable gateway names its tag: a dev daemon accepts it as named.
+        assert_eq!(
+            updater
+                .plan_for_server(&server("0.5.0", Some("v0.5.0")))
+                .map(|target| target.release),
+            Some("v0.5.0".to_string())
+        );
+        // A dev gateway names the moving tag: accepted as named too.
+        assert_eq!(
+            updater
+                .plan_for_server(&server("0.5.0", Some("dev")))
+                .map(|target| target.release),
+            Some(DEV_RELEASE_TAG.to_string())
+        );
+        // Something that is not a release tag is not installable; fall back
+        // to the version's stable tag rather than inventing one.
+        assert_eq!(
+            updater
+                .plan_for_server(&server("0.5.0", Some("nightly build 42")))
+                .map(|target| target.release),
+            Some("v0.5.0".to_string())
+        );
+        assert!(is_release_tag("dev"));
+        assert!(is_release_tag("v0.5.0"));
+        assert!(!is_release_tag("0.5.0"));
+        assert!(!is_release_tag(""));
     }
 
     #[tokio::test]
@@ -1266,8 +1304,16 @@ mod tests {
             updater.launch(&target).await,
             Err(UpdateError::Disabled)
         ));
+        // The dev channel accepts the stable tag the gateway named as is,
+        // and now also a gateway on the moving tag.
         assert_eq!(
             updater.plan_for_server(&newer).map(|target| target.release),
+            Some("v0.5.0".to_string())
+        );
+        assert_eq!(
+            updater
+                .plan_for_server(&server("0.5.0", Some("dev")))
+                .map(|target| target.release),
             Some(DEV_RELEASE_TAG.to_string())
         );
         fs::remove_dir_all(&dir).expect("cleanup");
@@ -1298,6 +1344,15 @@ mod tests {
             dev.plan_for_protocol_error(&error)
                 .map(|target| target.release),
             Some(DEV_RELEASE_TAG.to_string())
+        );
+        if let Some(details) = error.details.as_mut() {
+            details["serverRelease"] = json!("v0.5.0");
+        }
+        assert_eq!(
+            dev.plan_for_protocol_error(&error)
+                .map(|target| target.release),
+            Some("v0.5.0".to_string()),
+            "a dev daemon installs the stable tag the gateway named, not dev"
         );
     }
 
@@ -1608,6 +1663,13 @@ mod tests {
             .expect("newer release plans an update");
         assert_eq!(target.release, "v0.4.2");
         assert_eq!(target.reason, UpdateReason::NewerRelease);
+        // An older gateway that names no release: the stable tag of its version.
+        assert_eq!(
+            updater
+                .plan_for_server(&server("0.4.2", None))
+                .map(|target| target.release),
+            Some("v0.4.2".to_string())
+        );
         assert_eq!(
             updater.plan_for_server(&server("0.4.1", Some("v0.4.1"))),
             None

@@ -1073,23 +1073,16 @@ fn work_reason(in_flight: usize, shell_sessions: usize) -> Option<&'static str> 
     }
 }
 
-/// Requests that create work an installer's service stop would kill are
-/// refused while an update is being installed; reads still pass.
-fn admits_during_update(call: &str) -> bool {
-    matches!(call, "fs.read" | "fs.search")
-}
-
-/// The retryable refusal for `request` while an update installs, in the
-/// shape the caller expects for its call family, or `None` if it may pass.
-fn update_refusal_frame(request: &RequestFrame) -> Option<Frame> {
-    if admits_during_update(&request.call) {
-        return None;
-    }
+/// The retryable refusal for `request` while an update drains or installs,
+/// in the shape the caller expects for its call family. Every request is
+/// refused, reads included: a long search or a streaming read admitted after
+/// the idle check would be cut off when the installer stops the service.
+fn update_refusal_frame(request: &RequestFrame) -> Frame {
     let message = "This machine is installing an update; retry shortly.".to_string();
     if request.call.starts_with("fs.") {
-        return Some(driver_error_frame(request, message));
+        return driver_error_frame(request, message);
     }
-    Some(Frame::Res(ResponseFrame {
+    Frame::Res(ResponseFrame {
         id: request.id.clone(),
         ok: false,
         data: None,
@@ -1100,7 +1093,7 @@ fn update_refusal_frame(request: &RequestFrame) -> Option<Frame> {
             retryable: Some(true),
         }),
         body: None,
-    }))
+    })
 }
 
 /// A refused request may already be sending a body; owning and dropping it
@@ -1222,9 +1215,7 @@ impl UpdateLifecycle {
     fn admit(&self, requests: &ActiveRequests, request: &RequestFrame) -> Admission {
         let state = self.lock();
         if state.phase != UpdatePhase::Idle {
-            if let Some(refusal) = update_refusal_frame(request) {
-                return Admission::Refused(refusal);
-            }
+            return Admission::Refused(update_refusal_frame(request));
         }
         let cancellation = requests.register(request);
         drop(state);
@@ -1923,14 +1914,14 @@ mod tests {
     }
 
     #[test]
-    fn work_creating_requests_are_refused_while_an_update_installs() {
+    fn every_request_is_refused_while_an_update_installs() {
         let shell = RequestFrame {
             id: "req-shell".to_string(),
             call: "shell.exec".to_string(),
             args: None,
             body: None,
         };
-        let refusal = response_of(update_refusal_frame(&shell));
+        let refusal = response_of(Some(update_refusal_frame(&shell)));
         assert!(!refusal.ok);
         assert_eq!(refusal.id, "req-shell");
         let error = refusal.error.expect("refusal carries an error");
@@ -1944,7 +1935,7 @@ mod tests {
             call: "fs.write".to_string(),
             ..shell.clone()
         };
-        let refusal = response_of(update_refusal_frame(&write));
+        let refusal = response_of(Some(update_refusal_frame(&write)));
         assert!(refusal.ok);
         assert_eq!(refusal.id, "req-write");
         assert_eq!(
@@ -1952,14 +1943,24 @@ mod tests {
             Some(json!(false))
         );
 
-        for call in ["fs.read", "fs.search"] {
+        // Reads are refused too: a long search or a streaming read would be
+        // cut off by the service stop just the same.
+        for call in ["fs.read", "fs.search", "net.fetch"] {
             let read = RequestFrame {
                 call: call.to_string(),
                 ..shell.clone()
             };
-            assert!(update_refusal_frame(&read).is_none(), "{call} passes");
+            let refusal = response_of(Some(update_refusal_frame(&read)));
+            assert_eq!(refusal.id, "req-shell", "{call} is refused");
+            let refused = if call.starts_with("fs.") {
+                refusal.data.and_then(|data| data.get("ok").cloned()) == Some(json!(false))
+            } else {
+                refusal
+                    .error
+                    .is_some_and(|error| error.retryable == Some(true))
+            };
+            assert!(refused, "{call} is refused");
         }
-        assert!(!admits_during_update("net.fetch"));
     }
 
     #[test]
@@ -2229,7 +2230,7 @@ mod tests {
             args: None,
             body: Some(descriptor),
         };
-        assert!(update_refusal_frame(&request).is_some());
+        let _refusal = update_refusal_frame(&request);
         cancel_refused_body(&channel, request.body);
         let frame = tokio::time::timeout(std::time::Duration::from_secs(2), frames_rx.recv())
             .await
@@ -2273,7 +2274,7 @@ mod tests {
         assert_eq!(in_flight, 1);
         assert_eq!(work_reason(in_flight, 0), Some("requests in flight"));
 
-        // Arriving after the flip: refused, never registered. Reads pass.
+        // Arriving after the flip: refused, never registered, reads included.
         assert!(matches!(
             lifecycle.admit(&requests, &shell_request("req-after")),
             Admission::Refused(_)
@@ -2285,8 +2286,9 @@ mod tests {
         };
         assert!(matches!(
             lifecycle.admit(&requests, &read),
-            Admission::Admitted(_)
+            Admission::Refused(_)
         ));
+        assert_eq!(requests.in_flight(), 1);
 
         requests.finish("req-before", &before);
         guard.abandon();
