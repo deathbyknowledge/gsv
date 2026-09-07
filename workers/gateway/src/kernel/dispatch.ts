@@ -179,7 +179,7 @@ export type DispatchDeps = {
     peerConnectionId: string;
     ttlMs: number;
   }) => Promise<{
-    cancel: () => void;
+    cancel: (outcome?: "cancelled" | "failed") => void;
     attachBody: (body: CancellableFrameBody) => void;
   }>;
   requestTarget: (
@@ -783,7 +783,7 @@ async function routeToTarget(
   }
 
   let route: {
-    cancel: () => void;
+    cancel: (outcome?: "cancelled" | "failed") => void;
     attachBody: (body: CancellableFrameBody) => void;
   } | null = null;
   try {
@@ -817,7 +817,8 @@ async function routeToTarget(
       route.attachBody(outgoing);
     }
   } catch (error) {
-    route.cancel();
+    // the device never got the call: that is a failure of ours, not a cancellation
+    route.cancel("failed");
     const message = error instanceof Error ? error.message : String(error);
     return {
       handled: true,

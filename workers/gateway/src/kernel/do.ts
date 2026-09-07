@@ -1536,17 +1536,23 @@ export class Kernel extends DurableObject<GatewayEnv> {
   }
 
   private ledgerRotationArmed = false;
+  private ledgerArming = false;
 
   /**
-   * The first line of this Kernel's life arms the daily rotation, so a quiet
-   * installation still rotates on age; every hundredth line after that counts
-   * the window and pulls the rotation nearer when it is over its bound.
+   * The first line of this Kernel's life arms the daily housekeeping, and
+   * counts as armed only once the task is confirmed, so a scheduler failure
+   * is retried on the next line; every hundredth line after that counts the
+   * window and pulls the task nearer when it is over its bound.
    */
-  armLedgerRotation(seq: number): Promise<void> {
-    if (this.ledgerRotationArmed && seq % 100 !== 0) return Promise.resolve();
-    this.ledgerRotationArmed = true;
-    const overBound = this.ledger.windowCount() > LEDGER_WINDOW_ROWS;
-    return this.ensureLedgerRotation(overBound ? LEDGER_ROTATION_SOON_MS : LEDGER_ROTATION_DAILY_MS);
+  async armLedgerRotation(seq: number): Promise<void> {
+    if ((this.ledgerRotationArmed && seq % 100 !== 0) || this.ledgerArming) return;
+    this.ledgerArming = true;
+    try {
+      const overBound = this.ledger.windowCount() > LEDGER_WINDOW_ROWS;
+      this.ledgerRotationArmed = await this.ensureLedgerRotation(overBound ? LEDGER_ROTATION_SOON_MS : LEDGER_ROTATION_DAILY_MS);
+    } finally {
+      this.ledgerArming = false;
+    }
   }
 
   /**
@@ -1555,16 +1561,18 @@ export class Kernel extends DurableObject<GatewayEnv> {
    * task that is running still has its row while it runs, so re-arming from
    * inside it names that row, which is then replaced rather than kept.
    */
-  async ensureLedgerRotation(delayMs: number, runningTaskId?: string): Promise<void> {
+  async ensureLedgerRotation(delayMs: number, runningTaskId?: string): Promise<boolean> {
     const due = Date.now() + delayMs;
     try {
       const existing = await this.schedule(new Date(due), "onLedgerRotate", LEDGER_ROTATION_TASK, { idempotent: true });
       // task times are whole seconds; a pending task due no later than this one stands
-      if (existing.id !== runningTaskId && existing.time * 1_000 <= due + 1_000) return;
+      if (existing.id !== runningTaskId && existing.time * 1_000 <= due + 1_000) return true;
       await this.cancelSchedule(existing.id);
       await this.schedule(new Date(due), "onLedgerRotate", LEDGER_ROTATION_TASK, { idempotent: true });
+      return true;
     } catch (error) {
       console.warn(`[ledger] could not schedule rotation: ${error instanceof Error ? error.name : "error"}`);
+      return false;
     }
   }
 
@@ -1574,10 +1582,11 @@ export class Kernel extends DurableObject<GatewayEnv> {
       const closed = this.ledger.closeStale();
       const segments = await this.ledger.rotate();
       const expired = this.ledger.pruneExpired();
+      const expiredSegments = await this.ledger.pruneExpiredSegments();
       const dropped = await this.ledger.pruneMissingSegments();
-      if (closed > 0 || segments.length > 0 || expired > 0 || dropped > 0) {
+      if (closed > 0 || segments.length > 0 || expired > 0 || expiredSegments > 0 || dropped > 0) {
         console.log(
-          `[ledger] closed ${closed} stale, rotated ${segments.length} segment(s), expired ${expired} line(s) (${reason}); dropped ${dropped} index entries`,
+          `[ledger] closed ${closed} stale, rotated ${segments.length}, expired ${expired} line(s) and ${expiredSegments} segment(s) (${reason}); dropped ${dropped} index entries`,
         );
       }
     } catch (error) {

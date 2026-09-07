@@ -57,8 +57,8 @@ installation keeps every line in SQL and never writes a segment, so segments
 are always full and a read of a quiet history never leaves the Kernel. The
 daily task does the housekeeping that age does call for: a line still open
 after 24 hours closes as `cancelled` in place, and a line older than the
-retention period is deleted from the window, the same 90 days the bucket
-promises for segments. Exactly one rotation task is pending at any time, keyed
+retention period is deleted from the window, the same 90 days a segment
+gets. Exactly one rotation task is pending at any time, keyed
 by its callback and payload: a row-bound crossing moves the pending task
 nearer, never adds to it, and the task re-arms itself once when it runs,
 daily, or a minute later while the window is still over its bound, as after a
@@ -90,18 +90,20 @@ process, or place skips every segment whose sets cannot contain a match.
 
 ## Retention
 
-Segments expire by an R2 lifecycle rule on the `ledger/` prefix. Set it on the
-bucket, 90 days to start:
+The Kernel keeps the promise itself. The daily task deletes every segment whose
+newest line is past 90 days, object first and then its index entry, a bounded
+number per run, and deletes window lines past the same age, so retention holds
+whether or not a line ever reached a segment. It also checks the oldest few
+index entries against storage each run and drops any whose object is gone.
+
+In the managed service a segment's physical key sits under the installation's
+prefix, so a bucket lifecycle rule on `ledger/` would not reach it; a rule is
+belt and braces there, not the mechanism. A self-hosted bucket can add one on
+the `ledger/` prefix at the same age:
 
 ```
 wrangler r2 bucket lifecycle add gsv-storage --prefix "ledger/" --expire-days 90
 ```
-
-Lifecycle rules are bucket configuration, not Worker configuration, so the
-deployment does not declare them. The alarm drops index entries whose object
-is gone, and deletes window lines past the same age, so retention holds
-whether or not a line ever reached a segment; the constant in `ledger.ts`
-and the rule on the bucket are meant to say the same number.
 
 ## Reading
 

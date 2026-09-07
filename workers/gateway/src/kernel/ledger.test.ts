@@ -8,7 +8,8 @@ import {
   LEDGER_ID_LIMIT,
   LEDGER_INDEX_SET_LIMIT,
   LEDGER_RETENTION_MS,
-  LEDGER_SEGMENT_CHARS,
+  LEDGER_PRUNE_PER_ALARM,
+  LEDGER_SEGMENT_BYTES,
   LEDGER_SEGMENTS_PER_READ,
   LEDGER_SEGMENT_ROWS,
   LEDGER_WINDOW_AGE_MS,
@@ -42,6 +43,9 @@ class MemoryBucket {
   }
   async head(key: string): Promise<{ key: string } | null> {
     return this.objects.has(key) ? { key } : null;
+  }
+  async delete(key: string): Promise<void> {
+    this.objects.delete(key);
   }
 }
 
@@ -255,21 +259,55 @@ describe("LedgerStore", () => {
     });
   });
 
-  it("closes a segment at its size bound before its row bound", async () => {
+  it("closes a segment at its size bound in encoded bytes before its row bound", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
-      const store = new LedgerStore(sql, storage, bucketOf(new MemoryBucket()));
-      const big = "x".repeat(LEDGER_ARGS_LIMIT - 2);
-      // 300 lines of 16 KB each: about 4.8 MB, over the size bound and well under the row bound
-      for (let i = 0; i < 300; i += 1) {
+      const memory = new MemoryBucket();
+      const store = new LedgerStore(sql, storage, bucketOf(memory));
+      // 16K characters of three-byte text: 48 KB a line, so 120 lines are about 5.8 MB and one segment cannot hold them
+      const big = "文".repeat(LEDGER_ARGS_LIMIT - 2);
+      for (let i = 0; i < 120; i += 1) {
         store.append(entry({ requestId: `r${i}`, args: big }));
         store.complete(`r${i}`, { outcome: "ok" });
       }
-      const first = await store.rotateOnce();
-      expect(first.rotated && first.segment.rowCount).toBeLessThan(300);
-      expect(first.rotated && first.segment.bytes).toBeLessThanOrEqual(LEDGER_SEGMENT_CHARS);
-      const second = await store.rotateOnce();
-      expect(first.rotated && second.rotated && first.segment.rowCount + second.segment.rowCount).toBe(300);
-      expect(store.windowCount()).toBe(0);
+      let rows = 0;
+      let segments = 0;
+      while (store.windowCount() > 0) {
+        const result = await store.rotateOnce();
+        expect(result.rotated).toBe(true);
+        if (!result.rotated) return;
+        expect(result.segment.bytes).toBeLessThanOrEqual(LEDGER_SEGMENT_BYTES);
+        expect(new TextEncoder().encode(memory.objects.get(result.segment.objectKey) ?? "").byteLength).toBe(result.segment.bytes);
+        rows += result.segment.rowCount;
+        segments += 1;
+      }
+      expect(rows).toBe(120);
+      expect(segments).toBeGreaterThan(1);
+    });
+  });
+
+  it("deletes segments past retention itself, oldest first and a bounded number per run", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const memory = new MemoryBucket();
+      const store = new LedgerStore(sql, storage, bucketOf(memory));
+      const now = 100_000_000_000;
+      // more expired segments than one run handles, then one fresh segment
+      for (let segment = 0; segment < LEDGER_PRUNE_PER_ALARM + 2; segment += 1) {
+        store.append(entry({ requestId: `old-${segment}`, timestamp: now - LEDGER_RETENTION_MS - 10_000 + segment }));
+        store.complete(`old-${segment}`, { outcome: "ok" }, now);
+        expect((await store.rotateOnce(now)).rotated).toBe(true);
+      }
+      store.append(entry({ requestId: "fresh", timestamp: now - 1_000 }));
+      store.complete("fresh", { outcome: "ok" }, now);
+      expect((await store.rotateOnce(now)).rotated).toBe(true);
+      expect(store.segments()).toHaveLength(LEDGER_PRUNE_PER_ALARM + 3);
+
+      expect(await store.pruneExpiredSegments(now)).toBe(LEDGER_PRUNE_PER_ALARM);
+      expect(await store.pruneExpiredSegments(now)).toBe(2);
+      expect(await store.pruneExpiredSegments(now)).toBe(0);
+      const left = store.segments();
+      expect(left).toHaveLength(1);
+      expect(memory.objects.size).toBe(1);
+      expect(memory.objects.has(left[0].objectKey)).toBe(true);
     });
   });
 
@@ -508,6 +546,7 @@ describe("rotation scheduling", () => {
         },
         get: async () => null,
         head: async () => null,
+        delete: async () => {},
       };
       await kernel.ensureLedgerRotation(0);
       await kernel.alarm();

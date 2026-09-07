@@ -660,7 +660,7 @@ async registerRouteWithExpiry(route: {
     }
 
     return {
-      cancel: () => this.cancelRoute(route.id),
+      cancel: (outcome: "cancelled" | "failed" = "cancelled") => this.cancelRoute(route.id, outcome),
       attachBody: (body) => {
         const previous = this.routedBodies.get(route.id);
         this.routedBodies.set(route.id, body);

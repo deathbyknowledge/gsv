@@ -20,8 +20,10 @@ export const LEDGER_WINDOW_AGE_MS = 24 * 60 * 60 * 1000;
 /** Lines older than this leave the window without a segment; keep it equal to the bucket's lifecycle rule. */
 export const LEDGER_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 export const LEDGER_SEGMENT_ROWS = 2_000;
-/** A segment closes early past this many characters, so a read that holds a few segments stays small. */
-export const LEDGER_SEGMENT_CHARS = 4 * 1024 * 1024;
+/** A segment closes early past this many encoded bytes, so a read that holds a few segments stays small. */
+export const LEDGER_SEGMENT_BYTES = 4 * 1024 * 1024;
+/** Index entries checked or expired per alarm, so housekeeping stays a bounded amount of storage work. */
+export const LEDGER_PRUNE_PER_ALARM = 25;
 /** Characters of JSON text a line keeps of its arguments; the cut is marked. */
 export const LEDGER_ARGS_LIMIT = 16_384;
 export const LEDGER_ID_LIMIT = 128;
@@ -322,6 +324,7 @@ export type LedgerObjectStore = {
   put(key: string, value: string, options?: R2PutOptions): Promise<R2Object | null>;
   get(key: string): Promise<{ text(): Promise<string> } | null>;
   head(key: string): Promise<{ key: string } | null>;
+  delete(key: string): Promise<void>;
 };
 
 export class LedgerStore {
@@ -449,21 +452,23 @@ export class LedgerStore {
     // a segment closes at its row bound or its size bound, whichever comes first, and always holds at least one line
     const lines: StoredLine[] = [];
     const encoded: string[] = [];
-    let chars = 0;
+    const encoder = new TextEncoder();
+    let used = 0;
     for (const row of rows) {
       const stored = rowToStored(row);
       const line = stored.outcome === null ? { ...stored, outcome: "cancelled" as const, durationMs: null } : stored;
       const text = JSON.stringify(line);
-      if (lines.length > 0 && chars + text.length + 1 > LEDGER_SEGMENT_CHARS) break;
+      const size = encoder.encode(text).byteLength + 1;
+      if (lines.length > 0 && used + size > LEDGER_SEGMENT_BYTES) break;
       lines.push(line);
       encoded.push(text);
-      chars += text.length + 1;
+      used += size;
     }
     const seqs = lines.map((line) => line.seq);
     const body = encoded.join("\n") + "\n";
     const lastSeq = seqs[seqs.length - 1];
     const key = segmentKey(lastSeq);
-    const bytes = new TextEncoder().encode(body).byteLength;
+    const bytes = used;
     await this.bucket.put(key, body, { httpMetadata: { contentType: "application/x-ndjson" } });
 
     const segment: LedgerSegment = {
@@ -537,10 +542,26 @@ export class LedgerStore {
     return row.seq ?? 0;
   }
 
-  /** Drops index entries whose object has expired or been removed from storage. */
+  /**
+   * Deletes the oldest segments whose every line is past retention, object
+   * first and then its index entry, a bounded number per alarm. The Kernel
+   * keeps the retention promise itself; a bucket lifecycle rule is optional.
+   */
+  async pruneExpiredSegments(now = Date.now()): Promise<number> {
+    const cutoff = now - LEDGER_RETENTION_MS;
+    const expired = this.segments().filter((segment) => segment.lastTs < cutoff).slice(-LEDGER_PRUNE_PER_ALARM);
+    for (const segment of expired) {
+      await this.bucket.delete(segment.objectKey);
+      this.sql.exec("DELETE FROM ledger_segments WHERE seq = ?", segment.seq);
+      this.segmentCache.delete(segment.objectKey);
+    }
+    return expired.length;
+  }
+
+  /** Drops index entries whose object was removed from storage by something other than the Kernel, checking the oldest few per alarm. */
   async pruneMissingSegments(): Promise<number> {
     let dropped = 0;
-    for (const segment of this.segments()) {
+    for (const segment of this.segments().slice(-LEDGER_PRUNE_PER_ALARM)) {
       const head = await this.bucket.head(segment.objectKey);
       if (head) continue;
       this.sql.exec("DELETE FROM ledger_segments WHERE seq = ?", segment.seq);
