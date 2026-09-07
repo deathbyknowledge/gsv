@@ -8,6 +8,13 @@ $InstallDir = if ($env:GSV_INSTALL_DIR) {
   Join-Path $env:LOCALAPPDATA "Programs\gsv\bin"
 }
 $Channel = if ($env:GSV_CHANNEL) { $env:GSV_CHANNEL } else { "stable" }
+# Which parts of the distribution to install; Windows publishes gsv and gsvd.
+$AllComponents = @("gsv", "gsvd")
+$Components = if ($env:GSV_INSTALL_COMPONENTS) {
+  @($env:GSV_INSTALL_COMPONENTS -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+} else {
+  $AllComponents
+}
 $Version = if ($env:GSV_VERSION) { $env:GSV_VERSION } else { "" }
 $ConfigRoot = if ($env:APPDATA) { $env:APPDATA } else { Join-Path $env:USERPROFILE "AppData\Roaming" }
 $ConfigDir = Join-Path $ConfigRoot "gsv"
@@ -176,9 +183,15 @@ function Install-GsvHost {
 
   $releaseRef = Resolve-ReleaseRef
   $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString("N"))
-  $assets = [ordered]@{
-    "gsv-$Platform.exe" = "gsv.exe"
-    "gsvd-$Platform.exe" = "gsvd.exe"
+  if ($Components.Count -eq 0) { throw "GSV_INSTALL_COMPONENTS must name at least one component" }
+  foreach ($component in $Components) {
+    if ($AllComponents -notcontains $component) {
+      throw "Unknown component in GSV_INSTALL_COMPONENTS: $component (choose from $($AllComponents -join ','))"
+    }
+  }
+  $assets = [ordered]@{}
+  foreach ($component in $Components) {
+    $assets["$component-$Platform.exe"] = "$component.exe"
   }
   $taskExisted = $false
   $taskWasRunning = $false
@@ -275,7 +288,7 @@ if (-not $Version) {
     Write-Warn "Could not persist release.channel"
   }
 }
-Write-Success "Installed gsv and gsvd to $InstallDir"
+Write-Success "Installed $($Components -join ', ') to $InstallDir"
 Write-Warn "GSV Desktop is not yet released for Windows."
 Write-Host ""
 Write-Host "  Next: gsv auth setup"

@@ -35,6 +35,10 @@ irm https://install.gsv.space/install.ps1 | iex
 
 Use `GSV_CHANNEL=dev` for the moving development channel, or set
 `GSV_VERSION=vX.Y.Z` to install an immutable release tag.
+`GSV_INSTALL_COMPONENTS` selects a subset of `gsv`, `gsvd`, `gsv-desktop`,
+`gsv-transcribe`, and `gsv-vision` (default: all); a helper brings its license
+and provenance files with it, and the subset is verified, installed, and rolled
+back on its own.
 
 ## Install location
 
@@ -117,6 +121,12 @@ gsv config --local set device.auto_update false
 
 The daemon reads that setting again at every handshake, so the change applies
 the next time it connects; `gsv daemon reload` applies it immediately.
+
+An automatic update replaces only `gsvd` and `gsv`, which owns the service
+definition; it passes `GSV_INSTALL_COMPONENTS=gsv,gsvd` to the installer, so
+Desktop and its transcription and gesture helpers are left exactly as they
+were and a running Desktop never meets a helper it does not know. Desktop
+updates stay yours to start.
 
 The CLI and Desktop are never replaced while a person is using them. The CLI
 prints a hint when the gateway runs a newer release; rerun the installer to

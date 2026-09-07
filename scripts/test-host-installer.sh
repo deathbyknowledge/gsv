@@ -24,9 +24,13 @@ mkdir -p \
 make_fixture() {
     local name="$1"
     local marker="$2"
+    local behaviour="${3:-}"
     {
         printf '#!/usr/bin/env sh\n'
         printf 'if [ "${1:-}" = "daemon" ] && [ "${2:-}" = "start" ]; then systemctl --user start gsvd.service; fi\n'
+        if [ "$behaviour" = "fail-doctor" ]; then
+            printf 'if [ "${1:-}" = "daemon" ] && [ "${2:-}" = "doctor" ]; then exit 1; fi\n'
+        fi
         printf 'printf "%%s\\n" "%s"\n' "$marker"
     } > "$FIXTURES/$name"
     chmod 0755 "$FIXTURES/$name"
@@ -232,7 +236,7 @@ test "$(grep -c 'Added by the GSV installer' "$DEFAULT_HOME/.bashrc")" = "1"
 # directory needs nothing.
 OPT_OUT_HOME="$TEST_ROOT/opt-out-home"
 mkdir -p "$OPT_OUT_HOME"
-DEFAULT_HOME="$OPT_OUT_HOME" run_default_installer env GSV_NO_MODIFY_PATH=1 | grep -q "Left PATH alone"
+grep -q "Left PATH alone" <<< "$(DEFAULT_HOME="$OPT_OUT_HOME" run_default_installer env GSV_NO_MODIFY_PATH=1)"
 test ! -e "$OPT_OUT_HOME/.profile"
 ON_PATH_HOME="$TEST_ROOT/on-path-home"
 mkdir -p "$ON_PATH_HOME"
@@ -460,4 +464,65 @@ DEFAULT_HOME="$DEV_SERVICE_HOME" run_default_installer env GSV_VERSION=dev >/dev
 grep -qF -- '--user start gsvd.service channel=channel = "dev"' "$SYSTEMCTL_LOG"
 test "$(grep -c '^channel = "dev"$' "$DEV_SERVICE_HOME/.config/gsv/config.toml")" = "1"
 
-echo "host installer checksum, replacement, default directory, PATH, bundle, launcher, encoded-path, and dev-channel smoke passed"
+# An unattended-style install replaces only the selected components, leaves
+# the rest byte-identical, and rolls back only that subset when the health
+# check fails.
+SUBSET_HOME="$TEST_ROOT/subset-home"
+SUBSET_DIR="$TEST_ROOT/subset-bin"
+SUBSET_BEFORE="$TEST_ROOT/subset-before"
+mkdir -p "$SUBSET_HOME/.config/systemd/user"
+cp -r "$INSTALL_DIR" "$SUBSET_DIR"
+cp -r "$SUBSET_DIR" "$SUBSET_BEFORE"
+printf '[Service]\nExecStart="%s/gsvd" "--foreground"\n' "$SUBSET_DIR" > "$SUBSET_HOME/.config/systemd/user/gsvd.service"
+run_subset_installer() {
+    env -u XDG_CONFIG_HOME \
+        HOME="$SUBSET_HOME" \
+        PATH="$FAKE_BIN:/usr/bin:/bin" \
+        GSV_INSTALL_DIR="$SUBSET_DIR" \
+        GSV_INSTALLER_RELEASE_BOUND=0 \
+        GSV_TEST_RELEASE_DIR="$FIXTURES" \
+        GSV_TEST_SYSTEMCTL_LOG="$SYSTEMCTL_LOG" \
+        GSV_VERSION="v-test" \
+        "$@" bash "$REPOSITORY_ROOT/install.sh"
+}
+untouched_by_subset() {
+    local name
+    for name in gsv-desktop gsv-transcribe gsv-vision gsv-transcribe-THIRD_PARTY.md gsv-vision-LICENSE.apache-2.0 gsv-vision-PROVENANCE.md; do
+        cmp -s "$SUBSET_BEFORE/$name" "$SUBSET_DIR/$name" || return 1
+    done
+}
+if run_subset_installer env GSV_INSTALL_COMPONENTS="gsv,gsvd,gsv-mystery" >/dev/null 2>&1; then
+    echo "installer accepted an unknown component" >&2
+    exit 1
+fi
+test "$("$SUBSET_DIR/gsv")" = "gsv-v1"
+SUBSET_OUTPUT="$(run_subset_installer env GSV_INSTALL_COMPONENTS="gsv,gsvd")"
+grep -q "Verified 2 release artifacts" <<< "$SUBSET_OUTPUT"
+grep -q "Installed gsv, gsvd to $SUBSET_DIR" <<< "$SUBSET_OUTPUT"
+test "$("$SUBSET_DIR/gsv")" = "gsv-v2"
+test "$("$SUBSET_DIR/gsvd")" = "gsvd-v2"
+untouched_by_subset
+# A helper brings its sidecars: the transcription subset is three files.
+grep -q "Verified 2 release artifacts" <<< "$(run_subset_installer env GSV_INSTALL_COMPONENTS="gsv-transcribe")"
+test "$("$SUBSET_DIR/gsv-transcribe")" = "transcribe-v2"
+test "$(cat "$SUBSET_DIR/gsv-transcribe-THIRD_PARTY.md")" = "license-v2"
+test "$("$SUBSET_DIR/gsv-desktop")" = "desktop-v1"
+# A replacement gsv whose doctor fails rolls back gsv and gsvd only.
+cp "$SUBSET_DIR/gsv-transcribe" "$SUBSET_BEFORE/gsv-transcribe"
+cp "$SUBSET_DIR/gsv-transcribe-THIRD_PARTY.md" "$SUBSET_BEFORE/gsv-transcribe-THIRD_PARTY.md"
+make_fixture gsv-linux-x64 gsv-v3 fail-doctor
+make_fixture gsvd-linux-x64 gsvd-v3
+write_checksums
+if run_subset_installer env GSV_INSTALL_COMPONENTS="gsv,gsvd" >/dev/null 2>&1; then
+    echo "installer ignored a failed health check for a component subset" >&2
+    exit 1
+fi
+test "$("$SUBSET_DIR/gsv")" = "gsv-v2"
+test "$("$SUBSET_DIR/gsvd")" = "gsvd-v2"
+untouched_by_subset
+test ! -e "$SUBSET_DIR/.gsv.new.$$"
+make_fixture gsv-linux-x64 gsv-v2
+make_fixture gsvd-linux-x64 gsvd-v2
+write_checksums
+
+echo "host installer checksum, replacement, default directory, PATH, bundle, launcher, encoded-path, dev-channel, and component-subset smoke passed"

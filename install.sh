@@ -18,6 +18,11 @@ INSTALL_DIR_SOURCE=""
 DESKTOP_MANAGED_DAEMON=0
 CHANNEL="${GSV_CHANNEL:-stable}"
 VERSION="${GSV_VERSION:-}"
+# Which parts of the distribution to install. The daemon's unattended update
+# passes `gsv,gsvd` so Desktop and its helpers are never swapped under a
+# running Desktop; a person installs everything.
+ALL_COMPONENTS="gsv,gsvd,gsv-desktop,gsv-transcribe,gsv-vision"
+COMPONENTS="${GSV_INSTALL_COMPONENTS:-$ALL_COMPONENTS}"
 if [ "$(uname -s)" = "Darwin" ]; then
     CONFIG_HOME="${HOME}/Library/Application Support"
 else
@@ -67,6 +72,44 @@ validate_channel() {
             *[!A-Za-z0-9._-]*) error "Invalid GSV_VERSION release tag"; exit 1 ;;
         esac
     fi
+}
+
+validate_components() {
+    [ -n "$COMPONENTS" ] || { error "GSV_INSTALL_COMPONENTS must name at least one component"; exit 1; }
+    local component
+    for component in $(printf '%s' "$COMPONENTS" | tr ',' ' '); do
+        case ",${ALL_COMPONENTS}," in
+            *",${component},"*) ;;
+            *) error "Unknown component in GSV_INSTALL_COMPONENTS: $component (choose from ${ALL_COMPONENTS})"; exit 1 ;;
+        esac
+    done
+}
+
+# The release assets for the selected components, in install order. A
+# helper brings its license and provenance sidecars with it, so a subset is
+# complete, verified, and rolled back on its own.
+select_assets() {
+    ASSETS=()
+    TARGETS=()
+    EXECUTABLES=()
+    local component
+    for component in $(printf '%s' "$COMPONENTS" | tr ',' ' '); do
+        ASSETS+=("${component}-${PLATFORM}")
+        TARGETS+=("$component")
+        EXECUTABLES+=(1)
+        case "$component" in
+            gsv-transcribe)
+                ASSETS+=("gsv-transcribe-THIRD_PARTY.md")
+                TARGETS+=("gsv-transcribe-THIRD_PARTY.md")
+                EXECUTABLES+=(0)
+                ;;
+            gsv-vision)
+                ASSETS+=("gsv-vision-LICENSE.apache-2.0" "gsv-vision-PROVENANCE.md")
+                TARGETS+=("gsv-vision-LICENSE.apache-2.0" "gsv-vision-PROVENANCE.md")
+                EXECUTABLES+=(0 0)
+                ;;
+        esac
+    done
 }
 
 # Turn a plist string back into the path it encodes: the five XML entities
@@ -563,6 +606,7 @@ cleanup() {
 main() {
     detect_platform
     validate_channel
+    validate_components
     delegate_to_pinned_installer
     resolve_install_dir
     local release_ref
@@ -572,30 +616,14 @@ main() {
     BACKUPS=()
     trap cleanup EXIT INT TERM
 
-    ASSETS=(
-        "gsv-${PLATFORM}"
-        "gsvd-${PLATFORM}"
-        "gsv-desktop-${PLATFORM}"
-        "gsv-transcribe-${PLATFORM}"
-        "gsv-vision-${PLATFORM}"
-        "gsv-transcribe-THIRD_PARTY.md"
-        "gsv-vision-LICENSE.apache-2.0"
-        "gsv-vision-PROVENANCE.md"
-    )
-    TARGETS=(
-        "gsv"
-        "gsvd"
-        "gsv-desktop"
-        "gsv-transcribe"
-        "gsv-vision"
-        "gsv-transcribe-THIRD_PARTY.md"
-        "gsv-vision-LICENSE.apache-2.0"
-        "gsv-vision-PROVENANCE.md"
-    )
-    EXECUTABLES=(1 1 1 1 1 0 0 0)
+    select_assets
 
     echo ""
-    echo -e "  ${BOLD}GSV host installer${NC} · ${PLATFORM} · ${release_ref}"
+    if [ "$COMPONENTS" = "$ALL_COMPONENTS" ]; then
+        echo -e "  ${BOLD}GSV host installer${NC} · ${PLATFORM} · ${release_ref}"
+    else
+        echo -e "  ${BOLD}GSV host installer${NC} · ${PLATFORM} · ${release_ref} · ${COMPONENTS}"
+    fi
     echo ""
     info "Downloading release manifest"
     local checksum_url
@@ -643,7 +671,11 @@ main() {
     INSTALL_IN_PROGRESS=0
     remove_backups
     configure_path
-    success "Installed gsv, gsvd, Desktop, and local helpers to $INSTALL_DIR"
+    if [ "$COMPONENTS" = "$ALL_COMPONENTS" ]; then
+        success "Installed gsv, gsvd, Desktop, and local helpers to $INSTALL_DIR"
+    else
+        success "Installed ${COMPONENTS//,/, } to $INSTALL_DIR"
+    fi
     echo ""
     if [ "$INSTALL_DIR_SOURCE" = "default" ] && ! path_already_configured; then
         echo "  Open a new shell, or run now: export PATH=\"\$HOME/.gsv/bin:\$PATH\""

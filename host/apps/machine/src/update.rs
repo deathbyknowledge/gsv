@@ -29,6 +29,10 @@ fn is_release_tag(tag: &str) -> bool {
     tag == DEV_RELEASE_TAG || (tag.starts_with('v') && parse_version(tag).is_some())
 }
 
+/// The components an unattended update replaces: the daemon and the CLI
+/// that owns its service definition, never Desktop or its helpers.
+pub const UNATTENDED_COMPONENTS: &str = "gsv,gsvd";
+
 /// Where the public installer lives when the gateway does not name one.
 pub const DEFAULT_INSTALLER_URL: &str = "https://install.gsv.space";
 /// The daemon starts at most one installer per hour, whatever the outcome.
@@ -717,6 +721,14 @@ pub fn installer_invocation(
         (
             "GSV_INSTALL_DIR".to_string(),
             install_dir.display().to_string(),
+        ),
+        // Only the daemon and the CLI that owns its service definition.
+        // Desktop and its helpers stay as they are: a running Desktop must
+        // not find a helper that no longer speaks its private protocol, and
+        // Desktop updates are the person's to start.
+        (
+            "GSV_INSTALL_COMPONENTS".to_string(),
+            UNATTENDED_COMPONENTS.to_string(),
         ),
     ];
     if cfg!(windows) {
@@ -1741,6 +1753,9 @@ mod tests {
         assert!(invocation
             .env
             .contains(&("GSV_INSTALL_DIR".to_string(), "/usr/local/bin".to_string())));
+        assert!(invocation
+            .env
+            .contains(&("GSV_INSTALL_COMPONENTS".to_string(), "gsv,gsvd".to_string())));
         if cfg!(windows) {
             assert_eq!(invocation.program, "powershell.exe");
             assert!(invocation.args.contains(&"-NonInteractive".to_string()));
