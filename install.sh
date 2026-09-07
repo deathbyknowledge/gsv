@@ -111,6 +111,8 @@ validate_components() {
     # gsv controls gsvd and refuses a daemon of another version; Desktop and its helpers share private protocols
     validate_group "$HOST_GROUP" "$seen" "gsv and gsvd"
     validate_group "$DESKTOP_GROUP" "$seen" "gsv-desktop, gsv-transcribe and gsv-vision"
+    HOST_SELECTED=0
+    case "$seen" in *,gsv,*) HOST_SELECTED=1 ;; esac
 }
 
 # The release assets for the selected components, in install order. A
@@ -436,8 +438,10 @@ service_snapshot() {
     SERVICE_WAS_ACTIVE=0
     SERVICE_WAS_ENABLED=0
     # Desktop owns that service and the executable it runs; do not stop,
-    # migrate, or restart it here.
+    # migrate, or restart it here. An install that does not touch the daemon
+    # leaves its service alone as well.
     [ "$DESKTOP_MANAGED_DAEMON" -eq 0 ] || return 0
+    [ "$HOST_SELECTED" -eq 1 ] || return 0
     if [ "$OS" = "linux" ]; then
         SERVICE_PATH="${CONFIG_HOME}/systemd/user/gsvd.service"
         if [ -f "$SERVICE_PATH" ]; then
@@ -685,10 +689,13 @@ main() {
         exit 1
     fi
 
-    # The config must be complete before the replacement daemon starts, or
-    # it reads the old release channel until its next restart.
-    ensure_config_file
-    persist_release_channel
+    # The config belongs to the daemon and must be complete before its
+    # replacement starts, or it reads the old release channel until its next
+    # restart; an install without the daemon leaves it as it is.
+    if [ "$HOST_SELECTED" -eq 1 ]; then
+        ensure_config_file
+        persist_release_channel
+    fi
 
     if [ "$SERVICE_INSTALLED" -eq 1 ]; then
         if ! "${INSTALL_DIR}/gsv" daemon start >/dev/null || ! health_check_service; then

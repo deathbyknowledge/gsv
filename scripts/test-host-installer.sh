@@ -531,6 +531,13 @@ test "$("$SUBSET_DIR/gsv-transcribe")" = "transcribe-v2"
 test "$(cat "$SUBSET_DIR/gsv-transcribe-THIRD_PARTY.md")" = "license-v2"
 test "$("$SUBSET_DIR/gsv-vision")" = "vision-v2"
 test "$("$SUBSET_DIR/gsv")" = "gsv-v2"
+# Desktop and its helpers into a directory of their own leave the daemon's service and config alone.
+DESKTOP_DIR="$TEST_ROOT/desktop-bin"
+SYSTEMCTL_LINES_BEFORE="$(wc -l < "$SYSTEMCTL_LOG")"
+grep -q "Installed gsv-desktop, gsv-transcribe, gsv-vision to $DESKTOP_DIR" <<< "$(run_subset_installer env GSV_INSTALL_DIR="$DESKTOP_DIR" GSV_INSTALL_COMPONENTS="gsv-desktop,gsv-transcribe,gsv-vision")"
+test "$("$DESKTOP_DIR/gsv-desktop")" = "desktop-v2"
+test ! -e "$DESKTOP_DIR/gsv"
+test "$(wc -l < "$SYSTEMCTL_LOG")" = "$SYSTEMCTL_LINES_BEFORE"
 # A replacement gsv whose doctor fails rolls back gsv and gsvd only.
 cp "$SUBSET_DIR"/gsv-desktop "$SUBSET_DIR"/gsv-transcribe* "$SUBSET_DIR"/gsv-vision* "$SUBSET_BEFORE/"
 make_fixture gsv-linux-x64 gsv-v3 fail-doctor
