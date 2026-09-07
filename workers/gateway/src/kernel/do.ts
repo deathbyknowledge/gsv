@@ -690,7 +690,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         await this.responsibilityRuntime.onResponsibilityWake(task.payload, task);
         return;
       case "onLedgerRotate":
-        await this.onLedgerRotate(task.payload);
+        await this.onLedgerRotate(task.payload, task.id);
         return;
     }
   }
@@ -1400,7 +1400,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         error instanceof RequestCancelledError ? 499 : 409,
         error instanceof Error ? error.message : String(error),
       );
-      this.completeLedgerAs(inputFrame.id, "failed");
+      this.completeLedgerAs(inputFrame.id, error instanceof RequestCancelledError ? "cancelled" : "failed");
       return refused;
     }
     const requestSignal = callerSignal
@@ -1539,14 +1539,16 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
   /**
    * Exactly one pending rotation task, keyed by its callback and payload. A
-   * nearer due replaces the pending task; a later one never adds to it.
+   * nearer due replaces the pending task; a later one never adds to it. The
+   * task that is running still has its row while it runs, so re-arming from
+   * inside it names that row, which is then replaced rather than kept.
    */
-  async ensureLedgerRotation(delayMs: number): Promise<void> {
+  async ensureLedgerRotation(delayMs: number, runningTaskId?: string): Promise<void> {
     const due = Date.now() + delayMs;
     try {
       const existing = await this.schedule(new Date(due), "onLedgerRotate", LEDGER_ROTATION_TASK, { idempotent: true });
       // task times are whole seconds; a pending task due no later than this one stands
-      if (existing.time * 1_000 <= due + 1_000) return;
+      if (existing.id !== runningTaskId && existing.time * 1_000 <= due + 1_000) return;
       await this.cancelSchedule(existing.id);
       await this.schedule(new Date(due), "onLedgerRotate", LEDGER_ROTATION_TASK, { idempotent: true });
     } catch (error) {
@@ -1554,7 +1556,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     }
   }
 
-  async onLedgerRotate(reason: string): Promise<void> {
+  async onLedgerRotate(reason: string, runningTaskId?: string): Promise<void> {
     try {
       const segments = await this.ledger.rotate();
       const dropped = await this.ledger.pruneMissingSegments();
@@ -1564,7 +1566,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     } catch (error) {
       console.warn(`[ledger] rotation failed, will retry: ${error instanceof Error ? error.name : "error"}`);
     }
-    await this.ensureLedgerRotation(this.ledger.needsRotation() ? LEDGER_ROTATION_RETRY_MS : LEDGER_ROTATION_DAILY_MS);
+    await this.ensureLedgerRotation(this.ledger.needsRotation() ? LEDGER_ROTATION_RETRY_MS : LEDGER_ROTATION_DAILY_MS, runningTaskId);
   }
 
   async scheduleManagedOutboundEnqueue(
