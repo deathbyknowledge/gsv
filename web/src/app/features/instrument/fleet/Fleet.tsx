@@ -662,6 +662,7 @@ function FileInspector({
     queryFn: () => readFilesPath(client, { ...readArgsFor(file.target, file.path), limit: PREVIEW_LINES }),
   });
   const payload = read.data;
+  const linkedEntries = payload && payload.ok && "entries" in payload ? payload.entries : null;
   const content = payload && payload.ok && "content" in payload ? payload.content : null;
   const text = content !== null && !Array.isArray(content) ? content : null;
   const image = Array.isArray(content) ? content.find((item) => item.type === "image") : null;
@@ -682,6 +683,12 @@ function FileInspector({
       <div class="file-preview">
         {read.isPending ? <p class="note">reading…</p> : null}
         {error ? <p class="error">{error}</p> : null}
+        {linkedEntries ? (
+          <>
+            <p class="note">This is a folder reached through a link; the place reported it as a file. What it holds:</p>
+            <pre>{linkedEntries.map((entry) => `${entry.name}${entry.kind === "directory" ? "/" : ""}`).join("\n")}</pre>
+          </>
+        ) : null}
         {text !== null ? <pre>{text}</pre> : null}
         {image && image.type === "image" ? <img src={`data:${image.mimeType};base64,${image.data}`} alt={file.name} /> : null}
       </div>

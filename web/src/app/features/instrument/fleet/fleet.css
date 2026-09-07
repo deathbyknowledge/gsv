@@ -1,7 +1,8 @@
 /* Fleet: the far distance. A manifest, not a dashboard. */
 .fleet {
   display: grid;
-  grid-template-rows: 44px minmax(0, 1fr) auto 30px;
+  /* header · body · the command line (absent while closed) · status; no fixed slot that can go empty */
+  grid-template-rows: 44px minmax(0, 1fr) auto auto;
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -331,6 +332,7 @@
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--text-dim);
+  height: 30px;
 }
 .fleet-status .right {
   margin-left: auto;

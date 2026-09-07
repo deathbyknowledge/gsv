@@ -164,6 +164,20 @@ export function outputText(syscall: string, output: ChatTranscriptValue | undefi
   return fallback;
 }
 
+/** Some rows carry the result as a JSON string in their text; read it as the result it is. */
+function resultOf(row: ChatTranscriptRow): ChatTranscriptValue | undefined {
+  if (row.toolOutput !== undefined && row.toolOutput !== null && !isStringValue(row.toolOutput)) return row.toolOutput;
+  const text = isStringValue(row.toolOutput) ? row.toolOutput : row.text;
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return row.toolOutput ?? undefined;
+  try {
+    const parsed: ChatTranscriptValue = JSON.parse(trimmed);
+    return parsed;
+  } catch {
+    return row.toolOutput ?? undefined;
+  }
+}
+
 function callFromRow(row: ChatTranscriptRow): ActivityCall {
   const syscall = row.toolSyscall ?? row.toolName ?? "call";
   const finished = row.role === "toolResult" || row.status === "done" || row.status === "error";
@@ -172,7 +186,7 @@ function callFromRow(row: ChatTranscriptRow): ActivityCall {
     callId: row.toolCallId ?? row.id,
     syscall,
     summary,
-    output: finished ? trimOutput(outputText(syscall, row.toolOutput, row.text)) : "",
+    output: finished ? trimOutput(outputText(syscall, resultOf(row), row.text)) : "",
     finished,
     failed: row.isError === true || row.toolOutcome === "failed" || row.toolOutcome === "denied",
   };

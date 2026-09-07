@@ -227,6 +227,11 @@ describe("outputText", () => {
     expect(outputText("shell.exec", { stdout: "", stderr: "", exitCode: 0 }, "")).toBe("");
     expect(outputText("shell.exec", { status: "completed", output: "total 21\ndrwxr-xr-x .gsv" }, "{json}")).toBe("total 21\ndrwxr-xr-x .gsv");
   });
+  it("reads a result that arrived as a json string in the row's text", () => {
+    const row: ChatTranscriptRow = { id: "t", role: "toolResult", text: JSON.stringify({ status: "completed", output: "hello\nworld" }), time: "", timestamp: 1, toolSyscall: "shell.exec", toolArgs: { input: "echo" } };
+    const activity = activitiesForRows([row], "r", false)[0];
+    expect(activity.calls[0].output).toBe("hello\nworld");
+  });
   it("lists a directory and shows a file", () => {
     expect(outputText("fs.read", { ok: true, entries: [{ name: "Downloads", kind: "directory" }, { name: "a.txt", kind: "file" }] }, "")).toBe("Downloads/\na.txt");
     expect(outputText("fs.read", { content: "hello" }, "")).toBe("hello");
