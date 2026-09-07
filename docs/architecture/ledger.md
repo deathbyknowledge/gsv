@@ -29,12 +29,10 @@ Kernel at all. Both remain in their own records.
 | `tokens`, `costNanoUsd` | From `message.usage` on an `ai.text.generate` result: its `totalTokens`, and `cost.total` in USD converted to nano-USD |
 
 `detail` is redacted at write time and only ever holds: for a shell command,
-its command word and first argument, and nothing from the first content flag
-onward (`--message`, `-m`, `-H`, `--header`, `--data`, `-d`, `--body`,
-`--cookie`, `--user`, `--token`, `--password`); assignments such as
-`KEY=value` or `--flag=value` are dropped wherever they sit, nothing after
-`echo` or `printf` is kept, `user:password@` is removed from any token, and a
-URL, with or without a scheme, ends before its query or fragment. A script
+its command word alone, the first token after any leading `KEY=value`
+assignments, so no argument is kept and nothing has to decide which argument
+is content. The command as typed stays in the process transcript, which is the
+owner's own record. A script
 run through codemode is described as `script (N lines)` and never by its
 text. For other calls the detail is a path, a URL's host only, a model id,
 a process label, an adapter name, a config key. Request ids,

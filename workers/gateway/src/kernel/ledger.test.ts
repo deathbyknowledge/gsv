@@ -73,24 +73,14 @@ describe("redactDetail", () => {
     expect(redactDetail("ai.text.generate", { model: "gsv/default", prompt: "never" })).toBe("gsv/default");
     expect(redactDetail("conversation.send", { text: "never" })).toBe("");
   });
-  it("keeps only a shell command's shape", () => {
-    expect(redactShellInput("message ana <<GSV_MESSAGE\nsecret body\nGSV_MESSAGE")).toBe("message ana");
-    expect(redactShellInput('message send --message "the secret text" ana')).toBe("message send");
+  it("keeps only the command word of a shell command", () => {
+    expect(redactShellInput("message ana <<GSV_MESSAGE\nsecret body\nGSV_MESSAGE")).toBe("message");
     expect(redactShellInput('curl -H "Authorization: Bearer abc" https://x.test/a?b=c')).toBe("curl");
-    expect(redactShellInput("curl https://user:pw@x.test/path?token=1#frag")).toBe("curl https://x.test/path");
-    expect(redactShellInput("ls -la ~/Downloads")).toBe("ls");
+    expect(redactShellInput("cp a.txt b.txt")).toBe("cp");
     expect(redactShellInput("grep -r 'secret phrase' ~/notes")).toBe("grep");
-    expect(redactShellInput("rg secret notes.md")).toBe("rg");
-    expect(redactShellInput("sed 's/old/new/' f.txt")).toBe("sed");
-    expect(redactShellInput("cp a.txt b.txt")).toBe("cp a.txt");
-    expect(redactShellInput("git --data=x commit")).toBe("git");
     expect(redactShellInput("export OPENAI_API_KEY=sk-live-secret")).toBe("export");
-    expect(redactShellInput("env TOKEN=x cmd --flag")).toBe("env cmd");
-    expect(redactShellInput("TOKEN=x python run.py")).toBe("python run.py");
-    expect(redactShellInput("echo ghp_secret | gh auth login --with-token")).toBe("echo");
-    expect(redactShellInput("printf '%s' secret > f")).toBe("printf");
-    expect(redactShellInput("scp user:pw@host:file .")).toBe("scp host:file");
-    expect(redactShellInput("x.test/a?token=1")).toBe("x.test/a");
+    expect(redactShellInput("TOKEN=x python run.py")).toBe("python");
+    expect(redactShellInput("  /usr/bin/env  node  app.js")).toBe("/usr/bin/env");
     expect(redactShellInput("")).toBe("");
   });
   it("describes a script by its size and never by its text", () => {

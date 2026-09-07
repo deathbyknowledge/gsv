@@ -174,58 +174,15 @@ function hostOf(url: string): string {
   }
 }
 
-/** Flags whose value is content, not a name: nothing after them is kept. */
-const CONTENT_FLAGS = [
-  "--message", "-m", "-H", "--header", "--data", "-d", "--data-raw", "--data-binary",
-  "--body", "-b", "--cookie", "-u", "--user", "--token", "--password",
-];
-
-/** Commands whose arguments are content: only the word is kept. */
-/** Commands whose first argument is content (a pattern, an expression, a message) rather than a place. */
-const CONTENT_COMMANDS = new Set(["echo", "printf", "grep", "egrep", "fgrep", "rg", "ag", "ack", "sed", "awk", "gawk"]);
-
-function isContentFlag(token: string): boolean {
-  return CONTENT_FLAGS.some((flag) => token === flag || token.startsWith(`${flag}=`));
-}
-
-/** `KEY=value` and `--flag=value`: whatever sits right of the sign is a value nobody should read. */
-function isAssignment(token: string): boolean {
-  return /^-{0,2}[A-Za-z_][A-Za-z0-9_.-]*=/.test(token);
-}
-
 /**
- * A token that names a place keeps only the name: `user:password@` goes
- * wherever it appears, and a URL, with or without a scheme, ends before its
- * query or fragment.
- */
-function scrubToken(token: string): string {
-  const withoutUserinfo = token.replace(/[^\s/@:]+(?::[^\s/@]*)?@/g, "");
-  const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(withoutUserinfo);
-  const cut = withoutUserinfo.search(/[?#]/);
-  if (cut < 0 || !(hasScheme || withoutUserinfo.includes("/"))) return withoutUserinfo;
-  return withoutUserinfo.slice(0, cut);
-}
-
-/**
- * The shape of a shell command without its content: the command word and its
- * first argument when that argument is not a flag, cut at the first flag that
- * carries content, with assignments dropped and locations scrubbed.
+ * A shell command is known by its command word alone: the first token after
+ * any leading `KEY=value` assignments. No argument is ever kept, so nothing
+ * here has to decide which argument is content.
  */
 export function redactShellInput(input: string): string {
   const line = oneLine(input, LEDGER_DETAIL_LIMIT * 4);
-  const kept: string[] = [];
-  for (const token of line.split(" ").filter(Boolean)) {
-    if (isContentFlag(token)) break;
-    if (isAssignment(token)) continue;
-    if (kept.length === 0) {
-      kept.push(scrubToken(token));
-      if (CONTENT_COMMANDS.has(token)) break;
-      continue;
-    }
-    if (!token.startsWith("-")) kept.push(scrubToken(token));
-    break;
-  }
-  return capField(kept.join(" "), LEDGER_DETAIL_LIMIT);
+  const word = line.split(" ").find((token) => token !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) ?? "";
+  return capField(word, LEDGER_DETAIL_LIMIT);
 }
 
 /** A script is described by its size only; its text never enters the ledger. */
@@ -235,8 +192,8 @@ function scriptLabel(code: string): string {
 }
 
 /**
- * What a person would recognize the call by. A command's shape, a path, a
- * host, a model id. Never bodies, message text, search queries, tokens, or keys.
+ * What a person would recognize the call by. A command word, a path, a
+ * host, a model id. Never arguments, bodies, message text, tokens, or keys.
  */
 export function redactDetail(call: string, args: JsonLike): string {
   const parsed = detailArgsSchema.safeParse(args);
