@@ -341,7 +341,7 @@ const sysLedgerLineSchema = z.object({
 export const sysLedgerListResultSchema = z.object({ lines: z.array(sysLedgerLineSchema), nextCursor: z.string().nullable() });
 export type SysLedgerListResult = z.infer<typeof sysLedgerListResultSchema>;
 
-function argsFromDetail(call: string, detail: string): { input?: string; path?: string; url?: string; query?: string } {
+function argsFromDetail(call: string, detail: string): ToolArgs {
   if (call === "shell.exec" || call.startsWith("codemode.")) return { input: detail };
   if (call === "fs.search") return { query: detail };
   if (call.startsWith("fs.")) return { path: detail };
