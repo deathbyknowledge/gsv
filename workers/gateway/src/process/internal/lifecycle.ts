@@ -97,7 +97,7 @@ export const UNKNOWN_SHELL_SESSION_TARGET_MESSAGE =
 
 export const USER_INTERRUPTED_TOOL_MESSAGE = "User interrupted tool execution";
 
-export const MAX_TERMINAL_CORRECTION_ROUNDS = 1;
+export const MAX_TERMINAL_CORRECTION_ROUNDS = 3;
 
 export const MAX_TERMINAL_COMMAND_FAILURES = 5;
 
@@ -107,7 +107,17 @@ export const FINAL_MESSAGE_BLOCK_EXAMPLE =
   "message send <<'GSV_MESSAGE' && yield\nyour user-visible response\nGSV_MESSAGE";
 
 export const RUN_CONTROL_INSTRUCTION =
-  `Use a direct \`message send\` Shell call whenever the user should receive a message; sending does not finish the run. After all work is complete, run \`yield\`, or compose the final message as:\n${FINAL_MESSAGE_BLOCK_EXAMPLE}\nOrdinary assistant text is Process activity and is not sent to the user. In a human-facing run, do not combine meaningful assistant text with a bare \`yield\`; send that text with \`message send\` instead.`;
+  "Messages for the user go through the Send tool; `message send` and `yield` here are the same actions. Assistant text is not sent to the user; do not pair meaningful text with a bare yield.";
+
+export const SEND_TOOL_DESCRIPTION =
+  "Send a message to the person this run is for, end the run, or both. Assistant text is never delivered; this is how the person hears from you. yield true ends the run after the message, or silently when there is no text.";
+
+/** Appended to history when a turn ended in text alone; the next turn offers Send and nothing else. */
+export const YIELD_CORRECTION_MESSAGE =
+  "Your last turn was plain assistant text, which is Process activity and was not sent to the user. Call the Send tool: text for the person, with yield true when the work is complete, or yield true alone if there is nothing to say. Only Send is offered on this turn.";
+
+/** What the person hears when the run could not be corrected into sending, rather than nothing. */
+export const CORRECTION_FAILURE_NOTICE = "I wrote a reply but did not send it. Ask me again.";
 
 export const PENDING_RUN_CONTROL_CALL = "Shell";
 

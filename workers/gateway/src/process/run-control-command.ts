@@ -2,7 +2,7 @@ import { Bash, type SimpleCommandNode, type StatementNode, type WordNode } from 
 
 const runControlBash = new Bash({ commands: [] });
 
-type RunControlCommand =
+export type RunControlCommand =
   | { action: "message"; text: string; finish: boolean }
   | { action: "yield" };
 

@@ -280,7 +280,7 @@ describe("model context", () => {
       process.generation = {
         async generate(request: any) {
           generationCalls += 1;
-          expect(request.context.tools.map((tool: any) => tool.name)).toEqual(["Read", "Shell"]);
+          expect(request.context.tools.map((tool: any) => tool.name)).toEqual(["Read", "Shell", "Send"]);
           return generationCalls === 1
             ? assistantResponse([
                 {
@@ -542,15 +542,18 @@ describe("model context", () => {
     }
   });
 
-  it("requires an explicit yield and bounds the correction", async () => {
+  it("offers Send alone while correcting, then tells the person rather than going silent", async () => {
     const pid = "mech-terminal-action-required";
     const runId = "run-terminal-action-required";
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
     const result = await runInProcess(stub, async (process) => {
       const emitted = captureSignals(process);
+      const offered: string[][] = [];
       process.run.scheduleTick = vi.fn(async () => {});
-      mockGeneration(process, async () => {
+      process.run.commitRunControlMessage = vi.fn(async () => ({ conversationId: "conv", id: "notice" }));
+      mockGeneration(process, async (request: any) => {
+        offered.push((request.context?.tools ?? []).map((tool: any) => tool.name));
         return terminalTestResponse([{ type: "text", text: "This is only a draft." }]);
       }, async () => {
         return "unused";
@@ -563,20 +566,35 @@ describe("model context", () => {
       const correction = process.store.messages
         .getMessages()
         .find((message: any) => message.role === "system" && message.runId === runId);
-      expect(correction?.content).toContain("Run `yield` now");
+      expect(correction?.content).toContain("Call the Send tool");
       expect(
         (await process.history.buildContextMessages("default")).find((message: any) =>
-          message.content.includes("Run `yield` now"),
+          message.content.includes("Call the Send tool"),
         )?.content,
       ).toContain("[GSV EVENT]");
 
       await process.run.runTick(runId);
-      return { emitted, messages: process.store.messages.getMessages() };
+      await process.run.runTick(runId);
+      await process.run.runTick(runId);
+      return {
+        emitted,
+        offered,
+        notices: process.run.commitRunControlMessage.mock.calls,
+        messages: process.store.messages.getMessages(),
+      };
     });
 
-    expect(result.messages.filter((message: any) => message.role === "assistant")).toHaveLength(
-      2,
-    );
+    expect(result.messages.filter((message: any) => message.role === "assistant")).toHaveLength(4);
+    expect(
+      result.messages.filter((message: any) => message.role === "system" && message.content.includes("Call the Send tool")),
+    ).toHaveLength(3);
+    expect(result.offered[0]).toEqual(["Shell", "Send"]);
+    expect(result.offered.slice(1)).toEqual([["Send"], ["Send"], ["Send"]]);
+    expect(result.notices).toHaveLength(1);
+    expect(result.notices[0][2]).toMatchObject({
+      call: "proc.message.commit",
+      args: { runId, text: "I wrote a reply but did not send it. Ask me again." },
+    });
     expect(
       result.emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload,
     ).toMatchObject({
@@ -584,6 +602,46 @@ describe("model context", () => {
       reason: "message.action.missing",
       error: "The model did not yield after correction",
     });
+  });
+
+  it("sends and ends the run through the Send tool", async () => {
+    const pid = "mech-send-tool";
+    const runId = "run-send-tool";
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+
+    const result = await runInProcess(stub, async (process) => {
+      const emitted = captureSignals(process);
+      process.run.scheduleTick = vi.fn(async () => {});
+      process.run.commitRunControlMessage = vi.fn(async () => ({ conversationId: "conv", id: "sent" }));
+      mockGeneration(process, async () => {
+        return terminalTestResponse([
+          { type: "toolCall", id: "send-1", name: "Send", arguments: { text: "all done", yield: true } },
+        ]);
+      }, async () => {
+        return "unused";
+      });
+      process.store.messages.appendMessage("user", "Do the thing.", { runId });
+      process.runs.active = generationRun(runId, terminalTestConfig(pid));
+
+      await process.run.runTick(runId);
+      return {
+        emitted,
+        commits: process.run.commitRunControlMessage.mock.calls,
+        messages: process.store.messages.getMessages(),
+      };
+    });
+
+    expect(result.commits).toHaveLength(1);
+    expect(result.commits[0][2]).toMatchObject({
+      call: "proc.message.commit",
+      args: { runId, actionId: "send-1", text: "all done" },
+    });
+    expect(result.messages.find((message: any) => message.role === "toolResult")?.content).toBe(
+      "Message committed and run yielded",
+    );
+    expect(
+      result.emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload,
+    ).toMatchObject({ status: "ok", reason: "run.yielded" });
   });
 
   it("does not resurrect a superseded run after yield correction awaits", async () => {

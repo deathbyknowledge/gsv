@@ -9,7 +9,7 @@ import type {
   PersistedRunTick, RunTickContextState, RunTickInputs,
 } from "../internal/contracts";
 import {
-  FINAL_MESSAGE_BLOCK_EXAMPLE, MAX_TERMINAL_CORRECTION_ROUNDS, RUNTIME_EVENT_WAKE_MESSAGE,
+  CORRECTION_FAILURE_NOTICE, MAX_TERMINAL_CORRECTION_ROUNDS, RUNTIME_EVENT_WAKE_MESSAGE, YIELD_CORRECTION_MESSAGE,
   MAX_RETRYABLE_GENERATION_ATTEMPTS, PENDING_RUN_CONTROL_CALL, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE,
   MEDIA_PREPARATION_TIMEOUT_MS, TOOL_DISPATCH_TIMEOUT_MS,
 } from "../internal/lifecycle";
@@ -56,7 +56,7 @@ import { MANAGED_LIFECYCLE_RECHECK_MS, managedInstallationWorkGate } from "../..
 import { GSV_DELEGATED_TASK_CONTEXT } from "../../prompts/system";
 import { createContextProjection, parseContextProjection } from "../context";
 import { deriveGenerationContextId } from "../context-message-metadata";
-import { piToolParametersSchema } from "../internal/schemas";
+import { SEND_TOOL, piToolParametersSchema } from "../internal/schemas";
 
 function hasRunControlRegistration(
   host: Process,
@@ -391,6 +391,7 @@ export class ProcessRun {
     const run = this.host.runs.active;
     if (!run || run.runId !== runId) return;
     if ((run.terminalCorrectionRounds ?? 0) >= MAX_TERMINAL_CORRECTION_ROUNDS) {
+      await this.deliverCorrectionNotice(runId);
       await this.finishRun(runId, {
         reason: "message.action.missing",
         status: "error",
@@ -403,15 +404,36 @@ export class ProcessRun {
     const correctedRun = this.host.mutateActiveRun(runId, (current) => ({
       ...current,
       terminalCorrectionRounds: (current.terminalCorrectionRounds ?? 0) + 1,
+      terminalCorrectionPending: true,
     }));
     if (!correctedRun) return;
-    const message = [
-      "This run is not complete. Ordinary assistant text is Process activity and is not sent to the user.",
-      "Run `yield` now if the work is complete.",
-      `If the user still needs a final message, send and finish with:\n${FINAL_MESSAGE_BLOCK_EXAMPLE}`,
-    ].join("\n");
-    await this.host.history.appendSystemMessage(runId, message);
+    await this.host.history.appendSystemMessage(runId, YIELD_CORRECTION_MESSAGE);
     if (!this.host.handleRunStopped(runId)) await this.scheduleTick(runId);
+  }
+
+  /** The run could not be corrected into sending; the person hears that much rather than nothing. */
+  async deliverCorrectionNotice(runId: string): Promise<void> {
+    const run = this.host.runs.active;
+    if (!run || run.runId !== runId || run.returnToCaller) return;
+    const actionId = `correction-notice-${runId}`;
+    try {
+      const release = this.beginRunControlCommit(runId);
+      try {
+        const request = this.buildRunControlMessageCommitRequest(run, {
+          runId,
+          actionId,
+          text: CORRECTION_FAILURE_NOTICE,
+          media: [],
+        });
+        await this.commitRunControlMessage(runId, actionId, request);
+      } finally {
+        release();
+      }
+    } catch (error) {
+      console.warn(
+        `[Process] Could not deliver the correction notice for ${runId}: ${errorMessageFromUnknown(error)}`,
+      );
+    }
   }
 
   async finishRun(
@@ -1827,14 +1849,18 @@ export class ProcessRun {
       description: tool.description,
       parameters: piToolParametersSchema.parse(tool.inputSchema),
     }));
-    const tools = run.returnToCaller ? workTools : withRunControlInstructions(workTools);
-    const offeredToolNames = [...new Set(workTools.map((tool) => tool.name))];
+    // a correction turn offers Send alone: the model stopped in text, and the only question left is what to send
+    const correcting = run.terminalCorrectionPending === true && !run.returnToCaller;
+    const offeredWork = correcting ? [] : workTools;
+    const tools = run.returnToCaller ? workTools : correcting ? [SEND_TOOL] : withRunControlInstructions(workTools);
+    const offeredToolNames = [...new Set(offeredWork.map((tool) => tool.name))];
     const offeredRun = this.host.mutateActiveRun(runId, (current) => ({
       ...current,
       offeredToolNames,
+      terminalCorrectionPending: undefined,
     }));
     if (!offeredRun) return null;
-    return { run: offeredRun, activeConfig, workTools, tools };
+    return { run: offeredRun, activeConfig, workTools: offeredWork, tools };
   }
 
   async prepareRunTickContext(

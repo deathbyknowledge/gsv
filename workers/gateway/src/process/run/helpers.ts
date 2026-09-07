@@ -5,7 +5,7 @@ import {
   MAX_TERMINAL_COMMAND_FAILURES, MAX_TERMINAL_DELIVERY_FAILURES, RUN_CONTROL_INSTRUCTION,
 } from "../internal/lifecycle";
 import type { Message, Tool } from "@earendil-works/pi-ai";
-import { RUN_CONTROL_SHELL_TOOL, conversationProvenanceSchema } from "../internal/schemas";
+import { RUN_CONTROL_SHELL_TOOL, SEND_TOOL, conversationProvenanceSchema } from "../internal/schemas";
 import type { RunControlResult } from "../internal/contracts";
 import type { RunState } from "./state";
 import { z } from "zod";
@@ -75,6 +75,7 @@ export function conversationRunState(
   }
 }
 
+/** A human-facing run gets the Send tool, and a Shell that knows the same actions as commands. */
 export function withRunControlInstructions(workTools: Tool[]): Tool[] {
   let foundShell = false;
   const tools = workTools.map((tool) => {
@@ -85,7 +86,7 @@ export function withRunControlInstructions(workTools: Tool[]): Tool[] {
       description: `${tool.description} ${RUN_CONTROL_INSTRUCTION}`,
     };
   });
-  return foundShell ? tools : [...tools, RUN_CONTROL_SHELL_TOOL];
+  return foundShell ? [...tools, SEND_TOOL] : [...tools, RUN_CONTROL_SHELL_TOOL, SEND_TOOL];
 }
 
 export type RunControlFailureKind = Extract<RunControlResult, { ok: false; }>["failureKind"];
@@ -140,7 +141,7 @@ export function formatRunControlToolResult(
       : MAX_TERMINAL_DELIVERY_FAILURES,
   };
   if (result.failureKind === "command") {
-    return `Run-control command rejected (attempt ${failureAttempt.count} of ${failureAttempt.limit}): ${result.error}\nTo reply here, stage files first with \`message attach PATH...\`. Then issue \`message send ...\` as its own direct Shell tool call with no other tool calls or shell commands. Omit --to and --also. Run \`yield\` only when the work is complete.`;
+    return `Run-control command rejected (attempt ${failureAttempt.count} of ${failureAttempt.limit}): ${result.error}\nCall Send with the text for the person, and yield true only when the work is complete. To attach files, stage them first with \`message attach PATH...\` in the Shell. In the Shell, \`message send ...\` as its own call with no other tool calls is the same action; omit --to and --also.`;
   }
   return `Message delivery failed (attempt ${failureAttempt.count} of ${failureAttempt.limit}): ${result.error}\nRetry the exact same message command unchanged.`;
 }

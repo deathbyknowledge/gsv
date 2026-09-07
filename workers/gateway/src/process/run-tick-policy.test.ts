@@ -65,6 +65,35 @@ describe("run tick policy", () => {
     ).toMatchObject({ kind: "terminal", text: "done" });
   });
 
+  it("classifies Send tool calls as the same run control as the commands", () => {
+    const send = (id: string, args: Record<string, string | boolean | number>) => ({
+      type: "toolCall" as const,
+      id,
+      name: "Send",
+      arguments: args,
+    });
+    const read = { type: "toolCall" as const, id: "read-call", name: "Read", arguments: { path: "/tmp/value" } };
+    const parsedOf = (content: AssistantMessage["content"]) =>
+      classifyAssistantTurn(assistant(content), ["Read"]).runControlCalls[0]?.parsed;
+
+    expect(classifyAssistantTurn(assistant([send("s1", { text: "hello" })]), ["Read"]).kind).toBe("run-control");
+    expect(parsedOf([send("s1", { text: "hello" })])).toEqual({
+      ok: true,
+      command: { action: "message", text: "hello", finish: false },
+    });
+    expect(parsedOf([send("s2", { text: "bye", yield: true })])).toEqual({
+      ok: true,
+      command: { action: "message", text: "bye", finish: true },
+    });
+    expect(parsedOf([send("s3", { yield: true })])).toEqual({ ok: true, command: { action: "yield" } });
+    // an empty send is a message with no text: the runtime decides whether staged media makes it one
+    expect(parsedOf([send("s4", {})])).toEqual({ ok: true, command: { action: "message", text: "", finish: false } });
+    expect(parsedOf([send("s5", { text: "x", extra: 1 })])).toMatchObject({ ok: false, action: "message" });
+    expect(classifyAssistantTurn(assistant([send("s6", { text: "x" }), read]), ["Read"]).kind).toBe(
+      "invalid-run-control",
+    );
+  });
+
   it("skips duplicate fallback stacks without carrying fallback chains", () => {
     const primary = config({
       fallbacks: [
