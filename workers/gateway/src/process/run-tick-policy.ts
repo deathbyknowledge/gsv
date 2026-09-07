@@ -52,12 +52,14 @@ export function classifyAssistantTurn(
   const returnedToolCalls = response.content.filter(
     (block): block is ToolCall => block.type === "toolCall",
   );
+  const offered = new Set(offeredToolNames);
+  // Send is run control only where it was offered; a bounded IPC run never offers it, so a fabricated call is unoffered
   const runControlCalls = returnedToolCalls.flatMap((toolCall) => {
-    const call = parseRunControlShellCall(toolCall) ?? parseRunControlSendCall(toolCall);
+    const call = parseRunControlShellCall(toolCall)
+      ?? (offered.has(SEND_TOOL.name) ? parseRunControlSendCall(toolCall) : null);
     return call ? [call] : [];
   });
   const runControlIds = new Set(runControlCalls.map(({ toolCall }) => toolCall.id));
-  const offered = new Set(offeredToolNames);
   const toolCalls = returnedToolCalls.filter(
     (toolCall) => offered.has(toolCall.name) && !runControlIds.has(toolCall.id),
   );

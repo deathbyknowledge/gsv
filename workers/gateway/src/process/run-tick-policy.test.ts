@@ -74,9 +74,15 @@ describe("run tick policy", () => {
     });
     const read = { type: "toolCall" as const, id: "read-call", name: "Read", arguments: { path: "/tmp/value" } };
     const parsedOf = (content: AssistantMessage["content"]) =>
-      classifyAssistantTurn(assistant(content), ["Read"]).runControlCalls[0]?.parsed;
+      classifyAssistantTurn(assistant(content), ["Read", "Send"]).runControlCalls[0]?.parsed;
 
-    expect(classifyAssistantTurn(assistant([send("s1", { text: "hello" })]), ["Read"]).kind).toBe("run-control");
+    expect(classifyAssistantTurn(assistant([send("s1", { text: "hello" })]), ["Read", "Send"]).kind).toBe(
+      "run-control",
+    );
+    // where Send was not offered, as in a bounded IPC run, a fabricated call is unoffered like any other
+    expect(classifyAssistantTurn(assistant([send("s0", { text: "hello" })]), ["Read"]).kind).toBe(
+      "unoffered-tools",
+    );
     expect(parsedOf([send("s1", { text: "hello" })])).toEqual({
       ok: true,
       command: { action: "message", text: "hello", finish: false },
@@ -89,7 +95,7 @@ describe("run tick policy", () => {
     // an empty send is a message with no text: the runtime decides whether staged media makes it one
     expect(parsedOf([send("s4", {})])).toEqual({ ok: true, command: { action: "message", text: "", finish: false } });
     expect(parsedOf([send("s5", { text: "x", extra: 1 })])).toMatchObject({ ok: false, action: "message" });
-    expect(classifyAssistantTurn(assistant([send("s6", { text: "x" }), read]), ["Read"]).kind).toBe(
+    expect(classifyAssistantTurn(assistant([send("s6", { text: "x" }), read]), ["Read", "Send"]).kind).toBe(
       "invalid-run-control",
     );
   });

@@ -1280,7 +1280,7 @@ export class ProcessRun {
     const { prepared, response, fallbackMetadata, inferenceSpanId } = generated;
     const turn = classifyAssistantTurn(
       response,
-      prepared.workTools.map((tool) => tool.name),
+      prepared.run.offeredToolNames ?? prepared.workTools.map((tool) => tool.name),
     );
     let outputMedia =
       turn.toolCalls.length === 0 && turn.unofferedToolCalls.length === 0
@@ -1853,7 +1853,11 @@ export class ProcessRun {
     const correcting = run.terminalCorrectionPending === true && !run.returnToCaller;
     const offeredWork = correcting ? [] : workTools;
     const tools = run.returnToCaller ? workTools : correcting ? [SEND_TOOL] : withRunControlInstructions(workTools);
-    const offeredToolNames = [...new Set(offeredWork.map((tool) => tool.name))];
+    // the offered names are what the turn is classified against; Send counts only where the model was given it
+    const offeredToolNames = [
+      ...new Set(offeredWork.map((tool) => tool.name)),
+      ...(run.returnToCaller ? [] : [SEND_TOOL.name]),
+    ];
     const offeredRun = this.host.mutateActiveRun(runId, (current) => ({
       ...current,
       offeredToolNames,
