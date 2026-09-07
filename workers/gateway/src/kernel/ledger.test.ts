@@ -356,6 +356,33 @@ describe("LedgerStore", () => {
     });
   });
 
+  it("neither repeats nor loses a line however many rotations a walk spans", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const store = new LedgerStore(sql, storage, bucketOf(new MemoryBucket()));
+      const now = 80_000_000;
+      // forty open lines: an open line holds rotation, so closing two at a time rotates two at a time
+      for (let i = 1; i <= 40; i += 1) store.append(entry({ requestId: `r${i}`, timestamp: now - 1_000 + i }));
+      const seqs: number[] = [];
+      let cursor: string | null | undefined;
+      let lowest = 1;
+      for (let page = 0; page < 40; page += 1) {
+        const result = await store.list({ ownerUid: 1000, limit: 2, cursor: cursor ?? undefined });
+        seqs.push(...result.lines.map((line) => line.seq));
+        cursor = result.nextCursor;
+        if (!cursor) break;
+        // between pages, the two oldest lines close and rotate into a segment of their own
+        if (lowest <= 40) {
+          store.complete(`r${lowest}`, { outcome: "ok" }, now);
+          store.complete(`r${lowest + 1}`, { outcome: "ok" }, now);
+          expect((await store.rotateOnce(now)).rotated).toBe(true);
+          lowest += 2;
+        }
+      }
+      expect(seqs).toEqual(Array.from({ length: 40 }, (_, i) => 40 - i));
+      expect(store.segments().length).toBeGreaterThan(16);
+    });
+  });
+
   it("touches at most a few segments per read and hands back a cursor to continue", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       const memory = new MemoryBucket();

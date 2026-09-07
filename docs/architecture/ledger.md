@@ -115,13 +115,14 @@ parsed for the pages that continue inside them. A filtered read may return
 fewer than `limit` lines with a cursor still set; that means "more may exist,
 continue here".
 
-The cursor makes a rotation between two pages harmless. Each page that read
-the window records the newest segment that existed at the time and the lowest
-window sequence it examined, so everything at or above that number had been
-seen. A segment created after such a page holds lines that were in the window
-then, and reading it skips exactly those and returns the rest; segments older
-than the walk are read whole. A line is therefore neither lost nor repeated
-across a rotation. Filters are
+The cursor makes a rotation between two pages harmless with two numbers: the
+newest segment that existed when the walk began, and the lowest window
+sequence returned so far. Segments rotate as a contiguous prefix below the
+window and the walk reads the window downward, so a segment created after the
+walk began holds lines at or above that floor, already returned, and lines
+below it, not yet; reading it skips the former and returns the latter, and
+segments older than the walk are read whole. A line is therefore neither lost
+nor repeated across a rotation, however many rotations a walk spans. Filters are
 `pid`, `target`, `callPrefix`, `since`, and `until`; `limit` is at most 200.
 Visibility is the rule `proc.list` uses: a caller sees the lines of the human
 who owns them, and root sees every line. The `ledger.appended` signal, sent to

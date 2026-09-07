@@ -36,7 +36,6 @@ export const LEDGER_SEGMENTS_PER_READ = 4;
 export const LEDGER_OBJECT_PREFIX = "ledger/";
 /** Distinct pids, targets, or owners an index entry lists before it stops promising anything. */
 export const LEDGER_INDEX_SET_LIMIT = 64;
-const WALK_PAGES_LIMIT = 16;
 const ROTATIONS_PER_ALARM = 8;
 const DELETE_CHUNK = 50;
 
@@ -276,56 +275,37 @@ function matches(line: StoredLine, query: LedgerQuery): boolean {
 }
 
 /**
- * A walk is a series of pages. Each page that read the window remembers the
- * newest segment that existed at the time (`segTop`) and the lowest window seq
- * it examined (`low`, 0 once the window was exhausted): every window line at
- * or above `low` had been seen by then. A segment created after a page holds
- * lines that were in the window at that page, so reading it skips seqs at or
- * above the `low` of the latest page that predates the segment, and returns
- * the rest; segments older than the walk are read whole. That is what makes a
- * rotation between two pages neither repeat a line nor lose one. The cursor
- * carries those pages and a position: `<segTop>.<low>[,...]|w` continues in
- * the window below the last `low`; `<segTop>.<low>[,...]|s<segmentSeq>.<offset>`
- * continues inside a segment.
+ * A walk remembers two numbers: the newest segment that existed when it began
+ * (`top`) and the lowest window seq it has returned (`floor`). Segments rotate
+ * as a contiguous prefix below the window and the walk reads the window
+ * downward, so a segment created after the walk began holds lines at or above
+ * `floor`, already returned, and lines below it, not yet; reading it skips the
+ * former and returns the latter, while segments older than the walk are read
+ * whole. That is what makes a rotation between two pages, however many, neither
+ * repeat a line nor lose one. The cursor carries those two numbers and a
+ * position: `<top>.<floor>|w` continues in the window below `floor`;
+ * `<top>.<floor>|s<segmentSeq>.<offset>` continues inside a segment.
  */
-type WalkPage = { segTop: number; low: number };
-type Cursor = { pages: WalkPage[]; segment: { seq: number; offset: number } | null };
+type Walk = { top: number; floor: number };
+type Cursor = Walk & { segment: { seq: number; offset: number } | null };
 
 function parseCursor(cursor: string | undefined): Cursor | null {
   if (!cursor) return null;
-  const match = cursor.match(/^(\d+\.\d+(?:,\d+\.\d+)*)\|(w|s\d+\.\d+)$/);
+  const match = cursor.match(/^(\d+)\.(\d+)\|(w|s\d+\.\d+)$/);
   if (!match) throw new Error("Invalid ledger cursor");
-  const pages = match[1].split(",").map((pair) => {
-    const [segTop, low] = pair.split(".");
-    return { segTop: Number(segTop), low: Number(low) };
-  });
-  if (match[2] === "w") return { pages, segment: null };
-  const [seq, offset] = match[2].slice(1).split(".");
-  return { pages, segment: { seq: Number(seq), offset: Number(offset) } };
+  const walk = { top: Number(match[1]), floor: Number(match[2]) };
+  if (match[3] === "w") return { ...walk, segment: null };
+  const [seq, offset] = match[3].slice(1).split(".");
+  return { ...walk, segment: { seq: Number(seq), offset: Number(offset) } };
 }
 
-function formatCursor(pages: WalkPage[], segment: { seq: number; offset: number } | null): string {
-  const head = pages.map((page) => `${page.segTop}.${page.low}`).join(",");
-  return segment ? `${head}|s${segment.seq}.${segment.offset}` : `${head}|w`;
+function formatCursor(walk: Walk, segment: { seq: number; offset: number } | null): string {
+  return segment ? `${walk.top}.${walk.floor}|s${segment.seq}.${segment.offset}` : `${walk.top}.${walk.floor}|w`;
 }
 
-/** Records a window page; pages that saw the same segments collapse into one, the oldest are forgotten past the limit. */
-function notePage(pages: WalkPage[], segTop: number, low: number): void {
-  const last = pages[pages.length - 1];
-  if (last && last.segTop === segTop) {
-    last.low = Math.min(last.low, low);
-  } else {
-    pages.push({ segTop, low });
-  }
-  while (pages.length > WALK_PAGES_LIMIT) pages.shift();
-}
-
-/** The seq from which a segment's lines were already seen in the window, or null when the segment predates the walk. */
-function examinedFrom(pages: WalkPage[], segment: LedgerSegment): number | null {
-  for (let index = pages.length - 1; index >= 0; index -= 1) {
-    if (pages[index].segTop < segment.seq) return pages[index].low;
-  }
-  return null;
+/** The seq from which a segment's lines were already returned from the window, or null when the segment predates the walk. */
+function examinedFrom(walk: Walk, segment: LedgerSegment): number | null {
+  return segment.seq > walk.top ? walk.floor : null;
 }
 
 /** The three things the ledger asks of the installation's storage; an R2 bucket satisfies it as is. */
@@ -576,8 +556,11 @@ export class LedgerStore {
    * keeps the retention promise itself; a bucket lifecycle rule is optional.
    */
   async pruneExpiredSegments(now = Date.now()): Promise<number> {
-    const cutoff = now - LEDGER_RETENTION_MS;
-    const expired = this.segments().filter((segment) => segment.lastTs < cutoff).slice(-LEDGER_PRUNE_PER_ALARM);
+    const expired = [...this.sql.exec<SegmentRow>(
+      "SELECT * FROM ledger_segments WHERE last_ts < ? ORDER BY seq ASC LIMIT ?",
+      now - LEDGER_RETENTION_MS,
+      LEDGER_PRUNE_PER_ALARM,
+    )].map(segmentFromRow);
     for (const segment of expired) {
       await this.bucket.delete(segment.objectKey);
       this.sql.exec("DELETE FROM ledger_segments WHERE seq = ?", segment.seq);
@@ -623,14 +606,12 @@ export class LedgerStore {
   async list(query: LedgerQuery): Promise<SysLedgerListResult> {
     const limit = Math.max(1, Math.min(LEDGER_LIST_MAX, query.limit));
     const cursor = parseCursor(query.cursor);
-    const pages = cursor ? cursor.pages.map((page) => ({ ...page })) : [];
+    const walk: Walk = cursor ? { top: cursor.top, floor: cursor.floor } : { top: this.newestSegmentSeq(), floor: Number.MAX_SAFE_INTEGER };
     const lines: LedgerLine[] = [];
 
     if (cursor === null || cursor.segment === null) {
-      const segTop = this.newestSegmentSeq();
-      const last = pages[pages.length - 1];
       const where: string[] = ["seq < ?"];
-      const params: (string | number)[] = [last ? last.low : Number.MAX_SAFE_INTEGER];
+      const params: (string | number)[] = [walk.floor];
       if (query.ownerUid !== null) {
         where.push("owner_uid = ?");
         params.push(query.ownerUid);
@@ -663,9 +644,9 @@ export class LedgerStore {
       const returned = rows.slice(0, limit).map(rowToStored);
       for (const stored of returned) lines.push(publicLine(stored));
       const exhausted = rows.length <= limit;
-      notePage(pages, segTop, exhausted ? 0 : returned[returned.length - 1].seq);
-      if (!exhausted) return { lines, nextCursor: formatCursor(pages, null) };
-      if (lines.length >= limit) return { lines, nextCursor: segTop === 0 ? null : formatCursor(pages, null) };
+      if (returned.length > 0) walk.floor = returned[returned.length - 1].seq;
+      if (!exhausted) return { lines, nextCursor: formatCursor(walk, null) };
+      if (lines.length >= limit) return { lines, nextCursor: this.newestSegmentSeq() === 0 ? null : formatCursor(walk, null) };
     }
 
     // the index is walked a batch at a time from the cursor down, so a read never holds more of it than it looks at
@@ -675,11 +656,11 @@ export class LedgerStore {
       const batch = this.segmentsFrom(below, query, LEDGER_INDEX_BATCH);
       if (batch.length === 0) return { lines, nextCursor: null };
       for (const segment of batch) {
-        const from = examinedFrom(pages, segment);
+        const from = examinedFrom(walk, segment);
         if (from !== null && segment.firstSeq >= from) continue;
         if (!segmentMayMatch(segment, query)) continue;
         if (touched === LEDGER_SEGMENTS_PER_READ) {
-          return { lines, nextCursor: formatCursor(pages, { seq: segment.seq, offset: 0 }) };
+          return { lines, nextCursor: formatCursor(walk, { seq: segment.seq, offset: 0 }) };
         }
         touched += 1;
         const offset = cursor?.segment && segment.seq === cursor.segment.seq ? cursor.segment.offset : 0;
@@ -690,9 +671,9 @@ export class LedgerStore {
           lines.push(publicLine(line));
           if (lines.length >= limit) {
             const nextOffset = stored.length - position;
-            if (nextOffset < stored.length) return { lines, nextCursor: formatCursor(pages, { seq: segment.seq, offset: nextOffset }) };
+            if (nextOffset < stored.length) return { lines, nextCursor: formatCursor(walk, { seq: segment.seq, offset: nextOffset }) };
             const next = this.segmentsFrom(segment.seq - 1, query, 1)[0];
-            return { lines, nextCursor: next ? formatCursor(pages, { seq: next.seq, offset: 0 }) : null };
+            return { lines, nextCursor: next ? formatCursor(walk, { seq: next.seq, offset: 0 }) : null };
           }
         }
       }
