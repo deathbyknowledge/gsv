@@ -1,5 +1,6 @@
 import type { AiSpeechCreateResult } from "@humansandmachines/gsv/protocol";
 import type { PresenceRun, SpeechChunk, VoiceTimingChunk, VoiceTimingTrace } from "./types";
+import { randomId } from "../../services/ids";
 
 export function createVoiceTimingTrace(source: VoiceTimingTrace["source"], createdAt = Date.now()): VoiceTimingTrace {
   return {
@@ -167,9 +168,5 @@ function durationMs(start: number | undefined, end: number | undefined): number 
 }
 
 function createTimingId(): string {
-  const randomUuid = globalThis.crypto?.randomUUID;
-  if (randomUuid) {
-    return randomUuid.call(globalThis.crypto);
-  }
-  return `voice-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return randomId();
 }

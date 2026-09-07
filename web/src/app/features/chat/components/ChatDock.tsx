@@ -65,6 +65,7 @@ import {
 } from "./ChatWorkSessionBanner";
 import { formatCount, formatCurrencyCost } from "./chatUiFormat";
 import "./ChatDock.css";
+import { randomId } from "../../../services/ids";
 
 export type { ChatDockMessage } from "./ChatTranscript";
 
@@ -253,12 +254,8 @@ function fileToDraftAttachment(file: File): DraftAttachment {
   const type = inferAttachmentType(file);
   const sizeLabel = formatAttachmentSize(file.size);
   const label = file.name || (type === "image" ? "pasted image" : "attachment");
-  const randomUuid = globalThis.crypto?.randomUUID;
-  const randomId = randomUuid
-    ? randomUuid.call(globalThis.crypto)
-    : Math.random().toString(36).slice(2);
   return {
-    id: `${file.name}:${file.size}:${file.lastModified}:${randomId}`,
+    id: `${file.name}:${file.size}:${file.lastModified}:${randomId()}`,
     type,
     mimeType,
     body: file,

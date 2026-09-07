@@ -70,6 +70,7 @@ import {
   type ChatSendDraft,
   MAX_CHAT_PROCESS_MEDIA_BYTES,
 } from "../domain/processes";
+import { randomId } from "../../../services/ids";
 
 type ChatGsvClient = Pick<GSVClient, "proc" | "conversation" | "request">;
 type ChatMediaGsvClient = Pick<GSVClient, "request">;
@@ -140,7 +141,7 @@ export async function sendChatMessage(
       conversationId,
       text: draft.message,
       ...(media.length > 0 ? { media } : undefined),
-      idempotencyKey: crypto.randomUUID(),
+      idempotencyKey: randomId(),
     });
   });
 }

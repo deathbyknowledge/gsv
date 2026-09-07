@@ -6,6 +6,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 
 import { frameBodyFromBlob } from "./frameBody";
+import { randomId } from "../ids";
 
 export type StagedResourceUpload = {
   type: "image" | "audio" | "video" | "document";
@@ -25,7 +26,7 @@ export async function withStagedResources<T>(
   client: ResourceUploadClient,
   uploads: readonly StagedResourceUpload[],
   operation: (resources: ResourceBlock[]) => Promise<T>,
-  stagingNamespace: string = crypto.randomUUID(),
+  stagingNamespace: string = randomId(),
 ): Promise<T> {
   if (uploads.some(({ body }) => body.size > MAX_STAGED_RESOURCE_BYTES)) {
     throw new Error("Attachments cannot exceed 25 MiB");
