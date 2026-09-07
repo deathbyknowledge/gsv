@@ -118,6 +118,11 @@ import {
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
 import { LEDGER_WINDOW_ROWS, LedgerStore, ledgerTargetOf, outcomeOfResponse, redactDetail, usageOfResponse, type JsonLike } from "./ledger";
+
+const LEDGER_ROTATION_TASK = "rotate";
+const LEDGER_ROTATION_SOON_MS = 5_000;
+const LEDGER_ROTATION_RETRY_MS = 60_000;
+const LEDGER_ROTATION_DAILY_MS = 24 * 60 * 60 * 1000;
 import { SERVER_VERSION } from "../version";
 import { parseInstallationId } from "../installation/identity";
 import type { InstallationIdentity } from "../installation/identity";
@@ -1363,12 +1368,14 @@ export class Kernel extends DurableObject<GatewayEnv> {
     if (!peer) {
       return errFrame(inputFrame.id, 403, "Request has no authenticated peer");
     }
-    this.recordLedgerDispatch(inputFrame, ctx, origin);
     // Internal-only syscalls are reachable solely through Process provenance;
     // every other call is gated by the peer's grant.
     const allowed = isInternalOnlySyscall(inputFrame.call)
       ? peer.provenance.kind === "process-registry"
       : peerAllowsCall(peer, inputFrame.call);
+    // The ledger line is written after the grant decision, with every client-controlled field capped;
+    // a denied call is recorded and closed as denied with nothing but those capped fields.
+    this.recordLedgerDispatch(inputFrame, ctx, origin);
     if (!allowed) {
       const denied = errFrame(inputFrame.id, 403, `Permission denied: ${inputFrame.call}`);
       this.completeLedger(denied);
@@ -1379,6 +1386,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       ? AbortSignal.any([ctx.requestSignal, options.signal])
       : options.signal ?? ctx.requestSignal;
     if (callerSignal?.aborted) {
+      this.completeLedgerAs(inputFrame.id, "cancelled");
       if (options.throwOnCancel) throw requestAbortError(callerSignal.reason);
       return null;
     }
@@ -1387,11 +1395,13 @@ export class Kernel extends DurableObject<GatewayEnv> {
     try {
       controller = this.transport.registerActiveRequest(origin, inputFrame.id);
     } catch (error) {
-      return errFrame(
+      const refused = errFrame(
         inputFrame.id,
         error instanceof RequestCancelledError ? 499 : 409,
         error instanceof Error ? error.message : String(error),
       );
+      this.completeLedgerAs(inputFrame.id, "failed");
+      return refused;
     }
     const requestSignal = callerSignal
       ? AbortSignal.any([controller.signal, callerSignal])
@@ -1450,7 +1460,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       }
       return response;
     } catch (error) {
-      if (requestSignal.aborted) this.completeLedgerAs(frame.id, "cancelled");
+      this.completeLedgerAs(frame.id, requestSignal.aborted ? "cancelled" : "failed");
       if (!requestSignal.aborted || options.throwOnCancel) throw error;
       return null;
     } finally {
@@ -1505,39 +1515,46 @@ export class Kernel extends DurableObject<GatewayEnv> {
     }
   }
 
-  /** Coalesces the tail signal to a few per second per owner, and schedules rotation when the window fills. */
+  /** Coalesces the tail signal to a few per second per owner, and arms rotation when the window fills. */
   private noteLedgerAppend(ownerUid: number, seq: number): void {
-    const pending = this.ledgerSignals.get(ownerUid);
-    if (pending) {
-      pending.count += 1;
-      pending.seq = seq;
-    } else {
+    for (const uid of ownerUid === 0 ? [0] : [ownerUid, 0]) {
+      const pending = this.ledgerSignals.get(uid);
+      if (pending) {
+        pending.count += 1;
+        pending.seq = seq;
+        continue;
+      }
       const timer = setTimeout(() => {
-        const entry = this.ledgerSignals.get(ownerUid);
-        this.ledgerSignals.delete(ownerUid);
+        const entry = this.ledgerSignals.get(uid);
+        this.ledgerSignals.delete(uid);
         if (!entry) return;
-        this.connectionRuntime.broadcastToUserUid(ownerUid, "ledger.appended", { seq: entry.seq, count: entry.count });
+        this.connectionRuntime.broadcastToUserUid(uid, "ledger.appended", { seq: entry.seq, count: entry.count });
       }, 500);
-      this.ledgerSignals.set(ownerUid, { timer, count: 1, seq });
+      this.ledgerSignals.set(uid, { timer, count: 1, seq });
     }
-    if (seq % 100 === 0 || this.ledger.windowCount() > LEDGER_WINDOW_ROWS) {
-      this.ensureLedgerRotation(this.ledger.windowCount() > LEDGER_WINDOW_ROWS ? 5_000 : 24 * 60 * 60 * 1000);
-    }
+    if (seq % 100 !== 0) return;
+    const overBound = this.ledger.windowCount() > LEDGER_WINDOW_ROWS;
+    void this.ensureLedgerRotation(overBound ? LEDGER_ROTATION_SOON_MS : LEDGER_ROTATION_DAILY_MS);
   }
 
-  /** One rotation task at a time, tracked in the Kernel's own storage so restarts do not stack alarms. */
-  private ensureLedgerRotation(delayMs: number): void {
+  /**
+   * Exactly one pending rotation task, keyed by its callback and payload. A
+   * nearer due replaces the pending task; a later one never adds to it.
+   */
+  async ensureLedgerRotation(delayMs: number): Promise<void> {
     const due = Date.now() + delayMs;
-    const scheduled = this.ctx.storage.kv.get<number>("ledger_rotation_due");
-    if (scheduled !== undefined && scheduled <= due && scheduled > Date.now()) return;
-    this.ctx.storage.kv.put("ledger_rotation_due", due);
-    void this.schedule(due, "onLedgerRotate", "window").catch((error) => {
+    try {
+      const existing = await this.schedule(new Date(due), "onLedgerRotate", LEDGER_ROTATION_TASK, { idempotent: true });
+      // task times are whole seconds; a pending task due no later than this one stands
+      if (existing.time * 1_000 <= due + 1_000) return;
+      await this.cancelSchedule(existing.id);
+      await this.schedule(new Date(due), "onLedgerRotate", LEDGER_ROTATION_TASK, { idempotent: true });
+    } catch (error) {
       console.warn(`[ledger] could not schedule rotation: ${error instanceof Error ? error.name : "error"}`);
-    });
+    }
   }
 
   async onLedgerRotate(reason: string): Promise<void> {
-    this.ctx.storage.kv.delete("ledger_rotation_due");
     try {
       const segments = await this.ledger.rotate();
       const dropped = await this.ledger.pruneMissingSegments();
@@ -1547,7 +1564,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     } catch (error) {
       console.warn(`[ledger] rotation failed, will retry: ${error instanceof Error ? error.name : "error"}`);
     }
-    this.ensureLedgerRotation(this.ledger.needsRotation() ? 60_000 : 24 * 60 * 60 * 1000);
+    await this.ensureLedgerRotation(this.ledger.needsRotation() ? LEDGER_ROTATION_RETRY_MS : LEDGER_ROTATION_DAILY_MS);
   }
 
   async scheduleManagedOutboundEnqueue(
