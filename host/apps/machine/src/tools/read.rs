@@ -146,7 +146,12 @@ impl Tool for ReadTool {
             .map_err(|e| format!("Failed to read '{}': {}", resolved.display(), e))?;
 
         if metadata.is_dir() {
-            return read_directory(&resolved);
+            // Listing walks the directory and follows links synchronously; a slow mount must not hold a
+            // runtime worker, so the whole listing runs on the blocking pool.
+            let listing_path = resolved.clone();
+            return tokio::task::spawn_blocking(move || read_directory(&listing_path))
+                .await
+                .map_err(|e| format!("Failed to read '{}': {}", resolved.display(), e))?;
         }
 
         let size = metadata.len();
