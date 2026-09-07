@@ -31,9 +31,13 @@ Kernel at all. Both remain in their own records.
 `detail` is redacted at write time and only ever holds: for a shell command,
 its command word and first argument, and nothing from the first content flag
 onward (`--message`, `-m`, `-H`, `--header`, `--data`, `-d`, `--body`,
-`--cookie`, `--user`, `--token`, `--password`), with any URL cut to scheme,
-host, and path; for other calls a path, a URL's host only, a search query, a
-model id, a process label, an adapter name, a config key. Request ids,
+`--cookie`, `--user`, `--token`, `--password`); assignments such as
+`KEY=value` or `--flag=value` are dropped wherever they sit, nothing after
+`echo` or `printf` is kept, `user:password@` is removed from any token, and a
+URL, with or without a scheme, ends before its query or fragment. A script
+run through codemode is described as `script (N lines)` and never by its
+text. For other calls the detail is a path, a URL's host only, a search
+query, a model id, a process label, an adapter name, a config key. Request ids,
 targets, process and run ids are capped at 128 characters and the detail at
 200, truncation marked, whatever the caller sent. Bodies, message text, prompt
 content, tokens, and credentials never enter the ledger, so a segment is safe
@@ -45,15 +49,20 @@ Lines are written into `ledger_window` in the Kernel's own SQLite storage once
 the grant decision is made (a denied call is recorded and closed as denied),
 and completed with the outcome when the response is known: inline for local
 calls, on the routed response for calls that went to a machine, and on expiry,
-cancellation, or a refused registration otherwise. Every exit from the dispatch
-closes its line. The dispatch path only inserts and, every hundredth line,
+cancellation, or a refused registration otherwise. A routed call whose device
+or origin disconnects mid-flight, or whose device answers something the Kernel
+cannot decode, closes as `failed`; a call refused because its request was
+already cancelled closes as `cancelled`. Every exit from the dispatch closes
+its line. The dispatch path only inserts and, every hundredth line,
 counts; nothing else runs inline.
 
 The window is bounded to 5,000 lines or 24 hours, whichever comes first.
 Exactly one rotation task is pending at any time, keyed by its callback and
 payload: a row-bound crossing moves the pending task nearer, never adds to it,
-and the task re-arms itself once when it runs, daily or sooner while the window
-is still over its bound.
+and the task re-arms itself once when it runs, daily, or a minute later while
+the window is still over its bound, as after a failed write. The running task
+still has its row while it runs, so the re-arm names it and replaces it rather
+than mistaking it for a pending one.
 
 ## Segments
 
@@ -63,7 +72,8 @@ storage, one JSON line per ledger line, and only then, in one transaction,
 deletes exactly those sequence numbers from the window and inserts the
 segment's index entry into `ledger_segments`: sequence range, first and last
 timestamp, row count, bytes, and the sets of owner uids, process ids, and
-targets present. A line that completes while the object write is in flight is
+targets present. A set with more than 64 distinct values is stored as
+"unknown", and a read then opens the segment rather than trusting the index. A line that completes while the object write is in flight is
 untouched and rotates next time. Lines still open after the window age are
 closed as `cancelled` on the way out. A failed write retries on the next alarm
 and prunes nothing. A segment stays well under 1.5 MB.
@@ -88,14 +98,22 @@ is gone.
 
 ## Reading
 
-`sys.ledger.list` returns lines newest first, paged by an opaque cursor that
-carries the sequence range already handed out from the window and a segment
-position: the window first, filtered and limited in SQL, then segments from
-newest to oldest, at most four per call. A filtered read may return fewer than
-`limit` lines with a cursor still set; that means "more may exist, continue
-here". Segment reads skip the range the window already returned, so a line
-that rotated between two pages is never returned twice, and a straggler with
-a lower sequence than the segments around it is still reached. Filters are
+`sys.ledger.list` returns lines newest first, never more than `limit`, paged
+by an opaque cursor: the window first, filtered and limited in SQL, then
+segments from newest to oldest, at most four per call, with the index narrowed
+by the time bounds when the query has them and the last few segments read kept
+parsed for the pages that continue inside them. A filtered read may return
+fewer than `limit` lines with a cursor still set; that means "more may exist,
+continue here".
+
+The cursor makes a rotation between two pages harmless. Each page that read
+the window records the newest segment that existed at the time and the lowest
+window sequence it examined, so everything at or above that number had been
+seen. A segment created after such a page holds lines that were in the window
+then, and reading it skips exactly those and returns the rest; segments older
+than the walk are read whole. A line is therefore never returned twice and
+never lost, including a straggler that stayed open in the window while the
+lines around it rotated out. Filters are
 `pid`, `target`, `callPrefix`, `since`, and `until`; `limit` is at most 200.
 Visibility is the rule `proc.list` uses: a caller sees the lines of the human
 who owns them, and root sees every line. The `ledger.appended` signal, sent to
