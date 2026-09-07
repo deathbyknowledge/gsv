@@ -24,6 +24,7 @@ struct RuntimeSnapshot {
     connected: bool,
     reconnect_attempt: u32,
     last_error: Option<String>,
+    update_notice: Option<DiagnosticNotice>,
 }
 
 #[derive(Clone)]
@@ -45,6 +46,7 @@ impl DaemonRuntime {
                     connected: false,
                     reconnect_attempt: 0,
                     last_error: None,
+                    update_notice: None,
                 })),
                 actions,
             },
@@ -75,6 +77,34 @@ impl DaemonRuntime {
             snapshot.reconnect_attempt = attempt;
             snapshot.last_error = Some(error);
         });
+    }
+
+    /// The latest automatic-update decision, shown in diagnostics until the
+    /// next handshake replaces it.
+    pub fn set_update_notice(&self, notice: Option<DiagnosticNotice>) {
+        self.update(|snapshot| snapshot.update_notice = notice);
+    }
+
+    /// Drop an update notice that only said a release was available, once the
+    /// gateway no longer names one. A running installer's notice stays.
+    pub fn clear_stale_update_notice(&self) {
+        self.update(|snapshot| {
+            if snapshot
+                .update_notice
+                .as_ref()
+                .is_some_and(|notice| notice.code != "autoUpdateStarted")
+            {
+                snapshot.update_notice = None;
+            }
+        });
+    }
+
+    pub fn update_notice(&self) -> Option<DiagnosticNotice> {
+        self.snapshot
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .update_notice
+            .clone()
     }
 
     pub async fn request(&self, action: ControlAction) -> Result<(), OperationError> {
@@ -120,6 +150,9 @@ impl DaemonRuntime {
                 code: "connected".to_string(),
                 message: "The machine is connected to GSV.".to_string(),
             });
+        }
+        if let Some(notice) = snapshot.update_notice {
+            notices.push(notice);
         }
         Diagnostics::new(self.status(), notices).unwrap_or_else(|_| Diagnostics {
             status: self.status(),
@@ -199,5 +232,47 @@ mod tests {
             .await
             .expect("reload queues");
         assert_eq!(receiver.recv().await, Some(ControlAction::Reload));
+    }
+
+    #[test]
+    fn diagnostics_carry_the_latest_update_decision() {
+        let (runtime, _receiver) = DaemonRuntime::new("machine-a".to_string());
+        runtime.set_update_notice(Some(DiagnosticNotice {
+            level: DiagnosticLevel::Info,
+            code: "autoUpdateStarted".to_string(),
+            message: "Installing GSV v0.5.0.".to_string(),
+        }));
+        let codes: Vec<String> = runtime
+            .diagnostics()
+            .notices
+            .into_iter()
+            .map(|notice| notice.code)
+            .collect();
+        assert_eq!(codes, vec!["autoUpdateStarted".to_string()]);
+        runtime.set_update_notice(None);
+        assert!(runtime.diagnostics().notices.is_empty());
+    }
+
+    #[test]
+    fn a_stale_availability_notice_clears_but_a_running_installer_stays() {
+        let (runtime, _receiver) = DaemonRuntime::new("machine-a".to_string());
+        runtime.set_update_notice(Some(DiagnosticNotice {
+            level: DiagnosticLevel::Warning,
+            code: "autoUpdateOff".to_string(),
+            message: "GSV v0.5.0 is available.".to_string(),
+        }));
+        runtime.clear_stale_update_notice();
+        assert!(runtime.update_notice().is_none());
+
+        runtime.set_update_notice(Some(DiagnosticNotice {
+            level: DiagnosticLevel::Info,
+            code: "autoUpdateStarted".to_string(),
+            message: "Installing GSV v0.5.0.".to_string(),
+        }));
+        runtime.clear_stale_update_notice();
+        assert_eq!(
+            runtime.update_notice().map(|notice| notice.code),
+            Some("autoUpdateStarted".to_string())
+        );
     }
 }

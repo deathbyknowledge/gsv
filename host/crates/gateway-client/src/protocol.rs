@@ -164,6 +164,9 @@ pub struct PeerGrant {
 #[serde(rename_all = "camelCase")]
 pub struct ServerInfo {
     pub version: String,
+    /// The release tag the gateway was built from (`vX.Y.Z` or `dev`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release: Option<String>,
     pub connection_id: String,
 }
 

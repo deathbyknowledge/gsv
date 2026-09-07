@@ -13,7 +13,7 @@ pub use edit::EditTool;
 pub use net::NetFetchTool;
 pub use read::ReadTool;
 pub use search::SearchTool;
-pub use shell::{subscribe_exec_events, ShellTool};
+pub use shell::{running_process_count, subscribe_exec_events, ShellTool};
 pub use write::WriteTool;
 
 use async_trait::async_trait;
