@@ -1,12 +1,17 @@
 # The ledger
 
-The ledger is the Kernel's record of what ran: one line per dispatched syscall,
-whoever asked for it. A process reading a file on a machine, a human running a
-command from the prompt, an adapter delivering a message, a contact reading a
-shared resource: each is one line with who, where, the call, the argument that
-matters, the outcome, and the duration. It answers "what happened on my
+The ledger is the Kernel's record of what ran: one line per syscall that went
+through the Kernel's peer dispatch, whoever asked for it. A process reading a
+file on a machine, a human running a command from the prompt, an adapter
+delivering a message: each is one line with who, where, the call, the argument
+that matters, the outcome, and the duration. It answers "what happened on my
 installation" without depending on any process's history, which is compacted
 into memory over time and was never meant to be an audit trail.
+
+Two paths are not recorded, on purpose: federation reads served to a contact
+go straight into the transfer handler rather than through peer dispatch, and
+model calls a Process makes through the inference service never cross the
+Kernel at all. Both remain in their own records.
 
 ## What a line holds
 
@@ -21,39 +26,52 @@ into memory over time and was never meant to be an audit trail.
 | `detail` | The argument a person recognizes the call by, one line, at most 200 characters |
 | `outcome` | `ok`, `failed`, `denied`, or `cancelled`; null while the call is in flight |
 | `durationMs` | From dispatch to response |
-| `tokens`, `costNanoUsd` | When the response carries usage, as the ai calls do |
+| `tokens`, `costNanoUsd` | From `message.usage` on an `ai.text.generate` result: its `totalTokens`, and `cost.total` in USD converted to nano-USD |
 
-`detail` is redacted at write time and only ever holds: the first line of a
-shell command, a path, a URL's host (never its path or query), a search query,
-a model id, a process label, an adapter name, a config key. Bodies, message
-text, prompt content, tokens, and credentials never enter the ledger, so a
-segment is safe to hand to a client as it is.
+`detail` is redacted at write time and only ever holds: for a shell command,
+its command word and first argument, and nothing from the first content flag
+onward (`--message`, `-m`, `-H`, `--header`, `--data`, `-d`, `--body`,
+`--cookie`, `--user`, `--token`, `--password`), with any URL cut to scheme,
+host, and path; for other calls a path, a URL's host only, a search query, a
+model id, a process label, an adapter name, a config key. Request ids,
+targets, process and run ids are capped at 128 characters and the detail at
+200, truncation marked, whatever the caller sent. Bodies, message text, prompt
+content, tokens, and credentials never enter the ledger, so a segment is safe
+to hand to a client as it is.
 
 ## The window
 
-Lines are written into `ledger_window` in the Kernel's own SQLite storage when
-the call is dispatched, and completed with the outcome when the response is
-known: inline for local calls, on the routed response for calls that went to a
-machine, and on expiry or cancellation otherwise. The dispatch path only
-inserts and counts; nothing else runs inline.
+Lines are written into `ledger_window` in the Kernel's own SQLite storage once
+the grant decision is made (a denied call is recorded and closed as denied),
+and completed with the outcome when the response is known: inline for local
+calls, on the routed response for calls that went to a machine, and on expiry,
+cancellation, or a refused registration otherwise. Every exit from the dispatch
+closes its line. The dispatch path only inserts and, every hundredth line,
+counts; nothing else runs inline.
 
-The window is bounded to 5,000 lines or 24 hours, whichever comes first. The
-dispatch that crosses the row bound schedules the Kernel's alarm; the alarm
-also runs daily.
+The window is bounded to 5,000 lines or 24 hours, whichever comes first.
+Exactly one rotation task is pending at any time, keyed by its callback and
+payload: a row-bound crossing moves the pending task nearer, never adds to it,
+and the task re-arms itself once when it runs, daily or sooner while the window
+is still over its bound.
 
 ## Segments
 
-Rotation moves the oldest closed lines, up to 2,000 at a time, into one
-immutable object under `ledger/<seq>.jsonl` in the installation's R2 storage,
-one JSON line per ledger line. Lines still open after the window age are closed
-as `cancelled` on the way out. Only after the object write succeeds does one
-transaction delete those rows from the window and insert the segment's index
-entry into `ledger_segments`: sequence range, first and last timestamp, row
-count, bytes, and the set of process ids and targets present. A failed write
-retries on the next alarm and prunes nothing. A segment stays well under 1.5 MB.
+Rotation captures the oldest closed lines, up to 2,000 at a time, writes them
+as one immutable object under `ledger/<seq>.jsonl` in the installation's R2
+storage, one JSON line per ledger line, and only then, in one transaction,
+deletes exactly those sequence numbers from the window and inserts the
+segment's index entry into `ledger_segments`: sequence range, first and last
+timestamp, row count, bytes, and the sets of owner uids, process ids, and
+targets present. A line that completes while the object write is in flight is
+untouched and rotates next time. Lines still open after the window age are
+closed as `cancelled` on the way out. A failed write retries on the next alarm
+and prunes nothing. A segment stays well under 1.5 MB.
 
-The index is what keeps reads cheap: a query filtered by process or place skips
-every segment whose sets cannot contain a match.
+A line that closes late rotates in a later segment with a lower sequence
+number, so segment ranges may overlap; readers page by a sequence bound, not
+by range. The index is what keeps reads cheap: a query filtered by owner,
+process, or place skips every segment whose sets cannot contain a match.
 
 ## Retention
 
@@ -70,19 +88,25 @@ is gone.
 
 ## Reading
 
-`sys.ledger.list` returns lines newest first, paged by an opaque cursor: the
-window first, then segments from newest to oldest. Filters are `pid`,
-`target`, `callPrefix`, `since`, and `until`; `limit` is at most 200.
+`sys.ledger.list` returns lines newest first, paged by an opaque cursor that
+carries the sequence range already handed out from the window and a segment
+position: the window first, filtered and limited in SQL, then segments from
+newest to oldest, at most four per call. A filtered read may return fewer than
+`limit` lines with a cursor still set; that means "more may exist, continue
+here". Segment reads skip the range the window already returned, so a line
+that rotated between two pages is never returned twice, and a straggler with
+a lower sequence than the segments around it is still reached. Filters are
+`pid`, `target`, `callPrefix`, `since`, and `until`; `limit` is at most 200.
 Visibility is the rule `proc.list` uses: a caller sees the lines of the human
 who owns them, and root sees every line. The `ledger.appended` signal, sent to
-the owner's connections and coalesced to a few per second, carries the newest
-sequence and the count since the last signal, so a surface can tail the ledger
-without polling.
+the owner's connections and to root's, coalesced to a few per second, carries
+the newest sequence and the count since the last signal, so a surface can tail
+the ledger without polling.
 
 ## Cost
 
-One insert and one count per dispatch in the transaction the Kernel already
-holds, and one update on completion. Storage in the Kernel is the window plus
-an index entry per segment, a few hundred bytes each. If the write ever shows
-in Kernel latency, the same rows can move to a separate actor without changing
-the wire.
+One insert per dispatch and one count per hundred, in the transaction the
+Kernel already holds, and one update on completion. Storage in the Kernel is
+the window plus an index entry per segment, a few hundred bytes each. If the
+write ever shows in Kernel latency, the same rows can move to a separate actor
+without changing the wire.
