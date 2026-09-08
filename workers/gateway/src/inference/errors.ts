@@ -12,6 +12,17 @@ export type ProviderErrorContext = {
 export const NON_STANDARD_PROVIDER_ERROR =
   "Provider returned a non-standard error response.";
 
+/** New retained diagnostics are previews; classification must use the original error. */
+const MAX_PROVIDER_DIAGNOSTIC_CHARS = 4096;
+
+export function formatProviderErrorDiagnostic(message: string): string {
+  if (message.length <= MAX_PROVIDER_DIAGNOSTIC_CHARS) return message;
+  const suffix = `\n[truncated; original length ${message.length} characters]`;
+  const preview = message.slice(0, MAX_PROVIDER_DIAGNOSTIC_CHARS - suffix.length)
+    .replace(/[\uD800-\uDBFF]$/u, "");
+  return preview + suffix;
+}
+
 const BILLING_ERROR_PATTERN =
   /\b(?:http\s*402|error\s*code:\s*402|402|payment[\s_-]+required|insufficient[\s_-]+(?:funds|credits|balance|quota)|out[\s_-]+of[\s_-]+(?:credits?|quota)|no[\s_-]+(?:credits?|quota)|billing|payment|balance(?:[\s_-]+low)?|credits?|quota[\s_-]+exceeded|exceeded[\s_-]+quota)\b/i;
 const RATE_LIMIT_ERROR_PATTERN =
