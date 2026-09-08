@@ -27,6 +27,7 @@ export type ProcessRuntimeHarness = {
   signals: RunSignal[];
   spawn(label: string): Promise<Extract<ProcSpawnResult, { ok: true }>>;
   configureAi(pid: string): Promise<void>;
+  connectMachine(peerId: string): Promise<GSVClient>;
   waitFor(
     predicate: () => boolean | Promise<boolean>,
     description: string,
@@ -41,10 +42,12 @@ export async function startProcessRuntimeHarness(options: {
   const ai = await startOpenAiFixture();
   let harness: TestHarness | undefined;
   let client: GSVClient | undefined;
+  let gatewayUrl: string;
 
   try {
     harness = createGatewayTestHarness(options);
     const { url } = await harness.listen();
+    gatewayUrl = webSocketUrl(url);
     const setupClient = new GSVClient();
     await setupClient.requestOnce(webSocketUrl(url), "sys.setup", {
       username: USERNAME,
@@ -81,6 +84,7 @@ export async function startProcessRuntimeHarness(options: {
   const connectedClient = client;
   const signals: RunSignal[] = [];
   const spawnedPids = new Set<string>();
+  const machineClients = new Set<GSVClient>();
   const stopSignals = connectedClient.onSignal((signal, payload) => {
     const parsed = jsonObjectSchema.safeParse(payload);
     if (parsed.success) {
@@ -101,6 +105,16 @@ export async function startProcessRuntimeHarness(options: {
       if (!spawned.ok) throw new Error(spawned.error);
       spawnedPids.add(spawned.pid);
       return spawned;
+    },
+    connectMachine: async (peerId) => {
+      const issued = await connectedClient.sys.token.create({ kind: "machine", peerId, label: "Integration machine" });
+      const machine = new GSVClient({
+        url: gatewayUrl, username: USERNAME, token: issued.token.token,
+        peer: { id: peerId, version: "fixture-machine", platform: "linux", implements: ["fs.read"] },
+      });
+      machineClients.add(machine);
+      await machine.connect();
+      return machine;
     },
     configureAi: async (pid) => {
       await connectedClient.sys.config.set({
@@ -135,6 +149,7 @@ export async function startProcessRuntimeHarness(options: {
       for (const pid of [...spawnedPids].reverse()) {
         await connectedClient.proc.kill({ pid, archive: false }).catch(() => {});
       }
+      for (const machine of machineClients) machine.close();
       connectedClient.close();
       await Promise.all([ai.close(), connectedHarness.close()]);
     },
