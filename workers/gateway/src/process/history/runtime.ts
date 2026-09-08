@@ -1,7 +1,7 @@
 /** Owns Process history, context epochs, archives, compaction, and context policy. */
 
 import {
-  type JsonObject, type ProcContextEpoch, type ProcContextState, type ProcHistoryContextPolicy,
+  type JsonObject, type ProcHistoryRecordData, type ProcContextEpoch, type ProcContextState, type ProcHistoryContextPolicy,
   type ProcHistoryExportArgs, type ProcHistoryExportResult, type ProcHistoryImportArgs, type ProcHistoryImportResult,
   type ProcHistoryMessage, type ProcHistoryPolicyGetArgs, type ProcHistoryPolicyGetResult,
   type ProcHistoryPolicySetArgs, type ProcHistoryPolicySetResult, type ProcHistorySegmentReadArgs,
@@ -643,6 +643,8 @@ export class ProcessHistory {
       metadata: message.metadata,
       runId: message.runId,
       createdAt: message.createdAt,
+      records: message.records,
+      legacy: message.records === undefined,
     });
   }
 
@@ -660,8 +662,8 @@ export class ProcessHistory {
     });
   }
 
-  async appendSystemMessage(runId: string, content: string): Promise<number> {
-    const messageId = this.host.store.messages.appendMessage("system", content, { runId });
+  async appendSystemMessage(runId: string, content: string, record: ProcHistoryRecordData): Promise<number> {
+    const messageId = this.host.store.messages.appendMessage("system", content, { runId, record });
     await this.host.signals.changed(["messages"], { runId, role: "system", content });
     return messageId;
   }
@@ -1130,6 +1132,13 @@ export class ProcessHistory {
           generation: snapshot.generation,
           fromMessageId: snapshot.fromMessageId,
           toMessageId: snapshot.toMessageId,
+          record: {
+            kind: "event",
+            payload: {
+              kind: "history.compacted", severity: "info", audience: "model",
+              payload: { summary, segmentId, archivedMessages: snapshot.selected.length, archivePath: archivedTo },
+            },
+          },
           summary: formatCompactionSummaryMessage({
             archivedMessages: snapshot.selected.length,
             archivePath: archivedTo,
@@ -1380,6 +1389,14 @@ export class ProcessHistory {
       const id = this.host.store.epochs.appendContextEpochMessage({
         epochId: liveEpoch.id,
         kind: "context.runway",
+        record: {
+          kind: "event",
+          payload: {
+            kind: "context.runway", severity: "warn", audience: "model",
+            payload: { epochId: liveEpoch.id, remainingInputTokens,
+              runwayBeforeBoundaryTokens: Math.max(0, remainingInputTokens - boundaryRemainingTokens), policy },
+          },
+        },
         content,
         runId,
         createdAt: timestamp,
@@ -1440,7 +1457,7 @@ export class ProcessHistory {
       }
       lines.push("Compact the history or reset the process before sending more work.");
       const message = lines.join("\n");
-      await this.host.run.failWithSystemMessage(runId, "context.policy.fail", message);
+      await this.host.run.failWithSystemMessage(runId, "context.policy.fail", message, { trigger, policy, pressure });
       return "stopped";
     }
 
@@ -1451,7 +1468,7 @@ export class ProcessHistory {
         `Policy targets ${Math.round(policy.compactToPressure * 100)}% context pressure.`,
         "Compact manually or reset this process.",
       ].join("\n");
-      await this.host.run.failWithSystemMessage(runId, "context.auto_compact.empty", message);
+      await this.host.run.failWithSystemMessage(runId, "context.auto_compact.empty", message, { trigger, policy, pressure });
       return "stopped";
     }
 
@@ -1477,7 +1494,7 @@ export class ProcessHistory {
         trigger === "provider-overflow"
           ? `Auto-compaction failed after provider context overflow: ${result.error}`
           : `Auto-compaction failed before model call: ${result.error}`;
-      await this.host.run.failWithSystemMessage(runId, "context.auto_compact.failed", message);
+      await this.host.run.failWithSystemMessage(runId, "context.auto_compact.failed", message, { trigger, policy, pressure, error: result.error });
       return "stopped";
     }
 
@@ -1717,7 +1734,9 @@ export class ProcessHistory {
       provider: config.provider,
       model: config.model,
     });
-    await this.host.run.failWithSystemMessage(runId, CONTEXT_PROVIDER_OVERFLOW_REASON, message);
+    await this.host.run.failWithSystemMessage(runId, CONTEXT_PROVIDER_OVERFLOW_REASON, message, {
+      provider: config.provider, model: config.model, error: providerMessage, trigger: "provider-overflow",
+    });
   }
 
   async finishInsufficientCompactionRun(
@@ -1736,6 +1755,7 @@ export class ProcessHistory {
       runId,
       "context.auto_compact.insufficient",
       message,
+      { policy, beforePressure, afterPressure },
     );
   }
 
@@ -2065,6 +2085,13 @@ export class ProcessHistory {
       this.host.store.epochs.appendContextEpochMessage({
         epochId: epoch.id,
         kind: "context.projection",
+        record: {
+          kind: "event",
+          payload: {
+            kind: "context.changed", severity: "info", audience: "model",
+            payload: { epochId: epoch.id, previous: observed, current },
+          },
+        },
         observedProjection: jsonObjectSchema.parse(current),
         content,
         runId,

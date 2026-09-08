@@ -98,6 +98,19 @@ describe("ProcessStore", () => {
           kind: "context.projection",
           observedProjection: nextProjection,
           content: "Current date: 2026-08-29",
+          record: {
+            kind: "event",
+            payload: {
+              kind: "context.changed",
+              payload: {
+                epochId: epoch.id,
+                previous: epoch.observedProjection,
+                current: nextProjection,
+              },
+              severity: "info",
+              audience: "model",
+            },
+          },
           runId: "run-1",
           createdAt: 225,
         });
@@ -123,9 +136,38 @@ describe("ProcessStore", () => {
           "Responsibility changed.",
           "Current date: 2026-08-29",
         ]);
+        expect(store.messages.getMessages().map((message: any) => message.records)).toEqual([
+          [{
+            kind: "event",
+            payload: {
+              kind: "responsibility.revision",
+              payload: { epochId: epoch.id, transition },
+              severity: "info",
+              audience: "model",
+            },
+          }],
+          [{
+            kind: "event",
+            payload: {
+              kind: "context.changed",
+              payload: {
+                epochId: epoch.id,
+                previous: epoch.observedProjection,
+                current: nextProjection,
+              },
+              severity: "info",
+              audience: "model",
+            },
+          }],
+        ]);
 
+        store.messages.appendRelatedRecord(store.messages.getMessages()[0].id, {
+          kind: "note",
+          payload: { text: "Related epoch activity", thinking: [] },
+        });
         store.epochs.deleteContextEpochOwnedMessages(epoch.id);
         expect(store.messages.getMessages()).toEqual([]);
+        expect(store.sql.exec("SELECT COUNT(*) AS count FROM messages").one().count).toBe(0);
         expect(
           store.epochs.closeLiveContextEpoch("process.reset", 300, "/epoch.json.gz"),
         ).toMatchObject({
@@ -1015,10 +1057,20 @@ describe("ProcessStore", () => {
           eventId: "work-return-1",
           eventType: "adapter.work.returned",
         });
+        const record = {
+          kind: "event",
+          payload: {
+            kind: "adapter.work.returned",
+            payload: { eventId: "work-return-1", workPid: "work-1" },
+            severity: "info",
+            audience: "model",
+          },
+        };
         store.queue.enqueue("work-return-run-1", "the user returned from work", {
           role: "system",
           kind: "adapter.work.returned",
           provenance,
+          record,
         });
 
         expect(store.queue.dequeue()).toMatchObject({
@@ -1026,6 +1078,7 @@ describe("ProcessStore", () => {
           role: "system",
           kind: "adapter.work.returned",
           provenance,
+          record,
         });
       });
     });

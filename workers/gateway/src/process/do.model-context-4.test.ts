@@ -1,4 +1,4 @@
-import { bodyFromBytes } from "@humansandmachines/gsv/protocol";
+import { bodyFromBytes, type ProcHistoryRecord } from "@humansandmachines/gsv/protocol";
 import type { InternalRequestFrame } from "../protocol/protocol/process-frames";
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
@@ -58,6 +58,7 @@ describe("model context", () => {
         emitted,
         history,
         messages: process.store.messages.getMessages(),
+        records: process.store.messages.getRecords(),
       };
     });
 
@@ -75,6 +76,18 @@ describe("model context", () => {
       role: "assistant",
       content: "Here is the report.",
       media: expect.stringMatching(/root\/\.gsv\/media\/archived-media:[0-9a-f]{64}/),
+    });
+    const note = result.records.findLast((record: ProcHistoryRecord) => record.kind === "note");
+    expect(note).toMatchObject({
+      kind: "note",
+      payload: {
+        media: [{ revision: expect.any(String), path: expect.stringMatching(/^\/root\/\.gsv\/media\/archived-media:/) }],
+      },
+    });
+    const delivered = result.records.find((record: ProcHistoryRecord) => record.kind === "message" && record.payload.direction === "out");
+    expect(delivered).toMatchObject({
+      kind: "message",
+      payload: { media: [{ type: "resource", ref: { revision: note.payload.media[0].revision } }] },
     });
     expect(result.history).toMatchObject({
       ok: true,

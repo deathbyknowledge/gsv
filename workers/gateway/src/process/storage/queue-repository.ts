@@ -1,4 +1,5 @@
 import type { ProcessStore } from "../store";
+import { procHistoryRecordDataSchema } from "@humansandmachines/gsv/protocol";
 import { queuedMessageRole, type EnqueueMessageOptions, type QueuedMessage } from "./store-codecs";
 
 /** Owns FIFO admissions waiting behind the active Process run. */
@@ -16,8 +17,8 @@ export class ProcessQueueRepository {
     this.store.sql.exec(
       `INSERT INTO message_queue (
         run_id, generation, role, kind, message, media_json, origin_json,
-        provenance_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        provenance_json, record_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       runId,
       generation,
       options.role ?? "user",
@@ -26,6 +27,7 @@ export class ProcessQueueRepository {
       options.media ?? null,
       options.origin ?? null,
       options.provenance ?? null,
+      options.record ? JSON.stringify(procHistoryRecordDataSchema.parse(options.record)) : null,
       Date.now(),
     );
   }
@@ -41,14 +43,18 @@ export class ProcessQueueRepository {
         media_json: string | null;
         origin_json: string | null;
         provenance_json: string | null;
+        record_json: string | null;
       }>(
         `SELECT id, run_id, generation, role, kind, message, media_json,
-                origin_json, provenance_json
+                origin_json, provenance_json, record_json
            FROM message_queue
           ORDER BY id ASC
           LIMIT 1`,
       );
     if (!row) return null;
+    const record = row.record_json === null
+      ? undefined
+      : procHistoryRecordDataSchema.parse(JSON.parse(row.record_json));
     this.store.sql.exec("DELETE FROM message_queue WHERE id = ?", row.id);
     return {
       id: row.id,
@@ -60,6 +66,7 @@ export class ProcessQueueRepository {
       media: row.media_json,
       origin: row.origin_json,
       provenance: row.provenance_json,
+      record,
     };
   }
 

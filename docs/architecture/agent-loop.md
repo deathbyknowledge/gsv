@@ -24,6 +24,24 @@ parent, and state. Process SQLite stores the mutable run state:
 - `pending_hil`: human-in-the-loop tool approval state.
 - `process_kv`: process metadata.
 
+History records have five shapes: incoming or committed outgoing messages, model
+notes, individual tool calls, typed tool results, and runtime events. Process schema
+14 adds `kind` and `payload_json` to the existing `messages` table. Related records
+use `group_message_id` to retain the original assistant turn's identity, order,
+provider metadata, and lifetime. Outgoing messages are recorded from the confirmed
+Conversation commit and deduplicated by its identity.
+
+Runtime producers write event source data with explicit severity and audience.
+Queued events retain that data in `record_json`; incoming messages retain their
+queue kind, provenance, and canonical conversation identities. Legacy rows are
+inferred at the storage boundary without rewriting them during migration or
+inventing missing provenance.
+
+The first transition stage keeps the existing `proc.history` wire and provider
+context. Archives and fork imports retain typed records alongside compatibility
+messages, and media retention includes every member of a group. Switching the
+model renderer and public history consumers to records is a later stage.
+
 The Kernel delivers frames to the Process DO through `recvFrame`. Direct clients
 append canonical input with `conversation.send`, which privately admits the same
 interaction to its handler Process. Adapter ingress follows the same Kernel-owned
