@@ -5,11 +5,12 @@ import { useSession } from "../../services/session/SessionProvider";
 import { Zen } from "./zen/Zen";
 import { FirstDay } from "./firstday/FirstDay";
 import { Fleet } from "./fleet/Fleet";
+import { Memory } from "./memory/Memory";
 import { WireSync } from "./wire/WireSync";
 import "./instrument.css";
 
 /** The three distances of the instrument. Zen is near, Fleet is far, the first day is Zen's empty state. */
-export type Distance = "zen" | "firstday" | "fleet";
+export type Distance = "zen" | "firstday" | "fleet" | "memory";
 
 /** A row in Fleet, addressed the way the manifest addresses it: `target:<id>` or `proc:<pid>`. */
 export type FleetRow = `target:${string}` | `proc:${string}` | `ledger:${string}` | `more:${string}` | `dir:${string}` | `file:${string}`;
@@ -18,9 +19,10 @@ const DISTANCE_TO_PATH = {
   zen: "/zen",
   firstday: "/first-day",
   fleet: "/fleet",
+  memory: "/memory",
 } satisfies Record<Distance, string>;
 
-const DISTANCES: readonly Distance[] = ["zen", "firstday", "fleet"];
+const DISTANCES: readonly Distance[] = ["zen", "firstday", "fleet", "memory"];
 
 function distanceForPath(path: string): Distance {
   return DISTANCES.find((distance) => DISTANCE_TO_PATH[distance] === path) ?? "zen";
@@ -54,7 +56,7 @@ function systemTheme(): Theme {
   return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
 }
 
-const STAR_DENSITY = { zen: 0.013, firstday: 0.013, fleet: 0.022 } satisfies Record<Distance, number>;
+const STAR_DENSITY = { zen: 0.013, firstday: 0.013, fleet: 0.022, memory: 0.010 } satisfies Record<Distance, number>;
 const MOVE_MS = 150;
 
 function reducedMotion(): boolean {
@@ -156,6 +158,10 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         event.preventDefault();
         move(distance === "firstday" ? "zen" : "firstday");
       }
+      if (event.key === "m" && distance !== "fleet") {
+        event.preventDefault();
+        move(distance === "memory" ? "zen" : "memory");
+      }
       if (event.key === "l") {
         event.preventDefault();
         toggleTheme();
@@ -193,6 +199,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           <dl>
             <dt>z</dt><dd>zen and fleet</dd>
             <dt>n</dt><dd>first day</dd>
+            <dt>m</dt><dd>memory</dd>
             <dt>l</dt><dd>light and dark</dd>
             <dt>x</dt><dd>type size</dd>
             <dt>esc</dt><dd>leave the prompt</dd>
@@ -205,6 +212,13 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
             <dt>o</dt><dd>show the run</dd>
             <dt>y n</dt><dd>answer an approval</dd>
           </dl>
+          <h4>Memory</h4>
+          <dl>
+            <dt>j k</dt><dd>walk the pages</dd>
+            <dt>/</dt><dd>search</dd>
+            <dt>e</dt><dd>correct a page</dd>
+            <dt>⌘ enter</dt><dd>save</dd>
+          </dl>
           <h4>Fleet</h4>
           <dl>
             <dt>j k</dt><dd>move</dd>
@@ -216,9 +230,11 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       ) : null}
       <div class={`distance${phaseClass}`}>
         {distance === "zen" ? (
-          <Zen onFleet={(row) => move("fleet", row ?? null)} onFirstDay={() => move("firstday")} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid} onShip={() => setZenPid(null)} />
+          <Zen onFleet={(row) => move("fleet", row ?? null)} onFirstDay={() => move("firstday")} onMemory={() => move("memory")} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid} onShip={() => setZenPid(null)} />
         ) : distance === "firstday" ? (
           <FirstDay onZen={() => move("zen")} />
+        ) : distance === "memory" ? (
+          <Memory onZen={() => move("zen")} onFleet={() => move("fleet")} />
         ) : (
           <Fleet
             initialRow={fleetRow}

@@ -55,6 +55,7 @@ import {
 import "./zen.css";
 
 export type ZenProps = {
+  onMemory?: () => void;
   /** Step back to Fleet, optionally landing on a row (a place mentioned in a response, for instance). */
   onFleet: (row?: FleetRow) => void;
   /** Open the first day: the places manifest with empty rows. */
@@ -292,7 +293,7 @@ function NoteMoment({
   );
 }
 
-export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp, onShip }: ZenProps) {
+export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid: pidProp, onShip }: ZenProps) {
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
   const who = snapshot.username || "you";
@@ -868,6 +869,11 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
         <button type="button" onClick={onFirstDay}>
           <kbd>n</kbd>first day
         </button>
+        {onMemory ? (
+          <button type="button" onClick={onMemory}>
+            <kbd>m</kbd>memory
+          </button>
+        ) : null}
         <span>
           <kbd>?</kbd>keys
         </span>
