@@ -1,4 +1,4 @@
-import { useRef, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { JSX } from "preact";
 
 export type PromptPlace = {
@@ -38,7 +38,32 @@ export type PromptLineProps = {
  */
 export function PromptLine({ place, dir, placeholder, disabled, onSubmit, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }: PromptLineProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const mirrorRef = useRef<HTMLSpanElement>(null);
   const [command, setCommand] = useState(false);
+  /* the block caret: the input's own caret is hidden and a block is drawn where it is, measured off a mirror of the text before it */
+  const [focused, setFocused] = useState(false);
+  const [caretX, setCaretX] = useState(0);
+  useEffect(() => {
+    const input = inputRef.current;
+    if (input && document.activeElement === input) setFocused(true);
+  }, []);
+  useEffect(() => {
+    if (!focused) return undefined;
+    let frame = 0;
+    const measure = (): void => {
+      const input = inputRef.current;
+      const mirror = mirrorRef.current;
+      if (input && mirror) {
+        const at = input.selectionStart ?? input.value.length;
+        mirror.textContent = input.value.slice(0, at);
+        const x = mirror.getBoundingClientRect().width - input.scrollLeft;
+        setCaretX((current) => (Math.abs(current - x) < 0.5 ? current : x));
+      }
+      frame = requestAnimationFrame(measure);
+    };
+    frame = requestAnimationFrame(measure);
+    return () => cancelAnimationFrame(frame);
+  }, [focused]);
   const read = (): string => inputRef.current?.value ?? "";
   const changed = (): void => {
     const value = read();
@@ -88,19 +113,29 @@ export function PromptLine({ place, dir, placeholder, disabled, onSubmit, onPlac
           </>
         )}
       </button>
-      <input
-        ref={inputRef}
-        type="text"
-        placeholder={placeholder}
-        aria-label="Prompt"
-        spellcheck={false}
-        disabled={disabled}
-        onKeyDown={onKeyDown}
-        onInput={changed}
-        onFocus={() => onFocusChange?.(true)}
-        onBlur={() => onFocusChange?.(false)}
-        autoFocus={autoFocus}
-      />
+      <span class="field">
+        <input
+          ref={inputRef}
+          type="text"
+          placeholder={placeholder}
+          aria-label="Prompt"
+          spellcheck={false}
+          disabled={disabled}
+          onKeyDown={onKeyDown}
+          onInput={changed}
+          onFocus={() => {
+            setFocused(true);
+            onFocusChange?.(true);
+          }}
+          onBlur={() => {
+            setFocused(false);
+            onFocusChange?.(false);
+          }}
+          autoFocus={autoFocus}
+        />
+        <span class="mirror" ref={mirrorRef} aria-hidden="true" />
+        {focused && !disabled ? <span class="block-caret blink" style={{ transform: `translateX(${caretX}px)` }} aria-hidden="true" /> : null}
+      </span>
     </form>
   );
 }

@@ -190,16 +190,47 @@
 .prompt-line.is-offline .chip { color: var(--warn); border-color: var(--warn); }
 .prompt-line.is-command .chip { color: var(--path); text-transform: none; letter-spacing: 0.02em; font-size: 12px; }
 .prompt-line.is-command input { color: var(--path); }
+.prompt-line .field {
+  position: relative;
+  flex: 1;
+  display: flex;
+  min-width: 120px;
+}
 .prompt-line input {
   flex: 1;
-  min-width: 120px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
   background: transparent;
   border: 0;
   outline: 0;
   color: var(--text-hi);
   font: inherit;
   letter-spacing: 0.02em;
-  caret-color: var(--accent);
+  caret-color: transparent;
+}
+/* the mirror measures the text before the caret; the block is the same cursor the transcript shows */
+.prompt-line .mirror {
+  position: absolute;
+  left: 0;
+  top: 0;
+  visibility: hidden;
+  white-space: pre;
+  font: inherit;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+.prompt-line .block-caret {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 0.55em;
+  height: 1em;
+  margin-top: -0.5em;
+  background: var(--text-hi);
+  mix-blend-mode: difference;
+  box-shadow: 0 0 8px var(--accent);
+  pointer-events: none;
 }
 .prompt-line input:focus {
   text-shadow: var(--glow-focus);
