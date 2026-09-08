@@ -26,6 +26,9 @@ const WORKERS_AI_GATEWAY_BASE_URL =
 const WORKERS_AI_GATEWAY_COMPAT_URL = `${WORKERS_AI_GATEWAY_BASE_URL}/compat`;
 const WORKERS_AI_GATEWAY_MODEL_PREFIX = "workers-ai/";
 
+// Compatibility update: enabling node:os resolves the historical constraint below.
+// Production's compatibility date enables it; unit tests request it explicitly.
+// This module now uses pi-ai's current binding transport and upstream catalog.
 // pi-ai 0.84.3+ imports a Node user-agent helper that crashes the current
 // Workerd runtime during module evaluation. Keep 0.84.2's binding transport
 // and carry the newer catalog entry locally until that incompatibility clears.
