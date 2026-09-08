@@ -41,6 +41,8 @@ import { stableOpaqueId } from "../../shared/stable-id";
 
 const READ_PATHS_REMEMBERED = 64;
 const readPathArgsSchema = z.object({ path: z.string().min(1), target: z.string().optional() });
+/** A read that actually read a file: an ok result with a kind, not a folder listing and not an error inside an ok envelope. */
+const fileReadSuccessSchema = z.object({ ok: z.literal(true), kind: z.string() });
 
 /** The place and path a Read named, as one key, so a later Send may attach what the run already read. */
 export function readPathKey(args: JsonValue): string | null {
@@ -325,7 +327,7 @@ export class ProcessTools {
       await this.host.resources.deletePreparedToolResultMedia(prepared.createdKeys);
       return false;
     }
-    if (resolvedOutcome === "completed" && current.call === "fs.read") {
+    if (resolvedOutcome === "completed" && current.call === "fs.read" && fileReadSuccessSchema.safeParse(prepared.value).success) {
       const key = readPathKey(current.args);
       if (key) {
         this.host.mutateActiveRun(runId, (run) => ({

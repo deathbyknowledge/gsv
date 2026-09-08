@@ -58,7 +58,7 @@ export const SEND_TOOL: Tool = {
       attach: {
         type: "array",
         items: { type: "string" },
-        description: "Files to send with the message: a path on the cloud home, or target:path for a file on a place.",
+        description: "Files to send: a path on the cloud home, target:path for a file on a place, or [target]:path when the target id itself has a colon.",
       },
     },
     additionalProperties: false,

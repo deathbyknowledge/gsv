@@ -755,6 +755,12 @@ describe("model context", () => {
         size: 12,
       });
       expect(process.runs.active.readPaths).toEqual(["gsv\u0000/tmp/private.pdf"]);
+      // a read that failed inside an ok envelope, or listed a folder, is not an approval of anything
+      registerToolBlock(process, runId, [{ id: "read-2", name: "Read", arguments: { path: "/tmp/missing.pdf" } }]);
+      await process.tools.resolveStartedTool(runId, "dispatch-read-2", { ok: false, error: "No such file" });
+      registerToolBlock(process, runId, [{ id: "read-3", name: "Read", arguments: { path: "/tmp" } }]);
+      await process.tools.resolveStartedTool(runId, "dispatch-read-3", { ok: true, path: "/tmp", files: [], directories: [] });
+      expect(process.runs.active.readPaths).toEqual(["gsv\u0000/tmp/private.pdf"]);
       expect(
         await process.run.executeRunControlAction(runId, "send-attach-5", {
           ok: true as const,

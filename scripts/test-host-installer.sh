@@ -232,7 +232,8 @@ test "$(grep -c 'Added by the GSV installer' "$DEFAULT_HOME/.bashrc")" = "1"
 # directory needs nothing.
 OPT_OUT_HOME="$TEST_ROOT/opt-out-home"
 mkdir -p "$OPT_OUT_HOME"
-DEFAULT_HOME="$OPT_OUT_HOME" run_default_installer env GSV_NO_MODIFY_PATH=1 | grep -q "Left PATH alone"
+# read the whole output first: a pipe into grep -q closes early and the installer's last lines hit a broken pipe
+grep -q "Left PATH alone" <<< "$(DEFAULT_HOME="$OPT_OUT_HOME" run_default_installer env GSV_NO_MODIFY_PATH=1)"
 test ! -e "$OPT_OUT_HOME/.profile"
 ON_PATH_HOME="$TEST_ROOT/on-path-home"
 mkdir -p "$ON_PATH_HOME"
