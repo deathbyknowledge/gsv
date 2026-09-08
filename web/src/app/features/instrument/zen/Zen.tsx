@@ -90,7 +90,7 @@ function settleDuration(length: number): number {
   return Math.min(1600, Math.max(700, length * 2.5));
 }
 /** How many of the loaded messages settle on first paint, and how far apart they start. */
-const SETTLE_ON_LOAD = 8;
+const SETTLE_ON_LOAD = 12;
 const SETTLE_STAGGER_MS = 140;
 
 function reducedMotion(): boolean {
@@ -519,7 +519,7 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
       // the history as first loaded is not news, but it does materialise: the recent messages settle one after another
       seenMomentsRef.current = new Set(whole);
       if (reducedMotion()) return;
-      const recent = whole.slice(-SETTLE_ON_LOAD);
+      const recent = moments.filter((moment) => moment.role !== "note" && !moment.streaming).map((moment) => moment.id).slice(-SETTLE_ON_LOAD);
       const startedAt = Date.now();
       setSettling((current) => {
         const next = new Map(current);
@@ -897,8 +897,11 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
                   />
                 );
               }
+              const settleStart = settling.get(moment.id);
+              const pending = settleStart !== undefined && Date.now() < settleStart;
+              const materialising = settleStart !== undefined && !pending;
               return (
-                <div key={moment.id} data-index={index} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${isLatest ? "" : " is-older"}${browse === index ? " is-focus" : ""}`}>
+                <div key={moment.id} data-index={index} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${isLatest ? "" : " is-older"}${browse === index ? " is-focus" : ""}`}>
                   <div class="who">{moment.role === "human" ? who : "ship"}</div>
                   {moment.activities
                     .filter((activity) => activity.you)
@@ -912,7 +915,14 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
                       />
                     ))}
                   {moment.role === "human" ? (
-                    <div class="text">{moment.text}</div>
+                    settlePrefix(moment) !== null ? (
+                      <div class="text is-settling">
+                        <span class="ghost" aria-hidden="true">{moment.text}</span>
+                        <span class="live"><StreamingText text={moment.text.slice(0, settlePrefix(moment) ?? 0)} tick={tick} /></span>
+                      </div>
+                    ) : (
+                      <div class="text">{moment.text}</div>
+                    )
                   ) : moment.streaming ? (
                     <div class="text">
                       <StreamingText text={moment.text} tick={tick} />
@@ -920,7 +930,8 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
                     </div>
                   ) : settlePrefix(moment) !== null ? (
                     <div class="text is-settling">
-                      <StreamingText text={moment.text.slice(0, settlePrefix(moment) ?? 0)} tick={tick} />
+                      <span class="ghost" aria-hidden="true">{moment.text}</span>
+                      <span class="live"><StreamingText text={moment.text.slice(0, settlePrefix(moment) ?? 0)} tick={tick} /></span>
                     </div>
                   ) : moment.text ? (
                     <div class="text" onClick={onTextClick} dangerouslySetInnerHTML={{ __html: renderMarkdownHtml(linkPlaceReferences(moment.text, places)) }} />
