@@ -1729,7 +1729,7 @@ dependencies = [
 
 [[package]]
 name = "desktop"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "daemon-protocol",
@@ -1763,7 +1763,7 @@ dependencies = [
 
 [[package]]
 name = "desktop-protocol"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "libc",
@@ -2565,7 +2565,7 @@ dependencies = [
 
 [[package]]
 name = "gateway-client"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "futures-util",
  "serde",
@@ -2588,7 +2588,7 @@ dependencies = [
 
 [[package]]
 name = "gesture-protocol"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2596,7 +2596,7 @@ dependencies = [
 
 [[package]]
 name = "gestures"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "cameras",
  "crossbeam-channel",
@@ -3098,7 +3098,7 @@ checksum = "12101ecc8225ea6d675bc70263074eab6169079621c2186fe0c66590b2df9681"
 
 [[package]]
 name = "gsv"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "base64",
  "chrono",
@@ -3252,7 +3252,7 @@ dependencies = [
 
 [[package]]
 name = "host-config"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -4183,7 +4183,7 @@ checksum = "dae608c151f68243f2b000364e1f7b186d9c29845f7d2d85bd31b9ad77ad552b"
 
 [[package]]
 name = "machine"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "clap",
@@ -8042,7 +8042,7 @@ dependencies = [
 
 [[package]]
 name = "transcriber"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "cpal 0.18.1",
  "crossbeam-channel",
