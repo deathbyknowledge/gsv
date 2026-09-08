@@ -171,24 +171,34 @@ impl Tool for ReadTool {
             .map(|kind| kind.mime_type())
             .unwrap_or_else(|| infer_content_type(&resolved));
 
-        if content_type.starts_with("image/") && !is_text_content_type(content_type) {
-            if args.representation.as_deref() == Some("resource") {
-                return Ok(ToolOutput::json(json!({
-                    "ok": true,
+        // Any file has a resource representation: the reference a message or a
+        // transfer works from, without reading the content.
+        if args.representation.as_deref() == Some("resource") {
+            let kind = if content_type.starts_with("image/") && !is_text_content_type(content_type)
+            {
+                "image"
+            } else if is_text_content_type(content_type) {
+                "text"
+            } else {
+                "file"
+            };
+            return Ok(ToolOutput::json(json!({
+                "ok": true,
+                "path": resolved.display().to_string(),
+                "size": size,
+                "kind": kind,
+                "contentType": content_type,
+                "resource": {
+                    "type": "file",
+                    "target": self.device_id,
                     "path": resolved.display().to_string(),
-                    "size": size,
-                    "kind": "image",
+                    "revision": file_revision(&metadata),
                     "contentType": content_type,
-                    "resource": {
-                        "type": "file",
-                        "target": self.device_id,
-                        "path": resolved.display().to_string(),
-                        "revision": file_revision(&metadata),
-                        "contentType": content_type,
-                        "size": size,
-                    },
-                })));
-            }
+                    "size": size,
+                },
+            })));
+        }
+        if content_type.starts_with("image/") && !is_text_content_type(content_type) {
             return Ok(ToolOutput::with_body(
                 json!({
                     "ok": true,
@@ -423,6 +433,30 @@ mod tests {
             root.join("image.png").display().to_string()
         );
         assert_eq!(result.data["resource"]["contentType"], "image/png");
+        assert_eq!(result.data["resource"]["size"], bytes.len());
+        assert!(result.data["resource"]["revision"]
+            .as_str()
+            .is_some_and(|revision| !revision.is_empty()));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn returns_a_resource_for_any_file() {
+        let root = std::env::temp_dir().join(format!("gsv-read-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let bytes = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n1 0 obj\n".to_vec();
+        fs::write(root.join("report.pdf"), &bytes).unwrap();
+
+        let result = ReadTool::for_device(root.clone(), "laptop".to_string())
+            .execute(json!({ "path": "report.pdf", "representation": "resource" }))
+            .await
+            .unwrap();
+
+        assert!(result.body.is_none());
+        assert_eq!(result.data["kind"], "file");
+        assert_eq!(result.data["resource"]["target"], "laptop");
+        assert_eq!(result.data["resource"]["contentType"], "application/pdf");
         assert_eq!(result.data["resource"]["size"], bytes.len());
         assert!(result.data["resource"]["revision"]
             .as_str()

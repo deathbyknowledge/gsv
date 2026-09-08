@@ -636,6 +636,70 @@ describe("model context", () => {
     });
   });
 
+  it("attaches the files a Send names before committing, and refuses the send when one cannot be read", async () => {
+    const pid = "mech-send-attach";
+    const runId = "run-send-attach";
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+
+    await runInProcess(stub, async (process) => {
+      process.runs.active = generationRun(runId, terminalTestConfig(pid));
+      process.streams.complete = vi.fn(async () => {});
+      process.kernel.kernelRpc = vi.fn(async (call: string, args: any) => {
+        expect(call).toBe("fs.read");
+        expect(args.representation).toBe("resource");
+        if (args.path.endsWith("missing.pdf")) return { ok: false, error: "no such file" };
+        return {
+          ok: true,
+          path: args.path,
+          kind: "file",
+          contentType: "application/pdf",
+          size: 12,
+          resource: { type: "file", target: args.target ?? "gsv", path: args.path, revision: "rev-1", contentType: "application/pdf", size: 12 },
+        };
+      });
+      process.resources.handleProcRunAttach = vi.fn(async (args: any) => ({ ok: true, runId, media: args.media }));
+      process.resources.promoteRunOutputMedia = vi.fn(async () => [
+        { type: "document", mimeType: "application/pdf", key: "k", path: "/p", size: 12, revision: "rev-1" },
+      ]);
+      process.run.commitMessageRunControlAction = vi.fn(async (options: any) => ({
+        ok: true,
+        action: "message",
+        finish: options.finish,
+        text: options.text,
+        delivery: { kind: "none" },
+      }));
+
+      const sent = await process.run.executeRunControlAction(runId, "send-attach-1", {
+        ok: true as const,
+        command: { action: "message" as const, text: "here it is", finish: false, attach: ["laptop:/home/e/report.pdf", "/tmp/a.pdf"] },
+      }, []);
+      expect(sent).toMatchObject({ ok: true, action: "message" });
+      expect(process.kernel.kernelRpc.mock.calls.map((call: any[]) => call[1])).toEqual([
+        { target: "laptop", path: "/home/e/report.pdf", representation: "resource" },
+        { path: "/tmp/a.pdf", representation: "resource" },
+      ]);
+      expect(process.resources.handleProcRunAttach.mock.calls[0][0].media).toHaveLength(2);
+      expect(process.resources.handleProcRunAttach.mock.calls[0][0].media[0]).toMatchObject({
+        type: "resource",
+        mediaType: "document",
+        filename: "report.pdf",
+        ref: { target: "laptop", path: "/home/e/report.pdf" },
+      });
+      expect(process.run.commitMessageRunControlAction.mock.calls[0][0].media).toHaveLength(1);
+
+      const refused = await process.run.executeRunControlAction(runId, "send-attach-2", {
+        ok: true as const,
+        command: { action: "message" as const, text: "and this", finish: true, attach: ["laptop:/home/e/missing.pdf"] },
+      }, []);
+      expect(refused).toMatchObject({
+        ok: false,
+        failureKind: "command",
+        error: "cannot attach laptop:/home/e/missing.pdf: no such file",
+      });
+      expect(process.run.commitMessageRunControlAction).toHaveBeenCalledOnce();
+    });
+  });
+
   it("sends and ends the run through the Send tool", async () => {
     const pid = "mech-send-tool";
     const runId = "run-send-tool";

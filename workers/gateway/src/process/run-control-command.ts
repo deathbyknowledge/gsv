@@ -9,8 +9,25 @@ export type RunControlCommand =
     finish: boolean;
     /** A send with nothing to say: a final message when staged media makes it one, a bare yield otherwise. */
     emptyMeansYield?: true;
+    /** Files to send with the message, as the Send tool names them: `path`, `target:path`, or `[target]:path`. */
+    attach?: string[];
   }
   | { action: "yield" };
+
+/**
+ * Where a file a Send names lives. The same spelling the shell's `cp` reads:
+ * `[target]:path` for a path that itself contains a colon, `target:path`, or a
+ * bare path on the cloud home.
+ */
+export type AttachPlace = { target: string; path: string };
+
+export function parseAttachPath(spec: string): AttachPlace {
+  const bracket = spec.match(/^\[([^\]]*)]:(.*)$/);
+  if (bracket) return { target: bracket[1] || "gsv", path: bracket[2] };
+  const qualified = spec.match(/^([A-Za-z0-9_.-]+):(.*)$/);
+  if (qualified) return { target: qualified[1], path: qualified[2] };
+  return { target: "gsv", path: spec };
+}
 
 export type RunControlCommandParseResult =
   | { ok: true; command: RunControlCommand }

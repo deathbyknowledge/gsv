@@ -147,7 +147,8 @@ The model response can contain text, thinking blocks, and tool calls:
   that explicitly called `proc.observe`.
 - Assistant text, thinking blocks, and tool calls are stored in the `messages`
   table.
-- In a human-facing run, the `Send` tool commits one canonical user-visible message and any media
+- In a human-facing run, the `Send` tool commits one canonical user-visible message and any files it
+  names in `attach`, a path on the cloud home or `target:path` for a file on a place, along with media
   registered by `message attach`: `text` alone sends and the run continues, allowing multiple
   exactly-once messages from one run; `text` with `yield: true` sends and finishes without another
   generation; `yield: true` alone finishes without another Message, whatever the turn narrated as

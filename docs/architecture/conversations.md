@@ -36,7 +36,10 @@ delivery and run completion are separate operations:
 - The `Send` tool commits a canonical user-visible message without interpreting its contents. With
   `text` alone the run remains active, so the intelligence can update the user and then continue
   working; with `yield: true` the run finishes after the message, preserving its durable Process; with
-  `yield: true` and no text it finishes without another user-visible message.
+  `yield: true` and no text it finishes without another user-visible message. `attach` names files to
+  send, a path on the cloud home or `target:path` for a file on a place; each is referenced where it
+  lives through `fs.read`, retained into the process archive, and sent with the message, or the send is
+  refused naming the file that could not be read.
 - The same three actions exist as commands, so a person or a script can do what the model does. A
   literal block sends and leaves the run active, `yield` finishes it, and a final message composes both
   with ordinary shell success semantics:

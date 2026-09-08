@@ -17,7 +17,9 @@ import {
   type ResponsibilityRecord, jsonObjectSchema, type AiConfigResult, type AiTextGenerateConfig,
   type AiTextGenerateOptions, type ProcUsageState, jsonValueSchema, type JsonObject, type ProcTraceSpanStatus,
 } from "@humansandmachines/gsv/protocol";
-import type { RunControlCommand, RunControlCommandParseResult } from "../run-control-command";
+import { parseAttachPath, type RunControlCommand, type RunControlCommandParseResult } from "../run-control-command";
+import { mediaTypeFromContentType } from "../history/helpers";
+import type { FsReadResult, ResourceBlock } from "@humansandmachines/gsv/protocol";
 import type { RunOutputMedia, RunState } from "./state";
 import {
   errorMessageFromUnknown, isProviderContextOverflow, isProviderContextOverflowErrorMessage,
@@ -77,7 +79,7 @@ export class ProcessRun {
     runId: string,
     actionId: string,
     parsed: RunControlCommandParseResult,
-    media: RunOutputMedia[],
+    stagedMedia: RunOutputMedia[],
   ): Promise<RunControlResult> {
     if (!parsed.ok) {
       return {
@@ -88,6 +90,22 @@ export class ProcessRun {
         failureKind: "command",
         error: parsed.error,
       };
+    }
+    // files the Send names are referenced on their place, retained and staged first; a message goes out whole or not at all
+    let media = stagedMedia;
+    if (parsed.command.action === "message" && parsed.command.attach && parsed.command.attach.length > 0) {
+      const attached = await this.attachSendFiles(runId, parsed.command.attach);
+      if (!attached.ok) {
+        return {
+          ok: false,
+          action: "message",
+          text: parsed.command.text,
+          delivery: { kind: "none" },
+          failureKind: "command",
+          error: attached.error,
+        };
+      }
+      media = await this.host.resources.promoteRunOutputMedia(runId);
     }
     // a Send with yield and nothing to say is a bare yield, unless staged media makes it a final message.
     // Whatever the turn narrated as assistant text is Process activity, never a reply: it does not hold a yield.
@@ -142,6 +160,44 @@ export class ProcessRun {
       media,
       responsibilityAdmissionKey,
     });
+  }
+
+  /**
+   * Files a Send names become immutable references through `fs.read` on their
+   * place, then are retained and staged the way `message attach` stages them.
+   * The reads are the process's own calls, so the ledger shows them.
+   */
+  async attachSendFiles(
+    runId: string,
+    specs: readonly string[],
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const media: ResourceBlock[] = [];
+    for (const spec of specs) {
+      const { target, path } = parseAttachPath(spec);
+      let result: FsReadResult;
+      try {
+        result = await this.host.kernel.kernelRpc(
+          "fs.read",
+          target === "gsv" ? { path, representation: "resource" } : { target, path, representation: "resource" },
+          this.runAbortSignal(runId),
+        );
+      } catch (error) {
+        return { ok: false, error: `cannot attach ${spec}: ${errorMessageFromUnknown(error)}` };
+      }
+      if (!result.ok) return { ok: false, error: `cannot attach ${spec}: ${result.error}` };
+      if (!("resource" in result) || !result.resource) {
+        return { ok: false, error: `cannot attach ${spec}: it is not a file` };
+      }
+      const ref = result.resource;
+      media.push({
+        type: "resource",
+        ref,
+        mediaType: mediaTypeFromContentType(ref.contentType),
+        filename: ref.path.split(/[/\\]/).pop() || "attachment",
+      });
+    }
+    const attached = await this.host.resources.handleProcRunAttach({ runId, media });
+    return attached.ok ? { ok: true } : { ok: false, error: attached.error };
   }
 
   async executeMessageRunControlAction(options: {

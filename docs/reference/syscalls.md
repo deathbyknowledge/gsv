@@ -108,7 +108,7 @@ type FilesystemSyscalls = {
   "fs.read": {
     args: { target?: string; path: string; offset?: number; limit?: number; maxBytes?: number; representation?: "content" | "resource" };
     result:
-      | { ok: true; path: string; kind: "text" | "image"; contentType: string; lines?: number; size: number; truncated?: boolean; nextOffset?: number; resource?: FileResourceReference }
+      | { ok: true; path: string; kind: "text" | "image" | "file"; contentType: string; lines?: number; size: number; truncated?: boolean; nextOffset?: number; resource?: FileResourceReference }
       | { ok: true; path: string; files: string[]; directories: string[] }
       | OperationError;
   };

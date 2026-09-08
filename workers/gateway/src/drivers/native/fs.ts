@@ -58,7 +58,7 @@ export type FsOpenedSource = {
 type FsReadResponse = { data: FsReadResult; body?: FrameBody };
 type FsReadFileSuccess = Extract<
   FsReadResult,
-  { ok: true; kind: "text" | "image" }
+  { ok: true; kind: "text" | "image" | "file" }
 >;
 type TextLineSelection = {
   content: string;
@@ -207,21 +207,22 @@ async function readOpenedFile(
 ): Promise<FsReadResponse> {
   const contentType = opened.contentType ?? inferContentType(opened.path);
   try {
-    if (contentType.trim().toLowerCase().startsWith("image/") && !isTextContentType(contentType)) {
-      if (args.representation === "resource") {
-        await opened.body.stream.cancel().catch(() => {});
-        if (!opened.revision) {
-          throw new Error(`Unable to identify file revision: ${opened.path}`);
-        }
-        return readImageResource(opened.path, contentType, opened.size, {
-          type: "file",
-          target: opened.target,
-          path: opened.path,
-          revision: opened.revision,
-          contentType,
-          size: opened.size,
-        });
+    // any file has a resource representation: the reference a message or a transfer works from, no content read
+    if (args.representation === "resource") {
+      await opened.body.stream.cancel().catch(() => {});
+      if (!opened.revision) {
+        throw new Error(`Unable to identify file revision: ${opened.path}`);
       }
+      return readResource(opened.path, contentType, opened.size, {
+        type: "file",
+        target: opened.target,
+        path: opened.path,
+        revision: opened.revision,
+        contentType,
+        size: opened.size,
+      });
+    }
+    if (contentType.trim().toLowerCase().startsWith("image/") && !isTextContentType(contentType)) {
       return readImage(opened.path, contentType, opened.body.stream, opened.size);
     }
 
@@ -378,17 +379,23 @@ function readImage(
   };
 }
 
-function readImageResource(
+function readResource(
   path: string,
   contentType: string,
   size: number,
   resource: FileResourceReference,
 ): FsReadResponse {
+  const normalized = contentType.trim().toLowerCase();
+  const kind = normalized.startsWith("image/") && !isTextContentType(contentType)
+    ? "image"
+    : isTextContentType(contentType)
+      ? "text"
+      : "file";
   return {
     data: {
       ok: true,
       path,
-      kind: "image",
+      kind,
       contentType,
       size,
       resource,
