@@ -291,7 +291,7 @@
 .zen-bottom { position: relative; }
 .zen-picker {
   position: absolute;
-  left: 56px;
+  left: 0;
   bottom: calc(100% - 12px);
   min-width: 320px;
   background: var(--panel);

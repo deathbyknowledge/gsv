@@ -1,16 +1,23 @@
-import { useRef } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 import type { JSX } from "preact";
 
+export type PromptPlace = {
+  id: string;
+  /** What the person calls it: the target's label, or "your cloud home". */
+  label: string;
+  online: boolean;
+};
+
 export type PromptLineProps = {
-  /** Who is typing: the signed-in principal's username. */
-  who: string;
-  /** Where the prompt points: a target id. Shown bold, in the target color. */
-  where: string;
-  /** The working directory on that target, already shortened for display. */
+  /** Where the prompt points. Shown as a chip; it is the target, not a shell prompt. */
+  place: PromptPlace;
+  /** The working directory a command runs in on that place, already shortened for display. */
   dir: string;
   placeholder: string;
   disabled?: boolean;
   onSubmit: (text: string) => void;
+  /** Called when the chip is pressed, to change the place. */
+  onPlace?: () => void;
   /** Called on ArrowUp / ArrowDown with the input empty, for history browsing. */
   onHistory?: (direction: -1 | 1) => void;
   autoFocus?: boolean;
@@ -22,9 +29,22 @@ export type PromptLineProps = {
   onKeyIntercept?: (event: KeyboardEvent, value: string) => boolean;
 };
 
-/** The TUI's prompt line: `who@where dir $` and one input. A sentence goes to the ship; `$` runs directly. */
-export function PromptLine({ who, where, dir, placeholder, disabled, onSubmit, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }: PromptLineProps) {
+/**
+ * One line: a place chip and an input. Plain words go to the ship. Text that
+ * starts with `$` runs on the place directly, and while it does the chip shows
+ * the working directory instead of the place, so the change itself is the
+ * feedback; the `$` the person typed is the sigil. An offline place says so in
+ * the chip and keeps taking words.
+ */
+export function PromptLine({ place, dir, placeholder, disabled, onSubmit, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }: PromptLineProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [command, setCommand] = useState(false);
+  const read = (): string => inputRef.current?.value ?? "";
+  const changed = (): void => {
+    const value = read();
+    setCommand(value.startsWith("$"));
+    onInput?.(value);
+  };
   const submit = (event: JSX.TargetedEvent<HTMLFormElement>) => {
     event.preventDefault();
     const input = inputRef.current;
@@ -32,7 +52,7 @@ export function PromptLine({ who, where, dir, placeholder, disabled, onSubmit, o
     const text = input.value.trim();
     if (!text) return;
     input.value = "";
-    onInput?.("");
+    changed();
     onSubmit(text);
   };
   const onKeyDown = (event: KeyboardEvent) => {
@@ -54,13 +74,20 @@ export function PromptLine({ who, where, dir, placeholder, disabled, onSubmit, o
       onHistory(1);
     }
   };
+  const chipTitle = command ? `runs on ${place.label} in ${dir}` : place.online ? `on ${place.label}; press to change` : `${place.label} is offline; press to change`;
   return (
-    <form class="prompt-line" onSubmit={submit} autocomplete="off">
-      <span class="who">{who}</span>
-      <span class="at">@</span>
-      <span class="where">{where}</span>
-      <span class="dir">{dir}</span>
-      <span class="sigil">$</span>
+    <form class={`prompt-line${command ? " is-command" : ""}${place.online ? "" : " is-offline"}`} onSubmit={submit} autocomplete="off">
+      <button type="button" class="chip" onClick={onPlace} title={chipTitle} aria-label={chipTitle} tabIndex={-1}>
+        {command ? (
+          <span class="dir">{dir}</span>
+        ) : (
+          <>
+            <span class={`dot${place.online ? " is-on" : ""}`} aria-hidden="true" />
+            <span class="label">{place.label}</span>
+            {place.online ? null : <span class="state">offline</span>}
+          </>
+        )}
+      </button>
       <input
         ref={inputRef}
         type="text"
@@ -69,7 +96,7 @@ export function PromptLine({ who, where, dir, placeholder, disabled, onSubmit, o
         spellcheck={false}
         disabled={disabled}
         onKeyDown={onKeyDown}
-        onInput={() => onInput?.(inputRef.current?.value ?? "")}
+        onInput={changed}
         onFocus={() => onFocusChange?.(true)}
         onBlur={() => onFocusChange?.(false)}
         autoFocus={autoFocus}

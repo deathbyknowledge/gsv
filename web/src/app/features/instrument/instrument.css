@@ -157,20 +157,39 @@
 .instrument-status .is-warn { color: var(--update); }
 .instrument-status .is-err { color: var(--error); }
 
-/* the prompt line: who @ where directory $ */
+/* the prompt line: a place chip and the input; typing $ turns the chip into the working directory */
 .prompt-line {
   display: flex;
   align-items: baseline;
+  gap: 12px;
   border-top: 1px solid var(--border);
   padding-top: 14px;
   font-size: 15px;
   line-height: 1.4;
 }
-.prompt-line .who { color: var(--principal); }
-.prompt-line .at { color: var(--target); }
-.prompt-line .where { color: var(--target); font-weight: 700; }
-.prompt-line .dir { color: var(--path); margin-left: 8px; }
-.prompt-line .sigil { color: var(--text-hi); font-weight: 700; margin: 0 10px 0 8px; }
+.prompt-line .chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--border-raised);
+  border-radius: 0;
+  background: transparent;
+  color: var(--principal);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.prompt-line .chip:hover { border-color: var(--accent); color: var(--text-hi); }
+.prompt-line .chip .dot { width: 6px; height: 6px; display: inline-block; background: var(--idle); align-self: center; }
+.prompt-line .chip .dot.is-on { background: var(--online); }
+.prompt-line .chip .state { color: var(--warn); }
+.prompt-line.is-offline .chip { color: var(--warn); border-color: var(--warn); }
+.prompt-line.is-command .chip { color: var(--path); text-transform: none; letter-spacing: 0.02em; font-size: 12px; }
+.prompt-line.is-command input { color: var(--path); }
 .prompt-line input {
   flex: 1;
   min-width: 120px;

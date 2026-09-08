@@ -358,8 +358,7 @@ export function FirstDay({ onZen }: FirstDayProps) {
           <span>{status || "you can ask me to do any of this from the prompt instead"}</span>
         </div>
         <PromptLine
-          who={username}
-          where="gsv"
+          place={{ id: "gsv", label: "your cloud home", online: true }}
           dir="~"
           placeholder="connect my laptop"
           onSubmit={submit}

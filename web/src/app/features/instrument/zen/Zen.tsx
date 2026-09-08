@@ -21,7 +21,7 @@ import { loadConsoleTargets } from "../../gsv-console/backend/consoleService";
 import { executeTerminalCommand } from "../../terminal/backend/terminalService";
 import type { FleetRow } from "../Instrument";
 import { renderMarkdownHtml, escapeHtml } from "../shared/markdown";
-import { PromptLine } from "../shared/PromptLine";
+import { PromptLine, type PromptPlace } from "../shared/PromptLine";
 import { Wordmark } from "../shared/Wordmark";
 import {
   activityDuration,
@@ -41,8 +41,7 @@ import {
   noteSummary,
   type Activity,
   type Moment,
-  type Place,
-} from "./zenModel";
+  type Place, CLOUD_PLACE_ID } from "./zenModel";
 import "./zen.css";
 
 export type ZenProps = {
@@ -85,11 +84,11 @@ function placesFromTargets(targets: Awaited<ReturnType<typeof loadConsoleTargets
   return targets.map((target) => ({ id: target.deviceId, label: target.label || target.deviceId, online: target.online }));
 }
 
-function railHtml(activity: Activity, who: string): string {
+function railHtml(activity: Activity): string {
   const where = escapeHtml(activity.target);
   return activity.calls
     .map((call) => {
-      const head = `<span class="cmd"><span class="who">${escapeHtml(who)}</span>@<span class="where">${where}</span> <span class="dir">~</span> $ ${call.syscall === "shell.exec" ? escapeHtml(call.summary) : `${escapeHtml(call.syscall)} ${escapeHtml(call.summary)}`}</span>`;
+      const head = `<span class="cmd"><span class="where">${where}</span> <span class="dir">~</span> $ ${call.syscall === "shell.exec" ? escapeHtml(call.summary) : `${escapeHtml(call.syscall)} ${escapeHtml(call.summary)}`}</span>`;
       const body = call.output ? `\n${escapeHtml(call.output)}` : call.finished ? "" : `\n<span class="meta">running…</span>`;
       const failed = call.failed ? `\n<span class="err">failed</span>` : "";
       return `${head}${body}${failed}`;
@@ -100,13 +99,11 @@ function railHtml(activity: Activity, who: string): string {
 function ActivityLine({
   activity,
   places,
-  who,
   open,
   onToggle,
 }: {
   activity: Activity;
   places: readonly Place[];
-  who: string;
   open: boolean;
   onToggle: () => void;
 }) {
@@ -147,7 +144,7 @@ function ActivityLine({
         {head}
       </div>
       <div class="detail">
-        <div class="machine-rail" dangerouslySetInnerHTML={{ __html: railHtml(activity, who) }} />
+        <div class="machine-rail" dangerouslySetInnerHTML={{ __html: railHtml(activity) }} />
       </div>
     </div>
   );
@@ -223,6 +220,21 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
     const input = promptRef.current?.querySelector("input");
     if (input) input.value = "";
   }, []);
+  /* the chip opens the same picker that typing "@" does */
+  const openPicker = useCallback(() => {
+    const input = promptRef.current?.querySelector("input");
+    if (!input) return;
+    input.value = "@";
+    input.focus();
+    setPickerQuery("");
+    setPickerIndex(0);
+  }, []);
+  const currentPlace = useMemo<PromptPlace>(() => {
+    const id = where ?? CLOUD_PLACE_ID;
+    if (id === CLOUD_PLACE_ID) return { id, label: "your cloud home", online: true };
+    const place = places.find((entry) => entry.id === id);
+    return { id, label: place?.label ?? id, online: place?.online ?? false };
+  }, [places, where]);
   const onPromptKey = useCallback(
     (event: KeyboardEvent): boolean => {
       if (pickerQuery === null || pickerPlaces.length === 0) return false;
@@ -744,7 +756,6 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
                       key={activity.key}
                       activity={activity}
                       places={places}
-                      who={who}
                       open={openActivities.has(activity.key)}
                       onToggle={() => toggleActivity(activity.key)}
                     />
@@ -839,10 +850,16 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
             onFocusChange={onPromptFocus}
             onInput={onPromptInput}
             onKeyIntercept={onPromptKey}
-            who={who}
-            where={where ?? "gsv"}
+            onPlace={openPicker}
+            place={currentPlace}
             dir="~"
-            placeholder={pendingHil ? "answer the approval first" : "ask, or start with $ to run a command"}
+            placeholder={
+              pendingHil
+                ? "answer the approval first"
+                : currentPlace.online
+                  ? "Ask in plain words, or start with $ to run a command yourself"
+                  : `Ask in plain words; ${currentPlace.label} will run it when it's back`
+            }
             disabled={!connected || !pid}
             onSubmit={onSubmit}
             onHistory={onHistory}
