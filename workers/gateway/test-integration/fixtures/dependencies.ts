@@ -651,6 +651,13 @@ export default class TestDependencies
     return [];
   }
 
+  gateway(id: string): WorkersAiGatewayFixture {
+    if (id !== "default") {
+      throw new Error(`Unsupported integration AI gateway: ${id}`);
+    }
+    return new WorkersAiGatewayFixture(this.env);
+  }
+
   private integrationState(): DurableObjectStub<IntegrationState> {
     const id = this.env.INTEGRATION_STATE.idFromName(SINGLETON_INSTALLATION_ID);
     return this.env.INTEGRATION_STATE.get(id);
