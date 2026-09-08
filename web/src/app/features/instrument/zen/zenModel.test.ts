@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ChatTranscriptRow } from "../../chat/domain/transcript";
 import {
   activitiesForRows,
+  answerAttribution,
   argumentThatMatters,
   defaultPlace,
   formatSeconds,
@@ -20,6 +21,8 @@ import {
   resolveTail,
   trimOutput,
   noteSummary,
+  type AnswerHistoryEntry,
+  type Moment,
 } from "./zenModel";
 
 const places = [
@@ -30,6 +33,103 @@ const places = [
 function row(partial: Partial<ChatTranscriptRow> & { id: string }): ChatTranscriptRow {
   return { text: "", time: "", timestamp: null, ...partial };
 }
+
+describe("answerAttribution", () => {
+  const answer: Pick<Moment, "role" | "text" | "runId" | "timestamp" | "streaming"> = {
+    role: "ship", text: "Done.", runId: "r1", timestamp: 200, streaming: false,
+  };
+  const generation = (timestamp: number, model: string, runId = "r1"): AnswerHistoryEntry => ({
+    runId, timestamp, metadata: { provider: { provider: "openai-codex", model } },
+  });
+  const fallback: AnswerHistoryEntry = {
+    runId: "r1", timestamp: 150,
+    metadata: {
+      provider: { provider: "deepseek", model: "deepseek-chat", responseModel: "deepseek-v3.2" },
+      fallback: {
+        used: true,
+        from: { provider: "openai-codex", model: "gpt-6-astra" },
+        to: { provider: "deepseek", model: "deepseek-chat" },
+        reason: "Upstream unavailable",
+      },
+    },
+  };
+
+  it("labels the actual response model and evidenced fallback instead of the requested Astra", () => {
+    expect(answerAttribution(answer, [generation(100, "gpt-6-astra"), fallback], 200)).toEqual({
+      model: "deepseek-v3.2", provider: "deepseek",
+      fallbacks: [{ from: "gpt-6-astra", to: "deepseek-chat", reason: "Upstream unavailable" }],
+      omittedFallbacks: 0,
+    });
+  });
+
+  it("prefers responseModel and uses the recorded request model only when absent", () => {
+    const request = generation(100, "gpt-6-astra");
+    expect(answerAttribution(answer, [request], 200)?.model).toBe("gpt-6-astra");
+    expect(answerAttribution(answer, [{ ...request, metadata: {
+      provider: { provider: "openai-codex", model: "gpt-6-astra", responseModel: "gpt-6-astra-2026-09" },
+    } }], 200)?.model).toBe("gpt-6-astra-2026-09");
+  });
+
+  it("keeps each reply in a mixed-model run tied to its own commit cutoff", () => {
+    const history = [fallback, generation(100, "gpt-6-astra")];
+    const early = answerAttribution({ ...answer, timestamp: 125 }, history, 200);
+    expect(early?.model).toBe("gpt-6-astra");
+    expect(early?.fallbacks).toEqual([]);
+    expect(answerAttribution(answer, history, 200)?.model).toBe("deepseek-v3.2");
+    expect(history[0]).toBe(fallback);
+  });
+
+  it("does not retag old replies after later generations or another run change model", () => {
+    expect(answerAttribution(answer, [
+      generation(100, "gpt-6-astra"),
+      generation(200, "gpt-5.6-sol", "r2"),
+      { ...fallback, timestamp: 300 },
+    ], 300)).toMatchObject({ model: "gpt-6-astra", fallbacks: [] });
+  });
+
+  it("does not borrow an older model when the latest generation lacks metadata", () => {
+    expect(answerAttribution(answer, [
+      generation(100, "gpt-6-astra"), { runId: "r1", timestamp: 150 },
+    ], 200)).toBeNull();
+    expect(answerAttribution(answer, [], 200)).toBeNull();
+  });
+
+  it("does not infer an answer model from fallback targets alone", () => {
+    expect(answerAttribution(answer, [{ ...fallback, metadata: { fallback: fallback.metadata?.fallback } }], 200))
+      .toMatchObject({ model: null, provider: null, fallbacks: [{ from: "gpt-6-astra", to: "deepseek-chat" }] });
+  });
+
+  it("requires a committed Ship reply with an attributable run and timestamp", () => {
+    for (const change of [
+      { role: "human" as const }, { role: "note" as const }, { text: " " },
+      { streaming: true }, { runId: null }, { timestamp: null },
+    ]) expect(answerAttribution({ ...answer, ...change }, [fallback], 200)).toBeNull();
+    expect(answerAttribution(answer, [{ ...fallback, timestamp: null }], 200)).toBeNull();
+  });
+
+  it("waits for a history snapshot covering the committed reply before using same-run metadata", () => {
+    const previous = generation(100, "gpt-6-astra");
+    expect(answerAttribution(answer, [previous], 125)).toBeNull();
+    expect(answerAttribution(answer, [previous, fallback], 200)?.model).toBe("deepseek-v3.2");
+  });
+
+  it("bounds fallback diagnostics and deduplicates repeated typed generation metadata", () => {
+    const history: AnswerHistoryEntry[] = Array.from({ length: 5 }, (_, index) => ({
+      runId: "r1", timestamp: 100 + index,
+      metadata: {
+        provider: { model: `model-${index + 1}` },
+        fallback: { used: true, from: { model: `model-${index}` }, to: { model: `model-${index + 1}` }, reason: "x".repeat(1_000_000) },
+      },
+    }));
+    history.push(history[4]);
+    const result = answerAttribution(answer, history, 200);
+    expect(result?.fallbacks.map(({ from, to }) => [from, to])).toEqual([
+      ["model-2", "model-3"], ["model-3", "model-4"], ["model-4", "model-5"],
+    ]);
+    expect(result?.omittedFallbacks).toBe(2);
+    expect(result?.fallbacks.every(({ reason }) => reason?.length === 240 && reason.endsWith("…"))).toBe(true);
+  });
+});
 
 describe("parsePromptInput", () => {
   it("sends a sentence to the ship", () => {
