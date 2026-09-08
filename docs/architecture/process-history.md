@@ -162,3 +162,4 @@ RPC failures leave watches eligible for later transitions, including one-shot
 watches that have not received a matching successful acknowledgment. The missed
 transition is not replayed. Authorization failures, a gone Process, and invalid
 acknowledgments still disable the watch.
+Stale events ignored at the Process reset boundary do not consume one-shot watches.

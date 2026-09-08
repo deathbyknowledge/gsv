@@ -179,6 +179,7 @@ describe("registered target event watches", () => {
     ["resetting", true], ["resetting", false],
     ["server-error", true], ["server-error", false],
     ["transport-error", true], ["transport-error", false],
+    ["ignored", true], ["ignored", false],
   ] as const)("retains a watch after %s with once=%s and handles the next connection transition", async (failure, once) => {
     const stub = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
     const entered = deferred();
@@ -187,6 +188,13 @@ describe("registered target event watches", () => {
     send.mockImplementationOnce(async (_installationId, _pid, frame) => {
       entered.resolve();
       await release.promise;
+      if (failure === "ignored") {
+        if (frame.type !== "req" || frame.call !== "proc.event.deliver") throw new Error("Unexpected fixture delivery");
+        return {
+          type: "res", id: frame.id, ok: true,
+          data: { eventId: frame.args.eventId, runId: null, queued: false, ignored: true },
+        };
+      }
       if (failure === "transport-error") throw new Error("Fixture RPC transport unavailable");
       return {
         type: "res", id: frame.id, ok: false,
@@ -241,7 +249,7 @@ describe("registered target event watches", () => {
     } finally { send.mockRestore(); }
   });
 
-  it.each(["acknowledged", "failed", "resetting"] as const)("preserves a replacement watch when the previous delivery is %s", async (outcome) => {
+  it.each(["acknowledged", "failed", "resetting", "ignored"] as const)("preserves a replacement watch when the previous delivery is %s", async (outcome) => {
     const stub = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
     const entered = deferred();
     const release = deferred();
@@ -250,13 +258,16 @@ describe("registered target event watches", () => {
       if (frame.type !== "req" || frame.call !== "proc.event.deliver") throw new Error("Unexpected fixture delivery");
       entered.resolve();
       await release.promise;
-      if (outcome !== "acknowledged") {
+      if (outcome === "failed" || outcome === "resetting") {
         return {
           type: "res", id: frame.id, ok: false,
           error: { code: outcome === "resetting" ? 409 : 410, message: "Fixture delivery rejected" },
         };
       }
-      return { type: "res", id: frame.id, ok: true, data: { eventId: frame.args.eventId, runId: null, queued: false } };
+      return {
+        type: "res", id: frame.id, ok: true,
+        data: { eventId: frame.args.eventId, runId: null, queued: false, ignored: outcome === "ignored" },
+      };
     });
     try {
       await runInDurableObject(stub, async (kernel: Kernel) => {

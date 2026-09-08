@@ -119,6 +119,16 @@ describe("registered Process events", () => {
       expect(process.isInitialized()).toBe(true);
       expect(process.store.messages.getRecords()).toEqual([]);
 
+      const stale = request(`event:stale-before-reset:${audience}`, audience);
+      stale.args.event.payload.observedAt = resetAt;
+      expect(await process.recvFrame(stale)).toMatchObject({
+        ok: true, data: { eventId: stale.args.eventId, ignored: true, runId: null, queued: false },
+      });
+      expect(process.store.messages.getRecords()).toEqual([]);
+      expect(process.store.state.getValue("eventNoticeReceipts")).toBeNull();
+      expect(process.controller.runtimeEventAdmission(stale.args.eventId)).toBeNull();
+      expect(schedule).not.toHaveBeenCalled();
+
       const delivered = await process.recvFrame(frame);
       expect(delivered).toMatchObject({
         ok: true, data: { eventId: frame.args.eventId, runId: audience === "person" ? null : frame.args.eventId, queued: false },

@@ -66,6 +66,7 @@ export async function deliverTargetConnectionEvent(
       if (!result.success || result.data.eventId !== eventId) {
         throw new Error("Target event acknowledgment did not match the delivery");
       }
+      if (result.data.ignored) continue;
       if (watch.once) kernel.signalWatches.deleteHandled(watch.watchId, watch.revision);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
