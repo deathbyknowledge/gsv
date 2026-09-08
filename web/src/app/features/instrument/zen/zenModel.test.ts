@@ -241,6 +241,17 @@ describe("outputText", () => {
     expect(outputText("fs.read", { ok: true, entries: [{ name: "Downloads", kind: "directory" }, { name: "a.txt", kind: "file" }] }, "")).toBe("Downloads/\na.txt");
     expect(outputText("fs.read", { content: "hello" }, "")).toBe("hello");
   });
+  it("displays structured filesystem errors without interpreting other result values", () => {
+    const error = { ok: false, error: "ENOENT: no such file or directory" };
+    for (const syscall of ["fs.read", "fs.write", "fs.edit", "fs.delete", "fs.search"]) {
+      expect(outputText(syscall, error, "fallback")).toBe(error.error);
+    }
+    const literal = JSON.stringify(error);
+    expect(outputText("fs.read", literal, "fallback")).toBe(literal);
+    expect(outputText("fs.read", { ok: true, error: "ordinary data" }, "fallback")).toBe("fallback");
+    expect(outputText("fs.read", { ok: false, error: 1 }, "fallback")).toBe("fallback");
+    expect(outputText("net.fetch", error, "fallback")).toBe("fallback");
+  });
 });
 
 describe("receipt", () => {

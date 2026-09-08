@@ -127,12 +127,17 @@ export function trimOutput(text: string): string {
 
 const shellResultSchema = z.object({ stdout: z.string().optional(), stderr: z.string().optional(), exitCode: z.number().nullable().optional() });
 const commandResultSchema = z.object({ status: z.string().optional(), output: z.string() });
+const fileOperationErrorSchema = z.object({ ok: z.literal(false), error: z.string() });
 const fileResultSchema = z.object({ content: z.string().optional(), entries: z.array(z.object({ name: z.string(), kind: z.string().optional() })).optional() });
 const searchResultSchema = z.object({ results: z.array(z.object({ path: z.string() })).optional(), matches: z.array(z.object({ path: z.string() })).optional() });
 
 /** The tool result as a person would read it: stdout and stderr for a command, content or names for files, never the transport JSON. */
 export function outputText(syscall: string, output: ChatTranscriptValue | undefined, fallback: string): string {
   if (output === undefined || output === null) return fallback;
+  if (syscall.startsWith("fs.")) {
+    const error = fileOperationErrorSchema.safeParse(output);
+    if (error.success) return error.data.error;
+  }
   if (syscall === "shell.exec" || syscall.startsWith("codemode.")) {
     const command = commandResultSchema.safeParse(output);
     if (command.success) return command.data.output;

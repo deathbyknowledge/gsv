@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { procHistoryRecordSchema, procHistoryArchivedRecordSchema } from "@humansandmachines/gsv/protocol";
 import { mergeTranscriptRows } from "./transcriptMerge";
 import { transcriptRowsFromRecords } from "./typedHistory";
-import { momentsFromConversation, activitiesForRows } from "../../instrument/zen/zenModel";
+import { momentsFromConversation, activitiesForRows, receiptPhrases } from "../../instrument/zen/zenModel";
 
 const identity = { id: 1, messageId: 1, index: 0, runId: "r", generation: 1, createdAt: 1, source: "typed" };
 describe("typed history projection", () => {
@@ -30,6 +30,55 @@ describe("typed history projection", () => {
     expect(rows.map((row) => [row.id, row.toolCallId, row.timestamp, row.time])).toEqual([
       ["message:1", undefined, null, ""], ["message:2", undefined, null, ""],
     ]);
+  });
+
+  it("keeps a failed Read receipt when its running row settles and history reloads", () => {
+    const path = "/this-file-defo-does-not-exist.txt";
+    const output = { ok: false, error: `ENOENT: no such file or directory, stat '${path}'` };
+    const call = procHistoryRecordSchema.parse({ ...identity, kind: "call", payload: {
+      runId: "r", callId: "read", tool: "Read", syscall: "fs.read", target: "gsv", args: { path },
+    } });
+    const result = procHistoryRecordSchema.parse({ ...identity, id: 2, messageId: 2, createdAt: 2, kind: "result", payload: {
+      callId: "read", tool: "Read", outcome: "failed", output, media: [], resources: [],
+    } });
+    const records = [call, result];
+    const running = transcriptRowsFromRecords([call]).map((row) => ({ ...row, status: "running" as const }));
+    const settled = mergeTranscriptRows(running, transcriptRowsFromRecords(records));
+    const reloaded = transcriptRowsFromRecords(records.map((record) => procHistoryRecordSchema.parse(JSON.parse(JSON.stringify(record)))));
+
+    for (const rows of [settled, reloaded]) {
+      expect(rows).toEqual([expect.objectContaining({
+        role: "toolResult", toolName: "Read", toolSyscall: "fs.read", toolTarget: "gsv",
+        toolOutcome: "failed", toolOutput: output, isError: true, status: "error",
+      })]);
+      const moments = momentsFromConversation([], rows, null);
+      expect(moments).toHaveLength(1);
+      expect(moments[0].activities[0].calls).toEqual([expect.objectContaining({ output: output.error, finished: true, failed: true })]);
+      expect(receiptPhrases(moments[0])).toEqual([{ verb: "read", what: path, count: 1, noun: "files", failed: true }]);
+    }
+  });
+
+  it("shows successful Read content verbatim even when it looks like a filesystem error", () => {
+    const path = "/example.json";
+    const content = '{"ok":false,"error":"ENOENT: quoted file content"}';
+    const output = { ok: true, path, content };
+    const records = [
+      procHistoryRecordSchema.parse({ ...identity, kind: "call", payload: {
+        runId: "r", callId: "read", tool: "Read", syscall: "fs.read", target: "gsv", args: { path },
+      } }),
+      procHistoryRecordSchema.parse({ ...identity, id: 2, messageId: 2, createdAt: 2, kind: "result", payload: {
+        callId: "read", tool: "Read", outcome: "completed", output, media: [], resources: [],
+      } }),
+    ];
+    const reloaded = records.map((record) => procHistoryRecordSchema.parse(JSON.parse(JSON.stringify(record))));
+    for (const source of [records, reloaded]) {
+      const rows = transcriptRowsFromRecords(source);
+      expect(rows).toEqual([expect.objectContaining({ toolOutcome: "completed", toolOutput: output, isError: false, status: "done" })]);
+      const moments = momentsFromConversation([], rows, null);
+      expect(moments).toHaveLength(1);
+      expect(moments[0].activities[0].calls).toEqual([expect.objectContaining({ output: content, finished: true, failed: false })]);
+      expect(receiptPhrases(moments[0])).toEqual([{ verb: "read", what: path, count: 1, noun: "files", failed: false }]);
+    }
   });
 
   it("keeps Send inspectable while Zen uses committed messages and folds only notes into working", () => {

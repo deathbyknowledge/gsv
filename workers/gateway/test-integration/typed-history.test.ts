@@ -110,6 +110,67 @@ describe("typed history authenticated wire integration", () => {
     }
   });
 
+  it("retains failed native and machine reads across typed history, compatibility views, signals, and reconnect", async () => {
+    const runtime = await startProcessRuntimeHarness();
+    let release: (() => void) | undefined;
+    try {
+      const path = "/tmp/typed-history-missing-read.txt";
+      const nativeResponse = await runtime.client.request("fs.read", { path, target: "gsv" });
+      const nativeError = nativeResponse.data;
+      expect(nativeResponse.body).toBeUndefined();
+      expect(nativeError).toEqual({ ok: false, error: expect.stringContaining("ENOENT") });
+      const machineError = { ok: false, error: "ENOENT: synthetic machine file does not exist" };
+      const targetId = "typed-history-failed-read-machine";
+      const machine = await runtime.connectMachine(targetId);
+      let machineReads = 0;
+      machine.onRequest((frame) => {
+        expect(frame.call).toBe("fs.read");
+        expect(frame.args).toMatchObject({ path });
+        machineReads += 1;
+        // The fs.read contract carries operation errors inside a successful response frame.
+        return { data: machineError };
+      });
+      const process = await runtime.spawn("failed read outcome journey");
+      await runtime.configureAi(process.pid);
+      runtime.ai.enqueue({ kind: "tool-calls", calls: [
+        { id: "missing-native", name: "Read", arguments: { path, target: "gsv" } },
+        { id: "missing-machine", name: "Read", arguments: { path, target: targetId } },
+      ] });
+      const held = runtime.ai.hold({ kind: "message", text: "Both reads failed." });
+      release = held.release;
+      const sent = await runtime.client.proc.send({ pid: process.pid, message: "Read the two missing fixture files." });
+      if (!sent.ok) throw new Error(sent.error);
+      await held.started;
+      const pending = await history(runtime, { pid: process.pid, tail: true });
+      for (const [callId, output] of [["missing-native", nativeError], ["missing-machine", machineError]] as const) {
+        expect(pending.records).toContainEqual(expect.objectContaining({ kind: "result", payload: expect.objectContaining({
+          callId, tool: "Read", outcome: "failed", output,
+        }) }));
+        expect(pending.messages).toContainEqual(expect.objectContaining({ role: "toolResult", content: expect.objectContaining({
+          toolCallId: callId, toolName: "Read", isError: true, outcome: "failed", output: JSON.stringify(output),
+        }) }));
+        expect(runtime.signals).toContainEqual(expect.objectContaining({ signal: "proc.run.tool.finished", payload: expect.objectContaining({
+          pid: process.pid, runId: sent.runId, callId, outcome: "failed",
+        }) }));
+        expect(runtime.ai.requests[1]?.messages).toContainEqual(expect.objectContaining({
+          role: "tool", tool_call_id: callId, content: JSON.stringify(output),
+        }));
+      }
+      expect(machineReads).toBe(1);
+      runtime.client.close();
+      await runtime.client.connect();
+      const reconnected = await history(runtime, { pid: process.pid, tail: true });
+      expect(reconnected.records).toEqual(pending.records);
+      expect(reconnected.messages).toEqual(pending.messages);
+      expect((await history(runtime, { pid: process.pid, since: cursor(pending) })).records).toEqual([]);
+      held.release();
+      await runtime.waitFor(async () => (await history(runtime, { pid: process.pid })).activeRunId === null, "failed read run to finish");
+    } finally {
+      release?.();
+      await runtime.close();
+    }
+  });
+
   it("delivers watched target lifecycle notices without starting a person-only model run", async () => {
     const runtime = await startProcessRuntimeHarness();
     try {

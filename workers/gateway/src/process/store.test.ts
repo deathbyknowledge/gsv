@@ -3,6 +3,7 @@ import { runInDurableObject } from "cloudflare:test";
 import type { Process } from "./do";
 import { getProcessByPid } from "../shared/utils";
 import { normalizeUsageState } from "./store";
+import { wrapStoredToolResult } from "./tool-result-media";
 
 it("includes cached tokens when reconstructing a missing usage total", () => {
   expect(
@@ -1184,6 +1185,44 @@ describe("ProcessStore", () => {
             outcome: "failed",
           },
         ]);
+      });
+    });
+
+    it.each(["fs.read", "fs.write", "fs.edit", "fs.delete", "fs.search"])(
+      "records a resolved %s operation error as failed without changing its output",
+      async (call) => {
+        const stub = await getProcessByPid(`tc-operation-error-${call}`);
+        await runInDurableObject(stub, (instance: Process) => {
+          const output = { ok: false, error: "ENOENT: fixture file does not exist" };
+          instance.store.tools.register("operation-error", "call", "run", call, {});
+          instance.store.tools.resolve("operation-error", output);
+          expect(instance.store.tools.getResults("run")).toMatchObject([
+            { status: "completed", outcome: "failed", result: output },
+          ]);
+        });
+      },
+    );
+
+    it("classifies stored operation envelopes without interpreting returned content as failures", async () => {
+      const stub = await getProcessByPid("tc-operation-error-boundaries");
+      await runInDurableObject(stub, (instance: Process) => {
+        const error = { ok: false, error: "fixture error" };
+        const cases = [
+          { call: "fs.read", output: wrapStoredToolResult(error, []), outcome: "failed" },
+          { call: "shell.exec", output: wrapStoredToolResult({ status: "failed", error: "fixture error" }, []), outcome: "failed" },
+          { call: "fs.read", output: { ok: true, content: JSON.stringify(error) }, outcome: "completed" },
+          { call: "shell.exec", output: { status: "completed", output: JSON.stringify(error), exitCode: 0 }, outcome: "completed" },
+          { call: "codemode.exec", output: { status: "completed", result: error }, outcome: "completed" },
+          { call: "codemode.exec", output: JSON.stringify(error), outcome: "completed" },
+        ];
+        for (const [index, fixture] of cases.entries()) {
+          const id = `boundary-${index}`;
+          instance.store.tools.register(id, id, id, fixture.call, {});
+          instance.store.tools.resolve(id, fixture.output);
+          expect(instance.store.tools.getResults(id)).toMatchObject([
+            { status: "completed", outcome: fixture.outcome, result: fixture.output },
+          ]);
+        }
       });
     });
 
