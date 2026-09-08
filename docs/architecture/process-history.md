@@ -36,6 +36,8 @@ origin annotations or consume model context.
 Model-facing events start with `[GSV EVENT]` before any origin annotations.
 Scheduled events name an explicit reply target once in their body. Without one,
 they retain ordinary run destination annotations and do not redirect an active run.
+Target connection text names only the target ID and the connection change;
+display name, platform, and version remain in the structured payload.
 
 Responsibility events retain their complete ledger transition and an optional
 `contextFields` projection. Process selects those fields when it appends the

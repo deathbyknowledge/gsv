@@ -64,8 +64,11 @@ describe("registered Process events", () => {
       expect(process.store.messages.getRecords()).toHaveLength(1);
       const messages = await process.history.buildContextMessages();
       expect(messages).toHaveLength(1);
-      expect(messages[0]?.content).toMatch(/^\[GSV EVENT\]\n/u);
-      expect(messages[0]?.content).toContain('Target "My laptop" disconnected.');
+      expect(messages[0]?.content).toBe([
+        "[GSV EVENT]",
+        "[Directed endpoint: this GSV process.]",
+        "Target `laptop` disconnected.",
+      ].join("\n"));
     });
   });
 

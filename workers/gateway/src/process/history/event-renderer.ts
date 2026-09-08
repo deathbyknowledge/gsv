@@ -23,6 +23,7 @@ import type { RunControlResult } from "../internal/contracts";
 import { formatProviderErrorMessage, formatProviderContextOverflowMessage } from "../../inference/errors";
 import { formatContextProjectionEvent } from "../../prompts/context-events";
 import { formatContextRunwayAlertMessage } from "../../prompts/context-runway";
+import { formatTargetConnectionEvent } from "../../prompts/target-events";
 import { formatScheduleEventMessage } from "../../prompts/schedule-events";
 export { formatScheduleEventMessage } from "../../prompts/schedule-events";
 import { formatResponsibilityTransitionEvent } from "../../prompts/responsibility-events";
@@ -48,12 +49,7 @@ export function renderHistoryEvent(event: ProcHistoryEvent): string {
     case "ipc.overdue":
     case "ipc.timeout": return formatIpcReplyMessage(event.kind, event.payload);
     case "adapter.work.returned": return formatProcessRuntimeEvent({ type: event.kind, ...event.payload });
-    case "target.connection": return [
-      `Target ${JSON.stringify(event.payload.label ?? event.payload.targetId)} ${event.payload.event}.`,
-      `Target: ${event.payload.targetId}`,
-      `Platform: ${event.payload.platform}`,
-      ...(event.payload.version ? [`Version: ${event.payload.version}`] : []),
-    ].join("\n");
+    case "target.connection": return formatTargetConnectionEvent(event.payload);
     case "history.compacted": return formatCompactionSummaryMessage(event.payload);
     case "runtime.wake": return RUNTIME_EVENT_WAKE_MESSAGE;
     case "runtime.failed": return event.payload.prefix === undefined
