@@ -179,6 +179,14 @@ describe("typed history authenticated wire integration", () => {
       await runtime.client.sys.target.update({ targetId, label: "Fixture computer" });
       const process = await runtime.spawn("target watch wire journey");
       await runtime.configureAi(process.pid);
+      for (const args of [
+        { signal: "proc.run.finished", processId: process.pid },
+        { signal: "target.status", targetId, processId: process.pid },
+      ]) {
+        await expect(runtime.client.request("signal.watch", args)).rejects.toMatchObject({
+          code: 400, message: "Invalid signal.watch arguments",
+        });
+      }
       const input = `signal watch --json '${JSON.stringify({ signal: "target.status", targetId, key: "wire-target", once: false })}'`;
       runtime.ai.enqueue(
         { kind: "tool-calls", calls: [{ id: "watch-target", name: "CodeMode", arguments: {
