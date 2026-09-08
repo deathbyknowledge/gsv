@@ -104,7 +104,8 @@ describe("OpenAI Codex routed fetch transport", () => {
       id: "fc_read", type: "function_call", call_id: "call_read", name: "Read",
       arguments: '{"path":"/root/example.txt"}', status: "completed",
     };
-    const fetchMock: typeof fetch = async (input, init) => {
+    const fetchMock: typeof fetch = async function (this: void, input, init) {
+      expect(this).toBeUndefined();
       expect(String(input)).toBe("https://chatgpt.com/backend-api/codex/responses");
       requests.push(JSON.parse(String(init?.body)));
       if (requests.length > 1) return sseResponse(codexTextEvents("File inspected.", modelName));

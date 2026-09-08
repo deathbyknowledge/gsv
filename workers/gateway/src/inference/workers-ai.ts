@@ -106,6 +106,13 @@ export const workersAiProvider: Provider<"openai-completions"> =
         ...model,
         provider: WORKERS_AI_PROVIDER,
         baseUrl: WORKERS_AI_GATEWAY_COMPAT_URL,
+        // The binding URL does not match pi-ai's HTTPS gateway detection.
+        compat: {
+          maxTokensField: "max_tokens",
+          supportsReasoningEffort: false,
+          supportsStrictMode: false,
+          ...model.compat,
+        },
       };
       return [workersAiModel];
     }),

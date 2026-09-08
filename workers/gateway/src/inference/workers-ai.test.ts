@@ -84,10 +84,12 @@ describe("Workers AI provider", () => {
     const context: Context = {
       systemPrompt: "Be concise.",
       messages: [{ role: "user", content: "Say hello", timestamp: 1 }],
+      tools: [{ name: "Read", description: "Read a file", parameters: { type: "object", properties: {} } }],
     };
     const result = await models.completeSimple(model, context, {
       fetch: workersAiBindingFetch,
       maxTokens: 64,
+      reasoning: "high",
       onPayload: prepareWorkersAiGatewayPayload,
       sessionId: "process_test",
     });
@@ -104,7 +106,8 @@ describe("Workers AI provider", () => {
     const [input, options] = bindingFetch.mock.calls[0]!;
     const request = new Request(input, options);
     expect(request.url).toBe("https://workers-binding.ai/ai-gateway/gateways/default/compat/chat/completions");
-    expect(await request.json()).toMatchObject({
+    const payload = await request.json();
+    expect(payload).toMatchObject({
       model: `workers-ai/${DEFAULT_WORKERS_AI_MODEL}`,
       max_tokens: 64,
       stream: true,
@@ -112,7 +115,11 @@ describe("Workers AI provider", () => {
         { role: "system", content: "Be concise." },
         { role: "user", content: "Say hello" },
       ],
+      tools: [{ type: "function", function: { name: "Read" } }],
     });
+    expect(payload).not.toHaveProperty("max_completion_tokens");
+    expect(payload).not.toHaveProperty("reasoning_effort");
+    expect(payload).not.toHaveProperty("tools.0.function.strict");
     expect(request.headers.get("cf-aig-collect-log")).toBe("false");
     expect(request.headers.get("cf-aig-authorization")).toBe("Bearer cloudflare-gateway-binding");
     expect(request.headers.has("authorization")).toBe(false);

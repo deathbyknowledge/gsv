@@ -98,7 +98,8 @@ export function streamWithOpenAiCodexFetch(
       if (request.options?.timeoutMs !== undefined) {
         requestInit.timeoutMs = request.options.timeoutMs;
       }
-      const response = await request.fetch(resolveCodexUrl(request.model.baseUrl), requestInit);
+      const fetchImpl = request.fetch;
+      const response = await fetchImpl(resolveCodexUrl(request.model.baseUrl), requestInit);
 
       await request.options?.onResponse?.(providerResponseFromFetchResponse(response), request.model);
 
@@ -403,4 +404,3 @@ function parseProviderErrorMessage(rawBody: string): string | null {
     return null;
   }
 }
-
