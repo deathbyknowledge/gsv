@@ -542,7 +542,7 @@ describe("model context", () => {
     }
   });
 
-  it("offers Send alone while correcting, then tells the person rather than going silent", async () => {
+  it("keeps the same tool set while correcting, so the cached prefix survives, then tells the person rather than going silent", async () => {
     const pid = "mech-terminal-action-required";
     const runId = "run-terminal-action-required";
     const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -572,12 +572,6 @@ describe("model context", () => {
           message.content.includes("Call the Send tool"),
         )?.content,
       ).toContain("[GSV EVENT]");
-      // the restriction survives a tick that loads its inputs and is interrupted before generating
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        const inputs = await process.run.loadRunTickInputs(runId, process.runs.active);
-        expect(inputs?.tools.map((tool: any) => tool.name)).toEqual(["Send"]);
-      }
-
       await process.run.runTick(runId);
       await process.run.runTick(runId);
       await process.run.runTick(runId);
@@ -593,8 +587,8 @@ describe("model context", () => {
     expect(
       result.messages.filter((message: any) => message.role === "system" && message.content.includes("Call the Send tool")),
     ).toHaveLength(3);
-    expect(result.offered[0]).toEqual(["Shell", "Send"]);
-    expect(result.offered.slice(1)).toEqual([["Send"], ["Send"], ["Send"]]);
+    // every generation, corrections included, saw the same tools: a changed tool list would invalidate the provider's prompt cache
+    expect(result.offered).toEqual([["Shell", "Send"], ["Shell", "Send"], ["Shell", "Send"], ["Shell", "Send"]]);
     expect(result.notices).toHaveLength(1);
     expect(result.notices[0][2]).toMatchObject({
       call: "proc.message.commit",

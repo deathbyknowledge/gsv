@@ -58,9 +58,9 @@ normal shell dispatch. They do not require `shell.exec` capability or approval, 
 be invoked indirectly through CodeMode. The model receives only the fixed Read, Write, Edit, Delete,
 Search, Shell, CodeMode, and Send surface. A successful send returns a tool result and schedules the
 next model turn unless it yielded. If a generation stops without yielding, the Process adds a
-`[GSV EVENT]` correction and offers `Send` alone on the next turn, up to three times. A further
-omission ends the run with an inspectable error instead of looping indefinitely, and the person
-receives a short notice that a reply was written but not sent. A malformed message or run-control command has its own
+`[GSV EVENT]` correction naming `Send`, up to three times, with the tool set unchanged so the cached
+prompt prefix survives. A further omission ends the run with an inspectable error instead of looping
+indefinitely, and the person receives a short notice that a reply was written but not sent. A malformed message or run-control command has its own
 five-attempt recovery budget. Delivery failures are tracked separately, so they cannot exhaust either
 omission or command correction. Each send has a stable action id, allowing several exactly-once
 Messages in one run and safe replay after an uncertain response.

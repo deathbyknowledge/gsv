@@ -114,7 +114,7 @@ export const SEND_TOOL_DESCRIPTION =
 
 /** Appended to history when a turn ended in text alone; the next turn offers Send and nothing else. */
 export const YIELD_CORRECTION_MESSAGE =
-  "Your last turn was plain assistant text, which is Process activity and was not sent to the user. Call the Send tool: text for the person, with yield true when the work is complete, or yield true alone if there is nothing to say. Only Send is offered on this turn.";
+  "Your last turn was plain assistant text, which is Process activity and was not sent to the user. Call the Send tool: text for the person, with yield true when the work is complete, or yield true alone if there is nothing to say.";
 
 /** What the person hears when the run could not be corrected into sending, rather than nothing. */
 export const CORRECTION_FAILURE_NOTICE = "I wrote a reply but did not send it. Ask me again.";

@@ -157,9 +157,10 @@ The model response can contain text, thinking blocks, and tool calls:
 - Once the Process validates a message command, the originating client receives
   `message.started` and `message.delta`. Adapters wait for `message.committed`.
 - Ordinary assistant text in a human-facing run that stops without yielding causes a `[GSV EVENT]`
-  correction, and the next turn offers `Send` and nothing else, so the only question left is what to
-  send. After three omissions the run ends with an inspectable bounded error, and the person receives a
-  short notice that a reply was written but not sent, rather than silence.
+  correction that names `Send`. The tool set is part of the cached prompt prefix and never changes
+  between turns, corrections included. After three omissions the run ends with an inspectable bounded
+  error, and the person receives a short notice that a reply was written but not sent, rather than
+  silence.
 - A rejected message or run-control command gets five correction attempts. Delivery failures use a
   separate three-attempt budget and tell the model to retry the exact same message command.
 - If there are tool calls, the process evaluates approval rules and dispatches
