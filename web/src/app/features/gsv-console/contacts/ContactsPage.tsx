@@ -23,6 +23,7 @@ import { ConsolePage, ConsolePageState } from "../components/ConsolePageTemplate
 import type { ContactSendIntent, ContactsWorkspaceMutation } from "./contactsService";
 import { useContactConversation, useContactsWorkspace } from "./useContactsWorkspace";
 import "./ContactsPage.css";
+import { randomId } from "../../../services/ids";
 
 export function ContactsPage() {
   const { connected, query, mutation } = useContactsWorkspace();
@@ -417,7 +418,7 @@ export function selectContactSendIntent(
   }
   return {
     contactId,
-    idempotencyKey: crypto.randomUUID(),
+    idempotencyKey: randomId(),
     text,
     media,
   };
@@ -426,7 +427,7 @@ export function selectContactSendIntent(
 function contactDraftAttachment(file: File): ContactDraftAttachment {
   const mimeType = file.type || "application/octet-stream";
   return {
-    id: crypto.randomUUID(),
+    id: randomId(),
     label: file.name || "attachment",
     meta: formatAttachmentSize(file.size),
     type: contactAttachmentType(file),

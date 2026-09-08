@@ -1,0 +1,355 @@
+/* Zen: the response is the page. */
+.zen {
+  display: grid;
+  grid-template-rows: 44px minmax(0, 1fr) auto;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.zen-body {
+  position: relative;
+  display: grid;
+  grid-template-columns: 56px 1fr 56px;
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
+}
+@media (max-width: 720px) {
+  .zen-body { grid-template-columns: 18px 1fr 18px; }
+}
+.zen-timeline {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 20px;
+}
+.zen-timeline i {
+  width: 5px;
+  height: 5px;
+  background: var(--faint);
+  display: block;
+}
+.zen-timeline i.is-here {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+.zen-timeline i.is-human {
+  background: var(--idle);
+}
+.zen-moments {
+  position: relative;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  padding: 5vh 0 6vh;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* short transcripts sit at the bottom; long ones scroll all the way up (end-aligned flex cannot) */
+.zen-moments > :first-child { margin-top: auto; }
+.zen-moments::-webkit-scrollbar { display: none; }
+.zen-moment {
+  max-width: min(var(--measure-response), 92%);
+  margin: 0 auto;
+  width: 100%;
+  padding: 2.2vh 0;
+}
+.zen-moment.is-older { opacity: 0.55; }
+.zen-moment > .who {
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+.zen-moment.is-human .text {
+  font-family: var(--gsv-font-prose);
+  font-weight: 500;
+  font-size: clamp(18px, 1.7vw, 24px);
+  line-height: 1.3;
+  color: var(--accent);
+}
+.zen-moment.is-ship .text {
+  font-family: var(--gsv-font-prose);
+  font-weight: 400;
+  font-size: clamp(20px, 2.3vw, 32px);
+  line-height: 1.28;
+  color: var(--text-hi);
+  text-wrap: pretty;
+}
+.zen-moment.is-ship.is-older .text {
+  font-size: clamp(17px, 1.6vw, 22px);
+}
+.zen-moment .text p { margin: 0 0 0.6em; }
+.zen-moment .text p:last-child { margin-bottom: 0; }
+.zen-moment .text code {
+  font-family: var(--gsv-font-mono);
+  font-size: 0.72em;
+  color: var(--label);
+  background: var(--panel-2);
+  padding: 0.05em 0.3em;
+}
+.zen-moment .text a.ref {
+  color: var(--target);
+  border-bottom: 1px solid rgba(151, 170, 255, 0.35);
+}
+.zen-caret {
+  display: inline-block;
+  width: 0.55em;
+  height: 1em;
+  background: var(--accent);
+  vertical-align: -0.15em;
+  margin-left: 2px;
+  box-shadow: 0 0 8px var(--accent);
+}
+
+/* activity along the target axis: collapsed by default, the raw run one click away */
+.activity {
+  margin: 12px 0 4px;
+  max-width: 900px;
+}
+.activity .line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  color: var(--label);
+  cursor: pointer;
+  padding: 4px 0;
+  letter-spacing: 0.02em;
+}
+.activity .line:hover { color: var(--text-hi); }
+.activity .tri {
+  color: var(--faint);
+  width: 1ch;
+  display: inline-block;
+}
+.activity.is-open .tri { color: var(--accent); }
+.activity .place { color: var(--target); }
+.activity.is-you .place { color: var(--principal); }
+.activity .n { color: var(--text-dim); }
+.activity .pulse {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: var(--live);
+  box-shadow: 0 0 8px var(--live);
+  vertical-align: middle;
+  margin-right: 6px;
+}
+
+
+/* the receipt under a ship's message: what it did, in words; the working opens beneath */
+.receipt {
+  margin-top: 10px;
+  max-width: var(--measure-prose);
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  border-left: 2px solid var(--border-raised);
+  padding-left: 12px;
+  letter-spacing: 0.02em;
+}
+.receipt .line { cursor: pointer; }
+.receipt .line:hover { color: var(--text-hi); }
+.receipt em { font-style: normal; color: var(--path); }
+.receipt .n { color: var(--faint); }
+.receipt .is-failed { color: var(--warn); }
+.receipt .now { color: var(--text); }
+.receipt .pulse {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: var(--live);
+  box-shadow: 0 0 8px var(--live);
+  vertical-align: middle;
+  margin-right: 8px;
+}
+.receipt .detail { margin-top: 8px; }
+.receipt .ph { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); margin: 10px 0 4px; }
+.receipt .place-rail:first-child .ph { margin-top: 0; }
+
+/* approvals: a boxed question with keys, as the TUI does it */
+.zen-approval {
+  margin: 16px 0 4px;
+  border: 1px solid var(--update);
+  padding: 12px 16px;
+  font-family: var(--gsv-font-mono);
+  font-size: 13px;
+  color: var(--text);
+  max-width: 720px;
+  box-shadow: 0 0 18px rgba(255, 210, 77, 0.12);
+}
+.zen-approval .q {
+  color: var(--update);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-size: 11px;
+  margin-bottom: 8px;
+}
+.zen-approval .keys {
+  margin-top: 10px;
+  color: var(--text-dim);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: baseline;
+}
+.zen-approval kbd {
+  color: var(--text-hi);
+  padding: 0 6px;
+}
+.zen-approval.is-decided {
+  border-color: var(--border);
+  color: var(--text-dim);
+  box-shadow: none;
+}
+.zen-approval.is-decided .q { color: var(--text-dim); }
+
+.zen-bottom {
+  padding: 0 56px 22px;
+}
+@media (max-width: 720px) {
+  .zen-bottom { padding: 0 18px 14px; }
+  .prompt-line { font-size: 15px; }
+  .prompt-line .dir { display: none; }
+}
+.zen-empty {
+  font-family: var(--gsv-font-prose);
+  font-size: clamp(20px, 2.3vw, 30px);
+  line-height: 1.28;
+  color: var(--text-hi);
+  max-width: min(var(--measure-response), 92%);
+  margin: auto;
+  text-wrap: pretty;
+}
+.zen-empty .place { color: var(--target); }
+
+/* materialising: a moment before its turn holds its room unseen; at its turn the labels and receipt flicker in and the text settles over a ghost of itself */
+.zen-moment.is-pending { visibility: hidden; }
+.zen-moment.is-materialising .who,
+.zen-moment.is-materialising .receipt,
+.zen-moment.is-materialising .note-line,
+.zen-moment.is-materialising .activity { animation: zen-materialise 360ms steps(6) both; }
+@keyframes zen-materialise { from { opacity: 0; } to { opacity: 1; } }
+.zen-moment .text.is-settling { position: relative; white-space: pre-wrap; }
+.zen-moment .text.is-settling .ghost { visibility: hidden; }
+.zen-moment .text.is-settling .live { position: absolute; inset: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .zen-moment.is-materialising .who,
+  .zen-moment.is-materialising .receipt,
+  .zen-moment.is-materialising .note-line,
+  .zen-moment.is-materialising .activity { animation: none; }
+}
+.zen-moment .text .noise {
+  color: var(--glyph);
+}
+.zen-moment .text p {
+  margin: 0 0 0.6em;
+}
+.zen-moment .text a {
+  color: var(--link);
+}
+.zen-moment .text a[href^="#place:"] {
+  color: var(--target);
+  border-bottom: 1px solid rgba(151, 170, 255, 0.35);
+}
+.zen-moment .text pre {
+  font-family: var(--gsv-font-mono);
+  font-size: 0.6em;
+  line-height: 1.5;
+  color: var(--label);
+  border-left: 2px solid var(--border);
+  padding-left: 14px;
+  overflow-x: auto;
+  white-space: pre;
+}
+.zen-moment .text ul,
+.zen-moment .text ol {
+  padding-left: 1.2em;
+}
+.zen-approval .keys .ibtn {
+  padding: 6px 12px;
+}
+.zen-approval .keys .ibtn kbd {
+  color: inherit;
+  border-color: currentColor;
+  margin-right: 6px;
+}
+
+/* a folded note: the ship's memory, one line unless opened */
+.zen-timeline i.is-note { background: transparent; border: 1px solid var(--faint); }
+.zen-moment.is-note { padding: 1.2vh 0; }
+.zen-moment.is-note .who { color: var(--faint); }
+.zen-moment.is-note .note-line {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  text-align: left;
+  font-family: var(--gsv-font-mono);
+  font-size: 13px;
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+  padding: 4px 0;
+}
+.zen-moment.is-note .note-line:hover { color: var(--label); }
+.zen-moment.is-note .tri { color: var(--faint); width: 1ch; }
+.zen-moment.is-note.is-open .tri { color: var(--accent); }
+.zen-moment.is-note .note-text {
+  margin-top: 8px;
+  max-width: var(--measure-prose);
+  font-family: var(--gsv-font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--label);
+  white-space: pre-wrap;
+  border-left: 2px solid var(--border);
+  padding-left: 14px;
+}
+
+/* browse mode: the TUI's block cursor rests on the focused moment; the prompt steps back */
+.zen-moment { position: relative; }
+.zen-moment.is-focus::before {
+  content: "";
+  position: absolute;
+  left: -22px;
+  top: 2.2vh;
+  width: 8px;
+  height: 1.1em;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+  animation: instrument-blink 1s steps(1) infinite;
+}
+.zen-moment.is-focus.is-older { opacity: 0.85; }
+.zen-timeline i.is-focus { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.zen.is-browse .prompt-line { opacity: 0.55; }
+@media (prefers-reduced-motion: reduce) { .zen-moment.is-focus::before { animation: none; } }
+
+/* the ship's own narration, folded: it is not a message */
+.activity.is-thoughts .line { color: var(--text-dim); }
+.machine-rail.narration { white-space: pre-wrap; font-size: 12px; color: var(--text-dim); max-width: var(--measure-prose); }
+
+/* the place picker floats above the prompt, as the TUI's environment picker does */
+.zen-bottom { position: relative; }
+.zen-picker {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% - 12px);
+  min-width: 320px;
+  background: var(--panel);
+  border: 1px solid var(--border-raised);
+  padding: 6px;
+  z-index: 4;
+  box-shadow: 0 14px 40px rgba(5, 3, 18, 0.55);
+}
+.instrument.is-light .zen-picker { box-shadow: 0 14px 40px rgba(20, 17, 43, 0.15); }
+.zen-picker .pick { display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left; padding: 6px 10px; font: inherit; color: var(--text); }
+.zen-picker .pick.is-sel, .zen-picker .pick:hover { background: var(--selected); }
+.zen-picker .pick .dot { width: 6px; height: 6px; display: inline-block; background: var(--idle); align-self: center; border-radius: 0; box-shadow: none; }
+.zen-picker .pick .dot.is-on { background: var(--online); }
+.zen-picker .pick .id { color: var(--text-dim); margin-left: auto; font-size: 11px; }
+.zen-picker .hint { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); padding: 6px 10px 2px; }

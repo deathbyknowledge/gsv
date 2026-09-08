@@ -62,4 +62,24 @@
   --danger:        #a8324a;  /* destructive fill              */
   --danger-hi:     #c4445f;  /* destructive border / hover    */
   --warn:          #e0a64c;  /* caution / modal amber         */
+
+  /* — instrument surfaces (Zen, first day, Fleet) — */
+  --glyph:         #8071dd;  /* phosphor glyphs: wordmark, ASCII art     */
+  --star:          #5d5798;  /* star field glyphs                         */
+  --faint:         #4e496f;  /* faintest chrome: timeline marks, hints    */
+  --principal:     #8ec9a4;  /* prompt line: who (matches the TUI)        */
+  --target:        #97aaff;  /* prompt line + activity: where             */
+  --path:          #bea4e8;  /* prompt line: directory                    */
+  --glow:          0 0 5px rgba(140, 120, 235, 0.55), 0 0 14px rgba(110, 95, 209, 0.28);
+  --glow-soft:     0 0 5px rgba(150, 140, 255, 0.3);
+  --glow-focus:    0 0 9px rgba(150, 140, 255, 0.4);
+
+  /* — scales (new; the old sheets use literal px, migrate as pages move) — */
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
+  --space-5: 22px; --space-6: 32px; --space-7: 48px; --space-8: 72px;
+  --radius: 0;               /* the identity is square; never round     */
+  --measure-prose: 68ch;     /* running text                             */
+  --measure-response: 1020px;/* Zen response column, as the Desktop      */
+  --dur-fast: 120ms; --dur-move: 150ms; --dur-settle: 600ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 }
