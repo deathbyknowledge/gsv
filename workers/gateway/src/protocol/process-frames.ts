@@ -4,6 +4,7 @@ import type {
   EventReplyTarget,
   ProcMediaInput,
   ProcSendResult,
+  ProcHistoryEvent,
   ResourceBlock,
   ResponseErrEnvelope,
   TypedRequest,
@@ -36,6 +37,20 @@ export type ProcessRuntimeEventDeliverResult = {
   eventId: string;
   runId: string;
   queued: boolean;
+};
+
+/** Kernel-derived registered events; this call is never available to public peers. */
+export type ProcessEventDeliverArgs = {
+  eventId: string;
+  event: Extract<ProcHistoryEvent, { kind: "target.connection" }>;
+};
+
+export type ProcessEventDeliverResult = {
+  eventId: string;
+  runId: string | null;
+  queued: boolean;
+  messageId?: number;
+  ignored?: boolean;
 };
 
 type ProcessScheduleDataValue =
@@ -118,6 +133,7 @@ export type ProcessMessageCommitArgs = {
  * carrier. They share the public frame envelope but have their own contract table.
  */
 export type InternalSyscallDomains = {
+  "proc.event.deliver": { args: ProcessEventDeliverArgs; result: ProcessEventDeliverResult };
   "proc.runtime.event.deliver": {
     args: ProcessRuntimeEventDeliverArgs;
     result: ProcessRuntimeEventDeliverResult;

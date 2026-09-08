@@ -8,10 +8,8 @@ import {
   resourceBlockSchema, type ProcMediaInput, type ResourceBlock, jsonValueSchema, type FileResourceReference,
   type JsonValue,
 } from "@humansandmachines/gsv/protocol";
-import {
-  processMediaPath, processMediaPrefix, storeIncomingProcessMedia, type StoreIncomingProcessMediaOptions,
-  buildImageBlock, describeStoredProcessMedia, parseStoredProcessMedia, type StoredProcessMedia,
-} from "../media";
+import { processMediaPath, processMediaPrefix, storeIncomingProcessMedia, type StoreIncomingProcessMediaOptions, parseStoredProcessMedia, type StoredProcessMedia } from "../media";
+import { buildImageBlock, describeStoredProcessMedia } from "../history/media-renderer";
 import {
   agentArchiveMediaPath, agentArchiveMediaPrefix, isValidAgentArchiveMediaObject,
 } from "../../shared/process-media-path";
@@ -28,6 +26,7 @@ import type {
   ProcessRunAttachResult,
 } from "../../protocol/process-frames";
 import type { MessageRecord } from "../store";
+import { storedHistoryMedia } from "../storage/history-media";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import {
   MAX_PROCESS_MEDIA_READ_BYTES, retainedResourceBlock, type ArchivedMediaRewrite, type ResourceRetentionOptions,
@@ -457,6 +456,16 @@ export class ProcessResources {
           const message = `Failed to schedule process run: ${error instanceof Error ? error.message : String(error)}`;
           await this.host.controller.appendRuntimeMessage(message, {
             runId,
+            event: {
+              kind: "runtime.failed",
+              payload: {
+                reason: "schedule.error",
+                error: error instanceof Error ? error.message : String(error),
+                prefix: "Failed to schedule process run",
+              },
+              severity: "error",
+              audience: "both",
+            },
           });
           await this.host.run.finishRun(runId, {
             reason: "schedule.error",
@@ -502,7 +511,18 @@ export class ProcessResources {
       if (run?.runId !== runId || run.pendingMediaMessageId !== messageId) {
         return null;
       }
-      this.host.store.messages.appendMessage("system", message, { runId });
+      this.host.store.messages.appendMessage("system", message, {
+        runId,
+        record: {
+          kind: "event",
+          payload: {
+            kind: "media.failed",
+            payload: { reason, messageId, error: message },
+            severity: "error",
+            audience: "both",
+          },
+        },
+      });
       return this.host.run.commitRunFinishState(run, {
         reason,
         status: "error",
@@ -1051,7 +1071,7 @@ export class ProcessResources {
     return [
       ...new Set(
         messages.flatMap((message) =>
-          parseStoredProcessMedia(message.media).flatMap((media) =>
+          storedHistoryMedia(message).flatMap((media) =>
             media.key?.startsWith(sourcePrefix) && processMediaPath(media.key) ? [media.key] : [],
           ),
         ),

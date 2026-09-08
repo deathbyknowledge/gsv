@@ -25,6 +25,7 @@ export type PromptAssemblyInput = {
 export type PromptSection = {
   name: string;
   text: string;
+  responsibilityBaseline?: boolean;
   contextRoot?: {
     key: "system" | "program" | "user";
     label: string;
@@ -38,6 +39,7 @@ export type PromptSourceRecord = {
   name: string;
   bytes: number;
   sha256: string;
+  responsibilityBaseline?: boolean;
   contextRoot?: PromptSection["contextRoot"];
 };
 

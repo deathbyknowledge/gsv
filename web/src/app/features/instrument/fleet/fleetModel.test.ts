@@ -13,7 +13,6 @@ import {
   relativeTime,
   rowKeys,
   runsTodayByPlace,
-  targetFromToolArgs,
   shortPid,
   humanCall,
   ledgerFromSysLines,
@@ -114,12 +113,6 @@ describe("processes", () => {
 });
 
 describe("ledger", () => {
-  it("reads the place from the target argument and falls back to the cloud", () => {
-    expect(targetFromToolArgs({ target: "laptop", input: "ls" })).toBe("laptop");
-    expect(targetFromToolArgs({ path: "~/notes" })).toBe(CLOUD_TARGET_ID);
-    expect(targetFromToolArgs(undefined)).toBe(CLOUD_TARGET_ID);
-  });
-
   it("describes a call by the argument a person recognizes", () => {
     expect(describeToolCall("shell.exec", { input: "ls -la", target: "laptop" })).toBe("ls -la");
     expect(describeToolCall("fs.read", { path: "~/Downloads" })).toBe("~/Downloads");

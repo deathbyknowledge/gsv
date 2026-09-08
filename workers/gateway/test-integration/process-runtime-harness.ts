@@ -1,10 +1,12 @@
 import { GSVClient } from "@humansandmachines/gsv";
 import { jsonObjectSchema } from "@humansandmachines/gsv/protocol";
 import type {
+  AiModelEntry,
   JsonObject,
   ProcSpawnResult,
 } from "@humansandmachines/gsv/protocol";
 import type { TestHarness } from "wrangler";
+import { DEFAULT_WORKERS_AI_MODEL } from "../src/inference/default-models";
 import { createGatewayTestHarness, webSocketUrl } from "./harness";
 import { startOpenAiFixture, type OpenAiFixture } from "./openai-fixture";
 
@@ -27,6 +29,7 @@ export type ProcessRuntimeHarness = {
   signals: RunSignal[];
   spawn(label: string): Promise<Extract<ProcSpawnResult, { ok: true }>>;
   configureAi(pid: string): Promise<void>;
+  connectMachine(peerId: string): Promise<GSVClient>;
   waitFor(
     predicate: () => boolean | Promise<boolean>,
     description: string,
@@ -35,14 +38,18 @@ export type ProcessRuntimeHarness = {
   close(): Promise<void>;
 };
 
-export async function startProcessRuntimeHarness(): Promise<ProcessRuntimeHarness> {
+export async function startProcessRuntimeHarness(options: {
+  workersAi?: boolean;
+} = {}): Promise<ProcessRuntimeHarness> {
   const ai = await startOpenAiFixture();
   let harness: TestHarness | undefined;
   let client: GSVClient | undefined;
+  let gatewayUrl: string;
 
   try {
-    harness = createGatewayTestHarness();
+    harness = createGatewayTestHarness(options);
     const { url } = await harness.listen();
+    gatewayUrl = webSocketUrl(url);
     const setupClient = new GSVClient();
     await setupClient.requestOnce(webSocketUrl(url), "sys.setup", {
       username: USERNAME,
@@ -79,6 +86,7 @@ export async function startProcessRuntimeHarness(): Promise<ProcessRuntimeHarnes
   const connectedClient = client;
   const signals: RunSignal[] = [];
   const spawnedPids = new Set<string>();
+  const machineClients = new Set<GSVClient>();
   const stopSignals = connectedClient.onSignal((signal, payload) => {
     const parsed = jsonObjectSchema.safeParse(payload);
     if (parsed.success) {
@@ -100,20 +108,40 @@ export async function startProcessRuntimeHarness(): Promise<ProcessRuntimeHarnes
       spawnedPids.add(spawned.pid);
       return spawned;
     },
+    connectMachine: async (peerId) => {
+      const issued = await connectedClient.sys.token.create({ kind: "machine", peerId, label: "Integration machine" });
+      const machine = new GSVClient({
+        url: gatewayUrl, username: USERNAME, token: issued.token.token,
+        peer: { id: peerId, version: "fixture-machine", platform: "linux", implements: ["fs.read"] },
+      });
+      machineClients.add(machine);
+      await machine.connect();
+      return machine;
+    },
     configureAi: async (pid) => {
+      const models: AiModelEntry[] = [{
+        id: MODEL_ID,
+        name: "Integration model",
+        provider: "custom",
+        model: MODEL_ID,
+        baseUrl: ai.baseUrl,
+        providerStyle: "openai-chat-completions",
+        transportTarget: "gsv",
+      }];
+      // Any automatic Ship wake uses the local binding fixture, independently of this process's scripted model.
+      if (options.workersAi !== false) {
+        models.unshift({
+          id: "background-fixture",
+          name: "Background fixture",
+          provider: "workers-ai",
+          model: DEFAULT_WORKERS_AI_MODEL,
+        });
+      }
       await connectedClient.sys.config.set({
         key: `users/${USER_UID}/ai/models`,
         value: JSON.stringify({
           version: 1,
-          models: [{
-            id: MODEL_ID,
-            name: "Integration model",
-            provider: "custom",
-            model: MODEL_ID,
-            baseUrl: ai.baseUrl,
-            providerStyle: "openai-chat-completions",
-            transportTarget: "gsv",
-          }],
+          models,
         }),
       });
       await connectedClient.sys.config.set({
@@ -133,6 +161,7 @@ export async function startProcessRuntimeHarness(): Promise<ProcessRuntimeHarnes
       for (const pid of [...spawnedPids].reverse()) {
         await connectedClient.proc.kill({ pid, archive: false }).catch(() => {});
       }
+      for (const machine of machineClients) machine.close();
       connectedClient.close();
       await Promise.all([ai.close(), connectedHarness.close()]);
     },

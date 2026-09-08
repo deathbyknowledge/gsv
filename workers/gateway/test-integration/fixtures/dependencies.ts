@@ -423,6 +423,21 @@ export default class TestDependencies
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
+    if (
+      url.hostname === "workers-binding.ai"
+      && url.pathname === "/ai-gateway/gateways/default/compat/chat/completions"
+      && request.method === "POST"
+    ) {
+      const headers = new Headers(request.headers);
+      headers.delete("cf-aig-authorization");
+      return new WorkersAiGatewayFixture(this.env).run({
+        provider: "compat",
+        endpoint: "chat/completions",
+        headers: Object.fromEntries(headers),
+        query: await request.json(),
+      }, { signal: request.signal });
+    }
+
     const gateway = url.pathname === "/__test/service-frame/telegram"
       ? this.env.TELEGRAM_GATEWAY
       : url.pathname === "/__test/service-frame/discord"

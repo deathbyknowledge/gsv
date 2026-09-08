@@ -1,4 +1,5 @@
 import type { ProcessRuntimeEventDeliverArgs } from "../protocol/process-frames";
+import type { ProcHistoryRecordData } from "@humansandmachines/gsv/protocol";
 import { evictDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -271,7 +272,9 @@ describe("model context", () => {
           .getMessages()
           .filter(
             (message: any) =>
-              message.role === "system" && message.content.includes("ledger revision 2"),
+              message.records?.some((record: ProcHistoryRecordData) => record.kind === "event"
+                && record.payload.kind === "responsibility.revision"
+                && record.payload.payload.transition.revision === 2),
           ),
         calls: process.kernel.kernelRpc.mock.calls,
       };

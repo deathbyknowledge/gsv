@@ -1,3 +1,4 @@
+import type { ProcHistoryRecordData } from "@humansandmachines/gsv/protocol";
 import type { ProcessStore } from "../store";
 import type { HistorySegmentKind, ProcessHistorySegmentRecord } from "../history";
 import { normalizeCompactionCut, type MessageRecord } from "./store-codecs";
@@ -64,15 +65,17 @@ export class ProcessHistoryRepository {
     fromMessageId: number;
     toMessageId: number;
     summary: string;
+    record?: ProcHistoryRecordData;
   }): number {
     const summaryMessageId = opts.fromMessageId;
     const now = Date.now();
+    const revision = this.store.state.invalidateHistoryCursors();
 
     this.store.sql.exec(
       `DELETE FROM messages
         WHERE generation = ?
-          AND id >= ?
-          AND id <= ?`,
+          AND COALESCE(group_message_id, id) >= ?
+          AND COALESCE(group_message_id, id) <= ?`,
       opts.generation,
       opts.fromMessageId,
       opts.toMessageId,
@@ -80,12 +83,15 @@ export class ProcessHistoryRepository {
     this.store.sql.exec(
       `INSERT INTO messages (
         id, generation, role, content, tool_calls, tool_call_id,
-        media_json, origin_json, metadata_json, created_at
-      ) VALUES (?, ?, 'system', ?, NULL, NULL, NULL, NULL, NULL, ?)`,
+        media_json, origin_json, metadata_json, created_at, kind, payload_json, history_revision
+      ) VALUES (?, ?, 'system', ?, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?)`,
       summaryMessageId,
       opts.generation,
       opts.summary,
       now,
+      opts.record?.kind ?? null,
+      opts.record ? JSON.stringify(opts.record.payload) : null,
+      revision,
     );
 
     return summaryMessageId;

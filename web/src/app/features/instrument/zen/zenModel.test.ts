@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import type { ProcHistoryRecord } from "@humansandmachines/gsv/protocol";
 import type { ChatTranscriptRow } from "../../chat/domain/transcript";
 import {
   activitiesForRows,
   answerAttribution,
+  answerHistorySnapshot,
   argumentThatMatters,
   defaultPlace,
   formatSeconds,
@@ -131,6 +133,36 @@ describe("answerAttribution", () => {
   });
 });
 
+describe("answerHistorySnapshot", () => {
+  it("withholds stale model metadata while a newer assistant group is on the next delta page", () => {
+    const answer: Pick<Moment, "role" | "text" | "runId" | "timestamp" | "streaming"> = {
+      role: "ship", text: "Done.", runId: "r1", timestamp: 200, streaming: false,
+    };
+    const previous: ProcHistoryRecord = {
+      id: 1, messageId: 1, index: 0, generation: 1, runId: "r1", createdAt: 100, source: "typed",
+      kind: "note", payload: { text: "Working", thinking: [] }, metadata: { provider: { model: "gpt-6-astra" } },
+    };
+    const result: ProcHistoryRecord = {
+      id: 3, messageId: 3, index: 0, generation: 1, runId: "r1", createdAt: 210, source: "typed",
+      kind: "result", payload: { callId: "send", tool: "Send", outcome: "completed", output: "sent", media: [], resources: [] },
+    };
+    const partial = answerHistorySnapshot({ pid: "p1", records: [previous, result], hasMore: true }, "p1");
+    expect(answerAttribution(answer, partial.entries, partial.through)).toBeNull();
+
+    const current: ProcHistoryRecord = {
+      ...previous, id: 2, messageId: 2, createdAt: 150,
+      metadata: { provider: { provider: "deepseek", model: "deepseek-chat", responseModel: "deepseek-v3.2" } },
+    };
+    const history = { pid: "p1", records: [previous, current, result], hasMore: false };
+    const complete = answerHistorySnapshot(history, "p1");
+    expect(complete.entries).toHaveLength(2);
+    expect(complete.through).toBe(210);
+    expect(answerAttribution(answer, complete.entries, complete.through)?.model).toBe("deepseek-v3.2");
+    expect(answerHistorySnapshot(history, "another-process").entries).toEqual([]);
+    expect(answerHistorySnapshot(undefined, "p1").entries).toEqual([]);
+  });
+});
+
 describe("parsePromptInput", () => {
   it("sends a sentence to the ship", () => {
     expect(parsePromptInput("  what's in my downloads? ")).toEqual({ kind: "say", text: "what's in my downloads?" });
@@ -179,9 +211,9 @@ describe("argumentThatMatters", () => {
 describe("activitiesForRows", () => {
   it("groups calls by place in first-touch order and merges results into calls", () => {
     const rows = [
-      row({ id: "tool:1", role: "tool", toolCallId: "1", toolSyscall: "shell.exec", toolArgs: { target: "laptop", input: "ls" }, status: "planning", timestamp: 100 }),
-      row({ id: "tool:2", role: "toolResult", toolCallId: "2", toolSyscall: "fs.read", toolArgs: { path: "~/a" }, text: "hello", status: "done", timestamp: 150 }),
-      row({ id: "tool:1", role: "toolResult", toolCallId: "1", toolSyscall: "shell.exec", toolArgs: { target: "laptop", input: "ls" }, text: "a b c", status: "done", timestamp: 200 }),
+      row({ id: "tool:1", role: "tool", toolCallId: "1", toolSyscall: "shell.exec", toolTarget: "laptop", toolArgs: { target: "laptop", input: "ls" }, status: "planning", timestamp: 100 }),
+      row({ id: "tool:2", role: "toolResult", toolCallId: "2", toolSyscall: "fs.read", toolTarget: "gsv", toolArgs: { path: "~/a" }, text: "hello", status: "done", timestamp: 150 }),
+      row({ id: "tool:1", role: "toolResult", toolCallId: "1", toolSyscall: "shell.exec", toolTarget: "laptop", toolArgs: { target: "laptop", input: "ls" }, text: "a b c", status: "done", timestamp: 200 }),
     ];
     const activities = activitiesForRows(rows, "run", false);
     expect(activities.map((activity) => activity.target)).toEqual(["laptop", "gsv"]);
@@ -192,14 +224,14 @@ describe("activitiesForRows", () => {
   });
   it("marks the last activity live while its latest call is unfinished in the active run", () => {
     const rows = [
-      row({ id: "tool:1", role: "tool", toolCallId: "1", toolSyscall: "shell.exec", toolArgs: { target: "laptop", input: "sleep 5" }, status: "running" }),
+      row({ id: "tool:1", role: "tool", toolCallId: "1", toolSyscall: "shell.exec", toolTarget: "laptop", toolArgs: { target: "laptop", input: "sleep 5" }, status: "running" }),
     ];
     expect(activitiesForRows(rows, "run", true)[0].live).toBe(true);
     expect(activitiesForRows(rows, "run", false)[0].live).toBe(false);
   });
   it("flags failed and denied calls", () => {
     const rows = [
-      row({ id: "tool:1", role: "toolResult", toolCallId: "1", toolSyscall: "shell.exec", toolArgs: { target: "laptop", input: "rm x" }, toolOutcome: "denied", status: "done" }),
+      row({ id: "tool:1", role: "toolResult", toolCallId: "1", toolSyscall: "shell.exec", toolTarget: "laptop", toolArgs: { target: "laptop", input: "rm x" }, toolOutcome: "denied", status: "done" }),
     ];
     expect(activitiesForRows(rows, "run", false)[0].calls[0].failed).toBe(true);
   });
@@ -209,7 +241,7 @@ describe("momentsFromRows", () => {
   it("folds a run into a human moment and one ship moment carrying its activities", () => {
     const rows = [
       row({ id: "u1", role: "user", text: "look around", runId: "r1", timestamp: 1 }),
-      row({ id: "tool:1", role: "toolResult", toolCallId: "1", toolSyscall: "shell.exec", toolArgs: { target: "laptop", input: "ls" }, text: "x", runId: "r1", status: "done", timestamp: 2 }),
+      row({ id: "tool:1", role: "toolResult", toolCallId: "1", toolSyscall: "shell.exec", toolTarget: "laptop", toolArgs: { target: "laptop", input: "ls" }, text: "x", runId: "r1", status: "done", timestamp: 2 }),
       row({ id: "a1", role: "assistant", text: "Fourteen files.", runId: "r1", status: "done", timestamp: 3 }),
     ];
     const moments = momentsFromRows(rows, null);
@@ -222,7 +254,7 @@ describe("momentsFromRows", () => {
   it("shows a thinking ship moment while the active run has tools but no text", () => {
     const rows = [
       row({ id: "u1", role: "user", text: "go", runId: "r2" }),
-      row({ id: "tool:9", role: "tool", toolCallId: "9", toolSyscall: "fs.read", toolArgs: { path: "~/x" }, runId: "r2", status: "running" }),
+      row({ id: "tool:9", role: "tool", toolCallId: "9", toolSyscall: "fs.read", toolTarget: "gsv", toolArgs: { path: "~/x" }, runId: "r2", status: "running" }),
     ];
     const moments = momentsFromRows(rows, "r2");
     expect(moments[1].thinking).toBe(true);
@@ -308,7 +340,7 @@ describe("momentsFromConversation", () => {
     expect(moments[1].narration).toBe("I should look first, then remove.");
   });
   it("shows a working moment for an active run that has not sent anything yet", () => {
-    const transcript = [message({ id: "t1", role: "tool", toolSyscall: "fs.read", toolArgs: { path: "~/a" }, timestamp: 2_000, runId: "r2", status: "running" })];
+    const transcript = [message({ id: "t1", role: "tool", toolSyscall: "fs.read", toolTarget: "gsv", toolArgs: { path: "~/a" }, timestamp: 2_000, runId: "r2", status: "running" })];
     const moments = momentsFromConversation([], transcript, "r2");
     expect(moments).toHaveLength(1);
     expect(moments[0]).toMatchObject({ role: "ship", text: "", thinking: true, runId: "r2" });
@@ -316,11 +348,12 @@ describe("momentsFromConversation", () => {
 });
 
 describe("isMessageSend", () => {
-  it("recognizes the message command and nothing else", () => {
-    const row = (input: string): ChatTranscriptRow => ({ id: "x", role: "tool", text: "", time: "", timestamp: 1, toolSyscall: "shell.exec", toolArgs: { input } });
-    expect(isMessageSend(row("message ana <<GSV_MESSAGE\nhi\nGSV_MESSAGE"))).toBe(true);
-    expect(isMessageSend(row("gsv message esteve hello"))).toBe(true);
-    expect(isMessageSend(row("ls ~/messages"))).toBe(false);
+  it("recognizes the exact run-control tool without guessing from shell prose", () => {
+    expect(isMessageSend(row({ id: "send", toolName: "Send", toolSyscall: null }))).toBe(true);
+    expect(isMessageSend(row({ id: "shell", toolName: "Shell", toolSyscall: "shell.exec", toolArgs: { input: "message ana hi" } }))).toBe(false);
+    expect(isMessageSend(row({ id: "classified-shell", toolName: "Shell", toolSyscall: null, toolRunControl: true }))).toBe(true);
+    expect(isMessageSend(row({ id: "stream-shell", toolName: "Shell", toolSyscall: null }))).toBe(false);
+    expect(isMessageSend(row({ id: "other", toolName: "Send", toolSyscall: "adapter.send" }))).toBe(false);
   });
 });
 
@@ -331,14 +364,25 @@ describe("outputText", () => {
     expect(outputText("shell.exec", { stdout: "", stderr: "", exitCode: 0 }, "")).toBe("");
     expect(outputText("shell.exec", { status: "completed", output: "total 21\ndrwxr-xr-x .gsv" }, "{json}")).toBe("total 21\ndrwxr-xr-x .gsv");
   });
-  it("reads a result that arrived as a json string in the row's text", () => {
-    const row: ChatTranscriptRow = { id: "t", role: "toolResult", text: JSON.stringify({ status: "completed", output: "hello\nworld" }), time: "", timestamp: 1, toolSyscall: "shell.exec", toolArgs: { input: "echo" } };
+  it("renders typed output independently of JSON-looking row text", () => {
+    const row: ChatTranscriptRow = { id: "t", role: "toolResult", text: "{\"output\":\"misleading prose\"}", toolOutput: { status: "completed", output: "hello\nworld" }, time: "", timestamp: 1, toolSyscall: "shell.exec", toolArgs: { input: "echo" } };
     const activity = activitiesForRows([row], "r", false)[0];
     expect(activity.calls[0].output).toBe("hello\nworld");
   });
   it("lists a directory and shows a file", () => {
     expect(outputText("fs.read", { ok: true, entries: [{ name: "Downloads", kind: "directory" }, { name: "a.txt", kind: "file" }] }, "")).toBe("Downloads/\na.txt");
     expect(outputText("fs.read", { content: "hello" }, "")).toBe("hello");
+  });
+  it("displays structured filesystem errors without interpreting other result values", () => {
+    const error = { ok: false, error: "ENOENT: no such file or directory" };
+    for (const syscall of ["fs.read", "fs.write", "fs.edit", "fs.delete", "fs.search"]) {
+      expect(outputText(syscall, error, "fallback")).toBe(error.error);
+    }
+    const literal = JSON.stringify(error);
+    expect(outputText("fs.read", literal, "fallback")).toBe(literal);
+    expect(outputText("fs.read", { ok: true, error: "ordinary data" }, "fallback")).toBe("fallback");
+    expect(outputText("fs.read", { ok: false, error: 1 }, "fallback")).toBe("fallback");
+    expect(outputText("net.fetch", error, "fallback")).toBe("fallback");
   });
 });
 
@@ -356,9 +400,9 @@ describe("receipt", () => {
   });
   it("names each finished call by verb and place-qualified argument, in order", () => {
     const rows = [
-      row({ id: "t1", role: "toolResult", toolCallId: "1", toolSyscall: "fs.search", toolArgs: { path: "~/mail", q: "statement" }, status: "done", timestamp: 100 }),
-      row({ id: "t2", role: "toolResult", toolCallId: "2", toolSyscall: "fs.read", toolArgs: { target: "laptop", path: "~/Downloads/Q2.pdf" }, status: "done", timestamp: 150 }),
-      row({ id: "t3", role: "toolResult", toolCallId: "3", toolSyscall: "shell.exec", toolArgs: { target: "laptop", input: "cp ~/Downloads/Q2.pdf ~/Documents/Taxes/" }, toolOutcome: "denied", status: "done", timestamp: 300 }),
+      row({ id: "t1", role: "toolResult", toolCallId: "1", toolSyscall: "fs.search", toolTarget: "gsv", toolArgs: { path: "~/mail", q: "statement" }, status: "done", timestamp: 100 }),
+      row({ id: "t2", role: "toolResult", toolCallId: "2", toolSyscall: "fs.read", toolTarget: "laptop", toolArgs: { target: "laptop", path: "~/Downloads/Q2.pdf" }, status: "done", timestamp: 150 }),
+      row({ id: "t3", role: "toolResult", toolCallId: "3", toolSyscall: "shell.exec", toolTarget: "laptop", toolArgs: { target: "laptop", input: "cp ~/Downloads/Q2.pdf ~/Documents/Taxes/" }, toolOutcome: "denied", status: "done", timestamp: 300 }),
     ];
     // places come in first-touch order, and each place's calls in theirs
     expect(receiptPhrases(moment(rows)).map((phrase) => [phrase.verb, phrase.what, phrase.failed])).toEqual([
@@ -370,12 +414,12 @@ describe("receipt", () => {
     expect(receiptDuration(moment(rows))).toBe(formatSeconds(200));
   });
   it("folds three or more alike calls into a count and keeps two apart", () => {
-    const read = (id: string, path: string) => row({ id, role: "toolResult", toolCallId: id, toolSyscall: "fs.read", toolArgs: { path }, status: "done", timestamp: 1 });
+    const read = (id: string, path: string) => row({ id, role: "toolResult", toolCallId: id, toolSyscall: "fs.read", toolTarget: "gsv", toolArgs: { path }, status: "done", timestamp: 1 });
     expect(receiptPhrases(moment([read("1", "a"), read("2", "b"), read("3", "c")]))).toEqual([{ verb: "read", what: null, count: 3, noun: "files", failed: false }]);
     expect(receiptPhrases(moment([read("1", "a"), read("2", "b")])).map((phrase) => phrase.what)).toEqual(["a", "b"]);
   });
   it("says what is still running in the present tense", () => {
-    const rows = [row({ id: "t1", role: "tool", toolCallId: "1", toolSyscall: "fs.read", toolArgs: { target: "laptop", path: "~/x" }, status: "running" })];
+    const rows = [row({ id: "t1", role: "tool", toolCallId: "1", toolSyscall: "fs.read", toolTarget: "laptop", toolArgs: { target: "laptop", path: "~/x" }, status: "running" })];
     expect(receiptRunning(moment(rows, true))).toMatchObject({ verb: "reading", what: "laptop:~/x" });
     expect(receiptRunning(moment([]))).toBeNull();
   });

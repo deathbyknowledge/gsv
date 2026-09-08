@@ -1297,6 +1297,9 @@ describe("Kernel user signal broadcasts", () => {
         changes: ["messages"],
         content: "private model activity",
         messageId: 42,
+        historyRevision: 12,
+        historyGeneration: 2,
+        historyResetRevision: 8,
         queuedCount: 1,
         timestamp: 123,
       },
@@ -1316,6 +1319,9 @@ describe("Kernel user signal broadcasts", () => {
         changes: ["messages"],
         queuedCount: 1,
         timestamp: 123,
+        historyRevision: 12,
+        historyGeneration: 2,
+        historyResetRevision: 8,
       },
     });
   });
@@ -1556,7 +1562,6 @@ describe("Kernel process signal routing", () => {
       surfaceRoutes: { clearLegacyForProcess: vi.fn() },
       privateDestinations: { get: vi.fn(() => null), clearIfMatches: vi.fn() },
     };
-    kernel.processOutput.dispatchSignalWatches = vi.fn(async () => {});
     kernel.runRoutes = {
       get: vi.fn(() => route),
       delete: vi.fn(),
@@ -3441,7 +3446,6 @@ describe("Kernel process runtime projection", () => {
       }),
     };
     kernel.processOutput.pendingProcessSignals = new Map();
-    kernel.processOutput.dispatchSignalWatches = vi.fn(async () => {});
     kernel.runRoutes = { get: vi.fn(() => null), delete: vi.fn() };
     kernel.connectionRuntime.broadcastToUserUid = vi.fn();
     kernel.processOutput.broadcastProcessSignal = vi.fn((_uid, _processId, _route, emitted) => {

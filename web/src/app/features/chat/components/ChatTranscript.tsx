@@ -502,33 +502,8 @@ function lowercaseFirst(value: string): string {
   return value ? `${value.charAt(0).toLowerCase()}${value.slice(1)}` : value;
 }
 
-function inferToolSyscall(toolName: string | undefined, syscall: string | null | undefined): string | null {
-  if (syscall?.trim()) {
-    return syscall.trim();
-  }
-
-  switch (toolName) {
-    case "Read":
-      return "fs.read";
-    case "Search":
-      return "fs.search";
-    case "Shell":
-      return "shell.exec";
-    case "Write":
-      return "fs.write";
-    case "Edit":
-      return "fs.edit";
-    case "Delete":
-      return "fs.delete";
-    case "CodeMode":
-      return "codemode.exec";
-    default:
-      return null;
-  }
-}
-
 function toolSyscall(message: ChatDockMessage): string | null {
-  return inferToolSyscall(message.toolName, message.toolSyscall);
+  return message.toolSyscall ?? null;
 }
 
 export function toolEntryTone(message: ChatDockMessage): ChatTranscriptToolTone {

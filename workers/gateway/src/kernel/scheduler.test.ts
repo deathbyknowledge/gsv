@@ -1263,7 +1263,7 @@ describe("scheduler", () => {
     });
     expect(messages).toHaveLength(1);
     expect(messages[0].role).toBe("system");
-    expect(messages[0].content).toContain("Scheduled event `ops pulse` fired.");
+    expect(messages[0].content).toContain("Schedule `ops pulse` fired.");
     expect(messages[0].content).toContain("Run the scheduled ops pulse.");
 
     const schedule = await runInDurableObject(kernel, (instance: Kernel) => {

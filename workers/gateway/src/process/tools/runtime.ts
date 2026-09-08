@@ -1,3 +1,4 @@
+import { renderToolExecutionError, renderToolResultOutput } from "../history/event-renderer";
 /** Owns Process tool policy, dispatch, results, and CodeMode execution. */
 
 import {
@@ -394,23 +395,27 @@ export class ProcessTools {
       let isError: boolean;
       let outcome: ProcToolResultOutcome;
       let media: string | undefined;
+      let output: JsonValue = null;
+      let error: { message: string } | undefined;
 
       if (result.status === "completed") {
         const stored = unwrapStoredToolResult(result.result);
         const ownedMedia = this.host.resources.parseOwnedProcessMedia(
           JSON.stringify(stored.media),
         );
-        const storedText = z.string().safeParse(stored.output);
-        content = storedText.success ? storedText.data : JSON.stringify(stored.output ?? null);
+        output = stored.output;
+        content = renderToolResultOutput(stored.output);
         media = stringifyStoredProcessMedia(ownedMedia) ?? undefined;
         outcome = result.outcome ?? "completed";
         isError = outcome !== "completed";
       } else if (result.status === "error") {
-        content = `Error: ${result.error}`;
+        content = renderToolExecutionError(result.error, "tool");
+        error = { message: result.error ?? "Tool execution failed" };
         isError = true;
         outcome = result.outcome ?? "failed";
       } else if (options?.interruptPending) {
-        content = `Error: ${options.interruptPending}`;
+        content = renderToolExecutionError(options.interruptPending, "tool");
+        error = { message: options.interruptPending };
         isError = true;
         outcome = "cancelled";
         interrupted += 1;
@@ -418,6 +423,9 @@ export class ProcessTools {
         continue;
       }
 
+      if (isRunControlCall(result.call) && isError) {
+        output = { failureKind: outcome === "cancelled" ? "cancelled" : "execution", finish: false };
+      }
       this.host.store.messages.appendToolResult(
         result.id,
         result.call,
@@ -426,6 +434,7 @@ export class ProcessTools {
         runId,
         outcome,
         media,
+        { output, error },
       );
       if (result.status === "pending") {
         finished.push({

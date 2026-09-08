@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type {
-  ProcHistoryResult,
+  ProcHistoryRecordsResult,
   ProcListEntry,
 } from "@humansandmachines/gsv/protocol";
 import { normalizeHistory, normalizeProcessSummary } from "./processes";
@@ -40,7 +40,8 @@ describe("normalizeProcessSummary", () => {
 
 describe("normalizeHistory", () => {
   it("preserves the authoritative target on restored approvals", () => {
-    const result: Extract<ProcHistoryResult, { ok: true }> = {
+    const result: ProcHistoryRecordsResult = {
+      format: 2, records: [], historyRevision: 1, historyGeneration: 1, historyResetRevision: 0, reset: false, hasMore: false, cursor: "fixture:1",
       ok: true,
       pid: "proc:task",
       messages: [],

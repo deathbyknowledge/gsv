@@ -7,7 +7,8 @@ import {
 import { COMPACTION_SUMMARY_SYSTEM_PROMPT } from "../../prompts/compaction";
 import type { Context } from "@earendil-works/pi-ai";
 import {
-  type InteractionOrigin, type JsonObject, type ProcHistoryContextPolicy, type ResourceBlock, jsonObjectSchema,
+  type InteractionOrigin, type JsonObject, type ProcHistoryRecordData, type ProcHistoryContextPolicy,
+  type ResourceBlock, jsonObjectSchema,
 } from "@humansandmachines/gsv/protocol";
 import {
   type MessageRecord, normalizeMessageMetadata, parseAssistantMessageMeta, parseMessageMetadata,
@@ -15,10 +16,14 @@ import {
 import type { ProcessArchiveResult } from "../internal/contracts";
 import {
   archiveThinkingSchema, archiveToolCallsSchema, archivedMessageSchema, archivedToolResultMetadataSchema,
-  interactionOriginSchema,
 } from "../internal/schemas";
 import { normalizeToolResultOutcome } from "../internal/messages";
 import { parseStoredProcessMedia } from "../media";
+import { inferHistoryRecords, parseInteractionOrigin, parseInteractionOriginRecord } from "../storage/history-records";
+import { renderCompactionTranscriptWindow } from "./compaction-renderer";
+
+export { parseInteractionOrigin } from "../storage/history-records";
+export { formatCompactionSummaryMessage } from "./event-renderer";
 
 export function emptyProcessArchive(): ProcessArchiveResult {
   return {
@@ -52,25 +57,12 @@ export function historyArchiveFilename(generation: number): string {
   return `history.gen-${generation}.jsonl.gz`;
 }
 
-export function formatCompactionSummaryMessage(input: {
-  archivedMessages: number;
-  archivePath: string;
-  summary: string;
-}): string {
-  return [
-    "Process history compacted.",
-    "",
-    `Archived messages: ${input.archivedMessages}`,
-    `Archive: ${input.archivePath}`,
-    "",
-    "Summary:",
-    input.summary,
-  ].join("\n");
-}
-
 export function isCompactionSummaryMessage(message: MessageRecord): boolean {
-  return message.role === "system"
-    && message.content.startsWith("Process history compacted.\n");
+  const primary = (message.records ?? inferHistoryRecords(message))[0];
+  return primary?.kind === "event" && (
+    primary.payload.kind === "history.compacted"
+    || (primary.payload.kind === "legacy" && primary.payload.payload.recognizedKind === "history.compacted")
+  );
 }
 
 export function contextBoundaryRemainingTokens(
@@ -129,74 +121,6 @@ export function buildCompactionSummaryContext(
   };
 }
 
-function renderCompactionTranscriptWindow(messages: MessageRecord[], maxChars: number): string {
-  const complete: string[] = [];
-  let completeChars = 0;
-  for (const message of messages) {
-    const remaining = maxChars - completeChars - (complete.length > 0 ? 1 : 0);
-    if (message.content.length > remaining) break;
-    const line = JSON.stringify(serializeArchivedMessage(message));
-    if (line.length > remaining) break;
-    complete.push(line);
-    completeChars += line.length + (complete.length > 1 ? 1 : 0);
-  }
-  if (complete.length === messages.length) {
-    return complete.join("\n");
-  }
-
-  const omissionBudget = JSON.stringify({ omitted_messages: messages.length }).length + 2;
-  const recordsBudget = Math.max(0, maxChars - omissionBudget);
-  const headBudget = Math.floor(recordsBudget * 0.35);
-  const tailBudget = recordsBudget - headBudget;
-  const head: string[] = [];
-  const tail: string[] = [];
-  let headChars = 0;
-  let tailChars = 0;
-  let firstOmitted = 0;
-  let lastOmitted = messages.length;
-
-  while (firstOmitted < messages.length) {
-    const line = fitCompactionRecord(messages[firstOmitted]!, headBudget - headChars);
-    if (!line) break;
-    head.push(line);
-    headChars += line.length + 1;
-    firstOmitted += 1;
-  }
-  while (lastOmitted > firstOmitted) {
-    const line = fitCompactionRecord(messages[lastOmitted - 1]!, tailBudget - tailChars);
-    if (!line) break;
-    tail.unshift(line);
-    tailChars += line.length + 1;
-    lastOmitted -= 1;
-  }
-
-  const omitted = JSON.stringify({ omitted_messages: lastOmitted - firstOmitted });
-  return [...head, omitted, ...tail].join("\n");
-}
-
-function fitCompactionRecord(message: MessageRecord, maxChars: number): string | null {
-  if (maxChars <= 0) return null;
-  if (message.content.length <= maxChars) {
-    const full = JSON.stringify(serializeArchivedMessage(message));
-    if (full.length <= maxChars) return full;
-  }
-
-  let previewChars = Math.min(message.content.length, Math.floor(maxChars / 6));
-  while (previewChars >= 0) {
-    const preview = JSON.stringify({
-      id: message.id,
-      role: message.role,
-      content_preview: message.content.slice(0, previewChars),
-      content_omitted_chars: message.content.length - previewChars,
-      record_truncated: true,
-    });
-    if (preview.length <= maxChars) return preview;
-    if (previewChars === 0) break;
-    previewChars = Math.floor(previewChars / 2);
-  }
-  return null;
-}
-
 export function serializeArchivedMessage(
   message: MessageRecord,
   mediaRewrites: ReadonlyMap<string, ArchivedMediaRewrite> = new Map(),
@@ -216,6 +140,7 @@ export function serializeArchivedMessage(
   if (message.role === "assistant") {
     const meta = parseAssistantMessageMeta(message.toolCalls);
     return jsonObjectSchema.parse(JSON.parse(JSON.stringify({
+      records: message.records?.map((record) => rewriteHistoryMedia(record, mediaRewrites)),
       id: message.id,
       generation: message.generation,
       run_id: message.runId ?? undefined,
@@ -232,6 +157,7 @@ export function serializeArchivedMessage(
   }
 
   return jsonObjectSchema.parse(JSON.parse(JSON.stringify({
+    records: message.records?.map((record) => rewriteHistoryMedia(record, mediaRewrites)),
     id: message.id,
     generation: message.generation,
     run_id: message.runId ?? undefined,
@@ -244,6 +170,29 @@ export function serializeArchivedMessage(
     metadata,
     ts: message.createdAt,
   })));
+}
+
+function rewriteHistoryMedia(
+  record: ProcHistoryRecordData,
+  rewrites: ReadonlyMap<string, ArchivedMediaRewrite>,
+): ProcHistoryRecordData {
+  if (record.kind !== "message" && record.kind !== "note" && record.kind !== "result") return record;
+  if (!record.payload.media) return record;
+  const media = record.payload.media.map((item) => {
+    if (item.type === "resource") return item;
+    const rewrite = item.key ? rewrites.get(item.key) : undefined;
+    if (rewrite && "missing" in rewrite) {
+      const { key: _key, path: _path, ...metadata } = item;
+      return metadata;
+    }
+    if (rewrite) return { ...item, key: rewrite.key, path: rewrite.path, revision: rewrite.revision };
+    return item;
+  });
+  switch (record.kind) {
+    case "message": return { ...record, payload: { ...record.payload, media } };
+    case "note": return { ...record, payload: { ...record.payload, media } };
+    case "result": return { ...record, payload: { ...record.payload, media } };
+  }
 }
 
 export function parseArchivedMessageRecord(
@@ -273,7 +222,9 @@ export function parseArchivedMessageRecord(
     metadata,
     createdAt: record.ts,
   };
+  if (record.records !== undefined) archived.records = record.records;
   if (record.id !== undefined) archived.id = record.id;
+  if (record.generation !== undefined) archived.generation = record.generation;
   if (record.run_id !== undefined) archived.runId = record.run_id;
   if (toolCalls.success) archived.toolCalls = toolCalls.data;
   if (thinking.success) archived.thinking = thinking.data;
@@ -291,22 +242,6 @@ export function serializeInteractionOrigin(origin: InteractionOrigin | undefined
   } catch {
     return null;
   }
-}
-
-export function parseInteractionOrigin(value: string | null | undefined): InteractionOrigin | undefined {
-  if (!value) return undefined;
-  try {
-    return parseInteractionOriginRecord(JSON.parse(value));
-  } catch {
-    return undefined;
-  }
-}
-
-function parseInteractionOriginRecord(
-  value: Parameters<typeof interactionOriginSchema.safeParse>[0],
-): InteractionOrigin | undefined {
-  const result = interactionOriginSchema.safeParse(value);
-  return result.success ? result.data : undefined;
 }
 
 export function gzipMessageRecords(
@@ -331,6 +266,44 @@ export function gzipMessageRecords(
         `${index > 0 ? "\n" : ""}${JSON.stringify(serializeArchivedMessage(message, mediaRewrites))}`,
       ));
       index += 1;
+    },
+  }).pipeThrough(new CompressionStream("gzip"));
+}
+
+export function gzipContextEpochArchive(input: {
+  header: JsonObject;
+  epoch: JsonObject;
+  messages: MessageRecord[];
+  runBoundaries: JsonObject[];
+  signal?: AbortSignal;
+  mediaRewrites: ReadonlyMap<string, ArchivedMediaRewrite>;
+}): ReadableStream<Uint8Array> {
+  function* chunks(): Generator<string, void> {
+    yield `${JSON.stringify(input.header).slice(0, -1)},"epoch":${JSON.stringify(input.epoch).slice(0, -1)},"processActivity":[`;
+    for (let index = 0; index < input.messages.length; index += 1) {
+      yield `${index > 0 ? "," : ""}${JSON.stringify(serializeArchivedMessage(input.messages[index]!, input.mediaRewrites))}`;
+    }
+    yield '],"runBoundaries":[';
+    for (let index = 0; index < input.runBoundaries.length; index += 1) {
+      yield `${index > 0 ? "," : ""}${JSON.stringify(input.runBoundaries[index])}`;
+    }
+    yield "]}}";
+  }
+  const parts = chunks();
+  const encoder = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (input.signal?.aborted) {
+        parts.return();
+        controller.error(input.signal.reason ?? new Error("Context epoch archive cancelled"));
+        return;
+      }
+      const next = parts.next();
+      if (next.done) controller.close();
+      else controller.enqueue(encoder.encode(next.value));
+    },
+    cancel() {
+      parts.return();
     },
   }).pipeThrough(new CompressionStream("gzip"));
 }

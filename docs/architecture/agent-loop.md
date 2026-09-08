@@ -24,6 +24,27 @@ parent, and state. Process SQLite stores the mutable run state:
 - `pending_hil`: human-in-the-loop tool approval state.
 - `process_kv`: process metadata.
 
+History records have five shapes: incoming or committed outgoing messages, model
+notes, individual tool calls, typed tool results, and runtime events. Process schema
+14 adds `kind` and `payload_json` to the existing `messages` table. Related records
+use `group_message_id` to retain the original assistant turn's identity, order,
+provider metadata, and lifetime. Outgoing messages are recorded from the confirmed
+Conversation commit and deduplicated by its identity.
+
+Runtime producers write event source data with explicit severity and audience.
+Queued events retain that data in `record_json`; incoming messages retain their
+queue kind, provenance, and canonical conversation identities. Legacy rows are
+inferred at the storage boundary without rewriting them during migration or
+inventing missing provenance.
+
+The provider renderer, compaction renderer, and public history consumers read
+typed records. The captured provider-context fixtures remain byte-identical;
+compatibility messages are retained for supported older clients and histories.
+Archives and fork imports retain typed records alongside compatibility messages,
+and media retention includes every member of a group. Format-2 clients synchronize
+complete groups using durable history revisions and reset detection. See
+[Process History](./process-history.md) for record identity, rendering, and cursors.
+
 The Kernel delivers frames to the Process DO through `recvFrame`. Direct clients
 append canonical input with `conversation.send`, which privately admits the same
 interaction to its handler Process. Adapter ingress follows the same Kernel-owned
@@ -139,6 +160,13 @@ for shell and low-level callers.
 
 The process calls the configured generation service with `sessionAffinityKey`
 set to the PID.
+
+After classifying a generation failure and selecting a fallback, the Process
+limits the new fallback diagnostic to 4,096 characters (UTF-16 code units),
+including a truncation marker that records the original length. The same preview
+is announced and retained as `metadata.fallback.reason`; provider and model
+identifiers remain separate fields. Classification uses the original error.
+Existing history and imported diagnostics retain their full stored values.
 
 The model response can contain text, thinking blocks, and tool calls:
 

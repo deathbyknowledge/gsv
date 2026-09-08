@@ -77,6 +77,18 @@ already running, the Process persists the event immediately and includes it in t
 context; if no provider request is in flight, the current loop can react without waiting for a
 separate queued run.
 
+If the active run finishes before its model context includes an admitted event, a durable
+continuation starts another run from the existing history. It uses the same FIFO queue as
+ordinary input but adds no message or synthetic event to history. Already-queued input can
+provide that next turn, so finishing does not add a redundant continuation behind it. A reply
+for a different source run queues its continuation without changing the active run.
+If the last historical input named another reply destination, model context ends
+with the continuation's current destination annotation. This runtime metadata is
+not a stored history event and does not change the frozen system prompt.
+
+Queued wake messages from older versions are accepted as these silent continuations.
+Wake events already retained in history remain inspectable with their original records.
+
 The target pid is sufficient: IPC cannot select another history inside the
 target process.
 

@@ -11,20 +11,9 @@ import {
   workersAiProvider,
 } from "./workers-ai";
 
-type GatewayRequest = {
-  provider: string;
-  endpoint: string;
-  headers: Record<string, string>;
-  query: unknown;
-};
-
 type TestAi = {
-  gateway(id: string): {
-    run(
-      request: GatewayRequest,
-      options?: { signal?: AbortSignal },
-    ): Promise<Response>;
-  };
+  aiGatewayLogId: string | null;
+  fetch: typeof fetch;
   models(): Promise<never[]>;
 };
 
@@ -79,10 +68,10 @@ describe("Workers AI provider", () => {
   });
 
   it("routes pi-ai's OpenAI-compatible request through the binding", async () => {
-    const run = vi.fn(async () => completionStream());
-    const gateway = vi.fn((_id: string) => ({ run }));
+    const bindingFetch = vi.fn<typeof fetch>(async () => completionStream());
     installAi({
-      gateway,
+      aiGatewayLogId: null,
+      fetch: bindingFetch,
       models: vi.fn(async () => []),
     });
 
@@ -95,10 +84,12 @@ describe("Workers AI provider", () => {
     const context: Context = {
       systemPrompt: "Be concise.",
       messages: [{ role: "user", content: "Say hello", timestamp: 1 }],
+      tools: [{ name: "Read", description: "Read a file", parameters: { type: "object", properties: {} } }],
     };
     const result = await models.completeSimple(model, context, {
       fetch: workersAiBindingFetch,
       maxTokens: 64,
+      reasoning: "high",
       onPayload: prepareWorkersAiGatewayPayload,
       sessionId: "process_test",
     });
@@ -111,29 +102,29 @@ describe("Workers AI provider", () => {
       stopReason: "stop",
       usage: { input: 11, output: 4, totalTokens: 15 },
     });
-    expect(gateway).toHaveBeenCalledWith("default");
-    expect(run).toHaveBeenCalledTimes(1);
-    const [request, options] = run.mock.calls[0];
-    expect(request).toMatchObject({
-      provider: "compat",
-      endpoint: "chat/completions",
-      headers: {
-        "cf-aig-collect-log": "false",
-      },
-      query: {
-        model: `workers-ai/${DEFAULT_WORKERS_AI_MODEL}`,
-        max_tokens: 64,
-        stream: true,
-        messages: [
-          { role: "system", content: "Be concise." },
-          { role: "user", content: "Say hello" },
-        ],
-      },
+    expect(bindingFetch).toHaveBeenCalledTimes(1);
+    const [input, options] = bindingFetch.mock.calls[0]!;
+    const request = new Request(input, options);
+    expect(request.url).toBe("https://workers-binding.ai/ai-gateway/gateways/default/compat/chat/completions");
+    const payload = await request.json();
+    expect(payload).toMatchObject({
+      model: `workers-ai/${DEFAULT_WORKERS_AI_MODEL}`,
+      max_tokens: 64,
+      stream: true,
+      messages: [
+        { role: "system", content: "Be concise." },
+        { role: "user", content: "Say hello" },
+      ],
+      tools: [{ type: "function", function: { name: "Read" } }],
     });
-    expect(request.headers).not.toHaveProperty("authorization");
-    expect(request.headers).not.toHaveProperty("cf-aig-authorization");
-    expect(request.headers).not.toHaveProperty("x-api-key");
-    expect(options?.signal).toBeInstanceOf(AbortSignal);
+    expect(payload).not.toHaveProperty("max_completion_tokens");
+    expect(payload).not.toHaveProperty("reasoning_effort");
+    expect(payload).not.toHaveProperty("tools.0.function.strict");
+    expect(request.headers.get("cf-aig-collect-log")).toBe("false");
+    expect(request.headers.get("cf-aig-authorization")).toBe("Bearer cloudflare-gateway-binding");
+    expect(request.headers.has("authorization")).toBe(false);
+    expect(request.headers.has("x-api-key")).toBe(false);
+    expect(request.signal).toBeInstanceOf(AbortSignal);
   });
 });
 

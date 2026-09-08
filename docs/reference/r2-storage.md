@@ -61,7 +61,7 @@ Kernel SQLite is the authoritative control-plane store. Important tables include
 | `identity_links`, `surface_routes`, `link_challenges` | Adapter actor links and inbound surface routing. |
 | `run_routes` | Retains the exact client endpoint or adapter destination for a process run. |
 | `ipc_calls` | Durable same-owner IPC call deadlines, terminal results, and delivery outbox state. |
-| `signal_watches` | Process-owned signal watches. |
+| `signal_watches` | Process-owned target connection watches. |
 
 ## Process SQLite
 

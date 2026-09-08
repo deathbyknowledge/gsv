@@ -9,7 +9,13 @@ use std::hash::{DefaultHasher, Hasher as _};
 use std::io;
 use std::sync::Arc;
 
-use serde_json::{json, Value};
+use gateway_client::history::{
+    HistoryAudience, HistoryDirection, HistoryEvent, HistoryOutcome, HistoryRecord,
+    HistoryRecordData, HistorySeverity, ProcHistory,
+};
+#[cfg(test)]
+use serde_json::json;
+use serde_json::Value;
 
 use crate::content::{parse_media_attachments, MediaAttachment};
 use crate::prepared::{content_revision, ContentRevision};
@@ -144,6 +150,7 @@ pub struct HistoryActivity {
 pub struct HistoryMoment {
     pub id: Arc<str>,
     pub role: HistoryMomentRole,
+    pub event_severity: Option<HistorySeverity>,
     pub text: Arc<str>,
     pub render_text: Arc<str>,
     pub media: Arc<Vec<MediaAttachment>>,
@@ -201,33 +208,54 @@ pub struct HistorySnapshot {
     pub truncated: bool,
     pub has_more_before: Option<bool>,
     pub has_more_after: Option<bool>,
+    pub sync: HistorySync,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HistorySync {
+    pub revision: u64,
+    pub generation: u64,
+    pub reset_revision: u64,
+    pub reset: bool,
+    pub has_more: bool,
+    pub cursor: Option<String>,
 }
 
 struct IndexedHistoryMessage<'a> {
     id: Arc<str>,
-    value: &'a Value,
+    value: &'a HistoryRecord,
 }
 
 /// Normalize one `proc.history` response without performing Markdown parsing or GPUI layout.
-pub fn normalize_history(payload: &Value) -> HistorySnapshot {
-    let revision = history_revision(payload);
-    let all_messages = payload
-        .get("messages")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
-    let dropped_messages = all_messages
-        .len()
-        .saturating_sub(MAX_FETCHED_HISTORY_MESSAGES);
-    let visible_messages = &all_messages[dropped_messages..];
-    let visible_message_count = visible_messages.len();
-    let has_compaction_marker = visible_messages.iter().any(history_is_compaction_marker);
-    let messages = canonical_history_messages(visible_messages, dropped_messages);
+pub fn normalize_history(payload: &ProcHistory) -> HistorySnapshot {
+    let mut groups = Vec::new();
+    let mut seen = HashSet::new();
+    for record in &payload.records {
+        if seen.insert(record.message_id) {
+            groups.push(record.message_id);
+        }
+    }
+    let dropped_messages = groups.len().saturating_sub(MAX_FETCHED_HISTORY_MESSAGES);
+    let visible_groups = groups[dropped_messages..]
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
+    let records = payload
+        .records
+        .iter()
+        .filter(|record| visible_groups.contains(&record.message_id))
+        .collect::<Vec<_>>();
+    let messages = canonical_history_messages(&records);
+    let has_compaction_marker = messages.iter().any(|message| {
+        matches!(&message.value.data,
+        HistoryRecordData::Event(event) if event.kind == "history.compacted"
+                || (event.kind == "legacy" && event.payload.get("recognizedKind").and_then(Value::as_str) == Some("history.compacted")))
+    });
     let activity = derive_history_activity(
         payload,
         &messages,
         dropped_messages,
-        visible_message_count,
+        visible_groups.len(),
         has_compaction_marker,
     );
     let summary_owners = activity
@@ -236,128 +264,240 @@ pub fn normalize_history(payload: &Value) -> HistorySnapshot {
         .filter(|summary| !summary.entries.is_empty())
         .map(|summary| summary.moment_id.clone())
         .collect::<HashSet<_>>();
-    let mut moments = Vec::with_capacity(messages.len());
+    let mut moments = Vec::new();
     let mut preparation_candidates = Vec::new();
-
-    for message in &messages {
-        let value = message.value;
-        let Some(role_name) = value.get("role").and_then(Value::as_str) else {
-            continue;
-        };
-        let content = value.get("content").unwrap_or(&Value::Null);
-        let text: Arc<str> = Arc::from(extract_text(content));
-        let media = Arc::new(
-            value
-                .get("media")
-                .or_else(|| content.get("media"))
-                .map(parse_media_attachments)
-                .unwrap_or_default(),
-        );
-        let id = message.id.clone();
-        let run_id = history_run_id(value).map(Arc::from);
-
-        let render_text = text.clone();
-        if role_name == "assistant" {
-            let candidate = HistoryPreparationCandidate {
-                id: id.clone(),
-                revision: content_revision(text.as_ref(), media.as_slice()),
-                media_revision: content_revision("", media.as_slice()),
-                render_text: render_text.clone(),
-                text: text.clone(),
-                media: media.clone(),
-            };
-            preparation_candidates.push(candidate);
-        }
-
-        let role = match role_name {
-            "user" => HistoryMomentRole::User,
-            "assistant" => HistoryMomentRole::Intelligence,
-            "system" => HistoryMomentRole::System,
-            "toolResult" => continue,
+    for message in messages {
+        let (role, text, media) = match &message.value.data {
+            HistoryRecordData::Message(payload) => (
+                match payload.direction {
+                    HistoryDirection::In => HistoryMomentRole::User,
+                    HistoryDirection::Out => HistoryMomentRole::Intelligence,
+                },
+                payload.text.clone(),
+                &payload.media,
+            ),
+            HistoryRecordData::Note(payload) => (
+                HistoryMomentRole::Intelligence,
+                payload.text.clone(),
+                &payload.media,
+            ),
+            HistoryRecordData::Event(event) if event.audience != HistoryAudience::Model => {
+                let text: Arc<str> = Arc::from(render_history_event(event));
+                moments.push(HistoryMoment {
+                    id: message.id,
+                    role: HistoryMomentRole::System,
+                    event_severity: Some(event.severity),
+                    text: text.clone(),
+                    render_text: text,
+                    media: Arc::new(Vec::new()),
+                    run_id: message.value.run_id.as_deref().map(Arc::from),
+                });
+                continue;
+            }
             _ => continue,
         };
-        let has_activity_summary =
-            role == HistoryMomentRole::Intelligence && summary_owners.contains(id.as_ref());
-        if text.trim().is_empty() && media.is_empty() && !has_activity_summary {
-            continue;
-        }
-        moments.push(HistoryMoment {
-            id,
+        append_moment(
+            &mut moments,
+            &mut preparation_candidates,
+            message.id,
             role,
             text,
-            render_text,
-            media,
-            run_id,
-        });
+            parse_media_attachments(&Value::Array(media.clone())),
+            message.value.run_id.as_deref().map(Arc::from),
+            &summary_owners,
+        );
     }
-
     HistorySnapshot {
-        revision,
+        revision: history_revision(payload),
         active_run_id: payload
-            .get("activeRunId")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|run_id| !run_id.is_empty())
+            .active_run_id
+            .as_deref()
+            .filter(|id| !id.trim().is_empty())
             .map(Arc::from),
         pending_approval: payload
-            .get("pendingHil")
-            .filter(|value| !value.is_null())
+            .pending_hil
+            .as_ref()
             .and_then(parse_pending_approval),
         moments: moments.into(),
         activity,
         preparation_candidates: preparation_candidates.into(),
-        message_count: payload.get("messageCount").and_then(Value::as_u64),
-        truncated: dropped_messages > 0
-            || payload.get("truncated").and_then(Value::as_bool) == Some(true),
-        has_more_before: payload.get("hasMoreBefore").and_then(Value::as_bool),
-        has_more_after: payload.get("hasMoreAfter").and_then(Value::as_bool),
+        message_count: Some(payload.message_count),
+        truncated: dropped_messages > 0 || payload.truncated,
+        has_more_before: payload.has_more_before,
+        has_more_after: payload.has_more_after,
+        sync: HistorySync {
+            revision: payload.history_revision,
+            generation: payload.history_generation,
+            reset_revision: payload.history_reset_revision,
+            reset: payload.reset,
+            has_more: payload.has_more,
+            cursor: payload.cursor.clone(),
+        },
     }
 }
 
-pub fn normalize_conversation_history(conversation: &Value, process: &Value) -> HistorySnapshot {
-    let messages = conversation
-        .get("messages")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .map(|message| {
-            let author = message.get("author").unwrap_or(&Value::Null);
-            let role = if author.get("kind").and_then(Value::as_str) == Some("user") {
-                "user"
-            } else {
-                "assistant"
+fn render_history_event(event: &HistoryEvent) -> String {
+    if event.kind == "target.connection" {
+        if let (Some(target), Some(change @ ("connected" | "disconnected"))) = (
+            event.payload.get("targetId").and_then(Value::as_str),
+            event.payload.get("event").and_then(Value::as_str),
+        ) {
+            let label = event
+                .payload
+                .get("label")
+                .and_then(Value::as_str)
+                .filter(|label| !label.trim().is_empty() && *label != target);
+            return match label {
+                Some(label) => format!("{label} ({target}) {change}."),
+                None => format!("{target} {change}."),
             };
-            json!({
-                "id": message.get("id").cloned().unwrap_or(Value::Null),
-                "runId": message.get("runId").cloned().unwrap_or(Value::Null),
-                "role": role,
-                "content": message.get("text").cloned().unwrap_or_else(|| json!("")),
-                "media": message.get("media").cloned().unwrap_or_else(|| json!([])),
-                "timestamp": message.get("createdAt").cloned().unwrap_or(Value::Null),
-            })
+        }
+    }
+    format!(
+        "{}\n{}",
+        event.kind,
+        serde_json::to_string_pretty(&event.payload).unwrap_or_default()
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_moment(
+    moments: &mut Vec<HistoryMoment>,
+    candidates: &mut Vec<HistoryPreparationCandidate>,
+    id: Arc<str>,
+    role: HistoryMomentRole,
+    text: String,
+    media: Vec<MediaAttachment>,
+    run_id: Option<Arc<str>>,
+    summary_owners: &HashSet<Arc<str>>,
+) {
+    let text: Arc<str> = Arc::from(text);
+    let media = Arc::new(media);
+    if role == HistoryMomentRole::Intelligence {
+        candidates.push(HistoryPreparationCandidate {
+            id: id.clone(),
+            revision: content_revision(&text, &media),
+            media_revision: content_revision("", &media),
+            text: text.clone(),
+            render_text: text.clone(),
+            media: media.clone(),
+        });
+    }
+    if text.trim().is_empty() && media.is_empty() && !summary_owners.contains(&id) {
+        return;
+    }
+    moments.push(HistoryMoment {
+        id,
+        role,
+        event_severity: None,
+        text: text.clone(),
+        render_text: text,
+        media,
+        run_id,
+    });
+}
+
+pub fn normalize_conversation_history(
+    conversation: &Value,
+    process: &ProcHistory,
+) -> HistorySnapshot {
+    let activity = normalize_history(process);
+    let mut moments = Vec::new();
+    let mut preparation_candidates = Vec::new();
+    let mut times = HashMap::<Arc<str>, f64>::new();
+    let notices = process
+        .records
+        .iter()
+        .filter_map(|record| match &record.data {
+            HistoryRecordData::Event(event) if event.audience != HistoryAudience::Model => {
+                Some((record, event))
+            }
+            _ => None,
         })
         .collect::<Vec<_>>();
-    let summary = conversation.get("conversation").unwrap_or(&Value::Null);
-    let projected = json!({
-        "messages": messages,
-        "messageCount": summary.get("latestSequence").cloned().unwrap_or_else(|| json!(0)),
-        "truncated": conversation.get("hasMore").and_then(Value::as_bool) == Some(true),
-        "hasMoreBefore": conversation.get("hasMore").cloned().unwrap_or_else(|| json!(false)),
-        "hasMoreAfter": false,
-        "activeRunId": process.get("activeRunId").cloned().unwrap_or(Value::Null),
-        "runState": process.get("runState").cloned().unwrap_or(Value::Null),
-        "pendingHil": process.get("pendingHil").cloned().unwrap_or(Value::Null),
-        "context": process.get("context").cloned().unwrap_or(Value::Null),
-    });
-    let mut canonical = normalize_history(&projected);
-    let activity = normalize_history(process);
+    let conversation_id = conversation
+        .get("conversation")
+        .and_then(|summary| summary.get("id"))
+        .and_then(Value::as_str);
+    let notice_messages = notices
+        .iter()
+        .filter_map(|(_, event)| {
+            if event.kind != "correction.exhausted"
+                || event
+                    .payload
+                    .get("conversationId")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| Some(id) != conversation_id)
+            {
+                return None;
+            }
+            event
+                .payload
+                .get("messageId")
+                .and_then(Value::as_str)
+                .map(|id| (id, event.severity))
+        })
+        .collect::<HashMap<_, _>>();
+    let all_messages = conversation
+        .get("messages")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let dropped = all_messages
+        .len()
+        .saturating_sub(MAX_FETCHED_HISTORY_MESSAGES);
+    let mut canonical_ids = HashSet::new();
+    for message in &all_messages[dropped..] {
+        let Some(id) = message.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        canonical_ids.insert(id);
+        times.insert(
+            Arc::from(id),
+            message
+                .get("createdAt")
+                .and_then(Value::as_f64)
+                .unwrap_or_default(),
+        );
+        let role = if notice_messages.contains_key(id) {
+            HistoryMomentRole::System
+        } else if message
+            .get("author")
+            .and_then(|author| author.get("kind"))
+            .and_then(Value::as_str)
+            == Some("user")
+        {
+            HistoryMomentRole::User
+        } else {
+            HistoryMomentRole::Intelligence
+        };
+        append_moment(
+            &mut moments,
+            &mut preparation_candidates,
+            Arc::from(id),
+            role,
+            message
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            message
+                .get("media")
+                .map(parse_media_attachments)
+                .unwrap_or_default(),
+            message.get("runId").and_then(Value::as_str).map(Arc::from),
+            &HashSet::new(),
+        );
+        if let Some(moment) = moments.last_mut().filter(|moment| moment.id.as_ref() == id) {
+            moment.event_severity = notice_messages.get(id).copied();
+        }
+    }
     let raw_run_by_moment = activity
         .moments
         .iter()
         .filter_map(|moment| Some((moment.id.as_ref(), moment.run_id.as_deref()?)))
         .collect::<HashMap<_, _>>();
-    let canonical_moment_by_run = canonical
-        .moments
+    let canonical_moment_by_run = moments
         .iter()
         .filter(|moment| moment.role == HistoryMomentRole::Intelligence)
         .filter_map(|moment| Some((moment.run_id.as_deref()?, moment.id.clone())))
@@ -368,37 +508,89 @@ pub fn normalize_conversation_history(conversation: &Value, process: &Value) -> 
         .iter()
         .filter_map(|summary| {
             let run_id = raw_run_by_moment.get(summary.moment_id.as_ref())?;
-            let moment_id = canonical_moment_by_run.get(run_id)?.clone();
             Some(HistoryActivitySummary {
-                moment_id,
+                moment_id: canonical_moment_by_run.get(run_id)?.clone(),
                 entries: summary.entries.clone(),
             })
         })
         .collect::<Vec<_>>();
-    canonical.activity = HistoryActivity {
-        summaries: summaries.into(),
-        latest_call_states: activity.activity.latest_call_states,
-        authoritative: activity.activity.authoritative,
-    };
-    canonical
+    // Process notices stay explicitly system-owned, separate from committed conversation messages.
+    let notices_by_id = notices
+        .into_iter()
+        .map(|(record, event)| (record_identity(record), (record, event)))
+        .collect::<HashMap<_, _>>();
+    let mut pending_notices = Vec::new();
+    for moment in activity
+        .moments
+        .iter()
+        .filter(|moment| moment.role == HistoryMomentRole::System)
+    {
+        let Some((record, event)) = notices_by_id.get(&moment.id) else {
+            continue;
+        };
+        if event.kind == "correction.exhausted"
+            && event
+                .payload
+                .get("messageId")
+                .and_then(Value::as_str)
+                .is_some_and(|id| canonical_ids.contains(id) && notice_messages.contains_key(id))
+        {
+            continue;
+        }
+        let mut moment = moment.clone();
+        moment.id = Arc::from(format!(
+            "process:{}:{}:{}",
+            process.pid, record.generation, moment.id
+        ));
+        pending_notices.push((record.created_at, moment));
+    }
+    pending_notices.sort_by(|left, right| left.0.total_cmp(&right.0));
+    for (created_at, moment) in pending_notices {
+        let position = moments
+            .iter()
+            .position(|existing| times[&existing.id] > created_at)
+            .unwrap_or(moments.len());
+        times.insert(moment.id.clone(), created_at);
+        moments.insert(position, moment);
+    }
+    HistorySnapshot {
+        revision: history_revision(&(conversation, process)),
+        active_run_id: activity.active_run_id,
+        pending_approval: activity.pending_approval,
+        moments: moments.into(),
+        preparation_candidates: preparation_candidates.into(),
+        activity: HistoryActivity {
+            summaries: summaries.into(),
+            latest_call_states: activity.activity.latest_call_states,
+            authoritative: activity.activity.authoritative,
+        },
+        message_count: conversation
+            .get("conversation")
+            .and_then(|summary| summary.get("latestSequence"))
+            .and_then(Value::as_u64),
+        truncated: dropped > 0
+            || conversation.get("hasMore").and_then(Value::as_bool) == Some(true),
+        has_more_before: if dropped > 0 {
+            Some(true)
+        } else {
+            conversation.get("hasMore").and_then(Value::as_bool)
+        },
+        has_more_after: Some(false),
+        sync: activity.sync,
+    }
 }
 
 /// Message ids are process-history identities. A repeated id is an invalid transport record, but
 /// retaining the latest occurrence gives reconnecting clients a deterministic, internally
 /// consistent snapshot without allowing two different bodies to share one presentation key.
 fn canonical_history_messages<'a>(
-    messages: &'a [Value],
-    index_offset: usize,
+    messages: &[&'a HistoryRecord],
 ) -> Vec<IndexedHistoryMessage<'a>> {
     let indexed = messages
         .iter()
-        .enumerate()
-        .map(|(local_index, value)| {
-            let index = index_offset + local_index;
-            IndexedHistoryMessage {
-                id: Arc::from(history_moment_id(value, index)),
-                value,
-            }
+        .map(|value| IndexedHistoryMessage {
+            id: record_identity(value),
+            value,
         })
         .collect::<Vec<_>>();
     let latest = indexed
@@ -406,7 +598,6 @@ fn canonical_history_messages<'a>(
         .enumerate()
         .map(|(position, message)| (message.id.clone(), position))
         .collect::<HashMap<_, _>>();
-
     indexed
         .into_iter()
         .enumerate()
@@ -416,8 +607,16 @@ fn canonical_history_messages<'a>(
         .collect()
 }
 
+fn record_identity(record: &HistoryRecord) -> Arc<str> {
+    Arc::from(if record.index == 0 {
+        record.message_id.to_string()
+    } else {
+        format!("{}:{}", record.message_id, record.index)
+    })
+}
+
 fn derive_history_activity(
-    payload: &Value,
+    payload: &ProcHistory,
     messages: &[IndexedHistoryMessage<'_>],
     index_offset: usize,
     visible_message_count: usize,
@@ -434,49 +633,43 @@ fn derive_history_activity(
     let mut incomplete_runs = HashSet::<Arc<str>>::new();
     let mut pending_counts = HashMap::<Arc<str>, [u64; ACTIVITY_CATEGORIES.len()]>::new();
     let mut summaries = Vec::new();
-
+    let call_groups = messages
+        .iter()
+        .filter_map(|message| match &message.value.data {
+            HistoryRecordData::Call(call) if call.syscall.is_some() => {
+                Some(message.value.message_id)
+            }
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
     for message in messages {
-        let value = message.value;
-        let Some(run_id) = history_run_id(value).map(Arc::<str>::from) else {
+        let Some(run_id) = message
+            .value
+            .run_id
+            .as_deref()
+            .filter(|id| !id.trim().is_empty())
+            .map(Arc::<str>::from)
+        else {
             continue;
         };
-        match value.get("role").and_then(Value::as_str) {
-            Some("user") => {
+        match &message.value.data {
+            HistoryRecordData::Message(payload) if payload.direction == HistoryDirection::In => {
                 run_boundaries.insert(run_id);
             }
-            Some("assistant") => {
-                let tool_calls = history_tool_calls(value)
-                    .into_iter()
-                    .filter(|call| !is_terminal_delivery_tool(call))
-                    .collect::<Vec<_>>();
-                if !tool_calls.is_empty() {
-                    runs_with_call_context.insert(run_id.clone());
-                    for call in tool_calls {
-                        let Some(call_id) = call
-                            .get("id")
-                            .and_then(Value::as_str)
-                            .map(str::trim)
-                            .filter(|call_id| !call_id.is_empty())
-                            .map(Arc::<str>::from)
-                        else {
-                            continue;
-                        };
-                        let category = call
-                            .get("syscall")
-                            .and_then(Value::as_str)
-                            .and_then(HistoryActivityCategory::from_syscall)
-                            .or_else(|| {
-                                call.get("name")
-                                    .and_then(Value::as_str)
-                                    .and_then(HistoryActivityCategory::from_tool_name)
-                            });
-                        let key = (run_id.clone(), call_id);
-                        calls.entry(key.clone()).or_default().push_back(category);
-                        latest_call_states.insert(key, HistoryToolCallState::Pending);
-                    }
+            HistoryRecordData::Call(call) => {
+                runs_with_call_context.insert(run_id.clone());
+                if call.syscall.is_none() {
                     continue;
                 }
-
+                let category = call
+                    .syscall
+                    .as_deref()
+                    .and_then(HistoryActivityCategory::from_syscall);
+                let key = (run_id, Arc::from(call.call_id.as_str()));
+                calls.entry(key.clone()).or_default().push_back(category);
+                latest_call_states.insert(key, HistoryToolCallState::Pending);
+            }
+            HistoryRecordData::Note(_) if !call_groups.contains(&message.value.message_id) => {
                 if incomplete_runs.contains(&run_id) {
                     pending_counts.remove(&run_id);
                     continue;
@@ -492,49 +685,28 @@ fn derive_history_activity(
                     });
                 }
             }
-            Some("toolResult") => {
-                let Some(content) = value.get("content") else {
-                    continue;
-                };
-                let call_id = content
-                    .get("toolCallId")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|call_id| !call_id.is_empty())
-                    .map(Arc::<str>::from);
-                let key = call_id.map(|call_id| (run_id.clone(), call_id));
-                let correlated = key.as_ref().and_then(|key| {
-                    calls
-                        .get_mut(key)
-                        .and_then(VecDeque::pop_front)
-                        .map(|category| (key.clone(), category))
-                });
-                if let Some((key, _)) = &correlated {
-                    if calls.get(key).is_none_or(VecDeque::is_empty) {
-                        latest_call_states.insert(
-                            key.clone(),
-                            HistoryToolCallState::Terminal {
-                                message_id: message.id.clone(),
-                            },
-                        );
-                    }
+            HistoryRecordData::Result(result) => {
+                let key = (run_id.clone(), Arc::<str>::from(result.call_id.as_str()));
+                let correlated = calls.get_mut(&key).and_then(VecDeque::pop_front);
+                if correlated.is_some() && calls.get(&key).is_none_or(VecDeque::is_empty) {
+                    latest_call_states.insert(
+                        key,
+                        HistoryToolCallState::Terminal {
+                            message_id: message.id.clone(),
+                        },
+                    );
                 }
                 if !authoritative && !run_boundaries.contains(&run_id) {
                     incomplete_runs.insert(run_id.clone());
                     pending_counts.remove(&run_id);
                     continue;
                 }
-                if content.get("outcome").and_then(Value::as_str) != Some("completed") {
+                if result.outcome != HistoryOutcome::Completed {
                     continue;
                 }
-                let category = correlated.and_then(|(_, category)| category).or_else(|| {
+                let category = correlated.flatten().or_else(|| {
                     (!runs_with_call_context.contains(&run_id))
-                        .then(|| {
-                            content
-                                .get("toolName")
-                                .and_then(Value::as_str)
-                                .and_then(HistoryActivityCategory::from_tool_name)
-                        })
+                        .then(|| HistoryActivityCategory::from_tool_name(&result.tool))
                         .flatten()
                 });
                 let Some(category) = category else {
@@ -547,7 +719,6 @@ fn derive_history_activity(
             _ => {}
         }
     }
-
     let mut latest_call_states = latest_call_states
         .into_iter()
         .map(|((run_id, call_id), state)| HistoryToolCallStateEntry {
@@ -565,66 +736,18 @@ fn derive_history_activity(
     }
 }
 
-fn history_is_authoritative(payload: &Value, visible_message_count: usize) -> bool {
-    if payload.get("truncated").and_then(Value::as_bool) == Some(true) {
+fn history_is_authoritative(payload: &ProcHistory, visible_message_count: usize) -> bool {
+    if payload.truncated
+        || payload.has_more
+        || payload.has_more_before == Some(true)
+        || payload.has_more_after == Some(true)
+    {
         return false;
     }
-
-    let has_more_before = payload.get("hasMoreBefore").and_then(Value::as_bool);
-    let has_more_after = payload.get("hasMoreAfter").and_then(Value::as_bool);
-    if has_more_before == Some(true) || has_more_after == Some(true) {
-        return false;
+    if payload.has_more_before.is_some() || payload.has_more_after.is_some() {
+        return payload.has_more_before == Some(false) && payload.has_more_after == Some(false);
     }
-    if has_more_before.is_some() || has_more_after.is_some() {
-        return has_more_before == Some(false) && has_more_after == Some(false);
-    }
-
-    if payload.get("truncated").and_then(Value::as_bool) == Some(false) {
-        return true;
-    }
-    payload
-        .get("messageCount")
-        .and_then(Value::as_u64)
-        .is_some_and(|count| count == visible_message_count as u64)
-}
-
-fn history_is_compaction_marker(message: &Value) -> bool {
-    message.get("role").and_then(Value::as_str) == Some("system")
-        && message
-            .get("content")
-            .and_then(Value::as_str)
-            .is_some_and(|content| content.starts_with("Process history compacted."))
-}
-
-fn history_run_id(message: &Value) -> Option<&str> {
-    message
-        .get("runId")?
-        .as_str()
-        .map(str::trim)
-        .filter(|run_id| !run_id.is_empty())
-}
-
-fn history_tool_calls(message: &Value) -> Vec<&Value> {
-    let content = message.get("content").unwrap_or(&Value::Null);
-    if let Some(tool_calls) = content.get("toolCalls").and_then(Value::as_array) {
-        return tool_calls.iter().collect();
-    }
-    if let Some(tool_calls) = message.get("toolCalls").and_then(Value::as_array) {
-        return tool_calls.iter().collect();
-    }
-    content
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|block| block.get("type").and_then(Value::as_str) == Some("toolCall"))
-        .collect()
-}
-
-fn is_terminal_delivery_tool(call: &Value) -> bool {
-    matches!(
-        call.get("name").and_then(Value::as_str),
-        Some("Message" | "Silence")
-    )
+    payload.message_count == visible_message_count as u64
 }
 
 fn summary_entries(counts: [u64; ACTIVITY_CATEGORIES.len()]) -> Vec<HistoryActivitySummaryEntry> {
@@ -693,45 +816,7 @@ fn history_approval_preview(syscall: &str, args: Option<&Value>) -> HistoryAppro
     }
 }
 
-fn extract_text(value: &Value) -> String {
-    match value {
-        Value::String(text) => text.clone(),
-        Value::Array(items) => items
-            .iter()
-            .map(extract_text)
-            .filter(|text| !text.trim().is_empty())
-            .collect::<Vec<_>>()
-            .join("\n"),
-        Value::Object(record) => {
-            for key in ["text", "content", "message", "output"] {
-                if let Some(value) = record.get(key) {
-                    let text = extract_text(value);
-                    if !text.trim().is_empty() {
-                        return text;
-                    }
-                }
-            }
-            String::new()
-        }
-        Value::Number(number) => number.to_string(),
-        Value::Bool(value) => value.to_string(),
-        Value::Null => String::new(),
-    }
-}
-
-fn history_moment_id(message: &Value, index: usize) -> String {
-    message
-        .get("id")
-        .map(|value| {
-            value
-                .as_str()
-                .map(str::to_string)
-                .unwrap_or_else(|| value.to_string())
-        })
-        .unwrap_or_else(|| format!("history:{index}"))
-}
-
-fn history_revision(payload: &Value) -> HistoryRevision {
+fn history_revision(payload: &impl serde::Serialize) -> HistoryRevision {
     let mut hasher = DefaultHasher::new();
     let _ = serde_json::to_writer(HashWriter(&mut hasher), payload);
     HistoryRevision(hasher.finish())
@@ -751,6 +836,53 @@ impl io::Write for HashWriter<'_> {
 }
 
 #[cfg(test)]
+pub(crate) fn fixture(mut payload: Value) -> ProcHistory {
+    let envelope = payload.as_object_mut().expect("fixture envelope");
+    let records = envelope
+        .entry("records")
+        .or_insert_with(|| json!([]))
+        .as_array_mut()
+        .expect("records");
+    let mut groups = HashSet::new();
+    for (ordinal, record) in records.iter_mut().enumerate() {
+        let record = record.as_object_mut().expect("record");
+        let id = record
+            .get("id")
+            .cloned()
+            .unwrap_or_else(|| json!(ordinal + 1));
+        groups.insert(record.get("messageId").unwrap_or(&id).to_string());
+        record.entry("id").or_insert(id.clone());
+        record.entry("messageId").or_insert(id);
+        record.entry("index").or_insert(json!(0));
+        record.entry("generation").or_insert(json!(0));
+        record.entry("runId").or_insert(Value::Null);
+        record.entry("createdAt").or_insert(json!(0));
+        record.entry("source").or_insert(json!("typed"));
+    }
+    envelope
+        .entry("messageCount")
+        .or_insert(json!(groups.len()));
+    for (key, value) in [
+        ("ok", json!(true)),
+        ("format", json!(2)),
+        ("pid", json!("fixture-pid")),
+        ("historyRevision", json!(0)),
+        ("historyGeneration", json!(0)),
+        ("historyResetRevision", json!(0)),
+        ("reset", json!(false)),
+        ("hasMore", json!(false)),
+    ] {
+        envelope.entry(key).or_insert(value);
+    }
+    ProcHistory::decode(payload).expect("valid format-2 fixture")
+}
+
+#[cfg(test)]
+pub(crate) fn normalize_fixture(payload: &Value) -> HistorySnapshot {
+    normalize_history(&fixture(payload.clone()))
+}
+
+#[cfg(test)]
 mod tests {
     use serde_json::json;
 
@@ -760,22 +892,17 @@ mod tests {
     fn normalization_is_typed_bounded_and_precomputes_each_assistant_revision_once() {
         let messages = (0..MAX_FETCHED_HISTORY_MESSAGES + 5)
             .map(|index| {
-                json!({
-                    "id": index,
-                    "runId": format!("run-{index}"),
-                    "role": "assistant",
-                    "content": format!("reply {index}")
-                })
+                json!({ "id": index, "runId": format!("run-{index}"), "index": 0, "kind": "note", "payload": { "text": format!("reply {index}"), "thinking": [], "media": [] } })
             })
             .collect::<Vec<_>>();
         let payload = json!({
-            "messages": messages,
+            "records": messages,
             "messageCount": MAX_FETCHED_HISTORY_MESSAGES + 5,
             "truncated": false,
             "activeRunId": "run-live"
         });
 
-        let snapshot = normalize_history(&payload);
+        let snapshot = normalize_fixture(&payload);
 
         assert_eq!(snapshot.moments.len(), MAX_FETCHED_HISTORY_MESSAGES);
         assert_eq!(
@@ -811,27 +938,25 @@ mod tests {
     #[test]
     fn normalization_keeps_activity_and_approval_content_out_of_the_ui_parser() {
         let payload = json!({
-            "messages": [
-                { "id": 1, "runId": "run-1", "role": "user", "content": "Do both" },
-                { "id": 2, "runId": "run-1", "role": "assistant", "content": { "text": "", "toolCalls": [
-                    { "id": "read-a", "name": "Read", "arguments": { "path": "/private/a" } },
-                    { "id": "read-b", "syscall": "fs.read", "arguments": { "path": "/private/b" } }
-                ] } },
-                { "id": 3, "runId": "run-1", "role": "toolResult", "content": { "toolCallId": "read-a", "toolName": "Read", "outcome": "completed", "output": "private" } },
-                { "id": 4, "runId": "run-1", "role": "toolResult", "content": { "toolCallId": "read-b", "toolName": "Read", "outcome": "completed", "output": "private" } },
-                { "id": 5, "runId": "run-1", "role": "assistant", "content": "Done" }
-            ],
-            "truncated": false,
-            "pendingHil": {
-                "requestId": "approval-1",
-                "runId": "run-1",
-                "syscall": "shell.exec",
-                "target": "gsv",
-                "args": { "input": "  printf   private  " }
-            }
-        });
+                    "records": [
+                        { "id": 1, "runId": "run-1", "index": 0, "kind": "message", "payload": { "direction": "in", "text": "Do both", "media": [], "origin": {} } },
+                        { "id": 2, "runId": "run-1", "index": 0, "kind": "call", "payload": { "callId": "read-a", "tool": "Read", "syscall": "fs.read", "target": null, "runId": "run-1", "args": { "path": "/private/a" } } },
+        { "id": 2, "runId": "run-1", "index": 1, "kind": "call", "payload": { "callId": "read-b", "tool": "Read", "syscall": "fs.read", "target": null, "runId": "run-1", "args": { "path": "/private/b" } } },
+                        { "id": 3, "runId": "run-1", "index": 0, "kind": "result", "payload": { "callId": "read-a", "tool": "Read", "outcome": "completed", "output": "private", "media": [], "resources": [] } },
+                        { "id": 4, "runId": "run-1", "index": 0, "kind": "result", "payload": { "callId": "read-b", "tool": "Read", "outcome": "completed", "output": "private", "media": [], "resources": [] } },
+                        { "id": 5, "runId": "run-1", "index": 0, "kind": "note", "payload": { "text": "Done", "thinking": [], "media": [] } }
+                    ],
+                    "truncated": false,
+                    "pendingHil": {
+                        "requestId": "approval-1",
+                        "runId": "run-1",
+                        "syscall": "shell.exec",
+                        "target": "gsv",
+                        "args": { "input": "  printf   private  " }
+                    }
+                });
 
-        let snapshot = normalize_history(&payload);
+        let snapshot = normalize_fixture(&payload);
 
         assert_eq!(snapshot.activity.summaries.len(), 1);
         assert_eq!(snapshot.activity.summaries[0].moment_id.as_ref(), "5");
@@ -865,16 +990,16 @@ mod tests {
 
     #[test]
     fn revision_changes_with_transport_visible_history_state() {
-        let first = normalize_history(&json!({
-            "messages": [{ "id": 1, "role": "assistant", "content": "one" }],
+        let first = normalize_fixture(&json!({
+            "records": [{ "id": 1, "index": 0, "kind": "note", "payload": { "text": "one", "thinking": [], "media": [] } }],
             "activeRunId": null
         }));
-        let same = normalize_history(&json!({
-            "messages": [{ "id": 1, "role": "assistant", "content": "one" }],
+        let same = normalize_fixture(&json!({
+            "records": [{ "id": 1, "index": 0, "kind": "note", "payload": { "text": "one", "thinking": [], "media": [] } }],
             "activeRunId": null
         }));
-        let changed = normalize_history(&json!({
-            "messages": [{ "id": 1, "role": "assistant", "content": "two" }],
+        let changed = normalize_fixture(&json!({
+            "records": [{ "id": 1, "index": 0, "kind": "note", "payload": { "text": "two", "thinking": [], "media": [] } }],
             "activeRunId": null
         }));
 
@@ -884,36 +1009,20 @@ mod tests {
 
     #[test]
     fn duplicate_message_ids_keep_only_the_latest_record_and_its_preparation() {
-        let snapshot = normalize_history(&json!({
-            "messages": [
-                {
-                    "id": "assistant",
-                    "runId": "run-old",
-                    "role": "assistant",
-                    "content": {
-                        "text": "# stale response",
-                        "media": [{
+        let snapshot = normalize_fixture(&json!({
+            "records": [
+                { "id": 103, "runId": "run-old", "index": 0, "kind": "note", "payload": { "text": "# stale response", "thinking": [], "media": [{
                             "type": "image",
                             "mimeType": "image/png",
                             "url": "https://example.com/stale.png"
-                        }]
-                    }
-                },
-                { "id": "user", "runId": "run-live", "role": "user", "content": "between" },
-                { "id": "other", "runId": "run-live", "role": "assistant", "content": "other" },
-                {
-                    "id": "assistant",
-                    "runId": "run-live",
-                    "role": "assistant",
-                    "content": {
-                        "text": "# latest response",
-                        "media": [{
+                        }] } },
+                { "id": 101, "runId": "run-live", "index": 0, "kind": "message", "payload": { "direction": "in", "text": "between", "media": [], "origin": {} } },
+                { "id": 102, "runId": "run-live", "index": 0, "kind": "note", "payload": { "text": "other", "thinking": [], "media": [] } },
+                { "id": 103, "runId": "run-live", "index": 0, "kind": "note", "payload": { "text": "# latest response", "thinking": [], "media": [{
                             "type": "image",
                             "mimeType": "image/png",
                             "url": "https://example.com/latest.png"
-                        }]
-                    }
-                }
+                        }] } }
             ],
             "messageCount": 4,
             "truncated": false,
@@ -928,7 +1037,7 @@ mod tests {
                 .iter()
                 .map(|moment| moment.id.as_ref())
                 .collect::<Vec<_>>(),
-            ["user", "other", "assistant"]
+            ["101", "102", "103"]
         );
         assert_eq!(snapshot.preparation_candidates.len(), 2);
         assert_eq!(
@@ -937,7 +1046,7 @@ mod tests {
                 .iter()
                 .map(|candidate| candidate.id.as_ref())
                 .collect::<Vec<_>>(),
-            ["other", "assistant"]
+            ["102", "103"]
         );
         assert_eq!(snapshot.message_count, Some(4));
         assert!(!snapshot.truncated);
@@ -965,7 +1074,7 @@ mod tests {
             .preparation_candidates
             .last()
             .expect("latest assistant preparation");
-        assert_eq!(latest.id.as_ref(), "assistant");
+        assert_eq!(latest.id.as_ref(), "103");
         assert_eq!(latest.text.as_ref(), "# latest response");
         assert_eq!(
             latest.media[0].url.as_deref(),
@@ -1000,53 +1109,20 @@ mod tests {
             "hasMore": false
         });
         let process = json!({
-            "messages": [
-                { "id": 1, "runId": "run-1", "role": "user", "content": "inspect it" },
-                {
-                    "id": 2,
-                    "runId": "run-1",
-                    "role": "assistant",
-                    "content": {
-                        "toolCalls": [{
-                            "id": "shell-1",
-                            "name": "Shell",
-                            "syscall": "shell.exec",
-                            "arguments": { "input": "pwd" }
-                        }]
-                    }
-                },
-                {
-                    "id": 3,
-                    "runId": "run-1",
-                    "role": "toolResult",
-                    "content": {
-                        "toolCallId": "shell-1",
-                        "toolName": "Shell",
-                        "outcome": "completed",
-                        "content": "ok"
-                    }
-                },
-                {
-                    "id": 4,
-                    "runId": "run-1",
-                    "role": "assistant",
-                    "content": {
-                        "text": "done",
-                        "toolCalls": [{
-                            "id": "message-1",
-                            "name": "Message",
-                            "arguments": { "text": "done" }
-                        }]
-                    }
-                }
-            ],
-            "messageCount": 4,
-            "truncated": false,
-            "hasMoreBefore": false,
-            "hasMoreAfter": false
-        });
+                    "records": [
+                        { "id": 1, "runId": "run-1", "index": 0, "kind": "message", "payload": { "direction": "in", "text": "inspect it", "media": [], "origin": {} } },
+                        { "id": 2, "runId": "run-1", "index": 0, "kind": "call", "payload": { "callId": "shell-1", "tool": "Shell", "syscall": "shell.exec", "target": null, "runId": "run-1", "args": { "input": "pwd" } } },
+                        { "id": 3, "runId": "run-1", "index": 0, "kind": "result", "payload": { "callId": "shell-1", "tool": "Shell", "outcome": "completed", "output": "ok", "media": [], "resources": [] } },
+                        { "id": 4, "runId": "run-1", "index": 0, "kind": "note", "payload": { "text": "done", "thinking": [], "media": [] } },
+        { "id": 4, "runId": "run-1", "index": 1, "kind": "call", "payload": { "callId": "message-1", "tool": "Message", "syscall": null, "target": null, "runId": "run-1", "args": { "text": "done" } } }
+                    ],
+                    "messageCount": 4,
+                    "truncated": false,
+                    "hasMoreBefore": false,
+                    "hasMoreAfter": false
+                });
 
-        let snapshot = normalize_conversation_history(&conversation, &process);
+        let snapshot = normalize_conversation_history(&conversation, &fixture(process));
 
         assert_eq!(snapshot.activity.summaries.len(), 1);
         assert_eq!(
@@ -1054,5 +1130,123 @@ mod tests {
             "conversation-answer"
         );
         assert_eq!(snapshot.activity.summaries[0].entries[0].count, 1);
+    }
+    #[test]
+    fn typed_groups_keep_every_member_and_run_control_is_not_shell_activity() {
+        let history = fixture(
+            json!({"truncated":false,"historyRevision":9,"historyGeneration":3,
+                "historyResetRevision":6,"reset":true,"cursor":"opaque", "records":[
+                {"id":1,"runId":"r","kind":"message","payload":{"direction":"in","text":"hello","media":[],"origin":{}}},
+                {"id":2,"messageId":2,"index":0,"runId":"r","kind":"note","payload":{"text":"draft","thinking":[]}},
+                {"id":3,"messageId":2,"index":1,"runId":"r","kind":"call","payload":{"callId":"c","tool":"Shell",
+                    "syscall":null,"args":{"input":"message send hello && yield"},"target":null,"runId":"r"}},
+                {"id":4,"runId":"r","kind":"result","payload":{"callId":"c","tool":"Shell","outcome":"completed",
+                    "output":{"action":"send","finish":true,"delivery":{"messageId":"m"}},"media":[],"resources":[]}},
+                {"id":5,"runId":"r","kind":"note","payload":{"text":"after","thinking":[]}}
+            ]}),
+        );
+        let snapshot = normalize_history(&history);
+        assert_eq!(snapshot.moments.len(), 3);
+        assert_eq!(snapshot.moments[1].id.as_ref(), "2");
+        assert!(snapshot.activity.latest_call_states.is_empty());
+        assert!(snapshot
+            .activity
+            .summaries
+            .iter()
+            .all(|summary| summary.entries.is_empty()));
+        assert_eq!(snapshot.sync.revision, 9);
+        assert_eq!(snapshot.sync.generation, 3);
+        assert_eq!(snapshot.sync.reset_revision, 6);
+        assert!(snapshot.sync.reset);
+        assert_eq!(snapshot.sync.cursor.as_deref(), Some("opaque"));
+    }
+
+    #[test]
+    fn canonical_messages_ignore_drafts_and_keep_person_notices_as_system_moments() {
+        let process = fixture(json!({"truncated":false,"records":[
+            {"id":1,"runId":"r","kind":"note","payload":{"text":"uncommitted draft","thinking":[]}},
+            {"id":2,"runId":"r","kind":"message","payload":{"direction":"out","text":"compatibility copy",
+                "media":[],"origin":{},"conversationMessageId":"m"}},
+            {"id":3,"runId":"r","kind":"event","payload":{"kind":"correction.exhausted",
+                "payload":{"attempts":3,"limit":3},"severity":"warn","audience":"person"}},
+            {"id":4,"runId":"r","kind":"event","payload":{"kind":"correction.text-only",
+                "payload":{"attempt":1,"limit":3},"severity":"warn","audience":"model"}}
+        ]}));
+        let canonical = json!({"conversation":{"latestSequence":1},"hasMore":false,"messages":[
+            {"id":"m","runId":"r","author":{"kind":"process"},"text":"  committed text\n","media":[
+                {"type":"resource","ref":{"type":"file","target":"gsv","path":"/home/a/picture.png",
+                "revision":"immutable-revision","contentType":"image/png","size":42},"mediaType":"image"}]}]});
+        let snapshot = normalize_conversation_history(&canonical, &process);
+        assert_eq!(snapshot.moments.len(), 2);
+        assert_eq!(snapshot.moments[0].text.as_ref(), "  committed text\n");
+        assert_eq!(
+            snapshot.moments[0].media[0]
+                .resource
+                .as_ref()
+                .expect("resource")
+                .revision,
+            "immutable-revision"
+        );
+        assert_eq!(snapshot.moments[1].role, HistoryMomentRole::System);
+        assert!(snapshot.moments[1].text.starts_with("correction.exhausted"));
+        assert!(Arc::ptr_eq(
+            &snapshot.moments[1].text,
+            &snapshot.moments[1].render_text
+        ));
+        assert!(snapshot
+            .moments
+            .iter()
+            .all(|moment| !moment.text.contains("uncommitted")
+                && !moment.text.contains("correction.text-only")));
+    }
+    #[test]
+    fn notices_keep_chronological_position_and_committed_notice_identity() {
+        let process = fixture(json!({"truncated":false,"records":[
+            {"id":1,"createdAt":5,"kind":"event","payload":{"kind":"delivery.failed",
+                "payload":{"phase":"message","error":"old failure"},"severity":"error","audience":"person"}},
+            {"id":2,"createdAt":10,"kind":"event","payload":{"kind":"correction.exhausted",
+                "payload":{"attempts":3,"limit":3,"messageId":"notice"},"severity":"warn","audience":"person"}}
+        ]}));
+        let canonical = json!({"messages":[
+            {"id":"notice","createdAt":10,"author":{"kind":"process"},"text":"committed notice"},
+            {"id":"answer","createdAt":20,"author":{"kind":"process"},"text":"latest answer"},
+            {"id":"clock-adjusted","createdAt":18,"author":{"kind":"process"},"text":"later sequence"}
+        ]});
+        let snapshot = normalize_conversation_history(&canonical, &process);
+        assert_eq!(snapshot.moments.len(), 4);
+        assert!(snapshot.moments[0].text.contains("old failure"));
+        assert_eq!(snapshot.moments[1].id.as_ref(), "notice");
+        assert_eq!(snapshot.moments[1].text.as_ref(), "committed notice");
+        assert_eq!(snapshot.moments[1].role, HistoryMomentRole::System);
+        assert_eq!(snapshot.moments[2].id.as_ref(), "answer");
+        assert_eq!(snapshot.moments[3].id.as_ref(), "clock-adjusted");
+    }
+    #[test]
+    fn machine_connection_events_are_concise_system_notices_with_severity() {
+        for (label, change, expected) in [
+            (
+                Some("Studio"),
+                "disconnected",
+                "Studio (studio-pc) disconnected.",
+            ),
+            (Some("studio-pc"), "connected", "studio-pc connected."),
+            (None, "disconnected", "studio-pc disconnected."),
+        ] {
+            let mut event_payload =
+                json!({"targetId":"studio-pc","event":change,"platform":"linux","observedAt":1});
+            if let Some(label) = label {
+                event_payload["label"] = json!(label);
+            }
+            let snapshot = normalize_fixture(&json!({"records":[{"id":1,"kind":"event","payload":{
+                "kind":"target.connection","payload":event_payload,"severity":"warn","audience":"person"}}]}));
+            assert_eq!(snapshot.moments[0].role, HistoryMomentRole::System);
+            assert_eq!(snapshot.moments[0].text.as_ref(), expected);
+            assert_eq!(
+                snapshot.moments[0].event_severity,
+                Some(HistorySeverity::Warn)
+            );
+            let moments = crate::model::moments_from_history(&snapshot);
+            assert_eq!(moments[0].event_severity, Some(HistorySeverity::Warn));
+        }
     }
 }

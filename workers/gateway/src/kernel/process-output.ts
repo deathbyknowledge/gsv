@@ -17,11 +17,7 @@ import {
   RunRouteStore,
 } from "./run-routes";
 import {
-  type SignalWatchRecord,
-} from "./signal-watches";
-import {
   getConversationById,
-  sendFrameToProcess,
 } from "../shared/utils";
 import type {
   ConversationAppendRequest,
@@ -54,19 +50,14 @@ type ConnectionMessageStreamPayload = {
 };
 
 
-type SignalWatchDelivery = {
-  id: string;
-  key?: string;
-  state?: SignalWatchRecord["state"];
-  createdAt: number;
-};
-
-
 type AmbientProcessChangePayload = {
   pid: string;
   changes: string[];
   queuedCount?: number;
   timestamp?: number;
+  historyRevision?: number;
+  historyGeneration?: number;
+  historyResetRevision?: number;
 };
 
 
@@ -80,6 +71,9 @@ function ambientProcessChangeFrame(
   };
   if (frame.payload?.queuedCount !== undefined) payload.queuedCount = frame.payload.queuedCount;
   if (frame.payload?.timestamp !== undefined) payload.timestamp = frame.payload.timestamp;
+  if (frame.payload?.historyRevision !== undefined) payload.historyRevision = frame.payload.historyRevision;
+  if (frame.payload?.historyGeneration !== undefined) payload.historyGeneration = frame.payload.historyGeneration;
+  if (frame.payload?.historyResetRevision !== undefined) payload.historyResetRevision = frame.payload.historyResetRevision;
   return {
     type: "sig",
     signal: "proc.changed",
@@ -109,9 +103,6 @@ readonly pendingProcessSignals = new Map<string, Promise<void>>();
     }
 
     const runId = userFrame?.payload?.runId?.trim() || null;
-
-    // Signal watches are scoped to the process owner, not the run-as account.
-    await this.dispatchSignalWatches(ownerUid, processId, frame);
 
     if (!userFrame) return;
 
@@ -320,54 +311,6 @@ broadcastProcessSignal(
         connection.send(ambient);
       }
     }
-  }
-
-async dispatchSignalWatches(
-    uid: number,
-    processId: string,
-    frame: SignalFrame,
-  ): Promise<void> {
-    const watches = this.host.signalWatches.match(uid, frame.signal, processId);
-    for (const watch of watches) {
-      try {
-        await this.invokeProcessSignalWatch(watch, processId, frame);
-        if (watch.once) {
-          this.host.signalWatches.deleteHandled(watch.watchId);
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.host.signalWatches.markFailed(watch.watchId, message);
-        console.warn(`[Kernel] signal watch ${watch.watchId} failed: ${message}`);
-      }
-    }
-  }
-
-async invokeProcessSignalWatch(
-    watch: SignalWatchRecord,
-    processId: string,
-    frame: SignalFrame,
-  ): Promise<void> {
-    if (!watch.targetProcessId) {
-      throw new Error(`Process signal watch ${watch.watchId} is missing target process`);
-    }
-
-    const watchDelivery: SignalWatchDelivery = {
-      id: watch.watchId,
-      createdAt: watch.createdAt,
-    };
-    if (watch.key) watchDelivery.key = watch.key;
-    if (watch.state !== undefined) watchDelivery.state = watch.state;
-
-    await sendFrameToProcess(this.host.installationId, watch.targetProcessId, {
-      type: "sig",
-      signal: frame.signal,
-      payload: {
-        watched: true,
-        sourcePid: processId,
-        watch: watchDelivery,
-        payload: frame.payload,
-      },
-    });
   }
 
 async commitProcessMessage(

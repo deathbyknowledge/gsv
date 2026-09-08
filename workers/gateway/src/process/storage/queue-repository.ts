@@ -1,5 +1,6 @@
 import type { ProcessStore } from "../store";
-import { queuedMessageRole, type EnqueueMessageOptions, type QueuedMessage } from "./store-codecs";
+import { procHistoryRecordDataSchema } from "@humansandmachines/gsv/protocol";
+import { queuedMessageRole, type EnqueueMessageOptions, type QueuedRun } from "./store-codecs";
 
 /** Owns FIFO admissions waiting behind the active Process run. */
 export class ProcessQueueRepository {
@@ -16,8 +17,8 @@ export class ProcessQueueRepository {
     this.store.sql.exec(
       `INSERT INTO message_queue (
         run_id, generation, role, kind, message, media_json, origin_json,
-        provenance_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        provenance_json, record_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       runId,
       generation,
       options.role ?? "user",
@@ -26,11 +27,16 @@ export class ProcessQueueRepository {
       options.media ?? null,
       options.origin ?? null,
       options.provenance ?? null,
+      options.record ? JSON.stringify(procHistoryRecordDataSchema.parse(options.record)) : null,
       Date.now(),
     );
   }
 
-  dequeue(): QueuedMessage | null {
+  enqueueContinuation(runId: string): void {
+    this.enqueue(runId, "", { role: "system", kind: "runtime.continuation" });
+  }
+
+  dequeue(): QueuedRun | null {
     const row = this.store.first<{
         id: number;
         run_id: string;
@@ -41,16 +47,26 @@ export class ProcessQueueRepository {
         media_json: string | null;
         origin_json: string | null;
         provenance_json: string | null;
+        record_json: string | null;
       }>(
         `SELECT id, run_id, generation, role, kind, message, media_json,
-                origin_json, provenance_json
+                origin_json, provenance_json, record_json
            FROM message_queue
           ORDER BY id ASC
           LIMIT 1`,
       );
     if (!row) return null;
+    // Pre-upgrade queued wake messages are the same durable continuation admission.
+    if (row.kind === "runtime.continuation" || row.kind === "runtime.wake") {
+      this.store.sql.exec("DELETE FROM message_queue WHERE id = ?", row.id);
+      return { type: "continuation", id: row.id, runId: row.run_id, generation: row.generation };
+    }
+    const record = row.record_json === null
+      ? undefined
+      : procHistoryRecordDataSchema.parse(JSON.parse(row.record_json));
     this.store.sql.exec("DELETE FROM message_queue WHERE id = ?", row.id);
     return {
+      type: "message",
       id: row.id,
       runId: row.run_id,
       generation: row.generation,
@@ -60,6 +76,7 @@ export class ProcessQueueRepository {
       media: row.media_json,
       origin: row.origin_json,
       provenance: row.provenance_json,
+      record,
     };
   }
 

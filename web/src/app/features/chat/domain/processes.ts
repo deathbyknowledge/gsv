@@ -9,12 +9,13 @@ import type {
   ProcHistoryCompactResult,
   ProcHistorySegment,
   ProcHistorySegmentReadArgs,
-  ProcHistorySegmentReadResult,
+  ProcHistorySegmentRecordsResult,
   ProcHistorySegmentsArgs,
   ProcHilArgs,
   ProcHilDecision,
   ProcHilResult,
-  ProcHistoryMessage,
+  ProcHistoryRecord,
+  ProcHistoryRecordsResult,
   ProcHistoryResult,
   ProcHilRequest,
   ProcListEntry,
@@ -44,23 +45,15 @@ export type ChatProcessSummary = {
   cwd: string;
 };
 
-export type ChatHistoryMessageRole = ProcHistoryMessage["role"];
-
-export type ChatHistoryMessage = {
-  id: number | null;
-  clientId: string;
-  runId: string | null;
-  role: ChatHistoryMessageRole;
-  content: HistoryValue;
-  text: string;
-  timestamp: number | null;
-  origin: ProcHistoryMessage["origin"];
-  metadata: ProcHistoryMessage["metadata"];
-};
-
 export type ChatHistory = {
   pid: string;
-  messages: ChatHistoryMessage[];
+  records: ProcHistoryRecord[];
+  cursor?: string;
+  historyRevision: number;
+  historyGeneration: number;
+  historyResetRevision: number;
+  reset: boolean;
+  hasMore: boolean;
   messageCount: number;
   truncated: boolean;
   hasMoreBefore: boolean;
@@ -103,105 +96,11 @@ export type ChatHistoryCompactResult = Extract<ProcHistoryCompactResult, { ok: t
 export type ChatForkArgs = ProcForkArgs;
 export type ChatForkResult = Extract<ProcForkResult, { ok: true }>;
 export type ChatHistorySegmentReadArgs = ProcHistorySegmentReadArgs;
-export type ChatHistorySegmentReadResult = Extract<ProcHistorySegmentReadResult, { ok: true }>;
+export type ChatHistorySegmentReadResult = ProcHistorySegmentRecordsResult;
 export type ChatHistorySegmentsArgs = ProcHistorySegmentsArgs;
 export type ChatProcessAiConfig = Extract<ProcAiConfigGetResult, { ok: true }>["config"];
 export type ChatProcessAiConfigSetArgs = ProcAiConfigSetArgs;
 export type ChatProcessAiConfigSetResult = Extract<ProcAiConfigSetResult, { ok: true }>;
-
-export type HistoryValue = string | number | boolean | null | HistoryValue[] | HistoryRecord;
-export type HistoryRecord = { [key: string]: HistoryValue };
-const historyValueSchema: z.ZodType<HistoryValue> = z.lazy(() => z.union([
-  z.string(),
-  z.number(),
-  z.boolean(),
-  z.null(),
-  z.array(historyValueSchema),
-  z.record(z.string(), historyValueSchema),
-]));
-const historyRecordSchema = z.record(z.string(), historyValueSchema);
-
-function stringifyMessageContent(value: HistoryValue): string {
-  try {
-    return JSON.stringify(value, null, 2) ?? String(value);
-  } catch {
-    return String(value);
-  }
-}
-
-function normalizeMessageText(value: HistoryValue, role?: ChatHistoryMessageRole): string {
-  const text = z.string().safeParse(value);
-  if (text.success) {
-    return text.data;
-  }
-  const number = z.number().safeParse(value);
-  const boolean = z.boolean().safeParse(value);
-  if (number.success || boolean.success) {
-    return String(number.success ? number.data : boolean.data);
-  }
-
-  const list = z.array(historyValueSchema).safeParse(value);
-  if (list.success) {
-    return list.data
-      .map((part) => {
-        const partText = z.string().safeParse(part);
-        if (partText.success) {
-          return partText.data;
-        }
-        const record = historyRecordSchema.safeParse(part);
-        if (!record.success) {
-          return "";
-        }
-        if ("text" in record.data) return normalizeMessageText(record.data.text, role);
-        if ("output" in record.data) return normalizeMessageText(record.data.output, role);
-        if ("content" in record.data) return normalizeMessageText(record.data.content, role);
-        return "";
-      })
-      .filter(Boolean)
-      .join("\n");
-  }
-
-  const record = historyRecordSchema.safeParse(value);
-  if (record.success && "result" in record.data) {
-    return normalizeMessageText(record.data.result, role);
-  }
-  if (record.success && "error" in record.data) {
-    const text = normalizeMessageText(record.data.error, role);
-    return text ? `Error: ${text}` : "";
-  }
-
-  if (record.success && "toolName" in record.data) {
-    const toolName = z.string().safeParse(record.data.toolName);
-    const label = toolName.success && toolName.data.trim()
-      ? `Tool result: ${toolName.data.trim()}`
-      : "Tool result";
-    const args = "args" in record.data ? record.data.args : undefined;
-    const details = args === undefined ? "" : stringifyMessageContent(args);
-    return details ? `${label}\n${details}` : label;
-  }
-
-  if (role === "system" || role === "toolResult") {
-    return stringifyMessageContent(value);
-  }
-
-  if (value !== null && value !== undefined) {
-    return stringifyMessageContent(value);
-  }
-
-  return "";
-}
-
-function normalizeFallbackToolText(value: HistoryValue): string {
-  const record = historyRecordSchema.safeParse(value);
-  if (record.success && "toolName" in record.data) {
-    const toolName = z.string().safeParse(record.data.toolName);
-    return toolName.success && toolName.data.trim()
-      ? `Tool result: ${toolName.data}`
-      : "";
-  }
-
-  return "";
-}
 
 export function normalizeRunState(input: {
   activeRunId?: string | null;
@@ -255,29 +154,7 @@ export function normalizeProcessSummaries(processes: readonly ProcListEntry[]): 
     });
 }
 
-export function normalizeHistoryMessage(message: ProcHistoryMessage, index: number): ChatHistoryMessage {
-  const idResult = z.number().safeParse(message.id);
-  const id = idResult.success ? idResult.data : null;
-  const timestampResult = z.number().safeParse(message.timestamp);
-  const timestamp = timestampResult.success ? timestampResult.data : null;
-  const contentResult = historyValueSchema.safeParse(message.content);
-  const content = contentResult.success ? contentResult.data : null;
-
-  return {
-    id,
-    clientId: id === null ? `transient-${index}` : String(id),
-    runId: message.runId ?? null,
-    role: message.role,
-    content,
-    text: normalizeMessageText(content, message.role)
-      || normalizeFallbackToolText(content),
-    timestamp,
-    origin: message.origin,
-    metadata: message.metadata,
-  };
-}
-
-export function normalizeHistory(result: Extract<ProcHistoryResult, { ok: true }>): ChatHistory {
+export function normalizeHistory(result: ProcHistoryRecordsResult): ChatHistory {
   const pendingHil = normalizeHilRequest(result.pendingHil);
   const contextRevision = Math.max(
     nonNegativeInteger(result.contextRevision),
@@ -285,7 +162,13 @@ export function normalizeHistory(result: Extract<ProcHistoryResult, { ok: true }
   );
   return {
     pid: result.pid,
-    messages: result.messages.map(normalizeHistoryMessage),
+    records: result.records,
+    cursor: result.cursor,
+    historyRevision: result.historyRevision,
+    historyGeneration: result.historyGeneration,
+    historyResetRevision: result.historyResetRevision,
+    reset: result.reset,
+    hasMore: result.hasMore,
     messageCount: result.messageCount,
     truncated: result.truncated === true,
     hasMoreBefore: result.hasMoreBefore === true,

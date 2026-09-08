@@ -41,7 +41,7 @@ function createTableStatement(name: string): string {
 describe("process schema migrations", () => {
   it("starts the process component at a v1 baseline with ordered migrations", () => {
     expect(PROCESS_SCHEMA_COMPONENT).toBe("process");
-    expect(PROCESS_MIGRATIONS).toHaveLength(13);
+    expect(PROCESS_MIGRATIONS).toHaveLength(15);
     expect(PROCESS_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_process_schema",
@@ -93,6 +93,10 @@ describe("process schema migrations", () => {
     expect(PROCESS_MIGRATIONS[12]).toMatchObject({
       id: 13,
       name: "add_context_projections",
+    });
+    expect(PROCESS_MIGRATIONS[13]).toMatchObject({
+      id: 14,
+      name: "typed_history_records",
     });
   });
 

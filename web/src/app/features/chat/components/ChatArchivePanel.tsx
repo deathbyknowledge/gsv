@@ -1,9 +1,5 @@
 import { useEffect, useRef } from "preact/hooks";
-import {
-  normalizeHistoryMessage,
-  type ChatHistory,
-} from "../domain/processes";
-import { transcriptRowsFromHistory } from "../domain/transcript";
+import { transcriptRowsFromRecords } from "../domain/typedHistory";
 import {
   useChatHistorySegment,
   useChatHistorySegments,
@@ -17,25 +13,6 @@ type ChatArchivePanelProps = {
   selectedSegmentId: string;
   onSelectSegment: (segmentId: string) => void;
 };
-
-function archiveHistoryFromSegment(
-  processId: string,
-  segment: NonNullable<ReturnType<typeof useChatHistorySegment>["data"]>,
-): ChatHistory {
-  return {
-    pid: processId,
-    messages: segment.messages.map(normalizeHistoryMessage),
-    messageCount: segment.messageCount,
-    truncated: segment.truncated === true,
-    hasMoreBefore: false,
-    hasMoreAfter: false,
-    activeRunId: null,
-    runState: "idle",
-    pendingHil: null,
-    context: null,
-    contextRevision: 0,
-  };
-}
 
 export function ChatArchivePanel({
   onClose,
@@ -58,7 +35,7 @@ export function ChatArchivePanel({
     enabled: selected.length > 0,
   });
   const rows = segment.data
-    ? transcriptRowsFromHistory(archiveHistoryFromSegment(processId, segment.data))
+    ? transcriptRowsFromRecords(segment.data.records)
     : [];
   const segmentCount = segments.data?.length ?? 0;
   const backRef = useRef<HTMLButtonElement | null>(null);
@@ -103,7 +80,7 @@ export function ChatArchivePanel({
         </div>
         <div class="gsv-chat-archive-transcript">
           {segment.isError ? (
-            <div class="gsv-chat-archive-empty">SEGMENT UNAVAILABLE</div>
+            <div class="gsv-chat-archive-empty">{segment.error instanceof Error ? segment.error.message : "SEGMENT UNAVAILABLE"}</div>
           ) : rows.length > 0 ? (
             <ChatTranscript messages={rows} processId={processId} />
           ) : (

@@ -20,10 +20,7 @@ import type {
   JsonObject,
   JsonValue,
 } from "@humansandmachines/gsv/protocol";
-import {
-  jsonObjectSchema,
-  jsonValueSchema,
-} from "@humansandmachines/gsv/protocol";
+import { jsonObjectSchema } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 
 type OpenAiCodexFetchRequest = {
@@ -38,6 +35,23 @@ type OpenAiCodexFetchOptions = SimpleStreamOptions & {
   reasoningSummary?: "auto" | "concise" | "detailed";
   serviceTier?: "auto" | "default" | "flex" | "scale" | "priority";
   textVerbosity?: "low" | "medium" | "high";
+};
+
+type OpenAiCodexRequestBody = {
+  model: string;
+  store: boolean;
+  stream: boolean;
+  instructions: string;
+  input: ReturnType<typeof convertResponsesMessages>;
+  text: { verbosity: NonNullable<OpenAiCodexFetchOptions["textVerbosity"]> };
+  include: string[];
+  tool_choice: "auto";
+  parallel_tool_calls: boolean;
+  prompt_cache_key?: string;
+  temperature?: number;
+  service_tier?: OpenAiCodexFetchOptions["serviceTier"];
+  tools?: ReturnType<typeof convertResponsesTools>;
+  reasoning?: { effort: string; summary: NonNullable<OpenAiCodexFetchOptions["reasoningSummary"]> };
 };
 
 type RoutedRequestInit = RequestInit & { timeoutMs?: number };
@@ -98,7 +112,8 @@ export function streamWithOpenAiCodexFetch(
       if (request.options?.timeoutMs !== undefined) {
         requestInit.timeoutMs = request.options.timeoutMs;
       }
-      const response = await request.fetch(resolveCodexUrl(request.model.baseUrl), requestInit);
+      const fetchImpl = request.fetch;
+      const response = await fetchImpl(resolveCodexUrl(request.model.baseUrl), requestInit);
 
       await request.options?.onResponse?.(providerResponseFromFetchResponse(response), request.model);
 
@@ -175,15 +190,16 @@ function buildRequestBody(
   model: Model<Api>,
   context: Context,
   options: OpenAiCodexFetchOptions | undefined,
-): JsonObject {
-  const body: JsonObject = {
+): OpenAiCodexRequestBody {
+  // Provider converters retain optional undefined fields until HTTP JSON serialization.
+  const body: OpenAiCodexRequestBody = {
     model: model.id,
     store: false,
     stream: true,
     instructions: context.systemPrompt || "You are a helpful assistant.",
-    input: jsonValueSchema.parse(convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
+    input: convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
       includeSystemPrompt: false,
-    })),
+    }),
     text: { verbosity: options?.textVerbosity ?? "low" },
     include: ["reasoning.encrypted_content"],
     tool_choice: "auto",
@@ -203,7 +219,7 @@ function buildRequestBody(
     body.service_tier = serviceTier;
   }
   if (context.tools && context.tools.length > 0) {
-    body.tools = jsonValueSchema.parse(convertResponsesTools(context.tools, { strict: null }));
+    body.tools = convertResponsesTools(context.tools, { strict: null });
   }
 
   const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
@@ -403,4 +419,3 @@ function parseProviderErrorMessage(rawBody: string): string | null {
     return null;
   }
 }
-

@@ -129,10 +129,10 @@ describe("model context", () => {
     expect(result.messages[0]).toMatchObject({
       role: "system",
     });
-    expect(result.messages[0].content).toContain("Scheduled event `nightly` fired.");
+    expect(result.messages[0].content).toContain("Schedule `nightly` fired.");
     expect(result.contextMessages[0]).toMatchObject({
       role: "user",
-      content: expect.stringContaining("[From: schedule sched-1]"),
+      content: expect.stringContaining("ID: `sched-1`"),
     });
     expect(result.contextMessages[0].content).toContain("[Directed endpoint: this GSV process.]");
     expect(result.contextMessages[0].content).toContain("[GSV EVENT]");
@@ -309,7 +309,8 @@ describe("model context", () => {
       });
       const contextMessages = await process.history.buildContextMessages("default");
       expect(contextMessages).toHaveLength(1);
-      expect(contextMessages[0].content).toContain("[From: schedule sched-busy]");
+      expect(contextMessages[0].content).toContain("ID: `sched-busy`");
+      expect(contextMessages[0].content).not.toContain("Reply destination:");
       expect(contextMessages[0].content).not.toContain("[Directed endpoint:");
 
       await process.run.finishRun("run-busy", { status: "ok", resultText: "done" });
@@ -328,8 +329,8 @@ describe("model context", () => {
       mockGeneration(process, async (request: any) => {
         expect(request.context.systemPrompt).toBe("Test system prompt.");
         const input = JSON.stringify(request.context.messages);
-        expect(input).toContain("[From: schedule sched-adapter-reply]");
-        expect(input).toContain("[Directed endpoint: this Telegram direct message.]");
+        expect(input).toContain("ID: `sched-adapter-reply`");
+        expect(input).toContain("Reply destination: this Telegram direct message.");
         expect(input).not.toContain("message send");
         expect(input).not.toContain("--also");
         expect(input).not.toContain("telegram-user-1");
@@ -579,23 +580,23 @@ describe("model context", () => {
     });
 
     expect(result.generationContexts).toHaveLength(4);
-    expect(result.generationContexts[0]).not.toContain("Context runway is getting low.");
+    expect(result.generationContexts[0]).not.toContain("Context low:");
     expect(result.generationContexts[1]).toContain("[GSV EVENT]");
-    expect(result.generationContexts[1]).toContain("Context runway is getting low.");
-    expect(result.generationContexts[1]).toContain("About 164,000 input tokens remain");
+    expect(result.generationContexts[1]).toContain("Context low:");
+    expect(result.generationContexts[1]).toContain("~164,000 input tokens remain.");
     expect(result.generationContexts[1]).toContain(
-      "About 64,000 tokens of that runway remain before GSV automatically compacts",
+      "Automatic compaction in ~64,000 tokens (90% boundary).",
     );
-    expect(result.generationContexts[2].match(/Context runway is getting low\./gu)).toHaveLength(
+    expect(result.generationContexts[2].match(/Context low:/gu)).toHaveLength(
       1,
     );
-    expect(result.generationContexts[3].match(/Context runway is getting low\./gu)).toHaveLength(
+    expect(result.generationContexts[3].match(/Context low:/gu)).toHaveLength(
       1,
     );
     expect(
       result.messages.filter(
         (message: any) =>
-          message.role === "system" && message.content.includes("Context runway is getting low."),
+          message.role === "system" && message.content.includes("Context low:"),
       ),
     ).toHaveLength(1);
     expect(result.segments).toHaveLength(1);
@@ -643,7 +644,7 @@ describe("model context", () => {
       process.history.updateContextState = vi.fn(
         async (runId: string, _config: AiConfigResult, context: Context) => {
           const includesRunwayAlert = JSON.stringify(context).includes(
-            "Context runway is getting low.",
+            "Context low:",
           );
           const inputTokens = includesRunwayAlert ? 900_100 : 899_999;
           revision += 1;
@@ -691,7 +692,7 @@ describe("model context", () => {
     });
 
     expect(result.generationContexts).toHaveLength(1);
-    expect(result.generationContexts[0]).toContain("Context runway is getting low.");
+    expect(result.generationContexts[0]).toContain("Context low:");
     expect(
       result.messages.some(
         (message: any) =>

@@ -1,3 +1,5 @@
+import { useEffect } from "preact/hooks";
+import { getProcessHistorySync, processHistoryKey } from "../backend/historySync";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import type {
   ProcAbortArgs,
@@ -20,7 +22,6 @@ import {
   decideChatHil,
   forkChatProcess,
   getChatProcessAiConfig,
-  getChatHistory,
   getProcessTrace,
   listChatHistorySegments,
   listChatProcesses,
@@ -40,14 +41,9 @@ export const chatProcessListQueryKey = (args: ProcListArgs = {}) => [
   args,
 ] as const;
 
-export const chatProcessHistoryQueryKey = (args: ProcHistoryArgs = {}) => [
-  "process",
-  "chat",
-  "history",
-  args,
-] as const;
+export const chatProcessHistoryQueryKey = (args: ProcHistoryArgs = {}) => processHistoryKey(args.pid ?? "");
 
-export const chatProcessHistoryQueryKeyRoot = ["process", "chat", "history"] as const;
+export const chatProcessHistoryQueryKeyRoot = ["process"] as const;
 
 export const chatProcessTraceQueryKey = (args: ProcTraceArgs) => [
   "process",
@@ -102,6 +98,7 @@ type UseChatProcessListOptions = ChatQueryOptions & {
 
 type UseChatProcessHistoryOptions = ChatQueryOptions & {
   args?: ProcHistoryArgs;
+  observe?: boolean;
 };
 
 type UseChatProcessTraceOptions = ChatQueryOptions & {
@@ -133,12 +130,24 @@ export function useChatProcessList(options: UseChatProcessListOptions = {}) {
 
 export function useChatProcessHistory(options: UseChatProcessHistoryOptions = {}) {
   const { client, connected } = useGateway();
+  const queries = useQueryClient();
   const args = options.args ?? {};
+  const pid = args.pid?.trim() ?? "";
+  const limit = args.limit ?? 50;
+  const enabled = connected && options.enabled !== false && Boolean(pid);
+  const sync = getProcessHistorySync(client, queries);
+  useEffect(() => {
+    if (!enabled) return undefined;
+    return sync.retain(pid, limit, options.observe === true);
+  }, [enabled, limit, options.observe, pid, sync]);
 
   return useQuery({
-    queryKey: chatProcessHistoryQueryKey(args),
-    enabled: connected && options.enabled !== false && hasHistoryTarget(args),
-    queryFn: () => getChatHistory(client, args),
+    queryKey: processHistoryKey(pid),
+    enabled,
+    queryFn: () => sync.read(pid, limit),
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchInterval: false,
   });
 }
 

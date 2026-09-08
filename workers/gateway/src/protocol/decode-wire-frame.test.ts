@@ -6,6 +6,25 @@ import {
 } from "./decode-wire-frame";
 
 describe("decodeWireFrameJson", () => {
+  it.each(["person", "model", "both"])("accepts a registered target watch for audience %s", (audience) => {
+    const frame = {
+      type: "req", id: "target-watch", call: "signal.watch",
+      args: { signal: "target.status", targetId: "laptop", audience, key: "connection", once: false },
+    };
+    expect(decodeWireFrameJson(JSON.stringify(frame))).toEqual(frame);
+  });
+
+  it.each([
+    { signal: "proc.run.finished", processId: "old-process" },
+    { signal: "target.status" },
+    { signal: "proc.run.finished", targetId: "laptop" },
+    { signal: "target.status", targetId: "laptop", processId: "old-process" },
+  ])("rejects unregistered or retired signal-watch sources", (args) => {
+    expect(() => decodeWireFrameJson(JSON.stringify({
+      type: "req", id: "old-watch", call: "signal.watch", args,
+    }))).toThrow(InvalidWireFrameError);
+  });
+
   it("decodes a syscall request with its call-specific argument contract", () => {
     expect(decodeWireFrameJson(JSON.stringify({
       type: "req",

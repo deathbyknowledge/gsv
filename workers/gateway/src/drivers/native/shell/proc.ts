@@ -18,19 +18,17 @@ import { handleAccountList } from "../../../kernel/agents";
 import type { ArgsOf, ResultOf } from "../../../syscalls";
 import type {
   JsonObject,
-  JsonValue,
-  ProcHistoryMessage,
   ProcHistoryOverflowPolicy,
   ProcSpawnArgs,
   ResponsibilityRecord,
 } from "@humansandmachines/gsv/protocol";
 import {
   jsonObjectSchema,
-  jsonValueSchema,
 } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import type { RequestFrame } from "../../../protocol/frames";
 import { parseDurationMs, requireCommandCapability, requireShellOptionValue } from "./common";
+import { renderProcHistoryRecords } from "./history-renderer";
 
 const DEFAULT_HISTORY_CONTENT_CHARS = 4000;
 
@@ -41,10 +39,6 @@ const procSpawnArgsSchema = z.strictObject({
   prompt: z.string().optional(),
   parentPid: z.string().optional(),
   cwd: z.string().optional(),
-});
-const historyDisplayObjectSchema = z.object({
-  text: z.string().optional(),
-  output: z.string().optional(),
 });
 
 type ProcHistoryOk = Extract<ResultOf<"proc.history">, { ok: true }>;
@@ -393,7 +387,7 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
     case "history": {
       requireCommandCapability(ctx, "proc.history");
       const parsed = parseProcHistoryCommand(rest, ctx);
-      const historyArgs: ArgsOf<"proc.history"> = { pid: parsed.pid };
+      const historyArgs: ArgsOf<"proc.history"> = { pid: parsed.pid, format: 2 };
       if (parsed.limit !== undefined) historyArgs.limit = parsed.limit;
       if (parsed.offset !== undefined) historyArgs.offset = parsed.offset;
       if (parsed.beforeMessageId !== undefined) {
@@ -423,6 +417,7 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
       const segmentArgs: ArgsOf<"proc.history.segment.read"> = {
         pid: parsed.pid,
         segmentId: parsed.segmentId,
+        format: 2,
       };
       if (parsed.limit !== undefined) segmentArgs.limit = parsed.limit;
       if (parsed.offset !== undefined) segmentArgs.offset = parsed.offset;
@@ -1219,6 +1214,9 @@ function formatProcSegmentReadResult(
   result: ProcSegmentReadOk,
   json: boolean | undefined,
 ): string {
+  if (result.format !== 2 || !result.records) {
+    throw new Error("gateway does not support typed process history (format 2)");
+  }
   if (json) {
     return `${JSON.stringify(result, null, 2)}\n`;
   }
@@ -1228,15 +1226,7 @@ function formatProcSegmentReadResult(
     `Messages: ${result.messages.length}/${result.messageCount}${result.truncated ? " (truncated)" : ""}`,
     "",
   ];
-  for (let index = 0; index < result.messages.length; index += 1) {
-    const message = result.messages[index];
-    const timestamp = message.timestamp === undefined
-      ? "-"
-      : new Date(message.timestamp).toISOString();
-    lines.push(`[${index + 1}] ${message.role} ${timestamp}`);
-    lines.push(formatProcHistoryMessageContent(message));
-    lines.push("");
-  }
+  lines.push(...renderProcHistoryRecords(result.records));
   return `${lines.join("\n")}\n`;
 }
 
@@ -1244,6 +1234,9 @@ function formatProcHistoryResult(
   result: ProcHistoryOk,
   options: ProcHistoryFormatOptions,
 ): string {
+  if (result.format !== 2 || !result.records) {
+    throw new Error("gateway does not support typed process history (format 2)");
+  }
   if (options.json) {
     return `${JSON.stringify(result, null, 2)}\n`;
   }
@@ -1267,47 +1260,8 @@ function formatProcHistoryResult(
   }
   lines.push("");
 
-  for (let index = 0; index < result.messages.length; index += 1) {
-    const message = result.messages[index];
-    const timestamp = message.timestamp === undefined
-      ? "-"
-      : new Date(message.timestamp).toISOString();
-    const id = message.id === undefined ? String(index + 1) : `#${message.id}`;
-    const run = message.runId === undefined ? "" : ` run=${message.runId}`;
-    lines.push(`[${id}] ${message.role} ${timestamp}${run}`);
-    const content = formatProcHistoryMessageContent(message);
-    lines.push(options.full ? content : truncateProcHistoryContent(content, options.maxContentChars));
-    lines.push("");
-  }
+  lines.push(...renderProcHistoryRecords(result.records, options.full ? undefined : options.maxContentChars));
   return `${lines.join("\n")}\n`;
-}
-
-function formatProcHistoryMessageContent(message: ProcHistoryMessage): string {
-  return formatProcHistoryContent(jsonValueSchema.parse(message.content));
-}
-
-function formatProcHistoryContent(content: JsonValue): string {
-  const text = z.string().safeParse(content);
-  if (text.success) {
-    return text.data;
-  }
-  const display = historyDisplayObjectSchema.safeParse(content);
-  if (display.success) {
-    if (display.data.text?.trim()) {
-      return display.data.text;
-    }
-    if (display.data.output !== undefined) {
-      return display.data.output;
-    }
-  }
-  return JSON.stringify(content, null, 2) ?? "null";
-}
-
-function truncateProcHistoryContent(content: string, maxChars: number): string {
-  if (content.length <= maxChars) {
-    return content;
-  }
-  return `${content.slice(0, maxChars)}\n...[truncated ${content.length - maxChars} chars; use --full or --json to inspect all content]`;
 }
 
 function procUsage(): string {

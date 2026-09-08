@@ -1,7 +1,5 @@
 /** Assistant metadata and fallback media projection codecs. */
 
-import type { TextContent } from "@earendil-works/pi-ai";
-import { buildFallbackMediaBlocks, describeStoredProcessMedia, parseStoredProcessMedia } from "../media";
 import { z } from "zod";
 import { assistantMessageMetaSchema, toolCallSchema } from "./validation";
 import type { AssistantMessageMeta } from "./records";
@@ -24,30 +22,6 @@ export function parseAssistantMessageMeta(raw: string | null): AssistantMessageM
   }
   const metadata = assistantMessageMetaSchema.safeParse(parsed);
   return metadata.success ? metadata.data : {};
-}
-
-export function buildFallbackUserContent(
-  text: string,
-  media: ReturnType<typeof parseStoredProcessMedia>,
-): TextContent[] {
-  const content: TextContent[] = [];
-  if (text.trim().length > 0) {
-    content.push({ type: "text", text });
-  }
-
-  const fallbackBlocks = buildFallbackMediaBlocks(media);
-  if (fallbackBlocks.length > 0) {
-    content.push(...fallbackBlocks);
-  }
-
-  if (content.length === 0) {
-    content.push({
-      type: "text",
-      text: media.map((item) => describeStoredProcessMedia(item)).join("\n"),
-    });
-  }
-
-  return content;
 }
 
 export function stringifyAssistantMessageMeta(

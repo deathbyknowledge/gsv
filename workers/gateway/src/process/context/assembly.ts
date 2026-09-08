@@ -32,6 +32,7 @@ export async function assembleSystemPromptSnapshot(
         sha256: await sha256Hex(text),
       };
       if (section.contextRoot) source.contextRoot = section.contextRoot;
+      if (section.responsibilityBaseline === true) source.responsibilityBaseline = true;
       sources.push(source);
       if (section.contextRoot) {
         contextSections.push({ ...section, text });

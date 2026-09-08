@@ -4,6 +4,7 @@ import {
   type JsonValue, type ProcToolResultOutcome, type ProcTraceSpanReference,
 } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
+import { unwrapStoredToolResult } from "../tool-result-media";
 import {
   archivedThinkingSchema as thinkingContentSchema,
   archivedToolCallSchema as toolCallSchema,
@@ -162,7 +163,10 @@ export const toolResultMetaSchema = z.object({
   outcome: z.enum(["completed", "failed", "cancelled", "denied"]).optional(),
 });
 
-const failedToolResultSchema = z.object({ status: z.literal("failed") });
+const failedToolResultSchema = z.union([
+  z.object({ status: z.literal("failed") }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+]);
 
 export function normalizeStoredToolResultOutcome(value: string | null): ProcToolResultOutcome | null {
   if (
@@ -177,5 +181,6 @@ export function normalizeStoredToolResultOutcome(value: string | null): ProcTool
 }
 
 export function resolvedToolResultOutcome(result: JsonValue): "completed" | "failed" {
-  return failedToolResultSchema.safeParse(result).success ? "failed" : "completed";
+  const { output } = unwrapStoredToolResult(result);
+  return failedToolResultSchema.safeParse(output).success ? "failed" : "completed";
 }

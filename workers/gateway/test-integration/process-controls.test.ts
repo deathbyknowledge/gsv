@@ -462,14 +462,15 @@ describe("gateway process controls integration", () => {
         model: "integration-model",
         stream: true,
       });
-    });
+    }, { workersAi: false });
   });
 });
 
 async function withRuntime(
   test: (runtime: ProcessRuntimeHarness) => Promise<void>,
+  options: { workersAi?: boolean } = {},
 ): Promise<void> {
-  const runtime = await startProcessRuntimeHarness();
+  const runtime = await startProcessRuntimeHarness(options);
   try {
     await test(runtime);
   } finally {

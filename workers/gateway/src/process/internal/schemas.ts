@@ -4,7 +4,7 @@ import type { CodeModeExecArgs } from "../../syscalls/codemode";
 import { RUN_CONTROL_INSTRUCTION, SEND_TOOL_DESCRIPTION, SEND_TOOL_NAME } from "./lifecycle";
 import { MAX_MESSAGE_MEDIA_ITEMS } from "../../shared/message-media-limits";
 import type { Tool } from "@earendil-works/pi-ai";
-import { jsonObjectSchema, jsonValueSchema } from "@humansandmachines/gsv/protocol";
+import { jsonObjectSchema, jsonValueSchema, procHistoryRecordDataSchema } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import { processIdentitySchema } from "../../protocol/peer-schemas";
 
@@ -149,18 +149,6 @@ export const federationResponsibilityDetailsSchema = z.discriminatedUnion("event
   }),
 ]);
 
-export const watchedSignalPayloadSchema = z.object({
-  watched: z.literal(true),
-  sourcePid: z.string().trim().min(1).optional(),
-  watch: z.object({
-    key: z.string().trim().min(1).optional(),
-    state: z.json().optional(),
-  }).optional(),
-  payload: z.json().optional(),
-}).passthrough();
-
-export type WatchedSignalPayload = z.infer<typeof watchedSignalPayloadSchema>;
-
 export const ipcReplyPayloadSchema = z.object({
   callId: z.string().optional(),
   targetPid: z.string().optional(),
@@ -230,7 +218,9 @@ export const archivedThinkingSchema = z.object({
 });
 
 export const archivedMessageSchema = z.object({
+  records: z.optional(z.array(procHistoryRecordDataSchema).min(1)),
   id: z.number().int().positive().optional().catch(undefined),
+  generation: z.number().int().nonnegative().optional().catch(undefined),
   run_id: optionalNonEmptyStringSchema,
   role: z.enum(["user", "assistant", "system", "toolResult"]),
   content: z.string().catch(""),

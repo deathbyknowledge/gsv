@@ -166,10 +166,6 @@ function parseToolArgs(value: ChatTranscriptValue | undefined): ToolArgs {
 }
 
 /** The place a tool call ran on: its `target` argument, else the cloud home. */
-export function targetFromToolArgs(args: ChatTranscriptValue | undefined): string {
-  return parseToolArgs(args).target ?? CLOUD_TARGET_ID;
-}
-
 /** The argument that matters, collapsed to one line, so a heredoc or a long path never breaks a row. */
 export function describeToolCall(syscall: string, args: ChatTranscriptValue | undefined): string {
   const parsed = parseToolArgs(args);

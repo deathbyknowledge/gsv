@@ -6,6 +6,7 @@ import type {
   ConnectedPeer,
   JsonValue,
   ProcessIdentity,
+  ProcHistoryEventPayload,
 } from "@humansandmachines/gsv/protocol";
 import {
   emitTelemetry,
@@ -36,6 +37,7 @@ import {
   restoreKernelWebSocket,
 } from "./connection";
 import type { Kernel } from "./do";
+import { deliverTargetConnectionEvent } from "./target-events";
 import {
   sameRouteOrigin,
 } from "./do-shared";
@@ -43,6 +45,8 @@ import {
 
 export class ConnectionRuntime {
   constructor(readonly host: Kernel) {}
+
+  private readonly pendingTargetEvents = new Map<string, Promise<void>>();
 
 onConnect(connection: KernelConnection<ConnectionState>): void {
     const state: ConnectionState = { step: "pending" };
@@ -333,6 +337,24 @@ broadcastTargetStatus(
     if (!device) {
       return;
     }
+
+    const payload: ProcHistoryEventPayload<"target.connection"> = {
+      targetId: device.target_id, event, platform: device.platform,
+      version: device.version, observedAt: Date.now(),
+    };
+    if (device.label) payload.label = device.label;
+    const transitionId = `target.connection:${crypto.randomUUID()}`;
+    const watches = this.host.signalWatches.matchTarget(targetId, "target.status");
+    const previous = this.pendingTargetEvents.get(targetId) ?? Promise.resolve();
+    const delivery = previous.then(() => deliverTargetConnectionEvent(this.host, payload, transitionId, watches))
+      .catch((error) => {
+        console.warn(`[Kernel] Target event delivery failed: ${error instanceof Error ? error.message : String(error)}`);
+      })
+      .finally(() => {
+        if (this.pendingTargetEvents.get(targetId) === delivery) this.pendingTargetEvents.delete(targetId);
+      });
+    this.pendingTargetEvents.set(targetId, delivery);
+    this.host.ctx.waitUntil(delivery);
 
     const frame: SignalFrame = {
       type: "sig",

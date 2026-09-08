@@ -27,6 +27,31 @@ export class ProcessStateRepository {
       : INITIAL_HISTORY_GENERATION;
   }
 
+  getHistoryRevision(): number {
+    return Number(this.getValue("historyRevision") ?? "0");
+  }
+
+  getHistoryResetRevision(): number {
+    return Number(this.getValue("historyResetRevision") ?? "0");
+  }
+
+  nextHistoryRevision(): number {
+    const current = this.getHistoryRevision();
+    if (!Number.isSafeInteger(current) || current < 0 || current >= Number.MAX_SAFE_INTEGER) {
+      throw new Error("History revision exhausted or invalid");
+    }
+    const revision = current + 1;
+    this.setValue("historyRevision", String(revision));
+    return revision;
+  }
+
+  /** Deletions require a fresh client snapshot; this counter never resets with history. */
+  invalidateHistoryCursors(): number {
+    const revision = this.nextHistoryRevision();
+    this.setValue("historyResetRevision", String(revision));
+    return revision;
+  }
+
   // we could use `this.ctx.storage.kv` but the sqlite tables
   // it generates are private and can't see it, so we implement
   // it ourselves so we can inspect the tables.

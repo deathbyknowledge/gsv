@@ -1,7 +1,7 @@
 /** Durable Process record types shared by the SQLite repositories. */
 
 import type {
-  JsonObject, JsonValue, ProcMessageMetadata, ProcMessageProviderMetadata, ProcToolResultOutcome, ProcTraceSpan,
+  JsonObject, JsonValue, ProcHistoryRecordData, ProcMessageMetadata, ProcMessageProviderMetadata, ProcToolResultOutcome, ProcTraceSpan,
   ProcTraceSpanKind, ProcTraceSpanStatus, ResponsibilityRecord,
 } from "@humansandmachines/gsv/protocol";
 import type { SyscallName } from "../../syscalls";
@@ -55,6 +55,8 @@ export type MessageRecord = {
   origin?: string | null;
   metadata: string | null;
   createdAt: number;
+  /** Typed members of this compatibility message, in original turn order. */
+  records?: ProcHistoryRecordData[];
 };
 
 export type MessageRow = {
@@ -68,6 +70,9 @@ export type MessageRow = {
   media_json: string | null;
   origin_json: string | null;
   metadata_json?: string | null;
+  kind?: string | null;
+  payload_json?: string | null;
+  group_message_id?: number | null;
   created_at: number;
 };
 
@@ -81,6 +86,7 @@ export type MessageProviderMetadata = ProcMessageProviderMetadata;
 export type MessageMetadata = ProcMessageMetadata;
 
 export type QueuedMessage = {
+  type: "message";
   id: number;
   runId: string;
   generation: number;
@@ -90,7 +96,18 @@ export type QueuedMessage = {
   media: string | null;
   origin?: string | null;
   provenance?: string | null;
+  record?: ProcHistoryRecordData;
 };
+
+/** Durable work admission that reuses existing history without adding model input. */
+export type QueuedContinuation = {
+  type: "continuation";
+  id: number;
+  runId: string;
+  generation: number;
+};
+
+export type QueuedRun = QueuedMessage | QueuedContinuation;
 
 export type EnqueueMessageOptions = {
   role?: QueuedMessageRole;
@@ -98,6 +115,7 @@ export type EnqueueMessageOptions = {
   media?: string;
   origin?: string;
   provenance?: string;
+  record?: ProcHistoryRecordData;
 };
 
 export type PendingHilRecord = {

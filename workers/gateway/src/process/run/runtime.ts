@@ -1,6 +1,7 @@
 /** Owns the Process run state machine from admission through terminal delivery. */
 
 import type { AssistantMessage, Context, ToolCall, Tool } from "@earendil-works/pi-ai";
+import { z } from "zod";
 import type { InternalRequestFrame } from "../../protocol/process-frames";
 import type {
   CommittedRunControlMessage, RunControlResult, TerminalResponsibilityCheck, CompletedRunTransition,
@@ -9,13 +10,14 @@ import type {
   PersistedRunTick, RunTickContextState, RunTickInputs,
 } from "../internal/contracts";
 import {
-  CORRECTION_FAILURE_NOTICE, MAX_TERMINAL_CORRECTION_ROUNDS, RUNTIME_EVENT_WAKE_MESSAGE, YIELD_CORRECTION_MESSAGE,
+  CORRECTION_FAILURE_NOTICE, MAX_TERMINAL_CORRECTION_ROUNDS, YIELD_CORRECTION_MESSAGE,
   MAX_RETRYABLE_GENERATION_ATTEMPTS, SEND_TOOL_NAME, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE, isRunControlCall,
   MEDIA_PREPARATION_TIMEOUT_MS, TOOL_DISPATCH_TIMEOUT_MS,
 } from "../internal/lifecycle";
 import {
   type ResponsibilityRecord, jsonObjectSchema, type AiConfigResult, type AiTextGenerateConfig,
   type AiTextGenerateOptions, type ProcUsageState, jsonValueSchema, type JsonObject, type ProcTraceSpanStatus,
+  type ProcHistoryEventPayload,
 } from "@humansandmachines/gsv/protocol";
 import { parseAttachPath, type RunControlCommand, type RunControlCommandParseResult } from "../run-control-command";
 import { mediaTypeFromContentType } from "../history/helpers";
@@ -24,7 +26,7 @@ import { readPathKey } from "../tools/runtime";
 import type { FileResourceReference, FsReadArgs, FsReadResult, ResourceBlock } from "@humansandmachines/gsv/protocol";
 import type { RunOutputMedia, RunState } from "./state";
 import {
-  errorMessageFromUnknown, isProviderContextOverflow, isProviderContextOverflowErrorMessage,
+  errorMessageFromUnknown, formatProviderErrorDiagnostic, isProviderContextOverflow, isProviderContextOverflowErrorMessage,
 } from "../../inference/errors";
 import { sendFrameToKernel, cancelProcessRequests } from "../../shared/utils";
 import {
@@ -33,13 +35,14 @@ import {
 import type { Process } from "../do";
 import type { RunFinishOptions, RunFinishPayload, RunResult } from "./finish";
 import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
-import type { ArgsOf } from "../../syscalls";
+import { isRoutableSyscall, type ArgsOf } from "../../syscalls";
 import { inferenceLogicalRequestId, type InferenceAttribution } from "../../inference/provider";
 import {
   adaptContextMessage, adaptContextTool, adaptGeneratedAssistantMessage, buildAssistantMessageMetadata,
   modelMetadataFromAiConfig,
 } from "../internal/messages";
-import { formatAiModelStackLabel, formatGenerationFailure } from "../context/formatters";
+import { formatAiModelStackLabel } from "../context/formatters";
+import { formatGenerationFailure } from "../history/event-renderer";
 import {
   nextAiConfigFallback, classifyAssistantTurn, type AssistantTurnClassification,
 } from "../run-tick-policy";
@@ -47,14 +50,12 @@ import {
   describeAssistantResponseFailure, hasRawToolCallMarkupOutput, isRetryableAssistantResponseFailure,
   isRetryableGenerationErrorMessage,
 } from "../../inference/output";
-import {
-  formatRunControlToolResult, incrementRunControlFailure, isRunControlFailureExhausted, runControlFailureAttempt,
-  PROCESS_TASK_SCHEMA, type ProcessTask, type ProcessTaskCallback, contextSnapshotFromRun,
-  withRunControlInstructions,
-} from "./helpers";
+import { incrementRunControlFailure, isRunControlFailureExhausted, runControlFailureAttempt, PROCESS_TASK_SCHEMA, type ProcessTask, type ProcessTaskCallback, contextSnapshotFromRun, withRunControlInstructions } from "./helpers";
+import { formatRunControlToolResult, renderToolExecutionError, renderHistoryEvent } from "../history/event-renderer";
 import { ProcessStore, stringifyAssistantMessageMeta, type MessageMetadata, type ContextEpochRecord } from "../store";
 import { TOOL_TO_SYSCALL } from "../../syscalls/constants";
 import { stringifyStoredProcessMedia } from "../media";
+import { assistantHistoryRecords } from "../storage/history-records";
 import type { DurableTask, DurableTaskOptions } from "../../shared/durable-tasks";
 import { MANAGED_LIFECYCLE_RECHECK_MS, managedInstallationWorkGate } from "../../installation/lifecycle";
 import { GSV_DELEGATED_TASK_CONTEXT } from "../../prompts/system";
@@ -312,6 +313,18 @@ export class ProcessRun {
         options.actionId,
         request,
       );
+      this.host.store.messages.appendRunRecord(options.runId, {
+        kind: "message",
+        payload: {
+          direction: "out",
+          text: committedMessage.text,
+          media: committedMessage.media ?? [],
+          origin: { kind: "run-control", provenance: { source: "process" } },
+          conversationId: committedMessage.conversationId,
+          conversationMessageId: committedMessage.id,
+          deliveryId: options.actionId,
+        },
+      });
       this.consumeRunOutputMedia(options.runId, options.media);
       this.host.streams.deleteAction(options.runId, options.actionId);
       return {
@@ -504,7 +517,18 @@ export class ProcessRun {
       terminalCorrectionRounds: (current.terminalCorrectionRounds ?? 0) + 1,
     }));
     if (!correctedRun) return;
-    await this.host.history.appendSystemMessage(runId, YIELD_CORRECTION_MESSAGE);
+    await this.host.history.appendSystemMessage(runId, YIELD_CORRECTION_MESSAGE, {
+      kind: "event",
+      payload: {
+        kind: "correction.text-only",
+        payload: {
+          attempt: correctedRun.terminalCorrectionRounds ?? 1,
+          limit: MAX_TERMINAL_CORRECTION_ROUNDS,
+        },
+        severity: "warn",
+        audience: "model",
+      },
+    });
     if (!this.host.handleRunStopped(runId)) await this.scheduleTick(runId);
   }
 
@@ -522,7 +546,33 @@ export class ProcessRun {
           text: CORRECTION_FAILURE_NOTICE,
           media: [],
         });
-        await this.commitRunControlMessage(runId, actionId, request);
+        const committed = await this.commitRunControlMessage(runId, actionId, request);
+        this.host.store.messages.appendRunRecord(runId, {
+          kind: "message",
+          payload: {
+            direction: "out",
+            text: committed.text,
+            media: committed.media ?? [],
+            origin: { kind: "run-control", provenance: { source: "process" } },
+            conversationId: committed.conversationId,
+            conversationMessageId: committed.id,
+            deliveryId: actionId,
+          },
+        });
+        this.host.store.messages.appendRunRecord(runId, {
+          kind: "event",
+          payload: {
+            kind: "correction.exhausted",
+            payload: {
+              attempts: run.terminalCorrectionRounds ?? 0,
+              limit: MAX_TERMINAL_CORRECTION_ROUNDS,
+              conversationId: committed.conversationId,
+              messageId: committed.id,
+            },
+            severity: "error",
+            audience: "person",
+          },
+        });
       } finally {
         release();
       }
@@ -554,10 +604,17 @@ export class ProcessRun {
     else if (transition) await this.completeRunTransition(transition);
   }
 
-  async failWithSystemMessage(runId: string, reason: string, message: string): Promise<void> {
-    await this.host.history.appendSystemMessage(runId, message);
+  async failWithHistoryEvent(
+    runId: string,
+    payload: ProcHistoryEventPayload<"context.failed">,
+  ): Promise<void> {
+    const event = {
+      kind: "context.failed", payload, severity: "error", audience: "both",
+    } as const;
+    const message = renderHistoryEvent(event);
+    await this.host.history.appendSystemMessage(runId, message, { kind: "event", payload: event });
     await this.finishRun(runId, {
-      reason,
+      reason: payload.reason,
       status: "error",
       resultText: null,
       error: message,
@@ -573,14 +630,7 @@ export class ProcessRun {
 
     const wakeRunId = shouldQueueRuntimeWake ? crypto.randomUUID() : undefined;
     if (wakeRunId) {
-      this.host.store.queue.enqueue(wakeRunId, RUNTIME_EVENT_WAKE_MESSAGE, {
-        role: "system",
-        kind: "runtime.wake",
-        provenance: JSON.stringify({
-          source: "process",
-          eventType: "runtime.wake",
-        }),
-      });
+      this.host.store.queue.enqueueContinuation(wakeRunId);
     }
     const next = this.host.controller.claimNextQueuedRun();
 
@@ -1181,9 +1231,10 @@ export class ProcessRun {
     if (!fallback) return "none";
     control.fallbackIndex = fallback.nextIndex;
     if (failedResponse) this.recordUnpersistedAssistantUsage(failedResponse, current);
+    const diagnosticReason = formatProviderErrorDiagnostic(reason);
     const fallbackState = await this.beginGenerationFallback({
       runId,
-      reason,
+      reason: diagnosticReason,
       from: current,
       to: fallback.config,
       fallbackIndex: control.fallbackIndex,
@@ -1194,7 +1245,7 @@ export class ProcessRun {
       used: true,
       from: modelMetadataFromAiConfig(current),
       to: modelMetadataFromAiConfig(fallback.config),
-      reason,
+      reason: diagnosticReason,
     };
     control.prepared.activeConfig = fallback.config;
     const run = this.host.mutateActiveRun(runId, (active) => ({
@@ -1265,7 +1316,15 @@ export class ProcessRun {
       model: config.model,
     });
     if (reason === "generation.empty") console.error(`[Process] ${message}`);
-    await this.host.history.appendSystemMessage(runId, displayError);
+    await this.host.history.appendSystemMessage(runId, displayError, {
+      kind: "event",
+      payload: {
+        kind: "generation.failed",
+        payload: { reason, error: message, provider: config.provider, model: config.model },
+        severity: "error",
+        audience: "both",
+      },
+    });
     if (this.host.handleRunStopped(runId)) return null;
     return {
       kind: "finish",
@@ -1340,6 +1399,19 @@ export class ProcessRun {
         !result.ok,
         runId,
         result.ok ? "completed" : "failed",
+        undefined,
+        result.ok
+          ? { output: { action: result.action, finish: result.finish, delivery: result.delivery } }
+          : {
+            output: {
+              action: result.action,
+              finish: false,
+              delivery: result.delivery,
+              failureKind: result.failureKind,
+              attempt,
+            },
+            error: { message: result.error },
+          },
       );
       this.host.store.tools.clearRun(runId);
       return true;
@@ -1357,7 +1429,7 @@ export class ProcessRun {
       if (this.host.killed || !active || active.runId !== runId) return;
       const registration = runControlRegistration(this.host, runId, dispatchId, toolCallId);
       if (!registration) return;
-      const message = `Run-control execution failed: ${error}`;
+      const message = renderToolExecutionError(error, "run-control");
       this.host.store.tools.fail(dispatchId, message, "failed");
       this.host.store.messages.appendToolResult(
         toolCallId,
@@ -1366,6 +1438,11 @@ export class ProcessRun {
         true,
         runId,
         "failed",
+        undefined,
+        {
+          output: { failureKind: "execution", finish: false },
+          error: { message: error },
+        },
       );
       this.host.store.tools.clearRun(runId);
     });
@@ -1491,6 +1568,21 @@ export class ProcessRun {
           toolCalls: turn.returnedToolCalls,
         }),
         metadata,
+        records: assistantHistoryRecords({
+          text: turn.text,
+          thinking: turn.thinking,
+          toolCalls: turn.returnedToolCalls,
+          media: outputMedia,
+          runId,
+          runControlCallIds: turn.runControlCalls.map(({ toolCall }) => toolCall.id),
+          resolveTarget: (syscall, args) => {
+            if (!isRoutableSyscall(syscall)) return null;
+            const prepared = this.host.tools.prepareToolArgs(syscall, args);
+            if (prepared.missingShellSessionTarget) return null;
+            const target = z.string().optional().safeParse(prepared.args.target);
+            return target.success ? target.data || "gsv" : null;
+          },
+        }),
       };
       if (outputMedia.length > 0) {
         options.media = stringifyStoredProcessMedia(outputMedia) ?? undefined;
@@ -1553,6 +1645,14 @@ export class ProcessRun {
         true,
         runId,
         "failed",
+        undefined,
+        {
+          output: null,
+          error: {
+            code: "tool.not-offered",
+            message: `Tool "${toolCall.name}" was not offered for this generation`,
+          },
+        },
       );
     }
     if (invalidRunControl) {
@@ -1571,6 +1671,14 @@ export class ProcessRun {
       true,
       runId,
       "failed",
+      undefined,
+      {
+        output: { failureKind: "command", finish: false },
+        error: {
+          code: "run-control.mixed-actions",
+          message: "message send and yield must be issued separately from other tool actions",
+        },
+      },
     );
   }
 

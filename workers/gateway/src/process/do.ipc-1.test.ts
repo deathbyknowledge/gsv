@@ -1,7 +1,7 @@
 import { Kernel } from "../kernel/do";
 import type { ResponseOkFrame } from "../protocol/frames";
 import { getKernelPtr } from "../shared/utils";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import type { ProcHistoryRecord, ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -197,7 +197,7 @@ describe("proc.ipc.*", () => {
     });
 
     await waitForStoredMessage(source, (message) =>
-      message.content.includes(`Task id: \`${data.callId}\``),
+      message.content.includes(`Process \`${targetPid}\` finished task \`${data.callId}\`.`),
     );
 
     await runInProcess(source, (process) => {
@@ -206,9 +206,9 @@ describe("proc.ipc.*", () => {
       expect(messages).toHaveLength(1);
       expect(messages[0].role).toBe("system");
       expect(messages[0].content).toContain(
-        `Delegated task from process \`${targetPid}\` finished.`,
+        `Process \`${targetPid}\` finished task \`${data.callId}\`.`,
       );
-      expect(messages[0].content).toContain(`Task id: \`${data.callId}\`.`);
+      expect(messages[0].content).not.toContain("Task id:");
       expect(messages[0].content).toContain("status is green");
       expect(process.runs.active).toMatchObject({});
       process.runs.active = null;
@@ -259,7 +259,7 @@ describe("proc.ipc.*", () => {
     );
 
     await waitForStoredMessage(source, (message) =>
-      message.content.includes(`Task id: \`${data.callId}\``),
+      message.content.includes(`Process \`${targetPid}\` finished task \`${data.callId}\`.`),
     );
 
     await runInProcess(source, (process) => {
@@ -267,7 +267,7 @@ describe("proc.ipc.*", () => {
         .getMessages()
         .find(
           (message: any) =>
-            message.role === "system" && message.content.includes(`Task id: \`${data.callId}\``),
+            message.role === "system" && message.content.includes(`Process \`${targetPid}\` finished task \`${data.callId}\`.`),
         );
       expect(reply?.content).toContain("Error:");
       expect(reply?.content).toContain("Target run was aborted: user.superseded");
@@ -360,7 +360,7 @@ describe("proc.ipc.*", () => {
           .some(
             (message: any) =>
               message.role === "system" &&
-              (message.content.includes(`Task id: \`${ipc.callId}\``) ||
+              (message.content.includes(`Process \`${targetPid}\` finished task \`${ipc.callId}\`.`) ||
                 message.content.includes("late delegated result")),
           ),
       ).toBe(false);
@@ -608,10 +608,9 @@ describe("proc.ipc.*", () => {
       const queued = drainProcessQueue(process.store);
       expect(queued).toHaveLength(1);
       expect(queued[0]).toMatchObject({
-        role: "system",
-        kind: "runtime.wake",
+        type: "continuation",
       });
-      expect(queued[0].message).toContain("Review the GSV event above");
+      expect(queued[0]).not.toHaveProperty("message");
       expect(process.sendSignal).toHaveBeenCalledWith(
         "proc.changed",
         expect.objectContaining({ changes: ["queue"] }),
@@ -665,7 +664,7 @@ describe("proc.ipc.*", () => {
       expect(messages).toHaveLength(1);
       expect(messages[0].role).toBe("system");
       expect(messages[0].content).toContain(
-        `Delegated task from process \`${targetPid}\` finished.`,
+        `Process \`${targetPid}\` finished task \`busy-call\`.`,
       );
       expect(messages[0].content).toContain("busy result");
       expect(messages[0].content).toContain("Attachments:");
@@ -692,18 +691,11 @@ describe("proc.ipc.*", () => {
       const runtimeMessages = process.store.messages
         .getMessages()
         .filter((message: any) => message.role === "system");
-      expect(runtimeMessages.at(-1)?.content).toContain(
-        "A runtime event arrived while you were busy.",
-      );
-      expect(
-        process.store.messages
-          .getMessages()
-          .some(
-            (message: any) =>
-              message.role === "user" &&
-              message.content.includes("A runtime event arrived while you were busy."),
-          ),
-      ).toBe(false);
+      expect(runtimeMessages).toHaveLength(1);
+      expect(runtimeMessages[0].content).toContain("busy result");
+      expect(process.store.messages.getRecords().some((record: ProcHistoryRecord) =>
+        record.kind === "event" && record.payload.kind === "runtime.wake",
+      )).toBe(false);
       expect(process.store.queue.queueSize()).toBe(0);
       expect(process.runs.active?.runId).not.toBe("active-source-run");
       expect(process.runs.active).toMatchObject({});
@@ -818,8 +810,7 @@ describe("proc.ipc.*", () => {
     });
     await stubGeneration(source, (request) => {
       const input = JSON.stringify(request.context.messages);
-      expect(input).toContain("Delegated task");
-      expect(input).toContain("finished");
+      expect(input).toContain(`Process \`${targetPid}\` finished task \``);
       expect(input).toContain(token);
       return token;
     });
@@ -863,7 +854,7 @@ describe("proc.ipc.*", () => {
           messages.find(
             (message: any) =>
               message.role === "system" &&
-              message.content.includes(`Task id: \`${data.callId}\``),
+              message.content.includes(`Process \`${targetPid}\` finished task \`${data.callId}\`.`),
           ) ?? null
         );
       });

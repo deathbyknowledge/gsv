@@ -1,22 +1,23 @@
 /** Owns Process frame routing, admission, lifecycle transitions, and runtime events. */
 
+import { z } from "zod";
 import {
   ABORTED_RUN_IDS_KEY, IPC_TOMBSTONE_LIMIT, MEDIA_PREPARATION_TIMEOUT_MS, TOOL_EXECUTION_DENIED_BY_USER_MESSAGE,
   USER_INTERRUPTED_TOOL_MESSAGE, USER_SUPERSEDED_TOOL_MESSAGE, PROCESS_KILLED_TOMBSTONE_KEY, PROCESS_RESET_AT_KEY,
   tombstoneKilledProcessStorage, type ProcessKilledTombstone, HANDLED_IPC_CALLS_KEY, RUNTIME_EVENT_IDS_KEY,
-  RUNTIME_EVENT_TOMBSTONE_LIMIT, RUNTIME_EVENT_WAKE_MESSAGE, type RuntimeEventAdmission, DELIVERY_NOTICE_IDS_KEY,
+  RUNTIME_EVENT_TOMBSTONE_LIMIT, type RuntimeEventAdmission, DELIVERY_NOTICE_IDS_KEY,
   DELIVERY_NOTICE_TOMBSTONE_LIMIT, MAX_CANCELLED_REQUESTS,
 } from "../internal/lifecycle";
 import type { Process } from "../do";
 import {
   parseAssistantMessageMeta, parseMessageMetadata, type EnqueueMessageOptions, type MessageRecord,
-  type PendingHilRecord, type QueuedMessage, ProcessStore, type ToolCallRecord,
+  type PendingHilRecord, type QueuedRun, ProcessStore, type ToolCallRecord,
 } from "../store";
 import type { RunState, ResponsibilityBatchState } from "../run/state";
 import {
   abortedRunIdsSchema, archivedToolResultMetadataSchema, type IpcReplyPayload,
   cancelRequestPayloadSchema, deliveryNoticePayloadSchema, identityChangedPayloadSchema, ipcReplyPayloadSchema,
-  watchedSignalPayloadSchema, type CancelRequestPayload,
+  type CancelRequestPayload,
 } from "../internal/schemas";
 import { conversationRunState } from "../run/helpers";
 import { errorMessageFromUnknown } from "../../inference/errors";
@@ -25,15 +26,14 @@ import {
   type ProcHistoryMessage, type ProcHistoryResult, type ProcHistoryToolResultContent, type ProcIpcDeliverArgs,
   type ProcIpcDeliverResult, type ProcMediaInput, type ProcSendArgs, type ProcSendResult, type ResourceBlock,
   type ProcKillResult, type ProcResetResult, type ProcRunToolFinishedSignal, type InteractionOrigin, type JsonObject,
-  REQUEST_CANCEL_SIGNAL,
+  type ProcHistoryEvent, REQUEST_CANCEL_SIGNAL, jsonObjectSchema,
 } from "@humansandmachines/gsv/protocol";
 import { agentArchiveMediaPath } from "../../shared/process-media-path";
 import { parseInteractionOrigin, serializeInteractionOrigin, emptyProcessArchive } from "../history/helpers";
+import { historyCursor, parseHistoryCursor } from "../history/cursor";
 import { storeIncomingProcessMedia, stringifyStoredProcessMedia, deleteProcessMedia } from "../media";
-import {
-  formatIpcMessage, appendResponsibilityBatch, formatIpcReplyMessage, formatProcessRuntimeEvent,
-  formatScheduleEventMessage, formatWatchedSignalMessage, normalizeProcessRuntimeEvent,
-} from "../internal/events";
+import { appendResponsibilityBatch, normalizeProcessRuntimeEvent } from "../internal/events";
+import { formatIpcMessage, formatIpcReplyMessage, formatProcessRuntimeEvent, formatScheduleEventMessage } from "../history/event-renderer";
 import type { AssistantHistoryContent, AsyncCleanupTask, CodeModeApprovalWaiter } from "../internal/contracts";
 import { extractStoredFsReadResource } from "../tool-result-media";
 import {
@@ -57,6 +57,9 @@ import { AGENT_READ_MAX_BYTES } from "../../syscalls/read";
 import type { ResponseErrFrame, ResponseFrame, ResponseOkFrame, SignalFrame } from "../../protocol/frames";
 import type { ResultOf, SyscallName } from "../../syscalls";
 import { formatAgentToolResponse, materializeToolResponse } from "../tool-response";
+import { deliverProcessEvent } from "./events";
+
+const retiredWatchedSignalEnvelopeSchema = z.object({ watched: z.literal(true) });
 
 type SendAdmissionInput = {
   args: Omit<ProcSendArgs, "media"> & {
@@ -195,6 +198,8 @@ async function admitQueuedSend(
           runId,
           media: media ?? undefined,
           origin: origin ?? undefined,
+          queueKind: args.interaction ? "conversation.message" : "message",
+          provenance: args.interaction,
         });
         const nextRun: RunState = { runId };
         if (args.interaction) {
@@ -275,6 +280,8 @@ async function admitInterruptingSend(
         runId,
         media: hasMedia ? (stringifyStoredProcessMedia(incomingMedia) ?? undefined) : undefined,
         origin: origin ?? undefined,
+        queueKind: args.interaction ? "conversation.message" : "message",
+        provenance: args.interaction,
       });
       const nextRun: RunState = { runId };
       if (args.interaction) {
@@ -438,6 +445,8 @@ function requestErrorCode(killed: boolean, call: string): number {
 }
 
 type HistoryQuery = {
+  format?: 2;
+  since?: string;
   includeMessages: boolean;
   limit: number;
   offset: number;
@@ -452,8 +461,17 @@ function historyQuery(
 ): HistoryQuery | Extract<ProcHistoryResult, { ok: false }> {
   const limit = args.limit ?? 200;
   const offset = args.offset ?? 0;
+  if (args.format !== undefined && args.format !== 2) {
+    return { ok: false, error: "proc.history format must be 2" };
+  }
+  if (args.since !== undefined && args.format !== 2) {
+    return { ok: false, error: "proc.history since requires format 2" };
+  }
   if (!isPositiveInteger(limit)) {
     return { ok: false, error: "proc.history limit must be a positive integer" };
+  }
+  if (args.format === 2 && limit > 1_000) {
+    return { ok: false, error: "proc.history format 2 limit must not exceed 1000 groups" };
   }
   if (!isNonNegativeInteger(offset)) {
     return { ok: false, error: "proc.history offset must be a non-negative integer" };
@@ -467,12 +485,15 @@ function historyQuery(
   const tail = args.tail === true;
   const cursorCount =
     Number(tail) +
+    Number(args.since !== undefined) +
     Number(args.beforeMessageId !== undefined) +
     Number(args.afterMessageId !== undefined);
   if (cursorCount > 1) {
     return {
       ok: false,
-      error: "proc.history accepts only one cursor: tail, beforeMessageId, or afterMessageId",
+      error: args.since === undefined
+        ? "proc.history accepts only one cursor: tail, beforeMessageId, or afterMessageId"
+        : "proc.history accepts only one cursor: tail, beforeMessageId, afterMessageId, or since",
     };
   }
   if (cursorCount > 0 && args.offset !== undefined) {
@@ -481,7 +502,12 @@ function historyQuery(
       error: "proc.history offset cannot be combined with cursor pagination",
     };
   }
+  if (args.since !== undefined && args.includeMessages === false) {
+    return { ok: false, error: "proc.history since requires messages to be included" };
+  }
   return {
+    format: args.format,
+    since: args.since,
     includeMessages: args.includeMessages !== false,
     limit,
     offset,
@@ -660,7 +686,15 @@ export class ProcessController {
     } catch (error) {
       if (this.host.handleRunStopped(runId)) return false;
       const message = `${prefix}: ${errorMessageFromUnknown(error)}`;
-      await this.appendRuntimeMessage(message, { runId });
+      await this.appendRuntimeMessage(message, {
+        runId,
+        event: {
+          kind: "runtime.failed",
+          payload: { reason: "schedule.error", error: errorMessageFromUnknown(error), prefix },
+          severity: "error",
+          audience: "both",
+        },
+      });
       await this.host.run.finishRun(runId, {
         reason: "schedule.error",
         status: "error",
@@ -679,7 +713,7 @@ export class ProcessController {
     );
   }
 
-  claimNextQueuedRun(): QueuedMessage | null {
+  claimNextQueuedRun(): QueuedRun | null {
     if (this.host.runs.active) {
       return null;
     }
@@ -687,23 +721,28 @@ export class ProcessController {
     if (!next) {
       return null;
     }
-    this.host.store.messages.appendMessage(next.role, next.message, {
-      generation: next.generation,
-      runId: next.runId,
-      media: next.media ?? undefined,
-      origin: next.origin ?? undefined,
-    });
-    const run: RunState = {
-      runId: next.runId,
-      ...conversationRunState(next.kind, next.provenance),
-    };
-    if (next.kind === "ipc.call") run.returnToCaller = true;
+    const run: RunState = { runId: next.runId };
+    if (next.type === "message") {
+      this.host.store.messages.appendMessage(next.role, next.message, {
+        generation: next.generation,
+        runId: next.runId,
+        media: next.media ?? undefined,
+        origin: next.origin ?? undefined,
+        queueKind: next.kind,
+        provenance: next.provenance ? jsonObjectSchema.parse(JSON.parse(next.provenance)) : undefined,
+        record: next.record,
+      });
+      Object.assign(run, conversationRunState(next.kind, next.provenance));
+      if (next.kind === "ipc.call") run.returnToCaller = true;
+    } else {
+      run.continuation = true;
+    }
     this.host.runs.active = run;
     return next;
   }
 
   async promoteNextQueuedRun(
-    claimed: QueuedMessage | null = this.claimNextQueuedRun(),
+    claimed: QueuedRun | null = this.claimNextQueuedRun(),
   ): Promise<string | null> {
     if (!claimed || this.host.runs.active?.runId !== claimed.runId) {
       return null;
@@ -855,6 +894,11 @@ export class ProcessController {
     }
     const renderedMessage = formatIpcMessage(deliveredArgs);
     const origin = serializeInteractionOrigin(deliveredArgs.origin);
+    const provenance = jsonObjectSchema.parse({
+      source: "process",
+      eventType: args.call ? "ipc.call" : "ipc.message",
+      delivery: JSON.parse(JSON.stringify(deliveredArgs)),
+    });
     const releaseAdmission = await this.acquireQueuedSendAdmission();
     try {
       if (!this.host.isInitialized()) {
@@ -865,6 +909,7 @@ export class ProcessController {
         if (this.host.runs.active) {
           const enqueueOptions: EnqueueMessageOptions = {
             origin: origin ?? undefined,
+            provenance: JSON.stringify(provenance),
           };
           if (args.call) enqueueOptions.kind = "ipc.call";
           this.host.store.queue.enqueue(runId, renderedMessage, enqueueOptions);
@@ -873,6 +918,8 @@ export class ProcessController {
         this.host.store.messages.appendMessage("user", renderedMessage, {
           runId,
           origin: origin ?? undefined,
+          queueKind: args.call ? "ipc.call" : "message",
+          provenance,
         });
         const nextRun: RunState = { runId };
         if (args.call) {
@@ -919,8 +966,25 @@ export class ProcessController {
     const query = historyQuery(args);
     if ("ok" in query) return query;
 
-    const total = this.host.store.messages.messageCount();
-    const records = query.includeMessages ? this.host.store.messages.getMessages(query) : [];
+    const store = this.host.store;
+    const revision = store.state.getHistoryRevision();
+    const generation = store.state.getHistoryGeneration();
+    const resetRevision = store.state.getHistoryResetRevision();
+    let reset = false;
+    let delta: ReturnType<typeof store.messages.getHistoryDelta> | undefined;
+    if (query.since !== undefined) {
+      const cursor = parseHistoryCursor(query.since, pid);
+      if ("error" in cursor) return { ok: false, error: cursor.error };
+      if (cursor.generation > generation || cursor.revision > revision) {
+        return { ok: false, error: "proc.history since cursor is ahead of this history" };
+      }
+      reset = cursor.generation !== generation || cursor.revision < resetRevision;
+      if (!reset) delta = store.messages.getHistoryDelta(cursor.revision, query.limit);
+    }
+    const total = store.messages.messageCount();
+    const records = delta?.messages.sort((left, right) => left.id - right.id) ?? (query.includeMessages
+      ? store.messages.getMessages(reset ? { limit: query.limit, tail: true } : query)
+      : []);
     const firstMessageId = records[0]?.id ?? null;
     const lastMessageId = records[records.length - 1]?.id ?? null;
     const hasMoreBefore =
@@ -931,7 +995,7 @@ export class ProcessController {
 
     const messages = records.map((record) => processHistoryMessage(this.host, record));
 
-    return {
+    const snapshot = {
       ok: true,
       pid,
       messages,
@@ -947,7 +1011,26 @@ export class ProcessController {
       context: this.host.history.getContextStateForHistory(),
       contextRevision: this.host.store.state.getContextStateRevision(),
       historyPolicy: this.host.history.getHistoryContextPolicy(),
-    };
+    } as const;
+    if (query.format !== 2) return snapshot;
+    const result = {
+      ...snapshot,
+      format: 2,
+      records: store.messages.recordsForMessages(records),
+      historyRevision: revision,
+      historyGeneration: generation,
+      historyResetRevision: resetRevision,
+      reset,
+      hasMore: delta?.hasMore ?? false,
+    } as const;
+    // A historical page can be read at a newer revision without containing the
+    // intervening updates. Only snapshots and deltas may advance synchronization.
+    const headRead = query.includeMessages && (query.since !== undefined ||
+      (!hasMoreAfter && args.offset === undefined && args.beforeMessageId === undefined && args.afterMessageId === undefined));
+    return headRead ? {
+      ...result,
+      cursor: historyCursor(pid, generation, delta?.hasMore ? delta.revision! : revision),
+    } : result;
   }
 
   async handleProcAbort(args: ProcAbortArgs = {}): Promise<ProcAbortResult> {
@@ -1379,11 +1462,15 @@ export class ProcessController {
     return completed.result;
   }
 
-  async appendRuntimeMessage(content: string, opts?: { runId?: string }): Promise<void> {
+  async appendRuntimeMessage(
+    content: string,
+    opts: { runId?: string; event: ProcHistoryEvent },
+  ): Promise<void> {
     const timestamp = Date.now();
     const messageId = this.host.store.messages.appendMessage("system", content, {
       runId: opts?.runId,
       createdAt: timestamp,
+      record: { kind: "event", payload: opts.event },
     });
     const change: JsonObject = {
       messageId,
@@ -1438,6 +1525,25 @@ export class ProcessController {
       }
       const messageOptions: Parameters<ProcessStore["messages"]["appendMessage"]>[2] = {
         createdAt: timestamp,
+        record: {
+          kind: "event",
+          payload: {
+            kind: signal === "ipc.overdue" ? "ipc.overdue" : signal === "ipc.timeout" ? "ipc.timeout" : "ipc.reply",
+            payload: {
+              callId: payload.callId,
+              targetPid: payload.targetPid,
+              sourceRunId: payload.sourceRunId,
+              createdAt: payload.createdAt,
+              deadlineAt: payload.deadlineAt,
+              nextCheckAt: payload.nextCheckAt,
+              checkInCount: payload.checkInCount,
+              error: payload.error,
+              response: payload.response,
+            },
+            severity: signal === "ipc.timeout" || payload.error ? "error" : "info",
+            audience: "model",
+          },
+        },
       };
       if (nextRunId) {
         messageOptions.runId = nextRunId;
@@ -1452,14 +1558,7 @@ export class ProcessController {
         this.host.runs.active = { runId: nextRunId };
       } else if (sourceRunId && sourceRunId !== currentRun.runId) {
         wakeRunId = crypto.randomUUID();
-        this.host.store.queue.enqueue(wakeRunId, RUNTIME_EVENT_WAKE_MESSAGE, {
-          role: "system",
-          kind: "runtime.wake",
-          provenance: JSON.stringify({
-            source: "process",
-            eventType: "runtime.wake",
-          }),
-        });
+        this.host.store.queue.enqueueContinuation(wakeRunId);
       } else {
         currentRun.pendingRuntimeEvents = (currentRun.pendingRuntimeEvents ?? 0) + 1;
         this.host.runs.active = currentRun;
@@ -1521,6 +1620,12 @@ export class ProcessController {
         : await this.handleRuntimeEvent(formatProcessRuntimeEvent(event), event.type, {
             distinctRun: true,
             runId,
+            event: {
+              kind: "adapter.work.returned",
+              payload: { eventId, workPid: event.workPid },
+              severity: "info",
+              audience: "model",
+            },
           });
     if (!admission.ok) {
       throw new Error(admission.error);
@@ -1555,6 +1660,21 @@ export class ProcessController {
           eventId: args.runId,
           eventType: "schedule.event",
         }),
+        event: {
+          kind: "schedule.fired",
+          payload: {
+            runId: args.runId,
+            scheduleId: args.scheduleId,
+            scheduleName: args.scheduleName,
+            message: args.message,
+            data: args.data,
+            replyTo: args.replyTo,
+            scheduledAtMs: args.scheduledAtMs,
+            firedAtMs: args.firedAtMs,
+          },
+          severity: "info",
+          audience: "model",
+        },
       },
     );
     if (!admission.ok) {
@@ -1575,6 +1695,7 @@ export class ProcessController {
       provenance?: string;
       dedupeId?: string;
       responsibilityBatch?: ResponsibilityBatchState;
+      event?: ProcHistoryEvent;
     } = {},
   ): Promise<RuntimeEventAdmission> {
     if (!this.host.isInitialized()) {
@@ -1608,6 +1729,7 @@ export class ProcessController {
           kind: options.kind ?? "runtime.event",
           origin: serializeInteractionOrigin(options.origin) ?? undefined,
           provenance: options.provenance,
+          record: options.event ? { kind: "event", payload: options.event } : undefined,
         });
         return { messageId: -1, wakeRunId };
       }
@@ -1615,6 +1737,11 @@ export class ProcessController {
       if (content !== null) {
         const messageOptions: Parameters<ProcessStore["messages"]["appendMessage"]>[2] = {
           createdAt: timestamp,
+          record: options.event ? { kind: "event", payload: options.event } : undefined,
+          queueKind: options.kind,
+          provenance: options.provenance
+            ? jsonObjectSchema.parse(JSON.parse(options.provenance))
+            : undefined,
         };
         if (nextRunId) {
           messageOptions.runId = nextRunId;
@@ -1870,6 +1997,10 @@ export class ProcessController {
     frame: ProcessRequestFrame,
   ): Promise<ResponseFrame | InternalResponseFrame<ProcessInternalCall> | null> {
     try {
+      if (frame.call === "proc.event.deliver") {
+        const result = await deliverProcessEvent(this.host, frame.args);
+        return { type: "res", id: frame.id, ok: true, data: result };
+      }
       if (frame.call === "proc.runtime.event.deliver") {
         const result = await this.handleProcessRuntimeEventDeliver(frame.args);
         return { type: "res", id: frame.id, ok: true, data: result };
@@ -1947,14 +2078,8 @@ export class ProcessController {
   }
 
   async handleSig(frame: SignalFrame): Promise<void> {
-    const watchedSignal = watchedSignalPayloadSchema.safeParse(frame.payload);
-    if (watchedSignal.success) {
-      await this.handleRuntimeEvent(
-        formatWatchedSignalMessage(frame.signal, watchedSignal.data),
-        "signal.watch",
-      );
-      return;
-    }
+    // A delayed retired watch must not be interpreted as a direct IPC or control signal.
+    if (retiredWatchedSignalEnvelopeSchema.safeParse(frame.payload).success) return;
 
     switch (frame.signal) {
       case REQUEST_CANCEL_SIGNAL: {
@@ -1985,6 +2110,15 @@ export class ProcessController {
             if (this.host.store.state.getValue(noticeKey)) return null;
             const id = this.host.store.messages.appendMessage("system", message, {
               runId,
+              record: {
+                kind: "event",
+                payload: {
+                  kind: "delivery.failed",
+                  payload: { phase: "message", noticeId, runId, error: message },
+                  severity: "error",
+                  audience: "both",
+                },
+              },
             });
             this.host.store.state.setValue(noticeKey, String(id));
             const noticeIds = abortedRunIdsSchema.parse(

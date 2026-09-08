@@ -1,29 +1,64 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import type { ChatHistory } from "./processes";
+import { jsonValueSchema, jsonObjectSchema, procHistoryRecordDataSchema, procHistoryRecordSchema, type InteractionOrigin, type ProcMessageMetadata, type JsonObject } from "@humansandmachines/gsv/protocol";
 import { preserveDirectedConversationDelivery } from "./conversations";
 import {
-  SYSTEM_ERROR_PREFIXES,
   addOptimisticUserMessage,
   applyChatSignal,
-  classifySystemError,
   emptyChatRuntimeState,
   newerContextSnapshot,
   transcriptRowsFromHistory,
 } from "./transcript";
 
-function history(messages: ChatHistory["messages"]): ChatHistory {
+type HistoryFixture = {
+  id: number | null;
+  clientId: string;
+  runId: string | null;
+  role: "assistant" | "system" | "toolResult" | "user";
+  content: unknown;
+  text: string;
+  timestamp: number | null;
+  origin?: InteractionOrigin;
+  metadata?: ProcMessageMetadata;
+};
+
+function history(messages: HistoryFixture[]): ChatHistory {
+  const records = messages.flatMap((message, ordinal) => {
+    const value = jsonValueSchema.parse(message.content);
+    const parsedContent = jsonObjectSchema.safeParse(value);
+    const content: JsonObject = parsedContent.success ? parsedContent.data : {};
+    let members: unknown[];
+    if (message.role === "assistant") {
+      const thinking = Array.isArray(content.thinking) ? content.thinking.map((block) => z.string().safeParse(block).success ? { type: "thinking", thinking: block } : block) : [];
+      const calls = Array.isArray(content.toolCalls) ? content.toolCalls : [];
+      members = [
+        { kind: "note", payload: { text: z.string().safeParse(content.text).success ? content.text : message.text, thinking, media: content.media ?? [] } },
+        ...calls.map((item) => {
+          const call = jsonObjectSchema.parse(item);
+          return { kind: "call", payload: { callId: call.id, tool: call.name, syscall: call.syscall ?? null, args: call.arguments ?? {}, target: null, runId: message.runId } };
+        }),
+      ];
+    } else if (message.role === "toolResult") {
+      members = [{ kind: "result", payload: {
+        callId: content.toolCallId, tool: content.toolName, outcome: content.outcome ?? (content.isError ? "failed" : "completed"),
+        output: content.output ?? message.text, media: content.media ?? [], resources: content.resources ?? [],
+      } }];
+    } else if (message.role === "system") {
+      members = [{ kind: "event", payload: { kind: "legacy", payload: { text: message.text }, severity: "info", audience: "model" } }];
+    } else {
+      members = [{ kind: "message", payload: { direction: "in", text: message.text, media: content.media ?? [], origin: { interaction: message.origin } } }];
+    }
+    return members.map((member, index) => procHistoryRecordSchema.parse({
+      ...procHistoryRecordDataSchema.parse(member), id: ordinal + index + 1, messageId: message.id ?? ordinal + 1, index,
+      runId: message.runId, generation: 1, createdAt: message.timestamp ?? 1, source: "typed", metadata: message.metadata,
+    }));
+  });
   return {
-    pid: "pid-1",
-    messages,
-    messageCount: messages.length,
-    truncated: false,
-    hasMoreBefore: false,
-    hasMoreAfter: false,
-    activeRunId: null,
-    runState: "idle",
-    pendingHil: null,
-    context: null,
-    contextRevision: 0,
+    pid: "pid-1", records, messageCount: messages.length, cursor: "fixture:1",
+    historyRevision: 1, historyGeneration: 1, historyResetRevision: 0, reset: false, hasMore: false,
+    truncated: false, hasMoreBefore: false, hasMoreAfter: false,
+    activeRunId: null, runState: "idle", pendingHil: null, context: null, contextRevision: 0,
   };
 }
 
@@ -304,7 +339,7 @@ describe("chat transcript rows", () => {
     ]);
   });
 
-  it("keeps legacy tool errors classified from isError", () => {
+  it("keeps failed outcomes from the typed history boundary", () => {
     const rows = transcriptRowsFromHistory(history([
       {
         id: 1,
@@ -330,7 +365,7 @@ describe("chat transcript rows", () => {
         isError: true,
       }),
     ]);
-    expect(rows[0].toolOutcome).toBeUndefined();
+    expect(rows[0].toolOutcome).toBe("failed");
   });
 
   it("keeps backup model metadata on assistant history rows", () => {
@@ -399,7 +434,7 @@ describe("chat transcript rows", () => {
 
     expect(rows).toEqual([
       expect.objectContaining({
-        id: "backup:1",
+        id: "message:1",
         role: "assistant",
         text: "",
         backupModel: {
@@ -647,6 +682,72 @@ describe("chat transcript rows", () => {
     }, { pid: "pid-1" }).state;
 
     expect(state.activeRunId).toBe("run-new");
+  });
+
+  it("hides flagged thinking in live output while preserving visible and legacy blocks", () => {
+    const payload = {
+      pid: "pid-1", runId: "run-1", text: "Visible answer", timestamp: 1,
+      thinking: [
+        "Legacy visible reasoning",
+        { thinking: "Visible reasoning", redacted: false, thinkingSignature: "visible-signature" },
+        { text: "Visible legacy alias" },
+        { thinking: "opaque provider data", redacted: true, thinkingSignature: "hidden-signature" },
+        { text: "opaque legacy alias", redacted: true },
+      ],
+    };
+    const retained = structuredClone(payload);
+    const { state, refreshHistory } = applyChatSignal(
+      emptyChatRuntimeState("pid-1"), "proc.run.output", payload, { pid: "pid-1" },
+    );
+
+    expect(refreshHistory).toBe(true);
+    expect(state.rows).toEqual([expect.objectContaining({
+      role: "assistant", text: "Visible answer",
+      thinking: ["Legacy visible reasoning", "Visible reasoning", "Visible legacy alias", "[redacted thinking]", "[redacted thinking]"],
+      streaming: false, status: "done",
+    })]);
+    expect(payload).toEqual(retained);
+  });
+
+  it.each([
+    { text: "", partialText: "" },
+    { text: "Visible answer", partialText: "" },
+    { text: "", partialText: "Ordinary partial text" },
+  ])("masks partial thinking on completion '$text' after partial text '$partialText'", ({ text, partialText }) => {
+    const previous = {
+      id: "message:7", role: "assistant" as const, runId: "run-1", text: "Earlier committed note",
+      thinking: ["Earlier visible reasoning"], timestamp: 1, time: "", status: "done" as const,
+    };
+    let thinking = applyChatSignal({ ...emptyChatRuntimeState("pid-1"), rows: [previous] }, "proc.run.stream", {
+      pid: "pid-1", runId: "run-1", event: { type: "thinking_start" },
+    }, { pid: "pid-1" }).state;
+    thinking = applyChatSignal(thinking, "proc.run.stream", {
+      pid: "pid-1", runId: "run-1", event: { type: "thinking_delta", delta: "Partial reasoning later redacted" },
+    }, { pid: "pid-1" }).state;
+    if (partialText) thinking = applyChatSignal(thinking, "proc.run.stream", {
+      pid: "pid-1", runId: "run-1", event: { type: "text_delta", delta: partialText },
+    }, { pid: "pid-1" }).state;
+    const { state } = applyChatSignal(thinking, "proc.run.output", {
+      pid: "pid-1", runId: "run-1", text,
+      thinking: [{ thinking: "opaque provider data", redacted: true }],
+    }, { pid: "pid-1" });
+
+    expect(state.rows).toEqual([previous, expect.objectContaining({
+      role: "assistant", text, thinking: ["[redacted thinking]"], streaming: false, status: "done",
+    })]);
+    expect(thinking.rows[1].thinking).toEqual(["Partial reasoning later redacted"]);
+  });
+
+  it("keeps streamed thinking when completion omits it without explicit redaction", () => {
+    const thinking = applyChatSignal(emptyChatRuntimeState("pid-1"), "proc.run.stream", {
+      pid: "pid-1", runId: "run-1", event: { type: "thinking_delta", delta: "Visible partial reasoning" },
+    }, { pid: "pid-1" }).state;
+    const { state } = applyChatSignal(thinking, "proc.run.output", {
+      pid: "pid-1", runId: "run-1", text: "Visible answer", thinking: [],
+    }, { pid: "pid-1" });
+    expect(state.rows).toEqual([expect.objectContaining({
+      text: "Visible answer", thinking: ["Visible partial reasoning"],
+    })]);
   });
 
   it("moves live backup model status onto the assistant answer", () => {
@@ -898,27 +999,27 @@ describe("chat transcript rows", () => {
     ]);
   });
 
-  it("replaces one optimistic user row when the persisted message signal arrives", () => {
+  it("requests a typed delta without decoding compatibility message signals", () => {
     let state = addOptimisticUserMessage(
       emptyChatRuntimeState("pid-1"),
       "hello",
     );
     state = addOptimisticUserMessage(state, "hello");
 
-    state = applyChatSignal(state, "proc.changed", {
+    const reduction = applyChatSignal(state, "proc.changed", {
       pid: "pid-1",
       changes: ["messages"],
       role: "user",
       content: "hello",
       messageId: 42,
       timestamp: Date.now(),
-    }, { pid: "pid-1" }).state;
+    }, { pid: "pid-1" });
+    state = reduction.state;
+    expect(reduction.refreshHistory).toBe(true);
 
     expect(state.rows.filter((row) => row.role === "user" && row.text === "hello")).toHaveLength(2);
-    expect(state.rows).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "message:42", role: "user", text: "hello" }),
-    ]));
-    expect(state.rows.filter((row) => row.id.startsWith("optimistic:user:"))).toHaveLength(1);
+    expect(state.rows.some((row) => row.id === "message:42")).toBe(false);
+    expect(state.rows.filter((row) => row.id.startsWith("optimistic:user:"))).toHaveLength(2);
   });
 
   it("normalizes context state from a gateway without token-budget fields", () => {
@@ -1030,76 +1131,5 @@ describe("chat transcript rows", () => {
       context: null,
       contextRevision: 1,
     })).toBe(current);
-  });
-});
-
-describe("system error classification", () => {
-  it("recognizes every known gateway failure prefix", () => {
-    for (const prefix of SYSTEM_ERROR_PREFIXES) {
-      expect(classifySystemError(`${prefix} something specific`)).toBe(true);
-    }
-  });
-
-  it("recognizes real gateway messages", () => {
-    expect(classifySystemError("Generation failed: error code: 1031")).toBe(true);
-    expect(classifySystemError("Generation failed.")).toBe(true);
-    expect(classifySystemError("  Context limit reached for openai/gpt-5.")).toBe(true);
-    expect(classifySystemError(
-      "Context limit reached, but auto-compaction could not archive any older messages.",
-    )).toBe(true);
-  });
-
-  it("fail-safe: informational system messages stay neutral", () => {
-    expect(classifySystemError("Watched signal fired: deploy finished")).toBe(false);
-    expect(classifySystemError("Schedule event: nightly summary queued")).toBe(false);
-    expect(classifySystemError("IPC reply from worker-2")).toBe(false);
-    expect(classifySystemError("")).toBe(false);
-    // Error-ish wording that is not a known gateway format must NOT go red.
-    expect(classifySystemError("The user said generation failed earlier")).toBe(false);
-  });
-
-  it("marks history system rows with isError", () => {
-    const rows = transcriptRowsFromHistory(history([
-      {
-        id: 7,
-        clientId: "7",
-        role: "system",
-        runId: "run-9",
-        content: "Generation failed: error code: 1031",
-        text: "Generation failed: error code: 1031",
-        timestamp: 5,
-        origin: undefined,
-        metadata: undefined,
-      },
-      {
-        id: 8,
-        clientId: "8",
-        role: "system",
-        runId: "run-9",
-        content: "Schedule event: tick",
-        text: "Schedule event: tick",
-        timestamp: 6,
-        origin: undefined,
-        metadata: undefined,
-      },
-    ]));
-    const errorRow = rows.find((row) => row.id === "message:7");
-    const infoRow = rows.find((row) => row.id === "message:8");
-    expect(errorRow?.isError).toBe(true);
-    expect(infoRow?.isError).toBeUndefined();
-  });
-
-  it("marks live proc.changed system rows with isError", () => {
-    const seeded = applyChatSignal(emptyChatRuntimeState(), "proc.changed", {
-      pid: "pid-1",
-      changes: ["messages"],
-      role: "system",
-      content: "Generation failed: error code: 1031",
-      messageId: 43,
-      timestamp: Date.now(),
-    }, { pid: "pid-1" }).state;
-    expect(seeded.rows).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "message:43", role: "system", isError: true }),
-    ]));
   });
 });

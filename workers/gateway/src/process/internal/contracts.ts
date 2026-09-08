@@ -1,12 +1,12 @@
 /** Internal Process contracts primitives. */
 
 import type {
-  AiConfigResult, JsonObject, ProcArchiveEntry, ProcContextState, ProcMediaInput, ProcToolResultOutcome,
+  AiConfigResult, ConversationMessage, JsonObject, ProcArchiveEntry, ProcContextState, ProcMediaInput, ProcToolResultOutcome,
 } from "@humansandmachines/gsv/protocol";
 import type { AssistantMessage, Context, ThinkingContent, Tool, ToolCall } from "@earendil-works/pi-ai";
 import type { AssistantTurnClassification } from "../run-tick-policy";
 import type { FrameBody, ResponseFrame } from "../../protocol/frames";
-import type { MessageMetadata, QueuedMessage } from "../store";
+import type { MessageMetadata, QueuedRun } from "../store";
 import type { RunDelivery, RunFinishOptions, RunFinishPayload } from "../run/finish";
 import type { RunOutputMedia, RunState } from "../run/state";
 import type { SyscallName } from "../../syscalls";
@@ -121,10 +121,7 @@ export type TerminalResponsibilitySnapshot = {
   responsibilityIds: string[];
 };
 
-export type CommittedRunControlMessage = {
-  conversationId: string;
-  id: string;
-};
+export type CommittedRunControlMessage = Pick<ConversationMessage, "conversationId" | "id" | "text" | "media">;
 
 export type StagedResourceWriteArgs = Omit<ProcMediaInput, "key" | "path" | "url" | "size"> & {
   mediaId?: string;
@@ -161,7 +158,7 @@ export type RunFinishEffects = {
 
 export type CompletedRunTransition = {
   effects: RunFinishEffects;
-  next: QueuedMessage | null;
+  next: QueuedRun | null;
   wakeRunId?: string;
 };
 

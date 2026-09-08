@@ -48,31 +48,6 @@ function truncateInline(value: string, maxLength: number): string {
   return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength - 3).trim()}...`;
 }
 
-function inferToolSyscall(toolName: string | undefined, syscall: string | null | undefined): string | null {
-  if (syscall?.trim()) {
-    return syscall.trim();
-  }
-
-  switch (toolName) {
-    case "Read":
-      return "fs.read";
-    case "Search":
-      return "fs.search";
-    case "Shell":
-      return "shell.exec";
-    case "Write":
-      return "fs.write";
-    case "Edit":
-      return "fs.edit";
-    case "Delete":
-      return "fs.delete";
-    case "CodeMode":
-      return "codemode.exec";
-    default:
-      return null;
-  }
-}
-
 function toolDisplayName(toolName: string | undefined, syscall: string | null): string {
   const name = toolName?.trim();
   if (!name || name === "Tool") {
@@ -103,7 +78,7 @@ function liveToolTitle(input: {
   syscall?: string | null;
   toolName?: string;
 }): string {
-  const syscall = inferToolSyscall(input.toolName, input.syscall);
+  const syscall = input.syscall ?? null;
   const target = toolPathTarget(input.args) || "file";
 
   if (syscall === "fs.read") return `Reading ${target}`;
