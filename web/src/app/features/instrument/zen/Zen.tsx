@@ -46,6 +46,7 @@ import {
   receiptRunning,
   receiptSteps,
   CLOUD_PLACE_ID,
+  RESOLVE_TAIL,
   type Activity,
   type Moment,
   type Place,
@@ -84,6 +85,10 @@ type LocalRun = {
 
 const HISTORY_LIMIT = 400;
 const RESOLVE_FRAME_MS = 60;
+/** How long a message that arrived whole takes to settle out of glyph noise: brisk for a line, longer for a page, never a wait. */
+function settleDuration(length: number): number {
+  return Math.min(1600, Math.max(700, length * 2.5));
+}
 
 function reducedMotion(): boolean {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
@@ -444,11 +449,14 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
   }, [thinking]);
 
   const streaming = runtime.rows.some((row) => row.streaming);
+  /* a message that arrives whole settles out of noise on arrival; a streamed one already did, character by character */
+  const [settling, setSettling] = useState<ReadonlyMap<string, number>>(() => new Map());
+  const animating = streaming || settling.size > 0;
   useEffect(() => {
-    if (!streaming || reducedMotion()) return undefined;
+    if (!animating || reducedMotion()) return undefined;
     const interval = window.setInterval(() => setTick((value) => value + 1), RESOLVE_FRAME_MS);
     return () => window.clearInterval(interval);
-  }, [streaming]);
+  }, [animating]);
 
   /* moments: the runtime's, plus the commands run by hand */
   const moments = useMemo(() => {
@@ -485,6 +493,51 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
     }));
     return [...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
   }, [conversation.rows, localRuns, runtime.activeRunId, runtime.rows]);
+
+  const seenMomentsRef = useRef<Set<string> | null>(null);
+  const streamedMomentsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const moment of moments) if (moment.streaming) streamedMomentsRef.current.add(moment.id);
+    const whole = moments.filter((moment) => moment.role === "ship" && moment.text && !moment.streaming).map((moment) => moment.id);
+    if (seenMomentsRef.current === null) {
+      // the history as first loaded is not news
+      seenMomentsRef.current = new Set(whole);
+      return;
+    }
+    const seen = seenMomentsRef.current;
+    const fresh = whole.filter((id) => !seen.has(id));
+    if (fresh.length === 0) return;
+    for (const id of fresh) seen.add(id);
+    const arrived = fresh.filter((id) => !streamedMomentsRef.current.has(id));
+    if (arrived.length === 0 || reducedMotion()) return;
+    const startedAt = Date.now();
+    setSettling((current) => {
+      const next = new Map(current);
+      for (const id of arrived) next.set(id, startedAt);
+      return next;
+    });
+  }, [moments]);
+  useEffect(() => {
+    if (settling.size === 0) return;
+    const done = [...settling].filter(([id, startedAt]) => {
+      const moment = moments.find((entry) => entry.id === id);
+      return !moment || Date.now() - startedAt >= settleDuration(moment.text.length);
+    });
+    if (done.length === 0) return;
+    setSettling((current) => {
+      const next = new Map(current);
+      for (const [id] of done) next.delete(id);
+      return next;
+    });
+  }, [moments, settling, tick]);
+  /** How much of a settling message is shown so far: the settled head plus the noisy tail sweeping to the end. */
+  const settlePrefix = (moment: Moment): number | null => {
+    const startedAt = settling.get(moment.id);
+    if (startedAt === undefined) return null;
+    const progress = (Date.now() - startedAt) / settleDuration(moment.text.length);
+    if (progress >= 1) return null;
+    return Math.ceil(progress * (moment.text.length + RESOLVE_TAIL));
+  };
 
   useEffect(() => {
     if (browseRef.current !== null) return;
@@ -836,6 +889,10 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
                     <div class="text">
                       <StreamingText text={moment.text} tick={tick} />
                       <span class="zen-caret blink" />
+                    </div>
+                  ) : settlePrefix(moment) !== null ? (
+                    <div class="text is-settling">
+                      <StreamingText text={moment.text.slice(0, settlePrefix(moment) ?? 0)} tick={tick} />
                     </div>
                   ) : moment.text ? (
                     <div class="text" onClick={onTextClick} dangerouslySetInnerHTML={{ __html: renderMarkdownHtml(linkPlaceReferences(moment.text, places)) }} />
