@@ -363,6 +363,44 @@ export function gzipMessageRecords(
   }).pipeThrough(new CompressionStream("gzip"));
 }
 
+export function gzipContextEpochArchive(input: {
+  header: JsonObject;
+  epoch: JsonObject;
+  messages: MessageRecord[];
+  runBoundaries: JsonObject[];
+  signal?: AbortSignal;
+  mediaRewrites: ReadonlyMap<string, ArchivedMediaRewrite>;
+}): ReadableStream<Uint8Array> {
+  function* chunks(): Generator<string, void> {
+    yield `${JSON.stringify(input.header).slice(0, -1)},"epoch":${JSON.stringify(input.epoch).slice(0, -1)},"processActivity":[`;
+    for (let index = 0; index < input.messages.length; index += 1) {
+      yield `${index > 0 ? "," : ""}${JSON.stringify(serializeArchivedMessage(input.messages[index]!, input.mediaRewrites))}`;
+    }
+    yield '],"runBoundaries":[';
+    for (let index = 0; index < input.runBoundaries.length; index += 1) {
+      yield `${index > 0 ? "," : ""}${JSON.stringify(input.runBoundaries[index])}`;
+    }
+    yield "]}}";
+  }
+  const parts = chunks();
+  const encoder = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (input.signal?.aborted) {
+        parts.return();
+        controller.error(input.signal.reason ?? new Error("Context epoch archive cancelled"));
+        return;
+      }
+      const next = parts.next();
+      if (next.done) controller.close();
+      else controller.enqueue(encoder.encode(next.value));
+    },
+    cancel() {
+      parts.return();
+    },
+  }).pipeThrough(new CompressionStream("gzip"));
+}
+
 export async function gunzip(input: ArrayBuffer): Promise<string> {
   const stream = new Blob([input])
     .stream()
