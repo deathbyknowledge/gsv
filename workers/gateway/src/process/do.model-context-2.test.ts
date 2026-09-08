@@ -730,6 +730,20 @@ describe("model context", () => {
       ).toMatchObject({ ok: false, error: expect.stringContaining("not allowed") });
       expect(process.kernel.kernelRpc.mock.calls).toHaveLength(reads);
 
+      // a run that has not resolved its policy yet still faces the account's: a fresh run's first action may be this Send
+      process.runs.active = generationRun(
+        runId,
+        processTestConfig(pid, { generationStreaming: "off", accountApprovalPolicy: JSON.stringify({ default: "ask", rules: [] }) }),
+        { approvalPolicy: undefined },
+      );
+      expect(
+        await process.run.executeRunControlAction(runId, "send-attach-4b", {
+          ok: true as const,
+          command: { action: "message" as const, text: "x", finish: false, attach: ["/tmp/private.pdf"] },
+        }, []),
+      ).toMatchObject({ ok: false, error: expect.stringContaining("needs the person's approval") });
+      expect(process.kernel.kernelRpc.mock.calls).toHaveLength(reads);
+
       // a Read of the file earlier in the run, approved once or for good, lets the Send attach it under an ask rule
       process.runs.active = generationRun(runId, terminalTestConfig(pid), { approvalPolicy: { default: "ask", rules: [] } });
       registerToolBlock(process, runId, [{ id: "read-1", name: "Read", arguments: { path: "/tmp/private.pdf" } }]);
