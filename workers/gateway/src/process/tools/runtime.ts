@@ -39,12 +39,10 @@ import { materializeToolResponse } from "../tool-response";
 import { raceWithAbort } from "../../shared/abort";
 import { stableOpaqueId } from "../../shared/stable-id";
 
-const READ_PATHS_REMEMBERED = 64;
+const APPROVED_READS_REMEMBERED = 64;
 const readPathArgsSchema = z.object({ path: z.string().min(1), target: z.string().optional() });
-/** A read that actually read a file: an ok result with a kind, not a folder listing and not an error inside an ok envelope. */
-const fileReadSuccessSchema = z.object({ ok: z.literal(true), kind: z.string() });
 
-/** The place and path a Read named, as one key, so a later Send may attach what the run already read. */
+/** The place and path a Read named, as one key, so a later Send may attach what the person approved reading. */
 export function readPathKey(args: JsonValue): string | null {
   const parsed = readPathArgsSchema.safeParse(args);
   return parsed.success ? `${parsed.data.target ?? "gsv"}\0${parsed.data.path}` : null;
@@ -149,6 +147,17 @@ export class ProcessTools {
 
   shellSessionTargetKey(sessionId: string): string {
     return `${SHELL_SESSION_TARGET_KEY_PREFIX}${sessionId}`;
+  }
+
+  /** A read the person approved, once or for good, is one a Send may attach in this run without asking again. */
+  rememberApprovedRead(pendingHil: PendingHilRecord, runId: string): void {
+    if (pendingHil.syscall !== "fs.read") return;
+    const key = readPathKey(pendingHil.args);
+    if (!key) return;
+    this.host.mutateActiveRun(runId, (run) => ({
+      ...run,
+      approvedReads: [...new Set([...(run.approvedReads ?? []), key])].slice(-APPROVED_READS_REMEMBERED),
+    }));
   }
 
   rememberToolApproval(pendingHil: PendingHilRecord, run: RunState): boolean {
@@ -326,15 +335,6 @@ export class ProcessTools {
     if (!transitioned) {
       await this.host.resources.deletePreparedToolResultMedia(prepared.createdKeys);
       return false;
-    }
-    if (resolvedOutcome === "completed" && current.call === "fs.read" && fileReadSuccessSchema.safeParse(prepared.value).success) {
-      const key = readPathKey(current.args);
-      if (key) {
-        this.host.mutateActiveRun(runId, (run) => ({
-          ...run,
-          readPaths: [...new Set([...(run.readPaths ?? []), key])].slice(-READ_PATHS_REMEMBERED),
-        }));
-      }
     }
     const resumeRun = transitioned && this.host.store.tools.isRunResolved(runId);
     if (transitioned && wasStarted) {

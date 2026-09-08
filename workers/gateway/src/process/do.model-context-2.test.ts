@@ -22,7 +22,6 @@ import {
   terminalTestResponse,
   testUsage,
   yieldAction,
-  registerToolBlock,
 } from "./do-test-harness";
 
 describe("model context", () => {
@@ -744,29 +743,48 @@ describe("model context", () => {
       ).toMatchObject({ ok: false, error: expect.stringContaining("needs the person's approval") });
       expect(process.kernel.kernelRpc.mock.calls).toHaveLength(reads);
 
-      // a Read of the file earlier in the run, approved once or for good, lets the Send attach it under an ask rule
-      process.runs.active = generationRun(runId, terminalTestConfig(pid), { approvalPolicy: { default: "ask", rules: [] } });
-      registerToolBlock(process, runId, [{ id: "read-1", name: "Read", arguments: { path: "/tmp/private.pdf" } }]);
-      await process.tools.resolveStartedTool(runId, "dispatch-read-1", {
+      // the person approving a Read of the file, once or for good, lets a Send attach it under an ask rule,
+      // whatever the Read itself returned: a PDF's ordinary Read is refused as binary, and the approval still counts
+      process.runs.active = generationRun(runId, terminalTestConfig(pid), {
+        approvalPolicy: { default: "ask", rules: [] },
+        offeredToolNames: ["Read", "Send"],
+      });
+      process.kernel.dispatchSyscall = vi.fn(async () => {});
+      process.store.tools.register("dispatch-read-1", "read-1", runId, "fs.read", { path: "/tmp/private.pdf" });
+      process.store.tools.setPendingHil({
+        requestId: "approval-read-1",
+        runId,
+        toolCallId: "read-1",
+        toolName: "Read",
+        syscall: "fs.read",
+        args: { path: "/tmp/private.pdf" },
+        createdAt: Date.now(),
+      });
+      expect(
+        await process.controller.handleProcHil({ requestId: "approval-read-1", decision: "approve" }),
+      ).toMatchObject({ ok: true });
+      expect(process.runs.active.approvedReads).toEqual(["gsv\u0000/tmp/private.pdf"]);
+      process.kernel.kernelRpc = vi.fn(async (_call: string, args: any) => ({
         ok: true,
-        path: "/tmp/private.pdf",
+        path: args.path,
         kind: "file",
         contentType: "application/pdf",
         size: 12,
-      });
-      expect(process.runs.active.readPaths).toEqual(["gsv\u0000/tmp/private.pdf"]);
-      // a read that failed inside an ok envelope, or listed a folder, is not an approval of anything
-      registerToolBlock(process, runId, [{ id: "read-2", name: "Read", arguments: { path: "/tmp/missing.pdf" } }]);
-      await process.tools.resolveStartedTool(runId, "dispatch-read-2", { ok: false, error: "No such file" });
-      registerToolBlock(process, runId, [{ id: "read-3", name: "Read", arguments: { path: "/tmp" } }]);
-      await process.tools.resolveStartedTool(runId, "dispatch-read-3", { ok: true, path: "/tmp", files: [], directories: [] });
-      expect(process.runs.active.readPaths).toEqual(["gsv\u0000/tmp/private.pdf"]);
+        resource: { type: "file", target: args.target ?? "gsv", path: args.path, revision: "rev-1", contentType: "application/pdf", size: 12 },
+      }));
       expect(
         await process.run.executeRunControlAction(runId, "send-attach-5", {
           ok: true as const,
           command: { action: "message" as const, text: "x", finish: false, attach: ["/tmp/private.pdf"] },
         }, []),
       ).toMatchObject({ ok: true, action: "message" });
+      // a file the person did not approve is still refused
+      expect(
+        await process.run.executeRunControlAction(runId, "send-attach-5b", {
+          ok: true as const,
+          command: { action: "message" as const, text: "x", finish: false, attach: ["/tmp/other.pdf"] },
+        }, []),
+      ).toMatchObject({ ok: false, error: expect.stringContaining("needs the person's approval") });
 
       // a place answers for itself: a reference naming another place is refused
       process.runs.active = generationRun(runId, terminalTestConfig(pid));

@@ -190,9 +190,9 @@ export class ProcessRun {
       if (approval.action === "deny") {
         return { ok: false, error: `cannot attach ${spec}: reading it is not allowed by the tool approval rules` };
       }
-      // a Read of the same file earlier in this run was approved, once or for good; that approval carries here
-      const alreadyRead = (run?.readPaths ?? []).includes(readPathKey(readArgs) ?? "");
-      if (approval.action === "ask" && !alreadyRead) {
+      // the person approved reading this file earlier in the run, once or for good; that approval carries here
+      const approvedRead = (run?.approvedReads ?? []).includes(readPathKey(readArgs) ?? "");
+      if (approval.action === "ask" && !approvedRead) {
         return {
           ok: false,
           error: `cannot attach ${spec}: reading it needs the person's approval; read it with the Read tool first, then send`,
