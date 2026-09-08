@@ -9,9 +9,8 @@ import {
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import {
   CLOUDFLARE_GATEWAY_BINDING_AUTH_SENTINEL,
-  createGatewayBindingFetch,
-  type AiGatewayBinding,
-} from "@earendil-works/pi-ai/api/cloudflare-gateway-binding";
+  createAiBindingFetch,
+} from "@earendil-works/pi-ai/api/cloudflare-ai-binding";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { DEFAULT_WORKERS_AI_MODEL } from "./default-models";
 import * as z from "zod/mini";
@@ -23,7 +22,7 @@ export { DEFAULT_WORKERS_AI_MODEL };
 const PI_WORKERS_AI_PROVIDER = "cloudflare-workers-ai";
 const WORKERS_AI_GATEWAY_ID = "default";
 const WORKERS_AI_GATEWAY_BASE_URL =
-  `https://gateway.ai.cloudflare.com/v1/binding/${WORKERS_AI_GATEWAY_ID}`;
+  `https://workers-binding.ai/ai-gateway/gateways/${WORKERS_AI_GATEWAY_ID}`;
 const WORKERS_AI_GATEWAY_COMPAT_URL = `${WORKERS_AI_GATEWAY_BASE_URL}/compat`;
 const WORKERS_AI_GATEWAY_MODEL_PREFIX = "workers-ai/";
 
@@ -113,21 +112,13 @@ export const workersAiProvider: Provider<"openai-completions"> =
     api: openAICompletionsApi(),
   });
 
-const workersAiGatewayBinding: AiGatewayBinding = {
-  gateway(id) {
-    const binding = getWorkersAiBinding();
-    if (!binding) {
-      throw new Error("Workers AI binding is not configured for this worker");
-    }
-    return binding.gateway(id);
-  },
+export const workersAiBindingFetch: typeof fetch = (input, init) => {
+  const binding = getWorkersAiBinding();
+  if (!binding) {
+    throw new Error("Workers AI binding is not configured for this worker");
+  }
+  return createAiBindingFetch(binding)(input, init);
 };
-
-export const workersAiBindingFetch = createGatewayBindingFetch({
-  binding: workersAiGatewayBinding,
-  baseUrl: WORKERS_AI_GATEWAY_BASE_URL,
-  gateway: WORKERS_AI_GATEWAY_ID,
-});
 
 export function isWorkersAiProvider(provider: string): boolean {
   const normalized = provider.trim().toLowerCase();

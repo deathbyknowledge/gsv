@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
+import { createGenerationService } from "./service";
 import {
   completeWithOpenAiCodexFetch,
   streamWithOpenAiCodexFetch,
@@ -35,7 +36,7 @@ function codexModel() {
   return model;
 }
 
-function codexTextEvents(text = "ok"): JsonObject[] {
+function codexTextEvents(text = "ok", modelName = "gpt-5.4-mini"): JsonObject[] {
   return [
     {
       type: "response.created",
@@ -72,7 +73,7 @@ function codexTextEvents(text = "ok"): JsonObject[] {
       type: "response.completed",
       response: {
         id: "resp_1",
-        model: "gpt-5.4-mini",
+        model: modelName,
         status: "completed",
         usage: {
           input_tokens: 1,
@@ -97,6 +98,73 @@ function sseResponse(events: JsonObject[], separator = "\n\n"): Response {
 }
 
 describe("OpenAI Codex routed fetch transport", () => {
+  it.each(["gpt-6-astra", "gpt-5.6-sol"])("runs a %s tool turn through model resolution and routed fetch", async (modelName) => {
+    const requests: JsonObject[] = [];
+    const toolCall = {
+      id: "fc_read", type: "function_call", call_id: "call_read", name: "Read",
+      arguments: '{"path":"/root/example.txt"}', status: "completed",
+    };
+    const fetchMock: typeof fetch = async (input, init) => {
+      expect(String(input)).toBe("https://chatgpt.com/backend-api/codex/responses");
+      requests.push(JSON.parse(String(init?.body)));
+      if (requests.length > 1) return sseResponse(codexTextEvents("File inspected.", modelName));
+      return sseResponse([
+        { type: "response.created", response: { id: "response:tool" } },
+        { type: "response.output_item.added", output_index: 0, item: { ...toolCall, arguments: "", status: "in_progress" } },
+        { type: "response.function_call_arguments.delta", output_index: 0, delta: toolCall.arguments },
+        { type: "response.output_item.done", output_index: 0, item: toolCall },
+        {
+          type: "response.completed",
+          response: {
+            id: "response:tool", model: modelName, status: "completed",
+            usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15, input_tokens_details: { cached_tokens: 0 } },
+          },
+        },
+      ]);
+    };
+    const generation = createGenerationService({ fetch: fetchMock });
+    const config = {
+      executor: { kind: "kernel" as const }, provider: "openai-codex", model: modelName,
+      apiKey: codexToken(), reasoning: "high", maxTokens: 4096, maxContextBytes: 32768,
+    };
+    const context = {
+      systemPrompt: "Inspect a file, then report the result.",
+      messages: [{ role: "user" as const, content: "Inspect example.txt" }],
+      tools: [{ name: "Read", description: "Read a file", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } }],
+    };
+    const call = await generation.generate({ config, context, sessionAffinityKey: "process:codex" });
+    expect(call.stopReason).toBe("toolUse");
+    const requestedTool = call.content.find((content) => content.type === "toolCall");
+    expect(requestedTool).toMatchObject({ name: "Read", arguments: { path: "/root/example.txt" } });
+    if (!requestedTool || requestedTool.type !== "toolCall") throw new Error("Expected a Read tool call");
+    const completed = await generation.generate({
+      config,
+      context: {
+        ...context,
+        messages: [
+          ...context.messages,
+          call,
+          {
+            role: "toolResult", toolCallId: requestedTool.id, toolName: "Read",
+            content: [{ type: "text", text: "File contents" }], isError: false, timestamp: 1,
+          },
+        ],
+      },
+      sessionAffinityKey: "process:codex",
+    });
+    expect(completed.stopReason).toBe("stop");
+    expect(completed.content).toContainEqual(expect.objectContaining({ type: "text", text: "File inspected." }));
+    expect(requests).toHaveLength(2);
+    expect(requests[0]).toMatchObject({
+      model: modelName, reasoning: { effort: "high" }, prompt_cache_key: "process:codex",
+      tools: [{ type: "function", name: "Read" }],
+    });
+    expect(requests[1]?.input).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "function_call", call_id: "call_read", name: "Read" }),
+      expect.objectContaining({ type: "function_call_output", call_id: "call_read", output: "File contents" }),
+    ]));
+  });
+
   it("streams Codex SSE through the supplied fetch implementation", async () => {
     let capturedUrl = "";
     let capturedInit: RequestInit | undefined;

@@ -10,7 +10,7 @@ import {
 import * as z from "zod/mini";
 
 const WORKERS_AI_REGISTRY_PROVIDER: BuiltinProvider = "cloudflare-workers-ai";
-const MODEL_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const satisfies readonly ModelThinkingLevel[];
+const MODEL_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const satisfies readonly ModelThinkingLevel[];
 
 export function resolvePiAiModel(provider: string, modelName: string) {
   if (!isKnownPiAiProvider(provider)) {
