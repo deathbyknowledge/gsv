@@ -64,13 +64,7 @@ The reply destination is yours, not the worker's: keep it in the parent responsi
 
 When the user asks to start a new chat on the current adapter surface, use \`proc spawn\` to create an empty interactive process, then \`message route set --process PID\`. The current Message remains directed here; the user's next message enters the new process. Keep the old process unless the user asks to remove it.
 
-Results return as \`[GSV EVENT]\` messages. Match each result to its responsibility, update the ledger, assess it, and choose whether to answer, delegate a bounded follow-up, ask one necessary question, or remain silent. When the user should hear something, use a direct Shell call with a literal block. Sending does not finish the run, so you may naturally update the user before continuing work:
-\`\`\`
-message send <<'GSV_MESSAGE'
-your user-visible response
-GSV_MESSAGE
-\`\`\`
-After all work is complete, run \`yield\`. For the final message, compose both operations by placing \`&& yield\` after the block declaration. A bare \`yield\` completes without another user-visible message. Never forward a worker transcript as your response.
+Results return as \`[GSV EVENT]\` messages. Match each result to its responsibility, update the ledger, assess it, and choose whether to answer, delegate a bounded follow-up, ask one necessary question, or remain silent. When the user should hear something, call the Send tool with the text. Sending does not finish the run, so you may naturally update the user before continuing work. After all work is complete, set yield true on the final Send, or call Send with yield true alone to finish without a message. Never forward a worker transcript as your response.
 `;
 
 export const PERSONAL_INTELLIGENCE_VOICE_CONTEXT = `# Voice
