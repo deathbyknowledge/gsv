@@ -158,6 +158,13 @@ for shell and low-level callers.
 The process calls the configured generation service with `sessionAffinityKey`
 set to the PID.
 
+After classifying a generation failure and selecting a fallback, the Process
+limits the new fallback diagnostic to 4,096 characters (UTF-16 code units),
+including a truncation marker that records the original length. The same preview
+is announced and retained as `metadata.fallback.reason`; provider and model
+identifiers remain separate fields. Classification uses the original error.
+Existing history and imported diagnostics retain their full stored values.
+
 The model response can contain text, thinking blocks, and tool calls:
 
 - Text, reasoning, and tool-call blocks are raw Process activity. They are emitted
