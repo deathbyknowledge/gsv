@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useQuery } from "@tanstack/preact-query";
 import type { JSX } from "preact";
 import type { ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
@@ -20,6 +21,7 @@ import { useChatConversation } from "../../chat/hooks/useChatConversation";
 import { loadConsoleTargets } from "../../gsv-console/backend/consoleService";
 import { executeTerminalCommand } from "../../terminal/backend/terminalService";
 import type { FleetRow } from "../Instrument";
+import { INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import { renderMarkdownHtml, escapeHtml } from "../shared/markdown";
 import { PromptLine, type PromptPlace } from "../shared/PromptLine";
 import { Wordmark } from "../shared/Wordmark";
@@ -380,29 +382,18 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
     };
   }, [client, connected, pidProp]);
 
-  /* places, refreshed whenever a target's status changes */
+  /* places, from the instrument's targets cache; WireSync keeps it current from the wire */
+  const targetsQuery = useQuery({
+    queryKey: INSTRUMENT_TARGETS_KEY,
+    queryFn: () => loadConsoleTargets(client),
+    enabled: connected,
+  });
   useEffect(() => {
-    if (!connected) return undefined;
-    let cancelled = false;
-    const load = () => {
-      void loadConsoleTargets(client)
-        .then((targets) => {
-          if (cancelled) return;
-          const next = placesFromTargets(targets);
-          setPlaces(next);
-          setWhere((current) => current ?? defaultPlace(next));
-        })
-        .catch(() => undefined);
-    };
-    load();
-    const unsubscribe = client.onSignal((signal) => {
-      if (signal === "target.status") load();
-    });
-    return () => {
-      cancelled = true;
-      unsubscribe();
-    };
-  }, [client, connected]);
+    if (!targetsQuery.data) return;
+    const next = placesFromTargets(targetsQuery.data);
+    setPlaces(next);
+    setWhere((current) => current ?? defaultPlace(next));
+  }, [targetsQuery.data]);
 
   /* history, then live signals reduced into the runtime state */
   const refreshHistory = useCallback(async () => {

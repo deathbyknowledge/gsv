@@ -17,6 +17,7 @@ import { loadResponsibilitiesWorkspace } from "../../gsv-console/responsibilitie
 import { readFilesPath } from "../../files/backend/filesService";
 import { executeTerminalCommand } from "../../terminal/backend/terminalService";
 import type { FleetRow } from "../Instrument";
+import { INSTRUMENT_LEDGER_KEY, INSTRUMENT_LEDGER_PAGE, INSTRUMENT_PROCESSES_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import { Wordmark } from "../shared/Wordmark";
 import {
   CLOUD_TARGET_ID,
@@ -51,11 +52,11 @@ export type FleetProps = {
   onZen: (prefill?: string, pid?: string) => void;
 };
 
-const LEDGER_PAGE = 60;
+const LEDGER_PAGE = INSTRUMENT_LEDGER_PAGE;
 const NO_CURSOR: string | null = null;
 const PROCESS_PAGE = 8;
 type OpenFile = { target: string; path: string; name: string };
-const LEDGER_QUERY_KEY = ["fleet", "ledger"] as const;
+const LEDGER_QUERY_KEY = INSTRUMENT_LEDGER_KEY;
 
 function useNow(): number {
   const [now, setNow] = useState(() => Date.now());
@@ -81,16 +82,15 @@ function outcomeWord(outcome: string): string {
 export function Fleet({ initialRow, onZen }: FleetProps) {
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
-  const queryClient = useQueryClient();
   const now = useNow();
 
   const targetsQuery = useQuery({
-    queryKey: ["devices", "fleet-targets"],
+    queryKey: INSTRUMENT_TARGETS_KEY,
     queryFn: () => loadConsoleTargets(client),
     enabled: connected,
   });
   const processesQuery = useQuery({
-    queryKey: ["processes", "fleet"],
+    queryKey: INSTRUMENT_PROCESSES_KEY,
     queryFn: () => loadConsoleProcesses(client),
     enabled: connected,
   });
@@ -125,14 +125,6 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
     },
     getNextPageParam: (last) => last.nextCursor,
   });
-
-  useEffect(() => {
-    return client.onSignal((signal) => {
-      if (signal === "proc.run.finished" || signal === "proc.run.tool.finished" || signal === "ledger.appended") {
-        void queryClient.invalidateQueries({ queryKey: LEDGER_QUERY_KEY });
-      }
-    });
-  }, [client, queryClient]);
 
   const ledger = useMemo(() => (sysLedgerQuery.data?.pages ?? []).flatMap((page) => page.lines), [sysLedgerQuery.data]);
   const costToday = useMemo(() => costTodayByProcess(ledger, now), [ledger, now]);
@@ -769,7 +761,7 @@ function ProcessInspector({ process, model, cost, responsibilities, models, pref
   const { client } = useGateway();
   const queryClient = useQueryClient();
   const invalidate = () => {
-    void queryClient.invalidateQueries({ queryKey: ["processes"] });
+    void queryClient.invalidateQueries({ queryKey: INSTRUMENT_PROCESSES_KEY });
     void queryClient.invalidateQueries({ queryKey: LEDGER_QUERY_KEY });
   };
   const stop = useMutation({

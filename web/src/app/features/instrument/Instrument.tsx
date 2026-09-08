@@ -5,6 +5,7 @@ import { useSession } from "../../services/session/SessionProvider";
 import { Zen } from "./zen/Zen";
 import { FirstDay } from "./firstday/FirstDay";
 import { Fleet } from "./fleet/Fleet";
+import { WireSync } from "./wire/WireSync";
 import "./instrument.css";
 
 /** The three distances of the instrument. Zen is near, Fleet is far, the first day is Zen's empty state. */
@@ -183,6 +184,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         <GlyphStars density={STAR_DENSITY[distance]} />
       </div>
       <div class="instrument-scan" aria-hidden="true" />
+      <WireSync />
       <div class="instrument-vignette" aria-hidden="true" />
       <div class="instrument-scaled">
       {help ? (

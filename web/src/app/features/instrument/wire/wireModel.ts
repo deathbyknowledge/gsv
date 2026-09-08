@@ -1,0 +1,101 @@
+import { z } from "zod";
+import type { ConsoleProcess, ConsoleTarget } from "../../gsv-console/domain/consoleModels";
+import type { LedgerLine } from "../fleet/fleetModel";
+
+/* what each signal carries, as far as the instrument needs it */
+
+export const targetStatusSignalSchema = z.object({
+  event: z.enum(["connected", "disconnected"]),
+  target: z.object({
+    targetId: z.string(),
+    label: z.string().optional(),
+    description: z.string().optional(),
+    lastSeenAt: z.number().nullable().optional(),
+  }),
+});
+
+export const procSignalSchema = z.object({
+  pid: z.string(),
+  runId: z.string().optional(),
+  queuedCount: z.number().optional(),
+  timestamp: z.number().optional(),
+});
+
+export const ledgerAppendedSignalSchema = z.object({ seq: z.number(), count: z.number() });
+
+export type Patch<T> = { next: T; known: boolean };
+
+/** A target's status from the wire, applied to the cached list; `known` is false when the list has never seen it. */
+export function patchTargets(current: readonly ConsoleTarget[], signal: z.infer<typeof targetStatusSignalSchema>, now: number): Patch<ConsoleTarget[]> {
+  const online = signal.event === "connected";
+  const index = current.findIndex((target) => target.deviceId === signal.target.targetId);
+  if (index < 0) return { next: [...current], known: false };
+  const next = current.map((target, position) =>
+    position === index
+      ? {
+          ...target,
+          online,
+          label: signal.target.label ?? target.label,
+          description: signal.target.description ?? target.description,
+          lastSeenAt: online ? now : (signal.target.lastSeenAt ?? now),
+        }
+      : target,
+  );
+  return { next, known: true };
+}
+
+export type ProcessSignalName =
+  | "proc.changed"
+  | "proc.run.started"
+  | "proc.run.hil.requested"
+  | "proc.run.finished"
+  | "process.exit";
+
+const PROCESS_SIGNALS = new Set<string>(["proc.changed", "proc.run.started", "proc.run.hil.requested", "proc.run.finished", "process.exit"]);
+
+export function isProcessSignal(signal: string): signal is ProcessSignalName {
+  return PROCESS_SIGNALS.has(signal);
+}
+
+/** A process signal applied to the cached list: run state, queue length, last activity, or removal on exit. */
+export function patchProcesses(
+  current: readonly ConsoleProcess[],
+  signal: ProcessSignalName,
+  payload: z.infer<typeof procSignalSchema>,
+  now: number,
+): Patch<ConsoleProcess[]> {
+  const index = current.findIndex((process) => process.pid === payload.pid);
+  if (index < 0) return { next: [...current], known: signal === "process.exit" };
+  if (signal === "process.exit") return { next: current.filter((process) => process.pid !== payload.pid), known: true };
+  const at = payload.timestamp ?? now;
+  const next = current.map((process, position) => {
+    if (position !== index) return process;
+    const queuedCount = payload.queuedCount ?? process.queuedCount;
+    switch (signal) {
+      case "proc.changed":
+        return { ...process, queuedCount, lastActiveAt: at };
+      case "proc.run.started":
+        return { ...process, state: "running" as const, rawState: "running", activeRunId: payload.runId ?? process.activeRunId, queuedCount, lastActiveAt: at };
+      case "proc.run.hil.requested":
+        return { ...process, state: "waiting_hil" as const, rawState: "waiting_hil", lastActiveAt: at };
+      case "proc.run.finished": {
+        const state = queuedCount > 0 ? ("queued" as const) : ("idle" as const);
+        return { ...process, state, rawState: state, activeRunId: null, queuedCount, lastActiveAt: at };
+      }
+    }
+  });
+  return { next, known: true };
+}
+
+export type LedgerPage = { lines: LedgerLine[]; nextCursor: string | null };
+export type LedgerPages = { pages: LedgerPage[]; pageParams: (string | null)[] };
+
+/** Fresh lines, newest first, put in front of the first cached page; lines the cache already holds are skipped. */
+export function prependLedger(data: LedgerPages, fresh: readonly LedgerLine[]): LedgerPages {
+  if (data.pages.length === 0) return { pages: [{ lines: [...fresh], nextCursor: null }], pageParams: [null] };
+  const seen = new Set(data.pages.flatMap((page) => page.lines.map((line) => line.id)));
+  const added = fresh.filter((line) => !seen.has(line.id));
+  if (added.length === 0) return data;
+  const [first, ...rest] = data.pages;
+  return { pages: [{ ...first, lines: [...added, ...first.lines] }, ...rest], pageParams: data.pageParams };
+}
