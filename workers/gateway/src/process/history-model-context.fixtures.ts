@@ -84,8 +84,8 @@ export function goldenEvents(): EventFixture[] {
       text: formatContextRunwayAlertMessage({ remainingInputTokens: 12_000, runwayBeforeBoundaryTokens: 8_000, policy }),
     },
     {
-      event: { kind: "responsibility.revision", payload: { epochId: GOLDEN_EPOCH, transition }, severity: "info", audience: "model" },
-      text: formatResponsibilityTransitionEvent(transition),
+      event: { kind: "responsibility.revision", payload: { epochId: GOLDEN_EPOCH, transition, contextFields: ["state", "details"] }, severity: "info", audience: "model" },
+      text: formatResponsibilityTransitionEvent(transition, ["state", "details"]),
     },
     {
       event: { kind: "schedule.fired", payload: schedule, severity: "info", audience: "model" },

@@ -62,7 +62,9 @@ import {
 import { normalizeModelHistoryGroup } from "../storage/history-records";
 import { formatContextProjectionEvent } from "../../prompts/context-events";
 import { formatResponsibilityBaseline } from "../internal/events";
-import { formatResponsibilityTransitionEvent } from "./event-renderer";
+import {
+  formatResponsibilityTransitionEvent, RESPONSIBILITY_CONTEXT_FIELDS,
+} from "../../prompts/responsibility-events";
 
 
 function archivedToolResultMessage(
@@ -589,10 +591,35 @@ export class ProcessHistory {
           throw new Error("Target process history is not empty");
         }
         const generation = this.host.store.state.getHistoryGeneration();
+        const responsibilityFields = new Map<string, Set<string>>();
         let restored = 0;
         for (const archive of archives) {
           for (const message of archive) {
-            this.appendRestoredArchivedMessage(message, generation);
+            let imported = message;
+            const primary = message.records?.[0];
+            if (primary?.kind === "event" && primary.payload.kind === "responsibility.revision"
+              && primary.payload.audience !== "person") {
+              const { transition } = primary.payload.payload;
+              const knownFields = responsibilityFields.get(transition.responsibilityId) ?? new Set<string>();
+              const contextFields = RESPONSIBILITY_CONTEXT_FIELDS.filter((field) => (
+                transition.changedFields.includes(field)
+                || (!knownFields.has(field) && transition.record[field] !== undefined)
+              ));
+              imported = {
+                ...message,
+                content: formatResponsibilityTransitionEvent(transition, contextFields),
+                records: [{
+                  kind: "event",
+                  payload: {
+                    ...primary.payload,
+                    payload: { ...primary.payload.payload, contextFields },
+                  },
+                }, ...message.records!.slice(1)],
+              };
+              for (const field of contextFields) knownFields.add(field);
+              responsibilityFields.set(transition.responsibilityId, knownFields);
+            }
+            this.appendRestoredArchivedMessage(imported, generation);
             restored += 1;
           }
         }
@@ -2013,6 +2040,7 @@ export class ProcessHistory {
       contextProjection: projection,
       offeredTools,
       promptSources: snapshot.sources,
+      r12yBaselineRendered: snapshot.sources.some((source) => source.responsibilityBaseline === true),
       recoveredRunPrompt: promptOverride !== undefined,
     });
     return { prompt: snapshot.prompt, sourceManifest };
@@ -2098,7 +2126,6 @@ export class ProcessHistory {
           this.host.store.epochs.appendContextEpochTransition(
             epoch.id,
             transition,
-            formatResponsibilityTransitionEvent(transition),
             runId,
           );
           appended = true;

@@ -1,7 +1,10 @@
 import type { ProcessStore } from "../store";
 import type {
-  JsonObject, ProcHistoryRecordData, ResponsibilityRecord, ResponsibilityTransition,
+  JsonObject, ProcHistoryEvent, ProcHistoryRecordData, ResponsibilityRecord, ResponsibilityTransition,
 } from "@humansandmachines/gsv/protocol";
+import {
+  formatResponsibilityTransitionEvent, RESPONSIBILITY_CONTEXT_FIELDS,
+} from "../../prompts/responsibility-events";
 import {
   contextEpochFromRow, parseContextEpochJson, type ContextEpochRecord, type ContextEpochRow,
 } from "./store-codecs";
@@ -91,7 +94,6 @@ export class ProcessContextEpochRepository {
   appendContextEpochTransition(
     epochId: string,
     transition: ResponsibilityTransition,
-    content: string,
     runId: string,
   ): number {
     const epoch = this.getContextEpoch(epochId);
@@ -101,13 +103,44 @@ export class ProcessContextEpochRepository {
     if (transition.revision <= epoch.observedR12yRevision) {
       return epoch.observedR12yRevision;
     }
+    const knownFields = new Set<string>();
+    if (epoch.sourceManifest.r12yBaselineRendered === true) {
+      const baseline = epoch.r12yBaseline.find((record) => record.id === transition.responsibilityId);
+      if (baseline) {
+        for (const field of ["title", "state", "priority", "assignee", "dueAtMs", "nextCheckAtMs", "leaseExpiresAtMs", "blocker"] as const) {
+          if (baseline[field] !== undefined && (field !== "blocker" || baseline.blocker)) knownFields.add(field);
+        }
+      }
+    }
+    const priorEvents = this.store.sql.exec<{ payload_json: string }>(
+      `SELECT payload_json FROM messages
+       WHERE kind = 'event' AND group_message_id IS NULL
+         AND json_extract(payload_json, '$.kind') = 'responsibility.revision'
+         AND json_extract(payload_json, '$.audience') != 'person'
+         AND json_extract(payload_json, '$.payload.transition.responsibilityId') = ?`,
+      transition.responsibilityId,
+    ).toArray();
+    for (const row of priorEvents) {
+      const event = parseContextEpochJson<ProcHistoryEvent>(row.payload_json);
+      if (event.kind !== "responsibility.revision") throw new Error("Responsibility transition references another event kind");
+      const record = event.payload.transition.record;
+      const fields = event.payload.contextFields ?? RESPONSIBILITY_CONTEXT_FIELDS.filter((field) => (
+        record[field] !== undefined
+      ));
+      for (const field of fields) knownFields.add(field);
+    }
+    const contextFields = RESPONSIBILITY_CONTEXT_FIELDS.filter((field) => (
+      transition.changedFields.includes(field)
+      || (!knownFields.has(field) && transition.record[field] !== undefined)
+    ));
+    const content = formatResponsibilityTransitionEvent(transition, contextFields);
     const messageId = this.store.messages.appendMessage("system", content, {
       runId,
       record: {
         kind: "event",
         payload: {
           kind: "responsibility.revision",
-          payload: { epochId, transition },
+          payload: { epochId, transition, contextFields },
           severity: "info",
           audience: "model",
         },

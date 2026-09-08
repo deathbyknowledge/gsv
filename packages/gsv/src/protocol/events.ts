@@ -113,6 +113,7 @@ export const procHistoryEventPayloadSchemas = {
   "responsibility.revision": z.strictObject({
     epochId: z.string(),
     transition: responsibilityTransitionSchema,
+    contextFields: z.optional(z.array(z.string())),
   }),
   "correction.text-only": z.strictObject({
     attempt: nonNegativeIntegerSchema,
@@ -238,7 +239,12 @@ export type ProcHistoryEventPayloadMap = {
     provider?: string;
     model?: string;
   };
-  "responsibility.revision": { epochId: string; transition: ResponsibilityTransition };
+  "responsibility.revision": {
+    epochId: string;
+    transition: ResponsibilityTransition;
+    /** Exact record fields introduced or updated in model context; absent on older events. */
+    contextFields?: string[];
+  };
   "correction.text-only": { attempt: number; limit: number };
   "correction.exhausted": { attempts: number; limit: number; conversationId?: string; messageId?: string };
   "generation.failed": { reason: string; error: string; provider?: string; model?: string };

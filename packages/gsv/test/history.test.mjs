@@ -235,6 +235,31 @@ const eventFixtures = {
   "target.connection": { targetId: "machine:one", event: "connected", platform: "linux", observedAt: 100 },
 };
 
+test("responsibility events preserve context fields independently of the raw transition", () => {
+  const event = {
+    kind: "responsibility.revision",
+    payload: {
+      epochId: "epoch:1",
+      transition: {
+        ...transition,
+        record: { ...transition.record, details: { task: "Inspect the attachment", options: ["image", "audio"] } },
+      },
+    },
+    severity: "info",
+    audience: "model",
+  };
+  for (const contextFields of [["title", "details", "state"], ["state"], []]) {
+    const record = { kind: "event", payload: { ...event, payload: { ...event.payload, contextFields } } };
+    assert.deepEqual(procHistoryRecordDataSchema.parse(record), record);
+  }
+  const olderEvent = procHistoryEventSchema.parse(event);
+  assert.deepEqual(olderEvent, event);
+  assert.equal(Object.hasOwn(olderEvent.payload, "contextFields"), false);
+  for (const contextFields of [null, "state", ["state", 1]]) {
+    assert.equal(procHistoryEventSchema.safeParse({ ...event, payload: { ...event.payload, contextFields } }).success, false);
+  }
+});
+
 test("machine event registration has a typed payload and defaults to person-only delivery", () => {
   const definition = procHistoryTargetEventRegistry["target.status"];
   assert.equal(definition.kind, "target.connection");

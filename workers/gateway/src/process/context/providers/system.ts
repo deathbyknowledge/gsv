@@ -22,7 +22,7 @@ function renderContextFiles(
       if (!text) {
         return null;
       }
-      return {
+      const section: PromptSection = {
         name: file.name,
         text,
         contextRoot: {
@@ -32,6 +32,8 @@ function renderContextFiles(
           location: "/sys/config/ai/context.d",
         },
       };
+      if (/\{\{\s*r12y\s*\}\}/.test(file.text)) section.responsibilityBaseline = true;
+      return section;
     })
     .filter((section): section is PromptSection => section !== null);
 }

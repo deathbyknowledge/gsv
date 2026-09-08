@@ -34,6 +34,20 @@ provider content and metadata, including missing media and shared hydration
 budgets. A person-only event contributes no provider message and cannot change
 origin annotations or consume model context.
 
+Responsibility events retain their complete ledger transition and an optional
+`contextFields` projection. Process selects those fields when it appends the
+event: changed values plus any current fields the model has not yet seen.
+The starting ledger contributes only fields actually rendered through `{{r12y}}`;
+its compact view can omit records and details. Prior model-visible events also
+contribute their rendered fields, including imported history. Explicit field
+clears remain visible. The selected projection survives reload and archive reads
+without consulting a later ledger state. History import introduces the first
+retained occurrence of each responsibility before rendering subsequent deltas,
+because the source context baseline may not accompany an exported segment.
+Older events without a field projection render their present record fields;
+older prompt epochs without rendering metadata do not imply that the baseline
+was shown. This can introduce a record again once during an upgrade.
+
 `process/history/compaction-renderer.ts` renders typed JSONL for summarization.
 The bounded transcript preserves head and tail records and explicitly marks
 omission and oversized payloads. Person-only events are excluded from summary

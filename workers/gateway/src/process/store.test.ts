@@ -74,7 +74,6 @@ describe("ProcessStore", () => {
           store.epochs.appendContextEpochTransition(
             epoch.id,
             transition,
-            "Responsibility changed.",
             "run-1",
           ),
         ).toBe(2);
@@ -82,7 +81,6 @@ describe("ProcessStore", () => {
           store.epochs.appendContextEpochTransition(
             epoch.id,
             transition,
-            "must not duplicate",
             "run-1",
           ),
         ).toBe(2);
@@ -134,7 +132,7 @@ describe("ProcessStore", () => {
           },
         ]);
         expect(store.messages.getMessages().map((message: any) => message.content)).toEqual([
-          "Responsibility changed.",
+          expect.stringContaining("New state: active"),
           "Current date: 2026-08-29",
         ]);
         expect(store.messages.getMessages().map((message: any) => message.records)).toEqual([
@@ -142,7 +140,7 @@ describe("ProcessStore", () => {
             kind: "event",
             payload: {
               kind: "responsibility.revision",
-              payload: { epochId: epoch.id, transition },
+              payload: { epochId: epoch.id, transition, contextFields: ["title", "state", "priority", "assignee", "source"] },
               severity: "info",
               audience: "model",
             },

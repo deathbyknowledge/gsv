@@ -15,6 +15,7 @@ import type { StoredProcessMedia } from "./media";
 // These snapshots are a compatibility contract; do not regenerate them to accept a refactor.
 // Approved wording change on 2026-09-08: context.changed omits target implements.
 // Approved wording change on 2026-09-08: context.runway uses concise preservation guidance.
+// Approved wording change on 2026-09-08: responsibility.revision introduces unseen fields and then renders changed values.
 beforeEach(() => { vi.spyOn(Date, "now").mockReturnValue(GOLDEN_TIME); });
 afterEach(() => { vi.restoreAllMocks(); });
 
