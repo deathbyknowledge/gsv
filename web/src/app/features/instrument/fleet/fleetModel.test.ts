@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { ChatTranscriptRow } from "../../chat/domain/transcript";
 import type { ConsoleProcess, ConsoleTarget } from "../../gsv-console/domain/consoleModels";
 import {
   CLOUD_TARGET_ID,
   describeToolCall,
-  ledgerFromRows,
   mergeLedger,
+  costTodayByProcess,
+  modelByProcess,
   orderPlaces,
   orderProcesses,
   planetVariantForKind,
@@ -57,8 +57,23 @@ function process(overrides: Partial<ConsoleProcess>): ConsoleProcess {
   };
 }
 
-function toolRow(overrides: Partial<ChatTranscriptRow>): ChatTranscriptRow {
-  return { id: "r1", text: "", time: "", timestamp: 5_000, role: "tool", toolSyscall: "shell.exec", ...overrides };
+type SysLine = Parameters<typeof ledgerFromSysLines>[0][number];
+
+function sysLine(overrides: Partial<SysLine>): SysLine {
+  return {
+    seq: 1,
+    timestamp: 5_000,
+    principalKind: "process",
+    uid: 1000,
+    pid: "p1",
+    runId: "r1",
+    target: "laptop",
+    call: "shell.exec",
+    args: JSON.stringify({ input: "ls", target: "laptop" }),
+    outcome: "ok",
+    durationMs: 10,
+    ...overrides,
+  };
 }
 
 describe("places", () => {
@@ -111,42 +126,38 @@ describe("ledger", () => {
     expect(describeToolCall("ai.text.generate", { prompt: "x" })).toBe("ai.text.generate");
   });
 
-  it("turns tool rows into lines and skips prose", () => {
-    const lines = ledgerFromRows(
-      [
-        toolRow({ id: "a", toolArgs: { input: "ls", target: "laptop" }, toolOutcome: "completed" }),
-        { id: "b", text: "hello", time: "", timestamp: 6_000, role: "assistant" },
-        toolRow({ id: "c", toolSyscall: "fs.write", toolArgs: { path: "~/x.txt" }, status: "error" }),
-      ],
-      "42",
-    );
-    expect(lines).toHaveLength(2);
-    expect(lines[0]).toMatchObject({ place: "laptop", what: "looked around", detail: "ls", outcome: "completed", processId: "42" });
-    expect(lines[1]).toMatchObject({ place: CLOUD_TARGET_ID, syscall: "fs.write", outcome: "failed" });
-  });
-
   it("merges newest first and caps", () => {
-    const a = ledgerFromRows([toolRow({ id: "1", timestamp: 100 }), toolRow({ id: "2", timestamp: 300 })], "1");
-    const b = ledgerFromRows([toolRow({ id: "3", timestamp: 200 }), toolRow({ id: "4", timestamp: null })], "2");
-    const merged = mergeLedger([a, b], 3);
-    expect(merged.map((line) => line.timestamp)).toEqual([300, 200, 100]);
+    const a = ledgerFromSysLines([sysLine({ seq: 1, timestamp: 100 }), sysLine({ seq: 2, timestamp: 300 })]);
+    const b = ledgerFromSysLines([sysLine({ seq: 3, timestamp: 200 })]);
+    const merged = mergeLedger([a, b], 2);
+    expect(merged.map((line) => line.timestamp)).toEqual([300, 200]);
   });
 
   it("counts today's runs per place and lists touched files once", () => {
     const now = new Date(2026, 8, 5, 20, 0, 0).getTime();
     const today = new Date(2026, 8, 5, 9, 0, 0).getTime();
     const yesterday = new Date(2026, 8, 4, 9, 0, 0).getTime();
-    const lines = ledgerFromRows(
-      [
-        toolRow({ id: "1", timestamp: today, toolSyscall: "fs.read", toolArgs: { path: "~/a", target: "laptop" } }),
-        toolRow({ id: "2", timestamp: today, toolSyscall: "fs.read", toolArgs: { path: "~/a", target: "laptop" } }),
-        toolRow({ id: "3", timestamp: yesterday, toolSyscall: "fs.write", toolArgs: { path: "~/b" } }),
-      ],
-      "1",
-    );
+    const lines = ledgerFromSysLines([
+      sysLine({ seq: 3, timestamp: today, call: "fs.read", args: JSON.stringify({ path: "~/a", target: "laptop" }) }),
+      sysLine({ seq: 2, timestamp: today, call: "fs.read", args: JSON.stringify({ path: "~/a", target: "laptop" }) }),
+      sysLine({ seq: 1, timestamp: yesterday, call: "fs.write", target: "gsv", args: JSON.stringify({ path: "~/b" }) }),
+    ]);
     expect(runsTodayByPlace(lines, now).get("laptop")).toBe(2);
     expect(runsTodayByPlace(lines, now).get(CLOUD_TARGET_ID)).toBeUndefined();
     expect(recentlyTouched(lines, 5).map((line) => line.detail)).toEqual(["~/a", "~/b"]);
+  });
+
+  it("sums today's cost and finds the model per process from the ai lines", () => {
+    const now = new Date(2026, 8, 5, 20, 0, 0).getTime();
+    const today = new Date(2026, 8, 5, 9, 0, 0).getTime();
+    const yesterday = new Date(2026, 8, 4, 9, 0, 0).getTime();
+    const lines = ledgerFromSysLines([
+      sysLine({ seq: 3, timestamp: today, pid: "p1", call: "ai.text.generate", args: JSON.stringify({ model: "gsv/fast" }), costNanoUsd: 1_500_000_000 }),
+      sysLine({ seq: 2, timestamp: today, pid: "p1", call: "ai.text.generate", args: JSON.stringify({ model: "gsv/slow" }), costNanoUsd: 500_000_000 }),
+      sysLine({ seq: 1, timestamp: yesterday, pid: "p1", call: "ai.text.generate", args: JSON.stringify({ model: "gsv/old" }), costNanoUsd: 9_000_000_000 }),
+    ]);
+    expect(costTodayByProcess(lines, now).get("p1")).toBeCloseTo(2);
+    expect(modelByProcess(lines).get("p1")).toBe("gsv/fast");
   });
 });
 
@@ -189,12 +200,15 @@ describe("humanCall", () => {
 });
 
 describe("ledgerFromSysLines", () => {
-  it("draws the kernel's lines the way it draws history lines", () => {
+  it("draws the kernel's lines from their recorded arguments", () => {
     const lines = ledgerFromSysLines([
-      { seq: 7, timestamp: 5_000, principalKind: "process", uid: 1000, pid: "p1", runId: "r1", target: "laptop", call: "shell.exec", detail: "ls -la", outcome: "ok", durationMs: 40 },
-      { seq: 8, timestamp: 6_000, principalKind: "user", uid: 1000, pid: null, runId: null, target: "gsv", call: "fs.read", detail: "~/notes.md", outcome: null, durationMs: null },
+      sysLine({ seq: 7, timestamp: 5_000, args: JSON.stringify({ input: "ls -la", target: "laptop" }) }),
+      sysLine({ seq: 8, timestamp: 6_000, principalKind: "human", pid: null, runId: null, target: "gsv", call: "fs.read", args: JSON.stringify({ path: "~/notes.md" }), outcome: null, durationMs: null }),
+      sysLine({ seq: 9, timestamp: 7_000, call: "codemode.exec", args: '{"code":"const x = 1;\\nconst y = "…' }),
     ]);
     expect(lines[0]).toMatchObject({ id: "sys:7", place: "laptop", what: "looked around", detail: "ls -la", outcome: "completed", processId: "p1" });
     expect(lines[1]).toMatchObject({ id: "sys:8", what: "read notes.md", outcome: "running", processId: "you" });
+    // a line cut at the size bound is not JSON any more; it is shown as the text it is
+    expect(lines[2]).toMatchObject({ what: "ran a script", detail: '{"code":"const x = 1;\\nconst y = "…' });
   });
 });

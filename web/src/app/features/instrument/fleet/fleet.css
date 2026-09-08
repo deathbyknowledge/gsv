@@ -376,6 +376,10 @@
 .fleet .file-preview img { max-width: 100%; display: block; }
 
 .fleet-ledger .row { display: contents; }
+.fleet-ledger .older { grid-column: 1 / -1; padding: 6px 0 2px; border-top: 1px solid var(--rule-inner); }
+.fleet-ledger .older button { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-dim); }
+.fleet-ledger .older button:hover { color: var(--accent); }
+.fleet-ledger .older.is-sel { box-shadow: inset 3px 0 0 var(--accent); padding-left: 8px; }
 .fleet-ledger .row > span { white-space: nowrap; }
 .fleet-ledger .detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .fleet-ledger .who { text-align: right; }

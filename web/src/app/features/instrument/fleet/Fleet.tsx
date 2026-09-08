@@ -1,9 +1,8 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
 import { decideChatHil, getChatHistory, getChatProcessAiConfig } from "../../chat/backend/chatService";
-import { transcriptRowsFromHistory } from "../../chat/domain/transcript";
 import {
   loadConsoleAccounts,
   loadConsoleModels,
@@ -23,7 +22,8 @@ import {
   CLOUD_TARGET_ID,
   clockTime,
   formatUsd,
-  ledgerFromRows,
+  costTodayByProcess,
+  modelByProcess,
   ledgerFromSysLines,
   sysLedgerListResultSchema,
   mergeLedger,
@@ -51,19 +51,11 @@ export type FleetProps = {
   onZen: (prefill?: string, pid?: string) => void;
 };
 
-const LEDGER_PROCESSES = 3;
-const LEDGER_ROWS_PER_PROCESS = 40;
-const LEDGER_CAP = 60;
+const LEDGER_PAGE = 60;
+const NO_CURSOR: string | null = null;
 const PROCESS_PAGE = 8;
 type OpenFile = { target: string; path: string; name: string };
 const LEDGER_QUERY_KEY = ["fleet", "ledger"] as const;
-
-type ProcessLedger = {
-  pid: string;
-  lines: LedgerLine[];
-  costTotal: number | null;
-  model: string | null;
-};
 
 function useNow(): number {
   const [now, setNow] = useState(() => Date.now());
@@ -120,37 +112,19 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
 
   const places = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
   const processes = useMemo(() => orderProcesses(processesQuery.data ?? []), [processesQuery.data]);
-  const ledgerPids = useMemo(() => processes.slice(0, LEDGER_PROCESSES).map((process) => process.pid), [processes]);
-
-  const ledgerQuery = useQuery({
-    queryKey: [...LEDGER_QUERY_KEY, ledgerPids.join(",")],
-    enabled: connected && ledgerPids.length > 0,
-    queryFn: async (): Promise<ProcessLedger[]> =>
-      Promise.all(
-        ledgerPids.map(async (pid) => {
-          const history = await getChatHistory(client, { pid, limit: LEDGER_ROWS_PER_PROCESS, tail: true });
-          return {
-            pid,
-            lines: ledgerFromRows(transcriptRowsFromHistory(history), pid),
-            costTotal: history.context?.usage?.cost?.total ?? null,
-            model: history.context?.model ?? null,
-          };
-        }),
-      ),
-  });
-
-  /* the Kernel's own ledger when the gateway has it; the history merge above stays as the fallback.
-   * TODO: remove the history merge (ledgerQuery, LEDGER_PROCESSES, mergeLedger of process lines) once feat/kernel-ledger is merged and deployed. */
-  const sysLedgerQuery = useQuery({
+  /* the Kernel's ledger, newest first, a page at a time; a refetch walks every loaded page again so there is never a gap */
+  const sysLedgerQuery = useInfiniteQuery({
     queryKey: [...LEDGER_QUERY_KEY, "sys"],
     enabled: connected,
     retry: false,
-    queryFn: async () => {
-      const raw = await client.call("sys.ledger.list", { limit: LEDGER_CAP });
-      return ledgerFromSysLines(sysLedgerListResultSchema.parse(raw).lines);
+    initialPageParam: NO_CURSOR,
+    queryFn: async ({ pageParam }) => {
+      const raw = await client.call("sys.ledger.list", pageParam ? { limit: LEDGER_PAGE, cursor: pageParam } : { limit: LEDGER_PAGE });
+      const page = sysLedgerListResultSchema.parse(raw);
+      return { lines: ledgerFromSysLines(page.lines), nextCursor: page.nextCursor };
     },
+    getNextPageParam: (last) => last.nextCursor,
   });
-  const kernelLedger = sysLedgerQuery.data ?? null;
 
   useEffect(() => {
     return client.onSignal((signal) => {
@@ -160,10 +134,9 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
     });
   }, [client, queryClient]);
 
-  const ledger = useMemo(
-    () => kernelLedger ?? mergeLedger((ledgerQuery.data ?? []).map((entry) => entry.lines), LEDGER_CAP),
-    [kernelLedger, ledgerQuery.data],
-  );
+  const ledger = useMemo(() => (sysLedgerQuery.data?.pages ?? []).flatMap((page) => page.lines), [sysLedgerQuery.data]);
+  const costToday = useMemo(() => costTodayByProcess(ledger, now), [ledger, now]);
+  const modelByPid = useMemo(() => modelByProcess(ledger), [ledger]);
   const runsToday = useMemo(() => runsTodayByPlace(ledger, now), [ledger, now]);
   const placeLabel = useCallback(
     (id: string) => places.find((place) => place.id === id)?.label ?? id,
@@ -213,16 +186,22 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
           syscall: "shell.exec",
           what: "ran a command",
           detail: `${entry.command} · by you`,
+          args: "",
           outcome: entry.status === "failed" ? "failed" : "completed",
           runId: null,
+          costNanoUsd: null,
         },
         ...lines,
       ]);
     },
   });
 
-  const shownLedger = useMemo(() => mergeLedger([localLines, ledger], LEDGER_CAP), [localLines, ledger]);
+  const shownLedger = useMemo(() => mergeLedger([localLines, ledger], localLines.length + ledger.length), [localLines, ledger]);
   const moreRow: FleetRow = "more:processes";
+  const olderRow: FleetRow = "more:ledger";
+  const loadOlder = useCallback(() => {
+    if (sysLedgerQuery.hasNextPage && !sysLedgerQuery.isFetchingNextPage) void sysLedgerQuery.fetchNextPage();
+  }, [sysLedgerQuery]);
   /* the rows are whatever is on screen, in reading order: places, processes, the ledger, folders and files */
   const manifestRef = useRef<HTMLDivElement>(null);
   const visibleRows = useCallback((): FleetRow[] => {
@@ -276,6 +255,9 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
       } else if (event.key === "Enter" && selected && (selected.startsWith("dir:") || selected.startsWith("file:"))) {
         event.preventDefault();
         manifestRef.current?.querySelector<HTMLElement>(`[data-row="${selected}"]`)?.click();
+      } else if (event.key === "Enter" && selected === olderRow) {
+        event.preventDefault();
+        loadOlder();
       } else if (event.key === "Enter" && selected === moreRow) {
         event.preventDefault();
         setProcessLimit((limit) => (limit < processes.length ? limit + 20 : PROCESS_PAGE));
@@ -309,13 +291,13 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
     if (text) runCommand.mutate(text);
   };
 
-  const ledgerState = ledgerQuery.isPending && ledgerPids.length > 0 ? "ledger loading" : "ledger current";
+  const ledgerState = sysLedgerQuery.isPending ? "ledger loading" : "ledger current";
   const responsibilityCount = (pid: string) =>
     (responsibilitiesQuery.data?.open ?? []).filter(
       (record) => record.assignee.kind === "process" && record.assignee.processId === pid,
     ).length;
-  const costFor = (pid: string) => ledgerQuery.data?.find((entry) => entry.pid === pid)?.costTotal ?? null;
-  const modelFor = (pid: string) => ledgerQuery.data?.find((entry) => entry.pid === pid)?.model ?? null;
+  const costFor = (pid: string) => costToday.get(pid) ?? null;
+  const modelFor = (pid: string) => modelByPid.get(pid) ?? null;
 
   return (
     <main class="fleet" aria-label="Fleet">
@@ -438,10 +420,7 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
             <h2>
               <i /> Ledger <span class="count">{ledgerState}</span>
             </h2>
-            {!kernelLedger && ledgerPids.length < processes.length ? (
-              <p class="note">Showing the {ledgerPids.length} most recently active processes.</p>
-            ) : null}
-            {ledgerQuery.error ? <p class="error">Could not read history: {String(ledgerQuery.error)}</p> : null}
+            {sysLedgerQuery.error ? <p class="error">Could not read the ledger: {String(sysLedgerQuery.error)}</p> : null}
             <div class="fleet-ledger" role="table">
               {shownLedger.map((line) => (
                 <div class={`row${selected === ledgerRow(line.id) ? " is-sel" : ""}`} role="row" key={line.id} data-row={ledgerRow(line.id)} tabIndex={0} onClick={() => setSelected(ledgerRow(line.id))}>
@@ -456,6 +435,13 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
                 </div>
               ))}
               {shownLedger.length === 0 ? <span class="m">{ledgerState === "ledger loading" ? "reading…" : "nothing has run yet"}</span> : null}
+              {sysLedgerQuery.hasNextPage ? (
+                <div class={`older${selected === olderRow ? " is-sel" : ""}`} data-row={olderRow} tabIndex={0} onClick={() => setSelected(olderRow)}>
+                  <button type="button" onClick={loadOlder} disabled={sysLedgerQuery.isFetchingNextPage}>
+                    {sysLedgerQuery.isFetchingNextPage ? "reading…" : `show ${LEDGER_PAGE} older`}
+                  </button>
+                </div>
+              ) : null}
             </div>
           </section>
 
@@ -942,9 +928,9 @@ function LineInspector({
             <dd>{line.syscall}</dd>
           </>
         ) : null}
-        <dt>Detail</dt>
+        <dt>{technical ? "Arguments" : "Detail"}</dt>
         <dd>
-          <pre class="line-detail">{line.detail}</pre>
+          <pre class="line-detail">{technical && line.args ? line.args : line.detail}</pre>
         </dd>
       </dl>
       <div class="fleet-actions">
@@ -953,7 +939,7 @@ function LineInspector({
             open the conversation
           </button>
         ) : null}
-        <button type="button" class="ibtn" onClick={() => void navigator.clipboard?.writeText(line.detail)}>
+        <button type="button" class="ibtn" onClick={() => void navigator.clipboard?.writeText(technical && line.args ? line.args : line.detail)}>
           copy
         </button>
       </div>

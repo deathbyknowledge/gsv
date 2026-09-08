@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { AsciiPlanetVariant } from "../../../components/ui/AsciiPlanet";
-import type { ChatTranscriptRow, ChatTranscriptValue } from "../../chat/domain/transcript";
+import type { ChatTranscriptValue } from "../../chat/domain/transcript";
 import type { ConsoleProcess, ConsoleProcessState, ConsoleTarget } from "../../gsv-console/domain/consoleModels";
 import type { FleetRow } from "../Instrument";
 
@@ -31,8 +31,11 @@ export type LedgerLine = {
   what: string;
   /** The argument that matters, one line: a path, a command, a query. */
   detail: string;
+  /** The call's arguments as the Kernel recorded them, JSON text; empty for a line made here. */
+  args: string;
   outcome: string;
   runId: string | null;
+  costNanoUsd: number | null;
 };
 
 export function placeFromTarget(target: ConsoleTarget): Place {
@@ -151,6 +154,7 @@ const toolArgsSchema = z.object({
   query: z.string().optional(),
   code: z.string().optional(),
   script: z.string().optional(),
+  model: z.string().optional(),
 });
 
 type ToolArgs = z.infer<typeof toolArgsSchema>;
@@ -227,26 +231,6 @@ export function humanCall(syscall: string, args: ChatTranscriptValue | undefined
   return syscall;
 }
 
-export function ledgerFromRows(rows: readonly ChatTranscriptRow[], processId: string): LedgerLine[] {
-  const lines: LedgerLine[] = [];
-  for (const row of rows) {
-    const syscall = row.toolSyscall ?? row.toolName;
-    if (!syscall) continue;
-    lines.push({
-      id: `${processId}:${row.id}`,
-      timestamp: row.timestamp,
-      processId,
-      place: targetFromToolArgs(row.toolArgs),
-      syscall,
-      what: humanCall(syscall, row.toolArgs),
-      detail: describeToolCall(syscall, row.toolArgs),
-      outcome: row.toolOutcome ?? (row.status === "error" ? "failed" : row.status === "running" ? "running" : "completed"),
-      runId: row.runId ?? null,
-    });
-  }
-  return lines;
-}
-
 /** Newest first, capped. Lines without a timestamp sort last. */
 export function mergeLedger(lists: readonly (readonly LedgerLine[])[], cap: number): LedgerLine[] {
   const merged = lists.flat();
@@ -268,6 +252,30 @@ export function runsTodayByPlace(ledger: readonly LedgerLine[], now: number): Ma
     counts.set(line.place, (counts.get(line.place) ?? 0) + 1);
   }
   return counts;
+}
+
+const NANO_USD = 1_000_000_000;
+
+/** What each process spent today, in USD, from the ledger's ai lines. */
+export function costTodayByProcess(ledger: readonly LedgerLine[], now: number): Map<string, number> {
+  const since = startOfToday(now);
+  const totals = new Map<string, number>();
+  for (const line of ledger) {
+    if (line.costNanoUsd === null || line.timestamp === null || line.timestamp < since) continue;
+    totals.set(line.processId, (totals.get(line.processId) ?? 0) + line.costNanoUsd / NANO_USD);
+  }
+  return totals;
+}
+
+/** The model each process last thought with, from the newest ai line that names one. */
+export function modelByProcess(ledger: readonly LedgerLine[]): Map<string, string> {
+  const models = new Map<string, string>();
+  for (const line of ledger) {
+    if (!line.syscall.startsWith("ai.") || models.has(line.processId)) continue;
+    const model = parseToolArgs(parseLedgerArgs(line.args)).model;
+    if (model) models.set(line.processId, model);
+  }
+  return models;
 }
 
 /** Files a run touched, newest first, one entry per path. */
@@ -324,7 +332,7 @@ export function shortPid(pid: string): string {
   return compact.length <= 8 ? compact : compact.slice(-6);
 }
 
-/* ---------- the Kernel's own ledger, when the gateway has it ---------- */
+/* ---------- the Kernel's ledger ---------- */
 const sysLedgerLineSchema = z.object({
   seq: z.number(),
   timestamp: z.number(),
@@ -334,32 +342,45 @@ const sysLedgerLineSchema = z.object({
   runId: z.string().nullable(),
   target: z.string(),
   call: z.string(),
-  detail: z.string(),
+  args: z.string(),
   outcome: z.enum(["ok", "failed", "denied", "cancelled"]).nullable(),
   durationMs: z.number().nullable(),
+  tokens: z.number().nullable().optional(),
+  costNanoUsd: z.number().nullable().optional(),
 });
 export const sysLedgerListResultSchema = z.object({ lines: z.array(sysLedgerLineSchema), nextCursor: z.string().nullable() });
 export type SysLedgerListResult = z.infer<typeof sysLedgerListResultSchema>;
 
-function argsFromDetail(call: string, detail: string): ToolArgs {
-  if (call === "shell.exec" || call.startsWith("codemode.")) return { input: detail };
-  if (call === "fs.search") return { query: detail };
-  if (call.startsWith("fs.")) return { path: detail };
-  if (call === "net.fetch") return { url: `https://${detail}` };
-  return {};
+/** The Kernel records arguments as JSON text, cut at a size bound; a cut line is kept as its text. */
+export function parseLedgerArgs(args: string): ChatTranscriptValue | undefined {
+  try {
+    const parsed = JSON.parse(args);
+    return jsonValueSchema.parse(parsed);
+  } catch {
+    return undefined;
+  }
 }
 
-/** Lines from `sys.ledger.list`, in the same shape Fleet draws, so the two sources are interchangeable. */
+const jsonValueSchema: z.ZodType<ChatTranscriptValue> = z.lazy(() =>
+  z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(jsonValueSchema), z.record(z.string(), jsonValueSchema)]),
+);
+
+/** Lines from `sys.ledger.list`, in the shape Fleet draws. */
 export function ledgerFromSysLines(lines: readonly z.infer<typeof sysLedgerLineSchema>[]): LedgerLine[] {
-  return lines.map((line) => ({
-    id: `sys:${line.seq}`,
-    timestamp: line.timestamp,
-    processId: line.pid ?? (line.principalKind === "user" ? "you" : "gsv"),
-    place: line.target,
-    syscall: line.call,
-    what: humanCall(line.call, argsFromDetail(line.call, line.detail)),
-    detail: line.detail,
-    outcome: line.outcome === null ? "running" : line.outcome === "ok" ? "completed" : line.outcome,
-    runId: line.runId,
-  }));
+  return lines.map((line) => {
+    const args = parseLedgerArgs(line.args);
+    return {
+      id: `sys:${line.seq}`,
+      timestamp: line.timestamp,
+      processId: line.pid ?? (line.principalKind === "human" ? "you" : "gsv"),
+      place: line.target,
+      syscall: line.call,
+      what: humanCall(line.call, args),
+      detail: args === undefined ? line.args.replace(/\s+/g, " ").trim().slice(0, 200) : describeToolCall(line.call, args),
+      args: line.args,
+      outcome: line.outcome === null ? "running" : line.outcome === "ok" ? "completed" : line.outcome,
+      runId: line.runId,
+      costNanoUsd: line.costNanoUsd ?? null,
+    };
+  });
 }
