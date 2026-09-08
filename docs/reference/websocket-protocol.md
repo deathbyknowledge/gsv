@@ -301,6 +301,10 @@ Current principal defaults from `buildSignalList()`:
 ### Human peers
 
 - `proc.changed`
+  - Carries content-free history revision, generation, and reset-watermark hints
+    even for owner connections that are not observing raw Process activity.
+    Format-2 clients recover complete changed groups with `proc.history` and
+    `since`; missed or coalesced signals do not require guessing from message IDs.
 - `proc.run.started`
 - `proc.run.stream`
 - `proc.run.retrying`

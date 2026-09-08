@@ -69,6 +69,8 @@ Process history stores typed message, note, call, result, and event records. Run
 
 Canonical user-facing conversations are not Process histories. Conversations retain only committed user-visible Messages across Process replacement or deletion; Process history retains reasoning, drafts, tools, results, and run-control choices for inspection. `message send` commits a user-visible Message without finishing the active run, so a Process may update the user while continuing work. Every human-facing run must eventually call `yield`; a final send composes as `message send ... && yield`, while a bare `yield` completes silently. These Process-owned commands do not add model tools or require shell approval. A bounded IPC call instead returns ordinary assistant output as its durable Process result, independently of human delivery. Clients may opt into raw Process observation, while adapters receive only exact routed `adapter.send` requests.
 
+Process history uses typed message, note, call, result, and event records. Storage owns legacy inference; model context, compaction, and client presentation each render those records at their owning boundary. Preserve the captured provider-context contract when changing rendering. Person-only events remain inspectable without entering provider context or summary input. Format-2 history synchronization replaces complete message groups, including late companions and media changes; reset and compaction invalidate earlier cursors. See `docs/architecture/process-history.md`.
+
 ### Prefer fewer mechanisms
 
 - Consolidate duplicate paths and delete obsolete ones when behavior remains clear.
