@@ -14,7 +14,7 @@ export function buildSignalCommand(ctx: KernelContext) {
             "Usage: signal watch --json JSON | signal unwatch --json JSON",
             "",
             "Uses the signal.watch and signal.unwatch syscall arguments for this Process.",
-            "Watch exactly one processId or targetId. Target watches use target.status,",
+            "Watch an accessible targetId. Target watches use target.status,",
             "default to person-only notices, and may explicitly request audience model or both.",
             "Use once:false for repeated notifications; watches expire after ttlMs (default one day).",
             "Unwatch by watchId or key. Requires the corresponding signal capability.",

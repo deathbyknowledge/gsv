@@ -149,18 +149,6 @@ export const federationResponsibilityDetailsSchema = z.discriminatedUnion("event
   }),
 ]);
 
-export const watchedSignalPayloadSchema = z.object({
-  watched: z.literal(true),
-  sourcePid: z.string().trim().min(1).optional(),
-  watch: z.object({
-    key: z.string().trim().min(1).optional(),
-    state: z.json().optional(),
-  }).optional(),
-  payload: z.json().optional(),
-}).passthrough();
-
-export type WatchedSignalPayload = z.infer<typeof watchedSignalPayloadSchema>;
-
 export const ipcReplyPayloadSchema = z.object({
   callId: z.string().optional(),
   targetPid: z.string().optional(),

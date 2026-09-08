@@ -1,5 +1,6 @@
 /** Owns Process frame routing, admission, lifecycle transitions, and runtime events. */
 
+import { z } from "zod";
 import {
   ABORTED_RUN_IDS_KEY, IPC_TOMBSTONE_LIMIT, MEDIA_PREPARATION_TIMEOUT_MS, TOOL_EXECUTION_DENIED_BY_USER_MESSAGE,
   USER_INTERRUPTED_TOOL_MESSAGE, USER_SUPERSEDED_TOOL_MESSAGE, PROCESS_KILLED_TOMBSTONE_KEY, PROCESS_RESET_AT_KEY,
@@ -16,7 +17,7 @@ import type { RunState, ResponsibilityBatchState } from "../run/state";
 import {
   abortedRunIdsSchema, archivedToolResultMetadataSchema, type IpcReplyPayload,
   cancelRequestPayloadSchema, deliveryNoticePayloadSchema, identityChangedPayloadSchema, ipcReplyPayloadSchema,
-  watchedSignalPayloadSchema, type CancelRequestPayload,
+  type CancelRequestPayload,
 } from "../internal/schemas";
 import { conversationRunState } from "../run/helpers";
 import { errorMessageFromUnknown } from "../../inference/errors";
@@ -32,7 +33,7 @@ import { parseInteractionOrigin, serializeInteractionOrigin, emptyProcessArchive
 import { historyCursor, parseHistoryCursor } from "../history/cursor";
 import { storeIncomingProcessMedia, stringifyStoredProcessMedia, deleteProcessMedia } from "../media";
 import { appendResponsibilityBatch, normalizeProcessRuntimeEvent } from "../internal/events";
-import { formatIpcMessage, formatIpcReplyMessage, formatProcessRuntimeEvent, formatScheduleEventMessage, formatWatchedSignalMessage } from "../history/event-renderer";
+import { formatIpcMessage, formatIpcReplyMessage, formatProcessRuntimeEvent, formatScheduleEventMessage } from "../history/event-renderer";
 import type { AssistantHistoryContent, AsyncCleanupTask, CodeModeApprovalWaiter } from "../internal/contracts";
 import { extractStoredFsReadResource } from "../tool-result-media";
 import {
@@ -57,6 +58,8 @@ import type { ResponseErrFrame, ResponseFrame, ResponseOkFrame, SignalFrame } fr
 import type { ResultOf, SyscallName } from "../../syscalls";
 import { formatAgentToolResponse, materializeToolResponse } from "../tool-response";
 import { deliverProcessEvent } from "./events";
+
+const retiredWatchedSignalEnvelopeSchema = z.object({ watched: z.literal(true) });
 
 type SendAdmissionInput = {
   args: Omit<ProcSendArgs, "media"> & {
@@ -2075,27 +2078,8 @@ export class ProcessController {
   }
 
   async handleSig(frame: SignalFrame): Promise<void> {
-    const watchedSignal = watchedSignalPayloadSchema.safeParse(frame.payload);
-    if (watchedSignal.success) {
-      await this.handleRuntimeEvent(
-        formatWatchedSignalMessage(frame.signal, watchedSignal.data),
-        "signal.watch",
-        {
-          event: {
-            kind: "signal.watched",
-            payload: {
-              signal: frame.signal,
-              sourcePid: watchedSignal.data.sourcePid,
-              watch: watchedSignal.data.watch,
-              payload: watchedSignal.data.payload,
-            },
-            severity: "info",
-            audience: "model",
-          },
-        },
-      );
-      return;
-    }
+    // A delayed retired watch must not be interpreted as a direct IPC or control signal.
+    if (retiredWatchedSignalEnvelopeSchema.safeParse(frame.payload).success) return;
 
     switch (frame.signal) {
       case REQUEST_CANCEL_SIGNAL: {

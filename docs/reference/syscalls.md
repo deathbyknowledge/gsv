@@ -1796,17 +1796,17 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `signal.watch` | `handleSignalWatch` | Process-originated only. Creates or upserts a durable signal watch. Pass exactly one source: another owned `processId`, or an accessible `targetId` with the registered `target.status` signal. Target events default to audience `person`; `model` or `both` may be selected explicitly. TTL defaults to 24 hours and clamps to 1 second through 30 days; `once` defaults true. |
+| `signal.watch` | `handleSignalWatch` | Process-originated only. Creates or upserts a durable watch for an accessible `targetId` with the registered `target.status` signal. Events default to audience `person`; `model` or `both` may be selected explicitly. TTL defaults to 24 hours and clamps to 1 second through 30 days; `once` defaults true. |
 | `signal.unwatch` | `handleSignalUnwatch` | Process-originated only. Removes watches owned by the calling process using `watchId` or `key`. Returns number removed. |
 
-Signal watch delivery is handled by the kernel when matching signals are emitted. Once-watches are deleted after successful handling; failed deliveries mark the watch failed.
+Target watch delivery is handled by the Kernel when the target connects or disconnects. Once-watches are deleted after successful handling; failed deliveries mark the watch failed. Generic process signal watches are retired: `processId` registrations are rejected and existing registrations are removed during upgrade. Historical `signal.watched` records remain readable, but delayed watched-signal envelopes do not admit new Process work.
 
 Target connection events use the registered `target.connection` payload. The Kernel derives target identity and connection state from its authenticated connection lifecycle and rechecks the watching process's capability and target access before delivery. A `person` event enters typed Process history and notifies observing surfaces without starting a model run. `model` and `both` events use the ordinary Process event wake path. Machine peers cannot inject these internal event deliveries or claim another target's identity.
 
 ```ts
 type SignalSyscalls = {
   "signal.watch": {
-    args: { signal: string; processId?: string; targetId?: string; audience?: "model" | "person" | "both"; key?: string; state?: unknown; once?: boolean; ttlMs?: number };
+    args: { signal: "target.status"; targetId: string; audience?: "model" | "person" | "both"; key?: string; state?: unknown; once?: boolean; ttlMs?: number };
     result: { watchId: string; created: boolean; createdAt: number; expiresAt: number | null };
   };
 

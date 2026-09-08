@@ -190,35 +190,28 @@ describe("typed controller history producers", () => {
     });
   });
 
-  it("records watched signal fields without treating transport metadata as event payload", async () => {
-    const stub = await initProcess("typed-watched-signal", ROOT_IDENTITY);
+  it.each([false, true])("ignores retired watched envelopes with active run=%s", async (busy) => {
+    const stub = await initProcess(`retired-watched-signal-${busy}`, ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {
       isolateAdmission(process);
-      await process.controller.handleSig({
-        type: "sig",
-        signal: "machine.changed",
-        payload: {
-          watched: true,
-          sourcePid: "machine-1",
-          watch: { key: "status", state: { online: true } },
-          payload: { online: false },
-          transportField: "ignored",
-        },
-      });
-      expect(storedRecords(process)).toEqual([{
-        kind: "event",
-        payload: {
-          kind: "signal.watched",
+      if (busy) process.runs.active = { runId: "existing-run" };
+      const originalRun = structuredClone(process.runs.active);
+      for (const signal of ["machine.changed", "proc.run.finished", "ipc.reply", "ipc.overdue", "ipc.timeout"]) {
+        await process.controller.handleSig({
+          type: "sig",
+          signal,
           payload: {
-            signal: "machine.changed",
-            sourcePid: "machine-1",
-            watch: { key: "status", state: { online: true } },
-            payload: { online: false },
+            watched: true,
+            sourcePid: "old-source-process",
+            watch: { key: "completion", state: { watching: true } },
+            payload: { callId: "old-call", response: "completed" },
           },
-          severity: "info",
-          audience: "model",
-        },
-      }]);
+        });
+        expect(storedRecords(process), signal).toEqual([]);
+        expect(process.store.queue.queueSize(), signal).toBe(0);
+        expect(process.runs.active, signal).toEqual(originalRun);
+      }
+      expect(process.run.scheduleTick).not.toHaveBeenCalled();
     });
   });
 

@@ -127,10 +127,12 @@ use its existing `signal.watch` capability to watch an accessible target:
 }
 ```
 
-The source is exactly one `processId` or `targetId`. Existing process watches
-retain their original behavior. Target watches currently accept `target.status`
-only, and default to audience `person`; `model` and `both` explicitly admit model
-work. Existing watch TTL and one-shot semantics apply.
+The source is an explicit `targetId`, and the only registered signal is
+`target.status`. Watches default to audience `person`; `model` and `both`
+explicitly admit model work. Existing watch TTL and one-shot semantics apply.
+Generic process signal watches are retired: upgrade removes their registrations,
+and delayed watched-signal frames are ignored. Historical `signal.watched`
+records and their original model rendering remain supported.
 
 The native Shell exposes the same primitive as `signal watch --json JSON` and
 `signal unwatch --json JSON`. CodeMode can use its existing `shell()` helper.

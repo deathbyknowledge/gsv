@@ -7,7 +7,6 @@ import { jsonValueSchema } from "@humansandmachines/gsv/protocol";
 import type {
   ProcessAdapterWorkReturnedRuntimeEvent,
 } from "../../protocol/process-frames";
-import type { WatchedSignalPayload } from "../internal/schemas";
 import {
   CORRECTION_FAILURE_NOTICE, MAX_TERMINAL_COMMAND_FAILURES, MAX_TERMINAL_DELIVERY_FAILURES,
   RUNTIME_EVENT_WAKE_MESSAGE, YIELD_CORRECTION_MESSAGE,
@@ -116,7 +115,7 @@ export function formatProcessRuntimeEvent(event: ProcessAdapterWorkReturnedRunti
 
 export function formatWatchedSignalMessage(
   signal: string,
-  value: Pick<WatchedSignalPayload, "sourcePid" | "watch" | "payload">,
+  value: Omit<ProcHistoryEventPayload<"signal.watched">, "signal">,
 ): string {
   const sourcePid = value.sourcePid ?? null;
   const key = value.watch?.key ?? null;

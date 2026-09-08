@@ -10,6 +10,21 @@ import {
   procHistoryTargetEventRegistry,
 } from "../dist/protocol.js";
 
+test("historical watched-signal records remain readable after source retirement", () => {
+  const record = {
+    kind: "event",
+    payload: {
+      kind: "signal.watched", severity: "info", audience: "model",
+      payload: {
+        signal: "proc.run.finished", sourcePid: "old-process",
+        watch: { key: "completion", state: { count: 1 } },
+        payload: { status: "ok", result: null },
+      },
+    },
+  };
+  assert.deepEqual(procHistoryRecordDataSchema.parse(record), record);
+});
+
 test("archive records preserve unknown source coordinates and timestamps", () => {
   const record = {
     kind: "note", payload: { text: "Old reasoning", thinking: [] },

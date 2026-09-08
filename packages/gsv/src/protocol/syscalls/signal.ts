@@ -1,11 +1,10 @@
 import type { ProcHistoryEventAudience } from "../events";
 
 export type SignalWatchArgs = {
-  signal: string;
-  processId?: string;
-  /** Exact visible target; mutually exclusive with processId. */
-  targetId?: string;
-  /** Target event audience; defaults to person. Process signal watches keep their existing behavior. */
+  signal: "target.status";
+  /** Exact visible target that produces the registered connection event. */
+  targetId: string;
+  /** Target event audience; defaults to person. */
   audience?: ProcHistoryEventAudience;
   key?: string;
   state?: unknown;
