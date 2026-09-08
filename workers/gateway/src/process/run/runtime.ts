@@ -1,6 +1,7 @@
 /** Owns the Process run state machine from admission through terminal delivery. */
 
 import type { AssistantMessage, Context, ToolCall, Tool } from "@earendil-works/pi-ai";
+import { z } from "zod";
 import type { InternalRequestFrame } from "../../protocol/process-frames";
 import type {
   CommittedRunControlMessage, RunControlResult, TerminalResponsibilityCheck, CompletedRunTransition,
@@ -34,11 +35,11 @@ import {
 import type { Process } from "../do";
 import type { RunFinishOptions, RunFinishPayload, RunResult } from "./finish";
 import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
-import type { ArgsOf } from "../../syscalls";
+import { isRoutableSyscall, type ArgsOf } from "../../syscalls";
 import { inferenceLogicalRequestId, type InferenceAttribution } from "../../inference/provider";
 import {
   adaptContextMessage, adaptContextTool, adaptGeneratedAssistantMessage, buildAssistantMessageMetadata,
-  modelMetadataFromAiConfig, normalizeOptionalString,
+  modelMetadataFromAiConfig,
 } from "../internal/messages";
 import { formatAiModelStackLabel } from "../context/formatters";
 import { formatGenerationFailure } from "../history/event-renderer";
@@ -1594,8 +1595,11 @@ export class ProcessRun {
           runId,
           runControlCallIds: turn.runControlCalls.map(({ toolCall }) => toolCall.id),
           resolveTarget: (syscall, args) => {
-            const { target } = this.host.tools.prepareToolArgs(syscall, args).args;
-            return normalizeOptionalString(target) ?? null;
+            if (!isRoutableSyscall(syscall)) return null;
+            const prepared = this.host.tools.prepareToolArgs(syscall, args);
+            if (prepared.missingShellSessionTarget) return null;
+            const target = z.string().optional().safeParse(prepared.args.target);
+            return target.success ? target.data || "gsv" : null;
           },
         }),
       };

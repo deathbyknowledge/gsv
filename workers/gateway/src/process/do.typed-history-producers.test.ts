@@ -77,6 +77,38 @@ describe("typed history producers", () => {
     });
   });
 
+  it("records native routing defaults without inventing targets for unresolved sessions or CodeMode", async () => {
+    const stub = await initProcess("typed-history-default-targets", ROOT_IDENTITY);
+    await runInProcess(stub, async (process) => {
+      const runId = "typed-default-targets-run";
+      process.runs.active = { runId };
+      const turn = classifyAssistantTurn(assistantResponse([
+        { type: "toolCall", id: "read", name: "Read", arguments: { path: "/root/file" } },
+        { type: "toolCall", id: "write", name: "Write", arguments: { path: "/root/file", content: "text" } },
+        { type: "toolCall", id: "edit", name: "Edit", arguments: { path: "/root/file", oldText: "a", newText: "b" } },
+        { type: "toolCall", id: "delete", name: "Delete", arguments: { path: "/root/file" } },
+        { type: "toolCall", id: "search", name: "Search", arguments: { pattern: "text" } },
+        { type: "toolCall", id: "shell", name: "Shell", arguments: { input: "pwd" } },
+        { type: "toolCall", id: "remote", name: "Read", arguments: { path: "/tmp/file", target: "laptop" } },
+        { type: "toolCall", id: "gateway-name", name: "Read", arguments: { path: "/tmp/file", target: "gateway" } },
+        { type: "toolCall", id: "local-name", name: "Read", arguments: { path: "/tmp/file", target: "local" } },
+        { type: "toolCall", id: "spaced-name", name: "Read", arguments: { path: "/tmp/file", target: " laptop " } },
+        { type: "toolCall", id: "missing-session", name: "Shell", arguments: { sessionId: "unknown-session" } },
+        { type: "toolCall", id: "codemode", name: "CodeMode", arguments: { code: "return 1", target: "laptop" } },
+      ]), ["Read", "Write", "Edit", "Delete", "Search", "Shell", "CodeMode"]);
+      process.run.persistRunTickAssistantHistory(runId, turn, [], undefined);
+      const calls = process.store.messages.getRecords().filter((record) => record.kind === "call");
+      expect(calls.map((record) => [record.payload.callId, record.payload.target])).toEqual([
+        ["read", "gsv"], ["write", "gsv"], ["edit", "gsv"], ["delete", "gsv"],
+        ["search", "gsv"], ["shell", "gsv"], ["remote", "laptop"],
+        ["gateway-name", "gateway"], ["local-name", "local"], ["spaced-name", " laptop "],
+        ["missing-session", null], ["codemode", null],
+      ]);
+      expect(calls.map((record) => record.payload.args)).toEqual(turn.returnedToolCalls.map((call) => call.arguments));
+      process.runs.active = null;
+    });
+  });
+
   it("records Send and Shell run-control outcomes and preserves their display sentences", async () => {
     const stub = await initProcess("typed-history-run-control", ROOT_IDENTITY);
     await runInProcess(stub, async (process) => {

@@ -5,7 +5,7 @@ import {
   type ResourceBlock, type ProcHistoryMedia, type InteractionOrigin,
   type ProcHistoryArchivedResultPayload,
 } from "@humansandmachines/gsv/protocol";
-import { TOOL_TO_SYSCALL } from "../../syscalls/constants";
+import { TOOL_TO_SYSCALL, type ToolSyscallName } from "../../syscalls/constants";
 import { parseStoredProcessMedia } from "../media";
 import { materializeLegacyToolResultImages, unwrapStoredToolResult } from "../tool-result-media";
 import type { ModelHistoryGroup } from "../history/model-renderer";
@@ -156,7 +156,7 @@ export function assistantHistoryRecords(input: {
   media: ProcHistoryMedia[];
   runId: string | null;
   runControlCallIds?: readonly string[];
-  resolveTarget?: (syscall: string, args: JsonObject) => string | null;
+  resolveTarget?: (syscall: ToolSyscallName, args: JsonObject) => string | null;
 }): ProcHistoryRecordData[] {
   const note: Extract<ProcHistoryRecordData, { kind: "note" }> = {
     kind: "note", payload: { text: input.text, thinking: input.thinking },
