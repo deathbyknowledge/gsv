@@ -35,6 +35,11 @@ function makeContext(overrides: Partial<KernelContext> = {}): KernelContext {
       get: vi.fn(() => ({ uid: 1000, ownerUid: 1000 })),
       getOwnerUid: vi.fn(() => 1000),
     },
+    targets: {
+      canAccess: vi.fn(() => true),
+      get: vi.fn(() => ({ target_id: "machine-visible", owner_uid: 1000 })),
+    },
+    auth: { getPasswdByUid: vi.fn(() => null) },
     ...overrides,
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as KernelContext;
@@ -48,14 +53,16 @@ describe("signal watch handlers", () => {
       const store = (instance as { signalWatches: SignalWatchStore }).signalWatches;
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       const target = { kind: "process" as const, processId: "proc-target" };
-      const { watch } = store.upsert({ uid: 1000, target, signal: "proc.run.finished" });
+      const { watch } = store.upsert({
+        uid: 1000, target, signal: "target.status", sourceTargetId: "machine-visible", audience: "person",
+      });
 
       expect(store.removeById(1000, target, watch.watchId)).toBe(1);
       expect(store.removeById(1000, target, watch.watchId)).toBe(0);
     });
   });
 
-  it("registers process watches under the calling process owner uid", () => {
+  it("registers target watches under the calling process owner uid", () => {
     const ctx = makeContext({
       processId: "proc-agent",
       peer: testPeer({ kind: "human", account: {
@@ -76,31 +83,42 @@ describe("signal watch handlers", () => {
     });
 
     handleSignalWatch({
-      signal: "proc.run.finished",
-      processId: "proc-child",
-      key: "agent:proc-child:finished",
+      signal: "target.status",
+      targetId: "machine-visible",
+      key: "agent:machine-visible:status",
     }, ctx);
 
     expect(ctx.signalWatches.upsert).toHaveBeenCalledWith(expect.objectContaining({
       uid: 1000,
-      processId: "proc-child",
+      sourceTargetId: "machine-visible",
+      audience: "person",
       target: { kind: "process", processId: "proc-agent" },
     }));
   });
 
-  it("requires process runtimes to watch an explicit other process", () => {
+  it("rejects retired process sources and requires an explicit target", () => {
     const ctx = makeContext({
       processId: "proc-parent",
     });
 
-    expect(() => handleSignalWatch({
-      signal: "proc.run.finished",
-    }, ctx)).toThrow("process runtimes must watch an explicit processId");
+    for (const args of [
+      { signal: "proc.run.finished" },
+      { signal: "proc.run.finished", processId: "proc-child" },
+      { signal: "target.status", targetId: "" },
+    ]) {
+      expect(() => {
+        // @ts-expect-error Retired source shapes intentionally violate the public contract.
+        handleSignalWatch(args, ctx);
+      }).toThrow("Unknown or inaccessible target");
+    }
+    expect(ctx.signalWatches.upsert).not.toHaveBeenCalled();
+  });
 
-    expect(() => handleSignalWatch({
-      signal: "proc.run.finished",
-      processId: "proc-parent",
-    }, ctx)).toThrow("process runtimes cannot watch their own signals");
+  it("rejects target watch registration outside a process runtime", () => {
+    const ctx = makeContext();
+    expect(() => handleSignalWatch({ signal: "target.status", targetId: "machine-visible" }, ctx))
+      .toThrow("signal.watch is only available to process runtimes");
+    expect(ctx.signalWatches.upsert).not.toHaveBeenCalled();
   });
 
   it("unwatch delegates by key for the current target", () => {

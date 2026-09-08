@@ -14,10 +14,9 @@ export type SignalWatchRecord = {
   watchId: string;
   uid: number;
   targetProcessId: string;
-  signal: string;
-  processId: string | null;
-  sourceTargetId: string | null;
-  audience: ProcHistoryEventAudience | null;
+  signal: "target.status";
+  sourceTargetId: string;
+  audience: ProcHistoryEventAudience;
   revision: number;
   key: string | null;
   state: SignalWatchState;
@@ -35,10 +34,9 @@ export class SignalWatchStore {
   upsert(input: {
     uid: number;
     target: SignalWatchTargetInput;
-    signal: string;
-    processId?: string | null;
-    sourceTargetId?: string;
-    audience?: ProcHistoryEventAudience;
+    signal: "target.status";
+    sourceTargetId: string;
+    audience: ProcHistoryEventAudience;
     key?: string | null;
     state?: unknown;
     once?: boolean;
@@ -52,19 +50,18 @@ export class SignalWatchStore {
     if (existing) {
       this.sql.exec(
         `UPDATE signal_watches
-           SET target_type = 'process', target_process_id = ?, signal = ?, process_id = ?,
+           SET target_type = 'process', target_process_id = ?, signal = ?,
                state_json = ?, once_only = ?, error = NULL, updated_at = ?, expires_at = ?,
                source_target_id = ?, event_audience = ?, revision = revision + 1
          WHERE watch_id = ?`,
         input.target.processId,
         input.signal,
-        input.processId ?? null,
         JSON.stringify(input.state ?? null),
         input.once === false ? 0 : 1,
         now,
         input.expiresAt ?? null,
-        input.sourceTargetId ?? null,
-        input.audience ?? null,
+        input.sourceTargetId,
+        input.audience,
         existing.watchId,
       );
       return {
@@ -72,9 +69,8 @@ export class SignalWatchStore {
           ...existing,
           targetProcessId: input.target.processId,
           signal: input.signal,
-          processId: input.processId ?? null,
-          sourceTargetId: input.sourceTargetId ?? null,
-          audience: input.audience ?? null,
+          sourceTargetId: input.sourceTargetId,
+          audience: input.audience,
           revision: existing.revision + 1,
           state: input.state ?? null,
           once: input.once !== false,
@@ -91,9 +87,8 @@ export class SignalWatchStore {
       uid: input.uid,
       targetProcessId: input.target.processId,
       signal: input.signal,
-      processId: input.processId ?? null,
-      sourceTargetId: input.sourceTargetId ?? null,
-      audience: input.audience ?? null,
+      sourceTargetId: input.sourceTargetId,
+      audience: input.audience,
       revision: 1,
       key: input.key ?? null,
       state: input.state ?? null,
@@ -107,15 +102,14 @@ export class SignalWatchStore {
 
     this.sql.exec(
       `INSERT INTO signal_watches (
-        watch_id, uid, target_type, target_process_id, signal, process_id, dedupe_key,
+        watch_id, uid, target_type, target_process_id, signal, dedupe_key,
         state_json, once_only, status, error, created_at, updated_at, expires_at,
         source_target_id, event_audience
-      ) VALUES (?, ?, 'process', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, 'process', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       watch.watchId,
       watch.uid,
       watch.targetProcessId,
       watch.signal,
-      watch.processId,
       watch.key,
       JSON.stringify(watch.state),
       watch.once ? 1 : 0,
@@ -131,35 +125,12 @@ export class SignalWatchStore {
     return { watch, created: true };
   }
 
-  match(uid: number, signal: string, processId?: string | null): SignalWatchRecord[] {
+  matchTarget(targetId: string, signal: "target.status"): SignalWatchRecord[] {
     const now = Date.now();
     this.sql.exec(
       "DELETE FROM signal_watches WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at <= ?",
       now,
     );
-
-    return [...this.sql.exec<SignalWatchRow>(
-      `SELECT watch_id, uid, target_process_id, signal, process_id, dedupe_key,
-              state_json, once_only, status, error, created_at, updated_at, expires_at,
-              source_target_id, event_audience, revision
-       FROM signal_watches
-       WHERE uid = ?
-         AND target_type = 'process'
-         AND signal = ?
-         AND source_target_id IS NULL
-         AND status = 'active'
-         AND (process_id IS NULL OR process_id = ?)
-         AND (expires_at IS NULL OR expires_at > ?)
-       ORDER BY created_at ASC`,
-      uid,
-      signal,
-      processId ?? null,
-      now,
-    )].map(toSignalWatchRecord);
-  }
-
-  matchTarget(targetId: string, signal: string): SignalWatchRecord[] {
-    const now = Date.now();
     return this.sql.exec<SignalWatchRow>(
       `SELECT * FROM signal_watches
        WHERE source_target_id = ? AND signal = ? AND status = 'active'
@@ -221,7 +192,7 @@ export class SignalWatchStore {
     key: string,
   ): SignalWatchRecord | null {
     const rows = [...this.sql.exec<SignalWatchRow>(
-      `SELECT watch_id, uid, target_process_id, signal, process_id, dedupe_key,
+      `SELECT watch_id, uid, target_process_id, signal, dedupe_key,
               state_json, once_only, status, error, created_at, updated_at, expires_at,
               source_target_id, event_audience, revision
        FROM signal_watches
@@ -244,10 +215,9 @@ type SignalWatchRow = {
   watch_id: string;
   uid: number;
   target_process_id: string;
-  signal: string;
-  process_id: string | null;
-  source_target_id: string | null;
-  event_audience: ProcHistoryEventAudience | null;
+  signal: "target.status";
+  source_target_id: string;
+  event_audience: ProcHistoryEventAudience;
   revision: number;
   dedupe_key: string | null;
   state_json: string | null;
@@ -267,7 +237,6 @@ function toSignalWatchRecord(row: SignalWatchRow): SignalWatchRecord {
     uid: row.uid,
     targetProcessId: row.target_process_id,
     signal: row.signal,
-    processId: row.process_id,
     sourceTargetId: row.source_target_id,
     audience: row.event_audience,
     revision: row.revision,

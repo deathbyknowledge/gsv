@@ -44,7 +44,7 @@ function deferred() {
 }
 
 describe("registered target event watches", () => {
-  it("upgrades v39 process watches without changing their source or delivery behavior", async () => {
+  it("retires old process watches while retaining target watch state across the migration", async () => {
     const stub = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
     await runInDurableObject(stub, async (_kernel: Kernel, state) => {
       await state.storage.deleteAll();
@@ -56,38 +56,74 @@ describe("registered target event watches", () => {
           '{"old":true}', 0, 'active', NULL, 1, 1, NULL)`,
       );
       const before = state.storage.sql.exec("SELECT * FROM signal_watches").toArray();
-      runSqlMigrations(state.storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS);
+      runSqlMigrations(state.storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS.filter(({ id }) => id <= 40));
       expect(state.storage.sql.exec("SELECT * FROM signal_watches").toArray())
         .toEqual(before.map((row) => ({ ...row, source_target_id: null, event_audience: null, revision: 1 })));
       const store = new SignalWatchStore(state.storage.sql);
-      expect(store.match(7000, "proc.run.finished", "proc:child")).toMatchObject([
-        { watchId: "old-watch", processId: "proc:child", sourceTargetId: null, audience: null, state: { old: true } },
+      store.upsert({
+        uid: 7000, target: { kind: "process", processId: "proc:observer" },
+        signal: "target.status", sourceTargetId: "machine:visible", audience: "both",
+        key: "retained", state: { retained: true }, once: false,
+      });
+      const retained = state.storage.sql.exec("SELECT * FROM signal_watches WHERE source_target_id IS NOT NULL").toArray();
+      runSqlMigrations(state.storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS);
+      expect(state.storage.sql.exec("SELECT * FROM signal_watches").toArray()).toEqual(retained);
+      expect(store.matchTarget("machine:visible", "target.status")).toMatchObject([
+        { targetProcessId: "proc:observer", sourceTargetId: "machine:visible", audience: "both", state: { retained: true } },
       ]);
-      expect(store.matchTarget("machine:visible", "proc.run.finished")).toEqual([]);
     });
   });
 
-  it("authorizes an exact visible target while preserving process watch ownership restrictions", async () => {
+  it("authorizes only an exact visible target and a registered connection source", async () => {
     const stub = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
     await runInDurableObject(stub, (kernel: Kernel) => {
       const ctx = setup(kernel);
       for (const args of [
         { signal: "target.status", targetId: "machine:private" },
         { signal: "target.status", targetId: "missing" },
-        { signal: "target.status", targetId: "machine:visible", processId: "proc:child" },
         { signal: "custom.machine", targetId: "machine:visible" },
         { signal: "proc.run.finished", processId: "proc:foreign" },
         { signal: "proc.run.finished", processId: "proc:observer" },
         { signal: "proc.run.finished", processId: "proc:child", audience: "person" as const },
-      ]) expect(() => handleSignalWatch(args, ctx)).toThrow();
+      ]) {
+        expect(() => {
+          // @ts-expect-error Invalid source shapes intentionally violate the public contract.
+          handleSignalWatch(args, ctx);
+        }).toThrow();
+      }
       const watched = handleSignalWatch({ signal: "target.status", targetId: "machine:visible", key: "target:status", once: false }, ctx);
       expect(kernel.signalWatches.matchTarget("machine:visible", "target.status")).toMatchObject([
-        { watchId: watched.watchId, uid: 7000, targetProcessId: "proc:observer", processId: null, sourceTargetId: "machine:visible", audience: "person" },
+        { watchId: watched.watchId, uid: 7000, targetProcessId: "proc:observer", sourceTargetId: "machine:visible", audience: "person" },
       ]);
-      expect(kernel.signalWatches.match(7000, "target.status", "proc:child")).toEqual([]);
       handleSignalWatch({ signal: "target.status", targetId: "machine:visible", key: "target:status", audience: "both" }, ctx);
       expect(kernel.signalWatches.matchTarget("machine:visible", "target.status")).toMatchObject([{ watchId: watched.watchId, audience: "both" }]);
       expect(handleSignalUnwatch({ key: "target:status" }, ctx)).toEqual({ removed: 1 });
+    });
+  });
+
+  it("does not turn process output into watched frames even with an old registration present", async () => {
+    const stub = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
+    await runInDurableObject(stub, async (kernel: Kernel, state) => {
+      setup(kernel);
+      state.storage.sql.exec(
+        `INSERT INTO signal_watches (watch_id, uid, target_type, target_process_id, signal, process_id,
+          state_json, once_only, status, created_at, updated_at)
+         VALUES ('retired-watch', 7000, 'process', 'proc:observer', 'proc.run.finished', 'proc:child',
+          'null', 1, 'active', 1, 1)`,
+      );
+      const send = vi.spyOn(utils, "sendFrameToProcess");
+      const broadcast = vi.spyOn(kernel.processOutput, "broadcastProcessSignal").mockImplementation(() => {});
+      const frame = {
+        type: "sig", signal: "proc.run.finished", payload: { pid: "proc:child", runId: "run:child", timestamp: Date.now() },
+      } as const;
+      try {
+        await kernel.processOutput.handleProcessSignal("proc:child", frame, frame);
+        expect(send).not.toHaveBeenCalled();
+        expect(broadcast).toHaveBeenCalledWith(7000, "proc:child", null, frame);
+      } finally {
+        send.mockRestore();
+        broadcast.mockRestore();
+      }
     });
   });
 
