@@ -394,9 +394,10 @@ current Kernel:
 Canonical `conversation.*` and `message.*` signals are independent of raw
 Process observation. All connected clients for the owner can synchronize the
 same conversation, while only the directed connection receives transient
-Message streaming. `message send` commits without finishing the run; the model must explicitly
-finish a human-facing run through Shell with `yield`. A final send composes as
-`message send ... && yield`; ordinary assistant output remains Process activity. For a
+Message streaming. A send commits without finishing the run; the model must explicitly
+finish a human-facing run by yielding, through the `Send` tool or Shell's `yield`. A final send
+is `Send` with `yield: true`, or `message send ... && yield`; ordinary assistant output remains
+Process activity. For a
 bounded IPC worker, ordinary final output becomes `proc.run.finished.payload.result` and
 `delivery.kind` remains `"none"`.
 

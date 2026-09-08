@@ -150,16 +150,17 @@ The model response can contain text, thinking blocks, and tool calls:
 - In a human-facing run, the `Send` tool commits one canonical user-visible message and any media
   registered by `message attach`: `text` alone sends and the run continues, allowing multiple
   exactly-once messages from one run; `text` with `yield: true` sends and finishes without another
-  generation; `yield: true` alone finishes without another Message, and is valid only when the same
-  assistant turn contains no meaningful text. A direct Shell call with a literal
+  generation; `yield: true` alone finishes without another Message, whatever the turn narrated as
+  assistant text, since that text is Process activity and never a reply. A direct Shell call with a literal
   `message send <<'GSV_MESSAGE'` block, `yield`, or `message send ... && yield` is the same action as a
   command, for people, scripts, and the model alike.
 - Once the Process validates a message command, the originating client receives
   `message.started` and `message.delta`. Adapters wait for `message.committed`.
 - Ordinary assistant text in a human-facing run that stops without yielding causes a `[GSV EVENT]`
-  correction, and the next turn offers `Send` and nothing else, so the only question left is what to
-  send. After three omissions the run ends with an inspectable bounded error, and the person receives a
-  short notice that a reply was written but not sent, rather than silence.
+  correction that names `Send`. The tool set is part of the cached prompt prefix and never changes
+  between turns, corrections included. After three omissions the run ends with an inspectable bounded
+  error, and the person receives a short notice that a reply was written but not sent, rather than
+  silence.
 - A rejected message or run-control command gets five correction attempts. Delivery failures use a
   separate three-attempt budget and tell the model to retry the exact same message command.
 - If there are tool calls, the process evaluates approval rules and dispatches

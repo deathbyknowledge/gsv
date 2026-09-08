@@ -3880,8 +3880,8 @@ describe("native administration shell commands", () => {
 
     expect(current).toMatchObject({ status: "completed", exitCode: 0 });
     expect(current.stdout).toContain("current conversation: Telegram direct message");
-    expect(current.stdout).toContain("reply command: message send");
-    expect(current.stdout).toContain("omit --to and --also");
+    expect(current.stdout).toContain("reply: the Send tool, or `message send` as its own direct Shell tool call");
+    expect(current.stdout).toContain("Omit --to and --also when replying here.");
     const currentOutput = currentDestinationOutputSchema.safeParse(
       JSON.parse(currentJson.stdout),
     );

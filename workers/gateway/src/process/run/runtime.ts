@@ -78,7 +78,6 @@ export class ProcessRun {
     actionId: string,
     parsed: RunControlCommandParseResult,
     media: RunOutputMedia[],
-    assistantText = "",
   ): Promise<RunControlResult> {
     if (!parsed.ok) {
       return {
@@ -90,9 +89,8 @@ export class ProcessRun {
         error: parsed.error,
       };
     }
-    const activeRun = this.host.runs.active;
-    const isHumanFacingRun = activeRun?.runId === runId && !activeRun.returnToCaller;
-    // a Send with yield and nothing to say is a bare yield, unless staged media makes it a final message
+    // a Send with yield and nothing to say is a bare yield, unless staged media makes it a final message.
+    // Whatever the turn narrated as assistant text is Process activity, never a reply: it does not hold a yield.
     const command: RunControlCommand =
       parsed.command.action === "message"
         && parsed.command.emptyMeansYield === true
@@ -100,16 +98,6 @@ export class ProcessRun {
         && media.length === 0
         ? { action: "yield" }
         : parsed.command;
-    if (command.action === "yield" && isHumanFacingRun && assistantText.trim()) {
-      return {
-        ok: false,
-        action: "yield",
-        text: "",
-        delivery: { kind: "none" },
-        failureKind: "command",
-        error: "yield cannot accompany non-empty assistant text",
-      };
-    }
     if (command.action === "message" && !command.text.trim() && media.length === 0) {
       return {
         ok: false,
@@ -411,7 +399,6 @@ export class ProcessRun {
     const correctedRun = this.host.mutateActiveRun(runId, (current) => ({
       ...current,
       terminalCorrectionRounds: (current.terminalCorrectionRounds ?? 0) + 1,
-      terminalCorrectionPending: true,
     }));
     if (!correctedRun) return;
     await this.host.history.appendSystemMessage(runId, YIELD_CORRECTION_MESSAGE);
@@ -1205,7 +1192,6 @@ export class ProcessRun {
         call.toolCall.id,
         call.parsed,
         outputMedia,
-        turn.text,
       );
     } catch (error) {
       this.persistRunControlExecutionError(
@@ -1321,10 +1307,6 @@ export class ProcessRun {
       assistantMetadata,
     );
     if (!assistantHistory) return null;
-    // the correction turn has produced its response; only now does the restriction lift, so an interrupted tick keeps it
-    if (this.host.runs.active?.runId === runId && this.host.runs.active.terminalCorrectionPending) {
-      this.host.mutateActiveRun(runId, (current) => ({ ...current, terminalCorrectionPending: undefined }));
-    }
     if (inferenceSpanId) {
       this.host.store.traces.setTraceSpanReference(inferenceSpanId, {
         kind: "message",
@@ -1546,7 +1528,8 @@ export class ProcessRun {
       options: {
         reason: run.returnToCaller ? "ipc.returned" : "run.yielded",
         status: "ok",
-        resultText: result.action === "message" ? result.text : persisted.turn.text || null,
+        // a bounded call returns its text to the caller; a human-facing run that yielded quietly said nothing
+        resultText: result.action === "message" ? result.text : run.returnToCaller ? persisted.turn.text || null : null,
         delivery: result.delivery,
         usage: persisted.response.usage,
       },
@@ -1863,13 +1846,11 @@ export class ProcessRun {
       description: tool.description,
       parameters: piToolParametersSchema.parse(tool.inputSchema),
     }));
-    // a correction turn offers Send alone: the model stopped in text, and the only question left is what to send
-    const correcting = run.terminalCorrectionPending === true && !run.returnToCaller;
-    const offeredWork = correcting ? [] : workTools;
-    const tools = run.returnToCaller ? workTools : correcting ? [SEND_TOOL] : withRunControlInstructions(workTools);
+    // the tool set is part of the cached prompt prefix and stays the same from turn to turn, corrections included
+    const tools = run.returnToCaller ? workTools : withRunControlInstructions(workTools);
     // the offered names are what the turn is classified against; Send counts only where the model was given it
     const offeredToolNames = [
-      ...new Set(offeredWork.map((tool) => tool.name)),
+      ...new Set(workTools.map((tool) => tool.name)),
       ...(run.returnToCaller ? [] : [SEND_TOOL.name]),
     ];
     const offeredRun = this.host.mutateActiveRun(runId, (current) => ({
@@ -1877,7 +1858,7 @@ export class ProcessRun {
       offeredToolNames,
     }));
     if (!offeredRun) return null;
-    return { run: offeredRun, activeConfig, workTools: offeredWork, tools };
+    return { run: offeredRun, activeConfig, workTools, tools };
   }
 
   async prepareRunTickContext(

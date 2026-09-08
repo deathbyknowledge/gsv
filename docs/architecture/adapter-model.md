@@ -187,8 +187,8 @@ Desktop use.
 
 The canonical outbound path is:
 
-1. A process runs terminal `message send` through Shell. Ordinary assistant text remains
-   raw Process activity; a bare `yield` finishes without another Message.
+1. A process sends through the `Send` tool, or `message send` through Shell. Ordinary assistant
+   text remains raw Process activity; a bare `yield` finishes without another Message.
 2. The Kernel commits the Message to the canonical conversation and looks up the
    exact directed endpoint created during admission.
 3. If no conversation identity or exact route exists and this is a background run
@@ -226,7 +226,7 @@ separate or cross-channel message. `message current` describes the directed endp
 and the transport-neutral current-conversation commands. It includes an opaque
 destination id when it is an adapter surface only for a later or additional delivery;
 `message destinations` lists authorized observed surfaces, and `message attach`
-registers files for the next current-conversation message. A literal `message send <<'GSV_MESSAGE'` block sends without finishing the run
+registers files for the next current-conversation message. The `Send` tool, or a literal `message send <<'GSV_MESSAGE'` block, sends without finishing the run
 on its directed endpoint, including native clients. `message send --to ... --also` sends a separate message. `--also` is
 required for every separate send during an active run,
 preventing an accidental duplicate.

@@ -82,7 +82,7 @@ the process metadata needed for routing and permissions.
 The agent loop belongs to the Process DO. It assembles context, calls the model,
 receives tool calls, issues syscalls, waits for results, and emits raw
 `proc.run.*` and `proc.changed` activity through the Kernel. A Process explicitly
-may send user-visible updates through Shell with `message send` and finishes each human-facing run with `yield`;
+may send user-visible updates through its `Send` tool, or `message send` in Shell, and finishes each human-facing run by yielding;
 an IPC worker returns its ordinary final output directly to its caller.
 
 ### Conversations
