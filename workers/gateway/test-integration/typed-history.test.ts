@@ -278,15 +278,6 @@ describe("typed history authenticated wire integration", () => {
     try {
       const process = await runtime.spawn("responsibility context wire journey");
       await runtime.configureAi(process.pid);
-      // Any automatic Ship wake uses the local binding fixture, independently of this process's scripted model.
-      await runtime.client.sys.config.set({
-        key: "users/1000/ai/models",
-        value: JSON.stringify({ version: 1, models: [
-          { id: "background-fixture", name: "Background fixture", provider: "workers-ai", model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast" },
-          { id: "integration-model", name: "Integration model", provider: "custom", model: "integration-model",
-            baseUrl: runtime.ai.baseUrl, providerStyle: "openai-chat-completions", transportTarget: "gsv" },
-        ] }),
-      });
       const path = "/tmp/responsibility-context-wire.txt";
       await runtime.client.fs.write({ path, content: "responsibility fixture" });
       const first = runtime.ai.hold({ kind: "tool-calls", calls: [

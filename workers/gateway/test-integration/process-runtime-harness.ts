@@ -1,10 +1,12 @@
 import { GSVClient } from "@humansandmachines/gsv";
 import { jsonObjectSchema } from "@humansandmachines/gsv/protocol";
 import type {
+  AiModelEntry,
   JsonObject,
   ProcSpawnResult,
 } from "@humansandmachines/gsv/protocol";
 import type { TestHarness } from "wrangler";
+import { DEFAULT_WORKERS_AI_MODEL } from "../src/inference/default-models";
 import { createGatewayTestHarness, webSocketUrl } from "./harness";
 import { startOpenAiFixture, type OpenAiFixture } from "./openai-fixture";
 
@@ -117,19 +119,29 @@ export async function startProcessRuntimeHarness(options: {
       return machine;
     },
     configureAi: async (pid) => {
+      const models: AiModelEntry[] = [{
+        id: MODEL_ID,
+        name: "Integration model",
+        provider: "custom",
+        model: MODEL_ID,
+        baseUrl: ai.baseUrl,
+        providerStyle: "openai-chat-completions",
+        transportTarget: "gsv",
+      }];
+      // Any automatic Ship wake uses the local binding fixture, independently of this process's scripted model.
+      if (options.workersAi !== false) {
+        models.unshift({
+          id: "background-fixture",
+          name: "Background fixture",
+          provider: "workers-ai",
+          model: DEFAULT_WORKERS_AI_MODEL,
+        });
+      }
       await connectedClient.sys.config.set({
         key: `users/${USER_UID}/ai/models`,
         value: JSON.stringify({
           version: 1,
-          models: [{
-            id: MODEL_ID,
-            name: "Integration model",
-            provider: "custom",
-            model: MODEL_ID,
-            baseUrl: ai.baseUrl,
-            providerStyle: "openai-chat-completions",
-            transportTarget: "gsv",
-          }],
+          models,
         }),
       });
       await connectedClient.sys.config.set({
