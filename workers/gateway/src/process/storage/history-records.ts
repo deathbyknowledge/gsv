@@ -140,16 +140,26 @@ export function historyOutputResources(output: JsonValue): ResourceBlock[] {
   const seen = new Set<string>();
   while (pending.length) {
     const value = pending.pop();
-    const block = resourceBlockSchema.safeParse(value);
-    if (block.success) {
-      const key = JSON.stringify(block.data);
-      if (!seen.has(key)) resources.push(block.data);
-      seen.add(key);
-    } else if (Array.isArray(value)) {
-      pending.push(...value.toReversed());
-    } else {
-      const object = jsonObjectSchema.safeParse(value);
-      if (object.success) pending.push(...Object.values(object.data).toReversed());
+    if (Array.isArray(value)) {
+      for (let index = value.length - 1; index >= 0; index -= 1) {
+        pending.push(value[index]!);
+      }
+      continue;
+    }
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- JsonValue is already validated; traversal must not revalidate its subtrees.
+    if (value === null || typeof value !== "object") continue;
+    if (value.type === "resource") {
+      const block = resourceBlockSchema.safeParse(value);
+      if (block.success) {
+        const key = JSON.stringify(block.data);
+        if (!seen.has(key)) resources.push(block.data);
+        seen.add(key);
+        continue;
+      }
+    }
+    const values = Object.values(value);
+    for (let index = values.length - 1; index >= 0; index -= 1) {
+      pending.push(values[index]!);
     }
   }
   return resources;

@@ -1,6 +1,6 @@
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import type { ProcMessageMetadata, ResourceBlock } from "@humansandmachines/gsv/protocol";
+import type { JsonValue, ProcMessageMetadata, ResourceBlock } from "@humansandmachines/gsv/protocol";
 import { procHistoryRecordSchema } from "@humansandmachines/gsv/protocol";
 import type { Process } from "./do";
 import { getProcessByPid } from "../shared/utils";
@@ -249,6 +249,20 @@ describe("typed Process history storage", () => {
         output: { content: [first, second, first] }, media, resources: [first, second],
       },
     }]);
-    expect(historyOutputResources({ earlier: [first], later: { content: [second, first] } })).toEqual([first, second]);
+    expect(historyOutputResources({
+      earlier: [null, 0, true, "text", first],
+      later: { type: "resource", ref: null, content: [second, first] },
+    })).toEqual([first, second]);
+  });
+
+  it("collects resources from large arrays without overflowing call arguments", () => {
+    const first = resource("/first.png");
+    const second = resource("/second.png");
+    const output: JsonValue[] = Array.from({ length: 150_000 }, () => 0);
+    output[100] = first;
+    output[140_000] = second;
+    output[149_999] = first;
+
+    expect(historyOutputResources(output)).toEqual([first, second]);
   });
 });
