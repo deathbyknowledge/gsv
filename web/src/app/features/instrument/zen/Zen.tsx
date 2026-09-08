@@ -401,18 +401,26 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
   }, [targetsQuery.data]);
 
   /* history, then live signals reduced into the runtime state */
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const refreshHistory = useCallback(async () => {
     if (!pid) return;
-    const history = await getChatHistory(client, { pid, tail: true, limit: HISTORY_LIMIT });
-    const next = chatRuntimeStateFromHistory(history);
-    runtimeRef.current = next;
-    setRuntime(next);
+    try {
+      const history = await getChatHistory(client, { pid, tail: true, limit: HISTORY_LIMIT });
+      const next = chatRuntimeStateFromHistory(history);
+      runtimeRef.current = next;
+      setRuntime(next);
+    } finally {
+      setHistoryLoaded(true);
+    }
   }, [client, pid]);
+  /* both halves of the transcript, what was said and what was done, are shown together or not yet */
+  const ready = historyLoaded && conversation.loaded;
 
   useEffect(() => {
     if (!connected || !pid) return undefined;
     let active = true;
     let observing = false;
+    setHistoryLoaded(false);
     void refreshHistory().catch((error: Error) => setNote(error.message));
     void client.proc
       .observe({ pid })
@@ -497,6 +505,7 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
   const seenMomentsRef = useRef<Set<string> | null>(null);
   const streamedMomentsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
+    if (!ready) return;
     for (const moment of moments) if (moment.streaming) streamedMomentsRef.current.add(moment.id);
     const whole = moments.filter((moment) => moment.role === "ship" && moment.text && !moment.streaming).map((moment) => moment.id);
     if (seenMomentsRef.current === null) {
@@ -516,7 +525,7 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
       for (const id of arrived) next.set(id, startedAt);
       return next;
     });
-  }, [moments]);
+  }, [moments, ready]);
   useEffect(() => {
     if (settling.size === 0) return;
     const done = [...settling].filter(([id, startedAt]) => {
@@ -708,9 +717,11 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
       }
       if (typing) return;
       const focused = browse !== null ? moments[browse] : latest;
-      if (event.key === "o" && focused && focused.activities.length > 0) {
+      if (event.key === "o" && focused && (focused.activities.length > 0 || focused.narration)) {
         event.preventDefault();
-        toggleActivity(focused.activities[focused.activities.length - 1].key);
+        const yours = focused.activities.filter((activity) => activity.you);
+        const worked = focused.role === "ship" && (focused.activities.some((activity) => !activity.you) || focused.narration);
+        toggleActivity(worked ? `receipt:${focused.id}` : yours[yours.length - 1].key);
         return;
       }
       if (browse !== null && (event.key === "j" || event.key === "ArrowDown")) {
@@ -792,7 +803,7 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
   }, [browse, connected, lastRun, latest, localRuns, moments.length, now, pendingHil, pid, places, runtime.context, thinking, where]);
 
   const onlinePlaces = places.filter((place) => place.online);
-  const empty = moments.length === 0 && pid !== null;
+  const empty = ready && moments.length === 0 && pid !== null;
 
   return (
     <main class={`zen${browse !== null ? " is-browse" : ""}`} aria-label="Zen">
@@ -846,6 +857,8 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
               . Press <span class="place">n</span> to connect more places.
             </p>
           </div>
+        ) : !ready ? (
+          <div class="zen-moments" ref={momentsRef} />
         ) : (
           <div class="zen-moments" ref={momentsRef}>
             {moments.map((moment, index) => {

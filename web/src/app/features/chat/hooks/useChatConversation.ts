@@ -84,6 +84,8 @@ type ConversationRuntime = {
   rows: ChatTranscriptRow[];
   hasMore: boolean;
   loadingOlder: boolean;
+  /** True once the first history read has settled, with rows or without, so a surface can wait for it. */
+  loaded: boolean;
   error: string;
 };
 
@@ -92,6 +94,7 @@ const EMPTY_RUNTIME: ConversationRuntime = {
   rows: [],
   hasMore: false,
   loadingOlder: false,
+  loaded: false,
   error: "",
 };
 
@@ -164,9 +167,14 @@ export function useChatConversationRuntime(
       ),
       hasMore: history.hasMore,
       loadingOlder: false,
+      loaded: true,
       error: "",
     }));
   }, [enabled, historyQuery.data]);
+  useEffect(() => {
+    if (!enabled || !historyQuery.isError) return;
+    setRuntime((current) => (current.loaded ? current : { ...current, loaded: true }));
+  }, [enabled, historyQuery.isError]);
 
   useEffect(() => {
     if (!enabled || !conversationId) return undefined;
