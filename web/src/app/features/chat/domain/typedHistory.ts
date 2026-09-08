@@ -77,7 +77,7 @@ export function transcriptRowsFromRecords(records: readonly (ProcHistoryRecord |
         });
         break;
       case "note": {
-        const thinking = record.payload.thinking.map((block) => block.thinking).filter(Boolean);
+        const thinking = record.payload.thinking.map((block) => block.redacted ? "[redacted thinking]" : block.thinking).filter(Boolean);
         const fallback = record.metadata?.fallback;
         const backupModel = fallback ? { from: fallback.from, to: fallback.to, reason: fallback.reason } : undefined;
         if (record.payload.text || thinking.length || record.payload.media?.length || backupModel) {

@@ -6,6 +6,56 @@ import { momentsFromConversation, activitiesForRows, receiptPhrases } from "../.
 
 const identity = { id: 1, messageId: 1, index: 0, runId: "r", generation: 1, createdAt: 1, source: "typed" };
 describe("typed history projection", () => {
+  it.each(["live", "archive"])("hides redacted thinking in %s notes without changing retained content", (source) => {
+    const schema = source === "live" ? procHistoryRecordSchema : procHistoryArchivedRecordSchema;
+    const hidden = { type: "thinking", thinking: "opaque provider redaction", redacted: true, thinkingSignature: "hidden-signature" };
+    const media = [{ type: "image", mimeType: "image/png", key: "image:synthetic", description: "preview" }];
+    const payloads = [
+      { text: "Ordinary draft", thinking: [
+        { type: "thinking", thinking: "Visible reasoning", thinkingSignature: "visible-signature" },
+        hidden,
+        { type: "thinking", thinking: "Also visible", redacted: false, thinkingSignature: "second-signature" },
+      ], media },
+      { text: "", thinking: [hidden] },
+      { text: "Ordinary text remains", thinking: [hidden] },
+    ];
+    const records = payloads.map((payload, index) => schema.parse({
+      ...identity, id: index + 1, messageId: index + 1, kind: "note", payload,
+      createdAt: source === "archive" ? undefined : identity.createdAt,
+      source: source === "archive" ? "legacy" : identity.source,
+    }));
+    const retained = structuredClone(records);
+
+    const rows = transcriptRowsFromRecords(records);
+
+    expect(rows).toEqual([
+      expect.objectContaining({ role: "assistant", text: "Ordinary draft", thinking: ["Visible reasoning", "[redacted thinking]", "Also visible"], media }),
+      expect.objectContaining({ role: "assistant", text: "", thinking: ["[redacted thinking]"] }),
+      expect.objectContaining({ role: "assistant", text: "Ordinary text remains", thinking: ["[redacted thinking]"] }),
+    ]);
+    expect(JSON.stringify(rows)).not.toContain(hidden.thinking);
+    expect(records).toEqual(retained);
+  });
+
+  it("replaces stale streamed thinking from a redacted-only history note when completion was missed", () => {
+    const previous = transcriptRowsFromRecords([procHistoryRecordSchema.parse({
+      ...identity, kind: "note", payload: { text: "Earlier note", thinking: [{ type: "thinking", thinking: "Earlier visible reasoning" }] },
+    })]);
+    const streamed = {
+      id: "assistant:r", role: "assistant" as const, runId: "r", text: "", time: "", timestamp: 2,
+      thinking: ["Partial reasoning later redacted"], streaming: true, status: "streaming" as const,
+    };
+    const refreshed = transcriptRowsFromRecords([procHistoryRecordSchema.parse({
+      ...identity, id: 2, messageId: 2, createdAt: 2, kind: "note",
+      payload: { text: "", thinking: [{ type: "thinking", thinking: "opaque provider data", redacted: true }] },
+    })]);
+
+    expect(mergeTranscriptRows([...previous, streamed], refreshed)).toEqual([
+      ...previous,
+      expect.objectContaining({ id: "message:2", text: "", thinking: ["[redacted thinking]"], status: "done" }),
+    ]);
+  });
+
   it("uses event severity and kind without reclassifying ordinary text or JSON-looking strings", () => {
     const rows = transcriptRowsFromRecords([
       procHistoryRecordSchema.parse({ ...identity, kind: "message", payload: { direction: "in", text: "Generation failed: just a quotation", media: [], origin: {} } }),

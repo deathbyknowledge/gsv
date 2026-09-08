@@ -909,6 +909,7 @@ function extractThinkingBlocks(value: TranscriptRpcPayload): string[] {
       const text = asString(item);
       if (text) return text.trim();
       const block = asRecord(item);
+      if (block?.redacted === true) return "[redacted thinking]";
       return (asString(block?.thinking) ?? asString(block?.text) ?? "").trim();
     })
     .filter(Boolean);

@@ -684,6 +684,72 @@ describe("chat transcript rows", () => {
     expect(state.activeRunId).toBe("run-new");
   });
 
+  it("hides flagged thinking in live output while preserving visible and legacy blocks", () => {
+    const payload = {
+      pid: "pid-1", runId: "run-1", text: "Visible answer", timestamp: 1,
+      thinking: [
+        "Legacy visible reasoning",
+        { thinking: "Visible reasoning", redacted: false, thinkingSignature: "visible-signature" },
+        { text: "Visible legacy alias" },
+        { thinking: "opaque provider data", redacted: true, thinkingSignature: "hidden-signature" },
+        { text: "opaque legacy alias", redacted: true },
+      ],
+    };
+    const retained = structuredClone(payload);
+    const { state, refreshHistory } = applyChatSignal(
+      emptyChatRuntimeState("pid-1"), "proc.run.output", payload, { pid: "pid-1" },
+    );
+
+    expect(refreshHistory).toBe(true);
+    expect(state.rows).toEqual([expect.objectContaining({
+      role: "assistant", text: "Visible answer",
+      thinking: ["Legacy visible reasoning", "Visible reasoning", "Visible legacy alias", "[redacted thinking]", "[redacted thinking]"],
+      streaming: false, status: "done",
+    })]);
+    expect(payload).toEqual(retained);
+  });
+
+  it.each([
+    { text: "", partialText: "" },
+    { text: "Visible answer", partialText: "" },
+    { text: "", partialText: "Ordinary partial text" },
+  ])("masks partial thinking on completion '$text' after partial text '$partialText'", ({ text, partialText }) => {
+    const previous = {
+      id: "message:7", role: "assistant" as const, runId: "run-1", text: "Earlier committed note",
+      thinking: ["Earlier visible reasoning"], timestamp: 1, time: "", status: "done" as const,
+    };
+    let thinking = applyChatSignal({ ...emptyChatRuntimeState("pid-1"), rows: [previous] }, "proc.run.stream", {
+      pid: "pid-1", runId: "run-1", event: { type: "thinking_start" },
+    }, { pid: "pid-1" }).state;
+    thinking = applyChatSignal(thinking, "proc.run.stream", {
+      pid: "pid-1", runId: "run-1", event: { type: "thinking_delta", delta: "Partial reasoning later redacted" },
+    }, { pid: "pid-1" }).state;
+    if (partialText) thinking = applyChatSignal(thinking, "proc.run.stream", {
+      pid: "pid-1", runId: "run-1", event: { type: "text_delta", delta: partialText },
+    }, { pid: "pid-1" }).state;
+    const { state } = applyChatSignal(thinking, "proc.run.output", {
+      pid: "pid-1", runId: "run-1", text,
+      thinking: [{ thinking: "opaque provider data", redacted: true }],
+    }, { pid: "pid-1" });
+
+    expect(state.rows).toEqual([previous, expect.objectContaining({
+      role: "assistant", text, thinking: ["[redacted thinking]"], streaming: false, status: "done",
+    })]);
+    expect(thinking.rows[1].thinking).toEqual(["Partial reasoning later redacted"]);
+  });
+
+  it("keeps streamed thinking when completion omits it without explicit redaction", () => {
+    const thinking = applyChatSignal(emptyChatRuntimeState("pid-1"), "proc.run.stream", {
+      pid: "pid-1", runId: "run-1", event: { type: "thinking_delta", delta: "Visible partial reasoning" },
+    }, { pid: "pid-1" }).state;
+    const { state } = applyChatSignal(thinking, "proc.run.output", {
+      pid: "pid-1", runId: "run-1", text: "Visible answer", thinking: [],
+    }, { pid: "pid-1" });
+    expect(state.rows).toEqual([expect.objectContaining({
+      text: "Visible answer", thinking: ["Visible partial reasoning"],
+    })]);
+  });
+
   it("moves live backup model status onto the assistant answer", () => {
     let state = emptyChatRuntimeState("pid-1");
 
